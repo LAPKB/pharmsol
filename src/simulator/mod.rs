@@ -78,16 +78,10 @@ impl Equation {
             let covariates = occasion.get_covariates().unwrap();
             //TODO: set the right initial condition when occasion > 1
             let mut x = V::zeros(self.get_nstates());
-            (init)(
-                &V::from_vec(support_point.clone()),
-                0.0,
-                covariates,
-                &mut x,
-            );
+            (init)(&V::from_vec(support_point.clone()), 0.0, covariates, &mut x);
             let mut infusions: Vec<Infusion> = vec![];
-            let mut index = 0;
             let events = occasion.get_events(Some(&lag), Some(&fa), true);
-            for event in &events {
+            for (index, event) in events.iter().enumerate() {
                 match event {
                     Event::Bolus(bolus) => {
                         x[bolus.input()] += bolus.amount();
@@ -120,7 +114,6 @@ impl Equation {
                         next_event.get_time(),
                     );
                 }
-                index += 1;
             }
         }
         // Insert the cache entry
@@ -133,7 +126,7 @@ impl Equation {
     fn simulate_event(
         &self,
         x: V,
-        support_point: &Vec<f64>,
+        support_point: &[f64],
         covariates: &Covariates,
         infusions: &Vec<Infusion>,
         start_time: T,
@@ -186,19 +179,19 @@ impl Equation {
         }
     }
     #[inline(always)]
-    fn get_lag(&self, spp: &Vec<f64>) -> HashMap<usize, f64> {
+    fn get_lag(&self, spp: &[f64]) -> HashMap<usize, f64> {
         match self {
-            Equation::ODE(_, lag, _, _, _, _) => (lag)(&V::from_vec(spp.clone())),
+            Equation::ODE(_, lag, _, _, _, _) => (lag)(&V::from_vec(spp.to_owned())),
             Equation::SDE(_, _, _, _, _, _, _) => unimplemented!("Not Implemented"),
-            Equation::Analytical(_, _, lag, _, _, _, _) => (lag)(&V::from_vec(spp.clone())),
+            Equation::Analytical(_, _, lag, _, _, _, _) => (lag)(&V::from_vec(spp.to_owned())),
         }
     }
     #[inline(always)]
-    fn get_fa(&self, spp: &Vec<f64>) -> HashMap<usize, f64> {
+    fn get_fa(&self, spp: &[f64]) -> HashMap<usize, f64> {
         match self {
-            Equation::ODE(_, _, fa, _, _, _) => (fa)(&V::from_vec(spp.clone())),
+            Equation::ODE(_, _, fa, _, _, _) => (fa)(&V::from_vec(spp.to_owned())),
             Equation::SDE(_, _, _, _, _, _, _) => unimplemented!("Not Implemented"),
-            Equation::Analytical(_, _, _, fa, _, _, _) => (fa)(&V::from_vec(spp.clone())),
+            Equation::Analytical(_, _, _, fa, _, _, _) => (fa)(&V::from_vec(spp.to_owned())),
         }
     }
     #[inline(always)]
@@ -221,7 +214,7 @@ impl Equation {
 
 pub fn get_population_predictions(
     equation: &Equation,
-    subjects: &Vec<Subject>,
+    subjects: &[Subject],
     support_points: &Array2<f64>,
     _cache: bool,
 ) -> PopulationPredictions {

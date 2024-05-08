@@ -1,12 +1,13 @@
 use crate::{data::Covariates, simulator::*};
 
 #[inline(always)]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn simulate_analytical_event(
     eq: &AnalyticalEq,
     seq_eq: &SecEq,
 
     x: V,
-    support_point: &Vec<f64>,
+    support_point: &[f64],
     cov: &Covariates,
     infusions: &Vec<Infusion>,
     ti: f64,
@@ -15,7 +16,7 @@ pub(crate) fn simulate_analytical_event(
     if ti == tf {
         return x;
     }
-    let mut support_point = V::from_vec(support_point.clone());
+    let mut support_point = V::from_vec(support_point.to_owned());
     let mut rateiv = V::from_vec(vec![0.0, 0.0, 0.0]);
     //TODO: This should be pre-calculated
     for infusion in infusions {

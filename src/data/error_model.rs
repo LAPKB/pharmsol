@@ -18,7 +18,7 @@ pub enum ErrorType {
     Add,
     Prop,
 }
-
+#[allow(clippy::extra_unused_lifetimes)]
 impl<'a> ErrorModel<'_> {
     pub(crate) fn estimate_sigma(&self, prediction: &Prediction) -> f64 {
         let (c0, c1, c2, c3) = match prediction.errorpoly() {

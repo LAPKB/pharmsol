@@ -33,23 +33,25 @@ lazy_static! {
     static ref CACHE: DashMap<CacheKey, SubjectPredictions> = DashMap::with_capacity(CACHE_SIZE);
 }
 
-pub(crate) fn get_entry(subject: &String, support_point: &Vec<f64>) -> Option<SubjectPredictions> {
+pub(crate) fn get_entry(subject: &str, support_point: &Vec<f64>) -> Option<SubjectPredictions> {
     let cache_key = CacheKey {
-        subject: subject.clone(),
+        subject: subject.to_owned(),
         support_point: SupportPointHash::new(support_point),
     };
 
     // Check if the key already exists
-    CACHE.get(&cache_key).map(|existing_entry| existing_entry.clone())
+    CACHE
+        .get(&cache_key)
+        .map(|existing_entry| existing_entry.clone())
 }
 
 pub(crate) fn insert_entry(
-    subject: &String,
+    subject: &str,
     support_point: &Vec<f64>,
     predictions: SubjectPredictions,
 ) {
     let cache_key = CacheKey {
-        subject: subject.clone(),
+        subject: subject.to_owned(),
         support_point: SupportPointHash::new(support_point),
     };
 

@@ -1,3 +1,4 @@
+use super::closure::PMClosure;
 use crate::data::{Covariates, Infusion};
 use anyhow::{Ok, Result};
 use diffsol::{
@@ -6,11 +7,10 @@ use diffsol::{
     op::unit::UnitCallable,
     vector::Vector,
 };
-
 use std::rc::Rc;
 
-use super::closure::PMClosure;
-
+#[allow(clippy::type_complexity)]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_pm_ode<M, F, I>(
     rhs: F,
     init: I,

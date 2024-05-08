@@ -463,7 +463,7 @@ impl Covariates {
 impl fmt::Display for Covariates {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "Covariates:")?;
-        for (_, covariate) in &self.covariates {
+        for covariate in self.covariates.values() {
             writeln!(f, "{}", covariate)?;
         }
         Ok(())

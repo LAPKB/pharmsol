@@ -18,7 +18,7 @@ pub(crate) fn simulate_ode_event(
     x: V,
     support_point: &[f64],
     cov: &Covariates,
-    infusions: &Vec<Infusion>,
+    infusions: &[Infusion],
     ti: f64,
     tf: f64,
 ) -> V {
@@ -34,7 +34,7 @@ pub(crate) fn simulate_ode_event(
         RTOL,
         ATOL,
         cov.clone(),
-        infusions.clone(),
+        infusions.to_owned(),
     )
     .unwrap();
     let mut solver = Bdf::default();
