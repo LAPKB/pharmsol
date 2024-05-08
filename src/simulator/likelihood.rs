@@ -42,7 +42,7 @@ impl From<Vec<Prediction>> for SubjectPredictions {
         Self {
             flat_predictions: predictions.iter().map(|p| p.prediction).collect(),
             flat_observations: predictions.iter().map(|p| p.observation).collect(),
-            predictions: predictions,
+            predictions,
         }
     }
 }
@@ -88,7 +88,7 @@ impl PopulationPredictions {
 impl From<Array2<SubjectPredictions>> for PopulationPredictions {
     fn from(subject_predictions: Array2<SubjectPredictions>) -> Self {
         Self {
-            subject_predictions: subject_predictions,
+            subject_predictions,
         }
     }
 }

@@ -26,7 +26,7 @@ pub(crate) fn simulate_ode_event(
         return x;
     }
     let problem = build_pm_ode::<M, _, _>(
-        diffeq.clone(),
+        *diffeq,
         move |_p: &V, _t: T| x.clone(),
         V::from_vec(support_point.to_vec()),
         ti,

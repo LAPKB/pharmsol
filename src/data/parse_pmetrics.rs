@@ -34,7 +34,7 @@ pub fn read_pmetrics(path: &Path) -> Result<Data, Box<dyn Error>> {
 
         rows_map
             .entry(row.id.clone())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(row);
     }
 
@@ -86,7 +86,7 @@ pub fn read_pmetrics(path: &Path) -> Result<Data, Box<dyn Error>> {
                     if let Some(val) = value {
                         observed_covariates
                             .entry(key.clone())
-                            .or_insert_with(Vec::new)
+                            .or_default()
                             .push((row.time, Some(*val)));
                     }
                 }
@@ -131,7 +131,7 @@ pub fn read_pmetrics(path: &Path) -> Result<Data, Box<dyn Error>> {
                                 from: time,
                                 to: *next_time,
                                 method: InterpolationMethod::Linear {
-                                    slope: slope,
+                                    slope,
                                     intercept: current_value - slope * time,
                                 },
                             });
@@ -267,7 +267,7 @@ where
     T::Err: std::fmt::Display,
 {
     let s: String = Deserialize::deserialize(deserializer)?;
-    if s == "" || s == "." {
+    if s.is_empty() || s == "." {
         Ok(None)
     } else {
         T::from_str(&s).map(Some).map_err(serde::de::Error::custom)

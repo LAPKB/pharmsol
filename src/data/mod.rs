@@ -355,7 +355,7 @@ struct CovariateSegment {
 
 impl CovariateSegment {
     fn interpolate(&self, time: f64) -> Option<f64> {
-        if self.in_interval(time) == false {
+        if !self.in_interval(time) {
             return None;
         }
 
@@ -408,7 +408,7 @@ impl Covariate {
 
 impl fmt::Display for Covariate {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Covariate '{}':\n", self.name)?;
+        writeln!(f, "Covariate '{}':", self.name)?;
         for (index, segment) in self.segments.iter().enumerate() {
             write!(
                 f,

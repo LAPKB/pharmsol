@@ -40,10 +40,7 @@ pub(crate) fn get_entry(subject: &String, support_point: &Vec<f64>) -> Option<Su
     };
 
     // Check if the key already exists
-    match CACHE.get(&cache_key) {
-        Some(existing_entry) => Some(existing_entry.clone()),
-        None => None,
-    }
+    CACHE.get(&cache_key).map(|existing_entry| existing_entry.clone())
 }
 
 pub(crate) fn insert_entry(

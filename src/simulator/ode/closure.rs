@@ -48,8 +48,8 @@ where
             statistics: RefCell::new(OpStatistics::default()),
             coloring: None,
             sparsity: None,
-            covariates: covariates,
-            infusions: infusions,
+            covariates,
+            infusions,
         }
     }
 }
