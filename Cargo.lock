@@ -9,22 +9,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "250f629c0161ad8107cf89319e990051fae62832fd343083bea452d93e2205fd"
 
 [[package]]
-name = "alma"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "csv",
- "dashmap",
- "diffsol",
- "lazy_static",
- "nalgebra",
- "ndarray",
- "rayon",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "anyhow"
 version = "1.0.83"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -773,6 +757,22 @@ checksum = "b4c5cc86750666a3ed20bdaf5ca2a0344f9c67674cae0515bec2da16fbaa47db"
 dependencies = [
  "fixedbitset",
  "indexmap",
+]
+
+[[package]]
+name = "pharmsol"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "csv",
+ "dashmap",
+ "diffsol",
+ "lazy_static",
+ "nalgebra",
+ "ndarray",
+ "rayon",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 // use self::likelihood::{PopulationPredictions, SubjectPredictions};
 use crate::{
-    data::{Covariates, Event, Infusion, Subject},
+    data::{Covariates, Data, Event, Infusion, Subject},
     simulator::likelihood::{PopulationPredictions, SubjectPredictions, ToPrediction},
 };
 
@@ -214,7 +214,7 @@ impl Equation {
 
 pub fn get_population_predictions(
     equation: &Equation,
-    subjects: &[Subject],
+    subjects: &Data,
     support_points: &Array2<f64>,
     _cache: bool,
 ) -> PopulationPredictions {
@@ -227,6 +227,7 @@ pub fn get_population_predictions(
                 .into_par_iter()
                 .enumerate()
                 .for_each(|(j, mut element)| {
+                    let subjects = subjects.get_subjects();
                     let subject = subjects.get(i).unwrap();
                     let ypred =
                         equation.simulate_subject(subject, support_points.row(j).to_vec().as_ref());

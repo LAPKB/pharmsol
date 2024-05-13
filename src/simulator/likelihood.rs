@@ -104,10 +104,18 @@ pub struct Prediction {
 }
 
 impl Prediction {
+    pub fn time(&self) -> f64 {
+        self.time
+    }
     pub(crate) fn observation(&self) -> f64 {
         self.observation
     }
-
+    pub fn prediction(&self) -> f64 {
+        self.prediction
+    }
+    pub fn outeq(&self) -> usize {
+        self.outeq
+    }
     pub(crate) fn errorpoly(&self) -> Option<(f64, f64, f64, f64)> {
         self.errorpoly
     }

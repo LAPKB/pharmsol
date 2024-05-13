@@ -1,4 +1,5 @@
 use crate::data::*;
+use csv::WriterBuilder;
 use serde::de::{MapAccess, Visitor};
 use serde::{de, Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
@@ -32,10 +33,7 @@ pub fn read_pmetrics(path: &Path) -> Result<Data, Box<dyn Error>> {
     for row_result in reader.deserialize() {
         let row: Row = row_result?;
 
-        rows_map
-            .entry(row.id.clone())
-            .or_default()
-            .push(row);
+        rows_map.entry(row.id.clone()).or_default().push(row);
     }
 
     // For each ID, we ultimately create a [Subject] object
@@ -340,7 +338,34 @@ where
 
     deserializer.deserialize_map(CovsVisitor)
 }
+pub fn write_pmetrics_observations(data: &Data, file: &std::fs::File) {
+    let mut writer = WriterBuilder::new().has_headers(true).from_writer(file);
 
+    writer
+        .write_record(&["id", "block", "time", "out", "outeq"])
+        .unwrap();
+    for subject in data.get_subjects() {
+        for occasion in subject.occasions() {
+            for event in occasion.get_events(None, None, false) {
+                match event {
+                    Event::Observation(obs) => {
+                        // Write each field individually
+                        writer
+                            .write_record(&[
+                                &subject.id,
+                                &occasion.index.to_string(),
+                                &obs.time.to_string(),
+                                &obs.value.to_string(),
+                                &obs.outeq.to_string(),
+                            ])
+                            .unwrap();
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+}
 // #[cfg(test)]
 // mod tests {
 //     use super::*;

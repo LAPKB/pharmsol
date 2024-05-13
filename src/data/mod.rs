@@ -275,9 +275,9 @@ impl fmt::Display for Subject {
 }
 
 impl Subject {
-    // fn new(id: String, occasions: Vec<Occasion>) -> Self {
-    //     Subject { id, occasions }
-    // }
+    fn new(id: String, occasions: Vec<Occasion>) -> Self {
+        Subject { id, occasions }
+    }
     pub fn occasions(&self) -> Vec<&Occasion> {
         self.occasions.iter().collect()
     }
@@ -309,8 +309,84 @@ impl Data {
     fn new(subjects: Vec<Subject>) -> Self {
         Data { subjects }
     }
-    pub fn get_subjects(&self) -> Vec<Subject> {
-        self.subjects.clone()
+    pub fn get_subjects(&self) -> Vec<&Subject> {
+        self.subjects.iter().collect()
+    }
+    pub fn expand(&self, idelta: f64, tad: f64) -> Data {
+        if idelta <= 0.0 {
+            return self.clone();
+        }
+        // Determine the last time of the last observation, or Infusion + Duration
+        let mut last_time = self
+            .subjects
+            .iter()
+            .map(|subject| {
+                subject
+                    .occasions
+                    .iter()
+                    .map(|occasion| {
+                        occasion
+                            .events
+                            .iter()
+                            .filter_map(|event| match event {
+                                Event::Observation(observation) => Some(observation.time),
+                                Event::Infusion(infusion) => {
+                                    Some(infusion.time + infusion.duration)
+                                }
+                                _ => None,
+                            })
+                            .max_by(|a, b| a.partial_cmp(b).unwrap())
+                            .unwrap_or(0.0)
+                    })
+                    .max_by(|a, b| a.partial_cmp(b).unwrap())
+                    .unwrap_or(0.0)
+            })
+            .max_by(|a, b| a.partial_cmp(b).unwrap())
+            .unwrap_or(0.0);
+        last_time = last_time + tad;
+
+        // Create a new data structure with added observations at intervals of idelta
+        let mut new_subjects: Vec<Subject> = Vec::new();
+        for subject in &self.subjects {
+            let mut new_occasions: Vec<Occasion> = Vec::new();
+            for occasion in &subject.occasions {
+                let old_events = occasion.get_events(None, None, true);
+                let mut new_events: Vec<Event> = Vec::new();
+                let mut time = 0.0;
+                while time < last_time {
+                    let obs = Observation {
+                        time,
+                        value: -99.0,
+                        outeq: 0,
+                        errorpoly: None,
+                        ignore: false,
+                    };
+
+                    new_events.push(Event::Observation(obs));
+
+                    time += idelta;
+                    time = (time * 1e6).round() / 1e6;
+                }
+
+                new_events.extend(old_events);
+                new_occasions.push(Occasion::new(
+                    new_events,
+                    occasion.covariates.clone(),
+                    occasion.index,
+                ));
+                new_occasions
+                    .iter_mut()
+                    .for_each(|occasion| occasion.sort());
+            }
+            // Add the new occasions to the new subject
+            new_subjects.push(Subject::new(subject.id.clone(), new_occasions));
+        }
+
+        Data::new(new_subjects)
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.subjects.len()
     }
 
     // /// Returns the number of subjects in the data
