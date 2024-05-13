@@ -6,3 +6,13 @@
 
 Solve pharmacokinetic models using differential equations and their analytical solutions!
 
+
+## Supported analytical models
+We are working to support all the standard analytical models. 
+
+-  [x] One-compartment without oral absorption
+-  [x] One-compartment with absorption
+-  [ ] Two-compartmental models
+-  [ ] Three-compartmental models
+
+ 
