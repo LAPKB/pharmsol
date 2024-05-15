@@ -11,7 +11,8 @@ pub mod prelude {
     }
     pub mod simulator {
         pub use crate::simulator::{
-            fitting::*, get_population_predictions, likelihood::PopulationPredictions, Equation,
+            fitting::OptimalSupportPoint, get_population_predictions,
+            likelihood::PopulationPredictions, Equation,
         };
     }
     pub mod models {
