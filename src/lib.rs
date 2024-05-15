@@ -11,14 +11,15 @@ pub mod prelude {
     }
     pub mod simulator {
         pub use crate::simulator::{
-            fitting::OptimalSupportPoint, get_population_predictions,
-            likelihood::PopulationPredictions, Equation,
+            get_population_predictions, likelihood::PopulationPredictions, Equation,
         };
     }
     pub mod models {
         pub use crate::simulator::analytical::one_compartment;
         pub use crate::simulator::analytical::one_compartment_with_absorption;
     }
+    //traits
+    pub use crate::simulator::fitting::{EstimateTheta, OptimalSupportPoint};
 
     #[macro_export]
     macro_rules! fetch_params {

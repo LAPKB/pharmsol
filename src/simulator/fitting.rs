@@ -2,9 +2,9 @@ use argmin::{
     core::{CostFunction, Error, Executor},
     solver::neldermead::NelderMead,
 };
-use ndarray::Array1;
+use ndarray::{Array1, Array2, Axis};
 
-use crate::data::Subject;
+use crate::data::{Data, Subject};
 
 use super::Equation;
 
@@ -30,7 +30,7 @@ impl<'a> SppOptimizer<'a> {
         Self { equation, subject }
     }
 
-    fn optimize(self, point: Array1<f64>) -> Array1<f64> {
+    fn optimize(self, point: &Array1<f64>) -> Array1<f64> {
         let simplex = create_initial_simplex(&point);
         let solver = NelderMead::new(simplex)
             .with_sd_tolerance(1e-2)
@@ -70,11 +70,31 @@ fn create_initial_simplex(initial_point: &Array1<f64>) -> Vec<Array1<f64>> {
 }
 
 pub trait OptimalSupportPoint {
-    fn optimal_support_point(&self, equation: &Equation, point: Array1<f64>) -> Array1<f64>;
+    fn optimal_support_point(&self, equation: &Equation, point: &Array1<f64>) -> Array1<f64>;
 }
 
 impl OptimalSupportPoint for Subject {
-    fn optimal_support_point(&self, equation: &Equation, point: Array1<f64>) -> Array1<f64> {
+    fn optimal_support_point(&self, equation: &Equation, point: &Array1<f64>) -> Array1<f64> {
         SppOptimizer::new(equation, self).optimize(point)
+    }
+}
+
+pub trait EstimateTheta {
+    fn estimate_theta(&self, equation: &Equation, point: &Array1<f64>) -> Array2<f64>;
+}
+
+impl EstimateTheta for Data {
+    fn estimate_theta(&self, equation: &Equation, point: &Array1<f64>) -> Array2<f64> {
+        let n_sub = self.len();
+        let mut theta = Array2::zeros((n_sub, point.len()));
+
+        theta
+            .axis_iter_mut(Axis(0))
+            .zip(self.get_subjects().iter())
+            .for_each(|(mut row, subject)| {
+                row.assign(&subject.optimal_support_point(equation, point));
+            });
+
+        theta
     }
 }
