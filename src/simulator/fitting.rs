@@ -74,7 +74,7 @@ fn create_initial_simplex(initial_point: &Array1<f64>) -> Vec<Array1<f64>> {
     vertices
 }
 
-trait OptimalSupportPoint {
+pub trait OptimalSupportPoint {
     fn optimal_support_point(
         &self,
         equation: &Equation,
