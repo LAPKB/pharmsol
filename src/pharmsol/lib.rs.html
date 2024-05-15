@@ -54,6 +54,8 @@
 <a href="#52" id="52">52</a>
 <a href="#53" id="53">53</a>
 <a href="#54" id="54">54</a>
+<a href="#55" id="55">55</a>
+<a href="#56" id="56">56</a>
 </pre></div><pre class="rust"><code><span class="kw">mod </span>data;
 <span class="kw">mod </span>simulator;
 
@@ -74,6 +76,8 @@
         <span class="kw">pub use </span><span class="kw">crate</span>::simulator::analytical::one_compartment;
         <span class="kw">pub use </span><span class="kw">crate</span>::simulator::analytical::one_compartment_with_absorption;
     }
+    <span class="comment">//traits
+    </span><span class="kw">pub use </span><span class="kw">crate</span>::simulator::fitting::{EstimateTheta, OptimalSupportPoint};
 
     <span class="attr">#[macro_export]
     </span><span class="macro">macro_rules!</span> fetch_params {

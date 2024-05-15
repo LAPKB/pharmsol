@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["data","models","simulator"]};
+window.SIDEBAR_ITEMS = {"mod":["data","models","simulator"],"trait":["EstimateTheta","OptimalSupportPoint"]};
