@@ -1,5 +1,6 @@
 pub(crate) mod analytical;
 mod cache;
+pub mod fitting;
 pub(crate) mod likelihood;
 mod ode;
 use ndarray::{parallel::prelude::*, Axis};

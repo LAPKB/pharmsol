@@ -14,7 +14,7 @@ impl SubjectPredictions {
         &self.predictions
     }
 
-    fn subject_likelihood(&self, error_model: &ErrorModel) -> f64 {
+    pub(crate) fn likelihood(&self, error_model: &ErrorModel) -> f64 {
         //TODO: This sigma should not be calculated here, we should precalculate it and inject it into the struct
         let sigma: Array1<f64> = self
             .predictions
@@ -73,12 +73,7 @@ impl PopulationPredictions {
                     .into_par_iter()
                     .enumerate()
                     .for_each(|(j, mut element)| {
-                        element.fill(
-                            self.subject_predictions
-                                .get((i, j))
-                                .unwrap()
-                                .subject_likelihood(ep),
-                        );
+                        element.fill(self.subject_predictions.get((i, j)).unwrap().likelihood(ep));
                     })
             });
         psi

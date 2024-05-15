@@ -1,5 +1,6 @@
 use serde::Deserialize;
 use std::{collections::HashMap, fmt};
+
 pub mod error_model;
 pub(crate) mod parse_pmetrics;
 // Redesign of data formats
