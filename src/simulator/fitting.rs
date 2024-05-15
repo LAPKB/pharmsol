@@ -4,14 +4,13 @@ use argmin::{
 };
 use ndarray::Array1;
 
-use crate::data::{error_model::ErrorModel, Subject};
+use crate::data::Subject;
 
 use super::Equation;
 
 struct SppOptimizer<'a> {
     equation: &'a Equation,
     subject: &'a Subject,
-    error_model: &'a ErrorModel<'a>,
 }
 
 impl<'a> CostFunction for SppOptimizer<'a> {
@@ -19,20 +18,16 @@ impl<'a> CostFunction for SppOptimizer<'a> {
     type Output = f64;
 
     fn cost(&self, point: &Self::Param) -> Result<Self::Output, Error> {
-        Ok(-self
+        Ok(self
             .equation
             .simulate_subject(self.subject, point.to_vec().as_ref())
-            .likelihood(self.error_model))
+            .squared_error())
     }
 }
 
 impl<'a> SppOptimizer<'a> {
-    fn new(equation: &'a Equation, subject: &'a Subject, error_model: &'a ErrorModel<'a>) -> Self {
-        Self {
-            equation,
-            subject,
-            error_model,
-        }
+    fn new(equation: &'a Equation, subject: &'a Subject) -> Self {
+        Self { equation, subject }
     }
 
     fn optimize(self, point: Array1<f64>) -> Array1<f64> {
@@ -41,7 +36,7 @@ impl<'a> SppOptimizer<'a> {
             .with_sd_tolerance(1e-2)
             .expect("Error setting up the solver");
         let res = Executor::new(self, solver)
-            .configure(|state| state.max_iters(10))
+            // .configure(|state| state.max_iters(10))
             .run()
             .unwrap();
         res.state.best_param.unwrap()
@@ -75,21 +70,11 @@ fn create_initial_simplex(initial_point: &Array1<f64>) -> Vec<Array1<f64>> {
 }
 
 pub trait OptimalSupportPoint {
-    fn optimal_support_point(
-        &self,
-        equation: &Equation,
-        error_model: &ErrorModel,
-        point: Array1<f64>,
-    ) -> Array1<f64>;
+    fn optimal_support_point(&self, equation: &Equation, point: Array1<f64>) -> Array1<f64>;
 }
 
 impl OptimalSupportPoint for Subject {
-    fn optimal_support_point(
-        &self,
-        equation: &Equation,
-        error_model: &ErrorModel,
-        point: Array1<f64>,
-    ) -> Array1<f64> {
-        SppOptimizer::new(equation, self, error_model).optimize(point)
+    fn optimal_support_point(&self, equation: &Equation, point: Array1<f64>) -> Array1<f64> {
+        SppOptimizer::new(equation, self).optimize(point)
     }
 }

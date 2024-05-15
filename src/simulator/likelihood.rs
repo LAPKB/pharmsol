@@ -24,6 +24,13 @@ impl SubjectPredictions {
 
         normal_likelihood(&self.flat_predictions, &self.flat_observations, &sigma)
     }
+
+    pub(crate) fn squared_error(&self) -> f64 {
+        self.predictions
+            .iter()
+            .map(|p| (p.observation - p.prediction).powi(2))
+            .sum()
+    }
 }
 fn normal_likelihood(
     predictions: &Array1<f64>,
