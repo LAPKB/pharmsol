@@ -519,7 +519,7 @@ pub struct Covariates {
 }
 
 impl Covariates {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Covariates {
             covariates: HashMap::new(),
         }
