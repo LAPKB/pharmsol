@@ -167,7 +167,17 @@
 <a href="#165" id="165">165</a>
 <a href="#166" id="166">166</a>
 <a href="#167" id="167">167</a>
+<a href="#168" id="168">168</a>
+<a href="#169" id="169">169</a>
+<a href="#170" id="170">170</a>
+<a href="#171" id="171">171</a>
+<a href="#172" id="172">172</a>
+<a href="#173" id="173">173</a>
+<a href="#174" id="174">174</a>
+<a href="#175" id="175">175</a>
+<a href="#176" id="176">176</a>
 </pre></div><pre class="rust"><code><span class="kw">use crate</span>::{data::Covariates, simulator::<span class="kw-2">*</span>};
+<span class="kw">use </span>nalgebra::{DVector, Matrix2, Vector2};
 
 <span class="attr">#[inline(always)]
 #[allow(clippy::too_many_arguments)]
@@ -238,100 +248,108 @@
     xout
 }
 
-<span class="comment">// ///
-// /// Analytical for two compartment
-// /// Assumptions:
-// ///   - p is a vector of length 3 with ke, kcp and kpc in that order
-// ///   - rateiv is a vector of length 1 with the value of the infusion rate (only one drug)
-// ///   - x is a vector of length 2
-// ///   - covariates are not used
-// ///
-//  fn two_compartments(x: &amp;V, p: &amp;V, t: T, rateiv: V, _cov: &amp;Covariates) -&gt; V {
-//     let ke = p[0];
-//     let kcp = p[1];
-//     let kpc = p[2];
+<span class="doccomment">///
+/// Analytical for two compartment
+/// Assumptions:
+///   - p is a vector of length 3 with ke, kcp and kpc in that order
+///   - rateiv is a vector of length 1 with the value of the infusion rate (only one drug)
+///   - x is a vector of length 2
+///   - covariates are not used
+///
+</span><span class="kw">pub fn </span>two_compartments(x: <span class="kw-2">&amp;</span>V, p: <span class="kw-2">&amp;</span>V, t: T, rateiv: V, _cov: <span class="kw-2">&amp;</span>Covariates) -&gt; V {
+    <span class="kw">let </span>ke = p[<span class="number">0</span>];
+    <span class="kw">let </span>kcp = p[<span class="number">1</span>];
+    <span class="kw">let </span>kpc = p[<span class="number">2</span>];
 
-//     let sqrt = (ke + kcp + kpc).powi(2) - 4.0 * ke * kpc;
-//     if sqrt &lt; 0.0 {
-//         panic!("Imaginary solutions, program stopped!");
-//     }
-//     let sqrt = sqrt.sqrt();
-//     let l1 = (ke + kcp + kpc + sqrt) / 2.0;
-//     let l2 = (ke + kcp + kpc - sqrt) / 2.0;
-//     let non_zero = faer::scale(1. / (l1 - l2))
-//         * faer::mat![
-//             [
-//                 (l1 - kpc) * (-l1 * t).exp() + (kpc - l2) * (-l2 * t).exp(),
-//                 -kpc * (-l1 * t).exp() + kpc * (-l2 * t).exp(),
-//             ],
-//             [
-//                 kcp * (-l1 * t).exp() + kcp * (-l2 * t).exp(),
-//                 (l1 - ke - kcp) * (-l1 * t).exp() + (-ke + kcp - l2) * (-l2 * t).exp()
-//             ]
-//         ]
-//         * x;
-//     let infusion = faer::scale(rateiv[0] / (l1 - l2))
-//         * faer::col![
-//             ((l1 - kpc) / l1) * (1. - (-l1 * t).exp()) + ((kpc - l2) / l2) * (1. - (-l2 * t).exp()),
-//             (-kpc / l1) * (1. - (-l1 * t).exp()) + (kpc / l2) * (1. - (-l2 * t).exp()),
-//         ];
+    <span class="kw">let </span>sqrt = (ke + kcp + kpc).powi(<span class="number">2</span>) - <span class="number">4.0 </span>* ke * kpc;
+    <span class="kw">if </span>sqrt &lt; <span class="number">0.0 </span>{
+        <span class="macro">panic!</span>(<span class="string">"Imaginary solutions, program stopped!"</span>);
+    }
+    <span class="kw">let </span>sqrt = sqrt.sqrt();
+    <span class="kw">let </span>l1 = (ke + kcp + kpc + sqrt) / <span class="number">2.0</span>;
+    <span class="kw">let </span>l2 = (ke + kcp + kpc - sqrt) / <span class="number">2.0</span>;
+    <span class="kw">let </span>exp_l1_t = (-l1 * t).exp();
+    <span class="kw">let </span>exp_l2_t = (-l2 * t).exp();
+    <span class="kw">let </span>non_zero_matrix = Matrix2::new(
+        (l1 - kpc) * exp_l1_t + (kpc - l2) * exp_l2_t,
+        -kpc * exp_l1_t + kpc * exp_l2_t,
+        kcp * exp_l1_t + kcp * exp_l2_t,
+        (l1 - ke - kcp) * exp_l1_t + (-ke + kcp - l2) * exp_l2_t,
+    );
 
-//     non_zero + infusion
-// }
+    <span class="kw">let </span>non_zero = (non_zero_matrix * x) / (l1 - l2);
 
-// ///
-// /// Analytical for two compartment with absorption
-// /// Assumptions:
-// ///   - p is a vector of length 4 with ke, ka, kcp and kpc in that order
-// ///   - rateiv is a vector of length 1 with the value of the infusion rate (only one drug)
-// ///   - x is a vector of length 2
-// ///   - covariates are not used
-// ///
-//  fn two_compartments_with_absorption(x: &amp;V, p: &amp;V, t: T, rateiv: V, _cov: &amp;Covariates) -&gt; V {
-//     let ke = p[0];
-//     let ka = p[1];
-//     let kcp = p[2];
-//     let kpc = p[3];
-//     let mut xout = x.clone();
+    <span class="kw">let </span>infusion_vector = Vector2::new(
+        ((l1 - kpc) / l1) * (<span class="number">1.0 </span>- exp_l1_t) + ((kpc - l2) / l2) * (<span class="number">1.0 </span>- exp_l2_t),
+        (-kpc / l1) * (<span class="number">1.0 </span>- exp_l1_t) + (kpc / l2) * (<span class="number">1.0 </span>- exp_l2_t),
+    );
 
-//     let sqrt = (ke + kcp + kpc).powi(2) - 4.0 * ke * kpc;
-//     if sqrt &lt; 0.0 {
-//         panic!("Imaginary solutions, program stopped!");
-//     }
-//     let sqrt = sqrt.sqrt();
-//     let l1 = (ke + kcp + kpc + sqrt) / 2.0;
-//     let l2 = (ke + kcp + kpc - sqrt) / 2.0;
-//     let non_zero = faer::scale(1. / (l1 - l2))
-//         * faer::mat![
-//             [
-//                 (l1 - kpc) * (-l1 * t).exp() + (kpc - l2) * (-l2 * t).exp(),
-//                 -kpc * (-l1 * t).exp() + kpc * (-l2 * t).exp(),
-//             ],
-//             [
-//                 kcp * (-l1 * t).exp() + kcp * (-l2 * t).exp(),
-//                 (l1 - ke - kcp) * (-l1 * t).exp() + (-ke + kcp - l2) * (-l2 * t).exp()
-//             ]
-//         ]
-//         * faer::col![x[1], x[2]];
-//     let infusion = faer::scale(rateiv[0] / (l1 - l2))
-//         * faer::col![
-//             ((l1 - kpc) / l1) * (1. - (-l1 * t).exp()) + ((kpc - l2) / l2) * (1. - (-l2 * t).exp()),
-//             (-kpc / l1) * (1. - (-l1 * t).exp()) + (kpc / l2) * (1. - (-l2 * t).exp()),
-//         ];
+    <span class="kw">let </span>infusion = infusion_vector * (rateiv[<span class="number">0</span>] / (l1 - l2));
 
-//     let absorption = faer::scale(ka * x[0] / (l1 - l2))
-//         * faer::col![
-//             ((l1 - kpc) / (ka - l1)) * ((-l1 * t).exp() - (-ka * t).exp())
-//                 + ((kpc - l2) / (ka - l2)) * ((-l2 * t).exp() - (-ka * t).exp()),
-//             (-kpc / (ka - l1)) * ((-l1 * t).exp() - (-ka * t).exp())
-//                 + (kpc / (ka - l2)) * ((-l2 * t).exp() - (-ka * t).exp()),
-//         ];
-//     let aux = non_zero + infusion + absorption;
-//     xout[0] = x[0] * (-ka * t).exp();
+    <span class="kw">let </span>result_vector = non_zero + infusion;
 
-//     xout[1] = aux[0];
-//     xout[2] = aux[1];
+    <span class="comment">// Convert Vector2 to DVector
+    </span>DVector::from_vec(<span class="macro">vec!</span>[result_vector[<span class="number">0</span>], result_vector[<span class="number">1</span>]])
+}
 
-//     xout
-// }
-</span></code></pre></div></section></main></body></html>
+<span class="doccomment">///
+/// Analytical for two compartment with absorption
+/// Assumptions:
+///   - p is a vector of length 4 with ke, ka, kcp and kpc in that order
+///   - rateiv is a vector of length 1 with the value of the infusion rate (only one drug)
+///   - x is a vector of length 2
+///   - covariates are not used
+///
+</span><span class="kw">pub fn </span>two_compartments_with_absorption(x: <span class="kw-2">&amp;</span>V, p: <span class="kw-2">&amp;</span>V, t: T, rateiv: V, _cov: <span class="kw-2">&amp;</span>Covariates) -&gt; V {
+    <span class="kw">let </span>ke = p[<span class="number">0</span>];
+    <span class="kw">let </span>ka = p[<span class="number">1</span>];
+    <span class="kw">let </span>kcp = p[<span class="number">2</span>];
+    <span class="kw">let </span>kpc = p[<span class="number">3</span>];
+    <span class="kw">let </span><span class="kw-2">mut </span>xout = x.clone();
+
+    <span class="kw">let </span>sqrt = (ke + kcp + kpc).powi(<span class="number">2</span>) - <span class="number">4.0 </span>* ke * kpc;
+    <span class="kw">if </span>sqrt &lt; <span class="number">0.0 </span>{
+        <span class="macro">panic!</span>(<span class="string">"Imaginary solutions, program stopped!"</span>);
+    }
+    <span class="kw">let </span>sqrt = sqrt.sqrt();
+    <span class="kw">let </span>l1 = (ke + kcp + kpc + sqrt) / <span class="number">2.0</span>;
+    <span class="kw">let </span>l2 = (ke + kcp + kpc - sqrt) / <span class="number">2.0</span>;
+
+    <span class="kw">let </span>exp_l1_t = (-l1 * t).exp();
+    <span class="kw">let </span>exp_l2_t = (-l2 * t).exp();
+
+    <span class="kw">let </span>non_zero_matrix = Matrix2::new(
+        (l1 - kpc) * exp_l1_t + (kpc - l2) * exp_l2_t,
+        -kpc * exp_l1_t + kpc * exp_l2_t,
+        kcp * exp_l1_t + kcp * exp_l2_t,
+        (l1 - ke - kcp) * exp_l1_t + (-ke + kcp - l2) * exp_l2_t,
+    );
+
+    <span class="kw">let </span>non_zero = (non_zero_matrix * Vector2::new(x[<span class="number">1</span>], x[<span class="number">2</span>])) / (l1 - l2);
+
+    <span class="kw">let </span>infusion_vector = Vector2::new(
+        ((l1 - kpc) / l1) * (<span class="number">1.0 </span>- exp_l1_t) + ((kpc - l2) / l2) * (<span class="number">1.0 </span>- exp_l2_t),
+        (-kpc / l1) * (<span class="number">1.0 </span>- exp_l1_t) + (kpc / l2) * (<span class="number">1.0 </span>- exp_l2_t),
+    );
+
+    <span class="kw">let </span>infusion = infusion_vector * (rateiv[<span class="number">0</span>] / (l1 - l2));
+
+    <span class="kw">let </span>exp_ka_t = (-ka * t).exp();
+
+    <span class="kw">let </span>absorption_vector = Vector2::new(
+        ((l1 - kpc) / (ka - l1)) * (exp_l1_t - exp_ka_t)
+            + ((kpc - l2) / (ka - l2)) * (exp_l2_t - exp_ka_t),
+        (-kpc / (ka - l1)) * (exp_l1_t - exp_ka_t) + (kpc / (ka - l2)) * (exp_l2_t - exp_ka_t),
+    );
+
+    <span class="kw">let </span>absorption = absorption_vector * (ka * x[<span class="number">0</span>] / (l1 - l2));
+
+    <span class="kw">let </span>aux = non_zero + infusion + absorption;
+
+    xout[<span class="number">0</span>] = x[<span class="number">0</span>] * exp_ka_t;
+    xout[<span class="number">1</span>] = aux[<span class="number">0</span>];
+    xout[<span class="number">2</span>] = aux[<span class="number">1</span>];
+
+    xout
+}
+</code></pre></div></section></main></body></html>
