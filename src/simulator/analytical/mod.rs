@@ -1,5 +1,5 @@
-use nalgebra::{Matrix2, Vector2};
 use crate::{data::Covariates, simulator::*};
+use nalgebra::{DVector, Matrix2, Vector2};
 
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
@@ -78,7 +78,7 @@ pub fn one_compartment_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &Cov
 ///   - x is a vector of length 2
 ///   - covariates are not used
 ///
- fn two_compartments(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {
+pub fn two_compartments(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {
     let ke = p[0];
     let kcp = p[1];
     let kpc = p[2];
@@ -108,7 +108,10 @@ pub fn one_compartment_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &Cov
 
     let infusion = infusion_vector * (rateiv[0] / (l1 - l2));
 
-    (non_zero + infusion).into()
+    let result_vector = non_zero + infusion;
+
+    // Convert Vector2 to DVector
+    DVector::from_vec(vec![result_vector[0], result_vector[1]])
 }
 
 ///
@@ -119,7 +122,7 @@ pub fn one_compartment_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &Cov
 ///   - x is a vector of length 2
 ///   - covariates are not used
 ///
-fn two_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {
+pub fn two_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {
     let ke = p[0];
     let ka = p[1];
     let kcp = p[2];
@@ -156,7 +159,8 @@ fn two_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &Covari
     let exp_ka_t = (-ka * t).exp();
 
     let absorption_vector = Vector2::new(
-        ((l1 - kpc) / (ka - l1)) * (exp_l1_t - exp_ka_t) + ((kpc - l2) / (ka - l2)) * (exp_l2_t - exp_ka_t),
+        ((l1 - kpc) / (ka - l1)) * (exp_l1_t - exp_ka_t)
+            + ((kpc - l2) / (ka - l2)) * (exp_l2_t - exp_ka_t),
         (-kpc / (ka - l1)) * (exp_l1_t - exp_ka_t) + (kpc / (ka - l2)) * (exp_l2_t - exp_ka_t),
     );
 

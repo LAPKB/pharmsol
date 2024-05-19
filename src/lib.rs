@@ -17,6 +17,8 @@ pub mod prelude {
     pub mod models {
         pub use crate::simulator::analytical::one_compartment;
         pub use crate::simulator::analytical::one_compartment_with_absorption;
+        pub use crate::simulator::analytical::two_compartments;
+        pub use crate::simulator::analytical::two_compartments_with_absorption;
     }
     //traits
     pub use crate::simulator::fitting::{EstimateTheta, OptimalSupportPoint};
