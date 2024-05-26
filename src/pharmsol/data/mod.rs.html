@@ -1023,7 +1023,7 @@
             })
             .max_by(|a, b| a.partial_cmp(b).unwrap())
             .unwrap_or(<span class="number">0.0</span>);
-        last_time = last_time + tad;
+        last_time += tad;
 
         <span class="comment">// Create a new data structure with added observations at intervals of idelta
         </span><span class="kw">let </span><span class="kw-2">mut </span>new_subjects: Vec&lt;Subject&gt; = Vec::new();

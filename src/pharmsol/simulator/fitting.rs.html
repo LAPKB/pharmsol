@@ -133,7 +133,7 @@
     }
 
     <span class="kw">fn </span>optimize(<span class="self">self</span>, point: <span class="kw-2">&amp;</span>Array1&lt;f64&gt;) -&gt; Array1&lt;f64&gt; {
-        <span class="kw">let </span>simplex = create_initial_simplex(<span class="kw-2">&amp;</span>point);
+        <span class="kw">let </span>simplex = create_initial_simplex(point);
         <span class="kw">let </span>solver = NelderMead::new(simplex)
             .with_sd_tolerance(<span class="number">1e-2</span>)
             .expect(<span class="string">"Error setting up the solver"</span>);
