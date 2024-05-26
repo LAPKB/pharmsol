@@ -681,19 +681,19 @@
 <span class="kw">use </span>std::{collections::HashMap, fmt};
 
 <span class="kw">pub mod </span>error_model;
-<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>parse_pmetrics;
+<span class="kw">pub mod </span>parse_pmetrics;
 <span class="comment">// Redesign of data formats
 
 </span><span class="doccomment">/// An Event can be a Bolus, Infusion, or Observation
 </span><span class="attr">#[derive(Debug, Clone, Deserialize)]
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>Event {
+</span><span class="kw">pub enum </span>Event {
     Bolus(Bolus),
     Infusion(Infusion),
     Observation(Observation),
 }
 
 <span class="kw">impl </span>Event {
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>get_time(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
+    <span class="kw">pub fn </span>get_time(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
         <span class="kw">match </span><span class="self">self </span>{
             Event::Bolus(bolus) =&gt; bolus.time,
             Event::Infusion(infusion) =&gt; infusion.time,
@@ -734,24 +734,24 @@
 
 <span class="doccomment">/// An instantaenous input of drug
 </span><span class="attr">#[derive(Debug, Clone, Deserialize)]
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>Bolus {
+</span><span class="kw">pub struct </span>Bolus {
     time: f64,
     amount: f64,
     input: usize,
 }
 
 <span class="kw">impl </span>Bolus {
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>amount(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
+    <span class="kw">pub fn </span>amount(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
         <span class="self">self</span>.amount
     }
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>input(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+    <span class="kw">pub fn </span>input(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
         <span class="self">self</span>.input
     }
 }
 
 <span class="doccomment">/// A continuous dose of drug
 </span><span class="attr">#[derive(Debug, Clone, Deserialize)]
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>Infusion {
+</span><span class="kw">pub struct </span>Infusion {
     time: f64,
     amount: f64,
     input: usize,
@@ -759,26 +759,26 @@
 }
 
 <span class="kw">impl </span>Infusion {
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>amount(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
+    <span class="kw">pub fn </span>amount(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
         <span class="self">self</span>.amount
     }
 
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>input(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+    <span class="kw">pub fn </span>input(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
         <span class="self">self</span>.input
     }
 
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>duration(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
+    <span class="kw">pub fn </span>duration(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
         <span class="self">self</span>.duration
     }
 
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>time(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
+    <span class="kw">pub fn </span>time(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
         <span class="self">self</span>.time
     }
 }
 
 <span class="doccomment">/// An observation of drug concentration or covariates
 </span><span class="attr">#[derive(Debug, Clone, Deserialize)]
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>Observation {
+</span><span class="kw">pub struct </span>Observation {
     time: f64,
     value: f64,
     outeq: usize,
@@ -897,7 +897,7 @@
 <span class="kw">impl </span>Occasion {
     <span class="comment">// TODO: This clones the occasion, which is not ideal
 
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>get_events(
+    </span><span class="kw">pub fn </span>get_events(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         lagtime: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>HashMap&lt;usize, f64&gt;&gt;,
         bioavailability: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>HashMap&lt;usize, f64&gt;&gt;,
@@ -922,7 +922,7 @@
         }
     }
 
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>get_covariates(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Covariates&gt; {
+    <span class="kw">pub fn </span>get_covariates(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Covariates&gt; {
         <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span><span class="self">self</span>.covariates)
     }
 
@@ -1065,7 +1065,7 @@
         Data::new(new_subjects)
     }
 
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>len(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+    <span class="kw">pub fn </span>len(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
         <span class="self">self</span>.subjects.len()
     }
 
