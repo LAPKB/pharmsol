@@ -2,19 +2,19 @@ use serde::Deserialize;
 use std::{collections::HashMap, fmt};
 
 pub mod error_model;
-pub(crate) mod parse_pmetrics;
+pub mod parse_pmetrics;
 // Redesign of data formats
 
 /// An Event can be a Bolus, Infusion, or Observation
 #[derive(Debug, Clone, Deserialize)]
-pub(crate) enum Event {
+pub enum Event {
     Bolus(Bolus),
     Infusion(Infusion),
     Observation(Observation),
 }
 
 impl Event {
-    pub(crate) fn get_time(&self) -> f64 {
+    pub fn get_time(&self) -> f64 {
         match self {
             Event::Bolus(bolus) => bolus.time,
             Event::Infusion(infusion) => infusion.time,
@@ -55,24 +55,24 @@ impl fmt::Display for Event {
 
 /// An instantaenous input of drug
 #[derive(Debug, Clone, Deserialize)]
-pub(crate) struct Bolus {
+pub struct Bolus {
     time: f64,
     amount: f64,
     input: usize,
 }
 
 impl Bolus {
-    pub(crate) fn amount(&self) -> f64 {
+    pub fn amount(&self) -> f64 {
         self.amount
     }
-    pub(crate) fn input(&self) -> usize {
+    pub fn input(&self) -> usize {
         self.input
     }
 }
 
 /// A continuous dose of drug
 #[derive(Debug, Clone, Deserialize)]
-pub(crate) struct Infusion {
+pub struct Infusion {
     time: f64,
     amount: f64,
     input: usize,
@@ -80,26 +80,26 @@ pub(crate) struct Infusion {
 }
 
 impl Infusion {
-    pub(crate) fn amount(&self) -> f64 {
+    pub fn amount(&self) -> f64 {
         self.amount
     }
 
-    pub(crate) fn input(&self) -> usize {
+    pub fn input(&self) -> usize {
         self.input
     }
 
-    pub(crate) fn duration(&self) -> f64 {
+    pub fn duration(&self) -> f64 {
         self.duration
     }
 
-    pub(crate) fn time(&self) -> f64 {
+    pub fn time(&self) -> f64 {
         self.time
     }
 }
 
 /// An observation of drug concentration or covariates
 #[derive(Debug, Clone, Deserialize)]
-pub(crate) struct Observation {
+pub struct Observation {
     time: f64,
     value: f64,
     outeq: usize,
@@ -218,7 +218,7 @@ impl fmt::Display for Occasion {
 impl Occasion {
     // TODO: This clones the occasion, which is not ideal
 
-    pub(crate) fn get_events(
+    pub fn get_events(
         &self,
         lagtime: Option<&HashMap<usize, f64>>,
         bioavailability: Option<&HashMap<usize, f64>>,
@@ -243,7 +243,7 @@ impl Occasion {
         }
     }
 
-    pub(crate) fn get_covariates(&self) -> Option<&Covariates> {
+    pub fn get_covariates(&self) -> Option<&Covariates> {
         Some(&self.covariates)
     }
 
@@ -386,7 +386,7 @@ impl Data {
         Data::new(new_subjects)
     }
 
-    pub(crate) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.subjects.len()
     }
 
