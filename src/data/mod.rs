@@ -344,7 +344,7 @@ impl Data {
             })
             .max_by(|a, b| a.partial_cmp(b).unwrap())
             .unwrap_or(0.0);
-        last_time = last_time + tad;
+        last_time += tad;
 
         // Create a new data structure with added observations at intervals of idelta
         let mut new_subjects: Vec<Subject> = Vec::new();

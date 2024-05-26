@@ -31,7 +31,7 @@ impl<'a> SppOptimizer<'a> {
     }
 
     fn optimize(self, point: &Array1<f64>) -> Array1<f64> {
-        let simplex = create_initial_simplex(&point);
+        let simplex = create_initial_simplex(point);
         let solver = NelderMead::new(simplex)
             .with_sd_tolerance(1e-2)
             .expect("Error setting up the solver");

@@ -221,7 +221,6 @@ impl Row {
     }
 }
 
-///
 impl From<Row> for Event {
     fn from(row: Row) -> Self {
         match row.evid {
