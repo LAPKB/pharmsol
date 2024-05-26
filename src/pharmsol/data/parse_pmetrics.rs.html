@@ -355,36 +355,7 @@
 <a href="#353" id="353">353</a>
 <a href="#354" id="354">354</a>
 <a href="#355" id="355">355</a>
-<a href="#356" id="356">356</a>
-<a href="#357" id="357">357</a>
-<a href="#358" id="358">358</a>
-<a href="#359" id="359">359</a>
-<a href="#360" id="360">360</a>
-<a href="#361" id="361">361</a>
-<a href="#362" id="362">362</a>
-<a href="#363" id="363">363</a>
-<a href="#364" id="364">364</a>
-<a href="#365" id="365">365</a>
-<a href="#366" id="366">366</a>
-<a href="#367" id="367">367</a>
-<a href="#368" id="368">368</a>
-<a href="#369" id="369">369</a>
-<a href="#370" id="370">370</a>
-<a href="#371" id="371">371</a>
-<a href="#372" id="372">372</a>
-<a href="#373" id="373">373</a>
-<a href="#374" id="374">374</a>
-<a href="#375" id="375">375</a>
-<a href="#376" id="376">376</a>
-<a href="#377" id="377">377</a>
-<a href="#378" id="378">378</a>
-<a href="#379" id="379">379</a>
-<a href="#380" id="380">380</a>
-<a href="#381" id="381">381</a>
-<a href="#382" id="382">382</a>
-<a href="#383" id="383">383</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::data::<span class="kw-2">*</span>;
-<span class="kw">use </span>csv::WriterBuilder;
 <span class="kw">use </span>serde::de::{MapAccess, Visitor};
 <span class="kw">use </span>serde::{de, Deserialize, Deserializer, Serialize};
 <span class="kw">use </span>std::collections::HashMap;
@@ -723,34 +694,7 @@
 
     deserializer.deserialize_map(CovsVisitor)
 }
-<span class="kw">pub fn </span>write_pmetrics_observations(data: <span class="kw-2">&amp;</span>Data, file: <span class="kw-2">&amp;</span>std::fs::File) {
-    <span class="kw">let </span><span class="kw-2">mut </span>writer = WriterBuilder::new().has_headers(<span class="bool-val">true</span>).from_writer(file);
 
-    writer
-        .write_record(<span class="kw-2">&amp;</span>[<span class="string">"id"</span>, <span class="string">"block"</span>, <span class="string">"time"</span>, <span class="string">"out"</span>, <span class="string">"outeq"</span>])
-        .unwrap();
-    <span class="kw">for </span>subject <span class="kw">in </span>data.get_subjects() {
-        <span class="kw">for </span>occasion <span class="kw">in </span>subject.occasions() {
-            <span class="kw">for </span>event <span class="kw">in </span>occasion.get_events(<span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="bool-val">false</span>) {
-                <span class="kw">match </span>event {
-                    Event::Observation(obs) =&gt; {
-                        <span class="comment">// Write each field individually
-                        </span>writer
-                            .write_record(<span class="kw-2">&amp;</span>[
-                                <span class="kw-2">&amp;</span>subject.id,
-                                <span class="kw-2">&amp;</span>occasion.index.to_string(),
-                                <span class="kw-2">&amp;</span>obs.time.to_string(),
-                                <span class="kw-2">&amp;</span>obs.value.to_string(),
-                                <span class="kw-2">&amp;</span>obs.outeq.to_string(),
-                            ])
-                            .unwrap();
-                    }
-                    <span class="kw">_ </span>=&gt; {}
-                }
-            }
-        }
-    }
-}
 <span class="comment">// #[cfg(test)]
 // mod tests {
 //     use super::*;
