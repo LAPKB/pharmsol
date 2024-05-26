@@ -735,9 +735,9 @@
 <span class="doccomment">/// An instantaenous input of drug
 </span><span class="attr">#[derive(Debug, Clone, Deserialize)]
 </span><span class="kw">pub struct </span>Bolus {
-    time: f64,
-    amount: f64,
-    input: usize,
+    <span class="kw">pub </span>time: f64,
+    <span class="kw">pub </span>amount: f64,
+    <span class="kw">pub </span>input: usize,
 }
 
 <span class="kw">impl </span>Bolus {
@@ -752,10 +752,10 @@
 <span class="doccomment">/// A continuous dose of drug
 </span><span class="attr">#[derive(Debug, Clone, Deserialize)]
 </span><span class="kw">pub struct </span>Infusion {
-    time: f64,
-    amount: f64,
-    input: usize,
-    duration: f64,
+    <span class="kw">pub </span>time: f64,
+    <span class="kw">pub </span>amount: f64,
+    <span class="kw">pub </span>input: usize,
+    <span class="kw">pub </span>duration: f64,
 }
 
 <span class="kw">impl </span>Infusion {
@@ -779,11 +779,11 @@
 <span class="doccomment">/// An observation of drug concentration or covariates
 </span><span class="attr">#[derive(Debug, Clone, Deserialize)]
 </span><span class="kw">pub struct </span>Observation {
-    time: f64,
-    value: f64,
-    outeq: usize,
-    errorpoly: <span class="prelude-ty">Option</span>&lt;(f64, f64, f64, f64)&gt;,
-    ignore: bool,
+    <span class="kw">pub </span>time: f64,
+    <span class="kw">pub </span>value: f64,
+    <span class="kw">pub </span>outeq: usize,
+    <span class="kw">pub </span>errorpoly: <span class="prelude-ty">Option</span>&lt;(f64, f64, f64, f64)&gt;,
+    <span class="kw">pub </span>ignore: bool,
 }
 
 <span class="kw">impl </span>Observation {
@@ -804,9 +804,9 @@
 <span class="doccomment">/// An [Occasion] is a collection of events, for a given [Subject], that are from a specific occasion
 </span><span class="attr">#[derive(Debug, Deserialize, Clone)]
 </span><span class="kw">pub struct </span>Occasion {
-    events: Vec&lt;Event&gt;,
-    covariates: Covariates,
-    index: usize,
+    <span class="kw">pub </span>events: Vec&lt;Event&gt;,
+    <span class="kw">pub </span>covariates: Covariates,
+    <span class="kw">pub </span>index: usize,
 }
 
 <span class="kw">impl </span>Occasion {
@@ -940,8 +940,8 @@
 <span class="doccomment">/// [Subject] is a collection of blocks for one individual
 </span><span class="attr">#[derive(Debug, Deserialize, Clone)]
 </span><span class="kw">pub struct </span>Subject {
-    id: String,
-    occasions: Vec&lt;Occasion&gt;,
+    <span class="kw">pub </span>id: String,
+    <span class="kw">pub </span>occasions: Vec&lt;Occasion&gt;,
 }
 
 <span class="kw">impl </span>fmt::Display <span class="kw">for </span>Subject {
@@ -972,7 +972,7 @@
 /// [Data] implements the [DataTrait], which provides methods to access the data
 </span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>Data {
-    subjects: Vec&lt;Subject&gt;,
+    <span class="kw">pub </span>subjects: Vec&lt;Subject&gt;,
 }
 
 <span class="kw">impl </span>fmt::Display <span class="kw">for </span>Data {
