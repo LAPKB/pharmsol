@@ -56,9 +56,9 @@ impl fmt::Display for Event {
 /// An instantaenous input of drug
 #[derive(Debug, Clone, Deserialize)]
 pub struct Bolus {
-    time: f64,
-    amount: f64,
-    input: usize,
+    pub time: f64,
+    pub amount: f64,
+    pub input: usize,
 }
 
 impl Bolus {
@@ -73,10 +73,10 @@ impl Bolus {
 /// A continuous dose of drug
 #[derive(Debug, Clone, Deserialize)]
 pub struct Infusion {
-    time: f64,
-    amount: f64,
-    input: usize,
-    duration: f64,
+    pub time: f64,
+    pub amount: f64,
+    pub input: usize,
+    pub duration: f64,
 }
 
 impl Infusion {
@@ -100,11 +100,11 @@ impl Infusion {
 /// An observation of drug concentration or covariates
 #[derive(Debug, Clone, Deserialize)]
 pub struct Observation {
-    time: f64,
-    value: f64,
-    outeq: usize,
-    errorpoly: Option<(f64, f64, f64, f64)>,
-    ignore: bool,
+    pub time: f64,
+    pub value: f64,
+    pub outeq: usize,
+    pub errorpoly: Option<(f64, f64, f64, f64)>,
+    pub ignore: bool,
 }
 
 impl Observation {
@@ -125,9 +125,9 @@ impl Observation {
 /// An [Occasion] is a collection of events, for a given [Subject], that are from a specific occasion
 #[derive(Debug, Deserialize, Clone)]
 pub struct Occasion {
-    events: Vec<Event>,
-    covariates: Covariates,
-    index: usize,
+    pub events: Vec<Event>,
+    pub covariates: Covariates,
+    pub index: usize,
 }
 
 impl Occasion {
@@ -261,8 +261,8 @@ impl Occasion {
 /// [Subject] is a collection of blocks for one individual
 #[derive(Debug, Deserialize, Clone)]
 pub struct Subject {
-    id: String,
-    occasions: Vec<Occasion>,
+    pub id: String,
+    pub occasions: Vec<Occasion>,
 }
 
 impl fmt::Display for Subject {
@@ -293,7 +293,7 @@ impl Subject {
 /// [Data] implements the [DataTrait], which provides methods to access the data
 #[derive(Debug, Clone)]
 pub struct Data {
-    subjects: Vec<Subject>,
+    pub subjects: Vec<Subject>,
 }
 
 impl fmt::Display for Data {
