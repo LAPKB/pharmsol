@@ -8,7 +8,7 @@ authors = [
 ]
 description = "Rust library for solving analytic and ode-defined pharmacometric models."
 license = "GPL-3.0"
-documentation = "lapkb.github.io/pharmsol/"
+documentation = "https://lapkb.github.io/pharmsol/"
 
 [dependencies]
 anyhow = "1.0.83"
