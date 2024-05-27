@@ -71,7 +71,7 @@ impl Data {
                 new_occasions.push(Occasion::new(
                     new_events,
                     occasion.covariates.clone(),
-                    occasion.block_index,
+                    occasion.index,
                 ));
                 new_occasions
                     .iter_mut()
@@ -137,20 +137,24 @@ impl Subject {
 pub struct Occasion {
     events: Vec<Event>,
     covariates: Covariates,
-    block_index: usize,
+    index: usize,
 }
 impl Occasion {
     // Constructor
-    pub(crate) fn new(events: Vec<Event>, covariates: Covariates, block_index: usize) -> Self {
+    pub(crate) fn new(events: Vec<Event>, covariates: Covariates, index: usize) -> Self {
         Occasion {
             events,
             covariates,
-            block_index,
+            index,
         }
     }
 
-    pub fn block_index(&self) -> usize {
-        self.block_index
+    pub fn index(&self) -> usize {
+        self.index
+    }
+
+    pub(crate) fn add_covariate(&mut self, name: String, covariate: Covariate) {
+        self.covariates.add_covariate(name, covariate);
     }
 
     fn add_lagtime(&mut self, lagtime: Option<&HashMap<usize, f64>>) {
@@ -286,7 +290,7 @@ impl fmt::Display for Subject {
 }
 impl fmt::Display for Occasion {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f, "Occasion {}:", self.block_index)?;
+        writeln!(f, "Occasion {}:", self.index)?;
         for event in &self.events {
             writeln!(f, "  {}", event)?;
         }

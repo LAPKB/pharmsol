@@ -61,9 +61,6 @@ impl Covariate {
     //     }
     //     true
     // }
-}
-
-impl Covariate {
     pub fn interpolate(&self, time: f64) -> Option<f64> {
         self.segments
             .iter()
@@ -104,6 +101,8 @@ impl fmt::Display for Covariate {
 #[derive(Clone, Debug, Deserialize)]
 pub struct Covariates {
     // Mapping from covariate name to its segments
+    // FIXME: this hashmap have a key, covariate also has a name field, we are never
+    // checking if the name in the hashmap is the same as the name in the covariate
     covariates: HashMap<String, Covariate>,
 }
 
