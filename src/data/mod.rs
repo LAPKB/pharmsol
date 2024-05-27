@@ -2,7 +2,7 @@ use serde::Deserialize;
 use std::{collections::HashMap, fmt};
 
 pub mod error_model;
-pub mod parse_pmetrics;
+pub(crate) mod parse_pmetrics;
 // Redesign of data formats
 
 /// An Event can be a Bolus, Infusion, or Observation
@@ -14,7 +14,7 @@ pub enum Event {
 }
 
 impl Event {
-    pub fn get_time(&self) -> f64 {
+    pub(crate) fn get_time(&self) -> f64 {
         match self {
             Event::Bolus(bolus) => bolus.time,
             Event::Infusion(infusion) => infusion.time,
@@ -56,16 +56,16 @@ impl fmt::Display for Event {
 /// An instantaenous input of drug
 #[derive(Debug, Clone, Deserialize)]
 pub struct Bolus {
-    pub time: f64,
-    pub amount: f64,
-    pub input: usize,
+    time: f64,
+    amount: f64,
+    input: usize,
 }
 
 impl Bolus {
-    pub fn amount(&self) -> f64 {
+    pub(crate) fn amount(&self) -> f64 {
         self.amount
     }
-    pub fn input(&self) -> usize {
+    pub(crate) fn input(&self) -> usize {
         self.input
     }
 }
@@ -73,26 +73,26 @@ impl Bolus {
 /// A continuous dose of drug
 #[derive(Debug, Clone, Deserialize)]
 pub struct Infusion {
-    pub time: f64,
-    pub amount: f64,
-    pub input: usize,
-    pub duration: f64,
+    time: f64,
+    amount: f64,
+    input: usize,
+    duration: f64,
 }
 
 impl Infusion {
-    pub fn amount(&self) -> f64 {
+    pub(crate) fn amount(&self) -> f64 {
         self.amount
     }
 
-    pub fn input(&self) -> usize {
+    pub(crate) fn input(&self) -> usize {
         self.input
     }
 
-    pub fn duration(&self) -> f64 {
+    pub(crate) fn duration(&self) -> f64 {
         self.duration
     }
 
-    pub fn time(&self) -> f64 {
+    pub(crate) fn time(&self) -> f64 {
         self.time
     }
 }
@@ -100,11 +100,11 @@ impl Infusion {
 /// An observation of drug concentration or covariates
 #[derive(Debug, Clone, Deserialize)]
 pub struct Observation {
-    pub time: f64,
-    pub value: f64,
-    pub outeq: usize,
-    pub errorpoly: Option<(f64, f64, f64, f64)>,
-    pub ignore: bool,
+    time: f64,
+    value: f64,
+    outeq: usize,
+    errorpoly: Option<(f64, f64, f64, f64)>,
+    ignore: bool,
 }
 
 impl Observation {
@@ -117,7 +117,7 @@ impl Observation {
     pub fn outeq(&self) -> usize {
         self.outeq
     }
-    pub fn errorpoly(&self) -> Option<(f64, f64, f64, f64)> {
+    pub(crate) fn errorpoly(&self) -> Option<(f64, f64, f64, f64)> {
         self.errorpoly
     }
 }
@@ -125,9 +125,9 @@ impl Observation {
 /// An [Occasion] is a collection of events, for a given [Subject], that are from a specific occasion
 #[derive(Debug, Deserialize, Clone)]
 pub struct Occasion {
-    pub events: Vec<Event>,
-    pub covariates: Covariates,
-    pub index: usize,
+    events: Vec<Event>,
+    covariates: Covariates,
+    index: usize,
 }
 
 impl Occasion {
@@ -138,6 +138,10 @@ impl Occasion {
             covariates,
             index,
         }
+    }
+
+    pub fn index(&self) -> usize {
+        self.index
     }
 
     fn add_lagtime(&mut self, lagtime: Option<&HashMap<usize, f64>>) {
@@ -201,21 +205,6 @@ impl Occasion {
             }
         });
     }
-}
-
-impl fmt::Display for Occasion {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f, "Occasion {}:", self.index)?;
-        for event in &self.events {
-            writeln!(f, "  {}", event)?;
-        }
-
-        writeln!(f, "  Covariates:\n{}", self.covariates)?;
-        Ok(())
-    }
-}
-
-impl Occasion {
     // TODO: This clones the occasion, which is not ideal
 
     pub fn get_events(
@@ -258,11 +247,23 @@ impl Occasion {
     // }
 }
 
+impl fmt::Display for Occasion {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        writeln!(f, "Occasion {}:", self.index)?;
+        for event in &self.events {
+            writeln!(f, "  {}", event)?;
+        }
+
+        writeln!(f, "  Covariates:\n{}", self.covariates)?;
+        Ok(())
+    }
+}
+
 /// [Subject] is a collection of blocks for one individual
 #[derive(Debug, Deserialize, Clone)]
 pub struct Subject {
-    pub id: String,
-    pub occasions: Vec<Occasion>,
+    id: String,
+    occasions: Vec<Occasion>,
 }
 
 impl fmt::Display for Subject {
@@ -293,7 +294,7 @@ impl Subject {
 /// [Data] implements the [DataTrait], which provides methods to access the data
 #[derive(Debug, Clone)]
 pub struct Data {
-    pub subjects: Vec<Subject>,
+    subjects: Vec<Subject>,
 }
 
 impl fmt::Display for Data {
@@ -386,7 +387,7 @@ impl Data {
         Data::new(new_subjects)
     }
 
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.subjects.len()
     }
 
@@ -516,6 +517,12 @@ impl fmt::Display for Covariate {
 pub struct Covariates {
     // Mapping from covariate name to its segments
     covariates: HashMap<String, Covariate>,
+}
+
+impl Default for Covariates {
+    fn default() -> Self {
+        Covariates::new()
+    }
 }
 
 impl Covariates {
