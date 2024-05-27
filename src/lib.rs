@@ -6,7 +6,7 @@ pub mod prelude {
         pub use crate::data::{
             error_model::{ErrorModel, ErrorType},
             parse_pmetrics::read_pmetrics,
-            Covariates, Data, Event, Subject,
+            Covariates, Data, Event, Occasion, Subject,
         };
     }
     pub mod simulator {
