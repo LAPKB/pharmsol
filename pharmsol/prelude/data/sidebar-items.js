@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["ErrorType","Event"],"fn":["read_pmetrics"],"struct":["Covariates","Data","ErrorModel","Occasion","Subject"]};
+window.SIDEBAR_ITEMS = {"enum":["ErrorType","Event"],"fn":["read_pmetrics"],"struct":["Covariates","Data","ErrorModel","Subject"]};
