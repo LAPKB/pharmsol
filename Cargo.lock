@@ -824,6 +824,7 @@ dependencies = [
  "lazy_static",
  "nalgebra",
  "ndarray",
+ "rand",
  "rayon",
  "serde",
  "serde_json",

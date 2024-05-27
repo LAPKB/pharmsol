@@ -20,6 +20,8 @@ pub mod prelude {
         pub use crate::simulator::analytical::two_compartments;
         pub use crate::simulator::analytical::two_compartments_with_absorption;
     }
+    //extension traits
+    pub use crate::data::builder::SubjectBuilderExt;
     //traits
     pub use crate::simulator::fitting::{EstimateTheta, OptimalSupportPoint};
 

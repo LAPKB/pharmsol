@@ -112,37 +112,37 @@ pub fn read_pmetrics(path: &Path) -> Result<Data, Box<dyn Error>> {
 
                     if is_fixed {
                         // Use CarryForward for fixed covariates
-                        covariate.add_segment(CovariateSegment {
-                            from: time,
-                            to: to_time,
-                            method: InterpolationMethod::CarryForward {
+                        covariate.add_segment(CovariateSegment::new(
+                            time,
+                            to_time,
+                            InterpolationMethod::CarryForward {
                                 value: value.unwrap(),
                             },
-                        });
+                        ));
                     } else if let Some(next) = next_occurrence {
                         // Linear interpolation for non-fixed covariates
                         let (next_time, next_value) = next;
                         if let Some(current_value) = value {
                             let slope = (next_value.unwrap() - current_value) / (next_time - time);
-                            covariate.add_segment(CovariateSegment {
-                                from: time,
-                                to: *next_time,
-                                method: InterpolationMethod::Linear {
+                            covariate.add_segment(CovariateSegment::new(
+                                time,
+                                *next_time,
+                                InterpolationMethod::Linear {
                                     slope,
                                     intercept: current_value - slope * time,
                                 },
-                            });
+                            ));
                             last_value = Some((next_time, next_value));
                         }
                     } else if let Some((last_time, last_value)) = last_value {
                         // Extend the last linear segment to infinity if no more segments are available
-                        covariate.add_segment(CovariateSegment {
-                            from: *last_time,
-                            to: f64::INFINITY,
-                            method: InterpolationMethod::CarryForward {
+                        covariate.add_segment(CovariateSegment::new(
+                            *last_time,
+                            f64::INFINITY,
+                            InterpolationMethod::CarryForward {
                                 value: last_value.unwrap(),
                             },
-                        });
+                        ));
                     }
                 }
                 covariates.add_covariate(name, covariate)
@@ -152,12 +152,12 @@ pub fn read_pmetrics(path: &Path) -> Result<Data, Box<dyn Error>> {
             occasions.push(occasion);
         }
 
-        let subject = Subject { id, occasions };
+        let subject = Subject::new(id, occasions);
         subjects.push(subject);
     }
 
     // Sort subjects alphabetically by ID to get consistent ordering
-    subjects.sort_by(|a, b| a.id.cmp(&b.id));
+    subjects.sort_by(|a, b| a.id().cmp(b.id()));
     let data = Data::new(subjects);
 
     Ok(data)
@@ -224,27 +224,27 @@ impl Row {
 impl From<Row> for Event {
     fn from(row: Row) -> Self {
         match row.evid {
-            0 => Event::Observation(Observation {
-                time: row.time,
-                value: row.out.expect("Observation OUT is missing"),
-                outeq: row.outeq.expect("Observation OUTEQ is missing") - 1,
-                errorpoly: row.get_errorpoly(),
-                ignore: row.out == Some(-99.0),
-            }),
+            0 => Event::Observation(Observation::new(
+                row.time,
+                row.out.expect("Observation OUT is missing"),
+                row.outeq.expect("Observation OUTEQ is missing") - 1,
+                row.get_errorpoly(),
+                row.out == Some(-99.0),
+            )),
             1 | 4 => {
                 if row.dur.unwrap_or(0.0) > 0.0 {
-                    Event::Infusion(Infusion {
-                        time: row.time,
-                        amount: row.dose.expect("Infusion amount (DOSE) is missing"),
-                        input: row.input.expect("Infusion compartment (INPUT) is missing") - 1,
-                        duration: row.dur.expect("Infusion duration (DUR) is missing"),
-                    })
+                    Event::Infusion(Infusion::new(
+                        row.time,
+                        row.dose.expect("Infusion amount (DOSE) is missing"),
+                        row.input.expect("Infusion compartment (INPUT) is missing") - 1,
+                        row.dur.expect("Infusion duration (DUR) is missing"),
+                    ))
                 } else {
-                    Event::Bolus(Bolus {
-                        time: row.time,
-                        amount: row.dose.expect("Bolus amount (DOSE) is missing"),
-                        input: row.input.expect("Bolus compartment (INPUT) is missing") - 1,
-                    })
+                    Event::Bolus(Bolus::new(
+                        row.time,
+                        row.dose.expect("Bolus amount (DOSE) is missing"),
+                        row.input.expect("Bolus compartment (INPUT) is missing") - 1,
+                    ))
                 }
             }
             _ => panic!(
