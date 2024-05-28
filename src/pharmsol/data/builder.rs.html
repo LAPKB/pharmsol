@@ -175,7 +175,22 @@
 <a href="#173" id="173">173</a>
 <a href="#174" id="174">174</a>
 <a href="#175" id="175">175</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::data::<span class="kw-2">*</span>;
+<a href="#176" id="176">176</a>
+<a href="#177" id="177">177</a>
+<a href="#178" id="178">178</a>
+<a href="#179" id="179">179</a>
+<a href="#180" id="180">180</a>
+<a href="#181" id="181">181</a>
+<a href="#182" id="182">182</a>
+<a href="#183" id="183">183</a>
+<a href="#184" id="184">184</a>
+<a href="#185" id="185">185</a>
+<a href="#186" id="186">186</a>
+<a href="#187" id="187">187</a>
+<a href="#188" id="188">188</a>
+</pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::HashMap;
+
+<span class="kw">use </span><span class="kw">crate</span>::data::<span class="kw-2">*</span>;
 
 <span class="kw">pub trait </span>SubjectBuilderExt {
     <span class="kw">fn </span>builder(id: <span class="kw">impl </span>Into&lt;String&gt;) -&gt; SubjectBuilder;
@@ -189,6 +204,7 @@
             occasions: Vec::new(),
             current_occasion: occasion,
             current_covariates: Vec::new(),
+            current_segment: HashMap::new(),
         }
     }
 }
@@ -198,6 +214,7 @@
     occasions: Vec&lt;Occasion&gt;,
     current_occasion: Occasion,
     current_covariates: Vec&lt;(String, CovariateSegment)&gt;,
+    current_segment: HashMap&lt;String, (f64, f64)&gt;,
 }
 
 <span class="kw">impl </span>SubjectBuilder {
@@ -218,7 +235,13 @@
         <span class="self">self</span>.event(event)
     }
 
-    <span class="kw">pub fn </span>observation(
+    <span class="kw">pub fn </span>observation(<span class="self">self</span>, time: f64, value: f64, outeq: usize) -&gt; <span class="self">Self </span>{
+        <span class="kw">let </span>observation = Observation::new(time, value, outeq, <span class="prelude-val">None</span>, <span class="bool-val">false</span>);
+        <span class="kw">let </span>event = Event::Observation(observation);
+        <span class="self">self</span>.event(event)
+    }
+
+    <span class="kw">pub fn </span>observation_with_error(
         <span class="self">self</span>,
         time: f64,
         value: f64,
@@ -249,7 +272,7 @@
                     infusion.input(),
                     infusion.duration(),
                 ),
-                Event::Observation(observation) =&gt; <span class="self">self</span>.observation(
+                Event::Observation(observation) =&gt; <span class="self">self</span>.observation_with_error(
                     observation.time() + delta * i <span class="kw">as </span>f64,
                     observation.value(),
                     observation.outeq(),
@@ -271,19 +294,36 @@
         <span class="self">self
     </span>}
 
-    <span class="kw">pub fn </span>covariate(
-        <span class="kw-2">mut </span><span class="self">self</span>,
-        name: <span class="kw-2">&amp;</span>str,
-        from: f64,
-        to: f64,
-        method: InterpolationMethod,
-    ) -&gt; <span class="self">Self </span>{
-        <span class="kw">let </span>segment = CovariateSegment::new(from, to, method);
-        <span class="self">self</span>.current_covariates.push((name.to_owned(), segment));
+    <span class="kw">pub fn </span>covariate(<span class="kw-2">mut </span><span class="self">self</span>, name: <span class="kw">impl </span>Into&lt;String&gt;, time: f64, value: f64) -&gt; <span class="self">Self </span>{
+        <span class="kw">let </span>name = name.into();
+        <span class="kw">if let </span><span class="prelude-val">Some</span>((p_time, p_value)) = <span class="self">self</span>.current_segment.get(<span class="kw-2">&amp;</span>name) {
+            <span class="kw">let </span>slope = (value - p_value) / (time - p_time);
+            <span class="kw">let </span>intercept = p_value - slope * p_time;
+            <span class="kw">let </span>segment = CovariateSegment::new(
+                <span class="kw-2">*</span>p_time,
+                time,
+                InterpolationMethod::Linear { slope, intercept },
+            );
+            <span class="self">self</span>.current_covariates.push((name.clone(), segment));
+            <span class="self">self</span>.current_segment.remove(<span class="kw-2">&amp;</span>name);
+            <span class="self">self</span>.current_segment.insert(name.clone(), (time, value));
+        } <span class="kw">else </span>{
+            <span class="macro">dbg!</span>(<span class="string">"first time"</span>);
+            <span class="self">self</span>.current_segment.insert(name.clone(), (time, value));
+        }
         <span class="self">self
     </span>}
 
     <span class="kw">fn </span>add_covariates(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+        <span class="kw">for </span>(name, (time, val)) <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.current_segment {
+            <span class="kw">let </span>segment = CovariateSegment::new(
+                <span class="kw-2">*</span>time,
+                f64::INFINITY,
+                InterpolationMethod::CarryForward { value: <span class="kw-2">*</span>val },
+            );
+            <span class="self">self</span>.current_covariates.push((name.clone(), segment));
+        }
+        <span class="self">self</span>.current_segment.clear();
         <span class="comment">// collect all the current covariates with the same name together
         </span><span class="kw">let </span><span class="kw-2">mut </span>covariates: Vec&lt;(String, Vec&lt;CovariateSegment&gt;)&gt; = Vec::new();
         <span class="kw">for </span>(name, segment) <span class="kw">in </span><span class="self">self</span>.current_covariates.clone() {
@@ -315,35 +355,21 @@
     <span class="attr">#[test]
     </span><span class="kw">fn </span>test_subject_builder() {
         <span class="kw">let </span>subject = Subject::builder(<span class="string">"s1"</span>)
-            .observation(<span class="number">3.0</span>, <span class="number">100.0</span>, <span class="number">0</span>, <span class="prelude-val">None</span>, <span class="bool-val">false</span>)
+            .observation(<span class="number">3.0</span>, <span class="number">100.0</span>, <span class="number">0</span>)
             .repeat(<span class="number">2</span>, <span class="number">0.5</span>)
             .bolus(<span class="number">1.0</span>, <span class="number">100.0</span>, <span class="number">0</span>)
             .infusion(<span class="number">0.0</span>, <span class="number">100.0</span>, <span class="number">0</span>, <span class="number">1.0</span>)
             .repeat(<span class="number">3</span>, <span class="number">0.5</span>)
-            .covariate(
-                <span class="string">"c1"</span>,
-                <span class="number">0.0</span>,
-                <span class="number">5.0</span>,
-                Linear {
-                    slope: <span class="number">1.0</span>,
-                    intercept: <span class="number">0.0</span>,
-                },
-            )
-            .covariate(<span class="string">"c2"</span>, <span class="number">5.0</span>, f64::INFINITY, CarryForward { value: <span class="number">5.0 </span>})
+            .covariate(<span class="string">"c1"</span>, <span class="number">0.0</span>, <span class="number">5.0</span>)
+            .covariate(<span class="string">"c1"</span>, <span class="number">5.0</span>, <span class="number">10.0</span>)
+            .covariate(<span class="string">"c2"</span>, <span class="number">0.0</span>, <span class="number">10.0</span>)
             .reset()
-            .observation(<span class="number">10.0</span>, <span class="number">100.0</span>, <span class="number">0</span>, <span class="prelude-val">None</span>, <span class="bool-val">false</span>)
+            .observation(<span class="number">10.0</span>, <span class="number">100.0</span>, <span class="number">0</span>)
             .bolus(<span class="number">7.0</span>, <span class="number">100.0</span>, <span class="number">0</span>)
             .repeat(<span class="number">4</span>, <span class="number">1.0</span>)
-            .covariate(
-                <span class="string">"c3"</span>,
-                <span class="number">0.0</span>,
-                <span class="number">5.0</span>,
-                Linear {
-                    slope: <span class="number">1.0</span>,
-                    intercept: <span class="number">0.0</span>,
-                },
-            )
-            .covariate(<span class="string">"c4"</span>, <span class="number">5.0</span>, f64::INFINITY, CarryForward { value: <span class="number">5.0 </span>})
+            .covariate(<span class="string">"c1"</span>, <span class="number">0.0</span>, <span class="number">5.0</span>)
+            .covariate(<span class="string">"c1"</span>, <span class="number">5.0</span>, <span class="number">10.0</span>)
+            .covariate(<span class="string">"c2"</span>, <span class="number">0.0</span>, <span class="number">10.0</span>)
             .build();
         <span class="macro">println!</span>(<span class="string">"{}"</span>, subject);
         <span class="macro">assert_eq!</span>(subject.id(), <span class="string">"s1"</span>);
