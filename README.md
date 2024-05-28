@@ -23,18 +23,23 @@ let subject = data::Subject::builder("id1")
     .build();
 println!("{subject:#?}");
 let ode = simulator::Equation::new_ode(
+    //Difussion Equations
     |x, p, _t, dx, _rateiv, _cov| {
         fetch_cov!(cov, t,);
         fetch_params!(p, ka, ke, _tlag, _v);
         dx[0] = -ka * x[0];
         dx[1] = ka * x[0] - ke * x[1];
     },
+    // Lag definition (In this case boluses on dx[0] will be delayed by `tlag`)
     |p| {
         fetch_params!(p, _ka, _ke, tlag, _v);
         lag! {0=>tlag}
     },
+    // No bio-availability
     |_p| fa! {},
+    // Default initial conditions (0.0,0.0)
     |_p, _t, _cov, _x| {},
+    // Output Equations
     |x, p, _t, _cov, y| {
         fetch_params!(p, _ka, _ke, _tlag, v);
         y[0] = x[1] / v;
