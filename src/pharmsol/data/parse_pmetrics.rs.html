@@ -468,37 +468,37 @@
 
                     <span class="kw">if </span>is_fixed {
                         <span class="comment">// Use CarryForward for fixed covariates
-                        </span>covariate.add_segment(CovariateSegment {
-                            from: time,
-                            to: to_time,
-                            method: InterpolationMethod::CarryForward {
+                        </span>covariate.add_segment(CovariateSegment::new(
+                            time,
+                            to_time,
+                            InterpolationMethod::CarryForward {
                                 value: value.unwrap(),
                             },
-                        });
+                        ));
                     } <span class="kw">else if let </span><span class="prelude-val">Some</span>(next) = next_occurrence {
                         <span class="comment">// Linear interpolation for non-fixed covariates
                         </span><span class="kw">let </span>(next_time, next_value) = next;
                         <span class="kw">if let </span><span class="prelude-val">Some</span>(current_value) = value {
                             <span class="kw">let </span>slope = (next_value.unwrap() - current_value) / (next_time - time);
-                            covariate.add_segment(CovariateSegment {
-                                from: time,
-                                to: <span class="kw-2">*</span>next_time,
-                                method: InterpolationMethod::Linear {
+                            covariate.add_segment(CovariateSegment::new(
+                                time,
+                                <span class="kw-2">*</span>next_time,
+                                InterpolationMethod::Linear {
                                     slope,
                                     intercept: current_value - slope * time,
                                 },
-                            });
+                            ));
                             last_value = <span class="prelude-val">Some</span>((next_time, next_value));
                         }
                     } <span class="kw">else if let </span><span class="prelude-val">Some</span>((last_time, last_value)) = last_value {
                         <span class="comment">// Extend the last linear segment to infinity if no more segments are available
-                        </span>covariate.add_segment(CovariateSegment {
-                            from: <span class="kw-2">*</span>last_time,
-                            to: f64::INFINITY,
-                            method: InterpolationMethod::CarryForward {
+                        </span>covariate.add_segment(CovariateSegment::new(
+                            <span class="kw-2">*</span>last_time,
+                            f64::INFINITY,
+                            InterpolationMethod::CarryForward {
                                 value: last_value.unwrap(),
                             },
-                        });
+                        ));
                     }
                 }
                 covariates.add_covariate(name, covariate)
@@ -508,12 +508,12 @@
             occasions.push(occasion);
         }
 
-        <span class="kw">let </span>subject = Subject { id, occasions };
+        <span class="kw">let </span>subject = Subject::new(id, occasions);
         subjects.push(subject);
     }
 
     <span class="comment">// Sort subjects alphabetically by ID to get consistent ordering
-    </span>subjects.sort_by(|a, b| a.id.cmp(<span class="kw-2">&amp;</span>b.id));
+    </span>subjects.sort_by(|a, b| a.id().cmp(b.id()));
     <span class="kw">let </span>data = Data::new(subjects);
 
     <span class="prelude-val">Ok</span>(data)
@@ -580,27 +580,27 @@
 <span class="kw">impl </span>From&lt;Row&gt; <span class="kw">for </span>Event {
     <span class="kw">fn </span>from(row: Row) -&gt; <span class="self">Self </span>{
         <span class="kw">match </span>row.evid {
-            <span class="number">0 </span>=&gt; Event::Observation(Observation {
-                time: row.time,
-                value: row.out.expect(<span class="string">"Observation OUT is missing"</span>),
-                outeq: row.outeq.expect(<span class="string">"Observation OUTEQ is missing"</span>) - <span class="number">1</span>,
-                errorpoly: row.get_errorpoly(),
-                ignore: row.out == <span class="prelude-val">Some</span>(-<span class="number">99.0</span>),
-            }),
+            <span class="number">0 </span>=&gt; Event::Observation(Observation::new(
+                row.time,
+                row.out.expect(<span class="string">"Observation OUT is missing"</span>),
+                row.outeq.expect(<span class="string">"Observation OUTEQ is missing"</span>) - <span class="number">1</span>,
+                row.get_errorpoly(),
+                row.out == <span class="prelude-val">Some</span>(-<span class="number">99.0</span>),
+            )),
             <span class="number">1 </span>| <span class="number">4 </span>=&gt; {
                 <span class="kw">if </span>row.dur.unwrap_or(<span class="number">0.0</span>) &gt; <span class="number">0.0 </span>{
-                    Event::Infusion(Infusion {
-                        time: row.time,
-                        amount: row.dose.expect(<span class="string">"Infusion amount (DOSE) is missing"</span>),
-                        input: row.input.expect(<span class="string">"Infusion compartment (INPUT) is missing"</span>) - <span class="number">1</span>,
-                        duration: row.dur.expect(<span class="string">"Infusion duration (DUR) is missing"</span>),
-                    })
+                    Event::Infusion(Infusion::new(
+                        row.time,
+                        row.dose.expect(<span class="string">"Infusion amount (DOSE) is missing"</span>),
+                        row.input.expect(<span class="string">"Infusion compartment (INPUT) is missing"</span>) - <span class="number">1</span>,
+                        row.dur.expect(<span class="string">"Infusion duration (DUR) is missing"</span>),
+                    ))
                 } <span class="kw">else </span>{
-                    Event::Bolus(Bolus {
-                        time: row.time,
-                        amount: row.dose.expect(<span class="string">"Bolus amount (DOSE) is missing"</span>),
-                        input: row.input.expect(<span class="string">"Bolus compartment (INPUT) is missing"</span>) - <span class="number">1</span>,
-                    })
+                    Event::Bolus(Bolus::new(
+                        row.time,
+                        row.dose.expect(<span class="string">"Bolus amount (DOSE) is missing"</span>),
+                        row.input.expect(<span class="string">"Bolus compartment (INPUT) is missing"</span>) - <span class="number">1</span>,
+                    ))
                 }
             }
             <span class="kw">_ </span>=&gt; <span class="macro">panic!</span>(

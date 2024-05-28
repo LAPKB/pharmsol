@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["builder","covariate","error_model","event","structs"]};
