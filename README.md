@@ -4,7 +4,7 @@
 [![Documentation](https://github.com/LAPKB/pharmsol/actions/workflows/docs.yml/badge.svg)](https://github.com/LAPKB/pharmsol/actions/workflows/docs.yml)
 ![crates.io](https://img.shields.io/crates/v/pharmsol.svg)
 
-Solve pharmacokinetic models using differential equations and their analytical solutions!
+Simulate PK/PD profiles using ODE and analytical models.
 
 ## Example
 
