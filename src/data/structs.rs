@@ -6,7 +6,7 @@ use std::{collections::HashMap, fmt};
 ///
 /// This is the main data structure used to store the data, and is used to pass data to the model
 /// [Data] implements the [DataTrait], which provides methods to access the data
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Data {
     subjects: Vec<Subject>,
 }
@@ -115,14 +115,6 @@ impl Data {
     //         })
     //         .sum()
     // }
-}
-
-impl Default for Data {
-    fn default() -> Self {
-        Data {
-            subjects: Vec::new(),
-        }
-    }
 }
 
 /// [Subject] is a collection of blocks for one individual

@@ -76,7 +76,7 @@ impl SubjectBuilder {
                     observation.time() + delta * i as f64,
                     observation.value(),
                     observation.outeq(),
-                    observation.errorpoly().clone(),
+                    observation.errorpoly(),
                     observation.ignore(),
                 ),
             };
