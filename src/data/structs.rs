@@ -11,11 +11,14 @@ pub struct Data {
     subjects: Vec<Subject>,
 }
 impl Data {
-    pub(crate) fn new(subjects: Vec<Subject>) -> Self {
+    pub fn new(subjects: Vec<Subject>) -> Self {
         Data { subjects }
     }
     pub fn get_subjects(&self) -> Vec<&Subject> {
         self.subjects.iter().collect()
+    }
+    pub fn add_subject(&mut self, subject: Subject) {
+        self.subjects.push(subject);
     }
     pub fn expand(&self, idelta: f64, tad: f64) -> Data {
         if idelta <= 0.0 {
@@ -112,6 +115,14 @@ impl Data {
     //         })
     //         .sum()
     // }
+}
+
+impl Default for Data {
+    fn default() -> Self {
+        Data {
+            subjects: Vec::new(),
+        }
+    }
 }
 
 /// [Subject] is a collection of blocks for one individual

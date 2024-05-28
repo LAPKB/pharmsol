@@ -1,21 +1,14 @@
-use rand::{distributions::Alphanumeric, Rng};
-
 use crate::data::*;
 
 pub trait SubjectBuilderExt {
-    fn builder() -> SubjectBuilder;
+    fn builder(id: impl Into<String>) -> SubjectBuilder;
 }
 impl SubjectBuilderExt for Subject {
-    fn builder() -> SubjectBuilder {
-        let rndu8: Vec<u8> = rand::thread_rng()
-            .sample_iter(&Alphanumeric)
-            .take(5)
-            .collect();
-        let id = String::from_utf8(rndu8).unwrap();
+    fn builder(id: impl Into<String>) -> SubjectBuilder {
         let occasion = Occasion::new(Vec::new(), Covariates::new(), 0);
 
         SubjectBuilder {
-            id: id,
+            id: id.into(),
             occasions: Vec::new(),
             current_occasion: occasion,
             current_covariates: Vec::new(),
@@ -31,11 +24,6 @@ pub struct SubjectBuilder {
 }
 
 impl SubjectBuilder {
-    pub fn id(mut self, id: String) -> Self {
-        self.id = id;
-        self
-    }
-
     pub fn event(mut self, event: Event) -> Self {
         self.current_occasion.add_event(event);
         self
@@ -56,12 +44,12 @@ impl SubjectBuilder {
     pub fn observation(
         self,
         time: f64,
-        amount: f64,
-        input: usize,
-        error_poly: Option<(f64, f64, f64, f64)>,
+        value: f64,
+        outeq: usize,
+        errorpoly: Option<(f64, f64, f64, f64)>,
         ignore: bool,
     ) -> Self {
-        let observation = Observation::new(time, amount, input, error_poly, ignore);
+        let observation = Observation::new(time, value, outeq, errorpoly, ignore);
         let event = Event::Observation(observation);
         self.event(event)
     }
@@ -106,24 +94,15 @@ impl SubjectBuilder {
         self
     }
 
-    pub fn linear_covariate(
+    pub fn covariate(
         mut self,
-        name: String,
+        name: &str,
         from: f64,
         to: f64,
-        slope: f64,
-        intercept: f64,
+        method: InterpolationMethod,
     ) -> Self {
-        let method = InterpolationMethod::Linear { slope, intercept };
         let segment = CovariateSegment::new(from, to, method);
-        self.current_covariates.push((name, segment));
-        self
-    }
-
-    pub fn carry_forward_covariate(mut self, name: String, from: f64, to: f64, value: f64) -> Self {
-        let method = InterpolationMethod::CarryForward { value };
-        let segment = CovariateSegment::new(from, to, method);
-        self.current_covariates.push((name, segment));
+        self.current_covariates.push((name.to_owned(), segment));
         self
     }
 
@@ -154,28 +133,43 @@ impl SubjectBuilder {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::prelude::*;
 
     #[test]
     fn test_subject_builder() {
-        let subject = Subject::builder()
-            .id("test".to_string())
+        let subject = Subject::builder("s1")
             .observation(3.0, 100.0, 0, None, false)
             .repeat(2, 0.5)
             .bolus(1.0, 100.0, 0)
             .infusion(0.0, 100.0, 0, 1.0)
-            .repeat(3, 0.3)
-            .linear_covariate("cov1".to_string(), 0.0, 10.0, 1.0, 0.0)
-            .carry_forward_covariate("cov2".to_string(), 0.0, 10.0, 5.0)
+            .repeat(3, 0.5)
+            .covariate(
+                "c1",
+                0.0,
+                5.0,
+                Linear {
+                    slope: 1.0,
+                    intercept: 0.0,
+                },
+            )
+            .covariate("c2", 5.0, f64::INFINITY, CarryForward { value: 5.0 })
             .reset()
             .observation(10.0, 100.0, 0, None, false)
             .bolus(7.0, 100.0, 0)
-            .repeat(3, 1.0)
-            .linear_covariate("cov1".to_string(), 0.0, 10.0, 1.0, 0.0)
-            .carry_forward_covariate("cov2".to_string(), 0.0, 10.0, 5.0)
+            .repeat(4, 1.0)
+            .covariate(
+                "c3",
+                0.0,
+                5.0,
+                Linear {
+                    slope: 1.0,
+                    intercept: 0.0,
+                },
+            )
+            .covariate("c4", 5.0, f64::INFINITY, CarryForward { value: 5.0 })
             .build();
         println!("{}", subject);
-        assert_eq!(subject.id(), "test");
+        assert_eq!(subject.id(), "s1");
         assert_eq!(subject.occasions().len(), 2);
     }
 }

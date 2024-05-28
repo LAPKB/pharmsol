@@ -1,5 +1,10 @@
-mod data;
-mod simulator;
+pub mod data;
+pub mod simulator;
+
+//extension traits
+pub use crate::data::builder::SubjectBuilderExt;
+pub use crate::data::InterpolationMethod::*;
+pub use crate::data::*;
 
 pub mod prelude {
     pub mod data {
@@ -22,6 +27,8 @@ pub mod prelude {
     }
     //extension traits
     pub use crate::data::builder::SubjectBuilderExt;
+    pub use crate::data::InterpolationMethod::*;
+    pub use crate::data::*;
     //traits
     pub use crate::simulator::fitting::{EstimateTheta, OptimalSupportPoint};
 

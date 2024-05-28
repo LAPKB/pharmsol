@@ -7,10 +7,23 @@
 Solve pharmacokinetic models using differential equations and their analytical solutions!
 
 ## Example
+
 ODE based model.
-```Rust
-Equation::new_ode(
-    |x, p, _t, dx, rateiv, _cov| {
+
+```rust
+use pharmsol::*;
+
+let subject = data::Subject::builder("id1")
+    .bolus(0.0, 100.0, 0)
+    .repeat(2, 0.5)
+    .observation(0.5, 0.1, 0, None, false)
+    .observation(1.0, 0.4, 0, None, false)
+    .observation(2.0, 1.0, 0, None, false)
+    .observation(2.5, 1.1, 0, None, false)
+    .build();
+println!("{subject:#?}");
+let ode = simulator::Equation::new_ode(
+    |x, p, _t, dx, _rateiv, _cov| {
         fetch_cov!(cov, t,);
         fetch_params!(p, ka, ke, _tlag, _v);
         dx[0] = -ka * x[0];
@@ -28,12 +41,16 @@ Equation::new_ode(
     },
     (2, 1),
 );
+
+let op = ode.simulate_subject(&subject, &vec![0.3, 0.5, 0.1, 70.0]);
+println!("{op:#?}");
 ```
 
 Analytic based model.
 
 ```Rust
-Equation::new_analytical(
+...
+let analytical = simulator::Equation::new_analytical(
     one_compartment_with_absorption,
     |_p, _cov| {},
     |p| {
@@ -48,16 +65,16 @@ Equation::new_analytical(
     },
     (2, 1),
 );
+let op = analytical.simulate_subject(&subject, &vec![0.3, 0.5, 0.1, 70.0]);
+println!("{op:#?}");
 ```
 
-
 ## Supported analytical models
-We are working to support all the standard analytical models. 
 
--  [x] One-compartment with IV infusion
--  [x] One-compartment with IV infusion and oral absorption
--  [x] Two-compartment with IV infusion
--  [x] Two-compartment with IV infusion and oral absorption
--  [ ] Three-compartmental models
+We are working to support all the standard analytical models.
 
- 
+- [x] One-compartment with IV infusion
+- [x] One-compartment with IV infusion and oral absorption
+- [x] Two-compartment with IV infusion
+- [x] Two-compartment with IV infusion and oral absorption
+- [ ] Three-compartmental models

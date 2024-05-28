@@ -2,7 +2,7 @@ use serde::Deserialize;
 use std::{collections::HashMap, fmt};
 
 #[derive(Clone, Debug, Deserialize)]
-pub(crate) enum InterpolationMethod {
+pub enum InterpolationMethod {
     Linear { slope: f64, intercept: f64 },
     CarryForward { value: f64 },
 }
