@@ -16,10 +16,10 @@ use pharmsol::*;
 let subject = data::Subject::builder("id1")
     .bolus(0.0, 100.0, 0)
     .repeat(2, 0.5)
-    .observation(0.5, 0.1, 0, None, false)
-    .observation(1.0, 0.4, 0, None, false)
-    .observation(2.0, 1.0, 0, None, false)
-    .observation(2.5, 1.1, 0, None, false)
+    .observation(0.5, 0.1, 0)
+    .observation(1.0, 0.4, 0)
+    .observation(2.0, 1.0, 0)
+    .observation(2.5, 1.1, 0)
     .build();
 println!("{subject:#?}");
 let ode = simulator::Equation::new_ode(

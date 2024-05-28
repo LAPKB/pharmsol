@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::data::*;
 
 pub trait SubjectBuilderExt {
@@ -12,6 +14,7 @@ impl SubjectBuilderExt for Subject {
             occasions: Vec::new(),
             current_occasion: occasion,
             current_covariates: Vec::new(),
+            current_segment: HashMap::new(),
         }
     }
 }
@@ -21,6 +24,7 @@ pub struct SubjectBuilder {
     occasions: Vec<Occasion>,
     current_occasion: Occasion,
     current_covariates: Vec<(String, CovariateSegment)>,
+    current_segment: HashMap<String, (f64, f64)>,
 }
 
 impl SubjectBuilder {
@@ -41,7 +45,13 @@ impl SubjectBuilder {
         self.event(event)
     }
 
-    pub fn observation(
+    pub fn observation(self, time: f64, value: f64, outeq: usize) -> Self {
+        let observation = Observation::new(time, value, outeq, None, false);
+        let event = Event::Observation(observation);
+        self.event(event)
+    }
+
+    pub fn observation_with_error(
         self,
         time: f64,
         value: f64,
@@ -72,7 +82,7 @@ impl SubjectBuilder {
                     infusion.input(),
                     infusion.duration(),
                 ),
-                Event::Observation(observation) => self.observation(
+                Event::Observation(observation) => self.observation_with_error(
                     observation.time() + delta * i as f64,
                     observation.value(),
                     observation.outeq(),
@@ -94,19 +104,36 @@ impl SubjectBuilder {
         self
     }
 
-    pub fn covariate(
-        mut self,
-        name: &str,
-        from: f64,
-        to: f64,
-        method: InterpolationMethod,
-    ) -> Self {
-        let segment = CovariateSegment::new(from, to, method);
-        self.current_covariates.push((name.to_owned(), segment));
+    pub fn covariate(mut self, name: impl Into<String>, time: f64, value: f64) -> Self {
+        let name = name.into();
+        if let Some((p_time, p_value)) = self.current_segment.get(&name) {
+            let slope = (value - p_value) / (time - p_time);
+            let intercept = p_value - slope * p_time;
+            let segment = CovariateSegment::new(
+                *p_time,
+                time,
+                InterpolationMethod::Linear { slope, intercept },
+            );
+            self.current_covariates.push((name.clone(), segment));
+            self.current_segment.remove(&name);
+            self.current_segment.insert(name.clone(), (time, value));
+        } else {
+            dbg!("first time");
+            self.current_segment.insert(name.clone(), (time, value));
+        }
         self
     }
 
     fn add_covariates(&mut self) {
+        for (name, (time, val)) in &self.current_segment {
+            let segment = CovariateSegment::new(
+                *time,
+                f64::INFINITY,
+                InterpolationMethod::CarryForward { value: *val },
+            );
+            self.current_covariates.push((name.clone(), segment));
+        }
+        self.current_segment.clear();
         // collect all the current covariates with the same name together
         let mut covariates: Vec<(String, Vec<CovariateSegment>)> = Vec::new();
         for (name, segment) in self.current_covariates.clone() {
@@ -138,35 +165,21 @@ mod tests {
     #[test]
     fn test_subject_builder() {
         let subject = Subject::builder("s1")
-            .observation(3.0, 100.0, 0, None, false)
+            .observation(3.0, 100.0, 0)
             .repeat(2, 0.5)
             .bolus(1.0, 100.0, 0)
             .infusion(0.0, 100.0, 0, 1.0)
             .repeat(3, 0.5)
-            .covariate(
-                "c1",
-                0.0,
-                5.0,
-                Linear {
-                    slope: 1.0,
-                    intercept: 0.0,
-                },
-            )
-            .covariate("c2", 5.0, f64::INFINITY, CarryForward { value: 5.0 })
+            .covariate("c1", 0.0, 5.0)
+            .covariate("c1", 5.0, 10.0)
+            .covariate("c2", 0.0, 10.0)
             .reset()
-            .observation(10.0, 100.0, 0, None, false)
+            .observation(10.0, 100.0, 0)
             .bolus(7.0, 100.0, 0)
             .repeat(4, 1.0)
-            .covariate(
-                "c3",
-                0.0,
-                5.0,
-                Linear {
-                    slope: 1.0,
-                    intercept: 0.0,
-                },
-            )
-            .covariate("c4", 5.0, f64::INFINITY, CarryForward { value: 5.0 })
+            .covariate("c1", 0.0, 5.0)
+            .covariate("c1", 5.0, 10.0)
+            .covariate("c2", 0.0, 10.0)
             .build();
         println!("{}", subject);
         assert_eq!(subject.id(), "s1");
