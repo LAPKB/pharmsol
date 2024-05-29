@@ -163,6 +163,20 @@
 <a href="#161" id="161">161</a>
 <a href="#162" id="162">162</a>
 <a href="#163" id="163">163</a>
+<a href="#164" id="164">164</a>
+<a href="#165" id="165">165</a>
+<a href="#166" id="166">166</a>
+<a href="#167" id="167">167</a>
+<a href="#168" id="168">168</a>
+<a href="#169" id="169">169</a>
+<a href="#170" id="170">170</a>
+<a href="#171" id="171">171</a>
+<a href="#172" id="172">172</a>
+<a href="#173" id="173">173</a>
+<a href="#174" id="174">174</a>
+<a href="#175" id="175">175</a>
+<a href="#176" id="176">176</a>
+<a href="#177" id="177">177</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::data::{error_model::ErrorModel, Observation};
 
 <span class="kw">use </span>ndarray::{Array1, Array2, Axis};
@@ -173,10 +187,23 @@
     predictions: Vec&lt;Prediction&gt;,
     flat_predictions: Array1&lt;f64&gt;,
     flat_observations: Array1&lt;f64&gt;,
+    flat_time: Array1&lt;f64&gt;,
 }
 <span class="kw">impl </span>SubjectPredictions {
     <span class="kw">pub fn </span>get_predictions(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>Vec&lt;Prediction&gt; {
         <span class="kw-2">&amp;</span><span class="self">self</span>.predictions
+    }
+
+    <span class="kw">pub fn </span>flat_observations(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;f64&gt; {
+        <span class="self">self</span>.flat_observations.to_vec()
+    }
+
+    <span class="kw">pub fn </span>flat_predictions(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;f64&gt; {
+        <span class="self">self</span>.flat_predictions.to_vec()
+    }
+
+    <span class="kw">pub fn </span>flat_time(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;f64&gt; {
+        <span class="self">self</span>.flat_time.to_vec()
     }
 
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>likelihood(<span class="kw-2">&amp;</span><span class="self">self</span>, error_model: <span class="kw-2">&amp;</span>ErrorModel) -&gt; f64 {
@@ -214,6 +241,7 @@
         <span class="self">Self </span>{
             flat_predictions: predictions.iter().map(|p| p.prediction).collect(),
             flat_observations: predictions.iter().map(|p| p.observation).collect(),
+            flat_time: predictions.iter().map(|p| p.time).collect(),
             predictions,
         }
     }
