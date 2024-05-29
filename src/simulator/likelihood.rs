@@ -8,10 +8,23 @@ pub struct SubjectPredictions {
     predictions: Vec<Prediction>,
     flat_predictions: Array1<f64>,
     flat_observations: Array1<f64>,
+    flat_time: Array1<f64>,
 }
 impl SubjectPredictions {
     pub fn get_predictions(&self) -> &Vec<Prediction> {
         &self.predictions
+    }
+
+    pub fn flat_observations(&self) -> Vec<f64> {
+        self.flat_observations.to_vec()
+    }
+
+    pub fn flat_predictions(&self) -> Vec<f64> {
+        self.flat_predictions.to_vec()
+    }
+
+    pub fn flat_time(&self) -> Vec<f64> {
+        self.flat_time.to_vec()
     }
 
     pub(crate) fn likelihood(&self, error_model: &ErrorModel) -> f64 {
@@ -49,6 +62,7 @@ impl From<Vec<Prediction>> for SubjectPredictions {
         Self {
             flat_predictions: predictions.iter().map(|p| p.prediction).collect(),
             flat_observations: predictions.iter().map(|p| p.observation).collect(),
+            flat_time: predictions.iter().map(|p| p.time).collect(),
             predictions,
         }
     }
