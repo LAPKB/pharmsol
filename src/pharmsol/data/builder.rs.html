@@ -188,6 +188,7 @@
 <a href="#186" id="186">186</a>
 <a href="#187" id="187">187</a>
 <a href="#188" id="188">188</a>
+<a href="#189" id="189">189</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::HashMap;
 
 <span class="kw">use </span><span class="kw">crate</span>::data::<span class="kw-2">*</span>;
@@ -209,7 +210,8 @@
     }
 }
 
-<span class="kw">pub struct </span>SubjectBuilder {
+<span class="attr">#[derive(Debug, Clone)]
+</span><span class="kw">pub struct </span>SubjectBuilder {
     id: String,
     occasions: Vec&lt;Occasion&gt;,
     current_occasion: Occasion,
