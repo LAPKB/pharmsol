@@ -19,6 +19,7 @@ impl SubjectBuilderExt for Subject {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct SubjectBuilder {
     id: String,
     occasions: Vec<Occasion>,
