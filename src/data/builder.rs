@@ -119,7 +119,6 @@ impl SubjectBuilder {
             self.current_segment.remove(&name);
             self.current_segment.insert(name.clone(), (time, value));
         } else {
-            dbg!("first time");
             self.current_segment.insert(name.clone(), (time, value));
         }
         self
