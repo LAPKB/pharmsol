@@ -6,7 +6,7 @@ use ndarray::{Array1, Array2, Axis};
 
 use crate::data::{Data, Subject};
 
-use super::Equation;
+use super::{simulate_subject, Equation};
 
 struct SppOptimizer<'a> {
     equation: &'a Equation,
@@ -18,9 +18,7 @@ impl<'a> CostFunction for SppOptimizer<'a> {
     type Output = f64;
 
     fn cost(&self, point: &Self::Param) -> Result<Self::Output, Error> {
-        Ok(self
-            .equation
-            .simulate_subject(self.subject, point.to_vec().as_ref())
+        Ok(simulate_subject(self.equation, self.subject, point.to_vec().as_ref())
             .squared_error())
     }
 }

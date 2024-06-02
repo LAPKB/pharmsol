@@ -59,71 +59,6 @@ impl Equation {
         Equation::Analytical(eq, seq_eq, lag, fa, init, out, neqs)
     }
 
-    pub fn simulate_subject(
-        &self,
-        subject: &Subject,
-        support_point: &Vec<f64>,
-    ) -> SubjectPredictions {
-        let init = self.get_init();
-        let out = self.get_out();
-        let lag = self.get_lag(support_point);
-        let fa = self.get_fa(support_point);
-        let mut yout = vec![];
-        for occasion in subject.occasions() {
-            // Check for a cache entry
-            let pred = get_entry(subject.id(), support_point);
-            if let Some(pred) = pred {
-                return pred;
-            }
-            // What should we use as the initial state for the next occasion?
-            let covariates = occasion.get_covariates().unwrap();
-            //TODO: set the right initial condition when occasion > 1
-            let mut x = V::zeros(self.get_nstates());
-            (init)(&V::from_vec(support_point.clone()), 0.0, covariates, &mut x);
-            let mut infusions: Vec<Infusion> = vec![];
-            let events = occasion.get_events(Some(&lag), Some(&fa), true);
-            for (index, event) in events.iter().enumerate() {
-                match event {
-                    Event::Bolus(bolus) => {
-                        x[bolus.input()] += bolus.amount();
-                    }
-                    Event::Infusion(infusion) => {
-                        infusions.push(infusion.clone());
-                    }
-                    Event::Observation(observation) => {
-                        let mut y = V::zeros(self.get_nouteqs());
-                        (out)(
-                            &x,
-                            &V::from_vec(support_point.clone()),
-                            observation.time(),
-                            covariates,
-                            &mut y,
-                        );
-                        let pred = y[observation.outeq()];
-
-                        yout.push(observation.to_obs_pred(pred));
-                    }
-                }
-
-                if let Some(next_event) = events.get(index + 1) {
-                    x = self.simulate_event(
-                        x,
-                        support_point,
-                        covariates,
-                        &infusions,
-                        event.get_time(),
-                        next_event.get_time(),
-                    );
-                }
-            }
-        }
-        // Insert the cache entry
-        let pred: SubjectPredictions = yout.into();
-        insert_entry(subject.id(), support_point, pred.clone());
-        pred
-    }
-    #[inline(always)]
-
     fn simulate_event(
         &self,
         x: V,
@@ -230,10 +165,74 @@ pub fn get_population_predictions(
                 .for_each(|(j, mut element)| {
                     let subjects = subjects.get_subjects();
                     let subject = subjects.get(i).unwrap();
-                    let ypred =
-                        equation.simulate_subject(subject, support_points.row(j).to_vec().as_ref());
+                    let ypred = simulate_subject(equation, subject, support_points.row(j).to_vec().as_ref());
                     element.fill(ypred);
                 });
         });
     pred.into()
+}
+
+
+pub fn simulate_subject(
+    equation: &Equation,
+    subject: &Subject,
+    support_point: &Vec<f64>,
+) -> SubjectPredictions {
+    let init = equation.get_init();
+    let out = equation.get_out();
+    let lag = equation.get_lag(support_point);
+    let fa = equation.get_fa(support_point);
+    let mut yout = vec![];
+    for occasion in subject.occasions() {
+        // Check for a cache entry
+        let pred = get_entry(subject.id(), support_point);
+        if let Some(pred) = pred {
+            return pred;
+        }
+        // What should we use as the initial state for the next occasion?
+        let covariates = occasion.get_covariates().unwrap();
+        //TODO: set the right initial condition when occasion > 1
+        let mut x = V::zeros(equation.get_nstates());
+        (init)(&V::from_vec(support_point.clone()), 0.0, covariates, &mut x);
+        let mut infusions: Vec<Infusion> = vec![];
+        let events = occasion.get_events(Some(&lag), Some(&fa), true);
+        for (index, event) in events.iter().enumerate() {
+            match event {
+                Event::Bolus(bolus) => {
+                    x[bolus.input()] += bolus.amount();
+                }
+                Event::Infusion(infusion) => {
+                    infusions.push(infusion.clone());
+                }
+                Event::Observation(observation) => {
+                    let mut y = V::zeros(equation.get_nouteqs());
+                    (out)(
+                        &x,
+                        &V::from_vec(support_point.clone()),
+                        observation.time(),
+                        covariates,
+                        &mut y,
+                    );
+                    let pred = y[observation.outeq()];
+
+                    yout.push(observation.to_obs_pred(pred));
+                }
+            }
+
+            if let Some(next_event) = events.get(index + 1) {
+                x = equation.simulate_event(
+                    x,
+                    support_point,
+                    covariates,
+                    &infusions,
+                    event.get_time(),
+                    next_event.get_time(),
+                );
+            }
+        }
+    }
+    // Insert the cache entry
+    let pred: SubjectPredictions = yout.into();
+    insert_entry(subject.id(), support_point, pred.clone());
+    pred
 }

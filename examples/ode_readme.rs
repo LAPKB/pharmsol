@@ -1,5 +1,6 @@
 fn main() {
     use pharmsol::*;
+    use pharmsol::simulator::simulate_subject;
 
     let subject = data::Subject::builder("id1")
         .bolus(0.0, 100.0, 0)
@@ -30,6 +31,6 @@ fn main() {
         (2, 1),
     );
 
-    let op = ode.simulate_subject(&subject, &vec![0.3, 0.5, 0.1, 70.0]);
+    let op = simulate_subject(&ode, &subject, &vec![0.3, 0.5, 0.1, 70.0]);
     println!("{op:#?}");
 }
