@@ -1,5 +1,4 @@
 pub(crate) mod analytical;
-mod cache;
 pub mod fitting;
 pub(crate) mod likelihood;
 mod ode;
@@ -12,12 +11,11 @@ use crate::{
     simulator::likelihood::{PopulationPredictions, SubjectPredictions, ToPrediction},
 };
 
-// use dashmap::mapref::entry::Entry;
-// use dashmap::DashMap;
+use cached::proc_macro::cached;
+use cached::SizedCache;
 // use lazy_static::lazy_static;
 use ndarray::prelude::*;
 // use ndarray::Array1;
-use cache::*;
 use ndarray::Array2;
 
 type T = f64;
@@ -172,23 +170,23 @@ pub fn get_population_predictions(
     pred.into()
 }
 
-
+#[cached(
+    ty = "SizedCache<String, SubjectPredictions>",
+    create = "{ SizedCache::with_size(1000) }",
+    convert = r#"{ format!("{:?}_{:?}", subject, support_point) }"#
+)]
 pub fn simulate_subject(
     equation: &Equation,
     subject: &Subject,
     support_point: &Vec<f64>,
 ) -> SubjectPredictions {
+
     let init = equation.get_init();
     let out = equation.get_out();
     let lag = equation.get_lag(support_point);
     let fa = equation.get_fa(support_point);
     let mut yout = vec![];
     for occasion in subject.occasions() {
-        // Check for a cache entry
-        let pred = get_entry(subject.id(), support_point);
-        if let Some(pred) = pred {
-            return pred;
-        }
         // What should we use as the initial state for the next occasion?
         let covariates = occasion.get_covariates().unwrap();
         //TODO: set the right initial condition when occasion > 1
@@ -231,8 +229,6 @@ pub fn simulate_subject(
             }
         }
     }
-    // Insert the cache entry
     let pred: SubjectPredictions = yout.into();
-    insert_entry(subject.id(), support_point, pred.clone());
     pred
 }
