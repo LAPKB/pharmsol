@@ -312,7 +312,7 @@
         <span class="kw">let </span><span class="kw-2">mut </span>yout = <span class="macro">vec!</span>[];
         <span class="kw">for </span>occasion <span class="kw">in </span>subject.occasions() {
             <span class="comment">// Check for a cache entry
-            </span><span class="kw">let </span>pred = get_entry(subject.id(), support_point);
+            </span><span class="kw">let </span>pred = get_entry(subject, support_point);
             <span class="kw">if let </span><span class="prelude-val">Some</span>(pred) = pred {
                 <span class="kw">return </span>pred;
             }
@@ -360,7 +360,7 @@
         }
         <span class="comment">// Insert the cache entry
         </span><span class="kw">let </span>pred: SubjectPredictions = yout.into();
-        insert_entry(subject.id(), support_point, pred.clone());
+        insert_entry(subject, support_point, pred.clone());
         pred
     }
     <span class="attr">#[inline(always)]

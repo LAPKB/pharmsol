@@ -60,7 +60,18 @@
 <a href="#58" id="58">58</a>
 <a href="#59" id="59">59</a>
 <a href="#60" id="60">60</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::simulator::likelihood::SubjectPredictions;
+<a href="#61" id="61">61</a>
+<a href="#62" id="62">62</a>
+<a href="#63" id="63">63</a>
+<a href="#64" id="64">64</a>
+<a href="#65" id="65">65</a>
+<a href="#66" id="66">66</a>
+<a href="#67" id="67">67</a>
+<a href="#68" id="68">68</a>
+<a href="#69" id="69">69</a>
+<a href="#70" id="70">70</a>
+</pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::data::Subject;
+<span class="kw">use </span><span class="kw">crate</span>::simulator::likelihood::SubjectPredictions;
 <span class="kw">use </span>dashmap::DashMap;
 <span class="kw">use </span>lazy_static::lazy_static;
 <span class="kw">use </span>std::collections::hash_map::DefaultHasher;
@@ -70,11 +81,20 @@
 
 <span class="attr">#[derive(Clone, Debug, PartialEq, Hash)]
 </span><span class="kw">struct </span>CacheKey {
-    subject: String,
+    subject: SubjectHash,
     support_point: SupportPointHash,
 }
 
 <span class="kw">impl </span>Eq <span class="kw">for </span>CacheKey {}
+
+<span class="attr">#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+</span><span class="kw">struct </span>SubjectHash(u64);
+
+<span class="kw">impl </span>SubjectHash {
+    <span class="kw">fn </span>new(subject: <span class="kw-2">&amp;</span>Subject) -&gt; <span class="self">Self </span>{
+        SubjectHash(subject.hash())
+    }
+}
 
 <span class="attr">#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 </span><span class="kw">struct </span>SupportPointHash(u64);
@@ -95,9 +115,9 @@
     <span class="kw">static </span><span class="kw-2">ref </span>CACHE: DashMap&lt;CacheKey, SubjectPredictions&gt; = DashMap::with_capacity(CACHE_SIZE);
 }
 
-<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>get_entry(subject: <span class="kw-2">&amp;</span>str, support_point: <span class="kw-2">&amp;</span>Vec&lt;f64&gt;) -&gt; <span class="prelude-ty">Option</span>&lt;SubjectPredictions&gt; {
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>get_entry(subject: <span class="kw-2">&amp;</span>Subject, support_point: <span class="kw-2">&amp;</span>Vec&lt;f64&gt;) -&gt; <span class="prelude-ty">Option</span>&lt;SubjectPredictions&gt; {
     <span class="kw">let </span>cache_key = CacheKey {
-        subject: subject.to_owned(),
+        subject: SubjectHash::new(subject),
         support_point: SupportPointHash::new(support_point),
     };
 
@@ -108,12 +128,12 @@
 }
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>insert_entry(
-    subject: <span class="kw-2">&amp;</span>str,
+    subject: <span class="kw-2">&amp;</span>Subject,
     support_point: <span class="kw-2">&amp;</span>Vec&lt;f64&gt;,
     predictions: SubjectPredictions,
 ) {
     <span class="kw">let </span>cache_key = CacheKey {
-        subject: subject.to_owned(),
+        subject: SubjectHash::new(subject),
         support_point: SupportPointHash::new(support_point),
     };
 
