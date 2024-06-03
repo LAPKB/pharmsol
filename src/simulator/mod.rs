@@ -71,7 +71,7 @@ impl Equation {
         let mut yout = vec![];
         for occasion in subject.occasions() {
             // Check for a cache entry
-            let pred = get_entry(subject.id(), support_point);
+            let pred = get_entry(subject, support_point);
             if let Some(pred) = pred {
                 return pred;
             }
@@ -119,7 +119,7 @@ impl Equation {
         }
         // Insert the cache entry
         let pred: SubjectPredictions = yout.into();
-        insert_entry(subject.id(), support_point, pred.clone());
+        insert_entry(subject, support_point, pred.clone());
         pred
     }
     #[inline(always)]

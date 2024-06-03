@@ -1,3 +1,4 @@
+use crate::data::Subject;
 use crate::simulator::likelihood::SubjectPredictions;
 use dashmap::DashMap;
 use lazy_static::lazy_static;
@@ -8,11 +9,20 @@ const CACHE_SIZE: usize = 10000;
 
 #[derive(Clone, Debug, PartialEq, Hash)]
 struct CacheKey {
-    subject: String,
+    subject: SubjectHash,
     support_point: SupportPointHash,
 }
 
 impl Eq for CacheKey {}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct SubjectHash(u64);
+
+impl SubjectHash {
+    fn new(subject: &Subject) -> Self {
+        SubjectHash(subject.hash())
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct SupportPointHash(u64);
@@ -33,9 +43,9 @@ lazy_static! {
     static ref CACHE: DashMap<CacheKey, SubjectPredictions> = DashMap::with_capacity(CACHE_SIZE);
 }
 
-pub(crate) fn get_entry(subject: &str, support_point: &Vec<f64>) -> Option<SubjectPredictions> {
+pub(crate) fn get_entry(subject: &Subject, support_point: &Vec<f64>) -> Option<SubjectPredictions> {
     let cache_key = CacheKey {
-        subject: subject.to_owned(),
+        subject: SubjectHash::new(subject),
         support_point: SupportPointHash::new(support_point),
     };
 
@@ -46,12 +56,12 @@ pub(crate) fn get_entry(subject: &str, support_point: &Vec<f64>) -> Option<Subje
 }
 
 pub(crate) fn insert_entry(
-    subject: &str,
+    subject: &Subject,
     support_point: &Vec<f64>,
     predictions: SubjectPredictions,
 ) {
     let cache_key = CacheKey {
-        subject: subject.to_owned(),
+        subject: SubjectHash::new(subject),
         support_point: SupportPointHash::new(support_point),
     };
 

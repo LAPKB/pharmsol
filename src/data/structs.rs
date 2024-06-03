@@ -1,5 +1,6 @@
 use crate::data::*;
 use serde::Deserialize;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::{collections::HashMap, fmt};
 
 /// [Data] is a collection of [Subject]s, which are collections of [Occasion]s, which are collections of [Event]s
@@ -132,6 +133,39 @@ impl Subject {
     }
     pub fn id(&self) -> &String {
         &self.id
+    }
+
+    // Hasher for subject
+    pub fn hash(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+
+        // Hash the subject ID
+        self.id().hash(&mut hasher);
+
+        // Hash each occasion
+        for occasion in &self.occasions() {
+            occasion.index().hash(&mut hasher);
+            for event in &occasion.events {
+                match event {
+                    Event::Observation(observation) => {
+                        observation.time().to_bits().hash(&mut hasher);
+                        observation.value().to_bits().hash(&mut hasher);
+                        observation.outeq().hash(&mut hasher);
+                    }
+                    Event::Infusion(infusion) => {
+                        infusion.time().to_bits().hash(&mut hasher);
+                        infusion.duration().to_bits().hash(&mut hasher);
+                        infusion.amount().to_bits().hash(&mut hasher);
+                    }
+                    Event::Bolus(bolus) => {
+                        bolus.time().to_bits().hash(&mut hasher);
+                        bolus.amount().to_bits().hash(&mut hasher);
+                    }
+                }
+            }
+        }
+
+        hasher.finish()
     }
 }
 
