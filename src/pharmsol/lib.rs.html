@@ -69,6 +69,10 @@
 <a href="#67" id="67">67</a>
 <a href="#68" id="68">68</a>
 <a href="#69" id="69">69</a>
+<a href="#70" id="70">70</a>
+<a href="#71" id="71">71</a>
+<a href="#72" id="72">72</a>
+<a href="#73" id="73">73</a>
 </pre></div><pre class="rust"><code><span class="kw">pub mod </span>data;
 <span class="kw">pub mod </span>simulator;
 
@@ -120,7 +124,11 @@
     </span><span class="macro">macro_rules!</span> fetch_cov {
         (<span class="macro-nonterminal">$cov</span>:expr, <span class="macro-nonterminal">$t</span>:expr, $(<span class="macro-nonterminal">$name</span>:ident),<span class="kw-2">*</span>) =&gt; {
             $(
-                <span class="kw">let </span><span class="macro-nonterminal">$name </span>= <span class="macro-nonterminal">$cov</span>.get_covariate(<span class="macro">stringify!</span>(<span class="macro-nonterminal">$name</span>)).unwrap().interpolate(<span class="macro-nonterminal">$t</span>).unwrap();
+                <span class="kw">let </span><span class="macro-nonterminal">$name </span>= <span class="kw">match </span><span class="macro-nonterminal">$cov</span>.get_covariate(<span class="macro">stringify!</span>(<span class="macro-nonterminal">$name</span>)) {
+                    <span class="prelude-val">Some</span>(cov) =&gt; cov.interpolate(<span class="macro-nonterminal">$t</span>).unwrap(),
+                    <span class="prelude-val">None </span>=&gt; <span class="macro">panic!</span>(<span class="string">"Covariate {} not found"</span>, <span class="macro">stringify!</span>(<span class="macro-nonterminal">$name</span>)),
+                };
+
             )*
         };
     }
