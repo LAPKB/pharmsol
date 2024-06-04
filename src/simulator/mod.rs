@@ -69,6 +69,7 @@ impl Equation {
         let lag = self.get_lag(support_point);
         let fa = self.get_fa(support_point);
         let mut yout = vec![];
+
         for occasion in subject.occasions() {
             // Check for a cache entry
             let pred = get_entry(subject, support_point);
@@ -77,6 +78,7 @@ impl Equation {
             }
             // What should we use as the initial state for the next occasion?
             let covariates = occasion.get_covariates().unwrap();
+
             //TODO: set the right initial condition when occasion > 1
             let mut x = V::zeros(self.get_nstates());
             (init)(&V::from_vec(support_point.clone()), 0.0, covariates, &mut x);

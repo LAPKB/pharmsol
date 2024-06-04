@@ -49,7 +49,11 @@ pub mod prelude {
     macro_rules! fetch_cov {
         ($cov:expr, $t:expr, $($name:ident),*) => {
             $(
-                let $name = $cov.get_covariate(stringify!($name)).unwrap().interpolate($t).unwrap();
+                let $name = match $cov.get_covariate(stringify!($name)) {
+                    Some(cov) => cov.interpolate($t).unwrap(),
+                    None => panic!("Covariate {} not found", stringify!($name)),
+                };
+
             )*
         };
     }
