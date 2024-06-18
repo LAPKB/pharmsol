@@ -6,25 +6,17 @@ mod ode;
 use ndarray::{parallel::prelude::*, Axis};
 use std::collections::HashMap;
 
-// use self::likelihood::{PopulationPredictions, SubjectPredictions};
 use crate::{
     data::{Covariates, Data, Event, Infusion, Subject},
     simulator::likelihood::{PopulationPredictions, SubjectPredictions, ToPrediction},
 };
 
-// use dashmap::mapref::entry::Entry;
-// use dashmap::DashMap;
-// use lazy_static::lazy_static;
-use ndarray::prelude::*;
-// use ndarray::Array1;
 use cache::*;
+use ndarray::prelude::*;
 use ndarray::Array2;
 
 type T = f64;
-//  type V = faer::Col<T>;
-//  type M = faer::Mat<T>;
 type V = nalgebra::DVector<T>;
-//  type V = nalgebra::SVector<T, 2>;
 type M = nalgebra::DMatrix<T>;
 
 pub type DiffEq = fn(&V, &V, T, &mut V, V, &Covariates);
@@ -76,12 +68,14 @@ impl Equation {
             if let Some(pred) = pred {
                 return pred;
             }
-            // What should we use as the initial state for the next occasion?
             let covariates = occasion.get_covariates().unwrap();
 
-            //TODO: set the right initial condition when occasion > 1
+            // if occasion == 0, we use the init closure to get the initial state
+            // otherwise we initialize the state vector to zero
             let mut x = V::zeros(self.get_nstates());
-            (init)(&V::from_vec(support_point.clone()), 0.0, covariates, &mut x);
+            if occasion.index() == 0 {
+                (init)(&V::from_vec(support_point.clone()), 0.0, covariates, &mut x);
+            }
             let mut infusions: Vec<Infusion> = vec![];
             let events = occasion.get_events(Some(&lag), Some(&fa), true);
             for (index, event) in events.iter().enumerate() {
@@ -136,18 +130,15 @@ impl Equation {
         end_time: T,
     ) -> V {
         match self {
-            Equation::ODE(eqn, _, _, _, _, _) => {
-                // unimplemented!("Not implemented");
-                ode::simulate_ode_event(
-                    eqn,
-                    x,
-                    support_point,
-                    covariates,
-                    infusions,
-                    start_time,
-                    end_time,
-                )
-            }
+            Equation::ODE(eqn, _, _, _, _, _) => ode::simulate_ode_event(
+                eqn,
+                x,
+                support_point,
+                covariates,
+                infusions,
+                start_time,
+                end_time,
+            ),
             Equation::SDE(_, _, _, _, _, _, _) => {
                 unimplemented!("Not Implemented");
             }
