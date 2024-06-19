@@ -25,7 +25,7 @@ pub(crate) fn simulate_analytical_event(
             rateiv[infusion.input()] = infusion.amount() / infusion.duration();
         }
     }
-    (seq_eq)(&mut support_point, cov);
+    (seq_eq)(&mut support_point, tf, cov);
     (eq)(&x, &support_point, tf - ti, rateiv, cov)
 }
 
