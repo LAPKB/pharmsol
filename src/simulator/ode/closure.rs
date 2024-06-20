@@ -1,11 +1,11 @@
-use std::{cell::RefCell, rc::Rc};
-
+use diffsol::matrix::sparsity::MatrixSparsity;
 use diffsol::{
     jacobian::JacobianColoring,
     matrix::Matrix,
     op::{NonLinearOp, Op, OpStatistics},
     vector::Vector,
 };
+use std::{cell::RefCell, rc::Rc};
 
 use crate::data::{Covariates, Infusion};
 pub(crate) struct PMClosure<M, F>
@@ -71,8 +71,8 @@ where
     fn nparams(&self) -> usize {
         self.nparams
     }
-    fn sparsity(&self) -> Option<&<Self::M as Matrix>::Sparsity> {
-        self.sparsity.as_ref()
+    fn sparsity(&self) -> Option<<Self::M as Matrix>::SparsityRef<'_>> {
+        self.sparsity.as_ref().map(|s| s.as_ref())
     }
     fn statistics(&self) -> OpStatistics {
         self.statistics.borrow().clone()

@@ -212,9 +212,9 @@ checksum = "e6ca96b45ca70b8045e0462f191bd209fcb3c3bfe8dbfb1257ada54c4dd59169"
 
 [[package]]
 name = "diffsol"
-version = "0.1.9"
+version = "0.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb0cfe3df35a6788160ec6821d12f50afcd203a79aafcd157be112d343ec68ff"
+checksum = "8c163a6e2b484ed2ae9fa40535d35116e5ebd988c8068bf89a59b1fc69a7328c"
 dependencies = [
  "anyhow",
  "faer",
@@ -813,7 +813,7 @@ dependencies = [
 
 [[package]]
 name = "pharmsol"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "argmin",
