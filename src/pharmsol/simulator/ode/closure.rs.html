@@ -112,14 +112,14 @@
 <a href="#112" id="112">112</a>
 <a href="#113" id="113">113</a>
 <a href="#114" id="114">114</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>std::{cell::RefCell, rc::Rc};
-
+</pre></div><pre class="rust"><code><span class="kw">use </span>diffsol::matrix::sparsity::MatrixSparsity;
 <span class="kw">use </span>diffsol::{
     jacobian::JacobianColoring,
     matrix::Matrix,
     op::{NonLinearOp, Op, OpStatistics},
     vector::Vector,
 };
+<span class="kw">use </span>std::{cell::RefCell, rc::Rc};
 
 <span class="kw">use </span><span class="kw">crate</span>::data::{Covariates, Infusion};
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>PMClosure&lt;M, F&gt;
@@ -185,8 +185,8 @@
     <span class="kw">fn </span>nparams(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
         <span class="self">self</span>.nparams
     }
-    <span class="kw">fn </span>sparsity(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>&lt;<span class="self">Self</span>::M <span class="kw">as </span>Matrix&gt;::Sparsity&gt; {
-        <span class="self">self</span>.sparsity.as_ref()
+    <span class="kw">fn </span>sparsity(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;&lt;<span class="self">Self</span>::M <span class="kw">as </span>Matrix&gt;::SparsityRef&lt;<span class="lifetime">'_</span>&gt;&gt; {
+        <span class="self">self</span>.sparsity.as_ref().map(|s| s.as_ref())
     }
     <span class="kw">fn </span>statistics(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; OpStatistics {
         <span class="self">self</span>.statistics.borrow().clone()
