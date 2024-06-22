@@ -110,7 +110,7 @@ impl From<Array2<SubjectPredictions>> for PopulationPredictions {
 }
 
 /// Prediction holds an observation and its prediction
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Prediction {
     time: f64,
     observation: f64,
@@ -134,6 +134,15 @@ impl Prediction {
     }
     pub fn errorpoly(&self) -> Option<(f64, f64, f64, f64)> {
         self.errorpoly
+    }
+    pub fn percentage_error(&self) -> f64 {
+        ((self.prediction - self.observation) / self.observation) * 100.0
+    }
+    pub fn absolute_error(&self) -> f64 {
+        (self.prediction - self.observation).abs()
+    }
+    pub fn squared_error(&self) -> f64 {
+        (self.prediction - self.observation).powi(2)
     }
 }
 
