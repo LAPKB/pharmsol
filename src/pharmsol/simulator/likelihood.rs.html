@@ -175,6 +175,15 @@
 <a href="#175" id="175">175</a>
 <a href="#176" id="176">176</a>
 <a href="#177" id="177">177</a>
+<a href="#178" id="178">178</a>
+<a href="#179" id="179">179</a>
+<a href="#180" id="180">180</a>
+<a href="#181" id="181">181</a>
+<a href="#182" id="182">182</a>
+<a href="#183" id="183">183</a>
+<a href="#184" id="184">184</a>
+<a href="#185" id="185">185</a>
+<a href="#186" id="186">186</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::data::{error_model::ErrorModel, Observation};
 
 <span class="kw">use </span>ndarray::{Array1, Array2, Axis};
@@ -287,7 +296,7 @@
 }
 
 <span class="doccomment">/// Prediction holds an observation and its prediction
-</span><span class="attr">#[derive(Debug, Clone)]
+</span><span class="attr">#[derive(Debug, Clone, Copy)]
 </span><span class="kw">pub struct </span>Prediction {
     time: f64,
     observation: f64,
@@ -311,6 +320,15 @@
     }
     <span class="kw">pub fn </span>errorpoly(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;(f64, f64, f64, f64)&gt; {
         <span class="self">self</span>.errorpoly
+    }
+    <span class="kw">pub fn </span>percentage_error(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
+        ((<span class="self">self</span>.prediction - <span class="self">self</span>.observation) / <span class="self">self</span>.observation) * <span class="number">100.0
+    </span>}
+    <span class="kw">pub fn </span>absolute_error(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
+        (<span class="self">self</span>.prediction - <span class="self">self</span>.observation).abs()
+    }
+    <span class="kw">pub fn </span>squared_error(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
+        (<span class="self">self</span>.prediction - <span class="self">self</span>.observation).powi(<span class="number">2</span>)
     }
 }
 
