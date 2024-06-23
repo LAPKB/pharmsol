@@ -184,6 +184,9 @@
 <a href="#184" id="184">184</a>
 <a href="#185" id="185">185</a>
 <a href="#186" id="186">186</a>
+<a href="#187" id="187">187</a>
+<a href="#188" id="188">188</a>
+<a href="#189" id="189">189</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::data::{error_model::ErrorModel, Observation};
 
 <span class="kw">use </span>ndarray::{Array1, Array2, Axis};
@@ -320,6 +323,9 @@
     }
     <span class="kw">pub fn </span>errorpoly(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;(f64, f64, f64, f64)&gt; {
         <span class="self">self</span>.errorpoly
+    }
+    <span class="kw">pub fn </span>prediction_error(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
+        <span class="self">self</span>.prediction - <span class="self">self</span>.observation
     }
     <span class="kw">pub fn </span>percentage_error(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
         ((<span class="self">self</span>.prediction - <span class="self">self</span>.observation) / <span class="self">self</span>.observation) * <span class="number">100.0
