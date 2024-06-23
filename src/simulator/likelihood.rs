@@ -135,6 +135,9 @@ impl Prediction {
     pub fn errorpoly(&self) -> Option<(f64, f64, f64, f64)> {
         self.errorpoly
     }
+    pub fn prediction_error(&self) -> f64 {
+        self.prediction - self.observation
+    }
     pub fn percentage_error(&self) -> f64 {
         ((self.prediction - self.observation) / self.observation) * 100.0
     }
