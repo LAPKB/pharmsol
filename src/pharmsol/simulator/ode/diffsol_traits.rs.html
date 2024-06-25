@@ -86,7 +86,7 @@
     </span><span class="kw">let </span>rhs = Rc::new(rhs);
     <span class="kw">let </span>init = ConstantClosure::new(init, p.clone());
     <span class="kw">let </span>init = Rc::new(init);
-    <span class="kw">let </span>eqn = OdeSolverEquations::new(rhs, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>, init, p);
+    <span class="kw">let </span>eqn = OdeSolverEquations::new(rhs, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>, init, <span class="prelude-val">None</span>, p);
     <span class="kw">let </span>atol = M::V::from_element(nstates, M::T::from(atol));
     OdeSolverProblem::new(
         eqn,
