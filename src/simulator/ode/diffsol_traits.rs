@@ -36,7 +36,7 @@ where
     let rhs = Rc::new(rhs);
     let init = ConstantClosure::new(init, p.clone());
     let init = Rc::new(init);
-    let eqn = OdeSolverEquations::new(rhs, None, None, init, p);
+    let eqn = OdeSolverEquations::new(rhs, None, None, init, None, p);
     let atol = M::V::from_element(nstates, M::T::from(atol));
     OdeSolverProblem::new(
         eqn,
