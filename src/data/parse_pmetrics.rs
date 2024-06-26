@@ -103,6 +103,20 @@ pub fn read_pmetrics(path: &Path) -> Result<Data, Box<dyn Error>> {
 
                 let mut covariate = Covariate::new(name.clone(), vec![]);
 
+                // If only one occurence, add a single segment to infinity
+                if occurrences.len() == 1 {
+                    let (time, value) = occurrences[0];
+                    covariate.add_segment(CovariateSegment::new(
+                        time,
+                        f64::INFINITY,
+                        InterpolationMethod::CarryForward {
+                            value: value.unwrap(),
+                        },
+                    ));
+                    covariates.add_covariate(name, covariate);
+                    continue;
+                }
+
                 let mut last_value = None;
                 for i in 0..occurrences.len() {
                     let (time, value) = occurrences[i];
