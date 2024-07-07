@@ -23,3 +23,4 @@ ndarray = { version = "0.15.6", features = ["rayon"] }
 rayon = "1.10.0"
 serde = { version= "1.0.201", features = ["derive"] }
 serde_json = "1.0.117"
+thiserror = "1.0.61"

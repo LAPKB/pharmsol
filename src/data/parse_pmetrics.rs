@@ -2,15 +2,42 @@ use crate::data::*;
 use serde::de::{MapAccess, Visitor};
 use serde::{de, Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
+use std::fmt;
 use std::path::Path;
 use std::str::FromStr;
-use std::{error::Error, fmt};
+use thiserror::Error;
+
+/// Custom error type for the module
+#[allow(private_interfaces)]
+#[derive(Error, Debug)]
+pub enum PmetricsError {
+    #[error("CSV error: {0}")]
+    ReadError(#[from] csv::Error),
+    #[error("Parse error: {0}")]
+    SerdeError(#[from] serde::de::value::Error),
+    #[error("Unknown EVID: {evid} for ID {id} at time {time}")]
+    UnknownEvid { evid: isize, id: String, time: f64 },
+    #[error("Observation OUT is missing for {id} at time {time}")]
+    MissingObservationOut { id: String, time: f64 },
+    #[error("Observation OUTEQ is missing in for {id} at time {time}")]
+    MissingObservationOuteq { id: String, time: f64 },
+    #[error("Infusion amount (DOSE) is missing for {id} at time {time}")]
+    MissingInfusionDose { id: String, time: f64 },
+    #[error("Infusion compartment (INPUT) is missing for {id} at time {time}")]
+    MissingInfusionInput { id: String, time: f64 },
+    #[error("Infusion duration (DUR) is missing for {id} at time {time}")]
+    MissingInfusionDur { id: String, time: f64 },
+    #[error("Bolus amount (DOSE) is missing for {id} at time {time}")]
+    MissingBolusDose { id: String, time: f64 },
+    #[error("Bolus compartment (INPUT) is missing for {id} at time {time}")]
+    MissingBolusInput { id: String, time: f64 },
+}
 
 /// Read a Pmetrics datafile and convert it to a [Data] object
 ///
 /// For specific details, see the [Row] struct.
 #[allow(dead_code)]
-pub fn read_pmetrics(path: &Path) -> Result<Data, Box<dyn Error>> {
+pub fn read_pmetrics(path: &Path) -> Result<Data, PmetricsError> {
     let mut reader = csv::ReaderBuilder::new()
         .comment(Some(b'#'))
         .has_headers(true)
@@ -68,7 +95,7 @@ pub fn read_pmetrics(path: &Path) -> Result<Data, Box<dyn Error>> {
 
             // Parse events
             for row in rows.clone() {
-                let event: Event = Event::from(row);
+                let event: Event = Event::try_from(row.clone())?;
                 events.push(event);
             }
 
@@ -235,36 +262,65 @@ impl Row {
     }
 }
 
-impl From<Row> for Event {
-    fn from(row: Row) -> Self {
+impl TryFrom<Row> for Event {
+    type Error = PmetricsError;
+
+    fn try_from(row: Row) -> Result<Self, Self::Error> {
         match row.evid {
-            0 => Event::Observation(Observation::new(
+            0 => Ok(Event::Observation(Observation::new(
                 row.time,
-                row.out.expect("Observation OUT is missing"),
-                row.outeq.expect("Observation OUTEQ is missing") - 1,
+                row.out
+                    .ok_or_else(|| PmetricsError::MissingObservationOut {
+                        id: row.id.clone(),
+                        time: row.time.clone(),
+                    })?,
+                row.outeq
+                    .ok_or_else(|| PmetricsError::MissingObservationOuteq {
+                        id: row.id.clone(),
+                        time: row.time.clone(),
+                    })?
+                    - 1,
                 row.get_errorpoly(),
                 row.out == Some(-99.0),
-            )),
+            ))),
             1 | 4 => {
                 if row.dur.unwrap_or(0.0) > 0.0 {
-                    Event::Infusion(Infusion::new(
+                    Ok(Event::Infusion(Infusion::new(
                         row.time,
-                        row.dose.expect("Infusion amount (DOSE) is missing"),
-                        row.input.expect("Infusion compartment (INPUT) is missing") - 1,
-                        row.dur.expect("Infusion duration (DUR) is missing"),
-                    ))
+                        row.dose.ok_or_else(|| PmetricsError::MissingInfusionDose {
+                            id: row.id.clone(),
+                            time: row.time.clone(),
+                        })?,
+                        row.input
+                            .ok_or_else(|| PmetricsError::MissingInfusionInput {
+                                id: row.id.clone(),
+                                time: row.time.clone(),
+                            })?
+                            - 1,
+                        row.dur.ok_or_else(|| PmetricsError::MissingInfusionDur {
+                            id: row.id.clone(),
+                            time: row.time.clone(),
+                        })?,
+                    )))
                 } else {
-                    Event::Bolus(Bolus::new(
+                    Ok(Event::Bolus(Bolus::new(
                         row.time,
-                        row.dose.expect("Bolus amount (DOSE) is missing"),
-                        row.input.expect("Bolus compartment (INPUT) is missing") - 1,
-                    ))
+                        row.dose.ok_or_else(|| PmetricsError::MissingBolusDose {
+                            id: row.id.clone(),
+                            time: row.time.clone(),
+                        })?,
+                        row.input.ok_or_else(|| PmetricsError::MissingBolusInput {
+                            id: row.id.clone(),
+                            time: row.time.clone(),
+                        })? - 1,
+                    )))
                 }
             }
-            _ => panic!(
-                "Unknown EVID: {} for ID {} at time {}",
-                row.evid, row.id, row.time
-            ),
+            _ => Err(PmetricsError::UnknownEvid {
+                evid: row.evid,
+                id: row.id.clone(),
+                time: row.time,
+            }),
         }
     }
 }
