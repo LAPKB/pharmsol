@@ -12,6 +12,9 @@ pub struct Data {
     subjects: Vec<Subject>,
 }
 impl Data {
+    /// Constructs a new [Data] object from a vector of [Subject]s
+    /// 
+    /// It is recommended that the subjects are constructed using the [builder::SubjectBuilder] to ensure that the data is correctly formatted
     pub fn new(subjects: Vec<Subject>) -> Self {
         Data { subjects }
     }
@@ -209,6 +212,7 @@ impl Occasion {
         }
     }
 
+    /// Get the index of the occasion
     pub fn index(&self) -> usize {
         self.index
     }
