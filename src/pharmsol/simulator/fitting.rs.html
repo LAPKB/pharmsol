@@ -121,8 +121,8 @@
         <span class="prelude-val">Ok</span>(<span class="self">self
             </span>.equation
             .simulate_subject(<span class="self">self</span>.subject, point.to_vec().as_ref())
-            .squared_error())
-    }
+            .squared_error()) <span class="comment">//TODO: Change this to use the D function
+    </span>}
 }
 
 <span class="kw">impl</span>&lt;<span class="lifetime">'a</span>&gt; SppOptimizer&lt;<span class="lifetime">'a</span>&gt; {
