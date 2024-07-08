@@ -1,5 +1,7 @@
 mod EM;
 
+use std::process::abort;
+
 use nalgebra::DVector;
 
 use crate::{
@@ -21,6 +23,8 @@ pub(crate) fn simulate_sde_event(
     if ti == tf {
         return x;
     }
+    dbg!(ti, tf);
+    dbg!(&x);
     let mut sde = EM::SDE::new(
         drift.clone(),
         difussion.clone(),
@@ -28,5 +32,8 @@ pub(crate) fn simulate_sde_event(
         x,
     );
     let solution = sde.solve(ti, tf, 1);
-    solution.last().unwrap().clone().into()
+    let a: V = solution.last().unwrap().clone().into();
+    dbg!(&a);
+    abort();
+    a
 }

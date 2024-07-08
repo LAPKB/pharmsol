@@ -295,6 +295,9 @@ impl Equation {
                             }
                             Event::Observation(observation) => {
                                 let mut pred = Vec::with_capacity(nparticles);
+                                for _ in 0..nparticles {
+                                    pred.push(0.0);
+                                }
                                 pred.par_iter_mut().enumerate().for_each(|(i, p)| {
                                     let mut y = V::zeros(self.get_nouteqs());
                                     (out)(
@@ -313,7 +316,7 @@ impl Equation {
                                     .collect();
                                 let sum_q: f64 = q.iter().sum();
                                 let py = sum_q / nparticles as f64;
-                                ll.push(py);
+                                ll.push(py.ln());
 
                                 let w: Vec<f64> = q.iter().map(|qi| qi / sum_q).collect();
                                 let i = sysresample(&w);
@@ -338,7 +341,7 @@ impl Equation {
                     }
                 }
                 // let pred: SubjectPredictions = yout.into();
-                ll.iter().sum::<f64>().exp() // Should return the log likelihood?
+                ll.iter().sum::<f64>().exp()
             }
         }
     }
@@ -468,7 +471,7 @@ impl Equation {
     fn get_lag(&self, spp: &[f64]) -> HashMap<usize, f64> {
         match self {
             Equation::ODE(_, lag, _, _, _, _) => (lag)(&V::from_vec(spp.to_owned())),
-            Equation::SDE(_, _, _, _, _, _, _) => unimplemented!("Not Implemented"),
+            Equation::SDE(_, _, lag, _, _, _, _) => (lag)(&V::from_vec(spp.to_owned())),
             Equation::Analytical(_, _, lag, _, _, _, _) => (lag)(&V::from_vec(spp.to_owned())),
         }
     }
@@ -476,7 +479,7 @@ impl Equation {
     fn get_fa(&self, spp: &[f64]) -> HashMap<usize, f64> {
         match self {
             Equation::ODE(_, _, fa, _, _, _) => (fa)(&V::from_vec(spp.to_owned())),
-            Equation::SDE(_, _, _, _, _, _, _) => unimplemented!("Not Implemented"),
+            Equation::SDE(_, _, _, fa, _, _, _) => (fa)(&V::from_vec(spp.to_owned())),
             Equation::Analytical(_, _, _, fa, _, _, _) => (fa)(&V::from_vec(spp.to_owned())),
         }
     }
