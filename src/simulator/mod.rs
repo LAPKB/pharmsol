@@ -4,14 +4,15 @@ pub mod fitting;
 pub(crate) mod likelihood;
 mod ode;
 mod sde;
-use ndarray::{parallel::prelude::*, Axis};
-use sde::simulate_sde_event;
-use std::collections::HashMap;
-
 use crate::{
     data::{Covariates, Data, Event, Infusion, Subject},
     simulator::likelihood::{PopulationPredictions, SubjectPredictions, ToPrediction},
 };
+use ndarray::{parallel::prelude::*, Axis};
+use rand::prelude::*;
+use rayon::prelude::*;
+use sde::simulate_sde_event;
+use std::collections::HashMap;
 
 use cache::*;
 use ndarray::prelude::*;
@@ -179,6 +180,34 @@ pub type Fa = fn(&V) -> HashMap<usize, T>;
 ///
 pub type Neqs = (usize, usize);
 
+/// Probability density function
+fn normpdf(x: f64, mean: f64, std: f64) -> f64 {
+    let variance = std * std;
+    (1.0 / (std * (2.0 * std::f64::consts::PI).sqrt()))
+        * (-((x - mean) * (x - mean)) / (2.0 * variance)).exp()
+}
+fn sysresample(q: &[f64]) -> Vec<usize> {
+    let mut qc = vec![0.0; q.len()];
+    qc[0] = q[0];
+    for i in 1..q.len() {
+        qc[i] = qc[i - 1] + q[i];
+    }
+    let m = q.len();
+    let mut rng = thread_rng();
+    let u: Vec<f64> = (0..m)
+        .map(|i| (i as f64 + rng.gen::<f64>()) / m as f64)
+        .collect();
+    let mut i = vec![0; m];
+    let mut k = 0;
+    for j in 0..m {
+        while qc[k] < u[j] {
+            k += 1;
+        }
+        i[j] = k;
+    }
+    i
+}
+
 #[derive(Debug, Clone)]
 pub enum Equation {
     ODE(DiffEq, Lag, Fa, Init, Out, Neqs),
@@ -238,47 +267,73 @@ impl Equation {
                     let covariates = occasion.get_covariates().unwrap();
                     // if occasion == 0, we use the init closure to get the initial state
                     // otherwise we initialize the state vector to zero
-                    let mut x = V::zeros(self.get_nstates());
+                    let mut initial = V::zeros(self.get_nstates());
                     if occasion.index() == 0 {
-                        (init)(&V::from_vec(support_point.clone()), 0.0, covariates, &mut x);
+                        (init)(
+                            &V::from_vec(support_point.clone()),
+                            0.0,
+                            covariates,
+                            &mut initial,
+                        );
                     }
+                    let mut x = Vec::with_capacity(nparticles);
+                    for _ in 0..nparticles {
+                        x.push(initial.clone());
+                    }
+
                     let mut infusions: Vec<Infusion> = vec![];
                     let events = occasion.get_events(Some(&lag), Some(&fa), true);
                     for (index, event) in events.iter().enumerate() {
                         match event {
                             Event::Bolus(bolus) => {
-                                x[bolus.input()] += bolus.amount();
+                                x.par_iter_mut().for_each(|particle| {
+                                    particle[bolus.input()] += bolus.amount();
+                                });
                             }
                             Event::Infusion(infusion) => {
                                 infusions.push(infusion.clone());
                             }
                             Event::Observation(observation) => {
-                                let mut y = V::zeros(self.get_nouteqs());
-                                (out)(
-                                    &x,
-                                    &V::from_vec(support_point.clone()),
-                                    observation.time(),
-                                    covariates,
-                                    &mut y,
-                                );
-                                let pred = y[observation.outeq()];
+                                let mut pred = Vec::with_capacity(nparticles);
+                                pred.par_iter_mut().enumerate().for_each(|(i, p)| {
+                                    let mut y = V::zeros(self.get_nouteqs());
+                                    (out)(
+                                        &x[i],
+                                        &V::from_vec(support_point.clone()),
+                                        observation.time(),
+                                        covariates,
+                                        &mut y,
+                                    );
+                                    *p = y[observation.outeq()];
+                                });
 
-                                //
-                                // ll.push()
+                                let q: Vec<f64> = pred
+                                    .par_iter()
+                                    .map(|xi| normpdf(observation.value() - xi, 0.0, 0.5))
+                                    .collect();
+                                let sum_q: f64 = q.iter().sum();
+                                let py = sum_q / nparticles as f64;
+                                ll.push(py);
+
+                                let w: Vec<f64> = q.iter().map(|qi| qi / sum_q).collect();
+                                let i = sysresample(&w);
+                                x = i.iter().map(|&i| x[i].clone()).collect();
                             }
                         }
 
                         if let Some(next_event) = events.get(index + 1) {
-                            x = simulate_sde_event(
-                                drift,
-                                difussion,
-                                x,
-                                support_point,
-                                covariates,
-                                &infusions,
-                                event.get_time(),
-                                next_event.get_time(),
-                            );
+                            x.par_iter_mut().for_each(|particle| {
+                                *particle = simulate_sde_event(
+                                    drift,
+                                    difussion,
+                                    particle.clone(),
+                                    support_point,
+                                    covariates,
+                                    &infusions,
+                                    event.get_time(),
+                                    next_event.get_time(),
+                                );
+                            });
                         }
                     }
                 }
