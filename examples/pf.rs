@@ -1,4 +1,3 @@
-use nalgebra::DVector;
 use pharmsol::*;
 fn main() {
     let subject = data::Subject::builder("id1")
@@ -15,7 +14,10 @@ fn main() {
             dx[0] = -x[0] * x[1];
             dx[1] = -x[1] + p[0];
         },
-        |_p| DVector::from_column_slice(&[1.0, 0.01]),
+        |_p, d| {
+            d[0] = 1.0;
+            d[1] = 0.01;
+        },
         |_p| lag! {},
         |_p| fa! {},
         |_p, _t, _cov, x| x[1] = 1.0,

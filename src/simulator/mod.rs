@@ -76,10 +76,9 @@ pub type Drift = DiffEq;
 /// This closure represents the diffusion term of the model:
 /// Params:
 /// - p: The parameters of the model; Use the [fetch_params!] macro to extract the parameters
-/// Returns:
-/// - A vector of the diffusion term for each state variable
+/// - d: A mutable reference to the diffusion term for each state variable
 /// (This vector should have the same length as the x, and dx vectors on the drift closure)
-pub type Diffusion = fn(&V) -> V;
+pub type Diffusion = fn(&V, &mut V);
 /// This closure represents the initial state of the system:
 /// Params:
 /// - p: The parameters of the model; Use the [fetch_params!] macro to extract the parameters

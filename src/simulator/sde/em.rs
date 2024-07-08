@@ -43,7 +43,8 @@ impl SDE {
             &Covariates::default(),
         );
 
-        let diffusion_term = (self.diffusion)(&self.params.clone());
+        let mut diffusion_term = DVector::zeros(n);
+        (self.diffusion)(&self.params.clone(), &mut diffusion_term);
         let mut rng = thread_rng();
         // let mut rng = StdRng::seed_from_u64(0);
         for i in 0..n {
