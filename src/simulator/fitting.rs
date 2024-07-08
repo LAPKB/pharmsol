@@ -21,7 +21,7 @@ impl<'a> CostFunction for SppOptimizer<'a> {
         Ok(self
             .equation
             .simulate_subject(self.subject, point.to_vec().as_ref())
-            .squared_error())
+            .squared_error()) //TODO: Change this to use the D function
     }
 }
 

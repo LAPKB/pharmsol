@@ -3,7 +3,9 @@ mod cache;
 pub mod fitting;
 pub(crate) mod likelihood;
 mod ode;
+mod sde;
 use ndarray::{parallel::prelude::*, Axis};
+use sde::simulate_sde_event;
 use std::collections::HashMap;
 
 use crate::{
@@ -38,6 +40,46 @@ type M = nalgebra::DMatrix<T>;
 /// };
 pub type DiffEq = fn(&V, &V, T, &mut V, V, &Covariates);
 
+/// This closure represents an Analytical solution of the model, see [analytical] module for examples.
+/// Params:
+/// - x: The state vector at time t
+/// - p: The parameters of the model; Use the [fetch_params!] macro to extract the parameters
+/// - t: The time at which the output equation is evaluated
+/// - rateiv: A vector of infusion rates at time t
+/// - cov: A reference to the covariates at time t; Use the [fetch_cov!] macro to extract the covariates
+/// TODO: Remove covariates. They are not used in the analytical solution
+pub type AnalyticalEq = fn(&V, &V, T, V, &Covariates) -> V;
+
+/// This closure represents the drift term of the model:
+/// Params:
+/// - x: The state vector at time t
+/// - p: The parameters of the model; Use the [fetch_params!] macro to extract the parameters
+/// - t: The time at which the drift term is evaluated
+/// - dx: A mutable reference to the derivative of the state vector at time t
+/// - rateiv: A vector of infusion rates at time t
+/// - cov: A reference to the covariates at time t; Use the [fetch_cov!] macro to extract the covariates
+/// Example:
+/// ```ignore
+/// use pharmsol::*;
+/// let drift = |x, p, t, dx, rateiv, cov| {
+/// fetch_params!(p, mka, mke, v);
+/// fetch_cov!(cov, t, wt);
+/// ka = dx[2];
+/// ke = dx[3];
+/// dx[0] = -ka * x[0];
+/// dx[1] = ka * x[0] - ke * x[1];
+/// dx[2] = -dx[2] + mka; // Mean reverting to mka
+/// dx[3] = -dx[3] + mke; // Mean reverting to mke
+/// };
+pub type Drift = DiffEq;
+
+/// This closure represents the diffusion term of the model:
+/// Params:
+/// - p: The parameters of the model; Use the [fetch_params!] macro to extract the parameters
+/// Returns:
+/// - A vector of the diffusion term for each state variable
+/// (This vector should have the same length as the x, and dx vectors on the drift closure)
+pub type Diffusion = fn(&V) -> V;
 /// This closure represents the initial state of the system:
 /// Params:
 /// - p: The parameters of the model; Use the [fetch_params!] macro to extract the parameters
@@ -47,7 +89,7 @@ pub type DiffEq = fn(&V, &V, T, &mut V, V, &Covariates);
 /// Example:
 /// ```ignore
 /// use pharmsol::*;
-/// let init = |p, _t, cov, x| {
+/// let init = |p, t, cov, x| {
 ///  fetch_params!(p, ka, ke, v);
 ///  fetch_cov!(cov, t, wt);
 ///  x[0] = 500.0;
@@ -70,16 +112,6 @@ pub type Init = fn(&V, T, &Covariates, &mut V);
 ///   y[0] = x[1] / v;
 /// };
 pub type Out = fn(&V, &V, T, &Covariates, &mut V);
-
-/// This closure represents an Analytical solution of the model, see [analytical] module for examples.
-/// Params:
-/// - x: The state vector at time t
-/// - p: The parameters of the model; Use the [fetch_params!] macro to extract the parameters
-/// - t: The time at which the output equation is evaluated
-/// - rateiv: A vector of infusion rates at time t
-/// - cov: A reference to the covariates at time t; Use the [fetch_cov!] macro to extract the covariates
-/// TODO: Remove covariates. They are not used in the analytical solution
-pub type AnalyticalEq = fn(&V, &V, T, V, &Covariates) -> V;
 
 /// This closure represents the secondary equation of the model, secondary equations are used to update
 /// the parameter values based on the covariates.
@@ -150,7 +182,7 @@ pub type Neqs = (usize, usize);
 #[derive(Debug, Clone)]
 pub enum Equation {
     ODE(DiffEq, Lag, Fa, Init, Out, Neqs),
-    SDE(DiffEq, DiffEq, Lag, Fa, Init, Out, Neqs),
+    SDE(Drift, Diffusion, Lag, Fa, Init, Out, Neqs),
     Analytical(AnalyticalEq, SecEq, Lag, Fa, Init, Out, Neqs),
 }
 
@@ -170,11 +202,102 @@ impl Equation {
         Equation::Analytical(eq, seq_eq, lag, fa, init, out, neqs)
     }
 
+    pub fn new_sde(
+        drift: Drift,
+        diffusion: Diffusion,
+        lag: Lag,
+        fa: Fa,
+        init: Init,
+        out: Out,
+        neqs: Neqs,
+    ) -> Self {
+        Equation::SDE(drift, diffusion, lag, fa, init, out, neqs)
+    }
+
+    pub fn particle_filter(
+        &self,
+        subject: &Subject,
+        support_point: &Vec<f64>,
+        nparticles: usize,
+    ) -> f64 {
+        match self {
+            Equation::ODE(_, _, _, _, _, _) => {
+                unimplemented!("Particle Filter not implemented for ODE models")
+            }
+            Equation::Analytical(_, _, _, _, _, _, _) => {
+                unimplemented!("Particle Filter not implemented for Analytical models")
+            }
+            Equation::SDE(drift, difussion, _, _, _, _, _) => {
+                let init = self.get_init();
+                let out = self.get_out();
+                let lag = self.get_lag(support_point);
+                let fa = self.get_fa(support_point);
+                let mut ll = vec![];
+
+                for occasion in subject.occasions() {
+                    let covariates = occasion.get_covariates().unwrap();
+                    // if occasion == 0, we use the init closure to get the initial state
+                    // otherwise we initialize the state vector to zero
+                    let mut x = V::zeros(self.get_nstates());
+                    if occasion.index() == 0 {
+                        (init)(&V::from_vec(support_point.clone()), 0.0, covariates, &mut x);
+                    }
+                    let mut infusions: Vec<Infusion> = vec![];
+                    let events = occasion.get_events(Some(&lag), Some(&fa), true);
+                    for (index, event) in events.iter().enumerate() {
+                        match event {
+                            Event::Bolus(bolus) => {
+                                x[bolus.input()] += bolus.amount();
+                            }
+                            Event::Infusion(infusion) => {
+                                infusions.push(infusion.clone());
+                            }
+                            Event::Observation(observation) => {
+                                let mut y = V::zeros(self.get_nouteqs());
+                                (out)(
+                                    &x,
+                                    &V::from_vec(support_point.clone()),
+                                    observation.time(),
+                                    covariates,
+                                    &mut y,
+                                );
+                                let pred = y[observation.outeq()];
+
+                                //
+                                // ll.push()
+                            }
+                        }
+
+                        if let Some(next_event) = events.get(index + 1) {
+                            x = simulate_sde_event(
+                                drift,
+                                difussion,
+                                x,
+                                support_point,
+                                covariates,
+                                &infusions,
+                                event.get_time(),
+                                next_event.get_time(),
+                            );
+                        }
+                    }
+                }
+                // let pred: SubjectPredictions = yout.into();
+                ll.iter().sum::<f64>().exp() // Should return the log likelihood?
+            }
+        }
+    }
+
     pub fn simulate_subject(
         &self,
         subject: &Subject,
         support_point: &Vec<f64>,
     ) -> SubjectPredictions {
+        // Check for a cache entry
+        let pred = get_entry(subject, support_point);
+        if let Some(pred) = pred {
+            return pred;
+        }
         let init = self.get_init();
         let out = self.get_out();
         let lag = self.get_lag(support_point);
@@ -182,11 +305,6 @@ impl Equation {
         let mut yout = vec![];
 
         for occasion in subject.occasions() {
-            // Check for a cache entry
-            let pred = get_entry(subject, support_point);
-            if let Some(pred) = pred {
-                return pred;
-            }
             let covariates = occasion.get_covariates().unwrap();
 
             // if occasion == 0, we use the init closure to get the initial state
