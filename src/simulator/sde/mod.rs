@@ -1,12 +1,10 @@
-mod EM;
-
-use std::process::abort;
+mod em;
 
 use nalgebra::DVector;
 
 use crate::{
     data::{Covariates, Infusion},
-    simulator::{Diffusion, Drift, M, T, V},
+    simulator::{Diffusion, Drift, V},
 };
 
 #[inline(always)]
@@ -15,25 +13,21 @@ pub(crate) fn simulate_sde_event(
     difussion: &Diffusion,
     x: V,
     support_point: &[f64],
-    cov: &Covariates,
-    infusions: &[Infusion],
+    _cov: &Covariates,
+    _infusions: &[Infusion],
     ti: f64,
     tf: f64,
 ) -> V {
     if ti == tf {
         return x;
     }
-    dbg!(ti, tf);
-    dbg!(&x);
-    let mut sde = EM::SDE::new(
+
+    let mut sde = em::SDE::new(
         drift.clone(),
         difussion.clone(),
         DVector::from_column_slice(support_point),
         x,
     );
-    let solution = sde.solve(ti, tf, 1);
-    let a: V = solution.last().unwrap().clone().into();
-    dbg!(&a);
-    abort();
-    a
+    let solution = sde.solve(ti, tf, 2000);
+    solution.last().unwrap().clone().into()
 }

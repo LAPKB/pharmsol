@@ -10,7 +10,6 @@ use crate::{
 };
 use ndarray::{parallel::prelude::*, Axis};
 use rand::prelude::*;
-use rayon::prelude::*;
 use sde::simulate_sde_event;
 use std::collections::HashMap;
 

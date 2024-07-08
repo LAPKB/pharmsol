@@ -15,8 +15,7 @@ fn main() {
             dx[0] = -x[0] * x[1];
             dx[1] = -x[1] + p[0];
         },
-        // |_p| DVector::from_column_slice(&[1.0, 0.01]),
-        |_p| DVector::from_column_slice(&[0.0, 0.0]),
+        |_p| DVector::from_column_slice(&[1.0, 0.01]),
         |_p| lag! {},
         |_p| fa! {},
         |_p, _t, _cov, x| x[1] = 1.0,
@@ -26,6 +25,6 @@ fn main() {
         (2, 1),
     );
 
-    let ll = ode.particle_filter(&subject, &vec![1.0], 1);
+    let ll = ode.particle_filter(&subject, &vec![1.0], 10000);
     println!("{ll:#?}");
 }
