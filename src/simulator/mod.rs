@@ -6,6 +6,7 @@ mod ode;
 mod sde;
 use crate::{
     data::{Covariates, Data, Event, Infusion, Subject},
+    error_model::ErrorModel,
     simulator::likelihood::{PopulationPredictions, SubjectPredictions, ToPrediction},
 };
 use ndarray::{parallel::prelude::*, Axis};
@@ -178,12 +179,6 @@ pub type Fa = fn(&V) -> HashMap<usize, T>;
 ///
 pub type Neqs = (usize, usize);
 
-/// Probability density function
-fn normpdf(x: f64, mean: f64, std: f64) -> f64 {
-    let variance = std * std;
-    (1.0 / (std * (2.0 * std::f64::consts::PI).sqrt()))
-        * (-((x - mean) * (x - mean)) / (2.0 * variance)).exp()
-}
 fn sysresample(q: &[f64]) -> Vec<usize> {
     let mut qc = vec![0.0; q.len()];
     qc[0] = q[0];
@@ -246,6 +241,7 @@ impl Equation {
         subject: &Subject,
         support_point: &Vec<f64>,
         nparticles: usize,
+        error_model: &ErrorModel,
     ) -> f64 {
         match self {
             Equation::ODE(_, _, _, _, _, _) => {
@@ -307,11 +303,10 @@ impl Equation {
                                     );
                                     *p = y[observation.outeq()];
                                 });
-
-                                let q: Vec<f64> = pred
-                                    .par_iter()
-                                    .map(|xi| normpdf(observation.value() - xi, 0.0, 0.5))
-                                    .collect();
+                                let mut q: Vec<f64> = Vec::with_capacity(pred.len());
+                                pred.iter().for_each(|p| {
+                                    q.push(observation.to_obs_pred(*p).likelihood(error_model))
+                                });
                                 let sum_q: f64 = q.iter().sum();
                                 let py = sum_q / nparticles as f64;
                                 ll.push(py.ln());

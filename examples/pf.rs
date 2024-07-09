@@ -1,3 +1,4 @@
+use error_model::ErrorModel;
 use pharmsol::*;
 fn main() {
     let subject = data::Subject::builder("id1")
@@ -26,7 +27,8 @@ fn main() {
         },
         (2, 1),
     );
+    let em = ErrorModel::new((0.5, 0.0, 0.0, 0.0), 0.0, &error_model::ErrorType::Add);
 
-    let ll = ode.particle_filter(&subject, &vec![1.0], 10000);
+    let ll = ode.particle_filter(&subject, &vec![1.0], 10000, &em);
     println!("{ll:#?}");
 }

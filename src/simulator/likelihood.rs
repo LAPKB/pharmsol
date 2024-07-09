@@ -3,6 +3,9 @@ use crate::data::{error_model::ErrorModel, Observation};
 use ndarray::{Array1, Array2, Axis};
 use rayon::prelude::*;
 
+const FRAC_1_SQRT_2PI: f64 =
+    std::f64::consts::FRAC_2_SQRT_PI * std::f64::consts::FRAC_1_SQRT_2 / 2.0;
+
 #[derive(Debug, Clone, Default)]
 pub struct SubjectPredictions {
     predictions: Vec<Prediction>,
@@ -28,14 +31,10 @@ impl SubjectPredictions {
     }
 
     pub(crate) fn likelihood(&self, error_model: &ErrorModel) -> f64 {
-        //TODO: This sigma should not be calculated here, we should precalculate it and inject it into the struct
-        let sigma: Array1<f64> = self
-            .predictions
+        self.predictions
             .iter()
-            .map(|p| error_model.estimate_sigma(p))
-            .collect();
-
-        normal_likelihood(&self.flat_predictions, &self.flat_observations, &sigma)
+            .map(|p| p.likelihood(error_model))
+            .product()
     }
 
     pub(crate) fn squared_error(&self) -> f64 {
@@ -45,18 +44,12 @@ impl SubjectPredictions {
             .sum()
     }
 }
-fn normal_likelihood(
-    predictions: &Array1<f64>,
-    observations: &Array1<f64>,
-    sigma: &Array1<f64>,
-) -> f64 {
-    const FRAC_1_SQRT_2PI: f64 =
-        std::f64::consts::FRAC_2_SQRT_PI * std::f64::consts::FRAC_1_SQRT_2 / 2.0;
-    let diff = (observations - predictions).mapv(|x| x.powi(2));
-    let two_sigma_sq = (2.0 * sigma).mapv(|x| x.powi(2));
-    let aux_vec = FRAC_1_SQRT_2PI * (-&diff / two_sigma_sq).mapv(|x| x.exp()) / sigma;
-    aux_vec.product()
+
+/// Probability density function
+fn normpdf(obs: f64, pred: f64, sigma: f64) -> f64 {
+    (FRAC_1_SQRT_2PI / sigma) * (-((obs - pred) * (obs - pred)) / (2.0 * sigma * sigma)).exp()
 }
+
 impl From<Vec<Prediction>> for SubjectPredictions {
     fn from(predictions: Vec<Prediction>) -> Self {
         Self {
@@ -146,6 +139,10 @@ impl Prediction {
     }
     pub fn squared_error(&self) -> f64 {
         (self.prediction - self.observation).powi(2)
+    }
+    pub fn likelihood(&self, error_model: &ErrorModel) -> f64 {
+        let sigma = error_model.estimate_sigma(self);
+        normpdf(self.observation, self.prediction, sigma)
     }
 }
 
