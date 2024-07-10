@@ -1,7 +1,12 @@
-use crate::data::{error_model::ErrorModel, Observation};
+use crate::{
+    data::{error_model::ErrorModel, Observation},
+    Data,
+};
 
-use ndarray::{Array1, Array2, Axis};
+use ndarray::{Array1, Array2, Axis, ShapeBuilder};
 use rayon::prelude::*;
+
+use super::Equation;
 
 const FRAC_1_SQRT_2PI: f64 =
     std::f64::consts::FRAC_2_SQRT_PI * std::f64::consts::FRAC_1_SQRT_2 / 2.0;
@@ -100,6 +105,37 @@ impl From<Array2<SubjectPredictions>> for PopulationPredictions {
             subject_predictions,
         }
     }
+}
+
+pub fn pf_psi(
+    equation: &Equation,
+    subjects: &Data,
+    support_points: &Array2<f64>,
+    error_model: &ErrorModel,
+    nparticles: usize,
+) -> Array2<f64> {
+    let mut psi: Array2<f64> = Array2::default((subjects.len(), support_points.nrows()).f());
+    psi.axis_iter_mut(Axis(0))
+        .into_par_iter()
+        .enumerate()
+        .for_each(|(i, mut row)| {
+            row.axis_iter_mut(Axis(0))
+                .into_par_iter()
+                .enumerate()
+                .for_each(|(j, mut element)| {
+                    let subjects = subjects.get_subjects();
+                    let subject = subjects.get(i).unwrap();
+                    let ll = equation.particle_filter(
+                        subject,
+                        support_points.row(j).to_vec().as_ref(),
+                        nparticles,
+                        error_model,
+                    );
+
+                    element.fill(ll);
+                });
+        });
+    psi
 }
 
 /// Prediction holds an observation and its prediction
