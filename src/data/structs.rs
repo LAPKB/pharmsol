@@ -12,15 +12,41 @@ pub struct Data {
     subjects: Vec<Subject>,
 }
 impl Data {
+    /// Constructs a new [Data] object from a vector of [Subject]s
+    /// 
+    /// It is recommended that the subjects are constructed using the [builder::SubjectBuilder] to ensure that the data is correctly formatted
     pub fn new(subjects: Vec<Subject>) -> Self {
         Data { subjects }
     }
+    /// Get a vector of references to all [Subject]s in the [Data]
     pub fn get_subjects(&self) -> Vec<&Subject> {
         self.subjects.iter().collect()
     }
+    /// Add a [Subject] to the [Data]
     pub fn add_subject(&mut self, subject: Subject) {
         self.subjects.push(subject);
     }
+    /// Filter the [Data] to include only the [Subject]s with IDs in the include vector
+    pub fn filter_include(&self, include: &Vec<String>) -> Data {
+        let subjects = self
+            .subjects
+            .iter()
+            .filter(|subject| include.iter().any(|id| id == subject.id()))
+            .cloned()
+            .collect();
+        Data::new(subjects)
+    }
+    /// Filter the [Data] to exclude the [Subject]s with IDs in the exclude vector
+    pub fn filter_exclude(&self, exclude: Vec<String>) -> Data {
+        let subjects = self
+            .subjects
+            .iter()
+            .filter(|subject| !exclude.iter().any(|id| id == subject.id()))
+            .cloned()
+            .collect();
+        Data::new(subjects)
+    }
+    /// Expand the data by adding observations at intervals of idelta
     pub fn expand(&self, idelta: f64, tad: f64) -> Data {
         if idelta <= 0.0 {
             return self.clone();
@@ -186,6 +212,7 @@ impl Occasion {
         }
     }
 
+    /// Get the index of the occasion
     pub fn index(&self) -> usize {
         self.index
     }
@@ -334,5 +361,144 @@ impl fmt::Display for Occasion {
 
         writeln!(f, "  Covariates:\n{}", self.covariates)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::prelude::*;
+
+    fn create_sample_data() -> Data {
+        let subject1 = Subject::builder("subject1")
+            .observation(1.0, 10.0, 1)
+            .bolus(2.0, 50.0, 1)
+            .infusion(3.0, 100.0, 1, 1.0)
+            .covariate("age", 0.0, 30.0)
+            .covariate("weight", 0.0, 70.0)
+            .reset()
+            .observation(4.0, 20.0, 2)
+            .bolus(5.0, 60.0, 2)
+            .infusion(6.0, 120.0, 2, 2.0)
+            .covariate("age", 0.0, 31.0)
+            .covariate("weight", 0.0, 75.0)
+            .build();
+
+        let subject2 = Subject::builder("subject2")
+            .observation(1.5, 15.0, 1)
+            .bolus(2.5, 55.0, 1)
+            .infusion(3.5, 110.0, 1, 1.5)
+            .covariate("age", 0.0, 25.0)
+            .covariate("weight", 0.0, 65.0)
+            .reset()
+            .observation(4.5, 25.0, 2)
+            .bolus(5.5, 65.0, 2)
+            .infusion(6.5, 130.0, 2, 2.5)
+            .covariate("age", 0.0, 26.0)
+            .covariate("weight", 0.0, 68.0)
+            .build();
+
+        Data::new(vec![subject1, subject2])
+    }
+
+    #[test]
+    fn test_new_data() {
+        let data = create_sample_data();
+        assert_eq!(data.len(), 2);
+    }
+
+    #[test]
+    fn test_get_subjects() {
+        let data = create_sample_data();
+        let subjects = data.get_subjects();
+        assert_eq!(subjects.len(), 2);
+        assert_eq!(subjects[0].id(), "subject1");
+        assert_eq!(subjects[1].id(), "subject2");
+    }
+
+    #[test]
+    fn test_add_subject() {
+        let mut data = create_sample_data();
+        let new_subject = Subject::builder("subject3")
+            .observation(1.0, 10.0, 1)
+            .bolus(2.0, 50.0, 1)
+            .infusion(3.0, 100.0, 1, 1.0)
+            .covariate("age", 0.0, 30.0)
+            .covariate("weight", 0.0, 70.0)
+            .build();
+        data.add_subject(new_subject);
+        assert_eq!(data.len(), 3);
+        assert_eq!(data.get_subjects()[2].id(), "subject3");
+    }
+
+    #[test]
+    fn test_filter_include() {
+        let data = create_sample_data();
+        let include = vec!["subject1".to_string()];
+        let filtered_data = data.filter_include(&include);
+        assert_eq!(filtered_data.get_subjects().len(), 1);
+        assert_eq!(filtered_data.get_subjects()[0].id(), "subject1");
+    }
+
+    #[test]
+    fn test_filter_exclude() {
+        let data = create_sample_data();
+        let filtered_data = data.filter_exclude(vec!["subject1".to_string()]);
+        assert_eq!(filtered_data.len(), 1);
+        assert_eq!(filtered_data.get_subjects()[0].id(), "subject2");
+    }
+
+    #[test]
+    fn test_subject_hash() {
+        let subject = Subject::builder("subject1")
+            .observation(1.0, 10.0, 1)
+            .bolus(2.0, 50.0, 1)
+            .infusion(3.0, 100.0, 1, 1.0)
+            .covariate("age", 0.0, 30.0)
+            .covariate("weight", 0.0, 70.0)
+            .build();
+        let hash = subject.hash();
+        // Just check that hash is computed without errors
+        assert!(hash > 0);
+    }
+
+    #[test]
+    fn test_occasion_sort() {
+        let mut occasion = Occasion::new(
+            vec![
+                Event::Observation(Observation::new(2.0, 1.0, 1, None, false)),
+                Event::Bolus(Bolus::new(1.0, 100.0, 1)),
+            ],
+            Covariates::new(),
+            1,
+        );
+        occasion.sort();
+        let events = occasion.get_events(None, None, false);
+        match &events[0] {
+            Event::Bolus(b) => assert_eq!(b.time(), 1.0),
+            _ => panic!("First event should be a Bolus"),
+        }
+        match &events[1] {
+            Event::Observation(o) => assert_eq!(o.time(), 2.0),
+            _ => panic!("Second event should be an Observation"),
+        }
+    }
+
+    #[test]
+    fn test_event_get_events_with_ignore() {
+        let occasion = Occasion::new(
+            vec![
+                Event::Observation(Observation::new(1.0, 1.0, 1, None, false)),
+                Event::Observation(Observation::new(2.0, 2.0, 2, None, true)),
+            ],
+            Covariates::new(),
+            1,
+        );
+        let events = occasion.get_events(None, None, true);
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            Event::Observation(o) => assert_eq!(o.time(), 1.0),
+            _ => panic!("Event should be an Observation"),
+        }
     }
 }
