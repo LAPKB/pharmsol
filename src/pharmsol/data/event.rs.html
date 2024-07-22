@@ -153,6 +153,20 @@
 <a href="#153" id="153">153</a>
 <a href="#154" id="154">154</a>
 <a href="#155" id="155">155</a>
+<a href="#156" id="156">156</a>
+<a href="#157" id="157">157</a>
+<a href="#158" id="158">158</a>
+<a href="#159" id="159">159</a>
+<a href="#160" id="160">160</a>
+<a href="#161" id="161">161</a>
+<a href="#162" id="162">162</a>
+<a href="#163" id="163">163</a>
+<a href="#164" id="164">164</a>
+<a href="#165" id="165">165</a>
+<a href="#166" id="166">166</a>
+<a href="#167" id="167">167</a>
+<a href="#168" id="168">168</a>
+<a href="#169" id="169">169</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::fmt;
 
 <span class="kw">use </span>serde::Deserialize;
@@ -175,6 +189,8 @@
 }
 
 <span class="doccomment">/// An instantaenous input of drug
+///
+/// An amount of drug is added to a compartment at a specific time
 </span><span class="attr">#[derive(Debug, Clone, Deserialize)]
 </span><span class="kw">pub struct </span>Bolus {
     time: f64,
@@ -189,16 +205,20 @@
             input,
         }
     }
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>amount(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
+    <span class="doccomment">/// Get the amount of the bolus, often the dose
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>amount(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
         <span class="self">self</span>.amount
     }
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>input(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+    <span class="doccomment">/// Get the input compartment of the bolus, i.e. the compartment the drug is added to
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>input(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
         <span class="self">self</span>.input
     }
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>time(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
+    <span class="doccomment">/// Get the time of the bolus
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>time(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
         <span class="self">self</span>.time
     }
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>mut_time(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;mut </span>f64 {
+    <span class="doccomment">/// Get a mutable reference to the time of the bolus
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>mut_time(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;mut </span>f64 {
         <span class="kw-2">&amp;mut </span><span class="self">self</span>.time
     }
 }
@@ -220,19 +240,22 @@
             duration,
         }
     }
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>amount(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
+    <span class="doccomment">/// Get the total amount of drug provided over the infusion
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>amount(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
         <span class="self">self</span>.amount
     }
-
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>input(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+    <span class="doccomment">/// Get the input compartment of the infusion, i.e. the compartment the drug is added to
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>input(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
         <span class="self">self</span>.input
     }
-
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>duration(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
+    <span class="doccomment">/// Get the duration of the infusion
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>duration(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
         <span class="self">self</span>.duration
     }
-
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>time(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
+    <span class="doccomment">/// Get the start time of the infusion
+    ///
+    /// The infusion starts at this time and until time + duration
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>time(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
         <span class="self">self</span>.time
     }
 }
@@ -262,19 +285,24 @@
             ignore,
         }
     }
-    <span class="kw">pub fn </span>time(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
+    <span class="doccomment">/// Get the time of the observation
+    </span><span class="kw">pub fn </span>time(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
         <span class="self">self</span>.time
     }
-    <span class="kw">pub fn </span>value(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
+    <span class="doccomment">/// Get the value of the observation, e.g. drug concentration
+    </span><span class="kw">pub fn </span>value(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
         <span class="self">self</span>.value
     }
-    <span class="kw">pub fn </span>outeq(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+    <span class="doccomment">/// Get the output equation number of the observation
+    </span><span class="kw">pub fn </span>outeq(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
         <span class="self">self</span>.outeq
     }
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>errorpoly(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;(f64, f64, f64, f64)&gt; {
+    <span class="doccomment">/// Get the error polynomial coefficients of the observation
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>errorpoly(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;(f64, f64, f64, f64)&gt; {
         <span class="self">self</span>.errorpoly
     }
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>ignore(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+    <span class="doccomment">/// Get whether the observation should be ignored
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>ignore(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
         <span class="self">self</span>.ignore
     }
 }
