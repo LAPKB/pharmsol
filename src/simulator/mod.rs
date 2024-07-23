@@ -339,6 +339,97 @@ impl Equation {
         }
     }
 
+    pub fn simulate_trajectories(
+        &self,
+        subject: &Subject,
+        support_point: &Vec<f64>,
+        nparticles: usize,
+    ) -> Vec<Vec<f64>> {
+        match self {
+            Equation::ODE(_, _, _, _, _, _) => {
+                unimplemented!("Particle Filter not implemented for ODE models")
+            }
+            Equation::Analytical(_, _, _, _, _, _, _) => {
+                unimplemented!("Particle Filter not implemented for Analytical models")
+            }
+            Equation::SDE(drift, difussion, _, _, _, _, _) => {
+                let init = self.get_init();
+                let out = self.get_out();
+                let lag = self.get_lag(support_point);
+                let fa = self.get_fa(support_point);
+                let mut trajectories = vec![];
+
+                for occasion in subject.occasions() {
+                    let covariates = occasion.get_covariates().unwrap();
+                    // if occasion == 0, we use the init closure to get the initial state
+                    // otherwise we initialize the state vector to zero
+                    let mut initial = V::zeros(self.get_nstates());
+                    if occasion.index() == 0 {
+                        (init)(
+                            &V::from_vec(support_point.clone()),
+                            0.0,
+                            covariates,
+                            &mut initial,
+                        );
+                    }
+                    let mut x = Vec::with_capacity(nparticles);
+                    for _ in 0..nparticles {
+                        x.push(initial.clone());
+                    }
+
+                    let mut infusions: Vec<Infusion> = vec![];
+                    let events = occasion.get_events(Some(&lag), Some(&fa), true);
+                    for (index, event) in events.iter().enumerate() {
+                        match event {
+                            Event::Bolus(bolus) => {
+                                x.par_iter_mut().for_each(|particle| {
+                                    particle[bolus.input()] += bolus.amount();
+                                });
+                            }
+                            Event::Infusion(infusion) => {
+                                infusions.push(infusion.clone());
+                            }
+                            Event::Observation(observation) => {
+                                let mut pred = Vec::with_capacity(nparticles);
+                                for _ in 0..nparticles {
+                                    pred.push(0.0);
+                                }
+                                pred.par_iter_mut().enumerate().for_each(|(i, p)| {
+                                    let mut y = V::zeros(self.get_nouteqs());
+                                    (out)(
+                                        &x[i],
+                                        &V::from_vec(support_point.clone()),
+                                        observation.time(),
+                                        covariates,
+                                        &mut y,
+                                    );
+                                    *p = y[observation.outeq()];
+                                });
+                                trajectories.push(pred.clone());
+                            }
+                        }
+
+                        if let Some(next_event) = events.get(index + 1) {
+                            x.par_iter_mut().for_each(|particle| {
+                                *particle = simulate_sde_event(
+                                    drift,
+                                    difussion,
+                                    particle.clone(),
+                                    support_point,
+                                    covariates,
+                                    &infusions,
+                                    event.get_time(),
+                                    next_event.get_time(),
+                                );
+                            });
+                        }
+                    }
+                }
+                trajectories
+            }
+        }
+    }
+
     pub fn simulate_subject(
         &self,
         subject: &Subject,
