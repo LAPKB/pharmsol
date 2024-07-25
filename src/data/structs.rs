@@ -1,4 +1,5 @@
 use crate::data::*;
+use csv::WriterBuilder;
 use serde::Deserialize;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::{collections::HashMap, fmt};
@@ -20,6 +21,72 @@ impl Data {
     }
     pub fn add_subject(&mut self, subject: Subject) {
         self.subjects.push(subject);
+    }
+    pub fn write_pmetrics(&self, file: &std::fs::File) {
+        let mut writer = WriterBuilder::new().has_headers(true).from_writer(file);
+
+        writer
+            .write_record(&[
+                "ID", "EVID", "TIME", "DUR", "DOSE", "ADDL", "II", "INPUT", "OUT", "OUTEQ",
+            ])
+            .unwrap();
+        for subject in self.get_subjects() {
+            for occasion in subject.occasions() {
+                for event in occasion.get_events(None, None, false) {
+                    match event {
+                        Event::Observation(obs) => {
+                            // Write each field individually
+                            writer
+                                .write_record(&[
+                                    &subject.id(),
+                                    &"0".to_string(),
+                                    &obs.time().to_string(),
+                                    &".".to_string(),
+                                    &".".to_string(),
+                                    &".".to_string(),
+                                    &".".to_string(),
+                                    &".".to_string(),
+                                    &obs.value().to_string(),
+                                    &obs.outeq().to_string(),
+                                ])
+                                .unwrap();
+                        }
+                        Event::Infusion(inf) => {
+                            writer
+                                .write_record(&[
+                                    &subject.id(),
+                                    &"1".to_string(),
+                                    &inf.time().to_string(),
+                                    &inf.duration().to_string(),
+                                    &inf.amount().to_string(),
+                                    &".".to_string(),
+                                    &".".to_string(),
+                                    &".".to_string(),
+                                    &".".to_string(),
+                                    &".".to_string(),
+                                ])
+                                .unwrap();
+                        }
+                        Event::Bolus(bol) => {
+                            writer
+                                .write_record(&[
+                                    &subject.id(),
+                                    &"1".to_string(),
+                                    &bol.time().to_string(),
+                                    &"0".to_string(),
+                                    &bol.amount().to_string(),
+                                    &".".to_string(),
+                                    &".".to_string(),
+                                    &bol.input().to_string(),
+                                    &".".to_string(),
+                                    &".".to_string(),
+                                ])
+                                .unwrap();
+                        }
+                    }
+                }
+            }
+        }
     }
     pub fn expand(&self, idelta: f64, tad: f64) -> Data {
         if idelta <= 0.0 {
