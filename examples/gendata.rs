@@ -1,6 +1,10 @@
 use std::{fs::File, path::Path};
 
+use anyhow::Error;
+use error_model::{ErrorModel, ErrorType};
+use ndarray::{Array1, Array2};
 use pharmsol::*;
+use prelude::simulator::pf_psi;
 use rand_distr::Distribution;
 fn main() {
     let subject = data::Subject::builder("id1")
@@ -56,5 +60,24 @@ fn main() {
     }
     let data = data::Data::new(data);
     data.write_pmetrics(&File::create(Path::new("test.csv")).unwrap());
-    dbg!(data);
+    let mut theta = Array2::zeros((1, 3));
+    theta[[0, 0]] = 0.7;
+    theta[[0, 1]] = 0.1;
+    theta[[0, 2]] = 50.0;
+
+    let ll = sde.particle_filter(
+        &data.get_subjects().first().unwrap(),
+        &vec![0.7, 0.1, 50.0],
+        1000,
+        &ErrorModel::new((0.0, 0.0, 0.0, 0.0), 0.5, &ErrorType::Add),
+    );
+
+    let ll = pf_psi(
+        &sde,
+        &data,
+        &theta,
+        &ErrorModel::new((0.0, 0.0, 0.0, 0.0), 0.5, &ErrorType::Add),
+        1000,
+    );
+    dbg!(ll);
 }

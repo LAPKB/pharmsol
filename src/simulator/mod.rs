@@ -236,6 +236,13 @@ impl Equation {
         Equation::SDE(drift, diffusion, lag, fa, init, out, neqs)
     }
 
+    pub fn is_sde(&self) -> bool {
+        match self {
+            Equation::SDE(_, _, _, _, _, _, _) => true,
+            _ => false,
+        }
+    }
+
     pub fn particle_filter(
         &self,
         subject: &Subject,
