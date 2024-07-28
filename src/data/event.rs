@@ -20,6 +20,8 @@ impl Event {
 }
 
 /// An instantaenous input of drug
+///
+/// An amount of drug is added to a compartment at a specific time
 #[derive(Debug, Clone, Deserialize)]
 pub struct Bolus {
     time: f64,
@@ -34,15 +36,19 @@ impl Bolus {
             input,
         }
     }
+    /// Get the amount of the bolus, often the dose
     pub(crate) fn amount(&self) -> f64 {
         self.amount
     }
+    /// Get the input compartment of the bolus, i.e. the compartment the drug is added to
     pub(crate) fn input(&self) -> usize {
         self.input
     }
+    /// Get the time of the bolus
     pub(crate) fn time(&self) -> f64 {
         self.time
     }
+    /// Get a mutable reference to the time of the bolus
     pub(crate) fn mut_time(&mut self) -> &mut f64 {
         &mut self.time
     }
@@ -65,18 +71,21 @@ impl Infusion {
             duration,
         }
     }
+    /// Get the total amount of drug provided over the infusion
     pub(crate) fn amount(&self) -> f64 {
         self.amount
     }
-
+    /// Get the input compartment of the infusion, i.e. the compartment the drug is added to
     pub(crate) fn input(&self) -> usize {
         self.input
     }
-
+    /// Get the duration of the infusion
     pub(crate) fn duration(&self) -> f64 {
         self.duration
     }
-
+    /// Get the start time of the infusion
+    ///
+    /// The infusion starts at this time and until time + duration
     pub(crate) fn time(&self) -> f64 {
         self.time
     }
@@ -107,18 +116,23 @@ impl Observation {
             ignore,
         }
     }
+    /// Get the time of the observation
     pub fn time(&self) -> f64 {
         self.time
     }
+    /// Get the value of the observation, e.g. drug concentration
     pub fn value(&self) -> f64 {
         self.value
     }
+    /// Get the output equation number of the observation
     pub fn outeq(&self) -> usize {
         self.outeq
     }
+    /// Get the error polynomial coefficients of the observation
     pub(crate) fn errorpoly(&self) -> Option<(f64, f64, f64, f64)> {
         self.errorpoly
     }
+    /// Get whether the observation should be ignored
     pub(crate) fn ignore(&self) -> bool {
         self.ignore
     }
