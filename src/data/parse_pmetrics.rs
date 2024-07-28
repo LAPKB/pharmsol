@@ -2,7 +2,6 @@ use crate::data::*;
 use serde::de::{MapAccess, Visitor};
 use serde::{de, Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
-use std::path::Path;
 use std::str::FromStr;
 use std::{error::Error, fmt};
 
@@ -10,7 +9,8 @@ use std::{error::Error, fmt};
 ///
 /// For specific details, see the [Row] struct.
 #[allow(dead_code)]
-pub fn read_pmetrics(path: &Path) -> Result<Data, Box<dyn Error>> {
+pub fn read_pmetrics(path: impl Into<String>) -> Result<Data, Box<dyn Error>> {
+    let path = path.into();
     let mut reader = csv::ReaderBuilder::new()
         .comment(Some(b'#'))
         .has_headers(true)

@@ -27,7 +27,8 @@ impl Data {
 
         writer
             .write_record(&[
-                "ID", "EVID", "TIME", "DUR", "DOSE", "ADDL", "II", "INPUT", "OUT", "OUTEQ",
+                "ID", "EVID", "TIME", "DUR", "DOSE", "ADDL", "II", "INPUT", "OUT", "OUTEQ", "C0",
+                "C1", "C2", "C3",
             ])
             .unwrap();
         for subject in self.get_subjects() {
@@ -47,7 +48,11 @@ impl Data {
                                     &".".to_string(),
                                     &".".to_string(),
                                     &obs.value().to_string(),
-                                    &obs.outeq().to_string(),
+                                    &(obs.outeq() + 1).to_string(),
+                                    &".".to_string(),
+                                    &".".to_string(),
+                                    &".".to_string(),
+                                    &".".to_string(),
                                 ])
                                 .unwrap();
                         }
@@ -59,6 +64,10 @@ impl Data {
                                     &inf.time().to_string(),
                                     &inf.duration().to_string(),
                                     &inf.amount().to_string(),
+                                    &".".to_string(),
+                                    &".".to_string(),
+                                    &".".to_string(),
+                                    &".".to_string(),
                                     &".".to_string(),
                                     &".".to_string(),
                                     &".".to_string(),
@@ -77,7 +86,11 @@ impl Data {
                                     &bol.amount().to_string(),
                                     &".".to_string(),
                                     &".".to_string(),
-                                    &bol.input().to_string(),
+                                    &(bol.input() + 1).to_string(),
+                                    &".".to_string(),
+                                    &".".to_string(),
+                                    &".".to_string(),
+                                    &".".to_string(),
                                     &".".to_string(),
                                     &".".to_string(),
                                 ])

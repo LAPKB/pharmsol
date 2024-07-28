@@ -1,6 +1,6 @@
 [package]
 name = "pharmsol"
-version = "0.2.4"
+version = "0.3.0"
 edition = "2021"
 authors = [
     "Julián D. Otálvaro <juliandavid347@gmail.com>",

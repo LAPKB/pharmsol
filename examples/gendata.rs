@@ -1,8 +1,7 @@
 use std::{fs::File, path::Path};
 
-use anyhow::Error;
 use error_model::{ErrorModel, ErrorType};
-use ndarray::{Array1, Array2};
+use ndarray::Array2;
 use pharmsol::*;
 use prelude::simulator::pf_psi;
 use rand_distr::Distribution;
@@ -43,10 +42,11 @@ fn main() {
     let v_dist = rand_distr::Normal::new(50.0, 10.0).unwrap();
 
     let mut support_points = vec![];
-    for _ in 0..10 {
+    for _ in 0..100 {
         let ke = ke_dist.sample(&mut rand::thread_rng());
         let v = v_dist.sample(&mut rand::thread_rng());
         support_points.push(vec![ke, 0.1, v]);
+        println!("{ke}, 0.1, {v}");
     }
 
     let mut data = vec![];
@@ -65,7 +65,7 @@ fn main() {
     theta[[0, 1]] = 0.1;
     theta[[0, 2]] = 50.0;
 
-    let ll = sde.particle_filter(
+    let _ll = sde.particle_filter(
         &data.get_subjects().first().unwrap(),
         &vec![0.7, 0.1, 50.0],
         1000,
