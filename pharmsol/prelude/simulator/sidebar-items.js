@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["PopulationPredictions","Prediction","SubjectPredictions"]};
+window.SIDEBAR_ITEMS = {"fn":["pf_psi"],"struct":["PopulationPredictions","Prediction","SubjectPredictions"]};

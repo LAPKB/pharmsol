@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `src/simulator/likelihood.rs`."><title>likelihood.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-46f98efaafac5295.ttf.woff2,FiraSans-Regular-018c141bf0843ffd.woff2,FiraSans-Medium-8f9a781e4970d388.woff2,SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2,SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../../static.files/rustdoc-081576b923113409.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="pharmsol" data-themes="" data-resource-suffix="" data-rustdoc-version="1.79.0 (129f3b996 2024-06-10)" data-channel="1.79.0" data-search-js="search-bf21c90c8c1d92b1.js" data-settings-js="settings-4313503d2e1961c2.js" ><script src="../../../static.files/storage-e32f0c247825364d.js"></script><script defer src="../../../static.files/src-script-e66d777a5a92e9b2.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-20a3ad099b048cf2.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-09095024cf37855e.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><nav class="sub"><form class="search-form"><span></span><div id="sidebar-button" tabindex="-1"><a href="../../../pharmsol/all.html" title="show sidebar"></a></div><input class="search-input" name="search" aria-label="Run search in the documentation" autocomplete="off" spellcheck="false" placeholder="Type ‘S’ or ‘/’ to search, ‘?’ for more options…" type="search"><div id="help-button" tabindex="-1"><a href="../../../help.html" title="help">?</a></div><div id="settings-menu" tabindex="-1"><a href="../../../settings.html" title="settings">Settings</a></div></form></nav><section id="main-content" class="content"><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers"><a href="#1" id="1">1</a>
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `src/simulator/likelihood.rs`."><title>likelihood.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-46f98efaafac5295.ttf.woff2,FiraSans-Regular-018c141bf0843ffd.woff2,FiraSans-Medium-8f9a781e4970d388.woff2,SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2,SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../../static.files/rustdoc-dd39b87e5fcfba68.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="pharmsol" data-themes="" data-resource-suffix="" data-rustdoc-version="1.80.0 (051478957 2024-07-21)" data-channel="1.80.0" data-search-js="search-d52510db62a78183.js" data-settings-js="settings-4313503d2e1961c2.js" ><script src="../../../static.files/storage-118b08c4c78b968e.js"></script><script defer src="../../../static.files/src-script-e66d777a5a92e9b2.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-20a3ad099b048cf2.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-df360f571f6edeae.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers"><a href="#1" id="1">1</a>
 <a href="#2" id="2">2</a>
 <a href="#3" id="3">3</a>
 <a href="#4" id="4">4</a>
@@ -187,10 +187,51 @@
 <a href="#187" id="187">187</a>
 <a href="#188" id="188">188</a>
 <a href="#189" id="189">189</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::data::{error_model::ErrorModel, Observation};
+<a href="#190" id="190">190</a>
+<a href="#191" id="191">191</a>
+<a href="#192" id="192">192</a>
+<a href="#193" id="193">193</a>
+<a href="#194" id="194">194</a>
+<a href="#195" id="195">195</a>
+<a href="#196" id="196">196</a>
+<a href="#197" id="197">197</a>
+<a href="#198" id="198">198</a>
+<a href="#199" id="199">199</a>
+<a href="#200" id="200">200</a>
+<a href="#201" id="201">201</a>
+<a href="#202" id="202">202</a>
+<a href="#203" id="203">203</a>
+<a href="#204" id="204">204</a>
+<a href="#205" id="205">205</a>
+<a href="#206" id="206">206</a>
+<a href="#207" id="207">207</a>
+<a href="#208" id="208">208</a>
+<a href="#209" id="209">209</a>
+<a href="#210" id="210">210</a>
+<a href="#211" id="211">211</a>
+<a href="#212" id="212">212</a>
+<a href="#213" id="213">213</a>
+<a href="#214" id="214">214</a>
+<a href="#215" id="215">215</a>
+<a href="#216" id="216">216</a>
+<a href="#217" id="217">217</a>
+<a href="#218" id="218">218</a>
+<a href="#219" id="219">219</a>
+<a href="#220" id="220">220</a>
+<a href="#221" id="221">221</a>
+<a href="#222" id="222">222</a>
+</pre></div><pre class="rust"><code><span class="kw">use crate</span>::{
+    data::{error_model::ErrorModel, Observation},
+    Data,
+};
 
-<span class="kw">use </span>ndarray::{Array1, Array2, Axis};
+<span class="kw">use </span>ndarray::{Array1, Array2, Axis, ShapeBuilder};
 <span class="kw">use </span>rayon::prelude::<span class="kw-2">*</span>;
+
+<span class="kw">use </span><span class="kw">super</span>::Equation;
+
+<span class="kw">const </span>FRAC_1_SQRT_2PI: f64 =
+    std::f64::consts::FRAC_2_SQRT_PI * std::f64::consts::FRAC_1_SQRT_2 / <span class="number">2.0</span>;
 
 <span class="attr">#[derive(Debug, Clone, Default)]
 </span><span class="kw">pub struct </span>SubjectPredictions {
@@ -217,14 +258,10 @@
     }
 
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>likelihood(<span class="kw-2">&amp;</span><span class="self">self</span>, error_model: <span class="kw-2">&amp;</span>ErrorModel) -&gt; f64 {
-        <span class="comment">//TODO: This sigma should not be calculated here, we should precalculate it and inject it into the struct
-        </span><span class="kw">let </span>sigma: Array1&lt;f64&gt; = <span class="self">self
-            </span>.predictions
+        <span class="self">self</span>.predictions
             .iter()
-            .map(|p| error_model.estimate_sigma(p))
-            .collect();
-
-        normal_likelihood(<span class="kw-2">&amp;</span><span class="self">self</span>.flat_predictions, <span class="kw-2">&amp;</span><span class="self">self</span>.flat_observations, <span class="kw-2">&amp;</span>sigma)
+            .map(|p| p.likelihood(error_model))
+            .product()
     }
 
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>squared_error(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
@@ -234,18 +271,12 @@
             .sum()
     }
 }
-<span class="kw">fn </span>normal_likelihood(
-    predictions: <span class="kw-2">&amp;</span>Array1&lt;f64&gt;,
-    observations: <span class="kw-2">&amp;</span>Array1&lt;f64&gt;,
-    sigma: <span class="kw-2">&amp;</span>Array1&lt;f64&gt;,
-) -&gt; f64 {
-    <span class="kw">const </span>FRAC_1_SQRT_2PI: f64 =
-        std::f64::consts::FRAC_2_SQRT_PI * std::f64::consts::FRAC_1_SQRT_2 / <span class="number">2.0</span>;
-    <span class="kw">let </span>diff = (observations - predictions).mapv(|x| x.powi(<span class="number">2</span>));
-    <span class="kw">let </span>two_sigma_sq = (<span class="number">2.0 </span>* sigma).mapv(|x| x.powi(<span class="number">2</span>));
-    <span class="kw">let </span>aux_vec = FRAC_1_SQRT_2PI * (-<span class="kw-2">&amp;</span>diff / two_sigma_sq).mapv(|x| x.exp()) / sigma;
-    aux_vec.product()
+
+<span class="doccomment">/// Probability density function
+</span><span class="kw">fn </span>normpdf(obs: f64, pred: f64, sigma: f64) -&gt; f64 {
+    (FRAC_1_SQRT_2PI / sigma) * (-((obs - pred) * (obs - pred)) / (<span class="number">2.0 </span>* sigma * sigma)).exp()
 }
+
 <span class="kw">impl </span>From&lt;Vec&lt;Prediction&gt;&gt; <span class="kw">for </span>SubjectPredictions {
     <span class="kw">fn </span>from(predictions: Vec&lt;Prediction&gt;) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
@@ -298,6 +329,37 @@
     }
 }
 
+<span class="kw">pub fn </span>pf_psi(
+    equation: <span class="kw-2">&amp;</span>Equation,
+    subjects: <span class="kw-2">&amp;</span>Data,
+    support_points: <span class="kw-2">&amp;</span>Array2&lt;f64&gt;,
+    error_model: <span class="kw-2">&amp;</span>ErrorModel,
+    nparticles: usize,
+) -&gt; Array2&lt;f64&gt; {
+    <span class="kw">let </span><span class="kw-2">mut </span>psi: Array2&lt;f64&gt; = Array2::default((subjects.len(), support_points.nrows()).f());
+    psi.axis_iter_mut(Axis(<span class="number">0</span>))
+        .into_par_iter()
+        .enumerate()
+        .for_each(|(i, <span class="kw-2">mut </span>row)| {
+            row.axis_iter_mut(Axis(<span class="number">0</span>))
+                .into_par_iter()
+                .enumerate()
+                .for_each(|(j, <span class="kw-2">mut </span>element)| {
+                    <span class="kw">let </span>subjects = subjects.get_subjects();
+                    <span class="kw">let </span>subject = subjects.get(i).unwrap();
+                    <span class="kw">let </span>ll = equation.particle_filter(
+                        subject,
+                        support_points.row(j).to_vec().as_ref(),
+                        nparticles,
+                        error_model,
+                    );
+
+                    element.fill(ll);
+                });
+        });
+    psi
+}
+
 <span class="doccomment">/// Prediction holds an observation and its prediction
 </span><span class="attr">#[derive(Debug, Clone, Copy)]
 </span><span class="kw">pub struct </span>Prediction {
@@ -335,6 +397,10 @@
     }
     <span class="kw">pub fn </span>squared_error(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
         (<span class="self">self</span>.prediction - <span class="self">self</span>.observation).powi(<span class="number">2</span>)
+    }
+    <span class="kw">pub fn </span>likelihood(<span class="kw-2">&amp;</span><span class="self">self</span>, error_model: <span class="kw-2">&amp;</span>ErrorModel) -&gt; f64 {
+        <span class="kw">let </span>sigma = error_model.estimate_sigma(<span class="self">self</span>);
+        normpdf(<span class="self">self</span>.observation, <span class="self">self</span>.prediction, sigma)
     }
 }
 
