@@ -310,16 +310,22 @@ impl Equation {
                                     );
                                     *p = y[observation.outeq()];
                                 });
+                                //e = y[t] .- x[:,1]
+                                // q = pdf.(Distributions.Normal(0, 0.5), e)
                                 let mut q: Vec<f64> = Vec::with_capacity(pred.len());
                                 pred.iter().for_each(|p| {
                                     q.push(observation.to_obs_pred(*p).likelihood(error_model))
                                 });
                                 let sum_q: f64 = q.iter().sum();
+                                //py = (1 / Np) * sum(q)
                                 let py = sum_q / nparticles as f64;
+                                //b[t] = log(py)
                                 ll.push(py.ln());
-
+                                //q = q ./ sum(q)
                                 let w: Vec<f64> = q.iter().map(|qi| qi / sum_q).collect();
+                                //ind = sysresample(q)
                                 let i = sysresample(&w);
+                                //x = x[ind,:]
                                 x = i.iter().map(|&i| x[i].clone()).collect();
                             }
                         }
@@ -504,6 +510,7 @@ impl Equation {
         insert_entry(subject, support_point, pred.clone());
         pred
     }
+
     #[inline(always)]
 
     fn simulate_event(

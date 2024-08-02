@@ -1,5 +1,6 @@
 mod closure;
 mod diffsol_traits;
+
 use crate::{
     data::{Covariates, Infusion},
     simulator::{DiffEq, M, T, V},
@@ -38,5 +39,6 @@ pub(crate) fn simulate_ode_event(
     )
     .unwrap();
     let mut solver = Bdf::default();
-    solver.solve(&problem, tf).unwrap()
+    let sol = solver.solve(&problem, tf).unwrap();
+    sol.0.last().unwrap().clone()
 }

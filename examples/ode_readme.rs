@@ -1,7 +1,8 @@
 fn main() {
+    use data::Subject;
     use pharmsol::*;
 
-    let subject = data::Subject::builder("id1")
+    let subject = Subject::builder("id1")
         .bolus(0.0, 100.0, 0)
         .repeat(2, 0.5)
         .observation(0.5, 0.1, 0)
@@ -9,7 +10,7 @@ fn main() {
         .observation(2.0, 1.0, 0)
         .observation(2.5, 1.1, 0)
         .build();
-    println!("{subject:#?}");
+    // println!("{subject:#?}");
     let ode = simulator::Equation::new_ode(
         |x, p, _t, dx, _rateiv, _cov| {
             fetch_cov!(cov, t,);

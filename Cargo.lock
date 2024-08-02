@@ -109,12 +109,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
 
 [[package]]
-name = "cc"
-version = "1.0.100"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c891175c3fb232128f48de6590095e59198bbeb8620c310be349bfc3afd12c7b"
-
-[[package]]
 name = "cfg-if"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -219,12 +213,10 @@ checksum = "e6ca96b45ca70b8045e0462f191bd209fcb3c3bfe8dbfb1257ada54c4dd59169"
 
 [[package]]
 name = "diffsol"
-version = "0.1.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f78ea17bb48628f22bf1b52c679c9ce925415adaab953981270dc527c5b90577"
+version = "0.2.0"
+source = "git+https://github.com/martinjrobins/diffsol#25a163a5768bcbd0eaabe150ff64a46d287fc9fd"
 dependencies = [
  "anyhow",
- "cc",
  "faer",
  "nalgebra",
  "nalgebra-sparse",
@@ -638,6 +630,8 @@ checksum = "1107e2587bc373090389bd5b54e05ac3184fd02d7c102decf5d76b8feb84b2d0"
 dependencies = [
  "nalgebra",
  "num-traits",
+ "pest",
+ "pest_derive",
 ]
 
 [[package]]
