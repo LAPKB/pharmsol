@@ -40,8 +40,11 @@
 <a href="#40" id="40">40</a>
 <a href="#41" id="41">41</a>
 <a href="#42" id="42">42</a>
+<a href="#43" id="43">43</a>
+<a href="#44" id="44">44</a>
 </pre></div><pre class="rust"><code><span class="kw">mod </span>closure;
 <span class="kw">mod </span>diffsol_traits;
+
 <span class="kw">use crate</span>::{
     data::{Covariates, Infusion},
     simulator::{DiffEq, M, T, V},
@@ -80,6 +83,7 @@
     )
     .unwrap();
     <span class="kw">let </span><span class="kw-2">mut </span>solver = Bdf::default();
-    solver.solve(<span class="kw-2">&amp;</span>problem, tf).unwrap()
+    <span class="kw">let </span>sol = solver.solve(<span class="kw-2">&amp;</span>problem, tf).unwrap();
+    sol.<span class="number">0</span>.last().unwrap().clone()
 }
 </code></pre></div></section></main></body></html>

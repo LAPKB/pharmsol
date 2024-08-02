@@ -616,6 +616,13 @@
 <a href="#616" id="616">616</a>
 <a href="#617" id="617">617</a>
 <a href="#618" id="618">618</a>
+<a href="#619" id="619">619</a>
+<a href="#620" id="620">620</a>
+<a href="#621" id="621">621</a>
+<a href="#622" id="622">622</a>
+<a href="#623" id="623">623</a>
+<a href="#624" id="624">624</a>
+<a href="#625" id="625">625</a>
 </pre></div><pre class="rust"><code><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>analytical;
 <span class="kw">mod </span>cache;
 <span class="kw">pub mod </span>fitting;
@@ -928,17 +935,23 @@
                                     );
                                     <span class="kw-2">*</span>p = y[observation.outeq()];
                                 });
-                                <span class="kw">let </span><span class="kw-2">mut </span>q: Vec&lt;f64&gt; = Vec::with_capacity(pred.len());
+                                <span class="comment">//e = y[t] .- x[:,1]
+                                // q = pdf.(Distributions.Normal(0, 0.5), e)
+                                </span><span class="kw">let </span><span class="kw-2">mut </span>q: Vec&lt;f64&gt; = Vec::with_capacity(pred.len());
                                 pred.iter().for_each(|p| {
                                     q.push(observation.to_obs_pred(<span class="kw-2">*</span>p).likelihood(error_model))
                                 });
                                 <span class="kw">let </span>sum_q: f64 = q.iter().sum();
-                                <span class="kw">let </span>py = sum_q / nparticles <span class="kw">as </span>f64;
-                                ll.push(py.ln());
-
-                                <span class="kw">let </span>w: Vec&lt;f64&gt; = q.iter().map(|qi| qi / sum_q).collect();
-                                <span class="kw">let </span>i = sysresample(<span class="kw-2">&amp;</span>w);
-                                x = i.iter().map(|<span class="kw-2">&amp;</span>i| x[i].clone()).collect();
+                                <span class="comment">//py = (1 / Np) * sum(q)
+                                </span><span class="kw">let </span>py = sum_q / nparticles <span class="kw">as </span>f64;
+                                <span class="comment">//b[t] = log(py)
+                                </span>ll.push(py.ln());
+                                <span class="comment">//q = q ./ sum(q)
+                                </span><span class="kw">let </span>w: Vec&lt;f64&gt; = q.iter().map(|qi| qi / sum_q).collect();
+                                <span class="comment">//ind = sysresample(q)
+                                </span><span class="kw">let </span>i = sysresample(<span class="kw-2">&amp;</span>w);
+                                <span class="comment">//x = x[ind,:]
+                                </span>x = i.iter().map(|<span class="kw-2">&amp;</span>i| x[i].clone()).collect();
                             }
                         }
 
@@ -1122,6 +1135,7 @@
         insert_entry(subject, support_point, pred.clone());
         pred
     }
+
     <span class="attr">#[inline(always)]
 
     </span><span class="kw">fn </span>simulate_event(
