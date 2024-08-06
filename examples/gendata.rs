@@ -1,15 +1,15 @@
 use std::{fs::File, path::Path};
 
-use error_model::{ErrorModel, ErrorType};
-use ndarray::Array2;
+// use error_model::{ErrorModel, ErrorType};
+// use ndarray::Array2;
 use pharmsol::*;
-use prelude::simulator::pf_psi;
+// use prelude::simulator::pf_psi;
 use rand_distr::Distribution;
 fn main() {
     let subject = data::Subject::builder("id1")
         .bolus(0.0, 20.0, 0)
         .observation(0.0, -1.0, 0)
-        .repeat(12, 0.5)
+        .repeat(5, 0.2)
         .build();
 
     let sde = simulator::Equation::new_sde(
@@ -39,12 +39,13 @@ fn main() {
     );
 
     let ke_dist = rand_distr::Normal::new(0.7, 0.15).unwrap();
-    let v_dist = rand_distr::Normal::new(50.0, 10.0).unwrap();
+    // let v_dist = rand_distr::Normal::new(50.0, 10.0).unwrap();
 
     let mut support_points = vec![];
-    for _ in 0..100 {
+    for _ in 0..3 {
         let ke = ke_dist.sample(&mut rand::thread_rng());
-        let v = v_dist.sample(&mut rand::thread_rng());
+        // let v = v_dist.sample(&mut rand::thread_rng());
+        let v = 50.0;
         support_points.push(vec![ke, 0.1, v]);
         println!("{ke}, 0.1, {v}");
     }
@@ -54,30 +55,30 @@ fn main() {
         let trajectory = sde.simulate_trajectories(&subject, &spp, 1);
         let mut sb = data::Subject::builder(format!("id{}", i)).bolus(0.0, 20.0, 0);
         for (t, point) in trajectory.iter().enumerate() {
-            sb = sb.observation((t + 1) as f64 * 0.5, *point.first().unwrap(), 0);
+            sb = sb.observation((t + 1) as f64 * 0.2, *point.first().unwrap(), 0);
         }
         data.push(sb.build());
     }
     let data = data::Data::new(data);
     data.write_pmetrics(&File::create(Path::new("test.csv")).unwrap());
-    let mut theta = Array2::zeros((1, 3));
-    theta[[0, 0]] = 0.7;
-    theta[[0, 1]] = 0.1;
-    theta[[0, 2]] = 50.0;
+    // let mut theta = Array2::zeros((1, 3));
+    // theta[[0, 0]] = 0.7;
+    // theta[[0, 1]] = 0.1;
+    // theta[[0, 2]] = 50.0;
 
-    let _ll = sde.particle_filter(
-        &data.get_subjects().first().unwrap(),
-        &vec![0.7, 0.1, 50.0],
-        1000,
-        &ErrorModel::new((0.0, 0.0, 0.0, 0.0), 0.5, &ErrorType::Add),
-    );
+    // let _ll = sde.particle_filter(
+    //     &data.get_subjects().first().unwrap(),
+    //     &vec![0.7, 0.1, 50.0],
+    //     1000,
+    //     &ErrorModel::new((0.0, 0.0, 0.0, 0.0), 0.5, &ErrorType::Add),
+    // );
 
-    let ll = pf_psi(
-        &sde,
-        &data,
-        &theta,
-        &ErrorModel::new((0.0, 0.0, 0.0, 0.0), 0.5, &ErrorType::Add),
-        1000,
-    );
-    dbg!(ll);
+    // let ll = pf_psi(
+    //     &sde,
+    //     &data,
+    //     &theta,
+    //     &ErrorModel::new((0.0, 0.0, 0.0, 0.0), 0.5, &ErrorType::Add),
+    //     1000,
+    // );
+    // dbg!(ll);
 }

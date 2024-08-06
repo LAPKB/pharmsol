@@ -28,6 +28,6 @@ pub(crate) fn simulate_sde_event(
         DVector::from_column_slice(support_point),
         x,
     );
-    let solution = sde.solve(ti, tf, 2000);
+    let solution = sde.solve(ti, tf, 10);
     solution.last().unwrap().clone().into()
 }

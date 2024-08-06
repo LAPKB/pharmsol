@@ -16,8 +16,8 @@ argmin = "0.10.0"
 argmin-math = { version = "0.4.0", features = ["ndarray_v0_15-nolinalg"] }
 csv = "1.3.0"
 dashmap = "6.0.1"
-# diffsol = "=0.2.0"
-diffsol = {git = "https://github.com/martinjrobins/diffsol"}
+diffsol = "=0.2.1"
+# diffsol = {git = "https://github.com/martinjrobins/diffsol"}
 lazy_static = "1.4.0"
 nalgebra = "0.33.0"
 ndarray = { version = "0.15.6", features = ["rayon"] }
