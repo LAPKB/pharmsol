@@ -1,6 +1,5 @@
 use super::closure::PMClosure;
 use crate::data::{Covariates, Infusion};
-use anyhow::Result;
 use diffsol::{
     error::DiffsolError,
     matrix::Matrix,
