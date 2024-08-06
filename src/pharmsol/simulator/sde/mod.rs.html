@@ -61,7 +61,7 @@
         DVector::from_column_slice(support_point),
         x,
     );
-    <span class="kw">let </span>solution = sde.solve(ti, tf, <span class="number">2000</span>);
+    <span class="kw">let </span>solution = sde.solve(ti, tf, <span class="number">10</span>);
     solution.last().unwrap().clone().into()
 }
 </code></pre></div></section></main></body></html>
