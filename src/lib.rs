@@ -16,7 +16,7 @@ pub mod prelude {
     }
     pub mod simulator {
         pub use crate::simulator::{
-            get_population_predictions,
+            cache, get_population_predictions,
             likelihood::{pf_psi, PopulationPredictions, Prediction, SubjectPredictions},
             Equation,
         };

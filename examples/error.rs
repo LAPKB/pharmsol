@@ -39,6 +39,6 @@ fn main() {
         .repeat(120, 0.1)
         .build();
 
-    let op = ode.simulate_subject(&subject, &vec![0.1, 0.1, 0.1, 0.1, 70.0]);
+    let op = ode.simulate_subject(&subject, &vec![0.1, 0.1, 0.1, 0.1, 70.0], None);
     dbg!(op);
 }

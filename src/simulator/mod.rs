@@ -1,5 +1,5 @@
 pub(crate) mod analytical;
-mod cache;
+pub mod cache;
 pub mod fitting;
 pub(crate) mod likelihood;
 mod ode;
@@ -447,11 +447,14 @@ impl Equation {
         &self,
         subject: &Subject,
         support_point: &Vec<f64>,
+        cache: Option<&Cache>,
     ) -> SubjectPredictions {
-        // Check for a cache entry
-        let pred = get_entry(subject, support_point);
-        if let Some(pred) = pred {
-            return pred;
+        // If there is a cache, check for an existing entry
+        if let Some(cache) = cache {
+            let pred = cache.get_entry(subject, support_point);
+            if let Some(pred) = pred {
+                return pred;
+            }
         }
         let init = self.get_init();
         let out = self.get_out();
@@ -507,7 +510,9 @@ impl Equation {
         }
         // Insert the cache entry
         let pred: SubjectPredictions = yout.into();
-        insert_entry(subject, support_point, pred.clone());
+        if let Some(cache) = cache {
+            cache.insert_entry(subject, support_point, pred.clone());
+        }
         pred
     }
 
@@ -603,7 +608,7 @@ pub fn get_population_predictions(
     equation: &Equation,
     subjects: &Data,
     support_points: &Array2<f64>,
-    _cache: bool,
+    cache: Option<&Cache>,
 ) -> PopulationPredictions {
     let mut pred = Array2::default((subjects.len(), support_points.nrows()).f());
     pred.axis_iter_mut(Axis(0))
@@ -616,8 +621,8 @@ pub fn get_population_predictions(
                 .for_each(|(j, mut element)| {
                     let subjects = subjects.get_subjects();
                     let subject = subjects.get(i).unwrap();
-                    let ypred =
-                        equation.simulate_subject(subject, support_points.row(j).to_vec().as_ref());
+                    let support_point = support_points.row(j).to_vec();
+                    let ypred = equation.simulate_subject(subject, &support_point, cache);
                     element.fill(ypred);
                 });
         });

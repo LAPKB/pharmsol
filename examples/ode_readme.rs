@@ -31,6 +31,6 @@ fn main() {
         (2, 1),
     );
 
-    let op = ode.simulate_subject(&subject, &vec![0.3, 0.5, 0.1, 70.0]);
+    let op = ode.simulate_subject(&subject, &vec![0.3, 0.5, 0.1, 70.0], None);
     println!("{op:#?}");
 }

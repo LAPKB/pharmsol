@@ -1,11 +1,54 @@
 use crate::data::Subject;
 use crate::simulator::likelihood::SubjectPredictions;
 use dashmap::DashMap;
-use lazy_static::lazy_static;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-const CACHE_SIZE: usize = 10000;
+pub struct Cache {
+    map: DashMap<CacheKey, SubjectPredictions>,
+}
+
+impl Cache {
+    pub fn new(capacity: usize) -> Self {
+        Cache {
+            map: DashMap::with_capacity(capacity),
+        }
+    }
+
+    pub fn get_entry(
+        &self,
+        subject: &Subject,
+        support_point: &Vec<f64>,
+    ) -> Option<SubjectPredictions> {
+        let cache_key = CacheKey {
+            subject: SubjectHash::new(subject),
+            support_point: SupportPointHash::new(support_point),
+        };
+        self.map.get(&cache_key).map(|entry| entry.clone())
+    }
+
+    pub fn insert_entry(
+        &self,
+        subject: &Subject,
+        support_point: &Vec<f64>,
+        predictions: SubjectPredictions,
+    ) {
+        let cache_key = CacheKey {
+            subject: SubjectHash::new(subject),
+            support_point: SupportPointHash::new(support_point),
+        };
+        self.map.insert(cache_key, predictions);
+    }
+
+    // Optional: Add more methods, like clearing the cache, resizing, etc.
+    pub fn clear(&self) {
+        self.map.clear();
+    }
+
+    pub fn resize(&mut self, new_size: usize) {
+        self.map = DashMap::with_capacity(new_size);
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Hash)]
 struct CacheKey {
@@ -37,34 +80,4 @@ impl SupportPointHash {
         // Get the resulting hash
         SupportPointHash(hasher.finish())
     }
-}
-
-lazy_static! {
-    static ref CACHE: DashMap<CacheKey, SubjectPredictions> = DashMap::with_capacity(CACHE_SIZE);
-}
-
-pub(crate) fn get_entry(subject: &Subject, support_point: &Vec<f64>) -> Option<SubjectPredictions> {
-    let cache_key = CacheKey {
-        subject: SubjectHash::new(subject),
-        support_point: SupportPointHash::new(support_point),
-    };
-
-    // Check if the key already exists
-    CACHE
-        .get(&cache_key)
-        .map(|existing_entry| existing_entry.clone())
-}
-
-pub(crate) fn insert_entry(
-    subject: &Subject,
-    support_point: &Vec<f64>,
-    predictions: SubjectPredictions,
-) {
-    let cache_key = CacheKey {
-        subject: SubjectHash::new(subject),
-        support_point: SupportPointHash::new(support_point),
-    };
-
-    // Insert the new entry
-    CACHE.insert(cache_key, predictions);
 }
