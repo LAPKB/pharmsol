@@ -38,16 +38,19 @@ fn main() {
         (2, 1),
     );
 
-    let ke_dist = rand_distr::Normal::new(0.7, 0.15).unwrap();
+    // let ke_dist = rand_distr::Normal::new(0.7, 0.15).unwrap();
     // let v_dist = rand_distr::Normal::new(50.0, 10.0).unwrap();
+    let ske_dist = rand_distr::Normal::new(0.01, 0.005).unwrap();
 
     let mut support_points = vec![];
-    for _ in 0..3 {
-        let ke = ke_dist.sample(&mut rand::thread_rng());
+    for _ in 0..10 {
+        // let ke = ke_dist.sample(&mut rand::thread_rng());
+        let ke = 0.7;
+        let ske = ske_dist.sample(&mut rand::thread_rng());
         // let v = v_dist.sample(&mut rand::thread_rng());
         let v = 50.0;
-        support_points.push(vec![ke, 0.1, v]);
-        println!("{ke}, 0.1, {v}");
+        support_points.push(vec![ke, ske, v]);
+        println!("{ke}, {ske}, {v}");
     }
 
     let mut data = vec![];
