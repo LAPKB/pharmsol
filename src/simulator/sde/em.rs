@@ -45,8 +45,10 @@ impl SDE {
 
         let mut diffusion_term = DVector::zeros(n);
         (self.diffusion)(&self.params.clone(), &mut diffusion_term);
-        let mut rng = thread_rng();
-        // let mut rng = StdRng::seed_from_u64(0);
+
+        // Create a seeded RNG
+        let mut rng = StdRng::seed_from_u64(0);
+
         for i in 0..n {
             let normal_dist = Normal::new(0.0, 1.0).unwrap();
             self.state[i] +=
