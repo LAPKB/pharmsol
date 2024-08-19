@@ -564,6 +564,7 @@ pub fn get_population_predictions(
     pred.into()
 }
 
+//TODO: This is the one and only simulator, other copies of this (inside the Equation impl) should be removed
 pub fn simulator(eq: &Equation, subject: &Subject, support_point: &Vec<f64>) -> SubjectPredictions {
     // Check for a cache entry
     let pred = get_entry(subject, support_point);
