@@ -60,7 +60,7 @@ fn main() {
         let trajectory = sde.simulate_trajectories(&subject, &spp, 1);
         let mut sb = data::Subject::builder(format!("id{}", i)).bolus(0.0, 20.0, 0);
         for (t, point) in trajectory.iter().enumerate() {
-            sb = sb.observation((t + 1) as f64 * 0.2, *point.first().unwrap(), 0);
+            sb = sb.observation((t) as f64 * 0.2, *point.first().unwrap(), 0);
         }
         data.push(sb.build());
     }
