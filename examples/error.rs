@@ -37,8 +37,9 @@ fn main() {
         .infusion(0.0, 3235.0, 0, 0.005)
         .observation(0.5, 0.1, 0)
         .repeat(120, 0.1)
+        .covariate("WT", 0.0, 80.0)
         .build();
 
-    let op = ode.simulate_subject(&subject, &vec![0.1, 0.1, 0.1, 0.1, 70.0]);
+    let op = ode.simulate_subject(&subject, &vec![0.1, 0.1, 0.1, 70.0]);
     dbg!(op);
 }

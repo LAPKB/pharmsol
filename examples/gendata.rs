@@ -16,7 +16,7 @@ fn main() {
         |x, p, _t, dx, _rateiv, _cov| {
             // automatically defined
             fetch_params!(p, ka, ke0, _ske, _v);
-            let ke = x[1];
+            let ke = x[2];
             dx[2] = -ke + ke0;
             // user defined
             dx[0] = -ka * x[0];
