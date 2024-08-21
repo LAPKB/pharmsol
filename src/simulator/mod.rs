@@ -549,7 +549,13 @@ pub fn get_population_predictions(
 ) -> PopulationPredictions {
     let mut pred = Array2::default((subjects.len(), support_points.nrows()).f());
     let subjects = subjects.get_subjects();
-    let pb = ProgressBar::new(pred.ncols() as u64 * pred.nrows() as u64);
+    let pb = match progress {
+        true => {
+            let pb = ProgressBar::new(pred.ncols() as u64 * pred.nrows() as u64);
+            Some(pb)
+        }
+        false => None,
+    };
 
     pred.axis_iter_mut(Axis(0))
         .into_par_iter()
@@ -563,13 +569,13 @@ pub fn get_population_predictions(
                     let ypred =
                         equation.simulate_subject(subject, support_points.row(j).to_vec().as_ref());
                     element.fill(ypred);
-                    if progress {
-                        pb.inc(1);
+                    if let Some(pb_ref) = pb.as_ref() {
+                        pb_ref.inc(1);
                     }
                 });
         });
-    if progress {
-        pb.finish();
+    if let Some(pb_ref) = pb.as_ref() {
+        pb_ref.finish();
     }
 
     pred.into()
