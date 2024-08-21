@@ -9,11 +9,11 @@ use crate::{
     error_model::ErrorModel,
     simulator::likelihood::{PopulationPredictions, SubjectPredictions, ToPrediction},
 };
+use indicatif::ProgressBar;
 use ndarray::{parallel::prelude::*, Axis};
 use rand::prelude::*;
 use sde::simulate_sde_event;
 use std::collections::HashMap;
-use std::io::Write;
 
 use cache::*;
 use ndarray::prelude::*;
@@ -549,11 +549,12 @@ pub fn get_population_predictions(
 ) -> PopulationPredictions {
     let mut pred = Array2::default((subjects.len(), support_points.nrows()).f());
     let subjects = subjects.get_subjects();
-    let total_subjects = subjects.len();
-    let bar_width = 20; // Width of the progress bar
+    let pb = ProgressBar::new(pred.ncols() as u64 * pred.nrows() as u64);
 
-    if progress {
-        for (i, mut row) in pred.axis_iter_mut(Axis(0)).into_iter().enumerate() {
+    pred.axis_iter_mut(Axis(0))
+        .into_par_iter()
+        .enumerate()
+        .for_each(|(i, mut row)| {
             row.axis_iter_mut(Axis(0))
                 .into_par_iter()
                 .enumerate()
@@ -562,44 +563,15 @@ pub fn get_population_predictions(
                     let ypred =
                         equation.simulate_subject(subject, support_points.row(j).to_vec().as_ref());
                     element.fill(ypred);
+                    if progress {
+                        pb.inc(1);
+                    }
                 });
-
-            let subject_percent = (i + 1) as f64 / total_subjects as f64 * 100.0;
-            let progress_blocks =
-                ((i + 1) as f64 / total_subjects as f64 * bar_width as f64).round() as usize;
-
-            let bar = format!(
-                "[{}{}]",
-                "=".repeat(progress_blocks),
-                " ".repeat(bar_width - progress_blocks)
-            );
-
-            print!(
-                "\rSubjects:       {} {:>5.1}% ({}/{})",
-                bar,
-                subject_percent,
-                i + 1,
-                total_subjects
-            );
-            std::io::stdout().flush().unwrap();
-        }
-        print!("\n");
-    } else {
-        pred.axis_iter_mut(Axis(0))
-            .into_par_iter()
-            .enumerate()
-            .for_each(|(i, mut row)| {
-                row.axis_iter_mut(Axis(0))
-                    .into_par_iter()
-                    .enumerate()
-                    .for_each(|(j, mut element)| {
-                        let subject = subjects.get(i).unwrap();
-                        let ypred = equation
-                            .simulate_subject(subject, support_points.row(j).to_vec().as_ref());
-                        element.fill(ypred);
-                    });
-            });
+        });
+    if progress {
+        pb.finish();
     }
+
     pred.into()
 }
 
