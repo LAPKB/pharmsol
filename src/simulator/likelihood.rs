@@ -3,6 +3,7 @@ use crate::{
     Data,
 };
 
+use indicatif::{ProgressBar, ProgressStyle};
 use ndarray::{Array1, Array2, Axis, ShapeBuilder};
 use rayon::prelude::*;
 
@@ -113,8 +114,24 @@ pub fn pf_psi(
     support_points: &Array2<f64>,
     error_model: &ErrorModel,
     nparticles: usize,
+    progress: bool,
 ) -> Array2<f64> {
     let mut psi: Array2<f64> = Array2::default((subjects.len(), support_points.nrows()).f());
+    let subjects = subjects.get_subjects();
+    let pb = match progress {
+        true => {
+            let pb = ProgressBar::new(psi.ncols() as u64 * psi.nrows() as u64);
+            pb.set_style(
+                ProgressStyle::with_template(
+                    "Cycle #1:\n[{elapsed_precise}] {bar:40.green} {percent}% ETA:{eta}",
+                )
+                .unwrap()
+                .progress_chars("##-"),
+            );
+            Some(pb)
+        }
+        false => None,
+    };
     psi.axis_iter_mut(Axis(0))
         .into_par_iter()
         .enumerate()
@@ -123,7 +140,6 @@ pub fn pf_psi(
                 .into_par_iter()
                 .enumerate()
                 .for_each(|(j, mut element)| {
-                    let subjects = subjects.get_subjects();
                     let subject = subjects.get(i).unwrap();
                     let ll = equation.particle_filter(
                         subject,
@@ -133,8 +149,14 @@ pub fn pf_psi(
                     );
 
                     element.fill(ll);
+                    if let Some(pb_ref) = pb.as_ref() {
+                        pb_ref.inc(1);
+                    }
                 });
         });
+    if let Some(pb_ref) = pb.as_ref() {
+        pb_ref.finish();
+    }
     psi
 }
 

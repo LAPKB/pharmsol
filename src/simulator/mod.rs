@@ -554,7 +554,7 @@ pub fn get_population_predictions(
             let pb = ProgressBar::new(pred.ncols() as u64 * pred.nrows() as u64);
             pb.set_style(
                 ProgressStyle::with_template(
-                    "Cycle #1:\n[{elapsed_precise}] {bar:40.green} {percent:1}% ETA:{eta}",
+                    "Cycle #1:\n[{elapsed_precise}] {bar:40.green} {percent}% ETA:{eta}",
                 )
                 .unwrap()
                 .progress_chars("##-"),
