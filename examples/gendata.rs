@@ -15,22 +15,22 @@ fn main() {
     let sde = simulator::Equation::new_sde(
         |x, p, _t, dx, _rateiv, _cov| {
             // automatically defined
-            fetch_params!(p, _ske);
-            let ke0 = 1.2;
+            fetch_params!(p, ke0);
+            // let ke0 = 1.2;
             dx[1] = -x[1] + ke0;
             let ke = x[1];
             // user defined
             dx[0] = -ke * x[0];
         },
         |p, d| {
-            fetch_params!(p, ske);
-            d[1] = ske;
+            fetch_params!(p, _ke0);
+            d[1] = 0.1;
         },
         |_p| lag! {},
         |_p| fa! {},
         |p, _t, _cov, x| {
-            fetch_params!(p, _ske);
-            x[1] = 1.2;
+            fetch_params!(p, ke0);
+            x[1] = ke0;
         },
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ke0);
@@ -39,17 +39,17 @@ fn main() {
         (2, 1),
     );
 
-    // let ke_dist = rand_distr::Normal::new(1.2, 0.12).unwrap();
+    let ke_dist = rand_distr::Normal::new(1.2, 0.12).unwrap();
     // let v_dist = rand_distr::Normal::new(50.0, 10.0).unwrap();
-    let ske_dist = rand_distr::Normal::new(0.1, 0.01).unwrap();
+    // let ske_dist = rand_distr::Normal::new(0.1, 0.01).unwrap();
 
     let mut support_points = vec![];
     for _ in 0..100 {
-        // let ke = ke_dist.sample(&mut rand::thread_rng());
-        let ke = 1.2;
+        let ke = ke_dist.sample(&mut rand::thread_rng());
+        // let ke = 1.2;
 
-        // let ske = 0.1;
-        let ske = ske_dist.sample(&mut rand::thread_rng());
+        let ske = 0.1;
+        // let ske = ske_dist.sample(&mut rand::thread_rng());
         // let v = v_dist.sample(&mut rand::thread_rng());
         let v = 50.0;
         support_points.push(vec![ke]);

@@ -42,6 +42,9 @@ impl SupportPointHash {
 lazy_static! {
     static ref CACHE: DashMap<CacheKey, SubjectPredictions> = DashMap::with_capacity(CACHE_SIZE);
 }
+lazy_static! {
+    static ref PFCACHE: DashMap<CacheKey, f64> = DashMap::with_capacity(CACHE_SIZE);
+}
 
 pub(crate) fn get_entry(subject: &Subject, support_point: &Vec<f64>) -> Option<SubjectPredictions> {
     let cache_key = CacheKey {
@@ -51,6 +54,17 @@ pub(crate) fn get_entry(subject: &Subject, support_point: &Vec<f64>) -> Option<S
 
     // Check if the key already exists
     CACHE
+        .get(&cache_key)
+        .map(|existing_entry| existing_entry.clone())
+}
+pub(crate) fn get_pf_entry(subject: &Subject, support_point: &Vec<f64>) -> Option<f64> {
+    let cache_key = CacheKey {
+        subject: SubjectHash::new(subject),
+        support_point: SupportPointHash::new(support_point),
+    };
+
+    // Check if the key already exists
+    PFCACHE
         .get(&cache_key)
         .map(|existing_entry| existing_entry.clone())
 }
@@ -67,4 +81,13 @@ pub(crate) fn insert_entry(
 
     // Insert the new entry
     CACHE.insert(cache_key, predictions);
+}
+pub(crate) fn insert_pf_entry(subject: &Subject, support_point: &Vec<f64>, likelihood: f64) {
+    let cache_key = CacheKey {
+        subject: SubjectHash::new(subject),
+        support_point: SupportPointHash::new(support_point),
+    };
+
+    // Insert the new entry
+    PFCACHE.insert(cache_key, likelihood);
 }

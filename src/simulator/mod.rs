@@ -259,6 +259,11 @@ impl Equation {
                 unimplemented!("Particle Filter not implemented for Analytical models")
             }
             Equation::SDE(drift, difussion, _, _, _, _, _) => {
+                // Check for a cache entry
+                let pred = get_pf_entry(subject, support_point);
+                if let Some(pred) = pred {
+                    return pred;
+                }
                 let init = self.get_init();
                 let out = self.get_out();
                 let lag = self.get_lag(support_point);
@@ -348,7 +353,10 @@ impl Equation {
                     }
                 }
                 // let pred: SubjectPredictions = yout.into();
-                ll.iter().sum::<f64>().exp()
+                let likelihood = ll.iter().sum::<f64>().exp();
+                // Insert the cache entry
+                insert_pf_entry(subject, support_point, likelihood);
+                likelihood
             }
         }
     }
