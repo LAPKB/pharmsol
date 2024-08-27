@@ -115,6 +115,7 @@ pub fn pf_psi(
     error_model: &ErrorModel,
     nparticles: usize,
     progress: bool,
+    cache: bool,
 ) -> Array2<f64> {
     let mut psi: Array2<f64> = Array2::default((subjects.len(), support_points.nrows()).f());
     let subjects = subjects.get_subjects();
@@ -146,6 +147,7 @@ pub fn pf_psi(
                         support_points.row(j).to_vec().as_ref(),
                         nparticles,
                         error_model,
+                        cache,
                     );
 
                     element.fill(ll);
@@ -158,6 +160,57 @@ pub fn pf_psi(
         pb_ref.finish();
     }
     psi
+}
+
+pub fn get_population_predictions(
+    equation: &Equation,
+    subjects: &Data,
+    support_points: &Array2<f64>,
+    cache: bool,
+    progress: bool,
+) -> PopulationPredictions {
+    let mut pred = Array2::default((subjects.len(), support_points.nrows()).f());
+    let subjects = subjects.get_subjects();
+    let pb = match progress {
+        true => {
+            let pb = ProgressBar::new(pred.ncols() as u64 * pred.nrows() as u64);
+            pb.set_style(
+                ProgressStyle::with_template(
+                    "Cycle #1:\n[{elapsed_precise}] {bar:40.green} {percent}% ETA:{eta}",
+                )
+                .unwrap()
+                .progress_chars("##-"),
+            );
+            Some(pb)
+        }
+        false => None,
+    };
+
+    pred.axis_iter_mut(Axis(0))
+        .into_par_iter()
+        .enumerate()
+        .for_each(|(i, mut row)| {
+            row.axis_iter_mut(Axis(0))
+                .into_par_iter()
+                .enumerate()
+                .for_each(|(j, mut element)| {
+                    let subject = subjects.get(i).unwrap();
+                    let ypred = equation.simulate_subject(
+                        subject,
+                        support_points.row(j).to_vec().as_ref(),
+                        cache,
+                    );
+                    element.fill(ypred);
+                    if let Some(pb_ref) = pb.as_ref() {
+                        pb_ref.inc(1);
+                    }
+                });
+        });
+    if let Some(pb_ref) = pb.as_ref() {
+        pb_ref.finish();
+    }
+
+    pred.into()
 }
 
 /// Prediction holds an observation and its prediction

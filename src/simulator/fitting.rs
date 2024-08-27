@@ -20,7 +20,7 @@ impl<'a> CostFunction for SppOptimizer<'a> {
     fn cost(&self, point: &Self::Param) -> Result<Self::Output, Error> {
         Ok(self
             .equation
-            .simulate_subject(self.subject, point.to_vec().as_ref())
+            .simulate_subject(self.subject, point.to_vec().as_ref(), false)
             .squared_error()) //TODO: Change this to use the D function
     }
 }

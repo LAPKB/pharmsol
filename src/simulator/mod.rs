@@ -5,19 +5,16 @@ pub(crate) mod likelihood;
 mod ode;
 mod sde;
 use crate::{
-    data::{Covariates, Data, Event, Infusion, Subject},
+    data::{Covariates, Event, Infusion, Subject},
     error_model::ErrorModel,
-    simulator::likelihood::{PopulationPredictions, SubjectPredictions, ToPrediction},
+    simulator::likelihood::{SubjectPredictions, ToPrediction},
 };
-use indicatif::{ProgressBar, ProgressStyle};
-use ndarray::{parallel::prelude::*, Axis};
+use ndarray::parallel::prelude::*;
 use rand::prelude::*;
 use sde::simulate_sde_event;
 use std::collections::HashMap;
 
 use cache::*;
-use ndarray::prelude::*;
-use ndarray::Array2;
 
 type T = f64;
 type V = nalgebra::DVector<T>;
@@ -250,6 +247,7 @@ impl Equation {
         support_point: &Vec<f64>,
         nparticles: usize,
         error_model: &ErrorModel,
+        cache: bool,
     ) -> f64 {
         match self {
             Equation::ODE(_, _, _, _, _, _) => {
@@ -260,9 +258,11 @@ impl Equation {
             }
             Equation::SDE(drift, difussion, _, _, _, _, _) => {
                 // Check for a cache entry
-                let pred = get_pf_entry(subject, support_point);
-                if let Some(pred) = pred {
-                    return pred;
+                if cache {
+                    let pred = get_pf_entry(subject, support_point);
+                    if let Some(pred) = pred {
+                        return pred;
+                    }
                 }
                 let init = self.get_init();
                 let out = self.get_out();
@@ -355,7 +355,9 @@ impl Equation {
                 // let pred: SubjectPredictions = yout.into();
                 let likelihood = ll.iter().sum::<f64>().exp();
                 // Insert the cache entry
-                insert_pf_entry(subject, support_point, likelihood);
+                if cache {
+                    insert_pf_entry(subject, support_point, likelihood);
+                }
                 likelihood
             }
         }
@@ -456,8 +458,9 @@ impl Equation {
         &self,
         subject: &Subject,
         support_point: &Vec<f64>,
+        cache: bool,
     ) -> SubjectPredictions {
-        simulator(&self, subject, support_point)
+        simulator(&self, subject, support_point, cache)
     }
 
     #[inline(always)]
@@ -548,60 +551,19 @@ impl Equation {
     }
 }
 
-pub fn get_population_predictions(
-    equation: &Equation,
-    subjects: &Data,
-    support_points: &Array2<f64>,
-    _cache: bool,
-    progress: bool,
-) -> PopulationPredictions {
-    let mut pred = Array2::default((subjects.len(), support_points.nrows()).f());
-    let subjects = subjects.get_subjects();
-    let pb = match progress {
-        true => {
-            let pb = ProgressBar::new(pred.ncols() as u64 * pred.nrows() as u64);
-            pb.set_style(
-                ProgressStyle::with_template(
-                    "Cycle #1:\n[{elapsed_precise}] {bar:40.green} {percent}% ETA:{eta}",
-                )
-                .unwrap()
-                .progress_chars("##-"),
-            );
-            Some(pb)
-        }
-        false => None,
-    };
-
-    pred.axis_iter_mut(Axis(0))
-        .into_par_iter()
-        .enumerate()
-        .for_each(|(i, mut row)| {
-            row.axis_iter_mut(Axis(0))
-                .into_par_iter()
-                .enumerate()
-                .for_each(|(j, mut element)| {
-                    let subject = subjects.get(i).unwrap();
-                    let ypred =
-                        equation.simulate_subject(subject, support_points.row(j).to_vec().as_ref());
-                    element.fill(ypred);
-                    if let Some(pb_ref) = pb.as_ref() {
-                        pb_ref.inc(1);
-                    }
-                });
-        });
-    if let Some(pb_ref) = pb.as_ref() {
-        pb_ref.finish();
-    }
-
-    pred.into()
-}
-
 //TODO: This is the one and only simulator, other copies of this (inside the Equation impl) should be removed
-pub fn simulator(eq: &Equation, subject: &Subject, support_point: &Vec<f64>) -> SubjectPredictions {
+pub fn simulator(
+    eq: &Equation,
+    subject: &Subject,
+    support_point: &Vec<f64>,
+    cache: bool,
+) -> SubjectPredictions {
     // Check for a cache entry
-    let pred = get_entry(subject, support_point);
-    if let Some(pred) = pred {
-        return pred;
+    if cache {
+        let pred = get_entry(subject, support_point);
+        if let Some(pred) = pred {
+            return pred;
+        }
     }
     let init = eq.get_init();
     let out = eq.get_out();
@@ -657,6 +619,8 @@ pub fn simulator(eq: &Equation, subject: &Subject, support_point: &Vec<f64>) -> 
     }
     // Insert the cache entry
     let pred: SubjectPredictions = yout.into();
-    insert_entry(subject, support_point, pred.clone());
+    if cache {
+        insert_entry(subject, support_point, pred.clone());
+    }
     pred
 }
