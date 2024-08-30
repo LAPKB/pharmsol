@@ -292,6 +292,10 @@ impl Occasion {
         }
     }
 
+    pub fn events(&self) -> Vec<&Event> {
+        self.events.iter().collect()
+    }
+
     /// Get the index of the occasion
     pub fn index(&self) -> usize {
         self.index

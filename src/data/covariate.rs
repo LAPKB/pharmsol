@@ -9,7 +9,7 @@ pub enum InterpolationMethod {
 
 /// A [CovariateSegment] is a segment of the piece-wise interpolation of a [Covariate]
 #[derive(Clone, Debug, Deserialize)]
-pub(crate) struct CovariateSegment {
+pub struct CovariateSegment {
     from: f64,
     to: f64,
     method: InterpolationMethod,
@@ -33,6 +33,15 @@ impl CovariateSegment {
 
     fn in_interval(&self, time: f64) -> bool {
         self.from <= time && time <= self.to
+    }
+    pub fn from(&self) -> f64 {
+        self.from
+    }
+    pub fn to(&self) -> f64 {
+        self.to
+    }
+    pub fn method(&self) -> &InterpolationMethod {
+        &self.method
     }
 }
 
@@ -66,6 +75,12 @@ impl Covariate {
             .iter()
             .find(|&segment| segment.in_interval(time))
             .and_then(|segment| segment.interpolate(time))
+    }
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+    pub fn segments(&self) -> Vec<&CovariateSegment> {
+        self.segments.iter().collect()
     }
 }
 
@@ -117,6 +132,12 @@ impl Covariates {
         Covariates {
             covariates: HashMap::new(),
         }
+    }
+    pub fn covariates(&self) -> HashMap<String, &Covariate> {
+        self.covariates
+            .iter()
+            .map(|(k, v)| (k.clone(), v))
+            .collect()
     }
 
     pub(crate) fn add_covariate(&mut self, name: String, covariate: Covariate) {
