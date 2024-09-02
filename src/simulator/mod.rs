@@ -1,5 +1,4 @@
 pub(crate) mod analytical;
-mod cache;
 pub mod fitting;
 pub(crate) mod likelihood;
 mod ode;
@@ -9,12 +8,12 @@ use crate::{
     error_model::ErrorModel,
     simulator::likelihood::{SubjectPredictions, ToPrediction},
 };
+use minne::Cache;
 use ndarray::parallel::prelude::*;
 use rand::prelude::*;
 use sde::simulate_sde_event;
-use std::collections::HashMap;
-
-use cache::*;
+use std::{collections::hash_map::DefaultHasher, hash::Hash};
+use std::{collections::HashMap, hash::Hasher};
 
 type T = f64;
 type V = nalgebra::DVector<T>;
@@ -247,7 +246,7 @@ impl Equation {
         support_point: &Vec<f64>,
         nparticles: usize,
         error_model: &ErrorModel,
-        cache: bool,
+        cache: Cache<u64, f64>,
     ) -> f64 {
         match self {
             Equation::ODE(_, _, _, _, _, _) => {
@@ -257,12 +256,8 @@ impl Equation {
                 unimplemented!("Particle Filter not implemented for Analytical models")
             }
             Equation::SDE(drift, difussion, _, _, _, _, _) => {
-                // Check for a cache entry
-                if cache {
-                    let pred = get_pf_entry(subject, support_point);
-                    if let Some(pred) = pred {
-                        return pred;
-                    }
+                if let Some(likelihood) = cache.clone().get(&cache_key(subject, support_point)) {
+                    return likelihood.clone();
                 }
                 let init = self.get_init();
                 let out = self.get_out();
@@ -355,9 +350,9 @@ impl Equation {
                 // let pred: SubjectPredictions = yout.into();
                 let likelihood = ll.iter().sum::<f64>().exp();
                 // Insert the cache entry
-                if cache {
-                    insert_pf_entry(subject, support_point, likelihood);
-                }
+                cache
+                    .clone()
+                    .insert(cache_key(subject, support_point), likelihood);
                 likelihood
             }
         }
@@ -458,9 +453,9 @@ impl Equation {
         &self,
         subject: &Subject,
         support_point: &Vec<f64>,
-        cache: bool,
+        cache: minne::Cache<u64, SubjectPredictions>,
     ) -> SubjectPredictions {
-        simulator(&self, subject, support_point, cache)
+        simulator(self, subject, support_point, cache)
     }
 
     #[inline(always)]
@@ -556,15 +551,14 @@ pub fn simulator(
     eq: &Equation,
     subject: &Subject,
     support_point: &Vec<f64>,
-    cache: bool,
+    cache: minne::Cache<u64, SubjectPredictions>,
 ) -> SubjectPredictions {
-    // Check for a cache entry
-    if cache {
-        let pred = get_entry(subject, support_point);
-        if let Some(pred) = pred {
-            return pred;
+    if cache.is_some() {
+        if let Some(pred) = cache.clone().get(&cache_key(subject, support_point)) {
+            return pred.clone();
         }
-    }
+    };
+
     let init = eq.get_init();
     let out = eq.get_out();
     let lag = eq.get_lag(support_point);
@@ -619,8 +613,22 @@ pub fn simulator(
     }
     // Insert the cache entry
     let pred: SubjectPredictions = yout.into();
-    if cache {
-        insert_entry(subject, support_point, pred.clone());
-    }
+    if cache.is_some() {
+        cache
+            .clone()
+            .insert(cache_key(subject, support_point), pred.clone())
+    };
     pred
+}
+
+/// calculates a cache key for the subject and support point
+fn cache_key(subject: &Subject, support_point: &Vec<f64>) -> u64 {
+    let subject_hash = subject.hash();
+    let mut hasher = DefaultHasher::new();
+    // Hash each element in the Vec
+    for value in support_point {
+        value.to_bits().hash(&mut hasher);
+    }
+    subject_hash.hash(&mut hasher);
+    hasher.finish()
 }

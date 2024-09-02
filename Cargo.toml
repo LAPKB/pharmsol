@@ -1,6 +1,6 @@
 [package]
 name = "pharmsol"
-version = "0.3.2"
+version = "0.4.0"
 edition = "2021"
 authors = [
     "Julián D. Otálvaro <juliandavid347@gmail.com>",
@@ -19,6 +19,7 @@ diffsol = "=0.2.1"
 indicatif = "0.17.8"
 # diffsol = {git = "https://github.com/martinjrobins/diffsol"}
 lazy_static = "1.4.0"
+minne = "0.4.0"
 nalgebra = "0.33.0"
 ndarray = { version = "0.15.6", features = ["rayon"] }
 rand = "0.8.5"

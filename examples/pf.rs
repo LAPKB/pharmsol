@@ -29,6 +29,6 @@ fn main() {
     );
     let em = ErrorModel::new((0.5, 0.0, 0.0, 0.0), 0.0, &error_model::ErrorType::Add); // sigma = 0.5
 
-    let ll = sde.particle_filter(&subject, &vec![1.0], 10000, &em, false);
+    let ll = sde.particle_filter(&subject, &vec![1.0], 10000, &em, Cache::None);
     println!("{ll:#?}");
 }

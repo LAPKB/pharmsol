@@ -4,20 +4,21 @@ use crate::{
 };
 
 use indicatif::{ProgressBar, ProgressStyle};
-use ndarray::{Array1, Array2, Axis, ShapeBuilder};
+use ndarray::{Array2, Axis, ShapeBuilder};
 use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 
 use super::Equation;
 
 const FRAC_1_SQRT_2PI: f64 =
     std::f64::consts::FRAC_2_SQRT_PI * std::f64::consts::FRAC_1_SQRT_2 / 2.0;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SubjectPredictions {
     predictions: Vec<Prediction>,
-    flat_predictions: Array1<f64>,
-    flat_observations: Array1<f64>,
-    flat_time: Array1<f64>,
+    flat_predictions: Vec<f64>,
+    flat_observations: Vec<f64>,
+    flat_time: Vec<f64>,
 }
 impl SubjectPredictions {
     pub fn get_predictions(&self) -> &Vec<Prediction> {
@@ -115,7 +116,7 @@ pub fn pf_psi(
     error_model: &ErrorModel,
     nparticles: usize,
     progress: bool,
-    cache: bool,
+    cache: minne::Cache<u64, f64>,
 ) -> Array2<f64> {
     let mut psi: Array2<f64> = Array2::default((subjects.len(), support_points.nrows()).f());
     let subjects = subjects.get_subjects();
@@ -147,7 +148,7 @@ pub fn pf_psi(
                         support_points.row(j).to_vec().as_ref(),
                         nparticles,
                         error_model,
-                        cache,
+                        cache.clone(),
                     );
 
                     element.fill(ll);
@@ -166,7 +167,7 @@ pub fn get_population_predictions(
     equation: &Equation,
     subjects: &Data,
     support_points: &Array2<f64>,
-    cache: bool,
+    cache: minne::Cache<u64, SubjectPredictions>,
     progress: bool,
 ) -> PopulationPredictions {
     let mut pred = Array2::default((subjects.len(), support_points.nrows()).f());
@@ -198,7 +199,7 @@ pub fn get_population_predictions(
                     let ypred = equation.simulate_subject(
                         subject,
                         support_points.row(j).to_vec().as_ref(),
-                        cache,
+                        cache.clone(),
                     );
                     element.fill(ypred);
                     if let Some(pb_ref) = pb.as_ref() {
@@ -214,7 +215,7 @@ pub fn get_population_predictions(
 }
 
 /// Prediction holds an observation and its prediction
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Prediction {
     time: f64,
     observation: f64,

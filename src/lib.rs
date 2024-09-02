@@ -5,6 +5,7 @@ pub mod simulator;
 pub use crate::data::builder::SubjectBuilderExt;
 pub use crate::data::InterpolationMethod::*;
 pub use crate::data::*;
+pub use minne::Cache;
 
 pub mod prelude {
     pub mod data {

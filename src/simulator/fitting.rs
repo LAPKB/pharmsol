@@ -2,6 +2,7 @@ use argmin::{
     core::{CostFunction, Error, Executor},
     solver::neldermead::NelderMead,
 };
+use minne::Cache;
 use ndarray::{Array1, Array2, Axis};
 
 use crate::data::{Data, Subject};
@@ -20,7 +21,7 @@ impl<'a> CostFunction for SppOptimizer<'a> {
     fn cost(&self, point: &Self::Param) -> Result<Self::Output, Error> {
         Ok(self
             .equation
-            .simulate_subject(self.subject, point.to_vec().as_ref(), false)
+            .simulate_subject(self.subject, point.to_vec().as_ref(), Cache::None)
             .squared_error()) //TODO: Change this to use the D function
     }
 }
