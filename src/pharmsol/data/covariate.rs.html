@@ -269,17 +269,17 @@
 <a href="#269" id="269">269</a>
 <a href="#270" id="270">270</a>
 <a href="#271" id="271">271</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>serde::Deserialize;
+</pre></div><pre class="rust"><code><span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>std::{collections::HashMap, fmt};
 
-<span class="attr">#[derive(Clone, Debug, Deserialize)]
+<span class="attr">#[derive(Clone, Debug, Deserialize, Serialize)]
 </span><span class="kw">pub enum </span>InterpolationMethod {
     Linear { slope: f64, intercept: f64 },
     CarryForward { value: f64 },
 }
 
 <span class="doccomment">/// A [CovariateSegment] is a segment of the piece-wise interpolation of a [Covariate]
-</span><span class="attr">#[derive(Clone, Debug, Deserialize)]
+</span><span class="attr">#[derive(Clone, Debug, Deserialize, Serialize)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>CovariateSegment {
     from: f64,
     to: f64,
@@ -308,7 +308,7 @@
 }
 
 <span class="doccomment">/// A [Covariate] is a collection of [CovariateSegment]s, which allows for interpolation of covariate values
-</span><span class="attr">#[derive(Clone, Debug, Deserialize)]
+</span><span class="attr">#[derive(Clone, Debug, Deserialize, Serialize)]
 </span><span class="kw">pub struct </span>Covariate {
     name: String,
     segments: Vec&lt;CovariateSegment&gt;,
@@ -369,7 +369,7 @@
 }
 
 <span class="doccomment">/// [Covariates] is a collection of [Covariate]
-</span><span class="attr">#[derive(Clone, Debug, Deserialize)]
+</span><span class="attr">#[derive(Clone, Debug, Deserialize, Serialize)]
 </span><span class="kw">pub struct </span>Covariates {
     <span class="comment">// Mapping from covariate name to its segments
     // FIXME: this hashmap have a key, covariate also has a name field, we are never

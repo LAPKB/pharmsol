@@ -169,10 +169,10 @@
 <a href="#169" id="169">169</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::fmt;
 
-<span class="kw">use </span>serde::Deserialize;
+<span class="kw">use </span>serde::{Deserialize, Serialize};
 
 <span class="doccomment">/// An Event can be a Bolus, Infusion, or Observation
-</span><span class="attr">#[derive(Debug, Clone, Deserialize)]
+</span><span class="attr">#[derive(Debug, Clone, Deserialize, Serialize)]
 </span><span class="kw">pub enum </span>Event {
     Bolus(Bolus),
     Infusion(Infusion),
@@ -191,7 +191,7 @@
 <span class="doccomment">/// An instantaenous input of drug
 ///
 /// An amount of drug is added to a compartment at a specific time
-</span><span class="attr">#[derive(Debug, Clone, Deserialize)]
+</span><span class="attr">#[derive(Debug, Clone, Deserialize, Serialize)]
 </span><span class="kw">pub struct </span>Bolus {
     time: f64,
     amount: f64,
@@ -224,7 +224,7 @@
 }
 
 <span class="doccomment">/// A continuous dose of drug
-</span><span class="attr">#[derive(Debug, Clone, Deserialize)]
+</span><span class="attr">#[derive(Debug, Clone, Deserialize, Serialize)]
 </span><span class="kw">pub struct </span>Infusion {
     time: f64,
     amount: f64,
@@ -261,7 +261,7 @@
 }
 
 <span class="doccomment">/// An observation of drug concentration or covariates
-</span><span class="attr">#[derive(Debug, Clone, Deserialize)]
+</span><span class="attr">#[derive(Debug, Clone, Deserialize, Serialize)]
 </span><span class="kw">pub struct </span>Observation {
     time: f64,
     value: f64,
