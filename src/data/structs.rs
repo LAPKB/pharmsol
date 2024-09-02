@@ -1,6 +1,6 @@
 use crate::data::*;
 use csv::WriterBuilder;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::{collections::HashMap, fmt};
 
@@ -8,7 +8,7 @@ use std::{collections::HashMap, fmt};
 ///
 /// This is the main data structure used to store the data, and is used to pass data to the model
 /// [Data] implements the [DataTrait], which provides methods to access the data
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct Data {
     subjects: Vec<Subject>,
 }
@@ -225,7 +225,7 @@ impl Data {
 }
 
 /// [Subject] is a collection of blocks for one individual
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Subject {
     id: String,
     occasions: Vec<Occasion>,
@@ -276,7 +276,7 @@ impl Subject {
 }
 
 /// An [Occasion] is a collection of events, for a given [Subject], that are from a specific occasion
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Serialize)]
 pub struct Occasion {
     events: Vec<Event>,
     covariates: Covariates,
