@@ -3,20 +3,21 @@ use crate::{
     Data,
 };
 
-use ndarray::{Array1, Array2, Axis, ShapeBuilder};
+use ndarray::{Array2, Axis, ShapeBuilder};
 use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 
 use super::Equation;
 
 const FRAC_1_SQRT_2PI: f64 =
     std::f64::consts::FRAC_2_SQRT_PI * std::f64::consts::FRAC_1_SQRT_2 / 2.0;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SubjectPredictions {
     predictions: Vec<Prediction>,
-    flat_predictions: Array1<f64>,
-    flat_observations: Array1<f64>,
-    flat_time: Array1<f64>,
+    flat_predictions: Vec<f64>,
+    flat_observations: Vec<f64>,
+    flat_time: Vec<f64>,
 }
 impl SubjectPredictions {
     pub fn get_predictions(&self) -> &Vec<Prediction> {
@@ -139,7 +140,7 @@ pub fn pf_psi(
 }
 
 /// Prediction holds an observation and its prediction
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Prediction {
     time: f64,
     observation: f64,
