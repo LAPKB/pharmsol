@@ -66,6 +66,9 @@
 <a href="#66" id="66">66</a>
 <a href="#67" id="67">67</a>
 <a href="#68" id="68">68</a>
+<a href="#69" id="69">69</a>
+<a href="#70" id="70">70</a>
+<a href="#71" id="71">71</a>
 </pre></div><pre class="rust"><code><span class="kw">use crate</span>::{
     data::Covariates,
     simulator::{Diffusion, Drift},
@@ -113,9 +116,12 @@
 
         <span class="kw">let </span><span class="kw-2">mut </span>diffusion_term = DVector::zeros(n);
         (<span class="self">self</span>.diffusion)(<span class="kw-2">&amp;</span><span class="self">self</span>.params.clone(), <span class="kw-2">&amp;mut </span>diffusion_term);
-        <span class="kw">let </span><span class="kw-2">mut </span>rng = thread_rng();
-        <span class="comment">// let mut rng = StdRng::seed_from_u64(0);
-        </span><span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..n {
+
+        <span class="comment">// Create a seeded RNG
+        // let mut rng = StdRng::seed_from_u64(0);
+        </span><span class="kw">let </span><span class="kw-2">mut </span>rng = thread_rng();
+
+        <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..n {
             <span class="kw">let </span>normal_dist = Normal::new(<span class="number">0.0</span>, <span class="number">1.0</span>).unwrap();
             <span class="self">self</span>.state[i] +=
                 drift_term[i] * dt + diffusion_term[i] * normal_dist.sample(<span class="kw-2">&amp;mut </span>rng) * dt.sqrt();

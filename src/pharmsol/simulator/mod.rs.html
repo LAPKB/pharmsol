@@ -623,25 +623,25 @@
 <a href="#623" id="623">623</a>
 <a href="#624" id="624">624</a>
 <a href="#625" id="625">625</a>
+<a href="#626" id="626">626</a>
+<a href="#627" id="627">627</a>
+<a href="#628" id="628">628</a>
 </pre></div><pre class="rust"><code><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>analytical;
-<span class="kw">mod </span>cache;
 <span class="kw">pub mod </span>fitting;
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>likelihood;
 <span class="kw">mod </span>ode;
 <span class="kw">mod </span>sde;
 <span class="kw">use crate</span>::{
-    data::{Covariates, Data, Event, Infusion, Subject},
+    data::{Covariates, Event, Infusion, Subject},
     error_model::ErrorModel,
-    simulator::likelihood::{PopulationPredictions, SubjectPredictions, ToPrediction},
+    simulator::likelihood::{SubjectPredictions, ToPrediction},
 };
-<span class="kw">use </span>ndarray::{parallel::prelude::<span class="kw-2">*</span>, Axis};
+<span class="kw">use </span>minne::Cache;
+<span class="kw">use </span>ndarray::parallel::prelude::<span class="kw-2">*</span>;
 <span class="kw">use </span>rand::prelude::<span class="kw-2">*</span>;
 <span class="kw">use </span>sde::simulate_sde_event;
-<span class="kw">use </span>std::collections::HashMap;
-
-<span class="kw">use </span>cache::<span class="kw-2">*</span>;
-<span class="kw">use </span>ndarray::prelude::<span class="kw-2">*</span>;
-<span class="kw">use </span>ndarray::Array2;
+<span class="kw">use </span>std::{collections::hash_map::DefaultHasher, hash::Hash};
+<span class="kw">use </span>std::{collections::HashMap, hash::Hasher};
 
 <span class="kw">type </span>T = f64;
 <span class="kw">type </span>V = nalgebra::DVector&lt;T&gt;;
@@ -874,6 +874,7 @@
         support_point: <span class="kw-2">&amp;</span>Vec&lt;f64&gt;,
         nparticles: usize,
         error_model: <span class="kw-2">&amp;</span>ErrorModel,
+        cache: Cache&lt;u64, f64&gt;,
     ) -&gt; f64 {
         <span class="kw">match </span><span class="self">self </span>{
             Equation::ODE(<span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>) =&gt; {
@@ -883,6 +884,9 @@
                 <span class="macro">unimplemented!</span>(<span class="string">"Particle Filter not implemented for Analytical models"</span>)
             }
             Equation::SDE(drift, difussion, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>) =&gt; {
+                <span class="kw">if let </span><span class="prelude-val">Some</span>(likelihood) = cache.clone().get(<span class="kw-2">&amp;</span>cache_key(subject, support_point)) {
+                    <span class="kw">return </span>likelihood.clone();
+                }
                 <span class="kw">let </span>init = <span class="self">self</span>.get_init();
                 <span class="kw">let </span>out = <span class="self">self</span>.get_out();
                 <span class="kw">let </span>lag = <span class="self">self</span>.get_lag(support_point);
@@ -920,10 +924,7 @@
                                 infusions.push(infusion.clone());
                             }
                             Event::Observation(observation) =&gt; {
-                                <span class="kw">let </span><span class="kw-2">mut </span>pred = Vec::with_capacity(nparticles);
-                                <span class="kw">for _ in </span><span class="number">0</span>..nparticles {
-                                    pred.push(<span class="number">0.0</span>);
-                                }
+                                <span class="kw">let </span><span class="kw-2">mut </span>pred = <span class="macro">vec!</span>[<span class="number">0.0</span>; nparticles];
                                 pred.par_iter_mut().enumerate().for_each(|(i, p)| {
                                     <span class="kw">let </span><span class="kw-2">mut </span>y = V::zeros(<span class="self">self</span>.get_nouteqs());
                                     (out)(
@@ -972,7 +973,12 @@
                     }
                 }
                 <span class="comment">// let pred: SubjectPredictions = yout.into();
-                </span>ll.iter().sum::&lt;f64&gt;().exp()
+                </span><span class="kw">let </span>likelihood = ll.iter().sum::&lt;f64&gt;().exp();
+                <span class="comment">// Insert the cache entry
+                </span>cache
+                    .clone()
+                    .insert(cache_key(subject, support_point), likelihood);
+                likelihood
             }
         }
     }
@@ -1028,10 +1034,7 @@
                                 infusions.push(infusion.clone());
                             }
                             Event::Observation(observation) =&gt; {
-                                <span class="kw">let </span><span class="kw-2">mut </span>pred = Vec::with_capacity(nparticles);
-                                <span class="kw">for _ in </span><span class="number">0</span>..nparticles {
-                                    pred.push(<span class="number">0.0</span>);
-                                }
+                                <span class="kw">let </span><span class="kw-2">mut </span>pred = <span class="macro">vec!</span>[<span class="number">0.0</span>; nparticles];
                                 pred.par_iter_mut().enumerate().for_each(|(i, p)| {
                                     <span class="kw">let </span><span class="kw-2">mut </span>y = V::zeros(<span class="self">self</span>.get_nouteqs());
                                     (out)(
@@ -1072,68 +1075,9 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         subject: <span class="kw-2">&amp;</span>Subject,
         support_point: <span class="kw-2">&amp;</span>Vec&lt;f64&gt;,
+        cache: minne::Cache&lt;u64, SubjectPredictions&gt;,
     ) -&gt; SubjectPredictions {
-        <span class="comment">// Check for a cache entry
-        </span><span class="kw">let </span>pred = get_entry(subject, support_point);
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(pred) = pred {
-            <span class="kw">return </span>pred;
-        }
-        <span class="kw">let </span>init = <span class="self">self</span>.get_init();
-        <span class="kw">let </span>out = <span class="self">self</span>.get_out();
-        <span class="kw">let </span>lag = <span class="self">self</span>.get_lag(support_point);
-        <span class="kw">let </span>fa = <span class="self">self</span>.get_fa(support_point);
-        <span class="kw">let </span><span class="kw-2">mut </span>yout = <span class="macro">vec!</span>[];
-
-        <span class="kw">for </span>occasion <span class="kw">in </span>subject.occasions() {
-            <span class="kw">let </span>covariates = occasion.get_covariates().unwrap();
-
-            <span class="comment">// if occasion == 0, we use the init closure to get the initial state
-            // otherwise we initialize the state vector to zero
-            </span><span class="kw">let </span><span class="kw-2">mut </span>x = V::zeros(<span class="self">self</span>.get_nstates());
-            <span class="kw">if </span>occasion.index() == <span class="number">0 </span>{
-                (init)(<span class="kw-2">&amp;</span>V::from_vec(support_point.clone()), <span class="number">0.0</span>, covariates, <span class="kw-2">&amp;mut </span>x);
-            }
-            <span class="kw">let </span><span class="kw-2">mut </span>infusions: Vec&lt;Infusion&gt; = <span class="macro">vec!</span>[];
-            <span class="kw">let </span>events = occasion.get_events(<span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>lag), <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>fa), <span class="bool-val">true</span>);
-            <span class="kw">for </span>(index, event) <span class="kw">in </span>events.iter().enumerate() {
-                <span class="kw">match </span>event {
-                    Event::Bolus(bolus) =&gt; {
-                        x[bolus.input()] += bolus.amount();
-                    }
-                    Event::Infusion(infusion) =&gt; {
-                        infusions.push(infusion.clone());
-                    }
-                    Event::Observation(observation) =&gt; {
-                        <span class="kw">let </span><span class="kw-2">mut </span>y = V::zeros(<span class="self">self</span>.get_nouteqs());
-                        (out)(
-                            <span class="kw-2">&amp;</span>x,
-                            <span class="kw-2">&amp;</span>V::from_vec(support_point.clone()),
-                            observation.time(),
-                            covariates,
-                            <span class="kw-2">&amp;mut </span>y,
-                        );
-                        <span class="kw">let </span>pred = y[observation.outeq()];
-
-                        yout.push(observation.to_obs_pred(pred));
-                    }
-                }
-
-                <span class="kw">if let </span><span class="prelude-val">Some</span>(next_event) = events.get(index + <span class="number">1</span>) {
-                    x = <span class="self">self</span>.simulate_event(
-                        x,
-                        support_point,
-                        covariates,
-                        <span class="kw-2">&amp;</span>infusions,
-                        event.get_time(),
-                        next_event.get_time(),
-                    );
-                }
-            }
-        }
-        <span class="comment">// Insert the cache entry
-        </span><span class="kw">let </span>pred: SubjectPredictions = yout.into();
-        insert_entry(subject, support_point, pred.clone());
-        pred
+        simulator(<span class="self">self</span>, subject, support_point, cache)
     }
 
     <span class="attr">#[inline(always)]
@@ -1224,28 +1168,90 @@
     }
 }
 
-<span class="kw">pub fn </span>get_population_predictions(
-    equation: <span class="kw-2">&amp;</span>Equation,
-    subjects: <span class="kw-2">&amp;</span>Data,
-    support_points: <span class="kw-2">&amp;</span>Array2&lt;f64&gt;,
-    _cache: bool,
-) -&gt; PopulationPredictions {
-    <span class="kw">let </span><span class="kw-2">mut </span>pred = Array2::default((subjects.len(), support_points.nrows()).f());
-    pred.axis_iter_mut(Axis(<span class="number">0</span>))
-        .into_par_iter()
-        .enumerate()
-        .for_each(|(i, <span class="kw-2">mut </span>row)| {
-            row.axis_iter_mut(Axis(<span class="number">0</span>))
-                .into_par_iter()
-                .enumerate()
-                .for_each(|(j, <span class="kw-2">mut </span>element)| {
-                    <span class="kw">let </span>subjects = subjects.get_subjects();
-                    <span class="kw">let </span>subject = subjects.get(i).unwrap();
-                    <span class="kw">let </span>ypred =
-                        equation.simulate_subject(subject, support_points.row(j).to_vec().as_ref());
-                    element.fill(ypred);
-                });
-        });
-    pred.into()
+<span class="comment">//TODO: This is the one and only simulator, other copies of this (inside the Equation impl) should be removed
+</span><span class="kw">pub fn </span>simulator(
+    eq: <span class="kw-2">&amp;</span>Equation,
+    subject: <span class="kw-2">&amp;</span>Subject,
+    support_point: <span class="kw-2">&amp;</span>Vec&lt;f64&gt;,
+    cache: minne::Cache&lt;u64, SubjectPredictions&gt;,
+) -&gt; SubjectPredictions {
+    <span class="kw">if </span>cache.is_some() {
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(pred) = cache.clone().get(<span class="kw-2">&amp;</span>cache_key(subject, support_point)) {
+            <span class="kw">return </span>pred.clone();
+        }
+    };
+
+    <span class="kw">let </span>init = eq.get_init();
+    <span class="kw">let </span>out = eq.get_out();
+    <span class="kw">let </span>lag = eq.get_lag(support_point);
+    <span class="kw">let </span>fa = eq.get_fa(support_point);
+    <span class="kw">let </span><span class="kw-2">mut </span>yout = <span class="macro">vec!</span>[];
+
+    <span class="kw">for </span>occasion <span class="kw">in </span>subject.occasions() {
+        <span class="kw">let </span>covariates = occasion.get_covariates().unwrap();
+
+        <span class="comment">// if occasion == 0, we use the init closure to get the initial state
+        // otherwise we initialize the state vector to zero
+        </span><span class="kw">let </span><span class="kw-2">mut </span>x = V::zeros(eq.get_nstates());
+        <span class="kw">if </span>occasion.index() == <span class="number">0 </span>{
+            (init)(<span class="kw-2">&amp;</span>V::from_vec(support_point.clone()), <span class="number">0.0</span>, covariates, <span class="kw-2">&amp;mut </span>x);
+        }
+        <span class="kw">let </span><span class="kw-2">mut </span>infusions: Vec&lt;Infusion&gt; = <span class="macro">vec!</span>[];
+        <span class="kw">let </span>events = occasion.get_events(<span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>lag), <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>fa), <span class="bool-val">true</span>);
+        <span class="kw">for </span>(index, event) <span class="kw">in </span>events.iter().enumerate() {
+            <span class="kw">match </span>event {
+                Event::Bolus(bolus) =&gt; {
+                    x[bolus.input()] += bolus.amount();
+                }
+                Event::Infusion(infusion) =&gt; {
+                    infusions.push(infusion.clone());
+                }
+                Event::Observation(observation) =&gt; {
+                    <span class="kw">let </span><span class="kw-2">mut </span>y = V::zeros(eq.get_nouteqs());
+                    (out)(
+                        <span class="kw-2">&amp;</span>x,
+                        <span class="kw-2">&amp;</span>V::from_vec(support_point.clone()),
+                        observation.time(),
+                        covariates,
+                        <span class="kw-2">&amp;mut </span>y,
+                    );
+                    <span class="kw">let </span>pred = y[observation.outeq()];
+
+                    yout.push(observation.to_obs_pred(pred));
+                }
+            }
+
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(next_event) = events.get(index + <span class="number">1</span>) {
+                x = eq.simulate_event(
+                    x,
+                    support_point,
+                    covariates,
+                    <span class="kw-2">&amp;</span>infusions,
+                    event.get_time(),
+                    next_event.get_time(),
+                );
+            }
+        }
+    }
+    <span class="comment">// Insert the cache entry
+    </span><span class="kw">let </span>pred: SubjectPredictions = yout.into();
+    <span class="kw">if </span>cache.is_some() {
+        cache
+            .clone()
+            .insert(cache_key(subject, support_point), pred.clone())
+    };
+    pred
+}
+
+<span class="doccomment">/// calculates a cache key for the subject and support point
+</span><span class="kw">fn </span>cache_key(subject: <span class="kw-2">&amp;</span>Subject, support_point: <span class="kw-2">&amp;</span>Vec&lt;f64&gt;) -&gt; u64 {
+    <span class="kw">let </span>subject_hash = subject.hash();
+    <span class="kw">let </span><span class="kw-2">mut </span>hasher = DefaultHasher::new();
+    <span class="comment">// Hash each element in the Vec
+    </span><span class="kw">for </span>value <span class="kw">in </span>support_point {
+        value.to_bits().hash(<span class="kw-2">&amp;mut </span>hasher);
+    }
+    subject_hash.hash(<span class="kw-2">&amp;mut </span>hasher);
+    hasher.finish()
 }
 </code></pre></div></section></main></body></html>

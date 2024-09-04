@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["Equation"],"fn":["get_population_predictions"],"mod":["fitting"],"type":["AnalyticalEq","DiffEq","Diffusion","Drift","Fa","Init","Lag","Neqs","Out","SecEq"]};
+window.SIDEBAR_ITEMS = {"enum":["Equation"],"fn":["simulator"],"mod":["fitting"],"type":["AnalyticalEq","DiffEq","Diffusion","Drift","Fa","Init","Lag","Neqs","Out","SecEq"]};

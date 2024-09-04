@@ -206,15 +206,15 @@
         }
     }
     <span class="doccomment">/// Get the amount of the bolus, often the dose
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>amount(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
+    </span><span class="kw">pub fn </span>amount(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
         <span class="self">self</span>.amount
     }
     <span class="doccomment">/// Get the input compartment of the bolus, i.e. the compartment the drug is added to
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>input(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+    </span><span class="kw">pub fn </span>input(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
         <span class="self">self</span>.input
     }
     <span class="doccomment">/// Get the time of the bolus
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>time(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
+    </span><span class="kw">pub fn </span>time(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
         <span class="self">self</span>.time
     }
     <span class="doccomment">/// Get a mutable reference to the time of the bolus
@@ -241,21 +241,21 @@
         }
     }
     <span class="doccomment">/// Get the total amount of drug provided over the infusion
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>amount(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
+    </span><span class="kw">pub fn </span>amount(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
         <span class="self">self</span>.amount
     }
     <span class="doccomment">/// Get the input compartment of the infusion, i.e. the compartment the drug is added to
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>input(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+    </span><span class="kw">pub fn </span>input(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
         <span class="self">self</span>.input
     }
     <span class="doccomment">/// Get the duration of the infusion
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>duration(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
+    </span><span class="kw">pub fn </span>duration(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
         <span class="self">self</span>.duration
     }
     <span class="doccomment">/// Get the start time of the infusion
     ///
     /// The infusion starts at this time and until time + duration
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>time(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
+    </span><span class="kw">pub fn </span>time(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
         <span class="self">self</span>.time
     }
 }
@@ -298,11 +298,11 @@
         <span class="self">self</span>.outeq
     }
     <span class="doccomment">/// Get the error polynomial coefficients of the observation
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>errorpoly(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;(f64, f64, f64, f64)&gt; {
+    </span><span class="kw">pub fn </span>errorpoly(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;(f64, f64, f64, f64)&gt; {
         <span class="self">self</span>.errorpoly
     }
     <span class="doccomment">/// Get whether the observation should be ignored
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>ignore(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+    </span><span class="kw">pub fn </span>ignore(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
         <span class="self">self</span>.ignore
     }
 }
