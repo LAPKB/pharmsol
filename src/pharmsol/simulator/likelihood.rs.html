@@ -423,7 +423,7 @@
             <span class="kw">let </span>pb = ProgressBar::new(psi.ncols() <span class="kw">as </span>u64 * psi.nrows() <span class="kw">as </span>u64);
             pb.set_style(
                 ProgressStyle::with_template(
-                    <span class="string">"Cycle #1:\n[{elapsed_precise}] {bar:40.green} {percent}% ETA:{eta}"</span>,
+                    <span class="string">"Simulating subjects...\n[{elapsed_precise}] {bar:40.green} {percent}% ETA:{eta}"</span>,
                 )
                 .unwrap()
                 .progress_chars(<span class="string">"##-"</span>),
@@ -475,7 +475,7 @@
             <span class="kw">let </span>pb = ProgressBar::new(pred.ncols() <span class="kw">as </span>u64 * pred.nrows() <span class="kw">as </span>u64);
             pb.set_style(
                 ProgressStyle::with_template(
-                    <span class="string">"Cycle #1:\n[{elapsed_precise}] {bar:40.green} {percent}% ETA:{eta}"</span>,
+                    <span class="string">"Simulating subjects...\n[{elapsed_precise}] {bar:40.green} {percent}% ETA:{eta}"</span>,
                 )
                 .unwrap()
                 .progress_chars(<span class="string">"##-"</span>),
