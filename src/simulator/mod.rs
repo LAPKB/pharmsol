@@ -296,10 +296,7 @@ impl Equation {
                                 infusions.push(infusion.clone());
                             }
                             Event::Observation(observation) => {
-                                let mut pred = Vec::with_capacity(nparticles);
-                                for _ in 0..nparticles {
-                                    pred.push(0.0);
-                                }
+                                let mut pred = vec![0.0; nparticles];
                                 pred.par_iter_mut().enumerate().for_each(|(i, p)| {
                                     let mut y = V::zeros(self.get_nouteqs());
                                     (out)(
@@ -409,10 +406,7 @@ impl Equation {
                                 infusions.push(infusion.clone());
                             }
                             Event::Observation(observation) => {
-                                let mut pred = Vec::with_capacity(nparticles);
-                                for _ in 0..nparticles {
-                                    pred.push(0.0);
-                                }
+                                let mut pred = vec![0.0; nparticles];
                                 pred.par_iter_mut().enumerate().for_each(|(i, p)| {
                                     let mut y = V::zeros(self.get_nouteqs());
                                     (out)(
