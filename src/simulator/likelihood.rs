@@ -168,6 +168,7 @@ pub fn psi(
     support_points: &Array2<f64>,
     error_model: &ErrorModel,
     progress: bool,
+    cache: bool,
 ) -> Array2<f64> {
     let mut pred: Array2<f64> = Array2::default((subjects.len(), support_points.nrows()).f());
     let subjects = subjects.get_subjects();
@@ -195,12 +196,21 @@ pub fn psi(
                 .enumerate()
                 .for_each(|(j, mut element)| {
                     let subject = subjects.get(i).unwrap();
-                    let likelihood = subject_likelihood(
-                        subject,
-                        equation,
-                        support_points.row(j).to_vec().as_ref(),
-                        error_model,
-                    );
+                    let likelihood = if cache {
+                        subject_likelihood(
+                            subject,
+                            equation,
+                            support_points.row(j).to_vec().as_ref(),
+                            error_model,
+                        )
+                    } else {
+                        subject_likelihood_no_cache(
+                            subject,
+                            equation,
+                            support_points.row(j).to_vec().as_ref(),
+                            error_model,
+                        )
+                    };
                     element.fill(likelihood);
                     if let Some(pb_ref) = pb.as_ref() {
                         pb_ref.inc(1);
