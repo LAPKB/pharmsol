@@ -458,9 +458,8 @@ impl Equation {
         &self,
         subject: &Subject,
         support_point: &Vec<f64>,
-        cache: bool,
     ) -> SubjectPredictions {
-        simulator(&self, subject, support_point, cache)
+        simulator(&self, subject, support_point)
     }
 
     #[inline(always)]
@@ -552,19 +551,14 @@ impl Equation {
 }
 
 //TODO: This is the one and only simulator, other copies of this (inside the Equation impl) should be removed
-pub fn simulator(
-    eq: &Equation,
-    subject: &Subject,
-    support_point: &Vec<f64>,
-    cache: bool,
-) -> SubjectPredictions {
+pub fn simulator(eq: &Equation, subject: &Subject, support_point: &Vec<f64>) -> SubjectPredictions {
     // Check for a cache entry
-    if cache {
-        let pred = get_entry(subject, support_point);
-        if let Some(pred) = pred {
-            return pred;
-        }
-    }
+    // if cache {
+    //     let pred = get_entry(subject, support_point);
+    //     if let Some(pred) = pred {
+    //         return pred;
+    //     }
+    // }
     let init = eq.get_init();
     let out = eq.get_out();
     let lag = eq.get_lag(support_point);
@@ -619,8 +613,8 @@ pub fn simulator(
     }
     // Insert the cache entry
     let pred: SubjectPredictions = yout.into();
-    if cache {
-        insert_entry(subject, support_point, pred.clone());
-    }
+    // if cache {
+    //     insert_entry(subject, support_point, pred.clone());
+    // }
     pred
 }

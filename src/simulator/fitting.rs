@@ -20,7 +20,8 @@ impl<'a> CostFunction for SppOptimizer<'a> {
     fn cost(&self, point: &Self::Param) -> Result<Self::Output, Error> {
         Ok(self
             .equation
-            .simulate_subject(self.subject, point.to_vec().as_ref(), false)
+            //are you looking for the cache? we have a function that caches the simulation+ll calculation!
+            .simulate_subject(self.subject, point.to_vec().as_ref())
             .squared_error()) //TODO: Change this to use the D function
     }
 }

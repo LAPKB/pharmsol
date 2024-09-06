@@ -1,13 +1,13 @@
 use crate::{
     data::{error_model::ErrorModel, Observation},
-    Data,
+    Data, Subject,
 };
 
 use indicatif::{ProgressBar, ProgressStyle};
 use ndarray::{Array1, Array2, Axis, ShapeBuilder};
 use rayon::prelude::*;
 
-use super::Equation;
+use super::{get_pf_entry, insert_pf_entry, Equation};
 
 const FRAC_1_SQRT_2PI: f64 =
     std::f64::consts::FRAC_2_SQRT_PI * std::f64::consts::FRAC_1_SQRT_2 / 2.0;
@@ -79,27 +79,6 @@ impl Default for PopulationPredictions {
     }
 }
 
-impl PopulationPredictions {
-    pub fn get_psi(&self, ep: &ErrorModel) -> Array2<f64> {
-        let mut psi = Array2::zeros((
-            self.subject_predictions.nrows(),
-            self.subject_predictions.ncols(),
-        ));
-        psi.axis_iter_mut(Axis(0))
-            .into_par_iter()
-            .enumerate()
-            .for_each(|(i, mut row)| {
-                row.axis_iter_mut(Axis(0))
-                    .into_par_iter()
-                    .enumerate()
-                    .for_each(|(j, mut element)| {
-                        element.fill(self.subject_predictions.get((i, j)).unwrap().likelihood(ep));
-                    })
-            });
-        psi
-    }
-}
-
 impl From<Array2<SubjectPredictions>> for PopulationPredictions {
     fn from(subject_predictions: Array2<SubjectPredictions>) -> Self {
         Self {
@@ -162,13 +141,35 @@ pub fn pf_psi(
     psi
 }
 
-pub fn get_population_predictions(
+// impl PopulationPredictions {
+//     pub fn get_psi(&self, ep: &ErrorModel) -> Array2<f64> {
+//         let mut psi = Array2::zeros((
+//             self.subject_predictions.nrows(),
+//             self.subject_predictions.ncols(),
+//         ));
+//         psi.axis_iter_mut(Axis(0))
+//             .into_par_iter()
+//             .enumerate()
+//             .for_each(|(i, mut row)| {
+//                 row.axis_iter_mut(Axis(0))
+//                     .into_par_iter()
+//                     .enumerate()
+//                     .for_each(|(j, mut element)| {
+//                         element.fill(self.subject_predictions.get((i, j)).unwrap().likelihood(ep));
+//                     })
+//             });
+//         psi
+//     }
+// }
+//TODO: Export this function as a method of Data
+pub fn psi(
     equation: &Equation,
     subjects: &Data,
     support_points: &Array2<f64>,
+    error_model: &ErrorModel,
     cache: bool,
     progress: bool,
-) -> PopulationPredictions {
+) -> Array2<f64> {
     let mut pred = Array2::default((subjects.len(), support_points.nrows()).f());
     let subjects = subjects.get_subjects();
     let pb = match progress {
@@ -195,12 +196,14 @@ pub fn get_population_predictions(
                 .enumerate()
                 .for_each(|(j, mut element)| {
                     let subject = subjects.get(i).unwrap();
-                    let ypred = equation.simulate_subject(
+                    let likelihood = subject_likelihood(
                         subject,
+                        equation,
                         support_points.row(j).to_vec().as_ref(),
+                        error_model,
                         cache,
                     );
-                    element.fill(ypred);
+                    element.fill(likelihood);
                     if let Some(pb_ref) = pb.as_ref() {
                         pb_ref.inc(1);
                     }
@@ -211,6 +214,29 @@ pub fn get_population_predictions(
     }
 
     pred.into()
+}
+
+#[inline(always)]
+fn subject_likelihood(
+    subject: &Subject,
+    equation: &Equation,
+    support_point: &Vec<f64>,
+    error_model: &ErrorModel,
+    cache: bool,
+) -> f64 {
+    // Check for a cache entry
+    if cache {
+        let pred = get_pf_entry(subject, support_point);
+        if let Some(pred) = pred {
+            return pred;
+        }
+    }
+    let ypred = equation.simulate_subject(subject, support_point);
+    let likelihood = ypred.likelihood(error_model);
+    if cache {
+        insert_pf_entry(subject, support_point, likelihood);
+    }
+    likelihood
 }
 
 /// Prediction holds an observation and its prediction
