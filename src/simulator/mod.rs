@@ -8,6 +8,7 @@ use crate::{
     error_model::ErrorModel,
     simulator::likelihood::{SubjectPredictions, ToPrediction},
 };
+use likelihood::Prediction;
 use ndarray::parallel::prelude::*;
 use rand::prelude::*;
 use sde::simulate_sde_event;
@@ -453,13 +454,13 @@ impl Equation {
 
     fn simulate_event(
         &self,
-        x: V,
+        x: &mut V,
         support_point: &[f64],
         covariates: &Covariates,
         infusions: &Vec<Infusion>,
         start_time: T,
         end_time: T,
-    ) -> V {
+    ) {
         match self {
             Equation::ODE(eqn, _, _, _, _, _) => ode::simulate_ode_event(
                 eqn,
@@ -547,7 +548,6 @@ pub fn simulator(eq: &Equation, subject: &Subject, support_point: &Vec<f64>) -> 
     //     }
     // }
     let init = eq.get_init();
-    let out = eq.get_out();
     let lag = eq.get_lag(support_point);
     let fa = eq.get_fa(support_point);
     let mut yout = vec![];
@@ -564,44 +564,65 @@ pub fn simulator(eq: &Equation, subject: &Subject, support_point: &Vec<f64>) -> 
         let mut infusions: Vec<Infusion> = vec![];
         let events = occasion.get_events(Some(&lag), Some(&fa), true);
         for (index, event) in events.iter().enumerate() {
-            match event {
-                Event::Bolus(bolus) => {
-                    x[bolus.input()] += bolus.amount();
-                }
-                Event::Infusion(infusion) => {
-                    infusions.push(infusion.clone());
-                }
-                Event::Observation(observation) => {
-                    let mut y = V::zeros(eq.get_nouteqs());
-                    (out)(
-                        &x,
-                        &V::from_vec(support_point.clone()),
-                        observation.time(),
-                        covariates,
-                        &mut y,
-                    );
-                    let pred = y[observation.outeq()];
-
-                    yout.push(observation.to_obs_pred(pred));
-                }
-            }
-
-            if let Some(next_event) = events.get(index + 1) {
-                x = eq.simulate_event(
-                    x,
-                    support_point,
-                    covariates,
-                    &infusions,
-                    event.get_time(),
-                    next_event.get_time(),
-                );
-            }
+            simulate_event(
+                eq,
+                support_point,
+                event,
+                events.get(index + 1),
+                covariates,
+                &mut x,
+                &mut infusions,
+                &mut yout,
+            )
         }
     }
-    // Insert the cache entry
     let pred: SubjectPredictions = yout.into();
-    // if cache {
-    //     insert_entry(subject, support_point, pred.clone());
-    // }
+
     pred
+}
+
+#[inline(always)]
+fn simulate_event(
+    eq: &Equation,
+    support_point: &Vec<f64>,
+    event: &Event,
+    next_event: Option<&Event>,
+    covariates: &Covariates,
+    x: &mut nalgebra::DVector<f64>,
+    infusions: &mut Vec<Infusion>,
+    yout: &mut Vec<Prediction>,
+) {
+    let out = eq.get_out();
+    match event {
+        Event::Bolus(bolus) => {
+            x[bolus.input()] += bolus.amount();
+        }
+        Event::Infusion(infusion) => {
+            infusions.push(infusion.clone());
+        }
+        Event::Observation(observation) => {
+            let mut y = V::zeros(eq.get_nouteqs());
+            (out)(
+                &x,
+                &V::from_vec(support_point.clone()),
+                observation.time(),
+                covariates,
+                &mut y,
+            );
+            let pred = y[observation.outeq()];
+
+            yout.push(observation.to_obs_pred(pred));
+        }
+    }
+
+    if let Some(next_event) = next_event {
+        eq.simulate_event(
+            x,
+            support_point,
+            covariates,
+            &infusions,
+            event.get_time(),
+            next_event.get_time(),
+        );
+    }
 }

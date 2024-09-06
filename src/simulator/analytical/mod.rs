@@ -7,15 +7,15 @@ pub(crate) fn simulate_analytical_event(
     eq: &AnalyticalEq,
     seq_eq: &SecEq,
 
-    x: V,
+    x: &mut V,
     support_point: &[f64],
     cov: &Covariates,
     infusions: &Vec<Infusion>,
     ti: f64,
     tf: f64,
-) -> V {
+) {
     if ti == tf {
-        return x;
+        return;
     }
     let mut support_point = V::from_vec(support_point.to_owned());
     let mut rateiv = V::from_vec(vec![0.0, 0.0, 0.0]);
@@ -26,7 +26,7 @@ pub(crate) fn simulate_analytical_event(
         }
     }
     (seq_eq)(&mut support_point, tf, cov);
-    (eq)(&x, &support_point, tf - ti, rateiv, cov)
+    *x = (eq)(&x, &support_point, tf - ti, rateiv, cov);
 }
 
 ///
