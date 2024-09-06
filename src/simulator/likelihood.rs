@@ -3,11 +3,13 @@ use crate::{
     Data, Subject,
 };
 
+use cached::proc_macro::cached;
+use cached::UnboundCache;
 use indicatif::{ProgressBar, ProgressStyle};
 use ndarray::{Array1, Array2, Axis, ShapeBuilder};
 use rayon::prelude::*;
 
-use super::{get_pf_entry, insert_pf_entry, Equation};
+use super::Equation;
 
 const FRAC_1_SQRT_2PI: f64 =
     std::f64::consts::FRAC_2_SQRT_PI * std::f64::consts::FRAC_1_SQRT_2 / 2.0;
@@ -94,7 +96,6 @@ pub fn pf_psi(
     error_model: &ErrorModel,
     nparticles: usize,
     progress: bool,
-    cache: bool,
 ) -> Array2<f64> {
     let mut psi: Array2<f64> = Array2::default((subjects.len(), support_points.nrows()).f());
     let subjects = subjects.get_subjects();
@@ -126,7 +127,6 @@ pub fn pf_psi(
                         support_points.row(j).to_vec().as_ref(),
                         nparticles,
                         error_model,
-                        cache,
                     );
 
                     element.fill(ll);
@@ -167,10 +167,9 @@ pub fn psi(
     subjects: &Data,
     support_points: &Array2<f64>,
     error_model: &ErrorModel,
-    cache: bool,
     progress: bool,
 ) -> Array2<f64> {
-    let mut pred = Array2::default((subjects.len(), support_points.nrows()).f());
+    let mut pred: Array2<f64> = Array2::default((subjects.len(), support_points.nrows()).f());
     let subjects = subjects.get_subjects();
     let pb = match progress {
         true => {
@@ -201,7 +200,6 @@ pub fn psi(
                         equation,
                         support_points.row(j).to_vec().as_ref(),
                         error_model,
-                        cache,
                     );
                     element.fill(likelihood);
                     if let Some(pb_ref) = pb.as_ref() {
@@ -216,27 +214,33 @@ pub fn psi(
     pred.into()
 }
 
+// Commented code for disk cache
+// #[io_cached(
+//    disk = true,
+//    map_error = r##"|e| anyhow!(e)"##,
+//    convert = r#"{ format!("{}{}", subject.id(), spphash(support_point)) }"#,
+//    ty = "DiskCache<String, f64>"
+//)]
+
 #[inline(always)]
+#[cached(
+    ty = "UnboundCache<String, f64>",
+    create = "{ UnboundCache::with_capacity(100_000) }",
+    convert = r#"{ format!("{}{}", subject.id(), spphash(support_point)) }"#
+)]
 fn subject_likelihood(
     subject: &Subject,
     equation: &Equation,
     support_point: &Vec<f64>,
     error_model: &ErrorModel,
-    cache: bool,
 ) -> f64 {
-    // Check for a cache entry
-    if cache {
-        let pred = get_pf_entry(subject, support_point);
-        if let Some(pred) = pred {
-            return pred;
-        }
-    }
     let ypred = equation.simulate_subject(subject, support_point);
     let likelihood = ypred.likelihood(error_model);
-    if cache {
-        insert_pf_entry(subject, support_point, likelihood);
-    }
     likelihood
+}
+
+fn spphash(spp: &[f64]) -> u64 {
+    spp.iter().fold(0, |acc, x| acc + x.to_bits())
 }
 
 /// Prediction holds an observation and its prediction

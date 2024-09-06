@@ -1,5 +1,4 @@
 pub(crate) mod analytical;
-mod cache;
 pub mod fitting;
 pub(crate) mod likelihood;
 mod ode;
@@ -13,8 +12,6 @@ use ndarray::parallel::prelude::*;
 use rand::prelude::*;
 use sde::simulate_sde_event;
 use std::collections::HashMap;
-
-use cache::*;
 
 type T = f64;
 type V = nalgebra::DVector<T>;
@@ -247,7 +244,6 @@ impl Equation {
         support_point: &Vec<f64>,
         nparticles: usize,
         error_model: &ErrorModel,
-        cache: bool,
     ) -> f64 {
         match self {
             Equation::ODE(_, _, _, _, _, _) => {
@@ -258,12 +254,6 @@ impl Equation {
             }
             Equation::SDE(drift, difussion, _, _, _, _, _) => {
                 // Check for a cache entry
-                if cache {
-                    let pred = get_pf_entry(subject, support_point);
-                    if let Some(pred) = pred {
-                        return pred;
-                    }
-                }
                 let init = self.get_init();
                 let out = self.get_out();
                 let lag = self.get_lag(support_point);
@@ -355,9 +345,6 @@ impl Equation {
                 // let pred: SubjectPredictions = yout.into();
                 let likelihood = ll.iter().sum::<f64>().exp();
                 // Insert the cache entry
-                if cache {
-                    insert_pf_entry(subject, support_point, likelihood);
-                }
                 likelihood
             }
         }
