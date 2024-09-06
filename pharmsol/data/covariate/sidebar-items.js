@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["InterpolationMethod"],"struct":["Covariate","Covariates"]};
+window.SIDEBAR_ITEMS = {"enum":["InterpolationMethod"],"struct":["Covariate","CovariateSegment","Covariates"]};

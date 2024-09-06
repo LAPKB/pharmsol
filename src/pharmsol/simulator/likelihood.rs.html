@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `src/simulator/likelihood.rs`."><title>likelihood.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-46f98efaafac5295.ttf.woff2,FiraSans-Regular-018c141bf0843ffd.woff2,FiraSans-Medium-8f9a781e4970d388.woff2,SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2,SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../../static.files/rustdoc-dd39b87e5fcfba68.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="pharmsol" data-themes="" data-resource-suffix="" data-rustdoc-version="1.80.1 (3f5fd8dd4 2024-08-06)" data-channel="1.80.1" data-search-js="search-d52510db62a78183.js" data-settings-js="settings-4313503d2e1961c2.js" ><script src="../../../static.files/storage-118b08c4c78b968e.js"></script><script defer src="../../../static.files/src-script-e66d777a5a92e9b2.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-20a3ad099b048cf2.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-df360f571f6edeae.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers"><a href="#1" id="1">1</a>
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `src/simulator/likelihood.rs`."><title>likelihood.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-46f98efaafac5295.ttf.woff2,FiraSans-Regular-018c141bf0843ffd.woff2,FiraSans-Medium-8f9a781e4970d388.woff2,SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2,SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../../static.files/rustdoc-c5d6553a23f1e5a6.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="pharmsol" data-themes="" data-resource-suffix="" data-rustdoc-version="1.81.0 (eeb90cda1 2024-09-04)" data-channel="1.81.0" data-search-js="search-d234aafac6c221dd.js" data-settings-js="settings-4313503d2e1961c2.js" ><script src="../../../static.files/storage-118b08c4c78b968e.js"></script><script defer src="../../../static.files/src-script-e66d777a5a92e9b2.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-d2fab2bf619172d3.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-df360f571f6edeae.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers"><a href="#1" id="1">1</a>
 <a href="#2" id="2">2</a>
 <a href="#3" id="3">3</a>
 <a href="#4" id="4">4</a>
@@ -296,27 +296,51 @@
 <a href="#296" id="296">296</a>
 <a href="#297" id="297">297</a>
 <a href="#298" id="298">298</a>
+<a href="#299" id="299">299</a>
+<a href="#300" id="300">300</a>
+<a href="#301" id="301">301</a>
+<a href="#302" id="302">302</a>
+<a href="#303" id="303">303</a>
+<a href="#304" id="304">304</a>
+<a href="#305" id="305">305</a>
+<a href="#306" id="306">306</a>
+<a href="#307" id="307">307</a>
+<a href="#308" id="308">308</a>
+<a href="#309" id="309">309</a>
+<a href="#310" id="310">310</a>
+<a href="#311" id="311">311</a>
+<a href="#312" id="312">312</a>
+<a href="#313" id="313">313</a>
+<a href="#314" id="314">314</a>
+<a href="#315" id="315">315</a>
+<a href="#316" id="316">316</a>
+<a href="#317" id="317">317</a>
+<a href="#318" id="318">318</a>
+<a href="#319" id="319">319</a>
+<a href="#320" id="320">320</a>
+<a href="#321" id="321">321</a>
+<a href="#322" id="322">322</a>
+<a href="#323" id="323">323</a>
 </pre></div><pre class="rust"><code><span class="kw">use crate</span>::{
     data::{error_model::ErrorModel, Observation},
-    Data,
+    Data, Subject,
 };
 
 <span class="kw">use </span>indicatif::{ProgressBar, ProgressStyle};
-<span class="kw">use </span>ndarray::{Array2, Axis, ShapeBuilder};
+<span class="kw">use </span>ndarray::{Array1, Array2, Axis, ShapeBuilder};
 <span class="kw">use </span>rayon::prelude::<span class="kw-2">*</span>;
-<span class="kw">use </span>serde::{Deserialize, Serialize};
 
-<span class="kw">use </span><span class="kw">super</span>::Equation;
+<span class="kw">use super</span>::{get_pf_entry, insert_pf_entry, Equation};
 
 <span class="kw">const </span>FRAC_1_SQRT_2PI: f64 =
     std::f64::consts::FRAC_2_SQRT_PI * std::f64::consts::FRAC_1_SQRT_2 / <span class="number">2.0</span>;
 
-<span class="attr">#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+<span class="attr">#[derive(Debug, Clone, Default)]
 </span><span class="kw">pub struct </span>SubjectPredictions {
     predictions: Vec&lt;Prediction&gt;,
-    flat_predictions: Vec&lt;f64&gt;,
-    flat_observations: Vec&lt;f64&gt;,
-    flat_time: Vec&lt;f64&gt;,
+    flat_predictions: Array1&lt;f64&gt;,
+    flat_observations: Array1&lt;f64&gt;,
+    flat_time: Array1&lt;f64&gt;,
 }
 <span class="kw">impl </span>SubjectPredictions {
     <span class="kw">pub fn </span>get_predictions(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>Vec&lt;Prediction&gt; {
@@ -378,27 +402,6 @@
     }
 }
 
-<span class="kw">impl </span>PopulationPredictions {
-    <span class="kw">pub fn </span>get_psi(<span class="kw-2">&amp;</span><span class="self">self</span>, ep: <span class="kw-2">&amp;</span>ErrorModel) -&gt; Array2&lt;f64&gt; {
-        <span class="kw">let </span><span class="kw-2">mut </span>psi = Array2::zeros((
-            <span class="self">self</span>.subject_predictions.nrows(),
-            <span class="self">self</span>.subject_predictions.ncols(),
-        ));
-        psi.axis_iter_mut(Axis(<span class="number">0</span>))
-            .into_par_iter()
-            .enumerate()
-            .for_each(|(i, <span class="kw-2">mut </span>row)| {
-                row.axis_iter_mut(Axis(<span class="number">0</span>))
-                    .into_par_iter()
-                    .enumerate()
-                    .for_each(|(j, <span class="kw-2">mut </span>element)| {
-                        element.fill(<span class="self">self</span>.subject_predictions.get((i, j)).unwrap().likelihood(ep));
-                    })
-            });
-        psi
-    }
-}
-
 <span class="kw">impl </span>From&lt;Array2&lt;SubjectPredictions&gt;&gt; <span class="kw">for </span>PopulationPredictions {
     <span class="kw">fn </span>from(subject_predictions: Array2&lt;SubjectPredictions&gt;) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
@@ -414,7 +417,7 @@
     error_model: <span class="kw-2">&amp;</span>ErrorModel,
     nparticles: usize,
     progress: bool,
-    cache: minne::Cache&lt;u64, f64&gt;,
+    cache: bool,
 ) -&gt; Array2&lt;f64&gt; {
     <span class="kw">let </span><span class="kw-2">mut </span>psi: Array2&lt;f64&gt; = Array2::default((subjects.len(), support_points.nrows()).f());
     <span class="kw">let </span>subjects = subjects.get_subjects();
@@ -423,7 +426,7 @@
             <span class="kw">let </span>pb = ProgressBar::new(psi.ncols() <span class="kw">as </span>u64 * psi.nrows() <span class="kw">as </span>u64);
             pb.set_style(
                 ProgressStyle::with_template(
-                    <span class="string">"Simulating subjects...\n[{elapsed_precise}] {bar:40.green} {percent}% ETA:{eta}"</span>,
+                    <span class="string">"Cycle #1:\n[{elapsed_precise}] {bar:40.green} {percent}% ETA:{eta}"</span>,
                 )
                 .unwrap()
                 .progress_chars(<span class="string">"##-"</span>),
@@ -446,7 +449,7 @@
                         support_points.row(j).to_vec().as_ref(),
                         nparticles,
                         error_model,
-                        cache.clone(),
+                        cache,
                     );
 
                     element.fill(ll);
@@ -461,13 +464,35 @@
     psi
 }
 
-<span class="kw">pub fn </span>get_population_predictions(
+<span class="comment">// impl PopulationPredictions {
+//     pub fn get_psi(&amp;self, ep: &amp;ErrorModel) -&gt; Array2&lt;f64&gt; {
+//         let mut psi = Array2::zeros((
+//             self.subject_predictions.nrows(),
+//             self.subject_predictions.ncols(),
+//         ));
+//         psi.axis_iter_mut(Axis(0))
+//             .into_par_iter()
+//             .enumerate()
+//             .for_each(|(i, mut row)| {
+//                 row.axis_iter_mut(Axis(0))
+//                     .into_par_iter()
+//                     .enumerate()
+//                     .for_each(|(j, mut element)| {
+//                         element.fill(self.subject_predictions.get((i, j)).unwrap().likelihood(ep));
+//                     })
+//             });
+//         psi
+//     }
+// }
+//TODO: Export this function as a method of Data
+</span><span class="kw">pub fn </span>psi(
     equation: <span class="kw-2">&amp;</span>Equation,
     subjects: <span class="kw-2">&amp;</span>Data,
     support_points: <span class="kw-2">&amp;</span>Array2&lt;f64&gt;,
-    cache: minne::Cache&lt;u64, SubjectPredictions&gt;,
+    error_model: <span class="kw-2">&amp;</span>ErrorModel,
+    cache: bool,
     progress: bool,
-) -&gt; PopulationPredictions {
+) -&gt; Array2&lt;f64&gt; {
     <span class="kw">let </span><span class="kw-2">mut </span>pred = Array2::default((subjects.len(), support_points.nrows()).f());
     <span class="kw">let </span>subjects = subjects.get_subjects();
     <span class="kw">let </span>pb = <span class="kw">match </span>progress {
@@ -475,7 +500,7 @@
             <span class="kw">let </span>pb = ProgressBar::new(pred.ncols() <span class="kw">as </span>u64 * pred.nrows() <span class="kw">as </span>u64);
             pb.set_style(
                 ProgressStyle::with_template(
-                    <span class="string">"Simulating subjects...\n[{elapsed_precise}] {bar:40.green} {percent}% ETA:{eta}"</span>,
+                    <span class="string">"Cycle #1:\n[{elapsed_precise}] {bar:40.green} {percent}% ETA:{eta}"</span>,
                 )
                 .unwrap()
                 .progress_chars(<span class="string">"##-"</span>),
@@ -494,12 +519,14 @@
                 .enumerate()
                 .for_each(|(j, <span class="kw-2">mut </span>element)| {
                     <span class="kw">let </span>subject = subjects.get(i).unwrap();
-                    <span class="kw">let </span>ypred = equation.simulate_subject(
+                    <span class="kw">let </span>likelihood = subject_likelihood(
                         subject,
+                        equation,
                         support_points.row(j).to_vec().as_ref(),
-                        cache.clone(),
+                        error_model,
+                        cache,
                     );
-                    element.fill(ypred);
+                    element.fill(likelihood);
                     <span class="kw">if let </span><span class="prelude-val">Some</span>(pb_ref) = pb.as_ref() {
                         pb_ref.inc(<span class="number">1</span>);
                     }
@@ -512,8 +539,31 @@
     pred.into()
 }
 
+<span class="attr">#[inline(always)]
+</span><span class="kw">fn </span>subject_likelihood(
+    subject: <span class="kw-2">&amp;</span>Subject,
+    equation: <span class="kw-2">&amp;</span>Equation,
+    support_point: <span class="kw-2">&amp;</span>Vec&lt;f64&gt;,
+    error_model: <span class="kw-2">&amp;</span>ErrorModel,
+    cache: bool,
+) -&gt; f64 {
+    <span class="comment">// Check for a cache entry
+    </span><span class="kw">if </span>cache {
+        <span class="kw">let </span>pred = get_pf_entry(subject, support_point);
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(pred) = pred {
+            <span class="kw">return </span>pred;
+        }
+    }
+    <span class="kw">let </span>ypred = equation.simulate_subject(subject, support_point);
+    <span class="kw">let </span>likelihood = ypred.likelihood(error_model);
+    <span class="kw">if </span>cache {
+        insert_pf_entry(subject, support_point, likelihood);
+    }
+    likelihood
+}
+
 <span class="doccomment">/// Prediction holds an observation and its prediction
-</span><span class="attr">#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+</span><span class="attr">#[derive(Debug, Clone, Copy)]
 </span><span class="kw">pub struct </span>Prediction {
     time: f64,
     observation: f64,
