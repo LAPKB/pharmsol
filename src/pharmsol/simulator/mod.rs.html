@@ -605,21 +605,7 @@
 <a href="#605" id="605">605</a>
 <a href="#606" id="606">606</a>
 <a href="#607" id="607">607</a>
-<a href="#608" id="608">608</a>
-<a href="#609" id="609">609</a>
-<a href="#610" id="610">610</a>
-<a href="#611" id="611">611</a>
-<a href="#612" id="612">612</a>
-<a href="#613" id="613">613</a>
-<a href="#614" id="614">614</a>
-<a href="#615" id="615">615</a>
-<a href="#616" id="616">616</a>
-<a href="#617" id="617">617</a>
-<a href="#618" id="618">618</a>
-<a href="#619" id="619">619</a>
-<a href="#620" id="620">620</a>
 </pre></div><pre class="rust"><code><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>analytical;
-<span class="kw">mod </span>cache;
 <span class="kw">pub mod </span>fitting;
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>likelihood;
 <span class="kw">mod </span>ode;
@@ -633,8 +619,6 @@
 <span class="kw">use </span>rand::prelude::<span class="kw-2">*</span>;
 <span class="kw">use </span>sde::simulate_sde_event;
 <span class="kw">use </span>std::collections::HashMap;
-
-<span class="kw">use </span>cache::<span class="kw-2">*</span>;
 
 <span class="kw">type </span>T = f64;
 <span class="kw">type </span>V = nalgebra::DVector&lt;T&gt;;
@@ -867,7 +851,6 @@
         support_point: <span class="kw-2">&amp;</span>Vec&lt;f64&gt;,
         nparticles: usize,
         error_model: <span class="kw-2">&amp;</span>ErrorModel,
-        cache: bool,
     ) -&gt; f64 {
         <span class="kw">match </span><span class="self">self </span>{
             Equation::ODE(<span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>) =&gt; {
@@ -878,13 +861,7 @@
             }
             Equation::SDE(drift, difussion, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>) =&gt; {
                 <span class="comment">// Check for a cache entry
-                </span><span class="kw">if </span>cache {
-                    <span class="kw">let </span>pred = get_pf_entry(subject, support_point);
-                    <span class="kw">if let </span><span class="prelude-val">Some</span>(pred) = pred {
-                        <span class="kw">return </span>pred;
-                    }
-                }
-                <span class="kw">let </span>init = <span class="self">self</span>.get_init();
+                </span><span class="kw">let </span>init = <span class="self">self</span>.get_init();
                 <span class="kw">let </span>out = <span class="self">self</span>.get_out();
                 <span class="kw">let </span>lag = <span class="self">self</span>.get_lag(support_point);
                 <span class="kw">let </span>fa = <span class="self">self</span>.get_fa(support_point);
@@ -975,10 +952,7 @@
                 <span class="comment">// let pred: SubjectPredictions = yout.into();
                 </span><span class="kw">let </span>likelihood = ll.iter().sum::&lt;f64&gt;().exp();
                 <span class="comment">// Insert the cache entry
-                </span><span class="kw">if </span>cache {
-                    insert_pf_entry(subject, support_point, likelihood);
-                }
-                likelihood
+                </span>likelihood
             }
         }
     }

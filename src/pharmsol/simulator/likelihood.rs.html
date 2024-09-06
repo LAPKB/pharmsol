@@ -321,16 +321,22 @@
 <a href="#321" id="321">321</a>
 <a href="#322" id="322">322</a>
 <a href="#323" id="323">323</a>
+<a href="#324" id="324">324</a>
+<a href="#325" id="325">325</a>
+<a href="#326" id="326">326</a>
+<a href="#327" id="327">327</a>
 </pre></div><pre class="rust"><code><span class="kw">use crate</span>::{
     data::{error_model::ErrorModel, Observation},
     Data, Subject,
 };
 
+<span class="kw">use </span>cached::proc_macro::cached;
+<span class="kw">use </span>cached::UnboundCache;
 <span class="kw">use </span>indicatif::{ProgressBar, ProgressStyle};
 <span class="kw">use </span>ndarray::{Array1, Array2, Axis, ShapeBuilder};
 <span class="kw">use </span>rayon::prelude::<span class="kw-2">*</span>;
 
-<span class="kw">use super</span>::{get_pf_entry, insert_pf_entry, Equation};
+<span class="kw">use </span><span class="kw">super</span>::Equation;
 
 <span class="kw">const </span>FRAC_1_SQRT_2PI: f64 =
     std::f64::consts::FRAC_2_SQRT_PI * std::f64::consts::FRAC_1_SQRT_2 / <span class="number">2.0</span>;
@@ -417,7 +423,6 @@
     error_model: <span class="kw-2">&amp;</span>ErrorModel,
     nparticles: usize,
     progress: bool,
-    cache: bool,
 ) -&gt; Array2&lt;f64&gt; {
     <span class="kw">let </span><span class="kw-2">mut </span>psi: Array2&lt;f64&gt; = Array2::default((subjects.len(), support_points.nrows()).f());
     <span class="kw">let </span>subjects = subjects.get_subjects();
@@ -449,7 +454,6 @@
                         support_points.row(j).to_vec().as_ref(),
                         nparticles,
                         error_model,
-                        cache,
                     );
 
                     element.fill(ll);
@@ -490,10 +494,9 @@
     subjects: <span class="kw-2">&amp;</span>Data,
     support_points: <span class="kw-2">&amp;</span>Array2&lt;f64&gt;,
     error_model: <span class="kw-2">&amp;</span>ErrorModel,
-    cache: bool,
     progress: bool,
 ) -&gt; Array2&lt;f64&gt; {
-    <span class="kw">let </span><span class="kw-2">mut </span>pred = Array2::default((subjects.len(), support_points.nrows()).f());
+    <span class="kw">let </span><span class="kw-2">mut </span>pred: Array2&lt;f64&gt; = Array2::default((subjects.len(), support_points.nrows()).f());
     <span class="kw">let </span>subjects = subjects.get_subjects();
     <span class="kw">let </span>pb = <span class="kw">match </span>progress {
         <span class="bool-val">true </span>=&gt; {
@@ -524,7 +527,6 @@
                         equation,
                         support_points.row(j).to_vec().as_ref(),
                         error_model,
-                        cache,
                     );
                     element.fill(likelihood);
                     <span class="kw">if let </span><span class="prelude-val">Some</span>(pb_ref) = pb.as_ref() {
@@ -539,27 +541,33 @@
     pred.into()
 }
 
-<span class="attr">#[inline(always)]
+<span class="comment">// Commented code for disk cache
+// #[io_cached(
+//    disk = true,
+//    map_error = r##"|e| anyhow!(e)"##,
+//    convert = r#"{ format!("{}{}", subject.id(), spphash(support_point)) }"#,
+//    ty = "DiskCache&lt;String, f64&gt;"
+//)]
+
+</span><span class="attr">#[inline(always)]
+#[cached(
+    ty = <span class="string">"UnboundCache&lt;String, f64&gt;"</span>,
+    create = <span class="string">"{ UnboundCache::with_capacity(100_000) }"</span>,
+    convert = <span class="string">r#"{ format!("{}{}", subject.id(), spphash(support_point)) }"#
+</span>)]
 </span><span class="kw">fn </span>subject_likelihood(
     subject: <span class="kw-2">&amp;</span>Subject,
     equation: <span class="kw-2">&amp;</span>Equation,
     support_point: <span class="kw-2">&amp;</span>Vec&lt;f64&gt;,
     error_model: <span class="kw-2">&amp;</span>ErrorModel,
-    cache: bool,
 ) -&gt; f64 {
-    <span class="comment">// Check for a cache entry
-    </span><span class="kw">if </span>cache {
-        <span class="kw">let </span>pred = get_pf_entry(subject, support_point);
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(pred) = pred {
-            <span class="kw">return </span>pred;
-        }
-    }
     <span class="kw">let </span>ypred = equation.simulate_subject(subject, support_point);
     <span class="kw">let </span>likelihood = ypred.likelihood(error_model);
-    <span class="kw">if </span>cache {
-        insert_pf_entry(subject, support_point, likelihood);
-    }
     likelihood
+}
+
+<span class="kw">fn </span>spphash(spp: <span class="kw-2">&amp;</span>[f64]) -&gt; u64 {
+    spp.iter().fold(<span class="number">0</span>, |acc, x| acc + x.to_bits())
 }
 
 <span class="doccomment">/// Prediction holds an observation and its prediction
