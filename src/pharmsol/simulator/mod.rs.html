@@ -605,6 +605,27 @@
 <a href="#605" id="605">605</a>
 <a href="#606" id="606">606</a>
 <a href="#607" id="607">607</a>
+<a href="#608" id="608">608</a>
+<a href="#609" id="609">609</a>
+<a href="#610" id="610">610</a>
+<a href="#611" id="611">611</a>
+<a href="#612" id="612">612</a>
+<a href="#613" id="613">613</a>
+<a href="#614" id="614">614</a>
+<a href="#615" id="615">615</a>
+<a href="#616" id="616">616</a>
+<a href="#617" id="617">617</a>
+<a href="#618" id="618">618</a>
+<a href="#619" id="619">619</a>
+<a href="#620" id="620">620</a>
+<a href="#621" id="621">621</a>
+<a href="#622" id="622">622</a>
+<a href="#623" id="623">623</a>
+<a href="#624" id="624">624</a>
+<a href="#625" id="625">625</a>
+<a href="#626" id="626">626</a>
+<a href="#627" id="627">627</a>
+<a href="#628" id="628">628</a>
 </pre></div><pre class="rust"><code><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>analytical;
 <span class="kw">pub mod </span>fitting;
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>likelihood;
@@ -615,6 +636,7 @@
     error_model::ErrorModel,
     simulator::likelihood::{SubjectPredictions, ToPrediction},
 };
+<span class="kw">use </span>likelihood::Prediction;
 <span class="kw">use </span>ndarray::parallel::prelude::<span class="kw-2">*</span>;
 <span class="kw">use </span>rand::prelude::<span class="kw-2">*</span>;
 <span class="kw">use </span>sde::simulate_sde_event;
@@ -1060,13 +1082,13 @@
 
     </span><span class="kw">fn </span>simulate_event(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-        x: V,
+        x: <span class="kw-2">&amp;mut </span>V,
         support_point: <span class="kw-2">&amp;</span>[f64],
         covariates: <span class="kw-2">&amp;</span>Covariates,
         infusions: <span class="kw-2">&amp;</span>Vec&lt;Infusion&gt;,
         start_time: T,
         end_time: T,
-    ) -&gt; V {
+    ) {
         <span class="kw">match </span><span class="self">self </span>{
             Equation::ODE(eqn, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>, <span class="kw">_</span>) =&gt; ode::simulate_ode_event(
                 eqn,
@@ -1154,7 +1176,6 @@
     //     }
     // }
     </span><span class="kw">let </span>init = eq.get_init();
-    <span class="kw">let </span>out = eq.get_out();
     <span class="kw">let </span>lag = eq.get_lag(support_point);
     <span class="kw">let </span>fa = eq.get_fa(support_point);
     <span class="kw">let </span><span class="kw-2">mut </span>yout = <span class="macro">vec!</span>[];
@@ -1171,45 +1192,66 @@
         <span class="kw">let </span><span class="kw-2">mut </span>infusions: Vec&lt;Infusion&gt; = <span class="macro">vec!</span>[];
         <span class="kw">let </span>events = occasion.get_events(<span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>lag), <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>fa), <span class="bool-val">true</span>);
         <span class="kw">for </span>(index, event) <span class="kw">in </span>events.iter().enumerate() {
-            <span class="kw">match </span>event {
-                Event::Bolus(bolus) =&gt; {
-                    x[bolus.input()] += bolus.amount();
-                }
-                Event::Infusion(infusion) =&gt; {
-                    infusions.push(infusion.clone());
-                }
-                Event::Observation(observation) =&gt; {
-                    <span class="kw">let </span><span class="kw-2">mut </span>y = V::zeros(eq.get_nouteqs());
-                    (out)(
-                        <span class="kw-2">&amp;</span>x,
-                        <span class="kw-2">&amp;</span>V::from_vec(support_point.clone()),
-                        observation.time(),
-                        covariates,
-                        <span class="kw-2">&amp;mut </span>y,
-                    );
-                    <span class="kw">let </span>pred = y[observation.outeq()];
-
-                    yout.push(observation.to_obs_pred(pred));
-                }
-            }
-
-            <span class="kw">if let </span><span class="prelude-val">Some</span>(next_event) = events.get(index + <span class="number">1</span>) {
-                x = eq.simulate_event(
-                    x,
-                    support_point,
-                    covariates,
-                    <span class="kw-2">&amp;</span>infusions,
-                    event.get_time(),
-                    next_event.get_time(),
-                );
-            }
+            simulate_event(
+                eq,
+                support_point,
+                event,
+                events.get(index + <span class="number">1</span>),
+                covariates,
+                <span class="kw-2">&amp;mut </span>x,
+                <span class="kw-2">&amp;mut </span>infusions,
+                <span class="kw-2">&amp;mut </span>yout,
+            )
         }
     }
-    <span class="comment">// Insert the cache entry
-    </span><span class="kw">let </span>pred: SubjectPredictions = yout.into();
-    <span class="comment">// if cache {
-    //     insert_entry(subject, support_point, pred.clone());
-    // }
-    </span>pred
+    <span class="kw">let </span>pred: SubjectPredictions = yout.into();
+
+    pred
+}
+
+<span class="attr">#[inline(always)]
+</span><span class="kw">fn </span>simulate_event(
+    eq: <span class="kw-2">&amp;</span>Equation,
+    support_point: <span class="kw-2">&amp;</span>Vec&lt;f64&gt;,
+    event: <span class="kw-2">&amp;</span>Event,
+    next_event: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Event&gt;,
+    covariates: <span class="kw-2">&amp;</span>Covariates,
+    x: <span class="kw-2">&amp;mut </span>nalgebra::DVector&lt;f64&gt;,
+    infusions: <span class="kw-2">&amp;mut </span>Vec&lt;Infusion&gt;,
+    yout: <span class="kw-2">&amp;mut </span>Vec&lt;Prediction&gt;,
+) {
+    <span class="kw">let </span>out = eq.get_out();
+    <span class="kw">match </span>event {
+        Event::Bolus(bolus) =&gt; {
+            x[bolus.input()] += bolus.amount();
+        }
+        Event::Infusion(infusion) =&gt; {
+            infusions.push(infusion.clone());
+        }
+        Event::Observation(observation) =&gt; {
+            <span class="kw">let </span><span class="kw-2">mut </span>y = V::zeros(eq.get_nouteqs());
+            (out)(
+                <span class="kw-2">&amp;</span>x,
+                <span class="kw-2">&amp;</span>V::from_vec(support_point.clone()),
+                observation.time(),
+                covariates,
+                <span class="kw-2">&amp;mut </span>y,
+            );
+            <span class="kw">let </span>pred = y[observation.outeq()];
+
+            yout.push(observation.to_obs_pred(pred));
+        }
+    }
+
+    <span class="kw">if let </span><span class="prelude-val">Some</span>(next_event) = next_event {
+        eq.simulate_event(
+            x,
+            support_point,
+            covariates,
+            <span class="kw-2">&amp;</span>infusions,
+            event.get_time(),
+            next_event.get_time(),
+        );
+    }
 }
 </code></pre></div></section></main></body></html>

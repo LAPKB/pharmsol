@@ -60,19 +60,19 @@
 <span class="attr">#[inline(always)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>simulate_ode_event(
     diffeq: <span class="kw-2">&amp;</span>DiffEq,
-    x: V,
+    x: <span class="kw-2">&amp;mut </span>V,
     support_point: <span class="kw-2">&amp;</span>[f64],
     cov: <span class="kw-2">&amp;</span>Covariates,
     infusions: <span class="kw-2">&amp;</span>[Infusion],
     ti: f64,
     tf: f64,
-) -&gt; V {
+) {
     <span class="kw">if </span>ti == tf {
-        <span class="kw">return </span>x;
+        <span class="kw">return</span>;
     }
     <span class="kw">let </span>problem = build_pm_ode::&lt;M, <span class="kw">_</span>, <span class="kw">_</span>&gt;(
         <span class="kw-2">*</span>diffeq,
-        <span class="kw">move </span>|_p: <span class="kw-2">&amp;</span>V, _t: T| x.clone(),
+        |_p: <span class="kw-2">&amp;</span>V, _t: T| x.clone(),
         V::from_vec(support_point.to_vec()),
         ti,
         <span class="number">1e-3</span>,
@@ -84,6 +84,6 @@
     .unwrap();
     <span class="kw">let </span><span class="kw-2">mut </span>solver = Bdf::default();
     <span class="kw">let </span>sol = solver.solve(<span class="kw-2">&amp;</span>problem, tf).unwrap();
-    sol.<span class="number">0</span>.last().unwrap().clone()
+    <span class="kw-2">*</span>x = sol.<span class="number">0</span>.last().unwrap().clone()
 }
 </code></pre></div></section></main></body></html>
