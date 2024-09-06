@@ -325,6 +325,16 @@
 <a href="#325" id="325">325</a>
 <a href="#326" id="326">326</a>
 <a href="#327" id="327">327</a>
+<a href="#328" id="328">328</a>
+<a href="#329" id="329">329</a>
+<a href="#330" id="330">330</a>
+<a href="#331" id="331">331</a>
+<a href="#332" id="332">332</a>
+<a href="#333" id="333">333</a>
+<a href="#334" id="334">334</a>
+<a href="#335" id="335">335</a>
+<a href="#336" id="336">336</a>
+<a href="#337" id="337">337</a>
 </pre></div><pre class="rust"><code><span class="kw">use crate</span>::{
     data::{error_model::ErrorModel, Observation},
     Data, Subject,
@@ -495,6 +505,7 @@
     support_points: <span class="kw-2">&amp;</span>Array2&lt;f64&gt;,
     error_model: <span class="kw-2">&amp;</span>ErrorModel,
     progress: bool,
+    cache: bool,
 ) -&gt; Array2&lt;f64&gt; {
     <span class="kw">let </span><span class="kw-2">mut </span>pred: Array2&lt;f64&gt; = Array2::default((subjects.len(), support_points.nrows()).f());
     <span class="kw">let </span>subjects = subjects.get_subjects();
@@ -522,12 +533,21 @@
                 .enumerate()
                 .for_each(|(j, <span class="kw-2">mut </span>element)| {
                     <span class="kw">let </span>subject = subjects.get(i).unwrap();
-                    <span class="kw">let </span>likelihood = subject_likelihood(
-                        subject,
-                        equation,
-                        support_points.row(j).to_vec().as_ref(),
-                        error_model,
-                    );
+                    <span class="kw">let </span>likelihood = <span class="kw">if </span>cache {
+                        subject_likelihood(
+                            subject,
+                            equation,
+                            support_points.row(j).to_vec().as_ref(),
+                            error_model,
+                        )
+                    } <span class="kw">else </span>{
+                        subject_likelihood_no_cache(
+                            subject,
+                            equation,
+                            support_points.row(j).to_vec().as_ref(),
+                            error_model,
+                        )
+                    };
                     element.fill(likelihood);
                     <span class="kw">if let </span><span class="prelude-val">Some</span>(pb_ref) = pb.as_ref() {
                         pb_ref.inc(<span class="number">1</span>);
