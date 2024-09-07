@@ -6,7 +6,7 @@ use crate::{
 use cached::proc_macro::cached;
 use cached::UnboundCache;
 use indicatif::{ProgressBar, ProgressStyle};
-use ndarray::{Array1, Array2, Axis, ShapeBuilder};
+use ndarray::{Array2, Axis, ShapeBuilder};
 use rayon::prelude::*;
 
 use super::Equation;
@@ -17,11 +17,17 @@ const FRAC_1_SQRT_2PI: f64 =
 #[derive(Debug, Clone, Default)]
 pub struct SubjectPredictions {
     predictions: Vec<Prediction>,
-    flat_predictions: Array1<f64>,
-    flat_observations: Array1<f64>,
-    flat_time: Array1<f64>,
+    flat_predictions: Vec<f64>,
+    flat_observations: Vec<f64>,
+    flat_time: Vec<f64>,
 }
 impl SubjectPredictions {
+    pub fn add_prediction(&mut self, prediction: Prediction) {
+        self.predictions.push(prediction);
+        self.flat_observations.push(prediction.observation);
+        self.flat_predictions.push(prediction.prediction);
+        self.flat_time.push(prediction.time);
+    }
     pub fn get_predictions(&self) -> &Vec<Prediction> {
         &self.predictions
     }

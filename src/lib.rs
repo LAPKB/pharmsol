@@ -5,6 +5,8 @@ pub mod simulator;
 pub use crate::data::builder::SubjectBuilderExt;
 pub use crate::data::InterpolationMethod::*;
 pub use crate::data::*;
+pub use crate::equation::*;
+pub use crate::simulator::equation::{self, ODE};
 
 pub mod prelude {
     pub mod data {
@@ -16,16 +18,18 @@ pub mod prelude {
     }
     pub mod simulator {
         pub use crate::simulator::{
+            equation,
             likelihood::{pf_psi, psi, PopulationPredictions, Prediction, SubjectPredictions},
             Equation,
         };
     }
     pub mod models {
-        pub use crate::simulator::analytical::one_compartment;
-        pub use crate::simulator::analytical::one_compartment_with_absorption;
-        pub use crate::simulator::analytical::two_compartments;
-        pub use crate::simulator::analytical::two_compartments_with_absorption;
+        pub use crate::simulator::equation::analytical::one_compartment;
+        pub use crate::simulator::equation::analytical::one_compartment_with_absorption;
+        pub use crate::simulator::equation::analytical::two_compartments;
+        pub use crate::simulator::equation::analytical::two_compartments_with_absorption;
     }
+
     //extension traits
     pub use crate::data::builder::SubjectBuilderExt;
     pub use crate::data::InterpolationMethod::*;

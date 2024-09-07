@@ -1,17 +1,15 @@
-pub(crate) mod analytical;
+pub mod equation;
 pub mod fitting;
 pub(crate) mod likelihood;
-mod ode;
-mod sde;
 use crate::{
     data::{Covariates, Event, Infusion, Subject},
     error_model::ErrorModel,
     simulator::likelihood::{SubjectPredictions, ToPrediction},
 };
+use equation::{analytical, ode, sde::simulate_sde_event};
 use likelihood::Prediction;
 use ndarray::parallel::prelude::*;
 use rand::prelude::*;
-use sde::simulate_sde_event;
 use std::collections::HashMap;
 
 type T = f64;
@@ -540,23 +538,12 @@ impl Equation {
 
 //TODO: This is the one and only simulator, other copies of this (inside the Equation impl) should be removed
 pub fn simulator(eq: &Equation, subject: &Subject, support_point: &Vec<f64>) -> SubjectPredictions {
-    // Check for a cache entry
-    // if cache {
-    //     let pred = get_entry(subject, support_point);
-    //     if let Some(pred) = pred {
-    //         return pred;
-    //     }
-    // }
     let init = eq.get_init();
     let lag = eq.get_lag(support_point);
     let fa = eq.get_fa(support_point);
     let mut yout = vec![];
-
     for occasion in subject.occasions() {
         let covariates = occasion.get_covariates().unwrap();
-
-        // if occasion == 0, we use the init closure to get the initial state
-        // otherwise we initialize the state vector to zero
         let mut x = V::zeros(eq.get_nstates());
         if occasion.index() == 0 {
             (init)(&V::from_vec(support_point.clone()), 0.0, covariates, &mut x);
@@ -588,7 +575,7 @@ fn simulate_event(
     event: &Event,
     next_event: Option<&Event>,
     covariates: &Covariates,
-    x: &mut nalgebra::DVector<f64>,
+    x: &mut nalgebra::DVector<f64>, //SimulationState
     infusions: &mut Vec<Infusion>,
     yout: &mut Vec<Prediction>,
 ) {
