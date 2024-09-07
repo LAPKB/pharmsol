@@ -60,7 +60,6 @@ fn main() {
     let mut data = vec![];
     for (i, spp) in support_points.iter().enumerate() {
         let trajectories = sde.simulate_trajectories(&subject, &spp);
-        dbg!(&trajectories.dim());
         let trajectory = trajectories.row(0);
         // dbg!(&trajectory);
         let mut sb = data::Subject::builder(format!("id{}", i)).bolus(0.0, 20.0, 0);
