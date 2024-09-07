@@ -50,6 +50,7 @@ pub(crate) fn simulate_ode_event(
     *x = sol.0.last().unwrap().clone()
 }
 
+#[derive(Clone)]
 pub struct ODE {
     diffeq: DiffEq,
     lag: Lag,
@@ -74,7 +75,7 @@ impl ODE {
 
 impl Equation for ODE {
     type S = V;
-    type O = SubjectPredictions;
+    type P = SubjectPredictions;
 
     #[inline(always)]
     fn solve(
@@ -146,7 +147,7 @@ impl Equation for ODE {
         covariates: &Covariates,
         x: &mut Self::S,
         likelihood: &mut Vec<f64>,
-        output: &mut Self::O,
+        output: &mut Self::P,
     ) {
         let mut y = V::zeros(self.get_nouteqs());
         let out = self.get_out();

@@ -19,8 +19,8 @@ pub mod prelude {
     pub mod simulator {
         pub use crate::simulator::{
             equation,
+            equation::Equation,
             likelihood::{pf_psi, psi, PopulationPredictions, Prediction, SubjectPredictions},
-            Equation,
         };
     }
     pub mod models {

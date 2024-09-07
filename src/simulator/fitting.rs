@@ -4,30 +4,30 @@ use argmin::{
 };
 use ndarray::{Array1, Array2, Axis};
 
-use crate::data::{Data, Subject};
+use crate::{
+    data::{Data, Subject},
+    Equation, Predictions,
+};
 
-use super::Equation;
-
-struct SppOptimizer<'a> {
-    equation: &'a Equation,
+struct SppOptimizer<'a, E: Equation> {
+    equation: &'a E,
     subject: &'a Subject,
 }
 
-impl<'a> CostFunction for SppOptimizer<'a> {
+impl<'a, E: Equation> CostFunction for SppOptimizer<'a, E> {
     type Param = Array1<f64>;
     type Output = f64;
 
     fn cost(&self, point: &Self::Param) -> Result<Self::Output, Error> {
-        Ok(self
-            .equation
-            //are you looking for the cache? we have a function that caches the simulation+ll calculation!
-            .simulate_subject(self.subject, point.to_vec().as_ref())
-            .squared_error()) //TODO: Change this to use the D function
+        let (concentrations, _) =
+            self.equation
+                .simulate_subject(self.subject, point.to_vec().as_ref(), None);
+        Ok(concentrations.squared_error()) //TODO: Change this to use the D function
     }
 }
 
-impl<'a> SppOptimizer<'a> {
-    fn new(equation: &'a Equation, subject: &'a Subject) -> Self {
+impl<'a, E: Equation> SppOptimizer<'a, E> {
+    fn new(equation: &'a E, subject: &'a Subject) -> Self {
         Self { equation, subject }
     }
 
@@ -70,22 +70,22 @@ fn create_initial_simplex(initial_point: &Array1<f64>) -> Vec<Array1<f64>> {
     vertices
 }
 
-pub trait OptimalSupportPoint {
-    fn optimal_support_point(&self, equation: &Equation, point: &Array1<f64>) -> Array1<f64>;
+pub trait OptimalSupportPoint<E: Equation> {
+    fn optimal_support_point(&self, equation: &E, point: &Array1<f64>) -> Array1<f64>;
 }
 
-impl OptimalSupportPoint for Subject {
-    fn optimal_support_point(&self, equation: &Equation, point: &Array1<f64>) -> Array1<f64> {
+impl<E: Equation> OptimalSupportPoint<E> for Subject {
+    fn optimal_support_point(&self, equation: &E, point: &Array1<f64>) -> Array1<f64> {
         SppOptimizer::new(equation, self).optimize(point)
     }
 }
 
-pub trait EstimateTheta {
-    fn estimate_theta(&self, equation: &Equation, point: &Array1<f64>) -> Array2<f64>;
+pub trait EstimateTheta<E: Equation> {
+    fn estimate_theta(&self, equation: &E, point: &Array1<f64>) -> Array2<f64>;
 }
 
-impl EstimateTheta for Data {
-    fn estimate_theta(&self, equation: &Equation, point: &Array1<f64>) -> Array2<f64> {
+impl<E: Equation> EstimateTheta<E> for Data {
+    fn estimate_theta(&self, equation: &E, point: &Array1<f64>) -> Array2<f64> {
         let n_sub = self.len();
         let mut theta = Array2::zeros((n_sub, point.len()));
 

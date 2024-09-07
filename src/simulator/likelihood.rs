@@ -1,6 +1,6 @@
 use crate::{
     data::{error_model::ErrorModel, Observation},
-    Data, Subject,
+    Data, Equation, Predictions, Subject,
 };
 
 use cached::proc_macro::cached;
@@ -8,8 +8,6 @@ use cached::UnboundCache;
 use indicatif::{ProgressBar, ProgressStyle};
 use ndarray::{Array2, Axis, ShapeBuilder};
 use rayon::prelude::*;
-
-use super::Equation;
 
 const FRAC_1_SQRT_2PI: f64 =
     std::f64::consts::FRAC_2_SQRT_PI * std::f64::consts::FRAC_1_SQRT_2 / 2.0;
@@ -21,15 +19,30 @@ pub struct SubjectPredictions {
     flat_observations: Vec<f64>,
     flat_time: Vec<f64>,
 }
+
+impl Predictions for SubjectPredictions {
+    fn squared_error(&self) -> f64 {
+        self.predictions
+            .iter()
+            .map(|p| (p.observation - p.prediction).powi(2))
+            .sum()
+    }
+    fn get_predictions(&self) -> &Vec<Prediction> {
+        &self.predictions
+    }
+    fn likelihood(&self, error_model: &ErrorModel) -> f64 {
+        self.predictions
+            .iter()
+            .map(|p| p.likelihood(error_model))
+            .product()
+    }
+}
 impl SubjectPredictions {
     pub fn add_prediction(&mut self, prediction: Prediction) {
         self.predictions.push(prediction);
         self.flat_observations.push(prediction.observation);
         self.flat_predictions.push(prediction.prediction);
         self.flat_time.push(prediction.time);
-    }
-    pub fn get_predictions(&self) -> &Vec<Prediction> {
-        &self.predictions
     }
 
     pub fn flat_observations(&self) -> Vec<f64> {
@@ -42,20 +55,6 @@ impl SubjectPredictions {
 
     pub fn flat_time(&self) -> Vec<f64> {
         self.flat_time.to_vec()
-    }
-
-    pub(crate) fn likelihood(&self, error_model: &ErrorModel) -> f64 {
-        self.predictions
-            .iter()
-            .map(|p| p.likelihood(error_model))
-            .product()
-    }
-
-    pub(crate) fn squared_error(&self) -> f64 {
-        self.predictions
-            .iter()
-            .map(|p| (p.observation - p.prediction).powi(2))
-            .sum()
     }
 }
 
@@ -96,7 +95,7 @@ impl From<Array2<SubjectPredictions>> for PopulationPredictions {
 }
 
 pub fn pf_psi(
-    equation: &Equation,
+    equation: &impl Equation,
     subjects: &Data,
     support_points: &Array2<f64>,
     error_model: &ErrorModel,
@@ -169,7 +168,7 @@ pub fn pf_psi(
 // }
 //TODO: Export this function as a method of Data
 pub fn psi(
-    equation: &Equation,
+    equation: &impl Equation,
     subjects: &Data,
     support_points: &Array2<f64>,
     error_model: &ErrorModel,
@@ -246,13 +245,12 @@ pub fn psi(
 )]
 fn subject_likelihood(
     subject: &Subject,
-    equation: &Equation,
+    equation: &impl Equation,
     support_point: &Vec<f64>,
     error_model: &ErrorModel,
 ) -> f64 {
-    let ypred = equation.simulate_subject(subject, support_point);
-    let likelihood = ypred.likelihood(error_model);
-    likelihood
+    let ypred = equation.simulate_subject(subject, support_point, Some(error_model));
+    ypred.1.unwrap()
 }
 
 fn spphash(spp: &[f64]) -> u64 {

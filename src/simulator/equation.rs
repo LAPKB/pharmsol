@@ -7,11 +7,30 @@ pub use ode::*;
 
 use crate::{error_model::ErrorModel, Covariates, Event, Infusion, Observation, Subject};
 
-use super::{Init, Out};
+use super::{likelihood::Prediction, Init, Out};
 
-pub trait Equation {
+pub trait Predictions {
+    fn squared_error(&self) -> f64;
+    fn get_predictions(&self) -> &Vec<Prediction>;
+    fn likelihood(&self, error_model: &ErrorModel) -> f64;
+}
+
+pub trait Equation: 'static + Clone + Sync {
     type S;
-    type O;
+    type P: Predictions + Default;
+    fn particle_filter(
+        &self,
+        subject: &Subject,
+        support_point: &Vec<f64>,
+        n_particles: usize,
+        error_model: &ErrorModel,
+    ) -> f64 {
+        //TODO: This method should not be here
+        unimplemented!()
+    }
+    fn is_sde(&self) -> bool {
+        false
+    }
     fn solve(
         &self,
         state: &mut Self::S,
@@ -35,7 +54,7 @@ pub trait Equation {
         covariates: &Covariates,
         x: &mut Self::S,
         likelihood: &mut Vec<f64>,
-        output: &mut Self::O,
+        output: &mut Self::P,
     );
     fn _simulate_event(
         &self,
@@ -47,7 +66,7 @@ pub trait Equation {
         x: &mut Self::S,
         infusions: &mut Vec<Infusion>,
         likelihood: &mut Vec<f64>,
-        output: &mut Self::O,
+        output: &mut Self::P,
     ) {
         match event {
             Event::Bolus(bolus) => {
@@ -85,7 +104,7 @@ pub trait Equation {
         subject: &Subject,
         support_point: &Vec<f64>,
         error_model: Option<&ErrorModel>,
-    ) -> (Self::O, Option<f64>) {
+    ) -> (Self::P, Option<f64>) {
         let lag_closure = self.get_lag(support_point);
         let fa_closure = self.get_fa(support_point);
         let mut output = Self::_initial_output();
@@ -110,7 +129,7 @@ pub trait Equation {
             }
         }
         let ll = match error_model {
-            Some(_) => Some(likelihood.iter().sum::<f64>().exp()),
+            Some(_) => Some(likelihood.iter().product::<f64>()),
             None => None,
         };
         (output, ll)
@@ -122,6 +141,8 @@ pub trait Equation {
         covariates: &Covariates,
         occasion_index: usize,
     ) -> Self::S;
-    fn _initial_output() -> Self::O;
+    fn _initial_output() -> Self::P {
+        Default::default()
+    }
     fn _add_bolus(state: &mut Self::S, input: usize, amount: f64);
 }

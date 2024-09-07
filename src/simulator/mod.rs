@@ -315,7 +315,8 @@ impl Equation {
                                 //py = (1 / Np) * sum(q)
                                 let py = sum_q / nparticles as f64;
                                 //b[t] = log(py)
-                                ll.push(py.ln());
+                                // ll.push(py.ln());
+                                ll.push(py);
                                 //q = q ./ sum(q)
                                 let w: Vec<f64> = q.iter().map(|qi| qi / sum_q).collect();
                                 //ind = sysresample(q)
