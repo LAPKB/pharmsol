@@ -15,7 +15,7 @@ use diffsol::{ode_solver::method::OdeSolverMethod, Bdf};
 
 use self::diffsol_traits::build_pm_ode;
 
-use super::Equation;
+use super::{Equation, SimulationState};
 
 const RTOL: f64 = 1e-4;
 const ATOL: f64 = 1e-4;
@@ -70,6 +70,13 @@ impl ODE {
             out,
             neqs,
         }
+    }
+}
+
+impl SimulationState for V {
+    #[inline(always)]
+    fn add_bolus(&mut self, input: usize, amount: f64) {
+        self[input] += amount;
     }
 }
 
@@ -174,15 +181,5 @@ impl Equation for ODE {
             (init)(&V::from_vec(spp.to_vec()), 0.0, covariates, &mut x);
         }
         x
-    }
-
-    #[inline(always)]
-    fn _initial_output() -> SubjectPredictions {
-        SubjectPredictions::default()
-    }
-
-    #[inline(always)]
-    fn _add_bolus(x: &mut Self::S, input: usize, amount: f64) {
-        x[input] += amount;
     }
 }

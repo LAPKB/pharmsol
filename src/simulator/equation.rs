@@ -3,21 +3,29 @@ pub mod analytical;
 pub mod ode;
 pub mod sde;
 
+pub use analytical::*;
 pub use ode::*;
 
 use crate::{error_model::ErrorModel, Covariates, Event, Infusion, Observation, Subject};
 
 use super::{likelihood::Prediction, Init, Out};
 
-pub trait Predictions {
+pub trait SimulationState {
+    fn add_bolus(&mut self, input: usize, amount: f64);
+}
+
+pub trait Predictions: Default {
     fn squared_error(&self) -> f64;
     fn get_predictions(&self) -> &Vec<Prediction>;
     fn likelihood(&self, error_model: &ErrorModel) -> f64;
+    fn initial_output() -> Self {
+        Default::default()
+    }
 }
 
 pub trait Equation: 'static + Clone + Sync {
-    type S;
-    type P: Predictions + Default;
+    type S: SimulationState;
+    type P: Predictions;
     fn particle_filter(
         &self,
         subject: &Subject,
@@ -70,7 +78,7 @@ pub trait Equation: 'static + Clone + Sync {
     ) {
         match event {
             Event::Bolus(bolus) => {
-                Self::_add_bolus(x, bolus.input(), bolus.amount());
+                x.add_bolus(bolus.input(), bolus.amount());
             }
             Event::Infusion(infusion) => {
                 infusions.push(infusion.clone());
@@ -107,7 +115,7 @@ pub trait Equation: 'static + Clone + Sync {
     ) -> (Self::P, Option<f64>) {
         let lag_closure = self.get_lag(support_point);
         let fa_closure = self.get_fa(support_point);
-        let mut output = Self::_initial_output();
+        let mut output = Self::P::initial_output();
         let mut likelihood = Vec::new();
         for occasion in subject.occasions() {
             let covariates = occasion.get_covariates().unwrap();
@@ -141,8 +149,4 @@ pub trait Equation: 'static + Clone + Sync {
         covariates: &Covariates,
         occasion_index: usize,
     ) -> Self::S;
-    fn _initial_output() -> Self::P {
-        Default::default()
-    }
-    fn _add_bolus(state: &mut Self::S, input: usize, amount: f64);
 }

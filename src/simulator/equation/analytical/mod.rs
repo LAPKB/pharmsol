@@ -1,4 +1,4 @@
-use crate::{data::Covariates, simulator::*};
+use crate::{data::Covariates, simulator::*, Equation, Observation};
 use nalgebra::{DVector, Matrix2, Vector2};
 
 #[inline(always)]
@@ -27,6 +27,137 @@ pub(crate) fn simulate_analytical_event(
     }
     (seq_eq)(&mut support_point, tf, cov);
     *x = (eq)(&x, &support_point, tf - ti, rateiv, cov);
+}
+
+#[derive(Clone)]
+pub struct Analytical {
+    eq: AnalyticalEq,
+    seq_eq: SecEq,
+    lag: Lag,
+    fa: Fa,
+    init: Init,
+    out: Out,
+    neqs: Neqs,
+}
+
+impl Analytical {
+    pub fn new(
+        eq: AnalyticalEq,
+        seq_eq: SecEq,
+        lag: Lag,
+        fa: Fa,
+        init: Init,
+        out: Out,
+        neqs: Neqs,
+    ) -> Self {
+        Self {
+            eq,
+            seq_eq,
+            lag,
+            fa,
+            init,
+            out,
+            neqs,
+        }
+    }
+}
+
+impl Equation for Analytical {
+    type S = V;
+    type P = SubjectPredictions;
+
+    #[inline(always)]
+    fn solve(
+        &self,
+        x: &mut Self::S,
+        support_point: &Vec<f64>,
+        covariates: &Covariates,
+        infusions: &Vec<Infusion>,
+        ti: f64,
+        tf: f64,
+    ) {
+        if ti == tf {
+            return;
+        }
+        let mut support_point = V::from_vec(support_point.to_owned());
+        let mut rateiv = V::from_vec(vec![0.0, 0.0, 0.0]);
+        //TODO: This should be pre-calculated
+        for infusion in infusions {
+            if tf >= infusion.time() && tf <= infusion.duration() + infusion.time() {
+                rateiv[infusion.input()] = infusion.amount() / infusion.duration();
+            }
+        }
+        (self.seq_eq)(&mut support_point, tf, covariates);
+        *x = (self.eq)(&x, &support_point, tf - ti, rateiv, covariates);
+    }
+
+    #[inline(always)]
+    fn get_init(&self) -> &Init {
+        &self.init
+    }
+
+    #[inline(always)]
+    fn get_out(&self) -> &Out {
+        &self.out
+    }
+
+    #[inline(always)]
+    fn get_lag(&self, spp: &[f64]) -> HashMap<usize, f64> {
+        (self.lag)(&V::from_vec(spp.to_owned()))
+    }
+
+    #[inline(always)]
+    fn get_fa(&self, spp: &[f64]) -> HashMap<usize, f64> {
+        (self.fa)(&V::from_vec(spp.to_owned()))
+    }
+
+    #[inline(always)]
+    fn get_nstates(&self) -> usize {
+        self.neqs.0
+    }
+
+    #[inline(always)]
+    fn get_nouteqs(&self) -> usize {
+        self.neqs.1
+    }
+
+    #[inline(always)]
+    fn _process_observation(
+        &self,
+        support_point: &Vec<f64>,
+        observation: &Observation,
+        error_model: Option<&ErrorModel>,
+        covariates: &Covariates,
+        x: &mut Self::S,
+        likelihood: &mut Vec<f64>,
+        output: &mut Self::P,
+    ) {
+        let mut y = V::zeros(self.get_nouteqs());
+        let out = self.get_out();
+        (out)(
+            &x,
+            &V::from_vec(support_point.clone()),
+            observation.time(),
+            covariates,
+            &mut y,
+        );
+        let pred = y[observation.outeq()];
+        let pred = observation.to_obs_pred(pred);
+        if let Some(error_model) = error_model {
+            likelihood.push(pred.likelihood(error_model));
+        }
+        output.add_prediction(pred);
+    }
+
+    #[inline(always)]
+    fn _initial_state(&self, spp: &Vec<f64>, covariates: &Covariates, occasion_index: usize) -> V {
+        let init = self.get_init();
+        let mut x = V::zeros(self.get_nstates());
+        if occasion_index == 0 {
+            (init)(&V::from_vec(spp.to_vec()), 0.0, covariates, &mut x);
+        }
+        x
+    }
 }
 
 ///
