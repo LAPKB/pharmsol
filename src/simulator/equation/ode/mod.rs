@@ -8,8 +8,10 @@ use crate::{
     error_model::ErrorModel,
     prelude::simulator::SubjectPredictions,
     simulator::{likelihood::ToPrediction, DiffEq, Fa, Init, Lag, Neqs, Out, M, T, V},
-    Observation,
+    Observation, Subject,
 };
+use cached::proc_macro::cached;
+use cached::UnboundCache;
 
 use diffsol::{ode_solver::method::OdeSolverMethod, Bdf};
 
@@ -49,10 +51,52 @@ impl SimulationState for V {
         self[input] += amount;
     }
 }
+fn spphash(spp: &[f64]) -> u64 {
+    spp.iter().fold(0, |acc, x| acc + x.to_bits())
+}
+
+#[inline(always)]
+#[cached(
+    ty = "UnboundCache<String, SubjectPredictions>",
+    create = "{ UnboundCache::with_capacity(100_000) }",
+    convert = r#"{ format!("{}{}", subject.id(), spphash(support_point)) }"#
+)]
+fn _subject_predictions(
+    ode: &ODE,
+    subject: &Subject,
+    support_point: &Vec<f64>,
+) -> SubjectPredictions {
+    ode.simulate_subject(subject, support_point, None).0
+}
+
+fn _subject_likelihood(
+    ode: &ODE,
+    subject: &Subject,
+    support_point: &Vec<f64>,
+    error_model: &ErrorModel,
+    cache: bool,
+) -> f64 {
+    let ypred = if cache {
+        _subject_predictions(ode, subject, support_point)
+    } else {
+        _subject_predictions_no_cache(ode, subject, support_point)
+    };
+    ypred.likelihood(error_model)
+}
 
 impl Equation for ODE {
     type S = V;
     type P = SubjectPredictions;
+
+    fn subject_likelihood(
+        &self,
+        subject: &Subject,
+        support_point: &Vec<f64>,
+        error_model: &ErrorModel,
+        cache: bool,
+    ) -> f64 {
+        _subject_likelihood(self, subject, support_point, error_model, cache)
+    }
 
     #[inline(always)]
     fn solve(

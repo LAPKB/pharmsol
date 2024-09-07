@@ -1,10 +1,8 @@
 use crate::{
     data::{error_model::ErrorModel, Observation},
-    Data, Equation, Predictions, Subject,
+    Data, Equation, Predictions,
 };
 
-use cached::proc_macro::cached;
-use cached::UnboundCache;
 use indicatif::{ProgressBar, ProgressStyle};
 use ndarray::{Array2, Axis, ShapeBuilder};
 use rayon::prelude::*;
@@ -30,14 +28,14 @@ impl Predictions for SubjectPredictions {
     fn get_predictions(&self) -> &Vec<Prediction> {
         &self.predictions
     }
-    fn likelihood(&self, error_model: &ErrorModel) -> f64 {
+}
+impl SubjectPredictions {
+    pub fn likelihood(&self, error_model: &ErrorModel) -> f64 {
         self.predictions
             .iter()
             .map(|p| p.likelihood(error_model))
             .product()
     }
-}
-impl SubjectPredictions {
     pub fn add_prediction(&mut self, prediction: Prediction) {
         self.predictions.push(prediction);
         self.flat_observations.push(prediction.observation);
@@ -128,21 +126,12 @@ pub fn psi(
                 .enumerate()
                 .for_each(|(j, mut element)| {
                     let subject = subjects.get(i).unwrap();
-                    let likelihood = if cache {
-                        subject_likelihood(
-                            subject,
-                            equation,
-                            support_points.row(j).to_vec().as_ref(),
-                            error_model,
-                        )
-                    } else {
-                        subject_likelihood_no_cache(
-                            subject,
-                            equation,
-                            support_points.row(j).to_vec().as_ref(),
-                            error_model,
-                        )
-                    };
+                    let likelihood = equation.subject_likelihood(
+                        subject,
+                        support_points.row(j).to_vec().as_ref(),
+                        error_model,
+                        cache,
+                    );
                     element.fill(likelihood);
                     if let Some(pb_ref) = pb.as_ref() {
                         pb_ref.inc(1);
@@ -164,25 +153,25 @@ pub fn psi(
 //    ty = "DiskCache<String, f64>"
 //)]
 
-#[inline(always)]
-#[cached(
-    ty = "UnboundCache<String, f64>",
-    create = "{ UnboundCache::with_capacity(100_000) }",
-    convert = r#"{ format!("{}{}", subject.id(), spphash(support_point)) }"#
-)]
-fn subject_likelihood(
-    subject: &Subject,
-    equation: &impl Equation,
-    support_point: &Vec<f64>,
-    error_model: &ErrorModel,
-) -> f64 {
-    let ypred = equation.simulate_subject(subject, support_point, Some(error_model));
-    ypred.1.unwrap()
-}
+// #[inline(always)]
+// #[cached(
+//     ty = "UnboundCache<String, f64>",
+//     create = "{ UnboundCache::with_capacity(100_000) }",
+//     convert = r#"{ format!("{}{}", subject.id(), spphash(support_point)) }"#
+// )]
+// fn subject_likelihood(
+//     subject: &Subject,
+//     equation: &impl Equation,
+//     support_point: &Vec<f64>,
+//     error_model: &ErrorModel,
+// ) -> f64 {
+//     let ypred = equation.simulate_subject(subject, support_point, Some(error_model));
+//     ypred.1.unwrap()
+// }
 
-fn spphash(spp: &[f64]) -> u64 {
-    spp.iter().fold(0, |acc, x| acc + x.to_bits())
-}
+// fn spphash(spp: &[f64]) -> u64 {
+//     spp.iter().fold(0, |acc, x| acc + x.to_bits())
+// }
 
 /// Prediction holds an observation and its prediction
 #[derive(Debug, Clone, Copy)]

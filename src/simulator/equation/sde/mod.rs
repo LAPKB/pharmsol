@@ -6,6 +6,9 @@ use nalgebra::DVector;
 use ndarray::{concatenate, Array2, Axis};
 use rand::{thread_rng, Rng};
 use rayon::prelude::*;
+
+use cached::proc_macro::cached;
+use cached::UnboundCache;
 const STEPS: usize = 10;
 
 use crate::{
@@ -99,14 +102,25 @@ impl Predictions for Array2<Prediction> {
     fn get_predictions(&self) -> &Vec<Prediction> {
         unimplemented!();
     }
-    fn likelihood(&self, _error_model: &ErrorModel) -> f64 {
-        unimplemented!();
-    }
 }
 
 impl Equation for SDE {
     type S = Vec<DVector<f64>>; // Vec -> particles, DVector -> state
     type P = Array2<Prediction>; // Rows -> particles, Columns -> time
+
+    fn subject_likelihood(
+        &self,
+        subject: &Subject,
+        support_point: &Vec<f64>,
+        error_model: &ErrorModel,
+        cache: bool,
+    ) -> f64 {
+        if cache {
+            _subject_likelihood(self, subject, support_point, error_model)
+        } else {
+            _subject_likelihood_no_cache(self, subject, support_point, error_model)
+        }
+    }
 
     fn nparticles(&self) -> usize {
         self.nparticles
@@ -239,6 +253,26 @@ impl Equation for SDE {
         }
         x
     }
+}
+
+fn spphash(spp: &[f64]) -> u64 {
+    spp.iter().fold(0, |acc, x| acc + x.to_bits())
+}
+
+#[inline(always)]
+#[cached(
+    ty = "UnboundCache<String, f64>",
+    create = "{ UnboundCache::with_capacity(100_000) }",
+    convert = r#"{ format!("{}{}", subject.id(), spphash(support_point)) }"#
+)]
+fn _subject_likelihood(
+    sde: &SDE,
+    subject: &Subject,
+    support_point: &Vec<f64>,
+    error_model: &ErrorModel,
+) -> f64 {
+    let ypred = sde.simulate_subject(subject, support_point, Some(error_model));
+    ypred.1.unwrap()
 }
 fn sysresample(q: &[f64]) -> Vec<usize> {
     let mut qc = vec![0.0; q.len()];

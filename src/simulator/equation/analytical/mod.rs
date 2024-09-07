@@ -1,6 +1,7 @@
-use crate::{data::Covariates, simulator::*, Equation, Observation};
+use crate::{data::Covariates, simulator::*, Equation, Observation, Subject};
+use cached::proc_macro::cached;
+use cached::UnboundCache;
 use nalgebra::{DVector, Matrix2, Vector2};
-
 #[derive(Clone)]
 pub struct Analytical {
     eq: AnalyticalEq,
@@ -37,6 +38,15 @@ impl Analytical {
 impl Equation for Analytical {
     type S = V;
     type P = SubjectPredictions;
+    fn subject_likelihood(
+        &self,
+        subject: &Subject,
+        support_point: &Vec<f64>,
+        error_model: &ErrorModel,
+        cache: bool,
+    ) -> f64 {
+        _subject_likelihood(self, subject, support_point, error_model, cache)
+    }
 
     #[inline(always)]
     fn solve(
@@ -130,6 +140,37 @@ impl Equation for Analytical {
         }
         x
     }
+}
+fn spphash(spp: &[f64]) -> u64 {
+    spp.iter().fold(0, |acc, x| acc + x.to_bits())
+}
+#[inline(always)]
+#[cached(
+    ty = "UnboundCache<String, SubjectPredictions>",
+    create = "{ UnboundCache::with_capacity(100_000) }",
+    convert = r#"{ format!("{}{}", subject.id(), spphash(support_point)) }"#
+)]
+fn _subject_predictions(
+    ode: &Analytical,
+    subject: &Subject,
+    support_point: &Vec<f64>,
+) -> SubjectPredictions {
+    ode.simulate_subject(subject, support_point, None).0
+}
+
+fn _subject_likelihood(
+    ode: &Analytical,
+    subject: &Subject,
+    support_point: &Vec<f64>,
+    error_model: &ErrorModel,
+    cache: bool,
+) -> f64 {
+    let ypred = if cache {
+        _subject_predictions(ode, subject, support_point)
+    } else {
+        _subject_predictions_no_cache(ode, subject, support_point)
+    };
+    ypred.likelihood(error_model)
 }
 
 ///

@@ -21,12 +21,19 @@ pub trait Predictions: Default {
     }
     fn squared_error(&self) -> f64;
     fn get_predictions(&self) -> &Vec<Prediction>;
-    fn likelihood(&self, error_model: &ErrorModel) -> f64;
 }
 
 pub trait Equation: 'static + Clone + Sync {
     type S: SimulationState;
     type P: Predictions;
+
+    fn subject_likelihood(
+        &self,
+        subject: &Subject,
+        support_point: &Vec<f64>,
+        error_model: &ErrorModel,
+        cache: bool,
+    ) -> f64;
 
     fn nparticles(&self) -> usize {
         1
