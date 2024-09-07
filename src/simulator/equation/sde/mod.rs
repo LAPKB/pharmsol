@@ -91,7 +91,7 @@ impl SimulationState for Vec<DVector<f64>> {
 
 impl Predictions for Array2<Prediction> {
     fn new(nparticles: usize) -> Self {
-        Array2::from_shape_fn((nparticles, 1), |_| Prediction::default())
+        Array2::from_shape_fn((nparticles, 0), |_| Prediction::default())
     }
     fn squared_error(&self) -> f64 {
         unimplemented!();
