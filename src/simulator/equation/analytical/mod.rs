@@ -1,34 +1,6 @@
 use crate::{data::Covariates, simulator::*, Equation, Observation};
 use nalgebra::{DVector, Matrix2, Vector2};
 
-#[inline(always)]
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn simulate_analytical_event(
-    eq: &AnalyticalEq,
-    seq_eq: &SecEq,
-
-    x: &mut V,
-    support_point: &[f64],
-    cov: &Covariates,
-    infusions: &Vec<Infusion>,
-    ti: f64,
-    tf: f64,
-) {
-    if ti == tf {
-        return;
-    }
-    let mut support_point = V::from_vec(support_point.to_owned());
-    let mut rateiv = V::from_vec(vec![0.0, 0.0, 0.0]);
-    //TODO: This should be pre-calculated
-    for infusion in infusions {
-        if tf >= infusion.time() && tf <= infusion.duration() + infusion.time() {
-            rateiv[infusion.input()] = infusion.amount() / infusion.duration();
-        }
-    }
-    (seq_eq)(&mut support_point, tf, cov);
-    *x = (eq)(&x, &support_point, tf - ti, rateiv, cov);
-}
-
 #[derive(Clone)]
 pub struct Analytical {
     eq: AnalyticalEq,

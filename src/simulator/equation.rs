@@ -5,6 +5,7 @@ pub mod sde;
 
 pub use analytical::*;
 pub use ode::*;
+pub use sde::*;
 
 use crate::{error_model::ErrorModel, Covariates, Event, Infusion, Observation, Subject};
 
@@ -15,27 +16,22 @@ pub trait SimulationState {
 }
 
 pub trait Predictions: Default {
+    fn new(_nparticles: usize) -> Self {
+        Default::default()
+    }
     fn squared_error(&self) -> f64;
     fn get_predictions(&self) -> &Vec<Prediction>;
     fn likelihood(&self, error_model: &ErrorModel) -> f64;
-    fn initial_output() -> Self {
-        Default::default()
-    }
 }
 
 pub trait Equation: 'static + Clone + Sync {
     type S: SimulationState;
     type P: Predictions;
-    fn particle_filter(
-        &self,
-        subject: &Subject,
-        support_point: &Vec<f64>,
-        n_particles: usize,
-        error_model: &ErrorModel,
-    ) -> f64 {
-        //TODO: This method should not be here
-        unimplemented!()
+
+    fn nparticles(&self) -> usize {
+        1
     }
+
     fn is_sde(&self) -> bool {
         false
     }
@@ -115,7 +111,7 @@ pub trait Equation: 'static + Clone + Sync {
     ) -> (Self::P, Option<f64>) {
         let lag_closure = self.get_lag(support_point);
         let fa_closure = self.get_fa(support_point);
-        let mut output = Self::P::initial_output();
+        let mut output = Self::P::new(self.nparticles());
         let mut likelihood = Vec::new();
         for occasion in subject.occasions() {
             let covariates = occasion.get_covariates().unwrap();

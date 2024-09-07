@@ -12,7 +12,7 @@ fn main() {
         .repeat(5, 0.2)
         .build();
 
-    let sde = simulator::Equation::new_sde(
+    let sde = equation::SDE::new(
         |x, p, _t, dx, _rateiv, _cov| {
             // automatically defined
             fetch_params!(p, ke0);
@@ -37,6 +37,7 @@ fn main() {
             y[0] = x[0] / 50.0;
         },
         (2, 1),
+        1,
     );
 
     let ke_dist = rand_distr::Normal::new(1.2, 0.12).unwrap();
@@ -58,10 +59,11 @@ fn main() {
 
     let mut data = vec![];
     for (i, spp) in support_points.iter().enumerate() {
-        let trajectory = sde.simulate_trajectories(&subject, &spp, 1);
+        let trajectories = sde.simulate_trajectories(&subject, &spp);
+        let trajectory = trajectories.row(0);
         let mut sb = data::Subject::builder(format!("id{}", i)).bolus(0.0, 20.0, 0);
         for (t, point) in trajectory.iter().enumerate() {
-            sb = sb.observation((t) as f64 * 0.2, *point.first().unwrap(), 0);
+            sb = sb.observation((t) as f64 * 0.2, point.prediction(), 0);
         }
         data.push(sb.build());
     }

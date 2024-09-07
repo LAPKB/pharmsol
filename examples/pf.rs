@@ -10,7 +10,7 @@ fn main() {
         .observation(1.0, 7.5170, 0)
         .build();
 
-    let sde = simulator::Equation::new_sde(
+    let sde = equation::SDE::new(
         |x, p, _t, dx, _rateiv, _cov| {
             dx[0] = -x[0] * x[1]; // ke *x[0]
             dx[1] = -x[1] + p[0]; // mean reverting
@@ -26,9 +26,10 @@ fn main() {
             y[0] = x[0];
         },
         (2, 1),
+        10000,
     );
     let em = ErrorModel::new((0.5, 0.0, 0.0, 0.0), 0.0, &error_model::ErrorType::Add); // sigma = 0.5
 
-    let ll = sde.particle_filter(&subject, &vec![1.0], 10000, &em);
+    let ll = sde.simulate_subject(&subject, &vec![1.0], Some(&em)).1;
     println!("{ll:#?}");
 }

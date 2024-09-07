@@ -7,14 +7,14 @@ use rand::prelude::*;
 use rand_distr::{Distribution, Normal};
 /// Structure to hold the SDE system parameters and state
 #[derive(Clone)]
-pub struct SDE {
+pub struct EM {
     drift: Drift,
     diffusion: Diffusion,
     params: DVector<f64>,
     state: DVector<f64>,
 }
 
-impl SDE {
+impl EM {
     /// Creates a new SDE system
     pub fn new(
         drift: Drift,
@@ -22,7 +22,7 @@ impl SDE {
         params: DVector<f64>,
         initial_state: DVector<f64>,
     ) -> Self {
-        SDE {
+        Self {
             drift,
             diffusion,
             params,

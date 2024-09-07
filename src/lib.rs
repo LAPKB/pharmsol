@@ -20,7 +20,7 @@ pub mod prelude {
         pub use crate::simulator::{
             equation,
             equation::Equation,
-            likelihood::{pf_psi, psi, PopulationPredictions, Prediction, SubjectPredictions},
+            likelihood::{psi, PopulationPredictions, Prediction, SubjectPredictions},
         };
     }
     pub mod models {

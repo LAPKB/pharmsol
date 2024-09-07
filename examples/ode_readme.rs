@@ -14,7 +14,7 @@ fn main() {
         .covariate("age", 0.0, 25.0)
         .build();
     println!("{subject}");
-    let ode = simulator::Equation::new_ode(
+    let ode = equation::ODE::new(
         |x, p, t, dx, _rateiv, cov| {
             fetch_cov!(cov, t, wt, age);
             fetch_params!(p, ka, ke, _tlag, _v);
@@ -39,6 +39,6 @@ fn main() {
         (2, 1),
     );
 
-    let op = ode.simulate_subject(&subject, &vec![0.3, 0.5, 0.1, 70.0]);
+    let op = ode.simulate_subject(&subject, &vec![0.3, 0.5, 0.1, 70.0], None);
     println!("{op:#?}");
 }
