@@ -11,7 +11,7 @@ use crate::{error_model::ErrorModel, Covariates, Event, Infusion, Observation, S
 
 use super::{likelihood::Prediction, Init, Out};
 
-pub trait SimulationState {
+pub trait State {
     fn add_bolus(&mut self, input: usize, amount: f64);
 }
 
@@ -23,9 +23,18 @@ pub trait Predictions: Default {
     fn get_predictions(&self) -> &Vec<Prediction>;
 }
 
-pub trait PublicEquation {
-    type S: SimulationState;
+pub trait EquationTypes {
+    type S: State;
     type P: Predictions;
+}
+
+pub(crate) trait EquationPriv: EquationTypes {
+    fn get_init(&self) -> &Init;
+    fn get_out(&self) -> &Out;
+    fn get_lag(&self, spp: &[f64]) -> HashMap<usize, f64>;
+    fn get_fa(&self, spp: &[f64]) -> HashMap<usize, f64>;
+    fn get_nstates(&self) -> usize;
+    fn get_nouteqs(&self) -> usize;
     fn solve(
         &self,
         state: &mut Self::S,
@@ -35,9 +44,6 @@ pub trait PublicEquation {
         start_time: f64,
         end_time: f64,
     );
-}
-
-pub(crate) trait PrivateEquation: PublicEquation {
     fn nparticles(&self) -> usize {
         1
     }
@@ -45,7 +51,7 @@ pub(crate) trait PrivateEquation: PublicEquation {
     fn is_sde(&self) -> bool {
         false
     }
-    fn _process_observation(
+    fn process_observation(
         &self,
         support_point: &Vec<f64>,
         observation: &Observation,
@@ -56,14 +62,14 @@ pub(crate) trait PrivateEquation: PublicEquation {
         output: &mut Self::P,
     );
 
-    fn _initial_state(
+    fn initial_state(
         &self,
         support_point: &Vec<f64>,
         covariates: &Covariates,
         occasion_index: usize,
     ) -> Self::S;
 
-    fn _simulate_event(
+    fn simulate_event(
         &self,
         support_point: &Vec<f64>,
         event: &Event,
@@ -83,7 +89,7 @@ pub(crate) trait PrivateEquation: PublicEquation {
                 infusions.push(infusion.clone());
             }
             Event::Observation(observation) => {
-                self._process_observation(
+                self.process_observation(
                     support_point,
                     observation,
                     error_model,
@@ -109,8 +115,11 @@ pub(crate) trait PrivateEquation: PublicEquation {
 }
 
 #[allow(private_bounds)]
-pub trait Equation: PrivateEquation + 'static + Clone + Sync {
-    fn subject_likelihood(
+pub trait Equation: EquationPriv + 'static + Clone + Sync {
+    /// Estimate the likelihood of the subject given the support point and error model
+    /// This function might be cached
+    ///
+    fn estimate_likelihood(
         &self,
         subject: &Subject,
         support_point: &Vec<f64>,
@@ -118,12 +127,9 @@ pub trait Equation: PrivateEquation + 'static + Clone + Sync {
         cache: bool,
     ) -> f64;
 
-    fn get_init(&self) -> &Init;
-    fn get_out(&self) -> &Out;
-    fn get_lag(&self, spp: &[f64]) -> HashMap<usize, f64>;
-    fn get_fa(&self, spp: &[f64]) -> HashMap<usize, f64>;
-    fn get_nstates(&self) -> usize;
-    fn get_nouteqs(&self) -> usize;
+    fn estimate_predictions(&self, subject: &Subject, support_point: &Vec<f64>) -> Self::P {
+        self.simulate_subject(subject, support_point, None).0
+    }
 
     fn simulate_subject(
         &self,
@@ -137,11 +143,11 @@ pub trait Equation: PrivateEquation + 'static + Clone + Sync {
         let mut likelihood = Vec::new();
         for occasion in subject.occasions() {
             let covariates = occasion.get_covariates().unwrap();
-            let mut x = self._initial_state(support_point, covariates, occasion.index());
+            let mut x = self.initial_state(support_point, covariates, occasion.index());
             let mut infusions = Vec::new();
             let events = occasion.get_events(Some(&lag_closure), Some(&fa_closure), true);
             for (index, event) in events.iter().enumerate() {
-                self._simulate_event(
+                self.simulate_event(
                     support_point,
                     event,
                     events.get(index + 1),

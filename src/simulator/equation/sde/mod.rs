@@ -19,7 +19,7 @@ use crate::{
     Subject,
 };
 
-use super::{Equation, Predictions, PrivateEquation, PublicEquation, SimulationState};
+use super::{Equation, EquationPriv, EquationTypes, Predictions, State};
 
 #[inline(always)]
 pub(crate) fn simulate_sde_event(
@@ -80,11 +80,8 @@ impl SDE {
             nparticles,
         }
     }
-    pub fn simulate_trajectories(&self, subject: &Subject, spp: &Vec<f64>) -> Array2<Prediction> {
-        self.simulate_subject(subject, spp, None).0
-    }
 }
-impl SimulationState for Vec<DVector<f64>> {
+impl State for Vec<DVector<f64>> {
     fn add_bolus(&mut self, input: usize, amount: f64) {
         self.par_iter_mut().for_each(|particle| {
             particle[input] += amount;
@@ -104,9 +101,41 @@ impl Predictions for Array2<Prediction> {
     }
 }
 
-impl PublicEquation for SDE {
+impl EquationTypes for SDE {
     type S = Vec<DVector<f64>>; // Vec -> particles, DVector -> state
     type P = Array2<Prediction>; // Rows -> particles, Columns -> time
+}
+
+impl EquationPriv for SDE {
+    #[inline(always)]
+    fn get_init(&self) -> &Init {
+        &self.init
+    }
+
+    #[inline(always)]
+    fn get_out(&self) -> &Out {
+        &self.out
+    }
+
+    #[inline(always)]
+    fn get_lag(&self, spp: &[f64]) -> HashMap<usize, f64> {
+        (self.lag)(&V::from_vec(spp.to_owned()))
+    }
+
+    #[inline(always)]
+    fn get_fa(&self, spp: &[f64]) -> HashMap<usize, f64> {
+        (self.fa)(&V::from_vec(spp.to_owned()))
+    }
+
+    #[inline(always)]
+    fn get_nstates(&self) -> usize {
+        self.neqs.0
+    }
+
+    #[inline(always)]
+    fn get_nouteqs(&self) -> usize {
+        self.neqs.1
+    }
     #[inline(always)]
     fn solve(
         &self,
@@ -130,9 +159,6 @@ impl PublicEquation for SDE {
             );
         });
     }
-}
-
-impl PrivateEquation for SDE {
     fn nparticles(&self) -> usize {
         self.nparticles
     }
@@ -141,7 +167,7 @@ impl PrivateEquation for SDE {
         true
     }
     #[inline(always)]
-    fn _process_observation(
+    fn process_observation(
         &self,
         support_point: &Vec<f64>,
         observation: &crate::Observation,
@@ -182,7 +208,7 @@ impl PrivateEquation for SDE {
         }
     }
     #[inline(always)]
-    fn _initial_state(
+    fn initial_state(
         &self,
         support_point: &Vec<f64>,
         covariates: &Covariates,
@@ -206,7 +232,7 @@ impl PrivateEquation for SDE {
 }
 
 impl Equation for SDE {
-    fn subject_likelihood(
+    fn estimate_likelihood(
         &self,
         subject: &Subject,
         support_point: &Vec<f64>,
@@ -214,40 +240,10 @@ impl Equation for SDE {
         cache: bool,
     ) -> f64 {
         if cache {
-            _subject_likelihood(self, subject, support_point, error_model)
+            _estimate_likelihood(self, subject, support_point, error_model)
         } else {
-            _subject_likelihood_no_cache(self, subject, support_point, error_model)
+            _estimate_likelihood_no_cache(self, subject, support_point, error_model)
         }
-    }
-
-    #[inline(always)]
-    fn get_init(&self) -> &Init {
-        &self.init
-    }
-
-    #[inline(always)]
-    fn get_out(&self) -> &Out {
-        &self.out
-    }
-
-    #[inline(always)]
-    fn get_lag(&self, spp: &[f64]) -> HashMap<usize, f64> {
-        (self.lag)(&V::from_vec(spp.to_owned()))
-    }
-
-    #[inline(always)]
-    fn get_fa(&self, spp: &[f64]) -> HashMap<usize, f64> {
-        (self.fa)(&V::from_vec(spp.to_owned()))
-    }
-
-    #[inline(always)]
-    fn get_nstates(&self) -> usize {
-        self.neqs.0
-    }
-
-    #[inline(always)]
-    fn get_nouteqs(&self) -> usize {
-        self.neqs.1
     }
 }
 
@@ -261,7 +257,7 @@ fn spphash(spp: &[f64]) -> u64 {
     create = "{ UnboundCache::with_capacity(100_000) }",
     convert = r#"{ format!("{}{}{}", subject.id(), spphash(support_point), error_model.gl()) }"#
 )]
-fn _subject_likelihood(
+fn _estimate_likelihood(
     sde: &SDE,
     subject: &Subject,
     support_point: &Vec<f64>,

@@ -1,5 +1,5 @@
 use crate::{
-    data::Covariates, simulator::*, Equation, Observation, PrivateEquation, PublicEquation, Subject,
+    data::Covariates, simulator::*, Equation, EquationPriv, EquationTypes, Observation, Subject,
 };
 use cached::proc_macro::cached;
 use cached::UnboundCache;
@@ -37,85 +37,12 @@ impl Analytical {
     }
 }
 
-impl PublicEquation for Analytical {
+impl EquationTypes for Analytical {
     type S = V;
     type P = SubjectPredictions;
-    #[inline(always)]
-    fn solve(
-        &self,
-        x: &mut Self::S,
-        support_point: &Vec<f64>,
-        covariates: &Covariates,
-        infusions: &Vec<Infusion>,
-        ti: f64,
-        tf: f64,
-    ) {
-        if ti == tf {
-            return;
-        }
-        let mut support_point = V::from_vec(support_point.to_owned());
-        let mut rateiv = V::from_vec(vec![0.0, 0.0, 0.0]);
-        //TODO: This should be pre-calculated
-        for infusion in infusions {
-            if tf >= infusion.time() && tf <= infusion.duration() + infusion.time() {
-                rateiv[infusion.input()] = infusion.amount() / infusion.duration();
-            }
-        }
-        (self.seq_eq)(&mut support_point, tf, covariates);
-        *x = (self.eq)(&x, &support_point, tf - ti, rateiv, covariates);
-    }
 }
 
-impl PrivateEquation for Analytical {
-    #[inline(always)]
-    fn _process_observation(
-        &self,
-        support_point: &Vec<f64>,
-        observation: &Observation,
-        error_model: Option<&ErrorModel>,
-        covariates: &Covariates,
-        x: &mut Self::S,
-        likelihood: &mut Vec<f64>,
-        output: &mut Self::P,
-    ) {
-        let mut y = V::zeros(self.get_nouteqs());
-        let out = self.get_out();
-        (out)(
-            &x,
-            &V::from_vec(support_point.clone()),
-            observation.time(),
-            covariates,
-            &mut y,
-        );
-        let pred = y[observation.outeq()];
-        let pred = observation.to_obs_pred(pred);
-        if let Some(error_model) = error_model {
-            likelihood.push(pred.likelihood(error_model));
-        }
-        output.add_prediction(pred);
-    }
-    #[inline(always)]
-    fn _initial_state(&self, spp: &Vec<f64>, covariates: &Covariates, occasion_index: usize) -> V {
-        let init = self.get_init();
-        let mut x = V::zeros(self.get_nstates());
-        if occasion_index == 0 {
-            (init)(&V::from_vec(spp.to_vec()), 0.0, covariates, &mut x);
-        }
-        x
-    }
-}
-
-impl Equation for Analytical {
-    fn subject_likelihood(
-        &self,
-        subject: &Subject,
-        support_point: &Vec<f64>,
-        error_model: &ErrorModel,
-        cache: bool,
-    ) -> f64 {
-        _subject_likelihood(self, subject, support_point, error_model, cache)
-    }
-
+impl EquationPriv for Analytical {
     #[inline(always)]
     fn get_init(&self) -> &Init {
         &self.init
@@ -145,6 +72,78 @@ impl Equation for Analytical {
     fn get_nouteqs(&self) -> usize {
         self.neqs.1
     }
+    #[inline(always)]
+    fn solve(
+        &self,
+        x: &mut Self::S,
+        support_point: &Vec<f64>,
+        covariates: &Covariates,
+        infusions: &Vec<Infusion>,
+        ti: f64,
+        tf: f64,
+    ) {
+        if ti == tf {
+            return;
+        }
+        let mut support_point = V::from_vec(support_point.to_owned());
+        let mut rateiv = V::from_vec(vec![0.0, 0.0, 0.0]);
+        //TODO: This should be pre-calculated
+        for infusion in infusions {
+            if tf >= infusion.time() && tf <= infusion.duration() + infusion.time() {
+                rateiv[infusion.input()] = infusion.amount() / infusion.duration();
+            }
+        }
+        (self.seq_eq)(&mut support_point, tf, covariates);
+        *x = (self.eq)(&x, &support_point, tf - ti, rateiv, covariates);
+    }
+    #[inline(always)]
+    fn process_observation(
+        &self,
+        support_point: &Vec<f64>,
+        observation: &Observation,
+        error_model: Option<&ErrorModel>,
+        covariates: &Covariates,
+        x: &mut Self::S,
+        likelihood: &mut Vec<f64>,
+        output: &mut Self::P,
+    ) {
+        let mut y = V::zeros(self.get_nouteqs());
+        let out = self.get_out();
+        (out)(
+            &x,
+            &V::from_vec(support_point.clone()),
+            observation.time(),
+            covariates,
+            &mut y,
+        );
+        let pred = y[observation.outeq()];
+        let pred = observation.to_obs_pred(pred);
+        if let Some(error_model) = error_model {
+            likelihood.push(pred.likelihood(error_model));
+        }
+        output.add_prediction(pred);
+    }
+    #[inline(always)]
+    fn initial_state(&self, spp: &Vec<f64>, covariates: &Covariates, occasion_index: usize) -> V {
+        let init = self.get_init();
+        let mut x = V::zeros(self.get_nstates());
+        if occasion_index == 0 {
+            (init)(&V::from_vec(spp.to_vec()), 0.0, covariates, &mut x);
+        }
+        x
+    }
+}
+
+impl Equation for Analytical {
+    fn estimate_likelihood(
+        &self,
+        subject: &Subject,
+        support_point: &Vec<f64>,
+        error_model: &ErrorModel,
+        cache: bool,
+    ) -> f64 {
+        _estimate_likelihood(self, subject, support_point, error_model, cache)
+    }
 }
 fn spphash(spp: &[f64]) -> u64 {
     spp.iter().fold(0, |acc, x| acc + x.to_bits())
@@ -163,7 +162,7 @@ fn _subject_predictions(
     ode.simulate_subject(subject, support_point, None).0
 }
 
-fn _subject_likelihood(
+fn _estimate_likelihood(
     ode: &Analytical,
     subject: &Subject,
     support_point: &Vec<f64>,

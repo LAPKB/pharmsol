@@ -126,7 +126,7 @@ pub fn psi(
                 .enumerate()
                 .for_each(|(j, mut element)| {
                     let subject = subjects.get(i).unwrap();
-                    let likelihood = equation.subject_likelihood(
+                    let likelihood = equation.estimate_likelihood(
                         subject,
                         support_points.row(j).to_vec().as_ref(),
                         error_model,
@@ -159,7 +159,7 @@ pub fn psi(
 //     create = "{ UnboundCache::with_capacity(100_000) }",
 //     convert = r#"{ format!("{}{}", subject.id(), spphash(support_point)) }"#
 // )]
-// fn subject_likelihood(
+// fn estimate_likelihood(
 //     subject: &Subject,
 //     equation: &impl Equation,
 //     support_point: &Vec<f64>,

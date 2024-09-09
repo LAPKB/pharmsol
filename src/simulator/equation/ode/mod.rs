@@ -17,7 +17,7 @@ use diffsol::{ode_solver::method::OdeSolverMethod, Bdf};
 
 use self::diffsol_traits::build_pm_ode;
 
-use super::{Equation, PrivateEquation, PublicEquation, SimulationState};
+use super::{Equation, EquationPriv, EquationTypes, State};
 
 const RTOL: f64 = 1e-4;
 const ATOL: f64 = 1e-4;
@@ -45,7 +45,7 @@ impl ODE {
     }
 }
 
-impl SimulationState for V {
+impl State for V {
     #[inline(always)]
     fn add_bolus(&mut self, input: usize, amount: f64) {
         self[input] += amount;
@@ -69,7 +69,7 @@ fn _subject_predictions(
     ode.simulate_subject(subject, support_point, None).0
 }
 
-fn _subject_likelihood(
+fn _estimate_likelihood(
     ode: &ODE,
     subject: &Subject,
     support_point: &Vec<f64>,
@@ -84,9 +84,41 @@ fn _subject_likelihood(
     ypred.likelihood(error_model)
 }
 
-impl PublicEquation for ODE {
+impl EquationTypes for ODE {
     type S = V;
     type P = SubjectPredictions;
+}
+
+impl EquationPriv for ODE {
+    #[inline(always)]
+    fn get_init(&self) -> &Init {
+        &self.init
+    }
+
+    #[inline(always)]
+    fn get_out(&self) -> &Out {
+        &self.out
+    }
+
+    #[inline(always)]
+    fn get_lag(&self, spp: &[f64]) -> HashMap<usize, f64> {
+        (self.lag)(&V::from_vec(spp.to_owned()))
+    }
+
+    #[inline(always)]
+    fn get_fa(&self, spp: &[f64]) -> HashMap<usize, f64> {
+        (self.fa)(&V::from_vec(spp.to_owned()))
+    }
+
+    #[inline(always)]
+    fn get_nstates(&self) -> usize {
+        self.neqs.0
+    }
+
+    #[inline(always)]
+    fn get_nouteqs(&self) -> usize {
+        self.neqs.1
+    }
     #[inline(always)]
     fn solve(
         &self,
@@ -117,11 +149,8 @@ impl PublicEquation for ODE {
         let sol = solver.solve(&problem, end_time).unwrap();
         *state = sol.0.last().unwrap().clone()
     }
-}
-
-impl PrivateEquation for ODE {
     #[inline(always)]
-    fn _process_observation(
+    fn process_observation(
         &self,
         support_point: &Vec<f64>,
         observation: &Observation,
@@ -149,7 +178,7 @@ impl PrivateEquation for ODE {
     }
 
     #[inline(always)]
-    fn _initial_state(&self, spp: &Vec<f64>, covariates: &Covariates, occasion_index: usize) -> V {
+    fn initial_state(&self, spp: &Vec<f64>, covariates: &Covariates, occasion_index: usize) -> V {
         let init = self.get_init();
         let mut x = V::zeros(self.get_nstates());
         if occasion_index == 0 {
@@ -160,43 +189,13 @@ impl PrivateEquation for ODE {
 }
 
 impl Equation for ODE {
-    fn subject_likelihood(
+    fn estimate_likelihood(
         &self,
         subject: &Subject,
         support_point: &Vec<f64>,
         error_model: &ErrorModel,
         cache: bool,
     ) -> f64 {
-        _subject_likelihood(self, subject, support_point, error_model, cache)
-    }
-
-    #[inline(always)]
-    fn get_init(&self) -> &Init {
-        &self.init
-    }
-
-    #[inline(always)]
-    fn get_out(&self) -> &Out {
-        &self.out
-    }
-
-    #[inline(always)]
-    fn get_lag(&self, spp: &[f64]) -> HashMap<usize, f64> {
-        (self.lag)(&V::from_vec(spp.to_owned()))
-    }
-
-    #[inline(always)]
-    fn get_fa(&self, spp: &[f64]) -> HashMap<usize, f64> {
-        (self.fa)(&V::from_vec(spp.to_owned()))
-    }
-
-    #[inline(always)]
-    fn get_nstates(&self) -> usize {
-        self.neqs.0
-    }
-
-    #[inline(always)]
-    fn get_nouteqs(&self) -> usize {
-        self.neqs.1
+        _estimate_likelihood(self, subject, support_point, error_model, cache)
     }
 }
