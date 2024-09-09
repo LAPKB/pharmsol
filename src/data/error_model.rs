@@ -8,6 +8,9 @@ pub struct ErrorModel<'a> {
 }
 
 impl<'a> ErrorModel<'a> {
+    pub fn gl(&self) -> f64 {
+        self.gl
+    }
     pub fn new(c: (f64, f64, f64, f64), gl: f64, e_type: &'a ErrorType) -> Self {
         Self { c, gl, e_type }
     }

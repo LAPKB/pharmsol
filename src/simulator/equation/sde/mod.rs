@@ -216,18 +216,13 @@ impl Equation for SDE {
 
             pred.iter().for_each(|p| q.push(p.likelihood(em)));
             let sum_q: f64 = q.iter().sum();
-            //py = (1 / Np) * sum(q)
-            let py = sum_q / self.nparticles as f64;
-            //b[t] = log(py)
-            // ll.push(py.ln());
-            likelihood.push(py);
-            //q = q ./ sum(q)
             let w: Vec<f64> = q.iter().map(|qi| qi / sum_q).collect();
-            //ind = sysresample(q)
             let i = sysresample(&w);
-            //x = x[ind,:]
             let a: Vec<DVector<f64>> = i.iter().map(|&i| x[i].clone()).collect();
             *x = a;
+            likelihood.push(sum_q / self.nparticles as f64);
+            // let qq: Vec<f64> = i.iter().map(|&i| q[i]).collect();
+            // likelihood.push(qq.iter().sum::<f64>() / self.nparticles as f64);
         }
     }
 
@@ -263,7 +258,7 @@ fn spphash(spp: &[f64]) -> u64 {
 #[cached(
     ty = "UnboundCache<String, f64>",
     create = "{ UnboundCache::with_capacity(100_000) }",
-    convert = r#"{ format!("{}{}", subject.id(), spphash(support_point)) }"#
+    convert = r#"{ format!("{}{}{}", subject.id(), spphash(support_point), error_model.gl()) }"#
 )]
 fn _subject_likelihood(
     sde: &SDE,

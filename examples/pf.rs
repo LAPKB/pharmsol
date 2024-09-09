@@ -26,10 +26,14 @@ fn main() {
             y[0] = x[0];
         },
         (2, 1),
-        10000,
+        10000000,
     );
     let em = ErrorModel::new((0.5, 0.0, 0.0, 0.0), 0.0, &error_model::ErrorType::Add); // sigma = 0.5
 
-    let ll = sde.simulate_subject(&subject, &vec![1.0], Some(&em)).1;
+    let ll = sde
+        .simulate_subject(&subject, &vec![1.0], Some(&em))
+        .1
+        .unwrap();
+    dbg!(sde.subject_likelihood(&subject, &vec![1.0], &em, false));
     println!("{ll:#?}");
 }

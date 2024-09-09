@@ -57,6 +57,7 @@ pub trait Equation: 'static + Clone + Sync {
     fn get_fa(&self, spp: &[f64]) -> HashMap<usize, f64>;
     fn get_nstates(&self) -> usize;
     fn get_nouteqs(&self) -> usize;
+    #[doc(hidden)]
     fn _process_observation(
         &self,
         support_point: &Vec<f64>,
@@ -67,6 +68,7 @@ pub trait Equation: 'static + Clone + Sync {
         likelihood: &mut Vec<f64>,
         output: &mut Self::P,
     );
+    #[doc(hidden)]
     fn _simulate_event(
         &self,
         support_point: &Vec<f64>,
@@ -145,7 +147,7 @@ pub trait Equation: 'static + Clone + Sync {
         };
         (output, ll)
     }
-
+    #[doc(hidden)]
     fn _initial_state(
         &self,
         support_point: &Vec<f64>,
