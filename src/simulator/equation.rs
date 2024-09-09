@@ -23,25 +23,9 @@ pub trait Predictions: Default {
     fn get_predictions(&self) -> &Vec<Prediction>;
 }
 
-pub trait Equation: 'static + Clone + Sync {
+pub trait PublicEquation {
     type S: SimulationState;
     type P: Predictions;
-
-    fn subject_likelihood(
-        &self,
-        subject: &Subject,
-        support_point: &Vec<f64>,
-        error_model: &ErrorModel,
-        cache: bool,
-    ) -> f64;
-
-    fn nparticles(&self) -> usize {
-        1
-    }
-
-    fn is_sde(&self) -> bool {
-        false
-    }
     fn solve(
         &self,
         state: &mut Self::S,
@@ -51,13 +35,16 @@ pub trait Equation: 'static + Clone + Sync {
         start_time: f64,
         end_time: f64,
     );
-    fn get_init(&self) -> &Init;
-    fn get_out(&self) -> &Out;
-    fn get_lag(&self, spp: &[f64]) -> HashMap<usize, f64>;
-    fn get_fa(&self, spp: &[f64]) -> HashMap<usize, f64>;
-    fn get_nstates(&self) -> usize;
-    fn get_nouteqs(&self) -> usize;
-    #[doc(hidden)]
+}
+
+pub(crate) trait PrivateEquation: PublicEquation {
+    fn nparticles(&self) -> usize {
+        1
+    }
+    #[allow(dead_code)]
+    fn is_sde(&self) -> bool {
+        false
+    }
     fn _process_observation(
         &self,
         support_point: &Vec<f64>,
@@ -68,7 +55,14 @@ pub trait Equation: 'static + Clone + Sync {
         likelihood: &mut Vec<f64>,
         output: &mut Self::P,
     );
-    #[doc(hidden)]
+
+    fn _initial_state(
+        &self,
+        support_point: &Vec<f64>,
+        covariates: &Covariates,
+        occasion_index: usize,
+    ) -> Self::S;
+
     fn _simulate_event(
         &self,
         support_point: &Vec<f64>,
@@ -112,6 +106,25 @@ pub trait Equation: 'static + Clone + Sync {
             );
         }
     }
+}
+
+#[allow(private_bounds)]
+pub trait Equation: PrivateEquation + 'static + Clone + Sync {
+    fn subject_likelihood(
+        &self,
+        subject: &Subject,
+        support_point: &Vec<f64>,
+        error_model: &ErrorModel,
+        cache: bool,
+    ) -> f64;
+
+    fn get_init(&self) -> &Init;
+    fn get_out(&self) -> &Out;
+    fn get_lag(&self, spp: &[f64]) -> HashMap<usize, f64>;
+    fn get_fa(&self, spp: &[f64]) -> HashMap<usize, f64>;
+    fn get_nstates(&self) -> usize;
+    fn get_nouteqs(&self) -> usize;
+
     fn simulate_subject(
         &self,
         subject: &Subject,
@@ -147,11 +160,4 @@ pub trait Equation: 'static + Clone + Sync {
         };
         (output, ll)
     }
-    #[doc(hidden)]
-    fn _initial_state(
-        &self,
-        support_point: &Vec<f64>,
-        covariates: &Covariates,
-        occasion_index: usize,
-    ) -> Self::S;
 }

@@ -1,4 +1,6 @@
-use crate::{data::Covariates, simulator::*, Equation, Observation, Subject};
+use crate::{
+    data::Covariates, simulator::*, Equation, Observation, PrivateEquation, PublicEquation, Subject,
+};
 use cached::proc_macro::cached;
 use cached::UnboundCache;
 use nalgebra::{DVector, Matrix2, Vector2};
@@ -35,19 +37,9 @@ impl Analytical {
     }
 }
 
-impl Equation for Analytical {
+impl PublicEquation for Analytical {
     type S = V;
     type P = SubjectPredictions;
-    fn subject_likelihood(
-        &self,
-        subject: &Subject,
-        support_point: &Vec<f64>,
-        error_model: &ErrorModel,
-        cache: bool,
-    ) -> f64 {
-        _subject_likelihood(self, subject, support_point, error_model, cache)
-    }
-
     #[inline(always)]
     fn solve(
         &self,
@@ -71,6 +63,57 @@ impl Equation for Analytical {
         }
         (self.seq_eq)(&mut support_point, tf, covariates);
         *x = (self.eq)(&x, &support_point, tf - ti, rateiv, covariates);
+    }
+}
+
+impl PrivateEquation for Analytical {
+    #[inline(always)]
+    fn _process_observation(
+        &self,
+        support_point: &Vec<f64>,
+        observation: &Observation,
+        error_model: Option<&ErrorModel>,
+        covariates: &Covariates,
+        x: &mut Self::S,
+        likelihood: &mut Vec<f64>,
+        output: &mut Self::P,
+    ) {
+        let mut y = V::zeros(self.get_nouteqs());
+        let out = self.get_out();
+        (out)(
+            &x,
+            &V::from_vec(support_point.clone()),
+            observation.time(),
+            covariates,
+            &mut y,
+        );
+        let pred = y[observation.outeq()];
+        let pred = observation.to_obs_pred(pred);
+        if let Some(error_model) = error_model {
+            likelihood.push(pred.likelihood(error_model));
+        }
+        output.add_prediction(pred);
+    }
+    #[inline(always)]
+    fn _initial_state(&self, spp: &Vec<f64>, covariates: &Covariates, occasion_index: usize) -> V {
+        let init = self.get_init();
+        let mut x = V::zeros(self.get_nstates());
+        if occasion_index == 0 {
+            (init)(&V::from_vec(spp.to_vec()), 0.0, covariates, &mut x);
+        }
+        x
+    }
+}
+
+impl Equation for Analytical {
+    fn subject_likelihood(
+        &self,
+        subject: &Subject,
+        support_point: &Vec<f64>,
+        error_model: &ErrorModel,
+        cache: bool,
+    ) -> f64 {
+        _subject_likelihood(self, subject, support_point, error_model, cache)
     }
 
     #[inline(always)]
@@ -101,44 +144,6 @@ impl Equation for Analytical {
     #[inline(always)]
     fn get_nouteqs(&self) -> usize {
         self.neqs.1
-    }
-
-    #[inline(always)]
-    fn _process_observation(
-        &self,
-        support_point: &Vec<f64>,
-        observation: &Observation,
-        error_model: Option<&ErrorModel>,
-        covariates: &Covariates,
-        x: &mut Self::S,
-        likelihood: &mut Vec<f64>,
-        output: &mut Self::P,
-    ) {
-        let mut y = V::zeros(self.get_nouteqs());
-        let out = self.get_out();
-        (out)(
-            &x,
-            &V::from_vec(support_point.clone()),
-            observation.time(),
-            covariates,
-            &mut y,
-        );
-        let pred = y[observation.outeq()];
-        let pred = observation.to_obs_pred(pred);
-        if let Some(error_model) = error_model {
-            likelihood.push(pred.likelihood(error_model));
-        }
-        output.add_prediction(pred);
-    }
-
-    #[inline(always)]
-    fn _initial_state(&self, spp: &Vec<f64>, covariates: &Covariates, occasion_index: usize) -> V {
-        let init = self.get_init();
-        let mut x = V::zeros(self.get_nstates());
-        if occasion_index == 0 {
-            (init)(&V::from_vec(spp.to_vec()), 0.0, covariates, &mut x);
-        }
-        x
     }
 }
 fn spphash(spp: &[f64]) -> u64 {

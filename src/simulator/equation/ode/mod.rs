@@ -17,7 +17,7 @@ use diffsol::{ode_solver::method::OdeSolverMethod, Bdf};
 
 use self::diffsol_traits::build_pm_ode;
 
-use super::{Equation, SimulationState};
+use super::{Equation, PrivateEquation, PublicEquation, SimulationState};
 
 const RTOL: f64 = 1e-4;
 const ATOL: f64 = 1e-4;
@@ -84,20 +84,9 @@ fn _subject_likelihood(
     ypred.likelihood(error_model)
 }
 
-impl Equation for ODE {
+impl PublicEquation for ODE {
     type S = V;
     type P = SubjectPredictions;
-
-    fn subject_likelihood(
-        &self,
-        subject: &Subject,
-        support_point: &Vec<f64>,
-        error_model: &ErrorModel,
-        cache: bool,
-    ) -> f64 {
-        _subject_likelihood(self, subject, support_point, error_model, cache)
-    }
-
     #[inline(always)]
     fn solve(
         &self,
@@ -128,37 +117,9 @@ impl Equation for ODE {
         let sol = solver.solve(&problem, end_time).unwrap();
         *state = sol.0.last().unwrap().clone()
     }
+}
 
-    #[inline(always)]
-    fn get_init(&self) -> &Init {
-        &self.init
-    }
-
-    #[inline(always)]
-    fn get_out(&self) -> &Out {
-        &self.out
-    }
-
-    #[inline(always)]
-    fn get_lag(&self, spp: &[f64]) -> HashMap<usize, f64> {
-        (self.lag)(&V::from_vec(spp.to_owned()))
-    }
-
-    #[inline(always)]
-    fn get_fa(&self, spp: &[f64]) -> HashMap<usize, f64> {
-        (self.fa)(&V::from_vec(spp.to_owned()))
-    }
-
-    #[inline(always)]
-    fn get_nstates(&self) -> usize {
-        self.neqs.0
-    }
-
-    #[inline(always)]
-    fn get_nouteqs(&self) -> usize {
-        self.neqs.1
-    }
-
+impl PrivateEquation for ODE {
     #[inline(always)]
     fn _process_observation(
         &self,
@@ -195,5 +156,47 @@ impl Equation for ODE {
             (init)(&V::from_vec(spp.to_vec()), 0.0, covariates, &mut x);
         }
         x
+    }
+}
+
+impl Equation for ODE {
+    fn subject_likelihood(
+        &self,
+        subject: &Subject,
+        support_point: &Vec<f64>,
+        error_model: &ErrorModel,
+        cache: bool,
+    ) -> f64 {
+        _subject_likelihood(self, subject, support_point, error_model, cache)
+    }
+
+    #[inline(always)]
+    fn get_init(&self) -> &Init {
+        &self.init
+    }
+
+    #[inline(always)]
+    fn get_out(&self) -> &Out {
+        &self.out
+    }
+
+    #[inline(always)]
+    fn get_lag(&self, spp: &[f64]) -> HashMap<usize, f64> {
+        (self.lag)(&V::from_vec(spp.to_owned()))
+    }
+
+    #[inline(always)]
+    fn get_fa(&self, spp: &[f64]) -> HashMap<usize, f64> {
+        (self.fa)(&V::from_vec(spp.to_owned()))
+    }
+
+    #[inline(always)]
+    fn get_nstates(&self) -> usize {
+        self.neqs.0
+    }
+
+    #[inline(always)]
+    fn get_nouteqs(&self) -> usize {
+        self.neqs.1
     }
 }

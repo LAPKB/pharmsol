@@ -19,7 +19,7 @@ use crate::{
     Subject,
 };
 
-use super::{Equation, Predictions, SimulationState};
+use super::{Equation, Predictions, PrivateEquation, PublicEquation, SimulationState};
 
 #[inline(always)]
 pub(crate) fn simulate_sde_event(
@@ -104,32 +104,9 @@ impl Predictions for Array2<Prediction> {
     }
 }
 
-impl Equation for SDE {
+impl PublicEquation for SDE {
     type S = Vec<DVector<f64>>; // Vec -> particles, DVector -> state
     type P = Array2<Prediction>; // Rows -> particles, Columns -> time
-
-    fn subject_likelihood(
-        &self,
-        subject: &Subject,
-        support_point: &Vec<f64>,
-        error_model: &ErrorModel,
-        cache: bool,
-    ) -> f64 {
-        if cache {
-            _subject_likelihood(self, subject, support_point, error_model)
-        } else {
-            _subject_likelihood_no_cache(self, subject, support_point, error_model)
-        }
-    }
-
-    fn nparticles(&self) -> usize {
-        self.nparticles
-    }
-
-    fn is_sde(&self) -> bool {
-        true
-    }
-
     #[inline(always)]
     fn solve(
         &self,
@@ -153,37 +130,16 @@ impl Equation for SDE {
             );
         });
     }
+}
 
-    #[inline(always)]
-    fn get_init(&self) -> &Init {
-        &self.init
+impl PrivateEquation for SDE {
+    fn nparticles(&self) -> usize {
+        self.nparticles
     }
 
-    #[inline(always)]
-    fn get_out(&self) -> &Out {
-        &self.out
+    fn is_sde(&self) -> bool {
+        true
     }
-
-    #[inline(always)]
-    fn get_lag(&self, spp: &[f64]) -> HashMap<usize, f64> {
-        (self.lag)(&V::from_vec(spp.to_owned()))
-    }
-
-    #[inline(always)]
-    fn get_fa(&self, spp: &[f64]) -> HashMap<usize, f64> {
-        (self.fa)(&V::from_vec(spp.to_owned()))
-    }
-
-    #[inline(always)]
-    fn get_nstates(&self) -> usize {
-        self.neqs.0
-    }
-
-    #[inline(always)]
-    fn get_nouteqs(&self) -> usize {
-        self.neqs.1
-    }
-
     #[inline(always)]
     fn _process_observation(
         &self,
@@ -225,7 +181,6 @@ impl Equation for SDE {
             // likelihood.push(qq.iter().sum::<f64>() / self.nparticles as f64);
         }
     }
-
     #[inline(always)]
     fn _initial_state(
         &self,
@@ -247,6 +202,52 @@ impl Equation for SDE {
             x.push(state);
         }
         x
+    }
+}
+
+impl Equation for SDE {
+    fn subject_likelihood(
+        &self,
+        subject: &Subject,
+        support_point: &Vec<f64>,
+        error_model: &ErrorModel,
+        cache: bool,
+    ) -> f64 {
+        if cache {
+            _subject_likelihood(self, subject, support_point, error_model)
+        } else {
+            _subject_likelihood_no_cache(self, subject, support_point, error_model)
+        }
+    }
+
+    #[inline(always)]
+    fn get_init(&self) -> &Init {
+        &self.init
+    }
+
+    #[inline(always)]
+    fn get_out(&self) -> &Out {
+        &self.out
+    }
+
+    #[inline(always)]
+    fn get_lag(&self, spp: &[f64]) -> HashMap<usize, f64> {
+        (self.lag)(&V::from_vec(spp.to_owned()))
+    }
+
+    #[inline(always)]
+    fn get_fa(&self, spp: &[f64]) -> HashMap<usize, f64> {
+        (self.fa)(&V::from_vec(spp.to_owned()))
+    }
+
+    #[inline(always)]
+    fn get_nstates(&self) -> usize {
+        self.neqs.0
+    }
+
+    #[inline(always)]
+    fn get_nouteqs(&self) -> usize {
+        self.neqs.1
     }
 }
 
