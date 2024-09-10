@@ -142,7 +142,7 @@ pub fn psi(
         pb_ref.finish();
     }
 
-    pred.into()
+    pred
 }
 
 // Commented code for disk cache

@@ -163,7 +163,7 @@ impl EquationPriv for ODE {
         let mut y = V::zeros(self.get_nouteqs());
         let out = self.get_out();
         (out)(
-            &x,
+            x,
             &V::from_vec(support_point.clone()),
             observation.time(),
             covariates,

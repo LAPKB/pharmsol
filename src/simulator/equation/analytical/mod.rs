@@ -94,7 +94,7 @@ impl EquationPriv for Analytical {
             }
         }
         (self.seq_eq)(&mut support_point, tf, covariates);
-        *x = (self.eq)(&x, &support_point, tf - ti, rateiv, covariates);
+        *x = (self.eq)(x, &support_point, tf - ti, rateiv, covariates);
     }
     #[inline(always)]
     fn process_observation(
@@ -110,7 +110,7 @@ impl EquationPriv for Analytical {
         let mut y = V::zeros(self.get_nouteqs());
         let out = self.get_out();
         (out)(
-            &x,
+            x,
             &V::from_vec(support_point.clone()),
             observation.time(),
             covariates,

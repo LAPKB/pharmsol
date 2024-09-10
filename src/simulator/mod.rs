@@ -147,7 +147,7 @@ pub type Lag = fn(&V) -> HashMap<usize, T>;
 /// Returns:
 /// - A hashmap with the fraction absorbed for each comparment, if not presennt it is assumed to be 1.
 /// There is a convenience macro [fa!] to create the hashmap
-/// Example:
+///     Example:
 /// ```ignore
 /// use pharmsol::*;
 /// let fa = |p| {

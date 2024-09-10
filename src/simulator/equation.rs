@@ -106,7 +106,7 @@ pub(crate) trait EquationPriv: EquationTypes {
                 x,
                 support_point,
                 covariates,
-                &infusions,
+                infusions,
                 event.get_time(),
                 next_event.get_time(),
             );
@@ -160,10 +160,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
                 );
             }
         }
-        let ll = match error_model {
-            Some(_) => Some(likelihood.iter().product::<f64>()),
-            None => None,
-        };
+        let ll = error_model.map(|_| likelihood.iter().product::<f64>());
         (output, ll)
     }
 }

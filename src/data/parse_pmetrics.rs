@@ -274,12 +274,12 @@ impl TryFrom<Row> for Event {
                 row.out
                     .ok_or_else(|| PmetricsError::MissingObservationOut {
                         id: row.id.clone(),
-                        time: row.time.clone(),
+                        time: row.time,
                     })?,
                 row.outeq
                     .ok_or_else(|| PmetricsError::MissingObservationOuteq {
                         id: row.id.clone(),
-                        time: row.time.clone(),
+                        time: row.time,
                     })?
                     - 1,
                 row.get_errorpoly(),
@@ -291,17 +291,17 @@ impl TryFrom<Row> for Event {
                         row.time,
                         row.dose.ok_or_else(|| PmetricsError::MissingInfusionDose {
                             id: row.id.clone(),
-                            time: row.time.clone(),
+                            time: row.time,
                         })?,
                         row.input
                             .ok_or_else(|| PmetricsError::MissingInfusionInput {
                                 id: row.id.clone(),
-                                time: row.time.clone(),
+                                time: row.time,
                             })?
                             - 1,
                         row.dur.ok_or_else(|| PmetricsError::MissingInfusionDur {
                             id: row.id.clone(),
-                            time: row.time.clone(),
+                            time: row.time,
                         })?,
                     )))
                 } else {
@@ -309,11 +309,11 @@ impl TryFrom<Row> for Event {
                         row.time,
                         row.dose.ok_or_else(|| PmetricsError::MissingBolusDose {
                             id: row.id.clone(),
-                            time: row.time.clone(),
+                            time: row.time,
                         })?,
                         row.input.ok_or_else(|| PmetricsError::MissingBolusInput {
-                            id: row.id.clone(),
-                            time: row.time.clone(),
+                            id: row.id,
+                            time: row.time,
                         })? - 1,
                     )))
                 }

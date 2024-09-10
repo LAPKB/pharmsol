@@ -30,7 +30,7 @@ impl Data {
         let mut writer = WriterBuilder::new().has_headers(true).from_writer(file);
 
         writer
-            .write_record(&[
+            .write_record([
                 "ID", "EVID", "TIME", "DUR", "DOSE", "ADDL", "II", "INPUT", "OUT", "OUTEQ", "C0",
                 "C1", "C2", "C3",
             ])
@@ -42,8 +42,8 @@ impl Data {
                         Event::Observation(obs) => {
                             // Write each field individually
                             writer
-                                .write_record(&[
-                                    &subject.id(),
+                                .write_record([
+                                    subject.id(),
                                     &"0".to_string(),
                                     &obs.time().to_string(),
                                     &".".to_string(),
@@ -62,8 +62,8 @@ impl Data {
                         }
                         Event::Infusion(inf) => {
                             writer
-                                .write_record(&[
-                                    &subject.id(),
+                                .write_record([
+                                    subject.id(),
                                     &"1".to_string(),
                                     &inf.time().to_string(),
                                     &inf.duration().to_string(),
@@ -82,8 +82,8 @@ impl Data {
                         }
                         Event::Bolus(bol) => {
                             writer
-                                .write_record(&[
-                                    &subject.id(),
+                                .write_record([
+                                    subject.id(),
                                     &"1".to_string(),
                                     &bol.time().to_string(),
                                     &"0".to_string(),
@@ -106,7 +106,7 @@ impl Data {
         }
     }
     /// Filter the [Data] to include only the [Subject]s with IDs in the include vector
-    pub fn filter_include(&self, include: &Vec<String>) -> Data {
+    pub fn filter_include(&self, include: &[String]) -> Data {
         let subjects = self
             .subjects
             .iter()

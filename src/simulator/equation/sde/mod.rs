@@ -37,13 +37,13 @@ pub(crate) fn simulate_sde_event(
     }
 
     let mut sde = em::EM::new(
-        drift.clone(),
-        difussion.clone(),
+        *drift,
+        *difussion,
         DVector::from_column_slice(support_point),
         x,
     );
     let solution = sde.solve(ti, tf, STEPS);
-    solution.last().unwrap().clone().into()
+    solution.last().unwrap().clone()
 }
 
 #[derive(Clone)]
@@ -153,7 +153,7 @@ impl EquationPriv for SDE {
                 particle.clone(),
                 support_point,
                 covariates,
-                &infusions,
+                infusions,
                 ti,
                 tf,
             );
