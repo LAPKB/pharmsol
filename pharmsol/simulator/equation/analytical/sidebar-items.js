@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["one_compartment","one_compartment_with_absorption","two_compartments","two_compartments_with_absorption"],"struct":["Analytical"]};

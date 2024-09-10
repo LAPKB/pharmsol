@@ -70,6 +70,10 @@
 <a href="#70" id="70">70</a>
 <a href="#71" id="71">71</a>
 <a href="#72" id="72">72</a>
+<a href="#73" id="73">73</a>
+<a href="#74" id="74">74</a>
+<a href="#75" id="75">75</a>
+<a href="#76" id="76">76</a>
 </pre></div><pre class="rust"><code><span class="kw">pub mod </span>data;
 <span class="kw">pub mod </span>simulator;
 
@@ -77,6 +81,8 @@
 </span><span class="kw">pub use </span><span class="kw">crate</span>::data::builder::SubjectBuilderExt;
 <span class="kw">pub use </span><span class="kw">crate</span>::data::InterpolationMethod::<span class="kw-2">*</span>;
 <span class="kw">pub use </span><span class="kw">crate</span>::data::<span class="kw-2">*</span>;
+<span class="kw">pub use </span><span class="kw">crate</span>::equation::<span class="kw-2">*</span>;
+<span class="kw">pub use </span><span class="kw">crate</span>::simulator::equation::{<span class="self">self</span>, ODE};
 
 <span class="kw">pub mod </span>prelude {
     <span class="kw">pub mod </span>data {
@@ -88,16 +94,18 @@
     }
     <span class="kw">pub mod </span>simulator {
         <span class="kw">pub use </span><span class="kw">crate</span>::simulator::{
-            likelihood::{pf_psi, psi, PopulationPredictions, Prediction, SubjectPredictions},
-            Equation,
+            equation,
+            equation::Equation,
+            likelihood::{psi, PopulationPredictions, Prediction, SubjectPredictions},
         };
     }
     <span class="kw">pub mod </span>models {
-        <span class="kw">pub use </span><span class="kw">crate</span>::simulator::analytical::one_compartment;
-        <span class="kw">pub use </span><span class="kw">crate</span>::simulator::analytical::one_compartment_with_absorption;
-        <span class="kw">pub use </span><span class="kw">crate</span>::simulator::analytical::two_compartments;
-        <span class="kw">pub use </span><span class="kw">crate</span>::simulator::analytical::two_compartments_with_absorption;
+        <span class="kw">pub use </span><span class="kw">crate</span>::simulator::equation::analytical::one_compartment;
+        <span class="kw">pub use </span><span class="kw">crate</span>::simulator::equation::analytical::one_compartment_with_absorption;
+        <span class="kw">pub use </span><span class="kw">crate</span>::simulator::equation::analytical::two_compartments;
+        <span class="kw">pub use </span><span class="kw">crate</span>::simulator::equation::analytical::two_compartments_with_absorption;
     }
+
     <span class="comment">//extension traits
     </span><span class="kw">pub use </span><span class="kw">crate</span>::data::builder::SubjectBuilderExt;
     <span class="kw">pub use </span><span class="kw">crate</span>::data::InterpolationMethod::<span class="kw-2">*</span>;

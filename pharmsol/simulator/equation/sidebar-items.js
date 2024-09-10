@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["analytical","ode","sde"],"trait":["Equation","EquationTypes","Predictions","State"]};

@@ -570,7 +570,7 @@
         <span class="kw">let </span><span class="kw-2">mut </span>writer = WriterBuilder::new().has_headers(<span class="bool-val">true</span>).from_writer(file);
 
         writer
-            .write_record(<span class="kw-2">&amp;</span>[
+            .write_record([
                 <span class="string">"ID"</span>, <span class="string">"EVID"</span>, <span class="string">"TIME"</span>, <span class="string">"DUR"</span>, <span class="string">"DOSE"</span>, <span class="string">"ADDL"</span>, <span class="string">"II"</span>, <span class="string">"INPUT"</span>, <span class="string">"OUT"</span>, <span class="string">"OUTEQ"</span>, <span class="string">"C0"</span>,
                 <span class="string">"C1"</span>, <span class="string">"C2"</span>, <span class="string">"C3"</span>,
             ])
@@ -582,8 +582,8 @@
                         Event::Observation(obs) =&gt; {
                             <span class="comment">// Write each field individually
                             </span>writer
-                                .write_record(<span class="kw-2">&amp;</span>[
-                                    <span class="kw-2">&amp;</span>subject.id(),
+                                .write_record([
+                                    subject.id(),
                                     <span class="kw-2">&amp;</span><span class="string">"0"</span>.to_string(),
                                     <span class="kw-2">&amp;</span>obs.time().to_string(),
                                     <span class="kw-2">&amp;</span><span class="string">"."</span>.to_string(),
@@ -602,8 +602,8 @@
                         }
                         Event::Infusion(inf) =&gt; {
                             writer
-                                .write_record(<span class="kw-2">&amp;</span>[
-                                    <span class="kw-2">&amp;</span>subject.id(),
+                                .write_record([
+                                    subject.id(),
                                     <span class="kw-2">&amp;</span><span class="string">"1"</span>.to_string(),
                                     <span class="kw-2">&amp;</span>inf.time().to_string(),
                                     <span class="kw-2">&amp;</span>inf.duration().to_string(),
@@ -622,8 +622,8 @@
                         }
                         Event::Bolus(bol) =&gt; {
                             writer
-                                .write_record(<span class="kw-2">&amp;</span>[
-                                    <span class="kw-2">&amp;</span>subject.id(),
+                                .write_record([
+                                    subject.id(),
                                     <span class="kw-2">&amp;</span><span class="string">"1"</span>.to_string(),
                                     <span class="kw-2">&amp;</span>bol.time().to_string(),
                                     <span class="kw-2">&amp;</span><span class="string">"0"</span>.to_string(),
@@ -646,7 +646,7 @@
         }
     }
     <span class="doccomment">/// Filter the [Data] to include only the [Subject]s with IDs in the include vector
-    </span><span class="kw">pub fn </span>filter_include(<span class="kw-2">&amp;</span><span class="self">self</span>, include: <span class="kw-2">&amp;</span>Vec&lt;String&gt;) -&gt; Data {
+    </span><span class="kw">pub fn </span>filter_include(<span class="kw-2">&amp;</span><span class="self">self</span>, include: <span class="kw-2">&amp;</span>[String]) -&gt; Data {
         <span class="kw">let </span>subjects = <span class="self">self
             </span>.subjects
             .iter()
