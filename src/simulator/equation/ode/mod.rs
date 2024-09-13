@@ -22,7 +22,7 @@ use super::{Equation, EquationPriv, EquationTypes, State};
 const RTOL: f64 = 1e-4;
 const ATOL: f64 = 1e-4;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ODE {
     diffeq: DiffEq,
     lag: Lag,
