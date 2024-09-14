@@ -46,7 +46,7 @@ pub(crate) fn simulate_sde_event(
     solution.last().unwrap().clone()
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct SDE {
     drift: Drift,
     diffusion: Diffusion,

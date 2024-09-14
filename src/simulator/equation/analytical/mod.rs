@@ -4,7 +4,7 @@ use crate::{
 use cached::proc_macro::cached;
 use cached::UnboundCache;
 use nalgebra::{DVector, Matrix2, Vector2};
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Analytical {
     eq: AnalyticalEq,
     seq_eq: SecEq,
