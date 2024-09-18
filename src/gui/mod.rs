@@ -99,6 +99,7 @@ impl App for SubjectPredictions {
             });
             ui.separator();
             self.line_demo(ui);
+            //THIS CODE DO THE SAME AS line_demo
             // The central panel the region left after adding TopPanel's and SidePanel's
             // let plot = Plot::new("op_plot")
             //     .legend(Legend::default())
