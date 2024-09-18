@@ -1,12 +1,16 @@
 pub mod data;
+#[cfg(feature = "gui")]
+pub mod gui;
 pub mod simulator;
-
 //extension traits
 pub use crate::data::builder::SubjectBuilderExt;
 pub use crate::data::InterpolationMethod::*;
 pub use crate::data::*;
 pub use crate::equation::*;
 pub use crate::simulator::equation::{self, ODE};
+
+#[cfg(feature = "gui")]
+pub use crate::gui::*;
 
 pub mod prelude {
     pub mod data {
