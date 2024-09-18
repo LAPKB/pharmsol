@@ -41,12 +41,12 @@ impl SubjectPredictions {
             .legend(Legend::default())
             .show_axes(true)
             .show_grid(true);
-        if true {
-            plot = plot.view_aspect(1.0);
-        }
-        if true {
-            plot = plot.data_aspect(1.0);
-        }
+        // if true {
+        //     plot = plot.view_aspect(1.0);
+        // }
+        // if true {
+        //     plot = plot.data_aspect(1.0);
+        // }
 
         plot.show(ui, |plot_ui| {
             plot_ui.line(self.op());
