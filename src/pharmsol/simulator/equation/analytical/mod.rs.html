@@ -414,7 +414,7 @@
         <span class="comment">//TODO: This should be pre-calculated
         </span><span class="kw">for </span>infusion <span class="kw">in </span>infusions {
             <span class="kw">if </span>tf &gt;= infusion.time() &amp;&amp; tf &lt;= infusion.duration() + infusion.time() {
-                rateiv[infusion.input()] = infusion.amount() / infusion.duration();
+                rateiv[infusion.input()] += infusion.amount() / infusion.duration();
             }
         }
         (<span class="self">self</span>.seq_eq)(<span class="kw-2">&amp;mut </span>support_point, tf, covariates);

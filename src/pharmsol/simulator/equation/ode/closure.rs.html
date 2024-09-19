@@ -205,7 +205,7 @@
             <span class="kw">if </span>t &gt;= <span class="self">Self</span>::T::from(infusion.time())
                 &amp;&amp; t &lt;= <span class="self">Self</span>::T::from(infusion.duration() + infusion.time())
             {
-                rateiv[infusion.input()] = <span class="self">Self</span>::T::from(infusion.amount() / infusion.duration());
+                rateiv[infusion.input()] += <span class="self">Self</span>::T::from(infusion.amount() / infusion.duration());
             }
         }
         <span class="self">self</span>.statistics.borrow_mut().increment_call();
