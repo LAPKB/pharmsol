@@ -39,7 +39,7 @@ pub(crate) fn simulate_sde_event(
     //TODO: This should be pre-calculated
     for infusion in infusions {
         if tf >= infusion.time() && tf <= infusion.duration() + infusion.time() {
-            rateiv[infusion.input()] = infusion.amount() / infusion.duration();
+            rateiv[infusion.input()] += infusion.amount() / infusion.duration();
         }
     }
 

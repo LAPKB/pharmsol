@@ -91,7 +91,7 @@ where
             if t >= Self::T::from(infusion.time())
                 && t <= Self::T::from(infusion.duration() + infusion.time())
             {
-                rateiv[infusion.input()] = Self::T::from(infusion.amount() / infusion.duration());
+                rateiv[infusion.input()] += Self::T::from(infusion.amount() / infusion.duration());
             }
         }
         self.statistics.borrow_mut().increment_call();
