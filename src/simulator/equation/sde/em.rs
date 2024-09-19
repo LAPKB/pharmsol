@@ -12,6 +12,8 @@ pub struct EM {
     diffusion: Diffusion,
     params: DVector<f64>,
     state: DVector<f64>,
+    cov: Covariates,
+    rateiv: DVector<f64>,
 }
 
 impl EM {
@@ -21,12 +23,16 @@ impl EM {
         diffusion: Diffusion,
         params: DVector<f64>,
         initial_state: DVector<f64>,
+        cov: Covariates,
+        rateiv: DVector<f64>,
     ) -> Self {
         Self {
             drift,
             diffusion,
             params,
             state: initial_state,
+            cov,
+            rateiv,
         }
     }
 
@@ -39,8 +45,8 @@ impl EM {
             &self.params.clone(),
             time,
             &mut drift_term,
-            DVector::zeros(0),
-            &Covariates::default(),
+            self.rateiv.clone(),
+            &self.cov,
         );
 
         let mut diffusion_term = DVector::zeros(n);

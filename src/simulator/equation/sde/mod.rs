@@ -27,13 +27,20 @@ pub(crate) fn simulate_sde_event(
     difussion: &Diffusion,
     x: V,
     support_point: &[f64],
-    _cov: &Covariates,
-    _infusions: &[Infusion],
+    cov: &Covariates,
+    infusions: &[Infusion],
     ti: f64,
     tf: f64,
 ) -> V {
     if ti == tf {
         return x;
+    }
+    let mut rateiv = V::from_vec(vec![0.0, 0.0, 0.0]);
+    //TODO: This should be pre-calculated
+    for infusion in infusions {
+        if tf >= infusion.time() && tf <= infusion.duration() + infusion.time() {
+            rateiv[infusion.input()] = infusion.amount() / infusion.duration();
+        }
     }
 
     let mut sde = em::EM::new(
@@ -41,6 +48,8 @@ pub(crate) fn simulate_sde_event(
         *difussion,
         DVector::from_column_slice(support_point),
         x,
+        cov.clone(),
+        rateiv,
     );
     let solution = sde.solve(ti, tf, STEPS);
     solution.last().unwrap().clone()
