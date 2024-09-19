@@ -69,6 +69,12 @@
 <a href="#69" id="69">69</a>
 <a href="#70" id="70">70</a>
 <a href="#71" id="71">71</a>
+<a href="#72" id="72">72</a>
+<a href="#73" id="73">73</a>
+<a href="#74" id="74">74</a>
+<a href="#75" id="75">75</a>
+<a href="#76" id="76">76</a>
+<a href="#77" id="77">77</a>
 </pre></div><pre class="rust"><code><span class="kw">use crate</span>::{
     data::Covariates,
     simulator::{Diffusion, Drift},
@@ -83,6 +89,8 @@
     diffusion: Diffusion,
     params: DVector&lt;f64&gt;,
     state: DVector&lt;f64&gt;,
+    cov: Covariates,
+    rateiv: DVector&lt;f64&gt;,
 }
 
 <span class="kw">impl </span>EM {
@@ -92,12 +100,16 @@
         diffusion: Diffusion,
         params: DVector&lt;f64&gt;,
         initial_state: DVector&lt;f64&gt;,
+        cov: Covariates,
+        rateiv: DVector&lt;f64&gt;,
     ) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             drift,
             diffusion,
             params,
             state: initial_state,
+            cov,
+            rateiv,
         }
     }
 
@@ -110,8 +122,8 @@
             <span class="kw-2">&amp;</span><span class="self">self</span>.params.clone(),
             time,
             <span class="kw-2">&amp;mut </span>drift_term,
-            DVector::zeros(<span class="number">0</span>),
-            <span class="kw-2">&amp;</span>Covariates::default(),
+            <span class="self">self</span>.rateiv.clone(),
+            <span class="kw-2">&amp;</span><span class="self">self</span>.cov,
         );
 
         <span class="kw">let </span><span class="kw-2">mut </span>diffusion_term = DVector::zeros(n);
