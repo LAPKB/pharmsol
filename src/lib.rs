@@ -47,7 +47,7 @@ pub mod prelude {
             let p = $p;
             let mut idx = 0;
             $(
-                let $name = p[idx];
+                let mut $name = p[idx];
                 idx += 1;
             )*
         };

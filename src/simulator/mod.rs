@@ -113,8 +113,8 @@ pub type Out = fn(&V, &V, T, &Covariates, &mut V);
 /// Example:
 /// ```ignore
 /// use pharmsol::*;
-/// let sec_eq = |p, _t, cov| {
-///    fetch_params!(p, ka, ke);
+/// let sec_eq = |p, t, cov| {
+///    fetch_params!(p, ka, _ke);
 ///    fetch_cov!(cov, t, wt);
 ///    ka = ka * wt;
 /// };
