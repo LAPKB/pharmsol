@@ -2,7 +2,7 @@ use eframe::{
     egui::{self, Color32, Response},
     App,
 };
-use egui_plot::{Legend, Line, Plot, PlotPoints};
+use egui_plot::{Legend, Line, Plot, PlotPoints, Points};
 
 use crate::prelude::simulator::SubjectPredictions;
 pub trait GUI: Default + App + 'static {
@@ -23,7 +23,7 @@ pub trait GUI: Default + App + 'static {
 }
 
 impl SubjectPredictions {
-    fn op(&self) -> Line {
+    fn op(&self) -> Points {
         let points = PlotPoints::from_iter(
             self.flat_observations()
                 .iter()
@@ -31,7 +31,8 @@ impl SubjectPredictions {
                 .map(|(obs, pred)| [*obs, *pred]),
         );
         dbg!(&points.points());
-        Line::new(points)
+
+        Points::new(points)
             .color(Color32::from_rgb(100, 150, 250))
             .name("OP Plot")
     }
@@ -49,7 +50,7 @@ impl SubjectPredictions {
         // }
 
         plot.show(ui, |plot_ui| {
-            plot_ui.line(self.op());
+            plot_ui.points(self.op());
         })
         .response
     }
