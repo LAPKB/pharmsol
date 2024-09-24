@@ -15,30 +15,44 @@ fn main() {
         .build();
     println!("{subject}");
     let ode = equation::ODE::new(
-        |x, p, t, dx, _rateiv, cov| {
-            fetch_cov!(cov, t, wt, age);
-            fetch_params!(p, ka, ke, _tlag, _v);
-            // Secondary Eqs
-
-            let ke = ke * wt.powf(0.75) * (age / 25.0).powf(0.5);
-
+        |x, p, _t, dx, _rateiv, _cov| {
+            // fetch_cov!(cov, t,);
+            fetch_params!(p, ka, ke, _v);
             //Struct
             dx[0] = -ka * x[0];
             dx[1] = ka * x[0] - ke * x[1];
         },
-        |p| {
-            fetch_params!(p, _ka, _ke, tlag, _v);
-            lag! {0=>tlag}
-        },
+        |_p| lag! {},
         |_p| fa! {},
         |_p, _t, _cov, _x| {},
         |x, p, _t, _cov, y| {
-            fetch_params!(p, _ka, _ke, _tlag, v);
+            fetch_params!(p, _ka, _ke, v);
             y[0] = x[1] / v;
         },
         (2, 1),
     );
+    let net = equation::ODENet::new(
+        vec![
+            dmatrix![
+                -1.0,0.0;
+                1.0,0.0
+            ],
+            dmatrix![
+                0.0,0.0;
+                0.0,-1.0
+            ],
+            dmatrix![
+                0.0,0.0;
+                0.0,0.0
+            ],
+        ],
+        vec![OutEq::new(0, 1, Op::Div(2))],
+        (2, 1),
+    );
 
-    let op = ode.estimate_predictions(&subject, &vec![0.3, 0.5, 0.1, 70.0]);
-    println!("{op:#?}");
+    let op = net.estimate_predictions(&subject, &vec![0.3, 0.5, 70.0]);
+    println!("{:#?}", op.flat_predictions());
+
+    let op = ode.estimate_predictions(&subject, &vec![0.3, 0.5, 70.0]);
+    println!("{:#?}", op.flat_predictions());
 }
