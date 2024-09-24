@@ -46,6 +46,8 @@ fn main() {
                 0.0,0.0
             ],
         ],
+        HashMap::new(),
+        HashMap::new(),
         vec![OutEq::new(0, 1, Op::Div(2))],
         (2, 1),
     );

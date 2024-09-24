@@ -3,16 +3,13 @@ fn main() {
 
     let subject = Subject::builder("1")
         .infusion(0., 500.0, 0, 0.5)
-        .observation(0.5, 3.3371689999999998, 0)
-        .observation(1., 3.4750559999999999, 0)
-        .observation(2., 2.621165, 0)
-        .observation(3., 1.9103840000000001, 0)
-        .observation(4., 1.4256610000000001, 0)
-        .observation(6., 0.80077540000000003, 0)
-        .observation(8., 0.35291400000000001, 0)
-        .observation(12., 0.1020168, 0)
-        .observation(18., 0.015118929999999999, 0)
-        .observation(24., 0.0025999220000000002, 0)
+        .observation(0.5, 1.6457759999999999, 0)
+        .observation(1., 1.216442, 0)
+        .observation(2., 0.46227289999999999, 0)
+        .observation(3., 0.1697458, 0)
+        .observation(4., 0.063821779999999995, 0)
+        .observation(6., 0.0090993840000000003, 0)
+        .observation(8., 0.001017932, 0)
         .build();
 
     let an = equation::Analytical::new(
@@ -46,32 +43,44 @@ fn main() {
 
     let net = equation::ODENet::new(
         vec![dmatrix![-1.0], dmatrix![0.0]],
+        HashMap::new(),
+        HashMap::new(),
         vec![OutEq::new(0, 0, Op::Div(1))],
         (1, 1),
     );
-    let spp = vec![0.3, 0.5, 70.0];
     let em = ErrorModel::new((0.0, 0.05, 0.0, 0.0), 0.0, &ErrorType::Add);
-    let ll = an.estimate_likelihood(&subject, &spp, &em, false);
-    let op = an.estimate_predictions(&subject, &spp);
+    let ll = an.estimate_likelihood(
+        &subject,
+        &vec![1.02282724609375, 194.51904296875],
+        &em,
+        false,
+    );
+    let op = an.estimate_predictions(&subject, &vec![1.02282724609375, 194.51904296875]);
     println!(
         "Analytical: \n-2ll:{:#?}\n{:#?}",
-        -2.0 * ll.ln(),
+        -2.0 * ll,
         op.flat_predictions()
     );
 
-    let ll = ode.estimate_likelihood(&subject, &spp, &em, false);
-    let op = ode.estimate_predictions(&subject, &spp);
-    println!(
-        "ODE: \n-2ll:{:#?}\n{:#?}",
-        -2.0 * ll.ln(),
-        op.flat_predictions()
+    let ll = ode.estimate_likelihood(
+        &subject,
+        &vec![1.02282724609375, 194.51904296875],
+        &em,
+        false,
     );
+    let op = ode.estimate_predictions(&subject, &vec![1.02282724609375, 194.51904296875]);
+    println!("ODE: \n-2ll:{:#?}\n{:#?}", -2.0 * ll, op.flat_predictions());
 
-    let ll = net.estimate_likelihood(&subject, &spp, &em, false);
-    let op = net.estimate_predictions(&subject, &spp);
+    let ll = net.estimate_likelihood(
+        &subject,
+        &vec![1.02282724609375, 194.51904296875],
+        &em,
+        false,
+    );
+    let op = net.estimate_predictions(&subject, &vec![1.02282724609375, 194.51904296875]);
     println!(
         "ODENet: \n-2ll:{:#?}\n{:#?}",
-        -2.0 * ll.ln(),
+        -2.0 * ll,
         op.flat_predictions()
     );
 }
