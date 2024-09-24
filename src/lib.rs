@@ -7,6 +7,7 @@ pub use crate::data::InterpolationMethod::*;
 pub use crate::data::*;
 pub use crate::equation::*;
 pub use crate::simulator::equation::{self, ODE};
+pub use nalgebra::dmatrix;
 
 pub mod prelude {
     pub mod data {

@@ -116,15 +116,15 @@ impl EquationTypes for SDE {
 }
 
 impl EquationPriv for SDE {
-    #[inline(always)]
-    fn get_init(&self) -> &Init {
-        &self.init
-    }
+    // #[inline(always)]
+    // fn get_init(&self) -> &Init {
+    //     &self.init
+    // }
 
-    #[inline(always)]
-    fn get_out(&self) -> &Out {
-        &self.out
-    }
+    // #[inline(always)]
+    // fn get_out(&self) -> &Out {
+    //     &self.out
+    // }
 
     #[inline(always)]
     fn get_lag(&self, spp: &[f64]) -> HashMap<usize, f64> {

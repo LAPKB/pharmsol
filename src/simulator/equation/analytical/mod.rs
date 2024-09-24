@@ -43,15 +43,15 @@ impl EquationTypes for Analytical {
 }
 
 impl EquationPriv for Analytical {
-    #[inline(always)]
-    fn get_init(&self) -> &Init {
-        &self.init
-    }
+    // #[inline(always)]
+    // fn get_init(&self) -> &Init {
+    //     &self.init
+    // }
 
-    #[inline(always)]
-    fn get_out(&self) -> &Out {
-        &self.out
-    }
+    // #[inline(always)]
+    // fn get_out(&self) -> &Out {
+    //     &self.out
+    // }
 
     #[inline(always)]
     fn get_lag(&self, spp: &[f64]) -> HashMap<usize, f64> {
@@ -108,7 +108,7 @@ impl EquationPriv for Analytical {
         output: &mut Self::P,
     ) {
         let mut y = V::zeros(self.get_nouteqs());
-        let out = self.get_out();
+        let out = &self.out;
         (out)(
             x,
             &V::from_vec(support_point.clone()),
@@ -125,7 +125,7 @@ impl EquationPriv for Analytical {
     }
     #[inline(always)]
     fn initial_state(&self, spp: &Vec<f64>, covariates: &Covariates, occasion_index: usize) -> V {
-        let init = self.get_init();
+        let init = &self.init;
         let mut x = V::zeros(self.get_nstates());
         if occasion_index == 0 {
             (init)(&V::from_vec(spp.to_vec()), 0.0, covariates, &mut x);
