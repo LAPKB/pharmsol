@@ -27,12 +27,26 @@ const ATOL: f64 = 1e-4;
 pub struct ODENet {
     linear: Vec<DMatrix<f64>>,
     out: Vec<OutEq>,
+    lag: HashMap<usize, f64>,
+    fa: HashMap<usize, f64>,
     neqs: (usize, usize),
 }
 
 impl ODENet {
-    pub fn new(linear: Vec<DMatrix<f64>>, out: Vec<OutEq>, neqs: (usize, usize)) -> Self {
-        Self { linear, out, neqs }
+    pub fn new(
+        linear: Vec<DMatrix<f64>>,
+        lag: HashMap<usize, f64>,
+        fa: HashMap<usize, f64>,
+        out: Vec<OutEq>,
+        neqs: (usize, usize),
+    ) -> Self {
+        Self {
+            linear,
+            fa,
+            lag,
+            out,
+            neqs,
+        }
     }
 }
 
@@ -83,12 +97,12 @@ impl EquationTypes for ODENet {
 impl EquationPriv for ODENet {
     #[inline(always)]
     fn get_lag(&self, _spp: &[f64]) -> HashMap<usize, f64> {
-        Default::default()
+        self.lag.clone()
     }
 
     #[inline(always)]
     fn get_fa(&self, _spp: &[f64]) -> HashMap<usize, f64> {
-        Default::default()
+        self.fa.clone()
     }
 
     #[inline(always)]
