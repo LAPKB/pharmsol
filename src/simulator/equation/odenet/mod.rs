@@ -145,20 +145,9 @@ impl EquationPriv for ODENet {
         let mut y = V::zeros(self.get_nouteqs());
         let out = &self.out;
         let point = V::from_vec(support_point.clone());
-        // point.iter_mut().for_each(|x| *x = 1.0 / *x);
-        // assuming v = p[2] and y[0] = x[1]/v
         for eq in out.iter() {
             eq.apply(&mut y, &point, x);
         }
-        // y[0] = x[0] / point[1];
-
-        // (out)(
-        //     x,
-        //     &V::from_vec(support_point.clone()),
-        //     observation.time(),
-        //     covariates,
-        //     &mut y,
-        // );
         let pred = y[observation.outeq()];
         let pred = observation.to_obs_pred(pred);
         if let Some(error_model) = error_model {
