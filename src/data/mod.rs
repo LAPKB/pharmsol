@@ -5,5 +5,6 @@ pub mod event;
 pub(crate) mod parse_pmetrics;
 pub mod structs;
 pub use covariate::*;
+pub use error_model::*;
 pub use event::*;
 pub use structs::{Data, Occasion, Subject};

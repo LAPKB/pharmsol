@@ -49,13 +49,29 @@ fn main() {
         vec![OutEq::new(0, 0, Op::Div(1))],
         (1, 1),
     );
+    let spp = vec![0.3, 0.5, 70.0];
+    let em = ErrorModel::new((0.0, 0.05, 0.0, 0.0), 0.0, &ErrorType::Add);
+    let ll = an.estimate_likelihood(&subject, &spp, &em, false);
+    let op = an.estimate_predictions(&subject, &spp);
+    println!(
+        "Analytical: \n-2ll:{:#?}\n{:#?}",
+        -2.0 * ll.ln(),
+        op.flat_predictions()
+    );
 
-    let op = an.estimate_predictions(&subject, &vec![0.31261484375, 116.3623046875]);
-    println!("Analytical: \n{:#?}", op.flat_predictions());
+    let ll = ode.estimate_likelihood(&subject, &spp, &em, false);
+    let op = ode.estimate_predictions(&subject, &spp);
+    println!(
+        "ODE: \n-2ll:{:#?}\n{:#?}",
+        -2.0 * ll.ln(),
+        op.flat_predictions()
+    );
 
-    let op = ode.estimate_predictions(&subject, &vec![0.31261484375, 116.3623046875]);
-    println!("ODE: \n{:#?}", op.flat_predictions());
-
-    let op = net.estimate_predictions(&subject, &vec![0.31261484375, 116.3623046875]);
-    println!("Net: \n{:#?}", op.flat_predictions());
+    let ll = net.estimate_likelihood(&subject, &spp, &em, false);
+    let op = net.estimate_predictions(&subject, &spp);
+    println!(
+        "ODENet: \n-2ll:{:#?}\n{:#?}",
+        -2.0 * ll.ln(),
+        op.flat_predictions()
+    );
 }
