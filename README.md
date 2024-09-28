@@ -54,7 +54,7 @@ println!("{op:#?}");
 Analytic based model.
 
 ```rust
-...
+use pharmsol::*;
 let analytical = simulator::Equation::new_analytical(
     one_compartment_with_absorption,
     |_p, _cov| {},
