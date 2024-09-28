@@ -53,7 +53,7 @@ println!("{op:#?}");
 
 Analytic based model.
 
-```Rust
+```rust
 ...
 let analytical = simulator::Equation::new_analytical(
     one_compartment_with_absorption,
