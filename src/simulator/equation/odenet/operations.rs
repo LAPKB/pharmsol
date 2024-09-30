@@ -4,6 +4,8 @@ pub use Operator::*;
 
 use nalgebra::DVector;
 
+use crate::Covariates;
+
 #[derive(Clone, Debug)]
 pub enum Operator {
     P(usize),
@@ -76,7 +78,28 @@ impl Op {
     }
 }
 
-//Lag
+//Init
+#[derive(Clone, Debug)]
+pub struct Init {
+    state_index: usize,
+    operation: Op,
+}
+
+impl Init {
+    pub fn new(state_index: usize, operation: Op) -> Self {
+        Self {
+            state_index,
+            operation,
+        }
+    }
+    pub fn apply(&self, state: &mut DVector<f64>, p: &DVector<f64>, covs: &Covariates) {
+        //This is a hardcoded assumption, that the initial time is 0.0
+        let covs = covs.to_hashmap(0.0);
+        state[self.state_index] = self.operation.apply(p, None, Some(&covs));
+    }
+}
+
+//Lag & Fa
 
 #[derive(Clone, Debug)]
 pub struct Lag {
