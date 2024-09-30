@@ -53,6 +53,8 @@ fn main() {
                 0.0,0.0
             ],
         ],
+        vec![],
+        vec![],
         vec![Lag::new(0, Op::Equal(P(2)))],
         vec![],
         vec![],

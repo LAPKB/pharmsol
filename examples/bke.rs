@@ -46,6 +46,8 @@ fn main() {
         vec![],
         vec![],
         vec![],
+        vec![],
+        vec![],
         vec![OutEq::new(0, Div(X(0), P(1)))],
         (1, 1),
     );

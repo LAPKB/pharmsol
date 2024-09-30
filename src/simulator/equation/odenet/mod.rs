@@ -16,7 +16,7 @@ use cached::UnboundCache;
 
 use diffsol::{ode_solver::method::OdeSolverMethod, Bdf};
 use diffsol_traits::build_network_ode;
-use nalgebra::DMatrix;
+use nalgebra::{DMatrix, DVector};
 
 use super::{Equation, EquationPriv, EquationTypes, State};
 
@@ -26,8 +26,10 @@ const ATOL: f64 = 1e-4;
 #[derive(Clone, Debug)]
 pub struct ODENet {
     linear: Vec<DMatrix<f64>>,
+    non_linear: Vec<NL>,
     lag: Vec<Lag>,
     fa: Vec<Fa>,
+    secondary_equations: Vec<SEq>,
     init: Vec<Init>,
     out: Vec<OutEq>,
     neqs: (usize, usize),
@@ -36,6 +38,8 @@ pub struct ODENet {
 impl ODENet {
     pub fn new(
         linear: Vec<DMatrix<f64>>,
+        secondary_equations: Vec<SEq>,
+        non_linear: Vec<NL>,
         lag: Vec<Lag>,
         fa: Vec<Fa>,
         init: Vec<Init>,
@@ -44,12 +48,43 @@ impl ODENet {
     ) -> Self {
         Self {
             linear,
+            non_linear,
+            secondary_equations,
             fa,
             lag,
             init,
             out,
             neqs,
         }
+    }
+
+    fn calculate_secondary(
+        &self,
+        point: &DVector<f64>,
+        covs: &HashMap<String, f64>,
+    ) -> HashMap<String, f64> {
+        self.secondary_equations
+            .clone()
+            .into_iter()
+            .fold(HashMap::new(), |mut acc, x| {
+                x.apply(&mut acc, point, covs);
+                acc
+            })
+    }
+
+    fn calculate_non_linear(
+        &self,
+        p: &DVector<f64>,
+        x: &DVector<f64>,
+        covs: &HashMap<String, f64>,
+    ) -> DVector<f64> {
+        self.non_linear
+            .clone()
+            .into_iter()
+            .fold(DVector::zeros(x.len()), |mut acc, nl| {
+                nl.apply(&mut acc, p, covs);
+                acc
+            })
     }
 }
 
@@ -155,6 +190,11 @@ impl EquationPriv for ODENet {
         if start_time == end_time {
             return;
         }
+        let nl = self.calculate_non_linear(
+            &V::from_vec(support_point.clone()),
+            state,
+            &covariates.to_hashmap(start_time),
+        );
         let problem = build_network_ode(
             self.linear.clone(),
             |_p: &V, _t: T| state.clone(),
@@ -165,6 +205,7 @@ impl EquationPriv for ODENet {
             ATOL,
             covariates.clone(),
             infusions.clone(),
+            nl,
         )
         .unwrap();
         let mut solver = Bdf::default();
@@ -188,8 +229,9 @@ impl EquationPriv for ODENet {
         let out = &self.out;
         let point = V::from_vec(support_point.clone());
         let cov = covariates.to_hashmap(time);
+        let sec = self.calculate_secondary(&point, &cov);
         for eq in out.iter() {
-            eq.apply(&mut y, &point, x, &cov);
+            eq.apply(&mut y, &point, x, &cov, &sec);
         }
         let pred = y[observation.outeq()];
         let pred = observation.to_obs_pred(pred);
