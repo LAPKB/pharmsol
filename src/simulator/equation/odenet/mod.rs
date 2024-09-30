@@ -26,9 +26,10 @@ const ATOL: f64 = 1e-4;
 #[derive(Clone, Debug)]
 pub struct ODENet {
     linear: Vec<DMatrix<f64>>,
-    out: Vec<OutEq>,
     lag: Vec<Lag>,
     fa: Vec<Fa>,
+    init: Vec<Init>,
+    out: Vec<OutEq>,
     neqs: (usize, usize),
 }
 
@@ -37,6 +38,7 @@ impl ODENet {
         linear: Vec<DMatrix<f64>>,
         lag: Vec<Lag>,
         fa: Vec<Fa>,
+        init: Vec<Init>,
         out: Vec<OutEq>,
         neqs: (usize, usize),
     ) -> Self {
@@ -44,6 +46,7 @@ impl ODENet {
             linear,
             fa,
             lag,
+            init,
             out,
             neqs,
         }
@@ -196,17 +199,14 @@ impl EquationPriv for ODENet {
         output.add_prediction(pred);
     }
     #[inline(always)]
-    fn initial_state(
-        &self,
-        _spp: &Vec<f64>,
-        _covariates: &Covariates,
-        _occasion_index: usize,
-    ) -> V {
-        // let init = &self.init;
-        let x = V::zeros(self.get_nstates());
-        // if occasion_index == 0 {
-        //     (init)(&V::from_vec(spp.to_vec()), 0.0, covariates, &mut x);
-        // }
+    fn initial_state(&self, spp: &Vec<f64>, covariates: &Covariates, occasion_index: usize) -> V {
+        let mut x = V::zeros(self.get_nstates());
+        if occasion_index == 0 {
+            for eq in self.init.iter() {
+                let p = V::from_vec(spp.clone());
+                eq.apply(&mut x, &p, covariates);
+            }
+        }
         x
     }
 }

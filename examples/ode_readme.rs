@@ -55,6 +55,7 @@ fn main() {
         ],
         vec![Lag::new(0, Op::Equal(P(2)))],
         vec![],
+        vec![],
         vec![OutEq::new(0, Op::Div(X(1), P(3)))],
         (2, 1),
     );
