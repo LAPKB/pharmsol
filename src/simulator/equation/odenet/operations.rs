@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+pub use Op::*;
 pub use Operator::*;
 
 use nalgebra::DVector;
@@ -8,6 +9,7 @@ pub enum Operator {
     P(usize),
     Cov(String),
     X(usize),
+    O(Box<Op>),
 }
 
 impl Operator {
@@ -37,6 +39,7 @@ impl Operator {
                     panic!("State cannot be accessed in this context");
                 }
             }
+            Operator::O(op) => op.apply(p, x, cov),
         }
     }
 }
