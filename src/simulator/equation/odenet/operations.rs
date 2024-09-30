@@ -44,6 +44,9 @@ impl Operator {
 #[derive(Clone, Debug)]
 pub enum Op {
     Equal(Operator),
+    Sum(Operator, Operator),
+    Sub(Operator, Operator),
+    Mul(Operator, Operator),
     Div(Operator, Operator),
 }
 
@@ -56,6 +59,9 @@ impl Op {
     ) -> f64 {
         match self {
             Op::Equal(o) => o.get(p, x, cov),
+            Op::Sum(a, b) => a.get(p, x, cov) + b.get(p, x, cov),
+            Op::Sub(a, b) => a.get(p, x, cov) - b.get(p, x, cov),
+            Op::Mul(a, b) => a.get(p, x, cov) * b.get(p, x, cov),
             Op::Div(n, d) => {
                 if d.get(p, x, cov) == 0.0 {
                     panic!("Division by zero when applying operation Div");
@@ -85,9 +91,7 @@ impl Lag {
         }
     }
     pub fn apply(&self, lag: &mut HashMap<usize, f64>, p: &DVector<f64>) {
-        let value = self.operation.apply(p, None, None);
-        let entry = lag.entry(self.state_index).or_insert(0.0);
-        *entry += value;
+        lag.insert(self.state_index, self.operation.apply(p, None, None));
     }
 }
 
