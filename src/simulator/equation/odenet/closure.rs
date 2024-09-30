@@ -22,6 +22,7 @@ where
     statistics: RefCell<OpStatistics>,
     _covariates: Covariates,
     infusions: Vec<Infusion>,
+    nl: M::V,
 }
 
 impl<M> ODENetClosure<M>
@@ -35,6 +36,7 @@ where
         p: Rc<M::V>,
         covariates: Covariates,
         infusions: Vec<Infusion>,
+        nl: M::V,
     ) -> Self {
         let nparams = p.len();
         Self {
@@ -48,6 +50,7 @@ where
             sparsity: None,
             _covariates: covariates,
             infusions,
+            nl,
         }
     }
 }
@@ -95,6 +98,9 @@ where
         // Perform a matrix-vector multiplication `y = alpha * self * x + beta * y`.
         for i in 0..self.nparams {
             self.linear[i].gemv(self.p[i], x, Self::T::from(1.0), y);
+        }
+        for i in 0..self.nstates {
+            y[i] += self.nl[i];
         }
         // y += rateiv;
         // (self.func)(x, self.p.as_ref(), t, y, rateiv, &self.covariates)

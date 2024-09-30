@@ -21,6 +21,7 @@ pub(crate) fn build_network_ode<M, I>(
     atol: f64,
     cov: Covariates,
     infusions: Vec<Infusion>,
+    nl: M::V,
 ) -> Result<
     OdeSolverProblem<OdeSolverEquations<M, ODENetClosure<M>, ConstantClosure<M, I>>>,
     DiffsolError,
@@ -33,7 +34,7 @@ where
     let t0 = M::T::from(t0);
     let y0 = (init)(&p, t0);
     let nstates = y0.len();
-    let rhs = ODENetClosure::new(linear, nstates, nstates, p.clone(), cov, infusions);
+    let rhs = ODENetClosure::new(linear, nstates, nstates, p.clone(), cov, infusions, nl);
     // let mass = Rc::new(UnitCallable::new(nstates));
     let rhs = Rc::new(rhs);
     let init = ConstantClosure::new(init, p.clone());
