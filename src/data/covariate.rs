@@ -147,6 +147,13 @@ impl Covariates {
     pub fn get_covariate(&self, name: &str) -> Option<&Covariate> {
         self.covariates.get(name)
     }
+
+    pub fn to_hashmap(&self, time: f64) -> HashMap<String, f64> {
+        self.covariates
+            .iter()
+            .map(|(name, covariate)| (name.clone(), covariate.interpolate(time).unwrap()))
+            .collect()
+    }
     // fn get_covariate_names(&self) -> Vec<String> {
     //     self.covariates.keys().cloned().collect()
     // }

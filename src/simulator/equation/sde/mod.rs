@@ -127,13 +127,13 @@ impl EquationPriv for SDE {
     // }
 
     #[inline(always)]
-    fn get_lag(&self, spp: &[f64]) -> HashMap<usize, f64> {
-        (self.lag)(&V::from_vec(spp.to_owned()))
+    fn get_lag(&self, spp: &[f64]) -> Option<HashMap<usize, f64>> {
+        Some((self.lag)(&V::from_vec(spp.to_owned())))
     }
 
     #[inline(always)]
-    fn get_fa(&self, spp: &[f64]) -> HashMap<usize, f64> {
-        (self.fa)(&V::from_vec(spp.to_owned()))
+    fn get_fa(&self, spp: &[f64]) -> Option<HashMap<usize, f64>> {
+        Some((self.fa)(&V::from_vec(spp.to_owned())))
     }
 
     #[inline(always)]
@@ -181,6 +181,7 @@ impl EquationPriv for SDE {
         support_point: &Vec<f64>,
         observation: &crate::Observation,
         error_model: Option<&ErrorModel>,
+        _time: f64,
         covariates: &Covariates,
         x: &mut Self::S,
         likelihood: &mut Vec<f64>,

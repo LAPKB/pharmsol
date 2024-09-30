@@ -20,7 +20,7 @@ where
     coloring: Option<JacobianColoring<M>>,
     sparsity: Option<M::Sparsity>,
     statistics: RefCell<OpStatistics>,
-    covariates: Covariates,
+    _covariates: Covariates,
     infusions: Vec<Infusion>,
 }
 
@@ -46,7 +46,7 @@ where
             statistics: RefCell::new(OpStatistics::default()),
             coloring: None,
             sparsity: None,
-            covariates,
+            _covariates: covariates,
             infusions,
         }
     }

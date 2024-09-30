@@ -33,8 +33,8 @@ pub trait EquationTypes {
 pub(crate) trait EquationPriv: EquationTypes {
     // fn get_init(&self) -> &Init;
     // fn get_out(&self) -> &Out;
-    fn get_lag(&self, spp: &[f64]) -> HashMap<usize, f64>;
-    fn get_fa(&self, spp: &[f64]) -> HashMap<usize, f64>;
+    fn get_lag(&self, spp: &[f64]) -> Option<HashMap<usize, f64>>;
+    fn get_fa(&self, spp: &[f64]) -> Option<HashMap<usize, f64>>;
     fn get_nstates(&self) -> usize;
     fn get_nouteqs(&self) -> usize;
     fn solve(
@@ -58,6 +58,7 @@ pub(crate) trait EquationPriv: EquationTypes {
         support_point: &Vec<f64>,
         observation: &Observation,
         error_model: Option<&ErrorModel>,
+        time: f64,
         covariates: &Covariates,
         x: &mut Self::S,
         likelihood: &mut Vec<f64>,
@@ -95,6 +96,7 @@ pub(crate) trait EquationPriv: EquationTypes {
                     support_point,
                     observation,
                     error_model,
+                    event.get_time(),
                     covariates,
                     x,
                     likelihood,
@@ -147,7 +149,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
             let covariates = occasion.get_covariates().unwrap();
             let mut x = self.initial_state(support_point, covariates, occasion.index());
             let mut infusions = Vec::new();
-            let events = occasion.get_events(Some(&lag), Some(&fa), true);
+            let events = occasion.get_events(&lag, &fa, true);
             for (index, event) in events.iter().enumerate() {
                 self.simulate_event(
                     support_point,

@@ -43,9 +43,9 @@ fn main() {
 
     let net = equation::ODENet::new(
         vec![dmatrix![-1.0], dmatrix![0.0]],
-        HashMap::new(),
-        HashMap::new(),
-        vec![OutEq::new(0, 0, Op::Div(1))],
+        vec![],
+        vec![],
+        vec![OutEq::new(0, Op::Div(X(0), P(1)))],
         (1, 1),
     );
     let em = ErrorModel::new((0.0, 0.05, 0.0, 0.0), 0.0, &ErrorType::Add);

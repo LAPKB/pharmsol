@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 mod closure;
 mod diffsol_traits;
-mod outeq;
-pub use outeq::*;
+mod operations;
+pub use operations::*;
 
 use crate::{
     data::{Covariates, Infusion},
@@ -27,16 +27,16 @@ const ATOL: f64 = 1e-4;
 pub struct ODENet {
     linear: Vec<DMatrix<f64>>,
     out: Vec<OutEq>,
-    lag: HashMap<usize, f64>,
-    fa: HashMap<usize, f64>,
+    lag: Vec<Lag>,
+    fa: Vec<Fa>,
     neqs: (usize, usize),
 }
 
 impl ODENet {
     pub fn new(
         linear: Vec<DMatrix<f64>>,
-        lag: HashMap<usize, f64>,
-        fa: HashMap<usize, f64>,
+        lag: Vec<Lag>,
+        fa: Vec<Fa>,
         out: Vec<OutEq>,
         neqs: (usize, usize),
     ) -> Self {
@@ -96,13 +96,37 @@ impl EquationTypes for ODENet {
 
 impl EquationPriv for ODENet {
     #[inline(always)]
-    fn get_lag(&self, _spp: &[f64]) -> HashMap<usize, f64> {
-        self.lag.clone()
+    fn get_lag(&self, p: &[f64]) -> Option<HashMap<usize, f64>> {
+        let p = V::from_vec(p.to_owned());
+        match self.lag.len() {
+            0 => None,
+            _ => Some(
+                self.lag
+                    .clone()
+                    .into_iter()
+                    .fold(HashMap::new(), |mut acc, x| {
+                        x.apply(&mut acc, &p);
+                        acc
+                    }),
+            ),
+        }
     }
 
     #[inline(always)]
-    fn get_fa(&self, _spp: &[f64]) -> HashMap<usize, f64> {
-        self.fa.clone()
+    fn get_fa(&self, _spp: &[f64]) -> Option<HashMap<usize, f64>> {
+        let p = V::from_vec(_spp.to_owned());
+        match self.fa.len() {
+            0 => None,
+            _ => Some(
+                self.fa
+                    .clone()
+                    .into_iter()
+                    .fold(HashMap::new(), |mut acc, x| {
+                        x.apply(&mut acc, &p);
+                        acc
+                    }),
+            ),
+        }
     }
 
     #[inline(always)]
@@ -151,7 +175,8 @@ impl EquationPriv for ODENet {
         support_point: &Vec<f64>,
         observation: &Observation,
         error_model: Option<&ErrorModel>,
-        _covariates: &Covariates,
+        time: f64,
+        covariates: &Covariates,
         x: &mut Self::S,
         likelihood: &mut Vec<f64>,
         output: &mut Self::P,
@@ -159,8 +184,9 @@ impl EquationPriv for ODENet {
         let mut y = V::zeros(self.get_nouteqs());
         let out = &self.out;
         let point = V::from_vec(support_point.clone());
+        let cov = covariates.to_hashmap(time);
         for eq in out.iter() {
-            eq.apply(&mut y, &point, x);
+            eq.apply(&mut y, &point, x, &cov);
         }
         let pred = y[observation.outeq()];
         let pred = observation.to_obs_pred(pred);
