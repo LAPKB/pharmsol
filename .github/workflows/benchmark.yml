@@ -34,6 +34,7 @@ jobs:
           name: Criterion.rs Benchmark
           tool: 'cargo'
           output-file-path: output.txt
+          external-data-json-path: ./.github/cache/benchmark-data.json
           github-token: ${{ secrets.GITHUB_TOKEN }}
           auto-push: true
           # Show alert with commit comment on detecting possible performance regression
