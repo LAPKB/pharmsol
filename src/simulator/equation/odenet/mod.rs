@@ -14,7 +14,7 @@ use crate::{
 use cached::proc_macro::cached;
 use cached::UnboundCache;
 
-use diffsol::{ode_solver::method::OdeSolverMethod, Bdf};
+use diffsol::ode_solver::method::OdeSolverMethod;
 use diffsol_traits::build_network_ode;
 use nalgebra::{DMatrix, DVector};
 
@@ -208,7 +208,10 @@ impl EquationPriv for ODENet {
             nl,
         )
         .unwrap();
-        let mut solver = Bdf::default();
+        // let mut solver = diffsol::Bdf::default();
+        // let tableau: diffsol::Tableau<DMatrix<f64>> = diffsol::Tableau::esdirk34();
+        let tableau: diffsol::Tableau<DMatrix<f64>> = diffsol::Tableau::tr_bdf2();
+        let mut solver = diffsol::Sdirk::new(tableau, diffsol::NalgebraLU::default());
         let sol = solver.solve(&problem, end_time).unwrap();
         *state = sol.0.last().unwrap().clone()
     }
