@@ -11,51 +11,54 @@ Simulate PK/PD profiles using ODE and analytical models.
 ODE based model.
 
 ```rust
-use pharmsol::*;
+    use pharmsol::*;
 
-let subject = data::Subject::builder("id1")
-    .bolus(0.0, 100.0, 0)
-    .repeat(2, 0.5)
-    .observation(0.5, 0.1, 0)
-    .observation(1.0, 0.4, 0)
-    .observation(2.0, 1.0, 0)
-    .observation(2.5, 1.1, 0)
-    .build();
-println!("{subject:#?}");
-let ode = simulator::Equation::new_ode(
-    //Difussion Equations
-    |x, p, _t, dx, _rateiv, _cov| {
-        fetch_cov!(cov, t,);
-        fetch_params!(p, ka, ke, _tlag, _v);
-        dx[0] = -ka * x[0];
-        dx[1] = ka * x[0] - ke * x[1];
-    },
-    // Lag definition (In this case boluses on dx[0] will be delayed by `tlag`)
-    |p| {
-        fetch_params!(p, _ka, _ke, tlag, _v);
-        lag! {0=>tlag}
-    },
-    // No bio-availability
-    |_p| fa! {},
-    // Default initial conditions (0.0,0.0)
-    |_p, _t, _cov, _x| {},
-    // Output Equations
-    |x, p, _t, _cov, y| {
-        fetch_params!(p, _ka, _ke, _tlag, v);
-        y[0] = x[1] / v;
-    },
-    (2, 1),
-);
+    let subject = Subject::builder("id1")
+        .bolus(0.0, 100.0, 0)
+        .repeat(2, 0.5)
+        .observation(0.5, 0.1, 0)
+        .observation(1.0, 0.4, 0)
+        .observation(2.0, 1.0, 0)
+        .observation(2.5, 1.1, 0)
+        .covariate("wt", 0.0, 80.0)
+        .covariate("wt", 1.0, 83.0)
+        .covariate("age", 0.0, 25.0)
+        .build();
+    // println!("{subject}");
+    let ode = equation::ODE::new(
+        |x, p, t, dx, _rateiv, cov| {
+            fetch_cov!(cov, t, _wt, _age);
+            fetch_params!(p, ka, ke, _tlag, _v);
+            // Secondary Eqs
+            // let ke = ke * wt.powf(0.75) * (age / 25.0).powf(0.5);
 
-let op = ode.simulate_subject(&subject, &vec![0.3, 0.5, 0.1, 70.0], false);
-println!("{op:#?}");
+            //Struct
+            dx[0] = -ka * x[0];
+            dx[1] = ka * x[0] - ke * x[1];
+        },
+        |p| {
+            fetch_params!(p, _ka, _ke, tlag, _v);
+            lag! {0=>tlag}
+        },
+        |_p| fa! {},
+        |_p, _t, _cov, _x| {},
+        |x, p, _t, _cov, y| {
+            fetch_params!(p, _ka, _ke, _tlag, v);
+            y[0] = x[1] / v;
+        },
+        (2, 1),
+    );
+
+    let op = ode.estimate_predictions(&subject, &vec![0.3, 0.5, 0.1, 70.0]);
+    // println!("{op:#?}");
+    let _ = op.run();
 ```
 
 Analytic based model.
 
-```Rust
-...
-let analytical = simulator::Equation::new_analytical(
+```rust
+use pharmsol::*;
+let analytical = equation::Analytical::new(
     one_compartment_with_absorption,
     |_p, _cov| {},
     |p| {

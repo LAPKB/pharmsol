@@ -51,8 +51,24 @@ impl State for V {
         self[input] += amount;
     }
 }
+
+// Hash the support points by converting them to bits and summing them
+// The wrapping_add is used to avoid overflow, and prevent panics
 fn spphash(spp: &[f64]) -> u64 {
-    spp.iter().fold(0, |acc, x| acc + x.to_bits())
+    let mut hasher = std::hash::DefaultHasher::new();
+    spp.iter().for_each(|&value| {
+        // Normalize negative zero to zero, e.g. -0.0 -> 0.0
+        let normalized_value = if value == 0.0 && value.is_sign_negative() {
+            0.0
+        } else {
+            value
+        };
+        // Convert the value to bits and hash it
+        let bits = normalized_value.to_bits();
+        std::hash::Hash::hash(&bits, &mut hasher);
+    });
+
+    std::hash::Hasher::finish(&hasher)
 }
 
 #[inline(always)]
@@ -197,5 +213,25 @@ impl Equation for ODE {
         cache: bool,
     ) -> f64 {
         _estimate_likelihood(self, subject, support_point, error_model, cache)
+    }
+}
+
+// Test spphash
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_spphash() {
+        let spp1 = vec![1.0, 2.0, 3.0];
+        let spp2 = vec![1.0, 2.0, 3.0];
+        let spp3 = vec![3.0, 2.0, 1.0];
+        let spp4 = vec![1.0, 2.0, 3.000001];
+        // Equal values should have the same hash
+        assert_eq!(spphash(&spp1), spphash(&spp2));
+        // Mirrored values should have different hashes
+        assert_ne!(spphash(&spp1), spphash(&spp3));
+        // Very close values should have different hashes
+        // Note: Due to f64 precision this will fail for values that are very close, e.g. 3.0 and 3.0000000000000001
+        assert_ne!(spphash(&spp1), spphash(&spp4));
     }
 }
