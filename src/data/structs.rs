@@ -37,7 +37,7 @@ impl Data {
             .unwrap();
         for subject in self.get_subjects() {
             for occasion in subject.occasions() {
-                for event in occasion.get_events(None, None, false) {
+                for event in occasion.get_events(&None, &None, false) {
                     match event {
                         Event::Observation(obs) => {
                             // Write each field individually
@@ -164,7 +164,7 @@ impl Data {
         for subject in &self.subjects {
             let mut new_occasions: Vec<Occasion> = Vec::new();
             for occasion in &subject.occasions {
-                let old_events = occasion.get_events(None, None, true);
+                let old_events = occasion.get_events(&None, &None, true);
                 let mut new_events: Vec<Event> = Vec::new();
                 let mut time = 0.0;
                 while time < last_time {
@@ -271,7 +271,7 @@ impl Occasion {
         self.covariates.add_covariate(name, covariate);
     }
 
-    fn add_lagtime(&mut self, lagtime: Option<&HashMap<usize, f64>>) {
+    fn add_lagtime(&mut self, lagtime: &Option<HashMap<usize, f64>>) {
         if let Some(lag) = lagtime {
             for event in self.events.iter_mut() {
                 if let Event::Bolus(bolus) = event {
@@ -284,7 +284,7 @@ impl Occasion {
         self.sort();
     }
 
-    fn add_bioavailability(&mut self, bioavailability: Option<&HashMap<usize, f64>>) {
+    fn add_bioavailability(&mut self, bioavailability: &Option<HashMap<usize, f64>>) {
         // If lagtime is empty, return early
         if let Some(fmap) = bioavailability {
             for event in self.events.iter_mut() {
@@ -337,8 +337,8 @@ impl Occasion {
 
     pub fn get_events(
         &self,
-        lagtime: Option<&HashMap<usize, f64>>,
-        bioavailability: Option<&HashMap<usize, f64>>,
+        lagtime: &Option<HashMap<usize, f64>>,
+        bioavailability: &Option<HashMap<usize, f64>>,
         ignore: bool,
     ) -> Vec<Event> {
         let mut occ = self.clone();
@@ -509,7 +509,7 @@ mod tests {
             1,
         );
         occasion.sort();
-        let events = occasion.get_events(None, None, false);
+        let events = occasion.get_events(&None, &None, false);
         match &events[0] {
             Event::Bolus(b) => assert_eq!(b.time(), 1.0),
             _ => panic!("First event should be a Bolus"),
@@ -530,7 +530,7 @@ mod tests {
             Covariates::new(),
             1,
         );
-        let events = occasion.get_events(None, None, true);
+        let events = occasion.get_events(&None, &None, true);
         assert_eq!(events.len(), 1);
         match &events[0] {
             Event::Observation(o) => assert_eq!(o.time(), 1.0),
