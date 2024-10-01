@@ -164,18 +164,24 @@
 <a href="#164" id="164">164</a>
 <a href="#165" id="165">165</a>
 <a href="#166" id="166">166</a>
+<a href="#167" id="167">167</a>
+<a href="#168" id="168">168</a>
+<a href="#169" id="169">169</a>
+<a href="#170" id="170">170</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::HashMap;
 <span class="kw">pub mod </span>analytical;
 <span class="kw">pub mod </span>ode;
+<span class="kw">pub mod </span>odenet;
 <span class="kw">pub mod </span>sde;
 
 <span class="kw">pub use </span>analytical::<span class="kw-2">*</span>;
 <span class="kw">pub use </span>ode::<span class="kw-2">*</span>;
+<span class="kw">pub use </span>odenet::<span class="kw-2">*</span>;
 <span class="kw">pub use </span>sde::<span class="kw-2">*</span>;
 
 <span class="kw">use crate</span>::{error_model::ErrorModel, Covariates, Event, Infusion, Observation, Subject};
 
-<span class="kw">use super</span>::{likelihood::Prediction, Init, Out};
+<span class="kw">use </span><span class="kw">super</span>::likelihood::Prediction;
 
 <span class="kw">pub trait </span>State {
     <span class="kw">fn </span>add_bolus(<span class="kw-2">&amp;mut </span><span class="self">self</span>, input: usize, amount: f64);
@@ -195,10 +201,10 @@
 }
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">trait </span>EquationPriv: EquationTypes {
-    <span class="kw">fn </span>get_init(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>Init;
-    <span class="kw">fn </span>get_out(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>Out;
-    <span class="kw">fn </span>get_lag(<span class="kw-2">&amp;</span><span class="self">self</span>, spp: <span class="kw-2">&amp;</span>[f64]) -&gt; HashMap&lt;usize, f64&gt;;
-    <span class="kw">fn </span>get_fa(<span class="kw-2">&amp;</span><span class="self">self</span>, spp: <span class="kw-2">&amp;</span>[f64]) -&gt; HashMap&lt;usize, f64&gt;;
+    <span class="comment">// fn get_init(&amp;self) -&gt; &amp;Init;
+    // fn get_out(&amp;self) -&gt; &amp;Out;
+    </span><span class="kw">fn </span>get_lag(<span class="kw-2">&amp;</span><span class="self">self</span>, spp: <span class="kw-2">&amp;</span>[f64]) -&gt; <span class="prelude-ty">Option</span>&lt;HashMap&lt;usize, f64&gt;&gt;;
+    <span class="kw">fn </span>get_fa(<span class="kw-2">&amp;</span><span class="self">self</span>, spp: <span class="kw-2">&amp;</span>[f64]) -&gt; <span class="prelude-ty">Option</span>&lt;HashMap&lt;usize, f64&gt;&gt;;
     <span class="kw">fn </span>get_nstates(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize;
     <span class="kw">fn </span>get_nouteqs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize;
     <span class="kw">fn </span>solve(
@@ -222,6 +228,7 @@
         support_point: <span class="kw-2">&amp;</span>Vec&lt;f64&gt;,
         observation: <span class="kw-2">&amp;</span>Observation,
         error_model: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>ErrorModel&gt;,
+        time: f64,
         covariates: <span class="kw-2">&amp;</span>Covariates,
         x: <span class="kw-2">&amp;mut </span><span class="self">Self</span>::S,
         likelihood: <span class="kw-2">&amp;mut </span>Vec&lt;f64&gt;,
@@ -259,6 +266,7 @@
                     support_point,
                     observation,
                     error_model,
+                    event.get_time(),
                     covariates,
                     x,
                     likelihood,
@@ -303,15 +311,15 @@
         support_point: <span class="kw-2">&amp;</span>Vec&lt;f64&gt;,
         error_model: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>ErrorModel&gt;,
     ) -&gt; (<span class="self">Self</span>::P, <span class="prelude-ty">Option</span>&lt;f64&gt;) {
-        <span class="kw">let </span>lag_closure = <span class="self">self</span>.get_lag(support_point);
-        <span class="kw">let </span>fa_closure = <span class="self">self</span>.get_fa(support_point);
+        <span class="kw">let </span>lag = <span class="self">self</span>.get_lag(support_point);
+        <span class="kw">let </span>fa = <span class="self">self</span>.get_fa(support_point);
         <span class="kw">let </span><span class="kw-2">mut </span>output = <span class="self">Self</span>::P::new(<span class="self">self</span>.nparticles());
         <span class="kw">let </span><span class="kw-2">mut </span>likelihood = Vec::new();
         <span class="kw">for </span>occasion <span class="kw">in </span>subject.occasions() {
             <span class="kw">let </span>covariates = occasion.get_covariates().unwrap();
             <span class="kw">let </span><span class="kw-2">mut </span>x = <span class="self">self</span>.initial_state(support_point, covariates, occasion.index());
             <span class="kw">let </span><span class="kw-2">mut </span>infusions = Vec::new();
-            <span class="kw">let </span>events = occasion.get_events(<span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>lag_closure), <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>fa_closure), <span class="bool-val">true</span>);
+            <span class="kw">let </span>events = occasion.get_events(<span class="kw-2">&amp;</span>lag, <span class="kw-2">&amp;</span>fa, <span class="bool-val">true</span>);
             <span class="kw">for </span>(index, event) <span class="kw">in </span>events.iter().enumerate() {
                 <span class="self">self</span>.simulate_event(
                     support_point,

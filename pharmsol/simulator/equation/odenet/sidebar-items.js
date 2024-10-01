@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Op","Operator"],"struct":["Init","Lag","NL","ODENet","OutEq","SEq"],"type":["Fa"]};

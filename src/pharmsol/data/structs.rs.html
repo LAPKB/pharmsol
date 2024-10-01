@@ -577,7 +577,7 @@
             .unwrap();
         <span class="kw">for </span>subject <span class="kw">in </span><span class="self">self</span>.get_subjects() {
             <span class="kw">for </span>occasion <span class="kw">in </span>subject.occasions() {
-                <span class="kw">for </span>event <span class="kw">in </span>occasion.get_events(<span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="bool-val">false</span>) {
+                <span class="kw">for </span>event <span class="kw">in </span>occasion.get_events(<span class="kw-2">&amp;</span><span class="prelude-val">None</span>, <span class="kw-2">&amp;</span><span class="prelude-val">None</span>, <span class="bool-val">false</span>) {
                     <span class="kw">match </span>event {
                         Event::Observation(obs) =&gt; {
                             <span class="comment">// Write each field individually
@@ -704,7 +704,7 @@
         <span class="kw">for </span>subject <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.subjects {
             <span class="kw">let </span><span class="kw-2">mut </span>new_occasions: Vec&lt;Occasion&gt; = Vec::new();
             <span class="kw">for </span>occasion <span class="kw">in </span><span class="kw-2">&amp;</span>subject.occasions {
-                <span class="kw">let </span>old_events = occasion.get_events(<span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="bool-val">true</span>);
+                <span class="kw">let </span>old_events = occasion.get_events(<span class="kw-2">&amp;</span><span class="prelude-val">None</span>, <span class="kw-2">&amp;</span><span class="prelude-val">None</span>, <span class="bool-val">true</span>);
                 <span class="kw">let </span><span class="kw-2">mut </span>new_events: Vec&lt;Event&gt; = Vec::new();
                 <span class="kw">let </span><span class="kw-2">mut </span>time = <span class="number">0.0</span>;
                 <span class="kw">while </span>time &lt; last_time {
@@ -811,7 +811,7 @@
         <span class="self">self</span>.covariates.add_covariate(name, covariate);
     }
 
-    <span class="kw">fn </span>add_lagtime(<span class="kw-2">&amp;mut </span><span class="self">self</span>, lagtime: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>HashMap&lt;usize, f64&gt;&gt;) {
+    <span class="kw">fn </span>add_lagtime(<span class="kw-2">&amp;mut </span><span class="self">self</span>, lagtime: <span class="kw-2">&amp;</span><span class="prelude-ty">Option</span>&lt;HashMap&lt;usize, f64&gt;&gt;) {
         <span class="kw">if let </span><span class="prelude-val">Some</span>(lag) = lagtime {
             <span class="kw">for </span>event <span class="kw">in </span><span class="self">self</span>.events.iter_mut() {
                 <span class="kw">if let </span>Event::Bolus(bolus) = event {
@@ -824,7 +824,7 @@
         <span class="self">self</span>.sort();
     }
 
-    <span class="kw">fn </span>add_bioavailability(<span class="kw-2">&amp;mut </span><span class="self">self</span>, bioavailability: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>HashMap&lt;usize, f64&gt;&gt;) {
+    <span class="kw">fn </span>add_bioavailability(<span class="kw-2">&amp;mut </span><span class="self">self</span>, bioavailability: <span class="kw-2">&amp;</span><span class="prelude-ty">Option</span>&lt;HashMap&lt;usize, f64&gt;&gt;) {
         <span class="comment">// If lagtime is empty, return early
         </span><span class="kw">if let </span><span class="prelude-val">Some</span>(fmap) = bioavailability {
             <span class="kw">for </span>event <span class="kw">in </span><span class="self">self</span>.events.iter_mut() {
@@ -877,8 +877,8 @@
 
     </span><span class="kw">pub fn </span>get_events(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-        lagtime: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>HashMap&lt;usize, f64&gt;&gt;,
-        bioavailability: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>HashMap&lt;usize, f64&gt;&gt;,
+        lagtime: <span class="kw-2">&amp;</span><span class="prelude-ty">Option</span>&lt;HashMap&lt;usize, f64&gt;&gt;,
+        bioavailability: <span class="kw-2">&amp;</span><span class="prelude-ty">Option</span>&lt;HashMap&lt;usize, f64&gt;&gt;,
         ignore: bool,
     ) -&gt; Vec&lt;Event&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>occ = <span class="self">self</span>.clone();
@@ -1049,7 +1049,7 @@
             <span class="number">1</span>,
         );
         occasion.sort();
-        <span class="kw">let </span>events = occasion.get_events(<span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="bool-val">false</span>);
+        <span class="kw">let </span>events = occasion.get_events(<span class="kw-2">&amp;</span><span class="prelude-val">None</span>, <span class="kw-2">&amp;</span><span class="prelude-val">None</span>, <span class="bool-val">false</span>);
         <span class="kw">match </span><span class="kw-2">&amp;</span>events[<span class="number">0</span>] {
             Event::Bolus(b) =&gt; <span class="macro">assert_eq!</span>(b.time(), <span class="number">1.0</span>),
             <span class="kw">_ </span>=&gt; <span class="macro">panic!</span>(<span class="string">"First event should be a Bolus"</span>),
@@ -1070,7 +1070,7 @@
             Covariates::new(),
             <span class="number">1</span>,
         );
-        <span class="kw">let </span>events = occasion.get_events(<span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="bool-val">true</span>);
+        <span class="kw">let </span>events = occasion.get_events(<span class="kw-2">&amp;</span><span class="prelude-val">None</span>, <span class="kw-2">&amp;</span><span class="prelude-val">None</span>, <span class="bool-val">true</span>);
         <span class="macro">assert_eq!</span>(events.len(), <span class="number">1</span>);
         <span class="kw">match </span><span class="kw-2">&amp;</span>events[<span class="number">0</span>] {
             Event::Observation(o) =&gt; <span class="macro">assert_eq!</span>(o.time(), <span class="number">1.0</span>),

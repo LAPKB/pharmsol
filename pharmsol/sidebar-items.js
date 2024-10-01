@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"macro":["fa","fetch_cov","fetch_params","lag"],"mod":["data","prelude","simulator"]};
+window.SIDEBAR_ITEMS = {"macro":["dmatrix","fa","fetch_cov","fetch_params","lag"],"mod":["data","prelude","simulator"],"struct":["HashMap"]};

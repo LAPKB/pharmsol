@@ -290,6 +290,13 @@
 <a href="#290" id="290">290</a>
 <a href="#291" id="291">291</a>
 <a href="#292" id="292">292</a>
+<a href="#293" id="293">293</a>
+<a href="#294" id="294">294</a>
+<a href="#295" id="295">295</a>
+<a href="#296" id="296">296</a>
+<a href="#297" id="297">297</a>
+<a href="#298" id="298">298</a>
+<a href="#299" id="299">299</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>serde::Deserialize;
 <span class="kw">use </span>std::{collections::HashMap, fmt};
 
@@ -438,6 +445,13 @@
 
     <span class="kw">pub fn </span>get_covariate(<span class="kw-2">&amp;</span><span class="self">self</span>, name: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Covariate&gt; {
         <span class="self">self</span>.covariates.get(name)
+    }
+
+    <span class="kw">pub fn </span>to_hashmap(<span class="kw-2">&amp;</span><span class="self">self</span>, time: f64) -&gt; HashMap&lt;String, f64&gt; {
+        <span class="self">self</span>.covariates
+            .iter()
+            .map(|(name, covariate)| (name.clone(), covariate.interpolate(time).unwrap()))
+            .collect()
     }
     <span class="comment">// fn get_covariate_names(&amp;self) -&gt; Vec&lt;String&gt; {
     //     self.covariates.keys().cloned().collect()

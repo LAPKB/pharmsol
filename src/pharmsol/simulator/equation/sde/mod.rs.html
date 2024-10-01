@@ -296,6 +296,7 @@
 <a href="#296" id="296">296</a>
 <a href="#297" id="297">297</a>
 <a href="#298" id="298">298</a>
+<a href="#299" id="299">299</a>
 </pre></div><pre class="rust"><code><span class="kw">mod </span>em;
 
 <span class="kw">use </span>std::collections::HashMap;
@@ -414,24 +415,24 @@
 </span>}
 
 <span class="kw">impl </span>EquationPriv <span class="kw">for </span>SDE {
-    <span class="attr">#[inline(always)]
-    </span><span class="kw">fn </span>get_init(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>Init {
-        <span class="kw-2">&amp;</span><span class="self">self</span>.init
+    <span class="comment">// #[inline(always)]
+    // fn get_init(&amp;self) -&gt; &amp;Init {
+    //     &amp;self.init
+    // }
+
+    // #[inline(always)]
+    // fn get_out(&amp;self) -&gt; &amp;Out {
+    //     &amp;self.out
+    // }
+
+    </span><span class="attr">#[inline(always)]
+    </span><span class="kw">fn </span>get_lag(<span class="kw-2">&amp;</span><span class="self">self</span>, spp: <span class="kw-2">&amp;</span>[f64]) -&gt; <span class="prelude-ty">Option</span>&lt;HashMap&lt;usize, f64&gt;&gt; {
+        <span class="prelude-val">Some</span>((<span class="self">self</span>.lag)(<span class="kw-2">&amp;</span>V::from_vec(spp.to_owned())))
     }
 
     <span class="attr">#[inline(always)]
-    </span><span class="kw">fn </span>get_out(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>Out {
-        <span class="kw-2">&amp;</span><span class="self">self</span>.out
-    }
-
-    <span class="attr">#[inline(always)]
-    </span><span class="kw">fn </span>get_lag(<span class="kw-2">&amp;</span><span class="self">self</span>, spp: <span class="kw-2">&amp;</span>[f64]) -&gt; HashMap&lt;usize, f64&gt; {
-        (<span class="self">self</span>.lag)(<span class="kw-2">&amp;</span>V::from_vec(spp.to_owned()))
-    }
-
-    <span class="attr">#[inline(always)]
-    </span><span class="kw">fn </span>get_fa(<span class="kw-2">&amp;</span><span class="self">self</span>, spp: <span class="kw-2">&amp;</span>[f64]) -&gt; HashMap&lt;usize, f64&gt; {
-        (<span class="self">self</span>.fa)(<span class="kw-2">&amp;</span>V::from_vec(spp.to_owned()))
+    </span><span class="kw">fn </span>get_fa(<span class="kw-2">&amp;</span><span class="self">self</span>, spp: <span class="kw-2">&amp;</span>[f64]) -&gt; <span class="prelude-ty">Option</span>&lt;HashMap&lt;usize, f64&gt;&gt; {
+        <span class="prelude-val">Some</span>((<span class="self">self</span>.fa)(<span class="kw-2">&amp;</span>V::from_vec(spp.to_owned())))
     }
 
     <span class="attr">#[inline(always)]
@@ -479,6 +480,7 @@
         support_point: <span class="kw-2">&amp;</span>Vec&lt;f64&gt;,
         observation: <span class="kw-2">&amp;</span><span class="kw">crate</span>::Observation,
         error_model: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>ErrorModel&gt;,
+        _time: f64,
         covariates: <span class="kw-2">&amp;</span>Covariates,
         x: <span class="kw-2">&amp;mut </span><span class="self">Self</span>::S,
         likelihood: <span class="kw-2">&amp;mut </span>Vec&lt;f64&gt;,
