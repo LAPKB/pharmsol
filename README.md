@@ -86,3 +86,7 @@ We are working to support all the standard analytical models.
 - [x] Two-compartment with IV infusion
 - [x] Two-compartment with IV infusion and oral absorption
 - [ ] Three-compartmental models
+
+# Links
+[Documentation](https://lapkb.github.io/pharmsol/pharmsol/)
+[Benchmarks](https://lapkb.github.io/pharmsol/dev/bench/)
