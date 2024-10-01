@@ -29,6 +29,8 @@ thiserror = "1.0.61"
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }
 
+[lib]
+bench = false
 
 [[bench]]
 name = "performance"
