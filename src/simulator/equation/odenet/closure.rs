@@ -110,6 +110,7 @@ where
         for i in 0..self.nparams {
             self.linear[i].gemv(self.p[i], v, M::T::from(1.0), y);
         }
+
         // y =
         // (self.func)(v, self.p.as_ref(), t, y, rateiv, &self.covariates);
         // (self.jacobian_action)(x, self.p.as_ref(), t, v, y)
