@@ -35,3 +35,7 @@ bench = false
 [[bench]]
 name = "performance"
 harness = false
+
+[[bench]]
+name = "data"
+harness = false
