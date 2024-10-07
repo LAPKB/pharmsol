@@ -17,6 +17,13 @@ impl Event {
             Event::Observation(observation) => observation.time,
         }
     }
+    pub(crate) fn inc_time(&mut self, dt: f64) {
+        match self {
+            Event::Bolus(bolus) => bolus.time += dt,
+            Event::Infusion(infusion) => infusion.time += dt,
+            Event::Observation(observation) => observation.time += dt,
+        }
+    }
 }
 
 /// An instantaenous input of drug
