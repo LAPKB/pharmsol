@@ -135,9 +135,10 @@ impl EquationPriv for ODE {
         start_time: f64,
         end_time: f64,
     ) {
-        if start_time == end_time {
+        if f64::abs(start_time - end_time) < 1e-8 {
             return;
         }
+        // dbg!(start_time, end_time);
         let problem = build_pm_ode::<M, _, _>(
             self.diffeq,
             |_p: &V, _t: T| state.clone(),

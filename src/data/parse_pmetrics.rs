@@ -168,19 +168,29 @@ pub fn read_pmetrics(path: impl Into<String>) -> Result<Data, PmetricsError> {
                                 value: value.unwrap(),
                             },
                         ));
-                    } else if let Some(next) = next_occurrence {
-                        // Linear interpolation for non-fixed covariates
-                        let (next_time, next_value) = next;
+                    } else if let Some((next_time, next_value)) = next_occurrence {
                         if let Some(current_value) = value {
-                            let slope = (next_value.unwrap() - current_value) / (next_time - time);
-                            covariate.add_segment(CovariateSegment::new(
-                                time,
-                                *next_time,
-                                InterpolationMethod::Linear {
-                                    slope,
-                                    intercept: current_value - slope * time,
-                                },
-                            ));
+                            if *next_time == time {
+                                covariate.add_segment(CovariateSegment::new(
+                                    time,
+                                    *next_time,
+                                    InterpolationMethod::CarryForward {
+                                        value: current_value,
+                                    },
+                                ));
+                            } else {
+                                let slope =
+                                    (next_value.unwrap() - current_value) / (next_time - time);
+                                covariate.add_segment(CovariateSegment::new(
+                                    time,
+                                    *next_time,
+                                    InterpolationMethod::Linear {
+                                        slope,
+                                        intercept: current_value - slope * time,
+                                    },
+                                ));
+                            }
+
                             last_value = Some((next_time, next_value));
                         }
                     } else if let Some((last_time, last_value)) = last_value {

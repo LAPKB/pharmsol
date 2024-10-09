@@ -5,6 +5,7 @@ use diffsol::{
     op::{NonLinearOp, Op, OpStatistics},
     vector::Vector,
 };
+
 use std::{cell::RefCell, rc::Rc};
 
 use crate::data::{Covariates, Infusion};
