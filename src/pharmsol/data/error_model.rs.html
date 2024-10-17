@@ -91,7 +91,7 @@
         };
 
         <span class="kw">if </span>res.is_nan() || res &lt; <span class="number">0.0 </span>{
-            <span class="macro">panic!</span>(<span class="string">"negative sd"</span>);
+            <span class="macro">panic!</span>(<span class="string">"The computed standard deviation is either NaN or negative (SD = {}), coercing to 0"</span>, res);
             <span class="comment">// tracing::error!(
             //     "The computed standard deviation is either NaN or negative (SD = {}), coercing to 0",
             //     res
