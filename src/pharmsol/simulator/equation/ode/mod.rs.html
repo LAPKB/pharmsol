@@ -226,6 +226,7 @@
 <a href="#226" id="226">226</a>
 <a href="#227" id="227">227</a>
 <a href="#228" id="228">228</a>
+<a href="#229" id="229">229</a>
 </pre></div><pre class="rust"><code><span class="kw">mod </span>closure;
 <span class="kw">mod </span>diffsol_traits;
 
@@ -363,10 +364,11 @@
         start_time: f64,
         end_time: f64,
     ) {
-        <span class="kw">if </span>start_time == end_time {
+        <span class="kw">if </span>f64::abs(start_time - end_time) &lt; <span class="number">1e-8 </span>{
             <span class="kw">return</span>;
         }
-        <span class="kw">let </span>problem = build_pm_ode::&lt;M, <span class="kw">_</span>, <span class="kw">_</span>&gt;(
+        <span class="comment">// dbg!(start_time, end_time);
+        </span><span class="kw">let </span>problem = build_pm_ode::&lt;M, <span class="kw">_</span>, <span class="kw">_</span>&gt;(
             <span class="self">self</span>.diffeq,
             |_p: <span class="kw-2">&amp;</span>V, _t: T| state.clone(),
             V::from_vec(support_point.to_vec()),
