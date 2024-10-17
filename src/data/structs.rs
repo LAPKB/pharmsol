@@ -233,11 +233,22 @@ impl Subject {
     pub(crate) fn new(id: String, occasions: Vec<Occasion>) -> Self {
         Subject { id, occasions }
     }
+
+    /// Get a vector of references to all [Occasion]s in the [Subject]
     pub fn occasions(&self) -> Vec<&Occasion> {
         self.occasions.iter().collect()
     }
+
+    /// Get the ID of the [Subject]
     pub fn id(&self) -> &String {
         &self.id
+    }
+
+    /// Create a new [Subject] from one or more [Occasion]s
+    ///
+    /// This can be useful if you want to create a [Subject] from a single [Occasion], or a vector of select [Occasion]s
+    pub fn from_occasions(id: String, occasions: Vec<Occasion>) -> Self {
+        Subject { id, occasions }
     }
 }
 
@@ -248,6 +259,7 @@ pub struct Occasion {
     covariates: Covariates,
     index: usize,
 }
+
 impl Occasion {
     // Constructor
     pub(crate) fn new(events: Vec<Event>, covariates: Covariates, index: usize) -> Self {
