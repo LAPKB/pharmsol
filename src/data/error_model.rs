@@ -39,7 +39,7 @@ impl<'a> ErrorModel<'_> {
         };
 
         if res.is_nan() || res < 0.0 {
-            panic!("negative sd");
+            panic!("The computed standard deviation is either NaN or negative (SD = {}), coercing to 0", res);
             // tracing::error!(
             //     "The computed standard deviation is either NaN or negative (SD = {}), coercing to 0",
             //     res
