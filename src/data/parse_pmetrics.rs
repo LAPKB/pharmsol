@@ -97,8 +97,14 @@ pub fn read_pmetrics(path: impl Into<String>) -> Result<Data, PmetricsError> {
 
             // Parse events
             for row in rows.clone() {
-                let event: Event = Event::try_from(row.clone())?;
-                events.push(event);
+                match row.parse_events() {
+                    Ok(ev) => events.extend(ev),
+                    Err(e) => {
+                        // dbg!(&row);
+                        // dbg!(&e);
+                        return Err(e);
+                    }
+                }
             }
 
             // Parse covariates
@@ -162,19 +168,29 @@ pub fn read_pmetrics(path: impl Into<String>) -> Result<Data, PmetricsError> {
                                 value: value.unwrap(),
                             },
                         ));
-                    } else if let Some(next) = next_occurrence {
-                        // Linear interpolation for non-fixed covariates
-                        let (next_time, next_value) = next;
+                    } else if let Some((next_time, next_value)) = next_occurrence {
                         if let Some(current_value) = value {
-                            let slope = (next_value.unwrap() - current_value) / (next_time - time);
-                            covariate.add_segment(CovariateSegment::new(
-                                time,
-                                *next_time,
-                                InterpolationMethod::Linear {
-                                    slope,
-                                    intercept: current_value - slope * time,
-                                },
-                            ));
+                            if *next_time == time {
+                                covariate.add_segment(CovariateSegment::new(
+                                    time,
+                                    *next_time,
+                                    InterpolationMethod::CarryForward {
+                                        value: current_value,
+                                    },
+                                ));
+                            } else {
+                                let slope =
+                                    (next_value.unwrap() - current_value) / (next_time - time);
+                                covariate.add_segment(CovariateSegment::new(
+                                    time,
+                                    *next_time,
+                                    InterpolationMethod::Linear {
+                                        slope,
+                                        intercept: current_value - slope * time,
+                                    },
+                                ));
+                            }
+
                             last_value = Some((next_time, next_value));
                         }
                     } else if let Some((last_time, last_value)) = last_value {
@@ -191,7 +207,8 @@ pub fn read_pmetrics(path: impl Into<String>) -> Result<Data, PmetricsError> {
                 covariates.add_covariate(name, covariate)
             }
             // Create the block
-            let occasion = Occasion::new(events, covariates, block_index);
+            let mut occasion = Occasion::new(events, covariates, block_index);
+            occasion.sort();
             occasions.push(occasion);
         }
 
@@ -226,8 +243,8 @@ struct Row {
     #[serde(deserialize_with = "deserialize_option_isize")]
     addl: Option<isize>,
     /// Dosing interval
-    #[serde(deserialize_with = "deserialize_option_isize")]
-    ii: Option<isize>,
+    #[serde(deserialize_with = "deserialize_option_f64")]
+    ii: Option<f64>,
     /// Input compartment
     #[serde(deserialize_with = "deserialize_option_usize")]
     input: Option<usize>,
@@ -262,68 +279,83 @@ impl Row {
             _ => None,
         }
     }
-}
+    fn parse_events(self) -> Result<Vec<Event>, PmetricsError> {
+        let mut events: Vec<Event> = Vec::new();
 
-impl TryFrom<Row> for Event {
-    type Error = PmetricsError;
-
-    fn try_from(row: Row) -> Result<Self, Self::Error> {
-        match row.evid {
-            0 => Ok(Event::Observation(Observation::new(
-                row.time,
-                row.out
+        match self.evid {
+            0 => events.push(Event::Observation(Observation::new(
+                self.time,
+                self.out
                     .ok_or_else(|| PmetricsError::MissingObservationOut {
-                        id: row.id.clone(),
-                        time: row.time,
+                        id: self.id.clone(),
+                        time: self.time,
                     })?,
-                row.outeq
+                self.outeq
                     .ok_or_else(|| PmetricsError::MissingObservationOuteq {
-                        id: row.id.clone(),
-                        time: row.time,
+                        id: self.id.clone(),
+                        time: self.time,
                     })?
                     - 1,
-                row.get_errorpoly(),
-                row.out == Some(-99.0),
+                self.get_errorpoly(),
+                self.out == Some(-99.0),
             ))),
             1 | 4 => {
-                if row.dur.unwrap_or(0.0) > 0.0 {
-                    Ok(Event::Infusion(Infusion::new(
-                        row.time,
-                        row.dose.ok_or_else(|| PmetricsError::MissingInfusionDose {
-                            id: row.id.clone(),
-                            time: row.time,
-                        })?,
-                        row.input
+                let event = if self.dur.unwrap_or(0.0) > 0.0 {
+                    Event::Infusion(Infusion::new(
+                        self.time,
+                        self.dose
+                            .ok_or_else(|| PmetricsError::MissingInfusionDose {
+                                id: self.id.clone(),
+                                time: self.time,
+                            })?,
+                        self.input
                             .ok_or_else(|| PmetricsError::MissingInfusionInput {
-                                id: row.id.clone(),
-                                time: row.time,
+                                id: self.id.clone(),
+                                time: self.time,
                             })?
                             - 1,
-                        row.dur.ok_or_else(|| PmetricsError::MissingInfusionDur {
-                            id: row.id.clone(),
-                            time: row.time,
+                        self.dur.ok_or_else(|| PmetricsError::MissingInfusionDur {
+                            id: self.id.clone(),
+                            time: self.time,
                         })?,
-                    )))
+                    ))
                 } else {
-                    Ok(Event::Bolus(Bolus::new(
-                        row.time,
-                        row.dose.ok_or_else(|| PmetricsError::MissingBolusDose {
-                            id: row.id.clone(),
-                            time: row.time,
+                    Event::Bolus(Bolus::new(
+                        self.time,
+                        self.dose.ok_or_else(|| PmetricsError::MissingBolusDose {
+                            id: self.id.clone(),
+                            time: self.time,
                         })?,
-                        row.input.ok_or_else(|| PmetricsError::MissingBolusInput {
-                            id: row.id,
-                            time: row.time,
+                        self.input.ok_or_else(|| PmetricsError::MissingBolusInput {
+                            id: self.id,
+                            time: self.time,
                         })? - 1,
-                    )))
+                    ))
+                };
+                if self.addl.is_some() && self.ii.is_some() {
+                    if self.addl.unwrap_or(0) != 0 && self.ii.unwrap_or(0.0) > 0.0 {
+                        let mut ev = event.clone();
+                        let interval = &self.ii.unwrap().abs();
+                        let repetitions = &self.addl.unwrap().abs();
+                        let direction = &self.addl.unwrap().signum();
+
+                        for _ in 0..*repetitions {
+                            ev.inc_time((*direction as f64) * interval);
+                            events.push(ev.clone());
+                        }
+                    }
                 }
+                events.push(event);
             }
-            _ => Err(PmetricsError::UnknownEvid {
-                evid: row.evid,
-                id: row.id.clone(),
-                time: row.time,
-            }),
-        }
+            _ => {
+                return Err(PmetricsError::UnknownEvid {
+                    evid: self.evid,
+                    id: self.id.clone(),
+                    time: self.time,
+                });
+            }
+        };
+        Ok(events)
     }
 }
 
@@ -409,18 +441,50 @@ where
     deserializer.deserialize_map(CovsVisitor)
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
+#[cfg(test)]
+mod tests {
 
-//     #[test]
-//     fn test_read_pmetrics() {
-//         let path = std::path::Path::new("examples/data/bimodal_ke_blocks.csv");
-//         let data = read_pmetrics(&path).unwrap();
+    use super::*;
 
-//         assert_eq!(data.nsubjects(), 1);
-//         assert_eq!(data.nobs(), 30);
+    #[test]
+    fn test_addl() {
+        let data = read_pmetrics("src/tests/data/addl_test.csv");
 
-//         println!("{}", data);
-//     }
-// }
+        assert!(data.is_ok(), "Failed to parse data");
+
+        let data = data.unwrap();
+        let subjects = data.get_subjects();
+        let first_subject = subjects.get(0).unwrap();
+        let second_subject = subjects.get(1).unwrap();
+        let s1_occasions = first_subject.occasions();
+        let s2_occasions = second_subject.occasions();
+        let first_scenario = s1_occasions.get(0).unwrap();
+        let second_scenario = s2_occasions.get(0).unwrap();
+
+        let s1_times = first_scenario
+            .events()
+            .iter()
+            .map(|e| e.get_time())
+            .collect::<Vec<_>>();
+
+        // Negative ADDL, observations shifted forward
+
+        assert_eq!(
+            s1_times,
+            vec![-120.0, -108.0, -96.0, -84.0, -72.0, -60.0, -48.0, -36.0, -24.0, -12.0, 0.0, 9.0]
+        );
+
+        let s2_times = second_scenario
+            .events()
+            .iter()
+            .map(|e| e.get_time())
+            .collect::<Vec<_>>();
+
+        // Positive ADDL, no shift in observations
+
+        assert_eq!(
+            s2_times,
+            vec![0.0, 9.0, 12.0, 24.0, 36.0, 48.0, 60.0, 72.0, 84.0, 96.0, 108.0, 120.0]
+        );
+    }
+}
