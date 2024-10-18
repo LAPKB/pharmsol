@@ -1,4 +1,5 @@
 use crate::data::*;
+use anyhow::Result;
 use csv::WriterBuilder;
 use serde::Deserialize;
 use std::{collections::HashMap, fmt};
@@ -197,6 +198,13 @@ impl Data {
         self.subjects.len()
     }
 
+    pub fn set_errorpoly(&mut self, errormap: &ErrorMap, force: bool) -> Result<()> {
+        for subject in self.subjects.iter_mut() {
+            subject.set_errorpoly(errormap, force)?;
+        }
+        Ok(())
+    }
+
     // /// Returns the number of subjects in the data
     // fn nsubjects(&self) -> usize {
     //     self.subjects.len()
@@ -252,17 +260,26 @@ impl Subject {
     }
 
     // Set the error polynomial coefficients of the observation
-    pub fn set_errorpoly(&mut self, errormap: ErrorMap, force: bool) {
+    pub fn set_errorpoly(&mut self, errormap: &ErrorMap, force: bool) -> Result<()> {
         for occasion in self.occasions.iter_mut() {
             for event in occasion.events.iter_mut() {
                 if let Event::Observation(observation) = event {
                     let errorpoly = errormap.get(&observation.outeq()).cloned();
+
+                    if errorpoly.is_none() {
+                        return Err(anyhow::anyhow!(
+                            "Error polynomial not found for OUTEQ: {}",
+                            observation.outeq()
+                        ));
+                    }
+
                     if force || observation.errorpoly().is_none() {
                         observation.set_errorpoly(errorpoly);
                     }
                 }
             }
         }
+        Ok(())
     }
 }
 
