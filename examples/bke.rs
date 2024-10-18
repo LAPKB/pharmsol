@@ -51,7 +51,7 @@ fn main() {
         vec![OutEq::new(0, Div(X(0), P(1)))],
         (1, 1),
     );
-    let em = ErrorModel::new((0.0, 0.05, 0.0, 0.0), 0.0, &ErrorType::Add);
+    let em = ErrorModel::Proportional(2.0);
     let ll = an.estimate_likelihood(
         &subject,
         &vec![1.02282724609375, 194.51904296875],
