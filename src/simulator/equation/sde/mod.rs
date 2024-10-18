@@ -191,10 +191,14 @@ impl EquationPriv for SDE {
         likelihood: &mut Vec<f64>,
         output: &mut Self::P,
     ) {
-        // This block uses unsafe code to create a vector of predictions with uninitialized values.
-        // The use of unsafe is justified here because we immediately set the length of the vector
-        // and then initialize each element in parallel using rayon. This ensures that all elements
-        // are properly initialized before they are accessed.
+        // # Safety
+        // The `unsafe` block is used to set the length of the vector without initializing its elements
+        // using `Vec::set_len(self.nparticles)`. This is unsafe because Rust assumes the vector's elements
+        // are valid, but they remain uninitialized until explicitly set in the subsequent `par_iter_mut` loop.
+        //
+        // The parallel iteration (`par_iter_mut`) guarantees that each element is initialized before use.
+        // It is critical that every element is initialized exactly once before the vector is accessed or dropped.
+        //
         let predictions: Vec<Prediction> = unsafe {
             let mut pred = Vec::with_capacity(self.nparticles);
             pred.set_len(self.nparticles);
