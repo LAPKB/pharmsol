@@ -66,7 +66,7 @@ impl Default for AssayPolynomial {
 }
 
 /// Stores the (general) assay polynomial for each output equation
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ErrorMap {
     map: HashMap<usize, AssayPolynomial>,
 }
@@ -77,8 +77,9 @@ impl ErrorMap {
             map: HashMap::new(),
         }
     }
-    pub fn insert(&mut self, key: usize, value: AssayPolynomial) {
+    pub fn insert(mut self, key: usize, value: AssayPolynomial) -> Self {
         self.map.insert(key, value);
+        self
     }
     pub fn get(&self, key: &usize) -> Option<&AssayPolynomial> {
         self.map.get(&key)
