@@ -199,6 +199,8 @@ impl EquationPriv for SDE {
         // The parallel iteration (`par_iter_mut`) guarantees that each element is initialized before use.
         // It is critical that every element is initialized exactly once before the vector is accessed or dropped.
         //
+        // In this case, `set_len` sets the length of the vector to its current capacity and all the elements of
+        // the vector are initialized in the subsequent `par_iter_mut` loop. Making this safe.
         let predictions: Vec<Prediction> = unsafe {
             let mut pred = Vec::with_capacity(self.nparticles);
             pred.set_len(self.nparticles);
