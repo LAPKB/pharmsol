@@ -77,12 +77,18 @@ impl ErrorMap {
             map: HashMap::new(),
         }
     }
-    pub fn insert(mut self, key: usize, value: AssayPolynomial) -> Self {
+    /// Insert a new polynomial into the map and return the updated map
+    pub fn insert_return(mut self, key: usize, value: AssayPolynomial) -> Self {
         self.map.insert(key, value);
         self
     }
-    pub fn get(&self, key: &usize) -> Option<&AssayPolynomial> {
-        self.map.get(&key)
+    /// With a mutable reference to the map, insert a new polynomial
+    pub fn insert(&mut self, key: usize, value: AssayPolynomial) {
+        self.map.insert(key, value);
+    }
+    /// Get the polynomial for a given outeq
+    pub fn get(&self, outeq: &usize) -> Option<&AssayPolynomial> {
+        self.map.get(&outeq)
     }
 }
 
