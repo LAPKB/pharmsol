@@ -1,6 +1,6 @@
-use std::fmt;
-
+use crate::{data::error_model::AssayPolynomial, prelude::simulator::Prediction};
 use serde::Deserialize;
+use std::fmt;
 
 /// An Event can be a Bolus, Infusion, or Observation
 #[derive(Debug, Clone, Deserialize)]
@@ -104,7 +104,8 @@ pub struct Observation {
     time: f64,
     value: f64,
     outeq: usize,
-    errorpoly: Option<(f64, f64, f64, f64)>,
+    #[serde(skip)]
+    errorpoly: Option<AssayPolynomial>,
     ignore: bool,
 }
 impl Observation {
@@ -112,7 +113,7 @@ impl Observation {
         time: f64,
         value: f64,
         outeq: usize,
-        errorpoly: Option<(f64, f64, f64, f64)>,
+        errorpoly: Option<AssayPolynomial>,
         ignore: bool,
     ) -> Self {
         Observation {
@@ -136,12 +137,27 @@ impl Observation {
         self.outeq
     }
     /// Get the error polynomial coefficients of the observation
-    pub fn errorpoly(&self) -> Option<(f64, f64, f64, f64)> {
+    pub fn errorpoly(&self) -> Option<AssayPolynomial> {
         self.errorpoly
+    }
+    // Set the error polynomial coefficients of the observation
+    pub fn set_errorpoly(&mut self, errorpoly: Option<AssayPolynomial>) {
+        self.errorpoly = errorpoly;
     }
     /// Get whether the observation should be ignored
     pub fn ignore(&self) -> bool {
         self.ignore
+    }
+
+    /// Create a prediction from an observation
+    pub fn to_prediction(&self, pred: f64) -> Prediction {
+        Prediction::new(
+            self.time,
+            self.value,
+            pred,
+            self.outeq,
+            self.errorpoly.unwrap_or_default(),
+        )
     }
 }
 
@@ -160,7 +176,8 @@ impl fmt::Display for Event {
             ),
             Event::Observation(observation) => {
                 let errpoly_desc = match observation.errorpoly {
-                    Some((c0, c1, c2, c3)) => {
+                    Some(poly) => {
+                        let (c0, c1, c2, c3) = poly.get_polynomial();
                         format!("with error poly =  ({}, {}, {}, {})", c0, c1, c2, c3)
                     }
                     None => "".to_string(),

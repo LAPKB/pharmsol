@@ -57,10 +57,10 @@ impl SubjectBuilder {
         time: f64,
         value: f64,
         outeq: usize,
-        errorpoly: Option<(f64, f64, f64, f64)>,
+        errorpoly: AssayPolynomial,
         ignore: bool,
     ) -> Self {
-        let observation = Observation::new(time, value, outeq, errorpoly, ignore);
+        let observation = Observation::new(time, value, outeq, Some(errorpoly), ignore);
         let event = Event::Observation(observation);
         self.event(event)
     }
@@ -87,7 +87,7 @@ impl SubjectBuilder {
                     observation.time() + delta * i as f64,
                     observation.value(),
                     observation.outeq(),
-                    observation.errorpoly(),
+                    observation.errorpoly().unwrap_or_default(),
                     observation.ignore(),
                 ),
             };

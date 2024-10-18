@@ -118,7 +118,7 @@ impl EquationPriv for Analytical {
             &mut y,
         );
         let pred = y[observation.outeq()];
-        let pred = observation.to_obs_pred(pred);
+        let pred = observation.to_prediction(pred);
         if let Some(error_model) = error_model {
             likelihood.push(pred.likelihood(error_model));
         }

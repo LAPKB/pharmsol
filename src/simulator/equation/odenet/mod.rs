@@ -8,7 +8,7 @@ use crate::{
     data::{Covariates, Infusion},
     error_model::ErrorModel,
     prelude::simulator::SubjectPredictions,
-    simulator::{likelihood::ToPrediction, T, V},
+    simulator::{T, V},
     Observation, Subject,
 };
 use cached::proc_macro::cached;
@@ -237,7 +237,7 @@ impl EquationPriv for ODENet {
             eq.apply(&mut y, &point, x, &cov, &sec);
         }
         let pred = y[observation.outeq()];
-        let pred = observation.to_obs_pred(pred);
+        let pred = observation.to_prediction(pred);
         if let Some(error_model) = error_model {
             likelihood.push(pred.likelihood(error_model));
         }

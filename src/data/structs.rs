@@ -250,6 +250,20 @@ impl Subject {
     pub fn from_occasions(id: String, occasions: Vec<Occasion>) -> Self {
         Subject { id, occasions }
     }
+
+    // Set the error polynomial coefficients of the observation
+    pub fn set_errorpoly(&mut self, errormap: ErrorMap, force: bool) {
+        for occasion in self.occasions.iter_mut() {
+            for event in occasion.events.iter_mut() {
+                if let Event::Observation(observation) = event {
+                    let errorpoly = errormap.get(&observation.outeq()).cloned();
+                    if force || observation.errorpoly().is_none() {
+                        observation.set_errorpoly(errorpoly);
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// An [Occasion] is a collection of events, for a given [Subject], that are from a specific occasion

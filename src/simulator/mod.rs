@@ -4,7 +4,7 @@ pub(crate) mod likelihood;
 use crate::{
     data::{Covariates, Infusion},
     error_model::ErrorModel,
-    simulator::likelihood::{SubjectPredictions, ToPrediction},
+    simulator::likelihood::SubjectPredictions,
 };
 
 use std::collections::HashMap;

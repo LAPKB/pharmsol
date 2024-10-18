@@ -1,7 +1,4 @@
-use crate::{
-    data::{error_model::ErrorModel, Observation},
-    Data, Equation, Predictions,
-};
+use crate::{data::error_model::ErrorModel, AssayPolynomial, Data, Equation, Predictions};
 
 use indicatif::{ProgressBar, ProgressStyle};
 use ndarray::{Array2, Axis, ShapeBuilder};
@@ -180,10 +177,26 @@ pub struct Prediction {
     observation: f64,
     prediction: f64,
     outeq: usize,
-    errorpoly: Option<(f64, f64, f64, f64)>,
+    errorpoly: AssayPolynomial,
 }
 
 impl Prediction {
+    pub fn new(
+        time: f64,
+        observation: f64,
+        prediction: f64,
+        outeq: usize,
+        errorpoly: AssayPolynomial,
+    ) -> Self {
+        Self {
+            time,
+            observation,
+            prediction,
+            outeq,
+            errorpoly,
+        }
+    }
+
     pub fn time(&self) -> f64 {
         self.time
     }
@@ -196,7 +209,7 @@ impl Prediction {
     pub fn outeq(&self) -> usize {
         self.outeq
     }
-    pub fn errorpoly(&self) -> Option<(f64, f64, f64, f64)> {
+    pub fn assay_polynomial(&self) -> AssayPolynomial {
         self.errorpoly
     }
     pub fn prediction_error(&self) -> f64 {
@@ -212,35 +225,32 @@ impl Prediction {
         (self.prediction - self.observation).powi(2)
     }
     pub fn likelihood(&self, error_model: &ErrorModel) -> f64 {
-        let sigma = error_model.estimate_sigma(self);
+        let sigma = self.sigma(error_model);
         normpdf(self.observation, self.prediction, sigma)
     }
-}
 
-pub(crate) trait ToPrediction {
-    fn to_obs_pred(&self, pred: f64) -> Prediction;
-}
+    pub fn sigma(&self, error_model: &ErrorModel) -> f64 {
+        let (c0, c1, c2, c3) = self.errorpoly.get_polynomial();
 
-impl ToPrediction for Observation {
-    fn to_obs_pred(&self, pred: f64) -> Prediction {
-        Prediction {
-            time: self.time(),
-            observation: self.value(),
-            prediction: pred,
-            outeq: self.outeq(),
-            errorpoly: self.errorpoly(),
-        }
-    }
-}
+        let alpha = c0
+            + c1 * self.observation()
+            + c2 * self.observation().powi(2)
+            + c3 * self.observation().powi(3);
 
-impl Default for Prediction {
-    fn default() -> Self {
-        Self {
-            time: 0.0,
-            observation: 0.0,
-            prediction: 0.0,
-            outeq: 0,
-            errorpoly: None,
+        let res = match error_model {
+            ErrorModel::Additive(scalar) => (alpha.powi(2) + scalar.powi(2)).sqrt(),
+            ErrorModel::Proportional(scalar) => scalar * alpha,
+        };
+
+        if res.is_nan() || res < 0.0 {
+            panic!("The computed standard deviation is either NaN or negative (SD = {}), coercing to 0", res);
+            // tracing::error!(
+            //     "The computed standard deviation is either NaN or negative (SD = {}), coercing to 0",
+            //     res
+            // );
+            // 0.0
+        } else {
+            res
         }
     }
 }

@@ -15,7 +15,7 @@ use crate::{
     data::{Covariates, Infusion},
     error_model::ErrorModel,
     prelude::simulator::Prediction,
-    simulator::{likelihood::ToPrediction, Diffusion, Drift, Fa, Init, Lag, Neqs, Out, V},
+    simulator::{Diffusion, Drift, Fa, Init, Lag, Neqs, Out, V},
     Subject,
 };
 
@@ -187,8 +187,8 @@ impl EquationPriv for SDE {
         likelihood: &mut Vec<f64>,
         output: &mut Self::P,
     ) {
-        let mut pred = vec![Prediction::default(); self.nparticles];
-        pred.par_iter_mut().enumerate().for_each(|(i, p)| {
+        let mut pred_vec: Vec<Prediction> = Vec::with_capacity(self.nparticles);
+        pred_vec.par_iter_mut().enumerate().for_each(|(i, p)| {
             let mut y = V::zeros(self.get_nouteqs());
             (self.out)(
                 &x[i],
@@ -197,16 +197,16 @@ impl EquationPriv for SDE {
                 covariates,
                 &mut y,
             );
-            *p = observation.to_obs_pred(y[observation.outeq()]);
+            *p = observation.to_prediction(y[observation.outeq()]);
         });
-        let out = Array2::from_shape_vec((self.nparticles, 1), pred.clone()).unwrap();
+        let out = Array2::from_shape_vec((self.nparticles, 1), pred_vec.clone()).unwrap();
         *output = concatenate(Axis(1), &[output.view(), out.view()]).unwrap();
         //e = y[t] .- x[:,1]
         // q = pdf.(Distributions.Normal(0, 0.5), e)
         if let Some(em) = error_model {
             let mut q: Vec<f64> = Vec::with_capacity(self.nparticles);
 
-            pred.iter().for_each(|p| q.push(p.likelihood(em)));
+            pred_vec.iter().for_each(|p| q.push(p.likelihood(em)));
             let sum_q: f64 = q.iter().sum();
             let w: Vec<f64> = q.iter().map(|qi| qi / sum_q).collect();
             let i = sysresample(&w);
@@ -265,7 +265,7 @@ fn spphash(spp: &[f64]) -> u64 {
 #[cached(
     ty = "UnboundCache<String, f64>",
     create = "{ UnboundCache::with_capacity(100_000) }",
-    convert = r#"{ format!("{}{}{}", subject.id(), spphash(support_point), error_model.gl()) }"#
+    convert = r#"{ format!("{}{}{}", subject.id(), spphash(support_point), error_model.get_scalar()) }"#
 )]
 fn _estimate_likelihood(
     sde: &SDE,
