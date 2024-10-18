@@ -191,29 +191,35 @@ impl EquationPriv for SDE {
         likelihood: &mut Vec<f64>,
         output: &mut Self::P,
     ) {
-        let mut pred_vec: Vec<Prediction> = Vec::with_capacity(self.nparticles);
-        unsafe {
-            pred_vec.set_len(self.nparticles);
-        }
-        pred_vec.par_iter_mut().enumerate().for_each(|(i, p)| {
-            let mut y = V::zeros(self.get_nouteqs());
-            (self.out)(
-                &x[i],
-                &V::from_vec(support_point.clone()),
-                observation.time(),
-                covariates,
-                &mut y,
-            );
-            *p = observation.to_prediction(y[observation.outeq()]);
-        });
-        let out = Array2::from_shape_vec((self.nparticles, 1), pred_vec.clone()).unwrap();
+        // This block uses unsafe code to create a vector of predictions with uninitialized values.
+        // The use of unsafe is justified here because we immediately set the length of the vector
+        // and then initialize each element in parallel using rayon. This ensures that all elements
+        // are properly initialized before they are accessed.
+        let predictions: Vec<Prediction> = unsafe {
+            let mut pred = Vec::with_capacity(self.nparticles);
+            pred.set_len(self.nparticles);
+
+            pred.par_iter_mut().enumerate().for_each(|(i, p)| {
+                let mut y = V::zeros(self.get_nouteqs());
+                (self.out)(
+                    &x[i],
+                    &V::from_vec(support_point.clone()),
+                    observation.time(),
+                    covariates,
+                    &mut y,
+                );
+                *p = observation.to_prediction(y[observation.outeq()]);
+            });
+            pred
+        };
+        let out = Array2::from_shape_vec((self.nparticles, 1), predictions.clone()).unwrap();
         *output = concatenate(Axis(1), &[output.view(), out.view()]).unwrap();
         //e = y[t] .- x[:,1]
         // q = pdf.(Distributions.Normal(0, 0.5), e)
         if let Some(em) = error_model {
             let mut q: Vec<f64> = Vec::with_capacity(self.nparticles);
 
-            pred_vec.iter().for_each(|p| q.push(p.likelihood(em)));
+            predictions.iter().for_each(|p| q.push(p.likelihood(em)));
             let sum_q: f64 = q.iter().sum();
             let w: Vec<f64> = q.iter().map(|qi| qi / sum_q).collect();
             let i = sysresample(&w);
