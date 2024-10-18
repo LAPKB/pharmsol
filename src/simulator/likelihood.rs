@@ -16,6 +16,9 @@ pub struct SubjectPredictions {
 }
 
 impl Predictions for SubjectPredictions {
+    fn new(_nparticles: usize) -> Self {
+        Self::default()
+    }
     fn squared_error(&self) -> f64 {
         self.predictions
             .iter()

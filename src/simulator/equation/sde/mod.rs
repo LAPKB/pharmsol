@@ -99,8 +99,12 @@ impl State for Vec<DVector<f64>> {
 }
 
 impl Predictions for Array2<Prediction> {
+    // fn new(nparticles: usize) -> Self {
+    //     Array2::from_shape_fn((nparticles, 0), |_| Prediction::default())
+    // }
     fn new(nparticles: usize) -> Self {
-        Array2::from_shape_fn((nparticles, 0), |_| Prediction::default())
+        let v: Vec<Prediction> = Vec::with_capacity(nparticles);
+        Array2::from_shape_vec((nparticles, 0), v).unwrap()
     }
     fn squared_error(&self) -> f64 {
         unimplemented!();
@@ -188,6 +192,9 @@ impl EquationPriv for SDE {
         output: &mut Self::P,
     ) {
         let mut pred_vec: Vec<Prediction> = Vec::with_capacity(self.nparticles);
+        unsafe {
+            pred_vec.set_len(self.nparticles);
+        }
         pred_vec.par_iter_mut().enumerate().for_each(|(i, p)| {
             let mut y = V::zeros(self.get_nouteqs());
             (self.out)(

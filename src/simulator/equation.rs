@@ -17,10 +17,8 @@ pub trait State {
     fn add_bolus(&mut self, input: usize, amount: f64);
 }
 
-pub trait Predictions: Default {
-    fn new(_nparticles: usize) -> Self {
-        Default::default()
-    }
+pub trait Predictions {
+    fn new(_nparticles: usize) -> Self;
     fn squared_error(&self) -> f64;
     fn get_predictions(&self) -> &Vec<Prediction>;
 }
