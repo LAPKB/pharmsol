@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use serde::{Deserialize, Serialize};
+
 /// The error model is used to determine the standard deviation of the observations
 ///
 /// Two types of error models are currently supported: proportional ([ErrorType::Prop]) and additive ([ErrorType::Add])
@@ -11,7 +13,7 @@ use std::collections::HashMap;
 /// ```
 ///
 ///
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum ErrorModel {
     Additive(f64),
     Proportional(f64),
@@ -34,7 +36,7 @@ impl ErrorModel {
 }
 
 /// The error polynomial represents the coefficients of the polynomial that is used to determine the analytical noise of the observations
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct AssayPolynomial {
     c0: f64,
     c1: f64,
@@ -64,7 +66,7 @@ impl Default for AssayPolynomial {
 }
 
 /// Stores the (general) assay polynomial for each output equation
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ErrorMap {
     map: HashMap<usize, AssayPolynomial>,
 }
