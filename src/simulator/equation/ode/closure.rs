@@ -1,8 +1,9 @@
 use diffsol::matrix::sparsity::MatrixSparsity;
+use diffsol::op::nonlinear_op::NonLinearOp;
+use diffsol::NonLinearOpJacobian;
 use diffsol::{
-    jacobian::JacobianColoring,
     matrix::Matrix,
-    op::{NonLinearOp, Op, OpStatistics},
+    op::{Op, OpStatistics},
     vector::Vector,
 };
 
@@ -19,7 +20,6 @@ where
     nout: usize,
     nparams: usize,
     p: Rc<M::V>,
-    coloring: Option<JacobianColoring<M>>,
     sparsity: Option<M::Sparsity>,
     statistics: RefCell<OpStatistics>,
     covariates: Covariates,
@@ -47,7 +47,6 @@ where
             nparams,
             p,
             statistics: RefCell::new(OpStatistics::default()),
-            coloring: None,
             sparsity: None,
             covariates,
             infusions,
@@ -98,18 +97,17 @@ where
         self.statistics.borrow_mut().increment_call();
         (self.func)(x, self.p.as_ref(), t, y, rateiv, &self.covariates)
     }
+}
+
+impl<M, F> NonLinearOpJacobian for PMClosure<M, F>
+where
+    M: Matrix,
+    F: Fn(&M::V, &M::V, M::T, &mut M::V, M::V, &Covariates),
+{
     fn jac_mul_inplace(&self, _x: &M::V, t: M::T, v: &M::V, y: &mut M::V) {
         let rateiv = Self::V::zeros(self.nstates);
         self.statistics.borrow_mut().increment_jac_mul();
         (self.func)(v, self.p.as_ref(), t, y, rateiv, &self.covariates);
         // (self.jacobian_action)(x, self.p.as_ref(), t, v, y)
-    }
-    fn jacobian_inplace(&self, x: &Self::V, t: Self::T, y: &mut Self::M) {
-        self.statistics.borrow_mut().increment_matrix();
-        if let Some(coloring) = self.coloring.as_ref() {
-            coloring.jacobian_inplace(self, x, t, y);
-        } else {
-            self._default_jacobian_inplace(x, t, y);
-        }
     }
 }

@@ -13,7 +13,7 @@ use crate::{
 use cached::proc_macro::cached;
 use cached::UnboundCache;
 
-use diffsol::{ode_solver::method::OdeSolverMethod, Bdf};
+use diffsol::{ode_solver::method::OdeSolverMethod, Bdf, OdeSolverState};
 
 use self::diffsol_traits::build_pm_ode;
 
@@ -153,8 +153,12 @@ impl EquationPriv for ODE {
         .unwrap();
 
         let mut solver = Bdf::default();
-        let sol = solver.solve(&problem, end_time).unwrap();
-        *state = sol.0.last().unwrap().clone()
+        let st = OdeSolverState::new(&problem, &solver).unwrap();
+        solver.set_problem(st, &problem).unwrap();
+        while solver.state().unwrap().t <= end_time {
+            solver.step().unwrap();
+        }
+        *state = solver.interpolate(end_time).unwrap();
     }
     #[inline(always)]
     fn process_observation(
