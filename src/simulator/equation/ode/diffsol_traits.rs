@@ -5,7 +5,7 @@ use diffsol::{
     matrix::Matrix,
     ode_solver::{equations::OdeSolverEquations, problem::OdeSolverProblem},
     vector::Vector,
-    ConstantClosure,
+    ConstantClosure, OdeBuilder,
 };
 use std::rc::Rc;
 
@@ -40,14 +40,20 @@ where
     let init = ConstantClosure::new(init, p.clone());
     let init = Rc::new(init);
     let eqn = OdeSolverEquations::new(rhs, None, None, init, None, p);
-    let atol = M::V::from_element(nstates, M::T::from(atol));
-    OdeSolverProblem::new(
-        eqn,
-        M::T::from(rtol),
-        atol,
-        t0,
-        M::T::from(h0),
-        false,
-        false,
-    )
+    // let atol = M::V::from_element(nstates, M::T::from(atol));
+    OdeBuilder::new()
+        .atol(vec![atol])
+        .h0(h0)
+        .rtol(rtol)
+        .build_from_eqn(eqn)
+
+    // OdeSolverProblem::new(
+    //     eqn,
+    //     M::T::from(rtol),
+    //     atol,
+    //     t0,
+    //     M::T::from(h0),
+    //     false,
+    //     false,
+    // )
 }

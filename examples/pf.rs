@@ -31,7 +31,8 @@ fn main() {
     // let em = ErrorModel::new((0.5, 0.0, 0.0, 0.0), 0.0, &error_model::ErrorType::Add); // sigma = 0.5
 
     let em = ErrorModel::Additive(0.0);
-    let error_map = ErrorMap::new().insert(0, AssayPolynomial::new(0.5, 0.0, 0.0, 0.0));
+    let mut error_map = ErrorMap::new();
+    error_map.insert(0, AssayPolynomial::new(0.5, 0.0, 0.0, 0.0));
     subject.set_errorpoly(&error_map, false).unwrap();
 
     let ll = sde.estimate_likelihood(&subject, &vec![1.0], &em, false);
