@@ -45,6 +45,7 @@ where
         .atol(vec![atol])
         .h0(h0)
         .rtol(rtol)
+        .t0(t0.into())
         .build_from_eqn(eqn)
 
     // OdeSolverProblem::new(
