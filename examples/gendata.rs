@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::{fs::File, path::Path};
 
 // use error_model::{ErrorModel, ErrorType};
@@ -45,6 +46,7 @@ fn main() {
     // let ske_dist = rand_distr::Normal::new(0.1, 0.01).unwrap();
 
     let mut support_points = vec![];
+    let mut file = File::create("spp.csv").unwrap();
     for _ in 0..100 {
         let ke = ke_dist.sample(&mut rand::thread_rng());
         // let ke = 1.2;
@@ -55,6 +57,7 @@ fn main() {
         let v = 50.0;
         support_points.push(vec![ke]);
         println!("{ke}, {ske}, {v}");
+        writeln!(file, "{}, {}, {}", ke, ske, v).unwrap();
     }
 
     let mut data = vec![];
