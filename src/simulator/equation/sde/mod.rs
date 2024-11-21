@@ -197,7 +197,7 @@ impl EquationPriv for SDE {
                 covariates,
                 &mut y,
             );
-            *p = observation.to_obs_pred(y[observation.outeq()]);
+            *p = observation.to_obs_pred(y[observation.outeq()], x[i].as_slice().to_vec());
         });
         let out = Array2::from_shape_vec((self.nparticles, 1), pred.clone()).unwrap();
         *output = concatenate(Axis(1), &[output.view(), out.view()]).unwrap();

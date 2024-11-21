@@ -37,7 +37,7 @@ impl SubjectPredictions {
             .product()
     }
     pub fn add_prediction(&mut self, prediction: Prediction) {
-        self.predictions.push(prediction);
+        self.predictions.push(prediction.clone());
         self.flat_observations.push(prediction.observation);
         self.flat_predictions.push(prediction.prediction);
         self.flat_time.push(prediction.time);
@@ -174,13 +174,14 @@ pub fn psi(
 // }
 
 /// Prediction holds an observation and its prediction
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Prediction {
     time: f64,
     observation: f64,
     prediction: f64,
     outeq: usize,
     errorpoly: Option<(f64, f64, f64, f64)>,
+    state: Vec<f64>,
 }
 
 impl Prediction {
@@ -215,20 +216,24 @@ impl Prediction {
         let sigma = error_model.estimate_sigma(self);
         normpdf(self.observation, self.prediction, sigma)
     }
+    pub fn state(&self) -> &Vec<f64> {
+        &self.state
+    }
 }
 
 pub(crate) trait ToPrediction {
-    fn to_obs_pred(&self, pred: f64) -> Prediction;
+    fn to_obs_pred(&self, pred: f64, state: Vec<f64>) -> Prediction;
 }
 
 impl ToPrediction for Observation {
-    fn to_obs_pred(&self, pred: f64) -> Prediction {
+    fn to_obs_pred(&self, pred: f64, state: Vec<f64>) -> Prediction {
         Prediction {
             time: self.time(),
             observation: self.value(),
             prediction: pred,
             outeq: self.outeq(),
             errorpoly: self.errorpoly(),
+            state,
         }
     }
 }
@@ -241,6 +246,7 @@ impl Default for Prediction {
             prediction: 0.0,
             outeq: 0,
             errorpoly: None,
+            state: vec![],
         }
     }
 }

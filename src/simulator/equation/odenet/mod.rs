@@ -241,7 +241,7 @@ impl EquationPriv for ODENet {
             eq.apply(&mut y, &point, x, &cov, &sec);
         }
         let pred = y[observation.outeq()];
-        let pred = observation.to_obs_pred(pred);
+        let pred = observation.to_obs_pred(pred, x.as_slice().to_vec());
         if let Some(error_model) = error_model {
             likelihood.push(pred.likelihood(error_model));
         }
