@@ -159,6 +159,19 @@ impl Data {
             .unwrap_or(0.0);
         last_time += tad;
 
+        let mut outeq_values: Vec<usize> = Vec::new();
+        for subject in &self.subjects {
+            for occasion in &subject.occasions {
+                for event in occasion.get_events(&None, &None, true) {
+                    if let Event::Observation(obs) = event {
+                        outeq_values.push(obs.outeq());
+                    }
+                }
+            }
+        }
+        outeq_values.sort();
+        outeq_values.dedup();
+
         // Create a new data structure with added observations at intervals of idelta
         let mut new_subjects: Vec<Subject> = Vec::new();
         for subject in &self.subjects {
@@ -168,9 +181,10 @@ impl Data {
                 let mut new_events: Vec<Event> = Vec::new();
                 let mut time = 0.0;
                 while time < last_time {
-                    let obs = Observation::new(time, -99.0, 0, None, false);
-
-                    new_events.push(Event::Observation(obs));
+                    for outeq in &outeq_values {
+                        let obs = Observation::new(time, -99.0, *outeq, None, false);
+                        new_events.push(Event::Observation(obs));
+                    }
 
                     time += idelta;
                     time = (time * 1e6).round() / 1e6;
