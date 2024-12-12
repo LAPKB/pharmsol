@@ -32,14 +32,14 @@ pub trait EquationTypes {
 pub(crate) trait EquationPriv: EquationTypes {
     // fn get_init(&self) -> &Init;
     // fn get_out(&self) -> &Out;
-    fn get_lag(&self, spp: &[f64]) -> Option<HashMap<usize, f64>>;
-    fn get_fa(&self, spp: &[f64]) -> Option<HashMap<usize, f64>>;
+    fn get_lag(&self, spp: &HashMap<String, f64>) -> Option<HashMap<usize, f64>>;
+    fn get_fa(&self, spp: &HashMap<String, f64>) -> Option<HashMap<usize, f64>>;
     fn get_nstates(&self) -> usize;
     fn get_nouteqs(&self) -> usize;
     fn solve(
         &self,
         state: &mut Self::S,
-        support_point: &Vec<f64>,
+        support_point: &HashMap<String, f64>,
         covariates: &Covariates,
         infusions: &Vec<Infusion>,
         start_time: f64,
@@ -54,7 +54,7 @@ pub(crate) trait EquationPriv: EquationTypes {
     }
     fn process_observation(
         &self,
-        support_point: &Vec<f64>,
+        support_point: &HashMap<String, f64>,
         observation: &Observation,
         error_model: Option<&ErrorModel>,
         time: f64,
@@ -66,14 +66,14 @@ pub(crate) trait EquationPriv: EquationTypes {
 
     fn initial_state(
         &self,
-        support_point: &Vec<f64>,
+        support_point: &HashMap<String, f64>,
         covariates: &Covariates,
         occasion_index: usize,
     ) -> Self::S;
 
     fn simulate_event(
         &self,
-        support_point: &Vec<f64>,
+        support_point: &HashMap<String, f64>,
         event: &Event,
         next_event: Option<&Event>,
         error_model: Option<&ErrorModel>,
@@ -125,19 +125,23 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
     fn estimate_likelihood(
         &self,
         subject: &Subject,
-        support_point: &Vec<f64>,
+        support_point: &HashMap<String, f64>,
         error_model: &ErrorModel,
         cache: bool,
     ) -> f64;
 
-    fn estimate_predictions(&self, subject: &Subject, support_point: &Vec<f64>) -> Self::P {
+    fn estimate_predictions(
+        &self,
+        subject: &Subject,
+        support_point: &HashMap<String, f64>,
+    ) -> Self::P {
         self.simulate_subject(subject, support_point, None).0
     }
 
     fn simulate_subject(
         &self,
         subject: &Subject,
-        support_point: &Vec<f64>,
+        support_point: &HashMap<String, f64>,
         error_model: Option<&ErrorModel>,
     ) -> (Self::P, Option<f64>) {
         let lag = self.get_lag(support_point);

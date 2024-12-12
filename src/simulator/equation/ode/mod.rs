@@ -80,7 +80,7 @@ fn spphash(spp: &[f64]) -> u64 {
 fn _subject_predictions(
     ode: &ODE,
     subject: &Subject,
-    support_point: &Vec<f64>,
+    support_point: &HashMap<String, f64>,
 ) -> SubjectPredictions {
     ode.simulate_subject(subject, support_point, None).0
 }
@@ -107,13 +107,13 @@ impl EquationTypes for ODE {
 
 impl EquationPriv for ODE {
     #[inline(always)]
-    fn get_lag(&self, spp: &[f64]) -> Option<HashMap<usize, f64>> {
-        Some((self.lag)(&V::from_vec(spp.to_owned())))
+    fn get_lag(&self, spp: &HashMap<String, f64>) -> Option<HashMap<usize, f64>> {
+        Some((self.lag)(spp))
     }
 
     #[inline(always)]
-    fn get_fa(&self, spp: &[f64]) -> Option<HashMap<usize, f64>> {
-        Some((self.fa)(&V::from_vec(spp.to_owned())))
+    fn get_fa(&self, spp: &HashMap<String, f64>) -> Option<HashMap<usize, f64>> {
+        Some((self.fa)(spp))
     }
 
     #[inline(always)]
