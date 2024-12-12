@@ -41,16 +41,6 @@ fn main() {
         (1, 1),
     );
 
-    let net = equation::ODENet::new(
-        vec![dmatrix![-1.0], dmatrix![0.0]],
-        vec![],
-        vec![],
-        vec![],
-        vec![],
-        vec![],
-        vec![OutEq::new(0, Div(X(0), P(1)))],
-        (1, 1),
-    );
     let em = ErrorModel::new((0.0, 0.05, 0.0, 0.0), 0.0, &ErrorType::Add);
     let ll = an.estimate_likelihood(
         &subject,
@@ -73,17 +63,4 @@ fn main() {
     );
     let op = ode.estimate_predictions(&subject, &vec![1.02282724609375, 194.51904296875]);
     println!("ODE: \n-2ll:{:#?}\n{:#?}", -2.0 * ll, op.flat_predictions());
-
-    let ll = net.estimate_likelihood(
-        &subject,
-        &vec![1.02282724609375, 194.51904296875],
-        &em,
-        false,
-    );
-    let op = net.estimate_predictions(&subject, &vec![1.02282724609375, 194.51904296875]);
-    println!(
-        "ODENet: \n-2ll:{:#?}\n{:#?}",
-        -2.0 * ll,
-        op.flat_predictions()
-    );
 }

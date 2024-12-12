@@ -34,36 +34,6 @@ fn main() {
         },
         (2, 1),
     );
-    let net = equation::ODENet::new(
-        vec![
-            dmatrix![
-                -1.0,0.0;
-                1.0,0.0
-            ],
-            dmatrix![
-                0.0,0.0;
-                0.0,-1.0
-            ],
-            dmatrix![
-                0.0,0.0;
-                0.0,0.0
-            ],
-            dmatrix![
-                0.0,0.0;
-                0.0,0.0
-            ],
-        ],
-        vec![],
-        vec![],
-        vec![Lag::new(0, Op::Equal(P(2)))],
-        vec![],
-        vec![],
-        vec![OutEq::new(0, Op::Div(X(1), P(3)))],
-        (2, 1),
-    );
-
-    let op = net.estimate_predictions(&subject, &vec![0.3, 0.5, 0.1, 70.0]);
-    println!("{:#?}", op.flat_predictions());
 
     let op = ode.estimate_predictions(&subject, &vec![0.3, 0.5, 0.1, 70.0]);
     println!("{:#?}", op.flat_predictions());

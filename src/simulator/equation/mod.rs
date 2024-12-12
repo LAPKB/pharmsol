@@ -2,12 +2,10 @@ use std::collections::HashMap;
 pub mod analytical;
 pub mod meta;
 pub mod ode;
-pub mod odenet;
 pub mod sde;
 pub use analytical::*;
 pub use meta::*;
 pub use ode::*;
-pub use odenet::*;
 pub use sde::*;
 
 use crate::{error_model::ErrorModel, Covariates, Event, Infusion, Observation, Subject};
