@@ -23,8 +23,7 @@ fn main() {
             // user defined
             dx[0] = -ke * x[0];
         },
-        |p, d| {
-            fetch_params!(p, _ke0);
+        |_p, d| {
             d[1] = 0.1;
         },
         |_p| lag! {},
@@ -33,8 +32,7 @@ fn main() {
             fetch_params!(p, ke0);
             x[1] = ke0;
         },
-        |x, p, _t, _cov, y| {
-            fetch_params!(p, _ke0);
+        |x, _p, _t, _cov, y| {
             y[0] = x[0] / 50.0;
         },
         (2, 1),
