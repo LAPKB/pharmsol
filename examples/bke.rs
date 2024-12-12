@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 fn main() {
     use pharmsol::*;
 
@@ -19,7 +21,7 @@ fn main() {
         |_p| fa! {},
         |_p, _t, _cov, _x| {},
         |x, p, _t, _cov, y| {
-            fetch_params!(p, _ke, v);
+            let v = p.get("v").unwrap();
             y[0] = x[0] / v;
         },
         (1, 1),
@@ -28,39 +30,31 @@ fn main() {
     let ode = equation::ODE::new(
         |x, p, _t, dx, rateiv, _cov| {
             // fetch_cov!(cov, t, wt);
-            fetch_params!(p, ke, _v);
+            let ke = p.get("ke").unwrap();
             dx[0] = -ke * x[0] + rateiv[0];
         },
         |_p| lag! {},
         |_p| fa! {},
         |_p, _t, _cov, _x| {},
         |x, p, _t, _cov, y| {
-            fetch_params!(p, _ke, v);
+            let v = p.get("v").unwrap();
             y[0] = x[0] / v;
         },
         (1, 1),
     );
 
     let em = ErrorModel::new((0.0, 0.05, 0.0, 0.0), 0.0, &ErrorType::Add);
-    let ll = an.estimate_likelihood(
-        &subject,
-        &vec![1.02282724609375, 194.51904296875],
-        &em,
-        false,
-    );
-    let op = an.estimate_predictions(&subject, &vec![1.02282724609375, 194.51904296875]);
+    // let spp = SupportPoint::new(vec![("ke", 1.02282724609375), ("v", 194.51904296875)]);
+    let spp = support_point!("ke" => 1.02282724609375, "v" => 194.51904296875);
+    let ll = an.estimate_likelihood(&subject, &spp, &em, false);
+    let op = an.estimate_predictions(&subject, &spp);
     println!(
         "Analytical: \n-2ll:{:#?}\n{:#?}",
         -2.0 * ll,
         op.flat_predictions()
     );
 
-    let ll = ode.estimate_likelihood(
-        &subject,
-        &vec![1.02282724609375, 194.51904296875],
-        &em,
-        false,
-    );
-    let op = ode.estimate_predictions(&subject, &vec![1.02282724609375, 194.51904296875]);
+    let ll = ode.estimate_likelihood(&subject, &spp, &em, false);
+    let op = ode.estimate_predictions(&subject, &spp);
     println!("ODE: \n-2ll:{:#?}\n{:#?}", -2.0 * ll, op.flat_predictions());
 }

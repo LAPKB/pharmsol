@@ -1,5 +1,8 @@
 use super::closure::PMClosure;
-use crate::data::{Covariates, Infusion};
+use crate::{
+    data::{Covariates, Infusion},
+    simulator::SupportPoint,
+};
 use diffsol::{
     error::DiffsolError,
     matrix::Matrix,
@@ -14,7 +17,7 @@ use std::rc::Rc;
 pub(crate) fn build_pm_ode<M, F, I>(
     rhs: F,
     init: I,
-    p: M::V,
+    p: SupportPoint,
     t0: f64,
     h0: f64,
     rtol: f64,
@@ -27,19 +30,23 @@ pub(crate) fn build_pm_ode<M, F, I>(
 >
 where
     M: Matrix,
-    F: Fn(&M::V, &M::V, M::T, &mut M::V, M::V, &Covariates),
+    F: Fn(&M::V, &SupportPoint, M::T, &mut M::V, M::V, &Covariates),
     I: Fn(&M::V, M::T) -> M::V,
 {
     let p = Rc::new(p);
     let t0 = M::T::from(t0);
-    let y0 = (init)(&p, t0);
+    let v = Rc::new(M::V::from_vec(
+        p.to_vec().into_iter().map(M::T::from).collect(),
+    ));
+    let y0 = (init)(&v, t0);
     let nstates = y0.len();
     let rhs = PMClosure::new(rhs, nstates, nstates, p.clone(), cov, infusions);
     // let mass = Rc::new(UnitCallable::new(nstates));
     let rhs = Rc::new(rhs);
-    let init = ConstantClosure::new(init, p.clone());
+
+    let init = ConstantClosure::new(init, v.clone());
     let init = Rc::new(init);
-    let eqn = OdeSolverEquations::new(rhs, None, None, init, None, p);
+    let eqn = OdeSolverEquations::new(rhs, None, None, init, None, v);
     // let atol = M::V::from_element(nstates, M::T::from(atol));
     OdeBuilder::new()
         .atol(vec![atol])

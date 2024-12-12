@@ -9,6 +9,7 @@ pub use crate::data::InterpolationMethod::*;
 pub use crate::data::*;
 pub use crate::equation::*;
 pub use crate::simulator::equation::{self, ODE};
+pub use crate::simulator::types::*;
 pub use nalgebra::dmatrix;
 pub use std::collections::HashMap;
 
@@ -41,17 +42,17 @@ pub mod prelude {
     //traits
     pub use crate::simulator::fitting::{EstimateTheta, OptimalSupportPoint};
 
-    #[macro_export]
-    macro_rules! fetch_params {
-        ($p:expr, $($name:ident),*) => {
-            let p = $p;
-            let mut idx = 0;
-            $(
-                let $name = p[idx];
-                idx += 1;
-            )*
-        };
-    }
+    // #[macro_export]
+    // macro_rules! fetch_params {
+    //     ($p:expr, $($name:ident),*) => {
+    //         let p = $p;
+    //         let mut idx = 0;
+    //         $(
+    //             let $name = p[idx];
+    //             idx += 1;
+    //         )*
+    //     };
+    // }
     #[macro_export]
     macro_rules! fetch_cov {
         ($cov:expr, $t:expr, $($name:ident),*) => {

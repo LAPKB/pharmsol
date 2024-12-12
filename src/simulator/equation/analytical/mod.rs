@@ -1,6 +1,7 @@
 use crate::{
     data::Covariates, simulator::*, Equation, EquationPriv, EquationTypes, Observation, Subject,
 };
+use anyhow::Context;
 use cached::proc_macro::cached;
 use cached::UnboundCache;
 use nalgebra::{DVector, Matrix2, Vector2};
@@ -54,13 +55,13 @@ impl EquationPriv for Analytical {
     // }
 
     #[inline(always)]
-    fn get_lag(&self, spp: &[f64]) -> Option<HashMap<usize, f64>> {
-        Some((self.lag)(&V::from_vec(spp.to_owned())))
+    fn get_lag(&self, spp: &SupportPoint) -> Option<HashMap<usize, f64>> {
+        Some((self.lag)(spp))
     }
 
     #[inline(always)]
-    fn get_fa(&self, spp: &[f64]) -> Option<HashMap<usize, f64>> {
-        Some((self.fa)(&V::from_vec(spp.to_owned())))
+    fn get_fa(&self, spp: &SupportPoint) -> Option<HashMap<usize, f64>> {
+        Some((self.fa)(spp))
     }
 
     #[inline(always)]
@@ -76,7 +77,7 @@ impl EquationPriv for Analytical {
     fn solve(
         &self,
         x: &mut Self::S,
-        support_point: &Vec<f64>,
+        support_point: &SupportPoint,
         covariates: &Covariates,
         infusions: &Vec<Infusion>,
         ti: f64,
@@ -85,7 +86,7 @@ impl EquationPriv for Analytical {
         if ti == tf {
             return;
         }
-        let mut support_point = V::from_vec(support_point.to_owned());
+        let mut support_point = support_point.clone();
         let mut rateiv = V::from_vec(vec![0.0, 0.0, 0.0]);
         //TODO: This should be pre-calculated
         for infusion in infusions {
@@ -99,7 +100,7 @@ impl EquationPriv for Analytical {
     #[inline(always)]
     fn process_observation(
         &self,
-        support_point: &Vec<f64>,
+        support_point: &SupportPoint,
         observation: &Observation,
         error_model: Option<&ErrorModel>,
         _time: f64,
@@ -110,13 +111,7 @@ impl EquationPriv for Analytical {
     ) {
         let mut y = V::zeros(self.get_nouteqs());
         let out = &self.out;
-        (out)(
-            x,
-            &V::from_vec(support_point.clone()),
-            observation.time(),
-            covariates,
-            &mut y,
-        );
+        (out)(x, support_point, observation.time(), covariates, &mut y);
         let pred = y[observation.outeq()];
         let pred = observation.to_obs_pred(pred, x.as_slice().to_vec());
         if let Some(error_model) = error_model {
@@ -125,11 +120,16 @@ impl EquationPriv for Analytical {
         output.add_prediction(pred);
     }
     #[inline(always)]
-    fn initial_state(&self, spp: &Vec<f64>, covariates: &Covariates, occasion_index: usize) -> V {
+    fn initial_state(
+        &self,
+        spp: &SupportPoint,
+        covariates: &Covariates,
+        occasion_index: usize,
+    ) -> V {
         let init = &self.init;
         let mut x = V::zeros(self.get_nstates());
         if occasion_index == 0 {
-            (init)(&V::from_vec(spp.to_vec()), 0.0, covariates, &mut x);
+            (init)(spp, 0.0, covariates, &mut x);
         }
         x
     }
@@ -139,26 +139,26 @@ impl Equation for Analytical {
     fn estimate_likelihood(
         &self,
         subject: &Subject,
-        support_point: &Vec<f64>,
+        support_point: &SupportPoint,
         error_model: &ErrorModel,
         cache: bool,
     ) -> f64 {
         _estimate_likelihood(self, subject, support_point, error_model, cache)
     }
 }
-fn spphash(spp: &[f64]) -> u64 {
-    spp.iter().fold(0, |acc, x| acc + x.to_bits())
-}
+// fn spphash(spp: &[f64]) -> u64 {
+//     spp.iter().fold(0, |acc, x| acc + x.to_bits())
+// }
 #[inline(always)]
 #[cached(
     ty = "UnboundCache<String, SubjectPredictions>",
     create = "{ UnboundCache::with_capacity(100_000) }",
-    convert = r#"{ format!("{}{}", subject.id(), spphash(support_point)) }"#
+    convert = r#"{ format!("{}{}", subject.id(), support_point.hash()) }"#
 )]
 fn _subject_predictions(
     ode: &Analytical,
     subject: &Subject,
-    support_point: &Vec<f64>,
+    support_point: &SupportPoint,
 ) -> SubjectPredictions {
     ode.simulate_subject(subject, support_point, None).0
 }
@@ -166,7 +166,7 @@ fn _subject_predictions(
 fn _estimate_likelihood(
     ode: &Analytical,
     subject: &Subject,
-    support_point: &Vec<f64>,
+    support_point: &SupportPoint,
     error_model: &ErrorModel,
     cache: bool,
 ) -> f64 {
@@ -187,9 +187,12 @@ fn _estimate_likelihood(
 ///   - covariates are not used
 ///
 
-pub fn one_compartment(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {
+pub fn one_compartment(x: &V, p: &SupportPoint, t: T, rateiv: V, _cov: &Covariates) -> V {
     let mut xout = x.clone();
-    let ke = p[0];
+    let ke = p
+        .get("ke")
+        .context("ke not found in support point")
+        .unwrap();
 
     xout[0] = x[0] * (-ke * t).exp() + rateiv[0] / ke * (1.0 - (-ke * t).exp());
     // dbg!(t, &rateiv, x, &xout);
@@ -205,10 +208,24 @@ pub fn one_compartment(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {
 ///   - covariates are not used
 ///
 
-pub fn one_compartment_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {
+pub fn one_compartment_with_absorption(
+    x: &V,
+    p: &SupportPoint,
+    t: T,
+    rateiv: V,
+    _cov: &Covariates,
+) -> V {
     let mut xout = x.clone();
-    let ka = p[0];
-    let ke = p[1];
+    // let ka = p[0];
+    // let ke = p[1];
+    let ka = p
+        .get("ka")
+        .context("ka not found in support point")
+        .unwrap();
+    let ke = p
+        .get("ke")
+        .context("ke not found in support point")
+        .unwrap();
 
     xout[0] = x[0] * (-ka * t).exp();
 

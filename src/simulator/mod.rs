@@ -1,11 +1,14 @@
 pub mod equation;
 pub mod fitting;
 pub(crate) mod likelihood;
+pub mod types;
+
 use crate::{
     data::{Covariates, Infusion},
     error_model::ErrorModel,
     simulator::likelihood::{SubjectPredictions, ToPrediction},
 };
+use types::*;
 
 use std::collections::HashMap;
 
@@ -30,7 +33,7 @@ type M = nalgebra::DMatrix<T>;
 ///  dx[0] = -ka * x[0];
 ///  dx[1] = ka * x[0] - ke * x[1];
 /// };
-pub type DiffEq = fn(&V, &HashMap<String, f64>, T, &mut V, V, &Covariates);
+pub type DiffEq = fn(&V, &SupportPoint, T, &mut V, V, &Covariates);
 
 /// This closure represents an Analytical solution of the model, see [analytical] module for examples.
 /// Params:
@@ -40,7 +43,7 @@ pub type DiffEq = fn(&V, &HashMap<String, f64>, T, &mut V, V, &Covariates);
 /// - rateiv: A vector of infusion rates at time t
 /// - cov: A reference to the covariates at time t; Use the [fetch_cov!] macro to extract the covariates
 /// TODO: Remove covariates. They are not used in the analytical solution
-pub type AnalyticalEq = fn(&V, &HashMap<String, f64>, T, V, &Covariates) -> V;
+pub type AnalyticalEq = fn(&V, &SupportPoint, T, V, &Covariates) -> V;
 
 /// This closure represents the drift term of the model:
 /// Params:
@@ -70,7 +73,7 @@ pub type Drift = DiffEq;
 /// - p: The parameters of the model; Use the [fetch_params!] macro to extract the parameters
 /// - d: A mutable reference to the diffusion term for each state variable
 /// (This vector should have the same length as the x, and dx vectors on the drift closure)
-pub type Diffusion = fn(&HashMap<String, f64>, &mut V);
+pub type Diffusion = fn(&SupportPoint, &mut V);
 /// This closure represents the initial state of the system:
 /// Params:
 /// - p: The parameters of the model; Use the [fetch_params!] macro to extract the parameters
@@ -86,7 +89,7 @@ pub type Diffusion = fn(&HashMap<String, f64>, &mut V);
 ///  x[0] = 500.0;
 ///  x[1] = 0.0;
 /// };
-pub type Init = fn(&HashMap<String, f64>, T, &Covariates, &mut V);
+pub type Init = fn(&SupportPoint, T, &Covariates, &mut V);
 
 /// This closure represents the output equation of the model:
 /// Params:
@@ -102,7 +105,7 @@ pub type Init = fn(&HashMap<String, f64>, T, &Covariates, &mut V);
 ///   fetch_params!(p, ka, ke, v);
 ///   y[0] = x[1] / v;
 /// };
-pub type Out = fn(&V, &HashMap<String, f64>, T, &Covariates, &mut V);
+pub type Out = fn(&V, &SupportPoint, T, &Covariates, &mut V);
 
 /// This closure represents the secondary equation of the model, secondary equations are used to update
 /// the parameter values based on the covariates.
@@ -119,7 +122,7 @@ pub type Out = fn(&V, &HashMap<String, f64>, T, &Covariates, &mut V);
 ///    ka = ka * wt;
 /// };
 /// ```
-pub type SecEq = fn(&mut HashMap<String, f64>, T, &Covariates);
+pub type SecEq = fn(&mut SupportPoint, T, &Covariates);
 
 /// This closure represents the lag time of the model, the lag term delays the only the boluses going into
 /// an specific comparment.
@@ -138,7 +141,7 @@ pub type SecEq = fn(&mut HashMap<String, f64>, T, &Covariates);
 /// ```
 /// This will lag the bolus going into the first compartment by tlag and the bolus going into the
 /// second compartment by 0.3
-pub type Lag = fn(&HashMap<String, f64>) -> HashMap<usize, T>;
+pub type Lag = fn(&SupportPoint) -> HashMap<usize, T>;
 
 /// This closure represents the fraction absorbed (also called bioavailability or protein binding)
 /// of the model, the fa term is used to adjust the amount of drug that is absorbed into the system.
@@ -157,7 +160,7 @@ pub type Lag = fn(&HashMap<String, f64>) -> HashMap<usize, T>;
 /// ```
 /// This will adjust the amount of drug absorbed into the first compartment by fa and the amount of drug
 /// absorbed into the second compartment by 0.3
-pub type Fa = fn(&HashMap<String, f64>) -> HashMap<usize, T>;
+pub type Fa = fn(&SupportPoint) -> HashMap<usize, T>;
 
 /// The number of states and output equations of the model
 /// The first element is the number of states and the second element is the number of output equations

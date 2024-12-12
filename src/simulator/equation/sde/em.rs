@@ -1,6 +1,6 @@
 use crate::{
     data::Covariates,
-    simulator::{Diffusion, Drift},
+    simulator::{Diffusion, Drift, SupportPoint},
 };
 use nalgebra::DVector;
 use rand::prelude::*;
@@ -10,7 +10,7 @@ use rand_distr::{Distribution, Normal};
 pub struct EM {
     drift: Drift,
     diffusion: Diffusion,
-    params: DVector<f64>,
+    params: SupportPoint,
     state: DVector<f64>,
     cov: Covariates,
     rateiv: DVector<f64>,
@@ -21,7 +21,7 @@ impl EM {
     pub fn new(
         drift: Drift,
         diffusion: Diffusion,
-        params: DVector<f64>,
+        params: SupportPoint,
         initial_state: DVector<f64>,
         cov: Covariates,
         rateiv: DVector<f64>,

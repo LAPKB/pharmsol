@@ -7,6 +7,8 @@ use indicatif::{ProgressBar, ProgressStyle};
 use ndarray::{Array2, Axis, ShapeBuilder};
 use rayon::prelude::*;
 
+use super::Theta;
+
 const FRAC_1_SQRT_2PI: f64 =
     std::f64::consts::FRAC_2_SQRT_PI * std::f64::consts::FRAC_1_SQRT_2 / 2.0;
 
@@ -95,12 +97,12 @@ impl From<Array2<SubjectPredictions>> for PopulationPredictions {
 pub fn psi(
     equation: &impl Equation,
     subjects: &Data,
-    support_points: &Array2<f64>,
+    support_points: &Theta,
     error_model: &ErrorModel,
     progress: bool,
     cache: bool,
 ) -> Array2<f64> {
-    let mut pred: Array2<f64> = Array2::default((subjects.len(), support_points.nrows()).f());
+    let mut pred: Array2<f64> = Array2::default((subjects.len(), support_points.len()).f());
     let subjects = subjects.get_subjects();
     let pb = match progress {
         true => {
@@ -126,12 +128,9 @@ pub fn psi(
                 .enumerate()
                 .for_each(|(j, mut element)| {
                     let subject = subjects.get(i).unwrap();
-                    let likelihood = equation.estimate_likelihood(
-                        subject,
-                        support_points.row(j).to_vec().as_ref(),
-                        error_model,
-                        cache,
-                    );
+                    let support_point = support_points.get(j);
+                    let likelihood =
+                        equation.estimate_likelihood(subject, &support_point, error_model, cache);
                     element.fill(likelihood);
                     if let Some(pb_ref) = pb.as_ref() {
                         pb_ref.inc(1);

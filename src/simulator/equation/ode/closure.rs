@@ -10,16 +10,17 @@ use diffsol::{
 use std::{cell::RefCell, rc::Rc};
 
 use crate::data::{Covariates, Infusion};
+use crate::simulator::SupportPoint;
 pub(crate) struct PMClosure<M, F>
 where
     M: Matrix,
-    F: Fn(&M::V, &M::V, M::T, &mut M::V, M::V, &Covariates),
+    F: Fn(&M::V, &SupportPoint, M::T, &mut M::V, M::V, &Covariates),
 {
     func: F,
     nstates: usize,
     nout: usize,
     nparams: usize,
-    p: Rc<M::V>,
+    p: Rc<SupportPoint>,
     sparsity: Option<M::Sparsity>,
     statistics: RefCell<OpStatistics>,
     covariates: Covariates,
@@ -29,13 +30,13 @@ where
 impl<M, F> PMClosure<M, F>
 where
     M: Matrix,
-    F: Fn(&M::V, &M::V, M::T, &mut M::V, M::V, &Covariates),
+    F: Fn(&M::V, &SupportPoint, M::T, &mut M::V, M::V, &Covariates),
 {
     pub(crate) fn new(
         func: F,
         nstates: usize,
         nout: usize,
-        p: Rc<M::V>,
+        p: Rc<SupportPoint>,
         covariates: Covariates,
         infusions: Vec<Infusion>,
     ) -> Self {
@@ -57,7 +58,7 @@ where
 impl<M, F> Op for PMClosure<M, F>
 where
     M: Matrix,
-    F: Fn(&M::V, &M::V, M::T, &mut M::V, M::V, &Covariates),
+    F: Fn(&M::V, &SupportPoint, M::T, &mut M::V, M::V, &Covariates),
 {
     type V = M::V;
     type T = M::T;
@@ -82,7 +83,7 @@ where
 impl<M, F> NonLinearOp for PMClosure<M, F>
 where
     M: Matrix,
-    F: Fn(&M::V, &M::V, M::T, &mut M::V, M::V, &Covariates),
+    F: Fn(&M::V, &SupportPoint, M::T, &mut M::V, M::V, &Covariates),
 {
     fn call_inplace(&self, x: &M::V, t: M::T, y: &mut M::V) {
         let mut rateiv = Self::V::zeros(self.nstates);
@@ -102,7 +103,7 @@ where
 impl<M, F> NonLinearOpJacobian for PMClosure<M, F>
 where
     M: Matrix,
-    F: Fn(&M::V, &M::V, M::T, &mut M::V, M::V, &Covariates),
+    F: Fn(&M::V, &SupportPoint, M::T, &mut M::V, M::V, &Covariates),
 {
     fn jac_mul_inplace(&self, _x: &M::V, t: M::T, v: &M::V, y: &mut M::V) {
         let rateiv = Self::V::zeros(self.nstates);

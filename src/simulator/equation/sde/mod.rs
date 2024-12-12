@@ -15,7 +15,9 @@ use crate::{
     data::{Covariates, Infusion},
     error_model::ErrorModel,
     prelude::simulator::Prediction,
-    simulator::{likelihood::ToPrediction, Diffusion, Drift, Fa, Init, Lag, Neqs, Out, V},
+    simulator::{
+        likelihood::ToPrediction, Diffusion, Drift, Fa, Init, Lag, Neqs, Out, SupportPoint, V,
+    },
     Subject,
 };
 
@@ -26,7 +28,7 @@ pub(crate) fn simulate_sde_event(
     drift: &Drift,
     difussion: &Diffusion,
     x: V,
-    support_point: &[f64],
+    support_point: &SupportPoint,
     cov: &Covariates,
     infusions: &[Infusion],
     ti: f64,
@@ -46,7 +48,7 @@ pub(crate) fn simulate_sde_event(
     let mut sde = em::EM::new(
         *drift,
         *difussion,
-        DVector::from_column_slice(support_point),
+        support_point.clone(),
         x,
         cov.clone(),
         rateiv,
@@ -127,13 +129,13 @@ impl EquationPriv for SDE {
     // }
 
     #[inline(always)]
-    fn get_lag(&self, spp: &[f64]) -> Option<HashMap<usize, f64>> {
-        Some((self.lag)(&V::from_vec(spp.to_owned())))
+    fn get_lag(&self, spp: &SupportPoint) -> Option<HashMap<usize, f64>> {
+        Some((self.lag)(spp))
     }
 
     #[inline(always)]
-    fn get_fa(&self, spp: &[f64]) -> Option<HashMap<usize, f64>> {
-        Some((self.fa)(&V::from_vec(spp.to_owned())))
+    fn get_fa(&self, spp: &SupportPoint) -> Option<HashMap<usize, f64>> {
+        Some((self.fa)(spp))
     }
 
     #[inline(always)]
@@ -149,7 +151,7 @@ impl EquationPriv for SDE {
     fn solve(
         &self,
         state: &mut Self::S,
-        support_point: &Vec<f64>,
+        support_point: &SupportPoint,
         covariates: &Covariates,
         infusions: &Vec<Infusion>,
         ti: f64,
@@ -178,7 +180,7 @@ impl EquationPriv for SDE {
     #[inline(always)]
     fn process_observation(
         &self,
-        support_point: &Vec<f64>,
+        support_point: &SupportPoint,
         observation: &crate::Observation,
         error_model: Option<&ErrorModel>,
         _time: f64,
@@ -190,13 +192,7 @@ impl EquationPriv for SDE {
         let mut pred = vec![Prediction::default(); self.nparticles];
         pred.par_iter_mut().enumerate().for_each(|(i, p)| {
             let mut y = V::zeros(self.get_nouteqs());
-            (self.out)(
-                &x[i],
-                &V::from_vec(support_point.clone()),
-                observation.time(),
-                covariates,
-                &mut y,
-            );
+            (self.out)(&x[i], support_point, observation.time(), covariates, &mut y);
             *p = observation.to_obs_pred(y[observation.outeq()], x[i].as_slice().to_vec());
         });
         let out = Array2::from_shape_vec((self.nparticles, 1), pred.clone()).unwrap();
@@ -220,7 +216,7 @@ impl EquationPriv for SDE {
     #[inline(always)]
     fn initial_state(
         &self,
-        support_point: &Vec<f64>,
+        support_point: &SupportPoint,
         covariates: &Covariates,
         occasion_index: usize,
     ) -> Self::S {
@@ -228,12 +224,7 @@ impl EquationPriv for SDE {
         for _ in 0..self.nparticles {
             let mut state = DVector::zeros(self.get_nstates());
             if occasion_index == 0 {
-                (self.init)(
-                    &V::from_vec(support_point.to_vec()),
-                    0.0,
-                    covariates,
-                    &mut state,
-                );
+                (self.init)(support_point, 0.0, covariates, &mut state);
             }
             x.push(state);
         }
@@ -245,7 +236,7 @@ impl Equation for SDE {
     fn estimate_likelihood(
         &self,
         subject: &Subject,
-        support_point: &Vec<f64>,
+        support_point: &SupportPoint,
         error_model: &ErrorModel,
         cache: bool,
     ) -> f64 {
@@ -257,20 +248,20 @@ impl Equation for SDE {
     }
 }
 
-fn spphash(spp: &[f64]) -> u64 {
-    spp.iter().fold(0, |acc, x| acc + x.to_bits())
-}
+// fn spphash(spp: &[f64]) -> u64 {
+//     spp.iter().fold(0, |acc, x| acc + x.to_bits())
+// }
 
 #[inline(always)]
 #[cached(
     ty = "UnboundCache<String, f64>",
     create = "{ UnboundCache::with_capacity(100_000) }",
-    convert = r#"{ format!("{}{}{}", subject.id(), spphash(support_point), error_model.gl()) }"#
+    convert = r#"{ format!("{}{}{}", subject.id(), support_point.hash(), error_model.gl()) }"#
 )]
 fn _estimate_likelihood(
     sde: &SDE,
     subject: &Subject,
-    support_point: &Vec<f64>,
+    support_point: &SupportPoint,
     error_model: &ErrorModel,
 ) -> f64 {
     let ypred = sde.simulate_subject(subject, support_point, Some(error_model));
