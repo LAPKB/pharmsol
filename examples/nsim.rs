@@ -1,5 +1,6 @@
 fn main() {
     use pharmsol::*;
+
     let subject = Subject::builder("id1")
         .bolus(0.0, 100.0, 0)
         .repeat(2, 0.5)
