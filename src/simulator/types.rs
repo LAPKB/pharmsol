@@ -40,6 +40,14 @@ macro_rules! support_point {
         SupportPoint::new(map)
     }};
 }
+#[macro_export]
+macro_rules! fetch_params {
+    ($p:expr, $($param:ident),*) => {
+        $(
+            let $param = $p.get(stringify!($param).to_lowercase().as_str()).unwrap();
+        )*
+    };
+}
 
 impl SupportPoint {
     /// Create a new, empty support point
@@ -47,8 +55,9 @@ impl SupportPoint {
         Self { map }
     }
 
-    pub fn from_vec(vec: Vec<f64>, parameters: Vec<String>) -> Self {
+    pub fn from_vec(vec: Vec<f64>, parameters: Vec<impl Into<String>>) -> Self {
         assert!(vec.len() == parameters.len());
+        let parameters: Vec<String> = parameters.into_iter().map(|s| s.into()).collect();
         let mut map = BTreeMap::new();
         for (i, parameter) in parameters.iter().enumerate() {
             map.insert(parameter.clone(), vec[i]);

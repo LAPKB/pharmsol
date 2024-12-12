@@ -38,8 +38,9 @@ fn readme(n: usize) {
         },
         (2, 1),
     );
+    let spp = support_point!["ka" => 0.3, "ke" => 0.5, "tlag" => 0.1, "v" => 70.0];
     for _ in 0..n {
-        let op = ode.estimate_predictions(&subject, &vec![0.3, 0.5, 0.1, 70.0]);
+        let op = ode.estimate_predictions(&subject, &spp);
         assert_eq!(
             op.flat_predictions(),
             vec![

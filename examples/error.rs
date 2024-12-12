@@ -26,7 +26,7 @@ fn main() {
         |_p, _t, _cov, _x| {},
         |x, p, t, cov, y| {
             fetch_cov!(cov, t, WT);
-            fetch_params!(p, CL0, V0, Vp0, Q0);
+            let V0 = p.get("v0").unwrap();
             let V = V0 / (WT / 85.0);
             y[0] = x[0] / V;
         },
@@ -39,6 +39,9 @@ fn main() {
         .repeat(120, 0.1)
         .build();
 
-    let op = ode.estimate_predictions(&subject, &vec![0.1, 0.1, 0.1, 0.1, 70.0]);
+    //spp = vec![0.1, 0.1, 0.1, 0.1, 70.0]
+    let spp = support_point!("cl0" => 0.1, "v0" => 0.1, "vp0" => 0.1, "q0" => 0.1, "v0" => 70.0);
+
+    let op = ode.estimate_predictions(&subject, &spp);
     dbg!(op);
 }

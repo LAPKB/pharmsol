@@ -62,6 +62,7 @@ fn main() {
 
     let mut data = vec![];
     for (i, spp) in support_points.iter().enumerate() {
+        let spp = SupportPoint::from_vec(spp.clone(), vec!["ke", "ske", "v"]);
         let trajectories = sde.estimate_predictions(&subject, &spp);
         let trajectory = trajectories.row(0);
         // dbg!(&trajectory);

@@ -12,8 +12,9 @@ fn main() {
 
     let sde = equation::SDE::new(
         |x, p, _t, dx, _rateiv, _cov| {
+            fetch_params!(p, ke0);
             dx[0] = -x[0] * x[1]; // ke *x[0]
-            dx[1] = -x[1] + p[0]; // mean reverting
+            dx[1] = -x[1] + ke0; // mean reverting
         },
         |_p, d| {
             d[0] = 1.0;
@@ -31,8 +32,10 @@ fn main() {
 
     let em = ErrorModel::new((0.5, 0.0, 0.0, 0.0), 0.0, &error_model::ErrorType::Add); // sigma = 0.5
 
-    let ll = sde.estimate_likelihood(&subject, &vec![1.0], &em, false);
+    let spp = support_point!["ke0" => 1.0];
 
-    dbg!(sde.estimate_likelihood(&subject, &vec![1.0], &em, false));
+    let ll = sde.estimate_likelihood(&subject, &spp, &em, false);
+
+    dbg!(sde.estimate_likelihood(&subject, &spp, &em, false));
     println!("{ll:#?}");
 }
