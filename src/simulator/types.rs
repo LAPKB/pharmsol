@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use ndarray::Array2;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Theta {
     matrix: Array2<f64>,
     parameters: Vec<String>,
@@ -20,13 +20,13 @@ impl Theta {
     pub fn get(&self, i: usize) -> SupportPoint {
         let mut map = BTreeMap::new();
         for (j, parameter) in self.parameters.iter().enumerate() {
-            map.insert(parameter.clone(), self.matrix[[j, i]]);
+            map.insert(parameter.clone(), self.matrix[[i, j]]);
         }
         SupportPoint::new(map)
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Debug)]
 pub struct SupportPoint {
     map: BTreeMap<String, f64>,
 }
