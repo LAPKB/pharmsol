@@ -1,4 +1,6 @@
+use std::collections::hash_map::DefaultHasher;
 use std::collections::BTreeMap;
+use std::hash::{Hash, Hasher};
 
 use ndarray::Array2;
 
@@ -76,27 +78,10 @@ impl SupportPoint {
     }
 
     pub fn hash(&self) -> u64 {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
         let mut hasher = DefaultHasher::new();
 
-        // Sort the entries by key to ensure deterministic hashing
-        let mut sorted_entries: Vec<_> = self.map.iter().collect();
-        sorted_entries.sort_by(|a, b| a.0.cmp(b.0));
-
-        sorted_entries.iter().for_each(|(key, &value)| {
-            // Hash the key
-            key.hash(&mut hasher);
-
-            // Normalize negative zero to zero for the value
-            let normalized_value = if value == 0.0 && value.is_sign_negative() {
-                0.0
-            } else {
-                value
-            };
-            // Convert the value to bits and hash it
-            let bits = normalized_value.to_bits();
+        self.map.iter().for_each(|(_, &value)| {
+            let bits = value.to_bits();
             bits.hash(&mut hasher);
         });
 
