@@ -14,7 +14,7 @@ impl Theta {
     }
 
     pub fn len(&self) -> usize {
-        self.matrix.ncols()
+        self.matrix.nrows()
     }
 
     pub fn get(&self, i: usize) -> SupportPoint {
