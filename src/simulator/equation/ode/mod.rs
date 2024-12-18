@@ -14,8 +14,8 @@ use crate::{
 use cached::proc_macro::cached;
 use cached::UnboundCache;
 
-use closure::{PMProblem, PmRhs};
-use diffsol::{ode_solver::method::OdeSolverMethod, Bdf, OdeBuilder, OdeSolverState};
+use closure::PMProblem;
+use diffsol::{ode_solver::method::OdeSolverMethod, OdeBuilder};
 
 // use self::diffsol_traits::build_pm_ode;
 
@@ -157,22 +157,16 @@ impl EquationPriv for ODE {
         let problem = OdeBuilder::<M>::new()
             .atol(vec![ATOL])
             .rtol(RTOL)
-            .t0(start_time)
+            .init(|_p: &V, _t: T| state.clone())
             .h0(1e-3)
             .p(support_point.to_vec())
             .build_from_eqn(PMProblem::new(
-                PmRhs::new(
-                    self.diffeq,
-                    self.get_nstates(),
-                    self.get_nouteqs(),
-                    support_point.clone(),
-                    covariates.clone(),
-                    infusions.clone(),
-                ),
-                None,
-                None,
-                None,
-                None,
+                self.diffeq,
+                self.get_nstates(),
+                self.get_nouteqs(),
+                support_point.clone(),
+                covariates.clone(),
+                infusions.clone(),
             ))
             .unwrap();
         let mut solver = problem.bdf::<diffsol::NalgebraLU<f64>>().unwrap();

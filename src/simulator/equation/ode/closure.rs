@@ -5,45 +5,20 @@ use diffsol::{
 type T = f64;
 type V = nalgebra::DVector<f64>;
 type M = nalgebra::DMatrix<f64>;
-pub struct PmRhs<F>
+pub struct PmRhs<'a, F>
 where
     F: Fn(&V, &SupportPoint, T, &mut V, V, &Covariates),
 {
-    func: F,
-    nstates: usize,
-    nout: usize,
-    nparams: usize,
-    p: SupportPoint, //Rc<SupportPoint>,
-    // sparsity: Option<M::Sparsity>,
-    // statistics: RefCell<OpStatistics>,
-    covariates: Covariates,
-    infusions: Vec<Infusion>,
+    nstates: &'a usize,
+    nout: &'a usize,
+    nparams: &'a usize,
+    infusions: &'a Vec<Infusion>,
+    covariates: &'a Covariates,
+    p: &'a SupportPoint,
+    func: &'a F,
 }
-impl<F> PmRhs<F>
-where
-    F: Fn(&V, &SupportPoint, T, &mut V, V, &Covariates),
-{
-    pub fn new(
-        func: F,
-        nstates: usize,
-        nout: usize,
-        p: SupportPoint,
-        covariates: Covariates,
-        infusions: Vec<Infusion>,
-    ) -> Self {
-        let nparams = p.len();
-        Self {
-            func,
-            nstates,
-            nout,
-            nparams,
-            p,
-            covariates,
-            infusions,
-        }
-    }
-}
-impl<F> Op for PmRhs<F>
+
+impl<'a, F> Op for PmRhs<'a, F>
 where
     F: Fn(&V, &SupportPoint, T, &mut V, V, &Covariates),
 {
@@ -51,24 +26,24 @@ where
     type V = V;
     type M = M;
     fn nstates(&self) -> usize {
-        self.nstates
+        *self.nstates
     }
     fn nout(&self) -> usize {
-        self.nout
+        *self.nout
     }
     fn nparams(&self) -> usize {
-        self.nparams
+        *self.nparams
     }
 }
 
-impl<F> NonLinearOp for PmRhs<F>
+impl<'a, F> NonLinearOp for PmRhs<'a, F>
 where
     F: Fn(&V, &SupportPoint, T, &mut V, V, &Covariates),
 {
     fn call_inplace(&self, x: &Self::V, t: Self::T, y: &mut Self::V) {
-        let mut rateiv = Self::V::zeros(self.nstates);
+        let mut rateiv = Self::V::zeros(*self.nstates);
         //TODO: This should be pre-calculated
-        for infusion in &self.infusions {
+        for infusion in self.infusions {
             if t >= Self::T::from(infusion.time())
                 && t <= Self::T::from(infusion.duration() + infusion.time())
             {
@@ -80,7 +55,7 @@ where
     }
 }
 
-impl<F> NonLinearOpJacobian for PmRhs<F>
+impl<'a, F> NonLinearOpJacobian for PmRhs<'a, F>
 where
     F: Fn(&V, &SupportPoint, T, &mut V, V, &Covariates),
 {
@@ -108,7 +83,7 @@ impl Op for PmMass {
 }
 
 impl LinearOp for PmMass {
-    fn gemv_inplace(&self, x: &Self::V, t: Self::T, beta: Self::T, y: &mut Self::V) {}
+    fn gemv_inplace(&self, _x: &Self::V, _t: Self::T, _beta: Self::T, _y: &mut Self::V) {}
 }
 pub struct PmInit {
     nstates: usize,
@@ -132,7 +107,7 @@ impl Op for PmInit {
 }
 
 impl ConstantOp for PmInit {
-    fn call_inplace(&self, t: Self::T, y: &mut Self::V) {}
+    fn call_inplace(&self, _t: Self::T, _y: &mut Self::V) {}
 }
 pub struct PmRoot {
     nstates: usize,
@@ -156,7 +131,7 @@ impl Op for PmRoot {
 }
 
 impl NonLinearOp for PmRoot {
-    fn call_inplace(&self, x: &Self::V, t: Self::T, y: &mut Self::V) {}
+    fn call_inplace(&self, _x: &Self::V, _t: Self::T, _y: &mut Self::V) {}
 }
 pub struct PmOut {
     nstates: usize,
@@ -180,71 +155,93 @@ impl Op for PmOut {
 }
 
 impl NonLinearOp for PmOut {
-    fn call_inplace(&self, x: &Self::V, t: Self::T, y: &mut Self::V) {}
+    fn call_inplace(&self, _x: &Self::V, _t: Self::T, _y: &mut Self::V) {}
 }
 
-pub struct PMProblem {
-    rhs: PmRhs<fn(&V, &SupportPoint, T, &mut V, V, &Covariates)>,
-    mass: Option<PmMass>,
-    init: Option<PmInit>,
-    root: Option<PmRoot>,
-    out: Option<PmOut>,
+pub struct PMProblem<F>
+where
+    F: Fn(&V, &SupportPoint, T, &mut V, V, &Covariates),
+{
+    // rhs: PmRhs<fn(&V, &SupportPoint, T, &mut V, V, &Covariates)>,
+    func: F,
+    nstates: usize,
+    nout: usize,
+    nparams: usize,
+    p: SupportPoint,
+    covariates: Covariates,
+    infusions: Vec<Infusion>,
 }
 
-impl PMProblem {
+impl<F> PMProblem<F>
+where
+    F: Fn(&V, &SupportPoint, T, &mut V, V, &Covariates),
+{
     pub fn new(
-        rhs: PmRhs<fn(&V, &SupportPoint, T, &mut V, V, &Covariates)>,
-        mass: Option<PmMass>,
-        init: Option<PmInit>,
-        root: Option<PmRoot>,
-        out: Option<PmOut>,
+        func: F,
+        nstates: usize,
+        nout: usize,
+        p: SupportPoint,
+        covariates: Covariates,
+        infusions: Vec<Infusion>,
     ) -> Self {
+        let nparams = p.len();
         Self {
-            rhs,
-            mass,
-            init,
-            root,
-            out,
+            func,
+            nstates,
+            nout,
+            nparams,
+            p,
+            covariates,
+            infusions,
         }
     }
 }
 
-impl Op for PMProblem {
+impl<F> Op for PMProblem<F>
+where
+    F: Fn(&V, &SupportPoint, T, &mut V, V, &Covariates),
+{
     type T = T;
     type V = V;
     type M = M;
     fn nstates(&self) -> usize {
-        self.rhs.nstates
+        self.nstates
     }
     fn nout(&self) -> usize {
-        self.rhs.nout
+        self.nout
     }
     fn nparams(&self) -> usize {
-        self.rhs.nparams
+        self.nparams
     }
 }
 
-impl OdeEquationsRef<'_> for PMProblem {
-    type Rhs = PmRhs<fn(&V, &SupportPoint, T, &mut V, V, &Covariates)>;
+impl<'a, F> OdeEquationsRef<'a> for PMProblem<F>
+where
+    F: Fn(&V, &SupportPoint, T, &mut V, V, &Covariates),
+{
+    type Rhs = PmRhs<'a, F>;
     type Mass = PmMass;
     type Init = PmInit;
     type Root = PmRoot;
     type Out = PmOut;
 }
 
-impl OdeEquations for PMProblem {
-    fn rhs(&self) -> <PMProblem as OdeEquationsRef<'_>>::Rhs {
+impl<F> OdeEquations for PMProblem<F>
+where
+    F: Fn(&V, &SupportPoint, T, &mut V, V, &Covariates),
+{
+    fn rhs(&self) -> <PMProblem<F> as OdeEquationsRef<'_>>::Rhs {
         PmRhs {
-            func: self.rhs.func,
-            nstates: self.rhs.nstates,
-            nout: self.rhs.nout,
-            nparams: self.rhs.nparams,
-            p: self.rhs.p.clone(),
-            covariates: self.rhs.covariates.clone(),
-            infusions: self.rhs.infusions.clone(),
+            nstates: &self.nstates,
+            nout: &self.nout,
+            nparams: &self.nparams,
+            infusions: &self.infusions,
+            covariates: &self.covariates,
+            p: &self.p,
+            func: &self.func,
         }
     }
-    fn mass(&self) -> Option<<PMProblem as OdeEquationsRef<'_>>::Mass> {
+    fn mass(&self) -> Option<<PMProblem<F> as OdeEquationsRef<'_>>::Mass> {
         None
     }
     fn init(&self) -> PmInit {
@@ -254,16 +251,16 @@ impl OdeEquations for PMProblem {
             nparams: self.nparams(),
         }
     }
-    fn root(&self) -> Option<<PMProblem as OdeEquationsRef<'_>>::Root> {
+    fn root(&self) -> Option<<PMProblem<F> as OdeEquationsRef<'_>>::Root> {
         None
     }
-    fn out(&self) -> Option<<PMProblem as OdeEquationsRef<'_>>::Out> {
+    fn out(&self) -> Option<<PMProblem<F> as OdeEquationsRef<'_>>::Out> {
         None
     }
     fn set_params(&mut self, p: &Self::V) {
-        let names = self.rhs.p.parameters();
+        let names = self.p.parameters();
         for (i, name) in names.iter().enumerate() {
-            self.rhs.p.set(name, p[i]);
+            self.p.set(name, p[i]);
         }
     }
 }
