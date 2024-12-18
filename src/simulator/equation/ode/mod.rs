@@ -1,5 +1,4 @@
 mod closure;
-mod diffsol_traits;
 
 use std::collections::HashMap;
 
@@ -15,9 +14,10 @@ use crate::{
 use cached::proc_macro::cached;
 use cached::UnboundCache;
 
-use diffsol::{ode_solver::method::OdeSolverMethod, Bdf, OdeSolverState};
+use closure::{PMProblem, PmRhs};
+use diffsol::{ode_solver::method::OdeSolverMethod, Bdf, OdeBuilder, OdeSolverState};
 
-use self::diffsol_traits::build_pm_ode;
+// use self::diffsol_traits::build_pm_ode;
 
 use super::{Equation, EquationPriv, EquationTypes, State};
 
@@ -141,23 +141,43 @@ impl EquationPriv for ODE {
             return;
         }
         // dbg!(start_time, end_time);
-        let problem = build_pm_ode::<M, _, _>(
-            self.diffeq,
-            |_p: &V, _t: T| state.clone(),
-            support_point.clone(),
-            start_time,
-            1e-3,
-            RTOL,
-            ATOL,
-            covariates.clone(),
-            infusions.clone(),
-        )
-        .unwrap();
+        // let problem = build_pm_ode::<M, _, _>(
+        //     self.diffeq,
+        //     |_p: &V, _t: T| state.clone(),
+        //     support_point.clone(),
+        //     start_time,
+        //     1e-3,
+        //     RTOL,
+        //     ATOL,
+        //     covariates.clone(),
+        //     infusions.clone(),
+        // )
+        // .unwrap();
 
-        let mut solver = Bdf::default();
-        let st = OdeSolverState::new(&problem, &solver).unwrap();
-        solver.set_problem(st, &problem).unwrap();
-        while solver.state().unwrap().t <= end_time {
+        let problem = OdeBuilder::<M>::new()
+            .atol(vec![ATOL])
+            .rtol(RTOL)
+            .t0(start_time)
+            .h0(1e-3)
+            .build_from_eqn(PMProblem::new(
+                PmRhs::new(
+                    self.diffeq,
+                    self.get_nstates(),
+                    self.get_nouteqs(),
+                    support_point.clone(),
+                    covariates.clone(),
+                    infusions.clone(),
+                ),
+                None,
+                None,
+                None,
+                None,
+            ))
+            .unwrap();
+        let mut solver = problem.bdf::<diffsol::NalgebraLU<f64>>().unwrap();
+        // let (ys, ts) = solver.solve(end_time).unwrap();
+
+        while solver.state().t <= end_time {
             solver.step().unwrap();
         }
         *state = solver.interpolate(end_time).unwrap();

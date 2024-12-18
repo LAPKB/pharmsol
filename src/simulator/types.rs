@@ -104,4 +104,8 @@ impl SupportPoint {
     pub fn parameters(&self) -> Vec<String> {
         self.map.keys().cloned().collect()
     }
+
+    pub fn set(&mut self, key: &str, value: f64) {
+        self.map.insert(key.to_string(), value);
+    }
 }
