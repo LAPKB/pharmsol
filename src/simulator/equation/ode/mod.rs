@@ -159,6 +159,7 @@ impl EquationPriv for ODE {
             .rtol(RTOL)
             .t0(start_time)
             .h0(1e-3)
+            .p(support_point.to_vec())
             .build_from_eqn(PMProblem::new(
                 PmRhs::new(
                     self.diffeq,
