@@ -18,10 +18,10 @@ impl<'a> ErrorModel<'a> {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Copy)]
 pub enum ErrorType {
-    Add,
-    Prop,
+    Additive,
+    Proportional,
 }
 #[allow(clippy::extra_unused_lifetimes)]
 impl<'a> ErrorModel<'_> {
@@ -36,8 +36,8 @@ impl<'a> ErrorModel<'_> {
             + c3 * prediction.observation().powi(3);
 
         let res = match self.e_type {
-            ErrorType::Add => (alpha.powi(2) + self.gl.powi(2)).sqrt(),
-            ErrorType::Prop => self.gl * alpha,
+            ErrorType::Additive => (alpha.powi(2) + self.gl.powi(2)).sqrt(),
+            ErrorType::Proportional => self.gl * alpha,
         };
 
         if res.is_nan() || res < 0.0 {
