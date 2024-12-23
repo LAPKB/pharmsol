@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 use crate::simulator::likelihood::Prediction;
 
 #[derive(Debug, Clone)]
@@ -16,7 +18,7 @@ impl<'a> ErrorModel<'a> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ErrorType {
     Add,
     Prop,
