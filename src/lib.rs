@@ -27,6 +27,7 @@ pub mod prelude {
             equation,
             equation::Equation,
             likelihood::{psi, PopulationPredictions, Prediction, SubjectPredictions},
+            types::SupportPoint,
         };
     }
     pub mod models {
