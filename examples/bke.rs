@@ -41,7 +41,7 @@ fn main() {
         (1, 1),
     );
 
-    let em = ErrorModel::new((0.0, 0.05, 0.0, 0.0), 0.0, &ErrorType::Add);
+    let em = ErrorModel::new((0.0, 0.05, 0.0, 0.0), 0.0, &ErrorType::Additive);
     // let spp = SupportPoint::new(vec![("ke", 1.02282724609375), ("v", 194.51904296875)]);
     let spp = support_point!("ke" => 1.02282724609375, "v" => 194.51904296875);
     let ll = an.estimate_likelihood(&subject, &spp, &em, false);

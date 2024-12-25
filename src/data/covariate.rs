@@ -1,14 +1,14 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt};
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum InterpolationMethod {
     Linear { slope: f64, intercept: f64 },
     CarryForward { value: f64 },
 }
 
 /// A [CovariateSegment] is a segment of the piece-wise interpolation of a [Covariate]
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct CovariateSegment {
     from: f64,
     to: f64,
@@ -46,7 +46,7 @@ impl CovariateSegment {
 }
 
 /// A [Covariate] is a collection of [CovariateSegment]s, which allows for interpolation of covariate values
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Covariate {
     name: String,
     segments: Vec<CovariateSegment>,
@@ -113,7 +113,7 @@ impl fmt::Display for Covariate {
 }
 
 /// [Covariates] is a collection of [Covariate]
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Covariates {
     // Mapping from covariate name to its segments
     // FIXME: this hashmap have a key, covariate also has a name field, we are never
