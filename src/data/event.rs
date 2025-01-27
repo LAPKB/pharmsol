@@ -3,7 +3,7 @@ use std::fmt;
 use serde::Deserialize;
 
 /// An Event can be a Bolus, Infusion, or Observation
-#[derive(Debug, Clone, Deserialize)]
+#[derive(serde::Serialize, Debug, Clone, Deserialize)]
 pub enum Event {
     Bolus(Bolus),
     Infusion(Infusion),
@@ -29,7 +29,7 @@ impl Event {
 /// An instantaenous input of drug
 ///
 /// An amount of drug is added to a compartment at a specific time
-#[derive(Debug, Clone, Deserialize)]
+#[derive(serde::Serialize, Debug, Clone, Deserialize)]
 pub struct Bolus {
     time: f64,
     amount: f64,
@@ -62,7 +62,7 @@ impl Bolus {
 }
 
 /// A continuous dose of drug
-#[derive(Debug, Clone, Deserialize)]
+#[derive(serde::Serialize, Debug, Clone, Deserialize)]
 pub struct Infusion {
     time: f64,
     amount: f64,
@@ -99,7 +99,7 @@ impl Infusion {
 }
 
 /// An observation of drug concentration or covariates
-#[derive(Debug, Clone, Deserialize)]
+#[derive(serde::Serialize, Debug, Clone, Deserialize)]
 pub struct Observation {
     time: f64,
     value: f64,
