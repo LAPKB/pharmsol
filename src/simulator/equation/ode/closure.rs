@@ -10,9 +10,9 @@ pub struct PmRhs<'a, F>
 where
     F: Fn(&V, &V, T, &mut V, V, &Covariates),
 {
-    nstates: &'a usize,
-    nout: &'a usize,
-    nparams: &'a usize,
+    nstates: usize,
+    nout: usize,
+    nparams: usize,
     infusions: &'a Vec<Infusion>,
     covariates: &'a Covariates,
     p: &'a Vec<f64>,
@@ -26,13 +26,13 @@ where
     type V = V;
     type M = M;
     fn nstates(&self) -> usize {
-        *self.nstates
+        self.nstates
     }
     fn nout(&self) -> usize {
-        *self.nout
+        self.nout
     }
     fn nparams(&self) -> usize {
-        *self.nparams
+        self.nparams
     }
 }
 
@@ -41,7 +41,7 @@ where
     F: Fn(&V, &V, T, &mut V, V, &Covariates),
 {
     fn call_inplace(&self, x: &Self::V, t: Self::T, y: &mut Self::V) {
-        let mut rateiv = Self::V::zeros(*self.nstates);
+        let mut rateiv = Self::V::zeros(self.nstates);
         //TODO: This should be pre-calculated
         for infusion in self.infusions {
             if t >= Self::T::from(infusion.time())
@@ -233,9 +233,9 @@ where
 {
     fn rhs(&self) -> <PMProblem<F> as OdeEquationsRef<'_>>::Rhs {
         PmRhs {
-            nstates: &self.nstates,
-            nout: &self.nout,
-            nparams: &self.nparams,
+            nstates: self.nstates,
+            nout: self.nout,
+            nparams: self.nparams,
             infusions: &self.infusions,
             covariates: &self.covariates,
             p: &self.p,

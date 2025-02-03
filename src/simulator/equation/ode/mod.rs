@@ -6,7 +6,7 @@ use crate::{
     data::{Covariates, Infusion},
     error_model::ErrorModel,
     prelude::simulator::SubjectPredictions,
-    simulator::{likelihood::ToPrediction, DiffEq, Fa, Init, Lag, Neqs, Out, M, T, V},
+    simulator::{likelihood::ToPrediction, DiffEq, Fa, Init, Lag, Neqs, Out, M, V},
     Observation, Subject,
 };
 use cached::proc_macro::cached;
@@ -146,7 +146,7 @@ impl EquationPriv for ODE {
             .atol(vec![ATOL])
             .rtol(RTOL)
             // .t0(start_time)
-            .init(|_p: &V, _t: T| state.clone())
+            // .init(|_p: &V, _t: T| state.clone())
             .h0(1e-3)
             .p(support_point.clone())
             .build_from_eqn(PMProblem::new(
