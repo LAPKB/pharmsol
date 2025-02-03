@@ -11,6 +11,7 @@ pub use crate::equation::*;
 pub use crate::simulator::equation::{self, ODE};
 pub use crate::simulator::types::*;
 pub use nalgebra::dmatrix;
+pub use simulator::types::SupportPoint;
 pub use std::collections::BTreeMap;
 pub use std::collections::HashMap;
 
