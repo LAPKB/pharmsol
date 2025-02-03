@@ -44,7 +44,10 @@ macro_rules! support_point {
 macro_rules! fetch_params {
     ($p:expr, $($param:ident),*) => {
         $(
-            let $param = $p.get(stringify!($param).to_lowercase().as_str()).unwrap();
+            let $param = match $p.get(stringify!($param).to_lowercase().as_str()){
+                Some(value) => value,
+                None => panic!("Primary parameter {} is not defined", stringify!($param)),
+            };
         )*
     };
 }
