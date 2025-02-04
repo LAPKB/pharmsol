@@ -7,7 +7,7 @@ use std::{collections::HashMap, fmt};
 ///
 /// This is the main data structure used to store the data, and is used to pass data to the model
 /// [Data] implements the [DataTrait], which provides methods to access the data
-#[derive(Debug, Clone, Default)]
+#[derive(serde::Serialize, Debug, Clone, Default)]
 pub struct Data {
     subjects: Vec<Subject>,
 }
@@ -238,7 +238,7 @@ impl Data {
 }
 
 /// [Subject] is a collection of blocks for one individual
-#[derive(Debug, Deserialize, Clone)]
+#[derive(serde::Serialize, Debug, Deserialize, Clone)]
 pub struct Subject {
     id: String,
     occasions: Vec<Occasion>,
@@ -267,7 +267,7 @@ impl Subject {
 }
 
 /// An [Occasion] is a collection of events, for a given [Subject], that are from a specific occasion
-#[derive(Debug, Deserialize, Clone)]
+#[derive(serde::Serialize, Debug, Deserialize, Clone)]
 pub struct Occasion {
     events: Vec<Event>,
     covariates: Covariates,
