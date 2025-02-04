@@ -30,7 +30,7 @@ fn main() {
         10000,
     );
 
-    let em = ErrorModel::new((0.5, 0.0, 0.0, 0.0), 0.0, &error_model::ErrorType::Add); // sigma = 0.5
+    let em = ErrorModel::new((0.5, 0.0, 0.0, 0.0), 0.0, &error_model::ErrorType::Additive); // sigma = 0.5
 
     let spp = support_point!["ke0" => 1.0];
 
