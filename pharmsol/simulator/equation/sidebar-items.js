@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["analytical","ode","odenet","sde"],"trait":["Equation","EquationTypes","Predictions","State"]};
+window.SIDEBAR_ITEMS = {"mod":["analytical","meta","ode","sde"],"trait":["Equation","EquationTypes","Predictions","State"]};
