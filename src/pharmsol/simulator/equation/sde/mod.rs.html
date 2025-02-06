@@ -303,7 +303,7 @@
 
 <span class="kw">use </span>nalgebra::DVector;
 <span class="kw">use </span>ndarray::{concatenate, Array2, Axis};
-<span class="kw">use </span>rand::{thread_rng, Rng};
+<span class="kw">use </span>rand::{rng, Rng};
 <span class="kw">use </span>rayon::prelude::<span class="kw-2">*</span>;
 
 <span class="kw">use </span>cached::proc_macro::cached;
@@ -582,9 +582,9 @@
         qc[i] = qc[i - <span class="number">1</span>] + q[i];
     }
     <span class="kw">let </span>m = q.len();
-    <span class="kw">let </span><span class="kw-2">mut </span>rng = thread_rng();
+    <span class="kw">let </span><span class="kw-2">mut </span>rng = rng();
     <span class="kw">let </span>u: Vec&lt;f64&gt; = (<span class="number">0</span>..m)
-        .map(|i| (i <span class="kw">as </span>f64 + rng.gen::&lt;f64&gt;()) / m <span class="kw">as </span>f64)
+        .map(|i| (i <span class="kw">as </span>f64 + rng.random::&lt;f64&gt;()) / m <span class="kw">as </span>f64)
         .collect();
     <span class="kw">let </span><span class="kw-2">mut </span>i = <span class="macro">vec!</span>[<span class="number">0</span>; m];
     <span class="kw">let </span><span class="kw-2">mut </span>k = <span class="number">0</span>;
