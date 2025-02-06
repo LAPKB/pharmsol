@@ -48,7 +48,7 @@ fn main() {
     let mut support_points = vec![];
     let mut file = File::create("spp.csv").unwrap();
     for _ in 0..100 {
-        let ke = ke_dist.sample(&mut rand::thread_rng());
+        let ke = ke_dist.sample(&mut rand::rng());
         // let ke = 1.2;
 
         let ske = 0.1;

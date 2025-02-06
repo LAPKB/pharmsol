@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use nalgebra::DVector;
 use ndarray::{concatenate, Array2, Axis};
-use rand::{thread_rng, Rng};
+use rand::{rng, Rng};
 use rayon::prelude::*;
 
 use cached::proc_macro::cached;
@@ -283,9 +283,9 @@ fn sysresample(q: &[f64]) -> Vec<usize> {
         qc[i] = qc[i - 1] + q[i];
     }
     let m = q.len();
-    let mut rng = thread_rng();
+    let mut rng = rng();
     let u: Vec<f64> = (0..m)
-        .map(|i| (i as f64 + rng.gen::<f64>()) / m as f64)
+        .map(|i| (i as f64 + rng.random::<f64>()) / m as f64)
         .collect();
     let mut i = vec![0; m];
     let mut k = 0;
