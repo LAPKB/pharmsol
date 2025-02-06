@@ -3,7 +3,7 @@ use crate::{
     simulator::{Diffusion, Drift},
 };
 use nalgebra::DVector;
-use rand::prelude::*;
+use rand::rng;
 use rand_distr::{Distribution, Normal};
 /// Structure to hold the SDE system parameters and state
 #[derive(Clone)]
@@ -54,7 +54,7 @@ impl EM {
 
         // Create a seeded RNG
         // let mut rng = StdRng::seed_from_u64(0);
-        let mut rng = thread_rng();
+        let mut rng = rng();
 
         for i in 0..n {
             let normal_dist = Normal::new(0.0, 1.0).unwrap();
