@@ -1,13 +1,13 @@
 use crate::data::*;
 use csv::WriterBuilder;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt};
 
 /// [Data] is a collection of [Subject]s, which are collections of [Occasion]s, which are collections of [Event]s
 ///
 /// This is the main data structure used to store the data, and is used to pass data to the model
 /// [Data] implements the [DataTrait], which provides methods to access the data
-#[derive(serde::Serialize, Debug, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct Data {
     subjects: Vec<Subject>,
 }
