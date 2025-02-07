@@ -566,14 +566,14 @@
 <a href="#565" id="565">565</a>
 <a href="#566" id="566">566</a></pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::data::<span class="kw-2">*</span>;
 <span class="kw">use </span>csv::WriterBuilder;
-<span class="kw">use </span>serde::Deserialize;
+<span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>std::{collections::HashMap, fmt};
 
 <span class="doccomment">/// [Data] is a collection of [Subject]s, which are collections of [Occasion]s, which are collections of [Event]s
 ///
 /// This is the main data structure used to store the data, and is used to pass data to the model
 /// [Data] implements the [DataTrait], which provides methods to access the data
-</span><span class="attr">#[derive(serde::Serialize, Debug, Clone, Default)]
+</span><span class="attr">#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 </span><span class="kw">pub struct </span>Data {
     subjects: Vec&lt;Subject&gt;,
 }
