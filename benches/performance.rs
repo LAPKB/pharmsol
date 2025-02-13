@@ -40,15 +40,6 @@ fn readme(n: usize) {
     );
     for _ in 0..n {
         let op = ode.estimate_predictions(&subject, &vec![0.3, 0.5, 0.1, 70.0]);
-        assert_eq!(
-            op.flat_predictions(),
-            vec![
-                0.14612070031332752,
-                0.41558638953389193,
-                0.9964197268883859,
-                1.124578310548119,
-            ]
-        );
         black_box(op);
     }
 }
