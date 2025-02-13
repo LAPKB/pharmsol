@@ -13,6 +13,7 @@ ODE based model.
 ```rust
     use pharmsol::*;
 
+    // Subject data can be generated using the builder pattern
     let subject = Subject::builder("id1")
         .bolus(0.0, 100.0, 0)
         .repeat(2, 0.5)
@@ -24,15 +25,14 @@ ODE based model.
         .covariate("wt", 1.0, 83.0)
         .covariate("age", 0.0, 25.0)
         .build();
-    // println!("{subject}");
+
     let ode = equation::ODE::new(
         |x, p, t, dx, _rateiv, cov| {
+            // The following are helper functions to fetch parameters and covariates
             fetch_cov!(cov, t, _wt, _age);
             fetch_params!(p, ka, ke, _tlag, _v);
-            // Secondary Eqs
-            // let ke = ke * wt.powf(0.75) * (age / 25.0).powf(0.5);
 
-            //Struct
+            // The ODEs are defined here
             dx[0] = -ka * x[0];
             dx[1] = ka * x[0] - ke * x[1];
         },
@@ -44,6 +44,7 @@ ODE based model.
         |_p, _t, _cov, _x| {},
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ka, _ke, _tlag, v);
+            // This equation specifies the output, e.g. the measured concentrations
             y[0] = x[1] / v;
         },
         (2, 1),
