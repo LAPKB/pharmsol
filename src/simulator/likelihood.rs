@@ -25,8 +25,8 @@ impl Predictions for SubjectPredictions {
             .map(|p| (p.observation - p.prediction).powi(2))
             .sum()
     }
-    fn get_predictions(&self) -> &Vec<Prediction> {
-        &self.predictions
+    fn get_predictions(&self) -> Vec<Prediction> {
+        self.predictions.clone()
     }
 }
 impl SubjectPredictions {

@@ -105,8 +105,11 @@ impl Predictions for Array2<Prediction> {
     fn squared_error(&self) -> f64 {
         unimplemented!();
     }
-    fn get_predictions(&self) -> &Vec<Prediction> {
-        unimplemented!();
+    fn get_predictions(&self) -> Vec<Prediction> {
+        //TODO: This is only returning the first particle, not the best, not the worst, THE FIRST
+        // CHANGE THIS
+        let row = self.row(0).to_vec();
+        row
     }
 }
 
