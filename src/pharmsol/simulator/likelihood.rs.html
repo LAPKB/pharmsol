@@ -288,8 +288,8 @@
             .map(|p| (p.observation - p.prediction).powi(<span class="number">2</span>))
             .sum()
     }
-    <span class="kw">fn </span>get_predictions(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>Vec&lt;Prediction&gt; {
-        <span class="kw-2">&amp;</span><span class="self">self</span>.predictions
+    <span class="kw">fn </span>get_predictions(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;Prediction&gt; {
+        <span class="self">self</span>.predictions.clone()
     }
 }
 <span class="kw">impl </span>SubjectPredictions {
