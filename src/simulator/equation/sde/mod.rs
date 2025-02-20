@@ -9,7 +9,6 @@ use rayon::prelude::*;
 
 use cached::proc_macro::cached;
 use cached::UnboundCache;
-const STEPS: usize = 100;
 
 use crate::{
     data::{Covariates, Infusion},
@@ -50,8 +49,8 @@ pub(crate) fn simulate_sde_event(
         x,
         cov.clone(),
         rateiv,
-        1e-3,
-        1e-3,
+        1e-2,
+        1e-2,
     );
     let (_time, solution) = sde.solve(ti, tf);
     solution.last().unwrap().clone()
