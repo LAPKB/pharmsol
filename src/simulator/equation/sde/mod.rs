@@ -50,8 +50,8 @@ pub(crate) fn simulate_sde_event(
         x,
         cov.clone(),
         rateiv,
-        1e-4,
-        1e-4,
+        1e-3,
+        1e-3,
     );
     let (_time, solution) = sde.solve(ti, tf);
     solution.last().unwrap().clone()
