@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `src/simulator/equation/sde/em.rs`."><title>em.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../../../static.files/rustdoc-42caa33d.css"><meta name="rustdoc-vars" data-root-path="../../../../../" data-static-root-path="../../../../../static.files/" data-current-crate="pharmsol" data-themes="" data-resource-suffix="" data-rustdoc-version="1.84.1 (e71f9a9a9 2025-01-27)" data-channel="1.84.1" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../../../../static.files/storage-59e33391.js"></script><script defer src="../../../../../static.files/src-script-56102188.js"></script><script defer src="../../../../../src-files.js"></script><script defer src="../../../../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../../../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">pharmsol/simulator/equation/sde/</div>em.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers">
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `src/simulator/equation/sde/em.rs`."><title>em.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../../../../" data-static-root-path="../../../../../static.files/" data-current-crate="pharmsol" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0 (4d91de4e4 2025-02-17)" data-channel="1.85.0" data-search-js="search-75f5ac3e.js" data-settings-js="settings-0f613d39.js" ><script src="../../../../../static.files/storage-59e33391.js"></script><script defer src="../../../../../static.files/src-script-56102188.js"></script><script defer src="../../../../../src-files.js"></script><script defer src="../../../../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../../../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">pharmsol/simulator/equation/sde/</div>em.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers">
 <a href="#1" id="1">1</a>
 <a href="#2" id="2">2</a>
 <a href="#3" id="3">3</a>
@@ -75,7 +75,55 @@
 <a href="#74" id="74">74</a>
 <a href="#75" id="75">75</a>
 <a href="#76" id="76">76</a>
-<a href="#77" id="77">77</a></pre></div><pre class="rust"><code><span class="kw">use crate</span>::{
+<a href="#77" id="77">77</a>
+<a href="#78" id="78">78</a>
+<a href="#79" id="79">79</a>
+<a href="#80" id="80">80</a>
+<a href="#81" id="81">81</a>
+<a href="#82" id="82">82</a>
+<a href="#83" id="83">83</a>
+<a href="#84" id="84">84</a>
+<a href="#85" id="85">85</a>
+<a href="#86" id="86">86</a>
+<a href="#87" id="87">87</a>
+<a href="#88" id="88">88</a>
+<a href="#89" id="89">89</a>
+<a href="#90" id="90">90</a>
+<a href="#91" id="91">91</a>
+<a href="#92" id="92">92</a>
+<a href="#93" id="93">93</a>
+<a href="#94" id="94">94</a>
+<a href="#95" id="95">95</a>
+<a href="#96" id="96">96</a>
+<a href="#97" id="97">97</a>
+<a href="#98" id="98">98</a>
+<a href="#99" id="99">99</a>
+<a href="#100" id="100">100</a>
+<a href="#101" id="101">101</a>
+<a href="#102" id="102">102</a>
+<a href="#103" id="103">103</a>
+<a href="#104" id="104">104</a>
+<a href="#105" id="105">105</a>
+<a href="#106" id="106">106</a>
+<a href="#107" id="107">107</a>
+<a href="#108" id="108">108</a>
+<a href="#109" id="109">109</a>
+<a href="#110" id="110">110</a>
+<a href="#111" id="111">111</a>
+<a href="#112" id="112">112</a>
+<a href="#113" id="113">113</a>
+<a href="#114" id="114">114</a>
+<a href="#115" id="115">115</a>
+<a href="#116" id="116">116</a>
+<a href="#117" id="117">117</a>
+<a href="#118" id="118">118</a>
+<a href="#119" id="119">119</a>
+<a href="#120" id="120">120</a>
+<a href="#121" id="121">121</a>
+<a href="#122" id="122">122</a>
+<a href="#123" id="123">123</a>
+<a href="#124" id="124">124</a>
+<a href="#125" id="125">125</a></pre></div><pre class="rust"><code><span class="kw">use crate</span>::{
     data::Covariates,
     simulator::{Diffusion, Drift},
 };
@@ -91,6 +139,10 @@
     state: DVector&lt;f64&gt;,
     cov: Covariates,
     rateiv: DVector&lt;f64&gt;,
+    rtol: f64,
+    atol: f64,
+    max_step: f64,
+    min_step: f64,
 }
 
 <span class="kw">impl </span>EM {
@@ -102,6 +154,8 @@
         initial_state: DVector&lt;f64&gt;,
         cov: Covariates,
         rateiv: DVector&lt;f64&gt;,
+        rtol: f64,
+        atol: f64,
     ) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             drift,
@@ -110,16 +164,37 @@
             state: initial_state,
             cov,
             rateiv,
-        }
+            rtol,
+            atol,
+            max_step: <span class="number">0.1</span>,  <span class="comment">// Can be made configurable
+            </span>min_step: <span class="number">1e-6</span>, <span class="comment">// Can be made configurable
+        </span>}
     }
 
-    <span class="doccomment">/// Performs one step of the Euler-Maruyama method
-    </span><span class="kw">fn </span>euler_maruyama_step(<span class="kw-2">&amp;mut </span><span class="self">self</span>, time: f64, dt: f64) {
-        <span class="kw">let </span>n = <span class="self">self</span>.state.len();
+    <span class="kw">fn </span>calculate_error(<span class="kw-2">&amp;</span><span class="self">self</span>, y1: <span class="kw-2">&amp;</span>DVector&lt;f64&gt;, y2: <span class="kw-2">&amp;</span>DVector&lt;f64&gt;) -&gt; f64 {
+        <span class="kw">let </span>n = y1.len();
+        <span class="kw">let </span><span class="kw-2">mut </span>err = <span class="number">0.0f64</span>;
+
+        <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..n {
+            <span class="kw">let </span>tol = <span class="self">self</span>.atol + <span class="self">self</span>.rtol * <span class="self">self</span>.state[i].abs();
+            <span class="kw">let </span>e = (y1[i] - y2[i]).abs() / tol;
+            err = err.max(e);
+        }
+        err
+    }
+
+    <span class="kw">fn </span>compute_new_step(<span class="kw-2">&amp;</span><span class="self">self</span>, dt: f64, error: f64, safety: f64) -&gt; f64 {
+        <span class="kw">let </span><span class="kw-2">mut </span>new_dt = dt * safety * (<span class="number">1.0 </span>/ error).powf(<span class="number">0.5</span>);
+        new_dt = new_dt.clamp(<span class="self">self</span>.min_step, <span class="self">self</span>.max_step);
+        new_dt
+    }
+
+    <span class="kw">fn </span>euler_maruyama_step(<span class="kw-2">&amp;</span><span class="self">self</span>, time: f64, dt: f64, state: <span class="kw-2">&amp;mut </span>DVector&lt;f64&gt;) {
+        <span class="kw">let </span>n = state.len();
         <span class="kw">let </span><span class="kw-2">mut </span>drift_term = DVector::zeros(n);
         (<span class="self">self</span>.drift)(
-            <span class="kw-2">&amp;</span><span class="self">self</span>.state.clone(),
-            <span class="kw-2">&amp;</span><span class="self">self</span>.params.clone(),
+            state,
+            <span class="kw-2">&amp;</span><span class="self">self</span>.params,
             time,
             <span class="kw-2">&amp;mut </span>drift_term,
             <span class="self">self</span>.rateiv.clone(),
@@ -127,29 +202,50 @@
         );
 
         <span class="kw">let </span><span class="kw-2">mut </span>diffusion_term = DVector::zeros(n);
-        (<span class="self">self</span>.diffusion)(<span class="kw-2">&amp;</span><span class="self">self</span>.params.clone(), <span class="kw-2">&amp;mut </span>diffusion_term);
+        (<span class="self">self</span>.diffusion)(<span class="kw-2">&amp;</span><span class="self">self</span>.params, <span class="kw-2">&amp;mut </span>diffusion_term);
 
-        <span class="comment">// Create a seeded RNG
-        // let mut rng = StdRng::seed_from_u64(0);
-        </span><span class="kw">let </span><span class="kw-2">mut </span>rng = rng();
+        <span class="kw">let </span><span class="kw-2">mut </span>rng = rng();
+        <span class="kw">let </span>normal_dist = Normal::new(<span class="number">0.0</span>, <span class="number">1.0</span>).unwrap();
 
         <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..n {
-            <span class="kw">let </span>normal_dist = Normal::new(<span class="number">0.0</span>, <span class="number">1.0</span>).unwrap();
-            <span class="self">self</span>.state[i] +=
+            state[i] +=
                 drift_term[i] * dt + diffusion_term[i] * normal_dist.sample(<span class="kw-2">&amp;mut </span>rng) * dt.sqrt();
         }
     }
 
-    <span class="doccomment">/// Solves the SDE system over the given time period with the specified time step
-    </span><span class="kw">pub fn </span>solve(<span class="kw-2">&amp;mut </span><span class="self">self</span>, <span class="kw-2">mut </span>time: f64, tf: f64, steps: usize) -&gt; Vec&lt;DVector&lt;f64&gt;&gt; {
-        <span class="kw">let </span>dt = (tf - time) / steps <span class="kw">as </span>f64;
-        <span class="kw">let </span><span class="kw-2">mut </span>solution = Vec::with_capacity(steps);
-        <span class="kw">for _ in </span><span class="number">0</span>..steps {
-            <span class="self">self</span>.euler_maruyama_step(time, dt);
-            time += dt;
-            solution.push(<span class="self">self</span>.state.clone());
+    <span class="kw">pub fn </span>solve(<span class="kw-2">&amp;mut </span><span class="self">self</span>, t0: f64, tf: f64) -&gt; (Vec&lt;f64&gt;, Vec&lt;DVector&lt;f64&gt;&gt;) {
+        <span class="kw">let </span><span class="kw-2">mut </span>t = t0;
+        <span class="kw">let </span><span class="kw-2">mut </span>dt = <span class="self">self</span>.max_step;
+        <span class="kw">let </span>safety = <span class="number">0.9</span>;
+        <span class="kw">let </span><span class="kw-2">mut </span>times = <span class="macro">vec!</span>[t0];
+        <span class="kw">let </span><span class="kw-2">mut </span>solution = <span class="macro">vec!</span>[<span class="self">self</span>.state.clone()];
+
+        <span class="kw">while </span>t &lt; tf {
+            <span class="kw">let </span><span class="kw-2">mut </span>y1 = <span class="self">self</span>.state.clone();
+            <span class="kw">let </span><span class="kw-2">mut </span>y2 = <span class="self">self</span>.state.clone();
+
+            <span class="comment">// Single step
+            </span><span class="self">self</span>.euler_maruyama_step(t, dt, <span class="kw-2">&amp;mut </span>y1);
+
+            <span class="comment">// Two half steps
+            </span><span class="self">self</span>.euler_maruyama_step(t, dt / <span class="number">2.0</span>, <span class="kw-2">&amp;mut </span>y2);
+            <span class="self">self</span>.euler_maruyama_step(t + dt / <span class="number">2.0</span>, dt / <span class="number">2.0</span>, <span class="kw-2">&amp;mut </span>y2);
+
+            <span class="kw">let </span>error = <span class="self">self</span>.calculate_error(<span class="kw-2">&amp;</span>y1, <span class="kw-2">&amp;</span>y2);
+
+            <span class="kw">if </span>error &lt;= <span class="number">1.0 </span>{
+                t += dt;
+                <span class="self">self</span>.state = y2; <span class="comment">// Use more accurate solution
+                </span>times.push(t);
+                solution.push(<span class="self">self</span>.state.clone());
+                dt = <span class="self">self</span>.compute_new_step(dt, error, safety);
+                dt = dt.min(tf - t); <span class="comment">// Don't step beyond tf
+            </span>} <span class="kw">else </span>{
+                dt = <span class="self">self</span>.compute_new_step(dt, error, safety);
+            }
         }
-        solution
+
+        (times, solution)
     }
 }
 </code></pre></div></section></main></body></html>
