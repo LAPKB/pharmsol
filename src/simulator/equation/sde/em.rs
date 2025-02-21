@@ -14,6 +14,10 @@ pub struct EM {
     state: DVector<f64>,
     cov: Covariates,
     rateiv: DVector<f64>,
+    rtol: f64,
+    atol: f64,
+    max_step: f64,
+    min_step: f64,
 }
 
 impl EM {
@@ -25,6 +29,8 @@ impl EM {
         initial_state: DVector<f64>,
         cov: Covariates,
         rateiv: DVector<f64>,
+        rtol: f64,
+        atol: f64,
     ) -> Self {
         Self {
             drift,
@@ -33,16 +39,37 @@ impl EM {
             state: initial_state,
             cov,
             rateiv,
+            rtol,
+            atol,
+            max_step: 0.1,  // Can be made configurable
+            min_step: 1e-6, // Can be made configurable
         }
     }
 
-    /// Performs one step of the Euler-Maruyama method
-    fn euler_maruyama_step(&mut self, time: f64, dt: f64) {
-        let n = self.state.len();
+    fn calculate_error(&self, y1: &DVector<f64>, y2: &DVector<f64>) -> f64 {
+        let n = y1.len();
+        let mut err = 0.0f64;
+
+        for i in 0..n {
+            let tol = self.atol + self.rtol * self.state[i].abs();
+            let e = (y1[i] - y2[i]).abs() / tol;
+            err = err.max(e);
+        }
+        err
+    }
+
+    fn compute_new_step(&self, dt: f64, error: f64, safety: f64) -> f64 {
+        let mut new_dt = dt * safety * (1.0 / error).powf(0.5);
+        new_dt = new_dt.clamp(self.min_step, self.max_step);
+        new_dt
+    }
+
+    fn euler_maruyama_step(&self, time: f64, dt: f64, state: &mut DVector<f64>) {
+        let n = state.len();
         let mut drift_term = DVector::zeros(n);
         (self.drift)(
-            &self.state.clone(),
-            &self.params.clone(),
+            state,
+            &self.params,
             time,
             &mut drift_term,
             self.rateiv.clone(),
@@ -50,28 +77,49 @@ impl EM {
         );
 
         let mut diffusion_term = DVector::zeros(n);
-        (self.diffusion)(&self.params.clone(), &mut diffusion_term);
+        (self.diffusion)(&self.params, &mut diffusion_term);
 
-        // Create a seeded RNG
-        // let mut rng = StdRng::seed_from_u64(0);
         let mut rng = rng();
+        let normal_dist = Normal::new(0.0, 1.0).unwrap();
 
         for i in 0..n {
-            let normal_dist = Normal::new(0.0, 1.0).unwrap();
-            self.state[i] +=
+            state[i] +=
                 drift_term[i] * dt + diffusion_term[i] * normal_dist.sample(&mut rng) * dt.sqrt();
         }
     }
 
-    /// Solves the SDE system over the given time period with the specified time step
-    pub fn solve(&mut self, mut time: f64, tf: f64, steps: usize) -> Vec<DVector<f64>> {
-        let dt = (tf - time) / steps as f64;
-        let mut solution = Vec::with_capacity(steps);
-        for _ in 0..steps {
-            self.euler_maruyama_step(time, dt);
-            time += dt;
-            solution.push(self.state.clone());
+    pub fn solve(&mut self, t0: f64, tf: f64) -> (Vec<f64>, Vec<DVector<f64>>) {
+        let mut t = t0;
+        let mut dt = self.max_step;
+        let safety = 0.9;
+        let mut times = vec![t0];
+        let mut solution = vec![self.state.clone()];
+
+        while t < tf {
+            let mut y1 = self.state.clone();
+            let mut y2 = self.state.clone();
+
+            // Single step
+            self.euler_maruyama_step(t, dt, &mut y1);
+
+            // Two half steps
+            self.euler_maruyama_step(t, dt / 2.0, &mut y2);
+            self.euler_maruyama_step(t + dt / 2.0, dt / 2.0, &mut y2);
+
+            let error = self.calculate_error(&y1, &y2);
+
+            if error <= 1.0 {
+                t += dt;
+                self.state = y2; // Use more accurate solution
+                times.push(t);
+                solution.push(self.state.clone());
+                dt = self.compute_new_step(dt, error, safety);
+                dt = dt.min(tf - t); // Don't step beyond tf
+            } else {
+                dt = self.compute_new_step(dt, error, safety);
+            }
         }
-        solution
+
+        (times, solution)
     }
 }

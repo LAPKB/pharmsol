@@ -26,6 +26,10 @@ impl Data {
     pub fn add_subject(&mut self, subject: Subject) {
         self.subjects.push(subject);
     }
+
+    pub fn get_subject(&self, id: &str) -> Option<&Subject> {
+        self.subjects.iter().find(|subject| subject.id() == id)
+    }
     pub fn write_pmetrics(&self, file: &std::fs::File) {
         let mut writer = WriterBuilder::new().has_headers(true).from_writer(file);
 
