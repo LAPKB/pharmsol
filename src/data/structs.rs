@@ -1,13 +1,13 @@
 use crate::data::*;
 use csv::WriterBuilder;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt};
 
 /// [Data] is a collection of [Subject]s, which are collections of [Occasion]s, which are collections of [Event]s
 ///
 /// This is the main data structure used to store the data, and is used to pass data to the model
 /// [Data] implements the [DataTrait], which provides methods to access the data
-#[derive(serde::Serialize, Debug, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct Data {
     subjects: Vec<Subject>,
 }
@@ -25,6 +25,10 @@ impl Data {
     /// Add a [Subject] to the [Data]
     pub fn add_subject(&mut self, subject: Subject) {
         self.subjects.push(subject);
+    }
+
+    pub fn get_subject(&self, id: &str) -> Option<&Subject> {
+        self.subjects.iter().find(|subject| subject.id() == id)
     }
     pub fn write_pmetrics(&self, file: &std::fs::File) {
         let mut writer = WriterBuilder::new().has_headers(true).from_writer(file);

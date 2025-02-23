@@ -9,7 +9,6 @@ use rayon::prelude::*;
 
 use cached::proc_macro::cached;
 use cached::UnboundCache;
-const STEPS: usize = 10;
 
 use crate::{
     data::{Covariates, Infusion},
@@ -50,8 +49,10 @@ pub(crate) fn simulate_sde_event(
         x,
         cov.clone(),
         rateiv,
+        1e-2,
+        1e-2,
     );
-    let solution = sde.solve(ti, tf, STEPS);
+    let (_time, solution) = sde.solve(ti, tf);
     solution.last().unwrap().clone()
 }
 
@@ -105,8 +106,11 @@ impl Predictions for Array2<Prediction> {
     fn squared_error(&self) -> f64 {
         unimplemented!();
     }
-    fn get_predictions(&self) -> &Vec<Prediction> {
-        unimplemented!();
+    fn get_predictions(&self) -> Vec<Prediction> {
+        //TODO: This is only returning the first particle, not the best, not the worst, THE FIRST
+        // CHANGE THIS
+        let row = self.row(0).to_vec();
+        row
     }
 }
 

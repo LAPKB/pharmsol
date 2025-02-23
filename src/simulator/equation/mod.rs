@@ -21,7 +21,7 @@ pub trait Predictions: Default {
         Default::default()
     }
     fn squared_error(&self) -> f64;
-    fn get_predictions(&self) -> &Vec<Prediction>;
+    fn get_predictions(&self) -> Vec<Prediction>;
 }
 
 pub trait EquationTypes {
