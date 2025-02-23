@@ -39,3 +39,7 @@ harness = false
 [[bench]]
 name = "data"
 harness = false
+
+[[bench]]
+name = "ode"
+harness = false
