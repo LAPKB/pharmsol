@@ -15,13 +15,13 @@ struct SppOptimizer<'a, E: Equation> {
 }
 
 impl<'a, E: Equation> CostFunction for SppOptimizer<'a, E> {
-    type Param = Array1<f64>;
+    type Param = Vec<f64>;
     type Output = f64;
 
     fn cost(&self, point: &Self::Param) -> Result<Self::Output, Error> {
         let (concentrations, _) =
             self.equation
-                .simulate_subject(self.subject, point.to_vec().as_ref(), None);
+                .simulate_subject(self.subject, point.as_ref(), None);
         Ok(concentrations.squared_error()) //TODO: Change this to use the D function
     }
 }
@@ -32,7 +32,10 @@ impl<'a, E: Equation> SppOptimizer<'a, E> {
     }
 
     fn optimize(self, point: &Array1<f64>) -> Array1<f64> {
-        let simplex = create_initial_simplex(point);
+        let simplex = create_initial_simplex(point)
+            .into_iter()
+            .map(|x| x.to_vec())
+            .collect();
         let solver = NelderMead::new(simplex)
             .with_sd_tolerance(1e-2)
             .expect("Error setting up the solver");
@@ -40,7 +43,7 @@ impl<'a, E: Equation> SppOptimizer<'a, E> {
             // .configure(|state| state.max_iters(10))
             .run()
             .unwrap();
-        res.state.best_param.unwrap()
+        Array1::from_vec(res.state.best_param.unwrap())
     }
 }
 
