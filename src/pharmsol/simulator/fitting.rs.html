@@ -99,7 +99,10 @@
 <a href="#98" id="98">98</a>
 <a href="#99" id="99">99</a>
 <a href="#100" id="100">100</a>
-<a href="#101" id="101">101</a></pre></div><pre class="rust"><code><span class="kw">use </span>argmin::{
+<a href="#101" id="101">101</a>
+<a href="#102" id="102">102</a>
+<a href="#103" id="103">103</a>
+<a href="#104" id="104">104</a></pre></div><pre class="rust"><code><span class="kw">use </span>argmin::{
     core::{CostFunction, Error, Executor},
     solver::neldermead::NelderMead,
 };
@@ -116,13 +119,13 @@
 }
 
 <span class="kw">impl</span>&lt;<span class="lifetime">'a</span>, E: Equation&gt; CostFunction <span class="kw">for </span>SppOptimizer&lt;<span class="lifetime">'a</span>, E&gt; {
-    <span class="kw">type </span>Param = Array1&lt;f64&gt;;
+    <span class="kw">type </span>Param = Vec&lt;f64&gt;;
     <span class="kw">type </span>Output = f64;
 
     <span class="kw">fn </span>cost(<span class="kw-2">&amp;</span><span class="self">self</span>, point: <span class="kw-2">&amp;</span><span class="self">Self</span>::Param) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>::Output, Error&gt; {
         <span class="kw">let </span>(concentrations, <span class="kw">_</span>) =
             <span class="self">self</span>.equation
-                .simulate_subject(<span class="self">self</span>.subject, point.to_vec().as_ref(), <span class="prelude-val">None</span>);
+                .simulate_subject(<span class="self">self</span>.subject, point.as_ref(), <span class="prelude-val">None</span>);
         <span class="prelude-val">Ok</span>(concentrations.squared_error()) <span class="comment">//TODO: Change this to use the D function
     </span>}
 }
@@ -133,7 +136,10 @@
     }
 
     <span class="kw">fn </span>optimize(<span class="self">self</span>, point: <span class="kw-2">&amp;</span>Array1&lt;f64&gt;) -&gt; Array1&lt;f64&gt; {
-        <span class="kw">let </span>simplex = create_initial_simplex(point);
+        <span class="kw">let </span>simplex = create_initial_simplex(point)
+            .into_iter()
+            .map(|x| x.to_vec())
+            .collect();
         <span class="kw">let </span>solver = NelderMead::new(simplex)
             .with_sd_tolerance(<span class="number">1e-2</span>)
             .expect(<span class="string">"Error setting up the solver"</span>);
@@ -141,7 +147,7 @@
             <span class="comment">// .configure(|state| state.max_iters(10))
             </span>.run()
             .unwrap();
-        res.state.best_param.unwrap()
+        Array1::from_vec(res.state.best_param.unwrap())
     }
 }
 
