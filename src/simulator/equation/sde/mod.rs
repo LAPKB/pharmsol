@@ -34,13 +34,6 @@ pub(crate) fn simulate_sde_event(
     if ti == tf {
         return x;
     }
-    let mut rateiv = V::from_vec(vec![0.0, 0.0, 0.0]);
-    //TODO: This should be pre-calculated
-    for infusion in infusions {
-        if tf >= infusion.time() && tf <= infusion.duration() + infusion.time() {
-            rateiv[infusion.input()] += infusion.amount() / infusion.duration();
-        }
-    }
 
     let mut sde = em::EM::new(
         *drift,
@@ -48,7 +41,7 @@ pub(crate) fn simulate_sde_event(
         DVector::from_column_slice(support_point),
         x,
         cov.clone(),
-        rateiv,
+        infusions.to_vec(),
         1e-2,
         1e-2,
     );
