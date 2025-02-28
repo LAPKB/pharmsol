@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.8](https://github.com/LAPKB/pharmsol/compare/v0.7.7...v0.7.8) - 2025-02-28
+
+### Fixed
+
+- fix infusions for SDEs ([#27](https://github.com/LAPKB/pharmsol/pull/27))
+
 ## [0.7.7](https://github.com/LAPKB/pharmsol/compare/v0.7.6...v0.7.7) - 2025-02-23
 
 ### Other
