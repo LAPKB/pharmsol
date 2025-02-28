@@ -1,6 +1,7 @@
 use crate::{
     data::Covariates,
     simulator::{Diffusion, Drift},
+    Infusion,
 };
 use nalgebra::DVector;
 use rand::rng;
@@ -13,7 +14,7 @@ pub struct EM {
     params: DVector<f64>,
     state: DVector<f64>,
     cov: Covariates,
-    rateiv: DVector<f64>,
+    infusions: Vec<Infusion>,
     rtol: f64,
     atol: f64,
     max_step: f64,
@@ -28,7 +29,7 @@ impl EM {
         params: DVector<f64>,
         initial_state: DVector<f64>,
         cov: Covariates,
-        rateiv: DVector<f64>,
+        infusions: Vec<Infusion>,
         rtol: f64,
         atol: f64,
     ) -> Self {
@@ -38,7 +39,7 @@ impl EM {
             params,
             state: initial_state,
             cov,
-            rateiv,
+            infusions,
             rtol,
             atol,
             max_step: 0.1,  // Can be made configurable
@@ -66,13 +67,20 @@ impl EM {
 
     fn euler_maruyama_step(&self, time: f64, dt: f64, state: &mut DVector<f64>) {
         let n = state.len();
+        let mut rateiv = DVector::from_vec(vec![0.0, 0.0, 0.0]);
+        //TODO: This should be pre-calculated
+        for infusion in &self.infusions {
+            if time >= infusion.time() && time <= infusion.duration() + infusion.time() {
+                rateiv[infusion.input()] += infusion.amount() / infusion.duration();
+            }
+        }
         let mut drift_term = DVector::zeros(n);
         (self.drift)(
             state,
             &self.params,
             time,
             &mut drift_term,
-            self.rateiv.clone(),
+            rateiv,
             &self.cov,
         );
 
