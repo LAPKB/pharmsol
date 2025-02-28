@@ -165,7 +165,7 @@ fn main() {
     let ode = three_c_ode();
     let sde = three_c_sde();
 
-    let data = read_pmetrics("../PMcore/examples/w_vanco_sde/test.csv").unwrap();
+    let data = read_pmetrics("../PMcore/examples/vanco_sde/data.csv").unwrap();
     let subject = data.get_subject("51").unwrap();
 
     let ode_predictions = ode.estimate_predictions(&subject, &spp_ode);
