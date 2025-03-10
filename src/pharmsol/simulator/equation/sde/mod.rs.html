@@ -294,14 +294,7 @@
 <a href="#293" id="293">293</a>
 <a href="#294" id="294">294</a>
 <a href="#295" id="295">295</a>
-<a href="#296" id="296">296</a>
-<a href="#297" id="297">297</a>
-<a href="#298" id="298">298</a>
-<a href="#299" id="299">299</a>
-<a href="#300" id="300">300</a>
-<a href="#301" id="301">301</a>
-<a href="#302" id="302">302</a>
-<a href="#303" id="303">303</a></pre></div><pre class="rust"><code><span class="kw">mod </span>em;
+<a href="#296" id="296">296</a></pre></div><pre class="rust"><code><span class="kw">mod </span>em;
 
 <span class="kw">use </span>std::collections::HashMap;
 
@@ -337,13 +330,6 @@
     <span class="kw">if </span>ti == tf {
         <span class="kw">return </span>x;
     }
-    <span class="kw">let </span><span class="kw-2">mut </span>rateiv = V::from_vec(<span class="macro">vec!</span>[<span class="number">0.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>]);
-    <span class="comment">//TODO: This should be pre-calculated
-    </span><span class="kw">for </span>infusion <span class="kw">in </span>infusions {
-        <span class="kw">if </span>tf &gt;= infusion.time() &amp;&amp; tf &lt;= infusion.duration() + infusion.time() {
-            rateiv[infusion.input()] += infusion.amount() / infusion.duration();
-        }
-    }
 
     <span class="kw">let </span><span class="kw-2">mut </span>sde = em::EM::new(
         <span class="kw-2">*</span>drift,
@@ -351,7 +337,7 @@
         DVector::from_column_slice(support_point),
         x,
         cov.clone(),
-        rateiv,
+        infusions.to_vec(),
         <span class="number">1e-2</span>,
         <span class="number">1e-2</span>,
     );

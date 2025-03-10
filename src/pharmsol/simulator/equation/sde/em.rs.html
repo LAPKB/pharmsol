@@ -123,9 +123,18 @@
 <a href="#122" id="122">122</a>
 <a href="#123" id="123">123</a>
 <a href="#124" id="124">124</a>
-<a href="#125" id="125">125</a></pre></div><pre class="rust"><code><span class="kw">use crate</span>::{
+<a href="#125" id="125">125</a>
+<a href="#126" id="126">126</a>
+<a href="#127" id="127">127</a>
+<a href="#128" id="128">128</a>
+<a href="#129" id="129">129</a>
+<a href="#130" id="130">130</a>
+<a href="#131" id="131">131</a>
+<a href="#132" id="132">132</a>
+<a href="#133" id="133">133</a></pre></div><pre class="rust"><code><span class="kw">use crate</span>::{
     data::Covariates,
     simulator::{Diffusion, Drift},
+    Infusion,
 };
 <span class="kw">use </span>nalgebra::DVector;
 <span class="kw">use </span>rand::rng;
@@ -138,7 +147,7 @@
     params: DVector&lt;f64&gt;,
     state: DVector&lt;f64&gt;,
     cov: Covariates,
-    rateiv: DVector&lt;f64&gt;,
+    infusions: Vec&lt;Infusion&gt;,
     rtol: f64,
     atol: f64,
     max_step: f64,
@@ -153,7 +162,7 @@
         params: DVector&lt;f64&gt;,
         initial_state: DVector&lt;f64&gt;,
         cov: Covariates,
-        rateiv: DVector&lt;f64&gt;,
+        infusions: Vec&lt;Infusion&gt;,
         rtol: f64,
         atol: f64,
     ) -&gt; <span class="self">Self </span>{
@@ -163,7 +172,7 @@
             params,
             state: initial_state,
             cov,
-            rateiv,
+            infusions,
             rtol,
             atol,
             max_step: <span class="number">0.1</span>,  <span class="comment">// Can be made configurable
@@ -191,13 +200,20 @@
 
     <span class="kw">fn </span>euler_maruyama_step(<span class="kw-2">&amp;</span><span class="self">self</span>, time: f64, dt: f64, state: <span class="kw-2">&amp;mut </span>DVector&lt;f64&gt;) {
         <span class="kw">let </span>n = state.len();
+        <span class="kw">let </span><span class="kw-2">mut </span>rateiv = DVector::from_vec(<span class="macro">vec!</span>[<span class="number">0.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>]);
+        <span class="comment">//TODO: This should be pre-calculated
+        </span><span class="kw">for </span>infusion <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.infusions {
+            <span class="kw">if </span>time &gt;= infusion.time() &amp;&amp; time &lt;= infusion.duration() + infusion.time() {
+                rateiv[infusion.input()] += infusion.amount() / infusion.duration();
+            }
+        }
         <span class="kw">let </span><span class="kw-2">mut </span>drift_term = DVector::zeros(n);
         (<span class="self">self</span>.drift)(
             state,
             <span class="kw-2">&amp;</span><span class="self">self</span>.params,
             time,
             <span class="kw-2">&amp;mut </span>drift_term,
-            <span class="self">self</span>.rateiv.clone(),
+            rateiv,
             <span class="kw-2">&amp;</span><span class="self">self</span>.cov,
         );
 
