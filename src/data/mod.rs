@@ -16,7 +16,7 @@
 //! Creating a subject with the builder pattern:
 //!
 //! ```rust
-//! use pharmsol::data::*;
+//! use pharmsol::*;
 //!
 //! let subject = Subject::builder("patient_001")
 //!     .bolus(0.0, 100.0, 0)

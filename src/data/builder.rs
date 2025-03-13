@@ -13,7 +13,7 @@ pub trait SubjectBuilderExt {
     /// # Example
     ///
     /// ```rust
-    /// use pharmsol::data::*;
+    /// use pharmsol::*;
     ///
     /// let subject = Subject::builder("patient_001")
     ///     .bolus(0.0, 100.0, 0)
@@ -133,7 +133,8 @@ impl SubjectBuilder {
     /// # Example
     ///
     /// ```rust
-    /// use pharmsol::data::*;
+    /// use pharmsol::*;
+    ///
     ///
     /// let subject = Subject::builder("patient_001")
     ///     .bolus(0.0, 100.0, 0)  // First dose at time 0
@@ -198,7 +199,7 @@ impl SubjectBuilder {
     /// # Example
     ///
     /// ```rust
-    /// use pharmsol::data::*;
+    /// use pharmsol::*;
     ///
     /// let subject = Subject::builder("patient_001")
     ///     .covariate("weight", 0.0, 70.0)   // Weight at baseline
