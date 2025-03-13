@@ -23,7 +23,7 @@ struct SppOptimizer<'a, E: Equation> {
 ///
 /// This allows the SppOptimizer to be used with optimization algorithms
 /// from the argmin library to find optimal subject-specific parameters.
-impl<'a, E: Equation> CostFunction for SppOptimizer<'a, E> {
+impl<E: Equation> CostFunction for SppOptimizer<'_, E> {
     type Param = Vec<f64>;
     type Output = f64;
 

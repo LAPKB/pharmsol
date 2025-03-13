@@ -59,8 +59,8 @@ fn two_compartment() {
 }
 
 fn criterion_benchmark(c: &mut Criterion) {
-    c.bench_function("one_compartment", |b| b.iter(|| one_compartment()));
-    c.bench_function("two_compartment", |b| b.iter(|| two_compartment()));
+    c.bench_function("one_compartment", |b| b.iter(one_compartment));
+    c.bench_function("two_compartment", |b| b.iter(two_compartment));
 }
 
 criterion_group!(benches, criterion_benchmark);
