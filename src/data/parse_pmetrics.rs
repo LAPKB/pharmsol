@@ -60,7 +60,7 @@ pub enum PmetricsError {
 /// # Example
 ///
 /// ```rust,no_run
-/// use pharmsol::data::parse_pmetrics::read_pmetrics;
+/// use pharmsol::prelude::data::read_pmetrics;
 ///
 /// let data = read_pmetrics("path/to/pmetrics_data.csv").unwrap();
 /// println!("Number of subjects: {}", data.get_subjects().len());

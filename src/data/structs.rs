@@ -11,7 +11,7 @@ use std::{collections::HashMap, fmt};
 /// # Examples
 ///
 /// ```
-/// use pharmsol::data::*;
+/// use pharmsol::*;
 ///
 /// // Create subjects
 /// let subject1 = Subject::builder("patient_001")
