@@ -123,7 +123,7 @@ impl SubjectBuilder {
         self.event(event)
     }
 
-    /// Repeat the last event multiple times with a time increment
+    /// Repeat the last event `n` times, separated by some interval `delta`
     ///
     /// # Arguments
     ///
@@ -175,6 +175,8 @@ impl SubjectBuilder {
     ///
     /// This finalizes the current occasion, adds it to the subject,
     /// and creates a new occasion for subsequent events.
+    /// This is useful if a patient has new observations at some other occasion.
+    /// Note that all states are reset!
     pub fn reset(mut self) -> Self {
         let block_index = self.current_occasion.index() + 1;
         self.current_occasion.sort();
