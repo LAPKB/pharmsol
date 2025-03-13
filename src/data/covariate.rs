@@ -1,13 +1,18 @@
 use serde::Deserialize;
 use std::{collections::HashMap, fmt};
 
+/// Method used to interpolate covariate values between observations
 #[derive(serde::Serialize, Clone, Debug, Deserialize)]
 pub enum InterpolationMethod {
+    /// Linear interpolation between two points with slope and intercept
     Linear { slope: f64, intercept: f64 },
+    /// Constant value carried forward
     CarryForward { value: f64 },
 }
 
-/// A [CovariateSegment] is a segment of the piece-wise interpolation of a [Covariate]
+/// A segment of a piecewise interpolation function for a covariate
+///
+/// Each segment defines how to interpolate values within its time range.
 #[derive(serde::Serialize, Clone, Debug, Deserialize)]
 pub struct CovariateSegment {
     from: f64,
@@ -16,10 +21,20 @@ pub struct CovariateSegment {
 }
 
 impl CovariateSegment {
+    /// Create a new covariate segment
+    ///
+    /// # Arguments
+    ///
+    /// * `from` - Start time of the segment
+    /// * `to` - End time of the segment
+    /// * `method` - Interpolation method to use within this segment
     pub(crate) fn new(from: f64, to: f64, method: InterpolationMethod) -> Self {
         CovariateSegment { from, to, method }
     }
 
+    /// Interpolate the covariate value at a specific time within this segment
+    ///
+    /// Returns None if the time is outside the segment's range.
     fn interpolate(&self, time: f64) -> Option<f64> {
         if !self.in_interval(time) {
             return None;
@@ -31,21 +46,31 @@ impl CovariateSegment {
         }
     }
 
+    /// Check if a given time is within this segment's interval
     fn in_interval(&self, time: f64) -> bool {
         self.from <= time && time <= self.to
     }
+
+    /// Get the start time of the segment
     pub fn from(&self) -> f64 {
         self.from
     }
+
+    /// Get the end time of the segment
     pub fn to(&self) -> f64 {
         self.to
     }
+
+    /// Get the interpolation method used in this segment
     pub fn method(&self) -> &InterpolationMethod {
         &self.method
     }
 }
 
-/// A [Covariate] is a collection of [CovariateSegment]s, which allows for interpolation of covariate values
+/// A time-varying covariate consisting of multiple segments
+///
+/// The covariate provides interpolated values across its entire time range by
+/// combining multiple segments with different interpolation methods.
 #[derive(serde::Serialize, Clone, Debug, Deserialize)]
 pub struct Covariate {
     name: String,
@@ -53,32 +78,38 @@ pub struct Covariate {
 }
 
 impl Covariate {
+    /// Create a new covariate with the given name and segments
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The name of the covariate
+    /// * `segments` - Vector of covariate segments defining the interpolation
     pub(crate) fn new(name: String, segments: Vec<CovariateSegment>) -> Self {
         Covariate { name, segments }
     }
+
+    /// Add a segment to this covariate
     pub(crate) fn add_segment(&mut self, segment: CovariateSegment) {
         self.segments.push(segment);
     }
-    // Check that no segments are overlapping
-    // fn check(&self) -> bool {
-    //     let mut sorted = self.segments.clone();
-    //     sorted.sort_by(|a, b| a.from.partial_cmp(&b.from).unwrap());
-    //     for i in 0..sorted.len() - 1 {
-    //         if sorted[i].to > sorted[i + 1].from {
-    //             return false;
-    //         }
-    //     }
-    //     true
-    // }
+
+    /// Interpolate the covariate value at a specific time
+    ///
+    /// Returns the interpolated value if the time falls within any segment's range,
+    /// otherwise returns None.
     pub fn interpolate(&self, time: f64) -> Option<f64> {
         self.segments
             .iter()
             .find(|&segment| segment.in_interval(time))
             .and_then(|segment| segment.interpolate(time))
     }
+
+    /// Get the name of the covariate
     pub fn name(&self) -> &str {
         &self.name
     }
+
+    /// Get all segments in this covariate
     pub fn segments(&self) -> Vec<&CovariateSegment> {
         self.segments.iter().collect()
     }
@@ -112,7 +143,10 @@ impl fmt::Display for Covariate {
     }
 }
 
-/// [Covariates] is a collection of [Covariate]
+/// A collection of named covariates
+///
+/// This struct provides methods to manage multiple covariates and retrieve
+/// interpolated values for all covariates at specific time points.
 #[derive(serde::Serialize, Clone, Debug, Deserialize)]
 pub struct Covariates {
     // Mapping from covariate name to its segments
@@ -128,11 +162,14 @@ impl Default for Covariates {
 }
 
 impl Covariates {
+    /// Create a new empty collection of covariates
     pub fn new() -> Self {
         Covariates {
             covariates: HashMap::new(),
         }
     }
+
+    /// Get all covariates in this collection
     pub fn covariates(&self) -> HashMap<String, &Covariate> {
         self.covariates
             .iter()
@@ -140,23 +177,31 @@ impl Covariates {
             .collect()
     }
 
+    /// Add a covariate to the collection
     pub(crate) fn add_covariate(&mut self, name: String, covariate: Covariate) {
         self.covariates.insert(name, covariate);
     }
 
+    /// Get a specific covariate by name
     pub fn get_covariate(&self, name: &str) -> Option<&Covariate> {
         self.covariates.get(name)
     }
 
+    /// Convert all covariates to a HashMap of values at a specific time
+    ///
+    /// # Arguments
+    ///
+    /// * `time` - The time at which to interpolate all covariate values
+    ///
+    /// # Returns
+    ///
+    /// A HashMap mapping covariate names to their interpolated values at the specified time
     pub fn to_hashmap(&self, time: f64) -> HashMap<String, f64> {
         self.covariates
             .iter()
             .map(|(name, covariate)| (name.clone(), covariate.interpolate(time).unwrap()))
             .collect()
     }
-    // fn get_covariate_names(&self) -> Vec<String> {
-    //     self.covariates.keys().cloned().collect()
-    // }
 }
 
 impl fmt::Display for Covariates {

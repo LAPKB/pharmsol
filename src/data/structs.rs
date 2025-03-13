@@ -3,33 +3,86 @@ use csv::WriterBuilder;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt};
 
-/// [Data] is a collection of [Subject]s, which are collections of [Occasion]s, which are collections of [Event]s
+/// The main data container for pharmacokinetic/pharmacodynamic data
 ///
-/// This is the main data structure used to store the data, and is used to pass data to the model
-/// [Data] implements the [DataTrait], which provides methods to access the data
+/// [Data] is a collection of [Subject] instances, which themselves contain [Occasion] instances with [Event]s.
+/// This structure represents the complete dataset for pharmacometric analysis.
+///
+/// # Examples
+///
+/// ```
+/// use pharmsol::data::*;
+///
+/// // Create subjects
+/// let subject1 = Subject::builder("patient_001")
+///     .bolus(0.0, 100.0, 0)
+///     .observation(1.0, 5.0, 0)
+///     .build();
+///     
+/// let subject2 = Subject::builder("patient_002")
+///     .bolus(0.0, 120.0, 0)
+///     .observation(1.0, 6.0, 0)
+///     .build();
+///     
+/// // Create dataset with multiple subjects
+/// let mut data = Data::new(vec![subject1]);
+/// data.add_subject(subject2);
+///
+/// // Filter data
+/// let filtered = data.filter_include(&["patient_001".to_string()]);
+/// ```
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct Data {
     subjects: Vec<Subject>,
 }
 impl Data {
-    /// Constructs a new [Data] object from a vector of [Subject]s
+    /// Constructs a new `Data` object from a vector of `Subject`s
     ///
-    /// It is recommended that the subjects are constructed using the [builder::SubjectBuilder] to ensure that the data is correctly formatted
+    /// It is recommended to construct subjects using the `SubjectBuilder` to ensure proper data formatting.
+    ///
+    /// # Arguments
+    ///
+    /// * `subjects` - Vector of subjects to include in the dataset
     pub fn new(subjects: Vec<Subject>) -> Self {
         Data { subjects }
     }
-    /// Get a vector of references to all [Subject]s in the [Data]
+
+    /// Get a vector of references to all subjects in the dataset
+    ///
+    /// # Returns
+    ///
+    /// Vector of references to all subjects
     pub fn get_subjects(&self) -> Vec<&Subject> {
         self.subjects.iter().collect()
     }
-    /// Add a [Subject] to the [Data]
+
+    /// Add a subject to the dataset
+    ///
+    /// # Arguments
+    ///
+    /// * `subject` - Subject to add to the dataset
     pub fn add_subject(&mut self, subject: Subject) {
         self.subjects.push(subject);
     }
 
+    /// Get a specific subject by ID
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The ID of the subject to retrieve
+    ///
+    /// # Returns
+    ///
+    /// An `Option` containing a reference to the subject if found, or `None` if not found
     pub fn get_subject(&self, id: &str) -> Option<&Subject> {
         self.subjects.iter().find(|subject| subject.id() == id)
     }
+
+    /// Write the dataset to a file in Pmetrics format
+    ///
+    /// # Arguments
+    ///
+    /// * `file` - The file to write to
     pub fn write_pmetrics(&self, file: &std::fs::File) {
         let mut writer = WriterBuilder::new().has_headers(true).from_writer(file);
 
@@ -109,7 +162,16 @@ impl Data {
             }
         }
     }
-    /// Filter the [Data] to include only the [Subject]s with IDs in the include vector
+
+    /// Filter the dataset to include only subjects with specific IDs
+    ///
+    /// # Arguments
+    ///
+    /// * `include` - Vector of subject IDs to include
+    ///
+    /// # Returns
+    ///
+    /// A new `Data` object containing only the specified subjects
     pub fn filter_include(&self, include: &[String]) -> Data {
         let subjects = self
             .subjects
@@ -119,7 +181,16 @@ impl Data {
             .collect();
         Data::new(subjects)
     }
-    /// Filter the [Data] to exclude the [Subject]s with IDs in the exclude vector
+
+    /// Filter the dataset to exclude subjects with specific IDs
+    ///
+    /// # Arguments
+    ///
+    /// * `exclude` - Vector of subject IDs to exclude
+    ///
+    /// # Returns
+    ///
+    /// A new `Data` object with the specified subjects excluded
     pub fn filter_exclude(&self, exclude: Vec<String>) -> Data {
         let subjects = self
             .subjects
@@ -129,7 +200,19 @@ impl Data {
             .collect();
         Data::new(subjects)
     }
-    /// Expand the data by adding observations at intervals of idelta
+
+    /// Expand the dataset by adding observations at regular time intervals
+    ///
+    /// This is useful for creating a dense grid of time points for simulations.
+    ///
+    /// # Arguments
+    ///
+    /// * `idelta` - Time interval between added observations
+    /// * `tad` - Additional time to add after the last observation
+    ///
+    /// # Returns
+    ///
+    /// A new `Data` object with expanded observations
     pub fn expand(&self, idelta: f64, tad: f64) -> Data {
         if idelta <= 0.0 {
             return self.clone();
@@ -211,6 +294,7 @@ impl Data {
         Data::new(new_subjects)
     }
 
+    /// Get the number of subjects in the dataset
     pub(crate) fn len(&self) -> usize {
         self.subjects.len()
     }
@@ -241,36 +325,67 @@ impl Data {
     // }
 }
 
-/// [Subject] is a collection of blocks for one individual
+/// A subject in a pharmacometric dataset
+///
+/// A [Subject] represents a single individual with one or more occasions of data,
+/// each containing events (doses, observations) and covariates.
 #[derive(serde::Serialize, Debug, Deserialize, Clone)]
 pub struct Subject {
     id: String,
     occasions: Vec<Occasion>,
 }
 impl Subject {
+    /// Create a new subject with the given ID and occasions
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The subject identifier
+    /// * `occasions` - Vector of occasions for this subject
     pub(crate) fn new(id: String, occasions: Vec<Occasion>) -> Self {
         Subject { id, occasions }
     }
 
-    /// Get a vector of references to all [Occasion]s in the [Subject]
+    /// Get a vector of references to all occasions for this subject
+    ///
+    /// # Returns
+    ///
+    /// Vector of references to all occasions
     pub fn occasions(&self) -> Vec<&Occasion> {
         self.occasions.iter().collect()
     }
 
-    /// Get the ID of the [Subject]
+    /// Get the ID of the subject
+    ///
+    /// # Returns
+    ///
+    /// The subject's identifier
     pub fn id(&self) -> &String {
         &self.id
     }
 
-    /// Create a new [Subject] from one or more [Occasion]s
+    /// Create a new subject from one or more occasions
     ///
-    /// This can be useful if you want to create a [Subject] from a single [Occasion], or a vector of select [Occasion]s
+    /// This is useful when you want to create a subject from specific occasions
+    /// rather than building it completely from scratch.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The subject identifier
+    /// * `occasions` - Vector of occasions to include in this subject
+    ///
+    /// # Returns
+    ///
+    /// A new subject containing the specified occasions
     pub fn from_occasions(id: String, occasions: Vec<Occasion>) -> Self {
         Subject { id, occasions }
     }
 }
 
-/// An [Occasion] is a collection of events, for a given [Subject], that are from a specific occasion
+/// An occasion within a subject's dataset
+///
+/// An [Occasion] represents a distinct period of data collection for a subject,
+/// such as a hospital visit or dosing regimen. It contains events (doses, observations)
+/// and time-varying covariates.
 #[derive(serde::Serialize, Debug, Deserialize, Clone)]
 pub struct Occasion {
     events: Vec<Event>,
@@ -279,7 +394,13 @@ pub struct Occasion {
 }
 
 impl Occasion {
-    // Constructor
+    /// Create a new occasion
+    ///
+    /// # Arguments
+    ///
+    /// * `events` - Vector of events for this occasion
+    /// * `covariates` - Covariates for this occasion
+    /// * `index` - The occasion index (0-based)
     pub(crate) fn new(events: Vec<Event>, covariates: Covariates, index: usize) -> Self {
         Occasion {
             events,
@@ -288,15 +409,30 @@ impl Occasion {
         }
     }
 
+    /// Get a vector of references to all events in this occasion
+    ///
+    /// # Returns
+    ///
+    /// Vector of references to all events
     pub fn events(&self) -> Vec<&Event> {
         self.events.iter().collect()
     }
 
     /// Get the index of the occasion
+    ///
+    /// # Returns
+    ///
+    /// The occasion index (0-based)
     pub fn index(&self) -> usize {
         self.index
     }
 
+    /// Add a covariate to this occasion
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - Name of the covariate
+    /// * `covariate` - The covariate to add
     pub(crate) fn add_covariate(&mut self, name: String, covariate: Covariate) {
         self.covariates.add_covariate(name, covariate);
     }
@@ -365,6 +501,17 @@ impl Occasion {
     }
     // TODO: This clones the occasion, which is not ideal
 
+    /// Get events with modifications for lag time and bioavailability
+    ///
+    /// # Arguments
+    ///
+    /// * `lagtime` - Optional map of compartment-specific lag times
+    /// * `bioavailability` - Optional map of compartment-specific bioavailability factors
+    /// * `ignore` - Whether to exclude events marked as "ignore"
+    ///
+    /// # Returns
+    ///
+    /// Vector of events, potentially filtered and with times adjusted for lag and bioavailability
     pub fn get_events(
         &self,
         lagtime: &Option<HashMap<usize, f64>>,
@@ -390,6 +537,11 @@ impl Occasion {
         }
     }
 
+    /// Get the covariates for this occasion
+    ///
+    /// # Returns
+    ///
+    /// Reference to the occasion's covariates, if any
     pub fn get_covariates(&self) -> Option<&Covariates> {
         Some(&self.covariates)
     }
@@ -399,6 +551,11 @@ impl Occasion {
         self.events.push(event);
     }
 
+    /// Get the last event in this occasion
+    ///
+    /// # Returns
+    ///
+    /// Reference to the last event, if any
     pub(crate) fn last_event(&self) -> Option<&Event> {
         self.events.last()
     }

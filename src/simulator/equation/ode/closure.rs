@@ -10,6 +10,17 @@ use diffsol::{
 use std::{cell::RefCell, rc::Rc};
 
 use crate::data::{Covariates, Infusion};
+
+/// Closure wrapper for pharmacometric model ODE functions.
+///
+/// This structure adapts a pharmacometric model's differential equation function
+/// to the interface expected by the diffsol ODE solver library. It handles the calculation
+/// of infusion rates and provides access to covariates at each step of the integration.
+///
+/// # Type Parameters
+///
+/// * `M`: Matrix type used for linear algebra operations
+/// * `F`: Type of the right-hand side function for the ODEs
 pub(crate) struct PMClosure<M, F>
 where
     M: Matrix,
@@ -31,6 +42,20 @@ where
     M: Matrix,
     F: Fn(&M::V, &M::V, M::T, &mut M::V, M::V, &Covariates),
 {
+    /// Creates a new pharmacometric model closure.
+    ///
+    /// # Arguments
+    ///
+    /// * `func`: The differential equation function
+    /// * `nstates`: Number of state variables in the system
+    /// * `nout`: Number of output variables
+    /// * `p`: Parameter vector for the model
+    /// * `covariates`: Covariates that may influence the system
+    /// * `infusions`: Vector of infusion events to be applied during simulation
+    ///
+    /// # Returns
+    ///
+    /// A configured closure ready to be used with diffsol
     pub(crate) fn new(
         func: F,
         nstates: usize,
@@ -54,6 +79,9 @@ where
     }
 }
 
+/// Implementation of Op trait for PMClosure.
+///
+/// This provides information about the system dimensions and sparsity.
 impl<M, F> Op for PMClosure<M, F>
 where
     M: Matrix,
@@ -79,6 +107,10 @@ where
     }
 }
 
+/// Implementation of NonLinearOp for PMClosure.
+///
+/// This handles the evaluation of the right-hand side of the ODE system,
+/// calculating infusion rates and applying the model function.
 impl<M, F> NonLinearOp for PMClosure<M, F>
 where
     M: Matrix,
@@ -99,6 +131,9 @@ where
     }
 }
 
+/// Implementation of NonLinearOpJacobian for PMClosure.
+///
+/// This handles the calculation of the Jacobian matrix action for implicit ODE solvers.
 impl<M, F> NonLinearOpJacobian for PMClosure<M, F>
 where
     M: Matrix,

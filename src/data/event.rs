@@ -2,14 +2,23 @@ use std::fmt;
 
 use serde::Deserialize;
 
-/// An Event can be a Bolus, Infusion, or Observation
+/// Represents a pharmacokinetic/pharmacodynamic event
+///
+/// Events represent key occurrences in a PK/PD profile, including:
+/// - [Bolus] doses (instantaneous drug input)
+/// - [Infusion]s (continuous drug input over a duration)
+/// - [Observation]s (measured concentrations or other values)
 #[derive(serde::Serialize, Debug, Clone, Deserialize)]
 pub enum Event {
+    /// A bolus dose (instantaneous drug input)
     Bolus(Bolus),
+    /// An infusion (continuous drug input over a duration)
     Infusion(Infusion),
+    /// An observation of drug concentration or other measure
     Observation(Observation),
 }
 impl Event {
+    /// Get the time of the event
     pub(crate) fn get_time(&self) -> f64 {
         match self {
             Event::Bolus(bolus) => bolus.time,
@@ -17,6 +26,7 @@ impl Event {
             Event::Observation(observation) => observation.time,
         }
     }
+    /// Increment the event time by a specified delta
     pub(crate) fn inc_time(&mut self, dt: f64) {
         match self {
             Event::Bolus(bolus) => bolus.time += dt,
@@ -26,9 +36,9 @@ impl Event {
     }
 }
 
-/// An instantaenous input of drug
+/// Represents an instantaneous input of drug
 ///
-/// An amount of drug is added to a compartment at a specific time
+/// A [Bolus] is a discrete amount of drug added to a specific compartment at a specific time.
 #[derive(serde::Serialize, Debug, Clone, Deserialize)]
 pub struct Bolus {
     time: f64,
@@ -36,6 +46,13 @@ pub struct Bolus {
     input: usize,
 }
 impl Bolus {
+    /// Create a new bolus event
+    ///
+    /// # Arguments
+    ///
+    /// * `time` - Time of the bolus dose
+    /// * `amount` - Amount of drug administered
+    /// * `input` - The compartment number (zero-indexed) receiving the dose
     pub(crate) fn new(time: f64, amount: f64, input: usize) -> Self {
         Bolus {
             time,
@@ -43,15 +60,15 @@ impl Bolus {
             input,
         }
     }
-    /// Get the amount of the bolus, often the dose
+    /// Get the amount of drug in the bolus
     pub fn amount(&self) -> f64 {
         self.amount
     }
-    /// Get the input compartment of the bolus, i.e. the compartment the drug is added to
+    /// Get the compartment number (zero-indexed) that receives the bolus
     pub fn input(&self) -> usize {
         self.input
     }
-    /// Get the time of the bolus
+    /// Get the time of the bolus administration
     pub fn time(&self) -> f64 {
         self.time
     }
@@ -61,7 +78,9 @@ impl Bolus {
     }
 }
 
-/// A continuous dose of drug
+/// Represents a continuous dose of drug over time
+///
+/// An [Infusion] administers drug at a constant rate over a specified duration.
 #[derive(serde::Serialize, Debug, Clone, Deserialize)]
 pub struct Infusion {
     time: f64,
@@ -70,6 +89,14 @@ pub struct Infusion {
     duration: f64,
 }
 impl Infusion {
+    /// Create a new infusion event
+    ///
+    /// # Arguments
+    ///
+    /// * `time` - Start time of the infusion
+    /// * `amount` - Total amount of drug to be administered
+    /// * `input` - The compartment number (zero-indexed) receiving the dose
+    /// * `duration` - Duration of the infusion in time units
     pub(crate) fn new(time: f64, amount: f64, input: usize, duration: f64) -> Self {
         Infusion {
             time,
@@ -82,7 +109,7 @@ impl Infusion {
     pub fn amount(&self) -> f64 {
         self.amount
     }
-    /// Get the input compartment of the infusion, i.e. the compartment the drug is added to
+    /// Get the compartment number (zero-indexed) that receives the infusion
     pub fn input(&self) -> usize {
         self.input
     }
@@ -92,13 +119,13 @@ impl Infusion {
     }
     /// Get the start time of the infusion
     ///
-    /// The infusion starts at this time and until time + duration
+    /// The infusion continues from this time until time + duration.
     pub fn time(&self) -> f64 {
         self.time
     }
 }
 
-/// An observation of drug concentration or covariates
+/// Represents an observation of drug concentration or other measured value
 #[derive(serde::Serialize, Debug, Clone, Deserialize)]
 pub struct Observation {
     time: f64,
@@ -108,6 +135,15 @@ pub struct Observation {
     ignore: bool,
 }
 impl Observation {
+    /// Create a new observation
+    ///
+    /// # Arguments
+    ///
+    /// * `time` - Time of the observation
+    /// * `value` - Observed value (e.g., drug concentration)
+    /// * `outeq` - Output equation number (zero-indexed) corresponding to this observation
+    /// * `errorpoly` - Optional error polynomial coefficients (c0, c1, c2, c3)
+    /// * `ignore` - Whether to ignore this observation in calculations
     pub(crate) fn new(
         time: f64,
         value: f64,
@@ -127,19 +163,21 @@ impl Observation {
     pub fn time(&self) -> f64 {
         self.time
     }
-    /// Get the value of the observation, e.g. drug concentration
+    /// Get the value of the observation (e.g., drug concentration)
     pub fn value(&self) -> f64 {
         self.value
     }
-    /// Get the output equation number of the observation
+    /// Get the output equation number (zero-indexed) corresponding to this observation
     pub fn outeq(&self) -> usize {
         self.outeq
     }
-    /// Get the error polynomial coefficients of the observation
+    /// Get the error polynomial coefficients (c0, c1, c2, c3) if available
+    ///
+    /// The error polynomial is used to model the observation error.
     pub fn errorpoly(&self) -> Option<(f64, f64, f64, f64)> {
         self.errorpoly
     }
-    /// Get whether the observation should be ignored
+    /// Check if this observation should be ignored in calculations
     pub fn ignore(&self) -> bool {
         self.ignore
     }

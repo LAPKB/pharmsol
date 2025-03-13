@@ -19,9 +19,37 @@ use self::diffsol_traits::build_pm_ode;
 
 use super::{Equation, EquationPriv, EquationTypes, State};
 
+/// Relative tolerance used for ODE solving
 const RTOL: f64 = 1e-4;
+/// Absolute tolerance used for ODE solving
 const ATOL: f64 = 1e-4;
 
+/// Model equation implementation using ordinary differential equations (ODEs).
+///
+/// This struct encapsulates all components needed to define and solve a pharmacometric model
+/// using ordinary differential equations. It handles integration of the system from initial
+/// conditions through time, applying doses, and computing output equations.
+///
+/// The ODE implementation uses numerical integration with adaptive step size control to
+/// ensure accuracy and efficiency.
+///
+/// # Example
+///
+/// ```
+/// use pharmsol::simulator::{DiffEq, Lag, Fa, Init, Out, Neqs};
+/// use pharmsol::simulator::equation::ODE;
+///
+/// // Define model components (simplified for example)
+/// let diffeq: DiffEq = |state, params, time, out, rateiv, covs| { /* model equations */ };
+/// let lag: Lag = |params| std::collections::HashMap::new();
+/// let fa: Fa = |params| std::collections::HashMap::new();
+/// let init: Init = |params, time, covs, state| { /* initial conditions */ };
+/// let out: Out = |state, params, time, covs, out| { /* output equations */ };
+/// let neqs = (3, 2); // 3 state equations, 2 output equations
+///
+/// // Create ODE solver
+/// let ode_solver = ODE::new(diffeq, lag, fa, init, out, neqs);
+/// ```
 #[derive(Clone, Debug)]
 pub struct ODE {
     diffeq: DiffEq,
@@ -33,6 +61,20 @@ pub struct ODE {
 }
 
 impl ODE {
+    /// Creates a new ODE equation model.
+    ///
+    /// # Parameters
+    ///
+    /// - `diffeq`: Function defining the differential equations of the model system
+    /// - `lag`: Function that computes absorption lag times for different inputs
+    /// - `fa`: Function that computes bioavailability fractions for different inputs
+    /// - `init`: Function that initializes the state vector at the start of simulation
+    /// - `out`: Function that computes output equations from the current state
+    /// - `neqs`: Tuple containing (number of state equations, number of output equations)
+    ///
+    /// # Returns
+    ///
+    /// A configured ODE solver ready for simulation
     pub fn new(diffeq: DiffEq, lag: Lag, fa: Fa, init: Init, out: Out, neqs: Neqs) -> Self {
         Self {
             diffeq,
@@ -45,15 +87,34 @@ impl ODE {
     }
 }
 
+/// Implementation of the State trait for vector operations in ODE solving.
+///
+/// This enables the addition of bolus doses directly to state variables.
 impl State for V {
+    /// Adds a bolus dose to the specified input compartment in the state vector.
+    ///
+    /// # Arguments
+    ///
+    /// * `input`: Index of the compartment receiving the dose
+    /// * `amount`: Amount of drug to add
     #[inline(always)]
     fn add_bolus(&mut self, input: usize, amount: f64) {
         self[input] += amount;
     }
 }
 
-// Hash the support points by converting them to bits and summing them
-// The wrapping_add is used to avoid overflow, and prevent panics
+/// Computes a hash value for model parameters.
+///
+/// This function creates a deterministic hash from parameter values to enable
+/// caching of simulation results for identical parameter sets.
+///
+/// # Arguments
+///
+/// * `spp`: Slice containing parameter values
+///
+/// # Returns
+///
+/// A u64 hash value representing the parameter vector
 fn spphash(spp: &[f64]) -> u64 {
     let mut hasher = std::hash::DefaultHasher::new();
     spp.iter().for_each(|&value| {
@@ -71,6 +132,20 @@ fn spphash(spp: &[f64]) -> u64 {
     std::hash::Hasher::finish(&hasher)
 }
 
+/// Cached version of subject predictions.
+///
+/// This function caches simulation results for each unique combination of subject ID
+/// and parameter vector, avoiding redundant computations in optimization algorithms.
+///
+/// # Arguments
+///
+/// * `ode`: Reference to the ODE solver
+/// * `subject`: Subject data containing dosing and observation information
+/// * `support_point`: Parameter vector for the model
+///
+/// # Returns
+///
+/// Predictions for all observations in the subject
 #[inline(always)]
 #[cached(
     ty = "UnboundCache<String, SubjectPredictions>",
@@ -85,6 +160,19 @@ fn _subject_predictions(
     ode.simulate_subject(subject, support_point, None).0
 }
 
+/// Computes likelihood of observed data given model parameters.
+///
+/// # Arguments
+///
+/// * `ode`: Reference to the ODE solver
+/// * `subject`: Subject data containing observations
+/// * `support_point`: Parameter vector for the model
+/// * `error_model`: Error model to use for likelihood calculations
+/// * `cache`: Whether to use cached predictions
+///
+/// # Returns
+///
+/// Log-likelihood of the subject data given the model and parameters
 fn _estimate_likelihood(
     ode: &ODE,
     subject: &Subject,
@@ -100,11 +188,13 @@ fn _estimate_likelihood(
     ypred.likelihood(error_model)
 }
 
+/// Type definitions for ODE equation system.
 impl EquationTypes for ODE {
     type S = V;
     type P = SubjectPredictions;
 }
 
+/// Private implementation of ODE equation solver.
 impl EquationPriv for ODE {
     #[inline(always)]
     fn get_lag(&self, spp: &[f64]) -> Option<HashMap<usize, f64>> {
@@ -200,7 +290,20 @@ impl EquationPriv for ODE {
     }
 }
 
+/// Implementation of the Equation trait for ODE models.
 impl Equation for ODE {
+    /// Estimates the likelihood of observed data given a model and parameters.
+    ///
+    /// # Arguments
+    ///
+    /// * `subject`: Subject data containing observations
+    /// * `support_point`: Parameter vector for the model
+    /// * `error_model`: Error model to use for likelihood calculations
+    /// * `cache`: Whether to cache likelihood results for reuse
+    ///
+    /// # Returns
+    ///
+    /// The log-likelihood of the observed data given the model and parameters
     fn estimate_likelihood(
         &self,
         subject: &Subject,
