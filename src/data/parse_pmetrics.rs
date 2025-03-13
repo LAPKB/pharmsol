@@ -366,23 +366,21 @@ impl Row {
                             id: self.id.clone(),
                             time: self.time,
                         })?,
-                        self.input.ok_or_else(|| PmetricsError::MissingBolusInput {
+                        self.input.ok_or(PmetricsError::MissingBolusInput {
                             id: self.id,
                             time: self.time,
                         })? - 1,
                     ))
                 };
-                if self.addl.is_some() && self.ii.is_some() {
-                    if self.addl.unwrap_or(0) != 0 && self.ii.unwrap_or(0.0) > 0.0 {
-                        let mut ev = event.clone();
-                        let interval = &self.ii.unwrap().abs();
-                        let repetitions = &self.addl.unwrap().abs();
-                        let direction = &self.addl.unwrap().signum();
+                if self.addl.is_some() && self.ii.is_some() && self.addl.unwrap_or(0) != 0 && self.ii.unwrap_or(0.0) > 0.0 {
+                    let mut ev = event.clone();
+                    let interval = &self.ii.unwrap().abs();
+                    let repetitions = &self.addl.unwrap().abs();
+                    let direction = &self.addl.unwrap().signum();
 
-                        for _ in 0..*repetitions {
-                            ev.inc_time((*direction as f64) * interval);
-                            events.push(ev.clone());
-                        }
+                    for _ in 0..*repetitions {
+                        ev.inc_time((*direction as f64) * interval);
+                        events.push(ev.clone());
                     }
                 }
                 events.push(event);
@@ -494,12 +492,12 @@ mod tests {
 
         let data = data.unwrap();
         let subjects = data.get_subjects();
-        let first_subject = subjects.get(0).unwrap();
+        let first_subject = subjects.first().unwrap();
         let second_subject = subjects.get(1).unwrap();
         let s1_occasions = first_subject.occasions();
         let s2_occasions = second_subject.occasions();
-        let first_scenario = s1_occasions.get(0).unwrap();
-        let second_scenario = s2_occasions.get(0).unwrap();
+        let first_scenario = s1_occasions.first().unwrap();
+        let second_scenario = s2_occasions.first().unwrap();
 
         let s1_times = first_scenario
             .events()
