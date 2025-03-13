@@ -1,77 +1,21 @@
-# Contributing to PharmSol
-
-Thank you for your interest in contributing to PharmSol! This document provides guidelines and instructions for contributing to the project.
+# Contributing
+Thank you for your interest in contributing to `pharmsol`! This document provides guidelines and instructions for contributing to the project.
 
 ## Code of Conduct
 
-This project follows a Code of Conduct that all contributors are expected to adhere to. By participating, you are expected to uphold this code.
+Contributions to the project are expected to follow the [Rust Code of Conduct](https://www.rust-lang.org/policies/code-of-conduct).
 
-## How to Contribute
+## How to contribute
 
-### Reporting Bugs
+As an open-source project, we welcome contributions from everyone adhering to the code of conduct. Contributions can take many forms, including bug reports, feature requests, documentation improvements, and code contributions.
 
-If you find a bug, please create an issue in the GitHub repository with the following information:
+When reporting a bug or requesting a feature, please be as detailed as possible. Include information about the environment, the expected behavior, and the actual behavior. If possible, include a minimal code example that reproduces the issue.
 
-- A clear, descriptive title
-- A detailed description of the bug
-- Steps to reproduce the behavior
-- Expected behavior
-- Screenshots (if applicable)
-- Environment details (OS, Rust version, etc.)
+Code contributions should be submitted as pull requests, and may be submitted for review at any time. Please ensure that code is well-documented, tested, and formatted. The project follows the standard Rust code style. Please ensure your code is formatted using `rustfmt`.
 
-### Suggesting Enhancements
+## Implementing a new backend
 
-Enhancement suggestions are tracked as GitHub issues. When creating an enhancement suggestion, include:
-
-- A clear, descriptive title
-- A detailed description of the proposed enhancement
-- An explanation of why this enhancement would be useful
-- Possible implementation details or approaches
-
-### Code Contributions
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Implement your changes
-4. Add tests for your changes
-5. Ensure all tests pass (`cargo test`)
-6. Format your code with rustfmt (`cargo fmt`)
-7. Check your code with clippy (`cargo clippy`)
-8. Commit your changes (`git commit -m 'Add some amazing feature'`)
-9. Push to the branch (`git push origin feature/amazing-feature`)
-10. Open a Pull Request
-
-## Development Guidelines
-
-### Code Style
-
-PharmSol follows the standard Rust code style. Please ensure your code is formatted using `rustfmt`:
-
-```bash
-cargo fmt
-```
-
-And check for common issues using `clippy`:
-
-```bash
-cargo clippy --all-targets --all-features
-```
-
-### Documentation
-
-- All public API functions, types, and traits should be documented with rustdoc comments
-- Include examples in documentation when appropriate
-- Document complex algorithms or non-obvious behavior
-
-### Testing
-
-- Write unit tests for new functionality
-- Ensure all tests pass before submitting pull requests
-- Consider adding performance tests for performance-critical code
-
-### New Backends
-
-PharmSol is designed to be extensible with new simulation backends. If you're contributing a new backend:
+`pharmsol` is designed to be extensible with new simulation backends.
 
 1. Implement the appropriate traits (`Equation`, `EquationTypes`, etc.)
 2. Add comprehensive tests comparing with analytical solutions when possible
@@ -79,27 +23,10 @@ PharmSol is designed to be extensible with new simulation backends. If you're co
 4. Document the mathematical approach and implementation details
 5. Provide example usage in the documentation
 
-## Extending PharmSol
+## License
 
-### Adding New Models
-
-To add new predefined models:
-
-1. Implement the model in a new module or extend an existing one
-2. Follow the same interface patterns as existing models
-3. Add comprehensive tests
-4. Document the model equations and assumptions
-
-### Improving Performance
-
-Performance optimizations are always welcome. When contributing performance improvements:
-
-1. Include before/after benchmarks
-2. Explain your approach and reasoning
-3. Ensure correctness is maintained with tests
+`pharmsol` is licensed under the GPL-3.0 license. By contributing to the project, you agree to license your contributions under the same license.
 
 ## Getting Help
 
-If you have questions about contributing, please open an issue or reach out to the maintainers.
-
-Thank you for contributing to PharmSol!
+If you have any questions about contributing, please open an issue or reach out to the maintainers.
