@@ -11,31 +11,71 @@ use thiserror::Error;
 #[allow(private_interfaces)]
 #[derive(Error, Debug)]
 pub enum PmetricsError {
+    /// Error encountered when reading CSV data
     #[error("CSV error: {0}")]
     ReadError(#[from] csv::Error),
+    /// Error during data deserialization
     #[error("Parse error: {0}")]
     SerdeError(#[from] serde::de::value::Error),
+    /// Encountered an unknown EVID value
     #[error("Unknown EVID: {evid} for ID {id} at time {time}")]
     UnknownEvid { evid: isize, id: String, time: f64 },
+    /// Required observation value (OUT) is missing
     #[error("Observation OUT is missing for {id} at time {time}")]
     MissingObservationOut { id: String, time: f64 },
+    /// Required observation output equation (OUTEQ) is missing
     #[error("Observation OUTEQ is missing in for {id} at time {time}")]
     MissingObservationOuteq { id: String, time: f64 },
+    /// Required infusion dose amount is missing
     #[error("Infusion amount (DOSE) is missing for {id} at time {time}")]
     MissingInfusionDose { id: String, time: f64 },
+    /// Required infusion input compartment is missing
     #[error("Infusion compartment (INPUT) is missing for {id} at time {time}")]
     MissingInfusionInput { id: String, time: f64 },
+    /// Required infusion duration is missing
     #[error("Infusion duration (DUR) is missing for {id} at time {time}")]
     MissingInfusionDur { id: String, time: f64 },
+    /// Required bolus dose amount is missing
     #[error("Bolus amount (DOSE) is missing for {id} at time {time}")]
     MissingBolusDose { id: String, time: f64 },
+    /// Required bolus input compartment is missing
     #[error("Bolus compartment (INPUT) is missing for {id} at time {time}")]
     MissingBolusInput { id: String, time: f64 },
 }
 
 /// Read a Pmetrics datafile and convert it to a [Data] object
 ///
-/// For specific details, see the [Row] struct.
+/// This function parses a Pmetrics-formatted CSV file and constructs a [Data] object containing the structured
+/// pharmacokinetic/pharmacodynamic data. The function handles various data formats including doses, observations,
+/// and covariates.
+///
+/// # Arguments
+///
+/// * `path` - The path to the Pmetrics CSV file
+///
+/// # Returns
+///
+/// * `Result<Data, PmetricsError>` - A result containing either the parsed [Data] object or an error
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use pharmsol::data::parse_pmetrics::read_pmetrics;
+///
+/// let data = read_pmetrics("path/to/pmetrics_data.csv").unwrap();
+/// println!("Number of subjects: {}", data.get_subjects().len());
+/// ```
+///
+/// # Format details
+///
+/// The Pmetrics format expects columns like ID, TIME, EVID, DOSE, DUR, etc. The function will:
+/// - Convert all headers to lowercase for case-insensitivity
+/// - Group rows by subject ID
+/// - Create occasions based on EVID=4 events
+/// - Parse covariates and create appropriate interpolations
+/// - Handle additional doses via ADDL and II fields
+///
+/// For specific column definitions, see the [Row] struct.
 #[allow(dead_code)]
 pub fn read_pmetrics(path: impl Into<String>) -> Result<Data, PmetricsError> {
     let path = path.into();

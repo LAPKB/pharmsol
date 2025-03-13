@@ -9,6 +9,32 @@ use diffsol::{
 };
 use std::rc::Rc;
 
+/// Builds an ODE problem for pharmacometric models using the diffsol library.
+///
+/// This function creates an ODE solver problem by wrapping the pharmacometric model
+/// functions into the appropriate closures and structures expected by diffsol.
+///
+/// # Type Parameters
+///
+/// * `M`: Matrix type used for linear algebra operations
+/// * `F`: Type of the right-hand side function for the ODEs
+/// * `I`: Type of the initial condition function
+///
+/// # Arguments
+///
+/// * `rhs`: Right-hand side function of the ODE system
+/// * `init`: Initial condition function
+/// * `p`: Parameter vector
+/// * `t0`: Initial time
+/// * `h0`: Initial step size
+/// * `rtol`: Relative tolerance for error control
+/// * `atol`: Absolute tolerance for error control
+/// * `cov`: Covariates that may influence the system
+/// * `infusions`: Vector of infusion events to be applied during simulation
+///
+/// # Returns
+///
+/// Result containing either the configured ODE solver problem or an error
 #[allow(clippy::type_complexity)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_pm_ode<M, F, I>(

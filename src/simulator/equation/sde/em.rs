@@ -6,7 +6,12 @@ use crate::{
 use nalgebra::DVector;
 use rand::rng;
 use rand_distr::{Distribution, Normal};
-/// Structure to hold the SDE system parameters and state
+
+/// Implementation of the Euler-Maruyama method for solving stochastic differential equations.
+///
+/// This structure holds the SDE system parameters and state, providing a numerical method
+/// for approximating solutions to stochastic differential equations with adaptive step size
+/// control for improved accuracy.
 #[derive(Clone)]
 pub struct EM {
     drift: Drift,
@@ -22,7 +27,22 @@ pub struct EM {
 }
 
 impl EM {
-    /// Creates a new SDE system
+    /// Creates a new SDE solver using the Euler-Maruyama method.
+    ///
+    /// # Arguments
+    ///
+    /// * `drift` - Function defining the deterministic component of the SDE
+    /// * `diffusion` - Function defining the stochastic component of the SDE
+    /// * `params` - Vector of model parameters
+    /// * `initial_state` - Initial state vector of the system
+    /// * `cov` - Covariates that may influence the system dynamics
+    /// * `infusions` - Vector of infusion events to be applied during simulation
+    /// * `rtol` - Relative tolerance for adaptive step size control
+    /// * `atol` - Absolute tolerance for adaptive step size control
+    ///
+    /// # Returns
+    ///
+    /// A new instance of the Euler-Maruyama solver configured with the given parameters.
     pub fn new(
         drift: Drift,
         diffusion: Diffusion,
@@ -47,6 +67,16 @@ impl EM {
         }
     }
 
+    /// Calculates the error between two approximations for adaptive step size control.
+    ///
+    /// # Arguments
+    ///
+    /// * `y1` - First approximation of the solution
+    /// * `y2` - Second approximation of the solution (typically more accurate)
+    ///
+    /// # Returns
+    ///
+    /// The maximum normalized error between the two approximations.
     fn calculate_error(&self, y1: &DVector<f64>, y2: &DVector<f64>) -> f64 {
         let n = y1.len();
         let mut err = 0.0f64;
@@ -59,12 +89,30 @@ impl EM {
         err
     }
 
+    /// Computes a new step size based on the current error.
+    ///
+    /// # Arguments
+    ///
+    /// * `dt` - Current step size
+    /// * `error` - Current error estimate
+    /// * `safety` - Safety factor to prevent overly aggressive step size changes
+    ///
+    /// # Returns
+    ///
+    /// The adjusted step size for the next iteration.
     fn compute_new_step(&self, dt: f64, error: f64, safety: f64) -> f64 {
         let mut new_dt = dt * safety * (1.0 / error).powf(0.5);
         new_dt = new_dt.clamp(self.min_step, self.max_step);
         new_dt
     }
 
+    /// Performs a single Euler-Maruyama integration step.
+    ///
+    /// # Arguments
+    ///
+    /// * `time` - Current simulation time
+    /// * `dt` - Step size
+    /// * `state` - Current state of the system (modified in-place)
     fn euler_maruyama_step(&self, time: f64, dt: f64, state: &mut DVector<f64>) {
         let n = state.len();
         let mut rateiv = DVector::from_vec(vec![0.0, 0.0, 0.0]);
@@ -96,6 +144,20 @@ impl EM {
         }
     }
 
+    /// Solves the SDE system over the specified time interval.
+    ///
+    /// Uses adaptive step size control to balance accuracy and performance.
+    ///
+    /// # Arguments
+    ///
+    /// * `t0` - Starting time
+    /// * `tf` - Ending time
+    ///
+    /// # Returns
+    ///
+    /// A tuple containing:
+    /// * Vector of time points where solutions were computed
+    /// * Vector of state vectors corresponding to each time point
     pub fn solve(&mut self, t0: f64, tf: f64) -> (Vec<f64>, Vec<DVector<f64>>) {
         let mut t = t0;
         let mut dt = self.max_step;

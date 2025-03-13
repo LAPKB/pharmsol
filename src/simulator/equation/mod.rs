@@ -12,20 +12,47 @@ use crate::{error_model::ErrorModel, Covariates, Event, Infusion, Observation, S
 
 use super::likelihood::Prediction;
 
+/// Trait for state vectors that can receive bolus doses.
 pub trait State {
+    /// Add a bolus dose to the state at the specified input compartment.
+    ///
+    /// # Parameters
+    /// - `input`: The compartment index
+    /// - `amount`: The bolus amount
     fn add_bolus(&mut self, input: usize, amount: f64);
 }
 
+/// Trait for prediction containers.
 pub trait Predictions: Default {
+    /// Create a new prediction container with specified capacity.
+    ///
+    /// # Parameters
+    /// - `nparticles`: Number of particles (for SDE)
+    ///
+    /// # Returns
+    /// A new predictions container
     fn new(_nparticles: usize) -> Self {
         Default::default()
     }
+
+    /// Calculate the sum of squared errors for all predictions.
+    ///
+    /// # Returns
+    /// The sum of squared errors
     fn squared_error(&self) -> f64;
+
+    /// Get all predictions as a vector.
+    ///
+    /// # Returns
+    /// Vector of prediction objects
     fn get_predictions(&self) -> Vec<Prediction>;
 }
 
+/// Trait defining the associated types for equations.
 pub trait EquationTypes {
+    /// The state vector type
     type S: State;
+    /// The predictions container type
     type P: Predictions;
 }
 
@@ -117,11 +144,26 @@ pub(crate) trait EquationPriv: EquationTypes {
     }
 }
 
+/// Trait for model equations that can be simulated.
+///
+/// This trait defines the interface for different types of model equations
+/// (ODE, SDE, analytical) that can be simulated to generate predictions
+/// and estimate parameters.
 #[allow(private_bounds)]
 pub trait Equation: EquationPriv + 'static + Clone + Sync {
-    /// Estimate the likelihood of the subject given the support point and error model
-    /// This function might be cached
+    /// Estimate the likelihood of the subject given the support point and error model.
     ///
+    /// This function calculates how likely the observed data is given the model
+    /// parameters and error model. It may use caching for performance.
+    ///
+    /// # Parameters
+    /// - `subject`: The subject data
+    /// - `support_point`: The parameter values
+    /// - `error_model`: The error model
+    /// - `cache`: Whether to use caching
+    ///
+    /// # Returns
+    /// The log-likelihood value
     fn estimate_likelihood(
         &self,
         subject: &Subject,
@@ -130,10 +172,27 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
         cache: bool,
     ) -> f64;
 
+    /// Generate predictions for a subject with given parameters.
+    ///
+    /// # Parameters
+    /// - `subject`: The subject data
+    /// - `support_point`: The parameter values
+    ///
+    /// # Returns
+    /// Predicted concentrations
     fn estimate_predictions(&self, subject: &Subject, support_point: &Vec<f64>) -> Self::P {
         self.simulate_subject(subject, support_point, None).0
     }
 
+    /// Simulate a subject with given parameters and optionally calculate likelihood.
+    ///
+    /// # Parameters
+    /// - `subject`: The subject data
+    /// - `support_point`: The parameter values
+    /// - `error_model`: The error model (optional)
+    ///
+    /// # Returns
+    /// A tuple containing predictions and optional likelihood
     fn simulate_subject(
         &self,
         subject: &Subject,

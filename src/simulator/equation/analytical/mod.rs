@@ -4,6 +4,11 @@ use crate::{
 use cached::proc_macro::cached;
 use cached::UnboundCache;
 use nalgebra::{DVector, Matrix2, Vector2};
+
+/// Model equation using analytical solutions.
+///
+/// This implementation uses closed-form analytical solutions for the model
+/// equations rather than numerical integration.
 #[derive(Clone, Debug)]
 pub struct Analytical {
     eq: AnalyticalEq,
@@ -16,6 +21,16 @@ pub struct Analytical {
 }
 
 impl Analytical {
+    /// Create a new Analytical equation model.
+    ///
+    /// # Parameters
+    /// - `eq`: The analytical equation function
+    /// - `seq_eq`: The secondary equation function
+    /// - `lag`: The lag time function
+    /// - `fa`: The fraction absorbed function
+    /// - `init`: The initial state function
+    /// - `out`: The output equation function
+    /// - `neqs`: The number of states and output equations
     pub fn new(
         eq: AnalyticalEq,
         seq_eq: SecEq,
@@ -178,15 +193,13 @@ fn _estimate_likelihood(
     ypred.likelihood(error_model)
 }
 
+/// Analytical solution for one compartment model.
 ///
-/// Analytical for one compartment
-/// Assumptions:
-///   - p is a vector of length 1 with the value of the elimination constant
-///   - rateiv is a vector of length 1 with the value of the infusion rate (only one drug)
-///   - x is a vector of length 1
-///   - covariates are not used
-///
-
+/// # Assumptions
+/// - `p` is a vector of length 1 with the value of the elimination constant
+/// - `rateiv` is a vector of length 1 with the value of the infusion rate (only one drug)
+/// - `x` is a vector of length 1
+/// - covariates are not used
 pub fn one_compartment(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {
     let mut xout = x.clone();
     let ke = p[0];
@@ -196,15 +209,13 @@ pub fn one_compartment(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {
     xout
 }
 
+/// Analytical solution for one compartment model with first-order absorption.
 ///
-/// Analytical for one compartment with absorption
-/// Assumptions:
-///   - p is a vector of length 2 with ke and ka in that order
-///   - rateiv is a vector of length 1 with the value of the infusion rate (only one drug)
-///   - x is a vector of length 2
-///   - covariates are not used
-///
-
+/// # Assumptions
+/// - `p` is a vector of length 2 with ke and ka in that order
+/// - `rateiv` is a vector of length 1 with the value of the infusion rate (only one drug)
+/// - `x` is a vector of length 2
+/// - covariates are not used
 pub fn one_compartment_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {
     let mut xout = x.clone();
     let ka = p[0];
@@ -219,14 +230,13 @@ pub fn one_compartment_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &Cov
     xout
 }
 
+/// Analytical solution for two compartment model.
 ///
-/// Analytical for two compartment
-/// Assumptions:
-///   - p is a vector of length 3 with ke, kcp and kpc in that order
-///   - rateiv is a vector of length 1 with the value of the infusion rate (only one drug)
-///   - x is a vector of length 2
-///   - covariates are not used
-///
+/// # Assumptions
+/// - `p` is a vector of length 3 with ke, kcp and kpc in that order
+/// - `rateiv` is a vector of length 1 with the value of the infusion rate (only one drug)
+/// - `x` is a vector of length 2
+/// - covariates are not used
 pub fn two_compartments(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {
     let ke = p[0];
     let kcp = p[1];
@@ -263,14 +273,13 @@ pub fn two_compartments(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {
     DVector::from_vec(vec![result_vector[0], result_vector[1]])
 }
 
+/// Analytical solution for two compartment model with first-order absorption.
 ///
-/// Analytical for two compartment with absorption
-/// Assumptions:
-///   - p is a vector of length 4 with ke, ka, kcp and kpc in that order
-///   - rateiv is a vector of length 1 with the value of the infusion rate (only one drug)
-///   - x is a vector of length 2
-///   - covariates are not used
-///
+/// # Assumptions
+/// - `p` is a vector of length 4 with ke, ka, kcp and kpc in that order
+/// - `rateiv` is a vector of length 1 with the value of the infusion rate (only one drug)
+/// - `x` is a vector of length 3
+/// - covariates are not used
 pub fn two_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {
     let ke = p[0];
     let ka = p[1];
