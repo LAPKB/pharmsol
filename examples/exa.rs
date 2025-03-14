@@ -15,9 +15,9 @@ fn main() {
         .observation(8.0, 0.001017932, 0)
         .build();
 
+    // Create ODE model directly
     let ode = equation::ODE::new(
         |x, p, _t, dx, rateiv, _cov| {
-            // fetch_cov!(cov, t, wt);
             fetch_params!(p, ke, _v);
             dx[0] = -ke * x[0] + rateiv[0];
         },
@@ -31,38 +31,52 @@ fn main() {
         (1, 1),
     );
 
+    // Compile the same model using exa
     let model_path = exa::build::compile(
         format!(
             r#"
-            equation::ODE::new(
-        |x, p, _t, dx, rateiv, _cov| {{
-            // fetch_cov!(cov, t, wt);
-            fetch_params!(p, ke, _v);
-            dx[0] = -ke * x[0] + rateiv[0];
-        }},
-        |_p| lag! {{}},
-        |_p| fa! {{}},
-        |_p, _t, _cov, _x| {{}},
-        |x, p, _t, _cov, y| {{
-            fetch_params!(p, _ke, v);
-            y[0] = x[0] / v;
-        }},
-        (1, 1),
-    )
-    "#
+                equation::ODE::new(
+            |x, p, _t, dx, rateiv, _cov| {{
+                fetch_params!(p, ke, _v);
+                dx[0] = -ke * x[0] + rateiv[0];
+            }},
+            |_p| lag! {{}},
+            |_p| fa! {{}},
+            |_p, _t, _cov, _x| {{}},
+            |x, p, _t, _cov, y| {{
+                fetch_params!(p, _ke, v);
+                y[0] = x[0] / v;
+            }},
+            (1, 1),
+        )
+        "#
         ),
         Some(PathBuf::from("model.pkm")),
         vec!["ke".to_string(), "v".to_string()],
-        |a, b| println!("{}: {}", a, b),
+        |_, _| {}, // Empty callback for tests
     )
     .unwrap();
+
+    // Load the compiled model
     let model_path = PathBuf::from(model_path);
-    let (_lib, (dyn_ode, _meta)) = unsafe { exa::load::load_ode(model_path) };
-    let dyn_op = dyn_ode.estimate_predictions(&subject, &vec![1.02282724609375, 194.51904296875]);
-    println!("Dyn_model: {:#?}", dyn_op.flat_predictions());
+    let (_lib, (dyn_ode, _meta)) = unsafe { exa::load::load_ode(model_path.clone()) };
+
+    // Parameters for model evaluation
+    let params = vec![1.02282724609375, 194.51904296875];
+
+    // Get predictions from both models
+    let dyn_predictions = dyn_ode.estimate_predictions(&subject, &params);
+    let ode_predictions = ode.estimate_predictions(&subject, &params);
+
+    // Check that predictions are the same
+    let dyn_flat = dyn_predictions.flat_predictions();
+    let ode_flat = ode_predictions.flat_predictions();
+    println!("Dyn_model: {:#?}", dyn_flat);
 
     let op = ode.estimate_predictions(&subject, &vec![1.02282724609375, 194.51904296875]);
-    println!("ODE: {:#?}", op.flat_predictions());
+    println!("ODE: {:#?}", ode_flat);
+    // Clean up
+    std::fs::remove_file(model_path).ok();
 }
 
 #[cfg(not(feature = "exa"))]

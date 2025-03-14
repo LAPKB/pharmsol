@@ -136,7 +136,11 @@ fn create_template() -> Result<PathBuf, io::Error> {
     let template_dir = temp_dir.join("template");
     let cargo_toml_path = template_dir.join("Cargo.toml");
 
-    let cargo_toml_content = r#"
+    // Get the current package version
+    let pkg_version = env!("CARGO_PKG_VERSION");
+
+    let cargo_toml_content = format!(
+        r#"
         [package]
         name = "model_lib"
         version = "0.1.0"
@@ -146,8 +150,10 @@ fn create_template() -> Result<PathBuf, io::Error> {
         crate-type = ["cdylib"]
 
         [dependencies]
-        pharmsol = "0.7.8"
-        "#;
+        pharmsol = {{ version = "{}" }}
+        "#,
+        pkg_version
+    );
 
     if !template_dir.exists() {
         let output = Command::new("cargo")
