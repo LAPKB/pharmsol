@@ -15,6 +15,9 @@ fn main() {
         .observation(8.0, 0.001017932, 0)
         .build();
 
+    // optional: clear build directory if you want to compile the model again
+    //exa::build::clear_build();
+
     // Create ODE model directly
     let ode = equation::ODE::new(
         |x, p, _t, dx, rateiv, _cov| {
@@ -53,7 +56,7 @@ fn main() {
         ),
         Some(PathBuf::from("model.pkm")),
         vec!["ke".to_string(), "v".to_string()],
-        |_, _| {}, // Empty callback for tests
+        |key, msg| println!("{key}-{msg}"), // Empty callback for tests
     )
     .unwrap();
 
