@@ -167,7 +167,66 @@
 <a href="#166" id="166">166</a>
 <a href="#167" id="167">167</a>
 <a href="#168" id="168">168</a>
-<a href="#169" id="169">169</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::HashMap;
+<a href="#169" id="169">169</a>
+<a href="#170" id="170">170</a>
+<a href="#171" id="171">171</a>
+<a href="#172" id="172">172</a>
+<a href="#173" id="173">173</a>
+<a href="#174" id="174">174</a>
+<a href="#175" id="175">175</a>
+<a href="#176" id="176">176</a>
+<a href="#177" id="177">177</a>
+<a href="#178" id="178">178</a>
+<a href="#179" id="179">179</a>
+<a href="#180" id="180">180</a>
+<a href="#181" id="181">181</a>
+<a href="#182" id="182">182</a>
+<a href="#183" id="183">183</a>
+<a href="#184" id="184">184</a>
+<a href="#185" id="185">185</a>
+<a href="#186" id="186">186</a>
+<a href="#187" id="187">187</a>
+<a href="#188" id="188">188</a>
+<a href="#189" id="189">189</a>
+<a href="#190" id="190">190</a>
+<a href="#191" id="191">191</a>
+<a href="#192" id="192">192</a>
+<a href="#193" id="193">193</a>
+<a href="#194" id="194">194</a>
+<a href="#195" id="195">195</a>
+<a href="#196" id="196">196</a>
+<a href="#197" id="197">197</a>
+<a href="#198" id="198">198</a>
+<a href="#199" id="199">199</a>
+<a href="#200" id="200">200</a>
+<a href="#201" id="201">201</a>
+<a href="#202" id="202">202</a>
+<a href="#203" id="203">203</a>
+<a href="#204" id="204">204</a>
+<a href="#205" id="205">205</a>
+<a href="#206" id="206">206</a>
+<a href="#207" id="207">207</a>
+<a href="#208" id="208">208</a>
+<a href="#209" id="209">209</a>
+<a href="#210" id="210">210</a>
+<a href="#211" id="211">211</a>
+<a href="#212" id="212">212</a>
+<a href="#213" id="213">213</a>
+<a href="#214" id="214">214</a>
+<a href="#215" id="215">215</a>
+<a href="#216" id="216">216</a>
+<a href="#217" id="217">217</a>
+<a href="#218" id="218">218</a>
+<a href="#219" id="219">219</a>
+<a href="#220" id="220">220</a>
+<a href="#221" id="221">221</a>
+<a href="#222" id="222">222</a>
+<a href="#223" id="223">223</a>
+<a href="#224" id="224">224</a>
+<a href="#225" id="225">225</a>
+<a href="#226" id="226">226</a>
+<a href="#227" id="227">227</a>
+<a href="#228" id="228">228</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::HashMap;
 <span class="kw">pub mod </span>analytical;
 <span class="kw">pub mod </span>meta;
 <span class="kw">pub mod </span>ode;
@@ -181,21 +240,48 @@
 
 <span class="kw">use </span><span class="kw">super</span>::likelihood::Prediction;
 
-<span class="kw">pub trait </span>State {
-    <span class="kw">fn </span>add_bolus(<span class="kw-2">&amp;mut </span><span class="self">self</span>, input: usize, amount: f64);
+<span class="doccomment">/// Trait for state vectors that can receive bolus doses.
+</span><span class="kw">pub trait </span>State {
+    <span class="doccomment">/// Add a bolus dose to the state at the specified input compartment.
+    ///
+    /// # Parameters
+    /// - `input`: The compartment index
+    /// - `amount`: The bolus amount
+    </span><span class="kw">fn </span>add_bolus(<span class="kw-2">&amp;mut </span><span class="self">self</span>, input: usize, amount: f64);
 }
 
-<span class="kw">pub trait </span>Predictions: Default {
-    <span class="kw">fn </span>new(_nparticles: usize) -&gt; <span class="self">Self </span>{
+<span class="doccomment">/// Trait for prediction containers.
+</span><span class="kw">pub trait </span>Predictions: Default {
+    <span class="doccomment">/// Create a new prediction container with specified capacity.
+    ///
+    /// # Parameters
+    /// - `nparticles`: Number of particles (for SDE)
+    ///
+    /// # Returns
+    /// A new predictions container
+    </span><span class="kw">fn </span>new(_nparticles: usize) -&gt; <span class="self">Self </span>{
         Default::default()
     }
-    <span class="kw">fn </span>squared_error(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64;
-    <span class="kw">fn </span>get_predictions(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;Prediction&gt;;
+
+    <span class="doccomment">/// Calculate the sum of squared errors for all predictions.
+    ///
+    /// # Returns
+    /// The sum of squared errors
+    </span><span class="kw">fn </span>squared_error(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64;
+
+    <span class="doccomment">/// Get all predictions as a vector.
+    ///
+    /// # Returns
+    /// Vector of prediction objects
+    </span><span class="kw">fn </span>get_predictions(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;Prediction&gt;;
 }
 
-<span class="kw">pub trait </span>EquationTypes {
-    <span class="kw">type </span>S: State;
-    <span class="kw">type </span>P: Predictions;
+<span class="doccomment">/// Trait defining the associated types for equations.
+</span><span class="kw">pub trait </span>EquationTypes {
+    <span class="doccomment">/// The state vector type
+    </span><span class="kw">type </span>S: State;
+    <span class="doccomment">/// The predictions container type
+    </span><span class="kw">type </span>P: Predictions;
 }
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">trait </span>EquationPriv: EquationTypes {
@@ -286,11 +372,26 @@
     }
 }
 
-<span class="attr">#[allow(private_bounds)]
+<span class="doccomment">/// Trait for model equations that can be simulated.
+///
+/// This trait defines the interface for different types of model equations
+/// (ODE, SDE, analytical) that can be simulated to generate predictions
+/// and estimate parameters.
+</span><span class="attr">#[allow(private_bounds)]
 </span><span class="kw">pub trait </span>Equation: EquationPriv + <span class="lifetime">'static </span>+ Clone + Sync {
-    <span class="doccomment">/// Estimate the likelihood of the subject given the support point and error model
-    /// This function might be cached
+    <span class="doccomment">/// Estimate the likelihood of the subject given the support point and error model.
     ///
+    /// This function calculates how likely the observed data is given the model
+    /// parameters and error model. It may use caching for performance.
+    ///
+    /// # Parameters
+    /// - `subject`: The subject data
+    /// - `support_point`: The parameter values
+    /// - `error_model`: The error model
+    /// - `cache`: Whether to use caching
+    ///
+    /// # Returns
+    /// The log-likelihood value
     </span><span class="kw">fn </span>estimate_likelihood(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         subject: <span class="kw-2">&amp;</span>Subject,
@@ -299,11 +400,28 @@
         cache: bool,
     ) -&gt; f64;
 
-    <span class="kw">fn </span>estimate_predictions(<span class="kw-2">&amp;</span><span class="self">self</span>, subject: <span class="kw-2">&amp;</span>Subject, support_point: <span class="kw-2">&amp;</span>Vec&lt;f64&gt;) -&gt; <span class="self">Self</span>::P {
+    <span class="doccomment">/// Generate predictions for a subject with given parameters.
+    ///
+    /// # Parameters
+    /// - `subject`: The subject data
+    /// - `support_point`: The parameter values
+    ///
+    /// # Returns
+    /// Predicted concentrations
+    </span><span class="kw">fn </span>estimate_predictions(<span class="kw-2">&amp;</span><span class="self">self</span>, subject: <span class="kw-2">&amp;</span>Subject, support_point: <span class="kw-2">&amp;</span>Vec&lt;f64&gt;) -&gt; <span class="self">Self</span>::P {
         <span class="self">self</span>.simulate_subject(subject, support_point, <span class="prelude-val">None</span>).<span class="number">0
     </span>}
 
-    <span class="kw">fn </span>simulate_subject(
+    <span class="doccomment">/// Simulate a subject with given parameters and optionally calculate likelihood.
+    ///
+    /// # Parameters
+    /// - `subject`: The subject data
+    /// - `support_point`: The parameter values
+    /// - `error_model`: The error model (optional)
+    ///
+    /// # Returns
+    /// A tuple containing predictions and optional likelihood
+    </span><span class="kw">fn </span>simulate_subject(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         subject: <span class="kw-2">&amp;</span>Subject,
         support_point: <span class="kw-2">&amp;</span>Vec&lt;f64&gt;,

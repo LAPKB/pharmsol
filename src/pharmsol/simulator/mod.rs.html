@@ -169,7 +169,46 @@
 <a href="#168" id="168">168</a>
 <a href="#169" id="169">169</a>
 <a href="#170" id="170">170</a>
-<a href="#171" id="171">171</a></pre></div><pre class="rust"><code><span class="kw">pub mod </span>equation;
+<a href="#171" id="171">171</a>
+<a href="#172" id="172">172</a>
+<a href="#173" id="173">173</a>
+<a href="#174" id="174">174</a>
+<a href="#175" id="175">175</a>
+<a href="#176" id="176">176</a>
+<a href="#177" id="177">177</a>
+<a href="#178" id="178">178</a>
+<a href="#179" id="179">179</a>
+<a href="#180" id="180">180</a>
+<a href="#181" id="181">181</a>
+<a href="#182" id="182">182</a>
+<a href="#183" id="183">183</a>
+<a href="#184" id="184">184</a>
+<a href="#185" id="185">185</a>
+<a href="#186" id="186">186</a>
+<a href="#187" id="187">187</a>
+<a href="#188" id="188">188</a>
+<a href="#189" id="189">189</a>
+<a href="#190" id="190">190</a>
+<a href="#191" id="191">191</a>
+<a href="#192" id="192">192</a>
+<a href="#193" id="193">193</a>
+<a href="#194" id="194">194</a>
+<a href="#195" id="195">195</a>
+<a href="#196" id="196">196</a>
+<a href="#197" id="197">197</a>
+<a href="#198" id="198">198</a>
+<a href="#199" id="199">199</a>
+<a href="#200" id="200">200</a>
+<a href="#201" id="201">201</a>
+<a href="#202" id="202">202</a>
+<a href="#203" id="203">203</a>
+<a href="#204" id="204">204</a>
+<a href="#205" id="205">205</a>
+<a href="#206" id="206">206</a>
+<a href="#207" id="207">207</a>
+<a href="#208" id="208">208</a>
+<a href="#209" id="209">209</a>
+<a href="#210" id="210">210</a></pre></div><pre class="rust"><code><span class="kw">pub mod </span>equation;
 <span class="kw">pub mod </span>fitting;
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>likelihood;
 <span class="kw">use crate</span>::{
@@ -180,19 +219,24 @@
 
 <span class="kw">use </span>std::collections::HashMap;
 
-<span class="kw">type </span>T = f64;
-<span class="kw">type </span>V = nalgebra::DVector&lt;T&gt;;
-<span class="kw">type </span>M = nalgebra::DMatrix&lt;T&gt;;
+<span class="doccomment">/// Type alias for floating point values used in simulations
+</span><span class="kw">pub type </span>T = f64;
+<span class="doccomment">/// Type alias for state vector type used in simulations
+</span><span class="kw">pub type </span>V = nalgebra::DVector&lt;T&gt;;
+<span class="doccomment">/// Type alias for matrix type used in simulations
+</span><span class="kw">pub type </span>M = nalgebra::DMatrix&lt;T&gt;;
 
-<span class="doccomment">/// This closure represents the differential equation of the model:
-/// Params:
-/// - x: The state vector at time t
-/// - p: The parameters of the model; Use the [fetch_params!] macro to extract the parameters
-/// - t: The time at which the differential equation is evaluated
-/// - dx: A mutable reference to the derivative of the state vector at time t
-/// - rateiv: A vector of infusion rates at time t
-/// - cov: A reference to the covariates at time t; Use the [fetch_cov!] macro to extract the covariates
-/// Example:
+<span class="doccomment">/// This closure represents the differential equation of the model.
+///
+/// # Parameters
+/// - `x`: The state vector at time t
+/// - `p`: The parameters of the model; Use the [fetch_params!] macro to extract the parameters
+/// - `t`: The time at which the differential equation is evaluated
+/// - `dx`: A mutable reference to the derivative of the state vector at time t
+/// - `rateiv`: A vector of infusion rates at time t
+/// - `cov`: A reference to the covariates at time t; Use the [fetch_cov!] macro to extract the covariates
+///
+/// # Example
 /// ```ignore
 /// use pharmsol::*;
 /// let diff_eq = |x, p, t, dx, rateiv, cov| {
@@ -201,54 +245,65 @@
 ///  dx[0] = -ka * x[0];
 ///  dx[1] = ka * x[0] - ke * x[1];
 /// };
+/// ```
 </span><span class="kw">pub type </span>DiffEq = <span class="kw">fn</span>(<span class="kw-2">&amp;</span>V, <span class="kw-2">&amp;</span>V, T, <span class="kw-2">&amp;mut </span>V, V, <span class="kw-2">&amp;</span>Covariates);
 
-<span class="doccomment">/// This closure represents an Analytical solution of the model, see [analytical] module for examples.
-/// Params:
-/// - x: The state vector at time t
-/// - p: The parameters of the model; Use the [fetch_params!] macro to extract the parameters
-/// - t: The time at which the output equation is evaluated
-/// - rateiv: A vector of infusion rates at time t
-/// - cov: A reference to the covariates at time t; Use the [fetch_cov!] macro to extract the covariates
+<span class="doccomment">/// This closure represents an Analytical solution of the model.
+/// See [analytical] module for examples.
+///
+/// # Parameters
+/// - `x`: The state vector at time t
+/// - `p`: The parameters of the model; Use the [fetch_params!] macro to extract the parameters
+/// - `t`: The time at which the output equation is evaluated
+/// - `rateiv`: A vector of infusion rates at time t
+/// - `cov`: A reference to the covariates at time t; Use the [fetch_cov!] macro to extract the covariates
+///
 /// TODO: Remove covariates. They are not used in the analytical solution
 </span><span class="kw">pub type </span>AnalyticalEq = <span class="kw">fn</span>(<span class="kw-2">&amp;</span>V, <span class="kw-2">&amp;</span>V, T, V, <span class="kw-2">&amp;</span>Covariates) -&gt; V;
 
-<span class="doccomment">/// This closure represents the drift term of the model:
-/// Params:
-/// - x: The state vector at time t
-/// - p: The parameters of the model; Use the [fetch_params!] macro to extract the parameters
-/// - t: The time at which the drift term is evaluated
-/// - dx: A mutable reference to the derivative of the state vector at time t
-/// - rateiv: A vector of infusion rates at time t
-/// - cov: A reference to the covariates at time t; Use the [fetch_cov!] macro to extract the covariates
-/// Example:
+<span class="doccomment">/// This closure represents the drift term of a stochastic differential equation model.
+///
+/// # Parameters
+/// - `x`: The state vector at time t
+/// - `p`: The parameters of the model; Use the [fetch_params!] macro to extract the parameters
+/// - `t`: The time at which the drift term is evaluated
+/// - `dx`: A mutable reference to the derivative of the state vector at time t
+/// - `rateiv`: A vector of infusion rates at time t
+/// - `cov`: A reference to the covariates at time t; Use the [fetch_cov!] macro to extract the covariates
+///
+/// # Example
 /// ```ignore
 /// use pharmsol::*;
 /// let drift = |x, p, t, dx, rateiv, cov| {
-/// fetch_params!(p, mka, mke, v);
-/// fetch_cov!(cov, t, wt);
-/// ka = dx[2];
-/// ke = dx[3];
-/// dx[0] = -ka * x[0];
-/// dx[1] = ka * x[0] - ke * x[1];
-/// dx[2] = -dx[2] + mka; // Mean reverting to mka
-/// dx[3] = -dx[3] + mke; // Mean reverting to mke
+///   fetch_params!(p, mka, mke, v);
+///   fetch_cov!(cov, t, wt);
+///   ka = dx[2];
+///   ke = dx[3];
+///   dx[0] = -ka * x[0];
+///   dx[1] = ka * x[0] - ke * x[1];
+///   dx[2] = -dx[2] + mka; // Mean reverting to mka
+///   dx[3] = -dx[3] + mke; // Mean reverting to mke
 /// };
+/// ```
 </span><span class="kw">pub type </span>Drift = DiffEq;
 
-<span class="doccomment">/// This closure represents the diffusion term of the model:
-/// Params:
-/// - p: The parameters of the model; Use the [fetch_params!] macro to extract the parameters
-/// - d: A mutable reference to the diffusion term for each state variable
-/// (This vector should have the same length as the x, and dx vectors on the drift closure)
+<span class="doccomment">/// This closure represents the diffusion term of a stochastic differential equation model.
+///
+/// # Parameters
+/// - `p`: The parameters of the model; Use the [fetch_params!] macro to extract the parameters
+/// - `d`: A mutable reference to the diffusion term for each state variable
+///   (This vector should have the same length as the x, and dx vectors on the drift closure)
 </span><span class="kw">pub type </span>Diffusion = <span class="kw">fn</span>(<span class="kw-2">&amp;</span>V, <span class="kw-2">&amp;mut </span>V);
-<span class="doccomment">/// This closure represents the initial state of the system:
-/// Params:
-/// - p: The parameters of the model; Use the [fetch_params!] macro to extract the parameters
-/// - t: The time at which the initial state is evaluated; Hardcoded to 0.0
-/// - cov: A reference to the covariates at time t; Use the [fetch_cov!] macro to extract the covariates
-/// - x: A mutable reference to the state vector at time t
-/// Example:
+
+<span class="doccomment">/// This closure represents the initial state of the system.
+///
+/// # Parameters
+/// - `p`: The parameters of the model; Use the [fetch_params!] macro to extract the parameters
+/// - `t`: The time at which the initial state is evaluated; Hardcoded to 0.0
+/// - `cov`: A reference to the covariates at time t; Use the [fetch_cov!] macro to extract the covariates
+/// - `x`: A mutable reference to the state vector at time t
+///
+/// # Example
 /// ```ignore
 /// use pharmsol::*;
 /// let init = |p, t, cov, x| {
@@ -257,31 +312,38 @@
 ///  x[0] = 500.0;
 ///  x[1] = 0.0;
 /// };
+/// ```
 </span><span class="kw">pub type </span>Init = <span class="kw">fn</span>(<span class="kw-2">&amp;</span>V, T, <span class="kw-2">&amp;</span>Covariates, <span class="kw-2">&amp;mut </span>V);
 
-<span class="doccomment">/// This closure represents the output equation of the model:
-/// Params:
-/// - x: The state vector at time t
-/// - p: The parameters of the model; Use the [fetch_params!] macro to extract the parameters
-/// - t: The time at which the output equation is evaluated
-/// - cov: A reference to the covariates at time t; Use the [fetch_cov!] macro to extract the covariates
-/// - y: A mutable reference to the output vector at time t
-/// Example:
+<span class="doccomment">/// This closure represents the output equation of the model.
+///
+/// # Parameters
+/// - `x`: The state vector at time t
+/// - `p`: The parameters of the model; Use the [fetch_params!] macro to extract the parameters
+/// - `t`: The time at which the output equation is evaluated
+/// - `cov`: A reference to the covariates at time t; Use the [fetch_cov!] macro to extract the covariates
+/// - `y`: A mutable reference to the output vector at time t
+///
+/// # Example
 /// ```ignore
 /// use pharmsol::*;
 /// let out = |x, p, t, cov, y| {
 ///   fetch_params!(p, ka, ke, v);
 ///   y[0] = x[1] / v;
 /// };
+/// ```
 </span><span class="kw">pub type </span>Out = <span class="kw">fn</span>(<span class="kw-2">&amp;</span>V, <span class="kw-2">&amp;</span>V, T, <span class="kw-2">&amp;</span>Covariates, <span class="kw-2">&amp;mut </span>V);
 
-<span class="doccomment">/// This closure represents the secondary equation of the model, secondary equations are used to update
-/// the parameter values based on the covariates.
-/// Params:
-/// - p: The parameters of the model; Use the [fetch_params!] macro to extract the parameters
-/// - t: The time at which the secondary equation is evaluated
-/// - cov: A reference to the covariates at time t; Use the [fetch_cov!] macro to extract the covariates
-/// Example:
+<span class="doccomment">/// This closure represents the secondary equation of the model.
+///
+/// Secondary equations are used to update the parameter values based on the covariates.
+///
+/// # Parameters
+/// - `p`: The parameters of the model; Use the [fetch_params!] macro to extract the parameters
+/// - `t`: The time at which the secondary equation is evaluated
+/// - `cov`: A reference to the covariates at time t; Use the [fetch_cov!] macro to extract the covariates
+///
+/// # Example
 /// ```ignore
 /// use pharmsol::*;
 /// let sec_eq = |p, _t, cov| {
@@ -292,14 +354,19 @@
 /// ```
 </span><span class="kw">pub type </span>SecEq = <span class="kw">fn</span>(<span class="kw-2">&amp;mut </span>V, T, <span class="kw-2">&amp;</span>Covariates);
 
-<span class="doccomment">/// This closure represents the lag time of the model, the lag term delays the only the boluses going into
-/// an specific comparment.
-/// Params:
-/// - p: The parameters of the model; Use the [fetch_params!] macro to extract the parameters
-/// Returns:
-/// - A hashmap with the lag times for each comparment, if not presennt it is assumed to be 0.
+<span class="doccomment">/// This closure represents the lag time of the model.
+///
+/// The lag term delays only the boluses going into a specific compartment.
+///
+/// # Parameters
+/// - `p`: The parameters of the model; Use the [fetch_params!] macro to extract the parameters
+///
+/// # Returns
+/// - A hashmap with the lag times for each compartment. If not present, lag is assumed to be 0.
+///
 /// There is a convenience macro [lag!] to create the hashmap
-/// Example:
+///
+/// # Example
 /// ```ignore
 /// use pharmsol::*;
 /// let lag = |p| {
@@ -312,13 +379,19 @@
 </span><span class="kw">pub type </span>Lag = <span class="kw">fn</span>(<span class="kw-2">&amp;</span>V) -&gt; HashMap&lt;usize, T&gt;;
 
 <span class="doccomment">/// This closure represents the fraction absorbed (also called bioavailability or protein binding)
-/// of the model, the fa term is used to adjust the amount of drug that is absorbed into the system.
-/// Params:
-/// - p: The parameters of the model; Use the [fetch_params!] macro to extract the parameters
-/// Returns:
-/// - A hashmap with the fraction absorbed for each comparment, if not presennt it is assumed to be 1.
+/// of the model.
+///
+/// The fa term is used to adjust the amount of drug that is absorbed into the system.
+///
+/// # Parameters
+/// - `p`: The parameters of the model; Use the [fetch_params!] macro to extract the parameters
+///
+/// # Returns
+/// - A hashmap with the fraction absorbed for each compartment. If not present, it is assumed to be 1.
+///
 /// There is a convenience macro [fa!] to create the hashmap
-///     Example:
+///
+/// # Example
 /// ```ignore
 /// use pharmsol::*;
 /// let fa = |p| {
@@ -330,10 +403,15 @@
 /// absorbed into the second compartment by 0.3
 </span><span class="kw">pub type </span>Fa = <span class="kw">fn</span>(<span class="kw-2">&amp;</span>V) -&gt; HashMap&lt;usize, T&gt;;
 
-<span class="doccomment">/// The number of states and output equations of the model
-/// The first element is the number of states and the second element is the number of output equations
-/// This is used to initialize the state vector and the output vector
-/// Example:
+<span class="doccomment">/// The number of states and output equations of the model.
+///
+/// # Components
+/// - The first element is the number of states
+/// - The second element is the number of output equations
+///
+/// This is used to initialize the state vector and the output vector.
+///
+/// # Example
 /// ```ignore
 /// let neqs = (2, 1);
 /// ```

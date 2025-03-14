@@ -261,7 +261,86 @@
 <a href="#260" id="260">260</a>
 <a href="#261" id="261">261</a>
 <a href="#262" id="262">262</a>
-<a href="#263" id="263">263</a></pre></div><pre class="rust"><code><span class="kw">use crate</span>::{
+<a href="#263" id="263">263</a>
+<a href="#264" id="264">264</a>
+<a href="#265" id="265">265</a>
+<a href="#266" id="266">266</a>
+<a href="#267" id="267">267</a>
+<a href="#268" id="268">268</a>
+<a href="#269" id="269">269</a>
+<a href="#270" id="270">270</a>
+<a href="#271" id="271">271</a>
+<a href="#272" id="272">272</a>
+<a href="#273" id="273">273</a>
+<a href="#274" id="274">274</a>
+<a href="#275" id="275">275</a>
+<a href="#276" id="276">276</a>
+<a href="#277" id="277">277</a>
+<a href="#278" id="278">278</a>
+<a href="#279" id="279">279</a>
+<a href="#280" id="280">280</a>
+<a href="#281" id="281">281</a>
+<a href="#282" id="282">282</a>
+<a href="#283" id="283">283</a>
+<a href="#284" id="284">284</a>
+<a href="#285" id="285">285</a>
+<a href="#286" id="286">286</a>
+<a href="#287" id="287">287</a>
+<a href="#288" id="288">288</a>
+<a href="#289" id="289">289</a>
+<a href="#290" id="290">290</a>
+<a href="#291" id="291">291</a>
+<a href="#292" id="292">292</a>
+<a href="#293" id="293">293</a>
+<a href="#294" id="294">294</a>
+<a href="#295" id="295">295</a>
+<a href="#296" id="296">296</a>
+<a href="#297" id="297">297</a>
+<a href="#298" id="298">298</a>
+<a href="#299" id="299">299</a>
+<a href="#300" id="300">300</a>
+<a href="#301" id="301">301</a>
+<a href="#302" id="302">302</a>
+<a href="#303" id="303">303</a>
+<a href="#304" id="304">304</a>
+<a href="#305" id="305">305</a>
+<a href="#306" id="306">306</a>
+<a href="#307" id="307">307</a>
+<a href="#308" id="308">308</a>
+<a href="#309" id="309">309</a>
+<a href="#310" id="310">310</a>
+<a href="#311" id="311">311</a>
+<a href="#312" id="312">312</a>
+<a href="#313" id="313">313</a>
+<a href="#314" id="314">314</a>
+<a href="#315" id="315">315</a>
+<a href="#316" id="316">316</a>
+<a href="#317" id="317">317</a>
+<a href="#318" id="318">318</a>
+<a href="#319" id="319">319</a>
+<a href="#320" id="320">320</a>
+<a href="#321" id="321">321</a>
+<a href="#322" id="322">322</a>
+<a href="#323" id="323">323</a>
+<a href="#324" id="324">324</a>
+<a href="#325" id="325">325</a>
+<a href="#326" id="326">326</a>
+<a href="#327" id="327">327</a>
+<a href="#328" id="328">328</a>
+<a href="#329" id="329">329</a>
+<a href="#330" id="330">330</a>
+<a href="#331" id="331">331</a>
+<a href="#332" id="332">332</a>
+<a href="#333" id="333">333</a>
+<a href="#334" id="334">334</a>
+<a href="#335" id="335">335</a>
+<a href="#336" id="336">336</a>
+<a href="#337" id="337">337</a>
+<a href="#338" id="338">338</a>
+<a href="#339" id="339">339</a>
+<a href="#340" id="340">340</a>
+<a href="#341" id="341">341</a>
+<a href="#342" id="342">342</a></pre></div><pre class="rust"><code><span class="kw">use crate</span>::{
     data::{error_model::ErrorModel, Observation},
     Data, Equation, Predictions,
 };
@@ -273,7 +352,11 @@
 <span class="kw">const </span>FRAC_1_SQRT_2PI: f64 =
     std::f64::consts::FRAC_2_SQRT_PI * std::f64::consts::FRAC_1_SQRT_2 / <span class="number">2.0</span>;
 
-<span class="attr">#[derive(Debug, Clone, Default)]
+<span class="doccomment">/// Container for predictions associated with a single subject.
+///
+/// This struct holds all predictions for a subject along with the corresponding
+/// observations and time points.
+</span><span class="attr">#[derive(Debug, Clone, Default)]
 </span><span class="kw">pub struct </span>SubjectPredictions {
     predictions: Vec&lt;Prediction&gt;,
     flat_predictions: Vec&lt;f64&gt;,
@@ -292,34 +375,63 @@
         <span class="self">self</span>.predictions.clone()
     }
 }
+
 <span class="kw">impl </span>SubjectPredictions {
-    <span class="kw">pub fn </span>likelihood(<span class="kw-2">&amp;</span><span class="self">self</span>, error_model: <span class="kw-2">&amp;</span>ErrorModel) -&gt; f64 {
+    <span class="doccomment">/// Calculate the likelihood of the predictions given an error model.
+    ///
+    /// This multiplies the likelihood of each prediction to get the joint likelihood.
+    ///
+    /// # Parameters
+    /// - `error_model`: The error model to use for calculating the likelihood
+    ///
+    /// # Returns
+    /// The product of all individual prediction likelihoods
+    </span><span class="kw">pub fn </span>likelihood(<span class="kw-2">&amp;</span><span class="self">self</span>, error_model: <span class="kw-2">&amp;</span>ErrorModel) -&gt; f64 {
         <span class="self">self</span>.predictions
             .iter()
             .map(|p| p.likelihood(error_model))
             .product()
     }
-    <span class="kw">pub fn </span>add_prediction(<span class="kw-2">&amp;mut </span><span class="self">self</span>, prediction: Prediction) {
+
+    <span class="doccomment">/// Add a new prediction to the collection.
+    ///
+    /// This updates both the main predictions vector and the flat vectors.
+    ///
+    /// # Parameters
+    /// - `prediction`: The prediction to add
+    </span><span class="kw">pub fn </span>add_prediction(<span class="kw-2">&amp;mut </span><span class="self">self</span>, prediction: Prediction) {
         <span class="self">self</span>.predictions.push(prediction.clone());
         <span class="self">self</span>.flat_observations.push(prediction.observation);
         <span class="self">self</span>.flat_predictions.push(prediction.prediction);
         <span class="self">self</span>.flat_time.push(prediction.time);
     }
 
-    <span class="kw">pub fn </span>flat_observations(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;f64&gt; {
+    <span class="doccomment">/// Get a vector of all observation values.
+    ///
+    /// # Returns
+    /// Vector of observation values
+    </span><span class="kw">pub fn </span>flat_observations(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;f64&gt; {
         <span class="self">self</span>.flat_observations.to_vec()
     }
 
-    <span class="kw">pub fn </span>flat_predictions(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;f64&gt; {
+    <span class="doccomment">/// Get a vector of all prediction values.
+    ///
+    /// # Returns
+    /// Vector of prediction values
+    </span><span class="kw">pub fn </span>flat_predictions(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;f64&gt; {
         <span class="self">self</span>.flat_predictions.to_vec()
     }
 
-    <span class="kw">pub fn </span>flat_time(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;f64&gt; {
+    <span class="doccomment">/// Get a vector of all time points.
+    ///
+    /// # Returns
+    /// Vector of time points
+    </span><span class="kw">pub fn </span>flat_time(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;f64&gt; {
         <span class="self">self</span>.flat_time.to_vec()
     }
 }
 
-<span class="doccomment">/// Probability density function
+<span class="doccomment">/// Probability density function of the normal distribution
 </span><span class="kw">fn </span>normpdf(obs: f64, pred: f64, sigma: f64) -&gt; f64 {
     (FRAC_1_SQRT_2PI / sigma) * (-((obs - pred) * (obs - pred)) / (<span class="number">2.0 </span>* sigma * sigma)).exp()
 }
@@ -335,8 +447,12 @@
     }
 }
 
-<span class="kw">pub struct </span>PopulationPredictions {
-    <span class="kw">pub </span>subject_predictions: Array2&lt;SubjectPredictions&gt;,
+<span class="doccomment">/// Container for predictions across a population of subjects.
+///
+/// This struct holds predictions for multiple subjects organized in a 2D array.
+</span><span class="kw">pub struct </span>PopulationPredictions {
+    <span class="doccomment">/// 2D array of subject predictions
+    </span><span class="kw">pub </span>subject_predictions: Array2&lt;SubjectPredictions&gt;,
 }
 
 <span class="kw">impl </span>Default <span class="kw">for </span>PopulationPredictions {
@@ -355,7 +471,19 @@
     }
 }
 
-<span class="kw">pub fn </span>psi(
+<span class="doccomment">/// Calculate the psi matrix for maximum likelihood estimation.
+///
+/// # Parameters
+/// - `equation`: The equation to use for simulation
+/// - `subjects`: The subject data
+/// - `support_points`: The support points to evaluate
+/// - `error_model`: The error model to use
+/// - `progress`: Whether to show a progress bar
+/// - `cache`: Whether to use caching
+///
+/// # Returns
+/// A 2D array of likelihoods
+</span><span class="kw">pub fn </span>psi(
     equation: <span class="kw-2">&amp;</span><span class="kw">impl </span>Equation,
     subjects: <span class="kw-2">&amp;</span>Data,
     support_points: <span class="kw-2">&amp;</span>Array2&lt;f64&gt;,
@@ -448,44 +576,74 @@
 }
 
 <span class="kw">impl </span>Prediction {
-    <span class="kw">pub fn </span>time(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
+    <span class="doccomment">/// Get the time point of this prediction.
+    </span><span class="kw">pub fn </span>time(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
         <span class="self">self</span>.time
     }
-    <span class="kw">pub fn </span>observation(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
+
+    <span class="doccomment">/// Get the observed value.
+    </span><span class="kw">pub fn </span>observation(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
         <span class="self">self</span>.observation
     }
-    <span class="kw">pub fn </span>prediction(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
+
+    <span class="doccomment">/// Get the predicted value.
+    </span><span class="kw">pub fn </span>prediction(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
         <span class="self">self</span>.prediction
     }
-    <span class="kw">pub fn </span>outeq(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+
+    <span class="doccomment">/// Get the output equation index.
+    </span><span class="kw">pub fn </span>outeq(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
         <span class="self">self</span>.outeq
     }
-    <span class="kw">pub fn </span>errorpoly(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;(f64, f64, f64, f64)&gt; {
+
+    <span class="doccomment">/// Get the error polynomial coefficients, if available.
+    </span><span class="kw">pub fn </span>errorpoly(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;(f64, f64, f64, f64)&gt; {
         <span class="self">self</span>.errorpoly
     }
-    <span class="kw">pub fn </span>prediction_error(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
+
+    <span class="doccomment">/// Calculate the raw prediction error (prediction - observation).
+    </span><span class="kw">pub fn </span>prediction_error(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
         <span class="self">self</span>.prediction - <span class="self">self</span>.observation
     }
-    <span class="kw">pub fn </span>percentage_error(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
+
+    <span class="doccomment">/// Calculate the percentage error as (prediction - observation)/observation * 100.
+    </span><span class="kw">pub fn </span>percentage_error(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
         ((<span class="self">self</span>.prediction - <span class="self">self</span>.observation) / <span class="self">self</span>.observation) * <span class="number">100.0
     </span>}
-    <span class="kw">pub fn </span>absolute_error(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
+
+    <span class="doccomment">/// Calculate the absolute error |prediction - observation|.
+    </span><span class="kw">pub fn </span>absolute_error(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
         (<span class="self">self</span>.prediction - <span class="self">self</span>.observation).abs()
     }
-    <span class="kw">pub fn </span>squared_error(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
+
+    <span class="doccomment">/// Calculate the squared error (prediction - observation)².
+    </span><span class="kw">pub fn </span>squared_error(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
         (<span class="self">self</span>.prediction - <span class="self">self</span>.observation).powi(<span class="number">2</span>)
     }
-    <span class="kw">pub fn </span>likelihood(<span class="kw-2">&amp;</span><span class="self">self</span>, error_model: <span class="kw-2">&amp;</span>ErrorModel) -&gt; f64 {
+
+    <span class="doccomment">/// Calculate the likelihood of this prediction given an error model.
+    </span><span class="kw">pub fn </span>likelihood(<span class="kw-2">&amp;</span><span class="self">self</span>, error_model: <span class="kw-2">&amp;</span>ErrorModel) -&gt; f64 {
         <span class="kw">let </span>sigma = error_model.estimate_sigma(<span class="self">self</span>);
         normpdf(<span class="self">self</span>.observation, <span class="self">self</span>.prediction, sigma)
     }
-    <span class="kw">pub fn </span>state(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>Vec&lt;f64&gt; {
+
+    <span class="doccomment">/// Get the state vector at this prediction point.
+    </span><span class="kw">pub fn </span>state(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>Vec&lt;f64&gt; {
         <span class="kw-2">&amp;</span><span class="self">self</span>.state
     }
 }
 
-<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">trait </span>ToPrediction {
-    <span class="kw">fn </span>to_obs_pred(<span class="kw-2">&amp;</span><span class="self">self</span>, pred: f64, state: Vec&lt;f64&gt;) -&gt; Prediction;
+<span class="doccomment">/// Trait for converting observations to predictions.
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">trait </span>ToPrediction {
+    <span class="doccomment">/// Convert an observation to a prediction object.
+    ///
+    /// # Parameters
+    /// - `pred`: The predicted value
+    /// - `state`: The state vector at the prediction time
+    ///
+    /// # Returns
+    /// A new prediction object
+    </span><span class="kw">fn </span>to_obs_pred(<span class="kw-2">&amp;</span><span class="self">self</span>, pred: f64, state: Vec&lt;f64&gt;) -&gt; Prediction;
 }
 
 <span class="kw">impl </span>ToPrediction <span class="kw">for </span>Observation {

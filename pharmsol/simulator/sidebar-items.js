@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["equation","fitting"],"type":["AnalyticalEq","DiffEq","Diffusion","Drift","Fa","Init","Lag","Neqs","Out","SecEq"]};
+window.SIDEBAR_ITEMS = {"mod":["equation","fitting"],"type":["AnalyticalEq","DiffEq","Diffusion","Drift","Fa","Init","Lag","M","Neqs","Out","SecEq","T","V"]};

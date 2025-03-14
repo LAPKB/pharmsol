@@ -323,13 +323,27 @@
 <a href="#322" id="322">322</a>
 <a href="#323" id="323">323</a>
 <a href="#324" id="324">324</a>
-<a href="#325" id="325">325</a></pre></div><pre class="rust"><code><span class="kw">use crate</span>::{
+<a href="#325" id="325">325</a>
+<a href="#326" id="326">326</a>
+<a href="#327" id="327">327</a>
+<a href="#328" id="328">328</a>
+<a href="#329" id="329">329</a>
+<a href="#330" id="330">330</a>
+<a href="#331" id="331">331</a>
+<a href="#332" id="332">332</a>
+<a href="#333" id="333">333</a>
+<a href="#334" id="334">334</a></pre></div><pre class="rust"><code><span class="kw">use crate</span>::{
     data::Covariates, simulator::<span class="kw-2">*</span>, Equation, EquationPriv, EquationTypes, Observation, Subject,
 };
 <span class="kw">use </span>cached::proc_macro::cached;
 <span class="kw">use </span>cached::UnboundCache;
 <span class="kw">use </span>nalgebra::{DVector, Matrix2, Vector2};
-<span class="attr">#[derive(Clone, Debug)]
+
+<span class="doccomment">/// Model equation using analytical solutions.
+///
+/// This implementation uses closed-form analytical solutions for the model
+/// equations rather than numerical integration.
+</span><span class="attr">#[derive(Clone, Debug)]
 </span><span class="kw">pub struct </span>Analytical {
     eq: AnalyticalEq,
     seq_eq: SecEq,
@@ -341,7 +355,17 @@
 }
 
 <span class="kw">impl </span>Analytical {
-    <span class="kw">pub fn </span>new(
+    <span class="doccomment">/// Create a new Analytical equation model.
+    ///
+    /// # Parameters
+    /// - `eq`: The analytical equation function
+    /// - `seq_eq`: The secondary equation function
+    /// - `lag`: The lag time function
+    /// - `fa`: The fraction absorbed function
+    /// - `init`: The initial state function
+    /// - `out`: The output equation function
+    /// - `neqs`: The number of states and output equations
+    </span><span class="kw">pub fn </span>new(
         eq: AnalyticalEq,
         seq_eq: SecEq,
         lag: Lag,
@@ -503,15 +527,13 @@
     ypred.likelihood(error_model)
 }
 
-<span class="doccomment">///
-/// Analytical for one compartment
-/// Assumptions:
-///   - p is a vector of length 1 with the value of the elimination constant
-///   - rateiv is a vector of length 1 with the value of the infusion rate (only one drug)
-///   - x is a vector of length 1
-///   - covariates are not used
+<span class="doccomment">/// Analytical solution for one compartment model.
 ///
-
+/// # Assumptions
+/// - `p` is a vector of length 1 with the value of the elimination constant
+/// - `rateiv` is a vector of length 1 with the value of the infusion rate (only one drug)
+/// - `x` is a vector of length 1
+/// - covariates are not used
 </span><span class="kw">pub fn </span>one_compartment(x: <span class="kw-2">&amp;</span>V, p: <span class="kw-2">&amp;</span>V, t: T, rateiv: V, _cov: <span class="kw-2">&amp;</span>Covariates) -&gt; V {
     <span class="kw">let </span><span class="kw-2">mut </span>xout = x.clone();
     <span class="kw">let </span>ke = p[<span class="number">0</span>];
@@ -521,15 +543,13 @@
     </span>xout
 }
 
-<span class="doccomment">///
-/// Analytical for one compartment with absorption
-/// Assumptions:
-///   - p is a vector of length 2 with ke and ka in that order
-///   - rateiv is a vector of length 1 with the value of the infusion rate (only one drug)
-///   - x is a vector of length 2
-///   - covariates are not used
+<span class="doccomment">/// Analytical solution for one compartment model with first-order absorption.
 ///
-
+/// # Assumptions
+/// - `p` is a vector of length 2 with ke and ka in that order
+/// - `rateiv` is a vector of length 1 with the value of the infusion rate (only one drug)
+/// - `x` is a vector of length 2
+/// - covariates are not used
 </span><span class="kw">pub fn </span>one_compartment_with_absorption(x: <span class="kw-2">&amp;</span>V, p: <span class="kw-2">&amp;</span>V, t: T, rateiv: V, _cov: <span class="kw-2">&amp;</span>Covariates) -&gt; V {
     <span class="kw">let </span><span class="kw-2">mut </span>xout = x.clone();
     <span class="kw">let </span>ka = p[<span class="number">0</span>];
@@ -544,14 +564,13 @@
     xout
 }
 
-<span class="doccomment">///
-/// Analytical for two compartment
-/// Assumptions:
-///   - p is a vector of length 3 with ke, kcp and kpc in that order
-///   - rateiv is a vector of length 1 with the value of the infusion rate (only one drug)
-///   - x is a vector of length 2
-///   - covariates are not used
+<span class="doccomment">/// Analytical solution for two compartment model.
 ///
+/// # Assumptions
+/// - `p` is a vector of length 3 with ke, kcp and kpc in that order
+/// - `rateiv` is a vector of length 1 with the value of the infusion rate (only one drug)
+/// - `x` is a vector of length 2
+/// - covariates are not used
 </span><span class="kw">pub fn </span>two_compartments(x: <span class="kw-2">&amp;</span>V, p: <span class="kw-2">&amp;</span>V, t: T, rateiv: V, _cov: <span class="kw-2">&amp;</span>Covariates) -&gt; V {
     <span class="kw">let </span>ke = p[<span class="number">0</span>];
     <span class="kw">let </span>kcp = p[<span class="number">1</span>];
@@ -588,14 +607,13 @@
     </span>DVector::from_vec(<span class="macro">vec!</span>[result_vector[<span class="number">0</span>], result_vector[<span class="number">1</span>]])
 }
 
-<span class="doccomment">///
-/// Analytical for two compartment with absorption
-/// Assumptions:
-///   - p is a vector of length 4 with ke, ka, kcp and kpc in that order
-///   - rateiv is a vector of length 1 with the value of the infusion rate (only one drug)
-///   - x is a vector of length 2
-///   - covariates are not used
+<span class="doccomment">/// Analytical solution for two compartment model with first-order absorption.
 ///
+/// # Assumptions
+/// - `p` is a vector of length 4 with ke, ka, kcp and kpc in that order
+/// - `rateiv` is a vector of length 1 with the value of the infusion rate (only one drug)
+/// - `x` is a vector of length 3
+/// - covariates are not used
 </span><span class="kw">pub fn </span>two_compartments_with_absorption(x: <span class="kw-2">&amp;</span>V, p: <span class="kw-2">&amp;</span>V, t: T, rateiv: V, _cov: <span class="kw-2">&amp;</span>Covariates) -&gt; V {
     <span class="kw">let </span>ke = p[<span class="number">0</span>];
     <span class="kw">let </span>ka = p[<span class="number">1</span>];

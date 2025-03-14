@@ -102,7 +102,69 @@
 <a href="#101" id="101">101</a>
 <a href="#102" id="102">102</a>
 <a href="#103" id="103">103</a>
-<a href="#104" id="104">104</a></pre></div><pre class="rust"><code><span class="kw">use </span>argmin::{
+<a href="#104" id="104">104</a>
+<a href="#105" id="105">105</a>
+<a href="#106" id="106">106</a>
+<a href="#107" id="107">107</a>
+<a href="#108" id="108">108</a>
+<a href="#109" id="109">109</a>
+<a href="#110" id="110">110</a>
+<a href="#111" id="111">111</a>
+<a href="#112" id="112">112</a>
+<a href="#113" id="113">113</a>
+<a href="#114" id="114">114</a>
+<a href="#115" id="115">115</a>
+<a href="#116" id="116">116</a>
+<a href="#117" id="117">117</a>
+<a href="#118" id="118">118</a>
+<a href="#119" id="119">119</a>
+<a href="#120" id="120">120</a>
+<a href="#121" id="121">121</a>
+<a href="#122" id="122">122</a>
+<a href="#123" id="123">123</a>
+<a href="#124" id="124">124</a>
+<a href="#125" id="125">125</a>
+<a href="#126" id="126">126</a>
+<a href="#127" id="127">127</a>
+<a href="#128" id="128">128</a>
+<a href="#129" id="129">129</a>
+<a href="#130" id="130">130</a>
+<a href="#131" id="131">131</a>
+<a href="#132" id="132">132</a>
+<a href="#133" id="133">133</a>
+<a href="#134" id="134">134</a>
+<a href="#135" id="135">135</a>
+<a href="#136" id="136">136</a>
+<a href="#137" id="137">137</a>
+<a href="#138" id="138">138</a>
+<a href="#139" id="139">139</a>
+<a href="#140" id="140">140</a>
+<a href="#141" id="141">141</a>
+<a href="#142" id="142">142</a>
+<a href="#143" id="143">143</a>
+<a href="#144" id="144">144</a>
+<a href="#145" id="145">145</a>
+<a href="#146" id="146">146</a>
+<a href="#147" id="147">147</a>
+<a href="#148" id="148">148</a>
+<a href="#149" id="149">149</a>
+<a href="#150" id="150">150</a>
+<a href="#151" id="151">151</a>
+<a href="#152" id="152">152</a>
+<a href="#153" id="153">153</a>
+<a href="#154" id="154">154</a>
+<a href="#155" id="155">155</a>
+<a href="#156" id="156">156</a>
+<a href="#157" id="157">157</a>
+<a href="#158" id="158">158</a>
+<a href="#159" id="159">159</a>
+<a href="#160" id="160">160</a>
+<a href="#161" id="161">161</a>
+<a href="#162" id="162">162</a>
+<a href="#163" id="163">163</a>
+<a href="#164" id="164">164</a>
+<a href="#165" id="165">165</a>
+<a href="#166" id="166">166</a></pre></div><pre class="rust"><code><span class="kw">use </span>argmin::{
     core::{CostFunction, Error, Executor},
     solver::neldermead::NelderMead,
 };
@@ -113,16 +175,34 @@
     Equation, Predictions,
 };
 
-<span class="kw">struct </span>SppOptimizer&lt;<span class="lifetime">'a</span>, E: Equation&gt; {
+<span class="doccomment">/// Optimizer that finds the best subject-specific parameters
+///
+/// This struct wraps the equation model and subject data to create
+/// a cost function that can be optimized to find the best parameter
+/// fit for a specific individual.
+</span><span class="kw">struct </span>SppOptimizer&lt;<span class="lifetime">'a</span>, E: Equation&gt; {
     equation: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>E,
     subject: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>Subject,
 }
 
-<span class="kw">impl</span>&lt;<span class="lifetime">'a</span>, E: Equation&gt; CostFunction <span class="kw">for </span>SppOptimizer&lt;<span class="lifetime">'a</span>, E&gt; {
+<span class="doccomment">/// Implementation of the CostFunction trait for parameter optimization
+///
+/// This allows the SppOptimizer to be used with optimization algorithms
+/// from the argmin library to find optimal subject-specific parameters.
+</span><span class="kw">impl</span>&lt;E: Equation&gt; CostFunction <span class="kw">for </span>SppOptimizer&lt;<span class="lifetime">'_</span>, E&gt; {
     <span class="kw">type </span>Param = Vec&lt;f64&gt;;
     <span class="kw">type </span>Output = f64;
 
-    <span class="kw">fn </span>cost(<span class="kw-2">&amp;</span><span class="self">self</span>, point: <span class="kw-2">&amp;</span><span class="self">Self</span>::Param) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>::Output, Error&gt; {
+    <span class="doccomment">/// Calculates the cost (error) between model predictions and observations
+    ///
+    /// # Arguments
+    ///
+    /// * `point` - Parameter vector to evaluate
+    ///
+    /// # Returns
+    ///
+    /// The squared error between model predictions and observations, or an error if calculation fails
+    </span><span class="kw">fn </span>cost(<span class="kw-2">&amp;</span><span class="self">self</span>, point: <span class="kw-2">&amp;</span><span class="self">Self</span>::Param) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>::Output, Error&gt; {
         <span class="kw">let </span>(concentrations, <span class="kw">_</span>) =
             <span class="self">self</span>.equation
                 .simulate_subject(<span class="self">self</span>.subject, point.as_ref(), <span class="prelude-val">None</span>);
@@ -131,11 +211,33 @@
 }
 
 <span class="kw">impl</span>&lt;<span class="lifetime">'a</span>, E: Equation&gt; SppOptimizer&lt;<span class="lifetime">'a</span>, E&gt; {
-    <span class="kw">fn </span>new(equation: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>E, subject: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>Subject) -&gt; <span class="self">Self </span>{
+    <span class="doccomment">/// Creates a new SppOptimizer for individual parameter optimization
+    ///
+    /// # Arguments
+    ///
+    /// * `equation` - Reference to the equation model to use for simulation
+    /// * `subject` - Reference to the subject data to optimize against
+    ///
+    /// # Returns
+    ///
+    /// A new SppOptimizer instance
+    </span><span class="kw">fn </span>new(equation: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>E, subject: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>Subject) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{ equation, subject }
     }
 
-    <span class="kw">fn </span>optimize(<span class="self">self</span>, point: <span class="kw-2">&amp;</span>Array1&lt;f64&gt;) -&gt; Array1&lt;f64&gt; {
+    <span class="doccomment">/// Performs optimization to find the best parameter values
+    ///
+    /// Uses the Nelder-Mead algorithm to find parameter values that
+    /// minimize the error between model predictions and observations.
+    ///
+    /// # Arguments
+    ///
+    /// * `point` - Initial parameter values to start optimization from
+    ///
+    /// # Returns
+    ///
+    /// Optimized parameter values as an ndarray Array1
+    </span><span class="kw">fn </span>optimize(<span class="self">self</span>, point: <span class="kw-2">&amp;</span>Array1&lt;f64&gt;) -&gt; Array1&lt;f64&gt; {
         <span class="kw">let </span>simplex = create_initial_simplex(point)
             .into_iter()
             .map(|x| x.to_vec())
@@ -177,8 +279,19 @@
     vertices
 }
 
-<span class="kw">pub trait </span>OptimalSupportPoint&lt;E: Equation&gt; {
-    <span class="kw">fn </span>optimal_support_point(<span class="kw-2">&amp;</span><span class="self">self</span>, equation: <span class="kw-2">&amp;</span>E, point: <span class="kw-2">&amp;</span>Array1&lt;f64&gt;) -&gt; Array1&lt;f64&gt;;
+<span class="doccomment">/// Trait for finding the optimal support point for a subject
+</span><span class="kw">pub trait </span>OptimalSupportPoint&lt;E: Equation&gt; {
+    <span class="doccomment">/// Finds the optimal support point for a subject
+    ///
+    /// # Arguments
+    ///
+    /// * `equation` - Reference to the equation model to use for simulation
+    /// * `point` - Initial parameter values to start optimization from
+    ///
+    /// # Returns
+    ///
+    /// Optimized parameter values as an ndarray Array1
+    </span><span class="kw">fn </span>optimal_support_point(<span class="kw-2">&amp;</span><span class="self">self</span>, equation: <span class="kw-2">&amp;</span>E, point: <span class="kw-2">&amp;</span>Array1&lt;f64&gt;) -&gt; Array1&lt;f64&gt;;
 }
 
 <span class="kw">impl</span>&lt;E: Equation&gt; OptimalSupportPoint&lt;E&gt; <span class="kw">for </span>Subject {
@@ -187,8 +300,19 @@
     }
 }
 
-<span class="kw">pub trait </span>EstimateTheta&lt;E: Equation&gt; {
-    <span class="kw">fn </span>estimate_theta(<span class="kw-2">&amp;</span><span class="self">self</span>, equation: <span class="kw-2">&amp;</span>E, point: <span class="kw-2">&amp;</span>Array1&lt;f64&gt;) -&gt; Array2&lt;f64&gt;;
+<span class="doccomment">/// Trait for estimating the theta parameter for a dataset
+</span><span class="kw">pub trait </span>EstimateTheta&lt;E: Equation&gt; {
+    <span class="doccomment">/// Estimates the theta parameter for a dataset
+    ///
+    /// # Arguments
+    ///
+    /// * `equation` - Reference to the equation model to use for simulation
+    /// * `point` - Initial parameter values to start optimization from
+    ///
+    /// # Returns
+    ///
+    /// Estimated theta parameter values as an ndarray Array2
+    </span><span class="kw">fn </span>estimate_theta(<span class="kw-2">&amp;</span><span class="self">self</span>, equation: <span class="kw-2">&amp;</span>E, point: <span class="kw-2">&amp;</span>Array1&lt;f64&gt;) -&gt; Array2&lt;f64&gt;;
 }
 
 <span class="kw">impl</span>&lt;E: Equation&gt; EstimateTheta&lt;E&gt; <span class="kw">for </span>Data {
