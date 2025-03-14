@@ -3,3 +3,4 @@ cargo.lock
 Cargo.lock
 /.vscode
 /.idea
+*.pkm
