@@ -1,4 +1,6 @@
 pub mod data;
+#[cfg(feature = "exa")]
+pub mod exa;
 pub mod simulator;
 
 // Benchmark comment, remove later
