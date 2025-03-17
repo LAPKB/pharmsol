@@ -145,7 +145,7 @@ impl EquationPriv for ODE {
         let problem = OdeBuilder::<M>::new()
             .atol(vec![ATOL])
             .rtol(RTOL)
-            .t0(start_time)
+            // .t0(start_time)
             .init(|_, _| state.clone())
             .h0(1e-3)
             .p(support_point.clone())
