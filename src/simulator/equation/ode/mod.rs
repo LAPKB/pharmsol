@@ -145,8 +145,7 @@ impl EquationPriv for ODE {
         let problem = OdeBuilder::<M>::new()
             .atol(vec![ATOL])
             .rtol(RTOL)
-            // .t0(start_time)
-            .init(|_, _| state.clone())
+            .t0(start_time)
             .h0(1e-3)
             .p(support_point.clone())
             .build_from_eqn(PMProblem::new(
@@ -155,15 +154,14 @@ impl EquationPriv for ODE {
                 support_point.clone(),
                 covariates.clone(),
                 infusions.clone(),
+                state.clone(),
             ))
             .unwrap();
-        let mut solver = problem.bdf::<diffsol::NalgebraLU<f64>>().unwrap();
-        // let (ys, ts) = solver.solve(end_time).unwrap();
 
-        while solver.state().t <= end_time {
-            solver.step().unwrap();
-        }
-        *state = solver.interpolate(end_time).unwrap();
+        let mut solver = problem.bdf::<diffsol::NalgebraLU<f64>>().unwrap();
+        let (ys, _ts) = solver.solve(end_time).unwrap();
+
+        *state = ys.column(ys.ncols() - 1).into_owned();
     }
     #[inline(always)]
     fn process_observation(

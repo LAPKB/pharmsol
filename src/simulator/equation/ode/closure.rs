@@ -153,10 +153,13 @@ pub struct PmInit {
     nstates: usize,
     nout: usize,
     nparams: usize,
+    init: V,
 }
 
 impl ConstantOp for PmInit {
-    fn call_inplace(&self, _t: Self::T, _y: &mut Self::V) {}
+    fn call_inplace(&self, _t: Self::T, _y: &mut Self::V) {
+        _y.copy_from(&self.init);
+    }
 }
 pub struct PmRoot {
     nstates: usize,
@@ -185,6 +188,7 @@ where
     func: F,
     nstates: usize,
     nparams: usize,
+    init: V,
     p: Vec<f64>,
     covariates: Covariates,
     infusions: Vec<Infusion>,
@@ -200,12 +204,14 @@ where
         p: Vec<f64>,
         covariates: Covariates,
         infusions: Vec<Infusion>,
+        init: V,
     ) -> Self {
         let nparams = p.len();
         Self {
             func,
             nstates,
             nparams,
+            init,
             p,
             covariates,
             infusions,
@@ -246,6 +252,7 @@ where
             nstates: self.nstates(),
             nout: self.nout(),
             nparams: self.nparams(),
+            init: self.init.clone(),
         }
     }
     fn get_params(&self, p: &mut Self::V) {
