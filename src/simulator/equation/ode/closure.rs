@@ -11,7 +11,7 @@ where
     F: Fn(&V, &V, T, &mut V, V, &Covariates),
 {
     nstates: usize,
-    nout: usize,
+    // nout: usize,
     nparams: usize,
     infusions: &'a Vec<Infusion>,
     covariates: &'a Covariates,
@@ -29,7 +29,85 @@ where
         self.nstates
     }
     fn nout(&self) -> usize {
+        self.nstates
+    }
+    fn nparams(&self) -> usize {
+        self.nparams
+    }
+}
+
+impl Op for PmMass {
+    type T = T;
+    type V = V;
+    type M = M;
+    fn nstates(&self) -> usize {
+        self.nstates
+    }
+    fn nout(&self) -> usize {
         self.nout
+    }
+    fn nparams(&self) -> usize {
+        self.nparams
+    }
+}
+
+impl Op for PmInit {
+    type T = T;
+    type V = V;
+    type M = M;
+    fn nstates(&self) -> usize {
+        self.nstates
+    }
+    fn nout(&self) -> usize {
+        self.nout
+    }
+    fn nparams(&self) -> usize {
+        self.nparams
+    }
+}
+
+impl Op for PmRoot {
+    type T = T;
+    type V = V;
+    type M = M;
+    fn nstates(&self) -> usize {
+        self.nstates
+    }
+    fn nout(&self) -> usize {
+        self.nout
+    }
+    fn nparams(&self) -> usize {
+        self.nparams
+    }
+}
+
+impl Op for PmOut {
+    type T = T;
+    type V = V;
+    type M = M;
+    fn nstates(&self) -> usize {
+        self.nstates
+    }
+    fn nout(&self) -> usize {
+        self.nout
+    }
+    fn nparams(&self) -> usize {
+        self.nparams
+    }
+}
+
+impl<F> Op for PMProblem<F>
+where
+    F: Fn(&V, &V, T, &mut V, V, &Covariates),
+{
+    type T = T;
+    type V = V;
+    type M = M;
+    fn nstates(&self) -> usize {
+        self.nstates
+    }
+    fn nout(&self) -> usize {
+        self.nstates
     }
     fn nparams(&self) -> usize {
         self.nparams
@@ -52,9 +130,6 @@ where
         }
         // self.statistics.borrow_mut().increment_call();
         let p = DVector::from_vec(self.p.clone());
-        println!("x: {:?}", x);
-        println!("nstates: {:?}", self.nstates);
-        println!("nout: {:?}", self.nout);
         (self.func)(x, &p, t, y, rateiv, &self.covariates)
     }
 }
@@ -71,21 +146,6 @@ pub struct PmMass {
     nparams: usize,
 }
 
-impl Op for PmMass {
-    type T = T;
-    type V = V;
-    type M = M;
-    fn nstates(&self) -> usize {
-        self.nstates
-    }
-    fn nout(&self) -> usize {
-        self.nout
-    }
-    fn nparams(&self) -> usize {
-        self.nparams
-    }
-}
-
 impl LinearOp for PmMass {
     fn gemv_inplace(&self, _x: &Self::V, _t: Self::T, _beta: Self::T, _y: &mut Self::V) {}
 }
@@ -93,21 +153,6 @@ pub struct PmInit {
     nstates: usize,
     nout: usize,
     nparams: usize,
-}
-
-impl Op for PmInit {
-    type T = T;
-    type V = V;
-    type M = M;
-    fn nstates(&self) -> usize {
-        self.nstates
-    }
-    fn nout(&self) -> usize {
-        self.nout
-    }
-    fn nparams(&self) -> usize {
-        self.nparams
-    }
 }
 
 impl ConstantOp for PmInit {
@@ -119,21 +164,6 @@ pub struct PmRoot {
     nparams: usize,
 }
 
-impl Op for PmRoot {
-    type T = T;
-    type V = V;
-    type M = M;
-    fn nstates(&self) -> usize {
-        self.nstates
-    }
-    fn nout(&self) -> usize {
-        self.nout
-    }
-    fn nparams(&self) -> usize {
-        self.nparams
-    }
-}
-
 impl NonLinearOp for PmRoot {
     fn call_inplace(&self, _x: &Self::V, _t: Self::T, _y: &mut Self::V) {}
 }
@@ -141,21 +171,6 @@ pub struct PmOut {
     nstates: usize,
     nout: usize,
     nparams: usize,
-}
-
-impl Op for PmOut {
-    type T = T;
-    type V = V;
-    type M = M;
-    fn nstates(&self) -> usize {
-        self.nstates
-    }
-    fn nout(&self) -> usize {
-        self.nout
-    }
-    fn nparams(&self) -> usize {
-        self.nparams
-    }
 }
 
 impl NonLinearOp for PmOut {
@@ -169,7 +184,6 @@ where
     // rhs: PmRhs<fn(&V, &SupportPoint, T, &mut V, V, &Covariates)>,
     func: F,
     nstates: usize,
-    nout: usize,
     nparams: usize,
     p: Vec<f64>,
     covariates: Covariates,
@@ -183,7 +197,6 @@ where
     pub fn new(
         func: F,
         nstates: usize,
-        nout: usize,
         p: Vec<f64>,
         covariates: Covariates,
         infusions: Vec<Infusion>,
@@ -192,30 +205,11 @@ where
         Self {
             func,
             nstates,
-            nout,
             nparams,
             p,
             covariates,
             infusions,
         }
-    }
-}
-
-impl<F> Op for PMProblem<F>
-where
-    F: Fn(&V, &V, T, &mut V, V, &Covariates),
-{
-    type T = T;
-    type V = V;
-    type M = M;
-    fn nstates(&self) -> usize {
-        self.nstates
-    }
-    fn nout(&self) -> usize {
-        self.nout
-    }
-    fn nparams(&self) -> usize {
-        self.nparams
     }
 }
 
@@ -237,7 +231,6 @@ where
     fn rhs(&self) -> <PMProblem<F> as OdeEquationsRef<'_>>::Rhs {
         PmRhs {
             nstates: self.nstates,
-            nout: self.nout,
             nparams: self.nparams,
             infusions: &self.infusions,
             covariates: &self.covariates,

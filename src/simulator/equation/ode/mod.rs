@@ -142,8 +142,6 @@ impl EquationPriv for ODE {
             return;
         }
 
-        dbg!(&state);
-
         let problem = OdeBuilder::<M>::new()
             .atol(vec![ATOL])
             .rtol(RTOL)
@@ -154,7 +152,6 @@ impl EquationPriv for ODE {
             .build_from_eqn(PMProblem::new(
                 self.diffeq,
                 self.get_nstates(),
-                self.get_nouteqs(),
                 support_point.clone(),
                 covariates.clone(),
                 infusions.clone(),
