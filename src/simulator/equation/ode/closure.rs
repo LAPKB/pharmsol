@@ -52,6 +52,9 @@ where
         }
         // self.statistics.borrow_mut().increment_call();
         let p = DVector::from_vec(self.p.clone());
+        println!("x: {:?}", x);
+        println!("nstates: {:?}", self.nstates);
+        println!("nout: {:?}", self.nout);
         (self.func)(x, &p, t, y, rateiv, &self.covariates)
     }
 }
@@ -251,6 +254,9 @@ where
             nout: self.nout(),
             nparams: self.nparams(),
         }
+    }
+    fn get_params(&self, p: &mut Self::V) {
+        p.copy_from(&DVector::from_vec(self.p.clone()));
     }
     fn root(&self) -> Option<<PMProblem<F> as OdeEquationsRef<'_>>::Root> {
         None

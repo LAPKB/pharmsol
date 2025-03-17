@@ -142,11 +142,13 @@ impl EquationPriv for ODE {
             return;
         }
 
+        dbg!(&state);
+
         let problem = OdeBuilder::<M>::new()
             .atol(vec![ATOL])
             .rtol(RTOL)
-            // .t0(start_time)
-            // .init(|_p: &V, _t: T| state.clone())
+            .t0(start_time)
+            .init(|_, _| state.clone())
             .h0(1e-3)
             .p(support_point.clone())
             .build_from_eqn(PMProblem::new(
