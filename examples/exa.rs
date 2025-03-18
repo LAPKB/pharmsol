@@ -75,8 +75,6 @@ fn main() {
     let dyn_flat = dyn_predictions.flat_predictions();
     let ode_flat = ode_predictions.flat_predictions();
     println!("Dyn_model: {:#?}", dyn_flat);
-
-    let op = ode.estimate_predictions(&subject, &vec![1.02282724609375, 194.51904296875]);
     println!("ODE: {:#?}", ode_flat);
     // Clean up
     std::fs::remove_file(model_path).ok();
