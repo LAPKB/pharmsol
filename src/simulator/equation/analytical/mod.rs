@@ -244,15 +244,15 @@ pub fn two_compartments(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {
     let non_zero_matrix = Matrix2::new(
         (l1 - kpc) * exp_l1_t + (kpc - l2) * exp_l2_t,
         -kpc * exp_l1_t + kpc * exp_l2_t,
-        kcp * exp_l1_t + kcp * exp_l2_t,
-        (l1 - ke - kcp) * exp_l1_t + (-ke + kcp - l2) * exp_l2_t,
+        -kcp * exp_l1_t + kcp * exp_l2_t,
+        (l1 - ke - kcp) * exp_l1_t + (ke + kcp - l2) * exp_l2_t,
     );
 
     let non_zero = (non_zero_matrix * x) / (l1 - l2);
 
     let infusion_vector = Vector2::new(
         ((l1 - kpc) / l1) * (1.0 - exp_l1_t) + ((kpc - l2) / l2) * (1.0 - exp_l2_t),
-        (-kpc / l1) * (1.0 - exp_l1_t) + (kpc / l2) * (1.0 - exp_l2_t),
+        (-kcp / l1) * (1.0 - exp_l1_t) + (kcp / l2) * (1.0 - exp_l2_t),
     );
 
     let infusion = infusion_vector * (rateiv[0] / (l1 - l2));
@@ -292,15 +292,15 @@ pub fn two_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &Co
     let non_zero_matrix = Matrix2::new(
         (l1 - kpc) * exp_l1_t + (kpc - l2) * exp_l2_t,
         -kpc * exp_l1_t + kpc * exp_l2_t,
-        kcp * exp_l1_t + kcp * exp_l2_t,
-        (l1 - ke - kcp) * exp_l1_t + (-ke + kcp - l2) * exp_l2_t,
+        -kcp * exp_l1_t + kcp * exp_l2_t,
+        (l1 - ke - kcp) * exp_l1_t + (ke + kcp - l2) * exp_l2_t,
     );
 
     let non_zero = (non_zero_matrix * Vector2::new(x[1], x[2])) / (l1 - l2);
 
     let infusion_vector = Vector2::new(
         ((l1 - kpc) / l1) * (1.0 - exp_l1_t) + ((kpc - l2) / l2) * (1.0 - exp_l2_t),
-        (-kpc / l1) * (1.0 - exp_l1_t) + (kpc / l2) * (1.0 - exp_l2_t),
+        (-kcp / l1) * (1.0 - exp_l1_t) + (kcp / l2) * (1.0 - exp_l2_t),
     );
 
     let infusion = infusion_vector * (rateiv[0] / (l1 - l2));
@@ -310,7 +310,7 @@ pub fn two_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &Co
     let absorption_vector = Vector2::new(
         ((l1 - kpc) / (ka - l1)) * (exp_l1_t - exp_ka_t)
             + ((kpc - l2) / (ka - l2)) * (exp_l2_t - exp_ka_t),
-        (-kpc / (ka - l1)) * (exp_l1_t - exp_ka_t) + (kpc / (ka - l2)) * (exp_l2_t - exp_ka_t),
+        (-kcp / (ka - l1)) * (exp_l1_t - exp_ka_t) + (kcp / (ka - l2)) * (exp_l2_t - exp_ka_t),
     );
 
     let absorption = absorption_vector * (ka * x[0] / (l1 - l2));
@@ -322,4 +322,289 @@ pub fn two_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &Co
     xout[2] = aux[1];
 
     xout
+}
+
+///
+/// Analytical for three compartments
+/// Assumptions:
+///   - p is a vector of length xxxx with ke, ka, kcp and kpc in that order
+///   - rateiv is a vector of length 1 with the value of the infusion rate (only one drug)
+///   - x is a vector of length xxxxx
+///   - covariates are not used
+///
+// pub fn three_compartments(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {}
+
+///
+/// Analytical for three compartments with absorption
+/// Assumptions:
+///   - p is a vector of length xxxxx with ke, ka, kcp and kpc in that order
+///   - rateiv is a vector of length 1 with the value of the infusion rate (only one drug)
+///   - x is a vector of length xxxxx
+///   - covariates are not used
+///
+// pub fn three_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {}
+
+#[cfg(test)]
+mod tests {
+    use crate::*;
+
+    enum SubjectInfo {
+        InfusionDosing,
+        OralInfusionDosage
+    }
+
+    impl SubjectInfo {
+        fn get_subject(&self) -> Subject {
+            match self {
+                
+                SubjectInfo::InfusionDosing => Subject::builder("id1")
+                    .bolus(0.0, 100.0, 0)
+                    .infusion(24.0, 150.0, 0, 3.0)
+                    .observation(0.0, 0.0, 0)
+                    .observation(1.0, 0.0, 0)
+                    .observation(2.0, 0.0, 0)
+                    .observation(4.0, 0.0, 0)
+                    .observation(8.0, 0.0, 0)
+                    .observation(12.0, 0.0, 0)
+                    .observation(24.0, 0.0, 0)
+                    .observation(25.0, 0.0, 0)
+                    .observation(26.0, 0.0, 0)
+                    .observation(27.0, 0.0, 0)
+                    .observation(28.0, 0.0, 0)
+                    .observation(32.0, 0.0, 0)
+                    .observation(36.0, 0.0, 0)
+                    .build(),
+
+                SubjectInfo::OralInfusionDosage => Subject::builder("id1")
+                    .bolus(0.0, 100.0, 1)
+                    .infusion(24.0, 150.0, 0, 3.0)
+                    .bolus(48.0, 100.0, 0)
+                    .observation(0.0, 0.0, 0)
+                    .observation(1.0, 0.0, 0)
+                    .observation(2.0, 0.0, 0)
+                    .observation(4.0, 0.0, 0)
+                    .observation(8.0, 0.0, 0)
+                    .observation(12.0, 0.0, 0)
+                    .observation(24.0, 0.0, 0)
+                    .observation(25.0, 0.0, 0)
+                    .observation(26.0, 0.0, 0)
+                    .observation(27.0, 0.0, 0)
+                    .observation(28.0, 0.0, 0)
+                    .observation(32.0, 0.0, 0)
+                    .observation(36.0, 0.0, 0)
+                    .observation(48.0, 0.0, 0)
+                    .observation(49.0, 0.0, 0)
+                    .observation(50.0, 0.0, 0)
+                    .observation(52.0, 0.0, 0)
+                    .observation(56.0, 0.0, 0)
+                    .observation(60.0, 0.0, 0)
+                    .build(),
+            }
+        }
+    }
+
+    #[test]
+    fn test_one_compartment() {
+
+        let infusion_dosing = SubjectInfo::InfusionDosing;
+        let subject = infusion_dosing.get_subject();
+
+        let ode = equation::ODE::new(
+            |x, p, _t, dx, rateiv, _cov| {
+                fetch_params!(p, ke, _v);
+    
+                dx[0] = - ke * x[0] + rateiv[0];
+            },
+            |_p| lag! {},
+            |_p| fa! {},
+            |_p, _t, _cov, _x| {},
+            |x, p, _t, _cov, y| {
+                fetch_params!(p, _ke, v);
+                y[0] = x[0] / v;
+            },
+            (1, 1),
+        );
+
+        let analytical = equation::Analytical::new(
+            one_compartment,
+            |_p, _t, _cov| {},
+            |_p| lag! {},
+            |_p| fa! {},
+            |_p, _t, _cov, _x| {},
+            |x, p, _t, _cov, y| {
+                fetch_params!(p, _ke, v);
+                y[0] = x[0] / v;
+            },
+            (1, 1),
+        );
+
+        let op_ode = ode.estimate_predictions(&subject, &vec![0.1, 1.0]);
+        let op_analytical = analytical.estimate_predictions(&subject, &vec![0.1, 1.0]);
+
+        let pred_ode= &op_ode.flat_predictions()[..];
+        let pred_analytical = &op_analytical.flat_predictions()[..];
+        
+        println!("ode: {:?}", pred_ode);
+        println!("analitycal: {:?}", pred_analytical);
+        
+        for (&od, &an) in pred_ode.iter().zip(pred_analytical.iter()) {
+            let error = (od - an).abs() / od;  
+            assert!(error < 0.2, "error = {}, ode value = {}, analitycal value = {}", error, od, an);
+        }
+    }
+
+    #[test]
+    fn test_one_compartment_with_absorption() {
+
+        let oral_dosing = SubjectInfo::OralInfusionDosage;
+        let subject = oral_dosing.get_subject();
+
+        let ode = equation::ODE::new(
+            |x, p, _t, dx, rateiv, _cov| {
+                fetch_params!(p, ka, ke, _v);
+    
+                dx[0] = - ka * x[0];
+                dx[1] = ka * x[0] - ke * x[1] + rateiv[0];
+            },
+            |_p| lag! {},
+            |_p| fa! {},
+            |_p, _t, _cov, _x| {},
+            |x, p, _t, _cov, y| {
+                fetch_params!(p, _ka, _ke, v);
+                y[0] = x[1] / v;
+            },
+            (2, 1),
+        );
+
+        let analytical = equation::Analytical::new(
+            one_compartment_with_absorption,
+            |_p, _t, _cov| {},
+            |_p| lag! {},
+            |_p| fa! {},
+            |_p, _t, _cov, _x| {},
+            |x, p, _t, _cov, y| {
+                fetch_params!(p, _ka, _ke, v);
+                y[0] = x[1] / v;
+            },
+            (2, 1),
+        );
+
+        let op_ode = ode.estimate_predictions(&subject, &vec![1.0, 0.1, 1.0]);
+        let op_analytical = analytical.estimate_predictions(&subject, &vec![1.0, 0.1, 1.0]);
+
+        let pred_ode= &op_ode.flat_predictions()[..];
+        let pred_analytical = &op_analytical.flat_predictions()[..];
+
+        println!("ode: {:?}", pred_ode);
+        println!("analitycal: {:?}", pred_analytical);
+        
+        for (&od, &an) in pred_ode.iter().zip(pred_analytical.iter()) {
+            let error = (od - an).abs() / od;  
+            assert!(error < 0.2, "error = {}, ode value = {}, analitycal value = {}", error, od, an);
+        }
+    }
+
+    #[test]
+    fn test_two_compartments() {
+
+        let infusion_dosing = SubjectInfo::InfusionDosing;
+        let subject = infusion_dosing.get_subject();
+
+        let ode = equation::ODE::new(
+            |x, p, _t, dx, rateiv, _cov| {
+                fetch_params!(p, ke, kcp, kpc, _v);
+    
+                dx[0] = rateiv[0] - ke * x[0] - kcp * x[0] + kpc * x[1];
+                dx[1] = kcp * x[0] - kpc * x[1];
+            },
+            |_p| lag! {},
+            |_p| fa! {},
+            |_p, _t, _cov, _x| {},
+            |x, p, _t, _cov, y| {
+                fetch_params!(p, _ke, _kcp, _kpc, v);
+                y[0] = x[0] / v;
+            },
+            (2, 1),
+        );
+
+        let analytical = equation::Analytical::new(
+            two_compartments,
+            |_p, _t, _cov| {},
+            |_p| lag! {},
+            |_p| fa! {},
+            |_p, _t, _cov, _x| {},
+            |x, p, _t, _cov, y| {
+                fetch_params!(p, _ke, _kcp, _kpc, v);
+                y[0] = x[0] / v;
+            },
+            (2, 1),
+        );
+
+        let op_ode = ode.estimate_predictions(&subject, &vec![0.1, 3.0, 1.0, 1.0]);
+        let op_analytical = analytical.estimate_predictions(&subject, &vec![0.1, 3.0, 1.0, 1.0]);
+
+        let pred_ode= &op_ode.flat_predictions()[..];
+        let pred_analytical = &op_analytical.flat_predictions()[..];
+
+        println!("ode: {:?}", pred_ode);
+        println!("analitycal: {:?}", pred_analytical);
+        
+        for (&od, &an) in pred_ode.iter().zip(pred_analytical.iter()) {
+            let error = (od - an).abs() / od;  
+            assert!(error < 0.2, "error = {}, ode value = {}, analitycal value = {}", error, od, an);
+        }
+    }
+
+    #[test]
+    fn test_two_compartments_with_absorption() {
+
+        let oral_dosing = SubjectInfo::OralInfusionDosage;
+        let subject = oral_dosing.get_subject();
+
+        let ode = equation::ODE::new(
+            |x, p, _t, dx, rateiv, _cov| {
+                fetch_params!(p, ke, ka, kcp, kpc, _v);
+    
+                dx[0] = - ka * x[0];
+                dx[1] = rateiv[0] - ke * x[1] + ka * x[0] - kcp * x[1] + kpc * x[2];
+                dx[2] = kcp * x[1] - kpc * x[2];
+            },
+            |_p| lag! {},
+            |_p| fa! {},
+            |_p, _t, _cov, _x| {},
+            |x, p, _t, _cov, y| {
+                fetch_params!(p, _ke, _ka, _kcp, _kpc, v);
+                y[0] = x[1] / v;
+            },
+            (3, 1),
+        );
+
+        let analytical = equation::Analytical::new(
+            two_compartments_with_absorption,
+            |_p, _t, _cov| {},
+            |_p| lag! {},
+            |_p| fa! {},
+            |_p, _t, _cov, _x| {},
+            |x, p, _t, _cov, y| {
+                fetch_params!(p, _ke, _ka, _kcp, _kpc, v);
+                y[0] = x[1] / v;
+            },
+            (3, 1),
+        );
+
+        let op_ode = ode.estimate_predictions(&subject, &vec![0.1, 1.0, 3.0, 1.0, 1.0]);
+        let op_analytical = analytical.estimate_predictions(&subject, &vec![0.1, 1.0, 3.0, 1.0, 1.0]);
+
+        let pred_ode= &op_ode.flat_predictions()[..];
+        let pred_analytical = &op_analytical.flat_predictions()[..];
+
+        println!("ode: {:?}", pred_ode);
+        println!("analitycal: {:?}", pred_analytical);
+        
+        for (&od, &an) in pred_ode.iter().zip(pred_analytical.iter()) {
+            let error = (od - an).abs() / od;  
+            assert!(error < 0.2, "error = {}, ode value = {}, analitycal value = {}", error, od, an);
+        }
+    }
+
 }
