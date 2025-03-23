@@ -3,12 +3,12 @@ fn main() {
 
     let subject = Subject::builder("1")
         .infusion(0., 500.0, 0, 0.5)
-        .observation(0.5, 1.6457759999999999, 0)
+        .observation(0.5, 1.645_776, 0)
         .observation(1., 1.216442, 0)
-        .observation(2., 0.46227289999999999, 0)
+        .observation(2., 0.462_272_9, 0)
         .observation(3., 0.1697458, 0)
-        .observation(4., 0.063821779999999995, 0)
-        .observation(6., 0.0090993840000000003, 0)
+        .observation(4., 0.063_821_78, 0)
+        .observation(6., 0.009_099_384, 0)
         .observation(8., 0.001017932, 0)
         .build();
 
