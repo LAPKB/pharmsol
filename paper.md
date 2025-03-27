@@ -26,15 +26,21 @@ bibliography: paper.bib
 
 # Summary
 
-pharmsol is a modern, high-performance library for pharmacokinetic/pharmacodynamic (PK/PD) modeling and simulation implemented in Rust. It provides a flexible, declarative approach to defining, solving, and analyzing compartmental models through a carefully designed API that balances expressivity with computational efficiency. The library addresses significant performance challenges in PK/PD modeling through a systems-based architecture that leverages Rust's zero-cost abstractions and memory safety guarantees while maintaining an accessible interface for researchers and practitioners.
+`pharmsol` is a library for pharmacokinetic/pharmacodynamic (PK/PD) modeling and simulation, written in Rust. It provides efficient methods to define and solve compartmental models, either as a set of ordinary differential equations (ODEs), or through their pre-defined analytical solutions. It also provides an experimental interface to solving stochastic differential equations (SDEs), allowing for within subject variability over one or more occasions.
 
-The design of pharmsol emphasizes three core components: (1) a hierarchical data model for representing subject data, dosing regimens, and time-varying covariates; (2) a flexible equation system supporting numerical ODE and SDE-based solutions and closed-form analytical implementations of standard compartmental models; and (3) an efficient simulation framework that optimizes computational resources through strategic memory management and parallelization. This architecture enables rapid specification and simulation of complex dosing scenarios, sophisticated handling of inter-individual variability, and efficient solutions for both standard and custom PK/PD models.
+The design of `pharmsol` emphasizes three core components: (1) a hierarchical data model for representing subject data, dose regimens, and time-varying covariates; (2) a flexible equation system supporting numerical ODE and SDE-based solutions, as well as closed-form analytical implementations of standard compartmental models; and (3) an efficient simulation framework that optimizes computational resources through memory management, caching, and parallelization.
+
+As a library, `pharmsol` provides a foundation for building robust pharmacometric workflows in a memory-safe and efficient language.
 
 pharmsol serves as a foundation for building robust pharmacometric workflows, offering a significant performance advantage over existing tools while making advanced modeling techniques accessible to researchers across the pharmaceutical development pipeline.
 
 # Statement of Need
 
-Pharmacokinetic and pharmacodynamic simulation faces increasing complexity as drug development workflows incorporate more sophisticated dosing regimens, mechanistic models, and individualized approaches. **pharmsol** addresses these challenges by providing a high-performance simulation library with three specialized backends (analytical, ODE, and SDE) for efficient execution of PK/PD simulations.
+Pharmacokinetic and pharmacodynamic modeling and simulation has become a staple in drug development, therapeutic drug monitoring, and prediction of drug-drug interactions.
+
+Pharmacokinetic and pharmacodynamic simulation faces increasing complexity as drug development workflows incorporate more sophisticated dosing regimens, mechanistic models, and individualized approaches, all with higher throughput than ever before. As such, there is a need for 
+
+`pharmsol` addresses these challenges by providing a high-performance simulation library with three specialized backends (analytical, ODE, and SDE) for efficient execution of PK/PD simulations.
 
 Unlike comprehensive pharmacometric platforms such as NONMEM [@beal1989nonmem], Phoenix NLME [@phoenixnlme], or Monolix [@monolix], pharmsol is purpose-built as a simulation engine that pharmacometricians and modelers can leverage to rapidly execute simulations for individuals or populations with pre- and user defined models. While the library includes basic functionality for individual parameter fitting, its primary focus is on delivering a fully open-source solution that empowers users to inspect, modify, and extend the simulation capabilities without licensing constraints.
 
@@ -71,7 +77,12 @@ pharmsol is built around three primary modules that work together to provide a c
 
 ## Data Module
 
-The data module implements a hierarchical data structure that models the typical organization of pharmacometric data:
+The data module implements a hierarchical data structure that allows for flexible and accurate organization of data. The following is the high-level implementation of the data structure:
+
+
+`Data` is a collection of `Subject`s. Each subject can have events on different `Occasion`s, separating observations by some arbitrary time. At each occasion, a subject can have one of three events: an `Observation`, providing some measurement, typically the concentration of drug in plasma; an administered `Bolus` dose, or an administered `Infusion` over some time.
+
+
 
 ```
 Data → Subject → Occasion → Event (Bolus, Infusion, Observation)
