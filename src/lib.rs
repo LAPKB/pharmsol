@@ -34,6 +34,8 @@ pub mod prelude {
         pub use crate::simulator::equation::analytical::one_compartment_with_absorption;
         pub use crate::simulator::equation::analytical::two_compartments;
         pub use crate::simulator::equation::analytical::two_compartments_with_absorption;
+        pub use crate::simulator::equation::analytical::three_compartments;
+        pub use crate::simulator::equation::analytical::three_compartments_with_absorption;
     }
 
     //extension traits
