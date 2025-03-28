@@ -1,3 +1,3 @@
-var srcIndex = new Map(JSON.parse('[["pharmsol",["",[["data",[],["builder.rs","covariate.rs","error_model.rs","event.rs","mod.rs","parse_pmetrics.rs","structs.rs"]],["simulator",[["equation",[["analytical",[],["mod.rs"]],["ode",[],["closure.rs","mod.rs"]],["sde",[],["em.rs","mod.rs"]]],["meta.rs","mod.rs"]]],["fitting.rs","likelihood.rs","mod.rs"]]],["lib.rs"]]]]'));
+var srcIndex = new Map(JSON.parse('[["pharmsol",["",[["data",[],["builder.rs","covariate.rs","error_model.rs","event.rs","mod.rs","parse_pmetrics.rs","structs.rs"]],["simulator",[["equation",[["analytical",[],["mod.rs","one_compartment_models.rs","three_compartment_models.rs","two_compartment_models.rs"]],["ode",[],["closure.rs","mod.rs"]],["sde",[],["em.rs","mod.rs"]]],["meta.rs","mod.rs"]]],["fitting.rs","likelihood.rs","mod.rs"]]],["lib.rs"]]]]'));
 createSrcSidebar();
-//{"start":36,"fragment_lengths":[328]}
+//{"start":36,"fragment_lengths":[414]}
