@@ -64,7 +64,6 @@ fn main() {
     for (i, spp) in support_points.iter().enumerate() {
         let trajectories = sde.estimate_predictions(&subject, spp);
         let trajectory = trajectories.row(0);
-        // dbg!(&trajectory);
         let mut sb = data::Subject::builder(format!("id{}", i)).bolus(0.0, 20.0, 0);
         for (t, point) in trajectory.iter().enumerate() {
             sb = sb.observation((t) as f64 * 0.2, point.prediction(), 0);

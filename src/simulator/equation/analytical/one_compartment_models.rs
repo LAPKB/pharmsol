@@ -12,7 +12,6 @@ pub fn one_compartment(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {
     let ke = p[0];
 
     xout[0] = x[0] * (-ke * t).exp() + rateiv[0] / ke * (1.0 - (-ke * t).exp());
-    // dbg!(t, &rateiv, x, &xout);
     xout
 }
 
@@ -39,19 +38,18 @@ pub fn one_compartment_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &Cov
 
 #[cfg(test)]
 mod tests {
-    use crate::*;
     use super::{one_compartment, one_compartment_with_absorption};
+    use crate::*;
     use approx::assert_relative_eq;
 
     enum SubjectInfo {
         InfusionDosing,
-        OralInfusionDosage
+        OralInfusionDosage,
     }
 
     impl SubjectInfo {
         fn get_subject(&self) -> Subject {
             match self {
-                
                 SubjectInfo::InfusionDosing => Subject::builder("id1")
                     .bolus(0.0, 100.0, 0)
                     .infusion(24.0, 150.0, 0, 3.0)
@@ -100,15 +98,14 @@ mod tests {
 
     #[test]
     fn test_one_compartment() {
-
         let infusion_dosing = SubjectInfo::InfusionDosing;
         let subject = infusion_dosing.get_subject();
 
         let ode = equation::ODE::new(
             |x, p, _t, dx, rateiv, _cov| {
                 fetch_params!(p, ke, _v);
-    
-                dx[0] = - ke * x[0] + rateiv[0];
+
+                dx[0] = -ke * x[0] + rateiv[0];
             },
             |_p| lag! {},
             |_p| fa! {},
@@ -136,12 +133,12 @@ mod tests {
         let op_ode = ode.estimate_predictions(&subject, &vec![0.1, 1.0]);
         let op_analytical = analytical.estimate_predictions(&subject, &vec![0.1, 1.0]);
 
-        let pred_ode= &op_ode.flat_predictions()[..];
+        let pred_ode = &op_ode.flat_predictions()[..];
         let pred_analytical = &op_analytical.flat_predictions()[..];
-        
+
         println!("ode: {:?}", pred_ode);
         println!("analitycal: {:?}", pred_analytical);
-        
+
         for (&od, &an) in pred_ode.iter().zip(pred_analytical.iter()) {
             assert_relative_eq!(od, an, max_relative = 1e-4, epsilon = 1e-4,);
         }
@@ -149,15 +146,14 @@ mod tests {
 
     #[test]
     fn test_one_compartment_with_absorption() {
-
         let oral_infusion_dosing = SubjectInfo::OralInfusionDosage;
         let subject = oral_infusion_dosing.get_subject();
 
         let ode = equation::ODE::new(
             |x, p, _t, dx, rateiv, _cov| {
                 fetch_params!(p, ka, ke, _v);
-    
-                dx[0] = - ka * x[0];
+
+                dx[0] = -ka * x[0];
                 dx[1] = ka * x[0] - ke * x[1] + rateiv[0];
             },
             |_p| lag! {},
@@ -186,12 +182,12 @@ mod tests {
         let op_ode = ode.estimate_predictions(&subject, &vec![1.0, 0.1, 1.0]);
         let op_analytical = analytical.estimate_predictions(&subject, &vec![1.0, 0.1, 1.0]);
 
-        let pred_ode= &op_ode.flat_predictions()[..];
+        let pred_ode = &op_ode.flat_predictions()[..];
         let pred_analytical = &op_analytical.flat_predictions()[..];
 
         println!("ode: {:?}", pred_ode);
         println!("analitycal: {:?}", pred_analytical);
-        
+
         for (&od, &an) in pred_ode.iter().zip(pred_analytical.iter()) {
             assert_relative_eq!(od, an, max_relative = 1e-4, epsilon = 1e-4,);
         }
