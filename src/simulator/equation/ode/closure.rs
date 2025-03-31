@@ -138,7 +138,11 @@ impl<'a, F> NonLinearOpJacobian for PmRhs<'a, F>
 where
     F: Fn(&V, &V, T, &mut V, V, &Covariates),
 {
-    fn jac_mul_inplace(&self, _x: &Self::V, _t: Self::T, _v: &Self::V, _y: &mut Self::V) {}
+    fn jac_mul_inplace(&self, _x: &Self::V, t: Self::T, v: &Self::V, y: &mut Self::V) {
+        let rateiv = Self::V::zeros(self.nstates);
+        let p = DVector::from_vec(self.p.clone());
+        (self.func)(v, &p, t, y, rateiv, &self.covariates);
+    }
 }
 pub struct PmMass {
     nstates: usize,
