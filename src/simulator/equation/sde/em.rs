@@ -3,7 +3,7 @@ use crate::{
     simulator::{Diffusion, Drift},
     Infusion,
 };
-use nalgebra::DVector;
+use faer::Col;
 use rand::rng;
 use rand_distr::{Distribution, Normal};
 
@@ -16,8 +16,8 @@ use rand_distr::{Distribution, Normal};
 pub struct EM {
     drift: Drift,
     diffusion: Diffusion,
-    params: DVector<f64>,
-    state: DVector<f64>,
+    params: Col<f64>,
+    state: Col<f64>,
     cov: Covariates,
     infusions: Vec<Infusion>,
     rtol: f64,
@@ -46,8 +46,8 @@ impl EM {
     pub fn new(
         drift: Drift,
         diffusion: Diffusion,
-        params: DVector<f64>,
-        initial_state: DVector<f64>,
+        params: Col<f64>,
+        initial_state: Col<f64>,
         cov: Covariates,
         infusions: Vec<Infusion>,
         rtol: f64,
@@ -77,8 +77,8 @@ impl EM {
     /// # Returns
     ///
     /// The maximum normalized error between the two approximations.
-    fn calculate_error(&self, y1: &DVector<f64>, y2: &DVector<f64>) -> f64 {
-        let n = y1.len();
+    fn calculate_error(&self, y1: &Col<f64>, y2: &Col<f64>) -> f64 {
+        let n = y1.nrows();
         let mut err = 0.0f64;
 
         for i in 0..n {
@@ -113,16 +113,15 @@ impl EM {
     /// * `time` - Current simulation time
     /// * `dt` - Step size
     /// * `state` - Current state of the system (modified in-place)
-    fn euler_maruyama_step(&self, time: f64, dt: f64, state: &mut DVector<f64>) {
-        let n = state.len();
-        let mut rateiv = DVector::from_vec(vec![0.0, 0.0, 0.0]);
-        //TODO: This should be pre-calculated
+    fn euler_maruyama_step(&self, time: f64, dt: f64, state: &mut Col<f64>) {
+        let n = state.nrows();
+        let mut rateiv: Col<f64> = Col::zeros(n);
         for infusion in &self.infusions {
             if time >= infusion.time() && time <= infusion.duration() + infusion.time() {
                 rateiv[infusion.input()] += infusion.amount() / infusion.duration();
             }
         }
-        let mut drift_term = DVector::zeros(n);
+        let mut drift_term = Col::zeros(n);
         (self.drift)(
             state,
             &self.params,
@@ -132,7 +131,7 @@ impl EM {
             &self.cov,
         );
 
-        let mut diffusion_term = DVector::zeros(n);
+        let mut diffusion_term = Col::zeros(n);
         (self.diffusion)(&self.params, &mut diffusion_term);
 
         let mut rng = rng();
@@ -158,7 +157,7 @@ impl EM {
     /// A tuple containing:
     /// * Vector of time points where solutions were computed
     /// * Vector of state vectors corresponding to each time point
-    pub fn solve(&mut self, t0: f64, tf: f64) -> (Vec<f64>, Vec<DVector<f64>>) {
+    pub fn solve(&mut self, t0: f64, tf: f64) -> (Vec<f64>, Vec<Col<f64>>) {
         let mut t = t0;
         let mut dt = self.max_step;
         let safety = 0.9;

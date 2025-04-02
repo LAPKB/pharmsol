@@ -2,7 +2,6 @@ mod em;
 
 use std::collections::HashMap;
 
-use nalgebra::DVector;
 use ndarray::{concatenate, Array2, Axis};
 use rand::{rng, Rng};
 use rayon::prelude::*;
@@ -19,6 +18,7 @@ use crate::{
 };
 
 use super::{Equation, EquationPriv, EquationTypes, Predictions, State};
+use faer::Col;
 
 /// Simulate a stochastic differential equation (SDE) event.
 ///
@@ -57,7 +57,7 @@ pub(crate) fn simulate_sde_event(
     let mut sde = em::EM::new(
         *drift,
         *difussion,
-        DVector::from_column_slice(support_point),
+        Col::from_fn(support_point.len(), |i| support_point[i]),
         x,
         cov.clone(),
         infusions.to_vec(),
@@ -130,7 +130,7 @@ impl SDE {
 /// State trait implementation for particle-based SDE simulation.
 ///
 /// This implementation allows adding bolus doses to all particles in the system.
-impl State for Vec<DVector<f64>> {
+impl State for Vec<Col<f64>> {
     /// Adds a bolus dose to a specific input compartment across all particles.
     ///
     /// # Arguments
@@ -163,7 +163,7 @@ impl Predictions for Array2<Prediction> {
 }
 
 impl EquationTypes for SDE {
-    type S = Vec<DVector<f64>>; // Vec -> particles, DVector -> state
+    type S = Vec<Col<f64>>; // Vec -> particles, DVector -> state
     type P = Array2<Prediction>; // Rows -> particles, Columns -> time
 }
 
@@ -180,12 +180,14 @@ impl EquationPriv for SDE {
 
     #[inline(always)]
     fn get_lag(&self, spp: &[f64]) -> Option<HashMap<usize, f64>> {
-        Some((self.lag)(&V::from_vec(spp.to_owned())))
+        let spp: Col<f64> = Col::from_fn(spp.len(), |i| spp[i]);
+        Some((self.lag)(&spp))
     }
 
     #[inline(always)]
     fn get_fa(&self, spp: &[f64]) -> Option<HashMap<usize, f64>> {
-        Some((self.fa)(&V::from_vec(spp.to_owned())))
+        let spp: Col<f64> = Col::from_fn(spp.len(), |i| spp[i]);
+        Some((self.fa)(&spp))
     }
 
     #[inline(always)]
@@ -242,14 +244,15 @@ impl EquationPriv for SDE {
         let mut pred = vec![Prediction::default(); self.nparticles];
         pred.par_iter_mut().enumerate().for_each(|(i, p)| {
             let mut y = V::zeros(self.get_nouteqs());
-            (self.out)(
-                &x[i],
-                &V::from_vec(support_point.clone()),
-                observation.time(),
-                covariates,
-                &mut y,
+            let spp = Col::from_fn(support_point.len(), |i| support_point[i]);
+            (self.out)(&x[i], &spp, observation.time(), covariates, &mut y);
+
+            *p = observation.to_obs_pred(
+                y[observation.outeq()],
+                x[i].iter().copied().collect::<Vec<f64>>(),
             );
-            *p = observation.to_obs_pred(y[observation.outeq()], x[i].as_slice().to_vec());
+
+            //*p = observation.to_obs_pred(y[observation.outeq()], x[i].as_slice().to_vec());
         });
         let out = Array2::from_shape_vec((self.nparticles, 1), pred.clone()).unwrap();
         *output = concatenate(Axis(1), &[output.view(), out.view()]).unwrap();
@@ -262,7 +265,7 @@ impl EquationPriv for SDE {
             let sum_q: f64 = q.iter().sum();
             let w: Vec<f64> = q.iter().map(|qi| qi / sum_q).collect();
             let i = sysresample(&w);
-            let a: Vec<DVector<f64>> = i.iter().map(|&i| x[i].clone()).collect();
+            let a: Vec<Col<f64>> = i.iter().map(|&i| x[i].clone()).collect();
             *x = a;
             likelihood.push(sum_q / self.nparticles as f64);
             // let qq: Vec<f64> = i.iter().map(|&i| q[i]).collect();
@@ -278,14 +281,10 @@ impl EquationPriv for SDE {
     ) -> Self::S {
         let mut x = Vec::with_capacity(self.nparticles);
         for _ in 0..self.nparticles {
-            let mut state = DVector::zeros(self.get_nstates());
+            let mut state = Col::zeros(self.get_nstates());
+            let spp = Col::from_fn(support_point.len(), |i| support_point[i]);
             if occasion_index == 0 {
-                (self.init)(
-                    &V::from_vec(support_point.to_vec()),
-                    0.0,
-                    covariates,
-                    &mut state,
-                );
+                (self.init)(&spp, 0.0, covariates, &mut state);
             }
             x.push(state);
         }

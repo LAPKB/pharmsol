@@ -13,8 +13,26 @@ use cached::proc_macro::cached;
 use cached::UnboundCache;
 
 use closure::PMProblem;
-use diffsol::{ode_solver::method::OdeSolverMethod, OdeBuilder};
-use nalgebra::DVector;
+use diffsol::{
+    ode_solver::method::OdeSolverMethod, Bdf, FaerLU, NewtonNonlinearSolver, OdeBuilder,
+};
+use faer::{Col, Mat};
+
+type ST<'e> = Bdf<
+    'e,
+    PMProblem<
+        for<'a, 'b, 'c, 'd> fn(
+            &'a Col<f64>,
+            &'b Col<f64>,
+            f64,
+            &'c mut Col<f64>,
+            Col<f64>,
+            &'d Covariates,
+        ),
+    >,
+    NewtonNonlinearSolver<Mat<f64>, FaerLU<f64>>,
+    Mat<f64>,
+>;
 
 // use self::diffsol_traits::build_pm_ode;
 
@@ -109,13 +127,13 @@ impl EquationTypes for ODE {
 impl EquationPriv for ODE {
     #[inline(always)]
     fn get_lag(&self, spp: &[f64]) -> Option<HashMap<usize, f64>> {
-        let spp = DVector::from_vec(spp.to_vec());
+        let spp: Col<f64> = Col::from_fn(spp.len(), |i| spp[i]);
         Some((self.lag)(&spp))
     }
 
     #[inline(always)]
     fn get_fa(&self, spp: &[f64]) -> Option<HashMap<usize, f64>> {
-        let spp = DVector::from_vec(spp.to_vec());
+        let spp: Col<f64> = Col::from_fn(spp.len(), |i| spp[i]);
         Some((self.fa)(&spp))
     }
 
@@ -142,7 +160,7 @@ impl EquationPriv for ODE {
             return;
         }
 
-        let problem = OdeBuilder::<M>::new()
+        let problem: diffsol::OdeSolverProblem<PMProblem<DiffEq>> = OdeBuilder::<M>::new()
             .atol(vec![ATOL])
             .rtol(RTOL)
             .t0(start_time)
@@ -158,10 +176,10 @@ impl EquationPriv for ODE {
             ))
             .unwrap();
 
-        let mut solver = problem.bdf::<diffsol::NalgebraLU<f64>>().unwrap();
+        let mut solver: ST = problem.bdf::<diffsol::FaerLU<f64>>().unwrap();
         let (ys, _ts) = solver.solve(end_time).unwrap();
 
-        *state = ys.column(ys.ncols() - 1).into_owned();
+        *state = ys.col(ys.ncols() - 1).to_owned();
     }
     #[inline(always)]
     fn process_observation(
@@ -177,10 +195,10 @@ impl EquationPriv for ODE {
     ) {
         let mut y = V::zeros(self.get_nouteqs());
         let out = &self.out;
-        let spp = DVector::from_vec(support_point.clone());
+        let spp: Col<f64> = Col::from_fn(support_point.len(), |i| support_point[i]);
         (out)(x, &spp, observation.time(), covariates, &mut y);
         let pred = y[observation.outeq()];
-        let pred = observation.to_obs_pred(pred, x.as_slice().to_vec());
+        let pred = observation.to_obs_pred(pred, x.iter().copied().collect::<Vec<f64>>());
         if let Some(error_model) = error_model {
             likelihood.push(pred.likelihood(error_model));
         }
@@ -192,7 +210,7 @@ impl EquationPriv for ODE {
         let init = &self.init;
         let mut x = V::zeros(self.get_nstates());
         if occasion_index == 0 {
-            let spp = DVector::from_vec(spp.clone());
+            let spp: Col<f64> = Col::from_fn(spp.len(), |i| spp[i]);
             (init)(&spp, 0.0, covariates, &mut x);
         }
         x

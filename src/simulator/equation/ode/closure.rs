@@ -2,10 +2,11 @@ use crate::{Covariates, Infusion};
 use diffsol::{
     ConstantOp, LinearOp, NonLinearOp, NonLinearOpJacobian, OdeEquations, OdeEquationsRef, Op,
 };
-use nalgebra::DVector;
 type T = f64;
-type V = nalgebra::DVector<f64>;
-type M = nalgebra::DMatrix<f64>;
+type V = faer::Col<f64>;
+type M = faer::Mat<f64>;
+//type V = nalgebra::DVector<f64>;
+//type M = nalgebra::DMatrix<f64>;
 pub struct PmRhs<'a, F>
 where
     F: Fn(&V, &V, T, &mut V, V, &Covariates),
@@ -129,7 +130,7 @@ where
             }
         }
         // self.statistics.borrow_mut().increment_call();
-        let p = DVector::from_vec(self.p.clone());
+        let p = faer::Col::from_fn(self.nparams, |i| self.p[i]);
         (self.func)(x, &p, t, y, rateiv, &self.covariates)
     }
 }
@@ -256,7 +257,7 @@ where
         }
     }
     fn get_params(&self, p: &mut Self::V) {
-        p.copy_from(&DVector::from_vec(self.p.clone()));
+        faer::Col::from_fn(p.nrows(), |i| self.p[i]);
     }
     fn root(&self) -> Option<<PMProblem<F> as OdeEquationsRef<'_>>::Root> {
         None

@@ -1,10 +1,11 @@
 pub mod one_compartment_models;
-pub mod two_compartment_models;
-pub mod three_compartment_models;
+//pub mod three_compartment_models;
+//pub mod two_compartment_models;
 
+use faer::Col;
 pub use one_compartment_models::*;
-pub use two_compartment_models::*;
-pub use three_compartment_models::*;
+//pub use three_compartment_models::*;
+//pub use two_compartment_models::*;
 
 use crate::{
     data::Covariates, simulator::*, Equation, EquationPriv, EquationTypes, Observation, Subject,
@@ -77,12 +78,14 @@ impl EquationPriv for Analytical {
 
     #[inline(always)]
     fn get_lag(&self, spp: &[f64]) -> Option<HashMap<usize, f64>> {
-        Some((self.lag)(&V::from_vec(spp.to_owned())))
+        let spp: Col<f64> = Col::from_fn(spp.len(), |i| spp[i]);
+        Some((self.lag)(&spp))
     }
 
     #[inline(always)]
     fn get_fa(&self, spp: &[f64]) -> Option<HashMap<usize, f64>> {
-        Some((self.fa)(&V::from_vec(spp.to_owned())))
+        let spp: Col<f64> = Col::from_fn(spp.len(), |i| spp[i]);
+        Some((self.fa)(&spp))
     }
 
     #[inline(always)]
@@ -107,8 +110,10 @@ impl EquationPriv for Analytical {
         if ti == tf {
             return;
         }
-        let mut support_point = V::from_vec(support_point.to_owned());
-        let mut rateiv = V::from_vec(vec![0.0, 0.0, 0.0]);
+
+        let mut support_point: Col<f64> = Col::from_fn(support_point.len(), |i| support_point[i]);
+        let mut rateiv = Col::zeros(3);
+        //       let mut rateiv = V::from_vec(vec![0.0, 0.0, 0.0]);
         //TODO: This should be pre-calculated
         for infusion in infusions {
             if tf >= infusion.time() && tf <= infusion.duration() + infusion.time() {
@@ -132,15 +137,10 @@ impl EquationPriv for Analytical {
     ) {
         let mut y = V::zeros(self.get_nouteqs());
         let out = &self.out;
-        (out)(
-            x,
-            &V::from_vec(support_point.clone()),
-            observation.time(),
-            covariates,
-            &mut y,
-        );
+        let support_point: Col<f64> = Col::from_fn(support_point.len(), |i| support_point[i]);
+        (out)(x, &support_point, observation.time(), covariates, &mut y);
         let pred = y[observation.outeq()];
-        let pred = observation.to_obs_pred(pred, x.as_slice().to_vec());
+        let pred = observation.to_obs_pred(pred, x.iter().copied().collect::<Vec<f64>>());
         if let Some(error_model) = error_model {
             likelihood.push(pred.likelihood(error_model));
         }
@@ -151,7 +151,8 @@ impl EquationPriv for Analytical {
         let init = &self.init;
         let mut x = V::zeros(self.get_nstates());
         if occasion_index == 0 {
-            (init)(&V::from_vec(spp.to_vec()), 0.0, covariates, &mut x);
+            let spp = Col::from_fn(spp.len(), |i| spp[i]);
+            (init)(&spp, 0.0, covariates, &mut x);
         }
         x
     }
