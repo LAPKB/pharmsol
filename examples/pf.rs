@@ -1,4 +1,3 @@
-use error_model::ErrorModel;
 use pharmsol::*;
 fn main() {
     let subject = data::Subject::builder("id1")
@@ -29,7 +28,7 @@ fn main() {
         10000,
     );
 
-    let em = ErrorModel::new((0.5, 0.0, 0.0, 0.0), 0.0, &error_model::ErrorType::Add); // sigma = 0.5
+    let em = ErrorModel::new((0.5, 0.0, 0.0, 0.0), 0.0, ErrorType::Additive); // sigma = 0.5
 
     let ll = sde.estimate_likelihood(&subject, &vec![1.0], &em, false);
 
