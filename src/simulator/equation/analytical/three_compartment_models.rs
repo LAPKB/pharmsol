@@ -319,8 +319,7 @@ mod tests {
         let pred_analytical = &op_analytical.flat_predictions()[..];
 
         println!("ode: {:?}", pred_ode);
-        println!("analitycal: {:?}", pred_analytical);
-
+        println!("analytical: {:?}", pred_analytical);
         for (&od, &an) in pred_ode.iter().zip(pred_analytical.iter()) {
             assert_relative_eq!(od, an, max_relative = 1e-4, epsilon = 1e-4,);
         }
