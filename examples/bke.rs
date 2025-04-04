@@ -41,7 +41,7 @@ fn main() {
         (1, 1),
     );
 
-    let em = ErrorModel::new((0.0, 0.05, 0.0, 0.0), 0.0, &ErrorType::Add);
+    let em = ErrorModel::new((0.0, 0.05, 0.0, 0.0), 0.0, ErrorType::Additive);
     let ll = an.estimate_likelihood(
         &subject,
         &vec![1.02282724609375, 194.51904296875],
