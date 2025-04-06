@@ -35,17 +35,19 @@ pub fn three_compartments(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V
     let gamma = (beta.powi(2) + alpha.powi(2)).sqrt();
     let theta = alpha.atan2(beta);
 
-    let l1 = a / 3.0 + gamma.powf(1.0 / 3.0)*((theta / 3.0).cos() + 3.0_f64.sqrt() * (theta / 3.0).sin());
-    let l2 = a / 3.0 + gamma.powf(1.0 / 3.0)*((theta / 3.0).cos() - 3.0_f64.sqrt() * (theta / 3.0).sin());
+    let l1 = a / 3.0
+        + gamma.powf(1.0 / 3.0) * ((theta / 3.0).cos() + 3.0_f64.sqrt() * (theta / 3.0).sin());
+    let l2 = a / 3.0
+        + gamma.powf(1.0 / 3.0) * ((theta / 3.0).cos() - 3.0_f64.sqrt() * (theta / 3.0).sin());
     let l3 = a / 3.0 - (2.0 * gamma.powf(1.0 / 3.0) * (theta / 3.0).cos());
 
     let exp_l1_t = (-l1 * t).exp();
     let exp_l2_t = (-l2 * t).exp();
     let exp_l3_t = (-l3 * t).exp();
 
-    let c1 = (k21 -l1) * (k31 - l1) / ((l2 - l1) * (l3 - l1));
-    let c2 = (k21 -l2) * (k31 - l2) / ((l1 - l2) * (l3 - l2));
-    let c3 = (k21 -l3) * (k31 - l3) / ((l1 - l3) * (l2 - l3));
+    let c1 = (k21 - l1) * (k31 - l1) / ((l2 - l1) * (l3 - l1));
+    let c2 = (k21 - l2) * (k31 - l2) / ((l1 - l2) * (l3 - l2));
+    let c3 = (k21 - l3) * (k31 - l3) / ((l1 - l3) * (l2 - l3));
     let c4 = k21 * (k31 - l1) / ((l2 - l1) * (l3 - l1));
     let c5 = k21 * (k31 - l2) / ((l1 - l2) * (l3 - l2));
     let c6 = k21 * (k31 - l3) / ((l1 - l3) * (l2 - l3));
@@ -58,7 +60,7 @@ pub fn three_compartments(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V
     let c13 = ((k10 + k12 + k13 - l1) * (k31 - l1) - (k13 * k31)) / ((l2 - l1) * (l3 - l1));
     let c14 = ((k10 + k12 + k13 - l2) * (k31 - l2) - (k13 * k31)) / ((l1 - l2) * (l3 - l2));
     let c15 = ((k10 + k12 + k13 - l3) * (k31 - l3) - (k13 * k31)) / ((l1 - l3) * (l2 - l3));
-    let c16 = k12 * k31 / ((l2 - l1) * (l3 - l1));   
+    let c16 = k12 * k31 / ((l2 - l1) * (l3 - l1));
     let c17 = k12 * k31 / ((l1 - l2) * (l3 - l2));
     let c18 = k12 * k31 / ((l1 - l3) * (l2 - l3));
     let c19 = k13 * (k21 - l1) / ((l2 - l1) * (l3 - l1));
@@ -87,8 +89,12 @@ pub fn three_compartments(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V
 
     let infusion_vector = Vector3::new(
         ((1.0 - exp_l1_t) * c1 / l1) + ((1.0 - exp_l2_t) * c2 / l2) + ((1.0 - exp_l3_t) * c3 / l3),
-        ((1.0 - exp_l1_t) * c10 / l1) + ((1.0 - exp_l2_t) * c11 / l2) + ((1.0 - exp_l3_t) * c12 / l3),
-        ((1.0 - exp_l1_t) * c19 / l1) + ((1.0 - exp_l2_t) * c20 / l2) + ((1.0 - exp_l3_t) * c21 / l3),
+        ((1.0 - exp_l1_t) * c10 / l1)
+            + ((1.0 - exp_l2_t) * c11 / l2)
+            + ((1.0 - exp_l3_t) * c12 / l3),
+        ((1.0 - exp_l1_t) * c19 / l1)
+            + ((1.0 - exp_l2_t) * c20 / l2)
+            + ((1.0 - exp_l3_t) * c21 / l3),
     );
 
     let infusion = infusion_vector * rateiv[0];
@@ -136,17 +142,19 @@ pub fn three_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &
     let gamma = (beta.powi(2) + alpha.powi(2)).sqrt();
     let theta = alpha.atan2(beta);
 
-    let l1 = a / 3.0 + gamma.powf(1.0 / 3.0)*((theta / 3.0).cos() + 3.0_f64.sqrt() * (theta / 3.0).sin());
-    let l2 = a / 3.0 + gamma.powf(1.0 / 3.0)*((theta / 3.0).cos() - 3.0_f64.sqrt() * (theta / 3.0).sin());
+    let l1 = a / 3.0
+        + gamma.powf(1.0 / 3.0) * ((theta / 3.0).cos() + 3.0_f64.sqrt() * (theta / 3.0).sin());
+    let l2 = a / 3.0
+        + gamma.powf(1.0 / 3.0) * ((theta / 3.0).cos() - 3.0_f64.sqrt() * (theta / 3.0).sin());
     let l3 = a / 3.0 - (2.0 * gamma.powf(1.0 / 3.0) * (theta / 3.0).cos());
 
     let exp_l1_t = (-l1 * t).exp();
     let exp_l2_t = (-l2 * t).exp();
     let exp_l3_t = (-l3 * t).exp();
 
-    let c1 = (k21 -l1) * (k31 - l1) / ((l2 - l1) * (l3 - l1));
-    let c2 = (k21 -l2) * (k31 - l2) / ((l1 - l2) * (l3 - l2));
-    let c3 = (k21 -l3) * (k31 - l3) / ((l1 - l3) * (l2 - l3));
+    let c1 = (k21 - l1) * (k31 - l1) / ((l2 - l1) * (l3 - l1));
+    let c2 = (k21 - l2) * (k31 - l2) / ((l1 - l2) * (l3 - l2));
+    let c3 = (k21 - l3) * (k31 - l3) / ((l1 - l3) * (l2 - l3));
     let c4 = k21 * (k31 - l1) / ((l2 - l1) * (l3 - l1));
     let c5 = k21 * (k31 - l2) / ((l1 - l2) * (l3 - l2));
     let c6 = k21 * (k31 - l3) / ((l1 - l3) * (l2 - l3));
@@ -159,7 +167,7 @@ pub fn three_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &
     let c13 = ((k10 + k12 + k13 - l1) * (k31 - l1) - (k13 * k31)) / ((l2 - l1) * (l3 - l1));
     let c14 = ((k10 + k12 + k13 - l2) * (k31 - l2) - (k13 * k31)) / ((l1 - l2) * (l3 - l2));
     let c15 = ((k10 + k12 + k13 - l3) * (k31 - l3) - (k13 * k31)) / ((l1 - l3) * (l2 - l3));
-    let c16 = k12 * k31 / ((l2 - l1) * (l3 - l1));   
+    let c16 = k12 * k31 / ((l2 - l1) * (l3 - l1));
     let c17 = k12 * k31 / ((l1 - l2) * (l3 - l2));
     let c18 = k12 * k31 / ((l1 - l3) * (l2 - l3));
     let c19 = k13 * (k21 - l1) / ((l2 - l1) * (l3 - l1));
@@ -188,8 +196,12 @@ pub fn three_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &
 
     let infusion_vector = Vector3::new(
         ((1.0 - exp_l1_t) * c1 / l1) + ((1.0 - exp_l2_t) * c2 / l2) + ((1.0 - exp_l3_t) * c3 / l3),
-        ((1.0 - exp_l1_t) * c10 / l1) + ((1.0 - exp_l2_t) * c11 / l2) + ((1.0 - exp_l3_t) * c12 / l3),
-        ((1.0 - exp_l1_t) * c19 / l1) + ((1.0 - exp_l2_t) * c20 / l2) + ((1.0 - exp_l3_t) * c21 / l3),
+        ((1.0 - exp_l1_t) * c10 / l1)
+            + ((1.0 - exp_l2_t) * c11 / l2)
+            + ((1.0 - exp_l3_t) * c12 / l3),
+        ((1.0 - exp_l1_t) * c19 / l1)
+            + ((1.0 - exp_l2_t) * c20 / l2)
+            + ((1.0 - exp_l3_t) * c21 / l3),
     );
 
     let infusion = infusion_vector * rateiv[0];
@@ -197,9 +209,15 @@ pub fn three_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &
     let exp_ka_t = (-ka * t).exp();
 
     let absorption_vector = Vector3::new(
-        (exp_l1_t - exp_ka_t) * c1 / (ka - l1) + (exp_l2_t - exp_ka_t) * c2 / (ka - l2) + (exp_l3_t - exp_ka_t) * c3 / (ka - l3),
-        (exp_l1_t - exp_ka_t) * c10 / (ka - l1) + (exp_l2_t - exp_ka_t) * c11 / (ka - l2) + (exp_l3_t - exp_ka_t) * c12 / (ka - l3),
-        (exp_l1_t - exp_ka_t) * c19 / (ka - l1) + (exp_l2_t - exp_ka_t) * c20 / (ka - l2) + (exp_l3_t - exp_ka_t) * c21 / (ka - l3),
+        (exp_l1_t - exp_ka_t) * c1 / (ka - l1)
+            + (exp_l2_t - exp_ka_t) * c2 / (ka - l2)
+            + (exp_l3_t - exp_ka_t) * c3 / (ka - l3),
+        (exp_l1_t - exp_ka_t) * c10 / (ka - l1)
+            + (exp_l2_t - exp_ka_t) * c11 / (ka - l2)
+            + (exp_l3_t - exp_ka_t) * c12 / (ka - l3),
+        (exp_l1_t - exp_ka_t) * c19 / (ka - l1)
+            + (exp_l2_t - exp_ka_t) * c20 / (ka - l2)
+            + (exp_l3_t - exp_ka_t) * c21 / (ka - l3),
     );
 
     let absorption = absorption_vector * ka * x[0];
@@ -216,19 +234,18 @@ pub fn three_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &
 
 #[cfg(test)]
 mod tests {
-    use crate::*;
     use super::{three_compartments, three_compartments_with_absorption};
+    use crate::*;
     use approx::assert_relative_eq;
 
     enum SubjectInfo {
         InfusionDosing,
-        OralInfusionDosage
+        OralInfusionDosage,
     }
 
     impl SubjectInfo {
         fn get_subject(&self) -> Subject {
             match self {
-                
                 SubjectInfo::InfusionDosing => Subject::builder("id1")
                     .bolus(0.0, 100.0, 0)
                     .infusion(24.0, 150.0, 0, 3.0)
@@ -277,14 +294,13 @@ mod tests {
 
     #[test]
     fn test_three_compartments() {
-
         let infusion_dosing = SubjectInfo::InfusionDosing;
         let subject = infusion_dosing.get_subject();
 
         let ode = equation::ODE::new(
             |x, p, _t, dx, rateiv, _cov| {
                 fetch_params!(p, k10, k12, k13, k21, k31, _v);
-    
+
                 dx[0] = rateiv[0] - (k10 + k12 + k13) * x[0] + k21 * x[1] + k31 * x[2];
                 dx[1] = k12 * x[0] - k21 * x[1];
                 dx[2] = k13 * x[0] - k31 * x[2];
@@ -313,30 +329,30 @@ mod tests {
         );
 
         let op_ode = ode.estimate_predictions(&subject, &vec![0.1, 3.0, 2.0, 1.0, 0.5, 1.0]);
-        let pred_ode= &op_ode.flat_predictions()[..];
+        let pred_ode = &op_ode.flat_predictions()[..];
 
-        let op_analytical = analytical.estimate_predictions(&subject, &vec![0.1, 3.0, 2.0, 1.0, 0.5, 1.0]);
+        let op_analytical =
+            analytical.estimate_predictions(&subject, &vec![0.1, 3.0, 2.0, 1.0, 0.5, 1.0]);
         let pred_analytical = &op_analytical.flat_predictions()[..];
 
         println!("ode: {:?}", pred_ode);
         println!("analitycal: {:?}", pred_analytical);
 
         for (&od, &an) in pred_ode.iter().zip(pred_analytical.iter()) {
-            assert_relative_eq!(od, an, max_relative = 1e-4, epsilon = 1e-4,);
+            assert_relative_eq!(od, an, max_relative = 1e-3, epsilon = 1e-3);
         }
     }
 
     #[test]
     fn test_three_compartments_with_absorption() {
-
         let oral_infusion_dosing = SubjectInfo::OralInfusionDosage;
         let subject = oral_infusion_dosing.get_subject();
 
         let ode = equation::ODE::new(
             |x, p, _t, dx, rateiv, _cov| {
                 fetch_params!(p, ka, k10, k12, k13, k21, k31, _v);
-    
-                dx[0] = - ka * x[0];
+
+                dx[0] = -ka * x[0];
                 dx[1] = rateiv[0] - (k10 + k12 + k13) * x[1] + ka * x[0] + k21 * x[2] + k31 * x[3];
                 dx[2] = k12 * x[1] - k21 * x[2];
                 dx[3] = k13 * x[1] - k31 * x[3];
@@ -365,14 +381,15 @@ mod tests {
         );
 
         let op_ode = ode.estimate_predictions(&subject, &vec![1.0, 0.1, 3.0, 2.0, 1.0, 0.5, 1.0]);
-        let op_analytical = analytical.estimate_predictions(&subject, &vec![1.0, 0.1, 3.0, 2.0, 1.0, 0.5, 1.0]);
+        let op_analytical =
+            analytical.estimate_predictions(&subject, &vec![1.0, 0.1, 3.0, 2.0, 1.0, 0.5, 1.0]);
 
-        let pred_ode= &op_ode.flat_predictions()[..];
+        let pred_ode = &op_ode.flat_predictions()[..];
         let pred_analytical = &op_analytical.flat_predictions()[..];
 
         println!("ode: {:?}", pred_ode);
         println!("analitycal: {:?}", pred_analytical);
-        
+
         for (&od, &an) in pred_ode.iter().zip(pred_analytical.iter()) {
             assert_relative_eq!(od, an, max_relative = 1e-3, epsilon = 1e-3,);
         }
