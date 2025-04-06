@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.9](https://github.com/LAPKB/pharmsol/compare/v0.7.8...v0.7.9) - 2025-03-28
+
+### Added
+
+- Analytical models for three-compartments, review of the two-compartment models, and inclusion of tests. ([#42](https://github.com/LAPKB/pharmsol/pull/42))
+
+### Fixed
+
+- fix tests
+
+### Other
+
+- updated to diffsol 0.5.3 ([#41](https://github.com/LAPKB/pharmsol/pull/41))
+- Documentation
+- clippy
+- documentation
+- Add LICENSE ([#37](https://github.com/LAPKB/pharmsol/pull/37))
+- updating the example, showing how the callback works and an exmplanation about how to remove compilation artifacts
+- reading pharmsol's version dynamically. Cleaning up the example
+- added tests
+- working example using exa
+- Initial version of Exa, need to add some tests
+- Add CONTRIBUTING.md
+
 ## [0.7.8](https://github.com/LAPKB/pharmsol/compare/v0.7.7...v0.7.8) - 2025-03-11
 
 ### Fixed
