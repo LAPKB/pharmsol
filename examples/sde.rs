@@ -1,7 +1,8 @@
 use pharmsol::{prelude::data::read_pmetrics, *};
 
 fn one_c_ode() -> ODE {
-    let ode = equation::ODE::new(
+    
+    equation::ODE::new(
         |x, p, _t, dx, _rateiv, _cov| {
             // fetch_cov!(cov, t, wt);
             fetch_params!(p, ke);
@@ -14,12 +15,12 @@ fn one_c_ode() -> ODE {
             y[0] = x[0] / 50.0;
         },
         (1, 1),
-    );
-    ode
+    )
 }
 
 fn one_c_sde() -> SDE {
-    let sde = equation::SDE::new(
+    
+    equation::SDE::new(
         |x, p, _t, dx, _rateiv, _cov| {
             // automatically defined
             fetch_params!(p, ke0, _ske);
@@ -45,12 +46,12 @@ fn one_c_sde() -> SDE {
         },
         (2, 1),
         2,
-    );
-    sde
+    )
 }
 
 fn three_c_ode() -> ODE {
-    let ode = equation::ODE::new(
+    
+    equation::ODE::new(
         |x, p, _t, dx, _rateiv, _cov| {
             // fetch_cov!(cov, t, wt);
             fetch_params!(p, ka, ke, kcp, kpc, _vol);
@@ -66,12 +67,12 @@ fn three_c_ode() -> ODE {
             y[0] = x[1] / vol;
         },
         (3, 3),
-    );
-    ode
+    )
 }
 
 fn three_c_sde() -> SDE {
-    let sde = equation::SDE::new(
+    
+    equation::SDE::new(
         |x, p, _t, dx, _rateiv, _cov| {
             fetch_params!(p, ka, ke0, kcp, kpc, _vol, _ske);
             dx[3] = -x[3] + ke0;
@@ -96,8 +97,7 @@ fn three_c_sde() -> SDE {
         },
         (4, 1),
         2,
-    );
-    sde
+    )
 }
 
 fn main() {
@@ -168,8 +168,8 @@ fn main() {
     let data = read_pmetrics("../PMcore/examples/vanco_sde/data.csv").unwrap();
     let subject = data.get_subject("51").unwrap();
 
-    let ode_predictions = ode.estimate_predictions(&subject, &spp_ode);
-    let sde_predictions = sde.estimate_predictions(&subject, &spp_sde);
+    let ode_predictions = ode.estimate_predictions(subject, &spp_ode);
+    let sde_predictions = sde.estimate_predictions(subject, &spp_sde);
 
     let mut sde_flat_predictions: Vec<Vec<f64>> = Vec::new();
     for trajectory in sde_predictions.rows() {

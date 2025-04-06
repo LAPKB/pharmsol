@@ -1,66 +1,44 @@
-use diffsol::matrix::sparsity::MatrixSparsity;
-use diffsol::op::nonlinear_op::NonLinearOp;
-use diffsol::NonLinearOpJacobian;
+use crate::{Covariates, Infusion};
 use diffsol::{
-    matrix::Matrix,
-    op::{Op, OpStatistics},
-    vector::Vector,
+    ConstantOp, LinearOp, NonLinearOp, NonLinearOpJacobian, OdeEquations, OdeEquationsRef, Op,
 };
-
-use std::{cell::RefCell, rc::Rc};
-
-use crate::data::{Covariates, Infusion};
-pub(crate) struct PMClosure<M, F>
+use nalgebra::DVector;
+type T = f64;
+type V = nalgebra::DVector<f64>;
+type M = nalgebra::DMatrix<f64>;
+pub struct PmRhs<'a, F>
 where
-    M: Matrix,
-    F: Fn(&M::V, &M::V, M::T, &mut M::V, M::V, &Covariates),
+    F: Fn(&V, &V, T, &mut V, V, &Covariates),
 {
-    func: F,
     nstates: usize,
-    nout: usize,
+    // nout: usize,
     nparams: usize,
-    p: Rc<M::V>,
-    sparsity: Option<M::Sparsity>,
-    statistics: RefCell<OpStatistics>,
-    covariates: Covariates,
-    infusions: Vec<Infusion>,
+    infusions: &'a Vec<Infusion>,
+    covariates: &'a Covariates,
+    p: &'a Vec<f64>,
+    func: &'a F,
 }
-
-impl<M, F> PMClosure<M, F>
+impl<'a, F> Op for PmRhs<'a, F>
 where
-    M: Matrix,
-    F: Fn(&M::V, &M::V, M::T, &mut M::V, M::V, &Covariates),
+    F: Fn(&V, &V, T, &mut V, V, &Covariates),
 {
-    pub(crate) fn new(
-        func: F,
-        nstates: usize,
-        nout: usize,
-        p: Rc<M::V>,
-        covariates: Covariates,
-        infusions: Vec<Infusion>,
-    ) -> Self {
-        let nparams = p.len();
-        Self {
-            func,
-            nstates,
-            nout,
-            nparams,
-            p,
-            statistics: RefCell::new(OpStatistics::default()),
-            sparsity: None,
-            covariates,
-            infusions,
-        }
+    type T = T;
+    type V = V;
+    type M = M;
+    fn nstates(&self) -> usize {
+        self.nstates
+    }
+    fn nout(&self) -> usize {
+        self.nstates
+    }
+    fn nparams(&self) -> usize {
+        self.nparams
     }
 }
 
-impl<M, F> Op for PMClosure<M, F>
-where
-    M: Matrix,
-    F: Fn(&M::V, &M::V, M::T, &mut M::V, M::V, &Covariates),
-{
-    type V = M::V;
-    type T = M::T;
+impl Op for PmMass {
+    type T = T;
+    type V = V;
     type M = M;
     fn nstates(&self) -> usize {
         self.nstates
@@ -71,43 +49,226 @@ where
     fn nparams(&self) -> usize {
         self.nparams
     }
-    fn sparsity(&self) -> Option<<Self::M as Matrix>::SparsityRef<'_>> {
-        self.sparsity.as_ref().map(|s| s.as_ref())
+}
+
+impl Op for PmInit {
+    type T = T;
+    type V = V;
+    type M = M;
+    fn nstates(&self) -> usize {
+        self.nstates
     }
-    fn statistics(&self) -> OpStatistics {
-        self.statistics.borrow().clone()
+    fn nout(&self) -> usize {
+        self.nout
+    }
+    fn nparams(&self) -> usize {
+        self.nparams
     }
 }
 
-impl<M, F> NonLinearOp for PMClosure<M, F>
+impl Op for PmRoot {
+    type T = T;
+    type V = V;
+    type M = M;
+    fn nstates(&self) -> usize {
+        self.nstates
+    }
+    fn nout(&self) -> usize {
+        self.nout
+    }
+    fn nparams(&self) -> usize {
+        self.nparams
+    }
+}
+
+impl Op for PmOut {
+    type T = T;
+    type V = V;
+    type M = M;
+    fn nstates(&self) -> usize {
+        self.nstates
+    }
+    fn nout(&self) -> usize {
+        self.nout
+    }
+    fn nparams(&self) -> usize {
+        self.nparams
+    }
+}
+
+impl<F> Op for PMProblem<F>
 where
-    M: Matrix,
-    F: Fn(&M::V, &M::V, M::T, &mut M::V, M::V, &Covariates),
+    F: Fn(&V, &V, T, &mut V, V, &Covariates),
 {
-    fn call_inplace(&self, x: &M::V, t: M::T, y: &mut M::V) {
+    type T = T;
+    type V = V;
+    type M = M;
+    fn nstates(&self) -> usize {
+        self.nstates
+    }
+    fn nout(&self) -> usize {
+        self.nstates
+    }
+    fn nparams(&self) -> usize {
+        self.nparams
+    }
+}
+
+impl<'a, F> NonLinearOp for PmRhs<'a, F>
+where
+    F: Fn(&V, &V, T, &mut V, V, &Covariates),
+{
+    fn call_inplace(&self, x: &Self::V, t: Self::T, y: &mut Self::V) {
         let mut rateiv = Self::V::zeros(self.nstates);
         //TODO: This should be pre-calculated
-        for infusion in &self.infusions {
+        for infusion in self.infusions {
             if t >= Self::T::from(infusion.time())
                 && t <= Self::T::from(infusion.duration() + infusion.time())
             {
                 rateiv[infusion.input()] += Self::T::from(infusion.amount() / infusion.duration());
             }
         }
-        self.statistics.borrow_mut().increment_call();
-        (self.func)(x, self.p.as_ref(), t, y, rateiv, &self.covariates)
+        // self.statistics.borrow_mut().increment_call();
+        let p = DVector::from_vec(self.p.clone());
+        (self.func)(x, &p, t, y, rateiv, &self.covariates)
     }
 }
 
-impl<M, F> NonLinearOpJacobian for PMClosure<M, F>
+impl<'a, F> NonLinearOpJacobian for PmRhs<'a, F>
 where
-    M: Matrix,
-    F: Fn(&M::V, &M::V, M::T, &mut M::V, M::V, &Covariates),
+    F: Fn(&V, &V, T, &mut V, V, &Covariates),
 {
-    fn jac_mul_inplace(&self, _x: &M::V, t: M::T, v: &M::V, y: &mut M::V) {
+    fn jac_mul_inplace(&self, _x: &Self::V, t: Self::T, v: &Self::V, y: &mut Self::V) {
         let rateiv = Self::V::zeros(self.nstates);
-        self.statistics.borrow_mut().increment_jac_mul();
-        (self.func)(v, self.p.as_ref(), t, y, rateiv, &self.covariates);
-        // (self.jacobian_action)(x, self.p.as_ref(), t, v, y)
+        let p = DVector::from_vec(self.p.clone());
+        (self.func)(v, &p, t, y, rateiv, &self.covariates);
+    }
+}
+pub struct PmMass {
+    nstates: usize,
+    nout: usize,
+    nparams: usize,
+}
+
+impl LinearOp for PmMass {
+    fn gemv_inplace(&self, _x: &Self::V, _t: Self::T, _beta: Self::T, _y: &mut Self::V) {}
+}
+pub struct PmInit {
+    nstates: usize,
+    nout: usize,
+    nparams: usize,
+    init: V,
+}
+
+impl ConstantOp for PmInit {
+    fn call_inplace(&self, _t: Self::T, _y: &mut Self::V) {
+        _y.copy_from(&self.init);
+    }
+}
+pub struct PmRoot {
+    nstates: usize,
+    nout: usize,
+    nparams: usize,
+}
+
+impl NonLinearOp for PmRoot {
+    fn call_inplace(&self, _x: &Self::V, _t: Self::T, _y: &mut Self::V) {}
+}
+pub struct PmOut {
+    nstates: usize,
+    nout: usize,
+    nparams: usize,
+}
+
+impl NonLinearOp for PmOut {
+    fn call_inplace(&self, _x: &Self::V, _t: Self::T, _y: &mut Self::V) {}
+}
+
+pub struct PMProblem<F>
+where
+    F: Fn(&V, &V, T, &mut V, V, &Covariates),
+{
+    // rhs: PmRhs<fn(&V, &SupportPoint, T, &mut V, V, &Covariates)>,
+    func: F,
+    nstates: usize,
+    nparams: usize,
+    init: V,
+    p: Vec<f64>,
+    covariates: Covariates,
+    infusions: Vec<Infusion>,
+}
+
+impl<F> PMProblem<F>
+where
+    F: Fn(&V, &V, T, &mut V, V, &Covariates),
+{
+    pub fn new(
+        func: F,
+        nstates: usize,
+        p: Vec<f64>,
+        covariates: Covariates,
+        infusions: Vec<Infusion>,
+        init: V,
+    ) -> Self {
+        let nparams = p.len();
+        Self {
+            func,
+            nstates,
+            nparams,
+            init,
+            p,
+            covariates,
+            infusions,
+        }
+    }
+}
+
+impl<'a, F> OdeEquationsRef<'a> for PMProblem<F>
+where
+    F: Fn(&V, &V, T, &mut V, V, &Covariates),
+{
+    type Rhs = PmRhs<'a, F>;
+    type Mass = PmMass;
+    type Init = PmInit;
+    type Root = PmRoot;
+    type Out = PmOut;
+}
+
+impl<F> OdeEquations for PMProblem<F>
+where
+    F: Fn(&V, &V, T, &mut V, V, &Covariates),
+{
+    fn rhs(&self) -> <PMProblem<F> as OdeEquationsRef<'_>>::Rhs {
+        PmRhs {
+            nstates: self.nstates,
+            nparams: self.nparams,
+            infusions: &self.infusions,
+            covariates: &self.covariates,
+            p: &self.p,
+            func: &self.func,
+        }
+    }
+    fn mass(&self) -> Option<<PMProblem<F> as OdeEquationsRef<'_>>::Mass> {
+        None
+    }
+    fn init(&self) -> PmInit {
+        PmInit {
+            nstates: self.nstates(),
+            nout: self.nout(),
+            nparams: self.nparams(),
+            init: self.init.clone(),
+        }
+    }
+    fn get_params(&self, p: &mut Self::V) {
+        p.copy_from(&DVector::from_vec(self.p.clone()));
+    }
+    fn root(&self) -> Option<<PMProblem<F> as OdeEquationsRef<'_>>::Root> {
+        None
+    }
+    fn out(&self) -> Option<<PMProblem<F> as OdeEquationsRef<'_>>::Out> {
+        None
+    }
+    fn set_params(&mut self, p: &Self::V) {
+        self.p = p.iter().cloned().collect();
     }
 }

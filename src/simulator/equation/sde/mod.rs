@@ -20,6 +20,25 @@ use crate::{
 
 use super::{Equation, EquationPriv, EquationTypes, Predictions, State};
 
+/// Simulate a stochastic differential equation (SDE) event.
+///
+/// This function advances the SDE system from time `ti` to `tf` using
+/// the Euler-Maruyama method implemented in the `em` module.
+///
+/// # Arguments
+///
+/// * `drift` - Function defining the deterministic component of the SDE
+/// * `difussion` - Function defining the stochastic component of the SDE
+/// * `x` - Current state vector
+/// * `support_point` - Parameter vector for the model
+/// * `cov` - Covariates that may influence the system dynamics
+/// * `infusions` - Infusion events to be applied during simulation
+/// * `ti` - Starting time
+/// * `tf` - Ending time
+///
+/// # Returns
+///
+/// The state vector at time `tf` after simulation.
 #[inline(always)]
 pub(crate) fn simulate_sde_event(
     drift: &Drift,
@@ -49,6 +68,13 @@ pub(crate) fn simulate_sde_event(
     solution.last().unwrap().clone()
 }
 
+/// Stochastic Differential Equation solver for pharmacometric models.
+///
+/// This struct represents a stochastic differential equation system and provides
+/// methods to simulate particles and estimate likelihood for PKPD modeling.
+///
+/// SDE models introduce stochasticity into the system dynamics, allowing for more
+/// realistic modeling of biological variability and uncertainty.
 #[derive(Clone, Debug)]
 pub struct SDE {
     drift: Drift,
@@ -62,6 +88,22 @@ pub struct SDE {
 }
 
 impl SDE {
+    /// Creates a new stochastic differential equation solver.
+    ///
+    /// # Arguments
+    ///
+    /// * `drift` - Function defining the deterministic component of the SDE
+    /// * `diffusion` - Function defining the stochastic component of the SDE
+    /// * `lag` - Function to compute absorption lag times
+    /// * `fa` - Function to compute bioavailability fractions
+    /// * `init` - Function to initialize the system state
+    /// * `out` - Function to compute output equations
+    /// * `neqs` - Tuple containing the number of state and output equations
+    /// * `nparticles` - Number of particles to use in the simulation
+    ///
+    /// # Returns
+    ///
+    /// A new SDE solver instance configured with the given components.
     pub fn new(
         drift: Drift,
         diffusion: Diffusion,
@@ -84,7 +126,17 @@ impl SDE {
         }
     }
 }
+
+/// State trait implementation for particle-based SDE simulation.
+///
+/// This implementation allows adding bolus doses to all particles in the system.
 impl State for Vec<DVector<f64>> {
+    /// Adds a bolus dose to a specific input compartment across all particles.
+    ///
+    /// # Arguments
+    ///
+    /// * `input` - Index of the input compartment
+    /// * `amount` - Amount to add to the compartment
     fn add_bolus(&mut self, input: usize, amount: f64) {
         self.par_iter_mut().for_each(|particle| {
             particle[input] += amount;
@@ -92,6 +144,9 @@ impl State for Vec<DVector<f64>> {
     }
 }
 
+/// Predictions implementation for particle-based SDE simulation outputs.
+///
+/// This implementation manages and processes predictions from multiple particles.
 impl Predictions for Array2<Prediction> {
     fn new(nparticles: usize) -> Self {
         Array2::from_shape_fn((nparticles, 0), |_| Prediction::default())
@@ -239,6 +294,18 @@ impl EquationPriv for SDE {
 }
 
 impl Equation for SDE {
+    /// Estimates the likelihood of observed data given a model and parameters.
+    ///
+    /// # Arguments
+    ///
+    /// * `subject` - Subject data containing observations
+    /// * `support_point` - Parameter vector for the model
+    /// * `error_model` - Error model to use for likelihood calculations
+    /// * `cache` - Whether to cache likelihood results for reuse
+    ///
+    /// # Returns
+    ///
+    /// The log-likelihood of the observed data given the model and parameters.
     fn estimate_likelihood(
         &self,
         subject: &Subject,
@@ -254,6 +321,15 @@ impl Equation for SDE {
     }
 }
 
+/// Computes a hash value for a parameter vector.
+///
+/// # Arguments
+///
+/// * `spp` - Parameter vector
+///
+/// # Returns
+///
+/// A u64 hash value representing the parameter vector.
 fn spphash(spp: &[f64]) -> u64 {
     spp.iter().fold(0, |acc, x| acc + x.to_bits())
 }
@@ -273,6 +349,16 @@ fn _estimate_likelihood(
     let ypred = sde.simulate_subject(subject, support_point, Some(error_model));
     ypred.1.unwrap()
 }
+
+/// Performs systematic resampling of particles based on weights.
+///
+/// # Arguments
+///
+/// * `q` - Vector of particle weights
+///
+/// # Returns
+///
+/// Vector of indices to use for resampling.
 fn sysresample(q: &[f64]) -> Vec<usize> {
     let mut qc = vec![0.0; q.len()];
     qc[0] = q[0];

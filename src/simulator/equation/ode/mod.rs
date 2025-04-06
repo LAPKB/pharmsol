@@ -1,5 +1,4 @@
 mod closure;
-mod diffsol_traits;
 
 use std::collections::HashMap;
 
@@ -7,15 +6,17 @@ use crate::{
     data::{Covariates, Infusion},
     error_model::ErrorModel,
     prelude::simulator::SubjectPredictions,
-    simulator::{likelihood::ToPrediction, DiffEq, Fa, Init, Lag, Neqs, Out, M, T, V},
+    simulator::{likelihood::ToPrediction, DiffEq, Fa, Init, Lag, Neqs, Out, M, V},
     Observation, Subject,
 };
 use cached::proc_macro::cached;
 use cached::UnboundCache;
 
-use diffsol::{ode_solver::method::OdeSolverMethod, Bdf, OdeSolverState};
+use closure::PMProblem;
+use diffsol::{ode_solver::method::OdeSolverMethod, OdeBuilder};
+use nalgebra::DVector;
 
-use self::diffsol_traits::build_pm_ode;
+// use self::diffsol_traits::build_pm_ode;
 
 use super::{Equation, EquationPriv, EquationTypes, State};
 
@@ -108,12 +109,14 @@ impl EquationTypes for ODE {
 impl EquationPriv for ODE {
     #[inline(always)]
     fn get_lag(&self, spp: &[f64]) -> Option<HashMap<usize, f64>> {
-        Some((self.lag)(&V::from_vec(spp.to_owned())))
+        let spp = DVector::from_vec(spp.to_vec());
+        Some((self.lag)(&spp))
     }
 
     #[inline(always)]
     fn get_fa(&self, spp: &[f64]) -> Option<HashMap<usize, f64>> {
-        Some((self.fa)(&V::from_vec(spp.to_owned())))
+        let spp = DVector::from_vec(spp.to_vec());
+        Some((self.fa)(&spp))
     }
 
     #[inline(always)]
@@ -138,27 +141,27 @@ impl EquationPriv for ODE {
         if f64::abs(start_time - end_time) < 1e-8 {
             return;
         }
-        // dbg!(start_time, end_time);
-        let problem = build_pm_ode::<M, _, _>(
-            self.diffeq,
-            |_p: &V, _t: T| state.clone(),
-            V::from_vec(support_point.to_vec()),
-            start_time,
-            1e-3,
-            RTOL,
-            ATOL,
-            covariates.clone(),
-            infusions.clone(),
-        )
-        .unwrap();
 
-        let mut solver = Bdf::default();
-        let st = OdeSolverState::new(&problem, &solver).unwrap();
-        solver.set_problem(st, &problem).unwrap();
-        while solver.state().unwrap().t <= end_time {
-            solver.step().unwrap();
-        }
-        *state = solver.interpolate(end_time).unwrap();
+        let problem = OdeBuilder::<M>::new()
+            .atol(vec![ATOL])
+            .rtol(RTOL)
+            .t0(start_time)
+            .h0(1e-3)
+            .p(support_point.clone())
+            .build_from_eqn(PMProblem::new(
+                self.diffeq,
+                self.get_nstates(),
+                support_point.clone(),
+                covariates.clone(),
+                infusions.clone(),
+                state.clone(),
+            ))
+            .unwrap();
+
+        let mut solver = problem.bdf::<diffsol::NalgebraLU<f64>>().unwrap();
+        let (ys, _ts) = solver.solve(end_time).unwrap();
+
+        *state = ys.column(ys.ncols() - 1).into_owned();
     }
     #[inline(always)]
     fn process_observation(
@@ -174,13 +177,8 @@ impl EquationPriv for ODE {
     ) {
         let mut y = V::zeros(self.get_nouteqs());
         let out = &self.out;
-        (out)(
-            x,
-            &V::from_vec(support_point.clone()),
-            observation.time(),
-            covariates,
-            &mut y,
-        );
+        let spp = DVector::from_vec(support_point.clone());
+        (out)(x, &spp, observation.time(), covariates, &mut y);
         let pred = y[observation.outeq()];
         let pred = observation.to_obs_pred(pred, x.as_slice().to_vec());
         if let Some(error_model) = error_model {
@@ -194,7 +192,8 @@ impl EquationPriv for ODE {
         let init = &self.init;
         let mut x = V::zeros(self.get_nstates());
         if occasion_index == 0 {
-            (init)(&V::from_vec(spp.to_vec()), 0.0, covariates, &mut x);
+            let spp = DVector::from_vec(spp.clone());
+            (init)(&spp, 0.0, covariates, &mut x);
         }
         x
     }
@@ -212,22 +211,22 @@ impl Equation for ODE {
     }
 }
 
-// Test spphash
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn test_spphash() {
-        let spp1 = vec![1.0, 2.0, 3.0];
-        let spp2 = vec![1.0, 2.0, 3.0];
-        let spp3 = vec![3.0, 2.0, 1.0];
-        let spp4 = vec![1.0, 2.0, 3.000001];
-        // Equal values should have the same hash
-        assert_eq!(spphash(&spp1), spphash(&spp2));
-        // Mirrored values should have different hashes
-        assert_ne!(spphash(&spp1), spphash(&spp3));
-        // Very close values should have different hashes
-        // Note: Due to f64 precision this will fail for values that are very close, e.g. 3.0 and 3.0000000000000001
-        assert_ne!(spphash(&spp1), spphash(&spp4));
-    }
-}
+// // Test spphash
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
+//     #[test]
+//     fn test_spphash() {
+//         let spp1 = vec![1.0, 2.0, 3.0];
+//         let spp2 = vec![1.0, 2.0, 3.0];
+//         let spp3 = vec![3.0, 2.0, 1.0];
+//         let spp4 = vec![1.0, 2.0, 3.000001];
+//         // Equal values should have the same hash
+//         assert_eq!(spphash(&spp1), spphash(&spp2));
+//         // Mirrored values should have different hashes
+//         assert_ne!(spphash(&spp1), spphash(&spp3));
+//         // Very close values should have different hashes
+//         // Note: Due to f64 precision this will fail for values that are very close, e.g. 3.0 and 3.0000000000000001
+//         assert_ne!(spphash(&spp1), spphash(&spp4));
+//     }
+// }

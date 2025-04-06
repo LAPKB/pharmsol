@@ -9,15 +9,33 @@ use crate::{
     Equation, Predictions,
 };
 
+/// Optimizer that finds the best subject-specific parameters
+///
+/// This struct wraps the equation model and subject data to create
+/// a cost function that can be optimized to find the best parameter
+/// fit for a specific individual.
 struct SppOptimizer<'a, E: Equation> {
     equation: &'a E,
     subject: &'a Subject,
 }
 
-impl<'a, E: Equation> CostFunction for SppOptimizer<'a, E> {
+/// Implementation of the CostFunction trait for parameter optimization
+///
+/// This allows the SppOptimizer to be used with optimization algorithms
+/// from the argmin library to find optimal subject-specific parameters.
+impl<E: Equation> CostFunction for SppOptimizer<'_, E> {
     type Param = Vec<f64>;
     type Output = f64;
 
+    /// Calculates the cost (error) between model predictions and observations
+    ///
+    /// # Arguments
+    ///
+    /// * `point` - Parameter vector to evaluate
+    ///
+    /// # Returns
+    ///
+    /// The squared error between model predictions and observations, or an error if calculation fails
     fn cost(&self, point: &Self::Param) -> Result<Self::Output, Error> {
         let (concentrations, _) =
             self.equation
@@ -27,10 +45,32 @@ impl<'a, E: Equation> CostFunction for SppOptimizer<'a, E> {
 }
 
 impl<'a, E: Equation> SppOptimizer<'a, E> {
+    /// Creates a new SppOptimizer for individual parameter optimization
+    ///
+    /// # Arguments
+    ///
+    /// * `equation` - Reference to the equation model to use for simulation
+    /// * `subject` - Reference to the subject data to optimize against
+    ///
+    /// # Returns
+    ///
+    /// A new SppOptimizer instance
     fn new(equation: &'a E, subject: &'a Subject) -> Self {
         Self { equation, subject }
     }
 
+    /// Performs optimization to find the best parameter values
+    ///
+    /// Uses the Nelder-Mead algorithm to find parameter values that
+    /// minimize the error between model predictions and observations.
+    ///
+    /// # Arguments
+    ///
+    /// * `point` - Initial parameter values to start optimization from
+    ///
+    /// # Returns
+    ///
+    /// Optimized parameter values as an ndarray Array1
     fn optimize(self, point: &Array1<f64>) -> Array1<f64> {
         let simplex = create_initial_simplex(point)
             .into_iter()
@@ -73,7 +113,18 @@ fn create_initial_simplex(initial_point: &Array1<f64>) -> Vec<Array1<f64>> {
     vertices
 }
 
+/// Trait for finding the optimal support point for a subject
 pub trait OptimalSupportPoint<E: Equation> {
+    /// Finds the optimal support point for a subject
+    ///
+    /// # Arguments
+    ///
+    /// * `equation` - Reference to the equation model to use for simulation
+    /// * `point` - Initial parameter values to start optimization from
+    ///
+    /// # Returns
+    ///
+    /// Optimized parameter values as an ndarray Array1
     fn optimal_support_point(&self, equation: &E, point: &Array1<f64>) -> Array1<f64>;
 }
 
@@ -83,7 +134,18 @@ impl<E: Equation> OptimalSupportPoint<E> for Subject {
     }
 }
 
+/// Trait for estimating the theta parameter for a dataset
 pub trait EstimateTheta<E: Equation> {
+    /// Estimates the theta parameter for a dataset
+    ///
+    /// # Arguments
+    ///
+    /// * `equation` - Reference to the equation model to use for simulation
+    /// * `point` - Initial parameter values to start optimization from
+    ///
+    /// # Returns
+    ///
+    /// Estimated theta parameter values as an ndarray Array2
     fn estimate_theta(&self, equation: &E, point: &Array1<f64>) -> Array2<f64>;
 }
 
