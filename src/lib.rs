@@ -32,10 +32,10 @@ pub mod prelude {
     pub mod models {
         pub use crate::simulator::equation::analytical::one_compartment;
         pub use crate::simulator::equation::analytical::one_compartment_with_absorption;
-        pub use crate::simulator::equation::analytical::two_compartments;
-        pub use crate::simulator::equation::analytical::two_compartments_with_absorption;
         pub use crate::simulator::equation::analytical::three_compartments;
         pub use crate::simulator::equation::analytical::three_compartments_with_absorption;
+        pub use crate::simulator::equation::analytical::two_compartments;
+        pub use crate::simulator::equation::analytical::two_compartments_with_absorption;
     }
 
     //extension traits
@@ -80,5 +80,22 @@ pub mod prelude {
         ($($k:expr => $v:expr),* $(,)?) => {{
             core::convert::From::from([$(($k, $v),)*])
         }};
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_fetch_params_macro() {
+        // Test basic parameter fetching
+        let params = vec![1.0, 2.5, 3.7];
+
+        fetch_params!(params, ka, ke, v);
+
+        assert_eq!(ka, 1.0);
+        assert_eq!(ke, 2.5);
+        assert_eq!(v, 3.7);
     }
 }
