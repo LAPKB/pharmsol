@@ -305,40 +305,4 @@ mod tests {
             Some(10.0)
         );
     }
-
-    /* #[test]
-    fn test_infusions() {
-        let infusions = vec![
-            Infusion {
-                time: 0.0,
-                amount: 100.0,
-                input: 1,
-                duration: 1.0,
-            },
-            Infusion {
-                time: 2.0,
-                amount: 50.0,
-                input: 1,
-                duration: 1.0,
-            },
-            Infusion {
-                time: 3.0,
-                amount: 50.0,
-                input: 2,
-                duration: 1.0,
-            },
-        ];
-
-        let infusions = Infusions::from_infusions(infusions);
-
-        assert_eq!(infusions.get_rate_at_time(1, 0.0), 100.0);
-        assert_eq!(infusions.get_rate_at_time(1, 0.5), 100.0);
-        assert_eq!(infusions.get_rate_at_time(1, 1.0), 0.0);
-        assert_eq!(infusions.get_rate_at_time(1, 1.5), 50.0);
-        assert_eq!(infusions.get_rate_at_time(1, 2.0), 50.0);
-        assert_eq!(infusions.get_rate_at_time(1, 2.5), 50.0);
-        assert_eq!(infusions.get_rate_at_time(1, 3.0), 0.0);
-        assert_eq!(infusions.get_rate_at_time(1, 3.5), 0.0);
-        assert_eq!(infusions.get_rate_at_time(2, 3.0), 50.0);
-    } */
 }
