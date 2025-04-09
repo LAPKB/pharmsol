@@ -1,7 +1,6 @@
 use pharmsol::{prelude::data::read_pmetrics, *};
 
 fn one_c_ode() -> ODE {
-    
     equation::ODE::new(
         |x, p, _t, dx, _rateiv, _cov| {
             // fetch_cov!(cov, t, wt);
@@ -19,7 +18,6 @@ fn one_c_ode() -> ODE {
 }
 
 fn one_c_sde() -> SDE {
-    
     equation::SDE::new(
         |x, p, _t, dx, _rateiv, _cov| {
             // automatically defined
@@ -50,7 +48,6 @@ fn one_c_sde() -> SDE {
 }
 
 fn three_c_ode() -> ODE {
-    
     equation::ODE::new(
         |x, p, _t, dx, _rateiv, _cov| {
             // fetch_cov!(cov, t, wt);
@@ -71,7 +68,6 @@ fn three_c_ode() -> ODE {
 }
 
 fn three_c_sde() -> SDE {
-    
     equation::SDE::new(
         |x, p, _t, dx, _rateiv, _cov| {
             fetch_params!(p, ka, ke0, kcp, kpc, _vol, _ske);
