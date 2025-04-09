@@ -379,6 +379,16 @@ impl Subject {
     pub fn from_occasions(id: String, occasions: Vec<Occasion>) -> Self {
         Subject { id, occasions }
     }
+
+    /// Iterate over a mutable reference to the occasions
+    pub fn occasions_mut(&mut self) -> &mut Vec<Occasion> {
+        &mut self.occasions
+    }
+
+    /// Get a mutable iterator to the occasions
+    pub fn occasions_iter_mut(&mut self) -> std::slice::IterMut<Occasion> {
+        self.occasions.iter_mut()
+    }
 }
 
 /// An occasion within a subject's dataset
@@ -569,6 +579,16 @@ impl Occasion {
     //         })
     //         .collect()
     // }
+
+    /// Get a mutable reference to the events
+    pub fn events_mut(&mut self) -> &mut Vec<Event> {
+        &mut self.events
+    }
+
+    /// Get a mutable iterator to the events
+    pub fn events_iter_mut(&mut self) -> std::slice::IterMut<Event> {
+        self.events.iter_mut()
+    }
 }
 
 impl fmt::Display for Data {
