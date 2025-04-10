@@ -41,14 +41,24 @@ pub trait Predictions: Default {
 trait State: Default + Clone + std::fmt::Debug {}
 
 /// Trait defining the associated types for equations.
-pub trait EquationTypes {
+// pub trait EquationTypes {
+//     /// The state vector type
+//     type S: State;
+//     /// The predictions container type
+//     type P: Predictions;
+// }
+
+/// Trait for model equations that can be simulated.
+///
+/// This trait defines the interface for different types of model equations
+/// (ODE, SDE, analytical) that can be simulated to generate predictions
+/// and estimate parameters.
+#[allow(private_bounds)]
+pub trait Equation: 'static + Clone + Sync {
     /// The state vector type
     type S: State;
     /// The predictions container type
     type P: Predictions;
-}
-
-pub(crate) trait EquationPriv: EquationTypes {
     // fn get_init(&self) -> &Init;
     // fn get_out(&self) -> &Out;
     fn get_lag(&self, spp: &[f64]) -> Option<HashMap<usize, f64>>;
@@ -130,15 +140,6 @@ pub(crate) trait EquationPriv: EquationTypes {
             );
         }
     }
-}
-
-/// Trait for model equations that can be simulated.
-///
-/// This trait defines the interface for different types of model equations
-/// (ODE, SDE, analytical) that can be simulated to generate predictions
-/// and estimate parameters.
-#[allow(private_bounds)]
-pub trait Equation: EquationPriv + 'static + Clone + Sync {
     /// Estimate the likelihood of the subject given the support point and error model.
     ///
     /// This function calculates how likely the observed data is given the model
