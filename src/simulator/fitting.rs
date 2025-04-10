@@ -6,7 +6,7 @@ use ndarray::{Array1, Array2, Axis};
 
 use crate::{
     data::{Data, Subject},
-    Equation, Predictions,
+    Equation,
 };
 
 /// Optimizer that finds the best subject-specific parameters

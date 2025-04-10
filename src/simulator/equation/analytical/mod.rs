@@ -6,13 +6,10 @@ pub use one_compartment_models::*;
 pub use three_compartment_models::*;
 pub use two_compartment_models::*;
 
-use crate::{
-    data::Covariates, simulator::*, Equation, EquationPriv, EquationTypes, Observation, Subject,
-};
+use crate::simulator::model::Model;
+use crate::{data::Covariates, simulator::*, Equation, Observation, Subject};
 use cached::proc_macro::cached;
 use cached::UnboundCache;
-
-use super::State;
 
 /// Model equation using analytical solutions.
 ///
@@ -30,57 +27,46 @@ pub struct Analytical {
     state: V,
 }
 
-impl Analytical {
-    /// Create a new Analytical equation model.
-    ///
-    /// # Parameters
-    /// - `eq`: The analytical equation function
-    /// - `seq_eq`: The secondary equation function
-    /// - `lag`: The lag time function
-    /// - `fa`: The fraction absorbed function
-    /// - `init`: The initial state function
-    /// - `out`: The output equation function
-    /// - `neqs`: The number of states and output equations
-    pub fn new(
-        eq: AnalyticalEq,
-        seq_eq: SecEq,
-        lag: Lag,
-        fa: Fa,
-        init: Init,
-        out: Out,
-        neqs: Neqs,
-    ) -> Self {
-        Self {
-            eq,
-            seq_eq,
-            lag,
-            fa,
-            init,
-            out,
-            neqs,
-            state: V::zeros(neqs.0),
-        }
+pub struct AnalyticalModel<'a> {
+    equation: &'a Analytical,
+    data: &'a Subject,
+    state: V,
+}
+impl Equation for Analytical {
+    fn get_nstates(&self) -> usize {
+        self.neqs.0
+    }
+    fn get_nouteqs(&self) -> usize {
+        self.neqs.1
     }
 }
 
-impl State for V {}
-
-impl EquationTypes for Analytical {
+impl<'a> Model<'a> for AnalyticalModel<'a> {
+    type Eq = Analytical;
     type S = V;
     type P = SubjectPredictions;
-}
 
-impl EquationPriv for Analytical {
-    // #[inline(always)]
-    // fn get_init(&self) -> &Init {
-    //     &self.init
-    // }
+    fn new(equation: &'a Self::Eq, data: &'a Subject, spp: &[f64]) -> Self {
+        let mut state = V::zeros(equation.get_nstates());
+        equation.initial_state(&V::from_vec(spp.to_vec()), &data.covariates(), 0);
+        Self {
+            equation,
+            data,
+            state,
+        }
+    }
 
-    // #[inline(always)]
-    // fn get_out(&self) -> &Out {
-    //     &self.out
-    // }
+    fn equation(&self) -> &Self::Eq {
+        self.equation
+    }
 
+    fn data(&self) -> &Subject {
+        self.data
+    }
+
+    fn state(&self) -> &Self::S {
+        &self.state
+    }
     #[inline(always)]
     fn get_lag(&self, spp: &[f64]) -> Option<HashMap<usize, f64>> {
         Some((self.lag)(&V::from_vec(spp.to_owned())))
@@ -89,16 +75,6 @@ impl EquationPriv for Analytical {
     #[inline(always)]
     fn get_fa(&self, spp: &[f64]) -> Option<HashMap<usize, f64>> {
         Some((self.fa)(&V::from_vec(spp.to_owned())))
-    }
-
-    #[inline(always)]
-    fn get_nstates(&self) -> usize {
-        self.neqs.0
-    }
-
-    #[inline(always)]
-    fn get_nouteqs(&self) -> usize {
-        self.neqs.1
     }
 
     fn add_bolus(&mut self, input: usize, amount: f64) {
@@ -164,9 +140,6 @@ impl EquationPriv for Analytical {
         }
         self.state = x;
     }
-}
-
-impl Equation for Analytical {
     fn estimate_likelihood(
         &mut self,
         subject: &Subject,
@@ -177,6 +150,40 @@ impl Equation for Analytical {
         _estimate_likelihood(self, subject, support_point, error_model, cache)
     }
 }
+
+impl Analytical {
+    /// Create a new Analytical equation model.
+    ///
+    /// # Parameters
+    /// - `eq`: The analytical equation function
+    /// - `seq_eq`: The secondary equation function
+    /// - `lag`: The lag time function
+    /// - `fa`: The fraction absorbed function
+    /// - `init`: The initial state function
+    /// - `out`: The output equation function
+    /// - `neqs`: The number of states and output equations
+    pub fn new(
+        eq: AnalyticalEq,
+        seq_eq: SecEq,
+        lag: Lag,
+        fa: Fa,
+        init: Init,
+        out: Out,
+        neqs: Neqs,
+    ) -> Self {
+        Self {
+            eq,
+            seq_eq,
+            lag,
+            fa,
+            init,
+            out,
+            neqs,
+            state: V::zeros(neqs.0),
+        }
+    }
+}
+
 fn spphash(spp: &[f64]) -> u64 {
     spp.iter().fold(0, |acc, x| acc + x.to_bits())
 }

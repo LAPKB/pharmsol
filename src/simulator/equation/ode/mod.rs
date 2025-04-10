@@ -5,8 +5,12 @@ use std::collections::HashMap;
 use crate::{
     data::{Covariates, Infusion},
     error_model::ErrorModel,
-    prelude::simulator::SubjectPredictions,
-    simulator::{likelihood::ToPrediction, DiffEq, Fa, Init, Lag, Neqs, Out, M, V},
+    prelude::simulator::{Prediction, SubjectPredictions},
+    simulator::{
+        likelihood::ToPrediction,
+        model::{Model, Outputs, State},
+        DiffEq, Fa, Init, Lag, Neqs, Out, M, V,
+    },
     Observation, Subject,
 };
 use cached::proc_macro::cached;
@@ -16,9 +20,9 @@ use closure::PMProblem;
 use diffsol::{ode_solver::method::OdeSolverMethod, Bdf, NewtonNonlinearSolver, OdeBuilder};
 use nalgebra::DVector;
 
-// use self::diffsol_traits::build_pm_ode;
+use super::Equation;
 
-use super::{Equation, EquationPriv, EquationTypes};
+// use self::diffsol_traits::build_pm_ode;
 
 const RTOL: f64 = 1e-4;
 const ATOL: f64 = 1e-4;
@@ -31,77 +35,57 @@ pub struct ODE {
     init: Init,
     out: Out,
     neqs: Neqs,
-    state: V,
 }
-
-impl ODE {
-    pub fn new(diffeq: DiffEq, lag: Lag, fa: Fa, init: Init, out: Out, neqs: Neqs) -> Self {
-        Self {
-            diffeq,
-            lag,
-            fa,
-            init,
-            out,
-            neqs,
-            state: V::zeros(neqs.0),
-        }
+pub struct ODEModel<'a> {
+    equation: &'a ODE,
+    data: &'a Subject,
+    state: DVector<f64>,
+}
+impl State for DVector<f64> {}
+impl Outputs for SubjectPredictions {
+    fn squared_error(&self) -> f64 {
+        self.predictions
+            .iter()
+            .map(|p| (p.observation - p.prediction).powi(2))
+            .sum()
+    }
+    fn get_predictions(&self) -> Vec<Prediction> {
+        self.predictions.clone()
+    }
+}
+impl Equation for ODE {
+    fn get_nstates(&self) -> usize {
+        self.neqs.0
+    }
+    fn get_nouteqs(&self) -> usize {
+        self.neqs.1
     }
 }
 
-// Hash the support points by converting them to bits and summing them
-// The wrapping_add is used to avoid overflow, and prevent panics
-fn spphash(spp: &[f64]) -> u64 {
-    let mut hasher = std::hash::DefaultHasher::new();
-    spp.iter().for_each(|&value| {
-        // Normalize negative zero to zero, e.g. -0.0 -> 0.0
-        let normalized_value = if value == 0.0 && value.is_sign_negative() {
-            0.0
-        } else {
-            value
-        };
-        // Convert the value to bits and hash it
-        let bits = normalized_value.to_bits();
-        std::hash::Hash::hash(&bits, &mut hasher);
-    });
-
-    std::hash::Hasher::finish(&hasher)
-}
-
-#[inline(always)]
-#[cached(
-    ty = "UnboundCache<String, SubjectPredictions>",
-    create = "{ UnboundCache::with_capacity(100_000) }",
-    convert = r#"{ format!("{}{}", subject.id(), spphash(support_point)) }"#
-)]
-fn _subject_predictions(
-    ode: &mut ODE,
-    subject: &Subject,
-    support_point: &Vec<f64>,
-) -> SubjectPredictions {
-    ode.simulate_subject(subject, support_point, None).0
-}
-
-fn _estimate_likelihood(
-    ode: &mut ODE,
-    subject: &Subject,
-    support_point: &Vec<f64>,
-    error_model: &ErrorModel,
-    cache: bool,
-) -> f64 {
-    let ypred = if cache {
-        _subject_predictions(ode, subject, support_point)
-    } else {
-        _subject_predictions_no_cache(ode, subject, support_point)
-    };
-    ypred.likelihood(error_model)
-}
-
-impl EquationTypes for ODE {
+impl<'a> Model<'a> for ODEModel<'a> {
+    type Eq = ODE;
     type S = V;
     type P = SubjectPredictions;
-}
 
-impl EquationPriv for ODE {
+    fn new(equation: &'a ODE, data: &'a Subject, spp: &[f64]) -> Self {
+        Self {
+            equation,
+            data,
+            state: DVector::default(),
+        }
+    }
+
+    fn equation(&self) -> &ODE {
+        self.equation
+    }
+
+    fn data(&self) -> &Subject {
+        self.data
+    }
+
+    fn state(&self) -> &Self::S {
+        &self.state
+    }
     #[inline(always)]
     fn get_lag(&self, spp: &[f64]) -> Option<HashMap<usize, f64>> {
         let spp = DVector::from_vec(spp.to_vec());
@@ -112,16 +96,6 @@ impl EquationPriv for ODE {
     fn get_fa(&self, spp: &[f64]) -> Option<HashMap<usize, f64>> {
         let spp = DVector::from_vec(spp.to_vec());
         Some((self.fa)(&spp))
-    }
-
-    #[inline(always)]
-    fn get_nstates(&self) -> usize {
-        self.neqs.0
-    }
-
-    #[inline(always)]
-    fn get_nouteqs(&self) -> usize {
-        self.neqs.1
     }
 
     fn add_bolus(&mut self, input: usize, amount: f64) {
@@ -198,9 +172,6 @@ impl EquationPriv for ODE {
         }
         self.state = x;
     }
-}
-
-impl Equation for ODE {
     fn estimate_likelihood(
         &mut self,
         subject: &Subject,
@@ -210,6 +181,67 @@ impl Equation for ODE {
     ) -> f64 {
         _estimate_likelihood(self, subject, support_point, error_model, cache)
     }
+}
+
+impl ODE {
+    pub fn new(diffeq: DiffEq, lag: Lag, fa: Fa, init: Init, out: Out, neqs: Neqs) -> Self {
+        Self {
+            diffeq,
+            lag,
+            fa,
+            init,
+            out,
+            neqs,
+        }
+    }
+}
+
+// Hash the support points by converting them to bits and summing them
+// The wrapping_add is used to avoid overflow, and prevent panics
+fn spphash(spp: &[f64]) -> u64 {
+    let mut hasher = std::hash::DefaultHasher::new();
+    spp.iter().for_each(|&value| {
+        // Normalize negative zero to zero, e.g. -0.0 -> 0.0
+        let normalized_value = if value == 0.0 && value.is_sign_negative() {
+            0.0
+        } else {
+            value
+        };
+        // Convert the value to bits and hash it
+        let bits = normalized_value.to_bits();
+        std::hash::Hash::hash(&bits, &mut hasher);
+    });
+
+    std::hash::Hasher::finish(&hasher)
+}
+
+#[inline(always)]
+#[cached(
+    ty = "UnboundCache<String, SubjectPredictions>",
+    create = "{ UnboundCache::with_capacity(100_000) }",
+    convert = r#"{ format!("{}{}", subject.id(), spphash(support_point)) }"#
+)]
+fn _subject_predictions(
+    ode: &mut ODE,
+    subject: &Subject,
+    support_point: &Vec<f64>,
+) -> SubjectPredictions {
+    ode.simulate_subject(subject, support_point, None).0
+}
+
+fn _estimate_likelihood(
+    ode: &mut ODE,
+    subject: &Subject,
+    support_point: &Vec<f64>,
+    error_model: &ErrorModel,
+    cache: bool,
+) -> f64 {
+    let ypred = if cache {
+        _subject_predictions(ode, subject, support_point)
+    } else {
+        _subject_predictions_no_cache(ode, subject, support_point)
+    };
+    ypred.likelihood(error_model)
 }
 
 // // Test spphash

@@ -1,6 +1,6 @@
 use crate::{
     data::{error_model::ErrorModel, Observation},
-    Data, Equation, Predictions,
+    Data, Equation,
 };
 
 use indicatif::{ProgressBar, ProgressStyle};
@@ -16,22 +16,10 @@ const FRAC_1_SQRT_2PI: f64 =
 /// observations and time points.
 #[derive(Debug, Clone, Default)]
 pub struct SubjectPredictions {
-    predictions: Vec<Prediction>,
+    pub(crate) predictions: Vec<Prediction>,
     flat_predictions: Vec<f64>,
     flat_observations: Vec<f64>,
     flat_time: Vec<f64>,
-}
-
-impl Predictions for SubjectPredictions {
-    fn squared_error(&self) -> f64 {
-        self.predictions
-            .iter()
-            .map(|p| (p.observation - p.prediction).powi(2))
-            .sum()
-    }
-    fn get_predictions(&self) -> Vec<Prediction> {
-        self.predictions.clone()
-    }
 }
 
 impl SubjectPredictions {
@@ -226,8 +214,8 @@ pub fn psi(
 #[derive(Debug, Clone)]
 pub struct Prediction {
     time: f64,
-    observation: f64,
-    prediction: f64,
+    pub(crate) observation: f64,
+    pub(crate) prediction: f64,
     outeq: usize,
     errorpoly: Option<(f64, f64, f64, f64)>,
     state: Vec<f64>,
