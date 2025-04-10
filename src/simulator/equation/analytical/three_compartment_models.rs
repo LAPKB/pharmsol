@@ -58,6 +58,7 @@ pub fn three_compartments(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V
     let c13 = ((k10 + k12 + k13 - l1) * (k31 - l1) - (k13 * k31)) / ((l2 - l1) * (l3 - l1));
     let c14 = ((k10 + k12 + k13 - l2) * (k31 - l2) - (k13 * k31)) / ((l1 - l2) * (l3 - l2));
     let c15 = ((k10 + k12 + k13 - l3) * (k31 - l3) - (k13 * k31)) / ((l1 - l3) * (l2 - l3));
+
     let c16 = k12 * k31 / ((l2 - l1) * (l3 - l1));   
     let c17 = k12 * k31 / ((l1 - l2) * (l3 - l2));
     let c18 = k12 * k31 / ((l1 - l3) * (l2 - l3));
@@ -228,7 +229,6 @@ mod tests {
     impl SubjectInfo {
         fn get_subject(&self) -> Subject {
             match self {
-                
                 SubjectInfo::InfusionDosing => Subject::builder("id1")
                     .bolus(0.0, 100.0, 0)
                     .infusion(24.0, 150.0, 0, 3.0)
@@ -277,14 +277,12 @@ mod tests {
 
     #[test]
     fn test_three_compartments() {
-
         let infusion_dosing = SubjectInfo::InfusionDosing;
         let subject = infusion_dosing.get_subject();
 
         let ode = equation::ODE::new(
             |x, p, _t, dx, rateiv, _cov| {
                 fetch_params!(p, k10, k12, k13, k21, k31, _v);
-    
                 dx[0] = rateiv[0] - (k10 + k12 + k13) * x[0] + k21 * x[1] + k31 * x[2];
                 dx[1] = k12 * x[0] - k21 * x[1];
                 dx[2] = k13 * x[0] - k31 * x[2];
@@ -327,14 +325,12 @@ mod tests {
 
     #[test]
     fn test_three_compartments_with_absorption() {
-
         let oral_infusion_dosing = SubjectInfo::OralInfusionDosage;
         let subject = oral_infusion_dosing.get_subject();
 
         let ode = equation::ODE::new(
             |x, p, _t, dx, rateiv, _cov| {
                 fetch_params!(p, ka, k10, k12, k13, k21, k31, _v);
-    
                 dx[0] = - ka * x[0];
                 dx[1] = rateiv[0] - (k10 + k12 + k13) * x[1] + ka * x[0] + k21 * x[2] + k31 * x[3];
                 dx[2] = k12 * x[1] - k21 * x[2];

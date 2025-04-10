@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Debug};
 pub mod analytical;
 pub mod meta;
 pub mod ode;
@@ -51,7 +51,7 @@ pub trait Predictions: Default {
 /// Trait defining the associated types for equations.
 pub trait EquationTypes {
     /// The state vector type
-    type S: State;
+    type S: State + Debug;
     /// The predictions container type
     type P: Predictions;
 }
