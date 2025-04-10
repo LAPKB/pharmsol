@@ -12,7 +12,7 @@ fn main() {
         .observation(8., 0.001017932, 0)
         .build();
 
-    let an = equation::Analytical::new(
+    let mut an = equation::Analytical::new(
         one_compartment,
         |_p, _t, _cov| {},
         |_p| lag! {},
@@ -25,7 +25,7 @@ fn main() {
         (1, 1),
     );
 
-    let ode = equation::ODE::new(
+    let mut ode = equation::ODE::new(
         |x, p, _t, dx, rateiv, _cov| {
             // fetch_cov!(cov, t, wt);
             fetch_params!(p, ke, _v);

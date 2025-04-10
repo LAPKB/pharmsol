@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Debug};
+use std::collections::HashMap;
 pub mod analytical;
 pub mod meta;
 pub mod ode;
@@ -11,16 +11,6 @@ pub use sde::*;
 use crate::{error_model::ErrorModel, Covariates, Event, Infusion, Observation, Subject};
 
 use super::likelihood::Prediction;
-
-/// Trait for state vectors that can receive bolus doses.
-pub trait State {
-    /// Add a bolus dose to the state at the specified input compartment.
-    ///
-    /// # Parameters
-    /// - `input`: The compartment index
-    /// - `amount`: The bolus amount
-    fn add_bolus(&mut self, input: usize, amount: f64);
-}
 
 /// Trait for prediction containers.
 pub trait Predictions: Default {
@@ -48,10 +38,12 @@ pub trait Predictions: Default {
     fn get_predictions(&self) -> Vec<Prediction>;
 }
 
+trait State: Default + Clone + std::fmt::Debug {}
+
 /// Trait defining the associated types for equations.
 pub trait EquationTypes {
     /// The state vector type
-    type S: State + Debug;
+    type S: State;
     /// The predictions container type
     type P: Predictions;
 }
@@ -64,8 +56,7 @@ pub(crate) trait EquationPriv: EquationTypes {
     fn get_nstates(&self) -> usize;
     fn get_nouteqs(&self) -> usize;
     fn solve(
-        &self,
-        state: &mut Self::S,
+        &mut self,
         support_point: &Vec<f64>,
         covariates: &Covariates,
         infusions: &Vec<Infusion>,
@@ -80,39 +71,38 @@ pub(crate) trait EquationPriv: EquationTypes {
         false
     }
     fn process_observation(
-        &self,
+        &mut self,
         support_point: &Vec<f64>,
         observation: &Observation,
         error_model: Option<&ErrorModel>,
         time: f64,
         covariates: &Covariates,
-        x: &mut Self::S,
         likelihood: &mut Vec<f64>,
         output: &mut Self::P,
     );
 
     fn initial_state(
-        &self,
+        &mut self,
         support_point: &Vec<f64>,
         covariates: &Covariates,
         occasion_index: usize,
-    ) -> Self::S;
+    );
+    fn add_bolus(&mut self, input: usize, amount: f64);
 
     fn simulate_event(
-        &self,
+        &mut self,
         support_point: &Vec<f64>,
         event: &Event,
         next_event: Option<&Event>,
         error_model: Option<&ErrorModel>,
         covariates: &Covariates,
-        x: &mut Self::S,
         infusions: &mut Vec<Infusion>,
         likelihood: &mut Vec<f64>,
         output: &mut Self::P,
     ) {
         match event {
             Event::Bolus(bolus) => {
-                x.add_bolus(bolus.input(), bolus.amount());
+                self.add_bolus(bolus.input(), bolus.amount());
             }
             Event::Infusion(infusion) => {
                 infusions.push(infusion.clone());
@@ -124,7 +114,6 @@ pub(crate) trait EquationPriv: EquationTypes {
                     error_model,
                     event.get_time(),
                     covariates,
-                    x,
                     likelihood,
                     output,
                 );
@@ -133,7 +122,6 @@ pub(crate) trait EquationPriv: EquationTypes {
 
         if let Some(next_event) = next_event {
             self.solve(
-                x,
                 support_point,
                 covariates,
                 infusions,
@@ -165,7 +153,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
     /// # Returns
     /// The log-likelihood value
     fn estimate_likelihood(
-        &self,
+        &mut self,
         subject: &Subject,
         support_point: &Vec<f64>,
         error_model: &ErrorModel,
@@ -180,7 +168,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
     ///
     /// # Returns
     /// Predicted concentrations
-    fn estimate_predictions(&self, subject: &Subject, support_point: &Vec<f64>) -> Self::P {
+    fn estimate_predictions(&mut self, subject: &Subject, support_point: &Vec<f64>) -> Self::P {
         self.simulate_subject(subject, support_point, None).0
     }
 
@@ -194,7 +182,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
     /// # Returns
     /// A tuple containing predictions and optional likelihood
     fn simulate_subject(
-        &self,
+        &mut self,
         subject: &Subject,
         support_point: &Vec<f64>,
         error_model: Option<&ErrorModel>,
@@ -205,7 +193,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
         let mut likelihood = Vec::new();
         for occasion in subject.occasions() {
             let covariates = occasion.get_covariates().unwrap();
-            let mut x = self.initial_state(support_point, covariates, occasion.index());
+            self.initial_state(support_point, covariates, occasion.index());
             let mut infusions = Vec::new();
             let events = occasion.get_events(&lag, &fa, true);
             for (index, event) in events.iter().enumerate() {
@@ -215,7 +203,6 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
                     events.get(index + 1),
                     error_model,
                     covariates,
-                    &mut x,
                     &mut infusions,
                     &mut likelihood,
                     &mut output,

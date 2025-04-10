@@ -13,12 +13,12 @@ use cached::proc_macro::cached;
 use cached::UnboundCache;
 
 use closure::PMProblem;
-use diffsol::{ode_solver::method::OdeSolverMethod, OdeBuilder};
+use diffsol::{ode_solver::method::OdeSolverMethod, Bdf, NewtonNonlinearSolver, OdeBuilder};
 use nalgebra::DVector;
 
 // use self::diffsol_traits::build_pm_ode;
 
-use super::{Equation, EquationPriv, EquationTypes, State};
+use super::{Equation, EquationPriv, EquationTypes};
 
 const RTOL: f64 = 1e-4;
 const ATOL: f64 = 1e-4;
@@ -31,6 +31,7 @@ pub struct ODE {
     init: Init,
     out: Out,
     neqs: Neqs,
+    state: V,
 }
 
 impl ODE {
@@ -42,14 +43,8 @@ impl ODE {
             init,
             out,
             neqs,
+            state: V::zeros(neqs.0),
         }
-    }
-}
-
-impl State for V {
-    #[inline(always)]
-    fn add_bolus(&mut self, input: usize, amount: f64) {
-        self[input] += amount;
     }
 }
 
@@ -79,7 +74,7 @@ fn spphash(spp: &[f64]) -> u64 {
     convert = r#"{ format!("{}{}", subject.id(), spphash(support_point)) }"#
 )]
 fn _subject_predictions(
-    ode: &ODE,
+    ode: &mut ODE,
     subject: &Subject,
     support_point: &Vec<f64>,
 ) -> SubjectPredictions {
@@ -87,7 +82,7 @@ fn _subject_predictions(
 }
 
 fn _estimate_likelihood(
-    ode: &ODE,
+    ode: &mut ODE,
     subject: &Subject,
     support_point: &Vec<f64>,
     error_model: &ErrorModel,
@@ -128,10 +123,13 @@ impl EquationPriv for ODE {
     fn get_nouteqs(&self) -> usize {
         self.neqs.1
     }
+
+    fn add_bolus(&mut self, input: usize, amount: f64) {
+        self.state[input] += amount;
+    }
     #[inline(always)]
     fn solve(
-        &self,
-        state: &mut Self::S,
+        &mut self,
         support_point: &Vec<f64>,
         covariates: &Covariates,
         infusions: &Vec<Infusion>,
@@ -154,33 +152,36 @@ impl EquationPriv for ODE {
                 support_point.clone(),
                 covariates.clone(),
                 infusions.clone(),
-                state.clone(),
+                self.state.clone(),
             ))
             .unwrap();
 
-        let mut solver = problem.bdf::<diffsol::NalgebraLU<f64>>().unwrap();
+        let mut solver: Bdf<
+            '_,
+            PMProblem<DiffEq>,
+            NewtonNonlinearSolver<M, diffsol::NalgebraLU<f64>>,
+        > = problem.bdf::<diffsol::NalgebraLU<f64>>().unwrap();
         let (ys, _ts) = solver.solve(end_time).unwrap();
 
-        *state = ys.column(ys.ncols() - 1).into_owned();
+        self.state = ys.column(ys.ncols() - 1).into_owned();
     }
     #[inline(always)]
     fn process_observation(
-        &self,
+        &mut self,
         support_point: &Vec<f64>,
         observation: &Observation,
         error_model: Option<&ErrorModel>,
         _time: f64,
         covariates: &Covariates,
-        x: &mut Self::S,
         likelihood: &mut Vec<f64>,
         output: &mut Self::P,
     ) {
         let mut y = V::zeros(self.get_nouteqs());
         let out = &self.out;
         let spp = DVector::from_vec(support_point.clone());
-        (out)(x, &spp, observation.time(), covariates, &mut y);
+        (out)(&self.state, &spp, observation.time(), covariates, &mut y);
         let pred = y[observation.outeq()];
-        let pred = observation.to_obs_pred(pred, x.as_slice().to_vec());
+        let pred = observation.to_obs_pred(pred, self.state.as_slice().to_vec());
         if let Some(error_model) = error_model {
             likelihood.push(pred.likelihood(error_model));
         }
@@ -188,20 +189,20 @@ impl EquationPriv for ODE {
     }
 
     #[inline(always)]
-    fn initial_state(&self, spp: &Vec<f64>, covariates: &Covariates, occasion_index: usize) -> V {
+    fn initial_state(&mut self, spp: &Vec<f64>, covariates: &Covariates, occasion_index: usize) {
         let init = &self.init;
         let mut x = V::zeros(self.get_nstates());
         if occasion_index == 0 {
             let spp = DVector::from_vec(spp.clone());
             (init)(&spp, 0.0, covariates, &mut x);
         }
-        x
+        self.state = x;
     }
 }
 
 impl Equation for ODE {
     fn estimate_likelihood(
-        &self,
+        &mut self,
         subject: &Subject,
         support_point: &Vec<f64>,
         error_model: &ErrorModel,

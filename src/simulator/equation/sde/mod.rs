@@ -85,6 +85,7 @@ pub struct SDE {
     out: Out,
     neqs: Neqs,
     nparticles: usize,
+    state: Vec<DVector<f64>>,
 }
 
 impl SDE {
@@ -123,24 +124,8 @@ impl SDE {
             out,
             neqs,
             nparticles,
+            state: vec![DVector::zeros(neqs.0); nparticles],
         }
-    }
-}
-
-/// State trait implementation for particle-based SDE simulation.
-///
-/// This implementation allows adding bolus doses to all particles in the system.
-impl State for Vec<DVector<f64>> {
-    /// Adds a bolus dose to a specific input compartment across all particles.
-    ///
-    /// # Arguments
-    ///
-    /// * `input` - Index of the input compartment
-    /// * `amount` - Amount to add to the compartment
-    fn add_bolus(&mut self, input: usize, amount: f64) {
-        self.par_iter_mut().for_each(|particle| {
-            particle[input] += amount;
-        });
     }
 }
 
@@ -161,6 +146,8 @@ impl Predictions for Array2<Prediction> {
         row
     }
 }
+
+impl State for Vec<DVector<f64>> {}
 
 impl EquationTypes for SDE {
     type S = Vec<DVector<f64>>; // Vec -> particles, DVector -> state
@@ -193,21 +180,35 @@ impl EquationPriv for SDE {
         self.neqs.0
     }
 
+    /// Adds a bolus dose to a specific input compartment across all particles.
+    ///
+    /// # Arguments
+    ///
+    /// * `input` - Index of the input compartment
+    /// * `amount` - Amount to add to the compartment
+    fn add_bolus(&mut self, input: usize, amount: f64) {
+        // self.state.par_iter_mut().for_each(|particle| {
+        //     particle[input] += amount;
+        // });
+        for particle in &mut self.state {
+            particle[input] += amount;
+        }
+    }
+
     #[inline(always)]
     fn get_nouteqs(&self) -> usize {
         self.neqs.1
     }
     #[inline(always)]
     fn solve(
-        &self,
-        state: &mut Self::S,
+        &mut self,
         support_point: &Vec<f64>,
         covariates: &Covariates,
         infusions: &Vec<Infusion>,
         ti: f64,
         tf: f64,
     ) {
-        state.par_iter_mut().for_each(|particle| {
+        self.state.par_iter_mut().for_each(|particle| {
             *particle = simulate_sde_event(
                 &self.drift,
                 &self.diffusion,
@@ -229,13 +230,12 @@ impl EquationPriv for SDE {
     }
     #[inline(always)]
     fn process_observation(
-        &self,
+        &mut self,
         support_point: &Vec<f64>,
         observation: &crate::Observation,
         error_model: Option<&ErrorModel>,
         _time: f64,
         covariates: &Covariates,
-        x: &mut Self::S,
         likelihood: &mut Vec<f64>,
         output: &mut Self::P,
     ) {
@@ -243,13 +243,13 @@ impl EquationPriv for SDE {
         pred.par_iter_mut().enumerate().for_each(|(i, p)| {
             let mut y = V::zeros(self.get_nouteqs());
             (self.out)(
-                &x[i],
+                &self.state[i],
                 &V::from_vec(support_point.clone()),
                 observation.time(),
                 covariates,
                 &mut y,
             );
-            *p = observation.to_obs_pred(y[observation.outeq()], x[i].as_slice().to_vec());
+            *p = observation.to_obs_pred(y[observation.outeq()], self.state[i].as_slice().to_vec());
         });
         let out = Array2::from_shape_vec((self.nparticles, 1), pred.clone()).unwrap();
         *output = concatenate(Axis(1), &[output.view(), out.view()]).unwrap();
@@ -262,8 +262,8 @@ impl EquationPriv for SDE {
             let sum_q: f64 = q.iter().sum();
             let w: Vec<f64> = q.iter().map(|qi| qi / sum_q).collect();
             let i = sysresample(&w);
-            let a: Vec<DVector<f64>> = i.iter().map(|&i| x[i].clone()).collect();
-            *x = a;
+            let a: Vec<DVector<f64>> = i.iter().map(|&i| self.state[i].clone()).collect();
+            self.state = a;
             likelihood.push(sum_q / self.nparticles as f64);
             // let qq: Vec<f64> = i.iter().map(|&i| q[i]).collect();
             // likelihood.push(qq.iter().sum::<f64>() / self.nparticles as f64);
@@ -271,11 +271,11 @@ impl EquationPriv for SDE {
     }
     #[inline(always)]
     fn initial_state(
-        &self,
+        &mut self,
         support_point: &Vec<f64>,
         covariates: &Covariates,
         occasion_index: usize,
-    ) -> Self::S {
+    ) {
         let mut x = Vec::with_capacity(self.nparticles);
         for _ in 0..self.nparticles {
             let mut state = DVector::zeros(self.get_nstates());
@@ -289,7 +289,7 @@ impl EquationPriv for SDE {
             }
             x.push(state);
         }
-        x
+        self.state = x;
     }
 }
 
@@ -307,7 +307,7 @@ impl Equation for SDE {
     ///
     /// The log-likelihood of the observed data given the model and parameters.
     fn estimate_likelihood(
-        &self,
+        &mut self,
         subject: &Subject,
         support_point: &Vec<f64>,
         error_model: &ErrorModel,
@@ -341,7 +341,7 @@ fn spphash(spp: &[f64]) -> u64 {
     convert = r#"{ format!("{}{}{}", subject.id(), spphash(support_point), error_model.gl()) }"#
 )]
 fn _estimate_likelihood(
-    sde: &SDE,
+    sde: &mut SDE,
     subject: &Subject,
     support_point: &Vec<f64>,
     error_model: &ErrorModel,

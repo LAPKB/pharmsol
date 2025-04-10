@@ -1,6 +1,7 @@
 pub mod equation;
 pub mod fitting;
 pub(crate) mod likelihood;
+pub mod model;
 use crate::{
     data::{Covariates, Infusion},
     error_model::ErrorModel,

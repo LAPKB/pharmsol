@@ -1,16 +1,18 @@
 pub mod one_compartment_models;
-pub mod two_compartment_models;
 pub mod three_compartment_models;
+pub mod two_compartment_models;
 
 pub use one_compartment_models::*;
-pub use two_compartment_models::*;
 pub use three_compartment_models::*;
+pub use two_compartment_models::*;
 
 use crate::{
     data::Covariates, simulator::*, Equation, EquationPriv, EquationTypes, Observation, Subject,
 };
 use cached::proc_macro::cached;
 use cached::UnboundCache;
+
+use super::State;
 
 /// Model equation using analytical solutions.
 ///
@@ -25,6 +27,7 @@ pub struct Analytical {
     init: Init,
     out: Out,
     neqs: Neqs,
+    state: V,
 }
 
 impl Analytical {
@@ -55,9 +58,12 @@ impl Analytical {
             init,
             out,
             neqs,
+            state: V::zeros(neqs.0),
         }
     }
 }
+
+impl State for V {}
 
 impl EquationTypes for Analytical {
     type S = V;
@@ -94,10 +100,14 @@ impl EquationPriv for Analytical {
     fn get_nouteqs(&self) -> usize {
         self.neqs.1
     }
+
+    fn add_bolus(&mut self, input: usize, amount: f64) {
+        self.state[input] += amount;
+    }
+
     #[inline(always)]
     fn solve(
-        &self,
-        x: &mut Self::S,
+        &mut self,
         support_point: &Vec<f64>,
         covariates: &Covariates,
         infusions: &Vec<Infusion>,
@@ -116,50 +126,49 @@ impl EquationPriv for Analytical {
             }
         }
         (self.seq_eq)(&mut support_point, tf, covariates);
-        *x = (self.eq)(x, &support_point, tf - ti, rateiv, covariates);
+        self.state = (self.eq)(&self.state, &support_point, tf - ti, rateiv, covariates);
     }
     #[inline(always)]
     fn process_observation(
-        &self,
+        &mut self,
         support_point: &Vec<f64>,
         observation: &Observation,
         error_model: Option<&ErrorModel>,
         _time: f64,
         covariates: &Covariates,
-        x: &mut Self::S,
         likelihood: &mut Vec<f64>,
         output: &mut Self::P,
     ) {
         let mut y = V::zeros(self.get_nouteqs());
         let out = &self.out;
         (out)(
-            x,
+            &self.state,
             &V::from_vec(support_point.clone()),
             observation.time(),
             covariates,
             &mut y,
         );
         let pred = y[observation.outeq()];
-        let pred = observation.to_obs_pred(pred, x.as_slice().to_vec());
+        let pred = observation.to_obs_pred(pred, self.state.as_slice().to_vec());
         if let Some(error_model) = error_model {
             likelihood.push(pred.likelihood(error_model));
         }
         output.add_prediction(pred);
     }
     #[inline(always)]
-    fn initial_state(&self, spp: &Vec<f64>, covariates: &Covariates, occasion_index: usize) -> V {
+    fn initial_state(&mut self, spp: &Vec<f64>, covariates: &Covariates, occasion_index: usize) {
         let init = &self.init;
         let mut x = V::zeros(self.get_nstates());
         if occasion_index == 0 {
             (init)(&V::from_vec(spp.to_vec()), 0.0, covariates, &mut x);
         }
-        x
+        self.state = x;
     }
 }
 
 impl Equation for Analytical {
     fn estimate_likelihood(
-        &self,
+        &mut self,
         subject: &Subject,
         support_point: &Vec<f64>,
         error_model: &ErrorModel,
@@ -178,7 +187,7 @@ fn spphash(spp: &[f64]) -> u64 {
     convert = r#"{ format!("{}{}", subject.id(), spphash(support_point)) }"#
 )]
 fn _subject_predictions(
-    ode: &Analytical,
+    ode: &mut Analytical,
     subject: &Subject,
     support_point: &Vec<f64>,
 ) -> SubjectPredictions {
@@ -186,7 +195,7 @@ fn _subject_predictions(
 }
 
 fn _estimate_likelihood(
-    ode: &Analytical,
+    ode: &mut Analytical,
     subject: &Subject,
     support_point: &Vec<f64>,
     error_model: &ErrorModel,

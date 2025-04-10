@@ -297,7 +297,7 @@ mod tests {
         let infusion_dosing = SubjectInfo::InfusionDosing;
         let subject = infusion_dosing.get_subject();
 
-        let ode = equation::ODE::new(
+        let mut ode = equation::ODE::new(
             |x, p, _t, dx, rateiv, _cov| {
                 fetch_params!(p, k10, k12, k13, k21, k31, _v);
 
@@ -315,7 +315,7 @@ mod tests {
             (3, 1),
         );
 
-        let analytical = equation::Analytical::new(
+        let mut analytical = equation::Analytical::new(
             three_compartments,
             |_p, _t, _cov| {},
             |_p| lag! {},
@@ -348,7 +348,7 @@ mod tests {
         let oral_infusion_dosing = SubjectInfo::OralInfusionDosage;
         let subject = oral_infusion_dosing.get_subject();
 
-        let ode = equation::ODE::new(
+        let mut ode = equation::ODE::new(
             |x, p, _t, dx, rateiv, _cov| {
                 fetch_params!(p, ka, k10, k12, k13, k21, k31, _v);
 
@@ -367,7 +367,7 @@ mod tests {
             (4, 1),
         );
 
-        let analytical = equation::Analytical::new(
+        let mut analytical = equation::Analytical::new(
             three_compartments_with_absorption,
             |_p, _t, _cov| {},
             |_p| lag! {},
