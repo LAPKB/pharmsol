@@ -127,11 +127,11 @@ pub trait OptimalSupportPoint<'a, E: Equation<'a>> {
     /// # Returns
     ///
     /// Optimized parameter values as an ndarray Array1
-    fn optimal_support_point(&self, equation: &E, point: &Array1<f64>) -> Array1<f64>;
+    fn optimal_support_point(&'a self, equation: &'a E, point: &Array1<f64>) -> Array1<f64>;
 }
 
 impl<'a, E: Equation<'a>> OptimalSupportPoint<'a, E> for Subject {
-    fn optimal_support_point(&self, equation: &E, point: &Array1<f64>) -> Array1<f64> {
+    fn optimal_support_point(&'a self, equation: &'a E, point: &Array1<f64>) -> Array1<f64> {
         SppOptimizer::new(equation, self).optimize(point)
     }
 }
