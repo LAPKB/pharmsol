@@ -1,3 +1,5 @@
+use pharmsol::simulator::model::Model;
+
 fn main() {
     use pharmsol::*;
 
@@ -12,7 +14,7 @@ fn main() {
         .observation(8., 0.001017932, 0)
         .build();
 
-    let mut an = equation::Analytical::new(
+    let an = equation::Analytical::new(
         one_compartment,
         |_p, _t, _cov| {},
         |_p| lag! {},
@@ -25,7 +27,7 @@ fn main() {
         (1, 1),
     );
 
-    let mut ode = equation::ODE::new(
+    let ode = equation::ODE::new(
         |x, p, _t, dx, rateiv, _cov| {
             // fetch_cov!(cov, t, wt);
             fetch_params!(p, ke, _v);
@@ -42,25 +44,20 @@ fn main() {
     );
 
     let em = ErrorModel::new((0.0, 0.05, 0.0, 0.0), 0.0, &ErrorType::Add);
-    let ll = an.estimate_likelihood(
-        &subject,
-        &vec![1.02282724609375, 194.51904296875],
-        &em,
-        false,
-    );
-    let op = an.estimate_predictions(&subject, &vec![1.02282724609375, 194.51904296875]);
+    let mut model = an.initialize_model(&subject, &vec![1.02282724609375, 194.51904296875]);
+    let ll = model.estimate_likelihood(&vec![1.02282724609375, 194.51904296875], &em, false);
+    let mut model = ode.initialize_model(&subject, &vec![1.02282724609375, 194.51904296875]);
+    let op = model.estimate_outputs(&vec![1.02282724609375, 194.51904296875]);
     println!(
         "Analytical: \n-2ll:{:#?}\n{:#?}",
         -2.0 * ll,
         op.flat_predictions()
     );
 
-    let ll = ode.estimate_likelihood(
-        &subject,
-        &vec![1.02282724609375, 194.51904296875],
-        &em,
-        false,
-    );
-    let op = ode.estimate_predictions(&subject, &vec![1.02282724609375, 194.51904296875]);
+    let mut model = ode.initialize_model(&subject, &vec![1.02282724609375, 194.51904296875]);
+    let ll = model.estimate_likelihood(&vec![1.02282724609375, 194.51904296875], &em, false);
+
+    let mut model = ode.initialize_model(&subject, &vec![1.02282724609375, 194.51904296875]);
+    let op = model.estimate_outputs(&vec![1.02282724609375, 194.51904296875]);
     println!("ODE: \n-2ll:{:#?}\n{:#?}", -2.0 * ll, op.flat_predictions());
 }
