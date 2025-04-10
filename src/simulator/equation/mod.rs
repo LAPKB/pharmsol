@@ -9,7 +9,7 @@ pub use sde::*;
 
 use crate::Subject;
 
-use super::model::Model;
+use super::{likelihood::Prediction, model::Model};
 
 /// Trait defining the associated types for equations.
 // pub trait EquationTypes {
@@ -24,10 +24,41 @@ use super::model::Model;
 /// This trait defines the interface for different types of model equations
 /// (ODE, SDE, analytical) that can be simulated to generate predictions
 /// and estimate parameters.
+///
+pub trait Outputs: Default {
+    /// Create a new prediction container with specified capacity.
+    ///
+    /// # Parameters
+    /// - `nparticles`: Number of particles (for SDE)
+    ///
+    /// # Returns
+    /// A new Outputs container
+    fn new_outputs(_nparticles: usize) -> Self {
+        Default::default()
+    }
+
+    /// Calculate the sum of squared errors for all Outputs.
+    ///
+    /// # Returns
+    /// The sum of squared errors
+    fn squared_error(&self) -> f64;
+
+    /// Get all Outputs as a vector.
+    ///
+    /// # Returns
+    /// Vector of prediction objects
+    fn get_predictions(&self) -> Vec<Prediction>;
+}
+
+pub trait State: Default + Clone + std::fmt::Debug {}
 #[allow(private_bounds)]
-pub trait Equation: 'static + Clone + Sync {
-    // fn get_init(&self) -> &Init;
-    // fn get_out(&self) -> &Out;
+pub trait Equation<'a>: 'static + Clone + Sync {
+    /// The state vector type
+    type S: State;
+    /// The Outputs container type
+    type P: Outputs;
+
+    type Mod: Model<'a, Eq = Self>;
 
     fn get_nstates(&self) -> usize;
     fn get_nouteqs(&self) -> usize;
@@ -37,7 +68,9 @@ pub trait Equation: 'static + Clone + Sync {
         false
     }
 
-    fn initialize_model(&self, subject: &Subject, spp: &[f64]) {
-        Model::new(self, subject, spp)
+    fn initialize_model(&'a self, subject: &'a Subject, spp: &[f64]) -> Self::Mod;
+
+    fn nparticles(&self) -> usize {
+        1
     }
 }

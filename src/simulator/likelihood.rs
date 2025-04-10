@@ -7,6 +7,8 @@ use indicatif::{ProgressBar, ProgressStyle};
 use ndarray::{Array2, Axis, ShapeBuilder};
 use rayon::prelude::*;
 
+use super::model::Model;
+
 const FRAC_1_SQRT_2PI: f64 =
     std::f64::consts::FRAC_2_SQRT_PI * std::f64::consts::FRAC_1_SQRT_2 / 2.0;
 
@@ -129,9 +131,9 @@ impl From<Array2<SubjectPredictions>> for PopulationPredictions {
 ///
 /// # Returns
 /// A 2D array of likelihoods
-pub fn psi(
-    equation: &impl Equation,
-    subjects: &Data,
+pub fn psi<'a>(
+    equation: &'a impl Equation<'a>,
+    subjects: &'a Data,
     support_points: &Array2<f64>,
     error_model: &ErrorModel,
     progress: bool,
@@ -163,8 +165,9 @@ pub fn psi(
                 .enumerate()
                 .for_each(|(j, mut element)| {
                     let subject = subjects.get(i).unwrap();
-                    let likelihood = equation.estimate_likelihood(
-                        subject,
+                    let mut model =
+                        equation.initialize_model(subject, support_points.row(j).to_vec().as_ref());
+                    let likelihood = model.estimate_likelihood(
                         support_points.row(j).to_vec().as_ref(),
                         error_model,
                         cache,

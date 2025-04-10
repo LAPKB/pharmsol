@@ -6,15 +6,17 @@ use ndarray::{Array1, Array2, Axis};
 
 use crate::{
     data::{Data, Subject},
-    Equation,
+    Equation, Outputs,
 };
+
+use super::model::Model;
 
 /// Optimizer that finds the best subject-specific parameters
 ///
 /// This struct wraps the equation model and subject data to create
 /// a cost function that can be optimized to find the best parameter
 /// fit for a specific individual.
-struct SppOptimizer<'a, E: Equation> {
+struct SppOptimizer<'a, E: Equation<'a>> {
     equation: &'a E,
     subject: &'a Subject,
 }
@@ -23,7 +25,7 @@ struct SppOptimizer<'a, E: Equation> {
 ///
 /// This allows the SppOptimizer to be used with optimization algorithms
 /// from the argmin library to find optimal subject-specific parameters.
-impl<E: Equation> CostFunction for SppOptimizer<'_, E> {
+impl<'a, E: Equation<'a>> CostFunction for SppOptimizer<'a, E> {
     type Param = Vec<f64>;
     type Output = f64;
 
@@ -37,14 +39,14 @@ impl<E: Equation> CostFunction for SppOptimizer<'_, E> {
     ///
     /// The squared error between model predictions and observations, or an error if calculation fails
     fn cost(&self, point: &Self::Param) -> Result<Self::Output, Error> {
-        let (concentrations, _) =
-            self.equation
-                .simulate_subject(self.subject, point.as_ref(), None);
+        let mut model = self.equation.initialize_model(self.subject, point.as_ref());
+        let (concentrations, _) = model.simulate_subject(point.as_ref(), None);
+
         Ok(concentrations.squared_error()) //TODO: Change this to use the D function
     }
 }
 
-impl<'a, E: Equation> SppOptimizer<'a, E> {
+impl<'a, E: Equation<'a>> SppOptimizer<'a, E> {
     /// Creates a new SppOptimizer for individual parameter optimization
     ///
     /// # Arguments
@@ -114,7 +116,7 @@ fn create_initial_simplex(initial_point: &Array1<f64>) -> Vec<Array1<f64>> {
 }
 
 /// Trait for finding the optimal support point for a subject
-pub trait OptimalSupportPoint<E: Equation> {
+pub trait OptimalSupportPoint<'a, E: Equation<'a>> {
     /// Finds the optimal support point for a subject
     ///
     /// # Arguments
@@ -128,14 +130,14 @@ pub trait OptimalSupportPoint<E: Equation> {
     fn optimal_support_point(&self, equation: &E, point: &Array1<f64>) -> Array1<f64>;
 }
 
-impl<E: Equation> OptimalSupportPoint<E> for Subject {
+impl<'a, E: Equation<'a>> OptimalSupportPoint<'a, E> for Subject {
     fn optimal_support_point(&self, equation: &E, point: &Array1<f64>) -> Array1<f64> {
         SppOptimizer::new(equation, self).optimize(point)
     }
 }
 
 /// Trait for estimating the theta parameter for a dataset
-pub trait EstimateTheta<E: Equation> {
+pub trait EstimateTheta<'a, E: Equation<'a>> {
     /// Estimates the theta parameter for a dataset
     ///
     /// # Arguments
@@ -149,7 +151,7 @@ pub trait EstimateTheta<E: Equation> {
     fn estimate_theta(&self, equation: &E, point: &Array1<f64>) -> Array2<f64>;
 }
 
-impl<E: Equation> EstimateTheta<E> for Data {
+impl<'a, E: Equation<'a>> EstimateTheta<'a, E> for Data {
     fn estimate_theta(&self, equation: &E, point: &Array1<f64>) -> Array2<f64> {
         let n_sub = self.len();
         let mut theta = Array2::zeros((n_sub, point.len()));

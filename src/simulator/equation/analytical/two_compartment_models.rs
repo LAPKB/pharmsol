@@ -107,7 +107,7 @@ pub fn two_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &Co
 #[cfg(test)]
 mod tests {
     use super::{two_compartments, two_compartments_with_absorption};
-    use crate::*;
+    use crate::{simulator::model::Model, *};
     use approx::assert_relative_eq;
 
     enum SubjectInfo {
@@ -169,7 +169,7 @@ mod tests {
         let infusion_dosing = SubjectInfo::InfusionDosing;
         let subject = infusion_dosing.get_subject();
 
-        let mut ode = equation::ODE::new(
+        let ode = equation::ODE::new(
             |x, p, _t, dx, rateiv, _cov| {
                 fetch_params!(p, ke, kcp, kpc, _v);
 
@@ -186,7 +186,7 @@ mod tests {
             (2, 1),
         );
 
-        let mut analytical = equation::Analytical::new(
+        let analytical = equation::Analytical::new(
             two_compartments,
             |_p, _t, _cov| {},
             |_p| lag! {},
@@ -198,9 +198,10 @@ mod tests {
             },
             (2, 1),
         );
-
-        let op_ode = ode.estimate_predictions(&subject, &vec![0.1, 3.0, 1.0, 1.0]);
-        let op_analytical = analytical.estimate_predictions(&subject, &vec![0.1, 3.0, 1.0, 1.0]);
+        let mut ode_model = ode.initialize_model(&subject, &vec![0.1, 3.0, 1.0]);
+        let op_ode = ode_model.estimate_outputs(&vec![0.1, 3.0, 1.0]);
+        let mut analytical_model = analytical.initialize_model(&subject, &vec![0.1, 3.0, 1.0]);
+        let op_analytical = analytical_model.estimate_outputs(&vec![0.1, 3.0, 1.0]);
 
         let pred_ode = &op_ode.flat_predictions()[..];
         let pred_analytical = &op_analytical.flat_predictions()[..];
@@ -218,7 +219,7 @@ mod tests {
         let oral_infusion_dosing = SubjectInfo::OralInfusionDosage;
         let subject = oral_infusion_dosing.get_subject();
 
-        let mut ode = equation::ODE::new(
+        let ode = equation::ODE::new(
             |x, p, _t, dx, rateiv, _cov| {
                 fetch_params!(p, ke, ka, kcp, kpc, _v);
 
@@ -236,7 +237,7 @@ mod tests {
             (3, 1),
         );
 
-        let mut analytical = equation::Analytical::new(
+        let analytical = equation::Analytical::new(
             two_compartments_with_absorption,
             |_p, _t, _cov| {},
             |_p| lag! {},
@@ -248,10 +249,10 @@ mod tests {
             },
             (3, 1),
         );
-
-        let op_ode = ode.estimate_predictions(&subject, &vec![0.1, 1.0, 3.0, 1.0, 1.0]);
-        let op_analytical =
-            analytical.estimate_predictions(&subject, &vec![0.1, 1.0, 3.0, 1.0, 1.0]);
+        let mut ode_model = ode.initialize_model(&subject, &vec![0.1, 3.0, 1.0, 1.0]);
+        let op_ode = ode_model.estimate_outputs(&vec![0.1, 3.0, 1.0, 1.0]);
+        let mut analytical_model = analytical.initialize_model(&subject, &vec![0.1, 3.0, 1.0, 1.0]);
+        let op_analytical = analytical_model.estimate_outputs(&vec![0.1, 3.0, 1.0, 1.0]);
 
         let pred_ode = &op_ode.flat_predictions()[..];
         let pred_analytical = &op_analytical.flat_predictions()[..];
