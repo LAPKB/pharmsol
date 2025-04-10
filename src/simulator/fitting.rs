@@ -148,11 +148,11 @@ pub trait EstimateTheta<'a, E: Equation<'a>> {
     /// # Returns
     ///
     /// Estimated theta parameter values as an ndarray Array2
-    fn estimate_theta(&self, equation: &E, point: &Array1<f64>) -> Array2<f64>;
+    fn estimate_theta(&'a self, equation: &'a E, point: &Array1<f64>) -> Array2<f64>;
 }
 
 impl<'a, E: Equation<'a>> EstimateTheta<'a, E> for Data {
-    fn estimate_theta(&self, equation: &E, point: &Array1<f64>) -> Array2<f64> {
+    fn estimate_theta(&'a self, equation: &'a E, point: &Array1<f64>) -> Array2<f64> {
         let n_sub = self.len();
         let mut theta = Array2::zeros((n_sub, point.len()));
 

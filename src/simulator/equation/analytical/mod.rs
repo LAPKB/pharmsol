@@ -24,7 +24,6 @@ pub struct Analytical {
     init: Init,
     out: Out,
     neqs: Neqs,
-    state: V,
 }
 
 pub struct AnalyticalModel<'a> {
@@ -181,7 +180,6 @@ impl Analytical {
             init,
             out,
             neqs,
-            state: V::zeros(neqs.0),
         }
     }
 }
