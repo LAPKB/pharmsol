@@ -130,10 +130,11 @@ mod tests {
             },
             (1, 1),
         );
-        let mut ode_model = ode.initialize_model(&subject, &vec![1.0, 0.1]);
-        let op_ode = ode_model.estimate_outputs(&vec![1.0, 0.1]);
-        let mut analytical_model = analytical.initialize_model(&subject, &vec![1.0, 0.1]);
-        let op_analytical = analytical_model.estimate_outputs(&vec![1.0, 0.1]);
+        let spp = vec![1.0, 0.1];
+        let mut ode_model = ode.initialize_model(&subject, &spp);
+        let op_ode = ode_model.estimate_outputs();
+        let mut analytical_model = analytical.initialize_model(&subject, &spp);
+        let op_analytical = analytical_model.estimate_outputs();
 
         let pred_ode = &op_ode.flat_predictions()[..];
         let pred_analytical = &op_analytical.flat_predictions()[..];
@@ -180,11 +181,12 @@ mod tests {
             },
             (2, 1),
         );
-        let mut ode_model = ode.initialize_model(&subject, &vec![1.0, 0.1, 1.0]);
-        let op_ode = ode_model.estimate_outputs(&vec![1.0, 0.1, 1.0]);
+        let spp = vec![1.0, 0.1, 1.0];
+        let mut ode_model = ode.initialize_model(&subject, &spp);
+        let op_ode = ode_model.estimate_outputs();
 
-        let mut analytical_model = analytical.initialize_model(&subject, &vec![1.0, 0.1, 1.0]);
-        let op_analytical = analytical_model.estimate_outputs(&vec![1.0, 0.1, 1.0]);
+        let mut analytical_model = analytical.initialize_model(&subject, &spp);
+        let op_analytical = analytical_model.estimate_outputs();
 
         let pred_ode = &op_ode.flat_predictions()[..];
         let pred_analytical = &op_analytical.flat_predictions()[..];

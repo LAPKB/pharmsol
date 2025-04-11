@@ -165,13 +165,9 @@ pub fn psi<'a>(
                 .enumerate()
                 .for_each(|(j, mut element)| {
                     let subject = subjects.get(i).unwrap();
-                    let mut model =
-                        equation.initialize_model(subject, support_points.row(j).to_vec().as_ref());
-                    let likelihood = model.estimate_likelihood(
-                        support_points.row(j).to_vec().as_ref(),
-                        error_model,
-                        cache,
-                    );
+                    let spp = support_points.row(j).to_vec();
+                    let mut model = equation.initialize_model(subject, &spp);
+                    let likelihood = model.estimate_likelihood(error_model, cache);
                     element.fill(likelihood);
                     if let Some(pb_ref) = pb.as_ref() {
                         pb_ref.inc(1);

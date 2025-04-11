@@ -39,10 +39,10 @@ impl<'a, E: Equation<'a>> CostFunction for SppOptimizer<'a, E> {
     ///
     /// The squared error between model predictions and observations, or an error if calculation fails
     fn cost(&self, point: &Self::Param) -> Result<Self::Output, Error> {
-        let mut model = self.equation.initialize_model(self.subject, point.as_ref());
-        let (concentrations, _) = model.simulate_subject(point.as_ref(), None);
-
-        Ok(concentrations.squared_error()) //TODO: Change this to use the D function
+        let mut model = self.equation.initialize_model(self.subject, point);
+        let (concentrations, _) = model.simulate_subject(None);
+        let error = concentrations.squared_error();
+        Ok(error) //TODO: Change this to use the D function
     }
 }
 

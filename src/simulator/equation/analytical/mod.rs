@@ -30,6 +30,7 @@ pub struct AnalyticalModel<'a> {
     equation: &'a Analytical,
     data: &'a Subject,
     state: V,
+    spp: &'a [f64],
 }
 impl<'a> Equation<'a> for Analytical {
     type S = V;
@@ -41,7 +42,7 @@ impl<'a> Equation<'a> for Analytical {
     fn get_nouteqs(&self) -> usize {
         self.neqs.1
     }
-    fn initialize_model(&'a self, subject: &'a Subject, spp: &[f64]) -> Self::Mod {
+    fn initialize_model(&'a self, subject: &'a Subject, spp: &'a [f64]) -> Self::Mod {
         AnalyticalModel::new(self, subject, spp)
     }
 }
@@ -49,12 +50,13 @@ impl<'a> Equation<'a> for Analytical {
 impl<'a> Model<'a> for AnalyticalModel<'a> {
     type Eq = Analytical;
 
-    fn new(equation: &'a Self::Eq, data: &'a Subject, _spp: &[f64]) -> Self {
+    fn new(equation: &'a Self::Eq, data: &'a Subject, spp: &'a [f64]) -> Self {
         let state = V::zeros(equation.get_nstates());
         Self {
             equation,
             data,
             state,
+            spp,
         }
     }
 
@@ -70,13 +72,13 @@ impl<'a> Model<'a> for AnalyticalModel<'a> {
         &self.state
     }
     #[inline(always)]
-    fn get_lag(&self, spp: &[f64]) -> Option<HashMap<usize, f64>> {
-        Some((self.equation.lag)(&V::from_vec(spp.to_owned())))
+    fn get_lag(&self) -> Option<HashMap<usize, f64>> {
+        Some((self.equation.lag)(&V::from_vec(self.spp.to_vec())))
     }
 
     #[inline(always)]
-    fn get_fa(&self, spp: &[f64]) -> Option<HashMap<usize, f64>> {
-        Some((self.equation.fa)(&V::from_vec(spp.to_owned())))
+    fn get_fa(&self) -> Option<HashMap<usize, f64>> {
+        Some((self.equation.fa)(&V::from_vec(self.spp.to_vec())))
     }
 
     fn add_bolus(&mut self, input: usize, amount: f64) {
@@ -84,18 +86,11 @@ impl<'a> Model<'a> for AnalyticalModel<'a> {
     }
 
     #[inline(always)]
-    fn solve(
-        &mut self,
-        support_point: &Vec<f64>,
-        covariates: &Covariates,
-        infusions: &Vec<Infusion>,
-        ti: f64,
-        tf: f64,
-    ) {
+    fn solve(&mut self, covariates: &Covariates, infusions: &Vec<Infusion>, ti: f64, tf: f64) {
         if ti == tf {
             return;
         }
-        let mut support_point = V::from_vec(support_point.to_owned());
+        let mut support_point = V::from_vec(self.spp.to_vec());
         let mut rateiv = V::from_vec(vec![0.0, 0.0, 0.0]);
         //TODO: This should be pre-calculated
         for infusion in infusions {
@@ -109,7 +104,6 @@ impl<'a> Model<'a> for AnalyticalModel<'a> {
     #[inline(always)]
     fn process_observation(
         &mut self,
-        support_point: &Vec<f64>,
         observation: &Observation,
         error_model: Option<&ErrorModel>,
         _time: f64,
@@ -121,7 +115,7 @@ impl<'a> Model<'a> for AnalyticalModel<'a> {
         let out = &self.equation.out;
         (out)(
             &self.state,
-            &V::from_vec(support_point.clone()),
+            &V::from_vec(self.spp.to_vec()),
             observation.time(),
             covariates,
             &mut y,
@@ -134,21 +128,16 @@ impl<'a> Model<'a> for AnalyticalModel<'a> {
         output.add_prediction(pred);
     }
     #[inline(always)]
-    fn initial_state(&mut self, spp: &Vec<f64>, covariates: &Covariates, occasion_index: usize) {
+    fn initial_state(&mut self, covariates: &Covariates, occasion_index: usize) {
         let init = &self.equation.init;
         let mut x = V::zeros(self.equation.get_nstates());
         if occasion_index == 0 {
-            (init)(&V::from_vec(spp.to_vec()), 0.0, covariates, &mut x);
+            (init)(&V::from_vec(self.spp.to_vec()), 0.0, covariates, &mut x);
         }
         self.state = x;
     }
-    fn estimate_likelihood(
-        &mut self,
-        support_point: &Vec<f64>,
-        error_model: &ErrorModel,
-        cache: bool,
-    ) -> f64 {
-        _estimate_likelihood(self, support_point, error_model, cache)
+    fn estimate_likelihood(&mut self, error_model: &ErrorModel, cache: bool) -> f64 {
+        _estimate_likelihood(self, error_model, cache)
     }
 }
 
@@ -191,26 +180,17 @@ fn spphash(spp: &[f64]) -> u64 {
 #[cached(
     ty = "UnboundCache<String, SubjectPredictions>",
     create = "{ UnboundCache::with_capacity(100_000) }",
-    convert = r#"{ format!("{}{}", model.data.id(), spphash(support_point)) }"#
+    convert = r#"{ format!("{}{}", model.data.id(), spphash(model.spp)) }"#
 )]
-fn _subject_predictions(
-    model: &mut AnalyticalModel,
-
-    support_point: &Vec<f64>,
-) -> SubjectPredictions {
-    model.simulate_subject(support_point, None).0
+fn _subject_predictions(model: &mut AnalyticalModel) -> SubjectPredictions {
+    model.simulate_subject(None).0
 }
 
-fn _estimate_likelihood(
-    model: &mut AnalyticalModel,
-    support_point: &Vec<f64>,
-    error_model: &ErrorModel,
-    cache: bool,
-) -> f64 {
+fn _estimate_likelihood(model: &mut AnalyticalModel, error_model: &ErrorModel, cache: bool) -> f64 {
     let ypred = if cache {
-        _subject_predictions(model, support_point)
+        _subject_predictions(model)
     } else {
-        _subject_predictions_no_cache(model, support_point)
+        _subject_predictions_no_cache(model)
     };
     ypred.likelihood(error_model)
 }

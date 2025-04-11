@@ -7,18 +7,17 @@ use crate::{Covariates, Equation, ErrorModel, Event, Infusion, Observation, Subj
 pub trait Model<'a> {
     type Eq: Equation<'a>;
 
-    fn new(equation: &'a Self::Eq, subject: &'a Subject, spp: &[f64]) -> Self
+    fn new(equation: &'a Self::Eq, subject: &'a Subject, spp: &'a [f64]) -> Self
     where
         Self: Sized;
 
     fn equation(&self) -> &Self::Eq;
     fn subject(&self) -> &Subject;
     fn state(&self) -> &<Self::Eq as Equation<'a>>::S;
-    fn get_lag(&self, spp: &[f64]) -> Option<HashMap<usize, f64>>;
-    fn get_fa(&self, spp: &[f64]) -> Option<HashMap<usize, f64>>;
+    fn get_lag(&self) -> Option<HashMap<usize, f64>>;
+    fn get_fa(&self) -> Option<HashMap<usize, f64>>;
     fn solve(
         &mut self,
-        support_point: &Vec<f64>,
         covariates: &Covariates,
         infusions: &Vec<Infusion>,
         start_time: f64,
@@ -27,7 +26,6 @@ pub trait Model<'a> {
 
     fn process_observation(
         &mut self,
-        support_point: &Vec<f64>,
         observation: &Observation,
         error_model: Option<&ErrorModel>,
         time: f64,
@@ -36,17 +34,11 @@ pub trait Model<'a> {
         output: &mut <Self::Eq as Equation<'a>>::P,
     );
 
-    fn initial_state(
-        &mut self,
-        support_point: &Vec<f64>,
-        covariates: &Covariates,
-        occasion_index: usize,
-    );
+    fn initial_state(&mut self, covariates: &Covariates, occasion_index: usize);
     fn add_bolus(&mut self, input: usize, amount: f64);
 
     fn simulate_event(
         &mut self,
-        support_point: &Vec<f64>,
         event: &Event,
         next_event: Option<&Event>,
         error_model: Option<&ErrorModel>,
@@ -64,7 +56,6 @@ pub trait Model<'a> {
             }
             Event::Observation(observation) => {
                 self.process_observation(
-                    support_point,
                     observation,
                     error_model,
                     event.get_time(),
@@ -77,7 +68,6 @@ pub trait Model<'a> {
 
         if let Some(next_event) = next_event {
             self.solve(
-                support_point,
                 covariates,
                 infusions,
                 event.get_time(),
@@ -98,12 +88,7 @@ pub trait Model<'a> {
     ///
     /// # Returns
     /// The log-likelihood value
-    fn estimate_likelihood(
-        &mut self,
-        support_point: &Vec<f64>,
-        error_model: &ErrorModel,
-        cache: bool,
-    ) -> f64;
+    fn estimate_likelihood(&mut self, error_model: &ErrorModel, cache: bool) -> f64;
 
     fn nparticles(&self) -> usize {
         //TODO: remove
@@ -118,8 +103,8 @@ pub trait Model<'a> {
     ///
     /// # Returns
     /// Predicted concentrations
-    fn estimate_outputs(&mut self, support_point: &Vec<f64>) -> <Self::Eq as Equation<'a>>::P {
-        self.simulate_subject(support_point, None).0
+    fn estimate_outputs(&mut self) -> <Self::Eq as Equation<'a>>::P {
+        self.simulate_subject(None).0
     }
 
     /// Simulate a subject with given parameters and optionally calculate likelihood.
@@ -133,23 +118,21 @@ pub trait Model<'a> {
     /// A tuple containing Outputs and optional likelihood
     fn simulate_subject(
         &mut self,
-        support_point: &Vec<f64>,
         error_model: Option<&ErrorModel>,
     ) -> (<Self::Eq as Equation<'a>>::P, Option<f64>) {
-        let lag = self.get_lag(support_point);
-        let fa = self.get_fa(support_point);
+        let lag = self.get_lag();
+        let fa = self.get_fa();
 
         let mut output = <Self::Eq as Equation>::P::new_outputs(self.nparticles());
         let mut likelihood = Vec::new();
 
         for occasion in self.subject().clone().occasions() {
             let covariates = occasion.get_covariates().unwrap();
-            self.initial_state(support_point, covariates, occasion.index());
+            self.initial_state(covariates, occasion.index());
             let mut infusions = Vec::new();
             let events = occasion.get_events(&lag, &fa, true);
             for (index, event) in events.iter().enumerate() {
                 self.simulate_event(
-                    support_point,
                     event,
                     events.get(index + 1),
                     error_model,
