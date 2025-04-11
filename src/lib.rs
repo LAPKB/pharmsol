@@ -50,10 +50,10 @@ pub mod prelude {
     macro_rules! fetch_params {
         ($p:expr, $($name:ident),*) => {
             let p = $p;
-            let mut idx = 0;
+            let mut idx: i32 = -1;
             $(
-                let $name = p[idx];
                 idx += 1;
+                let $name = p[idx as usize];
             )*
         };
     }

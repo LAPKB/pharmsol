@@ -198,7 +198,7 @@ mod tests {
             },
             (2, 1),
         );
-        let spp = vec![0.1, 3.0, 1.0];
+        let spp = vec![0.1, 3.0, 1.0, 1.0];
         let mut ode_model = ode.initialize_model(&subject, spp.clone());
         let op_ode = ode_model.estimate_outputs();
         let mut analytical_model = analytical.initialize_model(&subject, spp.clone());
@@ -250,7 +250,7 @@ mod tests {
             },
             (3, 1),
         );
-        let spp = vec![0.1, 3.0, 1.0, 1.0];
+        let spp = vec![0.1, 1.0, 3.0, 1.0, 1.0];
         let mut ode_model = ode.initialize_model(&subject, spp.clone());
         let op_ode = ode_model.estimate_outputs();
         let mut analytical_model = analytical.initialize_model(&subject, spp.clone());
