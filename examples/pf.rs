@@ -31,8 +31,8 @@ fn main() {
 
     let em = ErrorModel::new((0.5, 0.0, 0.0, 0.0), 0.0, &error_model::ErrorType::Add); // sigma = 0.5
 
-    let ll = sde.estimate_likelihood(&subject, &vec![1.0], &em, false);
+    let mut model = sde.initialize_model(&subject, vec![1.0]);
+    let ll = model.estimate_likelihood(&em, false);
 
-    dbg!(sde.estimate_likelihood(&subject, &vec![1.0], &em, false));
     println!("{ll:#?}");
 }

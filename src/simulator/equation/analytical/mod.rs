@@ -30,7 +30,7 @@ pub struct AnalyticalModel<'a> {
     equation: &'a Analytical,
     data: &'a Subject,
     state: V,
-    spp: &'a [f64],
+    spp: Vec<f64>,
 }
 impl<'a> Equation<'a> for Analytical {
     type S = V;
@@ -42,7 +42,7 @@ impl<'a> Equation<'a> for Analytical {
     fn get_nouteqs(&self) -> usize {
         self.neqs.1
     }
-    fn initialize_model(&'a self, subject: &'a Subject, spp: &'a [f64]) -> Self::Mod {
+    fn initialize_model(&'a self, subject: &'a Subject, spp: Vec<f64>) -> Self::Mod {
         AnalyticalModel::new(self, subject, spp)
     }
 }
@@ -50,7 +50,7 @@ impl<'a> Equation<'a> for Analytical {
 impl<'a> Model<'a> for AnalyticalModel<'a> {
     type Eq = Analytical;
 
-    fn new(equation: &'a Self::Eq, data: &'a Subject, spp: &'a [f64]) -> Self {
+    fn new(equation: &'a Self::Eq, data: &'a Subject, spp: Vec<f64>) -> Self {
         let state = V::zeros(equation.get_nstates());
         Self {
             equation,
@@ -180,7 +180,7 @@ fn spphash(spp: &[f64]) -> u64 {
 #[cached(
     ty = "UnboundCache<String, SubjectPredictions>",
     create = "{ UnboundCache::with_capacity(100_000) }",
-    convert = r#"{ format!("{}{}", model.data.id(), spphash(model.spp)) }"#
+    convert = r#"{ format!("{}{}", model.data.id(), spphash(&model.spp)) }"#
 )]
 fn _subject_predictions(model: &mut AnalyticalModel) -> SubjectPredictions {
     model.simulate_subject(None).0

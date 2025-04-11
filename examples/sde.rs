@@ -1,7 +1,6 @@
 use pharmsol::{prelude::data::read_pmetrics, *};
 
 fn one_c_ode() -> ODE {
-    
     equation::ODE::new(
         |x, p, _t, dx, _rateiv, _cov| {
             // fetch_cov!(cov, t, wt);
@@ -19,7 +18,6 @@ fn one_c_ode() -> ODE {
 }
 
 fn one_c_sde() -> SDE {
-    
     equation::SDE::new(
         |x, p, _t, dx, _rateiv, _cov| {
             // automatically defined
@@ -50,7 +48,6 @@ fn one_c_sde() -> SDE {
 }
 
 fn three_c_ode() -> ODE {
-    
     equation::ODE::new(
         |x, p, _t, dx, _rateiv, _cov| {
             // fetch_cov!(cov, t, wt);
@@ -71,7 +68,6 @@ fn three_c_ode() -> ODE {
 }
 
 fn three_c_sde() -> SDE {
-    
     equation::SDE::new(
         |x, p, _t, dx, _rateiv, _cov| {
             fetch_params!(p, ka, ke0, kcp, kpc, _vol, _ske);
@@ -110,8 +106,11 @@ fn main() {
         .repeat(5, 0.2)
         .build();
 
-    let ode_predictions = ode.estimate_predictions(&subject, &vec![1.0]);
-    let sde_predictions = sde.estimate_predictions(&subject, &vec![1.0, 0.0]);
+    let mut ode_model = ode.initialize_model(&subject, vec![1.0]);
+    let mut sde_model = sde.initialize_model(&subject, vec![1.0, 0.0]);
+
+    let ode_predictions = ode_model.estimate_outputs();
+    let sde_predictions = sde_model.estimate_outputs();
 
     let mut sde_flat_predictions: Vec<Vec<f64>> = Vec::new();
     for trajectory in sde_predictions.rows() {
@@ -145,8 +144,11 @@ fn main() {
         0.0,
     ];
 
-    let ode_predictions = ode.estimate_predictions(&subject, &spp_ode);
-    let sde_predictions = sde.estimate_predictions(&subject, &spp_sde);
+    let mut ode_model = ode.initialize_model(&subject, spp_ode.clone());
+    let mut sde_model = sde.initialize_model(&subject, spp_sde.clone());
+
+    let ode_predictions = ode_model.estimate_outputs();
+    let sde_predictions = sde_model.estimate_outputs();
 
     let mut sde_flat_predictions: Vec<Vec<f64>> = Vec::new();
     for trajectory in sde_predictions.rows() {
@@ -168,8 +170,11 @@ fn main() {
     let data = read_pmetrics("../PMcore/examples/vanco_sde/data.csv").unwrap();
     let subject = data.get_subject("51").unwrap();
 
-    let ode_predictions = ode.estimate_predictions(subject, &spp_ode);
-    let sde_predictions = sde.estimate_predictions(subject, &spp_sde);
+    let mut ode_model = ode.initialize_model(subject, spp_ode.clone());
+    let mut sde_model = sde.initialize_model(subject, spp_sde.clone());
+
+    let ode_predictions = ode_model.estimate_outputs();
+    let sde_predictions = sde_model.estimate_outputs();
 
     let mut sde_flat_predictions: Vec<Vec<f64>> = Vec::new();
     for trajectory in sde_predictions.rows() {

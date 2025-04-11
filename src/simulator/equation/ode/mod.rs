@@ -36,7 +36,7 @@ pub struct ODEModel<'a> {
     equation: &'a ODE,
     data: &'a Subject,
     state: DVector<f64>,
-    spp: &'a [f64],
+    spp: Vec<f64>,
 }
 impl State for DVector<f64> {}
 impl Outputs for SubjectPredictions {
@@ -60,7 +60,7 @@ impl<'a> Equation<'a> for ODE {
     fn get_nouteqs(&self) -> usize {
         self.neqs.1
     }
-    fn initialize_model(&'a self, subject: &'a Subject, spp: &'a [f64]) -> Self::Mod {
+    fn initialize_model(&'a self, subject: &'a Subject, spp: Vec<f64>) -> Self::Mod {
         ODEModel::new(self, subject, spp)
     }
 }
@@ -68,7 +68,7 @@ impl<'a> Equation<'a> for ODE {
 impl<'a> Model<'a> for ODEModel<'a> {
     type Eq = ODE;
 
-    fn new(equation: &'a ODE, data: &'a Subject, spp: &'a [f64]) -> Self {
+    fn new(equation: &'a ODE, data: &'a Subject, spp: Vec<f64>) -> Self {
         Self {
             equation,
             data,
@@ -213,7 +213,7 @@ fn spphash(spp: &[f64]) -> u64 {
 #[cached(
     ty = "UnboundCache<String, SubjectPredictions>",
     create = "{ UnboundCache::with_capacity(100_000) }",
-    convert = r#"{ format!("{}{}", model.data.id(), spphash(model.spp)) }"#
+    convert = r#"{ format!("{}{}", model.data.id(), spphash(&model.spp)) }"#
 )]
 fn _subject_predictions(model: &mut ODEModel) -> SubjectPredictions {
     model.simulate_subject(None).0

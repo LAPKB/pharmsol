@@ -68,7 +68,7 @@ pub trait Equation<'a>: 'static + Clone + Sync {
         false
     }
 
-    fn initialize_model(&'a self, subject: &'a Subject, spp: &'a [f64]) -> Self::Mod;
+    fn initialize_model(&'a self, subject: &'a Subject, spp: Vec<f64>) -> Self::Mod;
 
     fn nparticles(&self) -> usize {
         1

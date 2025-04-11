@@ -11,6 +11,7 @@ pub use crate::data::InterpolationMethod::*;
 pub use crate::data::*;
 pub use crate::equation::*;
 pub use crate::simulator::equation::{self, ODE};
+pub use crate::simulator::model::Model;
 pub use nalgebra::dmatrix;
 pub use std::collections::HashMap;
 

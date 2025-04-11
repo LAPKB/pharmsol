@@ -93,7 +93,7 @@ pub struct SDEModel<'a> {
     equation: &'a SDE,
     data: &'a Subject,
     state: Vec<DVector<f64>>,
-    spp: &'a [f64],
+    spp: Vec<f64>,
 }
 
 impl State for Vec<DVector<f64>> {}
@@ -128,14 +128,14 @@ impl<'a> Equation<'a> for SDE {
     fn nparticles(&self) -> usize {
         self.nparticles
     }
-    fn initialize_model(&'a self, subject: &'a Subject, spp: &'a [f64]) -> Self::Mod {
+    fn initialize_model(&'a self, subject: &'a Subject, spp: Vec<f64>) -> Self::Mod {
         SDEModel::new(self, subject, spp)
     }
 }
 impl<'a> Model<'a> for SDEModel<'a> {
     type Eq = SDE;
 
-    fn new(equation: &'a Self::Eq, data: &'a Subject, spp: &'a [f64]) -> Self {
+    fn new(equation: &'a Self::Eq, data: &'a Subject, spp: Vec<f64>) -> Self {
         Self {
             equation,
             data,
@@ -187,7 +187,7 @@ impl<'a> Model<'a> for SDEModel<'a> {
                 &self.equation.drift,
                 &self.equation.diffusion,
                 particle.clone(),
-                self.spp,
+                &self.spp,
                 covariates,
                 infusions,
                 ti,
@@ -315,7 +315,7 @@ fn spphash(spp: &[f64]) -> u64 {
 #[cached(
     ty = "UnboundCache<String, f64>",
     create = "{ UnboundCache::with_capacity(100_000) }",
-    convert = r#"{ format!("{}{}{}", model.data.id(), spphash(model.spp), error_model.gl()) }"#
+    convert = r#"{ format!("{}{}{}", model.data.id(), spphash(&model.spp), error_model.gl()) }"#
 )]
 fn _estimate_likelihood(model: &mut SDEModel, error_model: &ErrorModel) -> f64 {
     let ypred = model.simulate_subject(Some(error_model));

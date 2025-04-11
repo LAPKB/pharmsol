@@ -7,7 +7,7 @@ use crate::{Covariates, Equation, ErrorModel, Event, Infusion, Observation, Subj
 pub trait Model<'a> {
     type Eq: Equation<'a>;
 
-    fn new(equation: &'a Self::Eq, subject: &'a Subject, spp: &'a [f64]) -> Self
+    fn new(equation: &'a Self::Eq, subject: &'a Subject, spp: Vec<f64>) -> Self
     where
         Self: Sized;
 
