@@ -194,35 +194,33 @@ impl NonLinearOp for PmOut {
 }
 
 // Completely revised PMProblem to fix lifetime issues and improve performance
-pub struct PMProblem<F>
+pub struct PMProblem<'a, F>
 where
-    F: Fn(&V, &V, T, &mut V, V, &Covariates) + 'static,
+    F: Fn(&V, &V, T, &mut V, V, &Covariates) + 'a,
 {
     func: F,
     nstates: usize,
     nparams: usize,
     init: V,
     p: Vec<f64>,
-    covariates: Covariates,
-    infusions: Vec<Infusion>,
+    covariates: &'a Covariates,
+    infusions: Vec<&'a Infusion>,
     rateiv_buffer: RefCell<V>,
 }
 
-impl<F> PMProblem<F>
+impl<'a, F> PMProblem<'a, F>
 where
-    F: Fn(&V, &V, T, &mut V, V, &Covariates) + 'static,
+    F: Fn(&V, &V, T, &mut V, V, &Covariates) + 'a,
 {
     pub fn new(
         func: F,
         nstates: usize,
         p: Vec<f64>,
-        covariates: &Covariates,
-        infusions: Vec<&Infusion>,
+        covariates: &'a Covariates,
+        infusions: Vec<&'a Infusion>,
         init: V,
     ) -> Self {
         let nparams = p.len();
-        let covariates = covariates.clone();
-        let infusions: Vec<Infusion> = infusions.iter().map(|&i| i.clone()).collect();
         let rateiv_buffer = RefCell::new(V::zeros(nstates));
 
         Self {
@@ -238,9 +236,9 @@ where
     }
 }
 
-impl<F> Op for PMProblem<F>
+impl<'a, F> Op for PMProblem<'a, F>
 where
-    F: Fn(&V, &V, T, &mut V, V, &Covariates) + 'static,
+    F: Fn(&V, &V, T, &mut V, V, &Covariates) + 'a,
 {
     type T = T;
     type V = V;
@@ -257,9 +255,9 @@ where
 }
 
 // Implement OdeEquationsRef for PMProblem for any lifetime 'b
-impl<'b, F> OdeEquationsRef<'b> for PMProblem<F>
+impl<'a, 'b, F> OdeEquationsRef<'b> for PMProblem<'a, F>
 where
-    F: Fn(&V, &V, T, &mut V, V, &Covariates) + 'static,
+    F: Fn(&V, &V, T, &mut V, V, &Covariates) + 'a,
 {
     type Rhs = PmRhs<'b, F>;
     type Mass = PmMass;
@@ -269,24 +267,16 @@ where
 }
 
 // Implement OdeEquations with correct lifetime handling
-impl<F> OdeEquations for PMProblem<F>
+impl<'a, F> OdeEquations for PMProblem<'a, F>
 where
-    F: Fn(&V, &V, T, &mut V, V, &Covariates) + 'static,
+    F: Fn(&V, &V, T, &mut V, V, &Covariates) + 'a,
 {
     fn rhs(&self) -> PmRhs<'_, F> {
-        let infusion_refs: Vec<&Infusion> = {
-            let mut refs = Vec::with_capacity(self.infusions.len());
-            for infusion in &self.infusions {
-                refs.push(infusion);
-            }
-            refs
-        };
-
         PmRhs {
             nstates: self.nstates,
             nparams: self.nparams,
-            infusions: infusion_refs,
-            covariates: &self.covariates,
+            infusions: self.infusions.clone(), // Just copying references, not cloning the actual data
+            covariates: self.covariates,
             p: &self.p,
             func: &self.func,
             rateiv_buffer: &self.rateiv_buffer,
