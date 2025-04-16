@@ -1,5 +1,6 @@
 mod closure;
 
+use core::panic;
 use std::collections::HashMap;
 
 use crate::{
@@ -15,12 +16,10 @@ use cached::UnboundCache;
 use crate::simulator::equation::Predictions;
 use closure::PMProblem;
 use diffsol::{
-    ode_solver::method::OdeSolverMethod, Bdf, NewtonNonlinearSolver, OdeBuilder,
-    OdeSolverStopReason,
+    error::OdeSolverError, ode_solver::method::OdeSolverMethod, Bdf, NewtonNonlinearSolver,
+    OdeBuilder, OdeSolverStopReason,
 };
 use nalgebra::DVector;
-
-// use self::diffsol_traits::build_pm_ode;
 
 use super::{Equation, EquationPriv, EquationTypes, State};
 
@@ -206,7 +205,7 @@ impl Equation for ODE {
                 .build_from_eqn(PMProblem::new(
                     self.diffeq,
                     self.get_nstates(),
-                    support_point.clone(),
+                    support_point.clone(), //TODO: Avoid cloning the support point
                     &covariates,
                     infusions,
                     self.initial_state(support_point, covariates, occasion.index()),
@@ -217,7 +216,7 @@ impl Equation for ODE {
                 '_,
                 PMProblem<DiffEq>,
                 NewtonNonlinearSolver<M, diffsol::NalgebraLU<f64>>,
-            > = problem.bdf::<diffsol::NalgebraLU<f64>>().unwrap();
+            > = problem.bdf::<diffsol::NalgebraLU<f64>>().unwrap(); // TODO: Result
 
             for (index, event) in events.iter().enumerate() {
                 let next_event = events.get(index + 1);
@@ -234,7 +233,7 @@ impl Equation for ODE {
                         //START PROCESS_OBSERVATION
                         let mut y = V::zeros(self.get_nouteqs());
                         let out = &self.out;
-                        let spp = DVector::from_vec(support_point.clone());
+                        let spp = DVector::from_vec(support_point.clone()); // TODO: Avoid clone
                         (out)(
                             solver.state().y,
                             &spp,
@@ -254,13 +253,25 @@ impl Equation for ODE {
                 }
                 // START SOLVE
                 if let Some(next_event) = next_event {
-                    let _ = solver.set_stop_time(next_event.get_time());
-                    loop {
-                        let ret = solver.step();
-                        match ret {
-                            Ok(OdeSolverStopReason::InternalTimestep) => continue,
-                            Ok(OdeSolverStopReason::TstopReached) => break,
-                            _ => panic!("Unexpected solver error: {:?}", ret),
+                    match solver.set_stop_time(next_event.get_time()) {
+                        Ok(_) => loop {
+                            let ret = solver.step();
+                            match ret {
+                                Ok(OdeSolverStopReason::InternalTimestep) => continue,
+                                Ok(OdeSolverStopReason::TstopReached) => break,
+                                _ => panic!("Unexpected solver error: {:?}", ret),
+                            }
+                        },
+                        Err(e) => {
+                            match e {
+                                diffsol::error::DiffsolError::OdeSolverError(
+                                    OdeSolverError::StopTimeAtCurrentTime,
+                                ) => {
+                                    // If the stop time is at the current state time, we can just continue
+                                    continue;
+                                }
+                                _ => panic!("Unexpected solver error: {:?}", e),
+                            }
                         }
                     }
                 }
