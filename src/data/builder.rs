@@ -96,7 +96,7 @@ impl SubjectBuilder {
     /// * `value` - Observed value (e.g., drug concentration)
     /// * `outeq` - Output equation number (zero-indexed) corresponding to this observation
     pub fn observation(self, time: f64, value: f64, outeq: usize) -> Self {
-        let observation = Observation::new(time, value, outeq, None, false);
+        let observation = Observation::new(time, value, outeq, None, false, false);
         let event = Event::Observation(observation);
         self.event(event)
     }
@@ -118,7 +118,7 @@ impl SubjectBuilder {
         errorpoly: Option<(f64, f64, f64, f64)>,
         ignore: bool,
     ) -> Self {
-        let observation = Observation::new(time, value, outeq, errorpoly, ignore);
+        let observation = Observation::new(time, value, outeq, errorpoly, ignore, false);
         let event = Event::Observation(observation);
         self.event(event)
     }

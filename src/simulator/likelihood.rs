@@ -1,15 +1,16 @@
 use crate::{
     data::{error_model::ErrorModel, Observation},
-    Data, Equation, Predictions,
+    Data, Equation, ErrorType, Predictions,
 };
 
 use indicatif::{ProgressBar, ProgressStyle};
 use ndarray::{Array2, Axis, ShapeBuilder};
 use rayon::prelude::*;
+use statrs::function::gamma::gamma;
 
 const FRAC_1_SQRT_2PI: f64 =
     std::f64::consts::FRAC_2_SQRT_PI * std::f64::consts::FRAC_1_SQRT_2 / 2.0;
-
+const ENABLE_POISSON: bool = false;
 /// Container for predictions associated with a single subject.
 ///
 /// This struct holds all predictions for a subject along with the corresponding
@@ -92,6 +93,29 @@ impl SubjectPredictions {
 /// Probability density function of the normal distribution
 fn normpdf(obs: f64, pred: f64, sigma: f64) -> f64 {
     (FRAC_1_SQRT_2PI / sigma) * (-((obs - pred) * (obs - pred)) / (2.0 * sigma * sigma)).exp()
+}
+
+fn poisson_pdf(obs: f64, pred: f64) -> f64 {
+    if pred < 0.0 || obs < 0.0 {
+        return 0.0;
+    }
+    let deviation = (obs - pred).abs();
+    let devfac = ((128.0 - deviation) / (128.0 + deviation)).powi(2);
+
+    let mut aaa = 0.0;
+    for ii in 0..=128 {
+        let ddd = (ii as f64) - pred;
+        aaa = aaa + ((128.0 - ddd) / (128.0 + ddd)).powi(2);
+    }
+    let minpoissonprob = devfac / aaa;
+
+    let mut poissonprob = (-1.0 * pred).exp() * (pred.powf(obs) / gamma(obs + 1.0));
+    let poissonprobplusdevfac = 0.1 * minpoissonprob + 0.9 * poissonprob;
+    if poissonprobplusdevfac > poissonprob {
+        poissonprob = poissonprobplusdevfac; // warning if this happens late in optimization.
+    }
+
+    poissonprob
 }
 
 impl From<Vec<Prediction>> for SubjectPredictions {
@@ -231,12 +255,20 @@ pub struct Prediction {
     outeq: usize,
     errorpoly: Option<(f64, f64, f64, f64)>,
     state: Vec<f64>,
+    ignore: bool,
+    blq: bool,
 }
 
 impl Prediction {
     /// Get the time point of this prediction.
     pub fn time(&self) -> f64 {
         self.time
+    }
+    /// Get the ignore flag.
+    ///
+
+    pub fn ignore(&self) -> bool {
+        self.ignore
     }
 
     /// Get the observed value.
@@ -281,8 +313,26 @@ impl Prediction {
 
     /// Calculate the likelihood of this prediction given an error model.
     pub fn likelihood(&self, error_model: &ErrorModel) -> f64 {
-        let sigma = error_model.estimate_sigma(self);
-        normpdf(self.observation, self.prediction, sigma)
+        if ENABLE_POISSON {
+            if self.observation < 128.0 {
+                if self.prediction <= 32.0 {
+                    poisson_pdf(self.observation, self.prediction)
+                } else {
+                    let sigma = match error_model.e_type() {
+                        ErrorType::Add => (error_model.gl().powi(2) + self.prediction).sqrt(),
+                        ErrorType::Prop => error_model.gl() * self.prediction.sqrt(),
+                    };
+                    normpdf(self.observation, self.prediction, sigma)
+                }
+            } else {
+                // This only gets executed if the observation is > 128
+                let sigma = error_model.estimate_sigma(self);
+                normpdf(self.observation, self.prediction, sigma)
+            }
+        } else {
+            let sigma = error_model.estimate_sigma(self);
+            normpdf(self.observation, self.prediction, sigma)
+        }
     }
 
     /// Get the state vector at this prediction point.
@@ -313,6 +363,8 @@ impl ToPrediction for Observation {
             outeq: self.outeq(),
             errorpoly: self.errorpoly(),
             state,
+            ignore: self.ignore(),
+            blq: self.blq(),
         }
     }
 }
@@ -326,6 +378,8 @@ impl Default for Prediction {
             outeq: 0,
             errorpoly: None,
             state: vec![],
+            ignore: false,
+            blq: false,
         }
     }
 }

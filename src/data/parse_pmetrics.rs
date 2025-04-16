@@ -338,6 +338,7 @@ impl Row {
                     - 1,
                 self.get_errorpoly(),
                 self.out == Some(-99.0),
+                self.out == Some(-88.0),
             ))),
             1 | 4 => {
                 let event = if self.dur.unwrap_or(0.0) > 0.0 {
@@ -372,7 +373,11 @@ impl Row {
                         })? - 1,
                     ))
                 };
-                if self.addl.is_some() && self.ii.is_some() && self.addl.unwrap_or(0) != 0 && self.ii.unwrap_or(0.0) > 0.0 {
+                if self.addl.is_some()
+                    && self.ii.is_some()
+                    && self.addl.unwrap_or(0) != 0
+                    && self.ii.unwrap_or(0.0) > 0.0
+                {
                     let mut ev = event.clone();
                     let interval = &self.ii.unwrap().abs();
                     let repetitions = &self.addl.unwrap().abs();

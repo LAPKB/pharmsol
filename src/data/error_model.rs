@@ -34,6 +34,10 @@ impl<'a> ErrorModel<'a> {
     pub fn new(c: (f64, f64, f64, f64), gl: f64, e_type: &'a ErrorType) -> Self {
         Self { c, gl, e_type }
     }
+
+    pub(crate) fn e_type(&self) -> &'a ErrorType {
+        self.e_type
+    }
 }
 
 /// Types of error models for pharmacometric observations

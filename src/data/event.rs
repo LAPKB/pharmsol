@@ -133,6 +133,7 @@ pub struct Observation {
     outeq: usize,
     errorpoly: Option<(f64, f64, f64, f64)>,
     ignore: bool,
+    blq: bool,
 }
 impl Observation {
     /// Create a new observation
@@ -150,6 +151,7 @@ impl Observation {
         outeq: usize,
         errorpoly: Option<(f64, f64, f64, f64)>,
         ignore: bool,
+        blq: bool,
     ) -> Self {
         Observation {
             time,
@@ -157,6 +159,7 @@ impl Observation {
             outeq,
             errorpoly,
             ignore,
+            blq,
         }
     }
     /// Get the time of the observation
@@ -180,6 +183,10 @@ impl Observation {
     /// Check if this observation should be ignored in calculations
     pub fn ignore(&self) -> bool {
         self.ignore
+    }
+
+    pub fn blq(&self) -> bool {
+        self.blq
     }
 }
 

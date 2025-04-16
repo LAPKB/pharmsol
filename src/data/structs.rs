@@ -269,7 +269,7 @@ impl Data {
                 let mut time = 0.0;
                 while time < last_time {
                     for outeq in &outeq_values {
-                        let obs = Observation::new(time, -99.0, *outeq, None, false);
+                        let obs = Observation::new(time, -99.0, *outeq, None, false, false);
                         new_events.push(Event::Observation(obs));
                     }
 
@@ -703,7 +703,7 @@ mod tests {
     fn test_occasion_sort() {
         let mut occasion = Occasion::new(
             vec![
-                Event::Observation(Observation::new(2.0, 1.0, 1, None, false)),
+                Event::Observation(Observation::new(2.0, 1.0, 1, None, false, false)),
                 Event::Bolus(Bolus::new(1.0, 100.0, 1)),
             ],
             Covariates::new(),
@@ -725,8 +725,8 @@ mod tests {
     fn test_event_get_events_with_ignore() {
         let occasion = Occasion::new(
             vec![
-                Event::Observation(Observation::new(1.0, 1.0, 1, None, false)),
-                Event::Observation(Observation::new(2.0, 2.0, 2, None, true)),
+                Event::Observation(Observation::new(1.0, 1.0, 1, None, false, false)),
+                Event::Observation(Observation::new(2.0, 2.0, 2, None, true, false)),
             ],
             Covariates::new(),
             1,
