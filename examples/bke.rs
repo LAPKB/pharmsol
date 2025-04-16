@@ -42,25 +42,20 @@ fn main() {
     );
 
     let em = ErrorModel::new((0.0, 0.05, 0.0, 0.0), 0.0, &ErrorType::Add);
-    let ll = an.estimate_likelihood(
-        &subject,
-        &vec![1.02282724609375, 194.51904296875],
-        &em,
-        false,
-    );
-    let op = an.estimate_predictions(&subject, &vec![1.02282724609375, 194.51904296875]);
+    let mut model = an.initialize_model(&subject, vec![1.02282724609375, 194.51904296875]);
+    let ll = model.estimate_likelihood(&em, false);
+    let mut model = ode.initialize_model(&subject, vec![1.02282724609375, 194.51904296875]);
+    let op = model.estimate_outputs();
     println!(
         "Analytical: \n-2ll:{:#?}\n{:#?}",
         -2.0 * ll,
         op.flat_predictions()
     );
 
-    let ll = ode.estimate_likelihood(
-        &subject,
-        &vec![1.02282724609375, 194.51904296875],
-        &em,
-        false,
-    );
-    let op = ode.estimate_predictions(&subject, &vec![1.02282724609375, 194.51904296875]);
+    let mut model = ode.initialize_model(&subject, vec![1.02282724609375, 194.51904296875]);
+    let ll = model.estimate_likelihood(&em, false);
+
+    let mut model = ode.initialize_model(&subject, vec![1.02282724609375, 194.51904296875]);
+    let op = model.estimate_outputs();
     println!("ODE: \n-2ll:{:#?}\n{:#?}", -2.0 * ll, op.flat_predictions());
 }

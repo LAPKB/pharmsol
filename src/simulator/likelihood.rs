@@ -1,11 +1,13 @@
 use crate::{
     data::{error_model::ErrorModel, Observation},
-    Data, Equation, Predictions,
+    Data, Equation,
 };
 
 use indicatif::{ProgressBar, ProgressStyle};
 use ndarray::{Array2, Axis, ShapeBuilder};
 use rayon::prelude::*;
+
+use super::model::Model;
 
 const FRAC_1_SQRT_2PI: f64 =
     std::f64::consts::FRAC_2_SQRT_PI * std::f64::consts::FRAC_1_SQRT_2 / 2.0;
@@ -16,22 +18,10 @@ const FRAC_1_SQRT_2PI: f64 =
 /// observations and time points.
 #[derive(Debug, Clone, Default)]
 pub struct SubjectPredictions {
-    predictions: Vec<Prediction>,
+    pub(crate) predictions: Vec<Prediction>,
     flat_predictions: Vec<f64>,
     flat_observations: Vec<f64>,
     flat_time: Vec<f64>,
-}
-
-impl Predictions for SubjectPredictions {
-    fn squared_error(&self) -> f64 {
-        self.predictions
-            .iter()
-            .map(|p| (p.observation - p.prediction).powi(2))
-            .sum()
-    }
-    fn get_predictions(&self) -> Vec<Prediction> {
-        self.predictions.clone()
-    }
 }
 
 impl SubjectPredictions {
@@ -141,9 +131,9 @@ impl From<Array2<SubjectPredictions>> for PopulationPredictions {
 ///
 /// # Returns
 /// A 2D array of likelihoods
-pub fn psi(
-    equation: &impl Equation,
-    subjects: &Data,
+pub fn psi<'a>(
+    equation: &'a impl Equation<'a>,
+    subjects: &'a Data,
     support_points: &Array2<f64>,
     error_model: &ErrorModel,
     progress: bool,
@@ -175,12 +165,9 @@ pub fn psi(
                 .enumerate()
                 .for_each(|(j, mut element)| {
                     let subject = subjects.get(i).unwrap();
-                    let likelihood = equation.estimate_likelihood(
-                        subject,
-                        support_points.row(j).to_vec().as_ref(),
-                        error_model,
-                        cache,
-                    );
+                    let mut model =
+                        equation.initialize_model(subject, support_points.row(j).to_vec());
+                    let likelihood = model.estimate_likelihood(error_model, cache);
                     element.fill(likelihood);
                     if let Some(pb_ref) = pb.as_ref() {
                         pb_ref.inc(1);
@@ -226,8 +213,8 @@ pub fn psi(
 #[derive(Debug, Clone)]
 pub struct Prediction {
     time: f64,
-    observation: f64,
-    prediction: f64,
+    pub(crate) observation: f64,
+    pub(crate) prediction: f64,
     outeq: usize,
     errorpoly: Option<(f64, f64, f64, f64)>,
     state: Vec<f64>,

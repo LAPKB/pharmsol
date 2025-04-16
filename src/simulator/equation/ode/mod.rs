@@ -5,20 +5,20 @@ use std::collections::HashMap;
 use crate::{
     data::{Covariates, Infusion},
     error_model::ErrorModel,
-    prelude::simulator::SubjectPredictions,
-    simulator::{likelihood::ToPrediction, DiffEq, Fa, Init, Lag, Neqs, Out, M, V},
+    prelude::simulator::{Prediction, SubjectPredictions},
+    simulator::{likelihood::ToPrediction, model::Model, DiffEq, Fa, Init, Lag, Neqs, Out, M, V},
     Observation, Subject,
 };
 use cached::proc_macro::cached;
 use cached::UnboundCache;
 
 use closure::PMProblem;
-use diffsol::{ode_solver::method::OdeSolverMethod, OdeBuilder};
+use diffsol::{ode_solver::method::OdeSolverMethod, Bdf, NewtonNonlinearSolver, OdeBuilder};
 use nalgebra::DVector;
 
-// use self::diffsol_traits::build_pm_ode;
+use super::{Equation, Outputs, State};
 
-use super::{Equation, EquationPriv, EquationTypes, State};
+// use self::diffsol_traits::build_pm_ode;
 
 const RTOL: f64 = 1e-4;
 const ATOL: f64 = 1e-4;
@@ -32,6 +32,174 @@ pub struct ODE {
     out: Out,
     neqs: Neqs,
 }
+pub struct ODEModel<'a> {
+    equation: &'a ODE,
+    data: &'a Subject,
+    state: Option<diffsol::OdeSolverProblem<PMProblem<DiffEq>>>,
+    spp: Vec<f64>,
+}
+
+impl Outputs for SubjectPredictions {
+    fn squared_error(&self) -> f64 {
+        self.predictions
+            .iter()
+            .map(|p| (p.observation - p.prediction).powi(2))
+            .sum()
+    }
+    fn get_predictions(&self) -> Vec<Prediction> {
+        self.predictions.clone()
+    }
+}
+
+impl State for diffsol::OdeSolverProblem<PMProblem<DiffEq>> {
+    fn add_bolus(&mut self, _input: usize, _amount: f64) {
+        unimplemented!("Bolus not implemented for ODE");
+    }
+    fn get_inner_state(&self) -> Vec<f64> {
+        unimplemented!("get_inner_state not implemented for ODE");
+    }
+    fn set_inner_state(&mut self, _state: DVector<f64>) {
+        unimplemented!("set_inner_state not implemented for ODE");
+    }
+}
+impl<'a> Equation<'a> for ODE {
+    type S = diffsol::OdeSolverProblem<PMProblem<DiffEq>>;
+    type P = SubjectPredictions;
+    type Mod = ODEModel<'a>;
+    fn get_nstates(&self) -> usize {
+        self.neqs.0
+    }
+    fn get_nouteqs(&self) -> usize {
+        self.neqs.1
+    }
+    fn initialize_model(&'a self, subject: &'a Subject, spp: Vec<f64>) -> Self::Mod {
+        ODEModel::new(self, subject, spp)
+    }
+}
+
+impl<'a> Model<'a> for ODEModel<'a> {
+    type Eq = ODE;
+
+    fn new(equation: &'a ODE, data: &'a Subject, spp: Vec<f64>) -> Self {
+        Self {
+            equation,
+            data,
+            state: None,
+            spp,
+        }
+    }
+
+    fn equation(&self) -> &ODE {
+        self.equation
+    }
+
+    fn subject(&self) -> &Subject {
+        self.data
+    }
+
+    fn state(&mut self) -> &mut <Self::Eq as Equation>::S {
+        if self.state.is_none() {
+            panic!("State is None. Please call initial_state() first.");
+        }
+        self.state.as_mut().unwrap()
+    }
+    #[inline(always)]
+    fn get_lag(&self) -> Option<HashMap<usize, f64>> {
+        let spp = DVector::from_vec(self.spp.to_vec());
+        Some((self.equation.lag)(&spp))
+    }
+
+    #[inline(always)]
+    fn get_fa(&self) -> Option<HashMap<usize, f64>> {
+        let spp = DVector::from_vec(self.spp.to_vec());
+        Some((self.equation.fa)(&spp))
+    }
+
+    #[inline(always)]
+    fn solve(
+        mut self,
+        covariates: &Covariates,
+        infusions: &Vec<Infusion>,
+        start_time: f64,
+        end_time: f64,
+    ) {
+        if f64::abs(start_time - end_time) < 1e-8 {
+            return;
+        }
+
+        // let problem: diffsol::OdeSolverProblem<PMProblem<DiffEq>> = OdeBuilder::<M>::new()
+        //     .atol(vec![ATOL])
+        //     .rtol(RTOL)
+        //     .t0(start_time)
+        //     .h0(1e-3)
+        //     .p(self.spp.to_vec())
+        //     .build_from_eqn(PMProblem::new(
+        //         self.equation.diffeq,
+        //         self.equation.get_nstates(),
+        //         self.spp.to_vec(),
+        //         covariates.clone(),
+        //         infusions.clone(),
+        //         self.state.clone(),
+        //     ))
+        //     .unwrap();
+
+        // // problem.t0 = start_time;
+
+        let problem = self.state.unwrap();
+        let mut solver: Bdf<
+            '_,
+            PMProblem<DiffEq>,
+            NewtonNonlinearSolver<M, diffsol::NalgebraLU<f64>>,
+        > = problem.bdf::<diffsol::NalgebraLU<f64>>().unwrap();
+        solver.solve(end_time).unwrap();
+        self.state = Some(solver.problem());
+
+        // self.state = ys.column(ys.ncols() - 1).into_owned();
+    }
+    #[inline(always)]
+    fn process_observation(
+        &mut self,
+        observation: &Observation,
+        error_model: Option<&ErrorModel>,
+        _time: f64,
+        covariates: &Covariates,
+        likelihood: &mut Vec<f64>,
+        output: &mut <Self::Eq as Equation>::P,
+    ) {
+        let mut y = V::zeros(self.equation.get_nouteqs());
+        let out = &self.equation.out;
+        let spp = DVector::from_vec(self.spp.to_vec());
+        let inner_state = self.state.as_ref().unwrap();
+        let inner_state = inner_state.get_inner_state();
+        (out)(
+            &DVector::from_vec(inner_state.clone()),
+            &spp,
+            observation.time(),
+            covariates,
+            &mut y,
+        );
+        let pred = y[observation.outeq()];
+        let pred = observation.to_obs_pred(pred, inner_state);
+        if let Some(error_model) = error_model {
+            likelihood.push(pred.likelihood(error_model));
+        }
+        output.add_prediction(pred);
+    }
+
+    #[inline(always)]
+    fn initial_state(&mut self, covariates: &Covariates, occasion_index: usize) {
+        let init = &self.equation.init;
+        let mut x = V::zeros(self.equation.get_nstates());
+        if occasion_index == 0 {
+            let spp = DVector::from_vec(self.spp.to_vec());
+            (init)(&spp, 0.0, covariates, &mut x);
+        }
+        self.state = x;
+    }
+    fn estimate_likelihood(&mut self, error_model: &ErrorModel, cache: bool) -> f64 {
+        _estimate_likelihood(self, error_model, cache)
+    }
+}
 
 impl ODE {
     pub fn new(diffeq: DiffEq, lag: Lag, fa: Fa, init: Init, out: Out, neqs: Neqs) -> Self {
@@ -43,13 +211,6 @@ impl ODE {
             out,
             neqs,
         }
-    }
-}
-
-impl State for V {
-    #[inline(always)]
-    fn add_bolus(&mut self, input: usize, amount: f64) {
-        self[input] += amount;
     }
 }
 
@@ -76,139 +237,19 @@ fn spphash(spp: &[f64]) -> u64 {
 #[cached(
     ty = "UnboundCache<String, SubjectPredictions>",
     create = "{ UnboundCache::with_capacity(100_000) }",
-    convert = r#"{ format!("{}{}", subject.id(), spphash(support_point)) }"#
+    convert = r#"{ format!("{}{}", model.data.id(), spphash(&model.spp)) }"#
 )]
-fn _subject_predictions(
-    ode: &ODE,
-    subject: &Subject,
-    support_point: &Vec<f64>,
-) -> SubjectPredictions {
-    ode.simulate_subject(subject, support_point, None).0
+fn _subject_predictions(model: &mut ODEModel) -> SubjectPredictions {
+    model.simulate_subject(None).0
 }
 
-fn _estimate_likelihood(
-    ode: &ODE,
-    subject: &Subject,
-    support_point: &Vec<f64>,
-    error_model: &ErrorModel,
-    cache: bool,
-) -> f64 {
+fn _estimate_likelihood(model: &mut ODEModel, error_model: &ErrorModel, cache: bool) -> f64 {
     let ypred = if cache {
-        _subject_predictions(ode, subject, support_point)
+        _subject_predictions(model)
     } else {
-        _subject_predictions_no_cache(ode, subject, support_point)
+        _subject_predictions_no_cache(model)
     };
     ypred.likelihood(error_model)
-}
-
-impl EquationTypes for ODE {
-    type S = V;
-    type P = SubjectPredictions;
-}
-
-impl EquationPriv for ODE {
-    #[inline(always)]
-    fn get_lag(&self, spp: &[f64]) -> Option<HashMap<usize, f64>> {
-        let spp = DVector::from_vec(spp.to_vec());
-        Some((self.lag)(&spp))
-    }
-
-    #[inline(always)]
-    fn get_fa(&self, spp: &[f64]) -> Option<HashMap<usize, f64>> {
-        let spp = DVector::from_vec(spp.to_vec());
-        Some((self.fa)(&spp))
-    }
-
-    #[inline(always)]
-    fn get_nstates(&self) -> usize {
-        self.neqs.0
-    }
-
-    #[inline(always)]
-    fn get_nouteqs(&self) -> usize {
-        self.neqs.1
-    }
-    #[inline(always)]
-    fn solve(
-        &self,
-        state: &mut Self::S,
-        support_point: &Vec<f64>,
-        covariates: &Covariates,
-        infusions: &Vec<Infusion>,
-        start_time: f64,
-        end_time: f64,
-    ) {
-        if f64::abs(start_time - end_time) < 1e-8 {
-            return;
-        }
-
-        let problem = OdeBuilder::<M>::new()
-            .atol(vec![ATOL])
-            .rtol(RTOL)
-            .t0(start_time)
-            .h0(1e-3)
-            .p(support_point.clone())
-            .build_from_eqn(PMProblem::new(
-                self.diffeq,
-                self.get_nstates(),
-                support_point.clone(),
-                covariates.clone(),
-                infusions.clone(),
-                state.clone(),
-            ))
-            .unwrap();
-
-        let mut solver = problem.bdf::<diffsol::NalgebraLU<f64>>().unwrap();
-        let (ys, _ts) = solver.solve(end_time).unwrap();
-
-        *state = ys.column(ys.ncols() - 1).into_owned();
-    }
-    #[inline(always)]
-    fn process_observation(
-        &self,
-        support_point: &Vec<f64>,
-        observation: &Observation,
-        error_model: Option<&ErrorModel>,
-        _time: f64,
-        covariates: &Covariates,
-        x: &mut Self::S,
-        likelihood: &mut Vec<f64>,
-        output: &mut Self::P,
-    ) {
-        let mut y = V::zeros(self.get_nouteqs());
-        let out = &self.out;
-        let spp = DVector::from_vec(support_point.clone());
-        (out)(x, &spp, observation.time(), covariates, &mut y);
-        let pred = y[observation.outeq()];
-        let pred = observation.to_obs_pred(pred, x.as_slice().to_vec());
-        if let Some(error_model) = error_model {
-            likelihood.push(pred.likelihood(error_model));
-        }
-        output.add_prediction(pred);
-    }
-
-    #[inline(always)]
-    fn initial_state(&self, spp: &Vec<f64>, covariates: &Covariates, occasion_index: usize) -> V {
-        let init = &self.init;
-        let mut x = V::zeros(self.get_nstates());
-        if occasion_index == 0 {
-            let spp = DVector::from_vec(spp.clone());
-            (init)(&spp, 0.0, covariates, &mut x);
-        }
-        x
-    }
-}
-
-impl Equation for ODE {
-    fn estimate_likelihood(
-        &self,
-        subject: &Subject,
-        support_point: &Vec<f64>,
-        error_model: &ErrorModel,
-        cache: bool,
-    ) -> f64 {
-        _estimate_likelihood(self, subject, support_point, error_model, cache)
-    }
 }
 
 // // Test spphash

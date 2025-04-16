@@ -11,6 +11,7 @@ pub use crate::data::InterpolationMethod::*;
 pub use crate::data::*;
 pub use crate::equation::*;
 pub use crate::simulator::equation::{self, ODE};
+pub use crate::simulator::model::Model;
 pub use nalgebra::dmatrix;
 pub use std::collections::HashMap;
 
@@ -32,10 +33,10 @@ pub mod prelude {
     pub mod models {
         pub use crate::simulator::equation::analytical::one_compartment;
         pub use crate::simulator::equation::analytical::one_compartment_with_absorption;
-        pub use crate::simulator::equation::analytical::two_compartments;
-        pub use crate::simulator::equation::analytical::two_compartments_with_absorption;
         pub use crate::simulator::equation::analytical::three_compartments;
         pub use crate::simulator::equation::analytical::three_compartments_with_absorption;
+        pub use crate::simulator::equation::analytical::two_compartments;
+        pub use crate::simulator::equation::analytical::two_compartments_with_absorption;
     }
 
     //extension traits
@@ -49,10 +50,10 @@ pub mod prelude {
     macro_rules! fetch_params {
         ($p:expr, $($name:ident),*) => {
             let p = $p;
-            let mut idx = 0;
+            let mut idx: i32 = -1;
             $(
-                let $name = p[idx];
                 idx += 1;
+                let $name = p[idx as usize];
             )*
         };
     }

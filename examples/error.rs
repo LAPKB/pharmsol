@@ -1,7 +1,7 @@
 #![allow(non_snake_case)]
 #![allow(unused_variables)]
 
-use pharmsol::*;
+use pharmsol::{simulator::model::Model, *};
 
 fn main() {
     let ode = equation::ODE::new(
@@ -38,7 +38,8 @@ fn main() {
         .observation(0.5, 0.1, 0)
         .repeat(120, 0.1)
         .build();
+    let mut model = ode.initialize_model(&subject, vec![0.1, 0.1, 0.1, 0.1, 70.0]);
+    let op = model.estimate_outputs();
 
-    let op = ode.estimate_predictions(&subject, &vec![0.1, 0.1, 0.1, 0.1, 70.0]);
     dbg!(op);
 }
