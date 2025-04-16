@@ -14,7 +14,7 @@ where
 {
     nstates: usize,
     nparams: usize,
-    infusions: Vec<&'a Infusion>,
+    infusions: &'a [&'a Infusion], // Change from Vec to slice reference
     covariates: &'a Covariates,
     p: &'a Vec<f64>,
     func: &'a F,
@@ -135,33 +135,45 @@ where
     F: Fn(&V, &V, T, &mut V, V, &Covariates),
 {
     fn call_inplace(&self, x: &Self::V, t: Self::T, y: &mut Self::V) {
-        {
-            let mut rateiv = self.rateiv_buffer.borrow_mut();
-            rateiv.fill(0.0);
+        // Compute rate IV at the current time
+        let mut rateiv_ref = self.rateiv_buffer.borrow_mut();
+        rateiv_ref.fill(0.0);
 
-            for infusion in &self.infusions {
-                if t >= Self::T::from(infusion.time())
-                    && t <= Self::T::from(infusion.duration() + infusion.time())
-                {
-                    rateiv[infusion.input()] +=
-                        Self::T::from(infusion.amount() / infusion.duration());
-                }
+        for infusion in self.infusions {
+            if t >= Self::T::from(infusion.time())
+                && t <= Self::T::from(infusion.duration() + infusion.time())
+            {
+                rateiv_ref[infusion.input()] +=
+                    Self::T::from(infusion.amount() / infusion.duration());
             }
         }
 
-        let mut p_dvector = DVector::zeros(self.p.len());
-        unsafe {
-            std::ptr::copy_nonoverlapping(self.p.as_ptr(), p_dvector.as_mut_ptr(), self.p.len());
+        // We need to drop the mutable borrow before calling the function
+        // to avoid potential conflicts with future borrows in the function
+        let rateiv = rateiv_ref.clone();
+        drop(rateiv_ref);
+
+        // Avoid creating a new DVector when possible
+        let p_len = self.p.len();
+        let mut p_dvector: DVector<f64>;
+        let p_ref: &DVector<f64>;
+
+        // Use stack allocation for small parameter vectors
+        if p_len <= 16 {
+            let mut stack_p = [0.0; 16];
+            stack_p[..p_len].copy_from_slice(&self.p);
+            p_dvector = DVector::from_row_slice(&stack_p[..p_len]);
+            p_ref = &p_dvector;
+        } else {
+            // For larger vectors, use the more efficient approach with unsafe
+            p_dvector = DVector::zeros(p_len);
+            unsafe {
+                std::ptr::copy_nonoverlapping(self.p.as_ptr(), p_dvector.as_mut_ptr(), p_len);
+            }
+            p_ref = &p_dvector;
         }
 
-        (self.func)(
-            x,
-            &p_dvector,
-            t,
-            y,
-            self.rateiv_buffer.borrow().clone(),
-            self.covariates,
-        )
+        (self.func)(x, p_ref, t, y, rateiv, self.covariates)
     }
 }
 
@@ -172,9 +184,21 @@ where
     fn jac_mul_inplace(&self, _x: &Self::V, t: Self::T, v: &Self::V, y: &mut Self::V) {
         let rateiv = V::zeros(self.nstates);
 
-        let mut p_dvector = DVector::zeros(self.p.len());
-        unsafe {
-            std::ptr::copy_nonoverlapping(self.p.as_ptr(), p_dvector.as_mut_ptr(), self.p.len());
+        // Avoid creating a new DVector when possible
+        let p_len = self.p.len();
+        let mut p_dvector: DVector<f64>;
+
+        // Use stack allocation for small parameter vectors
+        if p_len <= 16 {
+            let mut stack_p = [0.0; 16];
+            stack_p[..p_len].copy_from_slice(&self.p);
+            p_dvector = DVector::from_row_slice(&stack_p[..p_len]);
+        } else {
+            // For larger vectors, use the more efficient approach with unsafe
+            p_dvector = DVector::zeros(p_len);
+            unsafe {
+                std::ptr::copy_nonoverlapping(self.p.as_ptr(), p_dvector.as_mut_ptr(), p_len);
+            }
         }
 
         (self.func)(v, &p_dvector, t, y, rateiv, self.covariates);
@@ -275,7 +299,7 @@ where
         PmRhs {
             nstates: self.nstates,
             nparams: self.nparams,
-            infusions: self.infusions.clone(), // Just copying references, not cloning the actual data
+            infusions: &self.infusions, // Use reference instead of clone
             covariates: self.covariates,
             p: &self.p,
             func: &self.func,
