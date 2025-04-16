@@ -3,6 +3,7 @@ use diffsol::{
     ConstantOp, LinearOp, NonLinearOp, NonLinearOpJacobian, OdeEquations, OdeEquationsRef, Op,
 };
 use nalgebra::DVector;
+use std::cell::RefCell;
 type T = f64;
 type V = nalgebra::DVector<f64>;
 type M = nalgebra::DMatrix<f64>;
@@ -17,6 +18,7 @@ where
     covariates: &'a Covariates,
     p: &'a Vec<f64>,
     func: &'a F,
+    rateiv_buffer: &'a RefCell<V>,
 }
 
 impl<'a, F> Op for PmRhs<'a, F>
@@ -58,7 +60,6 @@ impl Op for PmMass {
     }
 }
 
-// Modify PmInit to hold a reference to the init vector instead of owning it
 pub struct PmInit<'a> {
     nstates: usize,
     nout: usize,
@@ -134,18 +135,33 @@ where
     F: Fn(&V, &V, T, &mut V, V, &Covariates),
 {
     fn call_inplace(&self, x: &Self::V, t: Self::T, y: &mut Self::V) {
-        let mut rateiv = Self::V::zeros(self.nstates);
-        //TODO: This should be pre-calculated
-        for infusion in &self.infusions {
-            if t >= Self::T::from(infusion.time())
-                && t <= Self::T::from(infusion.duration() + infusion.time())
-            {
-                rateiv[infusion.input()] += Self::T::from(infusion.amount() / infusion.duration());
+        {
+            let mut rateiv = self.rateiv_buffer.borrow_mut();
+            rateiv.fill(0.0);
+
+            for infusion in &self.infusions {
+                if t >= Self::T::from(infusion.time())
+                    && t <= Self::T::from(infusion.duration() + infusion.time())
+                {
+                    rateiv[infusion.input()] +=
+                        Self::T::from(infusion.amount() / infusion.duration());
+                }
             }
         }
-        // self.statistics.borrow_mut().increment_call();
-        let p = DVector::from_vec(self.p.clone());
-        (self.func)(x, &p, t, y, rateiv, &self.covariates)
+
+        let mut p_dvector = DVector::zeros(self.p.len());
+        unsafe {
+            std::ptr::copy_nonoverlapping(self.p.as_ptr(), p_dvector.as_mut_ptr(), self.p.len());
+        }
+
+        (self.func)(
+            x,
+            &p_dvector,
+            t,
+            y,
+            self.rateiv_buffer.borrow().clone(),
+            self.covariates,
+        )
     }
 }
 
@@ -154,9 +170,14 @@ where
     F: Fn(&V, &V, T, &mut V, V, &Covariates),
 {
     fn jac_mul_inplace(&self, _x: &Self::V, t: Self::T, v: &Self::V, y: &mut Self::V) {
-        let rateiv = Self::V::zeros(self.nstates);
-        let p = DVector::from_vec(self.p.clone());
-        (self.func)(v, &p, t, y, rateiv, &self.covariates);
+        let rateiv = V::zeros(self.nstates);
+
+        let mut p_dvector = DVector::zeros(self.p.len());
+        unsafe {
+            std::ptr::copy_nonoverlapping(self.p.as_ptr(), p_dvector.as_mut_ptr(), self.p.len());
+        }
+
+        (self.func)(v, &p_dvector, t, y, rateiv, self.covariates);
     }
 }
 
@@ -172,7 +193,7 @@ impl NonLinearOp for PmOut {
     fn call_inplace(&self, _x: &Self::V, _t: Self::T, _y: &mut Self::V) {}
 }
 
-// Completely revised PMProblem to fix lifetime issues
+// Completely revised PMProblem to fix lifetime issues and improve performance
 pub struct PMProblem<F>
 where
     F: Fn(&V, &V, T, &mut V, V, &Covariates) + 'static,
@@ -182,9 +203,9 @@ where
     nparams: usize,
     init: V,
     p: Vec<f64>,
-    // Store owned copies to avoid lifetime issues
     covariates: Covariates,
     infusions: Vec<Infusion>,
+    rateiv_buffer: RefCell<V>,
 }
 
 impl<F> PMProblem<F>
@@ -200,9 +221,9 @@ where
         init: V,
     ) -> Self {
         let nparams = p.len();
-        // Clone data to avoid lifetime issues
         let covariates = covariates.clone();
-        let infusions = infusions.iter().map(|&i| i.clone()).collect();
+        let infusions: Vec<Infusion> = infusions.iter().map(|&i| i.clone()).collect();
+        let rateiv_buffer = RefCell::new(V::zeros(nstates));
 
         Self {
             func,
@@ -212,6 +233,7 @@ where
             p,
             covariates,
             infusions,
+            rateiv_buffer,
         }
     }
 }
@@ -252,8 +274,13 @@ where
     F: Fn(&V, &V, T, &mut V, V, &Covariates) + 'static,
 {
     fn rhs(&self) -> PmRhs<'_, F> {
-        // Need to create references to the owned objects for this function call
-        let infusion_refs: Vec<&Infusion> = self.infusions.iter().collect();
+        let infusion_refs: Vec<&Infusion> = {
+            let mut refs = Vec::with_capacity(self.infusions.len());
+            for infusion in &self.infusions {
+                refs.push(infusion);
+            }
+            refs
+        };
 
         PmRhs {
             nstates: self.nstates,
@@ -262,6 +289,7 @@ where
             covariates: &self.covariates,
             p: &self.p,
             func: &self.func,
+            rateiv_buffer: &self.rateiv_buffer,
         }
     }
 
@@ -269,17 +297,24 @@ where
         None
     }
 
-    fn init(&self) -> PmInit {
+    fn init(&self) -> PmInit<'_> {
         PmInit {
-            nstates: self.nstates(),
-            nout: self.nout(),
-            nparams: self.nparams(),
+            nstates: self.nstates,
+            nout: self.nstates,
+            nparams: self.nparams,
             init: &self.init,
         }
     }
 
     fn get_params(&self, p: &mut V) {
-        p.copy_from(&DVector::from_vec(self.p.clone()));
+        // Avoid unnecessary cloning by directly copying values from self.p
+        if p.len() == self.p.len() {
+            for i in 0..self.p.len() {
+                p[i] = self.p[i];
+            }
+        } else {
+            p.copy_from(&DVector::from_vec(self.p.clone()));
+        }
     }
 
     fn root(&self) -> Option<PmRoot> {
@@ -291,6 +326,12 @@ where
     }
 
     fn set_params(&mut self, p: &V) {
-        self.p = p.iter().cloned().collect();
+        if self.p.len() == p.len() {
+            for i in 0..p.len() {
+                self.p[i] = p[i];
+            }
+        } else {
+            self.p = p.iter().cloned().collect();
+        }
     }
 }
