@@ -58,14 +58,15 @@ impl Op for PmMass {
     }
 }
 
-pub struct PmInit {
+// Modify PmInit to hold a reference to the init vector instead of owning it
+pub struct PmInit<'a> {
     nstates: usize,
     nout: usize,
     nparams: usize,
-    init: V,
+    init: &'a V,
 }
 
-impl Op for PmInit {
+impl<'a> Op for PmInit<'a> {
     type T = T;
     type V = V;
     type M = M;
@@ -77,6 +78,12 @@ impl Op for PmInit {
     }
     fn nparams(&self) -> usize {
         self.nparams
+    }
+}
+
+impl<'a> ConstantOp for PmInit<'a> {
+    fn call_inplace(&self, _t: Self::T, y: &mut Self::V) {
+        y.copy_from(self.init);
     }
 }
 
@@ -157,12 +164,6 @@ impl LinearOp for PmMass {
     fn gemv_inplace(&self, _x: &Self::V, _t: Self::T, _beta: Self::T, _y: &mut Self::V) {}
 }
 
-impl ConstantOp for PmInit {
-    fn call_inplace(&self, _t: Self::T, y: &mut Self::V) {
-        y.copy_from(&self.init);
-    }
-}
-
 impl NonLinearOp for PmRoot {
     fn call_inplace(&self, _x: &Self::V, _t: Self::T, _y: &mut Self::V) {}
 }
@@ -240,7 +241,7 @@ where
 {
     type Rhs = PmRhs<'b, F>;
     type Mass = PmMass;
-    type Init = PmInit;
+    type Init = PmInit<'b>;
     type Root = PmRoot;
     type Out = PmOut;
 }
@@ -273,7 +274,7 @@ where
             nstates: self.nstates(),
             nout: self.nout(),
             nparams: self.nparams(),
-            init: self.init.clone(),
+            init: &self.init,
         }
     }
 
