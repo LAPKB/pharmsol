@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
-use crate::simulator::equation::Outputs;
+use crate::simulator::equation::State;
+use crate::simulator::equation::*;
 use crate::{Covariates, Equation, ErrorModel, Event, Infusion, Observation, Subject};
-
 // Define Model as a trait
 pub trait Model<'a> {
     type Eq: Equation<'a>;
@@ -13,11 +13,11 @@ pub trait Model<'a> {
 
     fn equation(&self) -> &Self::Eq;
     fn subject(&self) -> &Subject;
-    fn state(&self) -> &<Self::Eq as Equation<'a>>::S;
+    fn state(&mut self) -> &mut <Self::Eq as Equation<'a>>::S;
     fn get_lag(&self) -> Option<HashMap<usize, f64>>;
     fn get_fa(&self) -> Option<HashMap<usize, f64>>;
     fn solve(
-        &mut self,
+        self,
         covariates: &Covariates,
         infusions: &Vec<Infusion>,
         start_time: f64,
@@ -35,10 +35,9 @@ pub trait Model<'a> {
     );
 
     fn initial_state(&mut self, covariates: &Covariates, occasion_index: usize);
-    fn add_bolus(&mut self, input: usize, amount: f64);
 
     fn simulate_event(
-        &mut self,
+        mut self,
         event: &Event,
         next_event: Option<&Event>,
         error_model: Option<&ErrorModel>,
@@ -46,10 +45,14 @@ pub trait Model<'a> {
         infusions: &mut Vec<Infusion>,
         likelihood: &mut Vec<f64>,
         output: &mut <Self::Eq as Equation<'a>>::P,
-    ) {
+    ) where
+        Self: Sized,
+    {
         match event {
             Event::Bolus(bolus) => {
-                self.add_bolus(bolus.input(), bolus.amount());
+                #[allow(unused_mut)]
+                let mut state = self.state();
+                state.add_bolus(bolus.input(), bolus.amount());
             }
             Event::Infusion(infusion) => {
                 infusions.push(infusion.clone());
@@ -117,16 +120,21 @@ pub trait Model<'a> {
     /// # Returns
     /// A tuple containing Outputs and optional likelihood
     fn simulate_subject(
-        &mut self,
+        mut self,
         error_model: Option<&ErrorModel>,
-    ) -> (<Self::Eq as Equation<'a>>::P, Option<f64>) {
+    ) -> (<Self::Eq as Equation<'a>>::P, Option<f64>)
+    where
+        Self: Sized,
+    {
         let lag = self.get_lag();
         let fa = self.get_fa();
 
         let mut output = <Self::Eq as Equation>::P::new_outputs(self.nparticles());
         let mut likelihood = Vec::new();
+        let subject = self.subject();
+        let occasions = subject.occasions();
 
-        for occasion in self.subject().clone().occasions() {
+        for occasion in occasions {
             let covariates = occasion.get_covariates().unwrap();
             self.initial_state(covariates, occasion.index());
             let mut infusions = Vec::new();

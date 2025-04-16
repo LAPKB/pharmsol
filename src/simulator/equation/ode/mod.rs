@@ -35,10 +35,10 @@ pub struct ODE {
 pub struct ODEModel<'a> {
     equation: &'a ODE,
     data: &'a Subject,
-    state: DVector<f64>,
+    state: Option<diffsol::OdeSolverProblem<PMProblem<DiffEq>>>,
     spp: Vec<f64>,
 }
-impl State for DVector<f64> {}
+
 impl Outputs for SubjectPredictions {
     fn squared_error(&self) -> f64 {
         self.predictions
@@ -50,8 +50,20 @@ impl Outputs for SubjectPredictions {
         self.predictions.clone()
     }
 }
+
+impl State for diffsol::OdeSolverProblem<PMProblem<DiffEq>> {
+    fn add_bolus(&mut self, _input: usize, _amount: f64) {
+        unimplemented!("Bolus not implemented for ODE");
+    }
+    fn get_inner_state(&self) -> Vec<f64> {
+        unimplemented!("get_inner_state not implemented for ODE");
+    }
+    fn set_inner_state(&mut self, _state: DVector<f64>) {
+        unimplemented!("set_inner_state not implemented for ODE");
+    }
+}
 impl<'a> Equation<'a> for ODE {
-    type S = V;
+    type S = diffsol::OdeSolverProblem<PMProblem<DiffEq>>;
     type P = SubjectPredictions;
     type Mod = ODEModel<'a>;
     fn get_nstates(&self) -> usize {
@@ -72,7 +84,7 @@ impl<'a> Model<'a> for ODEModel<'a> {
         Self {
             equation,
             data,
-            state: DVector::default(),
+            state: None,
             spp,
         }
     }
@@ -85,8 +97,11 @@ impl<'a> Model<'a> for ODEModel<'a> {
         self.data
     }
 
-    fn state(&self) -> &<Self::Eq as Equation>::S {
-        &self.state
+    fn state(&mut self) -> &mut <Self::Eq as Equation>::S {
+        if self.state.is_none() {
+            panic!("State is None. Please call initial_state() first.");
+        }
+        self.state.as_mut().unwrap()
     }
     #[inline(always)]
     fn get_lag(&self) -> Option<HashMap<usize, f64>> {
@@ -100,12 +115,9 @@ impl<'a> Model<'a> for ODEModel<'a> {
         Some((self.equation.fa)(&spp))
     }
 
-    fn add_bolus(&mut self, input: usize, amount: f64) {
-        self.state[input] += amount;
-    }
     #[inline(always)]
     fn solve(
-        &mut self,
+        mut self,
         covariates: &Covariates,
         infusions: &Vec<Infusion>,
         start_time: f64,
@@ -115,30 +127,34 @@ impl<'a> Model<'a> for ODEModel<'a> {
             return;
         }
 
-        let problem = OdeBuilder::<M>::new()
-            .atol(vec![ATOL])
-            .rtol(RTOL)
-            .t0(start_time)
-            .h0(1e-3)
-            .p(self.spp.to_vec())
-            .build_from_eqn(PMProblem::new(
-                self.equation.diffeq,
-                self.equation.get_nstates(),
-                self.spp.to_vec(),
-                covariates.clone(),
-                infusions.clone(),
-                self.state.clone(),
-            ))
-            .unwrap();
+        // let problem: diffsol::OdeSolverProblem<PMProblem<DiffEq>> = OdeBuilder::<M>::new()
+        //     .atol(vec![ATOL])
+        //     .rtol(RTOL)
+        //     .t0(start_time)
+        //     .h0(1e-3)
+        //     .p(self.spp.to_vec())
+        //     .build_from_eqn(PMProblem::new(
+        //         self.equation.diffeq,
+        //         self.equation.get_nstates(),
+        //         self.spp.to_vec(),
+        //         covariates.clone(),
+        //         infusions.clone(),
+        //         self.state.clone(),
+        //     ))
+        //     .unwrap();
 
+        // // problem.t0 = start_time;
+
+        let problem = self.state.unwrap();
         let mut solver: Bdf<
             '_,
             PMProblem<DiffEq>,
             NewtonNonlinearSolver<M, diffsol::NalgebraLU<f64>>,
         > = problem.bdf::<diffsol::NalgebraLU<f64>>().unwrap();
-        let (ys, _ts) = solver.solve(end_time).unwrap();
+        solver.solve(end_time).unwrap();
+        self.state = Some(solver.problem());
 
-        self.state = ys.column(ys.ncols() - 1).into_owned();
+        // self.state = ys.column(ys.ncols() - 1).into_owned();
     }
     #[inline(always)]
     fn process_observation(
@@ -153,9 +169,17 @@ impl<'a> Model<'a> for ODEModel<'a> {
         let mut y = V::zeros(self.equation.get_nouteqs());
         let out = &self.equation.out;
         let spp = DVector::from_vec(self.spp.to_vec());
-        (out)(&self.state, &spp, observation.time(), covariates, &mut y);
+        let inner_state = self.state.as_ref().unwrap();
+        let inner_state = inner_state.get_inner_state();
+        (out)(
+            &DVector::from_vec(inner_state.clone()),
+            &spp,
+            observation.time(),
+            covariates,
+            &mut y,
+        );
         let pred = y[observation.outeq()];
-        let pred = observation.to_obs_pred(pred, self.state.as_slice().to_vec());
+        let pred = observation.to_obs_pred(pred, inner_state);
         if let Some(error_model) = error_model {
             likelihood.push(pred.likelihood(error_model));
         }

@@ -4,6 +4,7 @@ pub mod ode;
 pub mod sde;
 pub use analytical::*;
 pub use meta::*;
+use nalgebra::DVector;
 pub use ode::*;
 pub use sde::*;
 
@@ -50,7 +51,11 @@ pub trait Outputs: Default {
     fn get_predictions(&self) -> Vec<Prediction>;
 }
 
-pub trait State: Default + Clone + std::fmt::Debug {}
+pub trait State {
+    fn add_bolus(&mut self, input: usize, amount: f64);
+    fn get_inner_state(&self) -> Vec<f64>;
+    fn set_inner_state(&mut self, state: DVector<f64>);
+}
 #[allow(private_bounds)]
 pub trait Equation<'a>: 'static + Clone + Sync {
     /// The state vector type
