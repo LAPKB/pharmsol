@@ -560,15 +560,29 @@ impl Occasion {
         self.events.last()
     }
 
-    // fn get_infusions_vec(&self) -> Vec<Infusion> {
-    //     self.events
-    //         .iter()
-    //         .filter_map(|event| match event {
-    //             Event::Infusion(infusion) => Some(infusion.clone()),
-    //             _ => None,
-    //         })
-    //         .collect()
-    // }
+    pub(crate) fn initial_time(&self) -> f64 {
+        //TODO this can be pre-computed when the struct is initially created
+        self.events
+            .iter()
+            .filter_map(|event| match event {
+                Event::Observation(observation) => Some(observation.time()),
+                Event::Bolus(bolus) => Some(bolus.time()),
+                Event::Infusion(infusion) => Some(infusion.time()),
+            })
+            .min_by(|a, b| a.partial_cmp(b).unwrap())
+            .unwrap_or(0.0)
+    }
+
+    pub(crate) fn infusions_ref(&self) -> Vec<&Infusion> {
+        //TODO this can be pre-computed when the struct is initially created
+        self.events
+            .iter()
+            .filter_map(|event| match event {
+                Event::Infusion(infusion) => Some(infusion),
+                _ => None,
+            })
+            .collect()
+    }
 }
 
 impl fmt::Display for Data {
