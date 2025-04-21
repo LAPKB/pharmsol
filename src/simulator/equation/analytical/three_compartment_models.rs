@@ -235,7 +235,7 @@ pub fn three_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &
 #[cfg(test)]
 mod tests {
     use super::{three_compartments, three_compartments_with_absorption};
-    use crate::*;
+    use crate::{simulator::model::Model, *};
     use approx::assert_relative_eq;
 
     enum SubjectInfo {
@@ -328,11 +328,12 @@ mod tests {
             (3, 1),
         );
 
-        let op_ode = ode.estimate_predictions(&subject, &vec![0.1, 3.0, 2.0, 1.0, 0.5, 1.0]);
+        let spp = vec![1.0, 0.1, 3.0, 2.0, 1.0, 0.5];
+        let ode_model = ode.initialize_model(&subject, spp.clone());
+        let op_ode = ode_model.estimate_outputs();
+        let analytical_model = analytical.initialize_model(&subject, spp.clone());
+        let op_analytical = analytical_model.estimate_outputs();
         let pred_ode = &op_ode.flat_predictions()[..];
-
-        let op_analytical =
-            analytical.estimate_predictions(&subject, &vec![0.1, 3.0, 2.0, 1.0, 0.5, 1.0]);
         let pred_analytical = &op_analytical.flat_predictions()[..];
 
         println!("ode: {:?}", pred_ode);
@@ -380,9 +381,12 @@ mod tests {
             (4, 1),
         );
 
-        let op_ode = ode.estimate_predictions(&subject, &vec![1.0, 0.1, 3.0, 2.0, 1.0, 0.5, 1.0]);
-        let op_analytical =
-            analytical.estimate_predictions(&subject, &vec![1.0, 0.1, 3.0, 2.0, 1.0, 0.5, 1.0]);
+        let spp = vec![1.0, 0.1, 3.0, 2.0, 1.0, 0.5, 1.0];
+        let ode_model = ode.initialize_model(&subject, spp.clone());
+        let op_ode = ode_model.estimate_outputs();
+
+        let analytical_model = analytical.initialize_model(&subject, spp.clone());
+        let op_analytical = analytical_model.estimate_outputs();
 
         let pred_ode = &op_ode.flat_predictions()[..];
         let pred_analytical = &op_analytical.flat_predictions()[..];

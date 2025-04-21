@@ -106,19 +106,18 @@ pub fn two_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &Co
 
 #[cfg(test)]
 mod tests {
-    use crate::*;
     use super::{two_compartments, two_compartments_with_absorption};
+    use crate::{simulator::model::Model, *};
     use approx::assert_relative_eq;
 
     enum SubjectInfo {
         InfusionDosing,
-        OralInfusionDosage
+        OralInfusionDosage,
     }
 
     impl SubjectInfo {
         fn get_subject(&self) -> Subject {
             match self {
-                
                 SubjectInfo::InfusionDosing => Subject::builder("id1")
                     .bolus(0.0, 100.0, 0)
                     .infusion(24.0, 150.0, 0, 3.0)
@@ -167,14 +166,13 @@ mod tests {
 
     #[test]
     fn test_two_compartments() {
-
         let infusion_dosing = SubjectInfo::InfusionDosing;
         let subject = infusion_dosing.get_subject();
 
         let ode = equation::ODE::new(
             |x, p, _t, dx, rateiv, _cov| {
                 fetch_params!(p, ke, kcp, kpc, _v);
-    
+
                 dx[0] = rateiv[0] - ke * x[0] - kcp * x[0] + kpc * x[1];
                 dx[1] = kcp * x[0] - kpc * x[1];
             },
@@ -201,15 +199,18 @@ mod tests {
             (2, 1),
         );
 
-        let op_ode = ode.estimate_predictions(&subject, &vec![0.1, 3.0, 1.0, 1.0]);
-        let op_analytical = analytical.estimate_predictions(&subject, &vec![0.1, 3.0, 1.0, 1.0]);
+        let spp = vec![0.1, 3.0, 1.0, 1.0];
+        let ode_model = ode.initialize_model(&subject, spp.clone());
+        let op_ode = ode_model.estimate_outputs();
+        let analytical_model = analytical.initialize_model(&subject, spp.clone());
+        let op_analytical = analytical_model.estimate_outputs();
 
-        let pred_ode= &op_ode.flat_predictions()[..];
+        let pred_ode = &op_ode.flat_predictions()[..];
         let pred_analytical = &op_analytical.flat_predictions()[..];
 
         println!("ode: {:?}", pred_ode);
         println!("analitycal: {:?}", pred_analytical);
-        
+
         for (&od, &an) in pred_ode.iter().zip(pred_analytical.iter()) {
             assert_relative_eq!(od, an, max_relative = 1e-4, epsilon = 1e-4,);
         }
@@ -217,15 +218,14 @@ mod tests {
 
     #[test]
     fn test_two_compartments_with_absorption() {
-
         let oral_infusion_dosing = SubjectInfo::OralInfusionDosage;
         let subject = oral_infusion_dosing.get_subject();
 
         let ode = equation::ODE::new(
             |x, p, _t, dx, rateiv, _cov| {
                 fetch_params!(p, ke, ka, kcp, kpc, _v);
-    
-                dx[0] = - ka * x[0];
+
+                dx[0] = -ka * x[0];
                 dx[1] = rateiv[0] - ke * x[1] + ka * x[0] - kcp * x[1] + kpc * x[2];
                 dx[2] = kcp * x[1] - kpc * x[2];
             },
@@ -252,15 +252,18 @@ mod tests {
             (3, 1),
         );
 
-        let op_ode = ode.estimate_predictions(&subject, &vec![0.1, 1.0, 3.0, 1.0, 1.0]);
-        let op_analytical = analytical.estimate_predictions(&subject, &vec![0.1, 1.0, 3.0, 1.0, 1.0]);
+        let spp = vec![0.1, 1.0, 3.0, 1.0, 1.0];
+        let ode_model = ode.initialize_model(&subject, spp.clone());
+        let op_ode = ode_model.estimate_outputs();
+        let analytical_model = analytical.initialize_model(&subject, spp.clone());
+        let op_analytical = analytical_model.estimate_outputs();
 
-        let pred_ode= &op_ode.flat_predictions()[..];
+        let pred_ode = &op_ode.flat_predictions()[..];
         let pred_analytical = &op_analytical.flat_predictions()[..];
 
         println!("ode: {:?}", pred_ode);
         println!("analitycal: {:?}", pred_analytical);
-        
+
         for (&od, &an) in pred_ode.iter().zip(pred_analytical.iter()) {
             assert_relative_eq!(od, an, max_relative = 1e-3, epsilon = 1e-3,);
         }

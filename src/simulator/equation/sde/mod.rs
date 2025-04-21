@@ -14,11 +14,13 @@ use crate::{
     data::{Covariates, Infusion},
     error_model::ErrorModel,
     prelude::simulator::Prediction,
-    simulator::{likelihood::ToPrediction, Diffusion, Drift, Fa, Init, Lag, Neqs, Out, V},
-    Subject,
+    simulator::{
+        likelihood::ToPrediction, model::Model, Diffusion, Drift, Fa, Init, Lag, Neqs, Out, V,
+    },
+    Occasion, Subject,
 };
 
-use super::{Equation, EquationPriv, EquationTypes, Predictions, State};
+use super::{Equation, Predictions, State};
 
 /// Simulate a stochastic differential equation (SDE) event.
 ///
@@ -46,7 +48,7 @@ pub(crate) fn simulate_sde_event(
     x: V,
     support_point: &[f64],
     cov: &Covariates,
-    infusions: &[Infusion],
+    infusions: &[&Infusion],
     ti: f64,
     tf: f64,
 ) -> V {
@@ -60,7 +62,10 @@ pub(crate) fn simulate_sde_event(
         DVector::from_column_slice(support_point),
         x,
         cov.clone(),
-        infusions.to_vec(),
+        infusions
+            .iter()
+            .map(|inf| (*inf).clone())
+            .collect::<Vec<Infusion>>(),
         1e-2,
         1e-2,
     );
@@ -85,6 +90,13 @@ pub struct SDE {
     out: Out,
     neqs: Neqs,
     nparticles: usize,
+}
+
+pub struct SDEModel<'a> {
+    equation: &'a SDE,
+    subject: &'a Subject,
+    state: Vec<DVector<f64>>,
+    support_point: Vec<f64>,
 }
 
 impl SDE {
@@ -148,7 +160,7 @@ impl State for Vec<DVector<f64>> {
 ///
 /// This implementation manages and processes predictions from multiple particles.
 impl Predictions for Array2<Prediction> {
-    fn new(nparticles: usize) -> Self {
+    fn empty(nparticles: usize) -> Self {
         Array2::from_shape_fn((nparticles, 0), |_| Prediction::default())
     }
     fn squared_error(&self) -> f64 {
@@ -162,31 +174,10 @@ impl Predictions for Array2<Prediction> {
     }
 }
 
-impl EquationTypes for SDE {
+impl<'a> Equation<'a> for SDE {
     type S = Vec<DVector<f64>>; // Vec -> particles, DVector -> state
     type P = Array2<Prediction>; // Rows -> particles, Columns -> time
-}
-
-impl EquationPriv for SDE {
-    // #[inline(always)]
-    // fn get_init(&self) -> &Init {
-    //     &self.init
-    // }
-
-    // #[inline(always)]
-    // fn get_out(&self) -> &Out {
-    //     &self.out
-    // }
-
-    #[inline(always)]
-    fn get_lag(&self, spp: &[f64]) -> Option<HashMap<usize, f64>> {
-        Some((self.lag)(&V::from_vec(spp.to_owned())))
-    }
-
-    #[inline(always)]
-    fn get_fa(&self, spp: &[f64]) -> Option<HashMap<usize, f64>> {
-        Some((self.fa)(&V::from_vec(spp.to_owned())))
-    }
+    type Mod = SDEModel<'a>;
 
     #[inline(always)]
     fn get_nstates(&self) -> usize {
@@ -198,27 +189,8 @@ impl EquationPriv for SDE {
         self.neqs.1
     }
     #[inline(always)]
-    fn solve(
-        &self,
-        state: &mut Self::S,
-        support_point: &Vec<f64>,
-        covariates: &Covariates,
-        infusions: &Vec<Infusion>,
-        ti: f64,
-        tf: f64,
-    ) {
-        state.par_iter_mut().for_each(|particle| {
-            *particle = simulate_sde_event(
-                &self.drift,
-                &self.diffusion,
-                particle.clone(),
-                support_point,
-                covariates,
-                infusions,
-                ti,
-                tf,
-            );
-        });
+    fn initialize_model(&'a self, subject: &'a Subject, spp: Vec<f64>) -> Self::Mod {
+        SDEModel::new(self, subject, spp)
     }
     fn nparticles(&self) -> usize {
         self.nparticles
@@ -227,96 +199,122 @@ impl EquationPriv for SDE {
     fn is_sde(&self) -> bool {
         true
     }
+}
+
+impl<'a> Model<'a> for SDEModel<'a> {
+    type Eq = SDE;
+    fn new(equation: &'a Self::Eq, subject: &'a Subject, support_point: Vec<f64>) -> Self {
+        Self {
+            equation,
+            subject,
+            state: vec![DVector::zeros(equation.get_nstates()); equation.nparticles()],
+            support_point,
+        }
+    }
+    #[inline(always)]
+    fn add_bolus(&mut self, input: usize, amount: f64) {
+        self.state.add_bolus(input, amount);
+    }
+
+    #[inline(always)]
+    fn equation(&self) -> &Self::Eq {
+        self.equation
+    }
+
+    #[inline(always)]
+    fn subject(&self) -> &Subject {
+        self.subject
+    }
+    #[inline(always)]
+    fn get_lag(&self) -> Option<HashMap<usize, f64>> {
+        Some((self.equation.lag)(&V::from_vec(
+            self.support_point.to_owned(),
+        )))
+    }
+
+    #[inline(always)]
+    fn get_fa(&self) -> Option<HashMap<usize, f64>> {
+        Some((self.equation.fa)(&V::from_vec(
+            self.support_point.to_owned(),
+        )))
+    }
+    #[inline(always)]
+    fn solve(&mut self, covariates: &Covariates, infusions: Vec<&Infusion>, ti: f64, tf: f64) {
+        self.state.par_iter_mut().for_each(|particle| {
+            *particle = simulate_sde_event(
+                &self.equation.drift,
+                &self.equation.diffusion,
+                particle.clone(),
+                &self.support_point,
+                covariates,
+                &infusions,
+                ti,
+                tf,
+            );
+        });
+    }
     #[inline(always)]
     fn process_observation(
-        &self,
-        support_point: &Vec<f64>,
+        &mut self,
         observation: &crate::Observation,
         error_model: Option<&ErrorModel>,
         _time: f64,
         covariates: &Covariates,
-        x: &mut Self::S,
         likelihood: &mut Vec<f64>,
-        output: &mut Self::P,
+        output: &mut <Self::Eq as Equation>::P,
     ) {
-        let mut pred = vec![Prediction::default(); self.nparticles];
+        let mut pred = vec![Prediction::default(); self.nparticles()];
         pred.par_iter_mut().enumerate().for_each(|(i, p)| {
-            let mut y = V::zeros(self.get_nouteqs());
-            (self.out)(
-                &x[i],
-                &V::from_vec(support_point.clone()),
+            let mut y = V::zeros(self.equation.get_nouteqs());
+            (self.equation.out)(
+                &self.state[i],
+                &V::from_vec(self.support_point.to_vec()),
                 observation.time(),
                 covariates,
                 &mut y,
             );
-            *p = observation.to_obs_pred(y[observation.outeq()], x[i].as_slice().to_vec());
+            *p = observation.to_obs_pred(y[observation.outeq()], self.state[i].as_slice().to_vec());
         });
-        let out = Array2::from_shape_vec((self.nparticles, 1), pred.clone()).unwrap();
+        let out = Array2::from_shape_vec((self.nparticles(), 1), pred.clone()).unwrap();
         *output = concatenate(Axis(1), &[output.view(), out.view()]).unwrap();
         //e = y[t] .- x[:,1]
         // q = pdf.(Distributions.Normal(0, 0.5), e)
         if let Some(em) = error_model {
-            let mut q: Vec<f64> = Vec::with_capacity(self.nparticles);
+            let mut q: Vec<f64> = Vec::with_capacity(self.nparticles());
 
             pred.iter().for_each(|p| q.push(p.likelihood(em)));
             let sum_q: f64 = q.iter().sum();
             let w: Vec<f64> = q.iter().map(|qi| qi / sum_q).collect();
             let i = sysresample(&w);
-            let a: Vec<DVector<f64>> = i.iter().map(|&i| x[i].clone()).collect();
-            *x = a;
-            likelihood.push(sum_q / self.nparticles as f64);
+            self.state = i.iter().map(|&i| self.state[i].clone()).collect();
+            likelihood.push(sum_q / self.nparticles() as f64);
             // let qq: Vec<f64> = i.iter().map(|&i| q[i]).collect();
             // likelihood.push(qq.iter().sum::<f64>() / self.nparticles as f64);
         }
     }
     #[inline(always)]
-    fn initial_state(
-        &self,
-        support_point: &Vec<f64>,
-        covariates: &Covariates,
-        occasion_index: usize,
-    ) -> Self::S {
-        let mut x = Vec::with_capacity(self.nparticles);
-        for _ in 0..self.nparticles {
-            let mut state = DVector::zeros(self.get_nstates());
-            if occasion_index == 0 {
-                (self.init)(
-                    &V::from_vec(support_point.to_vec()),
+    fn initial_state(&mut self, occasion: &Occasion) {
+        let mut x = Vec::with_capacity(self.nparticles());
+        let covariates = occasion.get_covariates();
+        for _ in 0..self.nparticles() {
+            let mut state = DVector::zeros(self.equation.get_nstates());
+            if occasion.index() == 0 {
+                (self.equation.init)(
+                    &V::from_vec(self.support_point.to_vec()),
                     0.0,
-                    covariates,
+                    covariates.unwrap_or(&Covariates::new()),
                     &mut state,
                 );
             }
             x.push(state);
         }
-        x
+        self.state = x
     }
-}
-
-impl Equation for SDE {
-    /// Estimates the likelihood of observed data given a model and parameters.
-    ///
-    /// # Arguments
-    ///
-    /// * `subject` - Subject data containing observations
-    /// * `support_point` - Parameter vector for the model
-    /// * `error_model` - Error model to use for likelihood calculations
-    /// * `cache` - Whether to cache likelihood results for reuse
-    ///
-    /// # Returns
-    ///
-    /// The log-likelihood of the observed data given the model and parameters.
-    fn estimate_likelihood(
-        &self,
-        subject: &Subject,
-        support_point: &Vec<f64>,
-        error_model: &ErrorModel,
-        cache: bool,
-    ) -> f64 {
+    fn estimate_likelihood(self, error_model: &ErrorModel, cache: bool) -> f64 {
         if cache {
-            _estimate_likelihood(self, subject, support_point, error_model)
+            _estimate_likelihood(self, error_model)
         } else {
-            _estimate_likelihood_no_cache(self, subject, support_point, error_model)
+            _estimate_likelihood_no_cache(self, error_model)
         }
     }
 }
@@ -338,15 +336,10 @@ fn spphash(spp: &[f64]) -> u64 {
 #[cached(
     ty = "UnboundCache<String, f64>",
     create = "{ UnboundCache::with_capacity(100_000) }",
-    convert = r#"{ format!("{}{}{}", subject.id(), spphash(support_point), error_model.gl()) }"#
+    convert = r#"{ format!("{}{}{}", model.subject.id(), spphash(&model.support_point), error_model.gl()) }"#
 )]
-fn _estimate_likelihood(
-    sde: &SDE,
-    subject: &Subject,
-    support_point: &Vec<f64>,
-    error_model: &ErrorModel,
-) -> f64 {
-    let ypred = sde.simulate_subject(subject, support_point, Some(error_model));
+fn _estimate_likelihood(model: SDEModel, error_model: &ErrorModel) -> f64 {
+    let ypred = model.simulate_subject(Some(error_model));
     ypred.1.unwrap()
 }
 
