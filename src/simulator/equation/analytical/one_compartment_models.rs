@@ -40,7 +40,9 @@ pub fn one_compartment_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &Cov
 #[cfg(test)]
 mod tests {
     use super::{one_compartment, one_compartment_with_absorption};
+
     use crate::{simulator::model::Model, *};
+
     use approx::assert_relative_eq;
 
     enum SubjectInfo {

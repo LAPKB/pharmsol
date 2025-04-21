@@ -108,6 +108,7 @@ pub fn two_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &Co
 mod tests {
     use super::{two_compartments, two_compartments_with_absorption};
     use crate::{simulator::model::Model, *};
+
     use approx::assert_relative_eq;
 
     enum SubjectInfo {
