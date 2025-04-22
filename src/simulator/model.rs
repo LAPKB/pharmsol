@@ -36,7 +36,7 @@ where
         output: &mut <Self::Eq as Equation<'a>>::P,
     );
 
-    fn initial_state(&mut self, occasion: &'a Occasion);
+    fn initial_state(&mut self, occasion: &Occasion);
 
     fn add_bolus(&mut self, input: usize, amount: f64);
 
@@ -135,7 +135,7 @@ where
         error_model: Option<&ErrorModel>,
     ) -> (<Self::Eq as Equation<'a>>::P, Option<f64>)
     where
-        Self: Sized + 'a,
+        Self: Sized,
     {
         let lag = self.get_lag();
         let fa = self.get_fa();
@@ -143,10 +143,14 @@ where
         let mut output = <Self::Eq as Equation>::P::empty(self.nparticles());
         let mut likelihood = Vec::new();
         // Clone the occasions so we don’t immutably borrow `self` across mutable calls.
-        let occasions = self.subject().occasions().clone();
+        let mut occasions: Vec<Occasion> = vec![];
+        for occasion in self.subject().occasions() {
+            // Clone the occasion to avoid borrowing issues
+            occasions.push(occasion.clone());
+        }
 
         for occasion in occasions {
-            self.initial_state(occasion);
+            self.initial_state(&occasion);
 
             let events = occasion.get_events(&lag, &fa, true);
             for (index, event) in events.iter().enumerate() {
@@ -154,7 +158,7 @@ where
                     event,
                     events.get(index + 1),
                     error_model,
-                    occasion,
+                    &occasion,
                     &mut likelihood,
                     &mut output,
                 );

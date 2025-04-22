@@ -14,8 +14,8 @@ where
 {
     nstates: usize,
     nparams: usize,
-    infusions: &'a [&'a Infusion], // Change from Vec to slice reference
-    covariates: &'a Covariates,
+    infusions: Vec<Infusion>, // Change from Vec to slice reference
+    covariates: Covariates,
     p: &'a Vec<f64>,
     func: &'a F,
     rateiv_buffer: &'a RefCell<V>,
@@ -139,7 +139,7 @@ where
         let mut rateiv_ref = self.rateiv_buffer.borrow_mut();
         rateiv_ref.fill(0.0);
 
-        for infusion in self.infusions {
+        for infusion in &self.infusions {
             if t >= Self::T::from(infusion.time())
                 && t <= Self::T::from(infusion.duration() + infusion.time())
             {
@@ -173,7 +173,7 @@ where
             p_ref = &p_dvector;
         }
 
-        (self.func)(x, p_ref, t, y, rateiv, self.covariates)
+        (self.func)(x, p_ref, t, y, rateiv, &self.covariates)
     }
 }
 
@@ -201,7 +201,7 @@ where
             }
         }
 
-        (self.func)(v, &p_dvector, t, y, rateiv, self.covariates);
+        (self.func)(v, &p_dvector, t, y, rateiv, &self.covariates);
     }
 }
 
@@ -218,30 +218,30 @@ impl NonLinearOp for PmOut {
 }
 
 // Completely revised PMProblem to fix lifetime issues and improve performance
-pub struct PMProblem<'a, F>
+pub struct PMProblem<F>
 where
-    F: Fn(&V, &V, T, &mut V, V, &Covariates) + 'a,
+    F: Fn(&V, &V, T, &mut V, V, &Covariates),
 {
     func: F,
     nstates: usize,
     nparams: usize,
     init: V,
     p: Vec<f64>,
-    covariates: &'a Covariates,
-    infusions: Vec<&'a Infusion>,
+    covariates: Covariates,
+    infusions: Vec<Infusion>,
     rateiv_buffer: RefCell<V>,
 }
 
-impl<'a, F> PMProblem<'a, F>
+impl<'a, F> PMProblem<F>
 where
-    F: Fn(&V, &V, T, &mut V, V, &Covariates) + 'a,
+    F: Fn(&V, &V, T, &mut V, V, &Covariates),
 {
     pub fn new(
         func: F,
         nstates: usize,
         p: Vec<f64>,
-        covariates: &'a Covariates,
-        infusions: Vec<&'a Infusion>,
+        covariates: Covariates,
+        infusions: Vec<Infusion>,
         init: V,
     ) -> Self {
         let nparams = p.len();
@@ -260,9 +260,9 @@ where
     }
 }
 
-impl<'a, F> Op for PMProblem<'a, F>
+impl<'a, F> Op for PMProblem<F>
 where
-    F: Fn(&V, &V, T, &mut V, V, &Covariates) + 'a,
+    F: Fn(&V, &V, T, &mut V, V, &Covariates),
 {
     type T = T;
     type V = V;
@@ -279,9 +279,9 @@ where
 }
 
 // Implement OdeEquationsRef for PMProblem for any lifetime 'b
-impl<'a, 'b, F> OdeEquationsRef<'b> for PMProblem<'a, F>
+impl<'a, 'b, F> OdeEquationsRef<'b> for PMProblem<F>
 where
-    F: Fn(&V, &V, T, &mut V, V, &Covariates) + 'a,
+    F: Fn(&V, &V, T, &mut V, V, &Covariates),
 {
     type Rhs = PmRhs<'b, F>;
     type Mass = PmMass;
@@ -291,7 +291,7 @@ where
 }
 
 // Implement OdeEquations with correct lifetime handling
-impl<'a, F> OdeEquations for PMProblem<'a, F>
+impl<'a, F> OdeEquations for PMProblem<F>
 where
     F: Fn(&V, &V, T, &mut V, V, &Covariates) + 'a,
 {
@@ -299,8 +299,8 @@ where
         PmRhs {
             nstates: self.nstates,
             nparams: self.nparams,
-            infusions: &self.infusions, // Use reference instead of clone
-            covariates: self.covariates,
+            infusions: self.infusions.clone(), // Use reference instead of clone
+            covariates: self.covariates.clone(),
             p: &self.p,
             func: &self.func,
             rateiv_buffer: &self.rateiv_buffer,

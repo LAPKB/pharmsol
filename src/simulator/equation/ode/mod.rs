@@ -8,7 +8,7 @@ use crate::{
     error_model::ErrorModel,
     prelude::simulator::{Prediction, SubjectPredictions},
     simulator::{likelihood::ToPrediction, model::Model, DiffEq, Fa, Init, Lag, Neqs, Out, M, V},
-    Event, Observation, Occasion, Subject,
+    Observation, Occasion, Subject,
 };
 use cached::proc_macro::cached;
 use cached::UnboundCache;
@@ -16,8 +16,8 @@ use cached::UnboundCache;
 use closure::PMProblem;
 use diffsol::OdeSolverState;
 use diffsol::{
-    error::OdeSolverError, ode_solver::method::OdeSolverMethod, Bdf, BdfState,
-    NewtonNonlinearSolver, OdeBuilder, OdeSolverProblem, OdeSolverStopReason,
+    error::OdeSolverError, ode_solver::method::OdeSolverMethod, BdfState, OdeBuilder,
+    OdeSolverProblem, OdeSolverStopReason,
 };
 use nalgebra::{DMatrix, DVector};
 
@@ -40,7 +40,7 @@ pub struct ODEModel<'a> {
     equation: &'a ODE,
     subject: &'a Subject,
     support_point: Vec<f64>,
-    problem: Option<OdeSolverProblem<PMProblem<'a, DiffEq>>>,
+    problem: Option<OdeSolverProblem<PMProblem<DiffEq>>>,
     state: Option<BdfState<DVector<f64>, DMatrix<f64>>>,
 }
 
@@ -208,9 +208,14 @@ impl<'a> Model<'a> for ODEModel<'a> {
     }
 
     #[inline(always)]
-    fn initial_state(&mut self, occasion: &'a Occasion) {
+    fn initial_state(&mut self, occasion: &Occasion) {
         let covariates = occasion.get_covariates().unwrap();
         let infusions = occasion.infusions_ref();
+
+        let mut infusions_owned: Vec<Infusion> = Vec::new();
+        for infusion in infusions {
+            infusions_owned.push(infusion.clone());
+        }
 
         let init = &self.equation.init;
         let mut x = V::zeros(self.equation.get_nstates());
@@ -229,8 +234,8 @@ impl<'a> Model<'a> for ODEModel<'a> {
                 self.equation.diffeq,
                 self.equation.get_nstates(),
                 self.support_point.clone(), //TODO: Avoid cloning the support point
-                &covariates,
-                infusions,
+                covariates.clone(),
+                infusions_owned,
                 x,
             ))
             .unwrap();
