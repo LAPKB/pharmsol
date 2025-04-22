@@ -14,11 +14,12 @@ use cached::proc_macro::cached;
 use cached::UnboundCache;
 
 use closure::PMProblem;
+use diffsol::OdeSolverState;
 use diffsol::{
-    error::OdeSolverError, ode_solver::method::OdeSolverMethod, Bdf, NewtonNonlinearSolver,
-    OdeBuilder, OdeSolverStopReason,
+    error::OdeSolverError, ode_solver::method::OdeSolverMethod, Bdf, BdfState,
+    NewtonNonlinearSolver, OdeBuilder, OdeSolverProblem, OdeSolverStopReason,
 };
-use nalgebra::DVector;
+use nalgebra::{DMatrix, DVector};
 
 use super::{Equation, Predictions, State};
 
@@ -39,8 +40,8 @@ pub struct ODEModel<'a> {
     equation: &'a ODE,
     subject: &'a Subject,
     support_point: Vec<f64>,
-    state:
-        Option<Bdf<'a, PMProblem<'a, DiffEq>, NewtonNonlinearSolver<M, diffsol::NalgebraLU<f64>>>>,
+    problem: Option<OdeSolverProblem<PMProblem<'a, DiffEq>>>,
+    state: Option<BdfState<DVector<f64>, DMatrix<f64>>>,
 }
 
 impl ODE {
@@ -56,10 +57,10 @@ impl ODE {
     }
 }
 
-impl State for Bdf<'_, PMProblem<'_, DiffEq>, NewtonNonlinearSolver<M, diffsol::NalgebraLU<f64>>> {
+impl State for BdfState<DVector<f64>, DMatrix<f64>> {
     #[inline(always)]
     fn add_bolus(&mut self, input: usize, amount: f64) {
-        self.state_mut().y[input] += amount;
+        self.as_mut().y[input] += amount;
     }
 }
 
@@ -81,7 +82,7 @@ impl Predictions for SubjectPredictions {
 }
 
 impl<'a> Equation<'a> for ODE {
-    type S = Bdf<'a, PMProblem<'a, DiffEq>, NewtonNonlinearSolver<M, diffsol::NalgebraLU<f64>>>;
+    type S = BdfState<DVector<f64>, DMatrix<f64>>;
     type P = SubjectPredictions;
     type Mod = ODEModel<'a>;
     #[inline(always)]
@@ -107,6 +108,7 @@ impl<'a> Model<'a> for ODEModel<'a> {
             equation,
             subject,
             support_point: spp,
+            problem: None,
             state: None,
         }
     }
@@ -148,31 +150,70 @@ impl<'a> Model<'a> for ODEModel<'a> {
         _covariates: &Covariates,
         _infusions: Vec<&Infusion>,
         _start_time: f64,
-        _end_time: f64,
+        end_time: f64,
     ) {
-        unimplemented!("solve not implemented for ODE");
+        let mut solver = self
+            .problem
+            .as_mut()
+            .unwrap()
+            .bdf_solver::<diffsol::NalgebraLU<f64>>(self.state.take().unwrap())
+            .unwrap();
+        match solver.set_stop_time(end_time) {
+            Ok(_) => loop {
+                let ret = solver.step();
+                match ret {
+                    Ok(OdeSolverStopReason::InternalTimestep) => continue,
+                    Ok(OdeSolverStopReason::TstopReached) => break,
+                    _ => panic!("Unexpected solver error: {:?}", ret),
+                }
+            },
+            Err(e) => match e {
+                diffsol::error::DiffsolError::OdeSolverError(
+                    OdeSolverError::StopTimeAtCurrentTime,
+                ) => {}
+                _ => panic!("Unexpected solver error: {:?}", e),
+            },
+        }
+        self.state = Some(solver.into_state());
     }
     #[inline(always)]
     fn process_observation(
         &mut self,
-        _observation: &Observation,
-        _error_model: Option<&ErrorModel>,
+        observation: &Observation,
+        error_model: Option<&ErrorModel>,
         _time: f64,
-        _covariates: &Covariates,
-        _likelihood: &mut Vec<f64>,
-        _output: &mut <Self::Eq as Equation>::P,
+        covariates: &Covariates,
+        likelihood: &mut Vec<f64>,
+        output: &mut <Self::Eq as Equation>::P,
     ) {
-        unimplemented!("process_observation not implemented for ODE");
+        let mut y = V::zeros(self.equation.get_nouteqs());
+        let out = &self.equation.out;
+        let spp = DVector::from_vec(self.support_point.clone()); // TODO: Avoid clone
+        (out)(
+            self.state.as_ref().unwrap().as_ref().y,
+            &spp,
+            observation.time(),
+            covariates,
+            &mut y,
+        );
+        let pred = y[observation.outeq()];
+        let pred = observation.to_obs_pred(
+            pred,
+            self.state.as_ref().unwrap().as_ref().y.as_slice().to_vec(),
+        );
+        if let Some(error_model) = error_model {
+            likelihood.push(pred.likelihood(error_model));
+        }
+        output.add_prediction(pred);
     }
 
     #[inline(always)]
-    fn initial_state(&mut self, occasion: &Occasion) {
+    fn initial_state(&mut self, occasion: &'a Occasion) {
         let covariates = occasion.get_covariates().unwrap();
         let infusions = occasion.infusions_ref();
 
         let init = &self.equation.init;
         let mut x = V::zeros(self.equation.get_nstates());
-        let covariates = occasion.get_covariates().unwrap();
         if occasion.index() == 0 {
             let spp = DVector::from_vec(self.support_point.clone());
             (init)(&spp, 0.0, covariates, &mut x);
@@ -194,17 +235,126 @@ impl<'a> Model<'a> for ODEModel<'a> {
             ))
             .unwrap();
 
-        let solver: Bdf<
-            'a,
-            PMProblem<'a, DiffEq>,
-            NewtonNonlinearSolver<M, diffsol::NalgebraLU<f64>>,
-        > = problem.bdf::<diffsol::NalgebraLU<f64>>().unwrap(); // TODO: Result
+        self.problem = Some(problem);
+        let solver = self
+            .problem
+            .as_ref()
+            .unwrap()
+            .bdf::<diffsol::NalgebraLU<f64>>()
+            .unwrap(); // TODO: Result
+        let state: BdfState<DVector<f64>, DMatrix<f64>> = solver.into_state();
 
-        self.state = Some(solver);
+        self.state = Some(state);
     }
     fn estimate_likelihood(self, error_model: &ErrorModel, cache: bool) -> f64 {
         _estimate_likelihood(self, error_model, cache)
     }
+    // fn simulate_subject(
+    //     mut self,
+    //     error_model: Option<&ErrorModel>,
+    // ) -> (<Self::Eq as Equation<'a>>::P, Option<f64>)
+    // where
+    //     Self: Sized + 'a,
+    // {
+    //     let lag = self.get_lag();
+    //     let fa = self.get_fa();
+    //     let mut output = <Self::Eq as Equation<'a>>::P::empty(self.nparticles());
+    //     let mut likelihood = Vec::new();
+    //     let occasions = self.subject().occasions().clone();
+
+    //     for occasion in occasions {
+    //         let covariates = occasion.get_covariates().unwrap();
+    //         let infusions = occasion.infusions_ref();
+    //         let events = occasion.get_events(&lag, &fa, true);
+
+    //         let problem: OdeSolverProblem<PMProblem<'_, DiffEq>> = OdeBuilder::<M>::new()
+    //             .atol(vec![ATOL])
+    //             .rtol(RTOL)
+    //             .t0(occasion.initial_time())
+    //             .h0(1e-3)
+    //             .p(self.support_point.clone())
+    //             .build_from_eqn(PMProblem::new(
+    //                 self.equation.diffeq,
+    //                 self.equation.get_nstates(),
+    //                 self.support_point.clone(), //TODO: Avoid cloning the support point
+    //                 &covariates,
+    //                 infusions,
+    //                 self.initial_state(support_point, covariates, occasion.index()),
+    //             ))
+    //             .unwrap();
+
+    //         let mut solver: Bdf<
+    //             '_,
+    //             PMProblem<DiffEq>,
+    //             NewtonNonlinearSolver<M, diffsol::NalgebraLU<f64>>,
+    //         > = problem.bdf::<diffsol::NalgebraLU<f64>>().unwrap(); // TODO: Result
+
+    //         let state: BdfState<DVector<f64>, DMatrix<f64>> = solver.into_state();
+    //         let mut solver = problem.bdf_solver(state);
+    //         for (index, event) in events.iter().enumerate() {
+    //             let next_event = events.get(index + 1);
+    //             //START SIMULATE_EVENT
+    //             match event {
+    //                 Event::Bolus(bolus) => {
+    //                     // x.add_bolus(bolus.input(), bolus.amount());
+    //                     solver.state_mut().y[bolus.input()] += bolus.amount();
+    //                 }
+    //                 Event::Infusion(_infusion) => {
+    //                     // infusions.push(infusion.clone());
+    //                 }
+    //                 Event::Observation(observation) => {
+    //                     //START PROCESS_OBSERVATION
+    //                     let mut y = V::zeros(self.get_nouteqs());
+    //                     let out = &self.out;
+    //                     let spp = DVector::from_vec(support_point.clone()); // TODO: Avoid clone
+    //                     (out)(
+    //                         solver.state().y,
+    //                         &spp,
+    //                         observation.time(),
+    //                         covariates,
+    //                         &mut y,
+    //                     );
+    //                     let pred = y[observation.outeq()];
+    //                     let pred =
+    //                         observation.to_obs_pred(pred, solver.state().y.as_slice().to_vec());
+    //                     if let Some(error_model) = error_model {
+    //                         likelihood.push(pred.likelihood(error_model));
+    //                     }
+    //                     output.add_prediction(pred);
+    //                     //END PROCESS_OBSERVATION
+    //                 }
+    //             }
+    //             // START SOLVE
+    //             if let Some(next_event) = next_event {
+    //                 match solver.set_stop_time(next_event.get_time()) {
+    //                     Ok(_) => loop {
+    //                         let ret = solver.step();
+    //                         match ret {
+    //                             Ok(OdeSolverStopReason::InternalTimestep) => continue,
+    //                             Ok(OdeSolverStopReason::TstopReached) => break,
+    //                             _ => panic!("Unexpected solver error: {:?}", ret),
+    //                         }
+    //                     },
+    //                     Err(e) => {
+    //                         match e {
+    //                             diffsol::error::DiffsolError::OdeSolverError(
+    //                                 OdeSolverError::StopTimeAtCurrentTime,
+    //                             ) => {
+    //                                 // If the stop time is at the current state time, we can just continue
+    //                                 continue;
+    //                             }
+    //                             _ => panic!("Unexpected solver error: {:?}", e),
+    //                         }
+    //                     }
+    //                 }
+    //             }
+    //             //End SOLVE
+    //             //END SIMULATE_EVENT
+    //         }
+    //     }
+    //     let ll = error_model.map(|_| likelihood.iter().product::<f64>());
+    //     (output, ll)
+    // }
 }
 
 // Hash the support points by converting them to bits and summing them
@@ -245,126 +395,22 @@ fn _estimate_likelihood(model: ODEModel, error_model: &ErrorModel, cache: bool) 
     ypred.likelihood(error_model)
 }
 
-// impl Equation for ODE {
-//     fn simulate_subject(
-//         &self,
-//         subject: &Subject,
-//         support_point: &Vec<f64>,
-//         error_model: Option<&ErrorModel>,
-//     ) -> (Self::P, Option<f64>) {
-//         let lag = self.get_lag(support_point);
-//         let fa = self.get_fa(support_point);
-//         let mut output = Self::P::new(self.nparticles());
-//         let mut likelihood = Vec::new();
-//         for occasion in subject.occasions() {
-//             let covariates = occasion.get_covariates().unwrap();
-//             let infusions = occasion.infusions_ref();
-//             let events = occasion.get_events(&lag, &fa, true);
-
-//             let problem = OdeBuilder::<M>::new()
-//                 .atol(vec![ATOL])
-//                 .rtol(RTOL)
-//                 .t0(occasion.initial_time())
-//                 .h0(1e-3)
-//                 .p(support_point.clone())
-//                 .build_from_eqn(PMProblem::new(
-//                     self.diffeq,
-//                     self.get_nstates(),
-//                     support_point.clone(), //TODO: Avoid cloning the support point
-//                     &covariates,
-//                     infusions,
-//                     self.initial_state(support_point, covariates, occasion.index()),
-//                 ))
-//                 .unwrap();
-
-//             let mut solver: Bdf<
-//                 '_,
-//                 PMProblem<DiffEq>,
-//                 NewtonNonlinearSolver<M, diffsol::NalgebraLU<f64>>,
-//             > = problem.bdf::<diffsol::NalgebraLU<f64>>().unwrap(); // TODO: Result
-
-//             for (index, event) in events.iter().enumerate() {
-//                 let next_event = events.get(index + 1);
-//                 //START SIMULATE_EVENT
-//                 match event {
-//                     Event::Bolus(bolus) => {
-//                         // x.add_bolus(bolus.input(), bolus.amount());
-//                         solver.state_mut().y[bolus.input()] += bolus.amount();
-//                     }
-//                     Event::Infusion(_infusion) => {
-//                         // infusions.push(infusion.clone());
-//                     }
-//                     Event::Observation(observation) => {
-//                         //START PROCESS_OBSERVATION
-//                         let mut y = V::zeros(self.get_nouteqs());
-//                         let out = &self.out;
-//                         let spp = DVector::from_vec(support_point.clone()); // TODO: Avoid clone
-//                         (out)(
-//                             solver.state().y,
-//                             &spp,
-//                             observation.time(),
-//                             covariates,
-//                             &mut y,
-//                         );
-//                         let pred = y[observation.outeq()];
-//                         let pred =
-//                             observation.to_obs_pred(pred, solver.state().y.as_slice().to_vec());
-//                         if let Some(error_model) = error_model {
-//                             likelihood.push(pred.likelihood(error_model));
-//                         }
-//                         output.add_prediction(pred);
-//                         //END PROCESS_OBSERVATION
-//                     }
-//                 }
-//                 // START SOLVE
-//                 if let Some(next_event) = next_event {
-//                     match solver.set_stop_time(next_event.get_time()) {
-//                         Ok(_) => loop {
-//                             let ret = solver.step();
-//                             match ret {
-//                                 Ok(OdeSolverStopReason::InternalTimestep) => continue,
-//                                 Ok(OdeSolverStopReason::TstopReached) => break,
-//                                 _ => panic!("Unexpected solver error: {:?}", ret),
-//                             }
-//                         },
-//                         Err(e) => {
-//                             match e {
-//                                 diffsol::error::DiffsolError::OdeSolverError(
-//                                     OdeSolverError::StopTimeAtCurrentTime,
-//                                 ) => {
-//                                     // If the stop time is at the current state time, we can just continue
-//                                     continue;
-//                                 }
-//                                 _ => panic!("Unexpected solver error: {:?}", e),
-//                             }
-//                         }
-//                     }
-//                 }
-//                 //End SOLVE
-//                 //END SIMULATE_EVENT
-//             }
-//         }
-//         let ll = error_model.map(|_| likelihood.iter().product::<f64>());
-//         (output, ll)
-//     }
-// }
-
-// // Test spphash
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     #[test]
-//     fn test_spphash() {
-//         let spp1 = vec![1.0, 2.0, 3.0];
-//         let spp2 = vec![1.0, 2.0, 3.0];
-//         let spp3 = vec![3.0, 2.0, 1.0];
-//         let spp4 = vec![1.0, 2.0, 3.000001];
-//         // Equal values should have the same hash
-//         assert_eq!(spphash(&spp1), spphash(&spp2));
-//         // Mirrored values should have different hashes
-//         assert_ne!(spphash(&spp1), spphash(&spp3));
-//         // Very close values should have different hashes
-//         // Note: Due to f64 precision this will fail for values that are very close, e.g. 3.0 and 3.0000000000000001
-//         assert_ne!(spphash(&spp1), spphash(&spp4));
-//     }
-// }
+// Test spphash
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_spphash() {
+        let spp1 = vec![1.0, 2.0, 3.0];
+        let spp2 = vec![1.0, 2.0, 3.0];
+        let spp3 = vec![3.0, 2.0, 1.0];
+        let spp4 = vec![1.0, 2.0, 3.000001];
+        // Equal values should have the same hash
+        assert_eq!(spphash(&spp1), spphash(&spp2));
+        // Mirrored values should have different hashes
+        assert_ne!(spphash(&spp1), spphash(&spp3));
+        // Very close values should have different hashes
+        // Note: Due to f64 precision this will fail for values that are very close, e.g. 3.0 and 3.0000000000000001
+        assert_ne!(spphash(&spp1), spphash(&spp4));
+    }
+}

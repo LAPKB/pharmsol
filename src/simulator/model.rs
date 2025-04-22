@@ -3,7 +3,10 @@ use std::collections::HashMap;
 use crate::simulator::equation::*;
 use crate::{Covariates, Equation, ErrorModel, Event, Infusion, Observation, Occasion, Subject};
 // Define Model as a trait
-pub trait Model<'a> {
+pub trait Model<'a>
+where
+    Self: 'a,
+{
     type Eq: Equation<'a>;
 
     fn new(equation: &'a Self::Eq, subject: &'a Subject, spp: Vec<f64>) -> Self
@@ -33,7 +36,7 @@ pub trait Model<'a> {
         output: &mut <Self::Eq as Equation<'a>>::P,
     );
 
-    fn initial_state(&mut self, occasion: &Occasion);
+    fn initial_state(&mut self, occasion: &'a Occasion);
 
     fn add_bolus(&mut self, input: usize, amount: f64);
 
@@ -132,15 +135,15 @@ pub trait Model<'a> {
         error_model: Option<&ErrorModel>,
     ) -> (<Self::Eq as Equation<'a>>::P, Option<f64>)
     where
-        Self: Sized,
+        Self: Sized + 'a,
     {
         let lag = self.get_lag();
         let fa = self.get_fa();
 
         let mut output = <Self::Eq as Equation>::P::empty(self.nparticles());
         let mut likelihood = Vec::new();
-        let subject = self.subject().clone(); // How to avoid cloning?
-        let occasions = subject.occasions();
+        // Clone the occasions so we don’t immutably borrow `self` across mutable calls.
+        let occasions = self.subject().occasions().clone();
 
         for occasion in occasions {
             self.initial_state(occasion);
