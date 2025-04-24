@@ -32,10 +32,10 @@ pub mod prelude {
     pub mod models {
         pub use crate::simulator::equation::analytical::one_compartment;
         pub use crate::simulator::equation::analytical::one_compartment_with_absorption;
-        pub use crate::simulator::equation::analytical::two_compartments;
-        pub use crate::simulator::equation::analytical::two_compartments_with_absorption;
         pub use crate::simulator::equation::analytical::three_compartments;
         pub use crate::simulator::equation::analytical::three_compartments_with_absorption;
+        pub use crate::simulator::equation::analytical::two_compartments;
+        pub use crate::simulator::equation::analytical::two_compartments_with_absorption;
     }
 
     //extension traits
@@ -54,6 +54,7 @@ pub mod prelude {
                 let $name = p[idx];
                 idx += 1;
             )*
+            let _ = idx; // Consume idx to avoid unused_assignments warning
         };
     }
     #[macro_export]
