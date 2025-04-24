@@ -42,8 +42,6 @@ pub mod prelude {
     pub use crate::data::builder::SubjectBuilderExt;
     pub use crate::data::InterpolationMethod::*;
     pub use crate::data::*;
-    //traits
-    pub use crate::simulator::fitting::{EstimateTheta, OptimalSupportPoint};
 
     #[macro_export]
     macro_rules! fetch_params {
