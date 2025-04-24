@@ -1,5 +1,5 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use pharmsol::*;
+use pharmsol::{simulator::model::Model, *};
 use std::hint::black_box;
 
 fn example_subject() -> Subject {
@@ -39,7 +39,9 @@ fn readme(n: usize) {
         (2, 1),
     );
     for _ in 0..n {
-        let op = ode.estimate_predictions(&subject, &vec![0.3, 0.5, 0.1, 70.0]);
+        let op = ode
+            .initialize_model(&subject, vec![0.3, 0.5, 0.1, 70.0])
+            .estimate_outputs();
         black_box(op);
     }
 }
