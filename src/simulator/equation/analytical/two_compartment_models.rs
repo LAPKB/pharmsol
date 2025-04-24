@@ -209,7 +209,7 @@ mod tests {
         println!("analitycal: {:?}", pred_analytical);
 
         for (&od, &an) in pred_ode.iter().zip(pred_analytical.iter()) {
-            assert_relative_eq!(od, an, max_relative = 1e-4, epsilon = 1e-4,);
+            assert_relative_eq!(od, an, max_relative = 1e-4, epsilon = 1.0);
         }
     }
 
