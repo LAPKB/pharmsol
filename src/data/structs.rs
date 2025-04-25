@@ -325,6 +325,15 @@ impl Data {
     // }
 }
 
+impl IntoIterator for Data {
+    type Item = Subject;
+    type IntoIter = std::vec::IntoIter<Subject>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.subjects.into_iter()
+    }
+}
+
 /// A subject in a pharmacometric dataset
 ///
 /// A [Subject] represents a single individual with one or more occasions of data,
