@@ -21,7 +21,7 @@ where
     rateiv_buffer: &'a RefCell<V>,
 }
 
-impl<'a, F> Op for PmRhs<'a, F>
+impl<F> Op for PmRhs<'_, F>
 where
     F: Fn(&V, &V, T, &mut V, V, &Covariates),
 {
@@ -67,7 +67,7 @@ pub struct PmInit<'a> {
     init: &'a V,
 }
 
-impl<'a> Op for PmInit<'a> {
+impl Op for PmInit<'_> {
     type T = T;
     type V = V;
     type M = M;
@@ -82,7 +82,7 @@ impl<'a> Op for PmInit<'a> {
     }
 }
 
-impl<'a> ConstantOp for PmInit<'a> {
+impl ConstantOp for PmInit<'_> {
     fn call_inplace(&self, _t: Self::T, y: &mut Self::V) {
         y.copy_from(self.init);
     }
@@ -130,7 +130,7 @@ impl Op for PmOut {
     }
 }
 
-impl<'a, F> NonLinearOp for PmRhs<'a, F>
+impl<F> NonLinearOp for PmRhs<'_, F>
 where
     F: Fn(&V, &V, T, &mut V, V, &Covariates),
 {
@@ -140,11 +140,8 @@ where
         rateiv_ref.fill(0.0);
 
         for infusion in self.infusions {
-            if t >= Self::T::from(infusion.time())
-                && t <= Self::T::from(infusion.duration() + infusion.time())
-            {
-                rateiv_ref[infusion.input()] +=
-                    Self::T::from(infusion.amount() / infusion.duration());
+            if t >= infusion.time() && t <= infusion.duration() + infusion.time() {
+                rateiv_ref[infusion.input()] += infusion.amount() / infusion.duration();
             }
         }
 
@@ -161,7 +158,7 @@ where
         // Use stack allocation for small parameter vectors
         if p_len <= 16 {
             let mut stack_p = [0.0; 16];
-            stack_p[..p_len].copy_from_slice(&self.p);
+            stack_p[..p_len].copy_from_slice(self.p);
             p_dvector = DVector::from_row_slice(&stack_p[..p_len]);
             p_ref = &p_dvector;
         } else {
@@ -177,7 +174,7 @@ where
     }
 }
 
-impl<'a, F> NonLinearOpJacobian for PmRhs<'a, F>
+impl<F> NonLinearOpJacobian for PmRhs<'_, F>
 where
     F: Fn(&V, &V, T, &mut V, V, &Covariates),
 {
@@ -191,7 +188,7 @@ where
         // Use stack allocation for small parameter vectors
         if p_len <= 16 {
             let mut stack_p = [0.0; 16];
-            stack_p[..p_len].copy_from_slice(&self.p);
+            stack_p[..p_len].copy_from_slice(self.p);
             p_dvector = DVector::from_row_slice(&stack_p[..p_len]);
         } else {
             // For larger vectors, use the more efficient approach with unsafe

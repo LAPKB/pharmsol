@@ -104,6 +104,7 @@ impl SDE {
     /// # Returns
     ///
     /// A new SDE solver instance configured with the given components.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         drift: Drift,
         diffusion: Diffusion,

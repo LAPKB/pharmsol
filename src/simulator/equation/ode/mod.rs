@@ -206,7 +206,7 @@ impl Equation for ODE {
                     self.diffeq,
                     self.get_nstates(),
                     support_point.clone(), //TODO: Avoid cloning the support point
-                    &covariates,
+                    covariates,
                     infusions,
                     self.initial_state(support_point, covariates, occasion.index()),
                 ))

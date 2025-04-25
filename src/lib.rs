@@ -3,8 +3,6 @@ pub mod data;
 pub mod exa;
 pub mod simulator;
 
-// Benchmark comment, remove later
-
 //extension traits
 pub use crate::data::builder::SubjectBuilderExt;
 pub use crate::data::InterpolationMethod::*;

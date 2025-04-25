@@ -79,6 +79,8 @@ pub(crate) trait EquationPriv: EquationTypes {
     fn is_sde(&self) -> bool {
         false
     }
+
+    #[allow(clippy::too_many_arguments)]
     fn process_observation(
         &self,
         support_point: &Vec<f64>,
@@ -98,6 +100,7 @@ pub(crate) trait EquationPriv: EquationTypes {
         occasion_index: usize,
     ) -> Self::S;
 
+    #[allow(clippy::too_many_arguments)]
     fn simulate_event(
         &self,
         support_point: &Vec<f64>,
