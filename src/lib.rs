@@ -3,8 +3,6 @@ pub mod data;
 pub mod exa;
 pub mod simulator;
 
-// Benchmark comment, remove later
-
 //extension traits
 pub use crate::data::builder::SubjectBuilderExt;
 pub use crate::data::InterpolationMethod::*;
@@ -17,9 +15,8 @@ pub use std::collections::HashMap;
 pub mod prelude {
     pub mod data {
         pub use crate::data::{
-            error_model::{ErrorModel, ErrorType},
-            parse_pmetrics::read_pmetrics,
-            Covariates, Data, Event, Occasion, Subject,
+            error_model::ErrorModel, parse_pmetrics::read_pmetrics, Covariates, Data, Event,
+            Occasion, Subject,
         };
     }
     pub mod simulator {
@@ -32,18 +29,16 @@ pub mod prelude {
     pub mod models {
         pub use crate::simulator::equation::analytical::one_compartment;
         pub use crate::simulator::equation::analytical::one_compartment_with_absorption;
-        pub use crate::simulator::equation::analytical::two_compartments;
-        pub use crate::simulator::equation::analytical::two_compartments_with_absorption;
         pub use crate::simulator::equation::analytical::three_compartments;
         pub use crate::simulator::equation::analytical::three_compartments_with_absorption;
+        pub use crate::simulator::equation::analytical::two_compartments;
+        pub use crate::simulator::equation::analytical::two_compartments_with_absorption;
     }
 
     //extension traits
     pub use crate::data::builder::SubjectBuilderExt;
     pub use crate::data::InterpolationMethod::*;
     pub use crate::data::*;
-    //traits
-    pub use crate::simulator::fitting::{EstimateTheta, OptimalSupportPoint};
 
     #[macro_export]
     macro_rules! fetch_params {
@@ -54,6 +49,7 @@ pub mod prelude {
                 let $name = p[idx];
                 idx += 1;
             )*
+            let _ = idx; // Consume idx to avoid unused_assignments warning
         };
     }
     #[macro_export]

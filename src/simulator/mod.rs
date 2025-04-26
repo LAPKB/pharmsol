@@ -1,5 +1,4 @@
 pub mod equation;
-pub mod fitting;
 pub(crate) mod likelihood;
 use crate::{
     data::{Covariates, Infusion},
