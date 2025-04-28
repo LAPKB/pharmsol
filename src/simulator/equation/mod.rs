@@ -125,7 +125,7 @@ pub(crate) trait EquationPriv: EquationTypes {
                     support_point,
                     observation,
                     error_model,
-                    event.get_time(),
+                    event.time(),
                     covariates,
                     x,
                     likelihood,
@@ -140,8 +140,8 @@ pub(crate) trait EquationPriv: EquationTypes {
                 support_point,
                 covariates,
                 infusions,
-                event.get_time(),
-                next_event.get_time(),
+                event.time(),
+                next_event.time(),
             );
         }
     }

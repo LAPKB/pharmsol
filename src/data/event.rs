@@ -19,7 +19,7 @@ pub enum Event {
 }
 impl Event {
     /// Get the time of the event
-    pub(crate) fn get_time(&self) -> f64 {
+    pub(crate) fn time(&self) -> f64 {
         match self {
             Event::Bolus(bolus) => bolus.time,
             Event::Infusion(infusion) => infusion.time,
@@ -365,16 +365,16 @@ mod tests {
         let mut infusion_event = Event::Infusion(Infusion::new(2.0, 200.0, 1, 2.5));
         let mut observation_event = Event::Observation(Observation::new(3.0, 75.5, 2, None, false));
 
-        assert_eq!(bolus_event.get_time(), 1.0);
-        assert_eq!(infusion_event.get_time(), 2.0);
-        assert_eq!(observation_event.get_time(), 3.0);
+        assert_eq!(bolus_event.time(), 1.0);
+        assert_eq!(infusion_event.time(), 2.0);
+        assert_eq!(observation_event.time(), 3.0);
 
         bolus_event.inc_time(0.5);
         infusion_event.inc_time(0.5);
         observation_event.inc_time(0.5);
 
-        assert_eq!(bolus_event.get_time(), 1.5);
-        assert_eq!(infusion_event.get_time(), 2.5);
-        assert_eq!(observation_event.get_time(), 3.5);
+        assert_eq!(bolus_event.time(), 1.5);
+        assert_eq!(infusion_event.time(), 2.5);
+        assert_eq!(observation_event.time(), 3.5);
     }
 }

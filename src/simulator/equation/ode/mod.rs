@@ -253,7 +253,7 @@ impl Equation for ODE {
                 }
                 // START SOLVE
                 if let Some(next_event) = next_event {
-                    match solver.set_stop_time(next_event.get_time()) {
+                    match solver.set_stop_time(next_event.time()) {
                         Ok(_) => loop {
                             let ret = solver.step();
                             match ret {
