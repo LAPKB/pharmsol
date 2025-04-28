@@ -36,13 +36,13 @@ pub struct Data {
     subjects: Vec<Subject>,
 }
 impl Data {
-    /// Constructs a new `Data` object from a vector of `Subject`s
+    /// Constructs a new [Data] object from a vector of [Subject]s
     ///
-    /// It is recommended to construct subjects using the `SubjectBuilder` to ensure proper data formatting.
+    /// It is recommended to construct subjects using the [SubjectBuilder] to ensure proper data formatting.
     ///
     /// # Arguments
     ///
-    /// * `subjects` - Vector of subjects to include in the dataset
+    /// * `subjects` - Vector of [Subject]s to include in the dataset
     pub fn new(subjects: Vec<Subject>) -> Self {
         Data { subjects }
     }
