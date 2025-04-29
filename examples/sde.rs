@@ -1,4 +1,4 @@
-use pharmsol::{prelude::data::read_pmetrics, *};
+use pharmsol::*;
 
 fn one_c_ode() -> ODE {
     equation::ODE::new(
@@ -161,7 +161,7 @@ fn main() {
     let ode = three_c_ode();
     let sde = three_c_sde();
 
-    let data = read_pmetrics("../PMcore/examples/vanco_sde/data.csv").unwrap();
+    let data = Data::read_pmetrics("../PMcore/examples/vanco_sde/data.csv").unwrap();
     let subject = data.get_subject("51").unwrap();
 
     let ode_predictions = ode.estimate_predictions(subject, &spp_ode);
