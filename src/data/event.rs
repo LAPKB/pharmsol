@@ -212,7 +212,7 @@ impl Observation {
     pub fn errorpoly(&self) -> Option<(f64, f64, f64, f64)> {
         self.errorpoly
     }
-    /// Check if this observation should be ignored in calculations
+    /// Check if this observation should be ignored in likelihood calculations
     pub fn ignore(&self) -> bool {
         self.ignore
     }
@@ -237,7 +237,7 @@ impl Observation {
         self.errorpoly = errorpoly;
     }
 
-    /// Set whether to ignore this observation in calculations
+    /// Set whether to ignore this observation in likelihood calculations
     pub fn set_ignore(&mut self, ignore: bool) {
         self.ignore = ignore;
     }
