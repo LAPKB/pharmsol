@@ -3,22 +3,36 @@ use serde::de::{MapAccess, Visitor};
 use serde::{de, Deserialize, Deserializer};
 use std::collections::HashMap;
 use std::fmt;
-
+use std::fs::File;
+use std::io::Read;
+use std::path::Path;
 use std::str::FromStr;
 use thiserror::Error;
 
-#[derive(Debug)]
+/// Defines the structure of data in the Pmetrics data format
+#[derive(Debug, Clone)]
 struct PmetricsRow {
+    // Subject ID
     id: String,
+    // Event ID (EVID)
     evid: usize,
+    // Time of the event
     time: f64,
+    // Duration of the event (optional)
     dur: Option<f64>,
+    // Dose amount (optional)
     dose: Option<f64>,
+    // Additional doses (optional)
     addl: Option<usize>,
+    // Dosing interval (optional)
     ii: Option<f64>,
+    // Input type (optional)
     input: Option<usize>,
+    // Output value (optional)
     out: Option<f64>,
+    // Output equation (optional)
     outeq: Option<usize>,
+    // Error polynomial coefficients (optional)
     c0: Option<f64>,
     c1: Option<f64>,
     c2: Option<f64>,
@@ -83,9 +97,9 @@ impl<'de> Visitor<'de> for PmetricsVisitor {
             E: de::Error,
             T::Err: fmt::Display,
         {
-            // TODO: Allows "." as empty
+            // Treat both empty strings and "." as empty values
             match value {
-                Some(s) if !s.is_empty() => s
+                Some(s) if !s.is_empty() && s != "." => s
                     .parse::<T>()
                     .map(Some)
                     .map_err(|e| E::custom(format!("Failed to parse value '{}': {}", s, e))),
@@ -277,9 +291,172 @@ impl TryFrom<PmetricsRow> for Vec<Event> {
     }
 }
 
+/// Deserialize PmetricsRow data from a CSV file into the Data struct
+///
+/// # Arguments
+///
+/// * `path` - Path to the CSV file containing Pmetrics data
+///
+/// # Returns
+///
+/// Result with the deserialized Data struct or a PmetricsError
+pub fn from_csv<P: AsRef<Path>>(path: P) -> Result<Data, PmetricsError> {
+    let file = File::open(path).map_err(|e| PmetricsError::CsvError(e.to_string()))?;
+    from_reader(file)
+}
+
+/// Deserialize PmetricsRow data from a reader into the Data struct
+///
+/// # Arguments
+///
+/// * `rdr` - Any type that implements Read trait containing Pmetrics CSV data
+///
+/// # Returns
+///
+/// Result with the deserialized Data struct or a PmetricsError
+pub fn from_reader<R: Read>(rdr: R) -> Result<Data, PmetricsError> {
+    let mut csv_reader = csv::ReaderBuilder::new()
+        .has_headers(true)
+        .trim(csv::Trim::All)
+        .from_reader(rdr);
+
+    // Prepare a HashMap to store subjects with their occasions
+    let mut subjects_map: HashMap<
+        String,
+        Vec<(usize, Vec<Event>, HashMap<String, Vec<(f64, f64)>>)>,
+    > = HashMap::new();
+
+    // Track occasion indices for each subject
+    let mut subject_occasions: HashMap<String, usize> = HashMap::new();
+
+    // Process each row in the CSV file
+    for record_result in csv_reader.deserialize() {
+        let record: PmetricsRow = record_result?;
+        let subject_id = record.id.clone();
+
+        // Check if this is a new occasion based on EVID=4
+        if record.evid == 4 {
+            // Increment the occasion index for this subject if EVID=4
+            let current_idx = subject_occasions.get(&subject_id).copied().unwrap_or(0);
+            let new_idx = current_idx + 1;
+            subject_occasions.insert(subject_id.clone(), new_idx);
+        } else if !subject_occasions.contains_key(&subject_id) {
+            // First record for this subject
+            subject_occasions.insert(subject_id.clone(), 0);
+        }
+
+        // Get the occasion for this subject
+        let occasion_idx = subject_occasions[&subject_id];
+
+        // Convert the PmetricsRow to events
+        let events = Vec::<Event>::try_from(record.clone())?;
+
+        // Get or create the subject's data
+        let subject_data = subjects_map
+            .entry(subject_id.clone())
+            .or_insert_with(Vec::new);
+
+        // Find the occasion for this subject
+        let occasion_data = if let Some(occ) = subject_data
+            .iter_mut()
+            .find(|(idx, _, _)| *idx == occasion_idx)
+        {
+            occ
+        } else {
+            // Create a new occasion for this subject
+            subject_data.push((occasion_idx, Vec::new(), HashMap::new()));
+            subject_data.last_mut().unwrap()
+        };
+
+        // Add the events to the occasion
+        occasion_data.1.extend(events);
+
+        // Process covariates
+        for (name, value) in record.covs {
+            let time_values = occasion_data.2.entry(name).or_insert_with(Vec::new);
+            time_values.push((record.time, value));
+        }
+    }
+
+    // Convert the collected data into Subject and Occasion objects
+    let mut data_subjects = Vec::new();
+
+    for (subject_id, occasions) in subjects_map {
+        let mut subject_occasions = Vec::new();
+
+        for (idx, events, covariate_map) in occasions {
+            // Convert covariate map to Covariates structure
+            let mut covariates = Covariates::new();
+
+            // Process each covariate name and its time-value pairs
+            for (name, mut time_points) in covariate_map {
+                if time_points.is_empty() {
+                    continue;
+                }
+
+                let mut covariate = Covariate::new(name.clone(), Vec::new());
+
+                // Sort time points by time
+                time_points.sort_by(|(t1, _), (t2, _)| t1.partial_cmp(t2).unwrap());
+
+                // Create segments between time points with linear interpolation
+                for i in 0..time_points.len() - 1 {
+                    let (t1, v1) = time_points[i];
+                    let (t2, v2) = time_points[i + 1];
+
+                    // Calculate linear interpolation parameters
+                    let slope = (v2 - v1) / (t2 - t1);
+                    let intercept = v1 - slope * t1;
+
+                    // Create and add the segment to the covariate
+                    let segment = CovariateSegment::new(
+                        t1,
+                        t2,
+                        InterpolationMethod::Linear { slope, intercept },
+                    );
+                    covariate.add_segment(segment);
+                }
+
+                // Add a carry-forward segment for the last time point
+                if let Some(&(last_time, last_value)) = time_points.last() {
+                    let segment = CovariateSegment::new(
+                        last_time,
+                        f64::INFINITY,
+                        InterpolationMethod::CarryForward { value: last_value },
+                    );
+                    covariate.add_segment(segment);
+                }
+
+                // Add the completed covariate to the covariates collection
+                covariates.add_covariate(name, covariate);
+            }
+
+            let mut occasion = Occasion::new(events, covariates, idx);
+            occasion.sort();
+            subject_occasions.push(occasion);
+        }
+
+        let subject = Subject::new(subject_id, subject_occasions);
+        data_subjects.push(subject);
+    }
+
+    Ok(Data::new(data_subjects))
+}
+
+impl Data {
+    pub fn read_pmetrics<P: AsRef<Path>>(path: P) -> Result<Data, PmetricsError> {
+        from_csv(path)
+    }
+
+    pub fn read_pmetrics_csv_from_reader<R: Read>(rdr: R) -> Result<Data, PmetricsError> {
+        from_reader(rdr)
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::parser::pmetrics::PmetricsRow;
+    use super::*;
+    use std::io::Cursor;
 
     #[test]
     fn test_parse_dose() {
@@ -291,6 +468,144 @@ mod tests {
         "#;
 
         let parsed_data: Vec<PmetricsRow> = serde_json::from_str(data).unwrap();
+        dbg!(&parsed_data);
         assert_eq!(parsed_data.len(), 3);
+    }
+
+    #[test]
+    fn test_deserialize_data_from_csv() {
+        // Create a sample CSV in Pmetrics format
+        let csv_data = "\
+ID,EVID,TIME,DUR,DOSE,ADDL,II,INPUT,OUT,OUTEQ,weight,age,C0,C1,C2,C3
+1,1,0.0,0,100.0,0,0,1,.,.,70,30,.,.,.,. 
+1,0,1.0,.,.,.,.,.,10.0,1,70,30,0.1,0,0,0
+1,0,2.0,.,.,.,.,.,8.0,1,72,30,0.1,0,0,0
+1,1,24.0,0,100.0,0,0,1,.,.,75,30,.,.,.,. 
+1,0,25.0,.,.,.,.,.,12.0,1,75,30,0.1,0,0,0
+1,0,26.0,.,.,.,.,.,9.0,1,75,30,0.1,0,0,0
+2,1,0.0,1.5,150.0,0,0,1,.,.,65,25,.,.,.,. 
+2,0,2.0,.,.,.,.,.,15.0,1,65,25,0.1,0,0,0
+2,0,4.0,.,.,.,.,.,12.0,1,67,25,0.1,0,0,0
+2,1,24.0,1.5,150.0,0,0,1,.,.,68,25,.,.,.,. 
+2,0,26.0,.,.,.,.,.,18.0,1,68,25,0.1,0,0,0
+2,0,28.0,.,.,.,.,.,14.0,1,68,25,0.1,0,0,0";
+
+        // Create a reader from the CSV data
+        let cursor = Cursor::new(csv_data);
+
+        // Deserialize the data
+        let data = from_reader(cursor).unwrap();
+
+        // Verify the structure
+        assert_eq!(data.len(), 2, "Should have 2 subjects");
+
+        // Check subject 1
+        let subject1 = data.get_subject("1").unwrap();
+        assert_eq!(
+            subject1.occasions().len(),
+            1,
+            "Subject 1 should have 1 occasion"
+        );
+
+        let occasion = subject1.occasions()[0];
+
+        // Check events
+        let events = occasion.events();
+        assert_eq!(events.len(), 6, "Subject 1 should have 6 events");
+
+        // Check covariates
+        let covariates = occasion.get_covariates().unwrap();
+        assert!(
+            covariates.get_covariate("weight").is_some(),
+            "Subject 1 should have weight covariate"
+        );
+        assert!(
+            covariates.get_covariate("age").is_some(),
+            "Subject 1 should have age covariate"
+        );
+
+        // Check subject 2
+        let subject2 = data.get_subject("2").unwrap();
+        assert_eq!(
+            subject2.occasions().len(),
+            1,
+            "Subject 2 should have 1 occasion"
+        );
+
+        let occasion = subject2.occasions()[0];
+
+        // Check events
+        let events = occasion.events();
+        assert_eq!(events.len(), 6, "Subject 2 should have 6 events");
+
+        // Check covariates
+        let covariates = occasion.get_covariates().unwrap();
+        assert!(
+            covariates.get_covariate("weight").is_some(),
+            "Subject 2 should have weight covariate"
+        );
+        assert!(
+            covariates.get_covariate("age").is_some(),
+            "Subject 2 should have age covariate"
+        );
+
+        // Check specific covariate values
+        let weight_cov = covariates.get_covariate("weight").unwrap();
+        assert_eq!(
+            weight_cov.interpolate(0.0).unwrap(),
+            65.0,
+            "Subject 2 weight at time 0.0 should be 65.0"
+        );
+        assert_eq!(
+            weight_cov.interpolate(24.0).unwrap(),
+            68.0,
+            "Subject 2 weight at time 24.0 should be 68.0"
+        );
+    }
+
+    #[test]
+    fn test_deserialize_data_from_csv_occasions() {
+        // Create a sample CSV in Pmetrics format
+        let csv_data = "\
+ID,EVID,TIME,DUR,DOSE,ADDL,II,INPUT,OUT,OUTEQ,weight,age,C0,C1,C2,C3
+1,1,0.0,0,100.0,0,0,1,.,.,70,30,.,.,.,. 
+1,0,1.0,.,.,.,.,.,10.0,1,70,30,0.1,0,0,0
+1,0,2.0,.,.,.,.,.,8.0,1,72,30,0.1,0,0,0
+1,1,24.0,0,100.0,0,0,1,.,.,75,30,.,.,.,. 
+1,0,25.0,.,.,.,.,.,12.0,1,75,30,0.1,0,0,0
+1,0,26.0,.,.,.,.,.,9.0,1,75,30,0.1,0,0,0
+1,4,0.0,1.5,150.0,0,0,1,.,.,65,25,.,.,.,. 
+1,0,2.0,.,.,.,.,.,15.0,1,65,25,0.1,0,0,0
+1,0,4.0,.,.,.,.,.,12.0,1,67,25,0.1,0,0,0
+1,1,24.0,1.5,150.0,0,0,1,.,.,68,25,.,.,.,. 
+1,0,26.0,.,.,.,.,.,18.0,1,68,25,0.1,0,0,0
+1,0,28.0,.,.,.,.,.,14.0,1,68,25,0.1,0,0,0";
+
+        // Create a reader from the CSV data
+        let cursor = Cursor::new(csv_data);
+
+        // Deserialize the data
+        let data = from_reader(cursor).unwrap();
+
+        // Verify the structure
+        assert_eq!(data.len(), 1, "Should have 1 subject");
+
+        let subject = data.get_subject("1").unwrap();
+        assert_eq!(
+            subject.occasions().len(),
+            2,
+            "Subject 1 should have 2 occasions"
+        );
+
+        assert_eq!(
+            subject.occasions()[0].events().len(),
+            6,
+            "Occasion 1 should have 6 events"
+        );
+        assert_eq!(
+            subject.occasions()[1].events().len(),
+            6,
+            "Occasion 2 should have 6 events"
+        );
     }
 }
