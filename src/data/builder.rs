@@ -311,10 +311,9 @@ mod tests {
         assert_eq!(subject.id(), "patient_002");
         assert_eq!(subject.occasions().len(), 2);
 
-        // First occasion checks
         let first_occasion = &subject.occasions()[0];
         assert_eq!(first_occasion.events().len(), 6); // 1 bolus + 3 observations + 1 bolus + 1 repeat
-        // Second occasion checks
+
         let second_occasion = &subject.occasions()[1];
         assert_eq!(second_occasion.events().len(), 3); // 1 bolus + 2 observations
     }

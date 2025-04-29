@@ -351,7 +351,11 @@ impl Subject {
     /// * `id` - The subject identifier
     /// * `occasions` - Vector of occasions for this subject
     pub(crate) fn new(id: String, occasions: Vec<Occasion>) -> Self {
-        Subject { id, occasions }
+        let mut subject = Subject { id, occasions };
+        for occasion in subject.occasions.iter_mut() {
+            occasion.sort();
+        }
+        subject
     }
 
     /// Get a vector of references to all occasions for this subject
