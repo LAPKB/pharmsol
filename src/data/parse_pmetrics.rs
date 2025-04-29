@@ -506,7 +506,7 @@ mod tests {
         let s1_times = first_scenario
             .events()
             .iter()
-            .map(|e| e.get_time())
+            .map(|e| e.time())
             .collect::<Vec<_>>();
 
         // Negative ADDL, observations shifted forward
@@ -519,7 +519,7 @@ mod tests {
         let s2_times = second_scenario
             .events()
             .iter()
-            .map(|e| e.get_time())
+            .map(|e| e.time())
             .collect::<Vec<_>>();
 
         // Positive ADDL, no shift in observations

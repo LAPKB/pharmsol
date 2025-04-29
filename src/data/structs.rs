@@ -36,13 +36,13 @@ pub struct Data {
     subjects: Vec<Subject>,
 }
 impl Data {
-    /// Constructs a new `Data` object from a vector of `Subject`s
+    /// Constructs a new [Data] object from a vector of [Subject]s
     ///
-    /// It is recommended to construct subjects using the `SubjectBuilder` to ensure proper data formatting.
+    /// It is recommended to construct subjects using the [SubjectBuilder] to ensure proper data formatting.
     ///
     /// # Arguments
     ///
-    /// * `subjects` - Vector of subjects to include in the dataset
+    /// * `subjects` - Vector of [Subject]s to include in the dataset
     pub fn new(subjects: Vec<Subject>) -> Self {
         Data { subjects }
     }
@@ -351,7 +351,11 @@ impl Subject {
     /// * `id` - The subject identifier
     /// * `occasions` - Vector of occasions for this subject
     pub(crate) fn new(id: String, occasions: Vec<Occasion>) -> Self {
-        Subject { id, occasions }
+        let mut subject = Subject { id, occasions };
+        for occasion in subject.occasions.iter_mut() {
+            occasion.sort();
+        }
+        subject
     }
 
     /// Get a vector of references to all occasions for this subject
@@ -387,6 +391,16 @@ impl Subject {
     /// A new subject containing the specified occasions
     pub fn from_occasions(id: String, occasions: Vec<Occasion>) -> Self {
         Subject { id, occasions }
+    }
+
+    /// Iterate over a mutable reference to the occasions
+    pub fn occasions_mut(&mut self) -> &mut Vec<Occasion> {
+        &mut self.occasions
+    }
+
+    /// Get a mutable iterator to the occasions
+    pub fn occasions_iter_mut(&mut self) -> std::slice::IterMut<Occasion> {
+        self.occasions.iter_mut()
     }
 }
 
@@ -567,6 +581,16 @@ impl Occasion {
     /// Reference to the last event, if any
     pub(crate) fn last_event(&self) -> Option<&Event> {
         self.events.last()
+    }
+
+    /// Get a mutable reference to the events
+    pub fn events_mut(&mut self) -> &mut Vec<Event> {
+        &mut self.events
+    }
+
+    /// Get a mutable iterator to the events
+    pub fn events_iter_mut(&mut self) -> std::slice::IterMut<Event> {
+        self.events.iter_mut()
     }
 
     pub(crate) fn initial_time(&self) -> f64 {

@@ -292,4 +292,62 @@ mod tests {
         assert_eq!(subject.id(), "s1");
         assert_eq!(subject.occasions().len(), 2);
     }
+
+    #[test]
+    fn test_complex_subject_builder() {
+        let subject = Subject::builder("patient_002")
+            .bolus(0.0, 50.0, 0)
+            .observation(1.0, 45.3, 0)
+            .observation(2.0, 40.1, 0)
+            .observation_with_error(3.0, 36.5, 0, Some((0.1, 0.05, 0.0, 0.0)), false)
+            .bolus(4.0, 50.0, 0)
+            .repeat(1, 12.0) // Repeat bolus at 16.0
+            .reset()
+            .bolus(24.0, 50.0, 0)
+            .observation(25.0, 48.2, 0)
+            .observation(26.0, 43.7, 0)
+            .build();
+
+        assert_eq!(subject.id(), "patient_002");
+        assert_eq!(subject.occasions().len(), 2);
+
+        let first_occasion = &subject.occasions()[0];
+        assert_eq!(first_occasion.events().len(), 6); // 1 bolus + 3 observations + 1 bolus + 1 repeat
+
+        let second_occasion = &subject.occasions()[1];
+        assert_eq!(second_occasion.events().len(), 3); // 1 bolus + 2 observations
+    }
+
+    #[test]
+    fn test_infusion_and_repetition() {
+        let subject = Subject::builder("patient_003")
+            .infusion(0.0, 100.0, 0, 2.0)
+            .repeat(3, 6.0) // Repeat infusion at 6.0, 12.0, and 18.0
+            .observation(1.0, 80.0, 0)
+            .observation(7.0, 85.0, 0)
+            .observation(13.0, 82.0, 0)
+            .observation(19.0, 79.0, 0)
+            .build();
+
+        assert_eq!(subject.id(), "patient_003");
+        assert_eq!(subject.occasions().len(), 1);
+
+        // Check the correct number of events
+        let events = subject.occasions()[0].events();
+        assert_eq!(events.len(), 8); // 4 infusions + 4 observations
+
+        // Count infusions
+        let infusion_count = events
+            .iter()
+            .filter(|e| matches!(e, Event::Infusion(_)))
+            .count();
+        assert_eq!(infusion_count, 4);
+
+        // Count observations
+        let observation_count = events
+            .iter()
+            .filter(|e| matches!(e, Event::Observation(_)))
+            .count();
+        assert_eq!(observation_count, 4);
+    }
 }

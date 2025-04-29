@@ -78,3 +78,20 @@ pub mod prelude {
         }};
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_fetch_params_macro() {
+        // Test basic parameter fetching
+        let params = vec![1.0, 2.5, 3.7];
+
+        fetch_params!(params, ka, ke, v);
+
+        assert_eq!(ka, 1.0);
+        assert_eq!(ke, 2.5);
+        assert_eq!(v, 3.7);
+    }
+}
