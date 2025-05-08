@@ -281,7 +281,7 @@ impl Prediction {
 
     /// Calculate the likelihood of this prediction given an error model.
     pub fn likelihood(&self, error_model: &ErrorModel) -> f64 {
-        let sigma = error_model.estimate_sigma(self);
+        let sigma = error_model.sigma(self);
         normpdf(self.observation, self.prediction, sigma)
     }
 

@@ -372,7 +372,11 @@ impl Row {
                         })? - 1,
                     ))
                 };
-                if self.addl.is_some() && self.ii.is_some() && self.addl.unwrap_or(0) != 0 && self.ii.unwrap_or(0.0) > 0.0 {
+                if self.addl.is_some()
+                    && self.ii.is_some()
+                    && self.addl.unwrap_or(0) != 0
+                    && self.ii.unwrap_or(0.0) > 0.0
+                {
                     let mut ev = event.clone();
                     let interval = &self.ii.unwrap().abs();
                     let repetitions = &self.addl.unwrap().abs();
@@ -502,7 +506,7 @@ mod tests {
         let s1_times = first_scenario
             .events()
             .iter()
-            .map(|e| e.get_time())
+            .map(|e| e.time())
             .collect::<Vec<_>>();
 
         // Negative ADDL, observations shifted forward
@@ -515,7 +519,7 @@ mod tests {
         let s2_times = second_scenario
             .events()
             .iter()
-            .map(|e| e.get_time())
+            .map(|e| e.time())
             .collect::<Vec<_>>();
 
         // Positive ADDL, no shift in observations

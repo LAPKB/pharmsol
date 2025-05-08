@@ -36,13 +36,13 @@ pub struct Data {
     subjects: Vec<Subject>,
 }
 impl Data {
-    /// Constructs a new `Data` object from a vector of `Subject`s
+    /// Constructs a new [Data] object from a vector of [Subject]s
     ///
-    /// It is recommended to construct subjects using the `SubjectBuilder` to ensure proper data formatting.
+    /// It is recommended to construct subjects using the [SubjectBuilder] to ensure proper data formatting.
     ///
     /// # Arguments
     ///
-    /// * `subjects` - Vector of subjects to include in the dataset
+    /// * `subjects` - Vector of [Subject]s to include in the dataset
     pub fn new(subjects: Vec<Subject>) -> Self {
         Data { subjects }
     }
@@ -325,6 +325,15 @@ impl Data {
     // }
 }
 
+impl IntoIterator for Data {
+    type Item = Subject;
+    type IntoIter = std::vec::IntoIter<Subject>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.subjects.into_iter()
+    }
+}
+
 /// A subject in a pharmacometric dataset
 ///
 /// A [Subject] represents a single individual with one or more occasions of data,
@@ -342,7 +351,11 @@ impl Subject {
     /// * `id` - The subject identifier
     /// * `occasions` - Vector of occasions for this subject
     pub(crate) fn new(id: String, occasions: Vec<Occasion>) -> Self {
-        Subject { id, occasions }
+        let mut subject = Subject { id, occasions };
+        for occasion in subject.occasions.iter_mut() {
+            occasion.sort();
+        }
+        subject
     }
 
     /// Get a vector of references to all occasions for this subject
@@ -378,6 +391,16 @@ impl Subject {
     /// A new subject containing the specified occasions
     pub fn from_occasions(id: String, occasions: Vec<Occasion>) -> Self {
         Subject { id, occasions }
+    }
+
+    /// Iterate over a mutable reference to the occasions
+    pub fn occasions_mut(&mut self) -> &mut Vec<Occasion> {
+        &mut self.occasions
+    }
+
+    /// Get a mutable iterator to the occasions
+    pub fn occasions_iter_mut(&mut self) -> std::slice::IterMut<Occasion> {
+        self.occasions.iter_mut()
     }
 }
 
@@ -560,15 +583,39 @@ impl Occasion {
         self.events.last()
     }
 
-    // fn get_infusions_vec(&self) -> Vec<Infusion> {
-    //     self.events
-    //         .iter()
-    //         .filter_map(|event| match event {
-    //             Event::Infusion(infusion) => Some(infusion.clone()),
-    //             _ => None,
-    //         })
-    //         .collect()
-    // }
+    /// Get a mutable reference to the events
+    pub fn events_mut(&mut self) -> &mut Vec<Event> {
+        &mut self.events
+    }
+
+    /// Get a mutable iterator to the events
+    pub fn events_iter_mut(&mut self) -> std::slice::IterMut<Event> {
+        self.events.iter_mut()
+    }
+
+    pub(crate) fn initial_time(&self) -> f64 {
+        //TODO this can be pre-computed when the struct is initially created
+        self.events
+            .iter()
+            .filter_map(|event| match event {
+                Event::Observation(observation) => Some(observation.time()),
+                Event::Bolus(bolus) => Some(bolus.time()),
+                Event::Infusion(infusion) => Some(infusion.time()),
+            })
+            .min_by(|a, b| a.partial_cmp(b).unwrap())
+            .unwrap_or(0.0)
+    }
+
+    pub(crate) fn infusions_ref(&self) -> Vec<&Infusion> {
+        //TODO this can be pre-computed when the struct is initially created
+        self.events
+            .iter()
+            .filter_map(|event| match event {
+                Event::Infusion(infusion) => Some(infusion),
+                _ => None,
+            })
+            .collect()
+    }
 }
 
 impl fmt::Display for Data {
