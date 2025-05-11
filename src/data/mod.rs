@@ -30,7 +30,7 @@ pub mod builder;
 pub mod covariate;
 pub mod error_model;
 pub mod event;
-pub(crate) mod parse_pmetrics;
+pub mod parser;
 pub mod structs;
 pub use covariate::*;
 pub use error_model::*;
