@@ -1,10 +1,12 @@
+use serde::{Deserialize, Serialize};
+
 use crate::simulator::likelihood::Prediction;
 
 /// Model for calculating observation errors in pharmacometric analyses
 ///
 /// An [ErrorModel] defines how the standard deviation of observations is calculated
 /// based on the type of error model used and its parameters.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ErrorModel {
     /// Additive error model, where error is independent of concentration
     ///
