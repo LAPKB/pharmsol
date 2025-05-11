@@ -153,3 +153,47 @@ impl ErrorModel {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Observation;
+
+    #[test]
+    fn test_additive_error_model() {
+        let observation = Observation::new(0.0, 20.0, 0, None, false);
+        let prediction = observation.to_prediction(10.0, vec![]);
+        let model = ErrorModel::additive((1.0, 0.0, 0.0, 0.0), 5.0);
+        assert_eq!(model.sigma(&prediction), (26.0_f64).sqrt());
+    }
+
+    #[test]
+    fn test_proportional_error_model() {
+        let observation = Observation::new(0.0, 20.0, 0, None, false);
+        let prediction = observation.to_prediction(10.0, vec![]);
+        let model = ErrorModel::proportional((1.0, 0.0, 0.0, 0.0), 2.0);
+        assert_eq!(model.sigma(&prediction), 2.0);
+    }
+
+    #[test]
+    fn test_polynomial() {
+        let model = ErrorModel::additive((1.0, 2.0, 3.0, 4.0), 5.0);
+        assert_eq!(model.polynomial(), (1.0, 2.0, 3.0, 4.0));
+    }
+
+    #[test]
+    fn test_set_polynomial() {
+        let mut model = ErrorModel::additive((1.0, 2.0, 3.0, 4.0), 5.0);
+        assert_eq!(model.polynomial(), (1.0, 2.0, 3.0, 4.0));
+        model.set_polynomial((5.0, 6.0, 7.0, 8.0));
+        assert_eq!(model.polynomial(), (5.0, 6.0, 7.0, 8.0));
+    }
+
+    #[test]
+    fn test_set_scalar() {
+        let mut model = ErrorModel::additive((1.0, 2.0, 3.0, 4.0), 5.0);
+        assert_eq!(model.scalar(), 5.0);
+        model.set_scalar(10.0);
+        assert_eq!(model.scalar(), 10.0);
+    }
+}

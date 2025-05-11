@@ -7,7 +7,7 @@ use crate::{
     data::{Covariates, Infusion},
     error_model::ErrorModel,
     prelude::simulator::SubjectPredictions,
-    simulator::{likelihood::ToPrediction, DiffEq, Fa, Init, Lag, Neqs, Out, M, V},
+    simulator::{DiffEq, Fa, Init, Lag, Neqs, Out, M, V},
     Event, Observation, Subject,
 };
 use cached::proc_macro::cached;
@@ -243,7 +243,7 @@ impl Equation for ODE {
                         );
                         let pred = y[observation.outeq()];
                         let pred =
-                            observation.to_obs_pred(pred, solver.state().y.as_slice().to_vec());
+                            observation.to_prediction(pred, solver.state().y.as_slice().to_vec());
                         if let Some(error_model) = error_model {
                             likelihood.push(pred.likelihood(error_model));
                         }

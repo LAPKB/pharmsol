@@ -140,7 +140,7 @@ impl EquationPriv for Analytical {
             &mut y,
         );
         let pred = y[observation.outeq()];
-        let pred = observation.to_obs_pred(pred, x.as_slice().to_vec());
+        let pred = observation.to_prediction(pred, x.as_slice().to_vec());
         if let Some(error_model) = error_model {
             likelihood.push(pred.likelihood(error_model));
         }
