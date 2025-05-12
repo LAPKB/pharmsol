@@ -1,6 +1,6 @@
 use crate::{
     data::{error_model::ErrorModel, Observation},
-    Data, Equation, ErrorModelError, Predictions,
+    Data, Equation, ErrorModelError, PharmsolError, Predictions,
 };
 
 use indicatif::{ProgressBar, ProgressStyle};
@@ -44,11 +44,17 @@ impl SubjectPredictions {
     ///
     /// # Returns
     /// The product of all individual prediction likelihoods
-    pub fn likelihood(&self, error_model: &ErrorModel) -> Result<f64, ErrorModelError> {
-        self.predictions
-            .iter()
-            .map(|p| p.likelihood(error_model))
-            .product()
+    pub fn likelihood(&self, error_model: &ErrorModel) -> Result<f64, PharmsolError> {
+        match self.predictions.is_empty() {
+            true => Ok(0.0),
+            false => self
+                .predictions
+                .iter()
+                .map(|p| p.likelihood(error_model))
+                .collect::<Result<Vec<f64>, _>>()
+                .map(|likelihoods| likelihoods.iter().product())
+                .map_err(PharmsolError::from),
+        }
     }
 
     /// Add a new prediction to the collection.
@@ -149,7 +155,7 @@ pub fn psi(
     error_model: &ErrorModel,
     progress: bool,
     cache: bool,
-) -> Array2<f64> {
+) -> Result<Array2<f64>, PharmsolError> {
     let mut pred: Array2<f64> = Array2::default((subjects.len(), support_points.nrows()).f());
     let subjects = subjects.get_subjects();
     let pb = match progress {
@@ -181,7 +187,7 @@ pub fn psi(
                         support_points.row(j).to_vec().as_ref(),
                         error_model,
                         cache,
-                    );
+                    )?;
                     element.fill(likelihood);
                     if let Some(pb_ref) = pb.as_ref() {
                         pb_ref.inc(1);

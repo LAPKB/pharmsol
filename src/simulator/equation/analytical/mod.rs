@@ -176,7 +176,7 @@ fn spphash(spp: &[f64]) -> u64 {
 }
 #[inline(always)]
 #[cached(
-    ty = "UnboundCache<String, SubjectPredictions>",
+    ty = "UnboundCache<String, Result<SubjectPredictions, PharmsolError>>",
     create = "{ UnboundCache::with_capacity(100_000) }",
     convert = r#"{ format!("{}{}", subject.id(), spphash(support_point)) }"#
 )]
@@ -184,8 +184,8 @@ fn _subject_predictions(
     ode: &Analytical,
     subject: &Subject,
     support_point: &Vec<f64>,
-) -> SubjectPredictions {
-    ode.simulate_subject(subject, support_point, None).0
+) -> Result<SubjectPredictions, PharmsolError> {
+    Ok(ode.simulate_subject(subject, support_point, None)?.0)
 }
 
 fn _estimate_likelihood(
@@ -199,6 +199,6 @@ fn _estimate_likelihood(
         _subject_predictions(ode, subject, support_point)
     } else {
         _subject_predictions_no_cache(ode, subject, support_point)
-    };
+    }?;
     ypred.likelihood(error_model)
 }

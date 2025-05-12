@@ -152,7 +152,7 @@ impl ErrorModel {
     }
 }
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 pub enum ErrorModelError {
     /// Error when the model is not valid
     #[error("The computed standard deviation is negative.")]

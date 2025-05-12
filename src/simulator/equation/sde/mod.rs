@@ -262,7 +262,13 @@ impl EquationPriv for SDE {
         if let Some(em) = error_model {
             let mut q: Vec<f64> = Vec::with_capacity(self.nparticles);
 
-            pred.iter().for_each(|p| q.push(p.likelihood(em)?));
+            pred.iter().for_each(|p| {
+                let lik = p.likelihood(em);
+                match lik {
+                    Ok(l) => q.push(l),
+                    Err(e) => return e,
+                }
+            });
             let sum_q: f64 = q.iter().sum();
             let w: Vec<f64> = q.iter().map(|qi| qi / sum_q).collect();
             let i = sysresample(&w);
@@ -272,6 +278,7 @@ impl EquationPriv for SDE {
             // let qq: Vec<f64> = i.iter().map(|&i| q[i]).collect();
             // likelihood.push(qq.iter().sum::<f64>() / self.nparticles as f64);
         }
+        Ok(())
     }
     #[inline(always)]
     fn initial_state(

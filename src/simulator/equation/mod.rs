@@ -185,8 +185,15 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
     ///
     /// # Returns
     /// Predicted concentrations
-    fn estimate_predictions(&self, subject: &Subject, support_point: &Vec<f64>) -> Self::P {
-        self.simulate_subject(subject, support_point, None).0
+    fn estimate_predictions(
+        &self,
+        subject: &Subject,
+        support_point: &Vec<f64>,
+    ) -> Result<Self::P, PharmsolError> {
+        Ok(self
+            .simulate_subject(subject, support_point, None)
+            .unwrap()
+            .0)
     }
 
     /// Simulate a subject with given parameters and optionally calculate likelihood.
@@ -203,7 +210,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
         subject: &Subject,
         support_point: &Vec<f64>,
         error_model: Option<&ErrorModel>,
-    ) -> (Self::P, Option<f64>) {
+    ) -> Result<(Self::P, Option<f64>), PharmsolError> {
         let lag = self.get_lag(support_point);
         let fa = self.get_fa(support_point);
         let mut output = Self::P::new(self.nparticles());
@@ -228,6 +235,6 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
             }
         }
         let ll = error_model.map(|_| likelihood.iter().product::<f64>());
-        (output, ll)
+        Ok((output, ll))
     }
 }
