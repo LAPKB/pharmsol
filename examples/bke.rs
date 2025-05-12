@@ -76,10 +76,10 @@ fn main() {
 
     // Display predictions
     println!("Predictions:");
-    println!("Analytical\tODE");
+    println!("Analytical\tODE\tDifference");
     op_an
         .flat_predictions()
         .iter()
         .zip(op_ode.flat_predictions())
-        .for_each(|(a, b)| println!("{:.9}\t{:.9}", a, b));
+        .for_each(|(a, b)| println!("{:.9}\t{:.9}\t{:.9}", a, b, a - b));
 }
