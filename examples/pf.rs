@@ -30,8 +30,12 @@ fn main() {
     );
     let em = ErrorModel::additive((0.0, 0.05, 0.0, 0.0), 0.0);
 
-    let ll = sde.estimate_likelihood(&subject, &vec![1.0], &em, false);
+    let ll = sde
+        .estimate_likelihood(&subject, &vec![1.0], &em, false)
+        .unwrap();
 
-    dbg!(sde.estimate_likelihood(&subject, &vec![1.0], &em, false));
+    dbg!(sde
+        .estimate_likelihood(&subject, &vec![1.0], &em, false)
+        .unwrap());
     println!("{ll:#?}");
 }

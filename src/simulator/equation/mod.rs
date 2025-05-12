@@ -114,7 +114,7 @@ pub(crate) trait EquationPriv: EquationTypes {
         infusions: &mut Vec<Infusion>,
         likelihood: &mut Vec<f64>,
         output: &mut Self::P,
-    ) {
+    ) -> Result<(), PharmsolError> {
         match event {
             Event::Bolus(bolus) => {
                 x.add_bolus(bolus.input(), bolus.amount());
@@ -132,7 +132,7 @@ pub(crate) trait EquationPriv: EquationTypes {
                     x,
                     likelihood,
                     output,
-                );
+                )?;
             }
         }
 
@@ -144,8 +144,9 @@ pub(crate) trait EquationPriv: EquationTypes {
                 infusions,
                 event.time(),
                 next_event.time(),
-            );
+            )?;
         }
+        Ok(())
     }
 }
 
@@ -231,7 +232,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
                     &mut infusions,
                     &mut likelihood,
                     &mut output,
-                );
+                )?;
             }
         }
         let ll = error_model.map(|_| likelihood.iter().product::<f64>());

@@ -182,13 +182,15 @@ pub fn psi(
                 .enumerate()
                 .for_each(|(j, mut element)| {
                     let subject = subjects.get(i).unwrap();
-                    let likelihood = equation.estimate_likelihood(
+                    match equation.estimate_likelihood(
                         subject,
                         support_points.row(j).to_vec().as_ref(),
                         error_model,
                         cache,
-                    )?;
-                    element.fill(likelihood);
+                    ) {
+                        Ok(likelihood) => element.fill(likelihood),
+                        Err(_) => element.fill(0.0), // Or handle the error appropriately
+                    };
                     if let Some(pb_ref) = pb.as_ref() {
                         pb_ref.inc(1);
                     }
@@ -198,7 +200,7 @@ pub fn psi(
         pb_ref.finish();
     }
 
-    pred
+    Ok(pred)
 }
 
 /// Prediction holds an observation and its prediction

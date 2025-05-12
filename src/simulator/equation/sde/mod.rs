@@ -266,7 +266,7 @@ impl EquationPriv for SDE {
                 let lik = p.likelihood(em);
                 match lik {
                     Ok(l) => q.push(l),
-                    Err(e) => return e,
+                    Err(e) => panic!("Error in likelihood calculation: {:?}", e),
                 }
             });
             let sum_q: f64 = q.iter().sum();
@@ -323,7 +323,7 @@ impl Equation for SDE {
         support_point: &Vec<f64>,
         error_model: &ErrorModel,
         cache: bool,
-    ) -> f64 {
+    ) -> Result<f64, PharmsolError> {
         if cache {
             _estimate_likelihood(self, subject, support_point, error_model)
         } else {
@@ -347,7 +347,7 @@ fn spphash(spp: &[f64]) -> u64 {
 
 #[inline(always)]
 #[cached(
-    ty = "UnboundCache<String, f64>",
+    ty = "UnboundCache<String, Result<f64, PharmsolError>>",
     create = "{ UnboundCache::with_capacity(100_000) }",
     convert = r#"{ format!("{}{}{}", subject.id(), spphash(support_point), error_model.scalar()) }"#
 )]
@@ -356,9 +356,9 @@ fn _estimate_likelihood(
     subject: &Subject,
     support_point: &Vec<f64>,
     error_model: &ErrorModel,
-) -> f64 {
-    let ypred = sde.simulate_subject(subject, support_point, Some(error_model));
-    ypred.1.unwrap()
+) -> Result<f64, PharmsolError> {
+    let ypred = sde.simulate_subject(subject, support_point, Some(error_model))?;
+    Ok(ypred.1.unwrap())
 }
 
 /// Performs systematic resampling of particles based on weights.

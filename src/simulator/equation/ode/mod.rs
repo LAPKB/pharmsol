@@ -245,7 +245,7 @@ impl Equation for ODE {
                         let pred =
                             observation.to_prediction(pred, solver.state().y.as_slice().to_vec());
                         if let Some(error_model) = error_model {
-                            likelihood.push(pred.likelihood(error_model));
+                            likelihood.push(pred.likelihood(error_model)?);
                         }
                         output.add_prediction(pred);
                         //END PROCESS_OBSERVATION

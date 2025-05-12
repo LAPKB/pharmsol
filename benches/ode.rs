@@ -32,7 +32,10 @@ fn one_compartment() {
         },
         (2, 1),
     );
-    black_box(ode.estimate_predictions(&subject, &vec![0.3, 0.5, 0.1, 70.0]));
+    black_box(
+        ode.estimate_predictions(&subject, &vec![0.3, 0.5, 0.1, 70.0])
+            .unwrap(),
+    );
 }
 
 fn two_compartment() {
@@ -55,7 +58,10 @@ fn two_compartment() {
         },
         (2, 1),
     );
-    black_box(ode.estimate_predictions(&subject, &vec![0.3, 0.5, 0.1, 0.04, 0.08, 70.0]));
+    black_box(
+        ode.estimate_predictions(&subject, &vec![0.3, 0.5, 0.1, 0.04, 0.08, 70.0])
+            .unwrap(),
+    );
 }
 
 fn criterion_benchmark(c: &mut Criterion) {

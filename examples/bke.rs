@@ -42,25 +42,33 @@ fn main() {
     );
 
     let em = ErrorModel::additive((0.0, 0.05, 0.0, 0.0), 0.0);
-    let ll = an.estimate_likelihood(
-        &subject,
-        &vec![1.02282724609375, 194.51904296875],
-        &em,
-        false,
-    );
-    let op = an.estimate_predictions(&subject, &vec![1.02282724609375, 194.51904296875]);
+    let ll = an
+        .estimate_likelihood(
+            &subject,
+            &vec![1.02282724609375, 194.51904296875],
+            &em,
+            false,
+        )
+        .unwrap();
+    let op = an
+        .estimate_predictions(&subject, &vec![1.02282724609375, 194.51904296875])
+        .unwrap();
     println!(
         "Analytical: \n-2ll:{:#?}\n{:#?}",
         -2.0 * ll,
         op.flat_predictions()
     );
 
-    let ll = ode.estimate_likelihood(
-        &subject,
-        &vec![1.02282724609375, 194.51904296875],
-        &em,
-        false,
-    );
-    let op = ode.estimate_predictions(&subject, &vec![1.02282724609375, 194.51904296875]);
+    let ll = ode
+        .estimate_likelihood(
+            &subject,
+            &vec![1.02282724609375, 194.51904296875],
+            &em,
+            false,
+        )
+        .unwrap();
+    let op = ode
+        .estimate_predictions(&subject, &vec![1.02282724609375, 194.51904296875])
+        .unwrap();
     println!("ODE: \n-2ll:{:#?}\n{:#?}", -2.0 * ll, op.flat_predictions());
 }
