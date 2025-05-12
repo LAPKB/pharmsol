@@ -1,6 +1,6 @@
 use crate::{
     data::{error_model::ErrorModel, Observation},
-    Data, Equation, Predictions,
+    Data, Equation, ErrorModelError, Predictions,
 };
 
 use indicatif::{ProgressBar, ProgressStyle};
@@ -44,7 +44,7 @@ impl SubjectPredictions {
     ///
     /// # Returns
     /// The product of all individual prediction likelihoods
-    pub fn likelihood(&self, error_model: &ErrorModel) -> f64 {
+    pub fn likelihood(&self, error_model: &ErrorModel) -> Result<f64, ErrorModelError> {
         self.predictions
             .iter()
             .map(|p| p.likelihood(error_model))
@@ -90,6 +90,7 @@ impl SubjectPredictions {
 }
 
 /// Probability density function of the normal distribution
+#[inline(always)]
 fn normpdf(obs: f64, pred: f64, sigma: f64) -> f64 {
     (FRAC_1_SQRT_2PI / sigma) * (-((obs - pred) * (obs - pred)) / (2.0 * sigma * sigma)).exp()
 }
@@ -252,9 +253,10 @@ impl Prediction {
     }
 
     /// Calculate the likelihood of this prediction given an error model.
-    pub fn likelihood(&self, error_model: &ErrorModel) -> f64 {
-        let sigma = error_model.sigma(self);
-        normpdf(self.observation, self.prediction, sigma)
+    pub fn likelihood(&self, error_model: &ErrorModel) -> Result<f64, ErrorModelError> {
+        let sigma = error_model.sigma(self)?;
+        let likelihood = normpdf(self.observation, self.prediction, sigma);
+        Ok(likelihood)
     }
 
     /// Get the state vector at this prediction point.

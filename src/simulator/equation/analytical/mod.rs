@@ -6,6 +6,7 @@ pub use one_compartment_models::*;
 pub use three_compartment_models::*;
 pub use two_compartment_models::*;
 
+use crate::PharmsolError;
 use crate::{
     data::Covariates, simulator::*, Equation, EquationPriv, EquationTypes, Observation, Subject,
 };
@@ -103,9 +104,9 @@ impl EquationPriv for Analytical {
         infusions: &Vec<Infusion>,
         ti: f64,
         tf: f64,
-    ) {
+    ) -> Result<(), PharmsolError> {
         if ti == tf {
-            return;
+            return Ok(());
         }
         let mut support_point = V::from_vec(support_point.to_owned());
         let mut rateiv = V::from_vec(vec![0.0, 0.0, 0.0]);
@@ -117,6 +118,7 @@ impl EquationPriv for Analytical {
         }
         (self.seq_eq)(&mut support_point, tf, covariates);
         *x = (self.eq)(x, &support_point, tf - ti, rateiv, covariates);
+        Ok(())
     }
     #[inline(always)]
     fn process_observation(
@@ -129,7 +131,7 @@ impl EquationPriv for Analytical {
         x: &mut Self::S,
         likelihood: &mut Vec<f64>,
         output: &mut Self::P,
-    ) {
+    ) -> Result<(), PharmsolError> {
         let mut y = V::zeros(self.get_nouteqs());
         let out = &self.out;
         (out)(
@@ -142,9 +144,10 @@ impl EquationPriv for Analytical {
         let pred = y[observation.outeq()];
         let pred = observation.to_prediction(pred, x.as_slice().to_vec());
         if let Some(error_model) = error_model {
-            likelihood.push(pred.likelihood(error_model));
+            likelihood.push(pred.likelihood(error_model)?);
         }
         output.add_prediction(pred);
+        Ok(())
     }
     #[inline(always)]
     fn initial_state(&self, spp: &Vec<f64>, covariates: &Covariates, occasion_index: usize) -> V {
@@ -164,7 +167,7 @@ impl Equation for Analytical {
         support_point: &Vec<f64>,
         error_model: &ErrorModel,
         cache: bool,
-    ) -> f64 {
+    ) -> Result<f64, PharmsolError> {
         _estimate_likelihood(self, subject, support_point, error_model, cache)
     }
 }
@@ -191,7 +194,7 @@ fn _estimate_likelihood(
     support_point: &Vec<f64>,
     error_model: &ErrorModel,
     cache: bool,
-) -> f64 {
+) -> Result<f64, PharmsolError> {
     let ypred = if cache {
         _subject_predictions(ode, subject, support_point)
     } else {

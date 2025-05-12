@@ -1,6 +1,6 @@
-use serde::{Deserialize, Serialize};
-
 use crate::simulator::likelihood::Prediction;
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 /// Model for calculating observation errors in pharmacometric analyses
 ///
@@ -123,7 +123,7 @@ impl ErrorModel {
     /// # Panics
     ///
     /// Panics if the computed standard deviation is NaN or negative
-    pub fn sigma(&self, prediction: &Prediction) -> f64 {
+    pub fn sigma(&self, prediction: &Prediction) -> Result<f64, ErrorModelError> {
         // Get appropriate polynomial coefficients from prediction or default
         let (c0, c1, c2, c3) = match prediction.errorpoly() {
             Some(poly) => poly,
@@ -137,21 +137,28 @@ impl ErrorModel {
             + c3 * prediction.observation().powi(3);
 
         // Calculate standard deviation based on error model type
-        let res = match self {
+        let sigma = match self {
             Self::Additive { lambda, .. } => (alpha.powi(2) + lambda.powi(2)).sqrt(),
             Self::Proportional { gamma, .. } => gamma * alpha,
         };
 
-        if !res.is_finite() || res < 0.0 {
-            panic!(
-                "The computed standard deviation is either non-finite or negative. The standard devation for the prediction {} is {}",
-                prediction,
-                res
-            );
+        if sigma < 0.0 {
+            Err(ErrorModelError::NegativeSigma)
+        } else if !sigma.is_finite() {
+            Err(ErrorModelError::NonFiniteSigma)
         } else {
-            res
+            Ok(sigma)
         }
     }
+}
+
+#[derive(Error, Debug)]
+pub enum ErrorModelError {
+    /// Error when the model is not valid
+    #[error("The computed standard deviation is negative.")]
+    NegativeSigma,
+    #[error("The computed standard deviation is non-finite")]
+    NonFiniteSigma,
 }
 
 #[cfg(test)]
@@ -164,7 +171,7 @@ mod tests {
         let observation = Observation::new(0.0, 20.0, 0, None, false);
         let prediction = observation.to_prediction(10.0, vec![]);
         let model = ErrorModel::additive((1.0, 0.0, 0.0, 0.0), 5.0);
-        assert_eq!(model.sigma(&prediction), (26.0_f64).sqrt());
+        assert_eq!(model.sigma(&prediction).unwrap(), (26.0_f64).sqrt());
     }
 
     #[test]
@@ -172,7 +179,7 @@ mod tests {
         let observation = Observation::new(0.0, 20.0, 0, None, false);
         let prediction = observation.to_prediction(10.0, vec![]);
         let model = ErrorModel::proportional((1.0, 0.0, 0.0, 0.0), 2.0);
-        assert_eq!(model.sigma(&prediction), 2.0);
+        assert_eq!(model.sigma(&prediction).unwrap(), 2.0);
     }
 
     #[test]

@@ -18,6 +18,8 @@ use crate::{
     Subject,
 };
 
+use crate::PharmsolError;
+
 use super::{Equation, EquationPriv, EquationTypes, Predictions, State};
 
 /// Simulate a stochastic differential equation (SDE) event.
@@ -207,7 +209,7 @@ impl EquationPriv for SDE {
         infusions: &Vec<Infusion>,
         ti: f64,
         tf: f64,
-    ) {
+    ) -> Result<(), PharmsolError> {
         state.par_iter_mut().for_each(|particle| {
             *particle = simulate_sde_event(
                 &self.drift,
@@ -220,6 +222,7 @@ impl EquationPriv for SDE {
                 tf,
             );
         });
+        Ok(())
     }
     fn nparticles(&self) -> usize {
         self.nparticles
@@ -239,7 +242,7 @@ impl EquationPriv for SDE {
         x: &mut Self::S,
         likelihood: &mut Vec<f64>,
         output: &mut Self::P,
-    ) {
+    ) -> Result<(), PharmsolError> {
         let mut pred = vec![Prediction::default(); self.nparticles];
         pred.par_iter_mut().enumerate().for_each(|(i, p)| {
             let mut y = V::zeros(self.get_nouteqs());
@@ -259,7 +262,7 @@ impl EquationPriv for SDE {
         if let Some(em) = error_model {
             let mut q: Vec<f64> = Vec::with_capacity(self.nparticles);
 
-            pred.iter().for_each(|p| q.push(p.likelihood(em)));
+            pred.iter().for_each(|p| q.push(p.likelihood(em)?));
             let sum_q: f64 = q.iter().sum();
             let w: Vec<f64> = q.iter().map(|qi| qi / sum_q).collect();
             let i = sysresample(&w);

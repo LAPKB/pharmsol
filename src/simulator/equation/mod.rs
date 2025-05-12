@@ -8,7 +8,9 @@ pub use meta::*;
 pub use ode::*;
 pub use sde::*;
 
-use crate::{error_model::ErrorModel, Covariates, Event, Infusion, Observation, Subject};
+use crate::{
+    error_model::ErrorModel, Covariates, Event, Infusion, Observation, PharmsolError, Subject,
+};
 
 use super::likelihood::Prediction;
 
@@ -71,7 +73,7 @@ pub(crate) trait EquationPriv: EquationTypes {
         infusions: &Vec<Infusion>,
         start_time: f64,
         end_time: f64,
-    );
+    ) -> Result<(), PharmsolError>;
     fn nparticles(&self) -> usize {
         1
     }
@@ -91,7 +93,7 @@ pub(crate) trait EquationPriv: EquationTypes {
         x: &mut Self::S,
         likelihood: &mut Vec<f64>,
         output: &mut Self::P,
-    );
+    ) -> Result<(), PharmsolError>;
 
     fn initial_state(
         &self,
@@ -173,7 +175,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
         support_point: &Vec<f64>,
         error_model: &ErrorModel,
         cache: bool,
-    ) -> f64;
+    ) -> Result<f64, PharmsolError>;
 
     /// Generate predictions for a subject with given parameters.
     ///
