@@ -9,14 +9,14 @@ use thiserror::Error;
 
 /// Custom error type for the module
 #[allow(private_interfaces)]
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 pub enum PmetricsError {
     /// Error encountered when reading CSV data
     #[error("CSV error: {0}")]
-    ReadError(#[from] csv::Error),
+    CSVError(String),
     /// Error during data deserialization
     #[error("Parse error: {0}")]
-    SerdeError(#[from] serde::de::value::Error),
+    SerdeError(String),
     /// Encountered an unknown EVID value
     #[error("Unknown EVID: {evid} for ID {id} at time {time}")]
     UnknownEvid { evid: isize, id: String, time: f64 },
@@ -83,23 +83,23 @@ pub fn read_pmetrics(path: impl Into<String>) -> Result<Data, PmetricsError> {
     let mut reader = csv::ReaderBuilder::new()
         .comment(Some(b'#'))
         .has_headers(true)
-        .from_path(path)?;
-
+        .from_path(&path)
+        .map_err(|e| PmetricsError::CSVError(e.to_string()))?;
     // Convert headers to lowercase
     let headers = reader
-        .headers()?
+        .headers()
+        .map_err(|e| PmetricsError::CSVError(e.to_string()))?
         .iter()
         .map(|h| h.to_lowercase())
         .collect::<Vec<_>>();
     reader.set_headers(csv::StringRecord::from(headers));
 
     // This is the object we are building, which can be converted to [Data]
-    let mut subjects: Vec<Subject> = Vec::new();
-
     // Read the datafile into a hashmap of rows by ID
     let mut rows_map: HashMap<String, Vec<Row>> = HashMap::new();
+    let mut subjects: Vec<Subject> = Vec::new();
     for row_result in reader.deserialize() {
-        let row: Row = row_result?;
+        let row: Row = row_result.map_err(|e| PmetricsError::CSVError(e.to_string()))?;
 
         rows_map.entry(row.id.clone()).or_default().push(row);
     }
