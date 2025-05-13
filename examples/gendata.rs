@@ -72,7 +72,8 @@ fn main() {
         data.push(sb.build());
     }
     let data = data::Data::new(data);
-    data.write_pmetrics(&File::create(Path::new("test.csv")).unwrap());
+    data.write_pmetrics(&File::create(Path::new("test.csv")).unwrap())
+        .unwrap();
     // let mut theta = Array2::zeros((1, 3));
     // theta[[0, 0]] = 0.7;
     // theta[[0, 1]] = 0.1;

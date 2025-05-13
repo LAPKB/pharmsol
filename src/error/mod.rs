@@ -12,4 +12,6 @@ pub enum PharmsolError {
     NdarrayShapeError(#[from] ShapeError),
     #[error("Error parsing Pmetrics datafile: {0}")]
     PmetricsError(#[from] PmetricsError),
+    #[error("Other error: {0}")]
+    OtherError(String),
 }
