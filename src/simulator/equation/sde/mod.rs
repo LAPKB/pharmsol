@@ -255,7 +255,7 @@ impl EquationPriv for SDE {
             );
             *p = observation.to_prediction(y[observation.outeq()], x[i].as_slice().to_vec());
         });
-        let out = Array2::from_shape_vec((self.nparticles, 1), pred.clone()).unwrap();
+        let out = Array2::from_shape_vec((self.nparticles, 1), pred.clone())?;
         *output = concatenate(Axis(1), &[output.view(), out.view()]).unwrap();
         //e = y[t] .- x[:,1]
         // q = pdf.(Distributions.Normal(0, 0.5), e)
