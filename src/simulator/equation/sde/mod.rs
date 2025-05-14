@@ -347,9 +347,10 @@ fn spphash(spp: &[f64]) -> u64 {
 
 #[inline(always)]
 #[cached(
-    ty = "UnboundCache<String, Result<f64, PharmsolError>>",
+    ty = "UnboundCache<String, f64>",
     create = "{ UnboundCache::with_capacity(100_000) }",
-    convert = r#"{ format!("{}{}{}", subject.id(), spphash(support_point), error_model.scalar()) }"#
+    convert = r#"{ format!("{}{}{}", subject.id(), spphash(support_point), error_model.scalar()) }"#,
+    result = "true"
 )]
 fn _estimate_likelihood(
     sde: &SDE,

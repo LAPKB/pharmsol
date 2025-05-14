@@ -285,13 +285,13 @@ impl Default for Prediction {
     }
 }
 
-impl Into<Observation> for Prediction {
-    fn into(self) -> Observation {
+impl From<Prediction> for Observation {
+    fn from(prediction: Prediction) -> Self {
         Observation::new(
-            self.time,
-            self.observation,
-            self.outeq,
-            self.errorpoly,
+            prediction.time,
+            prediction.observation,
+            prediction.outeq,
+            prediction.errorpoly,
             false,
         )
     }
