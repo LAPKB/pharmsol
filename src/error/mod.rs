@@ -14,4 +14,6 @@ pub enum PharmsolError {
     PmetricsError(#[from] PmetricsError),
     #[error("Other error: {0}")]
     OtherError(String),
+    #[error("Error setting up progress bar: {0}")]
+    ProgressBarError(String),
 }

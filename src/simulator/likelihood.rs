@@ -164,8 +164,7 @@ pub fn psi(
             pb.set_style(
                 ProgressStyle::with_template(
                     "Simulating subjects...\n[{elapsed_precise}] {bar:40.green} {percent}% ETA:{eta}",
-                )
-                .unwrap()
+                ).map_err(|e| PharmsolError::ProgressBarError(e.to_string()))?
                 .progress_chars("##-"),
             );
             Some(pb)
