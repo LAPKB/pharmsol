@@ -174,11 +174,13 @@ impl Equation for Analytical {
 fn spphash(spp: &[f64]) -> u64 {
     spp.iter().fold(0, |acc, x| acc + x.to_bits())
 }
+
 #[inline(always)]
 #[cached(
-    ty = "UnboundCache<String, Result<SubjectPredictions, PharmsolError>>",
+    ty = "UnboundCache<String, SubjectPredictions>",
     create = "{ UnboundCache::with_capacity(100_000) }",
-    convert = r#"{ format!("{}{}", subject.id(), spphash(support_point)) }"#
+    convert = r#"{ format!("{}{}", subject.id(), spphash(support_point)) }"#,
+    result = "true"
 )]
 fn _subject_predictions(
     ode: &Analytical,
