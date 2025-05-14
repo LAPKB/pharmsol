@@ -191,10 +191,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
         subject: &Subject,
         support_point: &Vec<f64>,
     ) -> Result<Self::P, PharmsolError> {
-        Ok(self
-            .simulate_subject(subject, support_point, None)
-            .unwrap()
-            .0)
+        Ok(self.simulate_subject(subject, support_point, None)?.0)
     }
 
     /// Simulate a subject with given parameters and optionally calculate likelihood.
