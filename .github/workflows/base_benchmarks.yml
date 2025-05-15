@@ -2,14 +2,14 @@ name: Benchmark (main)
 
 on:
   push:
-    branches: main
+    branches: [main]
 
 jobs:
   benchmark_base_branch:
     name: Continuous Benchmarking with Bencher
     permissions:
       checks: write
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
       - uses: bencherdev/bencher@main
@@ -19,7 +19,7 @@ jobs:
           --project pharmsol \
           --token '${{ secrets.BENCHER_API_TOKEN }}' \
           --branch main \
-          --testbed ubuntu-latest \
+          --testbed ${{ runner.name }} \
           --threshold-measure latency \
           --threshold-test t_test \
           --threshold-max-sample-size 64 \
