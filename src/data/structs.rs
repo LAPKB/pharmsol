@@ -1,4 +1,4 @@
-use crate::data::*;
+use crate::{data::*, PharmsolError};
 use csv::WriterBuilder;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt};
@@ -83,7 +83,7 @@ impl Data {
     /// # Arguments
     ///
     /// * `file` - The file to write to
-    pub fn write_pmetrics(&self, file: &std::fs::File) {
+    pub fn write_pmetrics(&self, file: &std::fs::File) -> Result<(), PharmsolError> {
         let mut writer = WriterBuilder::new().has_headers(true).from_writer(file);
 
         writer
@@ -91,7 +91,8 @@ impl Data {
                 "ID", "EVID", "TIME", "DUR", "DOSE", "ADDL", "II", "INPUT", "OUT", "OUTEQ", "C0",
                 "C1", "C2", "C3",
             ])
-            .unwrap();
+            .map_err(|e| PharmsolError::OtherError(e.to_string()))?;
+
         for subject in self.get_subjects() {
             for occasion in subject.occasions() {
                 for event in occasion.get_events(&None, &None, false) {
@@ -115,7 +116,7 @@ impl Data {
                                     &".".to_string(),
                                     &".".to_string(),
                                 ])
-                                .unwrap();
+                                .map_err(|e| PharmsolError::OtherError(e.to_string()))?;
                         }
                         Event::Infusion(inf) => {
                             writer
@@ -135,7 +136,7 @@ impl Data {
                                     &".".to_string(),
                                     &".".to_string(),
                                 ])
-                                .unwrap();
+                                .map_err(|e| PharmsolError::OtherError(e.to_string()))?;
                         }
                         Event::Bolus(bol) => {
                             writer
@@ -155,12 +156,13 @@ impl Data {
                                     &".".to_string(),
                                     &".".to_string(),
                                 ])
-                                .unwrap();
+                                .map_err(|e| PharmsolError::OtherError(e.to_string()))?;
                         }
                     }
                 }
             }
         }
+        Ok(())
     }
 
     /// Filter the dataset to include only subjects with specific IDs

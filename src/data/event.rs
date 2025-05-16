@@ -2,6 +2,8 @@ use std::fmt;
 
 use serde::Deserialize;
 
+use crate::prelude::simulator::Prediction;
+
 /// Represents a pharmacokinetic/pharmacodynamic event
 ///
 /// Events represent key occurrences in a PK/PD profile, including:
@@ -240,6 +242,18 @@ impl Observation {
     /// Set whether to ignore this observation in likelihood calculations
     pub fn set_ignore(&mut self, ignore: bool) {
         self.ignore = ignore;
+    }
+
+    /// Create a [Prediction] from this observation
+    pub fn to_prediction(&self, pred: f64, state: Vec<f64>) -> Prediction {
+        Prediction {
+            time: self.time(),
+            observation: self.value(),
+            prediction: pred,
+            outeq: self.outeq(),
+            errorpoly: self.errorpoly(),
+            state,
+        }
     }
 }
 

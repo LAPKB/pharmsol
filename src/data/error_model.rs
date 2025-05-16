@@ -1,10 +1,12 @@
 use crate::simulator::likelihood::Prediction;
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 /// Model for calculating observation errors in pharmacometric analyses
 ///
 /// An [ErrorModel] defines how the standard deviation of observations is calculated
 /// based on the type of error model used and its parameters.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ErrorModel {
     /// Additive error model, where error is independent of concentration
     ///
@@ -121,7 +123,7 @@ impl ErrorModel {
     /// # Panics
     ///
     /// Panics if the computed standard deviation is NaN or negative
-    pub fn sigma(&self, prediction: &Prediction) -> f64 {
+    pub fn sigma(&self, prediction: &Prediction) -> Result<f64, ErrorModelError> {
         // Get appropriate polynomial coefficients from prediction or default
         let (c0, c1, c2, c3) = match prediction.errorpoly() {
             Some(poly) => poly,
@@ -135,19 +137,78 @@ impl ErrorModel {
             + c3 * prediction.observation().powi(3);
 
         // Calculate standard deviation based on error model type
-        let res = match self {
+        let sigma = match self {
             Self::Additive { lambda, .. } => (alpha.powi(2) + lambda.powi(2)).sqrt(),
             Self::Proportional { gamma, .. } => gamma * alpha,
         };
 
-        if !res.is_finite() || res < 0.0 {
-            panic!(
-                "The computed standard deviation is either non-finite or negative. The standard devation for the prediction {} is {}",
-                prediction,
-                res
-            );
+        if sigma < 0.0 {
+            Err(ErrorModelError::NegativeSigma)
+        } else if !sigma.is_finite() {
+            Err(ErrorModelError::NonFiniteSigma)
         } else {
-            res
+            Ok(sigma)
         }
+    }
+
+    /// Estimate the variance of the observation
+    ///
+    /// This is a conveniecen function which calls [ErrorModel::sigma], and squares the result.
+    pub fn variance(&self, prediction: &Prediction) -> Result<f64, ErrorModelError> {
+        let sigma = self.sigma(prediction)?;
+        Ok(sigma.powi(2))
+    }
+}
+
+#[derive(Error, Debug, Clone)]
+pub enum ErrorModelError {
+    /// Error when the model is not valid
+    #[error("The computed standard deviation is negative.")]
+    NegativeSigma,
+    #[error("The computed standard deviation is non-finite")]
+    NonFiniteSigma,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Observation;
+
+    #[test]
+    fn test_additive_error_model() {
+        let observation = Observation::new(0.0, 20.0, 0, None, false);
+        let prediction = observation.to_prediction(10.0, vec![]);
+        let model = ErrorModel::additive((1.0, 0.0, 0.0, 0.0), 5.0);
+        assert_eq!(model.sigma(&prediction).unwrap(), (26.0_f64).sqrt());
+    }
+
+    #[test]
+    fn test_proportional_error_model() {
+        let observation = Observation::new(0.0, 20.0, 0, None, false);
+        let prediction = observation.to_prediction(10.0, vec![]);
+        let model = ErrorModel::proportional((1.0, 0.0, 0.0, 0.0), 2.0);
+        assert_eq!(model.sigma(&prediction).unwrap(), 2.0);
+    }
+
+    #[test]
+    fn test_polynomial() {
+        let model = ErrorModel::additive((1.0, 2.0, 3.0, 4.0), 5.0);
+        assert_eq!(model.polynomial(), (1.0, 2.0, 3.0, 4.0));
+    }
+
+    #[test]
+    fn test_set_polynomial() {
+        let mut model = ErrorModel::additive((1.0, 2.0, 3.0, 4.0), 5.0);
+        assert_eq!(model.polynomial(), (1.0, 2.0, 3.0, 4.0));
+        model.set_polynomial((5.0, 6.0, 7.0, 8.0));
+        assert_eq!(model.polynomial(), (5.0, 6.0, 7.0, 8.0));
+    }
+
+    #[test]
+    fn test_set_scalar() {
+        let mut model = ErrorModel::additive((1.0, 2.0, 3.0, 4.0), 5.0);
+        assert_eq!(model.scalar(), 5.0);
+        model.set_scalar(10.0);
+        assert_eq!(model.scalar(), 10.0);
     }
 }

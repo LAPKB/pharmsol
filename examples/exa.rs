@@ -68,8 +68,8 @@ fn main() {
     let params = vec![1.02282724609375, 194.51904296875];
 
     // Get predictions from both models
-    let dyn_predictions = dyn_ode.estimate_predictions(&subject, &params);
-    let ode_predictions = ode.estimate_predictions(&subject, &params);
+    let dyn_predictions = dyn_ode.estimate_predictions(&subject, &params).unwrap();
+    let ode_predictions = ode.estimate_predictions(&subject, &params).unwrap();
 
     // Check that predictions are the same
     let dyn_flat = dyn_predictions.flat_predictions();

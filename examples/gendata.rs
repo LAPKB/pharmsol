@@ -62,7 +62,7 @@ fn main() {
 
     let mut data = vec![];
     for (i, spp) in support_points.iter().enumerate() {
-        let trajectories = sde.estimate_predictions(&subject, spp);
+        let trajectories = sde.estimate_predictions(&subject, spp).unwrap();
         let trajectory = trajectories.row(0);
         // dbg!(&trajectory);
         let mut sb = data::Subject::builder(format!("id{}", i)).bolus(0.0, 20.0, 0);
@@ -72,7 +72,8 @@ fn main() {
         data.push(sb.build());
     }
     let data = data::Data::new(data);
-    data.write_pmetrics(&File::create(Path::new("test.csv")).unwrap());
+    data.write_pmetrics(&File::create(Path::new("test.csv")).unwrap())
+        .unwrap();
     // let mut theta = Array2::zeros((1, 3));
     // theta[[0, 0]] = 0.7;
     // theta[[0, 1]] = 0.1;
