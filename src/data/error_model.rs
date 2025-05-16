@@ -150,6 +150,14 @@ impl ErrorModel {
             Ok(sigma)
         }
     }
+
+    /// Estimate the variance of the observation
+    ///
+    /// This is a conveniecen function which calls [ErrorModel::sigma], and squares the result.
+    pub fn variance(&self, prediction: &Prediction) -> Result<f64, ErrorModelError> {
+        let sigma = self.sigma(prediction)?;
+        Ok(sigma.powi(2))
+    }
 }
 
 #[derive(Error, Debug, Clone)]
