@@ -194,43 +194,15 @@ pub fn psi(
     pred
 }
 
-// Commented code for disk cache
-// #[io_cached(
-//    disk = true,
-//    map_error = r##"|e| anyhow!(e)"##,
-//    convert = r#"{ format!("{}{}", subject.id(), spphash(support_point)) }"#,
-//    ty = "DiskCache<String, f64>"
-//)]
-
-// #[inline(always)]
-// #[cached(
-//     ty = "UnboundCache<String, f64>",
-//     create = "{ UnboundCache::with_capacity(100_000) }",
-//     convert = r#"{ format!("{}{}", subject.id(), spphash(support_point)) }"#
-// )]
-// fn estimate_likelihood(
-//     subject: &Subject,
-//     equation: &impl Equation,
-//     support_point: &Vec<f64>,
-//     error_model: &ErrorModel,
-// ) -> f64 {
-//     let ypred = equation.simulate_subject(subject, support_point, Some(error_model));
-//     ypred.1.unwrap()
-// }
-
-// fn spphash(spp: &[f64]) -> u64 {
-//     spp.iter().fold(0, |acc, x| acc + x.to_bits())
-// }
-
 /// Prediction holds an observation and its prediction
 #[derive(Debug, Clone)]
 pub struct Prediction {
-    time: f64,
-    observation: f64,
-    prediction: f64,
-    outeq: usize,
-    errorpoly: Option<(f64, f64, f64, f64)>,
-    state: Vec<f64>,
+    pub(crate) time: f64,
+    pub(crate) observation: f64,
+    pub(crate) prediction: f64,
+    pub(crate) outeq: usize,
+    pub(crate) errorpoly: Option<(f64, f64, f64, f64)>,
+    pub(crate) state: Vec<f64>,
 }
 
 impl Prediction {
@@ -291,32 +263,6 @@ impl Prediction {
     }
 }
 
-/// Trait for converting observations to predictions.
-pub(crate) trait ToPrediction {
-    /// Convert an observation to a prediction object.
-    ///
-    /// # Parameters
-    /// - `pred`: The predicted value
-    /// - `state`: The state vector at the prediction time
-    ///
-    /// # Returns
-    /// A new prediction object
-    fn to_obs_pred(&self, pred: f64, state: Vec<f64>) -> Prediction;
-}
-
-impl ToPrediction for Observation {
-    fn to_obs_pred(&self, pred: f64, state: Vec<f64>) -> Prediction {
-        Prediction {
-            time: self.time(),
-            observation: self.value(),
-            prediction: pred,
-            outeq: self.outeq(),
-            errorpoly: self.errorpoly(),
-            state,
-        }
-    }
-}
-
 impl Default for Prediction {
     fn default() -> Self {
         Self {
@@ -327,6 +273,18 @@ impl Default for Prediction {
             errorpoly: None,
             state: vec![],
         }
+    }
+}
+
+impl Into<Observation> for Prediction {
+    fn into(self) -> Observation {
+        Observation::new(
+            self.time,
+            self.observation,
+            self.outeq,
+            self.errorpoly,
+            false,
+        )
     }
 }
 

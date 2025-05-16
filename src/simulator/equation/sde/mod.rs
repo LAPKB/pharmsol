@@ -14,7 +14,7 @@ use crate::{
     data::{Covariates, Infusion},
     error_model::ErrorModel,
     prelude::simulator::Prediction,
-    simulator::{likelihood::ToPrediction, Diffusion, Drift, Fa, Init, Lag, Neqs, Out, V},
+    simulator::{Diffusion, Drift, Fa, Init, Lag, Neqs, Out, V},
     Subject,
 };
 
@@ -250,7 +250,7 @@ impl EquationPriv for SDE {
                 covariates,
                 &mut y,
             );
-            *p = observation.to_obs_pred(y[observation.outeq()], x[i].as_slice().to_vec());
+            *p = observation.to_prediction(y[observation.outeq()], x[i].as_slice().to_vec());
         });
         let out = Array2::from_shape_vec((self.nparticles, 1), pred.clone()).unwrap();
         *output = concatenate(Axis(1), &[output.view(), out.view()]).unwrap();
