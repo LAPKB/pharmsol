@@ -118,11 +118,7 @@ impl ErrorModel {
     ///
     /// # Returns
     ///
-    /// The estimated standard deviation
-    ///
-    /// # Panics
-    ///
-    /// Panics if the computed standard deviation is NaN or negative
+    /// The estimated standard deviation of the prediction
     pub fn sigma(&self, prediction: &Prediction) -> Result<f64, ErrorModelError> {
         // Get appropriate polynomial coefficients from prediction or default
         let (c0, c1, c2, c3) = match prediction.errorpoly() {
@@ -158,11 +154,52 @@ impl ErrorModel {
         let sigma = self.sigma(prediction)?;
         Ok(sigma.powi(2))
     }
+
+    /// Estimate the standard deviation for a raw observation value
+    ///
+    /// Calculates the standard deviation based on the error model type,
+    /// using the model's default coefficients and a provided observation value.
+    ///
+    /// # Arguments
+    ///
+    /// * `value` - The observation value for which to estimate the standard deviation
+    ///
+    /// # Returns
+    ///
+    /// The estimated standard deviation for the given value
+    pub fn sigma_from_value(&self, value: f64) -> Result<f64, ErrorModelError> {
+        // Get polynomial coefficients from the model
+        let (c0, c1, c2, c3) = self.polynomial();
+
+        // Calculate alpha term
+        let alpha = c0 + c1 * value + c2 * value.powi(2) + c3 * value.powi(3);
+
+        // Calculate standard deviation based on error model type
+        let sigma = match self {
+            Self::Additive { lambda, .. } => (alpha.powi(2) + lambda.powi(2)).sqrt(),
+            Self::Proportional { gamma, .. } => gamma * alpha,
+        };
+
+        if sigma < 0.0 {
+            Err(ErrorModelError::NegativeSigma)
+        } else if !sigma.is_finite() {
+            Err(ErrorModelError::NonFiniteSigma)
+        } else {
+            Ok(sigma)
+        }
+    }
+
+    /// Estimate the variance for a raw observation value
+    ///
+    /// This is a conveniecen function which calls [ErrorModel::sigma_from_value], and squares the result.
+    pub fn variance_from_value(&self, value: f64) -> Result<f64, ErrorModelError> {
+        let sigma = self.sigma_from_value(value)?;
+        Ok(sigma.powi(2))
+    }
 }
 
 #[derive(Error, Debug, Clone)]
 pub enum ErrorModelError {
-    /// Error when the model is not valid
     #[error("The computed standard deviation is negative.")]
     NegativeSigma,
     #[error("The computed standard deviation is non-finite")]
@@ -210,5 +247,14 @@ mod tests {
         assert_eq!(model.scalar(), 5.0);
         model.set_scalar(10.0);
         assert_eq!(model.scalar(), 10.0);
+    }
+
+    #[test]
+    fn test_sigma_from_value() {
+        let model = ErrorModel::additive((1.0, 0.0, 0.0, 0.0), 5.0);
+        assert_eq!(model.sigma_from_value(20.0).unwrap(), (26.0_f64).sqrt());
+
+        let model = ErrorModel::proportional((1.0, 0.0, 0.0, 0.0), 2.0);
+        assert_eq!(model.sigma_from_value(20.0).unwrap(), 2.0);
     }
 }
