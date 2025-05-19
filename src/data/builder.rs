@@ -115,7 +115,7 @@ impl SubjectBuilder {
         time: f64,
         value: f64,
         outeq: usize,
-        errorpoly: Option<(f64, f64, f64, f64)>,
+        errorpoly: Option<ErrorPoly>,
         ignore: bool,
     ) -> Self {
         let observation = Observation::new(time, value, outeq, errorpoly, ignore);
@@ -299,7 +299,13 @@ mod tests {
             .bolus(0.0, 50.0, 0)
             .observation(1.0, 45.3, 0)
             .observation(2.0, 40.1, 0)
-            .observation_with_error(3.0, 36.5, 0, Some((0.1, 0.05, 0.0, 0.0)), false)
+            .observation_with_error(
+                3.0,
+                36.5,
+                0,
+                Some(ErrorPoly::new(0.1, 0.05, 0.0, 0.0)),
+                false,
+            )
             .bolus(4.0, 50.0, 0)
             .repeat(1, 12.0) // Repeat bolus at 16.0
             .reset()

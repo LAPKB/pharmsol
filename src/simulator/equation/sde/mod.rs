@@ -14,9 +14,11 @@ use crate::{
     data::{Covariates, Infusion},
     error_model::ErrorModel,
     prelude::simulator::Prediction,
-    simulator::{likelihood::ToPrediction, Diffusion, Drift, Fa, Init, Lag, Neqs, Out, V},
+    simulator::{Diffusion, Drift, Fa, Init, Lag, Neqs, Out, V},
     Subject,
 };
+
+use crate::PharmsolError;
 
 use super::{Equation, EquationPriv, EquationTypes, Predictions, State};
 
@@ -207,7 +209,7 @@ impl EquationPriv for SDE {
         infusions: &Vec<Infusion>,
         ti: f64,
         tf: f64,
-    ) {
+    ) -> Result<(), PharmsolError> {
         state.par_iter_mut().for_each(|particle| {
             *particle = simulate_sde_event(
                 &self.drift,
@@ -220,6 +222,7 @@ impl EquationPriv for SDE {
                 tf,
             );
         });
+        Ok(())
     }
     fn nparticles(&self) -> usize {
         self.nparticles
@@ -239,7 +242,7 @@ impl EquationPriv for SDE {
         x: &mut Self::S,
         likelihood: &mut Vec<f64>,
         output: &mut Self::P,
-    ) {
+    ) -> Result<(), PharmsolError> {
         let mut pred = vec![Prediction::default(); self.nparticles];
         pred.par_iter_mut().enumerate().for_each(|(i, p)| {
             let mut y = V::zeros(self.get_nouteqs());
@@ -250,16 +253,22 @@ impl EquationPriv for SDE {
                 covariates,
                 &mut y,
             );
-            *p = observation.to_obs_pred(y[observation.outeq()], x[i].as_slice().to_vec());
+            *p = observation.to_prediction(y[observation.outeq()], x[i].as_slice().to_vec());
         });
-        let out = Array2::from_shape_vec((self.nparticles, 1), pred.clone()).unwrap();
+        let out = Array2::from_shape_vec((self.nparticles, 1), pred.clone())?;
         *output = concatenate(Axis(1), &[output.view(), out.view()]).unwrap();
         //e = y[t] .- x[:,1]
         // q = pdf.(Distributions.Normal(0, 0.5), e)
         if let Some(em) = error_model {
             let mut q: Vec<f64> = Vec::with_capacity(self.nparticles);
 
-            pred.iter().for_each(|p| q.push(p.likelihood(em)));
+            pred.iter().for_each(|p| {
+                let lik = p.likelihood(em);
+                match lik {
+                    Ok(l) => q.push(l),
+                    Err(e) => panic!("Error in likelihood calculation: {:?}", e),
+                }
+            });
             let sum_q: f64 = q.iter().sum();
             let w: Vec<f64> = q.iter().map(|qi| qi / sum_q).collect();
             let i = sysresample(&w);
@@ -269,6 +278,7 @@ impl EquationPriv for SDE {
             // let qq: Vec<f64> = i.iter().map(|&i| q[i]).collect();
             // likelihood.push(qq.iter().sum::<f64>() / self.nparticles as f64);
         }
+        Ok(())
     }
     #[inline(always)]
     fn initial_state(
@@ -313,7 +323,7 @@ impl Equation for SDE {
         support_point: &Vec<f64>,
         error_model: &ErrorModel,
         cache: bool,
-    ) -> f64 {
+    ) -> Result<f64, PharmsolError> {
         if cache {
             _estimate_likelihood(self, subject, support_point, error_model)
         } else {
@@ -339,16 +349,17 @@ fn spphash(spp: &[f64]) -> u64 {
 #[cached(
     ty = "UnboundCache<String, f64>",
     create = "{ UnboundCache::with_capacity(100_000) }",
-    convert = r#"{ format!("{}{}{}", subject.id(), spphash(support_point), error_model.scalar()) }"#
+    convert = r#"{ format!("{}{}{}", subject.id(), spphash(support_point), error_model.scalar()) }"#,
+    result = "true"
 )]
 fn _estimate_likelihood(
     sde: &SDE,
     subject: &Subject,
     support_point: &Vec<f64>,
     error_model: &ErrorModel,
-) -> f64 {
-    let ypred = sde.simulate_subject(subject, support_point, Some(error_model));
-    ypred.1.unwrap()
+) -> Result<f64, PharmsolError> {
+    let ypred = sde.simulate_subject(subject, support_point, Some(error_model))?;
+    Ok(ypred.1.unwrap())
 }
 
 /// Performs systematic resampling of particles based on weights.

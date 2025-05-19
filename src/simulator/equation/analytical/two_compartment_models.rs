@@ -199,8 +199,12 @@ mod tests {
             (2, 1),
         );
 
-        let op_ode = ode.estimate_predictions(&subject, &vec![0.1, 3.0, 1.0, 1.0]);
-        let op_analytical = analytical.estimate_predictions(&subject, &vec![0.1, 3.0, 1.0, 1.0]);
+        let op_ode = ode
+            .estimate_predictions(&subject, &vec![0.1, 3.0, 1.0, 1.0])
+            .unwrap();
+        let op_analytical = analytical
+            .estimate_predictions(&subject, &vec![0.1, 3.0, 1.0, 1.0])
+            .unwrap();
 
         let pred_ode = &op_ode.flat_predictions()[..];
         let pred_analytical = &op_analytical.flat_predictions()[..];
@@ -249,9 +253,12 @@ mod tests {
             (3, 1),
         );
 
-        let op_ode = ode.estimate_predictions(&subject, &vec![0.1, 1.0, 3.0, 1.0, 1.0]);
-        let op_analytical =
-            analytical.estimate_predictions(&subject, &vec![0.1, 1.0, 3.0, 1.0, 1.0]);
+        let op_ode = ode
+            .estimate_predictions(&subject, &vec![0.1, 1.0, 3.0, 1.0, 1.0])
+            .unwrap();
+        let op_analytical = analytical
+            .estimate_predictions(&subject, &vec![0.1, 1.0, 3.0, 1.0, 1.0])
+            .unwrap();
 
         let pred_ode = &op_ode.flat_predictions()[..];
         let pred_analytical = &op_analytical.flat_predictions()[..];

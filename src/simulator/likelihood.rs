@@ -1,6 +1,6 @@
 use crate::{
-    data::{error_model::ErrorModel, Observation},
-    Data, Equation, Predictions,
+    data::error_model::ErrorModel, Data, Equation, ErrorPoly, Observation, PharmsolError,
+    Predictions,
 };
 
 use indicatif::{ProgressBar, ProgressStyle};
@@ -44,11 +44,17 @@ impl SubjectPredictions {
     ///
     /// # Returns
     /// The product of all individual prediction likelihoods
-    pub fn likelihood(&self, error_model: &ErrorModel) -> f64 {
-        self.predictions
-            .iter()
-            .map(|p| p.likelihood(error_model))
-            .product()
+    pub fn likelihood(&self, error_model: &ErrorModel) -> Result<f64, PharmsolError> {
+        match self.predictions.is_empty() {
+            true => Ok(0.0),
+            false => self
+                .predictions
+                .iter()
+                .map(|p| p.likelihood(error_model))
+                .collect::<Result<Vec<f64>, _>>()
+                .map(|likelihoods| likelihoods.iter().product())
+                .map_err(PharmsolError::from),
+        }
     }
 
     /// Add a new prediction to the collection.
@@ -90,6 +96,7 @@ impl SubjectPredictions {
 }
 
 /// Probability density function of the normal distribution
+#[inline(always)]
 fn normpdf(obs: f64, pred: f64, sigma: f64) -> f64 {
     (FRAC_1_SQRT_2PI / sigma) * (-((obs - pred) * (obs - pred)) / (2.0 * sigma * sigma)).exp()
 }
@@ -148,17 +155,16 @@ pub fn psi(
     error_model: &ErrorModel,
     progress: bool,
     cache: bool,
-) -> Array2<f64> {
-    let mut pred: Array2<f64> = Array2::default((subjects.len(), support_points.nrows()).f());
+) -> Result<Array2<f64>, PharmsolError> {
+    let mut psi: Array2<f64> = Array2::default((subjects.len(), support_points.nrows()).f());
     let subjects = subjects.get_subjects();
     let pb = match progress {
         true => {
-            let pb = ProgressBar::new(pred.ncols() as u64 * pred.nrows() as u64);
+            let pb = ProgressBar::new(psi.ncols() as u64 * psi.nrows() as u64);
             pb.set_style(
                 ProgressStyle::with_template(
                     "Simulating subjects...\n[{elapsed_precise}] {bar:40.green} {percent}% ETA:{eta}",
-                )
-                .unwrap()
+                ).map_err(|e| PharmsolError::ProgressBarError(e.to_string()))?
                 .progress_chars("##-"),
             );
             Some(pb)
@@ -166,71 +172,51 @@ pub fn psi(
         false => None,
     };
 
-    pred.axis_iter_mut(Axis(0))
+    let result: Result<(), PharmsolError> = psi
+        .axis_iter_mut(Axis(0))
         .into_par_iter()
         .enumerate()
-        .for_each(|(i, mut row)| {
+        .try_for_each(|(i, mut row)| {
             row.axis_iter_mut(Axis(0))
                 .into_par_iter()
                 .enumerate()
-                .for_each(|(j, mut element)| {
+                .try_for_each(|(j, mut element)| {
                     let subject = subjects.get(i).unwrap();
-                    let likelihood = equation.estimate_likelihood(
+                    match equation.estimate_likelihood(
                         subject,
                         support_points.row(j).to_vec().as_ref(),
                         error_model,
                         cache,
-                    );
-                    element.fill(likelihood);
+                    ) {
+                        Ok(likelihood) => element.fill(likelihood),
+                        Err(e) => return Err(e),
+                    };
                     if let Some(pb_ref) = pb.as_ref() {
                         pb_ref.inc(1);
                     }
-                });
+                    Ok(())
+                })
         });
     if let Some(pb_ref) = pb.as_ref() {
         pb_ref.finish();
     }
 
-    pred
+    if let Err(e) = result {
+        return Err(e);
+    }
+
+    Ok(psi)
 }
-
-// Commented code for disk cache
-// #[io_cached(
-//    disk = true,
-//    map_error = r##"|e| anyhow!(e)"##,
-//    convert = r#"{ format!("{}{}", subject.id(), spphash(support_point)) }"#,
-//    ty = "DiskCache<String, f64>"
-//)]
-
-// #[inline(always)]
-// #[cached(
-//     ty = "UnboundCache<String, f64>",
-//     create = "{ UnboundCache::with_capacity(100_000) }",
-//     convert = r#"{ format!("{}{}", subject.id(), spphash(support_point)) }"#
-// )]
-// fn estimate_likelihood(
-//     subject: &Subject,
-//     equation: &impl Equation,
-//     support_point: &Vec<f64>,
-//     error_model: &ErrorModel,
-// ) -> f64 {
-//     let ypred = equation.simulate_subject(subject, support_point, Some(error_model));
-//     ypred.1.unwrap()
-// }
-
-// fn spphash(spp: &[f64]) -> u64 {
-//     spp.iter().fold(0, |acc, x| acc + x.to_bits())
-// }
 
 /// Prediction holds an observation and its prediction
 #[derive(Debug, Clone)]
 pub struct Prediction {
-    time: f64,
-    observation: f64,
-    prediction: f64,
-    outeq: usize,
-    errorpoly: Option<(f64, f64, f64, f64)>,
-    state: Vec<f64>,
+    pub(crate) time: f64,
+    pub(crate) observation: f64,
+    pub(crate) prediction: f64,
+    pub(crate) outeq: usize,
+    pub(crate) errorpoly: Option<ErrorPoly>,
+    pub(crate) state: Vec<f64>,
 }
 
 impl Prediction {
@@ -255,7 +241,7 @@ impl Prediction {
     }
 
     /// Get the error polynomial coefficients, if available.
-    pub fn errorpoly(&self) -> Option<(f64, f64, f64, f64)> {
+    pub fn errorpoly(&self) -> Option<ErrorPoly> {
         self.errorpoly
     }
 
@@ -280,40 +266,34 @@ impl Prediction {
     }
 
     /// Calculate the likelihood of this prediction given an error model.
-    pub fn likelihood(&self, error_model: &ErrorModel) -> f64 {
-        let sigma = error_model.sigma(self);
-        normpdf(self.observation, self.prediction, sigma)
+    pub fn likelihood(&self, error_model: &ErrorModel) -> Result<f64, PharmsolError> {
+        let sigma = error_model.sigma(self)?;
+        let likelihood = normpdf(self.observation, self.prediction, sigma);
+
+        if likelihood.is_finite() {
+            return Ok(likelihood);
+        } else if likelihood == 0.0 {
+            return Err(PharmsolError::ZeroLikelihood);
+        }
+        {
+            return Err(PharmsolError::NonFiniteLikelihood(likelihood));
+        }
     }
 
-    /// Get the state vector at this prediction point.
+    /// Get the state vector at this prediction point
     pub fn state(&self) -> &Vec<f64> {
         &self.state
     }
-}
 
-/// Trait for converting observations to predictions.
-pub(crate) trait ToPrediction {
-    /// Convert an observation to a prediction object.
-    ///
-    /// # Parameters
-    /// - `pred`: The predicted value
-    /// - `state`: The state vector at the prediction time
-    ///
-    /// # Returns
-    /// A new prediction object
-    fn to_obs_pred(&self, pred: f64, state: Vec<f64>) -> Prediction;
-}
-
-impl ToPrediction for Observation {
-    fn to_obs_pred(&self, pred: f64, state: Vec<f64>) -> Prediction {
-        Prediction {
-            time: self.time(),
-            observation: self.value(),
-            prediction: pred,
-            outeq: self.outeq(),
-            errorpoly: self.errorpoly(),
-            state,
-        }
+    /// Create an [Observation] from this prediction
+    pub fn to_observation(&self) -> Observation {
+        Observation::new(
+            self.time,
+            self.observation,
+            self.outeq,
+            self.errorpoly,
+            false,
+        )
     }
 }
 

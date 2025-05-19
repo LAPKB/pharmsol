@@ -106,8 +106,8 @@ fn main() {
         .repeat(5, 0.2)
         .build();
 
-    let ode_predictions = ode.estimate_predictions(&subject, &vec![1.0]);
-    let sde_predictions = sde.estimate_predictions(&subject, &vec![1.0, 0.0]);
+    let ode_predictions = ode.estimate_predictions(&subject, &vec![1.0]).unwrap();
+    let sde_predictions = sde.estimate_predictions(&subject, &vec![1.0, 0.0]).unwrap();
 
     let mut sde_flat_predictions: Vec<Vec<f64>> = Vec::new();
     for trajectory in sde_predictions.rows() {
@@ -141,8 +141,8 @@ fn main() {
         0.0,
     ];
 
-    let ode_predictions = ode.estimate_predictions(&subject, &spp_ode);
-    let sde_predictions = sde.estimate_predictions(&subject, &spp_sde);
+    let ode_predictions = ode.estimate_predictions(&subject, &spp_ode).unwrap();
+    let sde_predictions = sde.estimate_predictions(&subject, &spp_sde).unwrap();
 
     let mut sde_flat_predictions: Vec<Vec<f64>> = Vec::new();
     for trajectory in sde_predictions.rows() {
@@ -164,8 +164,8 @@ fn main() {
     let data = read_pmetrics("../PMcore/examples/vanco_sde/data.csv").unwrap();
     let subject = data.get_subject("51").unwrap();
 
-    let ode_predictions = ode.estimate_predictions(subject, &spp_ode);
-    let sde_predictions = sde.estimate_predictions(subject, &spp_sde);
+    let ode_predictions = ode.estimate_predictions(subject, &spp_ode).unwrap();
+    let sde_predictions = sde.estimate_predictions(subject, &spp_sde).unwrap();
 
     let mut sde_flat_predictions: Vec<Vec<f64>> = Vec::new();
     for trajectory in sde_predictions.rows() {

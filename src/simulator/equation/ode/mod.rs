@@ -7,8 +7,8 @@ use crate::{
     data::{Covariates, Infusion},
     error_model::ErrorModel,
     prelude::simulator::SubjectPredictions,
-    simulator::{likelihood::ToPrediction, DiffEq, Fa, Init, Lag, Neqs, Out, M, V},
-    Event, Observation, Subject,
+    simulator::{DiffEq, Fa, Init, Lag, Neqs, Out, M, V},
+    Event, Observation, PharmsolError, Subject,
 };
 use cached::proc_macro::cached;
 use cached::UnboundCache;
@@ -79,14 +79,15 @@ fn spphash(spp: &[f64]) -> u64 {
 #[cached(
     ty = "UnboundCache<String, SubjectPredictions>",
     create = "{ UnboundCache::with_capacity(100_000) }",
-    convert = r#"{ format!("{}{}", subject.id(), spphash(support_point)) }"#
+    convert = r#"{ format!("{}{}", subject.id(), spphash(support_point)) }"#,
+    result = "true"
 )]
 fn _subject_predictions(
     ode: &ODE,
     subject: &Subject,
     support_point: &Vec<f64>,
-) -> SubjectPredictions {
-    ode.simulate_subject(subject, support_point, None).0
+) -> Result<SubjectPredictions, PharmsolError> {
+    Ok(ode.simulate_subject(subject, support_point, None)?.0)
 }
 
 fn _estimate_likelihood(
@@ -95,12 +96,12 @@ fn _estimate_likelihood(
     support_point: &Vec<f64>,
     error_model: &ErrorModel,
     cache: bool,
-) -> f64 {
+) -> Result<f64, PharmsolError> {
     let ypred = if cache {
         _subject_predictions(ode, subject, support_point)
     } else {
         _subject_predictions_no_cache(ode, subject, support_point)
-    };
+    }?;
     ypred.likelihood(error_model)
 }
 
@@ -140,7 +141,7 @@ impl EquationPriv for ODE {
         _infusions: &Vec<Infusion>,
         _start_time: f64,
         _end_time: f64,
-    ) {
+    ) -> Result<(), PharmsolError> {
         unimplemented!("solve not implemented for ODE");
     }
     #[inline(always)]
@@ -154,7 +155,7 @@ impl EquationPriv for ODE {
         _x: &mut Self::S,
         _likelihood: &mut Vec<f64>,
         _output: &mut Self::P,
-    ) {
+    ) -> Result<(), PharmsolError> {
         unimplemented!("process_observation not implemented for ODE");
     }
 
@@ -177,7 +178,7 @@ impl Equation for ODE {
         support_point: &Vec<f64>,
         error_model: &ErrorModel,
         cache: bool,
-    ) -> f64 {
+    ) -> Result<f64, PharmsolError> {
         _estimate_likelihood(self, subject, support_point, error_model, cache)
     }
 
@@ -186,7 +187,7 @@ impl Equation for ODE {
         subject: &Subject,
         support_point: &Vec<f64>,
         error_model: Option<&ErrorModel>,
-    ) -> (Self::P, Option<f64>) {
+    ) -> Result<(Self::P, Option<f64>), PharmsolError> {
         let lag = self.get_lag(support_point);
         let fa = self.get_fa(support_point);
         let mut output = Self::P::new(self.nparticles());
@@ -243,9 +244,9 @@ impl Equation for ODE {
                         );
                         let pred = y[observation.outeq()];
                         let pred =
-                            observation.to_obs_pred(pred, solver.state().y.as_slice().to_vec());
+                            observation.to_prediction(pred, solver.state().y.as_slice().to_vec());
                         if let Some(error_model) = error_model {
-                            likelihood.push(pred.likelihood(error_model));
+                            likelihood.push(pred.likelihood(error_model)?);
                         }
                         output.add_prediction(pred);
                         //END PROCESS_OBSERVATION
@@ -280,26 +281,6 @@ impl Equation for ODE {
             }
         }
         let ll = error_model.map(|_| likelihood.iter().product::<f64>());
-        (output, ll)
+        Ok((output, ll))
     }
 }
-
-// // Test spphash
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     #[test]
-//     fn test_spphash() {
-//         let spp1 = vec![1.0, 2.0, 3.0];
-//         let spp2 = vec![1.0, 2.0, 3.0];
-//         let spp3 = vec![3.0, 2.0, 1.0];
-//         let spp4 = vec![1.0, 2.0, 3.000001];
-//         // Equal values should have the same hash
-//         assert_eq!(spphash(&spp1), spphash(&spp2));
-//         // Mirrored values should have different hashes
-//         assert_ne!(spphash(&spp1), spphash(&spp3));
-//         // Very close values should have different hashes
-//         // Note: Due to f64 precision this will fail for values that are very close, e.g. 3.0 and 3.0000000000000001
-//         assert_ne!(spphash(&spp1), spphash(&spp4));
-//     }
-// }

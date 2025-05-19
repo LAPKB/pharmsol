@@ -41,26 +41,45 @@ fn main() {
         (1, 1),
     );
 
-    let em = ErrorModel::additive((0.0, 0.05, 0.0, 0.0), 0.0);
-    let ll = an.estimate_likelihood(
-        &subject,
-        &vec![1.02282724609375, 194.51904296875],
-        &em,
-        false,
-    );
-    let op = an.estimate_predictions(&subject, &vec![1.02282724609375, 194.51904296875]);
-    println!(
-        "Analytical: \n-2ll:{:#?}\n{:#?}",
-        -2.0 * ll,
-        op.flat_predictions()
-    );
+    let em = ErrorModel::additive(ErrorPoly::new(0.0, 0.05, 0.0, 0.0), 0.0);
 
-    let ll = ode.estimate_likelihood(
-        &subject,
-        &vec![1.02282724609375, 194.51904296875],
-        &em,
-        false,
-    );
-    let op = ode.estimate_predictions(&subject, &vec![1.02282724609375, 194.51904296875]);
-    println!("ODE: \n-2ll:{:#?}\n{:#?}", -2.0 * ll, op.flat_predictions());
+    // Compute likelihoods and predictions for both models
+    let ll_an = an
+        .estimate_likelihood(
+            &subject,
+            &vec![1.02282724609375, 194.51904296875],
+            &em,
+            false,
+        )
+        .unwrap();
+    let op_an = an
+        .estimate_predictions(&subject, &vec![1.02282724609375, 194.51904296875])
+        .unwrap();
+
+    let ll_ode = ode
+        .estimate_likelihood(
+            &subject,
+            &vec![1.02282724609375, 194.51904296875],
+            &em,
+            false,
+        )
+        .unwrap();
+    let op_ode = ode
+        .estimate_predictions(&subject, &vec![1.02282724609375, 194.51904296875])
+        .unwrap();
+
+    // Display likelihoods side by side
+    println!("Likelihoods:");
+    println!("Analytical\tODE");
+    println!("{:.6}\t:{:.6}", -2.0 * ll_an, -2.0 * ll_ode);
+    println!();
+
+    // Display predictions
+    println!("Predictions:");
+    println!("Analytical\tODE\tDifference");
+    op_an
+        .flat_predictions()
+        .iter()
+        .zip(op_ode.flat_predictions())
+        .for_each(|(a, b)| println!("{:.9}\t{:.9}\t{:.9}", a, b, a - b));
 }
