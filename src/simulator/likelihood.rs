@@ -156,11 +156,11 @@ pub fn psi(
     progress: bool,
     cache: bool,
 ) -> Result<Array2<f64>, PharmsolError> {
-    let mut pred: Array2<f64> = Array2::default((subjects.len(), support_points.nrows()).f());
+    let mut psi: Array2<f64> = Array2::default((subjects.len(), support_points.nrows()).f());
     let subjects = subjects.get_subjects();
     let pb = match progress {
         true => {
-            let pb = ProgressBar::new(pred.ncols() as u64 * pred.nrows() as u64);
+            let pb = ProgressBar::new(psi.ncols() as u64 * psi.nrows() as u64);
             pb.set_style(
                 ProgressStyle::with_template(
                     "Simulating subjects...\n[{elapsed_precise}] {bar:40.green} {percent}% ETA:{eta}",
@@ -172,14 +172,15 @@ pub fn psi(
         false => None,
     };
 
-    pred.axis_iter_mut(Axis(0))
+    let result: Result<(), PharmsolError> = psi
+        .axis_iter_mut(Axis(0))
         .into_par_iter()
         .enumerate()
-        .for_each(|(i, mut row)| {
+        .try_for_each(|(i, mut row)| {
             row.axis_iter_mut(Axis(0))
                 .into_par_iter()
                 .enumerate()
-                .for_each(|(j, mut element)| {
+                .try_for_each(|(j, mut element)| {
                     let subject = subjects.get(i).unwrap();
                     match equation.estimate_likelihood(
                         subject,
@@ -188,18 +189,23 @@ pub fn psi(
                         cache,
                     ) {
                         Ok(likelihood) => element.fill(likelihood),
-                        Err(_) => element.fill(0.0), // Or handle the error appropriately
+                        Err(e) => return Err(e),
                     };
                     if let Some(pb_ref) = pb.as_ref() {
                         pb_ref.inc(1);
                     }
-                });
+                    Ok(())
+                })
         });
     if let Some(pb_ref) = pb.as_ref() {
         pb_ref.finish();
     }
 
-    Ok(pred)
+    if let Err(e) = result {
+        return Err(e);
+    }
+
+    Ok(psi)
 }
 
 /// Prediction holds an observation and its prediction
