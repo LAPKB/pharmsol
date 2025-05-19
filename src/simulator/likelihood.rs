@@ -1,6 +1,5 @@
 use crate::{
-    data::{error_model::ErrorModel, Observation},
-    Data, Equation, PharmsolError, Predictions,
+    data::error_model::ErrorModel, Data, Equation, Observation, PharmsolError, Predictions,
 };
 
 use indicatif::{ProgressBar, ProgressStyle};
@@ -280,9 +279,20 @@ impl Prediction {
         }
     }
 
-    /// Get the state vector at this prediction point.
+    /// Get the state vector at this prediction point
     pub fn state(&self) -> &Vec<f64> {
         &self.state
+    }
+
+    /// Create an [Observation] from this prediction
+    pub fn to_observation(&self) -> Observation {
+        Observation::new(
+            self.time,
+            self.observation,
+            self.outeq,
+            self.errorpoly,
+            false,
+        )
     }
 }
 
@@ -296,18 +306,6 @@ impl Default for Prediction {
             errorpoly: None,
             state: vec![],
         }
-    }
-}
-
-impl From<Prediction> for Observation {
-    fn from(prediction: Prediction) -> Self {
-        Observation::new(
-            prediction.time,
-            prediction.observation,
-            prediction.outeq,
-            prediction.errorpoly,
-            false,
-        )
     }
 }
 
