@@ -1,6 +1,7 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
 use pharmsol::prelude::*;
 use pharmsol::SubjectBuilderExt; // Ensure this trait is in scope
+use std::hint::black_box;
 
 fn subject_builder_benchmark(c: &mut Criterion) {
     // Simple case, few observations
