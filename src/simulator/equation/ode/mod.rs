@@ -284,23 +284,3 @@ impl Equation for ODE {
         Ok((output, ll))
     }
 }
-
-// // Test spphash
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     #[test]
-//     fn test_spphash() {
-//         let spp1 = vec![1.0, 2.0, 3.0];
-//         let spp2 = vec![1.0, 2.0, 3.0];
-//         let spp3 = vec![3.0, 2.0, 1.0];
-//         let spp4 = vec![1.0, 2.0, 3.000001];
-//         // Equal values should have the same hash
-//         assert_eq!(spphash(&spp1), spphash(&spp2));
-//         // Mirrored values should have different hashes
-//         assert_ne!(spphash(&spp1), spphash(&spp3));
-//         // Very close values should have different hashes
-//         // Note: Due to f64 precision this will fail for values that are very close, e.g. 3.0 and 3.0000000000000001
-//         assert_ne!(spphash(&spp1), spphash(&spp4));
-//     }
-// }

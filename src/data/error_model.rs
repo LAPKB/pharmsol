@@ -184,6 +184,8 @@ impl ErrorModel {
             Err(ErrorModelError::NegativeSigma)
         } else if !sigma.is_finite() {
             Err(ErrorModelError::NonFiniteSigma)
+        } else if sigma == 0.0 {
+            Err(ErrorModelError::ZeroSigma)
         } else {
             Ok(sigma)
         }
@@ -200,8 +202,10 @@ impl ErrorModel {
 
 #[derive(Error, Debug, Clone)]
 pub enum ErrorModelError {
-    #[error("The computed standard deviation is negative.")]
+    #[error("The computed standard deviation is negative")]
     NegativeSigma,
+    #[error("The computed standard deviation is zero")]
+    ZeroSigma,
     #[error("The computed standard deviation is non-finite")]
     NonFiniteSigma,
 }

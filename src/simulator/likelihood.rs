@@ -1,6 +1,6 @@
 use crate::{
     data::{error_model::ErrorModel, Observation},
-    Data, Equation, ErrorModelError, PharmsolError, Predictions,
+    Data, Equation, PharmsolError, Predictions,
 };
 
 use indicatif::{ProgressBar, ProgressStyle};
@@ -266,10 +266,18 @@ impl Prediction {
     }
 
     /// Calculate the likelihood of this prediction given an error model.
-    pub fn likelihood(&self, error_model: &ErrorModel) -> Result<f64, ErrorModelError> {
+    pub fn likelihood(&self, error_model: &ErrorModel) -> Result<f64, PharmsolError> {
         let sigma = error_model.sigma(self)?;
         let likelihood = normpdf(self.observation, self.prediction, sigma);
-        Ok(likelihood)
+
+        if likelihood.is_finite() {
+            return Ok(likelihood);
+        } else if likelihood == 0.0 {
+            return Err(PharmsolError::ZeroLikelihood);
+        }
+        {
+            return Err(PharmsolError::NonFiniteLikelihood(likelihood));
+        }
     }
 
     /// Get the state vector at this prediction point.

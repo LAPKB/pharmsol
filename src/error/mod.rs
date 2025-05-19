@@ -16,4 +16,8 @@ pub enum PharmsolError {
     OtherError(String),
     #[error("Error setting up progress bar: {0}")]
     ProgressBarError(String),
+    #[error("Likelihood is not finite: {0}")]
+    NonFiniteLikelihood(f64),
+    #[error("The calculated likelihood is zero")]
+    ZeroLikelihood,
 }
