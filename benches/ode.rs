@@ -1,6 +1,6 @@
-use criterion::black_box;
 use criterion::{criterion_group, criterion_main, Criterion};
 use pharmsol::*;
+use std::hint::black_box;
 
 fn example_subject() -> Subject {
     Subject::builder("1")
