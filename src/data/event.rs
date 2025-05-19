@@ -4,6 +4,8 @@ use serde::Deserialize;
 
 use crate::prelude::simulator::Prediction;
 
+use super::ErrorPoly;
+
 /// Represents a pharmacokinetic/pharmacodynamic event
 ///
 /// Events represent key occurrences in a PK/PD profile, including:
@@ -168,7 +170,7 @@ pub struct Observation {
     time: f64,
     value: f64,
     outeq: usize,
-    errorpoly: Option<(f64, f64, f64, f64)>,
+    errorpoly: Option<ErrorPoly>,
     ignore: bool,
 }
 impl Observation {
@@ -185,7 +187,7 @@ impl Observation {
         time: f64,
         value: f64,
         outeq: usize,
-        errorpoly: Option<(f64, f64, f64, f64)>,
+        errorpoly: Option<ErrorPoly>,
         ignore: bool,
     ) -> Self {
         Observation {
@@ -211,7 +213,7 @@ impl Observation {
     /// Get the error polynomial coefficients (c0, c1, c2, c3) if available
     ///
     /// The error polynomial is used to model the observation error.
-    pub fn errorpoly(&self) -> Option<(f64, f64, f64, f64)> {
+    pub fn errorpoly(&self) -> Option<ErrorPoly> {
         self.errorpoly
     }
     /// Check if this observation should be ignored in likelihood calculations
@@ -235,7 +237,7 @@ impl Observation {
     }
 
     /// Set the error polynomial coefficients (c0, c1, c2, c3) if available
-    pub fn set_errorpoly(&mut self, errorpoly: Option<(f64, f64, f64, f64)>) {
+    pub fn set_errorpoly(&mut self, errorpoly: Option<ErrorPoly>) {
         self.errorpoly = errorpoly;
     }
 
@@ -272,8 +274,14 @@ impl fmt::Display for Event {
             ),
             Event::Observation(observation) => {
                 let errpoly_desc = match observation.errorpoly {
-                    Some((c0, c1, c2, c3)) => {
-                        format!("with error poly =  ({}, {}, {}, {})", c0, c1, c2, c3)
+                    Some(errorpoly) => {
+                        format!(
+                            "with error poly {} {} {} {}",
+                            errorpoly.coefficients().0,
+                            errorpoly.coefficients().1,
+                            errorpoly.coefficients().2,
+                            errorpoly.coefficients().3
+                        )
                     }
                     None => "".to_string(),
                 };
@@ -342,7 +350,7 @@ mod tests {
 
     #[test]
     fn test_observation_creation() {
-        let error_poly = Some((0.1, 0.2, 0.3, 0.4));
+        let error_poly = Some(ErrorPoly::new(0.1, 0.2, 0.3, 0.4));
         let observation = Observation::new(5.0, 75.5, 2, error_poly, false);
 
         assert_eq!(observation.time(), 5.0);
@@ -354,7 +362,13 @@ mod tests {
 
     #[test]
     fn test_observation_setters() {
-        let mut observation = Observation::new(5.0, 75.5, 2, Some((0.1, 0.2, 0.3, 0.4)), false);
+        let mut observation = Observation::new(
+            5.0,
+            75.5,
+            2,
+            Some(ErrorPoly::new(0.1, 0.2, 0.3, 0.4)),
+            false,
+        );
 
         observation.set_time(6.0);
         assert_eq!(observation.time(), 6.0);
@@ -365,7 +379,7 @@ mod tests {
         observation.set_outeq(3);
         assert_eq!(observation.outeq(), 3);
 
-        let new_error_poly = Some((0.2, 0.3, 0.4, 0.5));
+        let new_error_poly = Some(ErrorPoly::new(0.2, 0.3, 0.4, 0.5));
         observation.set_errorpoly(new_error_poly);
         assert_eq!(observation.errorpoly(), new_error_poly);
 

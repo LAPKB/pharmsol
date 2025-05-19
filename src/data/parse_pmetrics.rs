@@ -313,9 +313,9 @@ struct Row {
 
 impl Row {
     /// Get the error polynomial coefficients
-    fn get_errorpoly(&self) -> Option<(f64, f64, f64, f64)> {
+    fn get_errorpoly(&self) -> Option<ErrorPoly> {
         match (self.c0, self.c1, self.c2, self.c3) {
-            (Some(c0), Some(c1), Some(c2), Some(c3)) => Some((c0, c1, c2, c3)),
+            (Some(c0), Some(c1), Some(c2), Some(c3)) => Some(ErrorPoly::new(c0, c1, c2, c3)),
             _ => None,
         }
     }

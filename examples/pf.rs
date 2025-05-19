@@ -28,7 +28,7 @@ fn main() {
         (2, 1),
         10000,
     );
-    let em = ErrorModel::additive((0.0, 0.05, 0.0, 0.0), 0.0);
+    let em = ErrorModel::additive(ErrorPoly::new(0.0, 0.05, 0.0, 0.0), 0.0);
 
     let ll = sde
         .estimate_likelihood(&subject, &vec![1.0], &em, false)

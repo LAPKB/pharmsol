@@ -1,5 +1,6 @@
 use crate::{
-    data::error_model::ErrorModel, Data, Equation, Observation, PharmsolError, Predictions,
+    data::error_model::ErrorModel, Data, Equation, ErrorPoly, Observation, PharmsolError,
+    Predictions,
 };
 
 use indicatif::{ProgressBar, ProgressStyle};
@@ -214,7 +215,7 @@ pub struct Prediction {
     pub(crate) observation: f64,
     pub(crate) prediction: f64,
     pub(crate) outeq: usize,
-    pub(crate) errorpoly: Option<(f64, f64, f64, f64)>,
+    pub(crate) errorpoly: Option<ErrorPoly>,
     pub(crate) state: Vec<f64>,
 }
 
@@ -240,7 +241,7 @@ impl Prediction {
     }
 
     /// Get the error polynomial coefficients, if available.
-    pub fn errorpoly(&self) -> Option<(f64, f64, f64, f64)> {
+    pub fn errorpoly(&self) -> Option<ErrorPoly> {
         self.errorpoly
     }
 

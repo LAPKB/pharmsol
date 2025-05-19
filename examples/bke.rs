@@ -41,7 +41,7 @@ fn main() {
         (1, 1),
     );
 
-    let em = ErrorModel::additive((0.0, 0.05, 0.0, 0.0), 0.0);
+    let em = ErrorModel::additive(ErrorPoly::new(0.0, 0.05, 0.0, 0.0), 0.0);
 
     // Compute likelihoods and predictions for both models
     let ll_an = an
