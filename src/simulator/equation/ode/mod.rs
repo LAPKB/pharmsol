@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use crate::{
     data::{Covariates, Infusion},
-    error_model::ErrorModel,
+    error_model::ErrorModels,
     prelude::simulator::SubjectPredictions,
     simulator::{DiffEq, Fa, Init, Lag, Neqs, Out, M, V},
     Event, Observation, PharmsolError, Subject,
@@ -94,7 +94,7 @@ fn _estimate_likelihood(
     ode: &ODE,
     subject: &Subject,
     support_point: &Vec<f64>,
-    error_model: &ErrorModel,
+    error_models: &ErrorModels,
     cache: bool,
 ) -> Result<f64, PharmsolError> {
     let ypred = if cache {
@@ -102,7 +102,7 @@ fn _estimate_likelihood(
     } else {
         _subject_predictions_no_cache(ode, subject, support_point)
     }?;
-    ypred.likelihood(error_model)
+    ypred.likelihood(error_models)
 }
 
 impl EquationTypes for ODE {
@@ -149,7 +149,7 @@ impl EquationPriv for ODE {
         &self,
         _support_point: &Vec<f64>,
         _observation: &Observation,
-        _error_model: Option<&ErrorModel>,
+        _error_models: Option<&ErrorModels>,
         _time: f64,
         _covariates: &Covariates,
         _x: &mut Self::S,
@@ -176,17 +176,17 @@ impl Equation for ODE {
         &self,
         subject: &Subject,
         support_point: &Vec<f64>,
-        error_model: &ErrorModel,
+        error_models: &ErrorModels,
         cache: bool,
     ) -> Result<f64, PharmsolError> {
-        _estimate_likelihood(self, subject, support_point, error_model, cache)
+        _estimate_likelihood(self, subject, support_point, error_models, cache)
     }
 
     fn simulate_subject(
         &self,
         subject: &Subject,
         support_point: &Vec<f64>,
-        error_model: Option<&ErrorModel>,
+        error_models: Option<&ErrorModels>,
     ) -> Result<(Self::P, Option<f64>), PharmsolError> {
         let lag = self.get_lag(support_point);
         let fa = self.get_fa(support_point);
@@ -245,8 +245,8 @@ impl Equation for ODE {
                         let pred = y[observation.outeq()];
                         let pred =
                             observation.to_prediction(pred, solver.state().y.as_slice().to_vec());
-                        if let Some(error_model) = error_model {
-                            likelihood.push(pred.likelihood(error_model)?);
+                        if let Some(error_models) = error_models {
+                            likelihood.push(pred.likelihood(error_models)?);
                         }
                         output.add_prediction(pred);
                         //END PROCESS_OBSERVATION
@@ -280,7 +280,7 @@ impl Equation for ODE {
                 //END SIMULATE_EVENT
             }
         }
-        let ll = error_model.map(|_| likelihood.iter().product::<f64>());
+        let ll = error_models.map(|_| likelihood.iter().product::<f64>());
         Ok((output, ll))
     }
 }

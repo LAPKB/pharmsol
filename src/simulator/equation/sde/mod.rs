@@ -12,7 +12,7 @@ use cached::UnboundCache;
 
 use crate::{
     data::{Covariates, Infusion},
-    error_model::ErrorModel,
+    error_model::ErrorModels,
     prelude::simulator::Prediction,
     simulator::{Diffusion, Drift, Fa, Init, Lag, Neqs, Out, V},
     Subject,
@@ -236,7 +236,7 @@ impl EquationPriv for SDE {
         &self,
         support_point: &Vec<f64>,
         observation: &crate::Observation,
-        error_model: Option<&ErrorModel>,
+        error_models: Option<&ErrorModels>,
         _time: f64,
         covariates: &Covariates,
         x: &mut Self::S,
@@ -259,7 +259,7 @@ impl EquationPriv for SDE {
         *output = concatenate(Axis(1), &[output.view(), out.view()]).unwrap();
         //e = y[t] .- x[:,1]
         // q = pdf.(Distributions.Normal(0, 0.5), e)
-        if let Some(em) = error_model {
+        if let Some(em) = error_models {
             let mut q: Vec<f64> = Vec::with_capacity(self.nparticles);
 
             pred.iter().for_each(|p| {
@@ -321,13 +321,13 @@ impl Equation for SDE {
         &self,
         subject: &Subject,
         support_point: &Vec<f64>,
-        error_model: &ErrorModel,
+        error_models: &ErrorModels,
         cache: bool,
     ) -> Result<f64, PharmsolError> {
         if cache {
-            _estimate_likelihood(self, subject, support_point, error_model)
+            _estimate_likelihood(self, subject, support_point, error_models)
         } else {
-            _estimate_likelihood_no_cache(self, subject, support_point, error_model)
+            _estimate_likelihood_no_cache(self, subject, support_point, error_models)
         }
     }
 }
@@ -349,16 +349,16 @@ fn spphash(spp: &[f64]) -> u64 {
 #[cached(
     ty = "UnboundCache<String, f64>",
     create = "{ UnboundCache::with_capacity(100_000) }",
-    convert = r#"{ format!("{}{}{}", subject.id(), spphash(support_point), error_model.scalar()) }"#,
+    convert = r#"{ format!("{}{}{:#?}", subject.id(), spphash(support_point), error_models.get_gamlams()) }"#,
     result = "true"
 )]
 fn _estimate_likelihood(
     sde: &SDE,
     subject: &Subject,
     support_point: &Vec<f64>,
-    error_model: &ErrorModel,
+    error_models: &ErrorModels,
 ) -> Result<f64, PharmsolError> {
-    let ypred = sde.simulate_subject(subject, support_point, Some(error_model))?;
+    let ypred = sde.simulate_subject(subject, support_point, Some(error_models))?;
     Ok(ypred.1.unwrap())
 }
 

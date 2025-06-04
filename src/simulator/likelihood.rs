@@ -1,5 +1,5 @@
 use crate::{
-    data::error_model::ErrorModel, Data, Equation, ErrorPoly, Observation, PharmsolError,
+    data::error_model::ErrorModels, Data, Equation, ErrorPoly, Observation, PharmsolError,
     Predictions,
 };
 
@@ -44,13 +44,13 @@ impl SubjectPredictions {
     ///
     /// # Returns
     /// The product of all individual prediction likelihoods
-    pub fn likelihood(&self, error_model: &ErrorModel) -> Result<f64, PharmsolError> {
+    pub fn likelihood(&self, error_models: &ErrorModels) -> Result<f64, PharmsolError> {
         match self.predictions.is_empty() {
             true => Ok(0.0),
             false => self
                 .predictions
                 .iter()
-                .map(|p| p.likelihood(error_model))
+                .map(|p| p.likelihood(error_models))
                 .collect::<Result<Vec<f64>, _>>()
                 .map(|likelihoods| likelihoods.iter().product())
                 .map_err(PharmsolError::from),
@@ -152,7 +152,7 @@ pub fn psi(
     equation: &impl Equation,
     subjects: &Data,
     support_points: &Array2<f64>,
-    error_model: &ErrorModel,
+    error_models: &ErrorModels,
     progress: bool,
     cache: bool,
 ) -> Result<Array2<f64>, PharmsolError> {
@@ -185,7 +185,7 @@ pub fn psi(
                     match equation.estimate_likelihood(
                         subject,
                         support_points.row(j).to_vec().as_ref(),
-                        error_model,
+                        error_models,
                         cache,
                     ) {
                         Ok(likelihood) => element.fill(likelihood),
@@ -266,8 +266,8 @@ impl Prediction {
     }
 
     /// Calculate the likelihood of this prediction given an error model.
-    pub fn likelihood(&self, error_model: &ErrorModel) -> Result<f64, PharmsolError> {
-        let sigma = error_model.sigma(self)?;
+    pub fn likelihood(&self, error_models: &ErrorModels) -> Result<f64, PharmsolError> {
+        let sigma = error_models.sigma(self)?;
         let likelihood = normpdf(self.observation, self.prediction, sigma);
 
         if likelihood.is_finite() {

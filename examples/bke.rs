@@ -41,14 +41,18 @@ fn main() {
         (1, 1),
     );
 
-    let em = ErrorModel::additive(ErrorPoly::new(0.0, 0.05, 0.0, 0.0), 0.0);
+    let ems = vec![ErrorModel::additive(
+        ErrorPoly::new(0.0, 0.05, 0.0, 0.0),
+        0.0,
+    )]
+    .into();
 
     // Compute likelihoods and predictions for both models
     let ll_an = an
         .estimate_likelihood(
             &subject,
             &vec![1.02282724609375, 194.51904296875],
-            &em,
+            &ems,
             false,
         )
         .unwrap();
@@ -60,7 +64,7 @@ fn main() {
         .estimate_likelihood(
             &subject,
             &vec![1.02282724609375, 194.51904296875],
-            &em,
+            &ems,
             false,
         )
         .unwrap();

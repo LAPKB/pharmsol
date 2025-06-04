@@ -2,7 +2,7 @@ pub mod equation;
 pub(crate) mod likelihood;
 use crate::{
     data::{Covariates, Infusion},
-    error_model::ErrorModel,
+    error_model::ErrorModels,
     simulator::likelihood::SubjectPredictions,
 };
 
