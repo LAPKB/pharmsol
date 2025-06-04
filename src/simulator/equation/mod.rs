@@ -9,7 +9,7 @@ pub use ode::*;
 pub use sde::*;
 
 use crate::{
-    error_model::ErrorModel, Covariates, Event, Infusion, Observation, PharmsolError, Subject,
+    error_model::ErrorModels, Covariates, Event, Infusion, Observation, PharmsolError, Subject,
 };
 
 use super::likelihood::Prediction;
@@ -87,7 +87,7 @@ pub(crate) trait EquationPriv: EquationTypes {
         &self,
         support_point: &Vec<f64>,
         observation: &Observation,
-        error_model: Option<&ErrorModel>,
+        error_models: Option<&ErrorModels>,
         time: f64,
         covariates: &Covariates,
         x: &mut Self::S,
@@ -108,7 +108,7 @@ pub(crate) trait EquationPriv: EquationTypes {
         support_point: &Vec<f64>,
         event: &Event,
         next_event: Option<&Event>,
-        error_model: Option<&ErrorModel>,
+        error_models: Option<&ErrorModels>,
         covariates: &Covariates,
         x: &mut Self::S,
         infusions: &mut Vec<Infusion>,
@@ -126,7 +126,7 @@ pub(crate) trait EquationPriv: EquationTypes {
                 self.process_observation(
                     support_point,
                     observation,
-                    error_model,
+                    error_models,
                     event.time(),
                     covariates,
                     x,
@@ -174,7 +174,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
         &self,
         subject: &Subject,
         support_point: &Vec<f64>,
-        error_model: &ErrorModel,
+        error_models: &ErrorModels,
         cache: bool,
     ) -> Result<f64, PharmsolError>;
 
@@ -207,7 +207,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
         &self,
         subject: &Subject,
         support_point: &Vec<f64>,
-        error_model: Option<&ErrorModel>,
+        error_models: Option<&ErrorModels>,
     ) -> Result<(Self::P, Option<f64>), PharmsolError> {
         let lag = self.get_lag(support_point);
         let fa = self.get_fa(support_point);
@@ -223,7 +223,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
                     support_point,
                     event,
                     events.get(index + 1),
-                    error_model,
+                    error_models,
                     covariates,
                     &mut x,
                     &mut infusions,
@@ -232,7 +232,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
                 )?;
             }
         }
-        let ll = error_model.map(|_| likelihood.iter().product::<f64>());
+        let ll = error_models.map(|_| likelihood.iter().product::<f64>());
         Ok((output, ll))
     }
 }

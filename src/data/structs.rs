@@ -404,6 +404,21 @@ impl Subject {
     pub fn occasions_iter_mut(&mut self) -> std::slice::IterMut<Occasion> {
         self.occasions.iter_mut()
     }
+
+    pub fn get_output_equations(&self) -> Vec<usize> {
+        // Collect all unique outeq values in order of occurrence
+        let outeq_values: Vec<usize> = self
+            .occasions
+            .iter()
+            .flat_map(|occasion| {
+                occasion.events.iter().filter_map(|event| match event {
+                    Event::Observation(obs) => Some(obs.outeq()),
+                    _ => None,
+                })
+            })
+            .collect();
+        outeq_values
+    }
 }
 
 /// An occasion within a subject's dataset

@@ -55,6 +55,140 @@ impl ErrorPoly {
     }
 }
 
+impl From<Vec<ErrorModel>> for ErrorModels {
+    fn from(models: Vec<ErrorModel>) -> Self {
+        Self(models)
+    }
+}
+
+/// Collection of error models for all possible outputs in the model/dataset
+/// This struct holds a vector of error models, each corresponding to a specific output
+/// in the pharmacometric analysis.
+///
+/// This is a wrapper around a vector of [ErrorModel]s, its size is determined by the number of outputs in the model/dataset.
+
+pub struct ErrorModels(Vec<ErrorModel>);
+
+impl ErrorModels {
+    /// Returns the number of error models in the collection.
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Returns a vector with the lambda or gamma parameters for each error model.
+    pub fn get_gamlams(&self) -> Vec<f64> {
+        self.0
+            .iter()
+            .map(|model| match model {
+                ErrorModel::Additive { lambda, .. } => *lambda,
+                ErrorModel::Proportional { gamma, .. } => *gamma,
+            })
+            .collect()
+    }
+
+    /// Returns the error polynomial associated with the specified output equation.
+    ///
+    /// # Arguments
+    ///
+    /// * `outeq` - The index of the output equation.
+    ///
+    /// # Returns
+    ///
+    /// The [`ErrorPoly`] for the given output equation.
+    pub fn errorpoly(&self, outeq: usize) -> ErrorPoly {
+        self.0[outeq].errorpoly()
+    }
+
+    /// Returns the scalar value associated with the specified output equation.
+    ///
+    /// # Arguments
+    ///
+    /// * `outeq` - The index of the output equation.
+    ///
+    /// # Returns
+    ///
+    /// The scalar value for the given output equation.
+    pub fn scalar(&self, outeq: usize) -> f64 {
+        self.0[outeq].scalar()
+    }
+
+    /// Sets the error polynomial for the specified output equation.
+    ///
+    /// # Arguments
+    ///
+    /// * `outeq` - The index of the output equation.
+    /// * `poly` - The new [`ErrorPoly`] to set.
+    pub fn set_polynomial(&mut self, outeq: usize, poly: ErrorPoly) {
+        self.0[outeq].set_polynomial(poly);
+    }
+
+    /// Sets the scalar value for the specified output equation.
+    ///
+    /// # Arguments
+    ///
+    /// * `outeq` - The index of the output equation.
+    /// * `scalar` - The new scalar value to set.
+    pub fn set_scalar(&mut self, outeq: usize, scalar: f64) {
+        self.0[outeq].set_scalar(scalar);
+    }
+
+    /// Computes the standard deviation (sigma) for the specified output equation and prediction.
+    ///
+    /// # Arguments
+    ///
+    /// * `outeq` - The index of the output equation.
+    /// * `prediction` - The [`Prediction`] to use for the calculation.
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing the computed sigma value or an [`ErrorModelError`] if the calculation fails.
+    pub fn sigma(&self, prediction: &Prediction) -> Result<f64, ErrorModelError> {
+        self.0[prediction.outeq].sigma(prediction)
+    }
+
+    /// Computes the variance for the specified output equation and prediction.
+    ///
+    /// # Arguments
+    ///
+    /// * `outeq` - The index of the output equation.
+    /// * `prediction` - The [`Prediction`] to use for the calculation.
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing the computed variance or an [`ErrorModelError`] if the calculation fails.
+    pub fn variance(&self, prediction: &Prediction) -> Result<f64, ErrorModelError> {
+        self.0[prediction.outeq].variance(prediction)
+    }
+
+    /// Computes the standard deviation (sigma) for the specified output equation and value.
+    ///
+    /// # Arguments
+    ///
+    /// * `outeq` - The index of the output equation.
+    /// * `value` - The value to use for the calculation.
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing the computed sigma value or an [`ErrorModelError`] if the calculation fails.
+    pub fn sigma_from_value(&self, outeq: usize, value: f64) -> Result<f64, ErrorModelError> {
+        self.0[outeq].sigma_from_value(value)
+    }
+
+    /// Computes the variance for the specified output equation and value.
+    ///
+    /// # Arguments
+    ///
+    /// * `outeq` - The index of the output equation.
+    /// * `value` - The value to use for the calculation.
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing the computed variance or an [`ErrorModelError`] if the calculation fails.
+    pub fn variance_from_value(&self, outeq: usize, value: f64) -> Result<f64, ErrorModelError> {
+        self.0[outeq].variance_from_value(value)
+    }
+}
+
 /// Model for calculating observation errors in pharmacometric analyses
 ///
 /// An [ErrorModel] defines how the standard deviation of observations is calculated
@@ -120,7 +254,7 @@ impl ErrorModel {
     /// # Returns
     ///
     /// The error polynomial coefficients (c0, c1, c2, c3)
-    pub fn errorpoly(&self) -> ErrorPoly {
+    fn errorpoly(&self) -> ErrorPoly {
         match self {
             Self::Additive { poly, .. } => *poly,
             Self::Proportional { poly, .. } => *poly,
@@ -136,7 +270,7 @@ impl ErrorModel {
     /// # Returns
     ///
     /// The updated error model with the new polynomial coefficients
-    pub fn set_polynomial(&mut self, poly: ErrorPoly) {
+    fn set_polynomial(&mut self, poly: ErrorPoly) {
         match self {
             Self::Additive { poly: p, .. } => *p = poly,
             Self::Proportional { poly: p, .. } => *p = poly,
@@ -144,7 +278,7 @@ impl ErrorModel {
     }
 
     /// Get the scaling parameter
-    pub fn scalar(&self) -> f64 {
+    fn scalar(&self) -> f64 {
         match self {
             Self::Additive { lambda, .. } => *lambda,
             Self::Proportional { gamma, .. } => *gamma,
@@ -152,7 +286,7 @@ impl ErrorModel {
     }
 
     /// Set the scaling parameter
-    pub fn set_scalar(&mut self, scalar: f64) {
+    fn set_scalar(&mut self, scalar: f64) {
         match self {
             Self::Additive { lambda, .. } => *lambda = scalar,
             Self::Proportional { gamma, .. } => *gamma = scalar,
@@ -172,7 +306,7 @@ impl ErrorModel {
     /// # Returns
     ///
     /// The estimated standard deviation of the prediction
-    pub fn sigma(&self, prediction: &Prediction) -> Result<f64, ErrorModelError> {
+    fn sigma(&self, prediction: &Prediction) -> Result<f64, ErrorModelError> {
         // Get appropriate polynomial coefficients from prediction or default
         let errorpoly = match prediction.errorpoly() {
             Some(poly) => poly,
@@ -205,7 +339,7 @@ impl ErrorModel {
     /// Estimate the variance of the observation
     ///
     /// This is a conveniecen function which calls [ErrorModel::sigma], and squares the result.
-    pub fn variance(&self, prediction: &Prediction) -> Result<f64, ErrorModelError> {
+    fn variance(&self, prediction: &Prediction) -> Result<f64, ErrorModelError> {
         let sigma = self.sigma(prediction)?;
         Ok(sigma.powi(2))
     }
@@ -222,7 +356,7 @@ impl ErrorModel {
     /// # Returns
     ///
     /// The estimated standard deviation for the given value
-    pub fn sigma_from_value(&self, value: f64) -> Result<f64, ErrorModelError> {
+    fn sigma_from_value(&self, value: f64) -> Result<f64, ErrorModelError> {
         // Get polynomial coefficients from the model
         let (c0, c1, c2, c3) = self.errorpoly().coefficients();
 
@@ -249,7 +383,7 @@ impl ErrorModel {
     /// Estimate the variance for a raw observation value
     ///
     /// This is a conveniecen function which calls [ErrorModel::sigma_from_value], and squares the result.
-    pub fn variance_from_value(&self, value: f64) -> Result<f64, ErrorModelError> {
+    fn variance_from_value(&self, value: f64) -> Result<f64, ErrorModelError> {
         let sigma = self.sigma_from_value(value)?;
         Ok(sigma.powi(2))
     }
