@@ -57,7 +57,7 @@ impl ErrorPoly {
 
 impl From<Vec<ErrorModel>> for ErrorModels {
     fn from(models: Vec<ErrorModel>) -> Self {
-        Self(models)
+        ErrorModels { models: models }
     }
 }
 
@@ -67,17 +67,19 @@ impl From<Vec<ErrorModel>> for ErrorModels {
 ///
 /// This is a wrapper around a vector of [ErrorModel]s, its size is determined by the number of outputs in the model/dataset.
 
-pub struct ErrorModels(Vec<ErrorModel>);
+pub struct ErrorModels {
+    models: Vec<ErrorModel>,
+}
 
 impl ErrorModels {
     /// Returns the number of error models in the collection.
     pub fn len(&self) -> usize {
-        self.0.len()
+        self.models.len()
     }
 
     /// Returns a vector with the lambda or gamma parameters for each error model.
     pub fn get_gamlams(&self) -> Vec<f64> {
-        self.0
+        self.models
             .iter()
             .map(|model| match model {
                 ErrorModel::Additive { lambda, .. } => *lambda,
@@ -96,7 +98,7 @@ impl ErrorModels {
     ///
     /// The [`ErrorPoly`] for the given output equation.
     pub fn errorpoly(&self, outeq: usize) -> ErrorPoly {
-        self.0[outeq].errorpoly()
+        self.models[outeq].errorpoly()
     }
 
     /// Returns the scalar value associated with the specified output equation.
@@ -109,7 +111,7 @@ impl ErrorModels {
     ///
     /// The scalar value for the given output equation.
     pub fn scalar(&self, outeq: usize) -> f64 {
-        self.0[outeq].scalar()
+        self.models[outeq].scalar()
     }
 
     /// Sets the error polynomial for the specified output equation.
@@ -119,7 +121,7 @@ impl ErrorModels {
     /// * `outeq` - The index of the output equation.
     /// * `poly` - The new [`ErrorPoly`] to set.
     pub fn set_polynomial(&mut self, outeq: usize, poly: ErrorPoly) {
-        self.0[outeq].set_polynomial(poly);
+        self.models[outeq].set_polynomial(poly);
     }
 
     /// Sets the scalar value for the specified output equation.
@@ -129,7 +131,7 @@ impl ErrorModels {
     /// * `outeq` - The index of the output equation.
     /// * `scalar` - The new scalar value to set.
     pub fn set_scalar(&mut self, outeq: usize, scalar: f64) {
-        self.0[outeq].set_scalar(scalar);
+        self.models[outeq].set_scalar(scalar);
     }
 
     /// Computes the standard deviation (sigma) for the specified output equation and prediction.
@@ -143,7 +145,7 @@ impl ErrorModels {
     ///
     /// A [`Result`] containing the computed sigma value or an [`ErrorModelError`] if the calculation fails.
     pub fn sigma(&self, prediction: &Prediction) -> Result<f64, ErrorModelError> {
-        self.0[prediction.outeq].sigma(prediction)
+        self.models[prediction.outeq].sigma(prediction)
     }
 
     /// Computes the variance for the specified output equation and prediction.
@@ -157,7 +159,7 @@ impl ErrorModels {
     ///
     /// A [`Result`] containing the computed variance or an [`ErrorModelError`] if the calculation fails.
     pub fn variance(&self, prediction: &Prediction) -> Result<f64, ErrorModelError> {
-        self.0[prediction.outeq].variance(prediction)
+        self.models[prediction.outeq].variance(prediction)
     }
 
     /// Computes the standard deviation (sigma) for the specified output equation and value.
@@ -171,7 +173,7 @@ impl ErrorModels {
     ///
     /// A [`Result`] containing the computed sigma value or an [`ErrorModelError`] if the calculation fails.
     pub fn sigma_from_value(&self, outeq: usize, value: f64) -> Result<f64, ErrorModelError> {
-        self.0[outeq].sigma_from_value(value)
+        self.models[outeq].sigma_from_value(value)
     }
 
     /// Computes the variance for the specified output equation and value.
@@ -185,7 +187,7 @@ impl ErrorModels {
     ///
     /// A [`Result`] containing the computed variance or an [`ErrorModelError`] if the calculation fails.
     pub fn variance_from_value(&self, outeq: usize, value: f64) -> Result<f64, ErrorModelError> {
-        self.0[outeq].variance_from_value(value)
+        self.models[outeq].variance_from_value(value)
     }
 }
 
