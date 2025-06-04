@@ -124,11 +124,11 @@ impl ErrorModels {
     ///
     /// * `outeq` - The index of the output equation.
     /// * `poly` - The new [`ErrorPoly`] to set.
-    pub fn set_polynomial(&mut self, outeq: usize, poly: ErrorPoly) -> Result<(), ErrorModelError> {
+    pub fn set_errorpoly(&mut self, outeq: usize, poly: ErrorPoly) -> Result<(), ErrorModelError> {
         self.models
             .get_mut(outeq)
             .ok_or(ErrorModelError::InvalidOutputEquation(outeq))?
-            .set_polynomial(poly);
+            .set_errorpoly(poly);
         Ok(())
     }
     /// Sets the scalar value for the specified output equation.
@@ -275,7 +275,7 @@ impl ErrorModel {
     /// # Returns
     ///
     /// The error polynomial coefficients (c0, c1, c2, c3)
-    fn errorpoly(&self) -> ErrorPoly {
+    pub fn errorpoly(&self) -> ErrorPoly {
         match self {
             Self::Additive { poly, .. } => *poly,
             Self::Proportional { poly, .. } => *poly,
@@ -291,7 +291,7 @@ impl ErrorModel {
     /// # Returns
     ///
     /// The updated error model with the new polynomial coefficients
-    fn set_polynomial(&mut self, poly: ErrorPoly) {
+    pub fn set_errorpoly(&mut self, poly: ErrorPoly) {
         match self {
             Self::Additive { poly: p, .. } => *p = poly,
             Self::Proportional { poly: p, .. } => *p = poly,
@@ -299,7 +299,7 @@ impl ErrorModel {
     }
 
     /// Get the scaling parameter
-    fn scalar(&self) -> f64 {
+    pub fn scalar(&self) -> f64 {
         match self {
             Self::Additive { lambda, .. } => *lambda,
             Self::Proportional { gamma, .. } => *gamma,
@@ -307,7 +307,7 @@ impl ErrorModel {
     }
 
     /// Set the scaling parameter
-    fn set_scalar(&mut self, scalar: f64) {
+    pub fn set_scalar(&mut self, scalar: f64) {
         match self {
             Self::Additive { lambda, .. } => *lambda = scalar,
             Self::Proportional { gamma, .. } => *gamma = scalar,
@@ -450,10 +450,10 @@ mod tests {
     }
 
     #[test]
-    fn test_set_polynomial() {
+    fn test_set_errorpoly() {
         let mut model = ErrorModel::additive(ErrorPoly::new(1.0, 2.0, 3.0, 4.0), 5.0);
         assert_eq!(model.errorpoly().coefficients(), (1.0, 2.0, 3.0, 4.0));
-        model.set_polynomial(ErrorPoly::new(5.0, 6.0, 7.0, 8.0));
+        model.set_errorpoly(ErrorPoly::new(5.0, 6.0, 7.0, 8.0));
         assert_eq!(model.errorpoly().coefficients(), (5.0, 6.0, 7.0, 8.0));
     }
 
