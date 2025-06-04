@@ -87,7 +87,6 @@ impl ErrorModels {
             })
             .collect()
     }
-
     /// Returns the error polynomial associated with the specified output equation.
     ///
     /// # Arguments
@@ -96,11 +95,13 @@ impl ErrorModels {
     ///
     /// # Returns
     ///
-    /// The [`ErrorPoly`] for the given output equation.
-    pub fn errorpoly(&self, outeq: usize) -> ErrorPoly {
-        self.models[outeq].errorpoly()
+    /// A [`Result`] containing the [`ErrorPoly`] for the given output equation or an [`ErrorModelError`] if the index is invalid.
+    pub fn errorpoly(&self, outeq: usize) -> Result<ErrorPoly, ErrorModelError> {
+        self.models
+            .get(outeq)
+            .ok_or(ErrorModelError::InvalidOutputEquation(outeq))
+            .map(|model| model.errorpoly())
     }
-
     /// Returns the scalar value associated with the specified output equation.
     ///
     /// # Arguments
@@ -109,9 +110,12 @@ impl ErrorModels {
     ///
     /// # Returns
     ///
-    /// The scalar value for the given output equation.
-    pub fn scalar(&self, outeq: usize) -> f64 {
-        self.models[outeq].scalar()
+    /// A [`Result`] containing the scalar value for the given output equation or an [`ErrorModelError`] if the index is invalid.
+    pub fn scalar(&self, outeq: usize) -> Result<f64, ErrorModelError> {
+        self.models
+            .get(outeq)
+            .ok_or(ErrorModelError::InvalidOutputEquation(outeq))
+            .map(|model| model.scalar())
     }
 
     /// Sets the error polynomial for the specified output equation.
@@ -120,18 +124,29 @@ impl ErrorModels {
     ///
     /// * `outeq` - The index of the output equation.
     /// * `poly` - The new [`ErrorPoly`] to set.
-    pub fn set_polynomial(&mut self, outeq: usize, poly: ErrorPoly) {
-        self.models[outeq].set_polynomial(poly);
+    pub fn set_polynomial(&mut self, outeq: usize, poly: ErrorPoly) -> Result<(), ErrorModelError> {
+        self.models
+            .get_mut(outeq)
+            .ok_or(ErrorModelError::InvalidOutputEquation(outeq))?
+            .set_polynomial(poly);
+        Ok(())
     }
-
     /// Sets the scalar value for the specified output equation.
     ///
     /// # Arguments
     ///
     /// * `outeq` - The index of the output equation.
     /// * `scalar` - The new scalar value to set.
-    pub fn set_scalar(&mut self, outeq: usize, scalar: f64) {
-        self.models[outeq].set_scalar(scalar);
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] indicating success or an [`ErrorModelError`] if the index is invalid.
+    pub fn set_scalar(&mut self, outeq: usize, scalar: f64) -> Result<(), ErrorModelError> {
+        self.models
+            .get_mut(outeq)
+            .ok_or(ErrorModelError::InvalidOutputEquation(outeq))?
+            .set_scalar(scalar);
+        Ok(())
     }
 
     /// Computes the standard deviation (sigma) for the specified output equation and prediction.
@@ -161,7 +176,6 @@ impl ErrorModels {
     pub fn variance(&self, prediction: &Prediction) -> Result<f64, ErrorModelError> {
         self.models[prediction.outeq].variance(prediction)
     }
-
     /// Computes the standard deviation (sigma) for the specified output equation and value.
     ///
     /// # Arguments
@@ -173,9 +187,11 @@ impl ErrorModels {
     ///
     /// A [`Result`] containing the computed sigma value or an [`ErrorModelError`] if the calculation fails.
     pub fn sigma_from_value(&self, outeq: usize, value: f64) -> Result<f64, ErrorModelError> {
-        self.models[outeq].sigma_from_value(value)
+        self.models
+            .get(outeq)
+            .ok_or(ErrorModelError::InvalidOutputEquation(outeq))?
+            .sigma_from_value(value)
     }
-
     /// Computes the variance for the specified output equation and value.
     ///
     /// # Arguments
@@ -187,7 +203,10 @@ impl ErrorModels {
     ///
     /// A [`Result`] containing the computed variance or an [`ErrorModelError`] if the calculation fails.
     pub fn variance_from_value(&self, outeq: usize, value: f64) -> Result<f64, ErrorModelError> {
-        self.models[outeq].variance_from_value(value)
+        self.models
+            .get(outeq)
+            .ok_or(ErrorModelError::InvalidOutputEquation(outeq))?
+            .variance_from_value(value)
     }
 }
 
@@ -399,6 +418,8 @@ pub enum ErrorModelError {
     ZeroSigma,
     #[error("The computed standard deviation is non-finite")]
     NonFiniteSigma,
+    #[error("The output equation index {0} is invalid")]
+    InvalidOutputEquation(usize),
 }
 
 #[cfg(test)]
