@@ -78,7 +78,7 @@ impl ErrorModels {
     }
 
     /// Returns a vector with the lambda or gamma parameters for each error model.
-    pub fn get_gamlams(&self) -> Vec<f64> {
+    pub fn scalars(&self) -> Vec<f64> {
         self.models
             .iter()
             .map(|model| match model {
