@@ -274,8 +274,7 @@ impl Prediction {
             return Ok(likelihood);
         } else if likelihood == 0.0 {
             return Err(PharmsolError::ZeroLikelihood);
-        }
-        {
+        } else {
             return Err(PharmsolError::NonFiniteLikelihood(likelihood));
         }
     }
