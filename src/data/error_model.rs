@@ -1,6 +1,10 @@
+use std::hash::{DefaultHasher, Hash, Hasher};
+
 use crate::simulator::likelihood::Prediction;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+const NOUTEQS: usize = 10; // Maximum number of output equations
 
 /// Error polynomial coefficients for the error model
 ///
@@ -55,9 +59,9 @@ impl ErrorPoly {
     }
 }
 
-impl From<Vec<ErrorModel>> for ErrorModels {
-    fn from(models: Vec<ErrorModel>) -> Self {
-        Self(models)
+impl From<[ErrorModel; NOUTEQS]> for ErrorModels {
+    fn from(models: [ErrorModel; NOUTEQS]) -> Self {
+        Self { models }
     }
 }
 
@@ -67,23 +71,56 @@ impl From<Vec<ErrorModel>> for ErrorModels {
 ///
 /// This is a wrapper around a vector of [ErrorModel]s, its size is determined by the number of outputs in the model/dataset.
 
-pub struct ErrorModels(Vec<ErrorModel>);
+pub struct ErrorModels {
+    models: [ErrorModel; NOUTEQS],
+}
 
 impl ErrorModels {
-    /// Returns the number of error models in the collection.
-    pub fn len(&self) -> usize {
-        self.0.len()
+    pub fn new() -> Self {
+        Self {
+            models: core::array::from_fn(|_| ErrorModel::default()),
+        }
     }
 
-    /// Returns a vector with the lambda or gamma parameters for each error model.
-    pub fn get_gamlams(&self) -> Vec<f64> {
-        self.0
-            .iter()
-            .map(|model| match model {
-                ErrorModel::Additive { lambda, .. } => *lambda,
-                ErrorModel::Proportional { gamma, .. } => *gamma,
-            })
-            .collect()
+    pub fn add(mut self, outeq: usize, model: ErrorModel) -> Result<Self, ErrorModelError> {
+        if outeq >= NOUTEQS {
+            return Err(ErrorModelError::InvalidOutputEquation(outeq));
+        }
+        if self.models[outeq] != ErrorModel::None {
+            return Err(ErrorModelError::ExistingOutputEquation(outeq));
+        }
+        self.models[outeq] = model;
+        Ok(self)
+    }
+    pub fn hash(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+
+        for outeq in 0..NOUTEQS {
+            // Find the model with the matching outeq ID
+
+            let model = &self.models[outeq];
+            outeq.hash(&mut hasher);
+
+            match model {
+                ErrorModel::Additive { lambda, poly: _ } => {
+                    0u8.hash(&mut hasher); // Use 0 for additive model
+                    lambda.to_bits().hash(&mut hasher);
+                }
+                ErrorModel::Proportional { gamma, poly: _ } => {
+                    1u8.hash(&mut hasher); // Use 1 for proportional model
+                    gamma.to_bits().hash(&mut hasher);
+                }
+                ErrorModel::None => {
+                    2u8.hash(&mut hasher); // Use 2 for no model
+                }
+            }
+        }
+
+        hasher.finish()
+    }
+    /// Returns the number of error models in the collection.
+    pub fn len(&self) -> usize {
+        self.models.len()
     }
 
     /// Returns the error polynomial associated with the specified output equation.
@@ -95,8 +132,8 @@ impl ErrorModels {
     /// # Returns
     ///
     /// The [`ErrorPoly`] for the given output equation.
-    pub fn errorpoly(&self, outeq: usize) -> ErrorPoly {
-        self.0[outeq].errorpoly()
+    pub fn errorpoly(&self, outeq: usize) -> Result<ErrorPoly, ErrorModelError> {
+        self.models[outeq].errorpoly()
     }
 
     /// Returns the scalar value associated with the specified output equation.
@@ -108,8 +145,8 @@ impl ErrorModels {
     /// # Returns
     ///
     /// The scalar value for the given output equation.
-    pub fn scalar(&self, outeq: usize) -> f64 {
-        self.0[outeq].scalar()
+    pub fn scalar(&self, outeq: usize) -> Result<f64, ErrorModelError> {
+        self.models[outeq].scalar()
     }
 
     /// Sets the error polynomial for the specified output equation.
@@ -119,7 +156,7 @@ impl ErrorModels {
     /// * `outeq` - The index of the output equation.
     /// * `poly` - The new [`ErrorPoly`] to set.
     pub fn set_polynomial(&mut self, outeq: usize, poly: ErrorPoly) {
-        self.0[outeq].set_polynomial(poly);
+        self.models[outeq].set_polynomial(poly);
     }
 
     /// Sets the scalar value for the specified output equation.
@@ -129,7 +166,7 @@ impl ErrorModels {
     /// * `outeq` - The index of the output equation.
     /// * `scalar` - The new scalar value to set.
     pub fn set_scalar(&mut self, outeq: usize, scalar: f64) {
-        self.0[outeq].set_scalar(scalar);
+        self.models[outeq].set_scalar(scalar);
     }
 
     /// Computes the standard deviation (sigma) for the specified output equation and prediction.
@@ -143,7 +180,7 @@ impl ErrorModels {
     ///
     /// A [`Result`] containing the computed sigma value or an [`ErrorModelError`] if the calculation fails.
     pub fn sigma(&self, prediction: &Prediction) -> Result<f64, ErrorModelError> {
-        self.0[prediction.outeq].sigma(prediction)
+        self.models[prediction.outeq].sigma(prediction)
     }
 
     /// Computes the variance for the specified output equation and prediction.
@@ -157,7 +194,7 @@ impl ErrorModels {
     ///
     /// A [`Result`] containing the computed variance or an [`ErrorModelError`] if the calculation fails.
     pub fn variance(&self, prediction: &Prediction) -> Result<f64, ErrorModelError> {
-        self.0[prediction.outeq].variance(prediction)
+        self.models[prediction.outeq].variance(prediction)
     }
 
     /// Computes the standard deviation (sigma) for the specified output equation and value.
@@ -171,7 +208,7 @@ impl ErrorModels {
     ///
     /// A [`Result`] containing the computed sigma value or an [`ErrorModelError`] if the calculation fails.
     pub fn sigma_from_value(&self, outeq: usize, value: f64) -> Result<f64, ErrorModelError> {
-        self.0[outeq].sigma_from_value(value)
+        self.models[outeq].sigma_from_value(value)
     }
 
     /// Computes the variance for the specified output equation and value.
@@ -185,7 +222,7 @@ impl ErrorModels {
     ///
     /// A [`Result`] containing the computed variance or an [`ErrorModelError`] if the calculation fails.
     pub fn variance_from_value(&self, outeq: usize, value: f64) -> Result<f64, ErrorModelError> {
-        self.0[outeq].variance_from_value(value)
+        self.models[outeq].variance_from_value(value)
     }
 }
 
@@ -193,7 +230,7 @@ impl ErrorModels {
 ///
 /// An [ErrorModel] defines how the standard deviation of observations is calculated
 /// based on the type of error model used and its parameters.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub enum ErrorModel {
     /// Additive error model, where error is independent of concentration
     ///
@@ -218,6 +255,8 @@ pub enum ErrorModel {
         /// Error polynomial coefficients (c0, c1, c2, c3)
         poly: ErrorPoly,
     },
+    #[default]
+    None,
 }
 
 impl ErrorModel {
@@ -254,10 +293,11 @@ impl ErrorModel {
     /// # Returns
     ///
     /// The error polynomial coefficients (c0, c1, c2, c3)
-    fn errorpoly(&self) -> ErrorPoly {
+    fn errorpoly(&self) -> Result<ErrorPoly, ErrorModelError> {
         match self {
-            Self::Additive { poly, .. } => *poly,
-            Self::Proportional { poly, .. } => *poly,
+            Self::Additive { poly, .. } => Ok(*poly),
+            Self::Proportional { poly, .. } => Ok(*poly),
+            Self::None => Err(ErrorModelError::MissingErrorModel),
         }
     }
 
@@ -274,14 +314,16 @@ impl ErrorModel {
         match self {
             Self::Additive { poly: p, .. } => *p = poly,
             Self::Proportional { poly: p, .. } => *p = poly,
+            Self::None => {}
         }
     }
 
     /// Get the scaling parameter
-    fn scalar(&self) -> f64 {
+    fn scalar(&self) -> Result<f64, ErrorModelError> {
         match self {
-            Self::Additive { lambda, .. } => *lambda,
-            Self::Proportional { gamma, .. } => *gamma,
+            Self::Additive { lambda, .. } => Ok(*lambda),
+            Self::Proportional { gamma, .. } => Ok(*gamma),
+            Self::None => Err(ErrorModelError::MissingErrorModel),
         }
     }
 
@@ -290,6 +332,7 @@ impl ErrorModel {
         match self {
             Self::Additive { lambda, .. } => *lambda = scalar,
             Self::Proportional { gamma, .. } => *gamma = scalar,
+            Self::None => {}
         }
     }
 
@@ -310,7 +353,7 @@ impl ErrorModel {
         // Get appropriate polynomial coefficients from prediction or default
         let errorpoly = match prediction.errorpoly() {
             Some(poly) => poly,
-            None => self.errorpoly(),
+            None => self.errorpoly()?,
         };
 
         let (c0, c1, c2, c3) = (errorpoly.c0, errorpoly.c1, errorpoly.c2, errorpoly.c3);
@@ -325,6 +368,9 @@ impl ErrorModel {
         let sigma = match self {
             Self::Additive { lambda, .. } => (alpha.powi(2) + lambda.powi(2)).sqrt(),
             Self::Proportional { gamma, .. } => gamma * alpha,
+            Self::None => {
+                return Err(ErrorModelError::MissingErrorModel);
+            }
         };
 
         if sigma < 0.0 {
@@ -358,7 +404,7 @@ impl ErrorModel {
     /// The estimated standard deviation for the given value
     fn sigma_from_value(&self, value: f64) -> Result<f64, ErrorModelError> {
         // Get polynomial coefficients from the model
-        let (c0, c1, c2, c3) = self.errorpoly().coefficients();
+        let (c0, c1, c2, c3) = self.errorpoly()?.coefficients();
 
         // Calculate alpha term
         let alpha = c0 + c1 * value + c2 * value.powi(2) + c3 * value.powi(3);
@@ -367,6 +413,9 @@ impl ErrorModel {
         let sigma = match self {
             Self::Additive { lambda, .. } => (alpha.powi(2) + lambda.powi(2)).sqrt(),
             Self::Proportional { gamma, .. } => gamma * alpha,
+            Self::None => {
+                return Err(ErrorModelError::MissingErrorModel);
+            }
         };
 
         if sigma < 0.0 {
@@ -397,6 +446,12 @@ pub enum ErrorModelError {
     ZeroSigma,
     #[error("The computed standard deviation is non-finite")]
     NonFiniteSigma,
+    #[error("The output equation index {0} is invalid")]
+    InvalidOutputEquation(usize),
+    #[error("The output equation number {0} already exists")]
+    ExistingOutputEquation(usize),
+    #[error("An output equation does not have an error model defined")]
+    MissingErrorModel,
 }
 
 #[cfg(test)]
@@ -423,23 +478,32 @@ mod tests {
     #[test]
     fn test_polynomial() {
         let model = ErrorModel::additive(ErrorPoly::new(1.0, 2.0, 3.0, 4.0), 5.0);
-        assert_eq!(model.errorpoly().coefficients(), (1.0, 2.0, 3.0, 4.0));
+        assert_eq!(
+            model.errorpoly().unwrap().coefficients(),
+            (1.0, 2.0, 3.0, 4.0)
+        );
     }
 
     #[test]
     fn test_set_polynomial() {
         let mut model = ErrorModel::additive(ErrorPoly::new(1.0, 2.0, 3.0, 4.0), 5.0);
-        assert_eq!(model.errorpoly().coefficients(), (1.0, 2.0, 3.0, 4.0));
+        assert_eq!(
+            model.errorpoly().unwrap().coefficients(),
+            (1.0, 2.0, 3.0, 4.0)
+        );
         model.set_polynomial(ErrorPoly::new(5.0, 6.0, 7.0, 8.0));
-        assert_eq!(model.errorpoly().coefficients(), (5.0, 6.0, 7.0, 8.0));
+        assert_eq!(
+            model.errorpoly().unwrap().coefficients(),
+            (5.0, 6.0, 7.0, 8.0)
+        );
     }
 
     #[test]
     fn test_set_scalar() {
         let mut model = ErrorModel::additive(ErrorPoly::new(1.0, 2.0, 3.0, 4.0), 5.0);
-        assert_eq!(model.scalar(), 5.0);
+        assert_eq!(model.scalar().unwrap(), 5.0);
         model.set_scalar(10.0);
-        assert_eq!(model.scalar(), 10.0);
+        assert_eq!(model.scalar().unwrap(), 10.0);
     }
 
     #[test]

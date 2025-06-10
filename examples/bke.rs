@@ -41,12 +41,19 @@ fn main() {
         (1, 1),
     );
 
-    let ems = vec![ErrorModel::additive(
-        ErrorPoly::new(0.0, 0.05, 0.0, 0.0),
-        0.0,
-    )]
-    .into();
+    let mut ems = ErrorModels::new()
+        .add(
+            0,
+            ErrorModel::additive(ErrorPoly::new(0.0, 0.05, 0.0, 0.0), 0.0),
+        )
+        .unwrap();
 
+    ems = ems
+        .add(
+            1,
+            ErrorModel::proportional(ErrorPoly::new(0.0, 0.05, 0.0, 0.0), 0.0),
+        )
+        .unwrap();
     // Compute likelihoods and predictions for both models
     let ll_an = an
         .estimate_likelihood(

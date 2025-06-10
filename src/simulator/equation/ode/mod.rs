@@ -75,21 +75,6 @@ fn spphash(spp: &[f64]) -> u64 {
     std::hash::Hasher::finish(&hasher)
 }
 
-#[inline(always)]
-#[cached(
-    ty = "UnboundCache<String, SubjectPredictions>",
-    create = "{ UnboundCache::with_capacity(100_000) }",
-    convert = r#"{ format!("{}{}", subject.id(), spphash(support_point)) }"#,
-    result = "true"
-)]
-fn _subject_predictions(
-    ode: &ODE,
-    subject: &Subject,
-    support_point: &Vec<f64>,
-) -> Result<SubjectPredictions, PharmsolError> {
-    Ok(ode.simulate_subject(subject, support_point, None)?.0)
-}
-
 fn _estimate_likelihood(
     ode: &ODE,
     subject: &Subject,
@@ -103,6 +88,21 @@ fn _estimate_likelihood(
         _subject_predictions_no_cache(ode, subject, support_point)
     }?;
     ypred.likelihood(error_models)
+}
+
+#[inline(always)]
+#[cached(
+    ty = "UnboundCache<String, SubjectPredictions>",
+    create = "{ UnboundCache::with_capacity(100_000) }",
+    convert = r#"{ format!("{}{}", subject.id(), spphash(support_point)) }"#,
+    result = "true"
+)]
+fn _subject_predictions(
+    ode: &ODE,
+    subject: &Subject,
+    support_point: &Vec<f64>,
+) -> Result<SubjectPredictions, PharmsolError> {
+    Ok(ode.simulate_subject(subject, support_point, None)?.0)
 }
 
 impl EquationTypes for ODE {

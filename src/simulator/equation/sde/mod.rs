@@ -349,7 +349,7 @@ fn spphash(spp: &[f64]) -> u64 {
 #[cached(
     ty = "UnboundCache<String, f64>",
     create = "{ UnboundCache::with_capacity(100_000) }",
-    convert = r#"{ format!("{}{}{:#?}", subject.id(), spphash(support_point), error_models.get_gamlams()) }"#,
+    convert = r#"{ format!("{}{}{:#?}", subject.id(), spphash(support_point), error_models.hash()) }"#,
     result = "true"
 )]
 fn _estimate_likelihood(
