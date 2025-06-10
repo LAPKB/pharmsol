@@ -4,8 +4,6 @@ use crate::simulator::likelihood::Prediction;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-const NOUTEQS: usize = 10; // Maximum number of output equations
-
 /// Error polynomial coefficients for the error model
 ///
 /// This struct holds the coefficients for a polynomial used to model
@@ -59,8 +57,8 @@ impl ErrorPoly {
     }
 }
 
-impl From<[ErrorModel; NOUTEQS]> for ErrorModels {
-    fn from(models: [ErrorModel; NOUTEQS]) -> Self {
+impl From<Vec<ErrorModel>> for ErrorModels {
+    fn from(models: Vec<ErrorModel>) -> Self {
         Self { models }
     }
 }
@@ -72,19 +70,17 @@ impl From<[ErrorModel; NOUTEQS]> for ErrorModels {
 /// This is a wrapper around a vector of [ErrorModel]s, its size is determined by the number of outputs in the model/dataset.
 
 pub struct ErrorModels {
-    models: [ErrorModel; NOUTEQS],
+    models: Vec<ErrorModel>,
 }
 
 impl ErrorModels {
     pub fn new() -> Self {
-        Self {
-            models: core::array::from_fn(|_| ErrorModel::default()),
-        }
+        Self { models: vec![] }
     }
 
     pub fn add(mut self, outeq: usize, model: ErrorModel) -> Result<Self, ErrorModelError> {
-        if outeq >= NOUTEQS {
-            return Err(ErrorModelError::InvalidOutputEquation(outeq));
+        if outeq >= self.models.len() {
+            self.models.resize(outeq + 1, ErrorModel::None);
         }
         if self.models[outeq] != ErrorModel::None {
             return Err(ErrorModelError::ExistingOutputEquation(outeq));
@@ -95,7 +91,7 @@ impl ErrorModels {
     pub fn hash(&self) -> u64 {
         let mut hasher = DefaultHasher::new();
 
-        for outeq in 0..NOUTEQS {
+        for outeq in 0..self.models.len() {
             // Find the model with the matching outeq ID
 
             let model = &self.models[outeq];
