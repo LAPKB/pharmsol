@@ -194,6 +194,16 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
         Ok(self.simulate_subject(subject, support_point, None)?.0)
     }
 
+    /// Get the number of output equations in the model.
+    fn nouteqs(&self) -> usize {
+        self.get_nouteqs()
+    }
+
+    /// Get the number of state variables in the model.
+    fn nstates(&self) -> usize {
+        self.get_nstates()
+    }
+
     /// Simulate a subject with given parameters and optionally calculate likelihood.
     ///
     /// # Parameters
