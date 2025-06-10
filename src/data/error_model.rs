@@ -68,9 +68,15 @@ impl From<Vec<ErrorModel>> for ErrorModels {
 /// in the pharmacometric analysis.
 ///
 /// This is a wrapper around a vector of [ErrorModel]s, its size is determined by the number of outputs in the model/dataset.
-
+#[derive(Serialize, Debug, Clone, Deserialize)]
 pub struct ErrorModels {
     models: Vec<ErrorModel>,
+}
+
+impl Default for ErrorModels {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ErrorModels {
@@ -141,6 +147,12 @@ impl ErrorModels {
     ///
     /// The [`ErrorPoly`] for the given output equation.
     pub fn errorpoly(&self, outeq: usize) -> Result<ErrorPoly, ErrorModelError> {
+        if outeq >= self.models.len() {
+            return Err(ErrorModelError::InvalidOutputEquation(outeq));
+        }
+        if self.models[outeq] == ErrorModel::None {
+            return Err(ErrorModelError::NoneErrorModel(outeq));
+        }
         self.models[outeq].errorpoly()
     }
 
@@ -154,7 +166,13 @@ impl ErrorModels {
     ///
     /// The scalar value for the given output equation.
     pub fn scalar(&self, outeq: usize) -> Result<f64, ErrorModelError> {
-        self.models[outeq].scalar()
+        if outeq >= self.models.len() {
+            return Err(ErrorModelError::InvalidOutputEquation(outeq));
+        }
+        if self.models[outeq] == ErrorModel::None {
+            return Err(ErrorModelError::NoneErrorModel(outeq));
+        }
+        Ok(self.models[outeq].scalar()?)
     }
 
     /// Sets the error polynomial for the specified output equation.
@@ -163,8 +181,15 @@ impl ErrorModels {
     ///
     /// * `outeq` - The index of the output equation.
     /// * `poly` - The new [`ErrorPoly`] to set.
-    pub fn set_polynomial(&mut self, outeq: usize, poly: ErrorPoly) {
-        self.models[outeq].set_polynomial(poly);
+    pub fn set_errorpoly(&mut self, outeq: usize, poly: ErrorPoly) -> Result<(), ErrorModelError> {
+        if outeq >= self.models.len() {
+            return Err(ErrorModelError::InvalidOutputEquation(outeq));
+        }
+        if self.models[outeq] == ErrorModel::None {
+            return Err(ErrorModelError::NoneErrorModel(outeq));
+        }
+        self.models[outeq].set_errorpoly(poly);
+        Ok(())
     }
 
     /// Sets the scalar value for the specified output equation.
@@ -173,8 +198,15 @@ impl ErrorModels {
     ///
     /// * `outeq` - The index of the output equation.
     /// * `scalar` - The new scalar value to set.
-    pub fn set_scalar(&mut self, outeq: usize, scalar: f64) {
+    pub fn set_scalar(&mut self, outeq: usize, scalar: f64) -> Result<(), ErrorModelError> {
+        if outeq >= self.models.len() {
+            return Err(ErrorModelError::InvalidOutputEquation(outeq));
+        }
+        if self.models[outeq] == ErrorModel::None {
+            return Err(ErrorModelError::NoneErrorModel(outeq));
+        }
         self.models[outeq].set_scalar(scalar);
+        Ok(())
     }
 
     /// Computes the standard deviation (sigma) for the specified output equation and prediction.
@@ -188,6 +220,13 @@ impl ErrorModels {
     ///
     /// A [`Result`] containing the computed sigma value or an [`ErrorModelError`] if the calculation fails.
     pub fn sigma(&self, prediction: &Prediction) -> Result<f64, ErrorModelError> {
+        let outeq = prediction.outeq;
+        if outeq >= self.models.len() {
+            return Err(ErrorModelError::InvalidOutputEquation(outeq));
+        }
+        if self.models[outeq] == ErrorModel::None {
+            return Err(ErrorModelError::NoneErrorModel(outeq));
+        }
         self.models[prediction.outeq].sigma(prediction)
     }
 
@@ -202,6 +241,13 @@ impl ErrorModels {
     ///
     /// A [`Result`] containing the computed variance or an [`ErrorModelError`] if the calculation fails.
     pub fn variance(&self, prediction: &Prediction) -> Result<f64, ErrorModelError> {
+        let outeq = prediction.outeq;
+        if outeq >= self.models.len() {
+            return Err(ErrorModelError::InvalidOutputEquation(outeq));
+        }
+        if self.models[outeq] == ErrorModel::None {
+            return Err(ErrorModelError::NoneErrorModel(outeq));
+        }
         self.models[prediction.outeq].variance(prediction)
     }
 
@@ -216,6 +262,12 @@ impl ErrorModels {
     ///
     /// A [`Result`] containing the computed sigma value or an [`ErrorModelError`] if the calculation fails.
     pub fn sigma_from_value(&self, outeq: usize, value: f64) -> Result<f64, ErrorModelError> {
+        if outeq >= self.models.len() {
+            return Err(ErrorModelError::InvalidOutputEquation(outeq));
+        }
+        if self.models[outeq] == ErrorModel::None {
+            return Err(ErrorModelError::NoneErrorModel(outeq));
+        }
         self.models[outeq].sigma_from_value(value)
     }
 
@@ -230,6 +282,12 @@ impl ErrorModels {
     ///
     /// A [`Result`] containing the computed variance or an [`ErrorModelError`] if the calculation fails.
     pub fn variance_from_value(&self, outeq: usize, value: f64) -> Result<f64, ErrorModelError> {
+        if outeq >= self.models.len() {
+            return Err(ErrorModelError::InvalidOutputEquation(outeq));
+        }
+        if self.models[outeq] == ErrorModel::None {
+            return Err(ErrorModelError::NoneErrorModel(outeq));
+        }
         self.models[outeq].variance_from_value(value)
     }
 }
@@ -318,7 +376,7 @@ impl ErrorModel {
     /// # Returns
     ///
     /// The updated error model with the new polynomial coefficients
-    pub fn set_polynomial(&mut self, poly: ErrorPoly) {
+    pub fn set_errorpoly(&mut self, poly: ErrorPoly) {
         match self {
             Self::Additive { poly: p, .. } => *p = poly,
             Self::Proportional { poly: p, .. } => *p = poly,
@@ -460,6 +518,8 @@ pub enum ErrorModelError {
     ExistingOutputEquation(usize),
     #[error("An output equation does not have an error model defined")]
     MissingErrorModel,
+    #[error("The output equation index {0} is of type ErrorModel::None")]
+    NoneErrorModel(usize),
 }
 
 #[cfg(test)]
@@ -493,13 +553,13 @@ mod tests {
     }
 
     #[test]
-    fn test_set_polynomial() {
+    fn test_set_errorpoly() {
         let mut model = ErrorModel::additive(ErrorPoly::new(1.0, 2.0, 3.0, 4.0), 5.0);
         assert_eq!(
             model.errorpoly().unwrap().coefficients(),
             (1.0, 2.0, 3.0, 4.0)
         );
-        model.set_polynomial(ErrorPoly::new(5.0, 6.0, 7.0, 8.0));
+        model.set_errorpoly(ErrorPoly::new(5.0, 6.0, 7.0, 8.0));
         assert_eq!(
             model.errorpoly().unwrap().coefficients(),
             (5.0, 6.0, 7.0, 8.0)
@@ -521,5 +581,347 @@ mod tests {
 
         let model = ErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0);
         assert_eq!(model.sigma_from_value(20.0).unwrap(), 2.0);
+    }
+
+    #[test]
+    fn test_error_models_new() {
+        let models = ErrorModels::new();
+        assert_eq!(models.len(), 0);
+    }
+
+    #[test]
+    fn test_error_models_default() {
+        let models = ErrorModels::default();
+        assert_eq!(models.len(), 0);
+    }
+
+    #[test]
+    fn test_error_models_add_single() {
+        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let models = ErrorModels::new().add(0, model).unwrap();
+        assert_eq!(models.len(), 1);
+    }
+
+    #[test]
+    fn test_error_models_add_multiple() {
+        let model1 = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let model2 = ErrorModel::proportional(ErrorPoly::new(2.0, 0.0, 0.0, 0.0), 3.0);
+
+        let models = ErrorModels::new()
+            .add(0, model1)
+            .unwrap()
+            .add(1, model2)
+            .unwrap();
+
+        assert_eq!(models.len(), 2);
+    }
+
+    #[test]
+    fn test_error_models_add_duplicate_outeq_fails() {
+        let model1 = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let model2 = ErrorModel::proportional(ErrorPoly::new(2.0, 0.0, 0.0, 0.0), 3.0);
+
+        let result = ErrorModels::new().add(0, model1).unwrap().add(0, model2); // Same outeq should fail
+
+        assert!(result.is_err());
+        match result {
+            Err(ErrorModelError::ExistingOutputEquation(outeq)) => assert_eq!(outeq, 0),
+            _ => panic!("Expected ExistingOutputEquation error"),
+        }
+    }
+
+    #[test]
+    fn test_error_models_scalar() {
+        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let models = ErrorModels::new().add(0, model).unwrap();
+
+        assert_eq!(models.scalar(0).unwrap(), 5.0);
+    }
+
+    #[test]
+    fn test_error_models_scalar_invalid_outeq() {
+        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let models = ErrorModels::new().add(0, model).unwrap();
+
+        let result = models.scalar(1);
+        assert!(result.is_err());
+        match result {
+            Err(ErrorModelError::InvalidOutputEquation(outeq)) => assert_eq!(outeq, 1),
+            _ => panic!("Expected InvalidOutputEquation error"),
+        }
+    }
+
+    #[test]
+    fn test_error_models_set_scalar() {
+        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let mut models = ErrorModels::new().add(0, model).unwrap();
+
+        assert_eq!(models.scalar(0).unwrap(), 5.0);
+        models.set_scalar(0, 10.0).unwrap();
+        assert_eq!(models.scalar(0).unwrap(), 10.0);
+    }
+
+    #[test]
+    fn test_error_models_set_scalar_invalid_outeq() {
+        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let mut models = ErrorModels::new().add(0, model).unwrap();
+
+        let result = models.set_scalar(1, 10.0);
+        assert!(result.is_err());
+        match result {
+            Err(ErrorModelError::InvalidOutputEquation(outeq)) => assert_eq!(outeq, 1),
+            _ => panic!("Expected InvalidOutputEquation error"),
+        }
+    }
+
+    #[test]
+    fn test_error_models_errorpoly() {
+        let poly = ErrorPoly::new(1.0, 2.0, 3.0, 4.0);
+        let model = ErrorModel::additive(poly, 5.0);
+        let models = ErrorModels::new().add(0, model).unwrap();
+
+        let retrieved_poly = models.errorpoly(0).unwrap();
+        assert_eq!(retrieved_poly.coefficients(), (1.0, 2.0, 3.0, 4.0));
+    }
+
+    #[test]
+    fn test_error_models_errorpoly_invalid_outeq() {
+        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let models = ErrorModels::new().add(0, model).unwrap();
+
+        let result = models.errorpoly(1);
+        assert!(result.is_err());
+        match result {
+            Err(ErrorModelError::InvalidOutputEquation(outeq)) => assert_eq!(outeq, 1),
+            _ => panic!("Expected InvalidOutputEquation error"),
+        }
+    }
+
+    #[test]
+    fn test_error_models_set_errorpoly() {
+        let poly1 = ErrorPoly::new(1.0, 2.0, 3.0, 4.0);
+        let poly2 = ErrorPoly::new(5.0, 6.0, 7.0, 8.0);
+        let model = ErrorModel::additive(poly1, 5.0);
+        let mut models = ErrorModels::new().add(0, model).unwrap();
+
+        assert_eq!(
+            models.errorpoly(0).unwrap().coefficients(),
+            (1.0, 2.0, 3.0, 4.0)
+        );
+        models.set_errorpoly(0, poly2).unwrap();
+        assert_eq!(
+            models.errorpoly(0).unwrap().coefficients(),
+            (5.0, 6.0, 7.0, 8.0)
+        );
+    }
+
+    #[test]
+    fn test_error_models_set_errorpoly_invalid_outeq() {
+        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let mut models = ErrorModels::new().add(0, model).unwrap();
+
+        let result = models.set_errorpoly(1, ErrorPoly::new(5.0, 6.0, 7.0, 8.0));
+        assert!(result.is_err());
+        match result {
+            Err(ErrorModelError::InvalidOutputEquation(outeq)) => assert_eq!(outeq, 1),
+            _ => panic!("Expected InvalidOutputEquation error"),
+        }
+    }
+
+    #[test]
+    fn test_error_models_sigma() {
+        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let models = ErrorModels::new().add(0, model).unwrap();
+
+        let observation = Observation::new(0.0, 20.0, 0, None, false);
+        let prediction = observation.to_prediction(10.0, vec![]);
+
+        let sigma = models.sigma(&prediction).unwrap();
+        assert_eq!(sigma, (26.0_f64).sqrt());
+    }
+
+    #[test]
+    fn test_error_models_sigma_invalid_outeq() {
+        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let models = ErrorModels::new().add(0, model).unwrap();
+
+        let observation = Observation::new(0.0, 20.0, 1, None, false); // outeq=1 not in models
+        let prediction = observation.to_prediction(10.0, vec![]);
+
+        let result = models.sigma(&prediction);
+        assert!(result.is_err());
+        match result {
+            Err(ErrorModelError::InvalidOutputEquation(outeq)) => assert_eq!(outeq, 1),
+            _ => panic!("Expected InvalidOutputEquation error"),
+        }
+    }
+
+    #[test]
+    fn test_error_models_variance() {
+        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let models = ErrorModels::new().add(0, model).unwrap();
+
+        let observation = Observation::new(0.0, 20.0, 0, None, false);
+        let prediction = observation.to_prediction(10.0, vec![]);
+
+        let variance = models.variance(&prediction).unwrap();
+        let expected_sigma = (26.0_f64).sqrt();
+        assert_eq!(variance, expected_sigma.powi(2));
+    }
+
+    #[test]
+    fn test_error_models_variance_invalid_outeq() {
+        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let models = ErrorModels::new().add(0, model).unwrap();
+
+        let observation = Observation::new(0.0, 20.0, 1, None, false); // outeq=1 not in models
+        let prediction = observation.to_prediction(10.0, vec![]);
+
+        let result = models.variance(&prediction);
+        assert!(result.is_err());
+        match result {
+            Err(ErrorModelError::InvalidOutputEquation(outeq)) => assert_eq!(outeq, 1),
+            _ => panic!("Expected InvalidOutputEquation error"),
+        }
+    }
+
+    #[test]
+    fn test_error_models_sigma_from_value() {
+        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let models = ErrorModels::new().add(0, model).unwrap();
+
+        let sigma = models.sigma_from_value(0, 20.0).unwrap();
+        assert_eq!(sigma, (26.0_f64).sqrt());
+    }
+
+    #[test]
+    fn test_error_models_sigma_from_value_invalid_outeq() {
+        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let models = ErrorModels::new().add(0, model).unwrap();
+
+        let result = models.sigma_from_value(1, 20.0);
+        assert!(result.is_err());
+        match result {
+            Err(ErrorModelError::InvalidOutputEquation(outeq)) => assert_eq!(outeq, 1),
+            _ => panic!("Expected InvalidOutputEquation error"),
+        }
+    }
+
+    #[test]
+    fn test_error_models_variance_from_value() {
+        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let models = ErrorModels::new().add(0, model).unwrap();
+
+        let variance = models.variance_from_value(0, 20.0).unwrap();
+        let expected_sigma = (26.0_f64).sqrt();
+        assert_eq!(variance, expected_sigma.powi(2));
+    }
+
+    #[test]
+    fn test_error_models_variance_from_value_invalid_outeq() {
+        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let models = ErrorModels::new().add(0, model).unwrap();
+
+        let result = models.variance_from_value(1, 20.0);
+        assert!(result.is_err());
+        match result {
+            Err(ErrorModelError::InvalidOutputEquation(outeq)) => assert_eq!(outeq, 1),
+            _ => panic!("Expected InvalidOutputEquation error"),
+        }
+    }
+
+    #[test]
+    fn test_error_models_hash_consistency() {
+        let model1 = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let model2 = ErrorModel::proportional(ErrorPoly::new(2.0, 0.0, 0.0, 0.0), 3.0);
+
+        let models1 = ErrorModels::new()
+            .add(0, model1.clone())
+            .unwrap()
+            .add(1, model2.clone())
+            .unwrap();
+
+        let models2 = ErrorModels::new()
+            .add(0, model1)
+            .unwrap()
+            .add(1, model2)
+            .unwrap();
+
+        // Same models should produce same hash
+        assert_eq!(models1.hash(), models2.hash());
+    }
+
+    #[test]
+    fn test_error_models_hash_order_independence() {
+        let model1 = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let model2 = ErrorModel::proportional(ErrorPoly::new(2.0, 0.0, 0.0, 0.0), 3.0);
+
+        // Add in different orders
+        let models1 = ErrorModels::new()
+            .add(0, model1.clone())
+            .unwrap()
+            .add(1, model2.clone())
+            .unwrap();
+
+        let models2 = ErrorModels::new()
+            .add(1, model2)
+            .unwrap()
+            .add(0, model1)
+            .unwrap();
+
+        // Hash should be the same regardless of insertion order
+        assert_eq!(models1.hash(), models2.hash());
+    }
+
+    #[test]
+    fn test_error_models_multiple_outeqs() {
+        let additive_model = ErrorModel::additive(ErrorPoly::new(1.0, 0.1, 0.0, 0.0), 0.5);
+        let proportional_model = ErrorModel::proportional(ErrorPoly::new(0.0, 0.05, 0.0, 0.0), 0.1);
+
+        let models = ErrorModels::new()
+            .add(0, additive_model)
+            .unwrap()
+            .add(1, proportional_model)
+            .unwrap();
+
+        assert_eq!(models.len(), 2);
+
+        // Test scalar retrieval for different outeqs
+        assert_eq!(models.scalar(0).unwrap(), 0.5);
+        assert_eq!(models.scalar(1).unwrap(), 0.1);
+
+        // Test polynomial retrieval for different outeqs
+        assert_eq!(
+            models.errorpoly(0).unwrap().coefficients(),
+            (1.0, 0.1, 0.0, 0.0)
+        );
+        assert_eq!(
+            models.errorpoly(1).unwrap().coefficients(),
+            (0.0, 0.05, 0.0, 0.0)
+        );
+    }
+
+    #[test]
+    fn test_error_models_with_predictions_different_outeqs() {
+        let additive_model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let proportional_model = ErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0);
+
+        let models = ErrorModels::new()
+            .add(0, additive_model)
+            .unwrap()
+            .add(1, proportional_model)
+            .unwrap();
+
+        // Test with outeq=0 (additive model)
+        let obs1 = Observation::new(0.0, 20.0, 0, None, false);
+        let pred1 = obs1.to_prediction(10.0, vec![]);
+        let sigma1 = models.sigma(&pred1).unwrap();
+        assert_eq!(sigma1, (26.0_f64).sqrt()); // additive: sqrt(alpha^2 + lambda^2) = sqrt(1^2 + 5^2) = sqrt(26)
+
+        // Test with outeq=1 (proportional model)
+        let obs2 = Observation::new(0.0, 20.0, 1, None, false);
+        let pred2 = obs2.to_prediction(10.0, vec![]);
+        let sigma2 = models.sigma(&pred2).unwrap();
+        assert_eq!(sigma2, 2.0); // proportional: gamma * alpha = 2 * 1 = 2
     }
 }
