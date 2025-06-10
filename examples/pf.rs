@@ -28,14 +28,20 @@ fn main() {
         (2, 1),
         10000,
     );
-    let em = ErrorModel::additive(ErrorPoly::new(0.0, 0.05, 0.0, 0.0), 0.0);
+
+    let ems = ErrorModels::new()
+        .add(
+            0,
+            ErrorModel::additive(ErrorPoly::new(0.5, 0.0, 0.0, 0.0), 0.0),
+        )
+        .unwrap();
 
     let ll = sde
-        .estimate_likelihood(&subject, &vec![1.0], &em, false)
+        .estimate_likelihood(&subject, &vec![1.0], &ems, false)
         .unwrap();
 
     dbg!(sde
-        .estimate_likelihood(&subject, &vec![1.0], &em, false)
+        .estimate_likelihood(&subject, &vec![1.0], &ems, false)
         .unwrap());
     println!("{ll:#?}");
 }

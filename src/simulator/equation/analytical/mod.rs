@@ -125,7 +125,7 @@ impl EquationPriv for Analytical {
         &self,
         support_point: &Vec<f64>,
         observation: &Observation,
-        error_model: Option<&ErrorModel>,
+        error_models: Option<&ErrorModels>,
         _time: f64,
         covariates: &Covariates,
         x: &mut Self::S,
@@ -143,8 +143,8 @@ impl EquationPriv for Analytical {
         );
         let pred = y[observation.outeq()];
         let pred = observation.to_prediction(pred, x.as_slice().to_vec());
-        if let Some(error_model) = error_model {
-            likelihood.push(pred.likelihood(error_model)?);
+        if let Some(error_models) = error_models {
+            likelihood.push(pred.likelihood(error_models)?);
         }
         output.add_prediction(pred);
         Ok(())
@@ -165,10 +165,10 @@ impl Equation for Analytical {
         &self,
         subject: &Subject,
         support_point: &Vec<f64>,
-        error_model: &ErrorModel,
+        error_models: &ErrorModels,
         cache: bool,
     ) -> Result<f64, PharmsolError> {
-        _estimate_likelihood(self, subject, support_point, error_model, cache)
+        _estimate_likelihood(self, subject, support_point, error_models, cache)
     }
 }
 fn spphash(spp: &[f64]) -> u64 {
@@ -194,7 +194,7 @@ fn _estimate_likelihood(
     ode: &Analytical,
     subject: &Subject,
     support_point: &Vec<f64>,
-    error_model: &ErrorModel,
+    error_models: &ErrorModels,
     cache: bool,
 ) -> Result<f64, PharmsolError> {
     let ypred = if cache {
@@ -202,5 +202,5 @@ fn _estimate_likelihood(
     } else {
         _subject_predictions_no_cache(ode, subject, support_point)
     }?;
-    ypred.likelihood(error_model)
+    ypred.likelihood(error_models)
 }
