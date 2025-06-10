@@ -88,6 +88,18 @@ impl ErrorModels {
         self.models[outeq] = model;
         Ok(self)
     }
+
+    pub fn iter(&self) -> impl Iterator<Item = (usize, &ErrorModel)> {
+        self.models.iter().enumerate()
+    }
+
+    pub fn into_iter(self) -> impl Iterator<Item = (usize, ErrorModel)> {
+        self.models.into_iter().enumerate()
+    }
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (usize, &mut ErrorModel)> {
+        self.models.iter_mut().enumerate()
+    }
+
     pub fn hash(&self) -> u64 {
         let mut hasher = DefaultHasher::new();
 
@@ -289,7 +301,7 @@ impl ErrorModel {
     /// # Returns
     ///
     /// The error polynomial coefficients (c0, c1, c2, c3)
-    fn errorpoly(&self) -> Result<ErrorPoly, ErrorModelError> {
+    pub fn errorpoly(&self) -> Result<ErrorPoly, ErrorModelError> {
         match self {
             Self::Additive { poly, .. } => Ok(*poly),
             Self::Proportional { poly, .. } => Ok(*poly),
@@ -306,7 +318,7 @@ impl ErrorModel {
     /// # Returns
     ///
     /// The updated error model with the new polynomial coefficients
-    fn set_polynomial(&mut self, poly: ErrorPoly) {
+    pub fn set_polynomial(&mut self, poly: ErrorPoly) {
         match self {
             Self::Additive { poly: p, .. } => *p = poly,
             Self::Proportional { poly: p, .. } => *p = poly,
@@ -315,7 +327,7 @@ impl ErrorModel {
     }
 
     /// Get the scaling parameter
-    fn scalar(&self) -> Result<f64, ErrorModelError> {
+    pub fn scalar(&self) -> Result<f64, ErrorModelError> {
         match self {
             Self::Additive { lambda, .. } => Ok(*lambda),
             Self::Proportional { gamma, .. } => Ok(*gamma),
@@ -324,7 +336,7 @@ impl ErrorModel {
     }
 
     /// Set the scaling parameter
-    fn set_scalar(&mut self, scalar: f64) {
+    pub fn set_scalar(&mut self, scalar: f64) {
         match self {
             Self::Additive { lambda, .. } => *lambda = scalar,
             Self::Proportional { gamma, .. } => *gamma = scalar,
@@ -345,7 +357,7 @@ impl ErrorModel {
     /// # Returns
     ///
     /// The estimated standard deviation of the prediction
-    fn sigma(&self, prediction: &Prediction) -> Result<f64, ErrorModelError> {
+    pub fn sigma(&self, prediction: &Prediction) -> Result<f64, ErrorModelError> {
         // Get appropriate polynomial coefficients from prediction or default
         let errorpoly = match prediction.errorpoly() {
             Some(poly) => poly,
@@ -381,7 +393,7 @@ impl ErrorModel {
     /// Estimate the variance of the observation
     ///
     /// This is a conveniecen function which calls [ErrorModel::sigma], and squares the result.
-    fn variance(&self, prediction: &Prediction) -> Result<f64, ErrorModelError> {
+    pub fn variance(&self, prediction: &Prediction) -> Result<f64, ErrorModelError> {
         let sigma = self.sigma(prediction)?;
         Ok(sigma.powi(2))
     }
@@ -398,7 +410,7 @@ impl ErrorModel {
     /// # Returns
     ///
     /// The estimated standard deviation for the given value
-    fn sigma_from_value(&self, value: f64) -> Result<f64, ErrorModelError> {
+    pub fn sigma_from_value(&self, value: f64) -> Result<f64, ErrorModelError> {
         // Get polynomial coefficients from the model
         let (c0, c1, c2, c3) = self.errorpoly()?.coefficients();
 
@@ -428,7 +440,7 @@ impl ErrorModel {
     /// Estimate the variance for a raw observation value
     ///
     /// This is a conveniecen function which calls [ErrorModel::sigma_from_value], and squares the result.
-    fn variance_from_value(&self, value: f64) -> Result<f64, ErrorModelError> {
+    pub fn variance_from_value(&self, value: f64) -> Result<f64, ErrorModelError> {
         let sigma = self.sigma_from_value(value)?;
         Ok(sigma.powi(2))
     }
