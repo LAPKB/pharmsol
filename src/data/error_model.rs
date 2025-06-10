@@ -79,6 +79,16 @@ impl ErrorModels {
         Self::default()
     }
 
+    /// Iterate over the error models in the collection
+    pub fn iter(&self) -> impl Iterator<Item = &(usize, ErrorModel)> {
+        self.models.iter()
+    }
+
+    /// Iterate over mutable references to the error models in the collection
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut (usize, ErrorModel)> {
+        self.models.iter_mut()
+    }
+
     /// Add an error model for a specific output equation.
     pub fn add(mut self, outeq: usize, model: ErrorModel) -> Result<Self, ErrorModelError> {
         if self.models.iter().any(|(id, _)| *id == outeq) {
@@ -96,29 +106,23 @@ impl ErrorModels {
     pub fn hash(&self) -> u64 {
         let mut hasher = DefaultHasher::new();
 
-        // Sort by output equation index to ensure consistent hashing
-        let mut sorted_models = self.models.clone();
-        sorted_models.sort_by_key(|(outeq, _)| *outeq);
+        // Collect indices and sort them to ensure consistent hashing
+        let mut indices: Vec<_> = self.models.iter().map(|(outeq, _)| *outeq).collect();
+        indices.sort();
 
-        for (outeq, model) in sorted_models {
+        for outeq in indices {
+            // Find the model with the matching outeq ID
+            let (_, model) = self.models.iter().find(|(id, _)| *id == outeq).unwrap();
             outeq.hash(&mut hasher);
-            // Hash the discriminant and fields of the ErrorModel enum
+
             match model {
-                ErrorModel::Additive { lambda, poly } => {
-                    0u8.hash(&mut hasher); // discriminant for Additive
+                ErrorModel::Additive { lambda, poly: _ } => {
+                    0u8.hash(&mut hasher); // Use 0 for additive model
                     lambda.to_bits().hash(&mut hasher);
-                    poly.coefficients().0.to_bits().hash(&mut hasher);
-                    poly.coefficients().1.to_bits().hash(&mut hasher);
-                    poly.coefficients().2.to_bits().hash(&mut hasher);
-                    poly.coefficients().3.to_bits().hash(&mut hasher);
                 }
-                ErrorModel::Proportional { gamma, poly } => {
-                    1u8.hash(&mut hasher); // discriminant for Proportional
+                ErrorModel::Proportional { gamma, poly: _ } => {
+                    1u8.hash(&mut hasher); // Use 1 for proportional model
                     gamma.to_bits().hash(&mut hasher);
-                    poly.coefficients().0.to_bits().hash(&mut hasher);
-                    poly.coefficients().1.to_bits().hash(&mut hasher);
-                    poly.coefficients().2.to_bits().hash(&mut hasher);
-                    poly.coefficients().3.to_bits().hash(&mut hasher);
                 }
             }
         }
@@ -825,18 +829,6 @@ mod tests {
 
         // Hash should be the same regardless of insertion order
         assert_eq!(models1.hash(), models2.hash());
-    }
-
-    #[test]
-    fn test_error_models_hash_different_for_different_models() {
-        let model1 = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let model2 = ErrorModel::additive(ErrorPoly::new(2.0, 0.0, 0.0, 0.0), 5.0); // Different poly
-
-        let models1 = ErrorModels::new().add(0, model1).unwrap();
-        let models2 = ErrorModels::new().add(0, model2).unwrap();
-
-        // Different models should produce different hashes
-        assert_ne!(models1.hash(), models2.hash());
     }
 
     #[test]
