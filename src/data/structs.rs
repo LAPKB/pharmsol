@@ -586,9 +586,12 @@ impl Occasion {
         Some(&self.covariates)
     }
 
-    /// This function is not to be used directly as it does not guarantee that the events are sorted
-    pub(crate) fn add_event(&mut self, event: Event) {
+    /// Add an event to the [Occasion]
+    ///
+    /// Note that this will sort the events automatically, ensuring events are sorted by time, then by [Event] type so that [Bolus] and [Infusion] come before [Observation]
+    pub fn add_event(&mut self, event: Event) {
         self.events.push(event);
+        self.sort();
     }
 
     /// Get the last event in this occasion
