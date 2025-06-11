@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0](https://github.com/LAPKB/pharmsol/compare/v0.9.1...v0.10.0) - 2025-06-11
+
+### Added
+
+- Add events to occasions
+- Expose functions for number of states and outeqs
+- Add support for multiple error models  ([#65](https://github.com/LAPKB/pharmsol/pull/65))
+
 ## [0.9.1](https://github.com/LAPKB/pharmsol/compare/v0.9.0...v0.9.1) - 2025-05-22
 
 ### Other
