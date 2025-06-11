@@ -23,7 +23,7 @@ pub enum Event {
 }
 impl Event {
     /// Get the time of the event
-    pub(crate) fn time(&self) -> f64 {
+    pub fn time(&self) -> f64 {
         match self {
             Event::Bolus(bolus) => bolus.time,
             Event::Infusion(infusion) => infusion.time,
@@ -57,7 +57,7 @@ impl Bolus {
     /// * `time` - Time of the bolus dose
     /// * `amount` - Amount of drug administered
     /// * `input` - The compartment number (zero-indexed) receiving the dose
-    pub(crate) fn new(time: f64, amount: f64, input: usize) -> Self {
+    pub fn new(time: f64, amount: f64, input: usize) -> Self {
         Bolus {
             time,
             amount,
@@ -116,7 +116,7 @@ impl Infusion {
     /// * `amount` - Total amount of drug to be administered
     /// * `input` - The compartment number (zero-indexed) receiving the dose
     /// * `duration` - Duration of the infusion in time units
-    pub(crate) fn new(time: f64, amount: f64, input: usize, duration: f64) -> Self {
+    pub fn new(time: f64, amount: f64, input: usize, duration: f64) -> Self {
         Infusion {
             time,
             amount,
@@ -183,7 +183,7 @@ impl Observation {
     /// * `outeq` - Output equation number (zero-indexed) corresponding to this observation
     /// * `errorpoly` - Optional error polynomial coefficients (c0, c1, c2, c3)
     /// * `ignore` - Whether to ignore this observation in calculations
-    pub(crate) fn new(
+    pub fn new(
         time: f64,
         value: f64,
         outeq: usize,
