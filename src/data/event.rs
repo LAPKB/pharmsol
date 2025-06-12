@@ -38,6 +38,45 @@ impl Event {
             Event::Observation(observation) => observation.time += dt,
         }
     }
+
+    /// Create a new bolus event
+    ///
+    /// # Arguments
+    /// * `time` - Time of the bolus dose
+    /// * `amount` - Amount of drug administered
+    /// * `input` - The compartment number (zero-indexed) receiving the dose
+    pub fn bolus(time: f64, amount: f64, input: usize) -> Self {
+        Event::Bolus(Bolus::new(time, amount, input))
+    }
+
+    /// Create a new infusion event
+    ///
+    /// # Arguments
+    /// * `time` - Start time of the infusion
+    /// * `amount` - Total amount of drug to be administered
+    /// * `input` - The compartment number (zero-indexed) receiving the dose
+    /// * `duration` - Duration of the infusion in time units
+    pub fn infusion(time: f64, amount: f64, input: usize, duration: f64) -> Self {
+        Event::Infusion(Infusion::new(time, amount, input, duration))
+    }
+
+    /// Create a new observation event
+    ///
+    /// # Arguments
+    /// * `time` - Time of the observation
+    /// * `value` - Observed value (e.g., drug concentration)
+    /// * `outeq` - Output equation number (zero-indexed) corresponding to this observation
+    /// * `errorpoly` - Optional error polynomial coefficients (c0, c1, c2, c3)
+    /// * `ignore` - Whether to ignore this observation in calculations
+    pub fn observation(
+        time: f64,
+        value: f64,
+        outeq: usize,
+        errorpoly: Option<ErrorPoly>,
+        ignore: bool,
+    ) -> Self {
+        Event::Observation(Observation::new(time, value, outeq, errorpoly, ignore))
+    }
 }
 
 /// Represents an instantaneous input of drug
@@ -404,5 +443,39 @@ mod tests {
         assert_eq!(bolus_event.time(), 1.5);
         assert_eq!(infusion_event.time(), 2.5);
         assert_eq!(observation_event.time(), 3.5);
+    }
+
+    #[test]
+    fn test_event_constructors() {
+        let bolus = Event::bolus(1.0, 100.0, 1);
+        match bolus {
+            Event::Bolus(b) => {
+                assert_eq!(b.time(), 1.0);
+                assert_eq!(b.amount(), 100.0);
+                assert_eq!(b.input(), 1);
+            }
+            _ => panic!("Expected Bolus variant"),
+        }
+        let infusion = Event::infusion(2.0, 200.0, 1, 2.5);
+        match infusion {
+            Event::Infusion(i) => {
+                assert_eq!(i.time(), 2.0);
+                assert_eq!(i.amount(), 200.0);
+                assert_eq!(i.input(), 1);
+                assert_eq!(i.duration(), 2.5);
+            }
+            _ => panic!("Expected Infusion variant"),
+        }
+        let obs = Event::observation(3.0, 75.5, 2, None, false);
+        match obs {
+            Event::Observation(o) => {
+                assert_eq!(o.time(), 3.0);
+                assert_eq!(o.value(), 75.5);
+                assert_eq!(o.outeq(), 2);
+                assert_eq!(o.errorpoly(), None);
+                assert_eq!(o.ignore(), false);
+            }
+            _ => panic!("Expected Observation variant"),
+        }
     }
 }
