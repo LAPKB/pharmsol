@@ -296,35 +296,54 @@ impl Data {
         Data::new(new_subjects)
     }
 
+    /// Get a mutable reference to a subject by ID
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The ID of the subject to retrieve
+    ///
+    /// # Returns
+    ///
+    /// An `Option` containing a mutable reference to the subject if found, or `None` if not found
+    pub fn get_subject_mut(&mut self, id: &str) -> Option<&mut Subject> {
+        self.subjects.iter_mut().find(|subject| subject.id() == id)
+    }
+
+    /// Get an iterator over all subjects
+    ///
+    /// # Returns
+    ///
+    /// An iterator yielding references to subjects
+    pub fn iter(&self) -> std::slice::Iter<Subject> {
+        self.subjects.iter()
+    }
+
+    /// Get a mutable iterator over all subjects
+    ///
+    /// # Returns
+    ///
+    /// A mutable iterator yielding references to subjects
+    pub fn iter_mut(&mut self) -> std::slice::IterMut<Subject> {
+        self.subjects.iter_mut()
+    }
+
     /// Get the number of subjects in the dataset
-    pub(crate) fn len(&self) -> usize {
+    ///
+    /// # Returns
+    ///
+    /// The number of subjects
+    pub fn len(&self) -> usize {
         self.subjects.len()
     }
 
-    // /// Returns the number of subjects in the data
-    // fn nsubjects(&self) -> usize {
-    //     self.subjects.len()
-    // }
-
-    // fn nobs(&self) -> usize {
-    //     // Count the number of the event type Observation in the data
-    //     self.subjects
-    //         .iter()
-    //         .map(|subject| {
-    //             subject
-    //                 .occasions
-    //                 .iter()
-    //                 .map(|occasion| {
-    //                     occasion
-    //                         .events
-    //                         .iter()
-    //                         .filter(|event| matches!(event, Event::Observation(_)))
-    //                         .count()
-    //                 })
-    //                 .sum::<usize>()
-    //         })
-    //         .sum()
-    // }
+    /// Check if the dataset is empty
+    ///
+    /// # Returns
+    ///
+    /// `true` if there are no subjects, `false` otherwise
+    pub fn is_empty(&self) -> bool {
+        self.subjects.is_empty()
+    }
 }
 
 impl IntoIterator for Data {
@@ -418,6 +437,55 @@ impl Subject {
             })
             .collect();
         outeq_values
+    }
+
+    /// Get a mutable reference to an occasion by index
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - The index of the occasion to retrieve
+    ///
+    /// # Returns
+    ///
+    /// An `Option` containing a mutable reference to the occasion if found, or `None` if not found
+    pub fn get_occasion_mut(&mut self, index: usize) -> Option<&mut Occasion> {
+        self.occasions.iter_mut().find(|occ| occ.index() == index)
+    }
+
+    /// Get an iterator over all occasions
+    ///
+    /// # Returns
+    ///
+    /// An iterator yielding references to occasions
+    pub fn iter(&self) -> std::slice::Iter<Occasion> {
+        self.occasions.iter()
+    }
+
+    /// Get a mutable iterator over all occasions
+    ///
+    /// # Returns
+    ///
+    /// A mutable iterator yielding references to occasions
+    pub fn iter_mut(&mut self) -> std::slice::IterMut<Occasion> {
+        self.occasions.iter_mut()
+    }
+
+    /// Get the number of occasions for this subject
+    ///
+    /// # Returns
+    ///
+    /// The number of occasions
+    pub fn len(&self) -> usize {
+        self.occasions.len()
+    }
+
+    /// Check if the subject has any occasions
+    ///
+    /// # Returns
+    ///
+    /// `true` if there are no occasions, `false` otherwise
+    pub fn is_empty(&self) -> bool {
+        self.occasions.is_empty()
     }
 }
 
@@ -636,6 +704,42 @@ impl Occasion {
             })
             .collect()
     }
+
+    /// Get an iterator over all events
+    ///
+    /// # Returns
+    ///
+    /// An iterator yielding references to events
+    pub fn iter(&self) -> std::slice::Iter<Event> {
+        self.events.iter()
+    }
+
+    /// Get a mutable iterator over all events
+    ///
+    /// # Returns
+    ///
+    /// A mutable iterator yielding references to events
+    pub fn iter_mut(&mut self) -> std::slice::IterMut<Event> {
+        self.events.iter_mut()
+    }
+
+    /// Get the number of events in this occasion
+    ///
+    /// # Returns
+    ///
+    /// The number of events
+    pub fn len(&self) -> usize {
+        self.events.len()
+    }
+
+    /// Check if the occasion has any events
+    ///
+    /// # Returns
+    ///
+    /// `true` if there are no events, `false` otherwise
+    pub fn is_empty(&self) -> bool {
+        self.events.is_empty()
+    }
 }
 
 impl fmt::Display for Data {
@@ -790,5 +894,92 @@ mod tests {
             Event::Observation(o) => assert_eq!(o.time(), 1.0),
             _ => panic!("Event should be an Observation"),
         }
+    }
+
+    #[test]
+    fn test_data_iterators() {
+        let data = create_sample_data();
+        let mut count = 0;
+        for subject in data.iter() {
+            assert!(subject.id().starts_with("subject"));
+            count += 1;
+        }
+        assert_eq!(count, 2);
+
+        let mut data = create_sample_data();
+        for subject in data.iter_mut() {
+            subject
+                .occasions_mut()
+                .push(Occasion::new(Vec::new(), Covariates::new(), 2));
+        }
+        assert_eq!(data.get_subjects()[0].occasions().len(), 3);
+    }
+
+    #[test]
+    fn test_subject_iterators() {
+        let subject = Subject::builder("test")
+            .observation(1.0, 10.0, 1)
+            .bolus(2.0, 50.0, 1)
+            .reset()
+            .observation(3.0, 20.0, 1)
+            .build();
+
+        let mut count = 0;
+        for occasion in subject.iter() {
+            assert!(occasion.index() < 2);
+            count += 1;
+        }
+        assert_eq!(count, 2);
+
+        let mut subject = subject;
+        for occasion in subject.iter_mut() {
+            occasion.add_event(Event::Observation(Observation::new(
+                4.0, 30.0, 1, None, false,
+            )));
+        }
+        assert_eq!(subject.occasions()[0].events().len(), 3);
+    }
+
+    #[test]
+    fn test_occasion_iterators() {
+        let occasion = Occasion::new(
+            vec![
+                Event::Observation(Observation::new(1.0, 10.0, 1, None, false)),
+                Event::Bolus(Bolus::new(2.0, 50.0, 1)),
+            ],
+            Covariates::new(),
+            0,
+        );
+
+        let mut count = 0;
+        for event in occasion.iter() {
+            match event {
+                Event::Observation(_) => count += 1,
+                Event::Bolus(_) => count += 2,
+                _ => panic!("Unexpected event type"),
+            }
+        }
+        assert_eq!(count, 3);
+
+        let mut occasion = occasion;
+        for event in occasion.iter_mut() {
+            event.inc_time(1.0);
+        }
+        assert_eq!(occasion.events()[0].time(), 2.0);
+    }
+
+    #[test]
+    fn test_get_mut_methods() {
+        let mut data = create_sample_data();
+        let subject = data.get_subject_mut("subject1").unwrap();
+        subject
+            .occasions_mut()
+            .push(Occasion::new(Vec::new(), Covariates::new(), 2));
+        assert_eq!(data.get_subjects()[0].occasions().len(), 3);
+
+        let mut subject = Subject::builder("test").observation(1.0, 10.0, 1).build();
+        let occasion = subject.get_occasion_mut(0).unwrap();
+        occasion.add_event(Event::Bolus(Bolus::new(2.0, 50.0, 1)));
+        assert_eq!(subject.occasions()[0].events().len(), 2);
     }
 }
