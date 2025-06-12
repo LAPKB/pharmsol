@@ -1070,7 +1070,9 @@ mod tests {
         assert_eq!(count, 2);
         let mut data = create_sample_data();
         for subject in &mut data {
-            subject.occasions_mut().push(Occasion::new(Vec::new(), Covariates::new(), 2));
+            subject
+                .occasions_mut()
+                .push(Occasion::new(Vec::new(), Covariates::new(), 2));
         }
         assert_eq!(data.get_subjects()[0].occasions().len(), 3);
     }
@@ -1100,7 +1102,9 @@ mod tests {
         // &mut
         let mut subject3 = subject;
         for occasion in &mut subject3 {
-            occasion.add_event(Event::Observation(Observation::new(4.0, 30.0, 1, None, false)));
+            occasion.add_event(Event::Observation(Observation::new(
+                4.0, 30.0, 1, None, false,
+            )));
         }
         assert_eq!(subject3.occasions()[0].events().len(), 3);
     }
