@@ -170,6 +170,9 @@ impl Equation for Analytical {
     ) -> Result<f64, PharmsolError> {
         _estimate_likelihood(self, subject, support_point, error_models, cache)
     }
+    fn kind() -> crate::EqnKind {
+        crate::EqnKind::Analytical
+    }
 }
 fn spphash(spp: &[f64]) -> u64 {
     spp.iter().fold(0, |acc, x| acc + x.to_bits())

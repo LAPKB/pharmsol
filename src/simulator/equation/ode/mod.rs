@@ -182,6 +182,10 @@ impl Equation for ODE {
         _estimate_likelihood(self, subject, support_point, error_models, cache)
     }
 
+    fn kind() -> crate::EqnKind {
+        crate::EqnKind::ODE
+    }
+
     fn simulate_subject(
         &self,
         subject: &Subject,

@@ -35,7 +35,7 @@ mod exa_tests {
         );
 
         // Compile the same model using exa
-        let model_path = exa::build::compile(
+        let model_path = exa::build::compile::<ODE>(
             format!(
                 r#"
                 equation::ODE::new(
@@ -62,7 +62,7 @@ mod exa_tests {
 
         // Load the compiled model
         let model_path = PathBuf::from(model_path);
-        let (_lib, (dyn_ode, _meta)) = unsafe { exa::load::load_ode(model_path.clone()) };
+        let (_lib, (dyn_ode, _meta)) = unsafe { exa::load::load::<ODE>(model_path.clone()) };
 
         // Parameters for model evaluation
         let params = vec![1.02282724609375, 194.51904296875];

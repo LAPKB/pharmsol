@@ -10,6 +10,8 @@ use rand_distr::Alphanumeric;
 use std::process::{Command, Stdio};
 use std::thread;
 
+use crate::Equation;
+
 /// Compiles model text into a dynamically loadable library.
 ///
 /// This function creates a Rust project from a template, injects the model text,
@@ -25,7 +27,7 @@ use std::thread;
 /// # Returns
 ///
 /// The path to the compiled model library file, or an error if compilation failed.
-pub fn compile(
+pub fn compile<E: Equation>(
     model_txt: String,
     output: Option<PathBuf>,
     params: Vec<String>,
@@ -41,7 +43,7 @@ pub fn compile(
             return Err(e);
         }
     };
-    let template_path = match inject_model(model_txt, params) {
+    let template_path = match inject_model::<E>(model_txt, params) {
         Ok(path) => path,
         Err(e) => {
             event_callback("build-log".into(), format!("Failed to inject model: {}", e));
@@ -150,9 +152,8 @@ fn create_template() -> Result<PathBuf, io::Error> {
         crate-type = ["cdylib"]
 
         [dependencies]
-        pharmsol = {{ version = "{}" }}
+        pharmsol = {{ version = "{pkg_version}" }}
         "#,
-        pkg_version
     );
 
     if !template_dir.exists() {
@@ -184,7 +185,7 @@ fn create_template() -> Result<PathBuf, io::Error> {
 /// # Returns
 ///
 /// The path to the template directory, or an error if injection failed.
-fn inject_model(model_txt: String, params: Vec<String>) -> Result<PathBuf, io::Error> {
+fn inject_model<E: Equation>(model_txt: String, params: Vec<String>) -> Result<PathBuf, io::Error> {
     let template_dir = env::temp_dir().join("exa_tmp").join("template");
     let lib_rs_path = template_dir.join("src").join("lib.rs");
     let lib_rs_content = format!(
@@ -194,7 +195,7 @@ fn inject_model(model_txt: String, params: Vec<String>) -> Result<PathBuf, io::E
         use std::ffi::c_void;
         use pharmsol::*;
     
-        pub fn eqn() -> equation::ODE {{
+        pub fn eqn() -> impl Equation {{
             {}
         }}
     
@@ -202,6 +203,11 @@ fn inject_model(model_txt: String, params: Vec<String>) -> Result<PathBuf, io::E
         pub extern "C" fn create_eqn_ptr() -> *mut c_void {{
             let eqn = Box::new(eqn());
             Box::into_raw(eqn) as *mut c_void
+        }}
+
+        #[no_mangle]
+        pub extern "C" fn equation_kind() -> EqnKind{{
+            {}
         }}
     
        #[no_mangle]
@@ -211,6 +217,7 @@ fn inject_model(model_txt: String, params: Vec<String>) -> Result<PathBuf, io::E
         }}
         "#,
         model_txt,
+        E::kind().to_str(),
         params
             .iter()
             .map(|p| format!("\"{}\"", p))

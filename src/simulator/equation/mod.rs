@@ -9,7 +9,8 @@ pub use ode::*;
 pub use sde::*;
 
 use crate::{
-    error_model::ErrorModels, Covariates, Event, Infusion, Observation, PharmsolError, Subject,
+    error_model::ErrorModels, Covariates, EqnKind, Event, Infusion, Observation, PharmsolError,
+    Subject,
 };
 
 use super::likelihood::Prediction;
@@ -177,6 +178,8 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
         error_models: &ErrorModels,
         cache: bool,
     ) -> Result<f64, PharmsolError>;
+
+    fn kind() -> EqnKind;
 
     /// Generate predictions for a subject with given parameters.
     ///

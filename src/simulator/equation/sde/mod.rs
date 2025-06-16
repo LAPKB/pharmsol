@@ -330,6 +330,10 @@ impl Equation for SDE {
             _estimate_likelihood_no_cache(self, subject, support_point, error_models)
         }
     }
+
+    fn kind() -> crate::EqnKind {
+        crate::EqnKind::SDE
+    }
 }
 
 /// Computes a hash value for a parameter vector.
