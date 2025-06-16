@@ -9,8 +9,7 @@ pub use ode::*;
 pub use sde::*;
 
 use crate::{
-    error_model::ErrorModels, Covariates, EqnKind, Event, Infusion, Observation, PharmsolError,
-    Subject,
+    error_model::ErrorModels, Covariates, Event, Infusion, Observation, PharmsolError, Subject,
 };
 
 use super::likelihood::Prediction;
@@ -247,5 +246,23 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
         }
         let ll = error_models.map(|_| likelihood.iter().product::<f64>());
         Ok((output, ll))
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Debug)]
+pub enum EqnKind {
+    ODE = 0,
+    Analytical = 1,
+    SDE = 2,
+}
+
+impl EqnKind {
+    pub fn to_str(&self) -> String {
+        match self {
+            Self::ODE => "EqnKind::ODE".to_string(),
+            Self::Analytical => "EqnKind::Analytical".to_string(),
+            Self::SDE => "EqnKind::SDE".to_string(),
+        }
     }
 }
