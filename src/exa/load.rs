@@ -1,7 +1,15 @@
 use libloading::{Library, Symbol};
 use std::path::PathBuf;
 
-use crate::{Meta, ODE};
+use crate::{EqnKind, Equation, Meta};
+
+pub unsafe fn get_kind(model_path: PathBuf) -> EqnKind {
+    let lib = unsafe { Library::new(model_path).expect("Failed to load library") };
+    let get_kind: Symbol<unsafe extern "C" fn() -> EqnKind> =
+        unsafe { lib.get(b"equation_kind").expect("Failed to load symbol") };
+    let kind = unsafe { get_kind() };
+    kind.clone()
+}
 
 /// Loads an ODE (Ordinary Differential Equation) and its metadata from a given library.
 ///
@@ -21,8 +29,9 @@ use crate::{Meta, ODE};
 ///
 /// A tuple containing the `Library` and a pair of (`ODE`, `Meta`). The `Library` must be kept
 /// in scope as long as the `ODE` and `Meta` are used.
-pub unsafe fn load_ode(model_path: PathBuf) -> (Library, (ODE, Meta)) {
+pub unsafe fn load<E: Equation>(model_path: PathBuf) -> (Library, (E, Meta)) {
     let lib = unsafe { Library::new(model_path).expect("Failed to load library") };
+
     let create_eqn: Symbol<unsafe extern "C" fn() -> *mut std::ffi::c_void> =
         unsafe { lib.get(b"create_eqn_ptr").expect("Failed to load symbol") };
     let eqn_ptr = unsafe { create_eqn() };
@@ -35,7 +44,7 @@ pub unsafe fn load_ode(model_path: PathBuf) -> (Library, (ODE, Meta)) {
         (
             lib,
             (
-                (&*(eqn_ptr as *mut ODE)).clone(),
+                (&*(eqn_ptr as *mut E)).clone(),
                 (&*(meta_ptr as *mut Meta)).clone(),
             ),
         )
@@ -56,7 +65,7 @@ pub unsafe fn load_ode(model_path: PathBuf) -> (Library, (ODE, Meta)) {
 /// # Returns
 ///
 /// A vector of strings representing the model parameters.
-pub unsafe fn model_parameters(model_path: PathBuf) -> Vec<String> {
-    let (_, (_, meta)) = unsafe { load_ode(model_path) };
+pub unsafe fn model_parameters<E: Equation>(model_path: PathBuf) -> Vec<String> {
+    let (_, (_, meta)) = unsafe { load::<E>(model_path) };
     meta.get_params().clone()
 }

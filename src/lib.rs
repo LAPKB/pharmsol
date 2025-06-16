@@ -11,6 +11,8 @@ pub use crate::data::*;
 pub use crate::equation::*;
 pub use crate::simulator::equation::{self, ODE};
 pub use error::PharmsolError;
+#[cfg(feature = "exa")]
+pub use exa::*;
 pub use nalgebra::dmatrix;
 pub use std::collections::HashMap;
 
