@@ -114,6 +114,7 @@ fn main() {
     println!("Analytical: {:#?}", analytical_flat);
     // Clean up
     std::fs::remove_file(ode_path).ok();
+    std::fs::remove_file(analytic_path).ok();
 }
 
 #[cfg(not(feature = "exa"))]
