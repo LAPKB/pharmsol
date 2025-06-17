@@ -258,11 +258,11 @@ pub enum EqnKind {
 }
 
 impl EqnKind {
-    pub fn to_str(&self) -> String {
+    pub fn to_str(&self) -> &'static str {
         match self {
-            Self::ODE => "EqnKind::ODE".to_string(),
-            Self::Analytical => "EqnKind::Analytical".to_string(),
-            Self::SDE => "EqnKind::SDE".to_string(),
+            Self::ODE => "EqnKind::ODE",
+            Self::Analytical => "EqnKind::Analytical",
+            Self::SDE => "EqnKind::SDE",
         }
     }
 }
