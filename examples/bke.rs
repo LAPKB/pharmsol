@@ -82,15 +82,23 @@ fn main() {
     // Display likelihoods side by side
     println!("Likelihoods:");
     println!("Analytical\tODE");
-    println!("{:.6}\t:{:.6}", -2.0 * ll_an, -2.0 * ll_ode);
+    println!("{:.6}\t{:.6}", -2.0 * ll_an, -2.0 * ll_ode);
     println!();
 
     // Display predictions
     println!("Predictions:");
-    println!("Analytical\tODE\tDifference");
+    println!("Analytical\tODE\t\tDifference\t% Difference");
     op_an
         .flat_predictions()
         .iter()
         .zip(op_ode.flat_predictions())
-        .for_each(|(a, b)| println!("{:.9}\t{:.9}\t{:.9}", a, b, a - b));
+        .for_each(|(a, b)| {
+            println!(
+                "{:.4}\t\t{:.4}\t\t{:.4}\t\t{:.3}",
+                a,
+                b,
+                a - b,
+                (a - b) / a * 100.0
+            )
+        });
 }
