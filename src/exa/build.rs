@@ -140,6 +140,12 @@ fn create_template() -> Result<PathBuf, io::Error> {
 
     // Get the current package version
     let pkg_version = env!("CARGO_PKG_VERSION");
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let pharmsol_dep = if std::env::var("PHARMSOL_LOCAL_EXA").is_ok() {
+        format!(r#"pharmsol = {{ path = "{}" }}"#, manifest_dir)
+    } else {
+        format!(r#"pharmsol = {{ version = "{}" }}"#, pkg_version)
+    };
 
     let cargo_toml_content = format!(
         r#"
@@ -152,7 +158,7 @@ fn create_template() -> Result<PathBuf, io::Error> {
         crate-type = ["cdylib"]
 
         [dependencies]
-        pharmsol = {{ version = "{pkg_version}" }}
+        {pharmsol_dep}
         "#,
     );
 
