@@ -1,10 +1,7 @@
-use std::fmt;
-
-use serde::Deserialize;
-
+use crate::data::error_model::ErrorPoly;
 use crate::prelude::simulator::Prediction;
-
-use super::ErrorPoly;
+use serde::Deserialize;
+use std::fmt;
 
 /// Represents a pharmacokinetic/pharmacodynamic event
 ///
@@ -67,7 +64,7 @@ impl Event {
     /// * `value` - Observed value (e.g., drug concentration)
     /// * `outeq` - Output equation number (zero-indexed) corresponding to this observation
     /// * `errorpoly` - Optional error polynomial coefficients (c0, c1, c2, c3)
-    /// * `ignore` - Whether to ignore this observation in calculations
+    /// * `ignore` - Whether to ignore this observation in likelihood calculations
     pub fn observation(
         time: f64,
         value: f64,
@@ -103,6 +100,7 @@ impl Bolus {
             input,
         }
     }
+
     /// Get the amount of drug in the bolus
     pub fn amount(&self) -> f64 {
         self.amount
@@ -112,10 +110,12 @@ impl Bolus {
     pub fn input(&self) -> usize {
         self.input
     }
+
     /// Get the time of the bolus administration
     pub fn time(&self) -> f64 {
         self.time
     }
+
     /// Get a mutable reference to the time of the bolus
     pub(crate) fn mut_time(&mut self) -> &mut f64 {
         &mut self.time
@@ -130,6 +130,7 @@ impl Bolus {
     pub fn set_input(&mut self, input: usize) {
         self.input = input;
     }
+
     /// Set the time of the bolus administration
     pub fn set_time(&mut self, time: f64) {
         self.time = time;
@@ -163,18 +164,22 @@ impl Infusion {
             duration,
         }
     }
+
     /// Get the total amount of drug provided over the infusion
     pub fn amount(&self) -> f64 {
         self.amount
     }
+
     /// Get the compartment number (zero-indexed) that receives the infusion
     pub fn input(&self) -> usize {
         self.input
     }
+
     /// Get the duration of the infusion
     pub fn duration(&self) -> f64 {
         self.duration
     }
+
     /// Get the start time of the infusion
     ///
     /// The infusion continues from this time until time + duration.
@@ -237,24 +242,29 @@ impl Observation {
             ignore,
         }
     }
+
     /// Get the time of the observation
     pub fn time(&self) -> f64 {
         self.time
     }
+
     /// Get the value of the observation (e.g., drug concentration)
     pub fn value(&self) -> f64 {
         self.value
     }
+
     /// Get the output equation number (zero-indexed) corresponding to this observation
     pub fn outeq(&self) -> usize {
         self.outeq
     }
+
     /// Get the error polynomial coefficients (c0, c1, c2, c3) if available
     ///
     /// The error polynomial is used to model the observation error.
     pub fn errorpoly(&self) -> Option<ErrorPoly> {
         self.errorpoly
     }
+
     /// Check if this observation should be ignored in likelihood calculations
     pub fn ignore(&self) -> bool {
         self.ignore
@@ -275,7 +285,7 @@ impl Observation {
         self.outeq = outeq;
     }
 
-    /// Set the error polynomial coefficients (c0, c1, c2, c3) if available
+    /// Set the [ErrorPoly] for this observation
     pub fn set_errorpoly(&mut self, errorpoly: Option<ErrorPoly>) {
         self.errorpoly = errorpoly;
     }

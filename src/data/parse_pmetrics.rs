@@ -1,4 +1,5 @@
-use crate::data::*;
+use crate::{data::*, PharmsolError};
+use csv::WriterBuilder;
 use serde::de::{MapAccess, Visitor};
 use serde::{de, Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
@@ -63,7 +64,7 @@ pub enum PmetricsError {
 /// use pharmsol::prelude::data::read_pmetrics;
 ///
 /// let data = read_pmetrics("path/to/pmetrics_data.csv").unwrap();
-/// println!("Number of subjects: {}", data.get_subjects().len());
+/// println!("Number of subjects: {}", data.subjects().len());
 /// ```
 ///
 /// # Format details
@@ -483,6 +484,95 @@ where
     deserializer.deserialize_map(CovsVisitor)
 }
 
+impl Data {
+    /// Write the dataset to a file in Pmetrics format
+    ///
+    /// # Arguments
+    ///
+    /// * `file` - The file to write to
+    pub fn write_pmetrics(&self, file: &std::fs::File) -> Result<(), PharmsolError> {
+        let mut writer = WriterBuilder::new().has_headers(true).from_writer(file);
+
+        writer
+            .write_record([
+                "ID", "EVID", "TIME", "DUR", "DOSE", "ADDL", "II", "INPUT", "OUT", "OUTEQ", "C0",
+                "C1", "C2", "C3",
+            ])
+            .map_err(|e| PharmsolError::OtherError(e.to_string()))?;
+
+        for subject in self.subjects() {
+            for occasion in subject.occasions() {
+                for event in occasion.get_events(&None, &None, false) {
+                    match event {
+                        Event::Observation(obs) => {
+                            // Write each field individually
+                            writer
+                                .write_record([
+                                    subject.id(),
+                                    &"0".to_string(),
+                                    &obs.time().to_string(),
+                                    &".".to_string(),
+                                    &".".to_string(),
+                                    &".".to_string(),
+                                    &".".to_string(),
+                                    &".".to_string(),
+                                    &obs.value().to_string(),
+                                    &(obs.outeq() + 1).to_string(),
+                                    &".".to_string(),
+                                    &".".to_string(),
+                                    &".".to_string(),
+                                    &".".to_string(),
+                                ])
+                                .map_err(|e| PharmsolError::OtherError(e.to_string()))?;
+                        }
+                        Event::Infusion(inf) => {
+                            writer
+                                .write_record([
+                                    subject.id(),
+                                    &"1".to_string(),
+                                    &inf.time().to_string(),
+                                    &inf.duration().to_string(),
+                                    &inf.amount().to_string(),
+                                    &".".to_string(),
+                                    &".".to_string(),
+                                    &".".to_string(),
+                                    &".".to_string(),
+                                    &".".to_string(),
+                                    &".".to_string(),
+                                    &".".to_string(),
+                                    &".".to_string(),
+                                    &".".to_string(),
+                                ])
+                                .map_err(|e| PharmsolError::OtherError(e.to_string()))?;
+                        }
+                        Event::Bolus(bol) => {
+                            writer
+                                .write_record([
+                                    subject.id(),
+                                    &"1".to_string(),
+                                    &bol.time().to_string(),
+                                    &"0".to_string(),
+                                    &bol.amount().to_string(),
+                                    &".".to_string(),
+                                    &".".to_string(),
+                                    &(bol.input() + 1).to_string(),
+                                    &".".to_string(),
+                                    &".".to_string(),
+                                    &".".to_string(),
+                                    &".".to_string(),
+                                    &".".to_string(),
+                                    &".".to_string(),
+                                ])
+                                .map_err(|e| PharmsolError::OtherError(e.to_string()))?;
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -495,7 +585,7 @@ mod tests {
         assert!(data.is_ok(), "Failed to parse data");
 
         let data = data.unwrap();
-        let subjects = data.get_subjects();
+        let subjects = data.subjects();
         let first_subject = subjects.first().unwrap();
         let second_subject = subjects.get(1).unwrap();
         let s1_occasions = first_subject.occasions();

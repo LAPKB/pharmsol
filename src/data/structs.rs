@@ -1,5 +1,4 @@
-use crate::{data::*, PharmsolError};
-use csv::WriterBuilder;
+use crate::data::*;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt};
 
@@ -52,7 +51,7 @@ impl Data {
     /// # Returns
     ///
     /// Vector of references to all subjects
-    pub fn get_subjects(&self) -> Vec<&Subject> {
+    pub fn subjects(&self) -> Vec<&Subject> {
         self.subjects.iter().collect()
     }
 
@@ -78,91 +77,17 @@ impl Data {
         self.subjects.iter().find(|subject| subject.id() == id)
     }
 
-    /// Write the dataset to a file in Pmetrics format
+    /// Get a mutable reference to aspecific subject by ID
     ///
     /// # Arguments
     ///
-    /// * `file` - The file to write to
-    pub fn write_pmetrics(&self, file: &std::fs::File) -> Result<(), PharmsolError> {
-        let mut writer = WriterBuilder::new().has_headers(true).from_writer(file);
-
-        writer
-            .write_record([
-                "ID", "EVID", "TIME", "DUR", "DOSE", "ADDL", "II", "INPUT", "OUT", "OUTEQ", "C0",
-                "C1", "C2", "C3",
-            ])
-            .map_err(|e| PharmsolError::OtherError(e.to_string()))?;
-
-        for subject in self.get_subjects() {
-            for occasion in subject.occasions() {
-                for event in occasion.get_events(&None, &None, false) {
-                    match event {
-                        Event::Observation(obs) => {
-                            // Write each field individually
-                            writer
-                                .write_record([
-                                    subject.id(),
-                                    &"0".to_string(),
-                                    &obs.time().to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &obs.value().to_string(),
-                                    &(obs.outeq() + 1).to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                ])
-                                .map_err(|e| PharmsolError::OtherError(e.to_string()))?;
-                        }
-                        Event::Infusion(inf) => {
-                            writer
-                                .write_record([
-                                    subject.id(),
-                                    &"1".to_string(),
-                                    &inf.time().to_string(),
-                                    &inf.duration().to_string(),
-                                    &inf.amount().to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                ])
-                                .map_err(|e| PharmsolError::OtherError(e.to_string()))?;
-                        }
-                        Event::Bolus(bol) => {
-                            writer
-                                .write_record([
-                                    subject.id(),
-                                    &"1".to_string(),
-                                    &bol.time().to_string(),
-                                    &"0".to_string(),
-                                    &bol.amount().to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &(bol.input() + 1).to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                ])
-                                .map_err(|e| PharmsolError::OtherError(e.to_string()))?;
-                        }
-                    }
-                }
-            }
-        }
-        Ok(())
+    /// * `id` - The ID of the subject to retrieve
+    ///
+    /// # Returns
+    ///
+    /// An `Option` containing a reference to the subject if found, or `None` if not found
+    pub fn get_subject_mut(&mut self, id: &str) -> Option<&mut Subject> {
+        self.subjects.iter_mut().find(|subject| subject.id() == id)
     }
 
     /// Filter the dataset to include only subjects with specific IDs
@@ -294,19 +219,6 @@ impl Data {
         }
 
         Data::new(new_subjects)
-    }
-
-    /// Get a mutable reference to a subject by ID
-    ///
-    /// # Arguments
-    ///
-    /// * `id` - The ID of the subject to retrieve
-    ///
-    /// # Returns
-    ///
-    /// An `Option` containing a mutable reference to the subject if found, or `None` if not found
-    pub fn get_subject_mut(&mut self, id: &str) -> Option<&mut Subject> {
-        self.subjects.iter_mut().find(|subject| subject.id() == id)
     }
 
     /// Get an iterator over all subjects
@@ -683,14 +595,14 @@ impl Occasion {
     /// # Returns
     ///
     /// Reference to the occasion's covariates, if any
-    pub fn get_covariates(&self) -> Option<&Covariates> {
+    pub fn covariates(&self) -> Option<&Covariates> {
         Some(&self.covariates)
     }
 
     /// Add an event to the [Occasion]
     ///
     /// Note that this will sort the events automatically, ensuring events are sorted by time, then by [Event] type so that [Bolus] and [Infusion] come before [Observation]
-    pub fn add_event(&mut self, event: Event) {
+    pub(crate) fn add_event(&mut self, event: Event) {
         self.events.push(event);
         self.sort();
     }
@@ -894,7 +806,7 @@ mod tests {
     #[test]
     fn test_get_subjects() {
         let data = create_sample_data();
-        let subjects = data.get_subjects();
+        let subjects = data.subjects();
         assert_eq!(subjects.len(), 2);
         assert_eq!(subjects[0].id(), "subject1");
         assert_eq!(subjects[1].id(), "subject2");
@@ -912,7 +824,7 @@ mod tests {
             .build();
         data.add_subject(new_subject);
         assert_eq!(data.len(), 3);
-        assert_eq!(data.get_subjects()[2].id(), "subject3");
+        assert_eq!(data.subjects()[2].id(), "subject3");
     }
 
     #[test]
@@ -920,8 +832,8 @@ mod tests {
         let data = create_sample_data();
         let include = vec!["subject1".to_string()];
         let filtered_data = data.filter_include(&include);
-        assert_eq!(filtered_data.get_subjects().len(), 1);
-        assert_eq!(filtered_data.get_subjects()[0].id(), "subject1");
+        assert_eq!(filtered_data.subjects().len(), 1);
+        assert_eq!(filtered_data.subjects()[0].id(), "subject1");
     }
 
     #[test]
@@ -929,7 +841,7 @@ mod tests {
         let data = create_sample_data();
         let filtered_data = data.filter_exclude(vec!["subject1".to_string()]);
         assert_eq!(filtered_data.len(), 1);
-        assert_eq!(filtered_data.get_subjects()[0].id(), "subject2");
+        assert_eq!(filtered_data.subjects()[0].id(), "subject2");
     }
 
     #[test]
@@ -988,7 +900,7 @@ mod tests {
                 .occasions_mut()
                 .push(Occasion::new(Vec::new(), Covariates::new(), 2));
         }
-        assert_eq!(data.get_subjects()[0].occasions().len(), 3);
+        assert_eq!(data.subjects()[0].occasions().len(), 3);
     }
 
     #[test]
@@ -1045,21 +957,6 @@ mod tests {
     }
 
     #[test]
-    fn test_get_mut_methods() {
-        let mut data = create_sample_data();
-        let subject = data.get_subject_mut("subject1").unwrap();
-        subject
-            .occasions_mut()
-            .push(Occasion::new(Vec::new(), Covariates::new(), 2));
-        assert_eq!(data.get_subjects()[0].occasions().len(), 3);
-
-        let mut subject = Subject::builder("test").observation(1.0, 10.0, 1).build();
-        let occasion = subject.get_occasion_mut(0).unwrap();
-        occasion.add_event(Event::Bolus(Bolus::new(2.0, 50.0, 1)));
-        assert_eq!(subject.occasions()[0].events().len(), 2);
-    }
-
-    #[test]
     fn test_data_intoiterator_refs() {
         let data = create_sample_data();
         let mut count = 0;
@@ -1074,7 +971,7 @@ mod tests {
                 .occasions_mut()
                 .push(Occasion::new(Vec::new(), Covariates::new(), 2));
         }
-        assert_eq!(data.get_subjects()[0].occasions().len(), 3);
+        assert_eq!(data.subjects()[0].occasions().len(), 3);
     }
     #[test]
     fn test_subject_intoiterator_all_forms() {
