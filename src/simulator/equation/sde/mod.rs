@@ -345,11 +345,22 @@ fn spphash(spp: &[f64]) -> u64 {
     spp.iter().fold(0, |acc, x| acc + x.to_bits())
 }
 
+/// Create a combined hash for cache key from all components
+fn cache_key(subject_id: &str, spp_hash: u64, error_models_hash: u64) -> u64 {
+    use std::hash::{DefaultHasher, Hash, Hasher};
+
+    let mut hasher = DefaultHasher::new();
+    subject_id.hash(&mut hasher);
+    spp_hash.hash(&mut hasher);
+    error_models_hash.hash(&mut hasher);
+    hasher.finish()
+}
+
 #[inline(always)]
 #[cached(
-    ty = "UnboundCache<String, f64>",
+    ty = "UnboundCache<u64, f64>",
     create = "{ UnboundCache::with_capacity(100_000) }",
-    convert = r#"{ format!("{}{}{:#?}", subject.id(), spphash(support_point), error_models.hash()) }"#,
+    convert = r#"{ cache_key(subject.id(), spphash(support_point), error_models.hash()) }"#,
     result = "true"
 )]
 fn _estimate_likelihood(
