@@ -75,6 +75,16 @@ fn spphash(spp: &[f64]) -> u64 {
     std::hash::Hasher::finish(&hasher)
 }
 
+/// Create a combined hash for cache key from subject ID and support point hash
+fn cache_key(subject_id: &str, spp_hash: u64) -> u64 {
+    use std::hash::{DefaultHasher, Hash, Hasher};
+
+    let mut hasher = DefaultHasher::new();
+    subject_id.hash(&mut hasher);
+    spp_hash.hash(&mut hasher);
+    hasher.finish()
+}
+
 fn _estimate_likelihood(
     ode: &ODE,
     subject: &Subject,
@@ -92,9 +102,9 @@ fn _estimate_likelihood(
 
 #[inline(always)]
 #[cached(
-    ty = "UnboundCache<String, SubjectPredictions>",
+    ty = "UnboundCache<u64, SubjectPredictions>",
     create = "{ UnboundCache::with_capacity(100_000) }",
-    convert = r#"{ format!("{}{}", subject.id(), spphash(support_point)) }"#,
+    convert = r#"{ cache_key(subject.id(), spphash(support_point)) }"#,
     result = "true"
 )]
 fn _subject_predictions(
