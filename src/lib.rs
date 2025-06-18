@@ -11,6 +11,8 @@ pub use crate::data::*;
 pub use crate::equation::*;
 pub use crate::simulator::equation::{self, ODE};
 pub use error::PharmsolError;
+#[cfg(feature = "exa")]
+pub use exa::*;
 pub use nalgebra::dmatrix;
 pub use std::collections::HashMap;
 
@@ -48,7 +50,8 @@ pub mod prelude {
             let p = $p;
             let mut idx = 0;
             $(
-                let $name = p[idx];
+                #[allow(unused_mut)]
+                let mut $name = p[idx];
                 idx += 1;
             )*
             let _ = idx; // Consume idx to avoid unused_assignments warning

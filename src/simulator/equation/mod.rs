@@ -178,6 +178,8 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
         cache: bool,
     ) -> Result<f64, PharmsolError>;
 
+    fn kind() -> EqnKind;
+
     /// Generate predictions for a subject with given parameters.
     ///
     /// # Parameters
@@ -244,5 +246,23 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
         }
         let ll = error_models.map(|_| likelihood.iter().product::<f64>());
         Ok((output, ll))
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Debug)]
+pub enum EqnKind {
+    ODE = 0,
+    Analytical = 1,
+    SDE = 2,
+}
+
+impl EqnKind {
+    pub fn to_str(&self) -> &'static str {
+        match self {
+            Self::ODE => "EqnKind::ODE",
+            Self::Analytical => "EqnKind::Analytical",
+            Self::SDE => "EqnKind::SDE",
+        }
     }
 }
