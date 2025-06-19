@@ -108,18 +108,51 @@ impl EquationPriv for Analytical {
         if ti == tf {
             return Ok(());
         }
-        let mut support_point = V::from_vec(support_point.to_owned());
-        let mut rateiv = V::from_vec(vec![0.0, 0.0, 0.0]);
-        //TODO: This should be pre-calculated
-        for infusion in infusions {
-            if tf >= infusion.time() && tf <= infusion.duration() + infusion.time() {
-                rateiv[infusion.input()] += infusion.amount() / infusion.duration();
+
+        // 1) Build and sort event times
+        let mut ts = Vec::new();
+        ts.push(ti);
+        ts.push(tf);
+        for inf in infusions {
+            let t0 = inf.time();
+            let t1 = t0 + inf.duration();
+            if t0 > ti && t0 < tf {
+                ts.push(t0)
+            }
+            if t1 > ti && t1 < tf {
+                ts.push(t1)
             }
         }
-        (self.seq_eq)(&mut support_point, tf, covariates);
-        *x = (self.eq)(x, &support_point, tf - ti, rateiv, covariates);
+        ts.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        ts.dedup_by(|a, b| (*a - *b).abs() < 1e-12);
+
+        // 2) March over each sub-interval
+        let mut current_t = ts[0];
+        for &next_t in &ts[1..] {
+            // prepare support and infusion rate for [current_t .. next_t]
+            let mut sp = V::from_vec(support_point.to_owned());
+            let mut rateiv = V::from_vec(vec![0.0; 3]);
+            for inf in infusions {
+                let s = inf.time();
+                let e = s + inf.duration();
+                if current_t >= s && next_t <= e {
+                    rateiv[inf.input()] += inf.amount() / inf.duration();
+                }
+            }
+
+            // advance the support-point to next_t
+            (self.seq_eq)(&mut sp, next_t, covariates);
+
+            // advance state by dt
+            let dt = next_t - current_t;
+            *x = (self.eq)(x, &sp, dt, rateiv, covariates);
+
+            current_t = next_t;
+        }
+
         Ok(())
     }
+
     #[inline(always)]
     fn process_observation(
         &self,
