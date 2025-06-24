@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1](https://github.com/LAPKB/pharmsol/compare/v0.11.0...v0.11.1) - 2025-06-19
+
+### Fixed
+
+- Infusions were not being handled correctly by the analytic solver. The old approach made a big jump without taking into account the discontinuities introduced by the infusions. This new approach detects the points in time where those discontinuities happen and solve the analytic model step by step.
+
+## [0.11.0](https://github.com/LAPKB/pharmsol/compare/v0.10.0...v0.11.0) - 2025-06-17
+
+### Added
+
+- env variable PHARMSOL_LOCAL_EXA controls the execution of EXA via a remote or local phamrsol dependency. Thanks to @mhovd
+- Exa now supports Analytical equations too
+
+### Fixed
+
+- params are fetched as mut
+- fix, EqnKind is not behind exa anymore
+
+### Other
+
+- Apply suggestions from code review
+
 ## [0.10.0](https://github.com/LAPKB/pharmsol/compare/v0.9.1...v0.10.0) - 2025-06-11
 
 ### Added
