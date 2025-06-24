@@ -197,7 +197,7 @@ impl Equation for ODE {
         let mut output = Self::P::new(self.nparticles());
         let mut likelihood = Vec::new();
         for occasion in subject.occasions() {
-            let covariates = occasion.get_covariates().unwrap();
+            let covariates = occasion.covariates().unwrap();
             let infusions = occasion.infusions_ref();
             let events = occasion.get_events(&lag, &fa, true);
 
