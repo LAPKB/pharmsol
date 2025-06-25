@@ -582,8 +582,8 @@ impl Occasion {
     /// # Returns
     ///
     /// Reference to the occasion's covariates, if any
-    pub fn get_covariates(&self) -> Option<&Covariates> {
-        Some(&self.covariates)
+    pub fn covariates(&self) -> &Covariates {
+        &self.covariates
     }
 
     /// Add an event to the [Occasion]

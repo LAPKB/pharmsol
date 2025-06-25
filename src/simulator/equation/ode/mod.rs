@@ -197,7 +197,7 @@ impl Equation for ODE {
         let mut output = Self::P::new(self.nparticles());
         let mut likelihood = Vec::new();
         for occasion in subject.occasions() {
-            let covariates = occasion.get_covariates().unwrap();
+            let covariates = occasion.covariates();
             let infusions = occasion.infusions_ref();
             let events = occasion.get_events(&lag, &fa, true);
 
@@ -214,14 +214,13 @@ impl Equation for ODE {
                     covariates,
                     infusions,
                     self.initial_state(support_point, covariates, occasion.index()),
-                ))
-                .unwrap();
+                ))?;
 
             let mut solver: Bdf<
                 '_,
                 PMProblem<DiffEq>,
                 NewtonNonlinearSolver<M, diffsol::NalgebraLU<f64>>,
-            > = problem.bdf::<diffsol::NalgebraLU<f64>>().unwrap(); // TODO: Result
+            > = problem.bdf::<diffsol::NalgebraLU<f64>>()?; // TODO: Result
 
             for (index, event) in events.iter().enumerate() {
                 let next_event = events.get(index + 1);
