@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0](https://github.com/LAPKB/pharmsol/compare/v0.11.1...v0.12.0) - 2025-06-25
+
+### Fixed
+
+- This commit properly handles multiple events at the sime time, avoiding an error by the ODE solver
+
+### Other
+
+- Improve error handling
+
 ## [0.11.1](https://github.com/LAPKB/pharmsol/compare/v0.11.0...v0.11.1) - 2025-06-19
 
 ### Fixed
