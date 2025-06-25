@@ -258,24 +258,26 @@ impl Equation for ODE {
                 }
                 // START SOLVE
                 if let Some(next_event) = next_event {
-                    match solver.set_stop_time(next_event.time()) {
-                        Ok(_) => loop {
-                            let ret = solver.step();
-                            match ret {
-                                Ok(OdeSolverStopReason::InternalTimestep) => continue,
-                                Ok(OdeSolverStopReason::TstopReached) => break,
-                                _ => panic!("Unexpected solver error: {:?}", ret),
-                            }
-                        },
-                        Err(e) => {
-                            match e {
-                                diffsol::error::DiffsolError::OdeSolverError(
-                                    OdeSolverError::StopTimeAtCurrentTime,
-                                ) => {
-                                    // If the stop time is at the current state time, we can just continue
-                                    continue;
+                    if !event.time().eq(&next_event.time()) {
+                        match solver.set_stop_time(next_event.time()) {
+                            Ok(_) => loop {
+                                let ret = solver.step();
+                                match ret {
+                                    Ok(OdeSolverStopReason::InternalTimestep) => continue,
+                                    Ok(OdeSolverStopReason::TstopReached) => break,
+                                    _ => panic!("Unexpected solver error: {:?}", ret),
                                 }
-                                _ => panic!("Unexpected solver error: {:?}", e),
+                            },
+                            Err(e) => {
+                                match e {
+                                    diffsol::error::DiffsolError::OdeSolverError(
+                                        OdeSolverError::StopTimeAtCurrentTime,
+                                    ) => {
+                                        // If the stop time is at the current state time, we can just continue
+                                        continue;
+                                    }
+                                    _ => panic!("Unexpected solver error: {:?}", e),
+                                }
                             }
                         }
                     }
