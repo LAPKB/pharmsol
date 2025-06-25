@@ -12,6 +12,8 @@ pub enum PharmsolError {
     NdarrayShapeError(#[from] ShapeError),
     #[error("Error parsing Pmetrics datafile: {0}")]
     PmetricsError(#[from] PmetricsError),
+    #[error("Diffsol error: {0}")]
+    DiffsolError(String),
     #[error("Other error: {0}")]
     OtherError(String),
     #[error("Error setting up progress bar: {0}")]
@@ -20,4 +22,10 @@ pub enum PharmsolError {
     NonFiniteLikelihood(f64),
     #[error("The calculated likelihood is zero")]
     ZeroLikelihood,
+}
+
+impl From<diffsol::error::DiffsolError> for PharmsolError {
+    fn from(error: diffsol::error::DiffsolError) -> Self {
+        PharmsolError::DiffsolError(error.to_string())
+    }
 }
