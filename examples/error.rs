@@ -21,8 +21,8 @@ fn main() {
             dx[0] = -Ke * x[0] - KCP * x[0] + KPC * x[1] + rateiv[0];
             dx[1] = KCP * x[0] - KPC * x[1];
         },
-        |p| lag! {},
-        |_p| fa! {},
+        |p, _t, _cov| lag! {},
+        |_p, _t, _cov| fa! {},
         |_p, _t, _cov, _x| {},
         |x, p, t, cov, y| {
             fetch_cov!(cov, t, WT);

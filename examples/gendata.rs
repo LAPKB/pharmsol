@@ -27,8 +27,8 @@ fn main() {
             fetch_params!(p, _ke0);
             d[1] = 0.1;
         },
-        |_p| lag! {},
-        |_p| fa! {},
+        |_p, _t, _cov| lag! {},
+        |_p, _t, _cov| fa! {},
         |p, _t, _cov, x| {
             fetch_params!(p, ke0);
             x[1] = ke0;
