@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0](https://github.com/LAPKB/pharmsol/compare/v0.12.0...v0.13.0) - 2025-07-03
+
+### Added
+
+- Added support for covariates on the fa, and lag blocks ([#87](https://github.com/LAPKB/pharmsol/pull/87))
+
 ## [0.12.0](https://github.com/LAPKB/pharmsol/compare/v0.11.1...v0.12.0) - 2025-06-25
 
 ### Fixed
