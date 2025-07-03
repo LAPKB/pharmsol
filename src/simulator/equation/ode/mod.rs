@@ -111,18 +111,26 @@ impl EquationTypes for ODE {
 }
 
 impl EquationPriv for ODE {
+    //#[inline(always)]
+    // fn get_lag(&self, spp: &[f64]) -> Option<HashMap<usize, f64>> {
+    //     let spp = DVector::from_vec(spp.to_vec());
+    //     Some((self.lag)(&spp))
+    // }
+
+    // #[inline(always)]
+    // fn get_fa(&self, spp: &[f64]) -> Option<HashMap<usize, f64>> {
+    //     let spp = DVector::from_vec(spp.to_vec());
+    //     Some((self.fa)(&spp))
+    // }
     #[inline(always)]
-    fn get_lag(&self, spp: &[f64]) -> Option<HashMap<usize, f64>> {
-        let spp = DVector::from_vec(spp.to_vec());
-        Some((self.lag)(&spp))
+    fn lag(&self) -> &Lag {
+        &self.lag
     }
 
     #[inline(always)]
-    fn get_fa(&self, spp: &[f64]) -> Option<HashMap<usize, f64>> {
-        let spp = DVector::from_vec(spp.to_vec());
-        Some((self.fa)(&spp))
+    fn fa(&self) -> &Fa {
+        &self.fa
     }
-
     #[inline(always)]
     fn get_nstates(&self) -> usize {
         self.neqs.0
@@ -192,14 +200,17 @@ impl Equation for ODE {
         support_point: &Vec<f64>,
         error_models: Option<&ErrorModels>,
     ) -> Result<(Self::P, Option<f64>), PharmsolError> {
-        let lag = self.get_lag(support_point);
-        let fa = self.get_fa(support_point);
+        // let lag = self.get_lag(support_point);
+        // let fa = self.get_fa(support_point);
         let mut output = Self::P::new(self.nparticles());
         let mut likelihood = Vec::new();
         for occasion in subject.occasions() {
             let covariates = occasion.covariates();
             let infusions = occasion.infusions_ref();
-            let events = occasion.get_events(&lag, &fa, true);
+            let events = occasion.get_events(
+                Some((self.fa(), self.lag(), support_point, covariates)),
+                true,
+            );
 
             let problem = OdeBuilder::<M>::new()
                 .atol(vec![ATOL])
@@ -264,7 +275,20 @@ impl Equation for ODE {
                                 match ret {
                                     Ok(OdeSolverStopReason::InternalTimestep) => continue,
                                     Ok(OdeSolverStopReason::TstopReached) => break,
-                                    _ => panic!("Unexpected solver error: {:?}", ret),
+                                    Err(err) => match err {
+                                        diffsol::error::DiffsolError::OdeSolverError(
+                                            OdeSolverError::StepSizeTooSmall { time },
+                                        ) => {
+                                            let _time = time;
+                                            return Err(PharmsolError::OtherError("The step size of the ODE solver went to zero, this means one of your parameters is getting really close to 0.0 or INFINITE. Check your model".to_string()));
+                                        }
+                                        _ => {
+                                            panic!("Unexpected solver error: {:?}", err)
+                                        }
+                                    },
+                                    _ => {
+                                        panic!("Unexpected solver return value: {:?}", ret);
+                                    }
                                 }
                             },
                             Err(e) => {
@@ -275,7 +299,9 @@ impl Equation for ODE {
                                         // If the stop time is at the current state time, we can just continue
                                         continue;
                                     }
-                                    _ => panic!("Unexpected solver error: {:?}", e),
+                                    _ => {
+                                        panic!("Unexpected solver error: {:?}", e)
+                                    }
                                 }
                             }
                         }

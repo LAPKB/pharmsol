@@ -158,14 +158,14 @@ pub type SecEq = fn(&mut V, T, &Covariates);
 /// # Example
 /// ```ignore
 /// use pharmsol::*;
-/// let lag = |p| {
+/// let lag = |p, _t, _cov| {
 ///    fetch_params!(p, tlag);
 ///    lag! {0=>tlag, 1=>0.3}
 /// };
 /// ```
 /// This will lag the bolus going into the first compartment by tlag and the bolus going into the
 /// second compartment by 0.3
-pub type Lag = fn(&V) -> HashMap<usize, T>;
+pub type Lag = fn(&V, T, &Covariates) -> HashMap<usize, T>;
 
 /// This closure represents the fraction absorbed (also called bioavailability or protein binding)
 /// of the model.
@@ -183,14 +183,14 @@ pub type Lag = fn(&V) -> HashMap<usize, T>;
 /// # Example
 /// ```ignore
 /// use pharmsol::*;
-/// let fa = |p| {
+/// let fa = |p, _t, _cov| {
 ///   fetch_params!(p, fa);
 ///   fa! {0=>fa, 1=>0.3}
 /// };
 /// ```
 /// This will adjust the amount of drug absorbed into the first compartment by fa and the amount of drug
 /// absorbed into the second compartment by 0.3
-pub type Fa = fn(&V) -> HashMap<usize, T>;
+pub type Fa = fn(&V, T, &Covariates) -> HashMap<usize, T>;
 
 /// The number of states and output equations of the model.
 ///

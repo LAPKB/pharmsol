@@ -40,7 +40,7 @@ ODE based model.
             fetch_params!(p, _ka, _ke, tlag, _v);
             lag! {0=>tlag}
         },
-        |_p| fa! {},
+        |_p, _t, _cov| fa! {},
         |_p, _t, _cov, _x| {},
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ka, _ke, _tlag, v);
@@ -66,7 +66,7 @@ let analytical = equation::Analytical::new(
         fetch_params!(p, _ka, _ke, tlag, _v);
         lag! {0=>tlag}
     },
-    |_p| fa! {},
+    |_p, _t, _cov| fa! {},
     |_p, _t, _cov, _x| {},
     |x, p, _t, _cov, y| {
         fetch_params!(p, _ka, _ke, _tlag, v);
@@ -89,5 +89,6 @@ We are working to support all the standard analytical models.
 - [ ] Three-compartmental models
 
 # Links
+
 [Documentation](https://lapkb.github.io/pharmsol/pharmsol/)
 [Benchmarks](https://lapkb.github.io/pharmsol/dev/bench/)

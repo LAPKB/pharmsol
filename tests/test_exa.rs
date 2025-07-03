@@ -24,8 +24,8 @@ mod exa_tests {
                 fetch_params!(p, ke, _v);
                 dx[0] = -ke * x[0] + rateiv[0];
             },
-            |_p| lag! {},
-            |_p| fa! {},
+            |_p, _t, _cov| lag! {},
+            |_p, _t, _cov| fa! {},
             |_p, _t, _cov, _x| {},
             |x, p, _t, _cov, y| {
                 fetch_params!(p, _ke, v);
@@ -43,8 +43,8 @@ mod exa_tests {
                 fetch_params!(p, ke, _v);
                 dx[0] = -ke * x[0] + rateiv[0];
             }},
-            |_p| lag! {{}},
-            |_p| fa! {{}},
+            |_p, _t, _cov| lag! {{}},
+            |_p, _t, _cov| fa! {{}},
             |_p, _t, _cov, _x| {{}},
             |x, p, _t, _cov, y| {{
                 fetch_params!(p, _ke, v);
