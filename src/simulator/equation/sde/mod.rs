@@ -1,7 +1,5 @@
 mod em;
 
-use std::collections::HashMap;
-
 use nalgebra::DVector;
 use ndarray::{concatenate, Array2, Axis};
 use rand::{rng, Rng};
@@ -181,14 +179,24 @@ impl EquationPriv for SDE {
     //     &self.out
     // }
 
+    // #[inline(always)]
+    // fn get_lag(&self, spp: &[f64]) -> Option<HashMap<usize, f64>> {
+    //     Some((self.lag)(&V::from_vec(spp.to_owned())))
+    // }
+
+    // #[inline(always)]
+    // fn get_fa(&self, spp: &[f64]) -> Option<HashMap<usize, f64>> {
+    //     Some((self.fa)(&V::from_vec(spp.to_owned())))
+    // }
+
     #[inline(always)]
-    fn get_lag(&self, spp: &[f64]) -> Option<HashMap<usize, f64>> {
-        Some((self.lag)(&V::from_vec(spp.to_owned())))
+    fn lag(&self) -> &Lag {
+        &self.lag
     }
 
     #[inline(always)]
-    fn get_fa(&self, spp: &[f64]) -> Option<HashMap<usize, f64>> {
-        Some((self.fa)(&V::from_vec(spp.to_owned())))
+    fn fa(&self) -> &Fa {
+        &self.fa
     }
 
     #[inline(always)]

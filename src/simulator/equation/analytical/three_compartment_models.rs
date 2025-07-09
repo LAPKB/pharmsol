@@ -305,8 +305,8 @@ mod tests {
                 dx[1] = k12 * x[0] - k21 * x[1];
                 dx[2] = k13 * x[0] - k31 * x[2];
             },
-            |_p| lag! {},
-            |_p| fa! {},
+            |_p, _t, _cov| lag! {},
+            |_p, _t, _cov| fa! {},
             |_p, _t, _cov, _x| {},
             |x, p, _t, _cov, y| {
                 fetch_params!(p, _k10, _k12, _k13, _k21, _k31, v);
@@ -318,8 +318,8 @@ mod tests {
         let analytical = equation::Analytical::new(
             three_compartments,
             |_p, _t, _cov| {},
-            |_p| lag! {},
-            |_p| fa! {},
+            |_p, _t, _cov| lag! {},
+            |_p, _t, _cov| fa! {},
             |_p, _t, _cov, _x| {},
             |x, p, _t, _cov, y| {
                 fetch_params!(p, _k10, _k12, _k13, _k21, _k31, v);
@@ -360,8 +360,8 @@ mod tests {
                 dx[2] = k12 * x[1] - k21 * x[2];
                 dx[3] = k13 * x[1] - k31 * x[3];
             },
-            |_p| lag! {},
-            |_p| fa! {},
+            |_p, _t, _cov| lag! {},
+            |_p, _t, _cov| fa! {},
             |_p, _t, _cov, _x| {},
             |x, p, _t, _cov, y| {
                 fetch_params!(p, _ka, _k10, _k12, _k13, _k21, _k31, v);
@@ -373,8 +373,8 @@ mod tests {
         let analytical = equation::Analytical::new(
             three_compartments_with_absorption,
             |_p, _t, _cov| {},
-            |_p| lag! {},
-            |_p| fa! {},
+            |_p, _t, _cov| lag! {},
+            |_p, _t, _cov| fa! {},
             |_p, _t, _cov, _x| {},
             |x, p, _t, _cov, y| {
                 fetch_params!(p, _ka, _k10, _k12, _k13, _k21, _k31, v);

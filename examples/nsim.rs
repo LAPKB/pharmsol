@@ -24,11 +24,11 @@ fn main() {
             dx[0] = -ka * x[0];
             dx[1] = ka * x[0] - ke * x[1];
         },
-        |p| {
+        |p, _t, _cov| {
             fetch_params!(p, _ka, _ke, tlag, _v);
             lag! {0=>tlag}
         },
-        |_p| fa! {},
+        |_p, _t, _cov| fa! {},
         |_p, _t, _cov, _x| {},
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ka, _ke, _tlag, v);
@@ -52,7 +52,7 @@ fn main() {
     //         fetch_params!(p, _ka, _ke, tlag, _v);
     //         lag! {0=>tlag}
     //     },
-    //     |_p| fa! {},
+    //     |_p, _t, _cov| fa! {},
     //     |_p, _t, _cov, _x| {},
     //     |x, p, _t, _cov, y| {
     //         fetch_params!(p, _ka, _ke, _tlag, v);

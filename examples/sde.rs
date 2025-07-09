@@ -7,8 +7,8 @@ fn one_c_ode() -> ODE {
             fetch_params!(p, ke);
             dx[0] = -ke * x[0];
         },
-        |_p| lag! {},
-        |_p| fa! {},
+        |_p, _t, _cov| lag! {},
+        |_p, _t, _cov| fa! {},
         |_p, _t, _cov, _x| {},
         |x, _p, _t, _cov, y| {
             y[0] = x[0] / 50.0;
@@ -32,8 +32,8 @@ fn one_c_sde() -> SDE {
             fetch_params!(p, _ke0, ske);
             d[1] = ske;
         },
-        |_p| lag! {},
-        |_p| fa! {},
+        |_p, _t, _cov| lag! {},
+        |_p, _t, _cov| fa! {},
         |p, _t, _cov, x| {
             fetch_params!(p, ke0, _ske);
             x[1] = ke0;
@@ -56,8 +56,8 @@ fn three_c_ode() -> ODE {
             dx[1] = ka * x[0] - (ke + kcp) * x[1] + kpc * x[2];
             dx[2] = kcp * x[1] - kpc * x[2];
         },
-        |_p| lag! {},
-        |_p| fa! {},
+        |_p, _t, _cov| lag! {},
+        |_p, _t, _cov| fa! {},
         |_p, _t, _cov, _x| {},
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ka, _ke, _kcp, _kpc, vol);
@@ -81,8 +81,8 @@ fn three_c_sde() -> SDE {
             fetch_params!(p, _ka, _ke0, _kcp, _kpc, _vol, ske);
             d[3] = ske;
         },
-        |_p| lag! {},
-        |_p| fa! {},
+        |_p, _t, _cov| lag! {},
+        |_p, _t, _cov| fa! {},
         |p, _t, _cov, x| {
             fetch_params!(p, _ka, ke0, _kcp, _kpc, _vol, _ske);
             x[3] = ke0;

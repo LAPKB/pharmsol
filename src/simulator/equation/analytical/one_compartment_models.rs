@@ -108,8 +108,8 @@ mod tests {
 
                 dx[0] = -ke * x[0] + rateiv[0];
             },
-            |_p| lag! {},
-            |_p| fa! {},
+            |_p, _t, _cov| lag! {},
+            |_p, _t, _cov| fa! {},
             |_p, _t, _cov, _x| {},
             |x, p, _t, _cov, y| {
                 fetch_params!(p, _ke, v);
@@ -121,8 +121,8 @@ mod tests {
         let analytical = equation::Analytical::new(
             one_compartment,
             |_p, _t, _cov| {},
-            |_p| lag! {},
-            |_p| fa! {},
+            |_p, _t, _cov| lag! {},
+            |_p, _t, _cov| fa! {},
             |_p, _t, _cov, _x| {},
             |x, p, _t, _cov, y| {
                 fetch_params!(p, _ke, v);
@@ -159,8 +159,8 @@ mod tests {
                 dx[0] = -ka * x[0];
                 dx[1] = ka * x[0] - ke * x[1] + rateiv[0];
             },
-            |_p| lag! {},
-            |_p| fa! {},
+            |_p, _t, _cov| lag! {},
+            |_p, _t, _cov| fa! {},
             |_p, _t, _cov, _x| {},
             |x, p, _t, _cov, y| {
                 fetch_params!(p, _ka, _ke, v);
@@ -172,8 +172,8 @@ mod tests {
         let analytical = equation::Analytical::new(
             one_compartment_with_absorption,
             |_p, _t, _cov| {},
-            |_p| lag! {},
-            |_p| fa! {},
+            |_p, _t, _cov| lag! {},
+            |_p, _t, _cov| fa! {},
             |_p, _t, _cov, _x| {},
             |x, p, _t, _cov, y| {
                 fetch_params!(p, _ka, _ke, v);
