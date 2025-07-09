@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.1](https://github.com/LAPKB/pharmsol/compare/v0.13.0...v0.13.1) - 2025-07-09
+
+### Other
+
+- hms
+- suggestions by @mhovd
+- remove indicatif
+- remove indicatif
+- remove indicatif, implemented a simple progress tracker that is compatible with R non-TTY terminal
+
 ## [0.13.0](https://github.com/LAPKB/pharmsol/compare/v0.12.0...v0.13.0) - 2025-07-03
 
 ### Added
