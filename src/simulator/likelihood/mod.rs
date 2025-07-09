@@ -1,11 +1,13 @@
+use crate::simulator::likelihood::progress::ProgressTracker;
 use crate::{
     data::error_model::ErrorModels, Data, Equation, ErrorPoly, Observation, PharmsolError,
     Predictions,
 };
 
-use indicatif::{ProgressBar, ProgressStyle};
 use ndarray::{Array2, Axis, ShapeBuilder};
 use rayon::prelude::*;
+
+mod progress;
 
 const FRAC_1_SQRT_2PI: f64 =
     std::f64::consts::FRAC_2_SQRT_PI * std::f64::consts::FRAC_1_SQRT_2 / 2.0;
@@ -158,18 +160,17 @@ pub fn psi(
 ) -> Result<Array2<f64>, PharmsolError> {
     let mut psi: Array2<f64> = Array2::default((subjects.len(), support_points.nrows()).f());
     let subjects = subjects.get_subjects();
-    let pb = match progress {
-        true => {
-            let pb = ProgressBar::new(psi.ncols() as u64 * psi.nrows() as u64);
-            pb.set_style(
-                ProgressStyle::with_template(
-                    "Simulating subjects...\n[{elapsed_precise}] {bar:40.green} {percent}% ETA:{eta}",
-                ).map_err(|e| PharmsolError::ProgressBarError(e.to_string()))?
-                .progress_chars("##-"),
-            );
-            Some(pb)
-        }
-        false => None,
+
+    let progress_tracker = if progress {
+        let total = subjects.len() * support_points.nrows();
+        println!(
+            "Simulating {} subjects with {} support points each...",
+            subjects.len(),
+            support_points.nrows()
+        );
+        Some(ProgressTracker::new(total))
+    } else {
+        None
     };
 
     let result: Result<(), PharmsolError> = psi
@@ -188,23 +189,23 @@ pub fn psi(
                         error_models,
                         cache,
                     ) {
-                        Ok(likelihood) => element.fill(likelihood),
+                        Ok(likelihood) => {
+                            element.fill(likelihood);
+                            if let Some(ref tracker) = progress_tracker {
+                                tracker.inc();
+                            }
+                        }
                         Err(e) => return Err(e),
                     };
-                    if let Some(pb_ref) = pb.as_ref() {
-                        pb_ref.inc(1);
-                    }
                     Ok(())
                 })
         });
-    if let Some(pb_ref) = pb.as_ref() {
-        pb_ref.finish();
+
+    if let Some(tracker) = progress_tracker {
+        tracker.finish();
     }
 
-    if let Err(e) = result {
-        return Err(e);
-    }
-
+    result?;
     Ok(psi)
 }
 

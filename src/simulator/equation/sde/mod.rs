@@ -1,7 +1,5 @@
 mod em;
 
-use std::collections::HashMap;
-
 use nalgebra::DVector;
 use ndarray::{concatenate, Array2, Axis};
 use rand::{rng, Rng};

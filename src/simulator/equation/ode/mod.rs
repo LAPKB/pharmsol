@@ -1,7 +1,6 @@
 mod closure;
 
 use core::panic;
-use std::collections::HashMap;
 
 use crate::{
     data::{Covariates, Infusion},
