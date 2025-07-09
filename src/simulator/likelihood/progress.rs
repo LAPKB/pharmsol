@@ -58,8 +58,8 @@ fn format_duration(duration: std::time::Duration) -> String {
     let secs = total_seconds % 60;
 
     if hours > 0 {
-        format!("{:02}:{:02}:{:02}", hours, minutes, secs)
+        format!("{:02}h:{:02}m:{:02}s", hours, minutes, secs)
     } else {
-        format!("{:02}:{:02}", minutes, secs)
+        format!("{:02}m:{:02}s", minutes, secs)
     }
 }
