@@ -27,12 +27,10 @@ impl ProgressTracker {
             let elapsed = self.start_time.elapsed();
 
             let eta_text = if current > 0 {
-                let estimated_total_time =
-                    elapsed.as_secs_f64() * (self.total as f64) / (current as f64);
-                let remaining_time = estimated_total_time - elapsed.as_secs_f64();
+                let estimated_total_duration = elapsed.mul_f64(self.total as f64 / current as f64);
 
-                if remaining_time > 0.0 {
-                    format_duration(remaining_time)
+                if let Some(remaining_duration) = estimated_total_duration.checked_sub(elapsed) {
+                    format_duration(remaining_duration)
                 } else {
                     "00:00".to_string()
                 }
@@ -44,7 +42,7 @@ impl ProgressTracker {
                 "\rProgress: {}/{} ({}%) ETA: {}",
                 current, self.total, percent, eta_text
             );
-            std::io::stdout().flush().unwrap();
+            std::io::stdout().flush().unwrap_or_default();
         }
     }
 
@@ -53,8 +51,8 @@ impl ProgressTracker {
     }
 }
 
-fn format_duration(seconds: f64) -> String {
-    let total_seconds = seconds as u64;
+fn format_duration(duration: std::time::Duration) -> String {
+    let total_seconds = duration.as_secs();
     let hours = total_seconds / 3600;
     let minutes = (total_seconds % 3600) / 60;
     let secs = total_seconds % 60;
