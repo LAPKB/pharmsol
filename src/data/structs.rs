@@ -1,7 +1,11 @@
-use crate::{data::*, PharmsolError};
+use crate::{
+    data::*,
+    simulator::{Fa, Lag},
+    PharmsolError,
+};
 use csv::WriterBuilder;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, fmt};
+use std::fmt;
 
 /// The main data container for pharmacokinetic/pharmacodynamic data
 ///
@@ -95,7 +99,7 @@ impl Data {
 
         for subject in self.get_subjects() {
             for occasion in subject.occasions() {
-                for event in occasion.get_events(&None, &None, false) {
+                for event in occasion.get_events(None, false) {
                     match event {
                         Event::Observation(obs) => {
                             // Write each field individually
@@ -251,7 +255,7 @@ impl Data {
         let mut outeq_values: Vec<usize> = Vec::new();
         for subject in &self.subjects {
             for occasion in &subject.occasions {
-                for event in occasion.get_events(&None, &None, true) {
+                for event in occasion.get_events(None, true) {
                     if let Event::Observation(obs) = event {
                         outeq_values.push(obs.outeq());
                     }
@@ -266,7 +270,7 @@ impl Data {
         for subject in &self.subjects {
             let mut new_occasions: Vec<Occasion> = Vec::new();
             for occasion in &subject.occasions {
-                let old_events = occasion.get_events(&None, &None, true);
+                let old_events = occasion.get_events(None, true);
                 let mut new_events: Vec<Event> = Vec::new();
                 let mut time = 0.0;
                 while time < last_time {
@@ -477,11 +481,14 @@ impl Occasion {
         self.covariates.add_covariate(name, covariate);
     }
 
-    fn add_lagtime(&mut self, lagtime: &Option<HashMap<usize, f64>>) {
-        if let Some(lag) = lagtime {
+    fn add_lagtime(&mut self, reorder: Option<(&Fa, &Lag, &Vec<f64>, &Covariates)>) {
+        if let Some((_, fn_lag, spp, covariates)) = reorder {
+            let spp = nalgebra::DVector::from_vec(spp.to_vec());
             for event in self.events.iter_mut() {
+                let time = event.time();
                 if let Event::Bolus(bolus) = event {
-                    if let Some(l) = lag.get(&bolus.input()) {
+                    let lagtime = fn_lag(&spp, time, covariates);
+                    if let Some(l) = lagtime.get(&bolus.input()) {
                         *bolus.mut_time() += l;
                     }
                 }
@@ -490,19 +497,20 @@ impl Occasion {
         self.sort();
     }
 
-    fn add_bioavailability(&mut self, bioavailability: &Option<HashMap<usize, f64>>) {
+    fn add_bioavailability(&mut self, reorder: Option<(&Fa, &Lag, &Vec<f64>, &Covariates)>) {
         // If lagtime is empty, return early
-        if let Some(fmap) = bioavailability {
+        if let Some((fn_fa, _, spp, covariates)) = reorder {
+            let spp = nalgebra::DVector::from_vec(spp.to_vec());
             for event in self.events.iter_mut() {
+                let time = event.time();
                 if let Event::Bolus(bolus) = event {
-                    if let Some(f) = fmap.get(&bolus.input()) {
-                        // bolus.time *= f;
-                        *bolus.mut_time() *= f;
+                    let fa = fn_fa(&spp, time, covariates);
+                    if let Some(f) = fa.get(&bolus.input()) {
+                        bolus.set_amount(bolus.amount() * f);
                     }
                 }
             }
         }
-        self.sort();
     }
 
     /// Sort events by time, then by [Event] type so that [Bolus] and [Infusion] come before [Observation]
@@ -554,13 +562,13 @@ impl Occasion {
     /// Vector of events, potentially filtered and with times adjusted for lag and bioavailability
     pub fn get_events(
         &self,
-        lagtime: &Option<HashMap<usize, f64>>,
-        bioavailability: &Option<HashMap<usize, f64>>,
+        reorder: Option<(&Fa, &Lag, &Vec<f64>, &Covariates)>,
         ignore: bool,
     ) -> Vec<Event> {
         let mut occ = self.clone();
-        occ.add_bioavailability(bioavailability);
-        occ.add_lagtime(lagtime);
+
+        occ.add_lagtime(reorder);
+        occ.add_bioavailability(reorder);
 
         // Filter out events that are marked as ignore
         if ignore {
@@ -582,8 +590,8 @@ impl Occasion {
     /// # Returns
     ///
     /// Reference to the occasion's covariates, if any
-    pub fn get_covariates(&self) -> Option<&Covariates> {
-        Some(&self.covariates)
+    pub fn covariates(&self) -> &Covariates {
+        &self.covariates
     }
 
     /// Add an event to the [Occasion]
@@ -763,7 +771,7 @@ mod tests {
             1,
         );
         occasion.sort();
-        let events = occasion.get_events(&None, &None, false);
+        let events = occasion.get_events(None, false);
         match &events[0] {
             Event::Bolus(b) => assert_eq!(b.time(), 1.0),
             _ => panic!("First event should be a Bolus"),
@@ -784,7 +792,7 @@ mod tests {
             Covariates::new(),
             1,
         );
-        let events = occasion.get_events(&None, &None, true);
+        let events = occasion.get_events(None, true);
         assert_eq!(events.len(), 1);
         match &events[0] {
             Event::Observation(o) => assert_eq!(o.time(), 1.0),

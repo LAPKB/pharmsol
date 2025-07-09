@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Debug};
+use std::fmt::Debug;
 pub mod analytical;
 pub mod meta;
 pub mod ode;
@@ -9,7 +9,9 @@ pub use ode::*;
 pub use sde::*;
 
 use crate::{
-    error_model::ErrorModels, Covariates, Event, Infusion, Observation, PharmsolError, Subject,
+    error_model::ErrorModels,
+    simulator::{Fa, Lag},
+    Covariates, Event, Infusion, Observation, PharmsolError, Subject,
 };
 
 use super::likelihood::Prediction;
@@ -61,8 +63,8 @@ pub trait EquationTypes {
 pub(crate) trait EquationPriv: EquationTypes {
     // fn get_init(&self) -> &Init;
     // fn get_out(&self) -> &Out;
-    fn get_lag(&self, spp: &[f64]) -> Option<HashMap<usize, f64>>;
-    fn get_fa(&self, spp: &[f64]) -> Option<HashMap<usize, f64>>;
+    fn lag(&self) -> &Lag;
+    fn fa(&self) -> &Fa;
     fn get_nstates(&self) -> usize;
     fn get_nouteqs(&self) -> usize;
     fn solve(
@@ -178,6 +180,8 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
         cache: bool,
     ) -> Result<f64, PharmsolError>;
 
+    fn kind() -> EqnKind;
+
     /// Generate predictions for a subject with given parameters.
     ///
     /// # Parameters
@@ -219,15 +223,18 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
         support_point: &Vec<f64>,
         error_models: Option<&ErrorModels>,
     ) -> Result<(Self::P, Option<f64>), PharmsolError> {
-        let lag = self.get_lag(support_point);
-        let fa = self.get_fa(support_point);
+        // let lag = self.get_lag(support_point);
+        // let fa = self.get_fa(support_point);
         let mut output = Self::P::new(self.nparticles());
         let mut likelihood = Vec::new();
         for occasion in subject.occasions() {
-            let covariates = occasion.get_covariates().unwrap();
+            let covariates = occasion.covariates();
             let mut x = self.initial_state(support_point, covariates, occasion.index());
             let mut infusions = Vec::new();
-            let events = occasion.get_events(&lag, &fa, true);
+            let events = occasion.get_events(
+                Some((self.fa(), self.lag(), support_point, covariates)),
+                true,
+            );
             for (index, event) in events.iter().enumerate() {
                 self.simulate_event(
                     support_point,
@@ -244,5 +251,23 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
         }
         let ll = error_models.map(|_| likelihood.iter().product::<f64>());
         Ok((output, ll))
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Debug)]
+pub enum EqnKind {
+    ODE = 0,
+    Analytical = 1,
+    SDE = 2,
+}
+
+impl EqnKind {
+    pub fn to_str(&self) -> &'static str {
+        match self {
+            Self::ODE => "EqnKind::ODE",
+            Self::Analytical => "EqnKind::Analytical",
+            Self::SDE => "EqnKind::SDE",
+        }
     }
 }

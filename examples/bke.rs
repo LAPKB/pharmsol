@@ -15,8 +15,8 @@ fn main() {
     let an = equation::Analytical::new(
         one_compartment,
         |_p, _t, _cov| {},
-        |_p| lag! {},
-        |_p| fa! {},
+        |_p, _t, _cov| lag! {},
+        |_p, _t, _cov| fa! {},
         |_p, _t, _cov, _x| {},
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ke, v);
@@ -31,8 +31,8 @@ fn main() {
             fetch_params!(p, ke, _v);
             dx[0] = -ke * x[0] + rateiv[0];
         },
-        |_p| lag! {},
-        |_p| fa! {},
+        |_p, _t, _cov| lag! {},
+        |_p, _t, _cov| fa! {},
         |_p, _t, _cov, _x| {},
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ke, v);

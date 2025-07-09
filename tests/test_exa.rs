@@ -24,8 +24,8 @@ mod exa_tests {
                 fetch_params!(p, ke, _v);
                 dx[0] = -ke * x[0] + rateiv[0];
             },
-            |_p| lag! {},
-            |_p| fa! {},
+            |_p, _t, _cov| lag! {},
+            |_p, _t, _cov| fa! {},
             |_p, _t, _cov, _x| {},
             |x, p, _t, _cov, y| {
                 fetch_params!(p, _ke, v);
@@ -35,7 +35,7 @@ mod exa_tests {
         );
 
         // Compile the same model using exa
-        let model_path = exa::build::compile(
+        let model_path = exa::build::compile::<ODE>(
             format!(
                 r#"
                 equation::ODE::new(
@@ -43,8 +43,8 @@ mod exa_tests {
                 fetch_params!(p, ke, _v);
                 dx[0] = -ke * x[0] + rateiv[0];
             }},
-            |_p| lag! {{}},
-            |_p| fa! {{}},
+            |_p, _t, _cov| lag! {{}},
+            |_p, _t, _cov| fa! {{}},
             |_p, _t, _cov, _x| {{}},
             |x, p, _t, _cov, y| {{
                 fetch_params!(p, _ke, v);
@@ -62,7 +62,7 @@ mod exa_tests {
 
         // Load the compiled model
         let model_path = PathBuf::from(model_path);
-        let (_lib, (dyn_ode, _meta)) = unsafe { exa::load::load_ode(model_path.clone()) };
+        let (_lib, (dyn_ode, _meta)) = unsafe { exa::load::load::<ODE>(model_path.clone()) };
 
         // Parameters for model evaluation
         let params = vec![1.02282724609375, 194.51904296875];

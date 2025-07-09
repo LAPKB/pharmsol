@@ -20,11 +20,11 @@ fn one_compartment() {
             dx[0] = -ka * x[0];
             dx[1] = ka * x[0] - ke * x[1];
         },
-        |p| {
+        |p, _t, _cov| {
             fetch_params!(p, _ka, _ke, tlag, _v);
             lag! {0=>tlag}
         },
-        |_p| fa! {},
+        |_p, _t, _cov| fa! {},
         |_p, _t, _cov, _x| {},
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ka, _ke, _tlag, v);
@@ -46,11 +46,11 @@ fn two_compartment() {
             dx[0] = -ka * x[0] - k12 * x[0] + k21 * x[1];
             dx[1] = k12 * x[0] - k21 * x[1] - ke * x[1];
         },
-        |p| {
+        |p, _t, _cov| {
             fetch_params!(p, _ka, _ke, _k12, _k21, tlag, _v);
             lag! {0=>tlag}
         },
-        |_p| fa! {},
+        |_p, _t, _cov| fa! {},
         |_p, _t, _cov, _x| {},
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ka, _ke, _k12, _k21, _tlag, v);
