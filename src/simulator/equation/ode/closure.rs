@@ -4,7 +4,7 @@ use diffsol::{
     Vector,
 };
 use diffsol::{NalgebraContext, NalgebraMat, NalgebraVec};
-use nalgebra::DVector;
+
 use std::cell::RefCell;
 pub type T = f64;
 pub type V = NalgebraVec<T>;
@@ -189,24 +189,12 @@ where
     fn jac_mul_inplace(&self, _x: &Self::V, t: Self::T, v: &Self::V, y: &mut Self::V) {
         let rateiv = V::zeros(self.nstates, NalgebraContext);
 
-        // Avoid creating a new DVector when possible
-        let p_len = self.p.len();
-        let mut p_dvector: DVector<f64>;
-
-        // Use stack allocation for small parameter vectors
-        if p_len <= 16 {
-            let mut stack_p = [0.0; 16];
-            stack_p[..p_len].copy_from_slice(self.p);
-            p_dvector = DVector::from_row_slice(&stack_p[..p_len]);
-        } else {
-            // For larger vectors, use the more efficient approach with unsafe
-            p_dvector = DVector::zeros(p_len);
-            unsafe {
-                std::ptr::copy_nonoverlapping(self.p.as_ptr(), p_dvector.as_mut_ptr(), p_len);
-            }
+        let mut p = NalgebraVec::zeros(self.p.len(), NalgebraContext);
+        for i in 0..self.p.len() {
+            p[i] = self.p[i];
         }
 
-        (self.func)(v, &p_dvector, t, y, rateiv, self.covariates);
+        (self.func)(v, &p, t, y, rateiv, self.covariates);
     }
 }
 
@@ -250,7 +238,7 @@ where
         init: V,
     ) -> Self {
         let nparams = p.len();
-        let rateiv_buffer = RefCell::new(V::zeros(nstates));
+        let rateiv_buffer = RefCell::new(V::zeros(nstates, NalgebraContext));
 
         Self {
             func,
@@ -336,7 +324,7 @@ where
                 p[i] = self.p[i];
             }
         } else {
-            let p_vec = V::new(DVector::from_vec(self.p.clone()), NalgebraContext);
+            let p_vec = V::zeros(self.p.len(), NalgebraContext);
             p.copy_from(&p_vec);
         }
     }
@@ -355,7 +343,11 @@ where
                 self.p[i] = p[i];
             }
         } else {
-            self.p = p.iter().cloned().collect();
+            let mut p_new = vec![0.0; self.p.len()];
+            for i in 0..self.p.len() {
+                p_new[i] = p[i];
+            }
+            self.p = p_new;
         }
     }
 }
