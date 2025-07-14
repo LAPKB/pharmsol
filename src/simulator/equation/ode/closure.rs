@@ -1,12 +1,15 @@
 use crate::{Covariates, Infusion};
 use diffsol::{
     ConstantOp, LinearOp, NonLinearOp, NonLinearOpJacobian, OdeEquations, OdeEquationsRef, Op,
+    Vector,
 };
+use diffsol::{NalgebraContext, NalgebraMat, NalgebraVec};
 use nalgebra::DVector;
 use std::cell::RefCell;
-type T = f64;
-type V = nalgebra::DVector<f64>;
-type M = nalgebra::DMatrix<f64>;
+pub type T = f64;
+pub type V = NalgebraVec<T>;
+pub type M = NalgebraMat<T>;
+pub type C = NalgebraContext;
 
 pub struct PmRhs<'a, F>
 where
@@ -28,6 +31,7 @@ where
     type T = T;
     type V = V;
     type M = M;
+    type C = C;
     fn nstates(&self) -> usize {
         self.nstates
     }
@@ -36,6 +40,9 @@ where
     }
     fn nparams(&self) -> usize {
         self.nparams
+    }
+    fn context(&self) -> &Self::C {
+        &NalgebraContext
     }
 }
 
@@ -49,6 +56,7 @@ impl Op for PmMass {
     type T = T;
     type V = V;
     type M = M;
+    type C = C;
     fn nstates(&self) -> usize {
         self.nstates
     }
@@ -57,6 +65,9 @@ impl Op for PmMass {
     }
     fn nparams(&self) -> usize {
         self.nparams
+    }
+    fn context(&self) -> &Self::C {
+        &NalgebraContext
     }
 }
 
@@ -71,6 +82,7 @@ impl Op for PmInit<'_> {
     type T = T;
     type V = V;
     type M = M;
+    type C = C;
     fn nstates(&self) -> usize {
         self.nstates
     }
@@ -79,6 +91,9 @@ impl Op for PmInit<'_> {
     }
     fn nparams(&self) -> usize {
         self.nparams
+    }
+    fn context(&self) -> &Self::C {
+        &NalgebraContext
     }
 }
 
@@ -98,6 +113,7 @@ impl Op for PmRoot {
     type T = T;
     type V = V;
     type M = M;
+    type C = C;
     fn nstates(&self) -> usize {
         self.nstates
     }
@@ -106,6 +122,9 @@ impl Op for PmRoot {
     }
     fn nparams(&self) -> usize {
         self.nparams
+    }
+    fn context(&self) -> &Self::C {
+        &NalgebraContext
     }
 }
 
@@ -119,6 +138,7 @@ impl Op for PmOut {
     type T = T;
     type V = V;
     type M = M;
+    type C = C;
     fn nstates(&self) -> usize {
         self.nstates
     }
@@ -127,6 +147,9 @@ impl Op for PmOut {
     }
     fn nparams(&self) -> usize {
         self.nparams
+    }
+    fn context(&self) -> &Self::C {
+        &NalgebraContext
     }
 }
 
@@ -150,27 +173,12 @@ where
         let rateiv = rateiv_ref.clone();
         drop(rateiv_ref);
 
-        // Avoid creating a new DVector when possible
-        let p_len = self.p.len();
-        let mut p_dvector: DVector<f64>;
-        let p_ref: &DVector<f64>;
-
-        // Use stack allocation for small parameter vectors
-        if p_len <= 16 {
-            let mut stack_p = [0.0; 16];
-            stack_p[..p_len].copy_from_slice(self.p);
-            p_dvector = DVector::from_row_slice(&stack_p[..p_len]);
-            p_ref = &p_dvector;
-        } else {
-            // For larger vectors, use the more efficient approach with unsafe
-            p_dvector = DVector::zeros(p_len);
-            unsafe {
-                std::ptr::copy_nonoverlapping(self.p.as_ptr(), p_dvector.as_mut_ptr(), p_len);
-            }
-            p_ref = &p_dvector;
+        let mut p = NalgebraVec::zeros(self.p.len(), NalgebraContext);
+        for i in 0..self.p.len() {
+            p[i] = self.p[i];
         }
 
-        (self.func)(x, p_ref, t, y, rateiv, self.covariates)
+        (self.func)(x, &p, t, y, rateiv, self.covariates)
     }
 }
 
@@ -179,7 +187,7 @@ where
     F: Fn(&V, &V, T, &mut V, V, &Covariates),
 {
     fn jac_mul_inplace(&self, _x: &Self::V, t: Self::T, v: &Self::V, y: &mut Self::V) {
-        let rateiv = V::zeros(self.nstates);
+        let rateiv = V::zeros(self.nstates, NalgebraContext);
 
         // Avoid creating a new DVector when possible
         let p_len = self.p.len();
@@ -264,6 +272,7 @@ where
     type T = T;
     type V = V;
     type M = M;
+    type C = C;
     fn nstates(&self) -> usize {
         self.nstates
     }
@@ -272,6 +281,9 @@ where
     }
     fn nparams(&self) -> usize {
         self.nparams
+    }
+    fn context(&self) -> &Self::C {
+        &NalgebraContext
     }
 }
 
@@ -324,7 +336,8 @@ where
                 p[i] = self.p[i];
             }
         } else {
-            p.copy_from(&DVector::from_vec(self.p.clone()));
+            let p_vec = V::new(DVector::from_vec(self.p.clone()), NalgebraContext);
+            p.copy_from(&p_vec);
         }
     }
 
