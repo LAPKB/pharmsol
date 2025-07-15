@@ -1,12 +1,14 @@
 use crate::{Covariates, Infusion};
 use diffsol::{
-    ConstantOp, LinearOp, NonLinearOp, NonLinearOpJacobian, OdeEquations, OdeEquationsRef, Op,
+    ConstantOp, LinearOp, MatrixCommon, NalgebraContext, NalgebraMat, NalgebraVec, NonLinearOp,
+    NonLinearOpJacobian, OdeEquations, OdeEquationsRef, Op, Vector, VectorCommon,
 };
 use nalgebra::DVector;
 use std::cell::RefCell;
-type T = f64;
-type V = nalgebra::DVector<f64>;
-type M = nalgebra::DMatrix<f64>;
+type M = NalgebraMat<f64>;
+type V = <M as MatrixCommon>::V;
+type C = <M as MatrixCommon>::C;
+type T = <M as MatrixCommon>::T;
 
 pub struct PmRhs<'a, F>
 where
@@ -28,6 +30,7 @@ where
     type T = T;
     type V = V;
     type M = M;
+    type C = C;
     fn nstates(&self) -> usize {
         self.nstates
     }
@@ -36,6 +39,9 @@ where
     }
     fn nparams(&self) -> usize {
         self.nparams
+    }
+    fn context(&self) -> &Self::C {
+        &NalgebraContext
     }
 }
 
@@ -49,6 +55,7 @@ impl Op for PmMass {
     type T = T;
     type V = V;
     type M = M;
+    type C = C;
     fn nstates(&self) -> usize {
         self.nstates
     }
@@ -57,6 +64,9 @@ impl Op for PmMass {
     }
     fn nparams(&self) -> usize {
         self.nparams
+    }
+    fn context(&self) -> &Self::C {
+        &NalgebraContext
     }
 }
 
@@ -71,6 +81,7 @@ impl Op for PmInit<'_> {
     type T = T;
     type V = V;
     type M = M;
+    type C = C;
     fn nstates(&self) -> usize {
         self.nstates
     }
@@ -79,6 +90,9 @@ impl Op for PmInit<'_> {
     }
     fn nparams(&self) -> usize {
         self.nparams
+    }
+    fn context(&self) -> &Self::C {
+        &NalgebraContext
     }
 }
 
@@ -98,6 +112,7 @@ impl Op for PmRoot {
     type T = T;
     type V = V;
     type M = M;
+    type C = C;
     fn nstates(&self) -> usize {
         self.nstates
     }
@@ -106,6 +121,9 @@ impl Op for PmRoot {
     }
     fn nparams(&self) -> usize {
         self.nparams
+    }
+    fn context(&self) -> &Self::C {
+        &NalgebraContext
     }
 }
 
@@ -119,6 +137,7 @@ impl Op for PmOut {
     type T = T;
     type V = V;
     type M = M;
+    type C = C;
     fn nstates(&self) -> usize {
         self.nstates
     }
@@ -127,6 +146,9 @@ impl Op for PmOut {
     }
     fn nparams(&self) -> usize {
         self.nparams
+    }
+    fn context(&self) -> &Self::C {
+        &NalgebraContext
     }
 }
 
@@ -170,7 +192,9 @@ where
             p_ref = &p_dvector;
         }
 
-        (self.func)(x, p_ref, t, y, rateiv, self.covariates)
+        let pnew = p_ref.to_owned().into();
+
+        (self.func)(x, &pnew, t, y, rateiv, self.covariates)
     }
 }
 
@@ -179,7 +203,7 @@ where
     F: Fn(&V, &V, T, &mut V, V, &Covariates),
 {
     fn jac_mul_inplace(&self, _x: &Self::V, t: Self::T, v: &Self::V, y: &mut Self::V) {
-        let rateiv = V::zeros(self.nstates);
+        let rateiv = V::zeros(self.nstates, NalgebraContext);
 
         // Avoid creating a new DVector when possible
         let p_len = self.p.len();
@@ -198,7 +222,14 @@ where
             }
         }
 
-        (self.func)(v, &p_dvector, t, y, rateiv, self.covariates);
+        (self.func)(
+            v,
+            &p_dvector.to_owned().into(),
+            t,
+            y,
+            rateiv,
+            self.covariates,
+        );
     }
 }
 
@@ -242,7 +273,7 @@ where
         init: V,
     ) -> Self {
         let nparams = p.len();
-        let rateiv_buffer = RefCell::new(V::zeros(nstates));
+        let rateiv_buffer = RefCell::new(V::zeros(nstates, NalgebraContext));
 
         Self {
             func,
@@ -264,6 +295,7 @@ where
     type T = T;
     type V = V;
     type M = M;
+    type C = C;
     fn nstates(&self) -> usize {
         self.nstates
     }
@@ -272,6 +304,9 @@ where
     }
     fn nparams(&self) -> usize {
         self.nparams
+    }
+    fn context(&self) -> &Self::C {
+        &NalgebraContext
     }
 }
 
@@ -324,7 +359,7 @@ where
                 p[i] = self.p[i];
             }
         } else {
-            p.copy_from(&DVector::from_vec(self.p.clone()));
+            p.copy_from(&DVector::from_vec(self.p.clone()).into());
         }
     }
 
@@ -342,7 +377,7 @@ where
                 self.p[i] = p[i];
             }
         } else {
-            self.p = p.iter().cloned().collect();
+            self.p = p.inner().iter().cloned().collect();
         }
     }
 }

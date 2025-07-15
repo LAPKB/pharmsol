@@ -15,8 +15,8 @@ use cached::UnboundCache;
 use crate::simulator::equation::Predictions;
 use closure::PMProblem;
 use diffsol::{
-    error::OdeSolverError, ode_solver::method::OdeSolverMethod, Bdf, NewtonNonlinearSolver,
-    OdeBuilder, OdeSolverStopReason,
+    error::OdeSolverError, ode_solver::method::OdeSolverMethod, Bdf, MatrixCommon,
+    NewtonNonlinearSolver, OdeBuilder, OdeEquationsRef, OdeSolverStopReason, VectorCommon,
 };
 use nalgebra::DVector;
 
@@ -223,7 +223,8 @@ impl Equation for ODE {
                     support_point.clone(), //TODO: Avoid cloning the support point
                     covariates,
                     infusions,
-                    self.initial_state(support_point, covariates, occasion.index()),
+                    self.initial_state(support_point, covariates, occasion.index())
+                        .into(),
                 ))?;
 
             let mut solver: Bdf<
