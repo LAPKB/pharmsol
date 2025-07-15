@@ -1,4 +1,5 @@
 use crate::{data::Covariates, simulator::*};
+use diffsol::{Matrix, NalgebraContext};
 use nalgebra::{DVector, Matrix3, Vector3};
 
 ///
@@ -73,19 +74,19 @@ pub fn three_compartments(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V
     let c26 = ((k10 + k12 + k13 - l2) * (k21 - l2) - (k12 * k21)) / ((l1 - l2) * (l3 - l2));
     let c27 = ((k10 + k12 + k13 - l3) * (k21 - l3) - (k12 * k21)) / ((l1 - l3) * (l2 - l3));
 
-    let non_zero_matrix = Matrix3::new(
-        c1 * exp_l1_t + c2 * exp_l2_t + c3 * exp_l3_t,
-        c4 * exp_l1_t + c5 * exp_l2_t + c6 * exp_l3_t,
-        c7 * exp_l1_t + c8 * exp_l2_t + c9 * exp_l3_t,
-        c10 * exp_l1_t + c11 * exp_l2_t + c12 * exp_l3_t,
-        c13 * exp_l1_t + c14 * exp_l2_t + c15 * exp_l3_t,
-        c16 * exp_l1_t + c17 * exp_l2_t + c18 * exp_l3_t,
-        c19 * exp_l1_t + c20 * exp_l2_t + c21 * exp_l3_t,
-        c22 * exp_l1_t + c23 * exp_l2_t + c24 * exp_l3_t,
-        c25 * exp_l1_t + c26 * exp_l2_t + c27 * exp_l3_t,
-    );
+    let mut non_zero_matrix = NalgebraMat::zeros(3, 3, NalgebraContext);
 
-    let non_zero = non_zero_matrix * x;
+    non_zero_matrix[(0, 0)] = c1 * exp_l1_t + c2 * exp_l2_t + c3 * exp_l3_t;
+    non_zero_matrix[(0, 1)] = c4 * exp_l1_t + c5 * exp_l2_t + c6 * exp_l3_t;
+    non_zero_matrix[(0, 2)] = c7 * exp_l1_t + c8 * exp_l2_t + c9 * exp_l3_t;
+    non_zero_matrix[(1, 0)] = c10 * exp_l1_t + c11 * exp_l2_t + c12 * exp_l3_t;
+    non_zero_matrix[(1, 1)] = c13 * exp_l1_t + c14 * exp_l2_t + c15 * exp_l3_t;
+    non_zero_matrix[(1, 2)] = c16 * exp_l1_t + c17 * exp_l2_t + c18 * exp_l3_t;
+    non_zero_matrix[(2, 0)] = c19 * exp_l1_t + c20 * exp_l2_t + c21 * exp_l3_t;
+    non_zero_matrix[(2, 1)] = c22 * exp_l1_t + c23 * exp_l2_t + c24 * exp_l3_t;
+    non_zero_matrix[(2, 2)] = c25 * exp_l1_t + c26 * exp_l2_t + c27 * exp_l3_t;
+
+    let non_zero: NalgebraMat<f64> = non_zero_matrix * x;
 
     let infusion_vector = Vector3::new(
         ((1.0 - exp_l1_t) * c1 / l1) + ((1.0 - exp_l2_t) * c2 / l2) + ((1.0 - exp_l3_t) * c3 / l3),

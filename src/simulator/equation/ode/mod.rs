@@ -15,8 +15,8 @@ use cached::UnboundCache;
 use crate::simulator::equation::Predictions;
 use closure::PMProblem;
 use diffsol::{
-    error::OdeSolverError, ode_solver::method::OdeSolverMethod, Bdf, NewtonNonlinearSolver,
-    OdeBuilder, OdeSolverStopReason,
+    error::OdeSolverError, ode_solver::method::OdeSolverMethod, Bdf, NalgebraContext, NalgebraVec,
+    NewtonNonlinearSolver, OdeBuilder, OdeSolverStopReason, Vector,
 };
 use nalgebra::DVector;
 
@@ -169,9 +169,9 @@ impl EquationPriv for ODE {
     #[inline(always)]
     fn initial_state(&self, spp: &Vec<f64>, covariates: &Covariates, occasion_index: usize) -> V {
         let init = &self.init;
-        let mut x = V::zeros(self.get_nstates());
+        let mut x = V::zeros(self.get_nstates(), NalgebraContext);
         if occasion_index == 0 {
-            let spp = DVector::from_vec(spp.clone());
+            let spp = NalgebraVec::from_vec(spp.clone(), NalgebraContext);
             (init)(&spp, 0.0, covariates, &mut x);
         }
         x
@@ -245,9 +245,9 @@ impl Equation for ODE {
                     }
                     Event::Observation(observation) => {
                         //START PROCESS_OBSERVATION
-                        let mut y = V::zeros(self.get_nouteqs());
+                        let mut y = V::zeros(self.get_nouteqs(), NalgebraContext);
                         let out = &self.out;
-                        let spp = DVector::from_vec(support_point.clone()); // TODO: Avoid clone
+                        let spp = NalgebraVec::from_vec(support_point.clone(), NalgebraContext); // TODO: Avoid clone
                         (out)(
                             solver.state().y,
                             &spp,

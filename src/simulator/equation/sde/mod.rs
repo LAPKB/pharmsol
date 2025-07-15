@@ -8,6 +8,7 @@ use rayon::prelude::*;
 use cached::proc_macro::cached;
 use cached::UnboundCache;
 
+use crate::PharmsolError;
 use crate::{
     data::{Covariates, Infusion},
     error_model::ErrorModels,
@@ -15,8 +16,7 @@ use crate::{
     simulator::{Diffusion, Drift, Fa, Init, Lag, Neqs, Out, V},
     Subject,
 };
-
-use crate::PharmsolError;
+use diffsol::NalgebraVec;
 
 use super::{Equation, EquationPriv, EquationTypes, Predictions, State};
 
@@ -299,6 +299,7 @@ impl EquationPriv for SDE {
         for _ in 0..self.nparticles {
             let mut state = DVector::zeros(self.get_nstates());
             if occasion_index == 0 {
+                let mut p = NalgebraVec::zeros(support_point.len());
                 (self.init)(
                     &V::from_vec(support_point.to_vec()),
                     0.0,
