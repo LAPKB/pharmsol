@@ -1,6 +1,5 @@
 mod em;
 
-use nalgebra::DVector;
 use ndarray::{concatenate, Array2, Axis};
 use rand::{rng, Rng};
 use rayon::prelude::*;
@@ -16,7 +15,10 @@ use crate::{
     simulator::{Diffusion, Drift, Fa, Init, Lag, Neqs, Out, V},
     Subject,
 };
-use diffsol::NalgebraVec;
+use diffsol::Vector;
+use diffsol::VectorCommon;
+use diffsol::VectorHost;
+use diffsol::{NalgebraContext, NalgebraVec};
 
 use super::{Equation, EquationPriv, EquationTypes, Predictions, State};
 
@@ -57,7 +59,7 @@ pub(crate) fn simulate_sde_event(
     let mut sde = em::EM::new(
         *drift,
         *difussion,
-        DVector::from_column_slice(support_point),
+        NalgebraVec::from_slice(support_point, NalgebraContext),
         x,
         cov.clone(),
         infusions.to_vec(),
@@ -131,7 +133,7 @@ impl SDE {
 /// State trait implementation for particle-based SDE simulation.
 ///
 /// This implementation allows adding bolus doses to all particles in the system.
-impl State for Vec<DVector<f64>> {
+impl State for Vec<NalgebraVec<f64>> {
     /// Adds a bolus dose to a specific input compartment across all particles.
     ///
     /// # Arguments
@@ -164,7 +166,7 @@ impl Predictions for Array2<Prediction> {
 }
 
 impl EquationTypes for SDE {
-    type S = Vec<DVector<f64>>; // Vec -> particles, DVector -> state
+    type S = Vec<NalgebraVec<f64>>; // Vec -> particles, NalgebraVec -> state
     type P = Array2<Prediction>; // Rows -> particles, Columns -> time
 }
 
@@ -253,10 +255,10 @@ impl EquationPriv for SDE {
     ) -> Result<(), PharmsolError> {
         let mut pred = vec![Prediction::default(); self.nparticles];
         pred.par_iter_mut().enumerate().for_each(|(i, p)| {
-            let mut y = V::zeros(self.get_nouteqs());
+            let mut y = V::zeros(self.get_nouteqs(), NalgebraContext);
             (self.out)(
                 &x[i],
-                &V::from_vec(support_point.clone()),
+                &V::from_vec(support_point.clone(), NalgebraContext),
                 observation.time(),
                 covariates,
                 &mut y,
@@ -280,7 +282,7 @@ impl EquationPriv for SDE {
             let sum_q: f64 = q.iter().sum();
             let w: Vec<f64> = q.iter().map(|qi| qi / sum_q).collect();
             let i = sysresample(&w);
-            let a: Vec<DVector<f64>> = i.iter().map(|&i| x[i].clone()).collect();
+            let a: Vec<NalgebraVec<f64>> = i.iter().map(|&i| x[i].clone()).collect();
             *x = a;
             likelihood.push(sum_q / self.nparticles as f64);
             // let qq: Vec<f64> = i.iter().map(|&i| q[i]).collect();
@@ -297,11 +299,11 @@ impl EquationPriv for SDE {
     ) -> Self::S {
         let mut x = Vec::with_capacity(self.nparticles);
         for _ in 0..self.nparticles {
-            let mut state = DVector::zeros(self.get_nstates());
+            let mut state = NalgebraVec::zeros(self.get_nstates(), NalgebraContext);
             if occasion_index == 0 {
-                let mut p = NalgebraVec::zeros(support_point.len());
+                let mut p = V::zeros(support_point.len(), NalgebraContext);
                 (self.init)(
-                    &V::from_vec(support_point.to_vec()),
+                    &V::from_vec(support_point.to_vec(), NalgebraContext),
                     0.0,
                     covariates,
                     &mut state,

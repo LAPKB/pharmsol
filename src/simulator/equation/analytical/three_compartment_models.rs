@@ -1,6 +1,5 @@
 use crate::{data::Covariates, simulator::*};
 use diffsol::{Matrix, NalgebraContext};
-use nalgebra::{DVector, Matrix3, Vector3};
 
 ///
 /// Analytical for three compartments
@@ -102,8 +101,8 @@ pub fn three_compartments(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V
 
     let result_vector = non_zero + infusion;
 
-    // Convert Vector2 to DVector
-    DVector::from_vec(vec![result_vector[0], result_vector[1], result_vector[2]])
+    // Convert Vector2 to NalgebraVec
+    NalgebraVec::from_vec(vec![result_vector[0], result_vector[1], result_vector[2]])
 }
 
 ///

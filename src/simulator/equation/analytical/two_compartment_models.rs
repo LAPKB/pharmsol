@@ -1,5 +1,8 @@
 use crate::{data::Covariates, simulator::*};
-use nalgebra::{DVector, Matrix2, Vector2};
+use diffsol::{Matrix, NalgebraContext};
+use nalgebra::Matrix2;
+
+use diffsol::{MatrixCommon, MatrixOp};
 
 /// Analytical solution for two compartment model.
 ///
@@ -22,12 +25,16 @@ pub fn two_compartments(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {
     let l2 = (ke + kcp + kpc - sqrt) / 2.0;
     let exp_l1_t = (-l1 * t).exp();
     let exp_l2_t = (-l2 * t).exp();
-    let non_zero_matrix = Matrix2::new(
+
+    let non_zero_matrix = diffsol::NalgebraMat::new(
         (l1 - kpc) * exp_l1_t + (kpc - l2) * exp_l2_t,
         -kpc * exp_l1_t + kpc * exp_l2_t,
         -kcp * exp_l1_t + kcp * exp_l2_t,
         (l1 - ke - kcp) * exp_l1_t + (ke + kcp - l2) * exp_l2_t,
     );
+
+    let non_zero_matrix = NalgebraMat::zeros(2, 2, NalgebraContext);
+    non_zero_matrix[(0, 0)] = (l1 - kpc) * exp_l1_t + (kpc - l2) * exp_l2_t;
 
     let non_zero = (non_zero_matrix * x) / (l1 - l2);
 
@@ -40,8 +47,8 @@ pub fn two_compartments(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {
 
     let result_vector = non_zero + infusion;
 
-    // Convert Vector2 to DVector
-    DVector::from_vec(vec![result_vector[0], result_vector[1]])
+    // Convert Vector2 to NalgebraVec
+    NalgebraVec::from_vec(vec![result_vector[0], result_vector[1]])
 }
 
 /// Analytical solution for two compartment model with first-order absorption.

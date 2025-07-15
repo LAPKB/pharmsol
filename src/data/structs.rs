@@ -4,6 +4,7 @@ use crate::{
     PharmsolError,
 };
 use csv::WriterBuilder;
+use diffsol::{NalgebraContext, NalgebraVec, Vector};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -483,7 +484,7 @@ impl Occasion {
 
     fn add_lagtime(&mut self, reorder: Option<(&Fa, &Lag, &Vec<f64>, &Covariates)>) {
         if let Some((_, fn_lag, spp, covariates)) = reorder {
-            let spp = nalgebra::DVector::from_vec(spp.to_vec());
+            let spp = NalgebraVec::from_vec(spp.to_vec(), NalgebraContext);
             for event in self.events.iter_mut() {
                 let time = event.time();
                 if let Event::Bolus(bolus) = event {
@@ -500,7 +501,7 @@ impl Occasion {
     fn add_bioavailability(&mut self, reorder: Option<(&Fa, &Lag, &Vec<f64>, &Covariates)>) {
         // If lagtime is empty, return early
         if let Some((fn_fa, _, spp, covariates)) = reorder {
-            let spp = nalgebra::DVector::from_vec(spp.to_vec());
+            let spp = NalgebraVec::from_vec(spp.to_vec(), NalgebraContext);
             for event in self.events.iter_mut() {
                 let time = event.time();
                 if let Event::Bolus(bolus) = event {

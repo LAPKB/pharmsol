@@ -16,9 +16,8 @@ use crate::simulator::equation::Predictions;
 use closure::PMProblem;
 use diffsol::{
     error::OdeSolverError, ode_solver::method::OdeSolverMethod, Bdf, NalgebraContext, NalgebraVec,
-    NewtonNonlinearSolver, OdeBuilder, OdeSolverStopReason, Vector,
+    NewtonNonlinearSolver, OdeBuilder, OdeSolverStopReason, Vector, VectorHost,
 };
-use nalgebra::DVector;
 
 use super::{Equation, EquationPriv, EquationTypes, State};
 
@@ -112,13 +111,13 @@ impl EquationTypes for ODE {
 impl EquationPriv for ODE {
     //#[inline(always)]
     // fn get_lag(&self, spp: &[f64]) -> Option<HashMap<usize, f64>> {
-    //     let spp = DVector::from_vec(spp.to_vec());
+    //     let spp = NalgebraVec::from_vec(spp.to_vec());
     //     Some((self.lag)(&spp))
     // }
 
     // #[inline(always)]
     // fn get_fa(&self, spp: &[f64]) -> Option<HashMap<usize, f64>> {
-    //     let spp = DVector::from_vec(spp.to_vec());
+    //     let spp = NalgebraVec::from_vec(spp.to_vec());
     //     Some((self.fa)(&spp))
     // }
     #[inline(always)]

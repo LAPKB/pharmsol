@@ -13,6 +13,7 @@ use crate::{
 use cached::proc_macro::cached;
 use cached::UnboundCache;
 
+use diffsol::{NalgebraContext, Vector, VectorHost};
 /// Model equation using analytical solutions.
 ///
 /// This implementation uses closed-form analytical solutions for the model
@@ -140,8 +141,8 @@ impl EquationPriv for Analytical {
         let mut current_t = ts[0];
         for &next_t in &ts[1..] {
             // prepare support and infusion rate for [current_t .. next_t]
-            let mut sp = V::from_vec(support_point.to_owned());
-            let mut rateiv = V::from_vec(vec![0.0; 3]);
+            let mut sp = V::from_vec(support_point.to_owned(), NalgebraContext);
+            let mut rateiv = V::from_vec(vec![0.0; 3], NalgebraContext);
             for inf in infusions {
                 let s = inf.time();
                 let e = s + inf.duration();
@@ -175,11 +176,11 @@ impl EquationPriv for Analytical {
         likelihood: &mut Vec<f64>,
         output: &mut Self::P,
     ) -> Result<(), PharmsolError> {
-        let mut y = V::zeros(self.get_nouteqs());
+        let mut y = V::zeros(self.get_nouteqs(), NalgebraContext);
         let out = &self.out;
         (out)(
             x,
-            &V::from_vec(support_point.clone()),
+            &V::from_vec(support_point.clone(), NalgebraContext),
             observation.time(),
             covariates,
             &mut y,
@@ -195,9 +196,14 @@ impl EquationPriv for Analytical {
     #[inline(always)]
     fn initial_state(&self, spp: &Vec<f64>, covariates: &Covariates, occasion_index: usize) -> V {
         let init = &self.init;
-        let mut x = V::zeros(self.get_nstates());
+        let mut x = NalgebraVec::zeros(self.get_nstates(), NalgebraContext);
         if occasion_index == 0 {
-            (init)(&V::from_vec(spp.to_vec()), 0.0, covariates, &mut x);
+            (init)(
+                &V::from_vec(spp.to_vec(), NalgebraContext),
+                0.0,
+                covariates,
+                &mut x,
+            );
         }
         x
     }
