@@ -15,8 +15,8 @@ use cached::UnboundCache;
 use crate::simulator::equation::Predictions;
 use closure::PMProblem;
 use diffsol::{
-    error::OdeSolverError, ode_solver::method::OdeSolverMethod, Bdf, MatrixCommon,
-    NewtonNonlinearSolver, OdeBuilder, OdeEquationsRef, OdeSolverStopReason, VectorCommon,
+    error::OdeSolverError, ode_solver::method::OdeSolverMethod, Bdf, MatrixCommon, NalgebraContext,
+    NewtonNonlinearSolver, OdeBuilder, OdeEquationsRef, OdeSolverStopReason, Vector, VectorCommon,
 };
 use nalgebra::DVector;
 
@@ -169,10 +169,10 @@ impl EquationPriv for ODE {
     #[inline(always)]
     fn initial_state(&self, spp: &Vec<f64>, covariates: &Covariates, occasion_index: usize) -> V {
         let init = &self.init;
-        let mut x = V::zeros(self.get_nstates());
+        let mut x = V::zeros(self.get_nstates(), NalgebraContext);
         if occasion_index == 0 {
             let spp = DVector::from_vec(spp.clone());
-            (init)(&spp, 0.0, covariates, &mut x);
+            (init)(&spp.into(), 0.0, covariates, &mut x);
         }
         x
     }
@@ -246,12 +246,12 @@ impl Equation for ODE {
                     }
                     Event::Observation(observation) => {
                         //START PROCESS_OBSERVATION
-                        let mut y = V::zeros(self.get_nouteqs());
+                        let mut y = V::zeros(self.get_nouteqs(), NalgebraContext);
                         let out = &self.out;
                         let spp = DVector::from_vec(support_point.clone()); // TODO: Avoid clone
                         (out)(
                             solver.state().y,
-                            &spp,
+                            &spp.into(),
                             observation.time(),
                             covariates,
                             &mut y,

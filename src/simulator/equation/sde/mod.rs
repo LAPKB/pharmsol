@@ -1,5 +1,6 @@
 mod em;
 
+use diffsol::{NalgebraContext, Vector};
 use nalgebra::DVector;
 use ndarray::{concatenate, Array2, Axis};
 use rand::{rng, Rng};
@@ -300,7 +301,7 @@ impl EquationPriv for SDE {
             let mut state = DVector::zeros(self.get_nstates());
             if occasion_index == 0 {
                 (self.init)(
-                    &V::from_vec(support_point.to_vec()),
+                    &V::from_vec(support_point.to_vec(), NalgebraContext),
                     0.0,
                     covariates,
                     &mut state,
