@@ -17,6 +17,7 @@ use closure::PMProblem;
 use diffsol::{
     error::OdeSolverError, ode_solver::method::OdeSolverMethod, Bdf, MatrixCommon, NalgebraContext,
     NewtonNonlinearSolver, OdeBuilder, OdeEquationsRef, OdeSolverStopReason, Vector, VectorCommon,
+    VectorHost,
 };
 use nalgebra::DVector;
 

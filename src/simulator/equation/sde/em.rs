@@ -7,6 +7,7 @@ use nalgebra::DVector;
 use rand::rng;
 use rand_distr::{Distribution, Normal};
 
+use diffsol::{VectorCommon, VectorHost};
 /// Implementation of the Euler-Maruyama method for solving stochastic differential equations.
 ///
 /// This structure holds the SDE system parameters and state, providing a numerical method
@@ -122,18 +123,18 @@ impl EM {
                 rateiv[infusion.input()] += infusion.amount() / infusion.duration();
             }
         }
-        let mut drift_term = DVector::zeros(n);
+        let mut drift_term = DVector::zeros(n).into();
         (self.drift)(
             state,
-            &self.params,
+            &self.params.into(),
             time,
             &mut drift_term,
-            rateiv,
+            rateiv.into(),
             &self.cov,
         );
 
-        let mut diffusion_term = DVector::zeros(n);
-        (self.diffusion)(&self.params, &mut diffusion_term);
+        let mut diffusion_term = DVector::zeros(n).into();
+        (self.diffusion)(&self.params.into(), &mut diffusion_term);
 
         let mut rng = rng();
         let normal_dist = Normal::new(0.0, 1.0).unwrap();

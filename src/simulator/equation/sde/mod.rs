@@ -17,6 +17,8 @@ use crate::{
     Subject,
 };
 
+use diffsol::VectorCommon;
+
 use crate::PharmsolError;
 
 use super::{Equation, EquationPriv, EquationTypes, Predictions, State};
@@ -59,14 +61,14 @@ pub(crate) fn simulate_sde_event(
         *drift,
         *difussion,
         DVector::from_column_slice(support_point),
-        x,
+        x.inner().clone(),
         cov.clone(),
         infusions.to_vec(),
         1e-2,
         1e-2,
     );
     let (_time, solution) = sde.solve(ti, tf);
-    solution.last().unwrap().clone()
+    solution.last().unwrap().clone().into()
 }
 
 /// Stochastic Differential Equation solver for pharmacometric models.
@@ -223,7 +225,7 @@ impl EquationPriv for SDE {
             *particle = simulate_sde_event(
                 &self.drift,
                 &self.diffusion,
-                particle.clone(),
+                particle.clone().into(),
                 support_point,
                 covariates,
                 infusions,
@@ -254,10 +256,10 @@ impl EquationPriv for SDE {
     ) -> Result<(), PharmsolError> {
         let mut pred = vec![Prediction::default(); self.nparticles];
         pred.par_iter_mut().enumerate().for_each(|(i, p)| {
-            let mut y = V::zeros(self.get_nouteqs());
+            let mut y = V::zeros(self.get_nouteqs(), NalgebraContext);
             (self.out)(
-                &x[i],
-                &V::from_vec(support_point.clone()),
+                &x[i].clone().into(),
+                &V::from_vec(support_point.clone(), NalgebraContext),
                 observation.time(),
                 covariates,
                 &mut y,
@@ -298,7 +300,7 @@ impl EquationPriv for SDE {
     ) -> Self::S {
         let mut x = Vec::with_capacity(self.nparticles);
         for _ in 0..self.nparticles {
-            let mut state = DVector::zeros(self.get_nstates());
+            let mut state: V = DVector::zeros(self.get_nstates()).into();
             if occasion_index == 0 {
                 (self.init)(
                     &V::from_vec(support_point.to_vec(), NalgebraContext),
@@ -307,7 +309,7 @@ impl EquationPriv for SDE {
                     &mut state,
                 );
             }
-            x.push(state);
+            x.push(state.inner().clone());
         }
         x
     }
