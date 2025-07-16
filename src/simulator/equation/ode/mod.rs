@@ -15,9 +15,8 @@ use cached::UnboundCache;
 use crate::simulator::equation::Predictions;
 use closure::PMProblem;
 use diffsol::{
-    error::OdeSolverError, ode_solver::method::OdeSolverMethod, Bdf, MatrixCommon, NalgebraContext,
-    NewtonNonlinearSolver, OdeBuilder, OdeEquationsRef, OdeSolverStopReason, Vector, VectorCommon,
-    VectorHost,
+    error::OdeSolverError, ode_solver::method::OdeSolverMethod, Bdf, NalgebraContext,
+    NewtonNonlinearSolver, OdeBuilder, OdeSolverStopReason, Vector, VectorHost,
 };
 use nalgebra::DVector;
 

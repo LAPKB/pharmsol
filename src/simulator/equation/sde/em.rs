@@ -7,7 +7,6 @@ use nalgebra::DVector;
 use rand::rng;
 use rand_distr::{Distribution, Normal};
 
-use diffsol::{VectorCommon, VectorHost};
 /// Implementation of the Euler-Maruyama method for solving stochastic differential equations.
 ///
 /// This structure holds the SDE system parameters and state, providing a numerical method

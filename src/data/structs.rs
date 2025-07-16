@@ -7,8 +7,6 @@ use csv::WriterBuilder;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-use diffsol::{NalgebraVec, Vector, VectorCommon, VectorHost};
-
 /// The main data container for pharmacokinetic/pharmacodynamic data
 ///
 /// [Data] is a collection of [Subject] instances, which themselves contain [Occasion] instances with [Event]s.

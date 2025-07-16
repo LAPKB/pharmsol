@@ -1,6 +1,6 @@
 use crate::{Covariates, Infusion};
 use diffsol::{
-    ConstantOp, LinearOp, MatrixCommon, NalgebraContext, NalgebraMat, NalgebraVec, NonLinearOp,
+    ConstantOp, LinearOp, MatrixCommon, NalgebraContext, NalgebraMat, NonLinearOp,
     NonLinearOpJacobian, OdeEquations, OdeEquationsRef, Op, Vector, VectorCommon,
 };
 use nalgebra::DVector;
