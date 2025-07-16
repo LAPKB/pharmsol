@@ -231,7 +231,7 @@ impl EquationPriv for SDE {
                 infusions,
                 ti,
                 tf,
-            );
+            ).inner().clone();
         });
         Ok(())
     }

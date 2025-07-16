@@ -125,8 +125,8 @@ impl EM {
         }
         let mut drift_term = DVector::zeros(n).into();
         (self.drift)(
-            state,
-            &self.params.into(),
+            &state.clone().into(),
+            &self.params.clone().into(),
             time,
             &mut drift_term,
             rateiv.into(),
@@ -134,7 +134,7 @@ impl EM {
         );
 
         let mut diffusion_term = DVector::zeros(n).into();
-        (self.diffusion)(&self.params.into(), &mut diffusion_term);
+        (self.diffusion)(&self.params.clone().into(), &mut diffusion_term);
 
         let mut rng = rng();
         let normal_dist = Normal::new(0.0, 1.0).unwrap();
