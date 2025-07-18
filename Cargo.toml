@@ -10,6 +10,7 @@ documentation = "https://lapkb.github.io/pharmsol/"
 [features]
 default = []
 exa = ["libloading"]
+sde = []
 
 [dependencies]
 cached = { version = "0.55.1" }

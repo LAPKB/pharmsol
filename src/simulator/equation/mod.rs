@@ -2,10 +2,12 @@ use std::{collections::HashMap, fmt::Debug};
 pub mod analytical;
 pub mod meta;
 pub mod ode;
+#[cfg(feature = "sde")]
 pub mod sde;
 pub use analytical::*;
 pub use meta::*;
 pub use ode::*;
+#[cfg(feature = "sde")]
 pub use sde::*;
 
 use crate::{
