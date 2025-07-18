@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::simulator::likelihood::progress::ProgressTracker;
 use crate::{
     data::error_model::ErrorModels, Data, Equation, ErrorPoly, Observation, PharmsolError,
@@ -18,21 +20,32 @@ const FRAC_1_SQRT_2PI: f64 =
 /// observations and time points.
 #[derive(Debug, Clone, Default)]
 pub struct SubjectPredictions {
-    predictions: Vec<Prediction>,
-    flat_predictions: Vec<f64>,
-    flat_observations: Vec<f64>,
-    flat_time: Vec<f64>,
+    predictions: HashMap<usize, Vec<Prediction>>,
+}
+
+impl IntoIterator for SubjectPredictions {
+    type Item = Prediction;
+    type IntoIter = std::vec::IntoIter<Prediction>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.predictions
+            .values()
+            .flat_map(|v| v.iter().cloned())
+            .collect::<Vec<_>>()
+            .into_iter()
+    }
 }
 
 impl Predictions for SubjectPredictions {
     fn squared_error(&self) -> f64 {
         self.predictions
-            .iter()
+            .values()
+            .flat_map(|preds| preds.iter())
             .map(|p| (p.observation - p.prediction).powi(2))
             .sum()
     }
-    fn get_predictions(&self) -> Vec<Prediction> {
-        self.predictions.clone()
+    fn predictions(&self) -> &HashMap<usize, Vec<Prediction>> {
+        &self.predictions
     }
 }
 
@@ -47,15 +60,18 @@ impl SubjectPredictions {
     /// # Returns
     /// The product of all individual prediction likelihoods
     pub fn likelihood(&self, error_models: &ErrorModels) -> Result<f64, PharmsolError> {
-        match self.predictions.is_empty() {
-            true => Ok(0.0),
-            false => self
-                .predictions
-                .iter()
-                .map(|p| p.likelihood(error_models))
-                .collect::<Result<Vec<f64>, _>>()
-                .map(|likelihoods| likelihoods.iter().product())
-                .map_err(PharmsolError::from),
+        let mut likelihood = 1.0;
+        for preds in self.predictions.values() {
+            for pred in preds {
+                likelihood *= pred.likelihood(error_models)?;
+            }
+        }
+        if likelihood.is_finite() {
+            Ok(likelihood)
+        } else if likelihood == 0.0 {
+            Err(PharmsolError::ZeroLikelihood)
+        } else {
+            Err(PharmsolError::NonFiniteLikelihood(likelihood))
         }
     }
 
@@ -65,35 +81,11 @@ impl SubjectPredictions {
     ///
     /// # Parameters
     /// - `prediction`: The prediction to add
-    pub fn add_prediction(&mut self, prediction: Prediction) {
-        self.predictions.push(prediction.clone());
-        self.flat_observations.push(prediction.observation);
-        self.flat_predictions.push(prediction.prediction);
-        self.flat_time.push(prediction.time);
-    }
-
-    /// Get a vector of all observation values.
-    ///
-    /// # Returns
-    /// Vector of observation values
-    pub fn flat_observations(&self) -> Vec<f64> {
-        self.flat_observations.to_vec()
-    }
-
-    /// Get a vector of all prediction values.
-    ///
-    /// # Returns
-    /// Vector of prediction values
-    pub fn flat_predictions(&self) -> Vec<f64> {
-        self.flat_predictions.to_vec()
-    }
-
-    /// Get a vector of all time points.
-    ///
-    /// # Returns
-    /// Vector of time points
-    pub fn flat_time(&self) -> Vec<f64> {
-        self.flat_time.to_vec()
+    pub fn add_prediction(&mut self, prediction: Prediction, occasion: usize) {
+        self.predictions
+            .entry(occasion)
+            .or_default()
+            .push(prediction);
     }
 }
 
@@ -101,17 +93,6 @@ impl SubjectPredictions {
 #[inline(always)]
 fn normpdf(obs: f64, pred: f64, sigma: f64) -> f64 {
     (FRAC_1_SQRT_2PI / sigma) * (-((obs - pred) * (obs - pred)) / (2.0 * sigma * sigma)).exp()
-}
-
-impl From<Vec<Prediction>> for SubjectPredictions {
-    fn from(predictions: Vec<Prediction>) -> Self {
-        Self {
-            flat_predictions: predictions.iter().map(|p| p.prediction).collect(),
-            flat_observations: predictions.iter().map(|p| p.observation).collect(),
-            flat_time: predictions.iter().map(|p| p.time).collect(),
-            predictions,
-        }
-    }
 }
 
 /// Container for predictions across a population of subjects.
