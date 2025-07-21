@@ -322,7 +322,7 @@ pub enum ErrorModel {
         lambda: f64,
         /// Error polynomial coefficients (c0, c1, c2, c3)
         poly: ErrorPoly,
-        /// Optional: lloq (Below Limit of Quantification) of the analytical method
+        /// Optional: lloq (Lower Limit of Quantification) of the analytical method
         lloq: Option<f64>,
     },
 
@@ -336,7 +336,7 @@ pub enum ErrorModel {
         gamma: f64,
         /// Error polynomial coefficients (c0, c1, c2, c3)
         poly: ErrorPoly,
-        /// Optional: lloq (Below Limit of Quantification) of the analytical method
+        /// Optional: lloq (Lower Limit of Quantification) of the analytical method
         lloq: Option<f64>,
     },
     #[default]
@@ -358,7 +358,7 @@ impl ErrorModel {
         Self::Additive { lambda, poly, lloq }
     }
 
-    /// Get the lloq (Below Limit of Quantification) value, if available.
+    /// Get the lloq (Lower Limit of Quantification) value, if available.
     ///
     /// # Returns
     ///
