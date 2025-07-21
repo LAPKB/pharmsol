@@ -80,10 +80,10 @@ impl Default for ErrorModels {
 }
 
 impl ErrorModels {
-    /// Create a new instance of ErrorModels with an empty vector
+    /// Create a new instance of [ErrorModels]
     ///
     /// # Returns
-    /// A new instance of ErrorModels with an empty vector of models.
+    /// A new instance of [ErrorModels].
     pub fn new() -> Self {
         Self { models: vec![] }
     }
