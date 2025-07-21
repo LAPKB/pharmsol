@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0](https://github.com/LAPKB/pharmsol/compare/v0.13.1...v0.14.0) - 2025-07-21
+
+### Other
+
+- cleaning up
+- renaming get_error_model to error_model
+- some documentation
+- error propagation
+- blq->lloq
+- blq->llq
+- support for BLQ
+
 ## [0.13.1](https://github.com/LAPKB/pharmsol/compare/v0.13.0...v0.13.1) - 2025-07-09
 
 ### Other
