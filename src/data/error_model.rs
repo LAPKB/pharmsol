@@ -96,7 +96,7 @@ impl ErrorModels {
     /// A reference to the [ErrorModel] for the specified output equation.
     /// # Errors
     /// If the output equation index is invalid, an [ErrorModelError::InvalidOutputEquation] is returned.
-    pub fn get_error_model(&self, outeq: usize) -> Result<&ErrorModel, ErrorModelError> {
+    pub fn error_model(&self, outeq: usize) -> Result<&ErrorModel, ErrorModelError> {
         if outeq >= self.models.len() {
             return Err(ErrorModelError::InvalidOutputEquation(outeq));
         }
