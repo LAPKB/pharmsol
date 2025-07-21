@@ -125,7 +125,7 @@ impl ErrorModels {
                 ErrorModel::Additive {
                     lambda,
                     poly: _,
-                    blq: _,
+                    lloq: _,
                 } => {
                     0u8.hash(&mut hasher); // Use 0 for additive model
                     lambda.to_bits().hash(&mut hasher);
@@ -133,7 +133,7 @@ impl ErrorModels {
                 ErrorModel::Proportional {
                     gamma,
                     poly: _,
-                    blq: _,
+                    lloq: _,
                 } => {
                     1u8.hash(&mut hasher); // Use 1 for proportional model
                     gamma.to_bits().hash(&mut hasher);
@@ -322,8 +322,8 @@ pub enum ErrorModel {
         lambda: f64,
         /// Error polynomial coefficients (c0, c1, c2, c3)
         poly: ErrorPoly,
-        /// Optional: BLQ (Below Limit of Quantification) of the analytical method
-        blq: Option<f64>,
+        /// Optional: lloq (Below Limit of Quantification) of the analytical method
+        lloq: Option<f64>,
     },
 
     /// Proportional error model, where error scales with concentration
@@ -336,8 +336,8 @@ pub enum ErrorModel {
         gamma: f64,
         /// Error polynomial coefficients (c0, c1, c2, c3)
         poly: ErrorPoly,
-        /// Optional: BLQ (Below Limit of Quantification) of the analytical method
-        blq: Option<f64>,
+        /// Optional: lloq (Below Limit of Quantification) of the analytical method
+        lloq: Option<f64>,
     },
     #[default]
     None,
@@ -354,19 +354,19 @@ impl ErrorModel {
     /// # Returns
     ///
     /// A new additive error model
-    pub fn additive(poly: ErrorPoly, lambda: f64, blq: Option<f64>) -> Self {
-        Self::Additive { lambda, poly, blq }
+    pub fn additive(poly: ErrorPoly, lambda: f64, lloq: Option<f64>) -> Self {
+        Self::Additive { lambda, poly, lloq }
     }
 
-    /// Get the BLQ (Below Limit of Quantification) value, if available.
+    /// Get the lloq (Below Limit of Quantification) value, if available.
     ///
     /// # Returns
     ///
-    /// An `Option<f64>` containing the BLQ value if it exists, otherwise `None`.
-    pub fn blq(&self) -> Option<f64> {
+    /// An `Option<f64>` containing the lloq value if it exists, otherwise `None`.
+    pub fn lloq(&self) -> Option<f64> {
         match self {
-            Self::Additive { blq, .. } => *blq,
-            Self::Proportional { blq, .. } => *blq,
+            Self::Additive { lloq, .. } => *lloq,
+            Self::Proportional { lloq, .. } => *lloq,
             Self::None => None,
         }
     }
@@ -381,8 +381,8 @@ impl ErrorModel {
     /// # Returns
     ///
     /// A new proportional error model
-    pub fn proportional(poly: ErrorPoly, gamma: f64, blq: Option<f64>) -> Self {
-        Self::Proportional { gamma, poly, blq }
+    pub fn proportional(poly: ErrorPoly, gamma: f64, lloq: Option<f64>) -> Self {
+        Self::Proportional { gamma, poly, lloq }
     }
 
     /// Get the error polynomial coefficients
