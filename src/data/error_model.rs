@@ -80,16 +80,37 @@ impl Default for ErrorModels {
 }
 
 impl ErrorModels {
+    /// Create a new instance of ErrorModels with an empty vector
+    ///
+    /// # Returns
+    /// A new instance of ErrorModels with an empty vector of models.
     pub fn new() -> Self {
         Self { models: vec![] }
     }
-    pub fn get(&self, outeq: usize) -> Result<&ErrorModel, ErrorModelError> {
+
+    /// Get the error model for a specific output equation
+    ///
+    /// # Arguments
+    /// * `outeq` - The index of the output equation for which to retrieve the error model.
+    /// # Returns
+    /// A reference to the [ErrorModel] for the specified output equation.
+    /// # Errors
+    /// If the output equation index is invalid, an [ErrorModelError::InvalidOutputEquation] is returned.
+    pub fn get_error_model(&self, outeq: usize) -> Result<&ErrorModel, ErrorModelError> {
         if outeq >= self.models.len() {
             return Err(ErrorModelError::InvalidOutputEquation(outeq));
         }
         Ok(&self.models[outeq])
     }
 
+    /// Add a new error model for a specific output equation
+    /// # Arguments
+    /// * `outeq` - The index of the output equation for which to add the error model.
+    /// * `model` - The [ErrorModel] to add for the specified output equation.
+    /// # Returns
+    /// A new instance of ErrorModels with the added model.
+    /// # Errors
+    /// If the output equation index is invalid or if a model already exists for that output equation, an [ErrorModelError::ExistingOutputEquation] is returned.
     pub fn add(mut self, outeq: usize, model: ErrorModel) -> Result<Self, ErrorModelError> {
         if outeq >= self.models.len() {
             self.models.resize(outeq + 1, ErrorModel::None);
@@ -100,18 +121,32 @@ impl ErrorModels {
         self.models[outeq] = model;
         Ok(self)
     }
-
+    /// Returns an iterator over the error models in the collection.
+    ///
+    /// # Returns
+    /// An iterator that yields tuples containing the index and a reference to each [ErrorModel].
     pub fn iter(&self) -> impl Iterator<Item = (usize, &ErrorModel)> {
         self.models.iter().enumerate()
     }
 
+    /// Returns an iterator that yields mutable references to the error models in the collection.
+    /// # Returns
+    /// An iterator that yields tuples containing the index and a mutable reference to each [ErrorModel].
     pub fn into_iter(self) -> impl Iterator<Item = (usize, ErrorModel)> {
         self.models.into_iter().enumerate()
     }
+
+    /// Returns a mutable iterator that yields mutable references to the error models in the collection.
+    /// # Returns
+    /// An iterator that yields tuples containing the index and a mutable reference to each [ErrorModel].
     pub fn iter_mut(&mut self) -> impl Iterator<Item = (usize, &mut ErrorModel)> {
         self.models.iter_mut().enumerate()
     }
 
+    /// Computes a hash for the error models collection.
+    /// This hash is based on the output equations and their associated error models.
+    /// # Returns
+    /// A `u64` hash value representing the error models collection.
     pub fn hash(&self) -> u64 {
         let mut hasher = DefaultHasher::new();
 
