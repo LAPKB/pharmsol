@@ -277,7 +277,7 @@ impl Prediction {
     pub fn likelihood(&self, error_models: &ErrorModels) -> Result<f64, PharmsolError> {
         let sigma = error_models.sigma(self)?;
 
-        let likelihood = if let Some(lloq) = error_models.get_error_model(self.outeq)?.lloq() {
+        let likelihood = if let Some(lloq) = error_models.error_model(self.outeq)?.lloq() {
             if self.observation <= lloq {
                 normcdf(self.observation, self.prediction, sigma)?
             } else {
