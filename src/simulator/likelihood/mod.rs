@@ -1,4 +1,5 @@
 use crate::simulator::likelihood::progress::ProgressTracker;
+use crate::ErrorModelError;
 use crate::{
     data::error_model::ErrorModels, Data, Equation, ErrorPoly, Observation, PharmsolError,
     Predictions,
@@ -104,9 +105,9 @@ fn normpdf(obs: f64, pred: f64, sigma: f64) -> f64 {
     (FRAC_1_SQRT_2PI / sigma) * (-((obs - pred) * (obs - pred)) / (2.0 * sigma * sigma)).exp()
 }
 #[inline(always)]
-fn normcdf(obs: f64, pred: f64, sigma: f64) -> f64 {
-    let norm = Normal::new(pred, sigma).expect("σ must be > 0");
-    norm.cdf(obs)
+fn normcdf(obs: f64, pred: f64, sigma: f64) -> Result<f64, ErrorModelError> {
+    let norm = Normal::new(pred, sigma).map_err(|_| ErrorModelError::NegativeSigma)?;
+    Ok(norm.cdf(obs))
 }
 
 impl From<Vec<Prediction>> for SubjectPredictions {
@@ -278,7 +279,7 @@ impl Prediction {
 
         let likelihood = if let Some(lloq) = error_models.get(self.outeq)?.lloq() {
             if self.observation <= lloq {
-                normcdf(self.observation, self.prediction, sigma)
+                normcdf(self.observation, self.prediction, sigma)?
             } else {
                 normpdf(self.observation, self.prediction, sigma)
             }
