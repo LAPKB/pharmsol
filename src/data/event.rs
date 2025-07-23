@@ -1,10 +1,7 @@
-use std::fmt;
-
-use serde::Deserialize;
-
+use crate::data::error_model::ErrorPoly;
 use crate::prelude::simulator::Prediction;
-
-use super::ErrorPoly;
+use serde::Deserialize;
+use std::fmt;
 
 /// Represents a pharmacokinetic/pharmacodynamic event
 ///
@@ -23,7 +20,7 @@ pub enum Event {
 }
 impl Event {
     /// Get the time of the event
-    pub(crate) fn time(&self) -> f64 {
+    pub fn time(&self) -> f64 {
         match self {
             Event::Bolus(bolus) => bolus.time,
             Event::Infusion(infusion) => infusion.time,
@@ -37,6 +34,45 @@ impl Event {
             Event::Infusion(infusion) => infusion.time += dt,
             Event::Observation(observation) => observation.time += dt,
         }
+    }
+
+    /// Create a new bolus event
+    ///
+    /// # Arguments
+    /// * `time` - Time of the bolus dose
+    /// * `amount` - Amount of drug administered
+    /// * `input` - The compartment number (zero-indexed) receiving the dose
+    pub fn bolus(time: f64, amount: f64, input: usize) -> Self {
+        Event::Bolus(Bolus::new(time, amount, input))
+    }
+
+    /// Create a new infusion event
+    ///
+    /// # Arguments
+    /// * `time` - Start time of the infusion
+    /// * `amount` - Total amount of drug to be administered
+    /// * `input` - The compartment number (zero-indexed) receiving the dose
+    /// * `duration` - Duration of the infusion in time units
+    pub fn infusion(time: f64, amount: f64, input: usize, duration: f64) -> Self {
+        Event::Infusion(Infusion::new(time, amount, input, duration))
+    }
+
+    /// Create a new observation event
+    ///
+    /// # Arguments
+    /// * `time` - Time of the observation
+    /// * `value` - Observed value (e.g., drug concentration)
+    /// * `outeq` - Output equation number (zero-indexed) corresponding to this observation
+    /// * `errorpoly` - Optional error polynomial coefficients (c0, c1, c2, c3)
+    /// * `ignore` - Whether to ignore this observation in likelihood calculations
+    pub fn observation(
+        time: f64,
+        value: f64,
+        outeq: usize,
+        errorpoly: Option<ErrorPoly>,
+        ignore: bool,
+    ) -> Self {
+        Event::Observation(Observation::new(time, value, outeq, errorpoly, ignore))
     }
 }
 
@@ -57,13 +93,14 @@ impl Bolus {
     /// * `time` - Time of the bolus dose
     /// * `amount` - Amount of drug administered
     /// * `input` - The compartment number (zero-indexed) receiving the dose
-    pub(crate) fn new(time: f64, amount: f64, input: usize) -> Self {
+    pub fn new(time: f64, amount: f64, input: usize) -> Self {
         Bolus {
             time,
             amount,
             input,
         }
     }
+
     /// Get the amount of drug in the bolus
     pub fn amount(&self) -> f64 {
         self.amount
@@ -73,10 +110,12 @@ impl Bolus {
     pub fn input(&self) -> usize {
         self.input
     }
+
     /// Get the time of the bolus administration
     pub fn time(&self) -> f64 {
         self.time
     }
+
     /// Get a mutable reference to the time of the bolus
     pub(crate) fn mut_time(&mut self) -> &mut f64 {
         &mut self.time
@@ -91,6 +130,7 @@ impl Bolus {
     pub fn set_input(&mut self, input: usize) {
         self.input = input;
     }
+
     /// Set the time of the bolus administration
     pub fn set_time(&mut self, time: f64) {
         self.time = time;
@@ -116,7 +156,7 @@ impl Infusion {
     /// * `amount` - Total amount of drug to be administered
     /// * `input` - The compartment number (zero-indexed) receiving the dose
     /// * `duration` - Duration of the infusion in time units
-    pub(crate) fn new(time: f64, amount: f64, input: usize, duration: f64) -> Self {
+    pub fn new(time: f64, amount: f64, input: usize, duration: f64) -> Self {
         Infusion {
             time,
             amount,
@@ -124,18 +164,22 @@ impl Infusion {
             duration,
         }
     }
+
     /// Get the total amount of drug provided over the infusion
     pub fn amount(&self) -> f64 {
         self.amount
     }
+
     /// Get the compartment number (zero-indexed) that receives the infusion
     pub fn input(&self) -> usize {
         self.input
     }
+
     /// Get the duration of the infusion
     pub fn duration(&self) -> f64 {
         self.duration
     }
+
     /// Get the start time of the infusion
     ///
     /// The infusion continues from this time until time + duration.
@@ -183,7 +227,7 @@ impl Observation {
     /// * `outeq` - Output equation number (zero-indexed) corresponding to this observation
     /// * `errorpoly` - Optional error polynomial coefficients (c0, c1, c2, c3)
     /// * `ignore` - Whether to ignore this observation in calculations
-    pub(crate) fn new(
+    pub fn new(
         time: f64,
         value: f64,
         outeq: usize,
@@ -198,24 +242,29 @@ impl Observation {
             ignore,
         }
     }
+
     /// Get the time of the observation
     pub fn time(&self) -> f64 {
         self.time
     }
+
     /// Get the value of the observation (e.g., drug concentration)
     pub fn value(&self) -> f64 {
         self.value
     }
+
     /// Get the output equation number (zero-indexed) corresponding to this observation
     pub fn outeq(&self) -> usize {
         self.outeq
     }
+
     /// Get the error polynomial coefficients (c0, c1, c2, c3) if available
     ///
     /// The error polynomial is used to model the observation error.
     pub fn errorpoly(&self) -> Option<ErrorPoly> {
         self.errorpoly
     }
+
     /// Check if this observation should be ignored in likelihood calculations
     pub fn ignore(&self) -> bool {
         self.ignore
@@ -236,7 +285,7 @@ impl Observation {
         self.outeq = outeq;
     }
 
-    /// Set the error polynomial coefficients (c0, c1, c2, c3) if available
+    /// Set the [ErrorPoly] for this observation
     pub fn set_errorpoly(&mut self, errorpoly: Option<ErrorPoly>) {
         self.errorpoly = errorpoly;
     }
@@ -404,5 +453,39 @@ mod tests {
         assert_eq!(bolus_event.time(), 1.5);
         assert_eq!(infusion_event.time(), 2.5);
         assert_eq!(observation_event.time(), 3.5);
+    }
+
+    #[test]
+    fn test_event_constructors() {
+        let bolus = Event::bolus(1.0, 100.0, 1);
+        match bolus {
+            Event::Bolus(b) => {
+                assert_eq!(b.time(), 1.0);
+                assert_eq!(b.amount(), 100.0);
+                assert_eq!(b.input(), 1);
+            }
+            _ => panic!("Expected Bolus variant"),
+        }
+        let infusion = Event::infusion(2.0, 200.0, 1, 2.5);
+        match infusion {
+            Event::Infusion(i) => {
+                assert_eq!(i.time(), 2.0);
+                assert_eq!(i.amount(), 200.0);
+                assert_eq!(i.input(), 1);
+                assert_eq!(i.duration(), 2.5);
+            }
+            _ => panic!("Expected Infusion variant"),
+        }
+        let obs = Event::observation(3.0, 75.5, 2, None, false);
+        match obs {
+            Event::Observation(o) => {
+                assert_eq!(o.time(), 3.0);
+                assert_eq!(o.value(), 75.5);
+                assert_eq!(o.outeq(), 2);
+                assert_eq!(o.errorpoly(), None);
+                assert_eq!(o.ignore(), false);
+            }
+            _ => panic!("Expected Observation variant"),
+        }
     }
 }

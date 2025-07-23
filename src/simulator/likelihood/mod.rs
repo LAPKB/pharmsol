@@ -166,7 +166,8 @@ pub fn psi(
     cache: bool,
 ) -> Result<Array2<f64>, PharmsolError> {
     let mut psi: Array2<f64> = Array2::default((subjects.len(), support_points.nrows()).f());
-    let subjects = subjects.get_subjects();
+
+    let subjects = subjects.subjects();
 
     let progress_tracker = if progress {
         let total = subjects.len() * support_points.nrows();

@@ -56,7 +56,7 @@ impl Data {
     /// # Returns
     ///
     /// Vector of references to all subjects
-    pub fn get_subjects(&self) -> Vec<&Subject> {
+    pub fn subjects(&self) -> Vec<&Subject> {
         self.subjects.iter().collect()
     }
 
@@ -82,7 +82,7 @@ impl Data {
         self.subjects.iter().find(|subject| subject.id() == id)
     }
 
-    /// Write the dataset to a file in Pmetrics format
+    /// Get a mutable reference to aspecific subject by ID
     ///
     /// # Arguments
     ///
@@ -99,7 +99,7 @@ impl Data {
 
         for subject in self.get_subjects() {
             for occasion in subject.occasions() {
-                for event in occasion.get_events(None, false) {
+                for event in occasion.get_events(&None, &None, false) {
                     match event {
                         Event::Observation(obs) => {
                             // Write each field individually
@@ -300,43 +300,57 @@ impl Data {
         Data::new(new_subjects)
     }
 
+    /// Get an iterator over all subjects
+    ///
+    /// # Returns
+    ///
+    /// An iterator yielding references to subjects
+    pub fn iter(&self) -> std::slice::Iter<Subject> {
+        self.subjects.iter()
+    }
+
+    /// Get a mutable iterator over all subjects
+    ///
+    /// # Returns
+    ///
+    /// A mutable iterator yielding references to subjects
+    pub fn iter_mut(&mut self) -> std::slice::IterMut<Subject> {
+        self.subjects.iter_mut()
+    }
+
     /// Get the number of subjects in the dataset
-    pub(crate) fn len(&self) -> usize {
+    ///
+    /// # Returns
+    ///
+    /// The number of subjects
+    pub fn len(&self) -> usize {
         self.subjects.len()
     }
 
-    // /// Returns the number of subjects in the data
-    // fn nsubjects(&self) -> usize {
-    //     self.subjects.len()
-    // }
-
-    // fn nobs(&self) -> usize {
-    //     // Count the number of the event type Observation in the data
-    //     self.subjects
-    //         .iter()
-    //         .map(|subject| {
-    //             subject
-    //                 .occasions
-    //                 .iter()
-    //                 .map(|occasion| {
-    //                     occasion
-    //                         .events
-    //                         .iter()
-    //                         .filter(|event| matches!(event, Event::Observation(_)))
-    //                         .count()
-    //                 })
-    //                 .sum::<usize>()
-    //         })
-    //         .sum()
-    // }
+    /// Check if the dataset is empty
+    ///
+    /// # Returns
+    ///
+    /// `true` if there are no subjects, `false` otherwise
+    pub fn is_empty(&self) -> bool {
+        self.subjects.is_empty()
+    }
 }
 
-impl IntoIterator for Data {
-    type Item = Subject;
-    type IntoIter = std::vec::IntoIter<Subject>;
-
+impl<'a> IntoIterator for &'a Data {
+    type Item = &'a Subject;
+    type IntoIter = std::slice::Iter<'a, Subject>;
+    /// Iterate immutably over all subjects in the dataset
     fn into_iter(self) -> Self::IntoIter {
-        self.subjects.into_iter()
+        self.subjects.iter()
+    }
+}
+impl<'a> IntoIterator for &'a mut Data {
+    type Item = &'a mut Subject;
+    type IntoIter = std::slice::IterMut<'a, Subject>;
+    /// Iterate mutably over all subjects in the dataset
+    fn into_iter(self) -> Self::IntoIter {
+        self.subjects.iter_mut()
     }
 }
 
@@ -422,6 +436,80 @@ impl Subject {
             })
             .collect();
         outeq_values
+    }
+
+    /// Get a mutable reference to an occasion by index
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - The index of the occasion to retrieve
+    ///
+    /// # Returns
+    ///
+    /// An `Option` containing a mutable reference to the occasion if found, or `None` if not found
+    pub fn get_occasion_mut(&mut self, index: usize) -> Option<&mut Occasion> {
+        self.occasions.iter_mut().find(|occ| occ.index() == index)
+    }
+
+    /// Get an iterator over all occasions
+    ///
+    /// # Returns
+    ///
+    /// An iterator yielding references to occasions
+    pub fn iter(&self) -> std::slice::Iter<Occasion> {
+        self.occasions.iter()
+    }
+
+    /// Get a mutable iterator over all occasions
+    ///
+    /// # Returns
+    ///
+    /// A mutable iterator yielding references to occasions
+    pub fn iter_mut(&mut self) -> std::slice::IterMut<Occasion> {
+        self.occasions.iter_mut()
+    }
+
+    /// Get the number of occasions for this subject
+    ///
+    /// # Returns
+    ///
+    /// The number of occasions
+    pub fn len(&self) -> usize {
+        self.occasions.len()
+    }
+
+    /// Check if the subject has any occasions
+    ///
+    /// # Returns
+    ///
+    /// `true` if there are no occasions, `false` otherwise
+    pub fn is_empty(&self) -> bool {
+        self.occasions.is_empty()
+    }
+}
+
+impl IntoIterator for Subject {
+    type Item = Occasion;
+    type IntoIter = std::vec::IntoIter<Occasion>;
+    /// Consumes the subject and yields owned occasions
+    fn into_iter(self) -> Self::IntoIter {
+        self.occasions.into_iter()
+    }
+}
+impl<'a> IntoIterator for &'a Subject {
+    type Item = &'a Occasion;
+    type IntoIter = std::slice::Iter<'a, Occasion>;
+    /// Iterate immutably over all occasions in the subject
+    fn into_iter(self) -> Self::IntoIter {
+        self.occasions.iter()
+    }
+}
+impl<'a> IntoIterator for &'a mut Subject {
+    type Item = &'a mut Occasion;
+    type IntoIter = std::slice::IterMut<'a, Occasion>;
+    /// Iterate mutably over all occasions in the subject
+    fn into_iter(self) -> Self::IntoIter {
+        self.occasions.iter_mut()
     }
 }
 
@@ -597,7 +685,7 @@ impl Occasion {
     /// Add an event to the [Occasion]
     ///
     /// Note that this will sort the events automatically, ensuring events are sorted by time, then by [Event] type so that [Bolus] and [Infusion] come before [Observation]
-    pub fn add_event(&mut self, event: Event) {
+    pub(crate) fn add_event(&mut self, event: Event) {
         self.events.push(event);
         self.sort();
     }
@@ -643,6 +731,85 @@ impl Occasion {
                 _ => None,
             })
             .collect()
+    }
+
+    /// Get an iterator over all events
+    ///
+    /// # Returns
+    ///
+    /// An iterator yielding references to events
+    pub fn iter(&self) -> std::slice::Iter<Event> {
+        self.events.iter()
+    }
+
+    /// Get a mutable iterator over all events
+    ///
+    /// # Returns
+    ///
+    /// A mutable iterator yielding references to events
+    pub fn iter_mut(&mut self) -> std::slice::IterMut<Event> {
+        self.events.iter_mut()
+    }
+
+    /// Get the number of events in this occasion
+    ///
+    /// # Returns
+    ///
+    /// The number of events
+    pub fn len(&self) -> usize {
+        self.events.len()
+    }
+
+    /// Check if the occasion has any events
+    ///
+    /// # Returns
+    ///
+    /// `true` if there are no events, `false` otherwise
+    pub fn is_empty(&self) -> bool {
+        self.events.is_empty()
+    }
+}
+
+impl IntoIterator for Occasion {
+    type Item = Event;
+    type IntoIter = std::vec::IntoIter<Event>;
+    /// Consumes the occasion and yields owned events
+    fn into_iter(self) -> Self::IntoIter {
+        self.events.into_iter()
+    }
+}
+impl<'a> IntoIterator for &'a Occasion {
+    type Item = &'a Event;
+    type IntoIter = std::slice::Iter<'a, Event>;
+    /// Iterate immutably over all events in the occasion
+    fn into_iter(self) -> Self::IntoIter {
+        self.events.iter()
+    }
+}
+impl<'a> IntoIterator for &'a mut Occasion {
+    type Item = &'a mut Event;
+    type IntoIter = std::slice::IterMut<'a, Event>;
+    /// Iterate mutably over all events in the occasion
+    fn into_iter(self) -> Self::IntoIter {
+        self.events.iter_mut()
+    }
+}
+
+// For Event, IntoIterator yields a single reference to self (for & and &mut)
+impl<'a> IntoIterator for &'a Event {
+    type Item = &'a Event;
+    type IntoIter = std::option::IntoIter<&'a Event>;
+    /// Yields a single reference to the event
+    fn into_iter(self) -> Self::IntoIter {
+        Some(self).into_iter()
+    }
+}
+impl<'a> IntoIterator for &'a mut Event {
+    type Item = &'a mut Event;
+    type IntoIter = std::option::IntoIter<&'a mut Event>;
+    /// Yields a single mutable reference to the event
+    fn into_iter(self) -> Self::IntoIter {
+        Some(self).into_iter()
     }
 }
 
@@ -722,7 +889,7 @@ mod tests {
     #[test]
     fn test_get_subjects() {
         let data = create_sample_data();
-        let subjects = data.get_subjects();
+        let subjects = data.subjects();
         assert_eq!(subjects.len(), 2);
         assert_eq!(subjects[0].id(), "subject1");
         assert_eq!(subjects[1].id(), "subject2");
@@ -740,7 +907,7 @@ mod tests {
             .build();
         data.add_subject(new_subject);
         assert_eq!(data.len(), 3);
-        assert_eq!(data.get_subjects()[2].id(), "subject3");
+        assert_eq!(data.subjects()[2].id(), "subject3");
     }
 
     #[test]
@@ -748,8 +915,8 @@ mod tests {
         let data = create_sample_data();
         let include = vec!["subject1".to_string()];
         let filtered_data = data.filter_include(&include);
-        assert_eq!(filtered_data.get_subjects().len(), 1);
-        assert_eq!(filtered_data.get_subjects()[0].id(), "subject1");
+        assert_eq!(filtered_data.subjects().len(), 1);
+        assert_eq!(filtered_data.subjects()[0].id(), "subject1");
     }
 
     #[test]
@@ -757,7 +924,7 @@ mod tests {
         let data = create_sample_data();
         let filtered_data = data.filter_exclude(vec!["subject1".to_string()]);
         assert_eq!(filtered_data.len(), 1);
-        assert_eq!(filtered_data.get_subjects()[0].id(), "subject2");
+        assert_eq!(filtered_data.subjects()[0].id(), "subject2");
     }
 
     #[test]
@@ -798,5 +965,179 @@ mod tests {
             Event::Observation(o) => assert_eq!(o.time(), 1.0),
             _ => panic!("Event should be an Observation"),
         }
+    }
+
+    #[test]
+    fn test_data_iterators() {
+        let data = create_sample_data();
+        let mut count = 0;
+        for subject in data.iter() {
+            assert!(subject.id().starts_with("subject"));
+            count += 1;
+        }
+        assert_eq!(count, 2);
+
+        let mut data = create_sample_data();
+        for subject in data.iter_mut() {
+            subject
+                .occasions_mut()
+                .push(Occasion::new(Vec::new(), Covariates::new(), 2));
+        }
+        assert_eq!(data.subjects()[0].occasions().len(), 3);
+    }
+
+    #[test]
+    fn test_subject_iterators() {
+        let subject = Subject::builder("test")
+            .observation(1.0, 10.0, 1)
+            .bolus(2.0, 50.0, 1)
+            .reset()
+            .observation(3.0, 20.0, 1)
+            .build();
+
+        let mut count = 0;
+        for occasion in subject.iter() {
+            assert!(occasion.index() < 2);
+            count += 1;
+        }
+        assert_eq!(count, 2);
+
+        let mut subject = subject;
+        for occasion in subject.iter_mut() {
+            occasion.add_event(Event::Observation(Observation::new(
+                4.0, 30.0, 1, None, false,
+            )));
+        }
+        assert_eq!(subject.occasions()[0].events().len(), 3);
+    }
+
+    #[test]
+    fn test_occasion_iterators() {
+        let occasion = Occasion::new(
+            vec![
+                Event::Observation(Observation::new(1.0, 10.0, 1, None, false)),
+                Event::Bolus(Bolus::new(2.0, 50.0, 1)),
+            ],
+            Covariates::new(),
+            0,
+        );
+
+        let mut count = 0;
+        for event in occasion.iter() {
+            match event {
+                Event::Observation(_) => count += 1,
+                Event::Bolus(_) => count += 2,
+                _ => panic!("Unexpected event type"),
+            }
+        }
+        assert_eq!(count, 3);
+
+        let mut occasion = occasion;
+        for event in occasion.iter_mut() {
+            event.inc_time(1.0);
+        }
+        assert_eq!(occasion.events()[0].time(), 2.0);
+    }
+
+    #[test]
+    fn test_data_intoiterator_refs() {
+        let data = create_sample_data();
+        let mut count = 0;
+        for subject in &data {
+            assert!(subject.id().starts_with("subject"));
+            count += 1;
+        }
+        assert_eq!(count, 2);
+        let mut data = create_sample_data();
+        for subject in &mut data {
+            subject
+                .occasions_mut()
+                .push(Occasion::new(Vec::new(), Covariates::new(), 2));
+        }
+        assert_eq!(data.subjects()[0].occasions().len(), 3);
+    }
+    #[test]
+    fn test_subject_intoiterator_all_forms() {
+        let subject = Subject::builder("test")
+            .observation(1.0, 10.0, 1)
+            .bolus(2.0, 50.0, 1)
+            .reset()
+            .observation(3.0, 20.0, 1)
+            .build();
+        // Owned
+        let mut count = 0;
+        for occasion in subject.clone() {
+            assert!(occasion.index() < 2);
+            count += 1;
+        }
+        assert_eq!(count, 2);
+        // &
+        let subject2 = subject.clone();
+        let mut count = 0;
+        for occasion in &subject2 {
+            assert!(occasion.index() < 2);
+            count += 1;
+        }
+        assert_eq!(count, 2);
+        // &mut
+        let mut subject3 = subject;
+        for occasion in &mut subject3 {
+            occasion.add_event(Event::Observation(Observation::new(
+                4.0, 30.0, 1, None, false,
+            )));
+        }
+        assert_eq!(subject3.occasions()[0].events().len(), 3);
+    }
+    #[test]
+    fn test_occasion_intoiterator_all_forms() {
+        let occasion = Occasion::new(
+            vec![
+                Event::Observation(Observation::new(1.0, 10.0, 1, None, false)),
+                Event::Bolus(Bolus::new(2.0, 50.0, 1)),
+            ],
+            Covariates::new(),
+            0,
+        );
+        // Owned
+        let mut count = 0;
+        for event in occasion.clone() {
+            match event {
+                Event::Observation(_) => count += 1,
+                Event::Bolus(_) => count += 2,
+                _ => panic!("Unexpected event type"),
+            }
+        }
+        assert_eq!(count, 3);
+        // &
+        let occasion2 = occasion.clone();
+        let mut count = 0;
+        for event in &occasion2 {
+            match event {
+                Event::Observation(_) => count += 1,
+                Event::Bolus(_) => count += 2,
+                _ => panic!("Unexpected event type"),
+            }
+        }
+        assert_eq!(count, 3);
+        // &mut
+        let mut occasion3 = occasion;
+        for event in &mut occasion3 {
+            event.inc_time(1.0);
+        }
+        assert_eq!(occasion3.events()[0].time(), 2.0);
+    }
+    #[test]
+    fn test_event_intoiterator_refs() {
+        let mut event = Event::Bolus(Bolus::new(1.0, 100.0, 1));
+        let mut count = 0;
+        for e in &event {
+            assert_eq!(e.time(), 1.0);
+            count += 1;
+        }
+        assert_eq!(count, 1);
+        for e in &mut event {
+            e.inc_time(1.0);
+        }
+        assert_eq!(event.time(), 2.0);
     }
 }
