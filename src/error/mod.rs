@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 use crate::data::error_model::ErrorModelError;
-use crate::data::parse_pmetrics::PmetricsError;
+use crate::data::parser::pmetrics::PmetricsError;
 use ndarray::ShapeError;
 
 #[derive(Error, Debug, Clone)]
