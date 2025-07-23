@@ -502,7 +502,7 @@ impl Data {
 
         for subject in self.subjects() {
             for occasion in subject.occasions() {
-                for event in occasion.get_events(&None, &None, false) {
+                for event in occasion.get_events(None, false) {
                     match event {
                         Event::Observation(obs) => {
                             // Write each field individually

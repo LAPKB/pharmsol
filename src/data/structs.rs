@@ -1,9 +1,7 @@
 use crate::{
     data::*,
     simulator::{Fa, Lag},
-    PharmsolError,
 };
-use csv::WriterBuilder;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -86,87 +84,13 @@ impl Data {
     ///
     /// # Arguments
     ///
-    /// * `file` - The file to write to
-    pub fn write_pmetrics(&self, file: &std::fs::File) -> Result<(), PharmsolError> {
-        let mut writer = WriterBuilder::new().has_headers(true).from_writer(file);
-
-        writer
-            .write_record([
-                "ID", "EVID", "TIME", "DUR", "DOSE", "ADDL", "II", "INPUT", "OUT", "OUTEQ", "C0",
-                "C1", "C2", "C3",
-            ])
-            .map_err(|e| PharmsolError::OtherError(e.to_string()))?;
-
-        for subject in self.get_subjects() {
-            for occasion in subject.occasions() {
-                for event in occasion.get_events(&None, &None, false) {
-                    match event {
-                        Event::Observation(obs) => {
-                            // Write each field individually
-                            writer
-                                .write_record([
-                                    subject.id(),
-                                    &"0".to_string(),
-                                    &obs.time().to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &obs.value().to_string(),
-                                    &(obs.outeq() + 1).to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                ])
-                                .map_err(|e| PharmsolError::OtherError(e.to_string()))?;
-                        }
-                        Event::Infusion(inf) => {
-                            writer
-                                .write_record([
-                                    subject.id(),
-                                    &"1".to_string(),
-                                    &inf.time().to_string(),
-                                    &inf.duration().to_string(),
-                                    &inf.amount().to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                ])
-                                .map_err(|e| PharmsolError::OtherError(e.to_string()))?;
-                        }
-                        Event::Bolus(bol) => {
-                            writer
-                                .write_record([
-                                    subject.id(),
-                                    &"1".to_string(),
-                                    &bol.time().to_string(),
-                                    &"0".to_string(),
-                                    &bol.amount().to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &(bol.input() + 1).to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                ])
-                                .map_err(|e| PharmsolError::OtherError(e.to_string()))?;
-                        }
-                    }
-                }
-            }
-        }
-        Ok(())
+    /// * `id` - The ID of the subject to retrieve
+    ///
+    /// # Returns
+    ///
+    /// An `Option` containing a reference to the subject if found, or `None` if not found
+    pub fn get_subject_mut(&mut self, id: &str) -> Option<&mut Subject> {
+        self.subjects.iter_mut().find(|subject| subject.id() == id)
     }
 
     /// Filter the dataset to include only subjects with specific IDs
