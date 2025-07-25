@@ -511,7 +511,7 @@ impl Data {
                                     &".".to_string(),
                                     &".".to_string(),
                                     &".".to_string(),
-                                    &obs.value().to_string(),
+                                    &obs.value().map_or(".".to_string(), |v| v.to_string()),
                                     &(obs.outeq() + 1).to_string(),
                                     &".".to_string(),
                                     &".".to_string(),

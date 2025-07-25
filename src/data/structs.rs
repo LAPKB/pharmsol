@@ -80,11 +80,10 @@ impl Data {
         self.subjects.iter().find(|subject| subject.id() == id)
     }
 
-    /// Get a mutable reference to aspecific subject by ID
+    /// Get a mutable reference to a specific subject by ID
     ///
     /// # Arguments
     ///
-
     /// * `id` - The ID of the subject to retrieve
     ///
     /// # Returns
@@ -640,6 +639,18 @@ impl Occasion {
         self.add_event(Event::Observation(observation));
     }
 
+    /// Add a [Bolus] event to the [Occasion]
+    pub fn add_bolus(&mut self, time: f64, amount: f64, input: usize) {
+        let bolus = Bolus::new(time, amount, input);
+        self.add_event(Event::Bolus(bolus));
+    }
+
+    /// Add an [Infusion] event to the [Occasion]
+    pub fn add_infusion(&mut self, time: f64, amount: f64, input: usize, duration: f64) {
+        let infusion = Infusion::new(time, amount, input, duration);
+        self.add_event(Event::Infusion(infusion));
+    }
+
     /// Get the last event in this occasion
     ///
     /// # Returns
@@ -900,24 +911,6 @@ mod tests {
     }
 
     #[test]
-    fn test_event_get_events_with_ignore() {
-        let occasion = Occasion::new(
-            vec![
-                Event::Observation(Observation::new(1.0, Some(1.0), 1, None)),
-                Event::Observation(Observation::new(2.0, Some(2.0), 2, None)),
-            ],
-            Covariates::new(),
-            1,
-        );
-        let events = occasion.get_events(None, true);
-        assert_eq!(events.len(), 1);
-        match &events[0] {
-            Event::Observation(o) => assert_eq!(o.time(), 1.0),
-            _ => panic!("Event should be an Observation"),
-        }
-    }
-
-    #[test]
     fn test_data_iterators() {
         let data = create_sample_data();
         let mut count = 0;
@@ -963,7 +956,7 @@ mod tests {
     fn test_occasion_iterators() {
         let occasion = Occasion::new(
             vec![
-                Event::Observation(Observation::new(1.0, 10.0, 1, None, false)),
+                Event::Observation(Observation::new(1.0, Some(10.0), 1, None)),
                 Event::Bolus(Bolus::new(2.0, 50.0, 1)),
             ],
             Covariates::new(),
@@ -1031,7 +1024,10 @@ mod tests {
         let mut subject3 = subject;
         for occasion in &mut subject3 {
             occasion.add_event(Event::Observation(Observation::new(
-                4.0, 30.0, 1, None, false,
+                4.0,
+                Some(30.0),
+                1,
+                None,
             )));
         }
         assert_eq!(subject3.occasions()[0].events().len(), 3);
@@ -1040,7 +1036,7 @@ mod tests {
     fn test_occasion_intoiterator_all_forms() {
         let occasion = Occasion::new(
             vec![
-                Event::Observation(Observation::new(1.0, 10.0, 1, None, false)),
+                Event::Observation(Observation::new(1.0, Some(10.0), 1, None)),
                 Event::Bolus(Bolus::new(2.0, 50.0, 1)),
             ],
             Covariates::new(),
