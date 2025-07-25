@@ -78,7 +78,6 @@ pub fn compile<E: Equation>(
     });
 
     fs::copy(&dynlib_path, &output_path).expect("Failed to copy dynamic library to output path");
-    dbg!(&output_path);
     Ok(output_path.to_string_lossy().to_string())
 }
 
@@ -257,6 +256,7 @@ fn build_template(
     command
         .arg("build")
         .arg("--release")
+        .arg("--quiet")
         .current_dir(&template_path)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
