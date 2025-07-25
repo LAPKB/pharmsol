@@ -528,34 +528,26 @@ impl Occasion {
     /// Sort events by time, then by [Event] type so that [Bolus] and [Infusion] come before [Observation]
     pub(crate) fn sort(&mut self) {
         self.events.sort_by(|a, b| {
-            // First, compare times using partial_cmp, then compare types if times are equal.
-            let time_a = match a {
-                Event::Bolus(bolus) => bolus.time(),
-                Event::Infusion(infusion) => infusion.time(),
-                Event::Observation(observation) => observation.time(),
-            };
-            let time_b = match b {
-                Event::Bolus(bolus) => bolus.time(),
-                Event::Infusion(infusion) => infusion.time(),
-                Event::Observation(observation) => observation.time(),
-            };
-
-            match time_a.partial_cmp(&time_b) {
-                Some(std::cmp::Ordering::Equal) => {
-                    // If times are equal, sort by event type.
-                    let type_order_a = match a {
-                        Event::Bolus(_) => 1,
-                        Event::Infusion(_) => 2,
-                        Event::Observation(_) => 3,
-                    };
-                    let type_order_b = match b {
-                        Event::Bolus(_) => 1,
-                        Event::Infusion(_) => 2,
-                        Event::Observation(_) => 3,
-                    };
-                    type_order_a.cmp(&type_order_b)
+            // Helper function to get event type order
+            #[inline]
+            fn event_type_order(event: &Event) -> u8 {
+                match event {
+                    Event::Bolus(_) => 1,
+                    Event::Infusion(_) => 2,
+                    Event::Observation(_) => 3,
                 }
-                other => other.unwrap_or(std::cmp::Ordering::Equal),
+            }
+
+            // Compare times first using the existing time() method
+            let time_cmp = a.time().partial_cmp(&b.time());
+
+            match time_cmp {
+                Some(std::cmp::Ordering::Equal) => {
+                    // If times are equal, sort by event type
+                    event_type_order(a).cmp(&event_type_order(b))
+                }
+                Some(ordering) => ordering,
+                None => std::cmp::Ordering::Equal, // Handle NaN cases
             }
         });
     }
