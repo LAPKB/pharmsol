@@ -278,9 +278,10 @@ impl Prediction {
         let sigma = error_models.sigma(self)?;
 
         let likelihood = if let Some(lloq) = error_models.error_model(self.outeq)?.lloq() {
-            if self.observation <= lloq {
+            if self.observation == lloq {
                 normcdf(self.observation, self.prediction, sigma)?
             } else {
+                // Observations lower than lloq will be treated as regular observations
                 normpdf(self.observation, self.prediction, sigma)
             }
         } else {
