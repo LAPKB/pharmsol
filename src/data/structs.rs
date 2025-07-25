@@ -261,6 +261,15 @@ impl Data {
     }
 }
 
+impl IntoIterator for Data {
+    type Item = Subject;
+    type IntoIter = std::vec::IntoIter<Subject>;
+    /// Consumes the data and yields owned subjects
+    fn into_iter(self) -> Self::IntoIter {
+        self.subjects.into_iter()
+    }
+}
+
 impl<'a> IntoIterator for &'a Data {
     type Item = &'a Subject;
     type IntoIter = std::slice::Iter<'a, Subject>;
