@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.1](https://github.com/LAPKB/pharmsol/compare/v0.14.0...v0.14.1) - 2025-07-25
+
+### Other
+
+- quiet-lloq
+- Update CI for building and testing ([#97](https://github.com/LAPKB/pharmsol/pull/97))
+
 ## [0.14.0](https://github.com/LAPKB/pharmsol/compare/v0.13.1...v0.14.0) - 2025-07-21
 
 ### Other
