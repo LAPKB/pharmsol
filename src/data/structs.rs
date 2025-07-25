@@ -84,6 +84,7 @@ impl Data {
     ///
     /// # Arguments
     ///
+
     /// * `id` - The ID of the subject to retrieve
     ///
     /// # Returns
@@ -199,7 +200,7 @@ impl Data {
                 let mut time = 0.0;
                 while time < last_time {
                     for outeq in &outeq_values {
-                        let obs = Observation::new(time, -99.0, *outeq, None, false);
+                        let obs = Observation::new(time, None, *outeq, None);
                         new_events.push(Event::Observation(obs));
                     }
 
@@ -584,14 +585,7 @@ impl Occasion {
 
         // Filter out events that are marked as ignore
         if ignore {
-            occ.events
-                .iter()
-                .filter(|event| match event {
-                    Event::Observation(observation) => !observation.ignore(),
-                    _ => true,
-                })
-                .cloned()
-                .collect()
+            occ.events.iter().cloned().collect()
         } else {
             occ.events.clone()
         }
@@ -612,6 +606,38 @@ impl Occasion {
     pub(crate) fn add_event(&mut self, event: Event) {
         self.events.push(event);
         self.sort();
+    }
+
+    /// Add an [Observation] event to the [Occasion]
+    pub fn add_observation(
+        &mut self,
+        time: f64,
+        value: f64,
+        outeq: usize,
+        errorpoly: Option<ErrorPoly>,
+    ) {
+        let observation = Observation::new(time, Some(value), outeq, errorpoly);
+        self.add_event(Event::Observation(observation));
+    }
+
+    /// Add a missing [Observation] event to the [Occasion]
+    pub fn add_missing_observation(&mut self, time: f64, outeq: usize) {
+        let observation = Observation::new(time, None, outeq, None);
+        self.add_event(Event::Observation(observation));
+    }
+
+    /// Add a missing [Observation] with a custom [ErrorPoly] to the [Occasion]
+    ///
+    /// This is useful if you want a different weight for the observation
+    pub fn add_observation_with_error(
+        &mut self,
+        time: f64,
+        value: f64,
+        outeq: usize,
+        errorpoly: ErrorPoly,
+    ) {
+        let observation = Observation::new(time, Some(value), outeq, Some(errorpoly));
+        self.add_event(Event::Observation(observation));
     }
 
     /// Get the last event in this occasion
@@ -855,7 +881,7 @@ mod tests {
     fn test_occasion_sort() {
         let mut occasion = Occasion::new(
             vec![
-                Event::Observation(Observation::new(2.0, 1.0, 1, None, false)),
+                Event::Observation(Observation::new(2.0, Some(1.0), 1, None)),
                 Event::Bolus(Bolus::new(1.0, 100.0, 1)),
             ],
             Covariates::new(),
@@ -877,8 +903,8 @@ mod tests {
     fn test_event_get_events_with_ignore() {
         let occasion = Occasion::new(
             vec![
-                Event::Observation(Observation::new(1.0, 1.0, 1, None, false)),
-                Event::Observation(Observation::new(2.0, 2.0, 2, None, true)),
+                Event::Observation(Observation::new(1.0, Some(1.0), 1, None)),
+                Event::Observation(Observation::new(2.0, Some(2.0), 2, None)),
             ],
             Covariates::new(),
             1,
@@ -928,9 +954,7 @@ mod tests {
 
         let mut subject = subject;
         for occasion in subject.iter_mut() {
-            occasion.add_event(Event::Observation(Observation::new(
-                4.0, 30.0, 1, None, false,
-            )));
+            occasion.add_observation(12.0, 100.0, 0, None);
         }
         assert_eq!(subject.occasions()[0].events().len(), 3);
     }

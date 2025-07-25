@@ -326,11 +326,7 @@ impl Row {
         match self.evid {
             0 => events.push(Event::Observation(Observation::new(
                 self.time,
-                self.out
-                    .ok_or_else(|| PmetricsError::MissingObservationOut {
-                        id: self.id.clone(),
-                        time: self.time,
-                    })?,
+                self.out,
                 self.outeq
                     .ok_or_else(|| PmetricsError::MissingObservationOuteq {
                         id: self.id.clone(),
@@ -338,7 +334,6 @@ impl Row {
                     })?
                     - 1,
                 self.get_errorpoly(),
-                self.out == Some(-99.0),
             ))),
             1 | 4 => {
                 let event = if self.dur.unwrap_or(0.0) > 0.0 {

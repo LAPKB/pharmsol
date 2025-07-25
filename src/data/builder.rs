@@ -88,20 +88,7 @@ impl SubjectBuilder {
         self.event(event)
     }
 
-    /// Add an observation event
-    ///
-    /// # Arguments
-    ///
-    /// * `time` - Time of the observation
-    /// * `value` - Observed value (e.g., drug concentration)
-    /// * `outeq` - Output equation number (zero-indexed) corresponding to this observation
-    pub fn observation(self, time: f64, value: f64, outeq: usize) -> Self {
-        let observation = Observation::new(time, value, outeq, None, false);
-        let event = Event::Observation(observation);
-        self.event(event)
-    }
-
-    /// Add an observation with error model parameters and ignore flag
+    /// Add an observation
     ///
     /// # Arguments
     ///
@@ -109,16 +96,40 @@ impl SubjectBuilder {
     /// * `value` - Observed value (e.g., drug concentration)
     /// * `outeq` - Output equation number (zero-indexed) corresponding to this observation
     /// * `errorpoly` - Error polynomial coefficients (c0, c1, c2, c3)
-    /// * `ignore` - Whether to ignore this observation in calculations
+    pub fn observation(self, time: f64, value: f64, outeq: usize) -> Self {
+        let observation = Observation::new(time, Some(value), outeq, None);
+        let event = Event::Observation(observation);
+        self.event(event)
+    }
+
+    /// Add an observation
+    ///
+    /// # Arguments
+    ///
+    /// * `time` - Time of the observation
+    /// * `outeq` - Output equation number (zero-indexed) corresponding to this observation
+    pub fn missing_observation(self, time: f64, outeq: usize) -> Self {
+        let observation = Observation::new(time, None, outeq, None);
+        let event = Event::Observation(observation);
+        self.event(event)
+    }
+
+    /// Add an observation with a specific error polynomial
+    ///
+    /// # Arguments
+    ///
+    /// * `time` - Time of the observation
+    /// * `value` - Observed value (e.g., drug concentration)
+    /// * `outeq` - Output equation number (zero-indexed) corresponding to this observation
+    /// * `errorpoly` - Error polynomial coefficients (c0, c1, c2, c3)
     pub fn observation_with_error(
         self,
         time: f64,
         value: f64,
         outeq: usize,
-        errorpoly: Option<ErrorPoly>,
-        ignore: bool,
+        errorpoly: ErrorPoly,
     ) -> Self {
-        let observation = Observation::new(time, value, outeq, errorpoly, ignore);
+        let observation = Observation::new(time, Some(value), outeq, Some(errorpoly));
         let event = Event::Observation(observation);
         self.event(event)
     }
@@ -159,13 +170,29 @@ impl SubjectBuilder {
                     infusion.input(),
                     infusion.duration(),
                 ),
-                Event::Observation(observation) => self.observation_with_error(
-                    observation.time() + delta * i as f64,
-                    observation.value(),
-                    observation.outeq(),
-                    observation.errorpoly(),
-                    observation.ignore(),
-                ),
+                Event::Observation(observation) => {
+                    if observation.value().is_some() {
+                        if observation.errorpoly().is_some() {
+                            self.observation_with_error(
+                                observation.time() + delta * i as f64,
+                                observation.value().unwrap(),
+                                observation.outeq(),
+                                observation.errorpoly().unwrap(),
+                            )
+                        } else {
+                            self.observation(
+                                observation.time() + delta * i as f64,
+                                observation.value().unwrap(),
+                                observation.outeq(),
+                            )
+                        }
+                    } else {
+                        self.missing_observation(
+                            observation.time() + delta * i as f64,
+                            observation.outeq(),
+                        )
+                    }
+                }
             };
         }
         self
@@ -298,14 +325,8 @@ mod tests {
         let subject = Subject::builder("patient_002")
             .bolus(0.0, 50.0, 0)
             .observation(1.0, 45.3, 0)
-            .observation(2.0, 40.1, 0)
-            .observation_with_error(
-                3.0,
-                36.5,
-                0,
-                Some(ErrorPoly::new(0.1, 0.05, 0.0, 0.0)),
-                false,
-            )
+            .observation(2.0, 0.1, 0)
+            .observation_with_error(3.0, 36.5, 0, ErrorPoly::new(0.1, 0.05, 0.0, 0.0))
             .bolus(4.0, 50.0, 0)
             .repeat(1, 12.0) // Repeat bolus at 16.0
             .reset()

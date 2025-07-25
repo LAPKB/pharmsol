@@ -22,7 +22,7 @@ const FRAC_1_SQRT_2PI: f64 =
 pub struct SubjectPredictions {
     predictions: Vec<Prediction>,
     flat_predictions: Vec<f64>,
-    flat_observations: Vec<f64>,
+    flat_observations: Vec<Option<f64>>,
     flat_time: Vec<f64>,
 }
 
@@ -30,7 +30,7 @@ impl Predictions for SubjectPredictions {
     fn squared_error(&self) -> f64 {
         self.predictions
             .iter()
-            .map(|p| (p.observation - p.prediction).powi(2))
+            .filter_map(|p| p.observation.map(|obs| (obs - p.prediction).powi(2)))
             .sum()
     }
     fn get_predictions(&self) -> Vec<Prediction> {
@@ -54,6 +54,7 @@ impl SubjectPredictions {
             false => self
                 .predictions
                 .iter()
+                .filter(|p| p.observation.is_some())
                 .map(|p| p.likelihood(error_models))
                 .collect::<Result<Vec<f64>, _>>()
                 .map(|likelihoods| likelihoods.iter().product())
@@ -78,7 +79,7 @@ impl SubjectPredictions {
     ///
     /// # Returns
     /// Vector of observation values
-    pub fn flat_observations(&self) -> Vec<f64> {
+    pub fn flat_observations(&self) -> Vec<Option<f64>> {
         self.flat_observations.to_vec()
     }
 
@@ -221,7 +222,7 @@ pub fn psi(
 #[derive(Debug, Clone)]
 pub struct Prediction {
     pub(crate) time: f64,
-    pub(crate) observation: f64,
+    pub(crate) observation: Option<f64>,
     pub(crate) prediction: f64,
     pub(crate) outeq: usize,
     pub(crate) errorpoly: Option<ErrorPoly>,
@@ -235,7 +236,7 @@ impl Prediction {
     }
 
     /// Get the observed value.
-    pub fn observation(&self) -> f64 {
+    pub fn observation(&self) -> Option<f64> {
         self.observation
     }
 
@@ -255,37 +256,44 @@ impl Prediction {
     }
 
     /// Calculate the raw prediction error (prediction - observation).
-    pub fn prediction_error(&self) -> f64 {
-        self.prediction - self.observation
+    pub fn prediction_error(&self) -> Option<f64> {
+        self.observation.map(|obs| self.prediction - obs)
     }
 
     /// Calculate the percentage error as (prediction - observation)/observation * 100.
-    pub fn percentage_error(&self) -> f64 {
-        ((self.prediction - self.observation) / self.observation) * 100.0
+    pub fn percentage_error(&self) -> Option<f64> {
+        self.observation
+            .map(|obs| ((self.prediction - obs) / obs) * 100.0)
     }
 
     /// Calculate the absolute error |prediction - observation|.
-    pub fn absolute_error(&self) -> f64 {
-        (self.prediction - self.observation).abs()
+    pub fn absolute_error(&self) -> Option<f64> {
+        self.observation.map(|obs| (self.prediction - obs).abs())
     }
 
     /// Calculate the squared error (prediction - observation)².
-    pub fn squared_error(&self) -> f64 {
-        (self.prediction - self.observation).powi(2)
+    pub fn squared_error(&self) -> Option<f64> {
+        self.observation.map(|obs| (self.prediction - obs).powi(2))
     }
 
     /// Calculate the likelihood of this prediction given an error model.
+    ///
+    /// Returns an error if the observation is missing or if the likelihood is either zero or non-finite.
     pub fn likelihood(&self, error_models: &ErrorModels) -> Result<f64, PharmsolError> {
+        if self.observation.is_none() {
+            return Err(PharmsolError::MissingObservation);
+        }
+
         let sigma = error_models.sigma(self)?;
 
         let likelihood = if let Some(lloq) = error_models.error_model(self.outeq)?.lloq() {
-            if self.observation <= lloq {
-                normcdf(self.observation, self.prediction, sigma)?
+            if self.observation.map_or(false, |obs| obs == lloq) {
+                normcdf(self.observation.unwrap(), self.prediction, sigma)?
             } else {
-                normpdf(self.observation, self.prediction, sigma)
+                normpdf(self.observation.unwrap(), self.prediction, sigma)
             }
         } else {
-            normpdf(self.observation, self.prediction, sigma)
+            normpdf(self.observation.unwrap(), self.prediction, sigma)
         };
 
         if likelihood.is_finite() {
@@ -304,13 +312,7 @@ impl Prediction {
 
     /// Create an [Observation] from this prediction
     pub fn to_observation(&self) -> Observation {
-        Observation::new(
-            self.time,
-            self.observation,
-            self.outeq,
-            self.errorpoly,
-            false,
-        )
+        Observation::new(self.time, self.observation, self.outeq, self.errorpoly)
     }
 }
 
@@ -318,7 +320,7 @@ impl Default for Prediction {
     fn default() -> Self {
         Self {
             time: 0.0,
-            observation: 0.0,
+            observation: None,
             prediction: 0.0,
             outeq: 0,
             errorpoly: None,
@@ -332,7 +334,7 @@ impl std::fmt::Display for Prediction {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(
             f,
-            "Time: {:.2}\tObs: {:.4}\tPred: {:.15}\tOuteq: {:.2}",
+            "Time: {:.2}\tObs: {:#?}\tPred: {:.15}\tOuteq: {:.2}",
             self.time, self.observation, self.prediction, self.outeq
         )
     }
