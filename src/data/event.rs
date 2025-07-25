@@ -168,10 +168,9 @@ impl Infusion {
 #[derive(serde::Serialize, Debug, Clone, Deserialize)]
 pub struct Observation {
     time: f64,
-    value: f64,
+    value: Option<f64>,
     outeq: usize,
     errorpoly: Option<ErrorPoly>,
-    ignore: bool,
 }
 impl Observation {
     /// Create a new observation
@@ -185,17 +184,15 @@ impl Observation {
     /// * `ignore` - Whether to ignore this observation in calculations
     pub(crate) fn new(
         time: f64,
-        value: f64,
+        value: Option<f64>,
         outeq: usize,
         errorpoly: Option<ErrorPoly>,
-        ignore: bool,
     ) -> Self {
         Observation {
             time,
             value,
             outeq,
             errorpoly,
-            ignore,
         }
     }
     /// Get the time of the observation
@@ -203,7 +200,7 @@ impl Observation {
         self.time
     }
     /// Get the value of the observation (e.g., drug concentration)
-    pub fn value(&self) -> f64 {
+    pub fn value(&self) -> Option<f64> {
         self.value
     }
     /// Get the output equation number (zero-indexed) corresponding to this observation
@@ -216,10 +213,6 @@ impl Observation {
     pub fn errorpoly(&self) -> Option<ErrorPoly> {
         self.errorpoly
     }
-    /// Check if this observation should be ignored in likelihood calculations
-    pub fn ignore(&self) -> bool {
-        self.ignore
-    }
 
     /// Set the time of the observation
     pub fn set_time(&mut self, time: f64) {
@@ -227,7 +220,7 @@ impl Observation {
     }
 
     /// Set the value of the observation (e.g., drug concentration)
-    pub fn set_value(&mut self, value: f64) {
+    pub fn set_value(&mut self, value: Option<f64>) {
         self.value = value;
     }
 
@@ -239,11 +232,6 @@ impl Observation {
     /// Set the error polynomial coefficients (c0, c1, c2, c3) if available
     pub fn set_errorpoly(&mut self, errorpoly: Option<ErrorPoly>) {
         self.errorpoly = errorpoly;
-    }
-
-    /// Set whether to ignore this observation in likelihood calculations
-    pub fn set_ignore(&mut self, ignore: bool) {
-        self.ignore = ignore;
     }
 
     /// Create a [Prediction] from this observation
@@ -287,7 +275,7 @@ impl fmt::Display for Event {
                 };
                 write!(
                     f,
-                    "Observation at time {:.2}: {} (outeq {}) {}",
+                    "Observation at time {:.2}: {:#?} (outeq {}) {}",
                     observation.time, observation.value, observation.outeq, errpoly_desc
                 )
             }
@@ -351,30 +339,24 @@ mod tests {
     #[test]
     fn test_observation_creation() {
         let error_poly = Some(ErrorPoly::new(0.1, 0.2, 0.3, 0.4));
-        let observation = Observation::new(5.0, 75.5, 2, error_poly, false);
+        let observation = Observation::new(5.0, Some(75.5), 2, error_poly);
 
         assert_eq!(observation.time(), 5.0);
-        assert_eq!(observation.value(), 75.5);
+        assert_eq!(observation.value(), Some(75.5));
         assert_eq!(observation.outeq(), 2);
         assert_eq!(observation.errorpoly(), error_poly);
-        assert_eq!(observation.ignore(), false);
     }
 
     #[test]
     fn test_observation_setters() {
-        let mut observation = Observation::new(
-            5.0,
-            75.5,
-            2,
-            Some(ErrorPoly::new(0.1, 0.2, 0.3, 0.4)),
-            false,
-        );
+        let mut observation =
+            Observation::new(5.0, Some(75.5), 2, Some(ErrorPoly::new(0.1, 0.2, 0.3, 0.4)));
 
         observation.set_time(6.0);
         assert_eq!(observation.time(), 6.0);
 
-        observation.set_value(80.0);
-        assert_eq!(observation.value(), 80.0);
+        observation.set_value(Some(80.0));
+        assert_eq!(observation.value(), Some(80.0));
 
         observation.set_outeq(3);
         assert_eq!(observation.outeq(), 3);
@@ -382,16 +364,13 @@ mod tests {
         let new_error_poly = Some(ErrorPoly::new(0.2, 0.3, 0.4, 0.5));
         observation.set_errorpoly(new_error_poly);
         assert_eq!(observation.errorpoly(), new_error_poly);
-
-        observation.set_ignore(true);
-        assert_eq!(observation.ignore(), true);
     }
 
     #[test]
     fn test_event_time_operations() {
         let mut bolus_event = Event::Bolus(Bolus::new(1.0, 100.0, 1));
         let mut infusion_event = Event::Infusion(Infusion::new(2.0, 200.0, 1, 2.5));
-        let mut observation_event = Event::Observation(Observation::new(3.0, 75.5, 2, None, false));
+        let mut observation_event = Event::Observation(Observation::new(3.0, Some(75.5), 2, None));
 
         assert_eq!(bolus_event.time(), 1.0);
         assert_eq!(infusion_event.time(), 2.0);

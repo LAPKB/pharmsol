@@ -113,7 +113,7 @@ impl Data {
                                     &".".to_string(),
                                     &".".to_string(),
                                     &".".to_string(),
-                                    &obs.value().to_string(),
+                                    &obs.value().map_or(".".to_string(), |v| v.to_string()),
                                     &(obs.outeq() + 1).to_string(),
                                     &".".to_string(),
                                     &".".to_string(),
@@ -275,7 +275,7 @@ impl Data {
                 let mut time = 0.0;
                 while time < last_time {
                     for outeq in &outeq_values {
-                        let obs = Observation::new(time, -99.0, *outeq, None, false);
+                        let obs = Observation::new(time, None, *outeq, None);
                         new_events.push(Event::Observation(obs));
                     }
 
@@ -572,14 +572,7 @@ impl Occasion {
 
         // Filter out events that are marked as ignore
         if ignore {
-            occ.events
-                .iter()
-                .filter(|event| match event {
-                    Event::Observation(observation) => !observation.ignore(),
-                    _ => true,
-                })
-                .cloned()
-                .collect()
+            occ.events.iter().cloned().collect()
         } else {
             occ.events.clone()
         }
@@ -683,13 +676,13 @@ mod tests {
 
     fn create_sample_data() -> Data {
         let subject1 = Subject::builder("subject1")
-            .observation(1.0, 10.0, 1)
+            .observation(1.0, Some(10.0), 1, None)
             .bolus(2.0, 50.0, 1)
             .infusion(3.0, 100.0, 1, 1.0)
             .covariate("age", 0.0, 30.0)
             .covariate("weight", 0.0, 70.0)
             .reset()
-            .observation(4.0, 20.0, 2)
+            .observation(4.0, Some(20.0), 2, None)
             .bolus(5.0, 60.0, 2)
             .infusion(6.0, 120.0, 2, 2.0)
             .covariate("age", 0.0, 31.0)
@@ -697,13 +690,13 @@ mod tests {
             .build();
 
         let subject2 = Subject::builder("subject2")
-            .observation(1.5, 15.0, 1)
+            .observation(1.5, Some(15.0), 1, None)
             .bolus(2.5, 55.0, 1)
             .infusion(3.5, 110.0, 1, 1.5)
             .covariate("age", 0.0, 25.0)
             .covariate("weight", 0.0, 65.0)
             .reset()
-            .observation(4.5, 25.0, 2)
+            .observation(4.5, Some(25.0), 2, None)
             .bolus(5.5, 65.0, 2)
             .infusion(6.5, 130.0, 2, 2.5)
             .covariate("age", 0.0, 26.0)
@@ -732,7 +725,7 @@ mod tests {
     fn test_add_subject() {
         let mut data = create_sample_data();
         let new_subject = Subject::builder("subject3")
-            .observation(1.0, 10.0, 1)
+            .observation(1.0, Some(10.0), 1, None)
             .bolus(2.0, 50.0, 1)
             .infusion(3.0, 100.0, 1, 1.0)
             .covariate("age", 0.0, 30.0)
@@ -764,7 +757,7 @@ mod tests {
     fn test_occasion_sort() {
         let mut occasion = Occasion::new(
             vec![
-                Event::Observation(Observation::new(2.0, 1.0, 1, None, false)),
+                Event::Observation(Observation::new(2.0, Some(1.0), 1, None)),
                 Event::Bolus(Bolus::new(1.0, 100.0, 1)),
             ],
             Covariates::new(),
@@ -786,8 +779,8 @@ mod tests {
     fn test_event_get_events_with_ignore() {
         let occasion = Occasion::new(
             vec![
-                Event::Observation(Observation::new(1.0, 1.0, 1, None, false)),
-                Event::Observation(Observation::new(2.0, 2.0, 2, None, true)),
+                Event::Observation(Observation::new(1.0, Some(1.0), 1, None)),
+                Event::Observation(Observation::new(2.0, Some(2.0), 2, None)),
             ],
             Covariates::new(),
             1,

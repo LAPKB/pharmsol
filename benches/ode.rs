@@ -5,10 +5,10 @@ use std::hint::black_box;
 fn example_subject() -> Subject {
     Subject::builder("1")
         .bolus(0.0, 100.0, 0)
-        .observation(3.0, 0.1, 0)
-        .observation(6.0, 0.4, 0)
-        .observation(12.0, 1.0, 0)
-        .observation(24.0, 1.1, 0)
+        .observation(3.0, Some(0.1), 0, None)
+        .observation(6.0, Some(0.4), 0, None)
+        .observation(12.0, Some(1.0), 0, None)
+        .observation(24.0, Some(1.1), 0, None)
         .build()
 }
 

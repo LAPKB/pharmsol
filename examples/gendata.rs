@@ -9,7 +9,7 @@ use rand_distr::Distribution;
 fn main() {
     let subject = data::Subject::builder("id1")
         .bolus(0.0, 20.0, 0)
-        .observation(0.0, -1.0, 0)
+        .observation(0.0, Some(-1.0), 0, None)
         .repeat(5, 0.2)
         .build();
 
@@ -67,7 +67,7 @@ fn main() {
         // dbg!(&trajectory);
         let mut sb = data::Subject::builder(format!("id{}", i)).bolus(0.0, 20.0, 0);
         for (t, point) in trajectory.iter().enumerate() {
-            sb = sb.observation((t) as f64 * 0.2, point.prediction(), 0);
+            sb = sb.observation((t) as f64 * 0.2, Some(point.prediction()), 0, None);
         }
         data.push(sb.build());
     }

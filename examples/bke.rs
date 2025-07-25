@@ -3,13 +3,14 @@ fn main() {
 
     let subject = Subject::builder("1")
         .infusion(0., 500.0, 0, 0.5)
-        .observation(0.5, 1.645_776, 0)
-        .observation(1., 1.216442, 0)
-        .observation(2., 0.462_272_9, 0)
-        .observation(3., 0.1697458, 0)
-        .observation(4., 0.063_821_78, 0)
-        .observation(6., 0.009_099_384, 0)
-        .observation(8., 0.001017932, 0)
+        .observation(0.5, Some(1.645_776), 0, None)
+        .observation(1., Some(1.216442), 0, None)
+        .observation(2., Some(0.462_272_9), 0, None)
+        .observation(3., Some(0.1697458), 0, None)
+        .observation(4., Some(0.063_821_78), 0, None)
+        .observation(6., Some(0.009_099_384), 0, None)
+        .observation(8., Some(0.001017932), 0, None)
+        .observation(12., None, 0, None)
         .build();
 
     let an = equation::Analytical::new(
