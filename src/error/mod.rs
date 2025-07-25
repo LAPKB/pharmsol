@@ -22,6 +22,8 @@ pub enum PharmsolError {
     NonFiniteLikelihood(f64),
     #[error("The calculated likelihood is zero")]
     ZeroLikelihood,
+    #[error("Missing observation in prediction")]
+    MissingObservation,
 }
 
 impl From<diffsol::error::DiffsolError> for PharmsolError {

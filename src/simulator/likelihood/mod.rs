@@ -277,12 +277,10 @@ impl Prediction {
 
     /// Calculate the likelihood of this prediction given an error model.
     ///
-    /// Panics if the observation is None.
+    /// Returns an error if the observation is missing or if the likelihood is either zero or non-finite.
     pub fn likelihood(&self, error_models: &ErrorModels) -> Result<f64, PharmsolError> {
         if self.observation.is_none() {
-            return Err(PharmsolError::ErrorModelError(
-                ErrorModelError::MissingObservation,
-            ));
+            return Err(PharmsolError::MissingObservation);
         }
 
         let sigma = error_models.sigma(self)?;

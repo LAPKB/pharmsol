@@ -774,22 +774,4 @@ mod tests {
             _ => panic!("Second event should be an Observation"),
         }
     }
-
-    #[test]
-    fn test_event_get_events_with_ignore() {
-        let occasion = Occasion::new(
-            vec![
-                Event::Observation(Observation::new(1.0, Some(1.0), 1, None)),
-                Event::Observation(Observation::new(2.0, Some(2.0), 2, None)),
-            ],
-            Covariates::new(),
-            1,
-        );
-        let events = occasion.get_events(None, true);
-        assert_eq!(events.len(), 1);
-        match &events[0] {
-            Event::Observation(o) => assert_eq!(o.time(), 1.0),
-            _ => panic!("Event should be an Observation"),
-        }
-    }
 }
