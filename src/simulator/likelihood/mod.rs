@@ -54,6 +54,7 @@ impl SubjectPredictions {
             false => self
                 .predictions
                 .iter()
+                .filter(|p| p.observation.is_some())
                 .map(|p| p.likelihood(error_models))
                 .collect::<Result<Vec<f64>, _>>()
                 .map(|likelihoods| likelihoods.iter().product())
@@ -275,7 +276,15 @@ impl Prediction {
     }
 
     /// Calculate the likelihood of this prediction given an error model.
+    ///
+    /// Panics if the observation is None.
     pub fn likelihood(&self, error_models: &ErrorModels) -> Result<f64, PharmsolError> {
+        if self.observation.is_none() {
+            return Err(PharmsolError::ErrorModelError(
+                ErrorModelError::MissingObservation,
+            ));
+        }
+
         let sigma = error_models.sigma(self)?;
 
         let likelihood = if let Some(lloq) = error_models.error_model(self.outeq)?.lloq() {
