@@ -65,7 +65,7 @@ impl EM {
         new_dt
     }
 
-    fn euler_maruyama_step(&self, time: f64, dt: f64, state: &mut DVector<f64>) {
+    fn euler_maruyama_step(&self, time: f64, dt: f64, state: &mut DVector<f64>, sigma: f64) {
         let n = state.len();
         let mut rateiv = DVector::from_vec(vec![0.0, 0.0, 0.0]);
         //TODO: This should be pre-calculated
@@ -87,12 +87,13 @@ impl EM {
         let mut diffusion_term = DVector::zeros(n);
         (self.diffusion)(&self.params, &mut diffusion_term);
 
-        let mut rng = rng();
-        let normal_dist = Normal::new(0.0, 1.0).unwrap();
+        let mut _rng = rng();
+        let _normal_dist = Normal::new(0.0, 1.0).unwrap();
 
         for i in 0..n {
             state[i] +=
-                drift_term[i] * dt + diffusion_term[i] * normal_dist.sample(&mut rng) * dt.sqrt();
+                // drift_term[i] * dt + diffusion_term[i] * normal_dist.sample(&mut rng) * dt.sqrt();
+                drift_term[i] * dt + diffusion_term[i] * sigma * dt.sqrt();
         }
     }
 
@@ -102,17 +103,22 @@ impl EM {
         let safety = 0.9;
         let mut times = vec![t0];
         let mut solution = vec![self.state.clone()];
+        let mut sigma = 0.00000001;
 
+
+        let mut rng = rng();
+        let normal_dist = Normal::new(0.0, 1.0).unwrap();
+        sigma = normal_dist.sample(&mut rng);
         while t < tf {
             let mut y1 = self.state.clone();
             let mut y2 = self.state.clone();
 
             // Single step
-            self.euler_maruyama_step(t, dt, &mut y1);
+            self.euler_maruyama_step(t, dt, &mut y1, sigma);
 
             // Two half steps
-            self.euler_maruyama_step(t, dt / 2.0, &mut y2);
-            self.euler_maruyama_step(t + dt / 2.0, dt / 2.0, &mut y2);
+            self.euler_maruyama_step(t, dt / 2.0, &mut y2, sigma);
+            self.euler_maruyama_step(t + dt / 2.0, dt / 2.0, &mut y2, sigma);
 
             let error = self.calculate_error(&y1, &y2);
 
