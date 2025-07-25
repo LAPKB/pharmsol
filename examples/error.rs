@@ -35,7 +35,7 @@ fn main() {
 
     let subject = data::Subject::builder("id1")
         .infusion(0.0, 3235.0, 0, 0.005)
-        .observation(0.5, Some(0.1), 0, None)
+        .observation(0.5, 0.1, 0)
         .repeat(120, 0.1)
         .build();
 

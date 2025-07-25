@@ -3,11 +3,11 @@ use pharmsol::*;
 fn main() {
     let subject = data::Subject::builder("id1")
         .bolus(0.0, 20.0, 0)
-        .observation(0.2, Some(16.6434), 0, None)
-        .observation(0.4, Some(14.3233), 0, None)
-        .observation(0.6, Some(9.8468), 0, None)
-        .observation(0.8, Some(9.4177), 0, None)
-        .observation(1.0, Some(7.5170), 0, None)
+        .observation(0.2, 16.6434, 0)
+        .observation(0.4, 14.3233, 0)
+        .observation(0.6, 9.8468, 0)
+        .observation(0.8, 9.4177, 0)
+        .observation(1.0, 7.5170, 0)
         .build();
 
     let sde = equation::SDE::new(

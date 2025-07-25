@@ -9,9 +9,9 @@ fn subject_builder_benchmark(c: &mut Criterion) {
         b.iter(|| {
             let subject = Subject::builder("strongman")
                 .bolus(0.0, 100.0, 0)
-                .observation(3.0, Some(100.0), 0, None)
-                .observation(4.0, Some(200.0), 0, None)
-                .observation(5.0, Some(300.0), 0, None)
+                .observation(3.0, 100.0, 0)
+                .observation(4.0, 200.0, 0)
+                .observation(5.0, 300.0, 0)
                 .build();
             black_box(subject); // Prevent compiler optimizations
         })
@@ -22,10 +22,10 @@ fn subject_builder_benchmark(c: &mut Criterion) {
         b.iter(|| {
             let subject = Subject::builder("strongman")
                 .bolus(0.0, 100.0, 0)
-                .observation(3.0, Some(100.0), 0, None)
-                .observation(4.0, Some(200.0), 0, None)
-                .observation(5.0, Some(300.0), 0, None)
-                .observation(12.0, Some(300.0), 0, None)
+                .observation(3.0, 100.0, 0)
+                .observation(4.0, 200.0, 0)
+                .observation(5.0, 300.0, 0)
+                .observation(12.0, 300.0, 0)
                 .covariate("iron", 0.0, 100.0)
                 .covariate("iron", 12.0, 50.0)
                 .build();

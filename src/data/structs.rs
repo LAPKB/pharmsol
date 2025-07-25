@@ -676,13 +676,13 @@ mod tests {
 
     fn create_sample_data() -> Data {
         let subject1 = Subject::builder("subject1")
-            .observation(1.0, Some(10.0), 1, None)
+            .observation(1.0, 10.0, 1)
             .bolus(2.0, 50.0, 1)
             .infusion(3.0, 100.0, 1, 1.0)
             .covariate("age", 0.0, 30.0)
             .covariate("weight", 0.0, 70.0)
             .reset()
-            .observation(4.0, Some(20.0), 2, None)
+            .observation(4.0, 20.0, 2)
             .bolus(5.0, 60.0, 2)
             .infusion(6.0, 120.0, 2, 2.0)
             .covariate("age", 0.0, 31.0)
@@ -690,13 +690,13 @@ mod tests {
             .build();
 
         let subject2 = Subject::builder("subject2")
-            .observation(1.5, Some(15.0), 1, None)
+            .observation(1.5, 15.0, 1)
             .bolus(2.5, 55.0, 1)
             .infusion(3.5, 110.0, 1, 1.5)
             .covariate("age", 0.0, 25.0)
             .covariate("weight", 0.0, 65.0)
             .reset()
-            .observation(4.5, Some(25.0), 2, None)
+            .observation(4.5, 25.0, 2)
             .bolus(5.5, 65.0, 2)
             .infusion(6.5, 130.0, 2, 2.5)
             .covariate("age", 0.0, 26.0)
@@ -725,7 +725,7 @@ mod tests {
     fn test_add_subject() {
         let mut data = create_sample_data();
         let new_subject = Subject::builder("subject3")
-            .observation(1.0, Some(10.0), 1, None)
+            .observation(1.0, 10.0, 1)
             .bolus(2.0, 50.0, 1)
             .infusion(3.0, 100.0, 1, 1.0)
             .covariate("age", 0.0, 30.0)

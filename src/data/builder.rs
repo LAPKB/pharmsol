@@ -96,15 +96,40 @@ impl SubjectBuilder {
     /// * `value` - Observed value (e.g., drug concentration)
     /// * `outeq` - Output equation number (zero-indexed) corresponding to this observation
     /// * `errorpoly` - Error polynomial coefficients (c0, c1, c2, c3)
-    /// * `ignore` - Whether to ignore this observation in calculations
-    pub fn observation(
+    pub fn observation(self, time: f64, value: f64, outeq: usize) -> Self {
+        let observation = Observation::new(time, Some(value), outeq, None);
+        let event = Event::Observation(observation);
+        self.event(event)
+    }
+
+    /// Add an observation
+    ///
+    /// # Arguments
+    ///
+    /// * `time` - Time of the observation
+    /// * `outeq` - Output equation number (zero-indexed) corresponding to this observation
+    pub fn missing_observation(self, time: f64, outeq: usize) -> Self {
+        let observation = Observation::new(time, None, outeq, None);
+        let event = Event::Observation(observation);
+        self.event(event)
+    }
+
+    /// Add an observation with a specific error polynomial
+    ///
+    /// # Arguments
+    ///
+    /// * `time` - Time of the observation
+    /// * `value` - Observed value (e.g., drug concentration)
+    /// * `outeq` - Output equation number (zero-indexed) corresponding to this observation
+    /// * `errorpoly` - Error polynomial coefficients (c0, c1, c2, c3)
+    pub fn observation_with_error(
         self,
         time: f64,
-        value: Option<f64>,
+        value: f64,
         outeq: usize,
-        errorpoly: Option<ErrorPoly>,
+        errorpoly: ErrorPoly,
     ) -> Self {
-        let observation = Observation::new(time, value, outeq, errorpoly);
+        let observation = Observation::new(time, Some(value), outeq, Some(errorpoly));
         let event = Event::Observation(observation);
         self.event(event)
     }
@@ -145,12 +170,29 @@ impl SubjectBuilder {
                     infusion.input(),
                     infusion.duration(),
                 ),
-                Event::Observation(observation) => self.observation(
-                    observation.time() + delta * i as f64,
-                    observation.value(),
-                    observation.outeq(),
-                    observation.errorpoly(),
-                ),
+                Event::Observation(observation) => {
+                    if observation.value().is_some() {
+                        if observation.errorpoly().is_some() {
+                            self.observation_with_error(
+                                observation.time() + delta * i as f64,
+                                observation.value().unwrap(),
+                                observation.outeq(),
+                                observation.errorpoly().unwrap(),
+                            )
+                        } else {
+                            self.observation(
+                                observation.time() + delta * i as f64,
+                                observation.value().unwrap(),
+                                observation.outeq(),
+                            )
+                        }
+                    } else {
+                        self.missing_observation(
+                            observation.time() + delta * i as f64,
+                            observation.outeq(),
+                        )
+                    }
+                }
             };
         }
         self
@@ -257,7 +299,7 @@ mod tests {
     #[test]
     fn test_subject_builder() {
         let subject = Subject::builder("s1")
-            .observation(3.0, Some(100.0), 0, None)
+            .observation(3.0, 100.0, 0)
             .repeat(2, 0.5)
             .bolus(1.0, 100.0, 0)
             .infusion(0.0, 100.0, 0, 1.0)
@@ -266,7 +308,7 @@ mod tests {
             .covariate("c1", 5.0, 10.0)
             .covariate("c2", 0.0, 10.0)
             .reset()
-            .observation(10.0, Some(100.0), 0, None)
+            .observation(10.0, 100.0, 0)
             .bolus(7.0, 100.0, 0)
             .repeat(4, 1.0)
             .covariate("c1", 0.0, 5.0)
@@ -282,20 +324,15 @@ mod tests {
     fn test_complex_subject_builder() {
         let subject = Subject::builder("patient_002")
             .bolus(0.0, 50.0, 0)
-            .observation(1.0, Some(45.3), 0, None)
-            .observation(2.0, Some(40.1), 0, None)
-            .observation(
-                3.0,
-                Some(36.5),
-                0,
-                Some(ErrorPoly::new(0.1, 0.05, 0.0, 0.0)),
-            )
+            .observation(1.0, 45.3, 0)
+            .observation(2.0, 0.1, 0)
+            .observation_with_error(3.0, 36.5, 0, ErrorPoly::new(0.1, 0.05, 0.0, 0.0))
             .bolus(4.0, 50.0, 0)
             .repeat(1, 12.0) // Repeat bolus at 16.0
             .reset()
             .bolus(24.0, 50.0, 0)
-            .observation(25.0, Some(48.2), 0, None)
-            .observation(26.0, Some(43.7), 0, None)
+            .observation(25.0, 48.2, 0)
+            .observation(26.0, 43.7, 0)
             .build();
 
         assert_eq!(subject.id(), "patient_002");
@@ -313,10 +350,10 @@ mod tests {
         let subject = Subject::builder("patient_003")
             .infusion(0.0, 100.0, 0, 2.0)
             .repeat(3, 6.0) // Repeat infusion at 6.0, 12.0, and 18.0
-            .observation(1.0, Some(80.0), 0, None)
-            .observation(7.0, Some(85.0), 0, None)
-            .observation(13.0, Some(82.0), 0, None)
-            .observation(19.0, Some(79.0), 0, None)
+            .observation(1.0, 80.0, 0)
+            .observation(7.0, 85.0, 0)
+            .observation(13.0, 82.0, 0)
+            .observation(19.0, 79.0, 0)
             .build();
 
         assert_eq!(subject.id(), "patient_003");
