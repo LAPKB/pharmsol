@@ -77,11 +77,6 @@ impl Bolus {
         self.time
     }
 
-    /// Get a mutable reference to the time of the bolus
-    pub(crate) fn mut_time(&mut self) -> &mut f64 {
-        &mut self.time
-    }
-
     /// Set the amount of drug in the bolus
     pub fn set_amount(&mut self, amount: f64) {
         self.amount = amount;
@@ -95,6 +90,21 @@ impl Bolus {
     /// Set the time of the bolus administration
     pub fn set_time(&mut self, time: f64) {
         self.time = time;
+    }
+
+    /// Get a mutable reference to the amount of drug in the bolus
+    pub fn mut_amount(&mut self) -> &mut f64 {
+        &mut self.amount
+    }
+
+    /// Get a mutable reference to the compartment number that receives the bolus
+    pub fn mut_input(&mut self) -> &mut usize {
+        &mut self.input
+    }
+
+    /// Get a mutable reference to the time of the bolus administration
+    pub fn mut_time(&mut self) -> &mut f64 {
+        &mut self.time
     }
 }
 
@@ -166,6 +176,26 @@ impl Infusion {
     /// Set the duration of the infusion
     pub fn set_duration(&mut self, duration: f64) {
         self.duration = duration;
+    }
+
+    /// Set the amount of drug in the infusion
+    pub fn mut_amount(&mut self) -> &mut f64 {
+        &mut self.amount
+    }
+
+    /// Set the compartment number (zero-indexed) that receives the infusion
+    pub fn mut_input(&mut self) -> &mut usize {
+        &mut self.input
+    }
+
+    /// Set the time of the infusion administration
+    pub fn mut_time(&mut self) -> &mut f64 {
+        &mut self.time
+    }
+
+    /// Set the duration of the infusion
+    pub fn mut_duration(&mut self) -> &mut f64 {
+        &mut self.duration
     }
 }
 
@@ -241,6 +271,26 @@ impl Observation {
     /// Set the [ErrorPoly] for this observation
     pub fn set_errorpoly(&mut self, errorpoly: Option<ErrorPoly>) {
         self.errorpoly = errorpoly;
+    }
+
+    /// Get a mutable reference to the time of the observation
+    pub fn mut_time(&mut self) -> &mut f64 {
+        &mut self.time
+    }
+
+    /// Get a mutable reference to the value of the observation
+    pub fn mut_value(&mut self) -> &mut Option<f64> {
+        &mut self.value
+    }
+
+    /// Get a mutable reference to the output equation number
+    pub fn mut_outeq(&mut self) -> &mut usize {
+        &mut self.outeq
+    }
+
+    /// Get a mutable reference to the error polynomial
+    pub fn mut_errorpoly(&mut self) -> &mut Option<ErrorPoly> {
+        &mut self.errorpoly
     }
 
     /// Create a [Prediction] from this observation
