@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 use crate::data::error_model::ErrorModelError;
-use crate::data::parse_pmetrics::PmetricsError;
+use crate::data::parser::pmetrics::PmetricsError;
 use ndarray::ShapeError;
 
 #[derive(Error, Debug, Clone)]
@@ -22,6 +22,8 @@ pub enum PharmsolError {
     NonFiniteLikelihood(f64),
     #[error("The calculated likelihood is zero")]
     ZeroLikelihood,
+    #[error("Missing observation in prediction")]
+    MissingObservation,
 }
 
 impl From<diffsol::error::DiffsolError> for PharmsolError {

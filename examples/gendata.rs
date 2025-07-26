@@ -9,7 +9,7 @@ use rand_distr::Distribution;
 fn main() {
     let subject = data::Subject::builder("id1")
         .bolus(0.0, 20.0, 0)
-        .observation(0.0, -1.0, 0)
+        .missing_observation(0.0, 0)
         .repeat(5, 0.2)
         .build();
 

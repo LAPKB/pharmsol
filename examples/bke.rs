@@ -10,6 +10,7 @@ fn main() {
         .observation(4., 0.063_821_78, 0)
         .observation(6., 0.009_099_384, 0)
         .observation(8., 0.001017932, 0)
+        .missing_observation(12.0, 0)
         .build();
 
     let an = equation::Analytical::new(
