@@ -326,7 +326,11 @@ impl Row {
         match self.evid {
             0 => events.push(Event::Observation(Observation::new(
                 self.time,
-                self.out,
+                if self.out == Some(-99.0) {
+                    None
+                } else {
+                    self.out
+                },
                 self.outeq
                     .ok_or_else(|| PmetricsError::MissingObservationOuteq {
                         id: self.id.clone(),
