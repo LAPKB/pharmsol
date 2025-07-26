@@ -1127,4 +1127,92 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn test_subject_builder_and_data_modification() {
+        // Create a subject with one bolus and three observations using the builder
+        let mut subject = Subject::builder("test_subject")
+            .bolus(0.0, 100.0, 1)
+            .missing_observation(0.0, 1)
+            .missing_observation(1.0, 1)
+            .missing_observation(3.0, 1)
+            .build();
+
+        // Verify initial setup
+        assert_eq!(subject.id(), "test_subject");
+        assert_eq!(subject.occasions().len(), 1);
+
+        let occasions = subject.occasions();
+        let occasion = &occasions.first().unwrap();
+        assert_eq!(occasion.events().len(), 4); // 1 bolus + 3 observations
+
+        // Find the bolus and verify initial dose
+        if let Some(Event::Bolus(bolus)) = occasion
+            .events()
+            .iter()
+            .find(|e| matches!(e, Event::Bolus(_)))
+        {
+            assert_eq!(bolus.amount(), 100.0);
+            assert_eq!(bolus.time(), 0.0);
+            assert_eq!(bolus.input(), 1);
+        } else {
+            panic!("Bolus event not found");
+        }
+
+        // Count observations with None values
+        let none_obs_count = occasion
+            .events()
+            .iter()
+            .filter(|e| matches!(e, Event::Observation(obs) if obs.value().is_none()))
+            .count();
+        assert_eq!(none_obs_count, 3);
+
+        // Edit the data: double the dose
+        let occasion_mut = subject.get_occasion_mut(0).unwrap();
+        for event in occasion_mut.events_iter_mut() {
+            if let Event::Bolus(bolus) = event {
+                let dose = bolus.mut_amount();
+                *dose *= 2.0; // Double the dose
+            }
+        }
+
+        // Add an observation at time 12 with value None
+        occasion_mut.add_missing_observation(12.0, 1);
+
+        // Verify the modifications
+        let occasion = &subject.occasions()[0];
+        assert_eq!(occasion.events().len(), 5); // 1 bolus + 4 observations
+
+        // Verify doubled dose
+        if let Some(Event::Bolus(bolus)) = occasion
+            .events()
+            .iter()
+            .find(|e| matches!(e, Event::Bolus(_)))
+        {
+            assert_eq!(bolus.amount(), 200.0); // Should be doubled
+        } else {
+            panic!("Bolus event not found after modification");
+        }
+
+        // Verify the new observation at time 12
+        if let Some(Event::Observation(obs)) = occasion
+            .events()
+            .iter()
+            .find(|e| matches!(e, Event::Observation(obs) if obs.time() == 12.0))
+        {
+            assert_eq!(obs.time(), 12.0);
+            assert_eq!(obs.value(), None);
+            assert_eq!(obs.outeq(), 1);
+        } else {
+            panic!("Observation at time 12 not found");
+        }
+
+        // Verify all observations still have None values
+        let none_obs_count = occasion
+            .events()
+            .iter()
+            .filter(|e| matches!(e, Event::Observation(obs) if obs.value().is_none()))
+            .count();
+        assert_eq!(none_obs_count, 4); // Should now be 4 observations with None values
+    }
 }
