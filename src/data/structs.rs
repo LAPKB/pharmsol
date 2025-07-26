@@ -1000,89 +1000,131 @@ mod tests {
     }
     #[test]
     fn test_subject_intoiterator_all_forms() {
-        let subject = Subject::builder("test")
-            .observation(1.0, 10.0, 1)
-            .bolus(2.0, 50.0, 1)
-            .reset()
-            .observation(3.0, 20.0, 1)
-            .build();
-        // Owned
-        let mut count = 0;
+        let data = create_sample_data();
+        let subject = data.get_subject("subject1").unwrap().clone();
+
+        // Test owned iterator - consumes the subject
+        let mut occasion_count = 0;
+        let mut total_events = 0;
         for occasion in subject.clone() {
-            assert!(occasion.index() < 2);
-            count += 1;
+            assert_eq!(occasion.index(), occasion_count);
+            total_events += occasion.events().len();
+            occasion_count += 1;
         }
-        assert_eq!(count, 2);
-        // &
-        let subject2 = subject.clone();
-        let mut count = 0;
-        for occasion in &subject2 {
-            assert!(occasion.index() < 2);
-            count += 1;
+        assert_eq!(occasion_count, 2); // subject1 has 2 occasions
+        assert_eq!(total_events, 6); // 3 events per occasion (obs + bolus + infusion)
+
+        // Test immutable reference iterator
+        let mut covariate_ages = Vec::new();
+        for occasion in &subject {
+            if let Some(age_cov) = occasion.covariates().get_covariate("age") {
+                if let Some(age_value) = age_cov.interpolate(0.0) {
+                    covariate_ages.push(age_value);
+                }
+            }
         }
-        assert_eq!(count, 2);
-        // &mut
-        let mut subject3 = subject;
-        for occasion in &mut subject3 {
-            occasion.add_event(Event::Observation(Observation::new(
-                4.0,
-                Some(30.0),
-                1,
-                None,
-            )));
+        assert_eq!(covariate_ages, vec![30.0, 31.0]); // Ages from sample data
+
+        // Test mutable reference iterator - add missing observations
+        let mut subject_mut = subject;
+        for occasion in &mut subject_mut {
+            occasion.add_missing_observation(10.0, 1); // Add observation at t=10 for outeq 1
         }
-        assert_eq!(subject3.occasions()[0].events().len(), 3);
+
+        // Verify we added observations to both occasions
+        assert_eq!(subject_mut.occasions()[0].events().len(), 4);
+        assert_eq!(subject_mut.occasions()[1].events().len(), 4);
     }
     #[test]
     fn test_occasion_intoiterator_all_forms() {
-        let occasion = Occasion::new(
-            vec![
-                Event::Observation(Observation::new(1.0, Some(10.0), 1, None)),
-                Event::Bolus(Bolus::new(2.0, 50.0, 1)),
-            ],
-            Covariates::new(),
-            0,
-        );
-        // Owned
-        let mut count = 0;
+        let data = create_sample_data();
+        let subject = data.get_subject("subject2").unwrap();
+        let occasion = subject.occasions()[0].clone(); // Clone to get owned occasion
+
+        // Test owned iterator - verify event types and ordering
+        let mut event_types = Vec::new();
+        let mut event_times = Vec::new();
         for event in occasion.clone() {
+            event_times.push(event.time());
             match event {
-                Event::Observation(_) => count += 1,
-                Event::Bolus(_) => count += 2,
-                _ => panic!("Unexpected event type"),
+                Event::Observation(_) => event_types.push("obs"),
+                Event::Bolus(_) => event_types.push("bolus"),
+                Event::Infusion(_) => event_types.push("infusion"),
             }
         }
-        assert_eq!(count, 3);
-        // &
-        let occasion2 = occasion.clone();
-        let mut count = 0;
-        for event in &occasion2 {
+        // Should be sorted by time, then by event type priority
+        assert_eq!(event_times, vec![1.5, 2.5, 3.5]);
+        assert_eq!(event_types, vec!["obs", "bolus", "infusion"]);
+
+        // Test immutable reference iterator - calculate total dose
+        let mut total_dose = 0.0;
+        for event in &occasion {
             match event {
-                Event::Observation(_) => count += 1,
-                Event::Bolus(_) => count += 2,
-                _ => panic!("Unexpected event type"),
+                Event::Bolus(bolus) => total_dose += bolus.amount(),
+                Event::Infusion(infusion) => total_dose += infusion.amount(),
+                _ => {}
             }
         }
-        assert_eq!(count, 3);
-        // &mut
-        let mut occasion3 = occasion;
-        for event in &mut occasion3 {
+        assert_eq!(total_dose, 165.0); // 55.0 (bolus) + 110.0 (infusion)
+
+        // Test mutable reference iterator - shift all event times by 1 hour
+        let mut occasion_mut = occasion;
+        for event in &mut occasion_mut {
             event.inc_time(1.0);
         }
-        assert_eq!(occasion3.events()[0].time(), 2.0);
+
+        // Verify all times were shifted
+        let shifted_times: Vec<f64> = occasion_mut.events().iter().map(|e| e.time()).collect();
+        assert_eq!(shifted_times, vec![2.5, 3.5, 4.5]);
     }
     #[test]
     fn test_event_intoiterator_refs() {
-        let mut event = Event::Bolus(Bolus::new(1.0, 100.0, 1));
-        let mut count = 0;
-        for e in &event {
-            assert_eq!(e.time(), 1.0);
-            count += 1;
+        let data = create_sample_data();
+        let subject = data.get_subject("subject1").unwrap();
+        let occasion = &subject.occasions()[0];
+
+        // Get a bolus event from sample data and test immutable reference iterator
+        if let Some(bolus_event) = occasion
+            .events()
+            .iter()
+            .find(|e| matches!(e, Event::Bolus(_)))
+        {
+            let mut event_count = 0;
+            for event in *bolus_event {
+                assert_eq!(event.time(), 2.0); // Bolus time from sample data
+                assert!(matches!(event, Event::Bolus(_)));
+                if let Event::Bolus(bolus) = event {
+                    assert_eq!(bolus.amount(), 50.0); // Amount from sample data
+                    assert_eq!(bolus.input(), 1); // Input compartment 1
+                }
+                event_count += 1;
+            }
+            assert_eq!(event_count, 1);
         }
-        assert_eq!(count, 1);
-        for e in &mut event {
-            e.inc_time(1.0);
+
+        // Test mutable reference iterator on a new event
+        let mut infusion_event = Event::Infusion(Infusion::new(5.0, 200.0, 1, 2.0));
+        let original_time = infusion_event.time();
+
+        for event in &mut infusion_event {
+            event.inc_time(3.0); // Increase time by 3 hours
         }
-        assert_eq!(event.time(), 2.0);
+
+        assert_eq!(infusion_event.time(), original_time + 3.0);
+
+        // Test with observation event from sample data
+        if let Some(obs_event) = occasion
+            .events()
+            .iter()
+            .find(|e| matches!(e, Event::Observation(_)))
+        {
+            for event in *obs_event {
+                assert_eq!(event.time(), 1.0); // Observation time from sample data
+                if let Event::Observation(observation) = event {
+                    assert_eq!(observation.value(), Some(10.0)); // Value from sample data
+                    assert_eq!(observation.outeq(), 1); // Output equation 1
+                }
+            }
+        }
     }
 }
