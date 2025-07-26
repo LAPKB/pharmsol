@@ -134,6 +134,7 @@ impl Data {
     /// Expand the dataset by adding observations at regular time intervals
     ///
     /// This is useful for creating a dense grid of time points for simulations.
+    /// Observations are only added if they don't already exist at that time/outeq combination.
     ///
     /// # Arguments
     ///
@@ -147,79 +148,81 @@ impl Data {
         if idelta <= 0.0 {
             return self.clone();
         }
-        // Determine the last time of the last observation, or Infusion + Duration
-        let mut last_time = self
+
+        // Determine the last time across all subjects and occasions
+        let last_time = self
+            .subjects
+            .iter()
+            .flat_map(|subject| &subject.occasions)
+            .flat_map(|occasion| &occasion.events)
+            .filter_map(|event| match event {
+                Event::Observation(observation) => Some(observation.time()),
+                Event::Infusion(infusion) => Some(infusion.time() + infusion.duration()),
+                _ => None,
+            })
+            .max_by(|a, b| a.partial_cmp(b).unwrap())
+            .unwrap_or(0.0)
+            + tad;
+
+        // Collect unique output equations more efficiently
+        let outeq_values = self.get_output_equations();
+
+        // Create new data structure with expanded observations
+        let new_subjects = self
             .subjects
             .iter()
             .map(|subject| {
-                subject
+                let new_occasions = subject
                     .occasions
                     .iter()
                     .map(|occasion| {
-                        occasion
-                            .events
+                        let old_events = occasion.get_events(None, true);
+
+                        // Create a set of existing (time, outeq) pairs for fast lookup
+                        let existing_obs: std::collections::HashSet<(u64, usize)> = old_events
                             .iter()
                             .filter_map(|event| match event {
-                                Event::Observation(observation) => Some(observation.time()),
-                                Event::Infusion(infusion) => {
-                                    Some(infusion.time() + infusion.duration())
+                                Event::Observation(obs) => {
+                                    // Convert to microseconds for consistent comparison
+                                    let time_key = (obs.time() * 1e6).round() as u64;
+                                    Some((time_key, obs.outeq()))
                                 }
                                 _ => None,
                             })
-                            .max_by(|a, b| a.partial_cmp(b).unwrap())
-                            .unwrap_or(0.0)
+                            .collect();
+
+                        // Generate new observation times
+                        let mut new_events = Vec::new();
+                        let mut time = 0.0;
+                        while time < last_time {
+                            let time_key = (time * 1e6).round() as u64;
+
+                            for &outeq in &outeq_values {
+                                // Only add if this (time, outeq) combination doesn't exist
+                                if !existing_obs.contains(&(time_key, outeq)) {
+                                    let obs = Observation::new(time, None, outeq, None);
+                                    new_events.push(Event::Observation(obs));
+                                }
+                            }
+
+                            time += idelta;
+                            time = (time * 1e6).round() / 1e6;
+                        }
+
+                        // Add original events
+                        new_events.extend(old_events);
+
+                        // Create new occasion and sort events
+                        let mut new_occasion =
+                            Occasion::new(new_events, occasion.covariates.clone(), occasion.index);
+                        new_occasion.sort();
+                        new_occasion
                     })
-                    .max_by(|a, b| a.partial_cmp(b).unwrap())
-                    .unwrap_or(0.0)
+                    .collect();
+
+                Subject::new(subject.id.clone(), new_occasions)
             })
-            .max_by(|a, b| a.partial_cmp(b).unwrap())
-            .unwrap_or(0.0);
-        last_time += tad;
-
-        let mut outeq_values: Vec<usize> = Vec::new();
-        for subject in &self.subjects {
-            for occasion in &subject.occasions {
-                for event in occasion.get_events(None, true) {
-                    if let Event::Observation(obs) = event {
-                        outeq_values.push(obs.outeq());
-                    }
-                }
-            }
-        }
-        outeq_values.sort();
-        outeq_values.dedup();
-
-        // Create a new data structure with added observations at intervals of idelta
-        let mut new_subjects: Vec<Subject> = Vec::new();
-        for subject in &self.subjects {
-            let mut new_occasions: Vec<Occasion> = Vec::new();
-            for occasion in &subject.occasions {
-                let old_events = occasion.get_events(None, true);
-                let mut new_events: Vec<Event> = Vec::new();
-                let mut time = 0.0;
-                while time < last_time {
-                    for outeq in &outeq_values {
-                        let obs = Observation::new(time, None, *outeq, None);
-                        new_events.push(Event::Observation(obs));
-                    }
-
-                    time += idelta;
-                    time = (time * 1e6).round() / 1e6;
-                }
-
-                new_events.extend(old_events);
-                new_occasions.push(Occasion::new(
-                    new_events,
-                    occasion.covariates.clone(),
-                    occasion.index,
-                ));
-                new_occasions
-                    .iter_mut()
-                    .for_each(|occasion| occasion.sort());
-            }
-            // Add the new occasions to the new subject
-            new_subjects.push(Subject::new(subject.id.clone(), new_occasions));
-        }
+            .collect();
 
         Data::new(new_subjects)
     }
@@ -258,6 +261,19 @@ impl Data {
     /// `true` if there are no subjects, `false` otherwise
     pub fn is_empty(&self) -> bool {
         self.subjects.is_empty()
+    }
+
+    /// Get a vector of all unique output equations (outeq) across all subjects
+    pub fn get_output_equations(&self) -> Vec<usize> {
+        // Collect all unique outeq values in order of occurrence
+        let mut outeq_values: Vec<usize> = self
+            .subjects
+            .iter()
+            .flat_map(|subject| subject.get_output_equations())
+            .collect();
+        outeq_values.sort_unstable();
+        outeq_values.dedup();
+        outeq_values
     }
 }
 
