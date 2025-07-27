@@ -206,8 +206,11 @@ mod tests {
             .estimate_predictions(&subject, &vec![0.1, 3.0, 1.0, 1.0])
             .unwrap();
 
-        let pred_ode = &op_ode.flat_predictions()[..];
-        let pred_analytical = &op_analytical.flat_predictions()[..];
+        let pred_ode: Vec<f64> = op_ode.into_iter().map(|pred| pred.prediction).collect();
+        let pred_analytical: Vec<f64> = op_analytical
+            .into_iter()
+            .map(|pred| pred.prediction)
+            .collect();
 
         println!("ode: {:?}", pred_ode);
         println!("analitycal: {:?}", pred_analytical);
@@ -260,8 +263,11 @@ mod tests {
             .estimate_predictions(&subject, &vec![0.1, 1.0, 3.0, 1.0, 1.0])
             .unwrap();
 
-        let pred_ode = &op_ode.flat_predictions()[..];
-        let pred_analytical = &op_analytical.flat_predictions()[..];
+        let pred_ode: Vec<f64> = op_ode.into_iter().map(|pred| pred.prediction).collect();
+        let pred_analytical: Vec<f64> = op_analytical
+            .into_iter()
+            .map(|pred| pred.prediction)
+            .collect();
 
         println!("ode: {:?}", pred_ode);
         println!("analitycal: {:?}", pred_analytical);

@@ -1,11 +1,13 @@
-use std::fmt::Debug;
+use std::{collections::HashMap, fmt::Debug};
 pub mod analytical;
 pub mod meta;
 pub mod ode;
+#[cfg(feature = "sde")]
 pub mod sde;
 pub use analytical::*;
 pub use meta::*;
 pub use ode::*;
+#[cfg(feature = "sde")]
 pub use sde::*;
 
 use crate::{
@@ -45,11 +47,11 @@ pub trait Predictions: Default {
     /// The sum of squared errors
     fn squared_error(&self) -> f64;
 
-    /// Get all predictions as a vector.
+    /// Get all predictions
     ///
     /// # Returns
-    /// Vector of prediction objects
-    fn get_predictions(&self) -> Vec<Prediction>;
+    /// A [HashMap] of predictions, index by their occasion
+    fn predictions(&self) -> &HashMap<usize, Vec<Prediction>>;
 }
 
 /// Trait defining the associated types for equations.
@@ -95,6 +97,7 @@ pub(crate) trait EquationPriv: EquationTypes {
         x: &mut Self::S,
         likelihood: &mut Vec<f64>,
         output: &mut Self::P,
+        occasion: usize,
     ) -> Result<(), PharmsolError>;
 
     fn initial_state(
@@ -116,6 +119,7 @@ pub(crate) trait EquationPriv: EquationTypes {
         infusions: &mut Vec<Infusion>,
         likelihood: &mut Vec<f64>,
         output: &mut Self::P,
+        occasion: usize,
     ) -> Result<(), PharmsolError> {
         match event {
             Event::Bolus(bolus) => {
@@ -134,6 +138,7 @@ pub(crate) trait EquationPriv: EquationTypes {
                     x,
                     likelihood,
                     output,
+                    occasion,
                 )?;
             }
         }
@@ -247,6 +252,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
                     &mut infusions,
                     &mut likelihood,
                     &mut output,
+                    occasion.index(),
                 )?;
             }
         }
