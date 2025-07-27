@@ -162,6 +162,7 @@ impl EquationPriv for ODE {
         _x: &mut Self::S,
         _likelihood: &mut Vec<f64>,
         _output: &mut Self::P,
+        _occasion: usize,
     ) -> Result<(), PharmsolError> {
         unimplemented!("process_observation not implemented for ODE");
     }
@@ -261,7 +262,7 @@ impl Equation for ODE {
                         if let Some(error_models) = error_models {
                             likelihood.push(pred.likelihood(error_models)?);
                         }
-                        output.add_prediction(pred);
+                        output.add_prediction(pred, occasion.index());
                         //END PROCESS_OBSERVATION
                     }
                 }

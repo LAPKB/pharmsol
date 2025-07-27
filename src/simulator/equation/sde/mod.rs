@@ -155,7 +155,7 @@ impl Predictions for Array2<Prediction> {
     fn squared_error(&self) -> f64 {
         unimplemented!();
     }
-    fn get_predictions(&self) -> Vec<Prediction> {
+    fn predictions(&self) -> Vec<Prediction> {
         //TODO: This is only returning the first particle, not the best, not the worst, THE FIRST
         // CHANGE THIS
         let row = self.row(0).to_vec();
@@ -250,6 +250,7 @@ impl EquationPriv for SDE {
         x: &mut Self::S,
         likelihood: &mut Vec<f64>,
         output: &mut Self::P,
+        _occasion: usize,
     ) -> Result<(), PharmsolError> {
         let mut pred = vec![Prediction::default(); self.nparticles];
         pred.par_iter_mut().enumerate().for_each(|(i, p)| {

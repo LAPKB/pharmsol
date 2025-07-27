@@ -174,6 +174,7 @@ impl EquationPriv for Analytical {
         x: &mut Self::S,
         likelihood: &mut Vec<f64>,
         output: &mut Self::P,
+        occasion: usize,
     ) -> Result<(), PharmsolError> {
         let mut y = V::zeros(self.get_nouteqs());
         let out = &self.out;
@@ -189,7 +190,7 @@ impl EquationPriv for Analytical {
         if let Some(error_models) = error_models {
             likelihood.push(pred.likelihood(error_models)?);
         }
-        output.add_prediction(pred);
+        output.add_prediction(pred, occasion);
         Ok(())
     }
     #[inline(always)]
