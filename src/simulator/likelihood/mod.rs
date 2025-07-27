@@ -64,26 +64,17 @@ impl SubjectPredictions {
     pub fn likelihood(&self, error_models: &ErrorModels) -> Result<f64, PharmsolError> {
         let mut likelihood = 1.0;
         for preds in self.predictions.values() {
-            for pred in preds {
+            for pred in preds.iter().filter(|pred| pred.observation().is_some()) {
                 likelihood *= pred.likelihood(error_models)?;
             }
         }
+
         if likelihood.is_finite() {
             Ok(likelihood)
         } else if likelihood == 0.0 {
             Err(PharmsolError::ZeroLikelihood)
         } else {
             Err(PharmsolError::NonFiniteLikelihood(likelihood))
-        match self.predictions.is_empty() {
-            true => Ok(0.0),
-            false => self
-                .predictions
-                .iter()
-                .filter(|p| p.observation.is_some())
-                .map(|p| p.likelihood(error_models))
-                .collect::<Result<Vec<f64>, _>>()
-                .map(|likelihoods| likelihoods.iter().product())
-                .map_err(PharmsolError::from),
         }
     }
 
@@ -98,6 +89,27 @@ impl SubjectPredictions {
             .entry(occasion)
             .or_default()
             .push(prediction);
+    }
+
+    /// Get the predictions for a specific occasion.
+    pub fn predictions_occasion(&self, occasion: usize) -> Option<&Vec<Prediction>> {
+        self.predictions.get(&occasion)
+    }
+
+    /// Get the predictions and the occasion index as a flat vector.
+    pub fn flat_predictions(&self) -> Vec<(usize, Prediction)> {
+        self.predictions
+            .iter()
+            .flat_map(|(occasion, v)| v.iter().map(move |pred| (*occasion, pred.clone())))
+            .collect()
+    }
+
+    /// Get all predictions as a flat vector.
+    pub fn predictions(&self) -> Vec<Prediction> {
+        self.predictions
+            .values()
+            .flat_map(|v| v.iter().cloned())
+            .collect()
     }
 }
 

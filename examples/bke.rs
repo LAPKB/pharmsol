@@ -90,8 +90,15 @@ fn main() {
     println!("Predictions:");
     println!("Analytical\tODE\tDifference");
     op_an
-        .flat_predictions()
-        .iter()
-        .zip(op_ode.flat_predictions())
-        .for_each(|(a, b)| println!("{:.9}\t{:.9}\t{:.9}", a, b, a - b));
+        .predictions()
+        .into_iter()
+        .zip(op_ode.predictions().into_iter())
+        .for_each(|(a, b)| {
+            println!(
+                "{:.9}\t{:.9}\t{:.9}",
+                a.prediction(),
+                b.prediction(),
+                a.prediction() - b.prediction()
+            )
+        });
 }
