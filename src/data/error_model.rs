@@ -4,6 +4,67 @@ use crate::simulator::likelihood::Prediction;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+/// Parameter that can be either fixed or variable for estimation
+///
+/// This enum allows specifying whether a scalar parameter (like lambda or gamma)
+/// should be fixed at a specific value or allowed to vary during estimation.
+#[derive(Debug, Clone, Serialize, Deserialize, Copy, PartialEq)]
+pub enum Scalar {
+    /// Parameter can be estimated/varied during optimization
+    Variable(f64),
+    /// Parameter is fixed at this value and won't be estimated
+    Fixed(f64),
+}
+
+impl Scalar {
+    /// Get the current value of the parameter
+    pub fn value(&self) -> f64 {
+        match self {
+            Self::Variable(val) | Self::Fixed(val) => *val,
+        }
+    }
+
+    /// Check if the parameter is fixed
+    pub fn is_fixed(&self) -> bool {
+        matches!(self, Self::Fixed(_))
+    }
+
+    /// Check if the parameter is variable (can be estimated)
+    pub fn is_variable(&self) -> bool {
+        matches!(self, Self::Variable(_))
+    }
+
+    /// Set the value while preserving the fixed/variable state
+    pub fn set_value(&mut self, new_value: f64) {
+        match self {
+            Self::Variable(val) => *val = new_value,
+            Self::Fixed(val) => *val = new_value,
+        }
+    }
+
+    /// Convert the parameter to fixed at its current value
+    pub fn make_fixed(&mut self) {
+        if let Self::Variable(val) = self {
+            *self = Self::Fixed(*val);
+        }
+    }
+
+    /// Convert the parameter to variable at its current value
+    pub fn make_variable(&mut self) {
+        if let Self::Fixed(val) = self {
+            *self = Self::Variable(*val);
+        }
+    }
+
+    /// Replace the current scalar with a new scalar value
+    pub fn set_scalar(&mut self, scalar: &Scalar) {
+        match scalar {
+            Scalar::Variable(val) => *self = Self::Variable(*val),
+            Scalar::Fixed(val) => *self = Self::Fixed(*val),
+        }
+    }
+}
+
 /// Error polynomial coefficients for the error model
 ///
 /// This struct holds the coefficients for a polynomial used to model
@@ -163,7 +224,8 @@ impl ErrorModels {
                     lloq: _,
                 } => {
                     0u8.hash(&mut hasher); // Use 0 for additive model
-                    lambda.to_bits().hash(&mut hasher);
+                    lambda.value().to_bits().hash(&mut hasher);
+                    lambda.is_fixed().hash(&mut hasher); // Include fixed/variable state in hash
                 }
                 ErrorModel::Proportional {
                     gamma,
@@ -171,7 +233,8 @@ impl ErrorModels {
                     lloq: _,
                 } => {
                     1u8.hash(&mut hasher); // Use 1 for proportional model
-                    gamma.to_bits().hash(&mut hasher);
+                    gamma.value().to_bits().hash(&mut hasher);
+                    gamma.is_fixed().hash(&mut hasher); // Include fixed/variable state in hash
                 }
                 ErrorModel::None => {
                     2u8.hash(&mut hasher); // Use 2 for no model
@@ -258,6 +321,93 @@ impl ErrorModels {
         Ok(())
     }
 
+    /// Gets the scalar parameter (including fixed/variable state) for the specified output equation.
+    ///
+    /// # Arguments
+    ///
+    /// * `outeq` - The index of the output equation.
+    ///
+    /// # Returns
+    ///
+    /// The [`Scalar`] for the given output equation.
+    pub fn scalar_param(&self, outeq: usize) -> Result<Scalar, ErrorModelError> {
+        if outeq >= self.models.len() {
+            return Err(ErrorModelError::InvalidOutputEquation(outeq));
+        }
+        if self.models[outeq] == ErrorModel::None {
+            return Err(ErrorModelError::NoneErrorModel(outeq));
+        }
+        self.models[outeq].scalar_param()
+    }
+
+    /// Sets the scalar parameter (including fixed/variable state) for the specified output equation.
+    ///
+    /// # Arguments
+    ///
+    /// * `outeq` - The index of the output equation.
+    /// * `param` - The new [`Scalar`] to set.
+    pub fn set_scalar_param(&mut self, outeq: usize, param: Scalar) -> Result<(), ErrorModelError> {
+        if outeq >= self.models.len() {
+            return Err(ErrorModelError::InvalidOutputEquation(outeq));
+        }
+        if self.models[outeq] == ErrorModel::None {
+            return Err(ErrorModelError::NoneErrorModel(outeq));
+        }
+        self.models[outeq].set_scalar_param(param);
+        Ok(())
+    }
+
+    /// Checks if the scalar parameter is fixed for the specified output equation.
+    ///
+    /// # Arguments
+    ///
+    /// * `outeq` - The index of the output equation.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the scalar parameter is fixed, `false` if it's variable.
+    pub fn is_scalar_fixed(&self, outeq: usize) -> Result<bool, ErrorModelError> {
+        if outeq >= self.models.len() {
+            return Err(ErrorModelError::InvalidOutputEquation(outeq));
+        }
+        if self.models[outeq] == ErrorModel::None {
+            return Err(ErrorModelError::NoneErrorModel(outeq));
+        }
+        self.models[outeq].is_scalar_fixed()
+    }
+
+    /// Makes the scalar parameter fixed at its current value for the specified output equation.
+    ///
+    /// # Arguments
+    ///
+    /// * `outeq` - The index of the output equation.
+    pub fn fix_scalar(&mut self, outeq: usize) -> Result<(), ErrorModelError> {
+        if outeq >= self.models.len() {
+            return Err(ErrorModelError::InvalidOutputEquation(outeq));
+        }
+        if self.models[outeq] == ErrorModel::None {
+            return Err(ErrorModelError::NoneErrorModel(outeq));
+        }
+        self.models[outeq].fix_scalar();
+        Ok(())
+    }
+
+    /// Makes the scalar parameter variable at its current value for the specified output equation.
+    ///
+    /// # Arguments
+    ///
+    /// * `outeq` - The index of the output equation.
+    pub fn unfix_scalar(&mut self, outeq: usize) -> Result<(), ErrorModelError> {
+        if outeq >= self.models.len() {
+            return Err(ErrorModelError::InvalidOutputEquation(outeq));
+        }
+        if self.models[outeq] == ErrorModel::None {
+            return Err(ErrorModelError::NoneErrorModel(outeq));
+        }
+        self.models[outeq].unfix_scalar();
+        Ok(())
+    }
+
     /// Computes the standard deviation (sigma) for the specified output equation and prediction.
     ///
     /// # Arguments
@@ -341,6 +491,37 @@ impl ErrorModels {
     }
 }
 
+impl IntoIterator for ErrorModels {
+    type Item = (usize, ErrorModel);
+    type IntoIter = std::vec::IntoIter<Self::Item>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.models
+            .into_iter()
+            .enumerate()
+            .collect::<Vec<_>>()
+            .into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a ErrorModels {
+    type Item = (usize, &'a ErrorModel);
+    type IntoIter = std::iter::Enumerate<std::slice::Iter<'a, ErrorModel>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.models.iter().enumerate()
+    }
+}
+
+impl<'a> IntoIterator for &'a mut ErrorModels {
+    type Item = (usize, &'a mut ErrorModel);
+    type IntoIter = std::iter::Enumerate<std::slice::IterMut<'a, ErrorModel>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.models.iter_mut().enumerate()
+    }
+}
+
 /// Model for calculating observation errors in pharmacometric analyses
 ///
 /// An [ErrorModel] defines how the standard deviation of observations is calculated
@@ -350,11 +531,11 @@ pub enum ErrorModel {
     /// Additive error model, where error is independent of concentration
     ///
     /// Contains:
-    /// * `lambda` - Lambda parameter for scaling errors
+    /// * `lambda` - Lambda parameter for scaling errors (can be fixed or variable)
     /// * `poly` - Error polynomial coefficients (c0, c1, c2, c3)
     Additive {
-        /// Lambda parameter for scaling errors
-        lambda: f64,
+        /// Lambda parameter for scaling errors (can be fixed or variable)
+        lambda: Scalar,
         /// Error polynomial coefficients (c0, c1, c2, c3)
         poly: ErrorPoly,
         /// Optional: lloq (Lower Limit of Quantification) of the analytical method
@@ -364,11 +545,11 @@ pub enum ErrorModel {
     /// Proportional error model, where error scales with concentration
     ///
     /// Contains:
-    /// * `gamma` - Gamma parameter for scaling errors
+    /// * `gamma` - Gamma parameter for scaling errors (can be fixed or variable)
     /// * `poly` - Error polynomial coefficients (c0, c1, c2, c3)
     Proportional {
-        /// Gamma parameter for scaling errors
-        gamma: f64,
+        /// Gamma parameter for scaling errors (can be fixed or variable)
+        gamma: Scalar,
         /// Error polynomial coefficients (c0, c1, c2, c3)
         poly: ErrorPoly,
         /// Optional: lloq (Lower Limit of Quantification) of the analytical method
@@ -379,17 +560,56 @@ pub enum ErrorModel {
 }
 
 impl ErrorModel {
-    /// Create a new additive error model
+    /// Create a new additive error model with a variable lambda parameter
     ///
     /// # Arguments
     ///
     /// * `poly` - Error polynomial coefficients (c0, c1, c2, c3)
-    /// * `lambda` - Lambda parameter for scaling errors
+    /// * `lambda` - Lambda parameter for scaling errors (will be variable)
+    /// * `lloq` - Optional lower limit of quantification
     ///
     /// # Returns
     ///
     /// A new additive error model
     pub fn additive(poly: ErrorPoly, lambda: f64, lloq: Option<f64>) -> Self {
+        Self::Additive {
+            lambda: Scalar::Variable(lambda),
+            poly,
+            lloq,
+        }
+    }
+
+    /// Create a new additive error model with a fixed lambda parameter
+    ///
+    /// # Arguments
+    ///
+    /// * `poly` - Error polynomial coefficients (c0, c1, c2, c3)
+    /// * `lambda` - Lambda parameter for scaling errors (will be fixed)
+    /// * `lloq` - Optional lower limit of quantification
+    ///
+    /// # Returns
+    ///
+    /// A new additive error model with fixed lambda
+    pub fn additive_fixed(poly: ErrorPoly, lambda: f64, lloq: Option<f64>) -> Self {
+        Self::Additive {
+            lambda: Scalar::Fixed(lambda),
+            poly,
+            lloq,
+        }
+    }
+
+    /// Create a new additive error model with a specified Scalar for lambda
+    ///
+    /// # Arguments
+    ///
+    /// * `poly` - Error polynomial coefficients (c0, c1, c2, c3)
+    /// * `lambda` - Lambda parameter (can be Variable or Fixed) using [Scalar]
+    /// * `lloq` - Optional lower limit of quantification
+    ///
+    /// # Returns
+    ///
+    /// A new additive error model
+    pub fn additive_with_param(poly: ErrorPoly, lambda: Scalar, lloq: Option<f64>) -> Self {
         Self::Additive { lambda, poly, lloq }
     }
 
@@ -406,17 +626,56 @@ impl ErrorModel {
         }
     }
 
-    /// Create a new proportional error model
+    /// Create a new proportional error model with a variable gamma parameter
     ///
     /// # Arguments
     ///
     /// * `poly` - Error polynomial coefficients (c0, c1, c2, c3)
-    /// * `gamma` - Gamma parameter for scaling errors
+    /// * `gamma` - Gamma parameter for scaling errors (will be variable)
+    /// * `lloq` - Optional lower limit of quantification
     ///
     /// # Returns
     ///
     /// A new proportional error model
     pub fn proportional(poly: ErrorPoly, gamma: f64, lloq: Option<f64>) -> Self {
+        Self::Proportional {
+            gamma: Scalar::Variable(gamma),
+            poly,
+            lloq,
+        }
+    }
+
+    /// Create a new proportional error model with a fixed gamma parameter
+    ///
+    /// # Arguments
+    ///
+    /// * `poly` - Error polynomial coefficients (c0, c1, c2, c3)
+    /// * `gamma` - Gamma parameter for scaling errors (will be fixed)
+    /// * `lloq` - Optional lower limit of quantification
+    ///
+    /// # Returns
+    ///
+    /// A new proportional error model with fixed gamma
+    pub fn proportional_fixed(poly: ErrorPoly, gamma: f64, lloq: Option<f64>) -> Self {
+        Self::Proportional {
+            gamma: Scalar::Fixed(gamma),
+            poly,
+            lloq,
+        }
+    }
+
+    /// Create a new proportional error model with a specified Scalar for gamma
+    ///
+    /// # Arguments
+    ///
+    /// * `poly` - Error polynomial coefficients (c0, c1, c2, c3)
+    /// * `gamma` - Gamma parameter (can be Variable or Fixed) using [Scalar]
+    /// * `lloq` - Optional lower limit of quantification
+    ///
+    /// # Returns
+    ///
+    /// A new proportional error model
+    pub fn proportional_with_param(poly: ErrorPoly, gamma: Scalar, lloq: Option<f64>) -> Self {
         Self::Proportional { gamma, poly, lloq }
     }
 
@@ -450,8 +709,26 @@ impl ErrorModel {
         }
     }
 
-    /// Get the scaling parameter
+    /// Get the scaling parameter value
     pub fn scalar(&self) -> Result<f64, ErrorModelError> {
+        match self {
+            Self::Additive { lambda, .. } => Ok(lambda.value()),
+            Self::Proportional { gamma, .. } => Ok(gamma.value()),
+            Self::None => Err(ErrorModelError::MissingErrorModel),
+        }
+    }
+
+    /// Set the scaling parameter value (preserves fixed/variable state)
+    pub fn set_scalar(&mut self, scalar: f64) {
+        match self {
+            Self::Additive { lambda, .. } => lambda.set_value(scalar),
+            Self::Proportional { gamma, .. } => gamma.set_value(scalar),
+            Self::None => {}
+        }
+    }
+
+    /// Get the scaling parameter (including its fixed/variable state)
+    pub fn scalar_param(&self) -> Result<Scalar, ErrorModelError> {
         match self {
             Self::Additive { lambda, .. } => Ok(*lambda),
             Self::Proportional { gamma, .. } => Ok(*gamma),
@@ -459,11 +736,38 @@ impl ErrorModel {
         }
     }
 
-    /// Set the scaling parameter
-    pub fn set_scalar(&mut self, scalar: f64) {
+    /// Set the scaling parameter (including its fixed/variable state)
+    pub fn set_scalar_param(&mut self, param: Scalar) {
         match self {
-            Self::Additive { lambda, .. } => *lambda = scalar,
-            Self::Proportional { gamma, .. } => *gamma = scalar,
+            Self::Additive { lambda, .. } => *lambda = param,
+            Self::Proportional { gamma, .. } => *gamma = param,
+            Self::None => {}
+        }
+    }
+
+    /// Check if the scaling parameter is fixed
+    pub fn is_scalar_fixed(&self) -> Result<bool, ErrorModelError> {
+        match self {
+            Self::Additive { lambda, .. } => Ok(lambda.is_fixed()),
+            Self::Proportional { gamma, .. } => Ok(gamma.is_fixed()),
+            Self::None => Err(ErrorModelError::MissingErrorModel),
+        }
+    }
+
+    /// Make the scaling parameter fixed at its current value
+    pub fn fix_scalar(&mut self) {
+        match self {
+            Self::Additive { lambda, .. } => lambda.make_fixed(),
+            Self::Proportional { gamma, .. } => gamma.make_fixed(),
+            Self::None => {}
+        }
+    }
+
+    /// Make the scaling parameter variable at its current value
+    pub fn unfix_scalar(&mut self) {
+        match self {
+            Self::Additive { lambda, .. } => lambda.make_variable(),
+            Self::Proportional { gamma, .. } => gamma.make_variable(),
             Self::None => {}
         }
     }
@@ -498,8 +802,8 @@ impl ErrorModel {
 
         // Calculate standard deviation based on error model type
         let sigma = match self {
-            Self::Additive { lambda, .. } => (alpha.powi(2) + lambda.powi(2)).sqrt(),
-            Self::Proportional { gamma, .. } => gamma * alpha,
+            Self::Additive { lambda, .. } => (alpha.powi(2) + lambda.value().powi(2)).sqrt(),
+            Self::Proportional { gamma, .. } => gamma.value() * alpha,
             Self::None => {
                 return Err(ErrorModelError::MissingErrorModel);
             }
@@ -543,8 +847,8 @@ impl ErrorModel {
 
         // Calculate standard deviation based on error model type
         let sigma = match self {
-            Self::Additive { lambda, .. } => (alpha.powi(2) + lambda.powi(2)).sqrt(),
-            Self::Proportional { gamma, .. } => gamma * alpha,
+            Self::Additive { lambda, .. } => (alpha.powi(2) + lambda.value().powi(2)).sqrt(),
+            Self::Proportional { gamma, .. } => gamma.value() * alpha,
             Self::None => {
                 return Err(ErrorModelError::MissingErrorModel);
             }
@@ -991,5 +1295,254 @@ mod tests {
         let pred2 = obs2.to_prediction(10.0, vec![]);
         let sigma2 = models.sigma(&pred2).unwrap();
         assert_eq!(sigma2, 2.0); // proportional: gamma * alpha = 2 * 1 = 2
+    }
+
+    #[test]
+    fn test_scalar_param_new_constructors() {
+        // Test variable constructors (default behavior)
+        let additive = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0, None);
+        assert_eq!(additive.scalar().unwrap(), 5.0);
+        assert!(!additive.is_scalar_fixed().unwrap());
+
+        let proportional = ErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0, None);
+        assert_eq!(proportional.scalar().unwrap(), 2.0);
+        assert!(!proportional.is_scalar_fixed().unwrap());
+
+        // Test fixed constructors
+        let additive_fixed =
+            ErrorModel::additive_fixed(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0, None);
+        assert_eq!(additive_fixed.scalar().unwrap(), 5.0);
+        assert!(additive_fixed.is_scalar_fixed().unwrap());
+
+        let proportional_fixed =
+            ErrorModel::proportional_fixed(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0, None);
+        assert_eq!(proportional_fixed.scalar().unwrap(), 2.0);
+        assert!(proportional_fixed.is_scalar_fixed().unwrap());
+
+        // Test Scalar constructors
+        let additive_with_param = ErrorModel::additive_with_param(
+            ErrorPoly::new(1.0, 0.0, 0.0, 0.0),
+            Scalar::Fixed(5.0),
+            None,
+        );
+        assert_eq!(additive_with_param.scalar().unwrap(), 5.0);
+        assert!(additive_with_param.is_scalar_fixed().unwrap());
+
+        let proportional_with_param = ErrorModel::proportional_with_param(
+            ErrorPoly::new(1.0, 0.0, 0.0, 0.0),
+            Scalar::Variable(2.0),
+            None,
+        );
+        assert_eq!(proportional_with_param.scalar().unwrap(), 2.0);
+        assert!(!proportional_with_param.is_scalar_fixed().unwrap());
+    }
+
+    #[test]
+    fn test_scalar_param_methods() {
+        let mut model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0, None);
+
+        // Test initial state
+        assert_eq!(model.scalar().unwrap(), 5.0);
+        assert!(!model.is_scalar_fixed().unwrap());
+
+        // Test fixing parameter
+        model.fix_scalar();
+        assert_eq!(model.scalar().unwrap(), 5.0);
+        assert!(model.is_scalar_fixed().unwrap());
+
+        // Test unfixing parameter
+        model.unfix_scalar();
+        assert_eq!(model.scalar().unwrap(), 5.0);
+        assert!(!model.is_scalar_fixed().unwrap());
+
+        // Test setting scalar param directly
+        model.set_scalar_param(Scalar::Fixed(10.0));
+        assert_eq!(model.scalar().unwrap(), 10.0);
+        assert!(model.is_scalar_fixed().unwrap());
+
+        // Test getting scalar param
+        let param = model.scalar_param().unwrap();
+        assert_eq!(param.value(), 10.0);
+        assert!(param.is_fixed());
+    }
+
+    #[test]
+    fn test_scalar_param_functionality() {
+        let mut param = Scalar::Variable(5.0);
+
+        // Test basic functionality
+        assert_eq!(param.value(), 5.0);
+        assert!(param.is_variable());
+        assert!(!param.is_fixed());
+
+        // Test setting value
+        param.set_value(10.0);
+        assert_eq!(param.value(), 10.0);
+        assert!(param.is_variable());
+
+        // Test making fixed
+        param.make_fixed();
+        assert_eq!(param.value(), 10.0);
+        assert!(param.is_fixed());
+        assert!(!param.is_variable());
+
+        // Test making variable again
+        param.make_variable();
+        assert_eq!(param.value(), 10.0);
+        assert!(param.is_variable());
+        assert!(!param.is_fixed());
+    }
+
+    #[test]
+    fn test_error_models_scalar_param_methods() {
+        let additive_model =
+            ErrorModel::additive_fixed(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0, None);
+        let proportional_model =
+            ErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0, None);
+
+        let mut models = ErrorModels::new()
+            .add(0, additive_model)
+            .unwrap()
+            .add(1, proportional_model)
+            .unwrap();
+
+        // Test scalar param retrieval
+        let param0 = models.scalar_param(0).unwrap();
+        assert_eq!(param0.value(), 5.0);
+        assert!(param0.is_fixed());
+
+        let param1 = models.scalar_param(1).unwrap();
+        assert_eq!(param1.value(), 2.0);
+        assert!(param1.is_variable());
+
+        // Test is_scalar_fixed
+        assert!(models.is_scalar_fixed(0).unwrap());
+        assert!(!models.is_scalar_fixed(1).unwrap());
+
+        // Test fixing/unfixing
+        models.fix_scalar(1).unwrap();
+        assert!(models.is_scalar_fixed(1).unwrap());
+
+        models.unfix_scalar(0).unwrap();
+        assert!(!models.is_scalar_fixed(0).unwrap());
+
+        // Test setting scalar param
+        models.set_scalar_param(0, Scalar::Fixed(10.0)).unwrap();
+        assert_eq!(models.scalar(0).unwrap(), 10.0);
+        assert!(models.is_scalar_fixed(0).unwrap());
+    }
+
+    #[test]
+    fn test_fixed_parameters_in_calculations() {
+        // Test that fixed and variable parameters produce the same calculation results
+        let observation = Observation::new(0.0, 20.0, 0, None, false);
+        let prediction = observation.to_prediction(10.0, vec![]);
+
+        let model_variable = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0, None);
+        let model_fixed = ErrorModel::additive_fixed(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0, None);
+
+        let sigma_variable = model_variable.sigma(&prediction).unwrap();
+        let sigma_fixed = model_fixed.sigma(&prediction).unwrap();
+
+        assert_eq!(sigma_variable, sigma_fixed);
+        assert_eq!(sigma_variable, (26.0_f64).sqrt());
+
+        // Test with sigma_from_value
+        let sigma_variable_val = model_variable.sigma_from_value(20.0).unwrap();
+        let sigma_fixed_val = model_fixed.sigma_from_value(20.0).unwrap();
+
+        assert_eq!(sigma_variable_val, sigma_fixed_val);
+        assert_eq!(sigma_variable_val, (26.0_f64).sqrt());
+    }
+
+    #[test]
+    fn test_hash_includes_fixed_state() {
+        let model1_variable = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0, None);
+        let model1_fixed =
+            ErrorModel::additive_fixed(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0, None);
+
+        let models1 = ErrorModels::new().add(0, model1_variable).unwrap();
+        let models2 = ErrorModels::new().add(0, model1_fixed).unwrap();
+
+        // Different fixed/variable states should produce different hashes
+        assert_ne!(models1.hash(), models2.hash());
+    }
+
+    #[test]
+    fn test_error_models_into_iter_functionality() {
+        let additive_model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0, None);
+        let proportional_model =
+            ErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0, None);
+
+        let mut models = ErrorModels::new()
+            .add(0, additive_model)
+            .unwrap()
+            .add(1, proportional_model)
+            .unwrap();
+
+        // Verify initial state - both should be variable
+        assert!(!models.is_scalar_fixed(0).unwrap());
+        assert!(!models.is_scalar_fixed(1).unwrap());
+        assert_eq!(models.scalar(0).unwrap(), 5.0);
+        assert_eq!(models.scalar(1).unwrap(), 2.0);
+
+        // First iteration: update values using iter_mut
+        for (outeq, model) in models.iter_mut() {
+            match outeq {
+                0 => model.set_scalar(10.0), // Update additive lambda from 5.0 to 10.0
+                1 => model.set_scalar(4.0),  // Update proportional gamma from 2.0 to 4.0
+                _ => {}
+            }
+        }
+
+        // Verify values were updated
+        assert_eq!(models.scalar(0).unwrap(), 10.0);
+        assert_eq!(models.scalar(1).unwrap(), 4.0);
+        assert!(!models.is_scalar_fixed(0).unwrap()); // Still variable
+        assert!(!models.is_scalar_fixed(1).unwrap()); // Still variable
+
+        // Second iteration: fix all parameters using iter_mut
+        for (_outeq, model) in models.iter_mut() {
+            model.fix_scalar();
+        }
+
+        // Verify all parameters are now fixed
+        assert!(models.is_scalar_fixed(0).unwrap());
+        assert!(models.is_scalar_fixed(1).unwrap());
+        assert_eq!(models.scalar(0).unwrap(), 10.0); // Values should remain the same
+        assert_eq!(models.scalar(1).unwrap(), 4.0);
+
+        // Test read-only iteration with iter()
+        let mut count = 0;
+        for (outeq, model) in models.iter() {
+            count += 1;
+            match outeq {
+                0 => {
+                    assert!(model.is_scalar_fixed().unwrap());
+                    assert_eq!(model.scalar().unwrap(), 10.0);
+                }
+                1 => {
+                    assert!(model.is_scalar_fixed().unwrap());
+                    assert_eq!(model.scalar().unwrap(), 4.0);
+                }
+                _ => panic!("Unexpected outeq: {}", outeq),
+            }
+        }
+        assert_eq!(count, 2);
+
+        // Test consuming iteration with into_iter()
+        let collected_models: Vec<(usize, ErrorModel)> = models.into_iter().collect();
+        assert_eq!(collected_models.len(), 2);
+
+        // Verify the collected models retain their state
+        let (outeq0, model0) = &collected_models[0];
+        let (outeq1, model1) = &collected_models[1];
+
+        assert_eq!(*outeq0, 0);
+        assert_eq!(*outeq1, 1);
+        assert!(model0.is_scalar_fixed().unwrap());
+        assert!(model1.is_scalar_fixed().unwrap());
+        assert_eq!(model0.scalar().unwrap(), 10.0);
+        assert_eq!(model1.scalar().unwrap(), 4.0);
     }
 }
