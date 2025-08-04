@@ -246,7 +246,11 @@ impl SubjectBuilder {
 
         // create the covariate object and add it to the current occasion
         for (name, segments) in covariates {
-            let covariate = Covariate::new(name.clone(), segments);
+            // Create a new empty covariate and manually add segments for backward compatibility
+            let mut covariate = Covariate::new_empty(name.clone());
+            for segment in segments {
+                covariate.add_segment(segment);
+            }
             self.current_occasion.add_covariate(name, covariate);
         }
         self.current_covariates.clear();

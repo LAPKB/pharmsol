@@ -62,7 +62,7 @@ pub mod prelude {
         ($cov:expr, $t:expr, $($name:ident),*) => {
             $(
                 let $name = match $cov.get_covariate(stringify!($name)) {
-                    Some(cov) => cov.interpolate($t).unwrap(),
+                    Some(cov) => cov.interpolate_immutable($t).unwrap(),
                     None => panic!("Covariate {} not found", stringify!($name)),
                 };
 
