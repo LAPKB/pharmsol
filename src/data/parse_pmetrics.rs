@@ -184,7 +184,7 @@ pub fn read_pmetrics(path: impl Into<String>) -> Result<Data, PmetricsError> {
                     covariate.add_segment(CovariateSegment::new(
                         time,
                         f64::INFINITY,
-                        InterpolationMethod::CarryForward {
+                        Interpolation::CarryForward {
                             value: value.unwrap(),
                         },
                     ));
@@ -204,7 +204,7 @@ pub fn read_pmetrics(path: impl Into<String>) -> Result<Data, PmetricsError> {
                         covariate.add_segment(CovariateSegment::new(
                             time,
                             to_time,
-                            InterpolationMethod::CarryForward {
+                            Interpolation::CarryForward {
                                 value: value.unwrap(),
                             },
                         ));
@@ -214,7 +214,7 @@ pub fn read_pmetrics(path: impl Into<String>) -> Result<Data, PmetricsError> {
                                 covariate.add_segment(CovariateSegment::new(
                                     time,
                                     *next_time,
-                                    InterpolationMethod::CarryForward {
+                                    Interpolation::CarryForward {
                                         value: current_value,
                                     },
                                 ));
@@ -224,7 +224,7 @@ pub fn read_pmetrics(path: impl Into<String>) -> Result<Data, PmetricsError> {
                                 covariate.add_segment(CovariateSegment::new(
                                     time,
                                     *next_time,
-                                    InterpolationMethod::Linear {
+                                    Interpolation::Linear {
                                         slope,
                                         intercept: current_value - slope * time,
                                     },
@@ -238,7 +238,7 @@ pub fn read_pmetrics(path: impl Into<String>) -> Result<Data, PmetricsError> {
                         covariate.add_segment(CovariateSegment::new(
                             *last_time,
                             f64::INFINITY,
-                            InterpolationMethod::CarryForward {
+                            Interpolation::CarryForward {
                                 value: last_value.unwrap(),
                             },
                         ));

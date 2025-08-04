@@ -213,11 +213,8 @@ impl SubjectBuilder {
         if let Some((p_time, p_value)) = self.current_segment.get(&name) {
             let slope = (value - p_value) / (time - p_time);
             let intercept = p_value - slope * p_time;
-            let segment = CovariateSegment::new(
-                *p_time,
-                time,
-                InterpolationMethod::Linear { slope, intercept },
-            );
+            let segment =
+                CovariateSegment::new(*p_time, time, Interpolation::Linear { slope, intercept });
             self.current_covariates.push((name.clone(), segment));
             self.current_segment.remove(&name);
             self.current_segment.insert(name.clone(), (time, value));
@@ -232,7 +229,7 @@ impl SubjectBuilder {
             let segment = CovariateSegment::new(
                 *time,
                 f64::INFINITY,
-                InterpolationMethod::CarryForward { value: *val },
+                Interpolation::CarryForward { value: *val },
             );
             self.current_covariates.push((name.clone(), segment));
         }

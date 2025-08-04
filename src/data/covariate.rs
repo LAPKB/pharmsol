@@ -1,9 +1,87 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt};
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct CovariateObservation {
+    name: String,
+    time: f64,
+    value: f64,
+    fixed: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CovariateData {
+    data: Vec<CovariateObservation>,
+}
+
+impl CovariateData {
+    /// Create a new empty CovariateData
+    pub fn new() -> Self {
+        CovariateData { data: Vec::new() }
+    }
+
+    /// Add an observation to the covariate data
+    pub fn add_observation(&mut self, name: impl Into<String>, time: f64, value: f64, fixed: bool) {
+        self.data.push(CovariateObservation {
+            name: name.into(),
+            time,
+            value,
+            fixed,
+        });
+    }
+
+    /// Get all observations in this covariate data
+    fn observations(&self) -> &[CovariateObservation] {
+        &self.data
+    }
+
+    pub fn to_covariates(&self) -> Covariates {
+        // First get all observations grouped by name
+        let mut grouped: HashMap<String, Vec<CovariateObservation>> = HashMap::new();
+        for obs in &self.data {
+            grouped
+                .entry(obs.name.clone())
+                .or_default()
+                .push((*obs).clone());
+        }
+
+        // Sort each group by time
+        for obs_list in grouped.values_mut() {
+            obs_list.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap());
+        }
+
+        // Create covariates from the grouped observations
+        let mut covariates = Covariates::new();
+        for (name, observations) in grouped {
+            let mut segments = Vec::new();
+            let mut last_time = None;
+            let mut last_value = None;
+
+            for obs in observations {
+                if let Some(from) = last_time {
+                    if let Some(value) = last_value {
+                        // Create a segment from the last observation to this one
+                        segments.push(CovariateSegment::new(
+                            from,
+                            obs.time,
+                            Interpolation::Linear {
+                                slope: (obs.value - value) / (obs.time - from),
+                                intercept: value - ((obs.value - value) / (obs.time - from)) * from,
+                            },
+                        ));
+                    }
+                }
+                last_time = Some(obs.time);
+                last_value = Some(obs.value);
+            }
+        }
+        covariates
+    }
+}
 
 /// Method used to interpolate covariate values between observations
 #[derive(serde::Serialize, Clone, Debug, Deserialize)]
-pub enum InterpolationMethod {
+pub enum Interpolation {
     /// Linear interpolation between two points with slope and intercept
     Linear { slope: f64, intercept: f64 },
     /// Constant value carried forward
@@ -13,11 +91,11 @@ pub enum InterpolationMethod {
 /// A segment of a piecewise interpolation function for a covariate
 ///
 /// Each segment defines how to interpolate values within its time range.
-#[derive(serde::Serialize, Clone, Debug, Deserialize)]
+#[derive(Serialize, Clone, Debug, Deserialize)]
 pub struct CovariateSegment {
     from: f64,
     to: f64,
-    method: InterpolationMethod,
+    method: Interpolation,
 }
 
 impl CovariateSegment {
@@ -28,7 +106,7 @@ impl CovariateSegment {
     /// * `from` - Start time of the segment
     /// * `to` - End time of the segment
     /// * `method` - Interpolation method to use within this segment
-    pub(crate) fn new(from: f64, to: f64, method: InterpolationMethod) -> Self {
+    pub(crate) fn new(from: f64, to: f64, method: Interpolation) -> Self {
         CovariateSegment { from, to, method }
     }
 
@@ -41,8 +119,8 @@ impl CovariateSegment {
         }
 
         match self.method {
-            InterpolationMethod::Linear { slope, intercept } => Some(slope * time + intercept),
-            InterpolationMethod::CarryForward { value } => Some(value),
+            Interpolation::Linear { slope, intercept } => Some(slope * time + intercept),
+            Interpolation::CarryForward { value } => Some(value),
         }
     }
 
@@ -62,7 +140,7 @@ impl CovariateSegment {
     }
 
     /// Get the interpolation method used in this segment
-    pub fn method(&self) -> &InterpolationMethod {
+    pub fn method(&self) -> &Interpolation {
         &self.method
     }
 }
@@ -127,14 +205,14 @@ impl fmt::Display for Covariate {
                 segment.to
             )?;
             match &segment.method {
-                InterpolationMethod::Linear { slope, intercept } => {
+                Interpolation::Linear { slope, intercept } => {
                     writeln!(
                         f,
                         "Linear, Slope: {:.2}, Intercept: {:.2}",
                         slope, intercept
                     )
                 }
-                InterpolationMethod::CarryForward { value } => {
+                Interpolation::CarryForward { value } => {
                     writeln!(f, "Carry Forward, Value: {:.2}", value)
                 }
             }?;
@@ -223,7 +301,7 @@ mod tests {
         let segment = CovariateSegment {
             from: 0.0,
             to: 10.0,
-            method: InterpolationMethod::Linear {
+            method: Interpolation::Linear {
                 slope: 1.0,
                 intercept: 0.0,
             },
@@ -240,7 +318,7 @@ mod tests {
         let segment = CovariateSegment {
             from: 0.0,
             to: 10.0,
-            method: InterpolationMethod::CarryForward { value: 5.0 },
+            method: Interpolation::CarryForward { value: 5.0 },
         };
 
         assert_eq!(segment.interpolate(0.0), Some(5.0));
@@ -262,7 +340,7 @@ mod tests {
                     CovariateSegment {
                         from: 0.0,
                         to: 10.0,
-                        method: InterpolationMethod::Linear {
+                        method: Interpolation::Linear {
                             slope: 1.0,
                             intercept: 0.0,
                         },
@@ -270,7 +348,7 @@ mod tests {
                     CovariateSegment {
                         from: 10.0,
                         to: 20.0,
-                        method: InterpolationMethod::CarryForward { value: 10.0 },
+                        method: Interpolation::CarryForward { value: 10.0 },
                     },
                 ],
             ),
