@@ -1441,7 +1441,7 @@ mod tests {
     #[test]
     fn test_fixed_parameters_in_calculations() {
         // Test that fixed and variable parameters produce the same calculation results
-        let observation = Observation::new(0.0, 20.0, 0, None, false);
+        let observation = Observation::new(0.0, Some(20.0), 0, None);
         let prediction = observation.to_prediction(10.0, vec![]);
 
         let model_variable = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0, None);
