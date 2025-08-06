@@ -19,8 +19,8 @@ pub use std::collections::HashMap;
 pub mod prelude {
     pub mod data {
         pub use crate::data::{
-            error_model::ErrorModels, parse_pmetrics::read_pmetrics, Covariates, Data, Event,
-            Occasion, Subject,
+            error_model::ErrorModels, parser::read_pmetrics, Covariates, Data, Event, Occasion,
+            Subject,
         };
     }
     pub mod simulator {
