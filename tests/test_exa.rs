@@ -35,6 +35,10 @@ mod exa_tests {
         );
 
         // Compile the same model using exa
+        // Use absolute path in the current test directory to avoid path issues
+        let test_dir = std::env::current_dir().expect("Failed to get current directory");
+        let model_output_path = test_dir.join("test_model.pkm");
+
         let model_path = exa::build::compile::<ODE>(
             format!(
                 r#"
@@ -54,7 +58,7 @@ mod exa_tests {
         )
         "#
             ),
-            Some(PathBuf::from("test_model.pkm")),
+            Some(model_output_path),
             vec!["ke".to_string(), "v".to_string()],
             |_, _| {}, // Empty callback for tests
         )

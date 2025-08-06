@@ -1,11 +1,13 @@
 use crate::simulator::likelihood::progress::ProgressTracker;
+use crate::ErrorModelError;
 use crate::{
     data::error_model::ErrorModels, Data, Equation, ErrorPoly, Observation, PharmsolError,
     Predictions,
 };
-
 use ndarray::{Array2, Axis, ShapeBuilder};
 use rayon::prelude::*;
+use statrs::distribution::ContinuousCDF;
+use statrs::distribution::Normal;
 
 mod progress;
 
@@ -101,6 +103,11 @@ impl SubjectPredictions {
 #[inline(always)]
 fn normpdf(obs: f64, pred: f64, sigma: f64) -> f64 {
     (FRAC_1_SQRT_2PI / sigma) * (-((obs - pred) * (obs - pred)) / (2.0 * sigma * sigma)).exp()
+}
+#[inline(always)]
+fn normcdf(obs: f64, pred: f64, sigma: f64) -> Result<f64, ErrorModelError> {
+    let norm = Normal::new(pred, sigma).map_err(|_| ErrorModelError::NegativeSigma)?;
+    Ok(norm.cdf(obs))
 }
 
 impl From<Vec<Prediction>> for SubjectPredictions {
@@ -269,14 +276,23 @@ impl Prediction {
     /// Calculate the likelihood of this prediction given an error model.
     pub fn likelihood(&self, error_models: &ErrorModels) -> Result<f64, PharmsolError> {
         let sigma = error_models.sigma(self)?;
-        let likelihood = normpdf(self.observation, self.prediction, sigma);
+
+        let likelihood = if let Some(lloq) = error_models.error_model(self.outeq)?.lloq() {
+            if self.observation == lloq {
+                normcdf(self.observation, self.prediction, sigma)?
+            } else {
+                // Observations lower than lloq will be treated as regular observations
+                normpdf(self.observation, self.prediction, sigma)
+            }
+        } else {
+            normpdf(self.observation, self.prediction, sigma)
+        };
 
         if likelihood.is_finite() {
             return Ok(likelihood);
         } else if likelihood == 0.0 {
             return Err(PharmsolError::ZeroLikelihood);
-        }
-        {
+        } else {
             return Err(PharmsolError::NonFiniteLikelihood(likelihood));
         }
     }

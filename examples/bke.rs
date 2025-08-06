@@ -44,14 +44,14 @@ fn main() {
     let mut ems = ErrorModels::new()
         .add(
             0,
-            ErrorModel::additive(ErrorPoly::new(0.0, 0.05, 0.0, 0.0), 0.0),
+            ErrorModel::additive(ErrorPoly::new(0.0, 0.05, 0.0, 0.0), 0.0, None),
         )
         .unwrap();
 
     ems = ems
         .add(
             1,
-            ErrorModel::proportional(ErrorPoly::new(0.0, 0.05, 0.0, 0.0), 0.0),
+            ErrorModel::proportional(ErrorPoly::new(0.0, 0.05, 0.0, 0.0), 0.0, None),
         )
         .unwrap();
     // Compute likelihoods and predictions for both models
