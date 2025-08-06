@@ -156,10 +156,28 @@ impl Predictions for Array2<Prediction> {
         unimplemented!();
     }
     fn get_predictions(&self) -> Vec<Prediction> {
-        //TODO: This is only returning the first particle, not the best, not the worst, THE FIRST
-        // CHANGE THIS
-        let row = self.row(0).to_vec();
-        row
+        // Make this return the mean prediction across all particles
+        if self.is_empty() || self.ncols() == 0 {
+            return Vec::new();
+        }
+
+        let mut result = Vec::with_capacity(self.ncols());
+
+        for col in 0..self.ncols() {
+            let column = self.column(col);
+
+            let mean_prediction: f64 = column
+                .iter()
+                .map(|pred: &Prediction| pred.prediction())
+                .sum::<f64>()
+                / self.nrows() as f64;
+
+            let mut prediction = column.first().unwrap().clone();
+            prediction.set_prediction(mean_prediction);
+            result.push(prediction);
+        }
+
+        result
     }
 }
 
