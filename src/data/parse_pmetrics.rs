@@ -409,7 +409,7 @@ where
     T::Err: std::fmt::Display,
 {
     let s: String = Deserialize::deserialize(deserializer)?;
-    if s.is_empty() || s == "." {
+    if s.is_empty() || s == "." || s == "NA" {
         Ok(None)
     } else {
         T::from_str(&s).map(Some).map_err(serde::de::Error::custom)
