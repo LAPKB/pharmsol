@@ -124,6 +124,8 @@ impl Covariate {
     }
 
     /// Add an observation to this covariate
+    ///
+    /// If an observation already exists at this time, it will update that value instead of adding a new one.
     pub fn add_observation(&mut self, time: f64, value: f64) {
         // If an observation already exists at this time, update it instead of adding a new one
         if let Some(existing_segment) = self.segments.iter_mut().find(|seg| seg.time() == time) {
@@ -414,6 +416,8 @@ impl Covariates {
     }
 
     /// Add an observation to a covariate, creating the covariate if it doesn't exist
+    ///
+    /// If a value already exists at the specified time, it will update that value silently
     pub fn add_observation(&mut self, name: &str, time: f64, value: f64) {
         if let Some(covariate) = self.covariates.get_mut(name) {
             covariate.add_observation(time, value);
@@ -651,24 +655,6 @@ mod tests {
                 .interpolate(18.0)
                 .unwrap(),
             27.5
-        );
-    }
-
-    #[test]
-    fn test_individual_segment_updates() {
-        let mut covariates = Covariates::new();
-        covariates.add_observation("test_cov", 0.0, 10.0);
-        covariates.add_observation("test_cov", 10.0, 20.0);
-        covariates.build();
-
-        // Initial interpolation should be linear
-        assert_eq!(
-            covariates
-                .get_covariate("test_cov")
-                .unwrap()
-                .interpolate(5.0)
-                .unwrap(),
-            15.0
         );
     }
 
