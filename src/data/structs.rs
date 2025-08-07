@@ -232,7 +232,7 @@ impl Data {
     /// # Returns
     ///
     /// An iterator yielding references to subjects
-    pub fn iter(&self) -> std::slice::Iter<Subject> {
+    pub fn iter(&'_ self) -> std::slice::Iter<'_, Subject> {
         self.subjects.iter()
     }
 
@@ -241,7 +241,7 @@ impl Data {
     /// # Returns
     ///
     /// A mutable iterator yielding references to subjects
-    pub fn iter_mut(&mut self) -> std::slice::IterMut<Subject> {
+    pub fn iter_mut(&'_ mut self) -> std::slice::IterMut<'_, Subject> {
         self.subjects.iter_mut()
     }
 
@@ -368,7 +368,7 @@ impl Subject {
     }
 
     /// Get a mutable iterator to the occasions
-    pub fn occasions_iter_mut(&mut self) -> std::slice::IterMut<Occasion> {
+    pub fn occasions_iter_mut(&'_ mut self) -> std::slice::IterMut<'_, Occasion> {
         self.occasions.iter_mut()
     }
 
@@ -405,7 +405,7 @@ impl Subject {
     /// # Returns
     ///
     /// An iterator yielding references to occasions
-    pub fn iter(&self) -> std::slice::Iter<Occasion> {
+    pub fn iter(&'_ self) -> std::slice::Iter<'_, Occasion> {
         self.occasions.iter()
     }
 
@@ -414,7 +414,7 @@ impl Subject {
     /// # Returns
     ///
     /// A mutable iterator yielding references to occasions
-    pub fn iter_mut(&mut self) -> std::slice::IterMut<Occasion> {
+    pub fn iter_mut(&'_ mut self) -> std::slice::IterMut<'_, Occasion> {
         self.occasions.iter_mut()
     }
 
@@ -699,7 +699,7 @@ impl Occasion {
     }
 
     /// Get a mutable iterator to the events
-    pub fn events_iter_mut(&mut self) -> std::slice::IterMut<Event> {
+    pub fn events_iter_mut(&'_ mut self) -> std::slice::IterMut<'_, Event> {
         self.events.iter_mut()
     }
 
@@ -732,7 +732,7 @@ impl Occasion {
     /// # Returns
     ///
     /// An iterator yielding references to events
-    pub fn iter(&self) -> std::slice::Iter<Event> {
+    pub fn iter(&'_ self) -> std::slice::Iter<'_, Event> {
         self.events.iter()
     }
 
@@ -741,7 +741,7 @@ impl Occasion {
     /// # Returns
     ///
     /// A mutable iterator yielding references to events
-    pub fn iter_mut(&mut self) -> std::slice::IterMut<Event> {
+    pub fn iter_mut(&'_ mut self) -> std::slice::IterMut<'_, Event> {
         self.events.iter_mut()
     }
 
