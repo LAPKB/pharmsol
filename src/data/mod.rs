@@ -23,7 +23,6 @@
 //!     .observation(1.0, 10.5, 0)
 //!     .observation(2.0, 8.2, 0)
 //!     .covariate("weight", 0.0, 70.0)
-//!     .unwrap()
 //!     .build();
 //! ```
 

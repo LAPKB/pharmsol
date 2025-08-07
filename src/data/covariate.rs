@@ -124,10 +124,12 @@ impl Covariate {
     }
 
     /// Add an observation to this covariate
-    pub fn add_observation(&mut self, time: f64, value: f64) -> Result<(), CovariateError> {
-        // Check if observation already exists at this time
-        if self.segments.iter().any(|seg| seg.time() == time) {
-            return Err(CovariateError::ObservationExists { time });
+    pub fn add_observation(&mut self, time: f64, value: f64) {
+        // If an observation already exists at this time, update it instead of adding a new one
+        if let Some(existing_segment) = self.segments.iter_mut().find(|seg| seg.time() == time) {
+            // Update the existing observation's value
+            existing_segment.method = Interpolation::CarryForward { value };
+            self.build_segments();
         }
 
         // Add a temporary segment to store the new observation
@@ -139,18 +141,15 @@ impl Covariate {
 
         // Rebuild all segments
         self.build_segments();
-        Ok(())
     }
 
     /// Update an observation at a specific time
-    pub fn update_observation(&mut self, time: f64, new_value: f64) -> bool {
+    pub fn update_observation(&mut self, time: f64, new_value: f64) {
         // Remove the old observation and add the new one
         let removed = self.remove_observation(time);
         if removed {
             // Add the updated observation
-            self.add_observation(time, new_value).is_ok()
-        } else {
-            false
+            self.add_observation(time, new_value)
         }
     }
 
@@ -372,7 +371,7 @@ impl Covariates {
             let mut covariate = Covariate::new(name.clone(), is_fixed);
             for &(time, value_opt) in occurrences {
                 if let Some(value) = value_opt {
-                    covariate.add_observation(time, value).unwrap();
+                    covariate.add_observation(time, value);
                 }
             }
 
@@ -415,28 +414,21 @@ impl Covariates {
     }
 
     /// Add an observation to a covariate, creating the covariate if it doesn't exist
-    pub fn add_observation(
-        &mut self,
-        name: &str,
-        time: f64,
-        value: f64,
-    ) -> Result<(), CovariateError> {
+    pub fn add_observation(&mut self, name: &str, time: f64, value: f64) {
         if let Some(covariate) = self.covariates.get_mut(name) {
-            covariate.add_observation(time, value).map_err(|e| e.into())
+            covariate.add_observation(time, value);
         } else {
             let mut covariate = Covariate::new(name.to_string(), false);
-            covariate
-                .add_observation(time, value)
-                .map_err(|e| e.into())?;
+            covariate.add_observation(time, value);
             self.covariates.insert(name.to_string(), covariate);
-            Ok(())
         }
     }
 
     /// Update an observation for a specific covariate
     pub fn update_observation(&mut self, name: &str, time: f64, new_value: f64) -> bool {
         if let Some(covariate) = self.covariates.get_mut(name) {
-            covariate.update_observation(time, new_value)
+            covariate.update_observation(time, new_value);
+            true
         } else {
             false
         }
@@ -536,8 +528,8 @@ mod tests {
 
         // Create a covariate with observations
         let mut covariate1 = Covariate::new("covariate1".to_string(), false);
-        covariate1.add_observation(0.0, 0.0).unwrap();
-        covariate1.add_observation(10.0, 10.0).unwrap();
+        covariate1.add_observation(0.0, 0.0);
+        covariate1.add_observation(10.0, 10.0);
 
         covariates.add_covariate("covariate1".to_string(), covariate1);
         covariates.build();
@@ -582,10 +574,10 @@ mod tests {
         let mut covariates = Covariates::new();
 
         // Add some raw observations
-        covariates.add_observation("weight", 0.0, 70.0).unwrap();
-        covariates.add_observation("weight", 12.0, 72.0).unwrap();
-        covariates.add_observation("weight", 24.0, 75.0).unwrap();
-        covariates.add_observation("age", 0.0, 35.0).unwrap();
+        covariates.add_observation("weight", 0.0, 70.0);
+        covariates.add_observation("weight", 12.0, 72.0);
+        covariates.add_observation("weight", 24.0, 75.0);
+        covariates.add_observation("age", 0.0, 35.0);
 
         // Fixed covariate
         covariates.set_covariate_fixed("age", true);
@@ -612,8 +604,8 @@ mod tests {
         let mut covariates = Covariates::new();
 
         // Add initial observations
-        covariates.add_observation("bmi", 0.0, 25.0).unwrap();
-        covariates.add_observation("bmi", 12.0, 26.0).unwrap();
+        covariates.add_observation("bmi", 0.0, 25.0);
+        covariates.add_observation("bmi", 12.0, 26.0);
 
         covariates.build();
 
@@ -650,7 +642,7 @@ mod tests {
         ); // Updated value
 
         // Add a new observation
-        covariates.add_observation("bmi", 24.0, 28.0).unwrap();
+        covariates.add_observation("bmi", 24.0, 28.0);
         covariates.build();
         assert_eq!(
             covariates
@@ -665,8 +657,8 @@ mod tests {
     #[test]
     fn test_individual_segment_updates() {
         let mut covariates = Covariates::new();
-        covariates.add_observation("test_cov", 0.0, 10.0).unwrap();
-        covariates.add_observation("test_cov", 10.0, 20.0).unwrap();
+        covariates.add_observation("test_cov", 0.0, 10.0);
+        covariates.add_observation("test_cov", 10.0, 20.0);
         covariates.build();
 
         // Initial interpolation should be linear

@@ -848,17 +848,13 @@ mod tests {
             .bolus(2.0, 50.0, 1)
             .infusion(3.0, 100.0, 1, 1.0)
             .covariate("age", 0.0, 30.0)
-            .unwrap()
             .covariate("weight", 0.0, 70.0)
-            .unwrap()
             .reset()
             .observation(4.0, 20.0, 2)
             .bolus(5.0, 60.0, 2)
             .infusion(6.0, 120.0, 2, 2.0)
             .covariate("age", 0.0, 31.0)
-            .unwrap()
             .covariate("weight", 0.0, 75.0)
-            .unwrap()
             .build();
 
         let subject2 = Subject::builder("subject2")
@@ -866,17 +862,13 @@ mod tests {
             .bolus(2.5, 55.0, 1)
             .infusion(3.5, 110.0, 1, 1.5)
             .covariate("age", 0.0, 25.0)
-            .unwrap()
             .covariate("weight", 0.0, 65.0)
-            .unwrap()
             .reset()
             .observation(4.5, 25.0, 2)
             .bolus(5.5, 65.0, 2)
             .infusion(6.5, 130.0, 2, 2.5)
             .covariate("age", 0.0, 26.0)
-            .unwrap()
             .covariate("weight", 0.0, 68.0)
-            .unwrap()
             .build();
 
         Data::new(vec![subject1, subject2])
@@ -905,9 +897,7 @@ mod tests {
             .bolus(2.0, 50.0, 1)
             .infusion(3.0, 100.0, 1, 1.0)
             .covariate("age", 0.0, 30.0)
-            .unwrap()
             .covariate("weight", 0.0, 70.0)
-            .unwrap()
             .build();
         data.add_subject(new_subject);
         assert_eq!(data.len(), 3);

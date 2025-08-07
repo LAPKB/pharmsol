@@ -230,14 +230,12 @@ impl SubjectBuilder {
     ///
     /// let subject = Subject::builder("patient_001")
     ///     .covariate("weight", 0.0, 70.0)   // Weight at baseline
-    ///     .unwrap()
     ///     .covariate("weight", 30.0, 68.5)  // Weight at day 30
-    ///     .unwrap()
     ///     .build();
     /// ```
-    pub fn covariate(mut self, name: &str, time: f64, value: f64) -> Result<Self, CovariateError> {
-        self.covariates.add_observation(name, time, value)?;
-        Ok(self)
+    pub fn covariate(mut self, name: &str, time: f64, value: f64) -> Self {
+        self.covariates.add_observation(name, time, value);
+        self
     }
 
     /// Finalize and build the Subject
@@ -263,21 +261,15 @@ mod tests {
             .infusion(0.0, 100.0, 0, 1.0)
             .repeat(3, 0.5)
             .covariate("c1", 0.0, 5.0)
-            .unwrap()
             .covariate("c1", 5.0, 10.0)
-            .unwrap()
             .covariate("c2", 0.0, 10.0)
-            .unwrap()
             .reset()
             .observation(10.0, 100.0, 0)
             .bolus(7.0, 100.0, 0)
             .repeat(4, 1.0)
             .covariate("c1", 0.0, 5.0)
-            .unwrap()
             .covariate("c1", 5.0, 10.0)
-            .unwrap()
             .covariate("c2", 0.0, 10.0)
-            .unwrap()
             .build();
         println!("{}", subject);
         assert_eq!(subject.id(), "s1");

@@ -11,11 +11,8 @@ fn example_subject() -> Subject {
         .observation(2.0, 1.0, 0)
         .observation(2.5, 1.1, 0)
         .covariate("wt", 0.0, 80.0)
-        .unwrap()
         .covariate("wt", 1.0, 83.0)
-        .unwrap()
         .covariate("age", 0.0, 25.0)
-        .unwrap()
         .build()
 }
 
