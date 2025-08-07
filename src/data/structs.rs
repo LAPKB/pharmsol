@@ -232,7 +232,7 @@ impl Data {
     /// # Returns
     ///
     /// An iterator yielding references to subjects
-    pub fn iter(&self) -> std::slice::Iter<Subject> {
+    pub fn iter(&'_ self) -> std::slice::Iter<'_, Subject> {
         self.subjects.iter()
     }
 
@@ -241,7 +241,7 @@ impl Data {
     /// # Returns
     ///
     /// A mutable iterator yielding references to subjects
-    pub fn iter_mut(&mut self) -> std::slice::IterMut<Subject> {
+    pub fn iter_mut(&'_ mut self) -> std::slice::IterMut<'_, Subject> {
         self.subjects.iter_mut()
     }
 
@@ -307,7 +307,7 @@ impl<'a> IntoIterator for &'a mut Data {
 ///
 /// A [Subject] represents a single individual with one or more occasions of data,
 /// each containing events (doses, observations) and covariates.
-#[derive(serde::Serialize, Debug, Deserialize, Clone)]
+#[derive(Serialize, Debug, Deserialize, Clone)]
 pub struct Subject {
     id: String,
     occasions: Vec<Occasion>,
@@ -368,7 +368,7 @@ impl Subject {
     }
 
     /// Get a mutable iterator to the occasions
-    pub fn occasions_iter_mut(&mut self) -> std::slice::IterMut<Occasion> {
+    pub fn occasions_iter_mut(&'_ mut self) -> std::slice::IterMut<'_, Occasion> {
         self.occasions.iter_mut()
     }
 
@@ -405,7 +405,7 @@ impl Subject {
     /// # Returns
     ///
     /// An iterator yielding references to occasions
-    pub fn iter(&self) -> std::slice::Iter<Occasion> {
+    pub fn iter(&'_ self) -> std::slice::Iter<'_, Occasion> {
         self.occasions.iter()
     }
 
@@ -414,7 +414,7 @@ impl Subject {
     /// # Returns
     ///
     /// A mutable iterator yielding references to occasions
-    pub fn iter_mut(&mut self) -> std::slice::IterMut<Occasion> {
+    pub fn iter_mut(&'_ mut self) -> std::slice::IterMut<'_, Occasion> {
         self.occasions.iter_mut()
     }
 
@@ -467,7 +467,7 @@ impl<'a> IntoIterator for &'a mut Subject {
 /// An [Occasion] represents a distinct period of data collection for a subject,
 /// such as a hospital visit or dosing regimen. It contains events (doses, observations)
 /// and time-varying covariates.
-#[derive(serde::Serialize, Debug, Deserialize, Clone)]
+#[derive(Serialize, Debug, Deserialize, Clone)]
 pub struct Occasion {
     events: Vec<Event>,
     covariates: Covariates,
@@ -514,8 +514,15 @@ impl Occasion {
     ///
     /// * `name` - Name of the covariate
     /// * `covariate` - The covariate to add
-    pub(crate) fn add_covariate(&mut self, name: String, covariate: Covariate) {
+    pub fn add_covariate(&mut self, name: String, covariate: Covariate) {
         self.covariates.add_covariate(name, covariate);
+        self.covariates.build();
+    }
+
+    /// Set covariates for this occasion
+    pub(crate) fn set_covariates(&mut self, covariates: Covariates) {
+        self.covariates = covariates;
+        self.covariates.build();
     }
 
     fn add_lagtime(&mut self, reorder: Option<(&Fa, &Lag, &Vec<f64>, &Covariates)>) {
@@ -607,13 +614,22 @@ impl Occasion {
         }
     }
 
-    /// Get the covariates for this occasion
+    /// Get a reference to the  covariates for this occasion
     ///
     /// # Returns
     ///
     /// Reference to the occasion's covariates, if any
     pub fn covariates(&self) -> &Covariates {
         &self.covariates
+    }
+
+    /// Get a mutable refernce to the covariates for this occasion
+    ///
+    /// # Returns
+    ///
+    /// Reference to the occasion's covariates, if any
+    pub fn covariates_mut(&mut self) -> &mut Covariates {
+        &mut self.covariates
     }
 
     /// Add an event to the [Occasion]
@@ -683,7 +699,7 @@ impl Occasion {
     }
 
     /// Get a mutable iterator to the events
-    pub fn events_iter_mut(&mut self) -> std::slice::IterMut<Event> {
+    pub fn events_iter_mut(&'_ mut self) -> std::slice::IterMut<'_, Event> {
         self.events.iter_mut()
     }
 
@@ -716,7 +732,7 @@ impl Occasion {
     /// # Returns
     ///
     /// An iterator yielding references to events
-    pub fn iter(&self) -> std::slice::Iter<Event> {
+    pub fn iter(&'_ self) -> std::slice::Iter<'_, Event> {
         self.events.iter()
     }
 
@@ -725,7 +741,7 @@ impl Occasion {
     /// # Returns
     ///
     /// A mutable iterator yielding references to events
-    pub fn iter_mut(&mut self) -> std::slice::IterMut<Event> {
+    pub fn iter_mut(&'_ mut self) -> std::slice::IterMut<'_, Event> {
         self.events.iter_mut()
     }
 
@@ -1034,7 +1050,7 @@ mod tests {
         let mut covariate_ages = Vec::new();
         for occasion in &subject {
             if let Some(age_cov) = occasion.covariates().get_covariate("age") {
-                if let Some(age_value) = age_cov.interpolate(0.0) {
+                if let Ok(age_value) = age_cov.interpolate(0.1) {
                     covariate_ages.push(age_value);
                 }
             }

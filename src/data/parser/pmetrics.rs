@@ -133,8 +133,6 @@ pub fn read_pmetrics(path: impl Into<String>) -> Result<Data, PmetricsError> {
         for (block_index, rows) in block_rows.clone().iter().enumerate() {
             // Collector for all events
             let mut events: Vec<Event> = Vec::new();
-            // Collector for covariates
-            let mut covariates = Covariates::new();
 
             // Parse events
             for row in rows.clone() {
@@ -148,7 +146,7 @@ pub fn read_pmetrics(path: impl Into<String>) -> Result<Data, PmetricsError> {
                 }
             }
 
-            // Parse covariates
+            // Parse covariates - collect raw observations
             let mut cloned_rows = rows.clone();
             cloned_rows.retain(|row| !row.covs.is_empty());
 
@@ -165,89 +163,10 @@ pub fn read_pmetrics(path: impl Into<String>) -> Result<Data, PmetricsError> {
                 }
             }
 
-            // Create segments for each covariate
-            for (key, mut occurrences) in observed_covariates {
-                occurrences.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-                let is_fixed = key.ends_with('!');
+            // Parse the raw covariate observations and build covariates
+            let covariates = Covariates::from_pmetrics_observations(&observed_covariates);
 
-                // If it's a fixed covariate, modify the name to remove "!"
-                let name = if is_fixed {
-                    key.trim_end_matches('!').to_string()
-                } else {
-                    key.clone()
-                };
-
-                let mut covariate = Covariate::new(name.clone(), vec![]);
-
-                // If only one occurence, add a single segment to infinity
-                if occurrences.len() == 1 {
-                    let (time, value) = occurrences[0];
-                    covariate.add_segment(CovariateSegment::new(
-                        time,
-                        f64::INFINITY,
-                        InterpolationMethod::CarryForward {
-                            value: value.unwrap(),
-                        },
-                    ));
-                    covariates.add_covariate(name, covariate);
-                    continue;
-                }
-
-                let mut last_value = None;
-                for i in 0..occurrences.len() {
-                    let (time, value) = occurrences[i];
-                    let next_occurrence = occurrences.get(i + 1);
-                    let to_time =
-                        next_occurrence.map_or(f64::INFINITY, |&(next_time, _)| next_time);
-
-                    if is_fixed {
-                        // Use CarryForward for fixed covariates
-                        covariate.add_segment(CovariateSegment::new(
-                            time,
-                            to_time,
-                            InterpolationMethod::CarryForward {
-                                value: value.unwrap(),
-                            },
-                        ));
-                    } else if let Some((next_time, next_value)) = next_occurrence {
-                        if let Some(current_value) = value {
-                            if *next_time == time {
-                                covariate.add_segment(CovariateSegment::new(
-                                    time,
-                                    *next_time,
-                                    InterpolationMethod::CarryForward {
-                                        value: current_value,
-                                    },
-                                ));
-                            } else {
-                                let slope =
-                                    (next_value.unwrap() - current_value) / (next_time - time);
-                                covariate.add_segment(CovariateSegment::new(
-                                    time,
-                                    *next_time,
-                                    InterpolationMethod::Linear {
-                                        slope,
-                                        intercept: current_value - slope * time,
-                                    },
-                                ));
-                            }
-
-                            last_value = Some((next_time, next_value));
-                        }
-                    } else if let Some((last_time, last_value)) = last_value {
-                        // Extend the last linear segment to infinity if no more segments are available
-                        covariate.add_segment(CovariateSegment::new(
-                            *last_time,
-                            f64::INFINITY,
-                            InterpolationMethod::CarryForward {
-                                value: last_value.unwrap(),
-                            },
-                        ));
-                    }
-                }
-                covariates.add_covariate(name, covariate)
-            }
-            // Create the block
+            // Create the occasion
             let mut occasion = Occasion::new(events, covariates, block_index);
             occasion.sort();
             occasions.push(occasion);

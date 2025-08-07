@@ -6,7 +6,7 @@ pub mod simulator;
 
 //extension traits
 pub use crate::data::builder::SubjectBuilderExt;
-pub use crate::data::InterpolationMethod::*;
+pub use crate::data::Interpolation::*;
 pub use crate::data::*;
 pub use crate::equation::*;
 pub use crate::simulator::equation::{self, ODE};
@@ -41,7 +41,7 @@ pub mod prelude {
 
     //extension traits
     pub use crate::data::builder::SubjectBuilderExt;
-    pub use crate::data::InterpolationMethod::*;
+    pub use crate::data::Interpolation::*;
     pub use crate::data::*;
 
     #[macro_export]
