@@ -53,10 +53,7 @@ impl CovariateSegment {
     /// Get the original observation value
     fn value(&self) -> f64 {
         match self.method {
-            Interpolation::Linear {
-                slope: _,
-                intercept,
-            } => intercept,
+            Interpolation::Linear { slope, intercept } => slope * self.from + intercept,
             Interpolation::CarryForward { value } => value,
         }
     }
