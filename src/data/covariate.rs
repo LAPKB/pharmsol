@@ -185,19 +185,6 @@ impl Covariate {
         let mut observations = self.observations.clone();
         observations.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap());
 
-        // If only one observation, add a single segment to infinity
-        if observations.len() == 1 {
-            let obs = &observations[0];
-            self.segments.push(CovariateSegment::new(
-                obs.time,
-                f64::INFINITY,
-                Interpolation::CarryForward { value: obs.value },
-            ));
-            self.segments_dirty = false;
-            return;
-        }
-
-        let mut last_value: Option<(&CovariateObservation, &CovariateObservation)> = None;
         for i in 0..observations.len() {
             let current_obs = &observations[i];
             let next_obs = observations.get(i + 1);
@@ -232,16 +219,6 @@ impl Covariate {
                         },
                     ));
                 }
-                last_value = Some((current_obs, next));
-            } else if let Some((_, last_obs)) = last_value {
-                // Extend the last linear segment to infinity if no more segments are available
-                self.segments.push(CovariateSegment::new(
-                    last_obs.time,
-                    f64::INFINITY,
-                    Interpolation::CarryForward {
-                        value: last_obs.value,
-                    },
-                ));
             }
         }
         self.segments_dirty = false;
@@ -451,7 +428,7 @@ impl Covariates {
         self.covariates.insert(name, covariate);
     }
 
-    /// Get mutable access to a specific covariate by name
+    /// Get access to a specific covariate by name
     pub fn get_covariate(&mut self, name: &str) -> Option<&mut Covariate> {
         self.covariates.get_mut(name)
     }
