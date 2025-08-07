@@ -1,22 +1,32 @@
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, fmt};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fmt,
+};
+use thiserror::Error;
+
+/// Error type for covariate operations
+#[derive(Error, Debug, Clone, Serialize, Deserialize)]
+pub enum CovariateError {
+    #[error("Observation already exists at time {time}")]
+    ObservationExists { time: f64 },
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CovariateObservation {
+pub(crate) struct CovariateObservation {
     pub time: f64,
     pub value: f64,
-    pub fixed: bool,
 }
 
 impl CovariateObservation {
     /// Create a new covariate observation
-    pub fn new(time: f64, value: f64, fixed: bool) -> Self {
-        CovariateObservation { time, value, fixed }
+    pub(crate) fn new(time: f64, value: f64) -> Self {
+        CovariateObservation { time, value }
     }
 }
 
 /// Method used to interpolate covariate values between observations
-#[derive(serde::Serialize, Clone, Debug, Deserialize)]
+#[derive(Serialize, Clone, Debug, Deserialize)]
 pub enum Interpolation {
     /// Linear interpolation between two points with slope and intercept
     Linear { slope: f64, intercept: f64 },
@@ -28,7 +38,7 @@ pub enum Interpolation {
 ///
 /// Each segment defines how to interpolate values within its time range.
 #[derive(Serialize, Clone, Debug, Deserialize)]
-pub struct CovariateSegment {
+struct CovariateSegment {
     from: f64,
     to: f64,
     method: Interpolation,
@@ -46,14 +56,10 @@ impl CovariateSegment {
         CovariateSegment { from, to, method }
     }
 
-    /// Update the interpolation method for this segment
-    pub fn set_interpolation(&mut self, method: Interpolation) {
-        self.method = method;
-    }
-
     /// Interpolate the covariate value at a specific time within this segment
     ///
     /// Returns None if the time is outside the segment's range.
+    #[inline]
     fn interpolate(&self, time: f64) -> Option<f64> {
         if !self.in_interval(time) {
             return None;
@@ -66,16 +72,21 @@ impl CovariateSegment {
     }
 
     /// Check if a given time is within this segment's interval
+    #[inline]
     fn in_interval(&self, time: f64) -> bool {
-        self.from <= time && time <= self.to
+        self.from <= time && time < self.to
     }
 
     /// Get the start time of the segment
+    ///
+    /// This is inclusive, meaning the segment starts at this time.
     pub fn from(&self) -> f64 {
         self.from
     }
 
     /// Get the end time of the segment
+    ///
+    /// The end time is exclusive, meaning the segment includes values up to but not including this time.
     pub fn to(&self) -> f64 {
         self.to
     }
@@ -86,16 +97,18 @@ impl CovariateSegment {
     }
 }
 
-/// A time-varying covariate consisting of raw observations and built segments
+/// A time-varying covariate consisting of raw observations and computed segments
 ///
 /// The covariate holds raw observations and builds interpolated segments on demand.
 /// This allows for dynamic updates to the observations and automatic rebuilding of segments.
-#[derive(serde::Serialize, Clone, Debug, Deserialize)]
+#[derive(Serialize, Clone, Debug, Deserialize)]
 pub struct Covariate {
     name: String,
     observations: Vec<CovariateObservation>,
     segments: Vec<CovariateSegment>,
     segments_dirty: bool, // Flag to track if segments need rebuilding
+    /// Flag to indicate if this covariate should always use carry-forward interpolation
+    fixed: bool,
 }
 
 impl Covariate {
@@ -105,38 +118,30 @@ impl Covariate {
     ///
     /// * `name` - The name of the covariate
     /// * `observations` - Vector of raw observations
-    pub fn new(name: String, observations: Vec<CovariateObservation>) -> Self {
+    /// * `fixed` - Whether this covariate should use carry-forward interpolation
+    pub fn new(name: String, fixed: bool) -> Self {
         let mut covariate = Covariate {
             name,
-            observations,
+            observations: Vec::new(),
             segments: Vec::new(),
             segments_dirty: true,
+            fixed,
         };
         covariate.build_segments();
         covariate
     }
 
-    /// Create a new empty covariate with just a name
-    pub fn new_empty(name: String) -> Self {
-        Covariate {
-            name,
-            observations: Vec::new(),
-            segments: Vec::new(),
-            segments_dirty: false,
-        }
-    }
-
     /// Add an observation to this covariate
-    pub fn add_observation(&mut self, time: f64, value: f64, fixed: bool) {
-        self.observations
-            .push(CovariateObservation::new(time, value, fixed));
-        self.segments_dirty = true;
-    }
+    pub fn add_observation(&mut self, time: f64, value: f64) -> Result<(), CovariateError> {
+        // Check if observation already exists at this time
+        if self.observations.iter().any(|obs| obs.time == time) {
+            return Err(CovariateError::ObservationExists { time });
+        }
 
-    /// Add an observation directly
-    pub fn add_observation_direct(&mut self, observation: CovariateObservation) {
-        self.observations.push(observation);
+        self.observations
+            .push(CovariateObservation::new(time, value));
         self.segments_dirty = true;
+        Ok(())
     }
 
     /// Update an observation at a specific time
@@ -198,7 +203,7 @@ impl Covariate {
             let next_obs = observations.get(i + 1);
             let to_time = next_obs.map_or(f64::INFINITY, |next| next.time);
 
-            if current_obs.fixed {
+            if self.fixed {
                 // Use CarryForward for fixed covariates
                 self.segments.push(CovariateSegment::new(
                     current_obs.time,
@@ -266,20 +271,6 @@ impl Covariate {
         }
     }
 
-    /// Remove a segment that contains the given time
-    pub fn remove_segment_at(&mut self, time: f64) -> bool {
-        self.ensure_segments_built();
-        let initial_len = self.segments.len();
-        self.segments.retain(|s| !s.in_interval(time));
-        self.segments.len() < initial_len
-    }
-
-    /// Replace all segments with new ones (useful for manual segment management)
-    pub fn replace_segments(&mut self, new_segments: Vec<CovariateSegment>) {
-        self.segments = new_segments;
-        self.segments_dirty = false; // Assume manual segment management
-    }
-
     /// Sort segments by their start time
     pub fn sort_segments(&mut self) {
         self.ensure_segments_built();
@@ -290,27 +281,38 @@ impl Covariate {
     /// Interpolate the covariate value at a specific time
     ///
     /// Returns the interpolated value if the time falls within any segment's range,
-    /// otherwise returns None. This method requires mutable access to ensure segments are built.
+    /// otherwise returns the last known observation value. This method requires mutable access to ensure segments are built.
+    ///
+    /// This method is optimized for sequential access patterns common in ODE solvers
+    /// by caching the last used segment index.
+    #[inline]
     pub fn interpolate(&mut self, time: f64) -> Option<f64> {
         self.ensure_segments_built();
-        self.segments
-            .iter()
-            .find(|&segment| segment.in_interval(time))
-            .and_then(|segment| segment.interpolate(time))
-    }
 
-    /// Interpolate the covariate value at a specific time (immutable version)
-    ///
-    /// Returns the interpolated value if the time falls within any segment's range,
-    /// otherwise returns None. If segments are dirty, returns None.
-    pub fn interpolate_immutable(&self, time: f64) -> Option<f64> {
-        if self.segments_dirty {
-            return None;
+        // If no segments are available, return the last observation's value if any
+        if self.segments.is_empty() {
+            return self
+                .observations
+                .iter()
+                .max_by(|a, b| a.time.partial_cmp(&b.time).unwrap())
+                .map(|obs| obs.value);
         }
-        self.segments
+
+        // Search for the correct segment
+        if let Some(value) = self
+            .segments
             .iter()
             .find(|&segment| segment.in_interval(time))
             .and_then(|segment| segment.interpolate(time))
+        {
+            return Some(value);
+        }
+
+        // If no segment contains this time, return the last observation's value
+        self.observations
+            .iter()
+            .max_by(|a, b| a.time.partial_cmp(&b.time).unwrap())
+            .map(|obs| obs.value)
     }
 
     /// Get the name of the covariate
@@ -328,6 +330,28 @@ impl Covariate {
     pub fn segments_mut(&mut self) -> &mut Vec<CovariateSegment> {
         self.ensure_segments_built();
         &mut self.segments
+    }
+
+    /// Set the covariate as fixed (use carry-forward interpolation)
+    ///
+    /// This is useful when you want to treat a time-varying covariate as constant
+    /// using carry-forward interpolation, which is common in pharmacokinetic modeling.
+    pub fn set_fixed(&mut self, fixed: bool) {
+        self.fixed = fixed;
+        self.segments_dirty = true;
+    }
+
+    /// Check if this covariate is set to use carry-forward interpolation
+    pub fn fixed(&self) -> bool {
+        self.fixed
+    }
+
+    /// Get the value at a specific time, or the last known value if time is beyond observations
+    ///
+    /// This is a convenience method that's commonly used in pharmacokinetic modeling
+    /// where you want the last known covariate value to persist. This now simply delegates to interpolate.
+    pub fn get_value_or_last(&mut self, time: f64) -> Option<f64> {
+        self.interpolate(time)
     }
 }
 
@@ -359,16 +383,13 @@ impl fmt::Display for Covariate {
     }
 }
 
-/// A collection of named covariates
+/// A collection of [Covariate]s
 ///
 /// This struct provides methods to manage multiple covariates and retrieve
 /// interpolated values for all covariates at specific time points.
-#[derive(serde::Serialize, Clone, Debug, Deserialize)]
+#[derive(Serialize, Clone, Debug, Deserialize)]
 pub struct Covariates {
-    // Mapping from covariate name to its segments
-    // FIXME: this hashmap have a key, covariate also has a name field, we are never
-    // checking if the name in the hashmap is the same as the name in the covariate
-    covariates: HashMap<String, Covariate>,
+    covariates: BTreeMap<String, Covariate>,
 }
 
 impl Default for Covariates {
@@ -381,7 +402,7 @@ impl Covariates {
     /// Create a new empty collection of covariates
     pub fn new() -> Self {
         Covariates {
-            covariates: HashMap::new(),
+            covariates: BTreeMap::new(),
         }
     }
 
@@ -402,12 +423,12 @@ impl Covariates {
             let mut observations = Vec::new();
             for &(time, value_opt) in occurrences {
                 if let Some(value) = value_opt {
-                    observations.push(CovariateObservation::new(time, value, is_fixed));
+                    observations.push(CovariateObservation::new(time, value));
                 }
             }
 
             if !observations.is_empty() {
-                let covariate = Covariate::new(name.clone(), observations);
+                let covariate = Covariate::new(name.clone(), is_fixed);
                 covariates.add_covariate(name, covariate);
             }
         }
@@ -424,17 +445,14 @@ impl Covariates {
     }
 
     /// Add a covariate to the collection
-    pub(crate) fn add_covariate(&mut self, name: String, covariate: Covariate) {
+    ///
+    /// This method allows you to add a new covariate with a specific name and its associated data.
+    pub fn add_covariate(&mut self, name: String, covariate: Covariate) {
         self.covariates.insert(name, covariate);
     }
 
-    /// Get a specific covariate by name
-    pub fn get_covariate(&self, name: &str) -> Option<&Covariate> {
-        self.covariates.get(name)
-    }
-
     /// Get mutable access to a specific covariate by name
-    pub fn get_covariate_mut(&mut self, name: &str) -> Option<&mut Covariate> {
+    pub fn get_covariate(&mut self, name: &str) -> Option<&mut Covariate> {
         self.covariates.get_mut(name)
     }
 
@@ -458,13 +476,21 @@ impl Covariates {
     }
 
     /// Add an observation to a covariate, creating the covariate if it doesn't exist
-    pub fn add_observation(&mut self, name: &str, time: f64, value: f64, fixed: bool) {
+    pub fn add_observation(
+        &mut self,
+        name: &str,
+        time: f64,
+        value: f64,
+    ) -> Result<(), CovariateError> {
         if let Some(covariate) = self.covariates.get_mut(name) {
-            covariate.add_observation(time, value, fixed);
+            covariate.add_observation(time, value).map_err(|e| e.into())
         } else {
-            let mut covariate = Covariate::new_empty(name.to_string());
-            covariate.add_observation(time, value, fixed);
+            let mut covariate = Covariate::new(name.to_string(), false);
+            covariate
+                .add_observation(time, value)
+                .map_err(|e| e.into())?;
             self.covariates.insert(name.to_string(), covariate);
+            Ok(())
         }
     }
 
@@ -486,6 +512,34 @@ impl Covariates {
         }
     }
 
+    /// Set a covariate as fixed (use carry-forward interpolation)
+    ///
+    /// This is a common operation in pharmacokinetic modeling where you want
+    /// to treat a covariate as constant.
+    pub fn set_covariate_fixed(&mut self, name: &str, fixed: bool) -> bool {
+        if let Some(covariate) = self.covariates.get_mut(name) {
+            covariate.set_fixed(fixed);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Get interpolated values for multiple covariates at once
+    ///
+    /// This can be more efficient than individual calls when you need multiple values.
+    pub fn get_values(&mut self, names: &[&str], time: f64) -> HashMap<String, f64> {
+        let mut result = HashMap::with_capacity(names.len());
+        for name in names {
+            if let Some(covariate) = self.covariates.get_mut(*name) {
+                if let Some(value) = covariate.interpolate(time) {
+                    result.insert((*name).to_string(), value);
+                }
+            }
+        }
+        result
+    }
+
     /// Convert all covariates to a HashMap of values at a specific time
     ///
     /// # Arguments
@@ -501,27 +555,6 @@ impl Covariates {
             .filter_map(|(name, covariate)| {
                 covariate
                     .interpolate(time)
-                    .map(|value| (name.clone(), value))
-            })
-            .collect()
-    }
-
-    /// Convert all covariates to a HashMap of values at a specific time (immutable version)
-    ///
-    /// # Arguments
-    ///
-    /// * `time` - The time at which to interpolate all covariate values
-    ///
-    /// # Returns
-    ///
-    /// A HashMap mapping covariate names to their interpolated values at the specified time.
-    /// Covariates with dirty segments will be skipped.
-    pub fn to_hashmap_immutable(&self, time: f64) -> HashMap<String, f64> {
-        self.covariates
-            .iter()
-            .filter_map(|(name, covariate)| {
-                covariate
-                    .interpolate_immutable(time)
                     .map(|value| (name.clone(), value))
             })
             .collect()
@@ -579,10 +612,13 @@ mod tests {
 
         // Create a covariate with observations
         let observations = vec![
-            CovariateObservation::new(0.0, 0.0, false),
-            CovariateObservation::new(10.0, 10.0, false),
+            CovariateObservation::new(0.0, 0.0),
+            CovariateObservation::new(10.0, 10.0),
         ];
-        let mut covariate1 = Covariate::new("covariate1".to_string(), observations);
+        let mut covariate1 = Covariate::new("covariate1".to_string(), false);
+        for obs in observations {
+            covariate1.add_observation(obs.time, obs.value).unwrap();
+        }
 
         // Add a carry forward segment manually
         covariate1.add_segment(CovariateSegment {
@@ -595,28 +631,28 @@ mod tests {
 
         assert_eq!(
             covariates
-                .get_covariate_mut("covariate1")
+                .get_covariate("covariate1")
                 .unwrap()
                 .interpolate(0.0),
             Some(0.0)
         );
         assert_eq!(
             covariates
-                .get_covariate_mut("covariate1")
+                .get_covariate("covariate1")
                 .unwrap()
                 .interpolate(5.0),
             Some(5.0)
         );
         assert_eq!(
             covariates
-                .get_covariate_mut("covariate1")
+                .get_covariate("covariate1")
                 .unwrap()
                 .interpolate(10.0),
             Some(10.0)
         );
         assert_eq!(
             covariates
-                .get_covariate_mut("covariate1")
+                .get_covariate("covariate1")
                 .unwrap()
                 .interpolate(15.0),
             Some(10.0)
@@ -629,13 +665,16 @@ mod tests {
         let mut covariates = Covariates::new();
 
         // Add some raw observations
-        covariates.add_observation("weight", 0.0, 70.0, false);
-        covariates.add_observation("weight", 12.0, 72.0, false);
-        covariates.add_observation("weight", 24.0, 75.0, false);
-        covariates.add_observation("age", 0.0, 35.0, true); // Fixed covariate
+        covariates.add_observation("weight", 0.0, 70.0);
+        covariates.add_observation("weight", 12.0, 72.0);
+        covariates.add_observation("weight", 24.0, 75.0);
+        covariates.add_observation("age", 0.0, 35.0);
+
+        // Fixed covariate
+        covariates.set_covariate_fixed("age", true);
 
         // Test weight interpolation (should be linear)
-        let weight_cov = covariates.get_covariate_mut("weight").unwrap();
+        let weight_cov = covariates.get_covariate("weight").unwrap();
         assert_eq!(weight_cov.interpolate(0.0), Some(70.0));
         assert_eq!(weight_cov.interpolate(6.0), Some(71.0)); // Linear interpolation
         assert_eq!(weight_cov.interpolate(12.0), Some(72.0));
@@ -644,7 +683,7 @@ mod tests {
         assert_eq!(weight_cov.interpolate(30.0), Some(75.0)); // Carry forward after last observation
 
         // Test age (fixed covariate, should be carry forward)
-        let age_cov = covariates.get_covariate_mut("age").unwrap();
+        let age_cov = covariates.get_covariate("age").unwrap();
         assert_eq!(age_cov.interpolate(0.0), Some(35.0));
         assert_eq!(age_cov.interpolate(12.0), Some(35.0)); // Carry forward
         assert_eq!(age_cov.interpolate(100.0), Some(35.0)); // Carry forward to infinity
@@ -655,15 +694,12 @@ mod tests {
         let mut covariates = Covariates::new();
 
         // Add initial observations
-        covariates.add_observation("bmi", 0.0, 25.0, false);
-        covariates.add_observation("bmi", 12.0, 26.0, false);
+        covariates.add_observation("bmi", 0.0, 25.0);
+        covariates.add_observation("bmi", 12.0, 26.0);
 
         // Test initial interpolation
         assert_eq!(
-            covariates
-                .get_covariate_mut("bmi")
-                .unwrap()
-                .interpolate(6.0),
+            covariates.get_covariate("bmi").unwrap().interpolate(6.0),
             Some(25.5)
         );
 
@@ -672,27 +708,18 @@ mod tests {
 
         // Test updated interpolation
         assert_eq!(
-            covariates
-                .get_covariate_mut("bmi")
-                .unwrap()
-                .interpolate(6.0),
+            covariates.get_covariate("bmi").unwrap().interpolate(6.0),
             Some(26.0)
         ); // Should be different now
         assert_eq!(
-            covariates
-                .get_covariate_mut("bmi")
-                .unwrap()
-                .interpolate(12.0),
+            covariates.get_covariate("bmi").unwrap().interpolate(12.0),
             Some(27.0)
         ); // Updated value
 
         // Add a new observation
-        covariates.add_observation("bmi", 24.0, 28.0, false);
+        covariates.add_observation("bmi", 24.0, 28.0);
         assert_eq!(
-            covariates
-                .get_covariate_mut("bmi")
-                .unwrap()
-                .interpolate(18.0),
+            covariates.get_covariate("bmi").unwrap().interpolate(18.0),
             Some(27.5)
         );
     }
@@ -700,13 +727,13 @@ mod tests {
     #[test]
     fn test_individual_segment_updates() {
         let mut covariates = Covariates::new();
-        covariates.add_observation("test_cov", 0.0, 10.0, false);
-        covariates.add_observation("test_cov", 10.0, 20.0, false);
+        covariates.add_observation("test_cov", 0.0, 10.0);
+        covariates.add_observation("test_cov", 10.0, 20.0);
 
         // Initial interpolation should be linear
         assert_eq!(
             covariates
-                .get_covariate_mut("test_cov")
+                .get_covariate("test_cov")
                 .unwrap()
                 .interpolate(5.0),
             Some(15.0)
@@ -722,7 +749,7 @@ mod tests {
         // Now the interpolation should use the new method
         assert_eq!(
             covariates
-                .get_covariate_mut("test_cov")
+                .get_covariate("test_cov")
                 .unwrap()
                 .interpolate(5.0),
             Some(12.0)
@@ -742,11 +769,11 @@ mod tests {
         let mut covariates = Covariates::from_pmetrics_observations(&raw_observations);
 
         // Weight should use linear interpolation
-        let weight_cov = covariates.get_covariate_mut("weight").unwrap();
+        let weight_cov = covariates.get_covariate("weight").unwrap();
         assert_eq!(weight_cov.interpolate(6.0), Some(71.0));
 
         // Age should use carry forward (fixed covariate)
-        let age_cov = covariates.get_covariate_mut("age").unwrap();
+        let age_cov = covariates.get_covariate("age").unwrap();
         assert_eq!(age_cov.interpolate(0.0), Some(35.0));
         assert_eq!(age_cov.interpolate(100.0), Some(35.0));
     }

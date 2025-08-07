@@ -307,7 +307,7 @@ impl<'a> IntoIterator for &'a mut Data {
 ///
 /// A [Subject] represents a single individual with one or more occasions of data,
 /// each containing events (doses, observations) and covariates.
-#[derive(serde::Serialize, Debug, Deserialize, Clone)]
+#[derive(Serialize, Debug, Deserialize, Clone)]
 pub struct Subject {
     id: String,
     occasions: Vec<Occasion>,
@@ -467,7 +467,7 @@ impl<'a> IntoIterator for &'a mut Subject {
 /// An [Occasion] represents a distinct period of data collection for a subject,
 /// such as a hospital visit or dosing regimen. It contains events (doses, observations)
 /// and time-varying covariates.
-#[derive(serde::Serialize, Debug, Deserialize, Clone)]
+#[derive(Serialize, Debug, Deserialize, Clone)]
 pub struct Occasion {
     events: Vec<Event>,
     covariates: Covariates,
@@ -612,8 +612,8 @@ impl Occasion {
     /// # Returns
     ///
     /// Reference to the occasion's covariates, if any
-    pub fn covariates(&self) -> &Covariates {
-        &self.covariates
+    pub fn covariates(&mut self) -> &mut Covariates {
+        &mut self.covariates
     }
 
     /// Add an event to the [Occasion]
@@ -1034,7 +1034,7 @@ mod tests {
         let mut covariate_ages = Vec::new();
         for occasion in &subject {
             if let Some(age_cov) = occasion.covariates().get_covariate("age") {
-                if let Some(age_value) = age_cov.interpolate(0.0) {
+                if let Some(age_value) = age_cov.clone().interpolate(0.0) {
                     covariate_ages.push(age_value);
                 }
             }

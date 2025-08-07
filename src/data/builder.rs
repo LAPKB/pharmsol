@@ -274,7 +274,7 @@ impl SubjectBuilder {
         // create the covariate object and add it to the current occasion
         for (name, segments) in covariates {
             // Create a new empty covariate and manually add segments for backward compatibility
-            let mut covariate = Covariate::new_empty(name.clone());
+            let mut covariate = Covariate::new(name.clone(), false); // Default to linear interpolation
             for segment in segments {
                 covariate.add_segment(segment);
             }
