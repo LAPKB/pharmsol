@@ -27,7 +27,9 @@ fn subject_builder_benchmark(c: &mut Criterion) {
                 .observation(5.0, 300.0, 0)
                 .observation(12.0, 300.0, 0)
                 .covariate("age", 0.0, 30.0)
+                .unwrap()
                 .covariate("weight", 0.0, 70.0)
+                .unwrap()
                 .build();
             black_box(subject);
         })
@@ -41,11 +43,13 @@ fn subject_builder_benchmark(c: &mut Criterion) {
                 .observation(1.0, 50.0, 0)
                 .observation(6.0, 25.0, 0)
                 .covariate("age", 0.0, 30.0)
+                .unwrap()
                 .reset()
                 .bolus(24.0, 120.0, 0)
                 .observation(25.0, 55.0, 0)
                 .observation(30.0, 30.0, 0)
                 .covariate("age", 24.0, 30.0)
+                .unwrap()
                 .build();
             black_box(subject);
         })
@@ -190,7 +194,9 @@ fn data_operations_benchmark(c: &mut Criterion) {
                     .observation(6.0, 25.0, 0)
                     .observation(12.0, 15.0, 0)
                     .covariate("age", 0.0, 20.0 + (i as f64 % 50.0))
+                    .unwrap()
                     .covariate("weight", 0.0, 60.0 + (i as f64 % 40.0))
+                    .unwrap()
                     .build()
             })
             .collect();
@@ -211,7 +217,9 @@ fn data_operations_benchmark(c: &mut Criterion) {
                         .observation(12.0, 15.0, 0)
                         .observation(24.0, 8.0, 0)
                         .covariate("age", 0.0, 25.0 + (i as f64 % 50.0))
+                        .unwrap()
                         .covariate("weight", 0.0, 60.0 + (i as f64 % 40.0))
+                        .unwrap()
                         .build()
                 })
                 .collect();

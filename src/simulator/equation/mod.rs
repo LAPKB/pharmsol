@@ -174,7 +174,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
     /// The log-likelihood value
     fn estimate_likelihood(
         &self,
-        subject: &mut Subject,
+        subject: &Subject,
         support_point: &Vec<f64>,
         error_models: &ErrorModels,
         cache: bool,
