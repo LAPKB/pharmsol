@@ -203,6 +203,7 @@ impl SubjectBuilder {
     pub fn reset(mut self) -> Self {
         let block_index = self.current_occasion.index() + 1;
         self.current_occasion.sort();
+        self.covariates.build();
         self.current_occasion.set_covariates(self.covariates);
         self.occasions.push(self.current_occasion);
         let occasion = Occasion::new(Vec::new(), Covariates::new(), block_index);
@@ -229,7 +230,9 @@ impl SubjectBuilder {
     ///
     /// let subject = Subject::builder("patient_001")
     ///     .covariate("weight", 0.0, 70.0)   // Weight at baseline
+    ///     .unwrap()
     ///     .covariate("weight", 30.0, 68.5)  // Weight at day 30
+    ///     .unwrap()
     ///     .build();
     /// ```
     pub fn covariate(mut self, name: &str, time: f64, value: f64) -> Result<Self, CovariateError> {

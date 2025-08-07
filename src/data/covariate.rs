@@ -214,6 +214,15 @@ impl Covariate {
                         },
                     ));
                 }
+            } else {
+                // Single observation, not fixed - create a CarryForward segment to infinity
+                self.segments.push(CovariateSegment::new(
+                    current_obs.time,
+                    f64::INFINITY,
+                    Interpolation::CarryForward {
+                        value: current_obs.value,
+                    },
+                ));
             }
         }
         self.segments_dirty = false;
@@ -380,11 +389,14 @@ impl Covariates {
             }
 
             if !observations.is_empty() {
-                let covariate = Covariate::new(name.clone(), is_fixed);
+                let mut covariate = Covariate::new(name.clone(), is_fixed);
+                for obs in observations {
+                    covariate.add_observation(obs.time(), obs.value()).unwrap();
+                }
                 covariates.add_covariate(name, covariate);
             }
         }
-
+        covariates.build();
         covariates
     }
 
