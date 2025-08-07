@@ -516,7 +516,7 @@ mod tests {
 
         assert_eq!(segment.interpolate(0.0), Some(0.0));
         assert_eq!(segment.interpolate(5.0), Some(5.0));
-        assert_eq!(segment.interpolate(10.0), Some(10.0));
+        assert_eq!(segment.interpolate(10.0), None);
         assert_eq!(segment.interpolate(15.0), None);
     }
 
@@ -530,7 +530,7 @@ mod tests {
 
         assert_eq!(segment.interpolate(0.0), Some(5.0));
         assert_eq!(segment.interpolate(5.0), Some(5.0));
-        assert_eq!(segment.interpolate(10.0), Some(5.0));
+        assert_eq!(segment.interpolate(10.0), None);
         assert_eq!(segment.interpolate(15.0), None);
     }
 
@@ -598,6 +598,7 @@ mod tests {
 
         // Fixed covariate
         covariates.set_covariate_fixed("age", true);
+        covariates.build();
 
         // Test weight interpolation (should be linear)
         let weight_cov = covariates.get_covariate("weight").unwrap();
@@ -623,6 +624,8 @@ mod tests {
         covariates.add_observation("bmi", 0.0, 25.0).unwrap();
         covariates.add_observation("bmi", 12.0, 26.0).unwrap();
 
+        covariates.build();
+
         // Test initial interpolation
         assert_eq!(
             covariates
@@ -635,6 +638,7 @@ mod tests {
 
         // Update an observation
         assert!(covariates.update_observation("bmi", 12.0, 27.0));
+        covariates.build();
 
         // Test updated interpolation
         assert_eq!(
@@ -656,6 +660,7 @@ mod tests {
 
         // Add a new observation
         covariates.add_observation("bmi", 24.0, 28.0).unwrap();
+        covariates.build();
         assert_eq!(
             covariates
                 .get_covariate("bmi")
@@ -671,6 +676,7 @@ mod tests {
         let mut covariates = Covariates::new();
         covariates.add_observation("test_cov", 0.0, 10.0).unwrap();
         covariates.add_observation("test_cov", 10.0, 20.0).unwrap();
+        covariates.build();
 
         // Initial interpolation should be linear
         assert_eq!(
@@ -693,7 +699,8 @@ mod tests {
         );
         raw_observations.insert("age!".to_string(), vec![(0.0, Some(35.0))]); // Fixed covariate
 
-        let covariates = Covariates::from_pmetrics_observations(&raw_observations);
+        let mut covariates = Covariates::from_pmetrics_observations(&raw_observations);
+        covariates.build();
 
         // Weight should use linear interpolation
         let weight_cov = covariates.get_covariate("weight").unwrap();

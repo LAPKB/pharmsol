@@ -519,6 +519,12 @@ impl Occasion {
         self.covariates.build();
     }
 
+    /// Set covariates for this occasion
+    pub(crate) fn set_covariates(&mut self, covariates: Covariates) {
+        self.covariates = covariates;
+        self.covariates.build();
+    }
+
     fn add_lagtime(&mut self, reorder: Option<(&Fa, &Lag, &Vec<f64>, &Covariates)>) {
         if let Some((_, fn_lag, spp, covariates)) = reorder {
             let spp = nalgebra::DVector::from_vec(spp.to_vec());
@@ -1054,7 +1060,7 @@ mod tests {
         let mut covariate_ages = Vec::new();
         for occasion in &subject {
             if let Some(age_cov) = occasion.covariates().get_covariate("age") {
-                if let Ok(age_value) = age_cov.clone().interpolate(0.0) {
+                if let Ok(age_value) = age_cov.interpolate(0.1) {
                     covariate_ages.push(age_value);
                 }
             }
