@@ -229,6 +229,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
         let mut likelihood = Vec::new();
         for occasion in subject.occasions() {
             let covariates = occasion.covariates();
+
             let mut x = self.initial_state(support_point, covariates, occasion.index());
             let mut infusions = Vec::new();
             let events = occasion.get_events(
