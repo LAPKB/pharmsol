@@ -680,4 +680,93 @@ mod tests {
         assert_eq!(age_cov.interpolate(0.0).unwrap(), (35.0));
         assert_eq!(age_cov.interpolate(100.0).unwrap(), (35.0));
     }
+
+    #[test]
+    fn test_pmetrics_csv_covariate_interpolation() {
+        use crate::data::parser::pmetrics::read_pmetrics;
+
+        // Read the test CSV file with weight data
+        let data_result = read_pmetrics("src/tests/data/covariate_test.csv");
+        assert!(
+            data_result.is_ok(),
+            "Failed to read CSV file: {:?}",
+            data_result.err()
+        );
+
+        let data = data_result.unwrap();
+
+        // Get the first subject
+        let binding = data.subjects();
+        let subject1 = binding.get(0).expect("Should have at least one subject");
+
+        // Get the covariates for subject 1
+        let covariates = subject1.occasions().first().unwrap().covariates();
+
+        // Verify that WT covariate exists
+        let wt_cov = covariates
+            .get_covariate("wt")
+            .expect("WT covariate should exist");
+
+        // Test interpolation at observation times
+        assert_eq!(
+            wt_cov.interpolate(0.0).unwrap(),
+            70.0,
+            "Weight at time 0 should be 70.0"
+        );
+        assert_eq!(
+            wt_cov.interpolate(24.0).unwrap(),
+            72.0,
+            "Weight at time 24 should be 72.0"
+        );
+        assert_eq!(
+            wt_cov.interpolate(48.0).unwrap(),
+            74.0,
+            "Weight at time 48 should be 74.0"
+        );
+
+        // Test linear interpolation between observations
+        let interpolated_value = wt_cov.interpolate(12.0).unwrap();
+        assert!(
+            (interpolated_value - 70.4).abs() < 1e-8,
+            "Weight at time 12 should be approximately 70.4 (linear interpolation), got {}",
+            interpolated_value
+        );
+        assert_eq!(
+            wt_cov.interpolate(36.0).unwrap(),
+            73.0,
+            "Weight at time 36 should be 73.0 (linear interpolation)"
+        );
+
+        // Test carry forward after last observation
+        assert_eq!(
+            wt_cov.interpolate(60.0).unwrap(),
+            74.0,
+            "Weight at time 60 should be 74.0 (carry forward)"
+        );
+
+        // Get the second subject
+        let binding = data.subjects();
+        let subject2 = binding.get(1).expect("Should have a second subject");
+        let covariates2 = subject2.occasions().first().unwrap().covariates();
+        let wt_cov2 = covariates2
+            .get_covariate("wt")
+            .expect("WT covariate should exist for subject 2");
+
+        // Test subject 2 weight interpolation
+        assert_eq!(
+            wt_cov2.interpolate(0.0).unwrap(),
+            65.0,
+            "Subject 2 weight at time 0 should be 65.0"
+        );
+        assert_eq!(
+            wt_cov2.interpolate(18.0).unwrap(),
+            66.0,
+            "Subject 2 weight at time 18 should be 66.0 (linear interpolation)"
+        );
+        assert_eq!(
+            wt_cov2.interpolate(48.0).unwrap(),
+            69.0,
+            "Subject 2 weight at time 48 should be 69.0"
+        );
+    }
 }
