@@ -122,18 +122,18 @@ impl EM {
                 rateiv[infusion.input()] += infusion.amount() / infusion.duration();
             }
         }
-        let mut drift_term = DVector::zeros(n);
+        let mut drift_term = DVector::zeros(n).into();
         (self.drift)(
-            state,
-            &self.params,
+            &state.clone().into(),
+            &self.params.clone().into(),
             time,
             &mut drift_term,
-            rateiv,
+            rateiv.into(),
             &self.cov,
         );
 
-        let mut diffusion_term = DVector::zeros(n);
-        (self.diffusion)(&self.params, &mut diffusion_term);
+        let mut diffusion_term = DVector::zeros(n).into();
+        (self.diffusion)(&self.params.clone().into(), &mut diffusion_term);
 
         let mut rng = rng();
         let normal_dist = Normal::new(0.0, 1.0).unwrap();

@@ -1,4 +1,5 @@
 use crate::{data::Covariates, simulator::*};
+use diffsol::VectorCommon;
 use nalgebra::{DVector, Matrix3, Vector3};
 
 ///
@@ -85,7 +86,7 @@ pub fn three_compartments(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V
         c25 * exp_l1_t + c26 * exp_l2_t + c27 * exp_l3_t,
     );
 
-    let non_zero = non_zero_matrix * x;
+    let non_zero = non_zero_matrix * x.inner();
 
     let infusion_vector = Vector3::new(
         ((1.0 - exp_l1_t) * c1 / l1) + ((1.0 - exp_l2_t) * c2 / l2) + ((1.0 - exp_l3_t) * c3 / l3),
@@ -102,7 +103,7 @@ pub fn three_compartments(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V
     let result_vector = non_zero + infusion;
 
     // Convert Vector2 to DVector
-    DVector::from_vec(vec![result_vector[0], result_vector[1], result_vector[2]])
+    DVector::from_vec(vec![result_vector[0], result_vector[1], result_vector[2]]).into()
 }
 
 ///
