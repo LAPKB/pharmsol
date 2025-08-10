@@ -245,6 +245,11 @@ impl Prediction {
         self.prediction
     }
 
+    /// Set the predicted value
+    pub(crate) fn set_prediction(&mut self, prediction: f64) {
+        self.prediction = prediction;
+    }
+
     /// Get the output equation index.
     pub fn outeq(&self) -> usize {
         self.outeq
