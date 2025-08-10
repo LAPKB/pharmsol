@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.2](https://github.com/LAPKB/pharmsol/compare/v0.14.1...v0.14.2) - 2025-08-10
+
+### Added
+
+- Change how SDE predictions are calculated ([#115](https://github.com/LAPKB/pharmsol/pull/115))
+- Update API for Data ([#102](https://github.com/LAPKB/pharmsol/pull/102))
+- Support fixed and variable scalars for error models ([#106](https://github.com/LAPKB/pharmsol/pull/106))
+
+### Fixed
+
+- Fix test missing Some ([#114](https://github.com/LAPKB/pharmsol/pull/114))
+- Handle NA in Pmetrics files ([#109](https://github.com/LAPKB/pharmsol/pull/109))
+
+### Other
+
+- Update diffsol to 0.6.5 ([#94](https://github.com/LAPKB/pharmsol/pull/94))
+- Adding covariate benchmarks ([#107](https://github.com/LAPKB/pharmsol/pull/107))
+- Update criterion and cached ([#105](https://github.com/LAPKB/pharmsol/pull/105))
+
 ## [0.14.1](https://github.com/LAPKB/pharmsol/compare/v0.14.0...v0.14.1) - 2025-07-25
 
 ### Other
