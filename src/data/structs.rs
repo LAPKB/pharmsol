@@ -531,7 +531,7 @@ impl Occasion {
             for event in self.events.iter_mut() {
                 let time = event.time();
                 if let Event::Bolus(bolus) = event {
-                    let lagtime = fn_lag(&spp, time, covariates);
+                    let lagtime = fn_lag(&spp.clone().into(), time, covariates);
                     if let Some(l) = lagtime.get(&bolus.input()) {
                         *bolus.mut_time() += l;
                     }
@@ -548,7 +548,7 @@ impl Occasion {
             for event in self.events.iter_mut() {
                 let time = event.time();
                 if let Event::Bolus(bolus) = event {
-                    let fa = fn_fa(&spp, time, covariates);
+                    let fa = fn_fa(&spp.clone().into(), time, covariates);
                     if let Some(f) = fa.get(&bolus.input()) {
                         bolus.set_amount(bolus.amount() * f);
                     }
