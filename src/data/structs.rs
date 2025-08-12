@@ -177,7 +177,7 @@ impl Data {
                     .occasions
                     .iter()
                     .map(|occasion| {
-                        let old_events = occasion.get_events(None, true, None);
+                        let old_events = occasion.process_events(None, true, None);
 
                         // Create a set of existing (time, outeq) pairs for fast lookup
                         let existing_obs: std::collections::HashSet<(u64, usize)> = old_events
@@ -587,18 +587,18 @@ impl Occasion {
     }
     // TODO: This clones the occasion, which is not ideal
 
-    /// Get events with modifications for lag time and bioavailability
+    /// Process the events with modifications for lag time, bioavailability and input remapping.
     ///
     /// # Arguments
     ///
-    /// * `lagtime` - Optional map of compartment-specific lag times
-    /// * `bioavailability` - Optional map of compartment-specific bioavailability factors
-    /// * `ignore` - Whether to exclude events marked as "ignore"
+    /// * `reorder` - Optional tuple containing references to (Fa, Lag, support point, covariates) for adjustments
+    /// * `ignore` - If true, filter out events marked as ignore
+    /// * `mappings` - Optional reference to an [equation::Mapper] for input remapping
     ///
     /// # Returns
     ///
     /// Vector of events, potentially filtered and with times adjusted for lag and bioavailability
-    pub fn get_events(
+    pub fn process_events(
         &self,
         reorder: Option<(&Fa, &Lag, &Vec<f64>, &Covariates)>,
         ignore: bool,
@@ -927,7 +927,7 @@ mod tests {
             1,
         );
         occasion.sort();
-        let events = occasion.get_events(None, false, None);
+        let events = occasion.process_events(None, false, None);
         match &events[0] {
             Event::Bolus(b) => assert_eq!(b.time(), 1.0),
             _ => panic!("First event should be a Bolus"),

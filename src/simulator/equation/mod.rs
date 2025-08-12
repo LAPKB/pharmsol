@@ -250,7 +250,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
 
             let mut x = self.initial_state(support_point, covariates, occasion.index());
             let mut infusions = Vec::new();
-            let events = occasion.get_events(
+            let events = occasion.process_events(
                 Some((self.fa(), self.lag(), support_point, covariates)),
                 true,
                 self.mappings(),

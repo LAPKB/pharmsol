@@ -215,7 +215,7 @@ impl Equation for ODE {
         for occasion in subject.occasions() {
             let covariates = occasion.covariates();
             let infusions = occasion.infusions_ref();
-            let events = occasion.get_events(
+            let events = occasion.process_events(
                 Some((self.fa(), self.lag(), support_point, covariates)),
                 true,
                 self.mappings(),
