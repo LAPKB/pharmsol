@@ -218,6 +218,7 @@ impl Equation for ODE {
             let events = occasion.get_events(
                 Some((self.fa(), self.lag(), support_point, covariates)),
                 true,
+                self.mappings(),
             );
 
             let problem = OdeBuilder::<M>::new()

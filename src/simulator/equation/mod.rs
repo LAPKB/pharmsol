@@ -13,7 +13,7 @@ use crate::{
     simulator::{Fa, Lag},
     Covariates, Event, Infusion, Observation, PharmsolError, Subject,
 };
-type Mapper = HashMap<usize, usize>;
+pub type Mapper = HashMap<usize, usize>;
 
 use super::likelihood::Prediction;
 
@@ -243,8 +243,6 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
         support_point: &Vec<f64>,
         error_models: Option<&ErrorModels>,
     ) -> Result<(Self::P, Option<f64>), PharmsolError> {
-        // let lag = self.get_lag(support_point);
-        // let fa = self.get_fa(support_point);
         let mut output = Self::P::new(self.nparticles());
         let mut likelihood = Vec::new();
         for occasion in subject.occasions() {
@@ -255,6 +253,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
             let events = occasion.get_events(
                 Some((self.fa(), self.lag(), support_point, covariates)),
                 true,
+                self.mappings(),
             );
             for (index, event) in events.iter().enumerate() {
                 self.simulate_event(
