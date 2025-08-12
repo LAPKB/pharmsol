@@ -102,8 +102,29 @@ impl Predictions for Array2<Prediction> {
     fn get_predictions(&self) -> Vec<Prediction> {
         //TODO: This is only returning the first particle, not the best, not the worst, THE FIRST
         // CHANGE THIS
-        let row = self.row(0).to_vec();
-        row
+        // let row = self.row(0).to_vec();
+        // row
+        // Make this return the mean prediction across all particles
+        if self.is_empty() || self.ncols() == 0 {
+            return Vec::new();
+        }
+
+        let mut result = Vec::with_capacity(self.ncols());
+
+        for col in 0..self.ncols() {
+            let column = self.column(col);
+            let mean_prediction: f64 = column
+                .iter()
+                .map(|pred: &Prediction| pred.prediction())
+                .sum::<f64>()
+                / self.nrows() as f64;
+
+                let mut prediction = column.first().unwrap().clone();
+                prediction.set_prediction(mean_prediction);
+                result.push(prediction);
+        }
+
+        result
     }
 }
 
@@ -202,8 +223,16 @@ impl EquationPriv for SDE {
         // q = pdf.(Distributions.Normal(0, 0.5), e)
         if let Some(em) = error_model {
             let mut q: Vec<f64> = Vec::with_capacity(self.nparticles);
-
+            //
+            // wmy centering_function is a running Chi^2 w/exp = support point
+            // let centering_function = p.pred[2]; // move this inside the iteration.
+            //
+            // pred.iter().for_each(|p| q.push(p.state[4] * p.likelihood(em)));
+            //
+            // note: Above doesn't compile b/c pred is private; but also: I'm not sure if pred is the state, and state is x ???
+            //
             pred.iter().for_each(|p| q.push(p.likelihood(em)));
+            //
             let sum_q: f64 = q.iter().sum();
             let w: Vec<f64> = q.iter().map(|qi| qi / sum_q).collect();
             let i = sysresample(&w);

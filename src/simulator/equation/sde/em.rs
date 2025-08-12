@@ -108,10 +108,12 @@ impl EM {
 
         let mut rng = rng();
         let normal_dist = Normal::new(0.0, 1.0).unwrap();
-        sigma = normal_dist.sample(&mut rng);
+        // sigma = normal_dist.sample(&mut rng); // oops!!! this makes one sigma for ENTIRE time
         while t < tf {
             let mut y1 = self.state.clone();
             let mut y2 = self.state.clone();
+
+            sigma = normal_dist.sample(&mut rng); // here is correct, only affects one step of the variable time step
 
             // Single step
             self.euler_maruyama_step(t, dt, &mut y1, sigma);
