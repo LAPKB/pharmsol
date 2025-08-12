@@ -27,6 +27,7 @@ pub struct Analytical {
     init: Init,
     out: Out,
     neqs: Neqs,
+    mappings: Option<equation::Mapper>,
 }
 
 impl Analytical {
@@ -57,6 +58,7 @@ impl Analytical {
             init,
             out,
             neqs,
+            mappings: None,
         }
     }
 }
@@ -221,6 +223,12 @@ impl Equation for Analytical {
     }
     fn kind() -> crate::EqnKind {
         crate::EqnKind::Analytical
+    }
+    fn mappings(&self) -> Option<&equation::Mapper> {
+        self.mappings.as_ref()
+    }
+    fn mappings_mut(&mut self) -> &mut Option<equation::Mapper> {
+        &mut self.mappings
     }
 }
 fn spphash(spp: &[f64]) -> u64 {

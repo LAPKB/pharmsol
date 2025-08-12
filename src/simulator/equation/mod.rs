@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use std::{collections::HashMap, fmt::Debug};
 pub mod analytical;
 pub mod meta;
 pub mod ode;
@@ -13,6 +13,7 @@ use crate::{
     simulator::{Fa, Lag},
     Covariates, Event, Infusion, Observation, PharmsolError, Subject,
 };
+type Mapper = HashMap<usize, usize>;
 
 use super::likelihood::Prediction;
 
@@ -206,6 +207,25 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
     /// Get the number of state variables in the model.
     fn nstates(&self) -> usize {
         self.get_nstates()
+    }
+
+    /// Returns the mappings (input -> cmt) if present.
+    fn mappings(&self) -> Option<&Mapper>;
+    /// Returns a mutable reference to the mappings if present.
+    fn mappings_mut(&mut self) -> &mut Option<Mapper>;
+    /// Add an new element to the mapper.
+    fn add_mapping(&mut self, input: usize, cmt: usize) {
+        let slot = self.mappings_mut();
+        match slot {
+            Some(mapper) => {
+                mapper.insert(input, cmt);
+            }
+            None => {
+                let mut mapper = HashMap::new();
+                mapper.insert(input, cmt);
+                *slot = Some(mapper);
+            }
+        }
     }
 
     /// Simulate a subject with given parameters and optionally calculate likelihood.
