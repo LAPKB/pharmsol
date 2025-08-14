@@ -516,13 +516,11 @@ impl Occasion {
     /// * `covariate` - The covariate to add
     pub fn add_covariate(&mut self, name: String, covariate: Covariate) {
         self.covariates.add_covariate(name, covariate);
-        self.covariates.build();
     }
 
     /// Set covariates for this occasion
     pub(crate) fn set_covariates(&mut self, covariates: Covariates) {
         self.covariates = covariates;
-        self.covariates.build();
     }
 
     fn add_lagtime(&mut self, reorder: Option<(&Fa, &Lag, &Vec<f64>, &Covariates)>) {

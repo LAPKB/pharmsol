@@ -203,7 +203,7 @@ impl SubjectBuilder {
     pub fn reset(mut self) -> Self {
         let block_index = self.current_occasion.index() + 1;
         self.current_occasion.sort();
-        self.covariates.build();
+
         self.current_occasion.set_covariates(self.covariates);
         self.occasions.push(self.current_occasion);
         let occasion = Occasion::new(Vec::new(), Covariates::new(), block_index);

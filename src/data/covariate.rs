@@ -221,20 +221,6 @@ impl Covariate {
         }
     }
 
-    /// Build the covariate segments
-    ///
-    /// Must be called before using the covariate to ensure segments are up-to-date.
-    fn build(&mut self) {
-        self.build_segments();
-    }
-
-    /// Sort segments by their start time
-    pub fn sort_segments(&mut self) {
-        self.build();
-        self.segments
-            .sort_by(|a, b| a.from.partial_cmp(&b.from).unwrap());
-    }
-
     /// Interpolate the covariate value at a specific time
     ///
     /// Returns the interpolated value if the time falls within any segment's range,
@@ -350,14 +336,8 @@ impl Covariates {
         }
     }
 
-    pub fn build(&mut self) {
-        for covariate in self.covariates.values_mut() {
-            covariate.build();
-        }
-    }
-
     /// Create covariates from Pmetrics raw observations
-    pub fn from_pmetrics_observations(
+    pub(crate) fn from_pmetrics_observations(
         raw_observations: &HashMap<String, Vec<(f64, Option<f64>)>>,
     ) -> Self {
         let mut covariates = Covariates::new();
@@ -381,7 +361,7 @@ impl Covariates {
                 covariates.add_covariate(name, covariate);
             }
         }
-        covariates.build();
+
         covariates
     }
 
@@ -536,7 +516,6 @@ mod tests {
         covariate1.add_observation(10.0, 10.0);
 
         covariates.add_covariate("covariate1".to_string(), covariate1);
-        covariates.build();
 
         assert_eq!(
             covariates
@@ -585,7 +564,6 @@ mod tests {
 
         // Fixed covariate
         covariates.set_covariate_fixed("age", true);
-        covariates.build();
 
         // Test weight interpolation (should be linear)
         let weight_cov = covariates.get_covariate("weight").unwrap();
@@ -611,8 +589,6 @@ mod tests {
         covariates.add_observation("bmi", 0.0, 25.0);
         covariates.add_observation("bmi", 12.0, 26.0);
 
-        covariates.build();
-
         // Test initial interpolation
         assert_eq!(
             covariates
@@ -625,7 +601,6 @@ mod tests {
 
         // Update an observation
         assert!(covariates.update_observation("bmi", 12.0, 27.0));
-        covariates.build();
 
         // Test updated interpolation
         assert_eq!(
@@ -647,7 +622,7 @@ mod tests {
 
         // Add a new observation
         covariates.add_observation("bmi", 24.0, 28.0);
-        covariates.build();
+
         assert_eq!(
             covariates
                 .get_covariate("bmi")
@@ -668,8 +643,7 @@ mod tests {
         );
         raw_observations.insert("age!".to_string(), vec![(0.0, Some(35.0))]); // Fixed covariate
 
-        let mut covariates = Covariates::from_pmetrics_observations(&raw_observations);
-        covariates.build();
+        let covariates = Covariates::from_pmetrics_observations(&raw_observations);
 
         // Weight should use linear interpolation
         let weight_cov = covariates.get_covariate("weight").unwrap();
