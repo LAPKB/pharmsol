@@ -14,7 +14,6 @@ fn main() {
         .observation(6.0, 0.009099384, 0)
         .observation(8.0, 0.001017932, 0)
         .build();
-
     // optional: clear build directory if you want to compile the model again
     //exa::build::clear_build();
 
@@ -37,6 +36,9 @@ fn main() {
     //clear build
     clear_build();
 
+    let test_dir = std::env::current_dir().expect("Failed to get current directory");
+    let model_output_path = test_dir.join("test_model.pkm");
+
     // Compile the same model using exa
     let ode_path = exa::build::compile::<ODE>(
         format!(
@@ -57,11 +59,13 @@ fn main() {
         )
         "#
         ),
-        Some(PathBuf::from("ode_model.pkm")),
+        Some(model_output_path),
         vec!["ke".to_string(), "v".to_string()],
         |key, msg| println!("{key}-{msg}"), // Empty callback for tests
     )
     .unwrap();
+
+    let analytic_output_path = test_dir.join("analytic_model.pkm");
 
     // compile the same model using analytic exa
     let analytic_path = exa::build::compile::<Analytical>(
@@ -81,15 +85,16 @@ fn main() {
             )
         "#
         ),
-        Some(PathBuf::from("analytic_model.pkm")),
+        Some(analytic_output_path),
         vec!["ke".to_string(), "v".to_string()],
         |key, msg| println!("{key}-{msg}"), // Empty callback for tests
     )
     .unwrap();
-
+    println!("ODE model compiled to: {}", ode_path);
     // Load the compiled model
     let ode_path = PathBuf::from(ode_path);
     let (_lib_ode, (dyn_ode, _meta)) = unsafe { exa::load::load::<ODE>(ode_path.clone()) };
+    println!("Analytical model compiled to: {}", analytic_path);
 
     let analytic_path = PathBuf::from(analytic_path);
     let (_lib_analytical, (dyn_analytical, _meta)) =

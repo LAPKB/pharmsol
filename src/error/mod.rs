@@ -2,7 +2,11 @@ use thiserror::Error;
 
 use crate::data::error_model::ErrorModelError;
 use crate::data::parser::pmetrics::PmetricsError;
+
 use crate::CovariateError;
+
+use crate::equation::mapping::MappingsError;
+
 use ndarray::ShapeError;
 
 #[derive(Error, Debug, Clone)]
@@ -27,6 +31,8 @@ pub enum PharmsolError {
     ZeroLikelihood,
     #[error("Missing observation in prediction")]
     MissingObservation,
+    #[error("Error in mapping inputs to compartments {0}")]
+    MappingError(#[from] MappingsError),
 }
 
 impl From<diffsol::error::DiffsolError> for PharmsolError {

@@ -7,6 +7,7 @@ pub use one_compartment_models::*;
 pub use three_compartment_models::*;
 pub use two_compartment_models::*;
 
+use crate::mapping::Mappings;
 use crate::PharmsolError;
 use crate::{
     data::Covariates, simulator::*, Equation, EquationPriv, EquationTypes, Observation, Subject,
@@ -18,6 +19,7 @@ use cached::UnboundCache;
 ///
 /// This implementation uses closed-form analytical solutions for the model
 /// equations rather than numerical integration.
+#[repr(C)]
 #[derive(Clone, Debug)]
 pub struct Analytical {
     eq: AnalyticalEq,
@@ -27,6 +29,7 @@ pub struct Analytical {
     init: Init,
     out: Out,
     neqs: Neqs,
+    mappings: Mappings,
 }
 
 impl Analytical {
@@ -57,6 +60,7 @@ impl Analytical {
             init,
             out,
             neqs,
+            mappings: Mappings::new(),
         }
     }
 }
@@ -221,6 +225,12 @@ impl Equation for Analytical {
     }
     fn kind() -> crate::EqnKind {
         crate::EqnKind::Analytical
+    }
+    fn mappings_ref(&self) -> &Mappings {
+        &self.mappings
+    }
+    fn mappings_mut(&mut self) -> &mut Mappings {
+        &mut self.mappings
     }
 }
 fn spphash(spp: &[f64]) -> u64 {
