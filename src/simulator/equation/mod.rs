@@ -1,5 +1,6 @@
-use std::{collections::HashMap, fmt::Debug};
+use std::fmt::Debug;
 pub mod analytical;
+pub mod mapping;
 pub mod meta;
 pub mod ode;
 pub mod sde;
@@ -10,10 +11,10 @@ pub use sde::*;
 
 use crate::{
     error_model::ErrorModels,
+    mapping::Mappings,
     simulator::{Fa, Lag},
     Covariates, Event, Infusion, Observation, PharmsolError, Subject,
 };
-pub type Mapper = HashMap<usize, usize>;
 
 use super::likelihood::Prediction;
 
@@ -210,22 +211,12 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
     }
 
     /// Returns the mappings (input -> cmt) if present.
-    fn mappings(&self) -> Option<&Mapper>;
+    fn mappings_ref(&self) -> &Mappings;
     /// Returns a mutable reference to the mappings if present.
-    fn mappings_mut(&mut self) -> &mut Option<Mapper>;
+    fn mappings_mut(&mut self) -> &mut Mappings;
     /// Add an new element to the mapper.
-    fn add_mapping(&mut self, input: usize, cmt: usize) {
-        let slot = self.mappings_mut();
-        match slot {
-            Some(mapper) => {
-                mapper.insert(input, cmt);
-            }
-            None => {
-                let mut mapper = HashMap::new();
-                mapper.insert(input, cmt);
-                *slot = Some(mapper);
-            }
-        }
+    fn add_mapping(&mut self, input: usize, cmt: usize) -> Result<(), &str> {
+        self.mappings_mut().insert(input, cmt)
     }
 
     /// Simulate a subject with given parameters and optionally calculate likelihood.
@@ -253,7 +244,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
             let events = occasion.process_events(
                 Some((self.fa(), self.lag(), support_point, covariates)),
                 true,
-                self.mappings(),
+                Some(self.mappings_ref()),
             );
             for (index, event) in events.iter().enumerate() {
                 self.simulate_event(

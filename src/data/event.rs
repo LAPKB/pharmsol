@@ -1,5 +1,5 @@
 use crate::data::error_model::ErrorPoly;
-use crate::equation;
+use crate::mapping::Mappings;
 use crate::prelude::simulator::Prediction;
 use serde::Deserialize;
 use std::fmt;
@@ -38,10 +38,10 @@ impl Event {
     }
 
     /// Remap the event's compartment indices based on a provided mapping
-    pub(crate) fn remap(&mut self, mappings: &equation::Mapper) {
+    pub(crate) fn remap(&mut self, mappings: &Mappings) {
         match self {
             Event::Bolus(bolus) => {
-                if let Some(&new_input) = mappings.get(&bolus.input) {
+                if let Some(new_input) = mappings.get(bolus.input) {
                     bolus.input = new_input;
                 }
             }

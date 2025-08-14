@@ -1,6 +1,6 @@
 use crate::{
     data::*,
-    equation,
+    mapping::Mappings,
     simulator::{Fa, Lag},
 };
 use serde::{Deserialize, Serialize};
@@ -519,11 +519,9 @@ impl Occasion {
         self.covariates.add_covariate(name, covariate);
     }
 
-    fn remap(&mut self, mappings: Option<&equation::Mapper>) {
-        if let Some(map) = mappings {
-            for event in self.events.iter_mut() {
-                event.remap(map);
-            }
+    fn remap(&mut self, mappings: &Mappings) {
+        for event in self.events.iter_mut() {
+            event.remap(mappings);
         }
     }
 
@@ -602,11 +600,12 @@ impl Occasion {
         &self,
         reorder: Option<(&Fa, &Lag, &Vec<f64>, &Covariates)>,
         ignore: bool,
-        mappings: Option<&equation::Mapper>,
+        mappings: Option<&Mappings>,
     ) -> Vec<Event> {
         let mut occ = self.clone();
-
-        occ.remap(mappings);
+        if let Some(mappings) = mappings {
+            occ.remap(mappings);
+        }
         occ.add_lagtime(reorder);
         occ.add_bioavailability(reorder);
 

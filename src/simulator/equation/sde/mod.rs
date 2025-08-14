@@ -11,8 +11,8 @@ use cached::UnboundCache;
 
 use crate::{
     data::{Covariates, Infusion},
-    equation,
     error_model::ErrorModels,
+    mapping::Mappings,
     prelude::simulator::Prediction,
     simulator::{Diffusion, Drift, Fa, Init, Lag, Neqs, Out, V},
     Subject,
@@ -89,7 +89,7 @@ pub struct SDE {
     out: Out,
     neqs: Neqs,
     nparticles: usize,
-    mappings: Option<equation::Mapper>,
+    mappings: Mappings,
 }
 
 impl SDE {
@@ -129,7 +129,7 @@ impl SDE {
             out,
             neqs,
             nparticles,
-            mappings: None,
+            mappings: Mappings::new(),
         }
     }
 }
@@ -364,10 +364,10 @@ impl Equation for SDE {
             _estimate_likelihood_no_cache(self, subject, support_point, error_models)
         }
     }
-    fn mappings(&self) -> Option<&equation::Mapper> {
-        self.mappings.as_ref()
+    fn mappings_ref(&self) -> &Mappings {
+        &self.mappings
     }
-    fn mappings_mut(&mut self) -> &mut Option<equation::Mapper> {
+    fn mappings_mut(&mut self) -> &mut Mappings {
         &mut self.mappings
     }
 

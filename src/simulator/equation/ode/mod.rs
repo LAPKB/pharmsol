@@ -4,8 +4,8 @@ use core::panic;
 
 use crate::{
     data::{Covariates, Infusion},
-    equation,
     error_model::ErrorModels,
+    mapping::Mappings,
     prelude::simulator::SubjectPredictions,
     simulator::{DiffEq, Fa, Init, Lag, Neqs, Out, M, V},
     Event, Observation, PharmsolError, Subject,
@@ -25,7 +25,7 @@ use super::{Equation, EquationPriv, EquationTypes, State};
 
 const RTOL: f64 = 1e-4;
 const ATOL: f64 = 1e-4;
-
+#[repr(C)]
 #[derive(Clone, Debug)]
 pub struct ODE {
     diffeq: DiffEq,
@@ -34,7 +34,7 @@ pub struct ODE {
     init: Init,
     out: Out,
     neqs: Neqs,
-    mappings: Option<equation::Mapper>,
+    mappings: Mappings,
 }
 
 impl ODE {
@@ -46,7 +46,7 @@ impl ODE {
             init,
             out,
             neqs,
-            mappings: None,
+            mappings: Mappings::new(),
         }
     }
 }
@@ -195,10 +195,10 @@ impl Equation for ODE {
     fn kind() -> crate::EqnKind {
         crate::EqnKind::ODE
     }
-    fn mappings(&self) -> Option<&equation::Mapper> {
-        self.mappings.as_ref()
+    fn mappings_ref(&self) -> &Mappings {
+        &self.mappings
     }
-    fn mappings_mut(&mut self) -> &mut Option<equation::Mapper> {
+    fn mappings_mut(&mut self) -> &mut Mappings {
         &mut self.mappings
     }
 
@@ -218,7 +218,7 @@ impl Equation for ODE {
             let events = occasion.process_events(
                 Some((self.fa(), self.lag(), support_point, covariates)),
                 true,
-                self.mappings(),
+                Some(self.mappings_ref()),
             );
 
             let problem = OdeBuilder::<M>::new()
