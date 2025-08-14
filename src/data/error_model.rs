@@ -876,6 +876,17 @@ impl ErrorModel {
         let sigma = self.sigma_from_value(value)?;
         Ok(sigma.powi(2))
     }
+
+    /// Get a boolean indicating if the error model should be optimized
+    ///
+    /// In other words, if the error model is not None, and the [Factor] is variable, it should be optimized.
+    pub fn optimize(&self) -> bool {
+        match self {
+            Self::Additive { lambda, .. } => lambda.is_variable(),
+            Self::Proportional { gamma, .. } => gamma.is_variable(),
+            Self::None => false,
+        }
+    }
 }
 
 #[derive(Error, Debug, Clone)]
