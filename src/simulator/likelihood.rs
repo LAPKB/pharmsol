@@ -194,6 +194,9 @@ impl Prediction {
     pub fn prediction(&self) -> f64 {
         self.prediction
     }
+    pub fn set_prediction(&mut self, prediction: f64) {
+        self.prediction = prediction;
+    }
     pub fn outeq(&self) -> usize {
         self.outeq
     }
@@ -214,6 +217,7 @@ impl Prediction {
     }
     pub fn likelihood(&self, error_model: &ErrorModel) -> f64 {
         let sigma = error_model.estimate_sigma(self);
+        println!("state {:#?}",self.state);
         normpdf(self.observation, self.prediction, sigma)
     }
     pub fn state(&self) -> &Vec<f64> {
