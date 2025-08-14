@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use crate::data::*;
 
 /// Extension trait for creating [Subject] instances using the builder pattern
@@ -30,8 +28,7 @@ impl SubjectBuilderExt for Subject {
             id: id.into(),
             occasions: Vec::new(),
             current_occasion: occasion,
-            current_covariates: Vec::new(),
-            current_segment: HashMap::new(),
+            covariates: Covariates::new(),
         }
     }
 }
@@ -46,8 +43,7 @@ pub struct SubjectBuilder {
     id: String,
     occasions: Vec<Occasion>,
     current_occasion: Occasion,
-    current_covariates: Vec<(String, CovariateSegment)>,
-    current_segment: HashMap<String, (f64, f64)>,
+    covariates: Covariates,
 }
 
 impl SubjectBuilder {
@@ -207,10 +203,12 @@ impl SubjectBuilder {
     pub fn reset(mut self) -> Self {
         let block_index = self.current_occasion.index() + 1;
         self.current_occasion.sort();
-        self.add_covariates();
+
+        self.current_occasion.set_covariates(self.covariates);
         self.occasions.push(self.current_occasion);
         let occasion = Occasion::new(Vec::new(), Covariates::new(), block_index);
         self.current_occasion = occasion;
+        self.covariates = Covariates::new();
         self
     }
 
@@ -235,51 +233,9 @@ impl SubjectBuilder {
     ///     .covariate("weight", 30.0, 68.5)  // Weight at day 30
     ///     .build();
     /// ```
-    pub fn covariate(mut self, name: impl Into<String>, time: f64, value: f64) -> Self {
-        let name = name.into();
-        if let Some((p_time, p_value)) = self.current_segment.get(&name) {
-            let slope = (value - p_value) / (time - p_time);
-            let intercept = p_value - slope * p_time;
-            let segment = CovariateSegment::new(
-                *p_time,
-                time,
-                InterpolationMethod::Linear { slope, intercept },
-            );
-            self.current_covariates.push((name.clone(), segment));
-            self.current_segment.remove(&name);
-            self.current_segment.insert(name.clone(), (time, value));
-        } else {
-            self.current_segment.insert(name.clone(), (time, value));
-        }
+    pub fn covariate(mut self, name: &str, time: f64, value: f64) -> Self {
+        self.covariates.add_observation(name, time, value);
         self
-    }
-
-    fn add_covariates(&mut self) {
-        for (name, (time, val)) in &self.current_segment {
-            let segment = CovariateSegment::new(
-                *time,
-                f64::INFINITY,
-                InterpolationMethod::CarryForward { value: *val },
-            );
-            self.current_covariates.push((name.clone(), segment));
-        }
-        self.current_segment.clear();
-        // collect all the current covariates with the same name together
-        let mut covariates: Vec<(String, Vec<CovariateSegment>)> = Vec::new();
-        for (name, segment) in self.current_covariates.clone() {
-            if let Some((_, segments)) = covariates.iter_mut().find(|(n, _)| n == &name) {
-                segments.push(segment);
-            } else {
-                covariates.push((name, vec![segment]));
-            }
-        }
-
-        // create the covariate object and add it to the current occasion
-        for (name, segments) in covariates {
-            let covariate = Covariate::new(name.clone(), segments);
-            self.current_occasion.add_covariate(name, covariate);
-        }
-        self.current_covariates.clear();
     }
 
     /// Finalize and build the Subject

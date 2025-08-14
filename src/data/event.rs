@@ -1,7 +1,7 @@
 use crate::data::error_model::ErrorPoly;
 use crate::mapping::Mappings;
 use crate::prelude::simulator::Prediction;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// Represents a pharmacokinetic/pharmacodynamic event
@@ -10,7 +10,7 @@ use std::fmt;
 /// - [Bolus] doses (instantaneous drug input)
 /// - [Infusion]s (continuous drug input over a duration)
 /// - [Observation]s (measured concentrations or other values)
-#[derive(serde::Serialize, Debug, Clone, Deserialize)]
+#[derive(Serialize, Debug, Clone, Deserialize)]
 pub enum Event {
     /// A bolus dose (instantaneous drug input)
     Bolus(Bolus),
@@ -53,7 +53,7 @@ impl Event {
 /// Represents an instantaneous input of drug
 ///
 /// A [Bolus] is a discrete amount of drug added to a specific compartment at a specific time.
-#[derive(serde::Serialize, Debug, Clone, Deserialize)]
+#[derive(Serialize, Debug, Clone, Deserialize)]
 pub struct Bolus {
     time: f64,
     amount: f64,
@@ -124,7 +124,7 @@ impl Bolus {
 /// Represents a continuous dose of drug over time
 ///
 /// An [Infusion] administers drug at a constant rate over a specified duration.
-#[derive(serde::Serialize, Debug, Clone, Deserialize)]
+#[derive(Serialize, Debug, Clone, Deserialize)]
 pub struct Infusion {
     time: f64,
     amount: f64,
@@ -213,7 +213,7 @@ impl Infusion {
 }
 
 /// Represents an observation of drug concentration or other measured value
-#[derive(serde::Serialize, Debug, Clone, Deserialize)]
+#[derive(Serialize, Debug, Clone, Deserialize)]
 pub struct Observation {
     time: f64,
     value: Option<f64>,
