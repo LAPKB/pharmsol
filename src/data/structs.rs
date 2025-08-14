@@ -1,5 +1,6 @@
 use crate::{
     data::*,
+    mapping::Mappings,
     simulator::{Fa, Lag},
 };
 use serde::{Deserialize, Serialize};
@@ -176,7 +177,7 @@ impl Data {
                     .occasions
                     .iter()
                     .map(|occasion| {
-                        let old_events = occasion.get_events(None, true);
+                        let old_events = occasion.process_events(None, true, None);
 
                         // Create a set of existing (time, outeq) pairs for fast lookup
                         let existing_obs: std::collections::HashSet<(u64, usize)> = old_events
@@ -518,6 +519,12 @@ impl Occasion {
         self.covariates.add_covariate(name, covariate);
     }
 
+    fn remap(&mut self, mappings: &Mappings) {
+        for event in self.events.iter_mut() {
+            event.remap(mappings);
+        }
+    }
+
     fn add_lagtime(&mut self, reorder: Option<(&Fa, &Lag, &Vec<f64>, &Covariates)>) {
         if let Some((_, fn_lag, spp, covariates)) = reorder {
             let spp = nalgebra::DVector::from_vec(spp.to_vec());
@@ -576,26 +583,28 @@ impl Occasion {
             }
         });
     }
-    // TODO: This clones the occasion, which is not ideal
 
-    /// Get events with modifications for lag time and bioavailability
+    /// Process the events with modifications for lag time, bioavailability and input remapping.
     ///
     /// # Arguments
     ///
-    /// * `lagtime` - Optional map of compartment-specific lag times
-    /// * `bioavailability` - Optional map of compartment-specific bioavailability factors
-    /// * `ignore` - Whether to exclude events marked as "ignore"
+    /// * `reorder` - Optional tuple containing references to (Fa, Lag, support point, covariates) for adjustments
+    /// * `ignore` - If true, filter out events marked as ignore
+    /// * `mappings` - Optional reference to an [equation::Mapper] for input remapping
     ///
     /// # Returns
     ///
     /// Vector of events, potentially filtered and with times adjusted for lag and bioavailability
-    pub fn get_events(
+    pub(crate) fn process_events(
         &self,
         reorder: Option<(&Fa, &Lag, &Vec<f64>, &Covariates)>,
         ignore: bool,
+        mappings: Option<&Mappings>,
     ) -> Vec<Event> {
         let mut occ = self.clone();
-
+        if let Some(mappings) = mappings {
+            occ.remap(mappings);
+        }
         occ.add_lagtime(reorder);
         occ.add_bioavailability(reorder);
 
@@ -916,7 +925,7 @@ mod tests {
             1,
         );
         occasion.sort();
-        let events = occasion.get_events(None, false);
+        let events = occasion.process_events(None, false, None);
         match &events[0] {
             Event::Bolus(b) => assert_eq!(b.time(), 1.0),
             _ => panic!("First event should be a Bolus"),

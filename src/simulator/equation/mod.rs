@@ -1,5 +1,6 @@
 use std::fmt::Debug;
 pub mod analytical;
+pub mod mapping;
 pub mod meta;
 pub mod ode;
 pub mod sde;
@@ -10,6 +11,7 @@ pub use sde::*;
 
 use crate::{
     error_model::ErrorModels,
+    mapping::Mappings,
     simulator::{Fa, Lag},
     Covariates, Event, Infusion, Observation, PharmsolError, Subject,
 };
@@ -208,6 +210,16 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
         self.get_nstates()
     }
 
+    /// Returns the mappings (input -> cmt) if present.
+    fn mappings_ref(&self) -> &Mappings;
+    /// Returns a mutable reference to the mappings if present.
+    fn mappings_mut(&mut self) -> &mut Mappings;
+    /// Add an new element to the mapper.
+    fn add_mapping(&mut self, input: usize, cmt: usize) -> Result<(), PharmsolError> {
+        self.mappings_mut().insert(input, cmt)?;
+        Ok(())
+    }
+
     /// Simulate a subject with given parameters and optionally calculate likelihood.
     ///
     /// # Parameters
@@ -223,8 +235,6 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
         support_point: &Vec<f64>,
         error_models: Option<&ErrorModels>,
     ) -> Result<(Self::P, Option<f64>), PharmsolError> {
-        // let lag = self.get_lag(support_point);
-        // let fa = self.get_fa(support_point);
         let mut output = Self::P::new(self.nparticles());
         let mut likelihood = Vec::new();
         for occasion in subject.occasions() {
@@ -232,9 +242,10 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
 
             let mut x = self.initial_state(support_point, covariates, occasion.index());
             let mut infusions = Vec::new();
-            let events = occasion.get_events(
+            let events = occasion.process_events(
                 Some((self.fa(), self.lag(), support_point, covariates)),
                 true,
+                Some(self.mappings_ref()),
             );
             for (index, event) in events.iter().enumerate() {
                 self.simulate_event(

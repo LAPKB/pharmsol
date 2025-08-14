@@ -5,6 +5,7 @@ use core::panic;
 use crate::{
     data::{Covariates, Infusion},
     error_model::ErrorModels,
+    mapping::Mappings,
     prelude::simulator::SubjectPredictions,
     simulator::{DiffEq, Fa, Init, Lag, Neqs, Out, M, V},
     Event, Observation, PharmsolError, Subject,
@@ -24,7 +25,7 @@ use super::{Equation, EquationPriv, EquationTypes, State};
 
 const RTOL: f64 = 1e-4;
 const ATOL: f64 = 1e-4;
-
+#[repr(C)]
 #[derive(Clone, Debug)]
 pub struct ODE {
     diffeq: DiffEq,
@@ -33,6 +34,7 @@ pub struct ODE {
     init: Init,
     out: Out,
     neqs: Neqs,
+    mappings: Mappings,
 }
 
 impl ODE {
@@ -44,6 +46,7 @@ impl ODE {
             init,
             out,
             neqs,
+            mappings: Mappings::new(),
         }
     }
 }
@@ -192,6 +195,12 @@ impl Equation for ODE {
     fn kind() -> crate::EqnKind {
         crate::EqnKind::ODE
     }
+    fn mappings_ref(&self) -> &Mappings {
+        &self.mappings
+    }
+    fn mappings_mut(&mut self) -> &mut Mappings {
+        &mut self.mappings
+    }
 
     fn simulate_subject(
         &self,
@@ -206,9 +215,10 @@ impl Equation for ODE {
         for occasion in subject.occasions() {
             let covariates = occasion.covariates();
             let infusions = occasion.infusions_ref();
-            let events = occasion.get_events(
+            let events = occasion.process_events(
                 Some((self.fa(), self.lag(), support_point, covariates)),
                 true,
+                Some(self.mappings_ref()),
             );
 
             let problem = OdeBuilder::<M>::new()
@@ -238,12 +248,9 @@ impl Equation for ODE {
                 //START SIMULATE_EVENT
                 match event {
                     Event::Bolus(bolus) => {
-                        // x.add_bolus(bolus.input(), bolus.amount());
                         solver.state_mut().y[bolus.input()] += bolus.amount();
                     }
-                    Event::Infusion(_infusion) => {
-                        // infusions.push(infusion.clone());
-                    }
+                    Event::Infusion(_infusion) => {}
                     Event::Observation(observation) => {
                         //START PROCESS_OBSERVATION
                         let mut y = V::zeros(self.get_nouteqs(), NalgebraContext);
