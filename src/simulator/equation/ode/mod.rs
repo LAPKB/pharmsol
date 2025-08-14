@@ -248,12 +248,9 @@ impl Equation for ODE {
                 //START SIMULATE_EVENT
                 match event {
                     Event::Bolus(bolus) => {
-                        // x.add_bolus(bolus.input(), bolus.amount());
                         solver.state_mut().y[bolus.input()] += bolus.amount();
                     }
-                    Event::Infusion(_infusion) => {
-                        // infusions.push(infusion.clone());
-                    }
+                    Event::Infusion(_infusion) => {}
                     Event::Observation(observation) => {
                         //START PROCESS_OBSERVATION
                         let mut y = V::zeros(self.get_nouteqs(), NalgebraContext);

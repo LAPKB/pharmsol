@@ -1,13 +1,13 @@
-use std::collections::HashMap;
+use thiserror::Error;
 
 // Maximum number of drugs you expect
-pub const MAX_DRUGS: usize = 10;
+pub(crate) const MAX_DRUGS: usize = 10;
 
-///Mappings maps 'INPUT' in the data into 'CMT' in the model
+/// Mappings maps 'INPUT' in the data into 'CMT' in the model
 /// It provides a way to define the data independent on the characteristics of the model
 /// Mappings are optional, if not provided, INPUT is assumed to be equal to CMT
 ///
-/// As of this moment, Mappings are only relevant for Bolus dosing.
+/// As of this moment, [Mappings] are only relevant for Bolus dosing.
 /// Infusions use the RATEIV variable in the model so no mapping is needed.
 #[repr(C)]
 #[derive(Clone, Debug)]
@@ -25,7 +25,7 @@ impl Mappings {
         }
     }
 
-    pub fn insert(&mut self, input: usize, cmt: usize) -> Result<(), &str> {
+    pub(crate) fn insert(&mut self, input: usize, cmt: usize) -> Result<(), MappingsError> {
         if input < MAX_DRUGS {
             if self.mappings[input].is_none() {
                 self.count += 1;
@@ -33,33 +33,21 @@ impl Mappings {
             self.mappings[input] = Some(cmt);
             Ok(())
         } else {
-            Err("Input exceeds maximum number of drugs")
+            Err(MappingsError::InputExceedsMaxDrugs(input))
         }
     }
 
-    pub fn get(&self, input: usize) -> Option<usize> {
+    pub(crate) fn get(&self, input: usize) -> Option<usize> {
         if input < MAX_DRUGS {
             self.mappings[input]
         } else {
             None
         }
     }
+}
 
-    pub fn to_hashmap(&self) -> HashMap<usize, usize> {
-        let mut map = HashMap::new();
-        for (input, &mapping) in self.mappings.iter().enumerate() {
-            if let Some(cmt) = mapping {
-                map.insert(input, cmt);
-            }
-        }
-        map
-    }
-
-    pub fn len(&self) -> usize {
-        self.count
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.count == 0
-    }
+#[derive(Error, Debug, Clone)]
+pub enum MappingsError {
+    #[error("The input number ({0}) is above the allowed maximum of {MAX_DRUGS}")]
+    InputExceedsMaxDrugs(usize),
 }

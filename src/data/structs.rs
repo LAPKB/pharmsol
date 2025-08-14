@@ -583,7 +583,6 @@ impl Occasion {
             }
         });
     }
-    // TODO: This clones the occasion, which is not ideal
 
     /// Process the events with modifications for lag time, bioavailability and input remapping.
     ///
@@ -596,7 +595,7 @@ impl Occasion {
     /// # Returns
     ///
     /// Vector of events, potentially filtered and with times adjusted for lag and bioavailability
-    pub fn process_events(
+    pub(crate) fn process_events(
         &self,
         reorder: Option<(&Fa, &Lag, &Vec<f64>, &Covariates)>,
         ignore: bool,

@@ -215,8 +215,9 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
     /// Returns a mutable reference to the mappings if present.
     fn mappings_mut(&mut self) -> &mut Mappings;
     /// Add an new element to the mapper.
-    fn add_mapping(&mut self, input: usize, cmt: usize) -> Result<(), &str> {
-        self.mappings_mut().insert(input, cmt)
+    fn add_mapping(&mut self, input: usize, cmt: usize) -> Result<(), PharmsolError> {
+        self.mappings_mut().insert(input, cmt)?;
+        Ok(())
     }
 
     /// Simulate a subject with given parameters and optionally calculate likelihood.
