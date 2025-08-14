@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0](https://github.com/LAPKB/pharmsol/compare/v0.15.0...v0.16.0) - 2025-08-14
+
+### Added
+
+- Update API for covariates ([#108](https://github.com/LAPKB/pharmsol/pull/108))
+- Add mapping support to boluses ([#119](https://github.com/LAPKB/pharmsol/pull/119))
+
+### Other
+
+- Implicit lifetimes where elided ([#120](https://github.com/LAPKB/pharmsol/pull/120))
+- Add helper function to check if error model should be optimized ([#122](https://github.com/LAPKB/pharmsol/pull/122))
+- Bump actions/checkout from 4 to 5 ([#117](https://github.com/LAPKB/pharmsol/pull/117))
+
 ## [0.15.0](https://github.com/LAPKB/pharmsol/compare/v0.14.1...v0.14.2) - 2025-08-10
 
 ### Added
