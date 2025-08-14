@@ -519,16 +519,14 @@ impl Occasion {
         self.covariates.add_covariate(name, covariate);
     }
 
-
     /// Set covariates for this occasion
     pub(crate) fn set_covariates(&mut self, covariates: Covariates) {
         self.covariates = covariates;
-
+    }
     fn remap(&mut self, mappings: &Mappings) {
         for event in self.events.iter_mut() {
             event.remap(mappings);
         }
-
     }
 
     fn add_lagtime(&mut self, reorder: Option<(&Fa, &Lag, &Vec<f64>, &Covariates)>) {
