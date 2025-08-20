@@ -48,6 +48,41 @@ impl Event {
             _ => {}
         }
     }
+
+    /// Get the occasion index for this event
+    pub fn occasion(&self) -> usize {
+        match self {
+            Event::Bolus(bolus) => bolus.occasion,
+            Event::Infusion(infusion) => infusion.occasion,
+            Event::Observation(observation) => observation.occasion,
+        }
+    }
+
+    /// Get a mutable reference to the occasion index
+    pub fn mut_occasion(&mut self) -> &mut usize {
+        match self {
+            Event::Bolus(bolus) => bolus.mut_occasion(),
+            Event::Infusion(infusion) => infusion.mut_occasion(),
+            Event::Observation(observation) => observation.mut_occasion(),
+        }
+    }
+
+    pub fn set_occasion(&mut self, occasion: usize) {
+        match self {
+            Event::Bolus(bolus) => {
+                let current_occasion = bolus.mut_occasion();
+                *current_occasion = occasion;
+            }
+            Event::Infusion(infusion) => {
+                let current_occasion = infusion.mut_occasion();
+                *current_occasion = occasion;
+            }
+            Event::Observation(observation) => {
+                let current_occasion = observation.mut_occasion();
+                *current_occasion = occasion;
+            }
+        }
+    }
 }
 
 /// Represents an instantaneous input of drug
@@ -58,6 +93,7 @@ pub struct Bolus {
     time: f64,
     amount: f64,
     input: usize,
+    occasion: usize,
 }
 impl Bolus {
     /// Create a new bolus event
@@ -67,11 +103,12 @@ impl Bolus {
     /// * `time` - Time of the bolus dose
     /// * `amount` - Amount of drug administered
     /// * `input` - The compartment number (zero-indexed) receiving the dose
-    pub fn new(time: f64, amount: f64, input: usize) -> Self {
+    pub fn new(time: f64, amount: f64, input: usize, occasion: usize) -> Self {
         Bolus {
             time,
             amount,
             input,
+            occasion,
         }
     }
 
@@ -119,6 +156,16 @@ impl Bolus {
     pub fn mut_time(&mut self) -> &mut f64 {
         &mut self.time
     }
+
+    /// Get the occasion index for this observation
+    pub fn occasion(&self) -> usize {
+        self.occasion
+    }
+
+    /// Get a mutable reference to the occasion index
+    pub fn mut_occasion(&mut self) -> &mut usize {
+        &mut self.occasion
+    }
 }
 
 /// Represents a continuous dose of drug over time
@@ -130,6 +177,7 @@ pub struct Infusion {
     amount: f64,
     input: usize,
     duration: f64,
+    occasion: usize,
 }
 impl Infusion {
     /// Create a new infusion event
@@ -140,12 +188,13 @@ impl Infusion {
     /// * `amount` - Total amount of drug to be administered
     /// * `input` - The compartment number (zero-indexed) receiving the dose
     /// * `duration` - Duration of the infusion in time units
-    pub fn new(time: f64, amount: f64, input: usize, duration: f64) -> Self {
+    pub fn new(time: f64, amount: f64, input: usize, duration: f64, occasion: usize) -> Self {
         Infusion {
             time,
             amount,
             input,
             duration,
+            occasion,
         }
     }
 
@@ -210,6 +259,16 @@ impl Infusion {
     pub fn mut_duration(&mut self) -> &mut f64 {
         &mut self.duration
     }
+
+    /// Get the occasion index for this observation
+    pub fn occasion(&self) -> usize {
+        self.occasion
+    }
+
+    /// Get a mutable reference to the occasion index
+    pub fn mut_occasion(&mut self) -> &mut usize {
+        &mut self.occasion
+    }
 }
 
 /// Represents an observation of drug concentration or other measured value
@@ -219,6 +278,7 @@ pub struct Observation {
     value: Option<f64>,
     outeq: usize,
     errorpoly: Option<ErrorPoly>,
+    occasion: usize,
 }
 impl Observation {
     /// Create a new observation
@@ -235,12 +295,14 @@ impl Observation {
         value: Option<f64>,
         outeq: usize,
         errorpoly: Option<ErrorPoly>,
+        occasion: usize,
     ) -> Self {
         Observation {
             time,
             value,
             outeq,
             errorpoly,
+            occasion,
         }
     }
 
@@ -306,6 +368,16 @@ impl Observation {
         &mut self.errorpoly
     }
 
+    /// Get the occasion index for this observation
+    pub fn occasion(&self) -> usize {
+        self.occasion
+    }
+
+    /// Get a mutable reference to the occasion index
+    pub fn mut_occasion(&mut self) -> &mut usize {
+        &mut self.occasion
+    }
+
     /// Create a [Prediction] from this observation
     pub fn to_prediction(&self, pred: f64, state: Vec<f64>) -> Prediction {
         Prediction {
@@ -315,6 +387,7 @@ impl Observation {
             outeq: self.outeq(),
             errorpoly: self.errorpoly(),
             state,
+            occasion: self.occasion(),
         }
     }
 }
@@ -362,7 +435,7 @@ mod tests {
 
     #[test]
     fn test_bolus_creation() {
-        let bolus = Bolus::new(2.5, 100.0, 1);
+        let bolus = Bolus::new(2.5, 100.0, 1, 0);
         assert_eq!(bolus.time(), 2.5);
         assert_eq!(bolus.amount(), 100.0);
         assert_eq!(bolus.input(), 1);
@@ -370,7 +443,7 @@ mod tests {
 
     #[test]
     fn test_bolus_setters() {
-        let mut bolus = Bolus::new(2.5, 100.0, 1);
+        let mut bolus = Bolus::new(2.5, 100.0, 1, 0);
 
         bolus.set_time(3.0);
         assert_eq!(bolus.time(), 3.0);
@@ -384,7 +457,7 @@ mod tests {
 
     #[test]
     fn test_infusion_creation() {
-        let infusion = Infusion::new(1.0, 200.0, 1, 2.5);
+        let infusion = Infusion::new(1.0, 200.0, 1, 2.5, 0);
         assert_eq!(infusion.time(), 1.0);
         assert_eq!(infusion.amount(), 200.0);
         assert_eq!(infusion.input(), 1);
@@ -393,7 +466,7 @@ mod tests {
 
     #[test]
     fn test_infusion_setters() {
-        let mut infusion = Infusion::new(1.0, 200.0, 1, 2.5);
+        let mut infusion = Infusion::new(1.0, 200.0, 1, 2.5, 0);
 
         infusion.set_time(1.5);
         assert_eq!(infusion.time(), 1.5);
@@ -411,7 +484,7 @@ mod tests {
     #[test]
     fn test_observation_creation() {
         let error_poly = Some(ErrorPoly::new(0.1, 0.2, 0.3, 0.4));
-        let observation = Observation::new(5.0, Some(75.5), 2, error_poly);
+        let observation = Observation::new(5.0, Some(75.5), 2, error_poly, 0);
 
         assert_eq!(observation.time(), 5.0);
         assert_eq!(observation.value(), Some(75.5));
@@ -421,8 +494,13 @@ mod tests {
 
     #[test]
     fn test_observation_setters() {
-        let mut observation =
-            Observation::new(5.0, Some(75.5), 2, Some(ErrorPoly::new(0.1, 0.2, 0.3, 0.4)));
+        let mut observation = Observation::new(
+            5.0,
+            Some(75.5),
+            2,
+            Some(ErrorPoly::new(0.1, 0.2, 0.3, 0.4)),
+            0,
+        );
 
         observation.set_time(6.0);
         assert_eq!(observation.time(), 6.0);
@@ -440,9 +518,10 @@ mod tests {
 
     #[test]
     fn test_event_time_operations() {
-        let mut bolus_event = Event::Bolus(Bolus::new(1.0, 100.0, 1));
-        let mut infusion_event = Event::Infusion(Infusion::new(2.0, 200.0, 1, 2.5));
-        let mut observation_event = Event::Observation(Observation::new(3.0, Some(75.5), 2, None));
+        let mut bolus_event = Event::Bolus(Bolus::new(1.0, 100.0, 1, 0));
+        let mut infusion_event = Event::Infusion(Infusion::new(2.0, 200.0, 1, 2.5, 0));
+        let mut observation_event =
+            Event::Observation(Observation::new(3.0, Some(75.5), 2, None, 0));
 
         assert_eq!(bolus_event.time(), 1.0);
         assert_eq!(infusion_event.time(), 2.0);

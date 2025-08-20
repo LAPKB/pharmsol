@@ -227,6 +227,7 @@ pub struct Prediction {
     pub(crate) outeq: usize,
     pub(crate) errorpoly: Option<ErrorPoly>,
     pub(crate) state: Vec<f64>,
+    pub(crate) occasion: usize,
 }
 
 impl Prediction {
@@ -317,7 +318,13 @@ impl Prediction {
 
     /// Create an [Observation] from this prediction
     pub fn to_observation(&self) -> Observation {
-        Observation::new(self.time, self.observation, self.outeq, self.errorpoly)
+        Observation::new(
+            self.time,
+            self.observation,
+            self.outeq,
+            self.errorpoly,
+            self.occasion,
+        )
     }
 }
 
@@ -330,6 +337,7 @@ impl Default for Prediction {
             outeq: 0,
             errorpoly: None,
             state: vec![],
+            occasion: 0,
         }
     }
 }
