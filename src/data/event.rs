@@ -67,19 +67,17 @@ impl Event {
         }
     }
 
+    /// Set the occasion index for this event
     pub fn set_occasion(&mut self, occasion: usize) {
         match self {
-            Event::Bolus(bolus) => {
-                let current_occasion = bolus.mut_occasion();
-                *current_occasion = occasion;
+            Event::Bolus(_) => {
+                *self.mut_occasion() = occasion;
             }
-            Event::Infusion(infusion) => {
-                let current_occasion = infusion.mut_occasion();
-                *current_occasion = occasion;
+            Event::Infusion(_) => {
+                *self.mut_occasion() = occasion;
             }
-            Event::Observation(observation) => {
-                let current_occasion = observation.mut_occasion();
-                *current_occasion = occasion;
+            Event::Observation(_) => {
+                *self.mut_occasion() = occasion;
             }
         }
     }
