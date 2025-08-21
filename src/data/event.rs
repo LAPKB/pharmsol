@@ -157,7 +157,7 @@ impl Bolus {
         &mut self.time
     }
 
-    /// Get the occasion index for this observation
+    /// Get the occasion index for this bolus
     pub fn occasion(&self) -> usize {
         self.occasion
     }
