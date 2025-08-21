@@ -167,7 +167,10 @@ pub fn read_pmetrics(path: impl Into<String>) -> Result<Data, PmetricsError> {
             let covariates = Covariates::from_pmetrics_observations(&observed_covariates);
 
             // Create the occasion
-            let mut occasion = Occasion::new(events, covariates, block_index);
+            let mut occasion = Occasion::new(block_index);
+            events.iter_mut().for_each(|e| e.set_occasion(block_index));
+            occasion.events = events;
+            occasion.covariates = covariates;
             occasion.sort();
             occasions.push(occasion);
         }
@@ -257,6 +260,7 @@ impl Row {
                     })?
                     - 1,
                 self.get_errorpoly(),
+                0,
             ))),
             1 | 4 => {
                 let event = if self.dur.unwrap_or(0.0) > 0.0 {
@@ -277,6 +281,7 @@ impl Row {
                             id: self.id.clone(),
                             time: self.time,
                         })?,
+                        0,
                     ))
                 } else {
                     Event::Bolus(Bolus::new(
@@ -289,6 +294,7 @@ impl Row {
                             id: self.id,
                             time: self.time,
                         })? - 1,
+                        0,
                     ))
                 };
                 if self.addl.is_some()

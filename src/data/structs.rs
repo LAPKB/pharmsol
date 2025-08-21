@@ -201,7 +201,8 @@ impl Data {
                             for &outeq in &outeq_values {
                                 // Only add if this (time, outeq) combination doesn't exist
                                 if !existing_obs.contains(&(time_key, outeq)) {
-                                    let obs = Observation::new(time, None, outeq, None);
+                                    let obs =
+                                        Observation::new(time, None, outeq, None, occasion.index);
                                     new_events.push(Event::Observation(obs));
                                 }
                             }
@@ -214,8 +215,10 @@ impl Data {
                         new_events.extend(old_events);
 
                         // Create new occasion and sort events
-                        let mut new_occasion =
-                            Occasion::new(new_events, occasion.covariates.clone(), occasion.index);
+                        let mut new_occasion = Occasion::new(occasion.index);
+                        new_occasion.events = new_events;
+                        new_occasion.covariates = occasion.covariates.clone();
+
                         new_occasion.sort();
                         new_occasion
                     })
@@ -470,9 +473,9 @@ impl<'a> IntoIterator for &'a mut Subject {
 /// and time-varying covariates.
 #[derive(Serialize, Debug, Deserialize, Clone)]
 pub struct Occasion {
-    events: Vec<Event>,
-    covariates: Covariates,
-    index: usize,
+    pub(crate) events: Vec<Event>,
+    pub(crate) covariates: Covariates,
+    pub(crate) index: usize,
 }
 
 impl Occasion {
@@ -483,10 +486,10 @@ impl Occasion {
     /// * `events` - Vector of events for this occasion
     /// * `covariates` - Covariates for this occasion
     /// * `index` - The occasion index (0-based)
-    pub(crate) fn new(events: Vec<Event>, covariates: Covariates, index: usize) -> Self {
+    pub(crate) fn new(index: usize) -> Self {
         Occasion {
-            events,
-            covariates,
+            events: Vec::new(),
+            covariates: Covariates::new(),
             index,
         }
     }
@@ -654,13 +657,13 @@ impl Occasion {
         outeq: usize,
         errorpoly: Option<ErrorPoly>,
     ) {
-        let observation = Observation::new(time, Some(value), outeq, errorpoly);
+        let observation = Observation::new(time, Some(value), outeq, errorpoly, self.index);
         self.add_event(Event::Observation(observation));
     }
 
     /// Add a missing [Observation] event to the [Occasion]
     pub fn add_missing_observation(&mut self, time: f64, outeq: usize) {
-        let observation = Observation::new(time, None, outeq, None);
+        let observation = Observation::new(time, None, outeq, None, self.index);
         self.add_event(Event::Observation(observation));
     }
 
@@ -674,19 +677,19 @@ impl Occasion {
         outeq: usize,
         errorpoly: ErrorPoly,
     ) {
-        let observation = Observation::new(time, Some(value), outeq, Some(errorpoly));
+        let observation = Observation::new(time, Some(value), outeq, Some(errorpoly), self.index);
         self.add_event(Event::Observation(observation));
     }
 
     /// Add a [Bolus] event to the [Occasion]
     pub fn add_bolus(&mut self, time: f64, amount: f64, input: usize) {
-        let bolus = Bolus::new(time, amount, input);
+        let bolus = Bolus::new(time, amount, input, self.index);
         self.add_event(Event::Bolus(bolus));
     }
 
     /// Add an [Infusion] event to the [Occasion]
     pub fn add_infusion(&mut self, time: f64, amount: f64, input: usize, duration: f64) {
-        let infusion = Infusion::new(time, amount, input, duration);
+        let infusion = Infusion::new(time, amount, input, duration, self.index);
         self.add_event(Event::Infusion(infusion));
     }
 
@@ -929,14 +932,9 @@ mod tests {
 
     #[test]
     fn test_occasion_sort() {
-        let mut occasion = Occasion::new(
-            vec![
-                Event::Observation(Observation::new(2.0, Some(1.0), 1, None)),
-                Event::Bolus(Bolus::new(1.0, 100.0, 1)),
-            ],
-            Covariates::new(),
-            1,
-        );
+        let mut occasion = Occasion::new(0);
+        occasion.add_observation(2.0, 1.0, 1, None);
+        occasion.add_bolus(1.0, 100.0, 1);
         occasion.sort();
         let events = occasion.process_events(None, false, None);
         match &events[0] {
@@ -961,9 +959,7 @@ mod tests {
 
         let mut data = create_sample_data();
         for subject in data.iter_mut() {
-            subject
-                .occasions_mut()
-                .push(Occasion::new(Vec::new(), Covariates::new(), 2));
+            subject.occasions_mut().push(Occasion::new(2));
         }
         assert_eq!(data.subjects()[0].occasions().len(), 3);
     }
@@ -993,14 +989,10 @@ mod tests {
 
     #[test]
     fn test_occasion_iterators() {
-        let occasion = Occasion::new(
-            vec![
-                Event::Observation(Observation::new(1.0, Some(10.0), 1, None)),
-                Event::Bolus(Bolus::new(2.0, 50.0, 1)),
-            ],
-            Covariates::new(),
-            0,
-        );
+        let mut occasion = Occasion::new(0);
+        occasion.add_observation(1.0, 10.0, 1, None);
+        occasion.add_bolus(2.0, 50.0, 1);
+        occasion.sort();
 
         let mut count = 0;
         for event in occasion.iter() {
@@ -1030,9 +1022,7 @@ mod tests {
         assert_eq!(count, 2);
         let mut data = create_sample_data();
         for subject in &mut data {
-            subject
-                .occasions_mut()
-                .push(Occasion::new(Vec::new(), Covariates::new(), 2));
+            subject.occasions_mut().push(Occasion::new(2));
         }
         assert_eq!(data.subjects()[0].occasions().len(), 3);
     }
@@ -1141,7 +1131,7 @@ mod tests {
         }
 
         // Test mutable reference iterator on a new event
-        let mut infusion_event = Event::Infusion(Infusion::new(5.0, 200.0, 1, 2.0));
+        let mut infusion_event = Event::Infusion(Infusion::new(5.0, 200.0, 1, 2.0, 2));
         let original_time = infusion_event.time();
 
         for event in &mut infusion_event {
