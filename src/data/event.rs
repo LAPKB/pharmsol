@@ -260,7 +260,7 @@ impl Infusion {
         &mut self.duration
     }
 
-    /// Get the occasion index for this observation
+    /// Get the occasion index for this infusion
     pub fn occasion(&self) -> usize {
         self.occasion
     }
