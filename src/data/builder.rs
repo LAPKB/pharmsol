@@ -22,7 +22,7 @@ pub trait SubjectBuilderExt {
 }
 impl SubjectBuilderExt for Subject {
     fn builder(id: impl Into<String>) -> SubjectBuilder {
-        let occasion = Occasion::new(Vec::new(), Covariates::new(), 0);
+        let occasion = Occasion::new(0);
 
         SubjectBuilder {
             id: id.into(),
@@ -65,7 +65,7 @@ impl SubjectBuilder {
     /// * `amount` - Amount of drug administered
     /// * `input` - The compartment number (zero-indexed) receiving the dose
     pub fn bolus(self, time: f64, amount: f64, input: usize) -> Self {
-        let bolus = Bolus::new(time, amount, input);
+        let bolus = Bolus::new(time, amount, input, self.current_occasion.index());
         let event = Event::Bolus(bolus);
         self.event(event)
     }
@@ -79,7 +79,7 @@ impl SubjectBuilder {
     /// * `input` - The compartment number (zero-indexed) receiving the dose
     /// * `duration` - Duration of the infusion in time units
     pub fn infusion(self, time: f64, amount: f64, input: usize, duration: f64) -> Self {
-        let infusion = Infusion::new(time, amount, input, duration);
+        let infusion = Infusion::new(time, amount, input, duration, self.current_occasion.index());
         let event = Event::Infusion(infusion);
         self.event(event)
     }
@@ -93,7 +93,13 @@ impl SubjectBuilder {
     /// * `outeq` - Output equation number (zero-indexed) corresponding to this observation
     /// * `errorpoly` - Error polynomial coefficients (c0, c1, c2, c3)
     pub fn observation(self, time: f64, value: f64, outeq: usize) -> Self {
-        let observation = Observation::new(time, Some(value), outeq, None);
+        let observation = Observation::new(
+            time,
+            Some(value),
+            outeq,
+            None,
+            self.current_occasion.index(),
+        );
         let event = Event::Observation(observation);
         self.event(event)
     }
@@ -105,7 +111,7 @@ impl SubjectBuilder {
     /// * `time` - Time of the observation
     /// * `outeq` - Output equation number (zero-indexed) corresponding to this observation
     pub fn missing_observation(self, time: f64, outeq: usize) -> Self {
-        let observation = Observation::new(time, None, outeq, None);
+        let observation = Observation::new(time, None, outeq, None, self.current_occasion.index());
         let event = Event::Observation(observation);
         self.event(event)
     }
@@ -125,7 +131,13 @@ impl SubjectBuilder {
         outeq: usize,
         errorpoly: ErrorPoly,
     ) -> Self {
-        let observation = Observation::new(time, Some(value), outeq, Some(errorpoly));
+        let observation = Observation::new(
+            time,
+            Some(value),
+            outeq,
+            Some(errorpoly),
+            self.current_occasion.index(),
+        );
         let event = Event::Observation(observation);
         self.event(event)
     }
@@ -206,7 +218,7 @@ impl SubjectBuilder {
 
         self.current_occasion.set_covariates(self.covariates);
         self.occasions.push(self.current_occasion);
-        let occasion = Occasion::new(Vec::new(), Covariates::new(), block_index);
+        let occasion = Occasion::new(block_index);
         self.current_occasion = occasion;
         self.covariates = Covariates::new();
         self
