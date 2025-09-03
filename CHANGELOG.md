@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0](https://github.com/LAPKB/pharmsol/compare/v0.16.0...v0.17.0) - 2025-09-03
+
+### Added
+
+- Adds the occasion index to events and predictions ([#123](https://github.com/LAPKB/pharmsol/pull/123))
+
 ## [0.16.0](https://github.com/LAPKB/pharmsol/compare/v0.15.0...v0.16.0) - 2025-08-14
 
 ### Added
