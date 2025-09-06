@@ -315,6 +315,11 @@ impl Prediction {
         &self.state
     }
 
+    // Get the occasion index
+    pub fn occasion(&self) -> usize {
+        self.occasion
+    }
+
     /// Create an [Observation] from this prediction
     pub fn to_observation(&self) -> Observation {
         Observation::new(
