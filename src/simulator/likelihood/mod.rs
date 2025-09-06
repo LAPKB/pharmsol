@@ -315,7 +315,7 @@ impl Prediction {
         &self.state
     }
 
-    // Get the occasion index
+    /// Get the occasion index
     pub fn occasion(&self) -> usize {
         self.occasion
     }
