@@ -89,7 +89,7 @@ pub struct SDE {
     out: Out,
     neqs: Neqs,
     nparticles: usize,
-    mappings: Mappings,
+    mappings: Option<Mappings>,
 }
 
 impl SDE {
@@ -129,7 +129,7 @@ impl SDE {
             out,
             neqs,
             nparticles,
-            mappings: Mappings::new(),
+            mappings: None,
         }
     }
 }
@@ -364,11 +364,11 @@ impl Equation for SDE {
             _estimate_likelihood_no_cache(self, subject, support_point, error_models)
         }
     }
-    fn mappings_ref(&self) -> &Mappings {
-        &self.mappings
+    fn mappings_ref(&self) -> Option<&Mappings> {
+        self.mappings.as_ref()
     }
     fn mappings_mut(&mut self) -> &mut Mappings {
-        &mut self.mappings
+        self.mappings.get_or_insert_with(Mappings::new)
     }
 
     fn kind() -> crate::EqnKind {

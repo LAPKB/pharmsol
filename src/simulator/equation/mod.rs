@@ -211,7 +211,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
     }
 
     /// Returns the mappings (input -> cmt) if present.
-    fn mappings_ref(&self) -> &Mappings;
+    fn mappings_ref(&self) -> Option<&Mappings>;
     /// Returns a mutable reference to the mappings if present.
     fn mappings_mut(&mut self) -> &mut Mappings;
     /// Add an new element to the mapper.
@@ -245,7 +245,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
             let events = occasion.process_events(
                 Some((self.fa(), self.lag(), support_point, covariates)),
                 true,
-                Some(self.mappings_ref()),
+                self.mappings_ref(),
             );
             for (index, event) in events.iter().enumerate() {
                 self.simulate_event(
