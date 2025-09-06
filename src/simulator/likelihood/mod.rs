@@ -320,6 +320,11 @@ impl Prediction {
         self.occasion
     }
 
+    /// Get a mutable reference to the occasion index
+    pub fn mut_occasion(&mut self) -> &mut usize {
+        &mut self.occasion
+    }
+
     /// Create an [Observation] from this prediction
     pub fn to_observation(&self) -> Observation {
         Observation::new(
