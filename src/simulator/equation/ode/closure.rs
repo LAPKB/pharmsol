@@ -195,9 +195,14 @@ where
 
         let pnew = p_ref.to_owned().into();
 
-        // Convert bolus Vec<f64> to V type for consistency
-        let bolus_dvector = DVector::from_vec(self.bolus.clone());
-        let bolus_v: V = bolus_dvector.into();
+        // Optimize bolus vector creation - avoid clone when possible
+        let bolus_v: V = if self.bolus.is_empty() {
+            // Common case: no bolus, create a zero vector
+            V::zeros(1, NalgebraContext) // Minimal size
+        } else {
+            // Only create DVector when bolus is non-empty
+            DVector::from_vec(self.bolus.clone()).into()
+        };
 
         (self.func)(x, &pnew, t, y, rateiv, self.covariates, &bolus_v)
     }
@@ -227,9 +232,12 @@ where
             }
         }
 
-        // Convert bolus Vec<f64> to V type for consistency
-        let bolus_dvector = DVector::from_vec(self.bolus.clone());
-        let bolus_v: V = bolus_dvector.into();
+        // Optimize bolus vector creation in Jacobian - same as in call_inplace
+        let bolus_v: V = if self.bolus.is_empty() {
+            V::zeros(1, NalgebraContext)
+        } else {
+            DVector::from_vec(self.bolus.clone()).into()
+        };
 
         (self.func)(
             v,

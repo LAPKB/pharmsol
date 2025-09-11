@@ -34,7 +34,7 @@ fn main() {
         |x, p, _t, dx, rateiv, _cov, bolus| {
             // fetch_cov!(cov, t, wt);
             fetch_params!(p, ke, _v);
-            dx[0] = -ke * x[0] + rateiv[0] + bolus[1]; // Access bolus input 1
+            dx[0] = -ke * x[0] + rateiv[0] + bolus[1] * 2.0; // Access bolus input 1
         },
         |_p, _t, _cov| lag! {},
         |_p, _t, _cov| fa! {},

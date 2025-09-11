@@ -249,6 +249,13 @@ impl Equation for ODE {
                     vec![0.0; bolus_vec_size],
                 ))?;
 
+            // Pre-allocate reusable vectors for bolus handling
+            let mut bolus_vec = vec![0.0; bolus_vec_size];
+            let mut bolus_changes = V::zeros(self.get_nstates(), NalgebraContext);
+            let rateiv_zero = V::zeros(self.get_nstates(), NalgebraContext);
+            let spp_dvector = DVector::from_vec(support_point.clone());
+            let spp_v: V = spp_dvector.into();
+
             let mut solver: Bdf<
                 '_,
                 PMProblem<DiffEq>,
@@ -260,25 +267,32 @@ impl Equation for ODE {
                 //START SIMULATE_EVENT
                 match event {
                     Event::Bolus(bolus) => {
-                        // Create bolus vector sized to accommodate the input index
-                        // The bolus vector should be at least as large as the largest input + 1
-                        let bolus_vec_size = 10; //TODO: Change back to dynamic sizing
-                        let mut bolus_vec = vec![0.0; bolus_vec_size];
+                        // Reset and reuse the bolus vector
+                        bolus_vec.fill(0.0);
                         bolus_vec[bolus.input()] = bolus.amount();
 
-                        // Call the model closure directly to compute bolus-induced changes
-                        let mut bolus_changes = V::zeros(self.get_nstates(), NalgebraContext);
-                        let rateiv = V::zeros(self.get_nstates(), NalgebraContext);
-                        let spp = DVector::from_vec(support_point.clone());
-                        let bolus_v: V = DVector::from_vec(bolus_vec).into();
+                        // Reset and reuse the bolus changes vector
+                        bolus_changes.fill(0.0);
+
+                        // Use stack allocation for small bolus vectors to avoid heap allocation
+                        let bolus_v: V = if bolus_vec.len() <= 8 {
+                            // Stack allocation for small vectors
+                            let mut stack_bolus = [0.0; 8];
+                            let len = bolus_vec.len().min(8);
+                            stack_bolus[..len].copy_from_slice(&bolus_vec[..len]);
+                            DVector::from_row_slice(&stack_bolus[..len]).into()
+                        } else {
+                            // Heap allocation for larger vectors
+                            DVector::from_vec(bolus_vec.clone()).into()
+                        };
 
                         // Call the differential equation closure
                         (self.diffeq)(
                             solver.state().y,
-                            &spp.into(),
+                            &spp_v,
                             event.time(),
                             &mut bolus_changes,
-                            rateiv,
+                            rateiv_zero.clone(),
                             covariates,
                             &bolus_v,
                         );
