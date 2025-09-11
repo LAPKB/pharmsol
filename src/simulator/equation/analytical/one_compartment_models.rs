@@ -103,7 +103,7 @@ mod tests {
         let subject = infusion_dosing.get_subject();
 
         let ode = equation::ODE::new(
-            |x, p, _t, dx, rateiv, _cov| {
+            |x, p, _t, dx, rateiv, _cov, _bolus| {
                 fetch_params!(p, ke, _v);
 
                 dx[0] = -ke * x[0] + rateiv[0];
@@ -153,7 +153,7 @@ mod tests {
         let subject = oral_infusion_dosing.get_subject();
 
         let ode = equation::ODE::new(
-            |x, p, _t, dx, rateiv, _cov| {
+            |x, p, _t, dx, rateiv, _cov, _bolus| {
                 fetch_params!(p, ka, ke, _v);
 
                 dx[0] = -ka * x[0];

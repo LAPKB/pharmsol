@@ -13,7 +13,7 @@ fn main() {
         .build();
     println!("{subject}");
     let ode = equation::ODE::new(
-        |x, p, t, dx, _rateiv, cov| {
+        |x, p, t, dx, _rateiv, cov, _bolus| {
             fetch_cov!(cov, t, wt, age);
             fetch_params!(p, ka, ke, _tlag, _v);
             // Secondary Eqs

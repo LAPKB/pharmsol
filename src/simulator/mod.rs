@@ -26,18 +26,19 @@ pub type M = NalgebraMat<T>;
 /// - `dx`: A mutable reference to the derivative of the state vector at time t
 /// - `rateiv`: A vector of infusion rates at time t
 /// - `cov`: A reference to the covariates at time t; Use the [fetch_cov!] macro to extract the covariates
+/// - `bolus`: A vector containing bolus amounts for each compartment at the current time
 ///
 /// # Example
 /// ```ignore
 /// use pharmsol::*;
-/// let diff_eq = |x, p, t, dx, rateiv, cov| {
+/// let diff_eq = |x, p, t, dx, rateiv, cov, bolus| {
 ///  fetch_params!(p, ka, ke, v);
 ///  fetch_cov!(cov, t, wt);
-///  dx[0] = -ka * x[0];
-///  dx[1] = ka * x[0] - ke * x[1];
+///  dx[0] = -ka * x[0] + bolus[0];
+///  dx[1] = ka * x[0] - ke * x[1] + bolus[1];
 /// };
 /// ```
-pub type DiffEq = fn(&V, &V, T, &mut V, V, &Covariates);
+pub type DiffEq = fn(&V, &V, T, &mut V, V, &Covariates, &V);
 
 /// This closure represents an Analytical solution of the model.
 /// See [analytical] module for examples.
@@ -61,17 +62,18 @@ pub type AnalyticalEq = fn(&V, &V, T, V, &Covariates) -> V;
 /// - `dx`: A mutable reference to the derivative of the state vector at time t
 /// - `rateiv`: A vector of infusion rates at time t
 /// - `cov`: A reference to the covariates at time t; Use the [fetch_cov!] macro to extract the covariates
+/// - `bolus`: A vector containing bolus amounts for each compartment at the current time
 ///
 /// # Example
 /// ```ignore
 /// use pharmsol::*;
-/// let drift = |x, p, t, dx, rateiv, cov| {
+/// let drift = |x, p, t, dx, rateiv, cov, bolus| {
 ///   fetch_params!(p, mka, mke, v);
 ///   fetch_cov!(cov, t, wt);
 ///   ka = dx[2];
 ///   ke = dx[3];
-///   dx[0] = -ka * x[0];
-///   dx[1] = ka * x[0] - ke * x[1];
+///   dx[0] = -ka * x[0] + bolus[0];
+///   dx[1] = ka * x[0] - ke * x[1] + bolus[1];
 ///   dx[2] = -dx[2] + mka; // Mean reverting to mka
 ///   dx[3] = -dx[3] + mke; // Mean reverting to mke
 /// };

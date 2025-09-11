@@ -1,4 +1,5 @@
-use std::fmt::Debug;
+use diffsol::Vector;
+use std::fmt::Debug; // Add this import for Vector trait
 pub mod analytical;
 pub mod mapping;
 pub mod meta;
@@ -10,10 +11,11 @@ pub use ode::*;
 pub use sde::*;
 
 use crate::{
+    data::{Covariates, Infusion},
     error_model::ErrorModels,
     mapping::Mappings,
-    simulator::{Fa, Lag},
-    Covariates, Event, Infusion, Observation, PharmsolError, Subject,
+    simulator::{Fa, Lag, V},
+    Event, Observation, PharmsolError, Subject,
 };
 
 use super::likelihood::Prediction;
@@ -26,6 +28,19 @@ pub trait State {
     /// - `input`: The compartment index
     /// - `amount`: The bolus amount
     fn add_bolus(&mut self, input: usize, amount: f64);
+}
+
+/// Implementation of State trait for the standard vector type V.
+impl State for V {
+    #[inline(always)]
+    fn add_bolus(&mut self, input: usize, amount: f64) {
+        if input < self.len() {
+            self[input] += amount;
+        } else {
+            // Handle out of bounds gracefully
+            eprintln!("Warning: Bolus input {} is out of bounds for state vector of size {}. Ignoring bolus.", input, self.len());
+        }
+    }
 }
 
 /// Trait for prediction containers.

@@ -65,6 +65,7 @@ pub(crate) fn simulate_sde_event(
         x.inner().clone(),
         cov.clone(),
         infusions.to_vec(),
+        vec![0.0; x.len()], // TODO: Implement proper bolus handling for SDE
         1e-2,
         1e-2,
     );
@@ -146,7 +147,12 @@ impl State for Vec<DVector<f64>> {
     /// * `amount` - Amount to add to the compartment
     fn add_bolus(&mut self, input: usize, amount: f64) {
         self.par_iter_mut().for_each(|particle| {
-            particle[input] += amount;
+            if input < particle.len() {
+                particle[input] += amount;
+            } else {
+                // Handle out of bounds gracefully - could log a warning here
+                eprintln!("Warning: Bolus input {} is out of bounds for state vector of size {}. Ignoring bolus.", input, particle.len());
+            }
         });
     }
 }

@@ -20,7 +20,7 @@ mod exa_tests {
 
         // Create ODE model directly
         let ode = equation::ODE::new(
-            |x, p, _t, dx, rateiv, _cov| {
+            |x, p, _t, dx, rateiv, _cov, _bolus| {
                 fetch_params!(p, ke, _v);
                 dx[0] = -ke * x[0] + rateiv[0];
             },
@@ -43,7 +43,7 @@ mod exa_tests {
             format!(
                 r#"
                 equation::ODE::new(
-            |x, p, _t, dx, rateiv, _cov| {{
+            |x, p, _t, dx, rateiv, _cov, _bolus| {{
                 fetch_params!(p, ke, _v);
                 dx[0] = -ke * x[0] + rateiv[0];
             }},

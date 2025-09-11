@@ -30,7 +30,7 @@ fn example_subject_covariates() -> Subject {
 fn one_compartment() {
     let subject = example_subject();
     let ode = equation::ODE::new(
-        |x, p, _t, dx, _rateiv, _cov| {
+        |x, p, _t, dx, _rateiv, _cov, _bolus| {
             fetch_params!(p, ka, ke, _tlag, _v);
             dx[0] = -ka * x[0];
             dx[1] = ka * x[0] - ke * x[1];
@@ -56,7 +56,7 @@ fn one_compartment() {
 fn one_compartment_covariates() {
     let subject = example_subject_covariates();
     let ode = equation::ODE::new(
-        |x, p, t, dx, _rateiv, cov| {
+        |x, p, t, dx, _rateiv, cov, _bolus| {
             fetch_cov!(cov, t, iron);
             fetch_params!(p, ka, ke, _tlag, _v);
 
@@ -85,7 +85,7 @@ fn one_compartment_covariates() {
 fn two_compartment() {
     let subject = example_subject();
     let ode = equation::ODE::new(
-        |x, p, _t, dx, _rateiv, _cov| {
+        |x, p, _t, dx, _rateiv, _cov, _bolus| {
             fetch_params!(p, ka, ke, k12, k21, _tlag, _v);
             dx[0] = -ka * x[0] - k12 * x[0] + k21 * x[1];
             dx[1] = k12 * x[0] - k21 * x[1] - ke * x[1];

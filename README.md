@@ -27,7 +27,7 @@ ODE based model.
         .build();
 
     let ode = equation::ODE::new(
-        |x, p, t, dx, _rateiv, cov| {
+        |x, p, t, dx, _rateiv, cov, _bolus| {
             // The following are helper functions to fetch parameters and covariates
             fetch_cov!(cov, t, _wt, _age);
             fetch_params!(p, ka, ke, _tlag, _v);

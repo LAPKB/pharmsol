@@ -21,7 +21,7 @@ use diffsol::{
 };
 use nalgebra::DVector;
 
-use super::{Equation, EquationPriv, EquationTypes, State};
+use super::{Equation, EquationPriv, EquationTypes};
 
 const RTOL: f64 = 1e-4;
 const ATOL: f64 = 1e-4;
@@ -51,12 +51,7 @@ impl ODE {
     }
 }
 
-impl State for V {
-    #[inline(always)]
-    fn add_bolus(&mut self, input: usize, amount: f64) {
-        self[input] += amount;
-    }
-}
+// State implementation for V is now in the parent equation module
 
 // Hash the support points by converting them to bits and summing them
 // The wrapping_add is used to avoid overflow, and prevent panics
@@ -221,6 +216,22 @@ impl Equation for ODE {
                 self.mappings_ref(),
             );
 
+            // Determine the maximum bolus input index to size the bolus vector appropriately
+            let max_bolus_input = events
+                .iter()
+                .filter_map(|event| {
+                    if let Event::Bolus(bolus) = event {
+                        Some(bolus.input())
+                    } else {
+                        None
+                    }
+                })
+                .max()
+                .unwrap_or(0);
+
+            // Size the bolus vector to accommodate both state vector and maximum bolus input
+            let bolus_vec_size = std::cmp::max(self.get_nstates(), max_bolus_input + 1);
+
             let problem = OdeBuilder::<M>::new()
                 .atol(vec![ATOL])
                 .rtol(RTOL)
@@ -235,6 +246,7 @@ impl Equation for ODE {
                     infusions,
                     self.initial_state(support_point, covariates, occasion.index())
                         .into(),
+                    vec![0.0; bolus_vec_size],
                 ))?;
 
             let mut solver: Bdf<
@@ -248,7 +260,33 @@ impl Equation for ODE {
                 //START SIMULATE_EVENT
                 match event {
                     Event::Bolus(bolus) => {
-                        solver.state_mut().y[bolus.input()] += bolus.amount();
+                        // Create bolus vector sized to accommodate the input index
+                        // The bolus vector should be at least as large as the largest input + 1
+                        let bolus_vec_size = 10; //TODO: Change back to dynamic sizing
+                        let mut bolus_vec = vec![0.0; bolus_vec_size];
+                        bolus_vec[bolus.input()] = bolus.amount();
+
+                        // Call the model closure directly to compute bolus-induced changes
+                        let mut bolus_changes = V::zeros(self.get_nstates(), NalgebraContext);
+                        let rateiv = V::zeros(self.get_nstates(), NalgebraContext);
+                        let spp = DVector::from_vec(support_point.clone());
+                        let bolus_v: V = DVector::from_vec(bolus_vec).into();
+
+                        // Call the differential equation closure
+                        (self.diffeq)(
+                            solver.state().y,
+                            &spp.into(),
+                            event.time(),
+                            &mut bolus_changes,
+                            rateiv,
+                            covariates,
+                            &bolus_v,
+                        );
+
+                        // Apply the computed changes to the state
+                        for i in 0..self.get_nstates() {
+                            solver.state_mut().y[i] += bolus_changes[i];
+                        }
                     }
                     Event::Infusion(_infusion) => {}
                     Event::Observation(observation) => {

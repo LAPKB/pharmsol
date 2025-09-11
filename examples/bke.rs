@@ -11,6 +11,10 @@ fn main() {
         .observation(6., 0.009_099_384, 0)
         .observation(8., 0.001017932, 0)
         .missing_observation(12.0, 0)
+        .bolus(13.0, 100.0, 1)
+        .missing_observation(14.0, 0)
+        .missing_observation(20.0, 0)
+        .missing_observation(24.0, 0)
         .build();
 
     let an = equation::Analytical::new(
@@ -27,10 +31,10 @@ fn main() {
     );
 
     let ode = equation::ODE::new(
-        |x, p, _t, dx, rateiv, _cov| {
+        |x, p, _t, dx, rateiv, _cov, bolus| {
             // fetch_cov!(cov, t, wt);
             fetch_params!(p, ke, _v);
-            dx[0] = -ke * x[0] + rateiv[0];
+            dx[0] = -ke * x[0] + rateiv[0] + bolus[1]; // Access bolus input 1
         },
         |_p, _t, _cov| lag! {},
         |_p, _t, _cov| fa! {},
