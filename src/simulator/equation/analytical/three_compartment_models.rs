@@ -236,6 +236,7 @@ pub fn three_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &
 #[cfg(test)]
 mod tests {
     use super::{three_compartments, three_compartments_with_absorption};
+    use crate::prelude::simulator::Prediction;
     use crate::*;
     use approx::assert_relative_eq;
 
@@ -293,6 +294,67 @@ mod tests {
         }
     }
 
+    /// Helper function to compare two vectors of predictions for testing
+    fn compare_predictions(
+        ode_predictions: &[Prediction],
+        analytical_predictions: &[Prediction],
+        tolerance: f64,
+    ) {
+        assert_eq!(
+            ode_predictions.len(),
+            analytical_predictions.len(),
+            "Prediction vectors must have the same length"
+        );
+
+        for (ode_pred, analytical_pred) in ode_predictions.iter().zip(analytical_predictions.iter())
+        {
+            // Check that times match
+            assert_relative_eq!(ode_pred.time(), analytical_pred.time(), epsilon = 1e-8,);
+
+            // Check that observations match
+            assert_eq!(
+                ode_pred.observation(),
+                analytical_pred.observation(),
+                "Observations do not match at time {}",
+                ode_pred.time()
+            );
+
+            // Check that outeq matches
+            assert_eq!(
+                ode_pred.outeq(),
+                analytical_pred.outeq(),
+                "Output equations do not match at time {}",
+                ode_pred.time()
+            );
+
+            // Check that prediction values match within tolerance
+            let ode_val = ode_pred.prediction();
+            let analytical_val = analytical_pred.prediction();
+            assert_relative_eq!(
+                ode_val,
+                analytical_val,
+                max_relative = tolerance,
+                epsilon = 1.0
+            );
+        }
+    }
+
+    // Function to pretty-print comparison of predictions
+    fn print_comparison(ode_predictions: &[Prediction], analytical_predictions: &[Prediction]) {
+        println!("Time\t\tAnalytical\tODE\t\tDelta");
+        for (analytical_pred, ode_pred) in analytical_predictions.iter().zip(ode_predictions.iter())
+        {
+            let analytical_val = analytical_pred.prediction();
+            let ode_val = ode_pred.prediction();
+            let delta = (analytical_val - ode_val).abs();
+            let time = analytical_pred.time();
+            println!(
+                "{:.2}\t\t{:.6}\t{:.6}\t{:.6}",
+                time, analytical_val, ode_val, delta
+            );
+        }
+    }
+
     #[test]
     fn test_three_compartments() {
         let infusion_dosing = SubjectInfo::InfusionDosing;
@@ -332,19 +394,16 @@ mod tests {
         let op_ode = ode
             .estimate_predictions(&subject, &vec![0.1, 3.0, 2.0, 1.0, 0.5, 1.0])
             .unwrap();
-        let pred_ode = &op_ode.flat_predictions()[..];
 
         let op_analytical = analytical
             .estimate_predictions(&subject, &vec![0.1, 3.0, 2.0, 1.0, 0.5, 1.0])
             .unwrap();
-        let pred_analytical = &op_analytical.flat_predictions()[..];
 
-        println!("ode: {:?}", pred_ode);
-        println!("analitycal: {:?}", pred_analytical);
+        let ode_predictions = op_ode.predictions();
+        let analytical_predictions = op_analytical.predictions();
 
-        for (&od, &an) in pred_ode.iter().zip(pred_analytical.iter()) {
-            assert_relative_eq!(od, an, max_relative = 1e-3, epsilon = 1e-3);
-        }
+        print_comparison(ode_predictions, analytical_predictions);
+        compare_predictions(ode_predictions, analytical_predictions, 1e-4);
     }
 
     #[test]
@@ -391,14 +450,10 @@ mod tests {
             .estimate_predictions(&subject, &vec![1.0, 0.1, 3.0, 2.0, 1.0, 0.5, 1.0])
             .unwrap();
 
-        let pred_ode = &op_ode.flat_predictions()[..];
-        let pred_analytical = &op_analytical.flat_predictions()[..];
+        let ode_predictions = op_ode.predictions();
+        let analytical_predictions = op_analytical.predictions();
 
-        println!("ode: {:?}", pred_ode);
-        println!("analitycal: {:?}", pred_analytical);
-
-        for (&od, &an) in pred_ode.iter().zip(pred_analytical.iter()) {
-            assert_relative_eq!(od, an, max_relative = 1e-3, epsilon = 1e-3,);
-        }
+        print_comparison(ode_predictions, analytical_predictions);
+        compare_predictions(ode_predictions, analytical_predictions, 1e-4);
     }
 }
