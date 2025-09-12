@@ -145,6 +145,7 @@ mod tests {
         println!("Time\t\tAnalytical\tODE\t\tDelta");
         for (analytical_pred, ode_pred) in analytical_predictions.iter().zip(ode_predictions.iter())
         {
+            assert_relative_eq!(analytical_pred.time(), ode_pred.time(), epsilon = 1e-8);
             let analytical_val = analytical_pred.prediction();
             let ode_val = ode_pred.prediction();
             let delta = (analytical_val - ode_val).abs();
