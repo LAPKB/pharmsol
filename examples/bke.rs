@@ -11,10 +11,10 @@ fn main() {
         .observation(6., 0.009_099_384, 0)
         .observation(8., 0.001017932, 0)
         .missing_observation(12.0, 0)
-        .bolus(13.0, 100.0, 1)
-        .missing_observation(14.0, 0)
-        .missing_observation(20.0, 0)
-        .missing_observation(24.0, 0)
+        .bolus(24.0, 100.0, 1)
+        .missing_observation(25.0, 0)
+        .missing_observation(26.0, 0)
+        .missing_observation(27.0, 0)
         .build();
 
     let an = equation::Analytical::new(
