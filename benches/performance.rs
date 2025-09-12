@@ -19,7 +19,7 @@ fn example_subject() -> Subject {
 fn readme(n: usize) {
     let subject = example_subject();
     let ode = equation::ODE::new(
-        |x, p, _t, dx, _rateiv, _cov| {
+        |x, p, _t, dx, _rateiv, _cov, _bolus| {
             // fetch_cov!(cov, t, _wt, _age);
             fetch_params!(p, ka, ke, _tlag, _v);
             //Struct

@@ -21,7 +21,7 @@ use diffsol::{
 };
 use nalgebra::DVector;
 
-use super::{Equation, EquationPriv, EquationTypes, State};
+use super::{Equation, EquationPriv, EquationTypes};
 
 const RTOL: f64 = 1e-4;
 const ATOL: f64 = 1e-4;
@@ -51,12 +51,7 @@ impl ODE {
     }
 }
 
-impl State for V {
-    #[inline(always)]
-    fn add_bolus(&mut self, input: usize, amount: f64) {
-        self[input] += amount;
-    }
-}
+// State implementation for V is now in the parent equation module
 
 // Hash the support points by converting them to bits and summing them
 // The wrapping_add is used to avoid overflow, and prevent panics
@@ -221,6 +216,22 @@ impl Equation for ODE {
                 self.mappings_ref(),
             );
 
+            // Determine the maximum bolus input index to size the bolus vector appropriately
+            let max_bolus_input = events
+                .iter()
+                .filter_map(|event| {
+                    if let Event::Bolus(bolus) = event {
+                        Some(bolus.input())
+                    } else {
+                        None
+                    }
+                })
+                .max()
+                .unwrap_or(0);
+
+            // Size the bolus vector to accommodate both state vector and maximum bolus input
+            let bolus_vec_size = std::cmp::max(self.get_nstates(), max_bolus_input + 1);
+
             let problem = OdeBuilder::<M>::new()
                 .atol(vec![ATOL])
                 .rtol(RTOL)
@@ -235,7 +246,15 @@ impl Equation for ODE {
                     infusions,
                     self.initial_state(support_point, covariates, occasion.index())
                         .into(),
+                    vec![0.0; bolus_vec_size],
                 ))?;
+
+            // Pre-allocate reusable vectors for bolus handling
+            let mut bolus_vec = vec![0.0; bolus_vec_size];
+            let mut bolus_changes = V::zeros(self.get_nstates(), NalgebraContext);
+            let rateiv_zero = V::zeros(self.get_nstates(), NalgebraContext);
+            let spp_dvector = DVector::from_vec(support_point.clone());
+            let spp_v: V = spp_dvector.into();
 
             let mut solver: Bdf<
                 '_,
@@ -248,7 +267,40 @@ impl Equation for ODE {
                 //START SIMULATE_EVENT
                 match event {
                     Event::Bolus(bolus) => {
-                        solver.state_mut().y[bolus.input()] += bolus.amount();
+                        // Reset and reuse the bolus vector
+                        bolus_vec.fill(0.0);
+                        bolus_vec[bolus.input()] = bolus.amount();
+
+                        // Reset and reuse the bolus changes vector
+                        bolus_changes.fill(0.0);
+
+                        // Use stack allocation for small bolus vectors to avoid heap allocation
+                        let bolus_v: V = if bolus_vec.len() <= 8 {
+                            // Stack allocation for small vectors
+                            let mut stack_bolus = [0.0; 8];
+                            let len = bolus_vec.len().min(8);
+                            stack_bolus[..len].copy_from_slice(&bolus_vec[..len]);
+                            DVector::from_row_slice(&stack_bolus[..len]).into()
+                        } else {
+                            // Heap allocation for larger vectors
+                            DVector::from_vec(bolus_vec.clone()).into()
+                        };
+
+                        // Call the differential equation closure
+                        (self.diffeq)(
+                            solver.state().y,
+                            &spp_v,
+                            event.time(),
+                            &mut bolus_changes,
+                            rateiv_zero.clone(),
+                            covariates,
+                            &bolus_v,
+                        );
+
+                        // Apply the computed changes to the state
+                        for i in 0..self.get_nstates() {
+                            solver.state_mut().y[i] += bolus_changes[i];
+                        }
                     }
                     Event::Infusion(_infusion) => {}
                     Event::Observation(observation) => {

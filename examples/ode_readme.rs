@@ -15,7 +15,7 @@ fn main() {
         .build();
     println!("{subject}");
     let ode = equation::ODE::new(
-        |x, p, _t, dx, _rateiv, _cov| {
+        |x, p, _t, dx, _rateiv, _cov, _bolus| {
             // fetch_cov!(cov, t,);
             fetch_params!(p, ka, ke, _tlag, _v);
             //Struct
