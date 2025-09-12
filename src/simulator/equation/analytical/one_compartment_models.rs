@@ -103,10 +103,10 @@ mod tests {
         let subject = infusion_dosing.get_subject();
 
         let ode = equation::ODE::new(
-            |x, p, _t, dx, rateiv, _cov, _bolus| {
+            |x, p, _t, dx, rateiv, _cov, bolus| {
                 fetch_params!(p, ke, _v);
 
-                dx[0] = -ke * x[0] + rateiv[0];
+                dx[0] = -ke * x[0] + rateiv[0] + bolus[0];
             },
             |_p, _t, _cov| lag! {},
             |_p, _t, _cov| fa! {},
