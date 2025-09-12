@@ -139,8 +139,21 @@ mod tests {
         let pred_ode = &op_ode.flat_predictions()[..];
         let pred_analytical = &op_analytical.flat_predictions()[..];
 
-        println!("ode: {:?}", pred_ode);
-        println!("analitycal: {:?}", pred_analytical);
+        let ode_predictions = op_ode.predictions();
+        let analytical_predictions = op_analytical.predictions();
+
+        println!("Time\t\tAnalytical\tODE\t\tDelta");
+        for (analytical_pred, ode_pred) in analytical_predictions.iter().zip(ode_predictions.iter())
+        {
+            let analytical_val = analytical_pred.prediction();
+            let ode_val = ode_pred.prediction();
+            let delta = (analytical_val - ode_val).abs();
+            let time = analytical_pred.time();
+            println!(
+                "{:.2}\t\t{:.6}\t{:.6}\t{:.6}",
+                time, analytical_val, ode_val, delta
+            );
+        }
 
         for (&od, &an) in pred_ode.iter().zip(pred_analytical.iter()) {
             assert_relative_eq!(od, an, max_relative = 1e-4, epsilon = 1.0,);
@@ -153,11 +166,11 @@ mod tests {
         let subject = oral_infusion_dosing.get_subject();
 
         let ode = equation::ODE::new(
-            |x, p, _t, dx, rateiv, _cov, _bolus| {
+            |x, p, _t, dx, rateiv, _cov, bolus| {
                 fetch_params!(p, ka, ke, _v);
 
-                dx[0] = -ka * x[0];
-                dx[1] = ka * x[0] - ke * x[1] + rateiv[0];
+                dx[0] = -ka * x[0] + bolus[0];
+                dx[1] = ka * x[0] - ke * x[1] + rateiv[0] + bolus[1];
             },
             |_p, _t, _cov| lag! {},
             |_p, _t, _cov| fa! {},
@@ -189,11 +202,26 @@ mod tests {
             .estimate_predictions(&subject, &vec![1.0, 0.1, 1.0])
             .unwrap();
 
+        let ode_predictions = op_ode.predictions();
+        let analytical_predictions = op_analytical.predictions();
+
+        println!("Time\t\tAnalytical\tODE\t\tDelta");
+        for (analytical_pred, ode_pred) in analytical_predictions.iter().zip(ode_predictions.iter())
+        {
+            // Check that times match
+            assert_relative_eq!(analytical_pred.time(), ode_pred.time(), epsilon = 1e-8);
+            let analytical_val = analytical_pred.prediction();
+            let ode_val = ode_pred.prediction();
+            let delta = (analytical_val - ode_val).abs();
+            let time = analytical_pred.time();
+            println!(
+                "{:.2}\t\t{:.6}\t{:.6}\t{:.6}",
+                time, analytical_val, ode_val, delta
+            );
+        }
+
         let pred_ode = &op_ode.flat_predictions()[..];
         let pred_analytical = &op_analytical.flat_predictions()[..];
-
-        println!("ode: {:?}", pred_ode);
-        println!("analitycal: {:?}", pred_analytical);
 
         for (&od, &an) in pred_ode.iter().zip(pred_analytical.iter()) {
             assert_relative_eq!(od, an, max_relative = 1e-4, epsilon = 1.0);
