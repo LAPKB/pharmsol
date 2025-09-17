@@ -307,6 +307,20 @@ impl<'a> IntoIterator for &'a mut Data {
     }
 }
 
+impl Into<Data> for Vec<Subject> {
+    /// Convert a vector of subjects into a Data object
+    fn into(self) -> Data {
+        Data::new(self)
+    }
+}
+
+impl Into<Data> for Subject {
+    /// Convert a subject into a Data object
+    fn into(self) -> Data {
+        Data::new(vec![self])
+    }
+}
+
 /// A subject in a pharmacometric dataset
 ///
 /// A [Subject] represents a single individual with one or more occasions of data,
