@@ -21,9 +21,6 @@ const FRAC_1_SQRT_2PI: f64 =
 #[derive(Debug, Clone, Default)]
 pub struct SubjectPredictions {
     predictions: Vec<Prediction>,
-    flat_predictions: Vec<f64>,
-    flat_observations: Vec<Option<f64>>,
-    flat_time: Vec<f64>,
 }
 
 impl Predictions for SubjectPredictions {
@@ -70,33 +67,38 @@ impl SubjectPredictions {
     /// - `prediction`: The prediction to add
     pub fn add_prediction(&mut self, prediction: Prediction) {
         self.predictions.push(prediction.clone());
-        self.flat_observations.push(prediction.observation);
-        self.flat_predictions.push(prediction.prediction);
-        self.flat_time.push(prediction.time);
     }
 
-    /// Get a vector of all observation values.
+    /// Get a reference to a vector of predictions.
     ///
     /// # Returns
     /// Vector of observation values
-    pub fn flat_observations(&self) -> Vec<Option<f64>> {
-        self.flat_observations.to_vec()
+    pub fn predictions(&self) -> &Vec<Prediction> {
+        &self.predictions
     }
 
-    /// Get a vector of all prediction values.
-    ///
-    /// # Returns
-    /// Vector of prediction values
+    /// Return a flat vector of predictions.
     pub fn flat_predictions(&self) -> Vec<f64> {
-        self.flat_predictions.to_vec()
+        self.predictions
+            .iter()
+            .map(|p| p.prediction)
+            .collect::<Vec<f64>>()
     }
 
-    /// Get a vector of all time points.
-    ///
-    /// # Returns
-    /// Vector of time points
-    pub fn flat_time(&self) -> Vec<f64> {
-        self.flat_time.to_vec()
+    /// Return a flat vector of predictions.
+    pub fn flat_times(&self) -> Vec<f64> {
+        self.predictions
+            .iter()
+            .map(|p| p.time)
+            .collect::<Vec<f64>>()
+    }
+
+    /// Return a flat vector of observations.
+    pub fn flat_observations(&self) -> Vec<Option<f64>> {
+        self.predictions
+            .iter()
+            .map(|p| p.observation)
+            .collect::<Vec<Option<f64>>>()
     }
 }
 
@@ -114,10 +116,7 @@ fn normcdf(obs: f64, pred: f64, sigma: f64) -> Result<f64, ErrorModelError> {
 impl From<Vec<Prediction>> for SubjectPredictions {
     fn from(predictions: Vec<Prediction>) -> Self {
         Self {
-            flat_predictions: predictions.iter().map(|p| p.prediction).collect(),
-            flat_observations: predictions.iter().map(|p| p.observation).collect(),
-            flat_time: predictions.iter().map(|p| p.time).collect(),
-            predictions,
+            predictions: predictions.iter().cloned().collect(),
         }
     }
 }
@@ -227,6 +226,7 @@ pub struct Prediction {
     pub(crate) outeq: usize,
     pub(crate) errorpoly: Option<ErrorPoly>,
     pub(crate) state: Vec<f64>,
+    pub(crate) occasion: usize,
 }
 
 impl Prediction {
@@ -315,9 +315,25 @@ impl Prediction {
         &self.state
     }
 
+    /// Get the occasion index
+    pub fn occasion(&self) -> usize {
+        self.occasion
+    }
+
+    /// Get a mutable reference to the occasion index
+    pub fn mut_occasion(&mut self) -> &mut usize {
+        &mut self.occasion
+    }
+
     /// Create an [Observation] from this prediction
     pub fn to_observation(&self) -> Observation {
-        Observation::new(self.time, self.observation, self.outeq, self.errorpoly)
+        Observation::new(
+            self.time,
+            self.observation,
+            self.outeq,
+            self.errorpoly,
+            self.occasion,
+        )
     }
 }
 
@@ -330,6 +346,7 @@ impl Default for Prediction {
             outeq: 0,
             errorpoly: None,
             state: vec![],
+            occasion: 0,
         }
     }
 }
@@ -337,10 +354,14 @@ impl Default for Prediction {
 // Implement display for Prediction
 impl std::fmt::Display for Prediction {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let obs_str = match self.observation {
+            Some(obs) => format!("{:.4}", obs),
+            None => "NA".to_string(),
+        };
         write!(
             f,
-            "Time: {:.2}\tObs: {:#?}\tPred: {:.15}\tOuteq: {:.2}",
-            self.time, self.observation, self.prediction, self.outeq
+            "Time: {:.2}\tObs: {:.4}\tPred: {:.4}\tOuteq: {:.2}",
+            self.time, obs_str, self.prediction, self.outeq
         )
     }
 }

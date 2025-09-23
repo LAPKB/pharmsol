@@ -34,7 +34,7 @@ pub struct ODE {
     init: Init,
     out: Out,
     neqs: Neqs,
-    mappings: Mappings,
+    mappings: Option<Mappings>,
 }
 
 impl ODE {
@@ -46,7 +46,7 @@ impl ODE {
             init,
             out,
             neqs,
-            mappings: Mappings::new(),
+            mappings: None,
         }
     }
 }
@@ -195,11 +195,11 @@ impl Equation for ODE {
     fn kind() -> crate::EqnKind {
         crate::EqnKind::ODE
     }
-    fn mappings_ref(&self) -> &Mappings {
-        &self.mappings
+    fn mappings_ref(&self) -> Option<&Mappings> {
+        self.mappings.as_ref()
     }
     fn mappings_mut(&mut self) -> &mut Mappings {
-        &mut self.mappings
+        self.mappings.get_or_insert_with(Mappings::new)
     }
 
     fn simulate_subject(
@@ -218,7 +218,7 @@ impl Equation for ODE {
             let events = occasion.process_events(
                 Some((self.fa(), self.lag(), support_point, covariates)),
                 true,
-                Some(self.mappings_ref()),
+                self.mappings_ref(),
             );
 
             let problem = OdeBuilder::<M>::new()
