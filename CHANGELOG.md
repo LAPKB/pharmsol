@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.2](https://github.com/LAPKB/pharmsol/compare/v0.17.1...v0.17.2) - 2025-09-24
+
+### Added
+
+- Implement into Data for Subject(s) ([#131](https://github.com/LAPKB/pharmsol/pull/131))
+
 ## [0.17.1](https://github.com/LAPKB/pharmsol/compare/v0.17.0...v0.17.1) - 2025-09-06
 
 ### Added
