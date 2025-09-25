@@ -14,7 +14,7 @@ fn main() {
         .build();
 
     let sde = equation::SDE::new(
-        |x, p, _t, dx, _rateiv, _cov| {
+        |x, p, _t, dx, _rateiv, _cov, _bolus| {
             // automatically defined
             fetch_params!(p, ke0);
             // let ke0 = 1.2;

@@ -2,7 +2,7 @@ use pharmsol::{prelude::data::read_pmetrics, *};
 
 fn one_c_ode() -> ODE {
     equation::ODE::new(
-        |x, p, _t, dx, _rateiv, _cov| {
+        |x, p, _t, dx, _rateiv, _cov, _bolus| {
             // fetch_cov!(cov, t, wt);
             fetch_params!(p, ke);
             dx[0] = -ke * x[0];
@@ -19,7 +19,7 @@ fn one_c_ode() -> ODE {
 
 fn one_c_sde() -> SDE {
     equation::SDE::new(
-        |x, p, _t, dx, _rateiv, _cov| {
+        |x, p, _t, dx, _rateiv, _cov, _bolus| {
             // automatically defined
             fetch_params!(p, ke0, _ske);
             // let ke0 = 1.2;
@@ -49,7 +49,7 @@ fn one_c_sde() -> SDE {
 
 fn three_c_ode() -> ODE {
     equation::ODE::new(
-        |x, p, _t, dx, _rateiv, _cov| {
+        |x, p, _t, dx, _rateiv, _cov, _bolus| {
             // fetch_cov!(cov, t, wt);
             fetch_params!(p, ka, ke, kcp, kpc, _vol);
             dx[0] = -ka * x[0];
@@ -69,7 +69,7 @@ fn three_c_ode() -> ODE {
 
 fn three_c_sde() -> SDE {
     equation::SDE::new(
-        |x, p, _t, dx, _rateiv, _cov| {
+        |x, p, _t, dx, _rateiv, _cov, _bolus| {
             fetch_params!(p, ka, ke0, kcp, kpc, _vol, _ske);
             dx[3] = -x[3] + ke0;
             let ke = x[3];

@@ -12,7 +12,7 @@ type T = <M as MatrixCommon>::T;
 
 pub struct PmRhs<'a, F>
 where
-    F: Fn(&V, &V, T, &mut V, V, &Covariates),
+    F: Fn(&V, &V, T, &mut V, V, &Covariates, &V),
 {
     nstates: usize,
     nparams: usize,
@@ -21,11 +21,12 @@ where
     p: &'a Vec<f64>,
     func: &'a F,
     rateiv_buffer: &'a RefCell<V>,
+    bolus: &'a Vec<f64>,
 }
 
 impl<F> Op for PmRhs<'_, F>
 where
-    F: Fn(&V, &V, T, &mut V, V, &Covariates),
+    F: Fn(&V, &V, T, &mut V, V, &Covariates, &V),
 {
     type T = T;
     type V = V;
@@ -154,7 +155,7 @@ impl Op for PmOut {
 
 impl<F> NonLinearOp for PmRhs<'_, F>
 where
-    F: Fn(&V, &V, T, &mut V, V, &Covariates),
+    F: Fn(&V, &V, T, &mut V, V, &Covariates, &V),
 {
     fn call_inplace(&self, x: &Self::V, t: Self::T, y: &mut Self::V) {
         // Compute rate IV at the current time
@@ -194,13 +195,22 @@ where
 
         let pnew = p_ref.to_owned().into();
 
-        (self.func)(x, &pnew, t, y, rateiv, self.covariates)
+        // Optimize bolus vector creation - avoid clone when possible
+        let bolus_v: V = if self.bolus.is_empty() {
+            // Common case: no bolus, create a zero vector
+            V::zeros(1, NalgebraContext) // Minimal size
+        } else {
+            // Only create DVector when bolus is non-empty
+            DVector::from_vec(self.bolus.clone()).into()
+        };
+
+        (self.func)(x, &pnew, t, y, rateiv, self.covariates, &bolus_v)
     }
 }
 
 impl<F> NonLinearOpJacobian for PmRhs<'_, F>
 where
-    F: Fn(&V, &V, T, &mut V, V, &Covariates),
+    F: Fn(&V, &V, T, &mut V, V, &Covariates, &V),
 {
     fn jac_mul_inplace(&self, _x: &Self::V, t: Self::T, v: &Self::V, y: &mut Self::V) {
         let rateiv = V::zeros(self.nstates, NalgebraContext);
@@ -222,6 +232,13 @@ where
             }
         }
 
+        // Optimize bolus vector creation in Jacobian - same as in call_inplace
+        let bolus_v: V = if self.bolus.is_empty() {
+            V::zeros(1, NalgebraContext)
+        } else {
+            DVector::from_vec(self.bolus.clone()).into()
+        };
+
         (self.func)(
             v,
             &p_dvector.to_owned().into(),
@@ -229,6 +246,7 @@ where
             y,
             rateiv,
             self.covariates,
+            &bolus_v,
         );
     }
 }
@@ -248,7 +266,7 @@ impl NonLinearOp for PmOut {
 // Completely revised PMProblem to fix lifetime issues and improve performance
 pub struct PMProblem<'a, F>
 where
-    F: Fn(&V, &V, T, &mut V, V, &Covariates) + 'a,
+    F: Fn(&V, &V, T, &mut V, V, &Covariates, &V) + 'a,
 {
     func: F,
     nstates: usize,
@@ -258,11 +276,12 @@ where
     covariates: &'a Covariates,
     infusions: Vec<&'a Infusion>,
     rateiv_buffer: RefCell<V>,
+    bolus: Vec<f64>,
 }
 
 impl<'a, F> PMProblem<'a, F>
 where
-    F: Fn(&V, &V, T, &mut V, V, &Covariates) + 'a,
+    F: Fn(&V, &V, T, &mut V, V, &Covariates, &V) + 'a,
 {
     pub fn new(
         func: F,
@@ -271,6 +290,7 @@ where
         covariates: &'a Covariates,
         infusions: Vec<&'a Infusion>,
         init: V,
+        bolus: Vec<f64>,
     ) -> Self {
         let nparams = p.len();
         let rateiv_buffer = RefCell::new(V::zeros(nstates, NalgebraContext));
@@ -284,13 +304,14 @@ where
             covariates,
             infusions,
             rateiv_buffer,
+            bolus,
         }
     }
 }
 
 impl<'a, F> Op for PMProblem<'a, F>
 where
-    F: Fn(&V, &V, T, &mut V, V, &Covariates) + 'a,
+    F: Fn(&V, &V, T, &mut V, V, &Covariates, &V) + 'a,
 {
     type T = T;
     type V = V;
@@ -313,7 +334,7 @@ where
 // Implement OdeEquationsRef for PMProblem for any lifetime 'b
 impl<'a, 'b, F> OdeEquationsRef<'b> for PMProblem<'a, F>
 where
-    F: Fn(&V, &V, T, &mut V, V, &Covariates) + 'a,
+    F: Fn(&V, &V, T, &mut V, V, &Covariates, &V) + 'a,
 {
     type Rhs = PmRhs<'b, F>;
     type Mass = PmMass;
@@ -325,7 +346,7 @@ where
 // Implement OdeEquations with correct lifetime handling
 impl<'a, F> OdeEquations for PMProblem<'a, F>
 where
-    F: Fn(&V, &V, T, &mut V, V, &Covariates) + 'a,
+    F: Fn(&V, &V, T, &mut V, V, &Covariates, &V) + 'a,
 {
     fn rhs(&self) -> PmRhs<'_, F> {
         PmRhs {
@@ -336,6 +357,7 @@ where
             p: &self.p,
             func: &self.func,
             rateiv_buffer: &self.rateiv_buffer,
+            bolus: &self.bolus,
         }
     }
 

@@ -11,7 +11,7 @@ fn main() {
         .build();
 
     let sde = equation::SDE::new(
-        |x, p, _t, dx, _rateiv, _cov| {
+        |x, p, _t, dx, _rateiv, _cov, _bolus| {
             dx[0] = -x[0] * x[1]; // ke *x[0]
             dx[1] = -x[1] + p[0]; // mean reverting
         },

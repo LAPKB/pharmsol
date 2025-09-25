@@ -3,9 +3,13 @@ use crate::{
     simulator::{Diffusion, Drift},
     Infusion,
 };
+use diffsol::{MatrixCommon, NalgebraMat};
 use nalgebra::DVector;
 use rand::rng;
 use rand_distr::{Distribution, Normal};
+
+type M = NalgebraMat<f64>;
+type V = <M as MatrixCommon>::V;
 
 /// Implementation of the Euler-Maruyama method for solving stochastic differential equations.
 ///
@@ -20,6 +24,7 @@ pub struct EM {
     state: DVector<f64>,
     cov: Covariates,
     infusions: Vec<Infusion>,
+    bolus: Vec<f64>,
     rtol: f64,
     atol: f64,
     max_step: f64,
@@ -50,6 +55,7 @@ impl EM {
         initial_state: DVector<f64>,
         cov: Covariates,
         infusions: Vec<Infusion>,
+        bolus: Vec<f64>,
         rtol: f64,
         atol: f64,
     ) -> Self {
@@ -60,6 +66,7 @@ impl EM {
             state: initial_state,
             cov,
             infusions,
+            bolus,
             rtol,
             atol,
             max_step: 0.1,  // Can be made configurable
@@ -123,6 +130,8 @@ impl EM {
             }
         }
         let mut drift_term = DVector::zeros(n).into();
+        let bolus_dvector = DVector::from_vec(self.bolus.clone());
+        let bolus_v: V = bolus_dvector.into();
         (self.drift)(
             &state.clone().into(),
             &self.params.clone().into(),
@@ -130,6 +139,7 @@ impl EM {
             &mut drift_term,
             rateiv.into(),
             &self.cov,
+            &bolus_v,
         );
 
         let mut diffusion_term = DVector::zeros(n).into();
