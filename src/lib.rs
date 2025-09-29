@@ -2,6 +2,7 @@ pub mod data;
 pub mod error;
 #[cfg(feature = "exa")]
 pub mod exa;
+pub mod optimize;
 pub mod simulator;
 
 //extension traits
@@ -9,6 +10,8 @@ pub use crate::data::builder::SubjectBuilderExt;
 pub use crate::data::Interpolation::*;
 pub use crate::data::*;
 pub use crate::equation::*;
+pub use crate::optimize::effect::get_e2;
+pub use crate::optimize::spp::SppOptimizer;
 pub use crate::simulator::equation::{self, ODE};
 pub use error::PharmsolError;
 #[cfg(feature = "exa")]
