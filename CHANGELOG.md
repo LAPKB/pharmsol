@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.2](https://github.com/LAPKB/pharmsol/compare/v0.17.1...v0.17.2) - 2025-09-30
+
+### Added
+
+- Implement into Data for Subject(s) ([#131](https://github.com/LAPKB/pharmsol/pull/131))
+
+### Other
+
+- moved the optim module into pharmsol, the idea is that the SppOptimizer and the EffectOptimizer both can be directly used in the model and because of this they belong in pharmsol
+- Bump actions/upload-pages-artifact from 3 to 4 ([#124](https://github.com/LAPKB/pharmsol/pull/124))
+
 ## [0.17.1](https://github.com/LAPKB/pharmsol/compare/v0.17.0...v0.17.1) - 2025-09-06
 
 ### Added
