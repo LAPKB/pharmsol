@@ -182,7 +182,7 @@ impl EquationPriv for ODE {
             &mut y,
         );
         let pred = y[observation.outeq()];
-        let pred = observation.to_obs_pred(pred, x.as_slice().to_vec());
+        let pred = observation.to_obs_pred(pred, x.as_slice().to_vec()); // obs + pred are in ... pred
         if let Some(error_model) = error_model {
             likelihood.push(pred.likelihood(error_model));
         }

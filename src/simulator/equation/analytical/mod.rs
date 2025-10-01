@@ -120,6 +120,9 @@ impl EquationPriv for Analytical {
         let pred = y[observation.outeq()];
         let pred = observation.to_obs_pred(pred, x.as_slice().to_vec());
         if let Some(error_model) = error_model {
+            // wmy centering_function is a running Chi^2 stat w/exp = support point
+            // let centering_function = pred[2];
+            // likelihood.push(centering_function * pred.likelihood(error_model));
             likelihood.push(pred.likelihood(error_model));
         }
         output.add_prediction(pred);

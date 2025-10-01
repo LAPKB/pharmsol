@@ -224,14 +224,23 @@ impl EquationPriv for SDE {
         if let Some(em) = error_model {
             let mut q: Vec<f64> = Vec::with_capacity(self.nparticles);
             //
-            // wmy centering_function is a running Chi^2 w/exp = support point
+            // wmy centering_function is a running Chi^2 w/expected value = support point value
             // let centering_function = p.pred[2]; // move this inside the iteration.
             //
-            // pred.iter().for_each(|p| q.push(p.state[4] * p.likelihood(em)));
-            //
-            // note: Above doesn't compile b/c pred is private; but also: I'm not sure if pred is the state, and state is x ???
-            //
-            pred.iter().for_each(|p| q.push(p.likelihood(em)));
+            
+            // if no centering_function {
+            //   pred.iter().for_each(|p| q.push(p.likelihood(em)));
+            // } else
+            // pred.iter().enumerate().for_each(|(i,p)| q.push(p.likelihood(em) * x[i][4])); // pred[i][2]
+
+            // if no centering function // for example w/the ODE
+            //     pred.iter().enumerate().for_each(|(i,p)| q.push(p.likelihood(em) )); // pred[i][2]
+            // else
+                pred.iter().enumerate().for_each(|(i,p)| q.push(p.likelihood(em) * x[i][4]));
+
+            // for (i,p) in pred.iter().enumerate() { // does the same thing as above.
+            //    q.push(p.likelihood(em) * x[i][4]);
+            // }
             //
             let sum_q: f64 = q.iter().sum();
             let w: Vec<f64> = q.iter().map(|qi| qi / sum_q).collect();

@@ -102,6 +102,7 @@ pub fn psi(
 ) -> Array2<f64> {
     let mut pred: Array2<f64> = Array2::default((subjects.len(), support_points.nrows()).f());
     let subjects = subjects.get_subjects();
+    let progress = true;
     let pb = match progress {
         true => {
             let pb = ProgressBar::new(pred.ncols() as u64 * pred.nrows() as u64);
@@ -116,6 +117,9 @@ pub fn psi(
         }
         false => None,
     };
+
+    // tracing::debug!( // tracing is an unresolved module
+        println!("Getting into axis_iter_mut");
 
     pred.axis_iter_mut(Axis(0))
         .into_par_iter()
@@ -132,6 +136,7 @@ pub fn psi(
                         error_model,
                         cache,
                     );
+                    println!("{}, {}, {}", i, j, likelihood); // Some subjects are hanging cargo run ... > debug.txt
                     element.fill(likelihood);
                     if let Some(pb_ref) = pb.as_ref() {
                         pb_ref.inc(1);
@@ -217,8 +222,27 @@ impl Prediction {
     }
     pub fn likelihood(&self, error_model: &ErrorModel) -> f64 {
         let sigma = error_model.estimate_sigma(self);
-        println!("state {:#?}",self.state);
-        normpdf(self.observation, self.prediction, sigma)
+        // println!("state {:#?}",self.state);
+
+        // if deviation is too small, set likelihood to 0
+        if (self.observation - self.prediction).abs() > 4.417*sigma { // 99.999 CI
+            0.0
+        }
+        else {
+            if self.observation() > 4.0 {
+               normpdf(self.observation, self.prediction, sigma)
+            }
+            else {
+                if self.prediction() <= (4.0 + 1.97*sigma) { // obs is BLQ, but prediction can be 5% above BLQ, this is a cluge, should be BLQ + sigma
+                // println!("obs > 4; pred <= 4");
+                // sigma = BLQ(); or the return value of BLQ(self.observation, self.prediction)
+                    normpdf(self.prediction, self.prediction, sigma)
+                } else {
+                  0.0 // std::f64::MIN
+                }
+            }
+        }
+
     }
     pub fn state(&self) -> &Vec<f64> {
         &self.state
