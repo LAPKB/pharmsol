@@ -292,9 +292,10 @@ impl Prediction {
 
         let sigma = error_models.sigma(self)?;
 
-        let likelihood = match self.censored {
-            true => normcdf(self.observation.unwrap(), self.prediction, sigma)?,
-            false => normpdf(self.observation.unwrap(), self.prediction, sigma),
+        let likelihood = if self.censored {
+            normcdf(self.observation.unwrap(), self.prediction, sigma)?
+        } else {
+            normpdf(self.observation.unwrap(), self.prediction, sigma)
         };
 
         if likelihood.is_finite() {
