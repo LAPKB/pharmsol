@@ -218,20 +218,12 @@ impl ErrorModels {
             outeq.hash(&mut hasher);
 
             match model {
-                ErrorModel::Additive {
-                    lambda,
-                    poly: _,
-                    lloq: _,
-                } => {
+                ErrorModel::Additive { lambda, poly: _ } => {
                     0u8.hash(&mut hasher); // Use 0 for additive model
                     lambda.value().to_bits().hash(&mut hasher);
                     lambda.is_fixed().hash(&mut hasher); // Include fixed/variable state in hash
                 }
-                ErrorModel::Proportional {
-                    gamma,
-                    poly: _,
-                    lloq: _,
-                } => {
+                ErrorModel::Proportional { gamma, poly: _ } => {
                     1u8.hash(&mut hasher); // Use 1 for proportional model
                     gamma.value().to_bits().hash(&mut hasher);
                     gamma.is_fixed().hash(&mut hasher); // Include fixed/variable state in hash
@@ -538,8 +530,6 @@ pub enum ErrorModel {
         lambda: Factor,
         /// Error polynomial coefficients (c0, c1, c2, c3)
         poly: ErrorPoly,
-        /// Optional: lloq (Lower Limit of Quantification) of the analytical method
-        lloq: Option<f64>,
     },
 
     /// Proportional error model, where error scales with concentration
@@ -552,8 +542,6 @@ pub enum ErrorModel {
         gamma: Factor,
         /// Error polynomial coefficients (c0, c1, c2, c3)
         poly: ErrorPoly,
-        /// Optional: lloq (Lower Limit of Quantification) of the analytical method
-        lloq: Option<f64>,
     },
     #[default]
     None,
@@ -571,11 +559,10 @@ impl ErrorModel {
     /// # Returns
     ///
     /// A new additive error model
-    pub fn additive(poly: ErrorPoly, lambda: f64, lloq: Option<f64>) -> Self {
+    pub fn additive(poly: ErrorPoly, lambda: f64) -> Self {
         Self::Additive {
             lambda: Factor::Variable(lambda),
             poly,
-            lloq,
         }
     }
 
@@ -590,11 +577,10 @@ impl ErrorModel {
     /// # Returns
     ///
     /// A new additive error model with fixed lambda
-    pub fn additive_fixed(poly: ErrorPoly, lambda: f64, lloq: Option<f64>) -> Self {
+    pub fn additive_fixed(poly: ErrorPoly, lambda: f64) -> Self {
         Self::Additive {
             lambda: Factor::Fixed(lambda),
             poly,
-            lloq,
         }
     }
 
@@ -609,21 +595,8 @@ impl ErrorModel {
     /// # Returns
     ///
     /// A new additive error model
-    pub fn additive_with_param(poly: ErrorPoly, lambda: Factor, lloq: Option<f64>) -> Self {
-        Self::Additive { lambda, poly, lloq }
-    }
-
-    /// Get the lloq (Lower Limit of Quantification) value, if available.
-    ///
-    /// # Returns
-    ///
-    /// An `Option<f64>` containing the lloq value if it exists, otherwise `None`.
-    pub fn lloq(&self) -> Option<f64> {
-        match self {
-            Self::Additive { lloq, .. } => *lloq,
-            Self::Proportional { lloq, .. } => *lloq,
-            Self::None => None,
-        }
+    pub fn additive_with_param(poly: ErrorPoly, lambda: Factor) -> Self {
+        Self::Additive { lambda, poly }
     }
 
     /// Create a new proportional error model with a variable gamma parameter
@@ -637,11 +610,10 @@ impl ErrorModel {
     /// # Returns
     ///
     /// A new proportional error model
-    pub fn proportional(poly: ErrorPoly, gamma: f64, lloq: Option<f64>) -> Self {
+    pub fn proportional(poly: ErrorPoly, gamma: f64) -> Self {
         Self::Proportional {
             gamma: Factor::Variable(gamma),
             poly,
-            lloq,
         }
     }
 
@@ -656,11 +628,10 @@ impl ErrorModel {
     /// # Returns
     ///
     /// A new proportional error model with fixed gamma
-    pub fn proportional_fixed(poly: ErrorPoly, gamma: f64, lloq: Option<f64>) -> Self {
+    pub fn proportional_fixed(poly: ErrorPoly, gamma: f64) -> Self {
         Self::Proportional {
             gamma: Factor::Fixed(gamma),
             poly,
-            lloq,
         }
     }
 
@@ -675,8 +646,8 @@ impl ErrorModel {
     /// # Returns
     ///
     /// A new proportional error model
-    pub fn proportional_with_param(poly: ErrorPoly, gamma: Factor, lloq: Option<f64>) -> Self {
-        Self::Proportional { gamma, poly, lloq }
+    pub fn proportional_with_param(poly: ErrorPoly, gamma: Factor) -> Self {
+        Self::Proportional { gamma, poly }
     }
 
     /// Get the error polynomial coefficients
@@ -918,7 +889,7 @@ mod tests {
     fn test_additive_error_model() {
         let observation = Observation::new(0.0, Some(20.0), 0, None, 0, false);
         let prediction = observation.to_prediction(10.0, vec![]);
-        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0, None);
+        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         assert_eq!(model.sigma(&prediction).unwrap(), (26.0_f64).sqrt());
     }
 
@@ -926,13 +897,13 @@ mod tests {
     fn test_proportional_error_model() {
         let observation = Observation::new(0.0, Some(20.0), 0, None, 0, false);
         let prediction = observation.to_prediction(10.0, vec![]);
-        let model = ErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0, None);
+        let model = ErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0);
         assert_eq!(model.sigma(&prediction).unwrap(), 2.0);
     }
 
     #[test]
     fn test_polynomial() {
-        let model = ErrorModel::additive(ErrorPoly::new(1.0, 2.0, 3.0, 4.0), 5.0, None);
+        let model = ErrorModel::additive(ErrorPoly::new(1.0, 2.0, 3.0, 4.0), 5.0);
         assert_eq!(
             model.errorpoly().unwrap().coefficients(),
             (1.0, 2.0, 3.0, 4.0)
@@ -941,7 +912,7 @@ mod tests {
 
     #[test]
     fn test_set_errorpoly() {
-        let mut model = ErrorModel::additive(ErrorPoly::new(1.0, 2.0, 3.0, 4.0), 5.0, None);
+        let mut model = ErrorModel::additive(ErrorPoly::new(1.0, 2.0, 3.0, 4.0), 5.0);
         assert_eq!(
             model.errorpoly().unwrap().coefficients(),
             (1.0, 2.0, 3.0, 4.0)
@@ -955,7 +926,7 @@ mod tests {
 
     #[test]
     fn test_set_factor() {
-        let mut model = ErrorModel::additive(ErrorPoly::new(1.0, 2.0, 3.0, 4.0), 5.0, None);
+        let mut model = ErrorModel::additive(ErrorPoly::new(1.0, 2.0, 3.0, 4.0), 5.0);
         assert_eq!(model.factor().unwrap(), 5.0);
         model.set_factor(10.0);
         assert_eq!(model.factor().unwrap(), 10.0);
@@ -963,10 +934,10 @@ mod tests {
 
     #[test]
     fn test_sigma_from_value() {
-        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0, None);
+        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         assert_eq!(model.sigma_from_value(20.0).unwrap(), (26.0_f64).sqrt());
 
-        let model = ErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0, None);
+        let model = ErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0);
         assert_eq!(model.sigma_from_value(20.0).unwrap(), 2.0);
     }
 
@@ -984,15 +955,15 @@ mod tests {
 
     #[test]
     fn test_error_models_add_single() {
-        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0, None);
+        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         let models = ErrorModels::new().add(0, model).unwrap();
         assert_eq!(models.len(), 1);
     }
 
     #[test]
     fn test_error_models_add_multiple() {
-        let model1 = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0, None);
-        let model2 = ErrorModel::proportional(ErrorPoly::new(2.0, 0.0, 0.0, 0.0), 3.0, None);
+        let model1 = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let model2 = ErrorModel::proportional(ErrorPoly::new(2.0, 0.0, 0.0, 0.0), 3.0);
 
         let models = ErrorModels::new()
             .add(0, model1)
@@ -1005,8 +976,8 @@ mod tests {
 
     #[test]
     fn test_error_models_add_duplicate_outeq_fails() {
-        let model1 = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0, None);
-        let model2 = ErrorModel::proportional(ErrorPoly::new(2.0, 0.0, 0.0, 0.0), 3.0, None);
+        let model1 = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let model2 = ErrorModel::proportional(ErrorPoly::new(2.0, 0.0, 0.0, 0.0), 3.0);
 
         let result = ErrorModels::new().add(0, model1).unwrap().add(0, model2); // Same outeq should fail
 
@@ -1019,7 +990,7 @@ mod tests {
 
     #[test]
     fn test_error_models_factor() {
-        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0, None);
+        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         let models = ErrorModels::new().add(0, model).unwrap();
 
         assert_eq!(models.factor(0).unwrap(), 5.0);
@@ -1027,7 +998,7 @@ mod tests {
 
     #[test]
     fn test_error_models_factor_invalid_outeq() {
-        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0, None);
+        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         let models = ErrorModels::new().add(0, model).unwrap();
 
         let result = models.factor(1);
@@ -1040,7 +1011,7 @@ mod tests {
 
     #[test]
     fn test_error_models_set_factor() {
-        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0, None);
+        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         let mut models = ErrorModels::new().add(0, model).unwrap();
 
         assert_eq!(models.factor(0).unwrap(), 5.0);
@@ -1050,7 +1021,7 @@ mod tests {
 
     #[test]
     fn test_error_models_set_factor_invalid_outeq() {
-        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0, None);
+        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         let mut models = ErrorModels::new().add(0, model).unwrap();
 
         let result = models.set_factor(1, 10.0);
@@ -1064,7 +1035,7 @@ mod tests {
     #[test]
     fn test_error_models_errorpoly() {
         let poly = ErrorPoly::new(1.0, 2.0, 3.0, 4.0);
-        let model = ErrorModel::additive(poly, 5.0, None);
+        let model = ErrorModel::additive(poly, 5.0);
         let models = ErrorModels::new().add(0, model).unwrap();
 
         let retrieved_poly = models.errorpoly(0).unwrap();
@@ -1073,7 +1044,7 @@ mod tests {
 
     #[test]
     fn test_error_models_errorpoly_invalid_outeq() {
-        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0, None);
+        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         let models = ErrorModels::new().add(0, model).unwrap();
 
         let result = models.errorpoly(1);
@@ -1088,7 +1059,7 @@ mod tests {
     fn test_error_models_set_errorpoly() {
         let poly1 = ErrorPoly::new(1.0, 2.0, 3.0, 4.0);
         let poly2 = ErrorPoly::new(5.0, 6.0, 7.0, 8.0);
-        let model = ErrorModel::additive(poly1, 5.0, None);
+        let model = ErrorModel::additive(poly1, 5.0);
         let mut models = ErrorModels::new().add(0, model).unwrap();
 
         assert_eq!(
@@ -1104,7 +1075,7 @@ mod tests {
 
     #[test]
     fn test_error_models_set_errorpoly_invalid_outeq() {
-        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0, None);
+        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         let mut models = ErrorModels::new().add(0, model).unwrap();
 
         let result = models.set_errorpoly(1, ErrorPoly::new(5.0, 6.0, 7.0, 8.0));
@@ -1117,7 +1088,7 @@ mod tests {
 
     #[test]
     fn test_error_models_sigma() {
-        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0, None);
+        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         let models = ErrorModels::new().add(0, model).unwrap();
 
         let observation = Observation::new(0.0, Some(20.0), 0, None, 0, false);
@@ -1129,7 +1100,7 @@ mod tests {
 
     #[test]
     fn test_error_models_sigma_invalid_outeq() {
-        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0, None);
+        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         let models = ErrorModels::new().add(0, model).unwrap();
 
         let observation = Observation::new(0.0, Some(20.0), 1, None, 0, false); // outeq=1 not in models
@@ -1145,7 +1116,7 @@ mod tests {
 
     #[test]
     fn test_error_models_variance() {
-        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0, None);
+        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         let models = ErrorModels::new().add(0, model).unwrap();
 
         let observation = Observation::new(0.0, Some(20.0), 0, None, 0, false);
@@ -1158,7 +1129,7 @@ mod tests {
 
     #[test]
     fn test_error_models_variance_invalid_outeq() {
-        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0, None);
+        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         let models = ErrorModels::new().add(0, model).unwrap();
 
         let observation = Observation::new(0.0, Some(20.0), 1, None, 0, false); // outeq=1 not in models
@@ -1174,7 +1145,7 @@ mod tests {
 
     #[test]
     fn test_error_models_sigma_from_value() {
-        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0, None);
+        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         let models = ErrorModels::new().add(0, model).unwrap();
 
         let sigma = models.sigma_from_value(0, 20.0).unwrap();
@@ -1183,7 +1154,7 @@ mod tests {
 
     #[test]
     fn test_error_models_sigma_from_value_invalid_outeq() {
-        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0, None);
+        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         let models = ErrorModels::new().add(0, model).unwrap();
 
         let result = models.sigma_from_value(1, 20.0);
@@ -1196,7 +1167,7 @@ mod tests {
 
     #[test]
     fn test_error_models_variance_from_value() {
-        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0, None);
+        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         let models = ErrorModels::new().add(0, model).unwrap();
 
         let variance = models.variance_from_value(0, 20.0).unwrap();
@@ -1206,7 +1177,7 @@ mod tests {
 
     #[test]
     fn test_error_models_variance_from_value_invalid_outeq() {
-        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0, None);
+        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         let models = ErrorModels::new().add(0, model).unwrap();
 
         let result = models.variance_from_value(1, 20.0);
@@ -1219,8 +1190,8 @@ mod tests {
 
     #[test]
     fn test_error_models_hash_consistency() {
-        let model1 = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0, None);
-        let model2 = ErrorModel::proportional(ErrorPoly::new(2.0, 0.0, 0.0, 0.0), 3.0, None);
+        let model1 = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let model2 = ErrorModel::proportional(ErrorPoly::new(2.0, 0.0, 0.0, 0.0), 3.0);
 
         let models1 = ErrorModels::new()
             .add(0, model1.clone())
@@ -1240,8 +1211,8 @@ mod tests {
 
     #[test]
     fn test_error_models_hash_order_independence() {
-        let model1 = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0, None);
-        let model2 = ErrorModel::proportional(ErrorPoly::new(2.0, 0.0, 0.0, 0.0), 3.0, None);
+        let model1 = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let model2 = ErrorModel::proportional(ErrorPoly::new(2.0, 0.0, 0.0, 0.0), 3.0);
 
         // Add in different orders
         let models1 = ErrorModels::new()
@@ -1262,9 +1233,8 @@ mod tests {
 
     #[test]
     fn test_error_models_multiple_outeqs() {
-        let additive_model = ErrorModel::additive(ErrorPoly::new(1.0, 0.1, 0.0, 0.0), 0.5, None);
-        let proportional_model =
-            ErrorModel::proportional(ErrorPoly::new(0.0, 0.05, 0.0, 0.0), 0.1, None);
+        let additive_model = ErrorModel::additive(ErrorPoly::new(1.0, 0.1, 0.0, 0.0), 0.5);
+        let proportional_model = ErrorModel::proportional(ErrorPoly::new(0.0, 0.05, 0.0, 0.0), 0.1);
 
         let models = ErrorModels::new()
             .add(0, additive_model)
@@ -1291,9 +1261,8 @@ mod tests {
 
     #[test]
     fn test_error_models_with_predictions_different_outeqs() {
-        let additive_model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0, None);
-        let proportional_model =
-            ErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0, None);
+        let additive_model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let proportional_model = ErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0);
 
         let models = ErrorModels::new()
             .add(0, additive_model)
@@ -1317,38 +1286,33 @@ mod tests {
     #[test]
     fn test_factor_param_new_constructors() {
         // Test variable constructors (default behavior)
-        let additive = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0, None);
+        let additive = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         assert_eq!(additive.factor().unwrap(), 5.0);
         assert!(!additive.is_factor_fixed().unwrap());
 
-        let proportional = ErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0, None);
+        let proportional = ErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0);
         assert_eq!(proportional.factor().unwrap(), 2.0);
         assert!(!proportional.is_factor_fixed().unwrap());
 
         // Test fixed constructors
-        let additive_fixed =
-            ErrorModel::additive_fixed(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0, None);
+        let additive_fixed = ErrorModel::additive_fixed(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         assert_eq!(additive_fixed.factor().unwrap(), 5.0);
         assert!(additive_fixed.is_factor_fixed().unwrap());
 
         let proportional_fixed =
-            ErrorModel::proportional_fixed(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0, None);
+            ErrorModel::proportional_fixed(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0);
         assert_eq!(proportional_fixed.factor().unwrap(), 2.0);
         assert!(proportional_fixed.is_factor_fixed().unwrap());
 
         // Test Factor constructors
-        let additive_with_param = ErrorModel::additive_with_param(
-            ErrorPoly::new(1.0, 0.0, 0.0, 0.0),
-            Factor::Fixed(5.0),
-            None,
-        );
+        let additive_with_param =
+            ErrorModel::additive_with_param(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), Factor::Fixed(5.0));
         assert_eq!(additive_with_param.factor().unwrap(), 5.0);
         assert!(additive_with_param.is_factor_fixed().unwrap());
 
         let proportional_with_param = ErrorModel::proportional_with_param(
             ErrorPoly::new(1.0, 0.0, 0.0, 0.0),
             Factor::Variable(2.0),
-            None,
         );
         assert_eq!(proportional_with_param.factor().unwrap(), 2.0);
         assert!(!proportional_with_param.is_factor_fixed().unwrap());
@@ -1356,7 +1320,7 @@ mod tests {
 
     #[test]
     fn test_factor_param_methods() {
-        let mut model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0, None);
+        let mut model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
 
         // Test initial state
         assert_eq!(model.factor().unwrap(), 5.0);
@@ -1412,10 +1376,8 @@ mod tests {
 
     #[test]
     fn test_error_models_factor_param_methods() {
-        let additive_model =
-            ErrorModel::additive_fixed(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0, None);
-        let proportional_model =
-            ErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0, None);
+        let additive_model = ErrorModel::additive_fixed(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let proportional_model = ErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0);
 
         let mut models = ErrorModels::new()
             .add(0, additive_model)
@@ -1455,8 +1417,8 @@ mod tests {
         let observation = Observation::new(0.0, Some(20.0), 0, None, 0, false);
         let prediction = observation.to_prediction(10.0, vec![]);
 
-        let model_variable = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0, None);
-        let model_fixed = ErrorModel::additive_fixed(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0, None);
+        let model_variable = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let model_fixed = ErrorModel::additive_fixed(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
 
         let sigma_variable = model_variable.sigma(&prediction).unwrap();
         let sigma_fixed = model_fixed.sigma(&prediction).unwrap();
@@ -1474,9 +1436,8 @@ mod tests {
 
     #[test]
     fn test_hash_includes_fixed_state() {
-        let model1_variable = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0, None);
-        let model1_fixed =
-            ErrorModel::additive_fixed(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0, None);
+        let model1_variable = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let model1_fixed = ErrorModel::additive_fixed(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
 
         let models1 = ErrorModels::new().add(0, model1_variable).unwrap();
         let models2 = ErrorModels::new().add(0, model1_fixed).unwrap();
@@ -1487,9 +1448,8 @@ mod tests {
 
     #[test]
     fn test_error_models_into_iter_functionality() {
-        let additive_model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0, None);
-        let proportional_model =
-            ErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0, None);
+        let additive_model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let proportional_model = ErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0);
 
         let mut models = ErrorModels::new()
             .add(0, additive_model)
