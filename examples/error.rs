@@ -5,7 +5,7 @@ use pharmsol::*;
 
 fn main() {
     let ode = equation::ODE::new(
-        |x, p, t, dx, rateiv, cov| {
+        |x, p, t, dx, _b, rateiv, cov| {
             fetch_cov!(cov, t, WT);
             fetch_params!(p, CL0, V0, Vp0, Q0);
 
