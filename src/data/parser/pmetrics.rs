@@ -218,7 +218,7 @@ struct Row {
     #[serde(deserialize_with = "deserialize_option_usize")]
     outeq: Option<usize>,
     /// Censoring output
-    #[serde(deserialize_with = "deserialize_option_bool")]
+    #[serde(default, deserialize_with = "deserialize_option_bool")]
     cens: Option<bool>,
     /// First element of the error polynomial
     #[serde(deserialize_with = "deserialize_option_f64")]
