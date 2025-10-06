@@ -251,7 +251,8 @@ impl Equation for ODE {
 
             // Pre-allocate reusable vectors for bolus handling
             let mut bolus_vec = vec![0.0; bolus_vec_size];
-            let mut bolus_changes = V::zeros(self.get_nstates(), NalgebraContext);
+            let mut state_with_bolus = V::zeros(self.get_nstates(), NalgebraContext);
+            let mut state_without_bolus = V::zeros(self.get_nstates(), NalgebraContext);
             let rateiv_zero = V::zeros(self.get_nstates(), NalgebraContext);
             let spp_dvector = DVector::from_vec(support_point.clone());
             let spp_v: V = spp_dvector.into();
@@ -272,24 +273,36 @@ impl Equation for ODE {
                         bolus_vec[bolus.input()] = bolus.amount();
 
                         // Reset and reuse the bolus changes vector
-                        bolus_changes.fill(0.0);
+                        state_with_bolus.fill(0.0);
+                        state_without_bolus.fill(0.0);
 
                         let bolus_v: V = DVector::from_vec(bolus_vec.clone()).into();
 
-                        // Call the differential equation closure
+                        // Call the differential equation closure with bolus
                         (self.diffeq)(
                             solver.state().y,
                             &spp_v,
                             event.time(),
-                            &mut bolus_changes,
+                            &mut state_with_bolus,
                             rateiv_zero.clone(),
                             covariates,
                             &bolus_v,
                         );
 
+                        (self.diffeq)(
+                            solver.state().y,
+                            &spp_v,
+                            event.time(),
+                            &mut state_without_bolus,
+                            rateiv_zero.clone(),
+                            covariates,
+                            &rateiv_zero, // Zero bolus
+                        );
+
+                        // The difference between the two states is the actual bolus effect
                         // Apply the computed changes to the state
                         for i in 0..self.get_nstates() {
-                            solver.state_mut().y[i] += bolus_changes[i];
+                            solver.state_mut().y[i] += state_with_bolus[i] - state_without_bolus[i];
                         }
                     }
                     Event::Infusion(_infusion) => {}
