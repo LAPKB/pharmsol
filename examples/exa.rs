@@ -19,9 +19,9 @@ fn main() {
 
     // Create ODE model directly
     let ode = equation::ODE::new(
-        |x, p, _t, dx, rateiv, _cov| {
+        |x, p, _t, dx, b, rateiv, _cov| {
             fetch_params!(p, ke, _v);
-            dx[0] = -ke * x[0] + rateiv[0];
+            dx[0] = -ke * x[0] + rateiv[0] + b[0];
         },
         |_p, _t, _cov| lag! {},
         |_p, _t, _cov| fa! {},
