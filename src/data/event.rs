@@ -277,6 +277,7 @@ pub struct Observation {
     outeq: usize,
     errorpoly: Option<ErrorPoly>,
     occasion: usize,
+    censored: bool,
 }
 impl Observation {
     /// Create a new observation
@@ -294,12 +295,14 @@ impl Observation {
         outeq: usize,
         errorpoly: Option<ErrorPoly>,
         occasion: usize,
+        censored: bool,
     ) -> Self {
         Observation {
             time,
             value,
             outeq,
             errorpoly,
+            censored,
             occasion,
         }
     }
@@ -386,7 +389,13 @@ impl Observation {
             errorpoly: self.errorpoly(),
             state,
             occasion: self.occasion(),
+            censored: self.censored(),
         }
+    }
+
+    /// Check if the observation is censored
+    pub fn censored(&self) -> bool {
+        self.censored
     }
 }
 
@@ -482,7 +491,7 @@ mod tests {
     #[test]
     fn test_observation_creation() {
         let error_poly = Some(ErrorPoly::new(0.1, 0.2, 0.3, 0.4));
-        let observation = Observation::new(5.0, Some(75.5), 2, error_poly, 0);
+        let observation = Observation::new(5.0, Some(75.5), 2, error_poly, 0, false);
 
         assert_eq!(observation.time(), 5.0);
         assert_eq!(observation.value(), Some(75.5));
@@ -498,6 +507,7 @@ mod tests {
             2,
             Some(ErrorPoly::new(0.1, 0.2, 0.3, 0.4)),
             0,
+            false,
         );
 
         observation.set_time(6.0);
@@ -519,7 +529,7 @@ mod tests {
         let mut bolus_event = Event::Bolus(Bolus::new(1.0, 100.0, 1, 0));
         let mut infusion_event = Event::Infusion(Infusion::new(2.0, 200.0, 1, 2.5, 0));
         let mut observation_event =
-            Event::Observation(Observation::new(3.0, Some(75.5), 2, None, 0));
+            Event::Observation(Observation::new(3.0, Some(75.5), 2, None, 0, false));
 
         assert_eq!(bolus_event.time(), 1.0);
         assert_eq!(infusion_event.time(), 2.0);

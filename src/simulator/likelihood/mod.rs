@@ -227,6 +227,7 @@ pub struct Prediction {
     pub(crate) errorpoly: Option<ErrorPoly>,
     pub(crate) state: Vec<f64>,
     pub(crate) occasion: usize,
+    pub(crate) censored: bool,
 }
 
 impl Prediction {
@@ -333,6 +334,7 @@ impl Prediction {
             self.outeq,
             self.errorpoly,
             self.occasion,
+            self.censored,
         )
     }
 }
@@ -347,6 +349,7 @@ impl Default for Prediction {
             errorpoly: None,
             state: vec![],
             occasion: 0,
+            censored: false,
         }
     }
 }

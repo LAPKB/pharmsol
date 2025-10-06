@@ -217,6 +217,9 @@ struct Row {
     /// Corresponding output equation for the observation
     #[serde(deserialize_with = "deserialize_option_usize")]
     outeq: Option<usize>,
+    /// Censoring output
+    #[serde(deserialize_with = "deserialize_option_bool")]
+    cens: Option<bool>,
     /// First element of the error polynomial
     #[serde(deserialize_with = "deserialize_option_f64")]
     c0: Option<f64>,
@@ -261,6 +264,7 @@ impl Row {
                     - 1,
                 self.get_errorpoly(),
                 0,
+                self.cens.unwrap_or(false),
             ))),
             1 | 4 => {
                 let event = if self.dur.unwrap_or(0.0) > 0.0 {
@@ -346,6 +350,24 @@ where
     D: Deserializer<'de>,
 {
     deserialize_option::<f64, D>(deserializer)
+}
+
+fn deserialize_option_bool<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s: String = Deserialize::deserialize(deserializer)?;
+    if s.is_empty() || s == "." || s == "NA" {
+        Ok(None)
+    } else {
+        match s.as_str() {
+            "1" | "true" | "True" | "TRUE" => Ok(Some(true)),
+            "0" | "false" | "False" | "FALSE" => Ok(Some(false)),
+            _ => Err(serde::de::Error::custom(
+                "expected a boolean value (1/0 or true/false)",
+            )),
+        }
+    }
 }
 
 fn deserialize_option_usize<'de, D>(deserializer: D) -> Result<Option<usize>, D::Error>
