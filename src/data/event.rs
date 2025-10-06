@@ -397,6 +397,16 @@ impl Observation {
     pub fn censored(&self) -> bool {
         self.censored
     }
+
+    /// Set whether the observation is censored
+    pub fn set_censored(&mut self, censored: bool) {
+        self.censored = censored;
+    }
+
+    /// Get a mutable reference to the censored flag
+    pub fn mut_censored(&mut self) -> &mut bool {
+        &mut self.censored
+    }
 }
 
 impl fmt::Display for Event {
