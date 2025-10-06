@@ -12,7 +12,7 @@ type T = <M as MatrixCommon>::T;
 
 pub struct PmRhs<'a, F>
 where
-    F: Fn(&V, &V, T, &mut V, V, &Covariates),
+    F: Fn(&V, &V, T, &mut V, V, V, &Covariates),
 {
     nstates: usize,
     nparams: usize,
@@ -25,7 +25,7 @@ where
 
 impl<F> Op for PmRhs<'_, F>
 where
-    F: Fn(&V, &V, T, &mut V, V, &Covariates),
+    F: Fn(&V, &V, T, &mut V, V, V, &Covariates),
 {
     type T = T;
     type V = V;
@@ -154,7 +154,7 @@ impl Op for PmOut {
 
 impl<F> NonLinearOp for PmRhs<'_, F>
 where
-    F: Fn(&V, &V, T, &mut V, V, &Covariates),
+    F: Fn(&V, &V, T, &mut V, V, V, &Covariates),
 {
     fn call_inplace(&self, x: &Self::V, t: Self::T, y: &mut Self::V) {
         // Compute rate IV at the current time
@@ -194,13 +194,15 @@ where
 
         let pnew = p_ref.to_owned().into();
 
-        (self.func)(x, &pnew, t, y, rateiv, self.covariates)
+        let bolus = V::zeros(self.nstates, NalgebraContext);
+
+        (self.func)(x, &pnew, t, y, bolus, rateiv, self.covariates);
     }
 }
 
 impl<F> NonLinearOpJacobian for PmRhs<'_, F>
 where
-    F: Fn(&V, &V, T, &mut V, V, &Covariates),
+    F: Fn(&V, &V, T, &mut V, V, V, &Covariates),
 {
     fn jac_mul_inplace(&self, _x: &Self::V, t: Self::T, v: &Self::V, y: &mut Self::V) {
         let rateiv = V::zeros(self.nstates, NalgebraContext);
@@ -222,11 +224,14 @@ where
             }
         }
 
+        let bolus = V::zeros(self.nstates, NalgebraContext);
+
         (self.func)(
             v,
             &p_dvector.to_owned().into(),
             t,
             y,
+            bolus,
             rateiv,
             self.covariates,
         );
@@ -248,7 +253,7 @@ impl NonLinearOp for PmOut {
 // Completely revised PMProblem to fix lifetime issues and improve performance
 pub struct PMProblem<'a, F>
 where
-    F: Fn(&V, &V, T, &mut V, V, &Covariates) + 'a,
+    F: Fn(&V, &V, T, &mut V, V, V, &Covariates) + 'a,
 {
     func: F,
     nstates: usize,
@@ -262,7 +267,7 @@ where
 
 impl<'a, F> PMProblem<'a, F>
 where
-    F: Fn(&V, &V, T, &mut V, V, &Covariates) + 'a,
+    F: Fn(&V, &V, T, &mut V, V, V, &Covariates) + 'a,
 {
     pub fn new(
         func: F,
@@ -290,7 +295,7 @@ where
 
 impl<'a, F> Op for PMProblem<'a, F>
 where
-    F: Fn(&V, &V, T, &mut V, V, &Covariates) + 'a,
+    F: Fn(&V, &V, T, &mut V, V, V, &Covariates) + 'a,
 {
     type T = T;
     type V = V;
@@ -313,7 +318,7 @@ where
 // Implement OdeEquationsRef for PMProblem for any lifetime 'b
 impl<'a, 'b, F> OdeEquationsRef<'b> for PMProblem<'a, F>
 where
-    F: Fn(&V, &V, T, &mut V, V, &Covariates) + 'a,
+    F: Fn(&V, &V, T, &mut V, V, V, &Covariates) + 'a,
 {
     type Rhs = PmRhs<'b, F>;
     type Mass = PmMass;
@@ -325,7 +330,7 @@ where
 // Implement OdeEquations with correct lifetime handling
 impl<'a, F> OdeEquations for PMProblem<'a, F>
 where
-    F: Fn(&V, &V, T, &mut V, V, &Covariates) + 'a,
+    F: Fn(&V, &V, T, &mut V, V, V, &Covariates) + 'a,
 {
     fn rhs(&self) -> PmRhs<'_, F> {
         PmRhs {

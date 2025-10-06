@@ -27,7 +27,7 @@ fn main() {
     );
 
     let ode = equation::ODE::new(
-        |x, p, _t, dx, rateiv, _cov| {
+        |x, p, _t, dx, _b, rateiv, _cov| {
             // fetch_cov!(cov, t, wt);
             fetch_params!(p, ke, _v);
             dx[0] = -ke * x[0] + rateiv[0];

@@ -2,7 +2,7 @@ use pharmsol::{prelude::data::read_pmetrics, *};
 
 fn one_c_ode() -> ODE {
     equation::ODE::new(
-        |x, p, _t, dx, _rateiv, _cov| {
+        |x, p, _t, dx, _b, _rateiv, _cov| {
             // fetch_cov!(cov, t, wt);
             fetch_params!(p, ke);
             dx[0] = -ke * x[0];
@@ -49,7 +49,7 @@ fn one_c_sde() -> SDE {
 
 fn three_c_ode() -> ODE {
     equation::ODE::new(
-        |x, p, _t, dx, _rateiv, _cov| {
+        |x, p, _t, dx, _b, _rateiv, _cov| {
             // fetch_cov!(cov, t, wt);
             fetch_params!(p, ka, ke, kcp, kpc, _vol);
             dx[0] = -ka * x[0];

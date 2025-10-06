@@ -299,12 +299,12 @@ mod tests {
         let subject = infusion_dosing.get_subject();
 
         let ode = equation::ODE::new(
-            |x, p, _t, dx, rateiv, _cov| {
+            |x, p, _t, dx, b, rateiv, _cov| {
                 fetch_params!(p, k10, k12, k13, k21, k31, _v);
 
-                dx[0] = rateiv[0] - (k10 + k12 + k13) * x[0] + k21 * x[1] + k31 * x[2];
-                dx[1] = k12 * x[0] - k21 * x[1];
-                dx[2] = k13 * x[0] - k31 * x[2];
+                dx[0] = rateiv[0] - (k10 + k12 + k13) * x[0] + k21 * x[1] + k31 * x[2] + b[0];
+                dx[1] = k12 * x[0] - k21 * x[1] + b[1];
+                dx[2] = k13 * x[0] - k31 * x[2] + b[2];
             },
             |_p, _t, _cov| lag! {},
             |_p, _t, _cov| fa! {},
@@ -353,13 +353,17 @@ mod tests {
         let subject = oral_infusion_dosing.get_subject();
 
         let ode = equation::ODE::new(
-            |x, p, _t, dx, rateiv, _cov| {
+            |x, p, _t, dx, b, rateiv, _cov| {
                 fetch_params!(p, ka, k10, k12, k13, k21, k31, _v);
 
-                dx[0] = -ka * x[0];
-                dx[1] = rateiv[0] - (k10 + k12 + k13) * x[1] + ka * x[0] + k21 * x[2] + k31 * x[3];
-                dx[2] = k12 * x[1] - k21 * x[2];
-                dx[3] = k13 * x[1] - k31 * x[3];
+                dx[0] = -ka * x[0] + b[0];
+                dx[1] = rateiv[0] - (k10 + k12 + k13) * x[1]
+                    + ka * x[0]
+                    + k21 * x[2]
+                    + k31 * x[3]
+                    + b[1];
+                dx[2] = k12 * x[1] - k21 * x[2] + b[2];
+                dx[3] = k13 * x[1] - k31 * x[3] + b[3];
             },
             |_p, _t, _cov| lag! {},
             |_p, _t, _cov| fa! {},

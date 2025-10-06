@@ -24,20 +24,21 @@ pub type M = NalgebraMat<T>;
 /// - `p`: The parameters of the model; Use the [fetch_params!] macro to extract the parameters
 /// - `t`: The time at which the differential equation is evaluated
 /// - `dx`: A mutable reference to the derivative of the state vector at time t
+/// - `bolus`: A vector of bolus amounts at time t
 /// - `rateiv`: A vector of infusion rates at time t
 /// - `cov`: A reference to the covariates at time t; Use the [fetch_cov!] macro to extract the covariates
 ///
 /// # Example
 /// ```ignore
 /// use pharmsol::*;
-/// let diff_eq = |x, p, t, dx, rateiv, cov| {
+/// let diff_eq = |x, p, t, dx, bolus, rateiv, cov| {
 ///  fetch_params!(p, ka, ke, v);
 ///  fetch_cov!(cov, t, wt);
 ///  dx[0] = -ka * x[0];
 ///  dx[1] = ka * x[0] - ke * x[1];
 /// };
 /// ```
-pub type DiffEq = fn(&V, &V, T, &mut V, V, &Covariates);
+pub type DiffEq = fn(&V, &V, T, &mut V, V, V, &Covariates);
 
 /// This closure represents an Analytical solution of the model.
 /// See [analytical] module for examples.
@@ -76,7 +77,8 @@ pub type AnalyticalEq = fn(&V, &V, T, V, &Covariates) -> V;
 ///   dx[3] = -dx[3] + mke; // Mean reverting to mke
 /// };
 /// ```
-pub type Drift = DiffEq;
+// pub type Drift = DiffEq;
+pub type Drift = fn(&V, &V, T, &mut V, V, &Covariates);
 
 /// This closure represents the diffusion term of a stochastic differential equation model.
 ///
