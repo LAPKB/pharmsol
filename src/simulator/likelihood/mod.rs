@@ -1,3 +1,4 @@
+use crate::parser::Censor;
 use crate::simulator::likelihood::progress::ProgressTracker;
 use crate::ErrorModelError;
 use crate::{
@@ -227,7 +228,7 @@ pub struct Prediction {
     pub(crate) errorpoly: Option<ErrorPoly>,
     pub(crate) state: Vec<f64>,
     pub(crate) occasion: usize,
-    pub(crate) censored: bool,
+    pub(crate) censored: Censor,
 }
 
 impl Prediction {
@@ -292,10 +293,11 @@ impl Prediction {
 
         let sigma = error_models.sigma(self)?;
 
-        let likelihood = if self.censored {
-            normcdf(self.observation.unwrap(), self.prediction, sigma)?
-        } else {
-            normpdf(self.observation.unwrap(), self.prediction, sigma)
+        //TODO: For the BLOQ and ALOQ cases, we should be using the LOQ values, not the observation values.
+        let likelihood = match self.censored {
+            Censor::None => normpdf(self.observation.unwrap(), self.prediction, sigma),
+            Censor::BLOQ => normcdf(self.observation.unwrap(), self.prediction, sigma)?,
+            Censor::ALOQ => 1.0 - normcdf(self.observation.unwrap(), self.prediction, sigma)?,
         };
 
         if likelihood.is_finite() {
@@ -345,7 +347,7 @@ impl Default for Prediction {
             errorpoly: None,
             state: vec![],
             occasion: 0,
-            censored: false,
+            censored: Censor::None,
         }
     }
 }

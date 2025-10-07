@@ -1,6 +1,7 @@
 use crate::{
     data::*,
     mapping::Mappings,
+    parser::Censor,
     simulator::{Fa, Lag},
 };
 use serde::{Deserialize, Serialize};
@@ -207,7 +208,7 @@ impl Data {
                                         outeq,
                                         None,
                                         occasion.index,
-                                        false,
+                                        Censor::None,
                                     );
                                     new_events.push(Event::Observation(obs));
                                 }
@@ -676,7 +677,7 @@ impl Occasion {
         value: f64,
         outeq: usize,
         errorpoly: Option<ErrorPoly>,
-        censored: bool,
+        censored: Censor,
     ) {
         let observation =
             Observation::new(time, Some(value), outeq, errorpoly, self.index, censored);
@@ -685,7 +686,7 @@ impl Occasion {
 
     /// Add a missing [Observation] event to the [Occasion]
     pub fn add_missing_observation(&mut self, time: f64, outeq: usize) {
-        let observation = Observation::new(time, None, outeq, None, self.index, false);
+        let observation = Observation::new(time, None, outeq, None, self.index, Censor::None);
         self.add_event(Event::Observation(observation));
     }
 
@@ -698,7 +699,7 @@ impl Occasion {
         value: f64,
         outeq: usize,
         errorpoly: ErrorPoly,
-        censored: bool,
+        censored: Censor,
     ) {
         let observation = Observation::new(
             time,
@@ -963,7 +964,7 @@ mod tests {
     #[test]
     fn test_occasion_sort() {
         let mut occasion = Occasion::new(0);
-        occasion.add_observation(2.0, 1.0, 1, None, false);
+        occasion.add_observation(2.0, 1.0, 1, None, Censor::None);
         occasion.add_bolus(1.0, 100.0, 1);
         occasion.sort();
         let events = occasion.process_events(None, false, None);
@@ -1012,7 +1013,7 @@ mod tests {
 
         let mut subject = subject;
         for occasion in subject.iter_mut() {
-            occasion.add_observation(12.0, 100.0, 0, None, false);
+            occasion.add_observation(12.0, 100.0, 0, None, Censor::None);
         }
         assert_eq!(subject.occasions()[0].events().len(), 3);
     }
@@ -1020,7 +1021,7 @@ mod tests {
     #[test]
     fn test_occasion_iterators() {
         let mut occasion = Occasion::new(0);
-        occasion.add_observation(1.0, 10.0, 1, None, false);
+        occasion.add_observation(1.0, 10.0, 1, None, Censor::None);
         occasion.add_bolus(2.0, 50.0, 1);
         occasion.sort();
 
