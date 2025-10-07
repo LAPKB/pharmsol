@@ -1,6 +1,5 @@
 use crate::{
     data::*,
-    mapping::Mappings,
     simulator::{Fa, Lag},
 };
 use serde::{Deserialize, Serialize};
@@ -177,7 +176,7 @@ impl Data {
                     .occasions
                     .iter()
                     .map(|occasion| {
-                        let old_events = occasion.process_events(None, true, None);
+                        let old_events = occasion.process_events(None, true);
 
                         // Create a set of existing (time, outeq) pairs for fast lookup
                         let existing_obs: std::collections::HashSet<(u64, usize)> = old_events
@@ -546,11 +545,6 @@ impl Occasion {
     pub(crate) fn set_covariates(&mut self, covariates: Covariates) {
         self.covariates = covariates;
     }
-    fn remap(&mut self, mappings: &Mappings) {
-        for event in self.events.iter_mut() {
-            event.remap(mappings);
-        }
-    }
 
     fn add_lagtime(&mut self, reorder: Option<(&Fa, &Lag, &Vec<f64>, &Covariates)>) {
         if let Some((_, fn_lag, spp, covariates)) = reorder {
@@ -626,12 +620,8 @@ impl Occasion {
         &self,
         reorder: Option<(&Fa, &Lag, &Vec<f64>, &Covariates)>,
         ignore: bool,
-        mappings: Option<&Mappings>,
     ) -> Vec<Event> {
         let mut occ = self.clone();
-        if let Some(mappings) = mappings {
-            occ.remap(mappings);
-        }
         occ.add_lagtime(reorder);
         occ.add_bioavailability(reorder);
 
@@ -966,7 +956,7 @@ mod tests {
         occasion.add_observation(2.0, 1.0, 1, None, false);
         occasion.add_bolus(1.0, 100.0, 1);
         occasion.sort();
-        let events = occasion.process_events(None, false, None);
+        let events = occasion.process_events(None, false);
         match &events[0] {
             Event::Bolus(b) => assert_eq!(b.time(), 1.0),
             _ => panic!("First event should be a Bolus"),
