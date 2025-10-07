@@ -5,7 +5,6 @@ use core::panic;
 use crate::{
     data::{Covariates, Infusion},
     error_model::ErrorModels,
-    mapping::Mappings,
     prelude::simulator::SubjectPredictions,
     simulator::{DiffEq, Fa, Init, Lag, Neqs, Out, M, V},
     Event, Observation, PharmsolError, Subject,
@@ -34,7 +33,6 @@ pub struct ODE {
     init: Init,
     out: Out,
     neqs: Neqs,
-    mappings: Option<Mappings>,
 }
 
 impl ODE {
@@ -46,7 +44,6 @@ impl ODE {
             init,
             out,
             neqs,
-            mappings: None,
         }
     }
 }
@@ -195,12 +192,6 @@ impl Equation for ODE {
     fn kind() -> crate::EqnKind {
         crate::EqnKind::ODE
     }
-    fn mappings_ref(&self) -> Option<&Mappings> {
-        self.mappings.as_ref()
-    }
-    fn mappings_mut(&mut self) -> &mut Mappings {
-        self.mappings.get_or_insert_with(Mappings::new)
-    }
 
     fn simulate_subject(
         &self,
@@ -225,7 +216,6 @@ impl Equation for ODE {
             let events = occasion.process_events(
                 Some((self.fa(), self.lag(), support_point, covariates)),
                 true,
-                self.mappings_ref(),
             );
 
             let problem = OdeBuilder::<M>::new()
