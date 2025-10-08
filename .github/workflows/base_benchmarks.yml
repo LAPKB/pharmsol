@@ -1,12 +1,18 @@
 name: Benchmark (main)
 
 on:
-  push:
-    branches: [main]
+  workflow_run:
+    workflows: ["Build"]
+    types:
+      - completed
+    branches:
+      - main
 
 jobs:
   benchmark_base_branch:
     name: Continuous Benchmarking with Bencher
+    # Only run if the test workflow succeeded
+    if: github.event.workflow_run.conclusion == 'success'
     permissions:
       checks: write
     runs-on: self-hosted

@@ -5,15 +5,19 @@ permissions:
   contents: write
 
 on:
-  push:
+  workflow_run:
+    workflows: ["Build"]
+    types:
+      - completed
     branches:
       - main
 
 jobs:
-
   # Release unpublished packages.
   release-plz-release:
     name: Release package
+    # Only run if the test workflow succeeded
+    if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -35,6 +39,8 @@ jobs:
   # Create a PR with the new versions and changelog, preparing the next release.
   release-plz-pr:
     name: Release (PR)
+    # Only run if the test workflow succeeded
+    if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
