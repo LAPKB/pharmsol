@@ -1,4 +1,4 @@
-use crate::mapping::Mappings;
+use crate::data::error_model::ErrorPoly;
 use crate::prelude::simulator::Prediction;
 use crate::{data::error_model::ErrorPoly, parser::Censor};
 use serde::{Deserialize, Serialize};
@@ -34,18 +34,6 @@ impl Event {
             Event::Bolus(bolus) => bolus.time += dt,
             Event::Infusion(infusion) => infusion.time += dt,
             Event::Observation(observation) => observation.time += dt,
-        }
-    }
-
-    /// Remap the event's compartment indices based on a provided mapping
-    pub(crate) fn remap(&mut self, mappings: &Mappings) {
-        match self {
-            Event::Bolus(bolus) => {
-                if let Some(new_input) = mappings.get(bolus.input) {
-                    bolus.input = new_input;
-                }
-            }
-            _ => {}
         }
     }
 

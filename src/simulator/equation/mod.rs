@@ -1,6 +1,5 @@
 use std::fmt::Debug;
 pub mod analytical;
-pub mod mapping;
 pub mod meta;
 pub mod ode;
 pub mod sde;
@@ -11,7 +10,6 @@ pub use sde::*;
 
 use crate::{
     error_model::ErrorModels,
-    mapping::Mappings,
     simulator::{Fa, Lag},
     Covariates, Event, Infusion, Observation, PharmsolError, Subject,
 };
@@ -210,16 +208,6 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
         self.get_nstates()
     }
 
-    /// Returns the mappings (input -> cmt) if present.
-    fn mappings_ref(&self) -> Option<&Mappings>;
-    /// Returns a mutable reference to the mappings if present.
-    fn mappings_mut(&mut self) -> &mut Mappings;
-    /// Add an new element to the mapper.
-    fn add_mapping(&mut self, input: usize, cmt: usize) -> Result<(), PharmsolError> {
-        self.mappings_mut().insert(input, cmt)?;
-        Ok(())
-    }
-
     /// Simulate a subject with given parameters and optionally calculate likelihood.
     ///
     /// # Parameters
@@ -245,7 +233,6 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
             let events = occasion.process_events(
                 Some((self.fa(), self.lag(), support_point, covariates)),
                 true,
-                self.mappings_ref(),
             );
             for (index, event) in events.iter().enumerate() {
                 self.simulate_event(

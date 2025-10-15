@@ -456,7 +456,7 @@ impl Data {
 
         for subject in self.subjects() {
             for occasion in subject.occasions() {
-                for event in occasion.process_events(None, false, None) {
+                for event in occasion.process_events(None, false) {
                     match event {
                         Event::Observation(obs) => {
                             // Write each field individually
