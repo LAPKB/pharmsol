@@ -234,9 +234,9 @@ impl EquationPriv for SDE {
             // pred.iter().enumerate().for_each(|(i,p)| q.push(p.likelihood(em) * x[i][4])); // pred[i][2]
 
             // if no centering function // for example w/the ODE
-            //     pred.iter().enumerate().for_each(|(i,p)| q.push(p.likelihood(em) )); // pred[i][2]
+                 pred.iter().enumerate().for_each(|(i,p)| q.push(p.likelihood(em) )); // pred[i][2]
             // else
-                pred.iter().enumerate().for_each(|(i,p)| q.push(p.likelihood(em) * x[i][4]));
+            //    pred.iter().enumerate().for_each(|(i,p)| q.push(p.likelihood(em) * x[i][4]));
 
             // for (i,p) in pred.iter().enumerate() { // does the same thing as above.
             //    q.push(p.likelihood(em) * x[i][4]);

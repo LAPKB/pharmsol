@@ -103,8 +103,6 @@ impl EM {
         let safety = 0.9;
         let mut times = vec![t0];
         let mut solution = vec![self.state.clone()];
-        let mut sigma = 0.00000001;
-
 
         let mut rng = rng();
         let normal_dist = Normal::new(0.0, 1.0).unwrap();
@@ -113,7 +111,7 @@ impl EM {
             let mut y1 = self.state.clone();
             let mut y2 = self.state.clone();
 
-            sigma = normal_dist.sample(&mut rng); // here is correct, only affects one step of the variable time step
+            let sigma = normal_dist.sample(&mut rng); // here is correct, only affects one step of the variable time step
 
             // Single step
             self.euler_maruyama_step(t, dt, &mut y1, sigma);

@@ -119,7 +119,7 @@ pub fn psi(
     };
 
     // tracing::debug!( // tracing is an unresolved module
-        println!("Getting into axis_iter_mut");
+    //    println!("Getting into axis_iter_mut");
 
     pred.axis_iter_mut(Axis(0))
         .into_par_iter()
@@ -136,7 +136,7 @@ pub fn psi(
                         error_model,
                         cache,
                     );
-                    println!("{}, {}, {}", i, j, likelihood); // Some subjects are hanging cargo run ... > debug.txt
+    //                println!("{}, {}, {}", i, j, likelihood); // Some subjects are hanging cargo run ... > debug.txt
                     element.fill(likelihood);
                     if let Some(pb_ref) = pb.as_ref() {
                         pb_ref.inc(1);
@@ -224,12 +224,16 @@ impl Prediction {
         let sigma = error_model.estimate_sigma(self);
         // println!("state {:#?}",self.state);
 
-        // if deviation is too small, set likelihood to 0
+        // if deviation is too big, set likelihood to 0
+        /*
         if (self.observation - self.prediction).abs() > 4.417*sigma { // 99.999 CI
             0.0
         }
         else {
-            if self.observation() > 4.0 {
+        */
+            normpdf(self.observation, self.prediction, sigma)
+        /*
+            /* if self.observation() > 4.0 {
                normpdf(self.observation, self.prediction, sigma)
             }
             else {
@@ -241,7 +245,9 @@ impl Prediction {
                   0.0 // std::f64::MIN
                 }
             }
+            */
         }
+        */
 
     }
     pub fn state(&self) -> &Vec<f64> {
