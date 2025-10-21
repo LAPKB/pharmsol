@@ -1,6 +1,6 @@
 use crate::data::error_model::ErrorPoly;
+use crate::parser::Censor;
 use crate::prelude::simulator::Prediction;
-use crate::{data::error_model::ErrorPoly, parser::Censor};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
