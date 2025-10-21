@@ -365,7 +365,7 @@ where
             "0" | "none" => Ok(Some(Censor::None)),
             "-1" | "aloq" => Ok(Some(Censor::ALOQ)),
             _ => Err(serde::de::Error::custom(format!(
-                "expected value (1/-1/0 or bloq/aloq/none), got {}",
+                "Expected one of 1/-1/0 or bloq/aloq/none), got {}",
                 s
             ))),
         }
