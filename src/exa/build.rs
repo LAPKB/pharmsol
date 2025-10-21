@@ -170,6 +170,7 @@ fn create_template() -> Result<PathBuf, io::Error> {
         {pharmsol_dep}
         "#,
     );
+    println!("Cargo.toml content:\n{}", &cargo_toml_content);
 
     if !template_dir.exists() {
         let output = Command::new("cargo")
