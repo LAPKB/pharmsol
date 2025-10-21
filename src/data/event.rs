@@ -256,6 +256,17 @@ impl Infusion {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Censor {
+    /// No censoring
+    None,
+    /// Below the lower limit of quantification
+    BLOQ,
+    /// Above the limit of quantification
+    ALOQ,
+}
+
 /// Represents an observation of drug concentration or other measured value
 #[derive(Serialize, Debug, Clone, Deserialize)]
 pub struct Observation {
@@ -264,7 +275,7 @@ pub struct Observation {
     outeq: usize,
     errorpoly: Option<ErrorPoly>,
     occasion: usize,
-    censored: bool,
+    censored: Censor,
 }
 impl Observation {
     /// Create a new observation
@@ -282,7 +293,7 @@ impl Observation {
         outeq: usize,
         errorpoly: Option<ErrorPoly>,
         occasion: usize,
-        censored: bool,
+        censored: Censor,
     ) -> Self {
         Observation {
             time,
@@ -376,22 +387,31 @@ impl Observation {
             errorpoly: self.errorpoly(),
             state,
             occasion: self.occasion(),
-            censored: self.censored(),
+            censored: self.censor(),
         }
     }
 
     /// Check if the observation is censored
     pub fn censored(&self) -> bool {
+        match self.censored {
+            Censor::None => false,
+            Censor::ALOQ => true,
+            Censor::BLOQ => true,
+        }
+    }
+
+    /// Get the censoring type of the observation
+    pub fn censor(&self) -> Censor {
         self.censored
     }
 
     /// Set whether the observation is censored
-    pub fn set_censored(&mut self, censored: bool) {
+    pub fn set_censored(&mut self, censored: Censor) {
         self.censored = censored;
     }
 
     /// Get a mutable reference to the censored flag
-    pub fn mut_censored(&mut self) -> &mut bool {
+    pub fn mut_censored(&mut self) -> &mut Censor {
         &mut self.censored
     }
 }
@@ -488,7 +508,7 @@ mod tests {
     #[test]
     fn test_observation_creation() {
         let error_poly = Some(ErrorPoly::new(0.1, 0.2, 0.3, 0.4));
-        let observation = Observation::new(5.0, Some(75.5), 2, error_poly, 0, false);
+        let observation = Observation::new(5.0, Some(75.5), 2, error_poly, 0, Censor::None);
 
         assert_eq!(observation.time(), 5.0);
         assert_eq!(observation.value(), Some(75.5));
@@ -504,7 +524,7 @@ mod tests {
             2,
             Some(ErrorPoly::new(0.1, 0.2, 0.3, 0.4)),
             0,
-            false,
+            Censor::None,
         );
 
         observation.set_time(6.0);
@@ -526,7 +546,7 @@ mod tests {
         let mut bolus_event = Event::Bolus(Bolus::new(1.0, 100.0, 1, 0));
         let mut infusion_event = Event::Infusion(Infusion::new(2.0, 200.0, 1, 2.5, 0));
         let mut observation_event =
-            Event::Observation(Observation::new(3.0, Some(75.5), 2, None, 0, false));
+            Event::Observation(Observation::new(3.0, Some(75.5), 2, None, 0, Censor::None));
 
         assert_eq!(bolus_event.time(), 1.0);
         assert_eq!(infusion_event.time(), 2.0);

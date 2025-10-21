@@ -218,8 +218,8 @@ struct Row {
     #[serde(deserialize_with = "deserialize_option_usize")]
     outeq: Option<usize>,
     /// Censoring output
-    #[serde(default, deserialize_with = "deserialize_option_bool")]
-    cens: Option<bool>,
+    #[serde(default, deserialize_with = "deserialize_option_censor")]
+    cens: Option<Censor>,
     /// First element of the error polynomial
     #[serde(deserialize_with = "deserialize_option_f64")]
     c0: Option<f64>,
@@ -264,7 +264,7 @@ impl Row {
                     - 1,
                 self.get_errorpoly(),
                 0,
-                self.cens.unwrap_or(false),
+                self.cens.unwrap_or(Censor::None),
             ))),
             1 | 4 => {
                 let event = if self.dur.unwrap_or(0.0) > 0.0 {
@@ -352,7 +352,7 @@ where
     deserialize_option::<f64, D>(deserializer)
 }
 
-fn deserialize_option_bool<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
+fn deserialize_option_censor<'de, D>(deserializer: D) -> Result<Option<Censor>, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -361,11 +361,13 @@ where
         Ok(None)
     } else {
         match s.as_str() {
-            "1" | "true" | "True" | "TRUE" => Ok(Some(true)),
-            "0" | "false" | "False" | "FALSE" => Ok(Some(false)),
-            _ => Err(serde::de::Error::custom(
-                "expected a boolean value (1/0 or true/false)",
-            )),
+            "1" | "bloq" => Ok(Some(Censor::BLOQ)),
+            "0" | "none" => Ok(Some(Censor::None)),
+            "-1" | "aloq" => Ok(Some(Censor::ALOQ)),
+            _ => Err(serde::de::Error::custom(format!(
+                "Expected one of 1/-1/0 or bloq/aloq/none), got {}",
+                s
+            ))),
         }
     }
 }

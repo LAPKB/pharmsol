@@ -1,4 +1,4 @@
-use crate::data::*;
+use crate::{data::*, Censor};
 
 /// Extension trait for creating [Subject] instances using the builder pattern
 pub trait SubjectBuilderExt {
@@ -99,7 +99,7 @@ impl SubjectBuilder {
             outeq,
             None,
             self.current_occasion.index(),
-            false,
+            Censor::None,
         );
         let event = Event::Observation(observation);
         self.event(event)
@@ -112,14 +112,20 @@ impl SubjectBuilder {
     /// * `value` - Observed value (e.g., drug concentration)
     /// * `outeq` - Output equation number (zero-indexed) corresponding to this
     /// observation
-    pub fn censored_observation(self, time: f64, value: f64, outeq: usize) -> Self {
+    pub fn censored_observation(
+        self,
+        time: f64,
+        value: f64,
+        outeq: usize,
+        censored: Censor,
+    ) -> Self {
         let observation = Observation::new(
             time,
             Some(value),
             outeq,
             None,
             self.current_occasion.index(),
-            true,
+            censored,
         );
         let event = Event::Observation(observation);
         self.event(event)
@@ -138,7 +144,7 @@ impl SubjectBuilder {
             outeq,
             None,
             self.current_occasion.index(),
-            false,
+            Censor::None,
         );
         let event = Event::Observation(observation);
         self.event(event)
@@ -159,7 +165,7 @@ impl SubjectBuilder {
         value: f64,
         outeq: usize,
         errorpoly: ErrorPoly,
-        censored: bool,
+        censored: Censor,
     ) -> Self {
         let observation = Observation::new(
             time,
@@ -217,7 +223,7 @@ impl SubjectBuilder {
                                 observation.value().unwrap(),
                                 observation.outeq(),
                                 observation.errorpoly().unwrap(),
-                                observation.censored(),
+                                observation.censor(),
                             )
                         } else {
                             if observation.censored() {
@@ -225,6 +231,7 @@ impl SubjectBuilder {
                                     observation.time() + delta * i as f64,
                                     observation.value().unwrap(),
                                     observation.outeq(),
+                                    observation.censor(),
                                 )
                             } else {
                                 self.observation(
@@ -302,7 +309,7 @@ impl SubjectBuilder {
 
 #[cfg(test)]
 mod tests {
-    use crate::prelude::*;
+    use crate::{prelude::*, Censor};
 
     #[test]
     fn test_subject_builder() {
@@ -334,7 +341,13 @@ mod tests {
             .bolus(0.0, 50.0, 0)
             .observation(1.0, 45.3, 0)
             .observation(2.0, 0.1, 0)
-            .observation_with_error(3.0, 36.5, 0, ErrorPoly::new(0.1, 0.05, 0.0, 0.0), false)
+            .observation_with_error(
+                3.0,
+                36.5,
+                0,
+                ErrorPoly::new(0.1, 0.05, 0.0, 0.0),
+                Censor::None,
+            )
             .bolus(4.0, 50.0, 0)
             .repeat(1, 12.0) // Repeat bolus at 16.0
             .reset()
