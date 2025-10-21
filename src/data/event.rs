@@ -259,8 +259,11 @@ impl Infusion {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Censor {
+    /// No censoring
     None,
+    /// Below the lower limit of quantification
     BLOQ,
+    /// Above the limit of quantification
     ALOQ,
 }
 
