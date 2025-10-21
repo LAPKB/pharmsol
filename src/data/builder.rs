@@ -1,4 +1,4 @@
-use crate::{data::*, parser::Censor};
+use crate::{data::*, Censor};
 
 /// Extension trait for creating [Subject] instances using the builder pattern
 pub trait SubjectBuilderExt {
@@ -309,7 +309,7 @@ impl SubjectBuilder {
 
 #[cfg(test)]
 mod tests {
-    use crate::{parser::Censor, prelude::*};
+    use crate::{prelude::*, Censor};
 
     #[test]
     fn test_subject_builder() {

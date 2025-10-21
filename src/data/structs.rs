@@ -1,7 +1,7 @@
 use crate::{
     data::*,
-    parser::Censor,
     simulator::{Fa, Lag},
+    Censor,
 };
 use serde::{Deserialize, Serialize};
 use std::fmt;

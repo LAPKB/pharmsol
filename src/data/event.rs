@@ -1,5 +1,4 @@
 use crate::data::error_model::ErrorPoly;
-use crate::parser::Censor;
 use crate::prelude::simulator::Prediction;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -255,6 +254,13 @@ impl Infusion {
     pub fn mut_occasion(&mut self) -> &mut usize {
         &mut self.occasion
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Censor {
+    None,
+    BLOQ,
+    ALOQ,
 }
 
 /// Represents an observation of drug concentration or other measured value

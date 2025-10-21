@@ -1,5 +1,5 @@
-use crate::parser::Censor;
 use crate::simulator::likelihood::progress::ProgressTracker;
+use crate::Censor;
 use crate::ErrorModelError;
 use crate::{
     data::error_model::ErrorModels, Data, Equation, ErrorPoly, Observation, PharmsolError,

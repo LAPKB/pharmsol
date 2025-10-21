@@ -883,7 +883,7 @@ pub enum ErrorModelError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{parser::Censor, Observation};
+    use crate::{Censor, Observation};
 
     #[test]
     fn test_additive_error_model() {

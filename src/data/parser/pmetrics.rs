@@ -330,13 +330,6 @@ impl Row {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Censor {
-    None,
-    BLOQ,
-    ALOQ,
-}
-
 /// Deserialize Option<T> from a string
 fn deserialize_option<'de, T, D>(deserializer: D) -> Result<Option<T>, D::Error>
 where
