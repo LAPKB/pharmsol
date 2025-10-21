@@ -6,7 +6,6 @@ mod exa_tests {
 
     #[test]
     fn test_exa_predictions_match_ode_predictions() {
-        println!("build path: {}", exa::build::template_path());
         // Create subject with observations
         let subject = Subject::builder("1")
             .infusion(0.0, 500.0, 0, 0.5)
@@ -61,7 +60,7 @@ mod exa_tests {
             ),
             Some(model_output_path),
             vec!["ke".to_string(), "v".to_string()],
-            |_key, msg| println!("{}", msg), // Empty callback for tests
+            |_, _| {}, // Empty callback for tests
         )
         .unwrap();
 
