@@ -371,9 +371,10 @@ where
             "1" | "bloq" => Ok(Some(Censor::BLOQ)),
             "0" | "none" => Ok(Some(Censor::None)),
             "-1" | "aloq" => Ok(Some(Censor::ALOQ)),
-            _ => Err(serde::de::Error::custom(
-                "expected a boolean value (1/-1/0 or bloq/aloq/none )",
-            )),
+            _ => Err(serde::de::Error::custom(format!(
+                "expected a boolean value (1/-1/0 or bloq/aloq/none), got {}",
+                s
+            ))),
         }
     }
 }
