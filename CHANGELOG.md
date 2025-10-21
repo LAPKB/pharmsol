@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0](https://github.com/LAPKB/pharmsol/compare/v0.17.2...v0.18.0) - 2025-10-21
+
+### Added
+
+- Add support for censoring (LLOQ and ULOQ) ([#140](https://github.com/LAPKB/pharmsol/pull/140))
+- add support to EXA
+- Doses are now defined in the model
+- Initial for the new censoring column in the Pmetrics format.
+
+### Other
+
+- Remove dbg statements
+- set the local flag
+- set the local flag
+- debug
+- Trying to handle the windows case correctly
+- Force diffsol's version
+- Bump nalgebra ([#144](https://github.com/LAPKB/pharmsol/pull/144))
+- Were we are going, there are no maps... This commit removes mappings as their functionality is now replaced by having the model define the bolus inputs inside them
+- if-else
+- Exhaustive match instead of if-else block
+- Add setters
+- Make cens column optional
+- Censoring likelihood calculation
+- Update argmin requirement from 0.10.0 to 0.11.0 ([#135](https://github.com/LAPKB/pharmsol/pull/135))
+
 ## [0.17.2](https://github.com/LAPKB/pharmsol/compare/v0.17.1...v0.17.2) - 2025-09-30
 
 ### Added
