@@ -140,8 +140,18 @@ fn create_template() -> Result<PathBuf, io::Error> {
     // Get the current package version
     let pkg_version = env!("CARGO_PKG_VERSION");
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
+
     let pharmsol_dep = if std::env::var("PHARMSOL_LOCAL_EXA").is_ok() {
-        format!(r#"pharmsol = {{ path = "{}" }}"#, manifest_dir)
+        let manifest_path =
+            std::fs::canonicalize(manifest_dir).unwrap_or_else(|_| PathBuf::from(manifest_dir));
+        let manifest_str = manifest_path.to_string_lossy();
+
+        if manifest_str.contains('\'') {
+            let escaped = manifest_str.replace('\\', "\\\\").replace('"', "\\\"");
+            format!(r#"pharmsol = {{ path = "{}" }}"#, escaped)
+        } else {
+            format!(r#"pharmsol = {{ path = '{}' }}"#, manifest_str)
+        }
     } else {
         format!(r#"pharmsol = {{ version = "{}" }}"#, pkg_version)
     };
