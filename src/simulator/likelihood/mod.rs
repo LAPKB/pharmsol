@@ -324,6 +324,11 @@ impl Prediction {
         &mut self.occasion
     }
 
+    /// Get the censoring status
+    pub fn censor(&self) -> Censor {
+        self.censored
+    }
+
     /// Create an [Observation] from this prediction
     pub fn to_observation(&self) -> Observation {
         Observation::new(
