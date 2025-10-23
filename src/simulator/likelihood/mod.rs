@@ -228,7 +228,7 @@ pub struct Prediction {
     pub(crate) errorpoly: Option<ErrorPoly>,
     pub(crate) state: Vec<f64>,
     pub(crate) occasion: usize,
-    pub(crate) censored: Censor,
+    pub(crate) censoring: Censor,
 }
 
 impl Prediction {
@@ -294,7 +294,7 @@ impl Prediction {
         let sigma = error_models.sigma(self)?;
 
         //TODO: For the BLOQ and ALOQ cases, we should be using the LOQ values, not the observation values.
-        let likelihood = match self.censored {
+        let likelihood = match self.censoring {
             Censor::None => normpdf(self.observation.unwrap(), self.prediction, sigma),
             Censor::BLOQ => normcdf(self.observation.unwrap(), self.prediction, sigma)?,
             Censor::ALOQ => 1.0 - normcdf(self.observation.unwrap(), self.prediction, sigma)?,
@@ -324,6 +324,11 @@ impl Prediction {
         &mut self.occasion
     }
 
+    /// Get the censoring status
+    pub fn censoring(&self) -> Censor {
+        self.censoring
+    }
+
     /// Create an [Observation] from this prediction
     pub fn to_observation(&self) -> Observation {
         Observation::new(
@@ -332,7 +337,7 @@ impl Prediction {
             self.outeq,
             self.errorpoly,
             self.occasion,
-            self.censored,
+            self.censoring,
         )
     }
 }
@@ -347,7 +352,7 @@ impl Default for Prediction {
             errorpoly: None,
             state: vec![],
             occasion: 0,
-            censored: Censor::None,
+            censoring: Censor::None,
         }
     }
 }

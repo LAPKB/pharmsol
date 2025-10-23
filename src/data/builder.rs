@@ -117,7 +117,7 @@ impl SubjectBuilder {
         time: f64,
         value: f64,
         outeq: usize,
-        censored: Censor,
+        censoring: Censor,
     ) -> Self {
         let observation = Observation::new(
             time,
@@ -125,7 +125,7 @@ impl SubjectBuilder {
             outeq,
             None,
             self.current_occasion.index(),
-            censored,
+            censoring,
         );
         let event = Event::Observation(observation);
         self.event(event)
@@ -223,7 +223,7 @@ impl SubjectBuilder {
                                 observation.value().unwrap(),
                                 observation.outeq(),
                                 observation.errorpoly().unwrap(),
-                                observation.censor(),
+                                observation.censoring(),
                             )
                         } else {
                             if observation.censored() {
@@ -231,7 +231,7 @@ impl SubjectBuilder {
                                     observation.time() + delta * i as f64,
                                     observation.value().unwrap(),
                                     observation.outeq(),
-                                    observation.censor(),
+                                    observation.censoring(),
                                 )
                             } else {
                                 self.observation(
