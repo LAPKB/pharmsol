@@ -275,7 +275,7 @@ pub struct Observation {
     outeq: usize,
     errorpoly: Option<ErrorPoly>,
     occasion: usize,
-    censored: Censor,
+    censoring: Censor,
 }
 impl Observation {
     /// Create a new observation
@@ -293,15 +293,15 @@ impl Observation {
         outeq: usize,
         errorpoly: Option<ErrorPoly>,
         occasion: usize,
-        censored: Censor,
+        censoring: Censor,
     ) -> Self {
         Observation {
             time,
             value,
             outeq,
             errorpoly,
-            censored,
             occasion,
+            censoring,
         }
     }
 
@@ -387,13 +387,13 @@ impl Observation {
             errorpoly: self.errorpoly(),
             state,
             occasion: self.occasion(),
-            censored: self.censor(),
+            censoring: self.censoring(),
         }
     }
 
     /// Check if the observation is censored
     pub fn censored(&self) -> bool {
-        match self.censored {
+        match self.censoring {
             Censor::None => false,
             Censor::ALOQ => true,
             Censor::BLOQ => true,
@@ -401,18 +401,18 @@ impl Observation {
     }
 
     /// Get the censoring type of the observation
-    pub fn censor(&self) -> Censor {
-        self.censored
+    pub fn censoring(&self) -> Censor {
+        self.censoring
     }
 
     /// Set whether the observation is censored
-    pub fn set_censored(&mut self, censored: Censor) {
-        self.censored = censored;
+    pub fn censor(&mut self, censor: Censor) {
+        self.censoring = censor;
     }
 
-    /// Get a mutable reference to the censored flag
-    pub fn mut_censored(&mut self) -> &mut Censor {
-        &mut self.censored
+    /// Get a mutable reference to the censoring flag
+    pub fn mut_censoring(&mut self) -> &mut Censor {
+        &mut self.censoring
     }
 }
 
