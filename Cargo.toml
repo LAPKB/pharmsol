@@ -7,27 +7,51 @@ description = "Rust library for solving analytic and ode-defined pharmacometric 
 license = "GPL-3.0"
 documentation = "https://lapkb.github.io/pharmsol/"
 
+
 [features]
-default = []
+
+
+default = [
+    "native"
+]
+
+# `native` now contains only crates that are known to break or behave poorly
+# on wasm (threads, native-optimized code, or platform-specific backends).
+native = [
+    "dep:rayon",
+    "ndarray/rayon",
+    "dep:argmin",
+    "dep:argmin-math",
+    "dep:getrandom",
+    "dep:statrs",
+]
+
+wasm = []
+
 exa = ["libloading"]
 
 [dependencies]
 cached = { version = "0.56.0" }
 csv = "1.3.0"
-diffsol = "=0.7.0"
+diffsol = { version = "=0.7.0",  features = ["faer", "nalgebra"] }
 libloading = { version = "0.8.6", optional = true, features = [] }
-nalgebra = "0.34.1"
-ndarray = { version = "0.16.1", features = ["rayon"] }
-rand = "0.9.0"
-rand_distr = "0.5.0"
-rayon = "1.10.0"
+nalgebra = { version = "0.34.1" }
+ndarray = { version = "0.16.1"}
+rand = { version = "0.9.0"}
+rand_distr = { version = "0.5.0"}
+rayon = { version = "1.10.0", optional = true }
 serde = { version = "1.0.201", features = ["derive"] }
 serde_json = "1.0.117"
-statrs = "0.18.0"
+statrs = { version = "0.18.0", optional = true }
 thiserror = "2.0.11"
-argmin = "0.11.0"
-argmin-math = "0.5.1"
+argmin = { version = "0.11.0", optional = true }
+argmin-math = { version = "0.5.1", optional = true }
 tracing = "0.1.41"
+getrandom = { version = "0.3", optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+
+getrandom = { version = "0.3", features = ["wasm_js"] }
 
 [dev-dependencies]
 criterion = { version = "0.7.0", features = ["html_reports"] }

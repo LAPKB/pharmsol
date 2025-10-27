@@ -6,8 +6,14 @@ use crate::{
     Predictions,
 };
 use ndarray::{Array2, Axis, ShapeBuilder};
+
+#[cfg(feature = "native")]
 use rayon::prelude::*;
+
+#[cfg(feature = "native")]
 use statrs::distribution::ContinuousCDF;
+
+#[cfg(feature = "native")]
 use statrs::distribution::Normal;
 
 mod progress;
@@ -108,10 +114,38 @@ impl SubjectPredictions {
 fn normpdf(obs: f64, pred: f64, sigma: f64) -> f64 {
     (FRAC_1_SQRT_2PI / sigma) * (-((obs - pred) * (obs - pred)) / (2.0 * sigma * sigma)).exp()
 }
+
+#[cfg(feature = "native")]
 #[inline(always)]
 fn normcdf(obs: f64, pred: f64, sigma: f64) -> Result<f64, ErrorModelError> {
     let norm = Normal::new(pred, sigma).map_err(|_| ErrorModelError::NegativeSigma)?;
     Ok(norm.cdf(obs))
+}
+
+// wasm-safe approximation of the normal CDF (avoids `statrs`)
+#[cfg(not(feature = "native"))]
+#[inline(always)]
+fn normcdf(obs: f64, pred: f64, sigma: f64) -> Result<f64, ErrorModelError> {
+    if sigma <= 0.0 {
+        return Err(ErrorModelError::NegativeSigma);
+    }
+    // Use a numeric approximation for erf (Abramowitz-Stegun)
+    fn erf(x: f64) -> f64 {
+        let a1 = 0.254829592;
+        let a2 = -0.284496736;
+        let a3 = 1.421413741;
+        let a4 = -1.453152027;
+        let a5 = 1.061405429;
+        let p = 0.3275911;
+        let sign = if x < 0.0 { -1.0 } else { 1.0 };
+        let x = x.abs();
+        let t = 1.0 / (1.0 + p * x);
+        let y = 1.0 - (((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t) * (-x * x).exp();
+        sign * y
+    }
+
+    let z = (obs - pred) / (sigma * std::f64::consts::SQRT_2);
+    Ok(0.5 * (1.0 + erf(z)))
 }
 
 impl From<Vec<Prediction>> for SubjectPredictions {
@@ -182,15 +216,42 @@ pub fn psi(
         None
     };
 
-    let result: Result<(), PharmsolError> = psi
-        .axis_iter_mut(Axis(0))
-        .into_par_iter()
-        .enumerate()
-        .try_for_each(|(i, mut row)| {
-            row.axis_iter_mut(Axis(0))
+    let result: Result<(), PharmsolError> = {
+        #[cfg(feature = "native")]
+        {
+            psi.axis_iter_mut(Axis(0))
                 .into_par_iter()
                 .enumerate()
-                .try_for_each(|(j, mut element)| {
+                .try_for_each(|(i, mut row)| {
+                    row.axis_iter_mut(Axis(0))
+                        .into_par_iter()
+                        .enumerate()
+                        .try_for_each(|(j, mut element)| {
+                            let subject = subjects.get(i).unwrap();
+                            match equation.estimate_likelihood(
+                                subject,
+                                support_points.row(j).to_vec().as_ref(),
+                                error_models,
+                                cache,
+                            ) {
+                                Ok(likelihood) => {
+                                    element.fill(likelihood);
+                                    if let Some(ref tracker) = progress_tracker {
+                                        tracker.inc();
+                                    }
+                                }
+                                Err(e) => return Err(e),
+                            };
+                            Ok(())
+                        })
+                })
+        }
+
+        #[cfg(not(feature = "native"))]
+        {
+            let mut outer_result: Result<(), PharmsolError> = Ok(());
+            for (i, mut row) in psi.axis_iter_mut(Axis(0)).enumerate() {
+                for (j, mut element) in row.axis_iter_mut(Axis(0)).enumerate() {
                     let subject = subjects.get(i).unwrap();
                     match equation.estimate_likelihood(
                         subject,
@@ -204,11 +265,19 @@ pub fn psi(
                                 tracker.inc();
                             }
                         }
-                        Err(e) => return Err(e),
+                        Err(e) => {
+                            outer_result = Err(e);
+                            break;
+                        }
                     };
-                    Ok(())
-                })
-        });
+                }
+                if outer_result.is_err() {
+                    break;
+                }
+            }
+            outer_result
+        }
+    };
 
     if let Some(tracker) = progress_tracker {
         tracker.finish();
