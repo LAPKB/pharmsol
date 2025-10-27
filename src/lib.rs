@@ -10,7 +10,10 @@ pub use crate::data::builder::SubjectBuilderExt;
 pub use crate::data::Interpolation::*;
 pub use crate::data::*;
 pub use crate::equation::*;
+#[cfg(feature = "native")]
 pub use crate::optimize::effect::get_e2;
+
+#[cfg(feature = "native")]
 pub use crate::optimize::spp::SppOptimizer;
 pub use crate::simulator::equation::{self, ODE};
 pub use error::PharmsolError;

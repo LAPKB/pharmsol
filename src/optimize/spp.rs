@@ -1,12 +1,16 @@
+#[cfg(feature = "native")]
 use argmin::{
     core::{CostFunction, Error, Executor},
     solver::neldermead::NelderMead,
 };
 
+#[cfg(feature = "native")]
 use ndarray::{Array1, Axis};
 
+#[cfg(feature = "native")]
 use crate::{prelude::simulator::psi, Data, Equation, ErrorModels};
 
+#[cfg(feature = "native")]
 pub struct SppOptimizer<'a, E: Equation> {
     equation: &'a E,
     data: &'a Data,
@@ -14,6 +18,7 @@ pub struct SppOptimizer<'a, E: Equation> {
     pyl: &'a Array1<f64>,
 }
 
+#[cfg(feature = "native")]
 impl<E: Equation> CostFunction for SppOptimizer<'_, E> {
     type Param = Vec<f64>;
     type Output = f64;
@@ -41,6 +46,7 @@ impl<E: Equation> CostFunction for SppOptimizer<'_, E> {
     }
 }
 
+#[cfg(feature = "native")]
 impl<'a, E: Equation> SppOptimizer<'a, E> {
     pub fn new(
         equation: &'a E,
@@ -66,6 +72,7 @@ impl<'a, E: Equation> SppOptimizer<'a, E> {
     }
 }
 
+#[cfg(feature = "native")]
 fn create_initial_simplex(initial_point: &[f64]) -> Vec<Vec<f64>> {
     let num_dimensions = initial_point.len();
     let perturbation_percentage = 0.008;
@@ -90,4 +97,40 @@ fn create_initial_simplex(initial_point: &[f64]) -> Vec<Vec<f64>> {
     }
 
     vertices
+}
+
+// WASM / non-native stubs
+#[cfg(not(feature = "native"))]
+use ndarray::Array1;
+
+#[cfg(not(feature = "native"))]
+use crate::{Data, Equation, ErrorModels};
+
+#[cfg(not(feature = "native"))]
+pub struct SppOptimizer<'a, E> {
+    _phantom: std::marker::PhantomData<&'a E>,
+}
+
+#[cfg(not(feature = "native"))]
+impl<'a, E: Equation> SppOptimizer<'a, E> {
+    pub fn new(
+        _equation: &'a E,
+        _data: &'a Data,
+        _sig: &'a ErrorModels,
+        _pyl: &'a Array1<f64>,
+    ) -> Self {
+        SppOptimizer {
+            _phantom: std::marker::PhantomData,
+        }
+    }
+
+    pub fn optimize_point(
+        self,
+        _spp: Array1<f64>,
+    ) -> Result<Array1<f64>, Box<dyn std::error::Error>> {
+        Err(Box::new(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "SppOptimizer is disabled when feature `native` is not enabled",
+        )))
+    }
 }
