@@ -17,6 +17,11 @@ pub use crate::simulator::equation::{self, ODE};
 pub use error::PharmsolError;
 #[cfg(feature = "exa")]
 pub use exa::*;
+// When the `exa` (native) feature is enabled prefer its exports at crate root to
+// avoid ambiguous glob re-exports between `exa` and `exa_wasm` (they both expose
+// `build` and `interpreter` modules). When `exa` is not enabled, re-export
+// `exa_wasm` at the crate root so its API is available.
+#[cfg(not(feature = "exa"))]
 pub use exa_wasm::*;
 pub use nalgebra::dmatrix;
 pub use std::collections::HashMap;

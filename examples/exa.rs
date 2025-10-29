@@ -34,7 +34,9 @@ fn main() {
     );
 
     //clear build
-    clear_build();
+    // clear_build();
+
+    println!("{}", exa::build::template_path());
 
     let test_dir = std::env::current_dir().expect("Failed to get current directory");
     let model_output_path = test_dir.join("test_model.pkm");
@@ -44,9 +46,9 @@ fn main() {
         format!(
             r#"
                 equation::ODE::new(
-            |x, p, _t, dx, rateiv, _cov| {{
+            |x, p, _t, dx, b, rateiv, _cov| {{
                 fetch_params!(p, ke, _v);
-                dx[0] = -ke * x[0] + rateiv[0];
+                dx[0] = -ke * x[0] + rateiv[0] + b[0];
             }},
             |_p, _t, _cov| lag! {{}},
             |_p, _t, _cov| fa! {{}},

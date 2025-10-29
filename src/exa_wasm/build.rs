@@ -17,6 +17,91 @@ pub fn emit_ir<E: crate::Equation>(
     params: Vec<String>,
 ) -> Result<String, io::Error> {
     use serde_json::json;
+    use std::collections::HashMap;
+
+    // Extract structured lag/fa maps from macro text so the runtime does not
+    // need to re-parse macro bodies. These will be empty maps if not present.
+    fn extract_macro_map(src: &str, mac: &str) -> HashMap<usize, String> {
+        let mut res = HashMap::new();
+        let mut search = 0usize;
+        while let Some(pos) = src[search..].find(mac) {
+            let start = search + pos;
+            if let Some(lb_rel) = src[start..].find('{') {
+                let lb = start + lb_rel;
+                let mut depth: isize = 0;
+                let mut i = lb;
+                let bytes = src.as_bytes();
+                let len = src.len();
+                let mut end_opt: Option<usize> = None;
+                while i < len {
+                    match bytes[i] as char {
+                        '{' => depth += 1,
+                        '}' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                end_opt = Some(i);
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                    i += 1;
+                }
+                if let Some(rb) = end_opt {
+                    let body = &src[lb + 1..rb];
+                    // split top-level entries by commas not inside parentheses/braces
+                    let mut entry = String::new();
+                    let mut paren = 0isize;
+                    let mut brace = 0isize;
+                    for ch in body.chars() {
+                        match ch {
+                            '(' => {
+                                paren += 1;
+                                entry.push(ch);
+                            }
+                            ')' => {
+                                paren -= 1;
+                                entry.push(ch);
+                            }
+                            '{' => {
+                                brace += 1;
+                                entry.push(ch);
+                            }
+                            '}' => {
+                                brace -= 1;
+                                entry.push(ch);
+                            }
+                            ',' if paren == 0 && brace == 0 => {
+                                let parts: Vec<&str> = entry.split("=>").collect();
+                                if parts.len() == 2 {
+                                    if let Ok(k) = parts[0].trim().parse::<usize>() {
+                                        res.insert(k, parts[1].trim().to_string());
+                                    }
+                                }
+                                entry.clear();
+                            }
+                            _ => entry.push(ch),
+                        }
+                    }
+                    if !entry.trim().is_empty() {
+                        let parts: Vec<&str> = entry.split("=>").collect();
+                        if parts.len() == 2 {
+                            if let Ok(k) = parts[0].trim().parse::<usize>() {
+                                res.insert(k, parts[1].trim().to_string());
+                            }
+                        }
+                    }
+                    search = rb + 1;
+                    continue;
+                }
+            }
+            search = start + mac.len();
+        }
+        res
+    }
+
+    let lag_map = extract_macro_map(lag_txt.as_deref().unwrap_or(""), "lag!");
+    let fa_map = extract_macro_map(fa_txt.as_deref().unwrap_or(""), "fa!");
 
     let ir_obj = json!({
         "ir_version": "1.0",
@@ -25,6 +110,8 @@ pub fn emit_ir<E: crate::Equation>(
         "diffeq": diffeq_txt,
         "lag": lag_txt,
         "fa": fa_txt,
+        "lag_map": lag_map,
+        "fa_map": fa_map,
         "init": init_txt,
         "out": out_txt,
     });

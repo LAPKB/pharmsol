@@ -227,31 +227,40 @@ impl Equation for ODE {
         // We set the thread-local current id for the duration of this call and
         // restore it on exit via a small RAII guard. When the `exa` feature is
         // disabled these are no-ops.
-        let _restore_current = {
+        // Set the current interpreter registry id for both possible interpreter
+        // implementations (native `exa` and `exa_wasm`). Store previous ids and
+        // restore them on Drop. Using a single guard type avoids type-mismatch
+        // issues across cfg branches.
+        struct RestoreGuard {
+            exa_prev: Option<usize>,
+            exa_wasm_prev: Option<usize>,
+        }
+        impl Drop for RestoreGuard {
+            fn drop(&mut self) {
+                #[cfg(feature = "exa")]
+                {
+                    // Only call if the `exa` interpreter is compiled in
+                    let _ = crate::exa::interpreter::set_current_expr_id(self.exa_prev);
+                }
+                // exa_wasm may be present alongside exa; restore its id as well.
+                let _ = crate::exa_wasm::interpreter::set_current_expr_id(self.exa_wasm_prev);
+            }
+        }
+
+        let exa_prev = {
             #[cfg(feature = "exa")]
             {
-                let prev = crate::exa::interpreter::set_current_expr_id(self.registry_id);
-                #[allow(dead_code)]
-                struct Restore(Option<usize>);
-                impl Drop for Restore {
-                    fn drop(&mut self) {
-                        let _ = crate::exa::interpreter::set_current_expr_id(self.0);
-                    }
-                }
-                Restore(prev)
+                crate::exa::interpreter::set_current_expr_id(self.registry_id)
             }
+            #[cfg(not(feature = "exa"))]
             {
-                let prev = crate::exa_wasm::interpreter::set_current_expr_id(self.registry_id);
-                #[allow(dead_code)]
-                struct Restore(Option<usize>);
-                impl Drop for Restore {
-                    fn drop(&mut self) {
-                        let _ = crate::exa_wasm::interpreter::set_current_expr_id(self.0);
-                    }
-                }
-                Restore(prev)
+                None
             }
-            
+        };
+        let exa_wasm_prev = crate::exa_wasm::interpreter::set_current_expr_id(self.registry_id);
+        let _restore_current = RestoreGuard {
+            exa_prev,
+            exa_wasm_prev,
         };
 
         // let lag = self.get_lag(support_point);
@@ -272,7 +281,15 @@ impl Equation for ODE {
                 Some((self.fa(), self.lag(), support_point, covariates)),
                 true,
             );
+            // If interpreter produced a runtime error while computing lag/fa, propagate it
+            if let Some(err) = crate::exa_wasm::interpreter::take_runtime_error() {
+                return Err(PharmsolError::OtherError(err));
+            }
 
+            let init_state = self.initial_state(support_point, covariates, occasion.index());
+            if let Some(err) = crate::exa_wasm::interpreter::take_runtime_error() {
+                return Err(PharmsolError::OtherError(err));
+            }
             let problem = OdeBuilder::<M>::new()
                 .atol(vec![ATOL])
                 .rtol(RTOL)
@@ -285,8 +302,7 @@ impl Equation for ODE {
                     support_point.clone(), //TODO: Avoid cloning the support point
                     covariates,
                     infusions,
-                    self.initial_state(support_point, covariates, occasion.index())
-                        .into(),
+                    init_state.into(),
                 ))?;
 
             let mut solver: Bdf<
@@ -323,6 +339,9 @@ impl Equation for ODE {
                             zero_vector.clone(),
                             covariates,
                         );
+                        if let Some(err) = crate::exa_wasm::interpreter::take_runtime_error() {
+                            return Err(PharmsolError::OtherError(err));
+                        }
 
                         // Call the differential equation closure with bolus
                         (self.diffeq)(
@@ -334,6 +353,9 @@ impl Equation for ODE {
                             zero_vector.clone(),
                             covariates,
                         );
+                        if let Some(err) = crate::exa_wasm::interpreter::take_runtime_error() {
+                            return Err(PharmsolError::OtherError(err));
+                        }
 
                         // The difference between the two states is the actual bolus effect
                         // Apply the computed changes to the state
@@ -354,6 +376,9 @@ impl Equation for ODE {
                             covariates,
                             &mut y,
                         );
+                        if let Some(err) = crate::exa_wasm::interpreter::take_runtime_error() {
+                            return Err(PharmsolError::OtherError(err));
+                        }
                         let pred = y[observation.outeq()];
                         let pred =
                             observation.to_prediction(pred, solver.state().y.as_slice().to_vec());
@@ -370,6 +395,13 @@ impl Equation for ODE {
                         match solver.set_stop_time(next_event.time()) {
                             Ok(_) => loop {
                                 let ret = solver.step();
+                                // If the interpreter set a runtime error during evaluation inside
+                                // the ODE step, surface it here.
+                                if let Some(err) =
+                                    crate::exa_wasm::interpreter::take_runtime_error()
+                                {
+                                    return Err(PharmsolError::OtherError(err));
+                                }
                                 match ret {
                                     Ok(OdeSolverStopReason::InternalTimestep) => continue,
                                     Ok(OdeSolverStopReason::TstopReached) => break,

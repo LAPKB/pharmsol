@@ -22,6 +22,8 @@ struct IrFile {
     fa: Option<String>,
     init: Option<String>,
     out: Option<String>,
+    lag_map: Option<std::collections::HashMap<usize, String>>,
+    fa_map: Option<std::collections::HashMap<usize, String>>,
 }
 
 #[cfg(test)]
@@ -212,6 +214,11 @@ enum Expr {
         name: String,
         args: Vec<Expr>,
     },
+    Ternary {
+        cond: Box<Expr>,
+        then_branch: Box<Expr>,
+        else_branch: Box<Expr>,
+    },
 }
 
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -235,6 +242,7 @@ static NEXT_EXPR_ID: Lazy<AtomicUsize> = Lazy::new(|| AtomicUsize::new(1));
 
 thread_local! {
     static CURRENT_EXPR_ID: std::cell::Cell<Option<usize>> = std::cell::Cell::new(None);
+    static LAST_RUNTIME_ERROR: std::cell::RefCell<Option<String>> = std::cell::RefCell::new(None);
 }
 
 pub(crate) fn set_current_expr_id(id: Option<usize>) -> Option<usize> {
@@ -244,6 +252,19 @@ pub(crate) fn set_current_expr_id(id: Option<usize>) -> Option<usize> {
         p
     });
     prev
+}
+
+// Runtime error helpers: interpreter code can set an error message when a
+// runtime problem (invalid index, unknown function, etc.) occurs. The
+// simulator will poll for this error and convert it into a `PharmsolError`.
+pub fn set_runtime_error(msg: String) {
+    LAST_RUNTIME_ERROR.with(|c| {
+        *c.borrow_mut() = Some(msg);
+    });
+}
+
+pub fn take_runtime_error() -> Option<String> {
+    LAST_RUNTIME_ERROR.with(|c| c.borrow_mut().take())
 }
 
 #[derive(Debug, Clone)]
@@ -266,6 +287,8 @@ enum Token {
     And,
     Or,
     Bang,
+    Question,
+    Colon,
     Semicolon,
 }
 
@@ -315,6 +338,14 @@ fn tokenize(s: &str) -> Vec<Token> {
         match c {
             '[' => {
                 toks.push(Token::LBracket);
+                chars.next();
+            }
+            '?' => {
+                toks.push(Token::Question);
+                chars.next();
+            }
+            ':' => {
+                toks.push(Token::Colon);
                 chars.next();
             }
             ']' => {
@@ -428,7 +459,41 @@ impl Parser {
     }
 
     fn parse_expr(&mut self) -> Option<Expr> {
-        self.parse_or()
+        self.parse_ternary()
+    }
+
+    fn parse_ternary(&mut self) -> Option<Expr> {
+        // parse conditional ternary: cond ? then : else
+        let cond = self.parse_or()?;
+        if let Some(Token::Question) = self.peek().cloned() {
+            self.next();
+            let then_branch = self.parse_expr()?;
+            if let Some(Token::Colon) = self.peek().cloned() {
+                self.next();
+                let else_branch = self.parse_expr()?;
+                return Some(Expr::Ternary {
+                    cond: Box::new(cond),
+                    then_branch: Box::new(then_branch),
+                    else_branch: Box::new(else_branch),
+                });
+            } else {
+                return None;
+            }
+        }
+        Some(cond)
+    }
+
+    /// Parse and return a Result with an informative error message on failure.
+    fn parse_expr_result(&mut self) -> Result<Expr, String> {
+        if let Some(expr) = self.parse_expr() {
+            Ok(expr)
+        } else {
+            Err(format!(
+                "parse error at pos {} remaining={:?}",
+                self.pos,
+                self.peek()
+            ))
+        }
     }
 
     fn parse_or(&mut self) -> Option<Expr> {
@@ -674,7 +739,11 @@ impl Parser {
                     self.next(); // consume '['
                     #[cfg(test)]
                     {
-                        eprintln!("parsing index: pos={} remaining={:?}", self.pos, &self.tokens[self.pos..]);
+                        eprintln!(
+                            "parsing index: pos={} remaining={:?}",
+                            self.pos,
+                            &self.tokens[self.pos..]
+                        );
                     }
                     let mut depth = 1isize;
                     let mut i = self.pos;
@@ -807,6 +876,10 @@ fn eval_expr(
         Expr::Indexed(name, idx_expr) => {
             let idxf = eval_expr(idx_expr, x, p, rateiv, pmap, t, cov);
             if !idxf.is_finite() || idxf.is_sign_negative() {
+                set_runtime_error(format!(
+                    "invalid index expression for '{}' -> {}",
+                    name, idxf
+                ));
                 return 0.0;
             }
             let idx = idxf as usize;
@@ -935,7 +1008,45 @@ fn eval_expr(
             for aexpr in args.iter() {
                 avals.push(eval_expr(aexpr, x, p, rateiv, pmap, t, cov));
             }
-            eval_call(name.as_str(), &avals)
+            let res = eval_call(name.as_str(), &avals);
+            if res == 0.0 {
+                // eval_call returns 0.0 for unknown functions — set runtime error
+                // so the simulator can pick it up and convert to Err.
+                if !matches!(
+                    name.as_str(),
+                    "min"
+                        | "max"
+                        | "abs"
+                        | "floor"
+                        | "ceil"
+                        | "round"
+                        | "sin"
+                        | "cos"
+                        | "tan"
+                        | "exp"
+                        | "ln"
+                        | "log"
+                        | "log10"
+                        | "log2"
+                        | "pow"
+                        | "powf"
+                ) {
+                    set_runtime_error(format!("unknown function '{}()', returned 0.0", name));
+                }
+            }
+            res
+        }
+        Expr::Ternary {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
+            let c = eval_expr(cond, x, p, rateiv, pmap, t, cov);
+            if c != 0.0 {
+                eval_expr(then_branch, x, p, rateiv, pmap, t, cov)
+            } else {
+                eval_expr(else_branch, x, p, rateiv, pmap, t, cov)
+            }
         }
         Expr::MethodCall {
             receiver,
@@ -948,7 +1059,31 @@ fn eval_expr(
             for aexpr in args.iter() {
                 avals.push(eval_expr(aexpr, x, p, rateiv, pmap, t, cov));
             }
-            eval_call(name.as_str(), &avals)
+            let res = eval_call(name.as_str(), &avals);
+            if res == 0.0 {
+                if !matches!(
+                    name.as_str(),
+                    "min"
+                        | "max"
+                        | "abs"
+                        | "floor"
+                        | "ceil"
+                        | "round"
+                        | "sin"
+                        | "cos"
+                        | "tan"
+                        | "exp"
+                        | "ln"
+                        | "log"
+                        | "log10"
+                        | "log2"
+                        | "pow"
+                        | "powf"
+                ) {
+                    set_runtime_error(format!("unknown method '{}', returned 0.0", name));
+                }
+            }
+            res
         }
     }
 }
@@ -966,8 +1101,14 @@ fn eval_call(name: &str, args: &[f64]) -> f64 {
         }
         "ln" | "log" => args.get(0).cloned().unwrap_or(0.0).ln(),
         "log10" => args.get(0).cloned().unwrap_or(0.0).log10(),
+        "log2" => args.get(0).cloned().unwrap_or(0.0).log2(),
         "sqrt" => args.get(0).cloned().unwrap_or(0.0).sqrt(),
         "pow" => {
+            let a = args.get(0).cloned().unwrap_or(0.0);
+            let b = args.get(1).cloned().unwrap_or(0.0);
+            a.powf(b)
+        }
+        "powf" => {
             let a = args.get(0).cloned().unwrap_or(0.0);
             let b = args.get(1).cloned().unwrap_or(0.0);
             a.powf(b)
@@ -1177,28 +1318,43 @@ pub fn load_ir_ode(ir_path: PathBuf) -> Result<(ODE, Meta, usize), io::Error> {
     for (i, rhs) in extract_all_assign(&diffeq_text, "dx[") {
         let toks = tokenize(&rhs);
         let mut p = Parser::new(toks);
-        if let Some(expr) = p.parse_expr() {
-            dx_map.insert(i, expr);
-        } else {
-            parse_errors.push(format!("failed to parse dx[{}] RHS='{}'", i, rhs));
+        let res = p.parse_expr_result();
+        match res {
+            Ok(expr) => {
+                dx_map.insert(i, expr);
+            }
+            Err(e) => {
+                parse_errors.push(format!("failed to parse dx[{}] RHS='{}' : {}", i, rhs, e));
+            }
         }
     }
     for (i, rhs) in extract_all_assign(&out_text, "y[") {
         let toks = tokenize(&rhs);
         let mut p = Parser::new(toks);
-        if let Some(expr) = p.parse_expr() {
-            out_map.insert(i, expr);
-        } else {
-            parse_errors.push(format!("failed to parse y[{}] RHS='{}'", i, rhs));
+        let res = p.parse_expr_result();
+        match res {
+            Ok(expr) => {
+                out_map.insert(i, expr);
+            }
+            Err(e) => {
+                parse_errors.push(format!("failed to parse y[{}] RHS='{}' : {}", i, rhs, e));
+            }
         }
     }
     for (i, rhs) in extract_all_assign(&init_text, "x[") {
         let toks = tokenize(&rhs);
         let mut p = Parser::new(toks);
-        if let Some(expr) = p.parse_expr() {
-            init_map.insert(i, expr);
-        } else {
-            parse_errors.push(format!("failed to parse init x[{}] RHS='{}'", i, rhs));
+        let res = p.parse_expr_result();
+        match res {
+            Ok(expr) => {
+                init_map.insert(i, expr);
+            }
+            Err(e) => {
+                parse_errors.push(format!(
+                    "failed to parse init x[{}] RHS='{}' : {}",
+                    i, rhs, e
+                ));
+            }
         }
     }
 
@@ -1286,22 +1442,70 @@ pub fn load_ir_ode(ir_path: PathBuf) -> Result<(ODE, Meta, usize), io::Error> {
         res
     }
 
-    for (i, rhs) in extract_macro_map(&lag_text, "lag!") {
-        let toks = tokenize(&rhs);
-        let mut p = Parser::new(toks);
-        if let Some(expr) = p.parse_expr() {
-            lag_map.insert(i, expr);
-        } else {
-            parse_errors.push(format!("failed to parse lag! entry {} => '{}'", i, rhs));
+    if let Some(lmap) = ir.lag_map.clone() {
+        for (i, rhs) in lmap.into_iter() {
+            let toks = tokenize(&rhs);
+            let mut p = Parser::new(toks);
+            match p.parse_expr_result() {
+                Ok(expr) => {
+                    lag_map.insert(i, expr);
+                }
+                Err(e) => {
+                    parse_errors.push(format!(
+                        "failed to parse lag! entry {} => '{}' : {}",
+                        i, rhs, e
+                    ));
+                }
+            }
+        }
+    } else {
+        for (i, rhs) in extract_macro_map(&lag_text, "lag!") {
+            let toks = tokenize(&rhs);
+            let mut p = Parser::new(toks);
+            match p.parse_expr_result() {
+                Ok(expr) => {
+                    lag_map.insert(i, expr);
+                }
+                Err(e) => {
+                    parse_errors.push(format!(
+                        "failed to parse lag! entry {} => '{}' : {}",
+                        i, rhs, e
+                    ));
+                }
+            }
         }
     }
-    for (i, rhs) in extract_macro_map(&fa_text, "fa!") {
-        let toks = tokenize(&rhs);
-        let mut p = Parser::new(toks);
-        if let Some(expr) = p.parse_expr() {
-            fa_map.insert(i, expr);
-        } else {
-            parse_errors.push(format!("failed to parse fa! entry {} => '{}'", i, rhs));
+    if let Some(fmap) = ir.fa_map.clone() {
+        for (i, rhs) in fmap.into_iter() {
+            let toks = tokenize(&rhs);
+            let mut p = Parser::new(toks);
+            match p.parse_expr_result() {
+                Ok(expr) => {
+                    fa_map.insert(i, expr);
+                }
+                Err(e) => {
+                    parse_errors.push(format!(
+                        "failed to parse fa! entry {} => '{}' : {}",
+                        i, rhs, e
+                    ));
+                }
+            }
+        }
+    } else {
+        for (i, rhs) in extract_macro_map(&fa_text, "fa!") {
+            let toks = tokenize(&rhs);
+            let mut p = Parser::new(toks);
+            match p.parse_expr_result() {
+                Ok(expr) => {
+                    fa_map.insert(i, expr);
+                }
+                Err(e) => {
+                    parse_errors.push(format!(
+                        "failed to parse fa! entry {} => '{}' : {}",
+                        i, rhs, e
+                    ));
+                }
+            }
         }
     }
 
@@ -1574,6 +1778,15 @@ pub fn load_ir_ode(ir_path: PathBuf) -> Result<(ODE, Meta, usize), io::Error> {
                 for a in args.iter() {
                     validate_expr(a, pmap, nstates, nparams, errors);
                 }
+            }
+            Expr::Ternary {
+                cond,
+                then_branch,
+                else_branch,
+            } => {
+                validate_expr(cond, pmap, nstates, nparams, errors);
+                validate_expr(then_branch, pmap, nstates, nparams, errors);
+                validate_expr(else_branch, pmap, nstates, nparams, errors);
             }
         }
     }
