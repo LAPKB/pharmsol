@@ -237,26 +237,14 @@ impl Equation for ODE {
         }
         impl Drop for RestoreGuard {
             fn drop(&mut self) {
-                #[cfg(feature = "exa")]
-                {
-                    // Only call if the `exa` interpreter is compiled in
-                    let _ = crate::exa::interpreter::set_current_expr_id(self.exa_prev);
-                }
-                // exa_wasm may be present alongside exa; restore its id as well.
+                // Native `exa` no longer provides an interpreter module; skip restoring it.
+                // Always restore the exa_wasm interpreter id if present.
                 let _ = crate::exa_wasm::interpreter::set_current_expr_id(self.exa_wasm_prev);
             }
         }
 
-        let exa_prev = {
-            #[cfg(feature = "exa")]
-            {
-                crate::exa::interpreter::set_current_expr_id(self.registry_id)
-            }
-            #[cfg(not(feature = "exa"))]
-            {
-                None
-            }
-        };
+        // Native `exa` does not provide an interpreter registry in this branch.
+        let exa_prev: Option<usize> = None;
         let exa_wasm_prev = crate::exa_wasm::interpreter::set_current_expr_id(self.registry_id);
         let _restore_current = RestoreGuard {
             exa_prev,
