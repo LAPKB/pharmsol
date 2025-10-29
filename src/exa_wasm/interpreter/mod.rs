@@ -188,6 +188,39 @@ mod tests {
     }
 }
 
+#[cfg(test)]
+mod load_negative_tests {
+    use super::*;
+    use std::env;
+    use std::fs;
+
+    // Ensure loader returns an error when textual lag/fa are present but
+    // structured lag_map/fa_map fields are missing. This verifies we no
+    // longer accept fragile runtime macro parsing.
+    #[test]
+    fn test_loader_errors_when_missing_structured_maps() {
+        let tmp = env::temp_dir().join("exa_test_ir_negative.json");
+        // Build a minimal IR JSON where lag/fa textual fields are present
+        // but lag_map/fa_map are omitted.
+        let ir_json = serde_json::json!({
+            "ir_version": "1.0",
+            "kind": "EqnKind::ODE",
+            "params": ["ke", "v"],
+            "diffeq": "|x, p, _t, dx, rateiv, _cov| { dx[0] = -ke * x[0] + rateiv[0]; }",
+            "lag": "|p, t, _cov| { lag!{0 => t} }",
+            "fa": "|p, t, _cov| { fa!{0 => 0.1} }",
+            "init": "|p, _t, _cov, x| { }",
+            "out": "|x, p, _t, _cov, y| { y[0] = x[0]; }"
+        });
+        let s = serde_json::to_string_pretty(&ir_json).expect("serialize");
+        fs::write(&tmp, s.as_bytes()).expect("write tmp");
+
+        let res = load_ir_ode(tmp.clone());
+        fs::remove_file(tmp).ok();
+        assert!(res.is_err(), "loader should reject IR missing structured maps");
+    }
+}
+
 // --- rest of interpreter implementation follows (copy of original) ---
 
 // Small expression AST for arithmetic used in model RHS and outputs.
@@ -291,6 +324,27 @@ enum Token {
     Colon,
     Semicolon,
 }
+
+#[derive(Debug, Clone)]
+struct ParseError {
+    pos: usize,
+    found: Option<Token>,
+    expected: Vec<String>,
+}
+
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if !self.expected.is_empty() {
+            write!(f, "parse error at pos {} found={:?} expected={:?}", self.pos, self.found, self.expected)
+        } else if let Some(tok) = &self.found {
+            write!(f, "parse error at pos {} found={:?}", self.pos, tok)
+        } else {
+            write!(f, "parse error at pos {} found=<end>", self.pos)
+        }
+    }
+}
+
+impl std::error::Error for ParseError {}
 
 fn tokenize(s: &str) -> Vec<Token> {
     let mut toks = Vec::new();
@@ -441,11 +495,21 @@ fn tokenize(s: &str) -> Vec<Token> {
 struct Parser {
     tokens: Vec<Token>,
     pos: usize,
+    expected: Vec<String>,
 }
 
 impl Parser {
     fn new(tokens: Vec<Token>) -> Self {
-        Self { tokens, pos: 0 }
+        Self {
+            tokens,
+            pos: 0,
+            expected: Vec::new(),
+        }
+    }
+    fn expected_push(&mut self, s: &str) {
+        if !self.expected.contains(&s.to_string()) {
+            self.expected.push(s.to_string());
+        }
     }
     fn peek(&self) -> Option<&Token> {
         self.tokens.get(self.pos)
@@ -477,6 +541,7 @@ impl Parser {
                     else_branch: Box::new(else_branch),
                 });
             } else {
+                self.expected_push(":");
                 return None;
             }
         }
@@ -484,15 +549,15 @@ impl Parser {
     }
 
     /// Parse and return a Result with an informative error message on failure.
-    fn parse_expr_result(&mut self) -> Result<Expr, String> {
+    fn parse_expr_result(&mut self) -> Result<Expr, ParseError> {
         if let Some(expr) = self.parse_expr() {
             Ok(expr)
         } else {
-            Err(format!(
-                "parse error at pos {} remaining={:?}",
-                self.pos,
-                self.peek()
-            ))
+            Err(ParseError {
+                pos: self.pos,
+                found: self.peek().cloned(),
+                expected: self.expected.clone(),
+            })
         }
     }
 
@@ -710,18 +775,22 @@ impl Parser {
                             if let Some(expr) = self.parse_expr() {
                                 args.push(expr);
                             } else {
-                                return None;
+                                        self.expected_push("expression");
+                                        return None;
                             }
                             match self.peek() {
                                 Some(Token::Comma) => {
                                     self.next();
                                     continue;
                                 }
-                                Some(Token::RParen) => {
+                                        Some(Token::RParen) => {
                                     self.next();
                                     break;
                                 }
-                                _ => return None,
+                                        _ => {
+                                            self.expected_push(",|)");
+                                            return None;
+                                        }
                             }
                         }
                         Expr::Call {
@@ -761,6 +830,7 @@ impl Parser {
                         i += 1;
                     }
                     if i >= self.tokens.len() {
+                        self.expected_push("]");
                         return None; // no matching ']'
                     }
                     // parse tokens in range [self.pos, i) as a sub-expression
@@ -780,13 +850,18 @@ impl Parser {
                     if let Some(e) = expr {
                         e
                     } else {
+                        self.expected_push("expression");
                         return None;
                     }
                 } else {
+                    self.expected_push(")");
                     return None;
                 }
             }
-            _ => return None,
+            _ => {
+                self.expected_push("number|identifier|'('");
+                return None;
+            }
         };
 
         // Postfix method-call chaining like primary.ident(arg1, ...)
@@ -798,6 +873,7 @@ impl Parser {
                 let name = if let Some(Token::Ident(n)) = self.next().cloned() {
                     n
                 } else {
+                    self.expected_push("identifier");
                     return None;
                 };
                 // optional arglist
@@ -812,6 +888,7 @@ impl Parser {
                             if let Some(expr) = self.parse_expr() {
                                 args.push(expr);
                             } else {
+                                self.expected_push("expression");
                                 return None;
                             }
                             match self.peek() {
@@ -823,7 +900,10 @@ impl Parser {
                                     self.next();
                                     break;
                                 }
-                                _ => return None,
+                                _ => {
+                                    self.expected_push(",|)");
+                                    return None;
+                                }
                             }
                         }
                     }
@@ -854,6 +934,10 @@ fn eval_expr(
     match expr {
         Expr::Number(v) => *v,
         Expr::Ident(name) => {
+            // allow underscore-prefixed idents as intentional ignored placeholders
+            if name.starts_with('_') {
+                return 0.0;
+            }
             if let Some(map) = pmap {
                 if let Some(idx) = map.get(name) {
                     return p[*idx];
@@ -871,6 +955,8 @@ fn eval_expr(
                     }
                 }
             }
+            // Unknown identifier: set a runtime error so the simulator can fail fast
+            set_runtime_error(format!("unknown identifier '{}'", name));
             0.0
         }
         Expr::Indexed(name, idx_expr) => {
@@ -888,6 +974,11 @@ fn eval_expr(
                     if idx < x.len() {
                         x[idx]
                     } else {
+                        set_runtime_error(format!(
+                            "index out of bounds 'x'[{}] (nstates={})",
+                            idx,
+                            x.len()
+                        ));
                         0.0
                     }
                 }
@@ -895,6 +986,12 @@ fn eval_expr(
                     if idx < p.len() {
                         p[idx]
                     } else {
+                        set_runtime_error(format!(
+                            "parameter index out of bounds '{}'[{}] (nparams={})",
+                            name,
+                            idx,
+                            p.len()
+                        ));
                         0.0
                     }
                 }
@@ -902,10 +999,18 @@ fn eval_expr(
                     if idx < rateiv.len() {
                         rateiv[idx]
                     } else {
+                        set_runtime_error(format!(
+                            "index out of bounds 'rateiv'[{}] (len={})",
+                            idx,
+                            rateiv.len()
+                        ));
                         0.0
                     }
                 }
-                _ => 0.0,
+                _ => {
+                    set_runtime_error(format!("unknown indexed symbol '{}'", name));
+                    0.0
+                }
             }
         }
         Expr::UnaryOp { op, rhs } => {
@@ -1358,89 +1463,10 @@ pub fn load_ir_ode(ir_path: PathBuf) -> Result<(ODE, Meta, usize), io::Error> {
         }
     }
 
-    fn extract_macro_map(src: &str, mac: &str) -> Vec<(usize, String)> {
-        // Find the macro name and then extract the top-level brace content.
-        let mut res = Vec::new();
-        let mut search = 0usize;
-        while let Some(pos) = src[search..].find(mac) {
-            let start = search + pos;
-            // find '{' after macro
-            if let Some(lb_rel) = src[start..].find('{') {
-                let lb = start + lb_rel;
-                // find matching '}' using brace depth
-                let mut depth = 0isize;
-                let mut i = lb;
-                let bytes = src.as_bytes();
-                let len = src.len();
-                let mut end_opt: Option<usize> = None;
-                while i < len {
-                    match bytes[i] as char {
-                        '{' => depth += 1,
-                        '}' => {
-                            depth -= 1;
-                            if depth == 0 {
-                                end_opt = Some(i);
-                                break;
-                            }
-                        }
-                        _ => {}
-                    }
-                    i += 1;
-                }
-                if let Some(rb) = end_opt {
-                    let body = &src[lb + 1..rb];
-                    // Split top-level entries by commas not inside parentheses or braces
-                    let mut entry = String::new();
-                    let mut paren = 0isize;
-                    let mut brace = 0isize;
-                    for ch in body.chars() {
-                        match ch {
-                            '(' => {
-                                paren += 1;
-                                entry.push(ch);
-                            }
-                            ')' => {
-                                paren -= 1;
-                                entry.push(ch);
-                            }
-                            '{' => {
-                                brace += 1;
-                                entry.push(ch);
-                            }
-                            '}' => {
-                                brace -= 1;
-                                entry.push(ch);
-                            }
-                            ',' if paren == 0 && brace == 0 => {
-                                // finish entry
-                                let parts: Vec<&str> = entry.split("=>").collect();
-                                if parts.len() == 2 {
-                                    if let Ok(k) = parts[0].trim().parse::<usize>() {
-                                        res.push((k, parts[1].trim().to_string()));
-                                    }
-                                }
-                                entry.clear();
-                            }
-                            _ => entry.push(ch),
-                        }
-                    }
-                    if !entry.trim().is_empty() {
-                        let parts: Vec<&str> = entry.split("=>").collect();
-                        if parts.len() == 2 {
-                            if let Ok(k) = parts[0].trim().parse::<usize>() {
-                                res.push((k, parts[1].trim().to_string()));
-                            }
-                        }
-                    }
-                    search = rb + 1;
-                    continue;
-                }
-            }
-            // advance search to avoid infinite loop
-            search = start + mac.len();
-        }
-        res
-    }
+    // Note: textual macro extraction (parsing `lag!{...}` or `fa!{...}` from the
+    // raw model text) was removed. Build-time emit_ir should populate
+    // `lag_map` and `fa_map` in the IR. If those maps are missing but the
+    // textual fields are present the loader will now produce a parse error.
 
     if let Some(lmap) = ir.lag_map.clone() {
         for (i, rhs) in lmap.into_iter() {
@@ -1459,20 +1485,8 @@ pub fn load_ir_ode(ir_path: PathBuf) -> Result<(ODE, Meta, usize), io::Error> {
             }
         }
     } else {
-        for (i, rhs) in extract_macro_map(&lag_text, "lag!") {
-            let toks = tokenize(&rhs);
-            let mut p = Parser::new(toks);
-            match p.parse_expr_result() {
-                Ok(expr) => {
-                    lag_map.insert(i, expr);
-                }
-                Err(e) => {
-                    parse_errors.push(format!(
-                        "failed to parse lag! entry {} => '{}' : {}",
-                        i, rhs, e
-                    ));
-                }
-            }
+        if !lag_text.trim().is_empty() {
+            parse_errors.push("IR missing structured `lag_map` field; textual `lag!{}` parsing is no longer supported at runtime".to_string());
         }
     }
     if let Some(fmap) = ir.fa_map.clone() {
@@ -1492,20 +1506,8 @@ pub fn load_ir_ode(ir_path: PathBuf) -> Result<(ODE, Meta, usize), io::Error> {
             }
         }
     } else {
-        for (i, rhs) in extract_macro_map(&fa_text, "fa!") {
-            let toks = tokenize(&rhs);
-            let mut p = Parser::new(toks);
-            match p.parse_expr_result() {
-                Ok(expr) => {
-                    fa_map.insert(i, expr);
-                }
-                Err(e) => {
-                    parse_errors.push(format!(
-                        "failed to parse fa! entry {} => '{}' : {}",
-                        i, rhs, e
-                    ));
-                }
-            }
+        if !fa_text.trim().is_empty() {
+            parse_errors.push("IR missing structured `fa_map` field; textual `fa!{}` parsing is no longer supported at runtime".to_string());
         }
     }
 
@@ -1668,22 +1670,7 @@ pub fn load_ir_ode(ir_path: PathBuf) -> Result<(ODE, Meta, usize), io::Error> {
     }
 
     if dx_map.is_empty() {
-        if let Some(start) = diffeq_text.find("dx") {
-            if let Some(semi) = diffeq_text[start..].find(';') {
-                let rhs = diffeq_text[start..start + semi].to_string();
-                if let Some(eqpos) = rhs.find('=') {
-                    let rhs_expr = rhs[eqpos + 1..].trim().to_string();
-                    let toks = tokenize(&rhs_expr);
-                    let mut p = Parser::new(toks);
-                    if let Some(expr) = p.parse_expr() {
-                        dx_map.insert(0, expr);
-                    } else {
-                        parse_errors
-                            .push(format!("failed to parse fallback dx RHS='{}'", rhs_expr));
-                    }
-                }
-            }
-        }
+        parse_errors.push("no dx[...] assignments found in diffeq; emit_ir must populate dx entries in the IR".to_string());
     }
 
     if !parse_errors.is_empty() {

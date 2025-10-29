@@ -21,6 +21,8 @@ struct IrFile {
     fa: Option<String>,
     init: Option<String>,
     out: Option<String>,
+    lag_map: Option<std::collections::HashMap<usize, String>>,
+    fa_map: Option<std::collections::HashMap<usize, String>>,
 }
 
 #[cfg(test)]
@@ -649,69 +651,43 @@ pub fn load_ir_ode(ir_path: PathBuf) -> Result<(ODE, Meta, usize), io::Error> {
         }
     }
 
-    // Parse lag!{...} and fa!{...} simple maps like 0=>tlag,1=>0.3
-    fn extract_macro_map(src: &str, mac: &str) -> Vec<(usize, String)> {
-        if let Some(pos) = src.find(mac) {
-            if let Some(lb) = src[pos..].find('{') {
-                let tail = &src[pos + lb + 1..];
-                if let Some(rb) = tail.find('}') {
-                    let body = &tail[..rb];
-                    // split by ',' and parse 'k => expr'
-                    return body
-                        .split(',')
-                        .filter_map(|s| {
-                            let parts: Vec<&str> = s.split("=>").collect();
-                            if parts.len() == 2 {
-                                if let Ok(k) = parts[0].trim().parse::<usize>() {
-                                    return Some((k, parts[1].trim().to_string()));
-                                }
-                            }
-                            None
-                        })
-                        .collect();
-                }
+    // Require structured lag_map and fa_map in IR (emitted by emit_ir). If the
+    // textual `lag` or `fa` fields are present but no structured map exists,
+    // produce a parse error. This avoids fragile runtime macro parsing.
+    if let Some(lmap) = ir.lag_map.clone() {
+        for (i, rhs) in lmap.into_iter() {
+            let toks = tokenize(&rhs);
+            let mut p = Parser::new(toks);
+            if let Some(expr) = p.parse_expr() {
+                lag_map.insert(i, expr);
+            } else {
+                parse_errors.push(format!("failed to parse lag! entry {} => '{}'", i, rhs));
             }
         }
-        Vec::new()
-    }
-
-    for (i, rhs) in extract_macro_map(&lag_text, "lag!") {
-        let toks = tokenize(&rhs);
-        let mut p = Parser::new(toks);
-        if let Some(expr) = p.parse_expr() {
-            lag_map.insert(i, expr);
-        } else {
-            parse_errors.push(format!("failed to parse lag! entry {} => '{}'", i, rhs));
+    } else {
+        if !lag_text.trim().is_empty() {
+            parse_errors.push("IR missing structured `lag_map` field; textual `lag!{}` parsing is no longer supported at runtime".to_string());
         }
     }
-    for (i, rhs) in extract_macro_map(&fa_text, "fa!") {
-        let toks = tokenize(&rhs);
-        let mut p = Parser::new(toks);
-        if let Some(expr) = p.parse_expr() {
-            fa_map.insert(i, expr);
-        } else {
-            parse_errors.push(format!("failed to parse fa! entry {} => '{}'", i, rhs));
+    if let Some(fmap) = ir.fa_map.clone() {
+        for (i, rhs) in fmap.into_iter() {
+            let toks = tokenize(&rhs);
+            let mut p = Parser::new(toks);
+            if let Some(expr) = p.parse_expr() {
+                fa_map.insert(i, expr);
+            } else {
+                parse_errors.push(format!("failed to parse fa! entry {} => '{}'", i, rhs));
+            }
+        }
+    } else {
+        if !fa_text.trim().is_empty() {
+            parse_errors.push("IR missing structured `fa_map` field; textual `fa!{}` parsing is no longer supported at runtime".to_string());
         }
     }
 
     // Heuristics: if no dx statements found, try to extract single expression inside closure-like text
     if dx_map.is_empty() {
-        if let Some(start) = diffeq_text.find("dx") {
-            if let Some(semi) = diffeq_text[start..].find(';') {
-                let rhs = diffeq_text[start..start + semi].to_string();
-                if let Some(eqpos) = rhs.find('=') {
-                    let rhs_expr = rhs[eqpos + 1..].trim().to_string();
-                    let toks = tokenize(&rhs_expr);
-                    let mut p = Parser::new(toks);
-                    if let Some(expr) = p.parse_expr() {
-                        dx_map.insert(0, expr);
-                    } else {
-                        parse_errors
-                            .push(format!("failed to parse fallback dx RHS='{}'", rhs_expr));
-                    }
-                }
-            }
-        }
+        parse_errors.push("no dx[...] assignments found in diffeq; emit_ir must populate dx entries in the IR".to_string());
     }
 
     if !parse_errors.is_empty() {

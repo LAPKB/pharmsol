@@ -24,9 +24,7 @@ fn main() {
         },
         |_p, _t, _cov| lag! {},
         |_p, _t, _cov| fa! {},
-    |_p, _t, _cov, _x| {
-            
-    },
+        |_p, _t, _cov, _x| {},
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ke, v);
             y[0] = x[0] / v;
@@ -47,6 +45,10 @@ fn main() {
         Some(ir_path.clone()),
         vec!["ke".to_string(), "v".to_string()],
     ).expect("emit_ir failed");
+
+    //debug the contents of the ir file
+    let ir_contents = std::fs::read_to_string(&ir_path).expect("Failed to read IR file");
+    println!("Generated IR file contents:\n{}", ir_contents);
 
     // Load the IR model using the WASM-capable interpreter
     let (wasm_ode, _meta, _id) =
@@ -93,4 +95,3 @@ fn main() {
     // Clean up
     std::fs::remove_file(ir_path).ok();
 }
-
