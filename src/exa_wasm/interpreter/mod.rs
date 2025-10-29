@@ -54,7 +54,7 @@ mod tests {
         let tmp = env::temp_dir().join("exa_test_ir.json");
         let diffeq = "|x, p, _t, dx, rateiv, _cov| { dx[0] = 100.0; }".to_string();
         let out = "|x, p, _t, _cov, y| { y[0] = x[0]; }".to_string();
-    let _path = crate::exa_wasm::build::emit_ir::<crate::equation::ODE>(
+        let _path = crate::exa_wasm::build::emit_ir::<crate::equation::ODE>(
             diffeq,
             None,
             None,
@@ -64,7 +64,7 @@ mod tests {
             vec!["ke".to_string()],
         )
         .expect("emit_ir failed");
-    let (_ode, _meta, id) = load_ir_ode(tmp.clone()).expect("load_ir_ode failed");
+        let (_ode, _meta, id) = load_ir_ode(tmp.clone()).expect("load_ir_ode failed");
         // clean up
         fs::remove_file(tmp).ok();
         // ensure ode_for_id returns an ODE
@@ -87,6 +87,103 @@ mod tests {
         let val = eval_expr(&expr, &x, &pvec, &rateiv, Some(&pmap), Some(0.0), None);
         assert!(val.is_finite());
     }
+
+    #[test]
+    fn test_arithmetic_and_power() {
+        let s = "-1 + 2*3 - 4/2 + 2^3"; // -1 + 6 -2 + 8 = 11
+        let toks = tokenize(s);
+        let mut p = Parser::new(toks);
+        let expr = p.parse_expr().expect("parse failed");
+        use crate::simulator::V;
+        let x = V::zeros(1, diffsol::NalgebraContext);
+        let pvec = V::zeros(1, diffsol::NalgebraContext);
+        let rateiv = V::zeros(1, diffsol::NalgebraContext);
+        let val = eval_expr(&expr, &x, &pvec, &rateiv, None, Some(0.0), None);
+        assert!((val - 11.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_comparisons_and_logical() {
+        let s = "(1 < 2) && (3 >= 2) || (0 == 1)"; // true && true || false => true
+        let toks = tokenize(s);
+        let mut p = Parser::new(toks);
+        let expr = p.parse_expr().expect("parse failed");
+        use crate::simulator::V;
+        let x = V::zeros(1, diffsol::NalgebraContext);
+        let pvec = V::zeros(1, diffsol::NalgebraContext);
+        let rateiv = V::zeros(1, diffsol::NalgebraContext);
+        let val = eval_expr(&expr, &x, &pvec, &rateiv, None, Some(0.0), None);
+        assert_eq!(val, 1.0);
+    }
+
+    #[test]
+    fn test_if_builtin() {
+        let s = "if(1, 2.5, 7.5)"; // should return 2.5
+        let toks = tokenize(s);
+        let mut p = Parser::new(toks);
+        let expr = p.parse_expr().expect("parse failed");
+        use crate::simulator::V;
+        let x = V::zeros(1, diffsol::NalgebraContext);
+        let pvec = V::zeros(1, diffsol::NalgebraContext);
+        let rateiv = V::zeros(1, diffsol::NalgebraContext);
+        let val = eval_expr(&expr, &x, &pvec, &rateiv, None, Some(0.0), None);
+        assert!((val - 2.5).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_dynamic_indexing() {
+        let s = "x[(1+1)] * p[0]"; // x[2]*p[0]
+        let toks = tokenize(s);
+        let mut p = Parser::new(toks);
+        let expr = p.parse_expr().expect("parse failed");
+        use crate::simulator::V;
+        let mut x = V::zeros(4, diffsol::NalgebraContext);
+        x[2] = 3.0;
+        let mut pvec = V::zeros(1, diffsol::NalgebraContext);
+        pvec[0] = 2.0;
+        let rateiv = V::zeros(1, diffsol::NalgebraContext);
+        let val = eval_expr(&expr, &x, &pvec, &rateiv, None, Some(0.0), None);
+        assert!((val - 6.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_function_whitelist_and_methods() {
+        let s = "max(2.0, 3.0) + pow(2.0, 3.0)"; // 3 + 8 = 11
+        let toks = tokenize(s);
+        let mut p = Parser::new(toks);
+        let expr = p.parse_expr().expect("parse failed");
+        use crate::simulator::V;
+        let x = V::zeros(1, diffsol::NalgebraContext);
+        let pvec = V::zeros(1, diffsol::NalgebraContext);
+        let rateiv = V::zeros(1, diffsol::NalgebraContext);
+        let val = eval_expr(&expr, &x, &pvec, &rateiv, None, Some(0.0), None);
+        assert!((val - 11.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_macro_parsing_load_ir() {
+        use std::env;
+        use std::fs;
+        let tmp = env::temp_dir().join("exa_test_ir_lag.json");
+        let diffeq = "|x, p, _t, dx, rateiv, _cov| { dx[0] = 0.0; }".to_string();
+        // lag text contains function calls and commas inside calls
+        let lag = Some(
+            "|p, t, _cov| { lag!{0 => max(1.0, t * 2.0), 1 => if(t>0, 2.0, 3.0)} }".to_string(),
+        );
+        let _path = crate::exa_wasm::build::emit_ir::<crate::equation::ODE>(
+            diffeq,
+            lag,
+            None,
+            None,
+            None,
+            Some(tmp.clone()),
+            vec![],
+        )
+        .expect("emit_ir failed");
+        let res = load_ir_ode(tmp.clone());
+        fs::remove_file(tmp).ok();
+        assert!(res.is_ok());
+    }
 }
 
 // --- rest of interpreter implementation follows (copy of original) ---
@@ -95,15 +192,15 @@ mod tests {
 #[derive(Debug, Clone)]
 enum Expr {
     Number(f64),
-    Ident(String),          // e.g. ke
-    Indexed(String, usize), // e.g. x[0], rateiv[0], y[0]
+    Ident(String),              // e.g. ke
+    Indexed(String, Box<Expr>), // e.g. x[0], rateiv[0], y[0] where index can be expr
     UnaryOp {
-        op: char,
+        op: String,
         rhs: Box<Expr>,
     },
     BinaryOp {
         lhs: Box<Expr>,
-        op: char,
+        op: String,
         rhs: Box<Expr>,
     },
     Call {
@@ -160,6 +257,15 @@ enum Token {
     Comma,
     Dot,
     Op(char),
+    Lt,
+    Gt,
+    Le,
+    Ge,
+    EqEq,
+    Ne,
+    And,
+    Or,
+    Bang,
     Semicolon,
 }
 
@@ -174,12 +280,13 @@ fn tokenize(s: &str) -> Vec<Token> {
         if c.is_ascii_digit() || c == '.' {
             let mut num = String::new();
             while let Some(&d) = chars.peek() {
+                // allow digits, dot, exponent markers, and a sign only when
+                // it follows an exponent marker (e or E)
                 if d.is_ascii_digit()
                     || d == '.'
                     || d == 'e'
                     || d == 'E'
-                    || d == '+'
-                    || d == '-' && num.ends_with('e')
+                    || ((d == '+' || d == '-') && (num.ends_with('e') || num.ends_with('E')))
                 {
                     num.push(d);
                     chars.next();
@@ -242,6 +349,56 @@ fn tokenize(s: &str) -> Vec<Token> {
                 toks.push(Token::Dot);
                 chars.next();
             }
+            '<' => {
+                chars.next();
+                if let Some(&'=') = chars.peek() {
+                    chars.next();
+                    toks.push(Token::Le);
+                } else {
+                    toks.push(Token::Lt);
+                }
+            }
+            '>' => {
+                chars.next();
+                if let Some(&'=') = chars.peek() {
+                    chars.next();
+                    toks.push(Token::Ge);
+                } else {
+                    toks.push(Token::Gt);
+                }
+            }
+            '=' => {
+                chars.next();
+                if let Some(&'=') = chars.peek() {
+                    chars.next();
+                    toks.push(Token::EqEq);
+                } else {
+                    // single '=' not used, skip
+                }
+            }
+            '!' => {
+                chars.next();
+                if let Some(&'=') = chars.peek() {
+                    chars.next();
+                    toks.push(Token::Ne);
+                } else {
+                    toks.push(Token::Bang);
+                }
+            }
+            '&' => {
+                chars.next();
+                if let Some(&'&') = chars.peek() {
+                    chars.next();
+                    toks.push(Token::And);
+                }
+            }
+            '|' => {
+                chars.next();
+                if let Some(&'|') = chars.peek() {
+                    chars.next();
+                    toks.push(Token::Or);
+                }
+            }
             _ => {
                 chars.next();
             }
@@ -271,7 +428,109 @@ impl Parser {
     }
 
     fn parse_expr(&mut self) -> Option<Expr> {
-        self.parse_add_sub()
+        self.parse_or()
+    }
+
+    fn parse_or(&mut self) -> Option<Expr> {
+        let mut node = self.parse_and()?;
+        while let Some(Token::Or) = self.peek().cloned() {
+            self.next();
+            let rhs = self.parse_and()?;
+            node = Expr::BinaryOp {
+                lhs: Box::new(node),
+                op: "||".to_string(),
+                rhs: Box::new(rhs),
+            };
+        }
+        Some(node)
+    }
+
+    fn parse_and(&mut self) -> Option<Expr> {
+        let mut node = self.parse_eq()?;
+        while let Some(Token::And) = self.peek().cloned() {
+            self.next();
+            let rhs = self.parse_eq()?;
+            node = Expr::BinaryOp {
+                lhs: Box::new(node),
+                op: "&&".to_string(),
+                rhs: Box::new(rhs),
+            };
+        }
+        Some(node)
+    }
+
+    fn parse_eq(&mut self) -> Option<Expr> {
+        let mut node = self.parse_cmp()?;
+        loop {
+            match self.peek() {
+                Some(Token::EqEq) => {
+                    self.next();
+                    let rhs = self.parse_cmp()?;
+                    node = Expr::BinaryOp {
+                        lhs: Box::new(node),
+                        op: "==".to_string(),
+                        rhs: Box::new(rhs),
+                    };
+                }
+                Some(Token::Ne) => {
+                    self.next();
+                    let rhs = self.parse_cmp()?;
+                    node = Expr::BinaryOp {
+                        lhs: Box::new(node),
+                        op: "!=".to_string(),
+                        rhs: Box::new(rhs),
+                    };
+                }
+                _ => break,
+            }
+        }
+        Some(node)
+    }
+
+    fn parse_cmp(&mut self) -> Option<Expr> {
+        let mut node = self.parse_add_sub()?;
+        loop {
+            match self.peek() {
+                Some(Token::Lt) => {
+                    self.next();
+                    let rhs = self.parse_add_sub()?;
+                    node = Expr::BinaryOp {
+                        lhs: Box::new(node),
+                        op: "<".to_string(),
+                        rhs: Box::new(rhs),
+                    };
+                }
+                Some(Token::Gt) => {
+                    self.next();
+                    let rhs = self.parse_add_sub()?;
+                    node = Expr::BinaryOp {
+                        lhs: Box::new(node),
+                        op: ">".to_string(),
+                        rhs: Box::new(rhs),
+                    };
+                }
+                Some(Token::Le) => {
+                    self.next();
+                    let rhs = self.parse_add_sub()?;
+                    node = Expr::BinaryOp {
+                        lhs: Box::new(node),
+                        op: "<=".to_string(),
+                        rhs: Box::new(rhs),
+                    };
+                }
+                Some(Token::Ge) => {
+                    self.next();
+                    let rhs = self.parse_add_sub()?;
+                    node = Expr::BinaryOp {
+                        lhs: Box::new(node),
+                        op: ">=".to_string(),
+                        rhs: Box::new(rhs),
+                    };
+                }
+                _ => break,
+            }
+        }
+        Some(node)
     }
 
     fn parse_add_sub(&mut self) -> Option<Expr> {
@@ -283,7 +542,7 @@ impl Parser {
                     let rhs = self.parse_mul_div()?;
                     node = Expr::BinaryOp {
                         lhs: Box::new(node),
-                        op: '+',
+                        op: "+".to_string(),
                         rhs: Box::new(rhs),
                     };
                 }
@@ -292,7 +551,7 @@ impl Parser {
                     let rhs = self.parse_mul_div()?;
                     node = Expr::BinaryOp {
                         lhs: Box::new(node),
-                        op: '-',
+                        op: "-".to_string(),
                         rhs: Box::new(rhs),
                     };
                 }
@@ -311,7 +570,7 @@ impl Parser {
                     let rhs = self.parse_unary()?;
                     node = Expr::BinaryOp {
                         lhs: Box::new(node),
-                        op: '*',
+                        op: "*".to_string(),
                         rhs: Box::new(rhs),
                     };
                 }
@@ -320,7 +579,7 @@ impl Parser {
                     let rhs = self.parse_unary()?;
                     node = Expr::BinaryOp {
                         lhs: Box::new(node),
-                        op: '/',
+                        op: "/".to_string(),
                         rhs: Box::new(rhs),
                     };
                 }
@@ -338,7 +597,7 @@ impl Parser {
             let rhs = self.parse_power()?; // right-associative
             return Some(Expr::BinaryOp {
                 lhs: Box::new(node),
-                op: '^',
+                op: "^".to_string(),
                 rhs: Box::new(rhs),
             });
         }
@@ -350,7 +609,16 @@ impl Parser {
             self.next();
             let rhs = self.parse_unary()?;
             return Some(Expr::UnaryOp {
-                op: '-',
+                op: '-'.to_string(),
+                rhs: Box::new(rhs),
+            });
+        }
+        if let Some(Token::Bang) = self.peek() {
+            self.next();
+            let rhs = self.parse_unary()?;
+            // represent logical not as Call if needed, but use unary op '!'
+            return Some(Expr::UnaryOp {
+                op: '!'.to_string(),
                 rhs: Box::new(rhs),
             });
         }
@@ -368,7 +636,10 @@ impl Parser {
                     if let Some(Token::RParen) = self.peek() {
                         // empty arglist
                         self.next();
-                        Expr::Call { name: id.clone(), args }
+                        Expr::Call {
+                            name: id.clone(),
+                            args,
+                        }
                     } else {
                         loop {
                             if let Some(expr) = self.parse_expr() {
@@ -388,21 +659,48 @@ impl Parser {
                                 _ => return None,
                             }
                         }
-                        Expr::Call { name: id.clone(), args }
+                        Expr::Call {
+                            name: id.clone(),
+                            args,
+                        }
                     }
                 } else if let Some(Token::LBracket) = self.peek() {
-                    // Indexing: Ident[NUM]
-                    self.next();
-                    if let Some(Token::Num(n)) = self.next().cloned() {
-                        let idx = n as usize;
-                        if let Some(Token::RBracket) = self.next().cloned() {
-                            Expr::Indexed(id.clone(), idx)
-                        } else {
-                            return None;
-                        }
-                    } else {
-                        return None;
+                    // Indexing: Ident[expr]
+                    // To avoid the inner parse consuming the closing ']' we locate
+                    // the matching RBracket in the token stream, parse only the
+                    // tokens inside with a fresh Parser, and advance the main
+                    // parser past the closing bracket. This supports nested
+                    // parentheses and nested brackets inside the index.
+                    self.next(); // consume '['
+                    #[cfg(test)]
+                    {
+                        eprintln!("parsing index: pos={} remaining={:?}", self.pos, &self.tokens[self.pos..]);
                     }
+                    let mut depth = 1isize;
+                    let mut i = self.pos;
+                    while i < self.tokens.len() {
+                        match &self.tokens[i] {
+                            Token::LBracket => depth += 1,
+                            Token::RBracket => {
+                                depth -= 1;
+                                if depth == 0 {
+                                    break;
+                                }
+                            }
+                            _ => {}
+                        }
+                        i += 1;
+                    }
+                    if i >= self.tokens.len() {
+                        return None; // no matching ']'
+                    }
+                    // parse tokens in range [self.pos, i) as a sub-expression
+                    let slice = self.tokens[self.pos..i].to_vec();
+                    let mut sub = Parser::new(slice);
+                    let idx_expr = sub.parse_expr()?;
+                    // advance main parser past the matched RBracket
+                    self.pos = i + 1;
+                    Expr::Indexed(id.clone(), Box::new(idx_expr))
                 } else {
                     Expr::Ident(id.clone())
                 }
@@ -410,7 +708,11 @@ impl Parser {
             Token::LParen => {
                 let expr = self.parse_expr();
                 if let Some(Token::RParen) = self.next().cloned() {
-                    if let Some(e) = expr { e } else { return None }
+                    if let Some(e) = expr {
+                        e
+                    } else {
+                        return None;
+                    }
                 } else {
                     return None;
                 }
@@ -502,29 +804,130 @@ fn eval_expr(
             }
             0.0
         }
-        Expr::Indexed(name, idx) => match name.as_str() {
-            "x" => x[*idx],
-            "p" | "params" => p[*idx],
-            "rateiv" => rateiv[*idx],
-            _ => 0.0,
-        },
+        Expr::Indexed(name, idx_expr) => {
+            let idxf = eval_expr(idx_expr, x, p, rateiv, pmap, t, cov);
+            if !idxf.is_finite() || idxf.is_sign_negative() {
+                return 0.0;
+            }
+            let idx = idxf as usize;
+            match name.as_str() {
+                "x" => {
+                    if idx < x.len() {
+                        x[idx]
+                    } else {
+                        0.0
+                    }
+                }
+                "p" | "params" => {
+                    if idx < p.len() {
+                        p[idx]
+                    } else {
+                        0.0
+                    }
+                }
+                "rateiv" => {
+                    if idx < rateiv.len() {
+                        rateiv[idx]
+                    } else {
+                        0.0
+                    }
+                }
+                _ => 0.0,
+            }
+        }
         Expr::UnaryOp { op, rhs } => {
             let v = eval_expr(rhs, x, p, rateiv, pmap, t, cov);
-            match op {
-                '-' => -v,
+            match op.as_str() {
+                "-" => -v,
+                "!" => {
+                    if v == 0.0 {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                }
                 _ => v,
             }
         }
         Expr::BinaryOp { lhs, op, rhs } => {
             let a = eval_expr(lhs, x, p, rateiv, pmap, t, cov);
-            let b = eval_expr(rhs, x, p, rateiv, pmap, t, cov);
-            match op {
-                '+' => a + b,
-                '-' => a - b,
-                '*' => a * b,
-                '/' => a / b,
-                '^' => a.powf(b),
-                _ => a,
+            // short-circuit for logical && and ||
+            match op.as_str() {
+                "&&" => {
+                    if a == 0.0 {
+                        return 0.0;
+                    }
+                    let b = eval_expr(rhs, x, p, rateiv, pmap, t, cov);
+                    if b != 0.0 {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                }
+                "||" => {
+                    if a != 0.0 {
+                        return 1.0;
+                    }
+                    let b = eval_expr(rhs, x, p, rateiv, pmap, t, cov);
+                    if b != 0.0 {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                }
+                _ => {
+                    let b = eval_expr(rhs, x, p, rateiv, pmap, t, cov);
+                    match op.as_str() {
+                        "+" => a + b,
+                        "-" => a - b,
+                        "*" => a * b,
+                        "/" => a / b,
+                        "^" => a.powf(b),
+                        "<" => {
+                            if a < b {
+                                1.0
+                            } else {
+                                0.0
+                            }
+                        }
+                        ">" => {
+                            if a > b {
+                                1.0
+                            } else {
+                                0.0
+                            }
+                        }
+                        "<=" => {
+                            if a <= b {
+                                1.0
+                            } else {
+                                0.0
+                            }
+                        }
+                        ">=" => {
+                            if a >= b {
+                                1.0
+                            } else {
+                                0.0
+                            }
+                        }
+                        "==" => {
+                            if a == b {
+                                1.0
+                            } else {
+                                0.0
+                            }
+                        }
+                        "!=" => {
+                            if a != b {
+                                1.0
+                            } else {
+                                0.0
+                            }
+                        }
+                        _ => a,
+                    }
+                }
             }
         }
         Expr::Call { name, args } => {
@@ -534,7 +937,11 @@ fn eval_expr(
             }
             eval_call(name.as_str(), &avals)
         }
-        Expr::MethodCall { receiver, name, args } => {
+        Expr::MethodCall {
+            receiver,
+            name,
+            args,
+        } => {
             let recv = eval_expr(receiver, x, p, rateiv, pmap, t, cov);
             let mut avals: Vec<f64> = Vec::new();
             avals.push(recv);
@@ -546,10 +953,17 @@ fn eval_expr(
     }
 }
 
-
 fn eval_call(name: &str, args: &[f64]) -> f64 {
     match name {
         "exp" => args.get(0).cloned().unwrap_or(0.0).exp(),
+        "if" => {
+            let cond = args.get(0).cloned().unwrap_or(0.0);
+            if cond != 0.0 {
+                args.get(1).cloned().unwrap_or(0.0)
+            } else {
+                args.get(2).cloned().unwrap_or(0.0)
+            }
+        }
         "ln" | "log" => args.get(0).cloned().unwrap_or(0.0).ln(),
         "log10" => args.get(0).cloned().unwrap_or(0.0).log10(),
         "sqrt" => args.get(0).cloned().unwrap_or(0.0).sqrt(),
@@ -789,27 +1203,87 @@ pub fn load_ir_ode(ir_path: PathBuf) -> Result<(ODE, Meta, usize), io::Error> {
     }
 
     fn extract_macro_map(src: &str, mac: &str) -> Vec<(usize, String)> {
-        if let Some(pos) = src.find(mac) {
-            if let Some(lb) = src[pos..].find('{') {
-                let tail = &src[pos + lb + 1..];
-                if let Some(rb) = tail.find('}') {
-                    let body = &tail[..rb];
-                    return body
-                        .split(',')
-                        .filter_map(|s| {
-                            let parts: Vec<&str> = s.split("=>").collect();
-                            if parts.len() == 2 {
-                                if let Ok(k) = parts[0].trim().parse::<usize>() {
-                                    return Some((k, parts[1].trim().to_string()));
-                                }
+        // Find the macro name and then extract the top-level brace content.
+        let mut res = Vec::new();
+        let mut search = 0usize;
+        while let Some(pos) = src[search..].find(mac) {
+            let start = search + pos;
+            // find '{' after macro
+            if let Some(lb_rel) = src[start..].find('{') {
+                let lb = start + lb_rel;
+                // find matching '}' using brace depth
+                let mut depth = 0isize;
+                let mut i = lb;
+                let bytes = src.as_bytes();
+                let len = src.len();
+                let mut end_opt: Option<usize> = None;
+                while i < len {
+                    match bytes[i] as char {
+                        '{' => depth += 1,
+                        '}' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                end_opt = Some(i);
+                                break;
                             }
-                            None
-                        })
-                        .collect();
+                        }
+                        _ => {}
+                    }
+                    i += 1;
+                }
+                if let Some(rb) = end_opt {
+                    let body = &src[lb + 1..rb];
+                    // Split top-level entries by commas not inside parentheses or braces
+                    let mut entry = String::new();
+                    let mut paren = 0isize;
+                    let mut brace = 0isize;
+                    for ch in body.chars() {
+                        match ch {
+                            '(' => {
+                                paren += 1;
+                                entry.push(ch);
+                            }
+                            ')' => {
+                                paren -= 1;
+                                entry.push(ch);
+                            }
+                            '{' => {
+                                brace += 1;
+                                entry.push(ch);
+                            }
+                            '}' => {
+                                brace -= 1;
+                                entry.push(ch);
+                            }
+                            ',' if paren == 0 && brace == 0 => {
+                                // finish entry
+                                let parts: Vec<&str> = entry.split("=>").collect();
+                                if parts.len() == 2 {
+                                    if let Ok(k) = parts[0].trim().parse::<usize>() {
+                                        res.push((k, parts[1].trim().to_string()));
+                                    }
+                                }
+                                entry.clear();
+                            }
+                            _ => entry.push(ch),
+                        }
+                    }
+                    if !entry.trim().is_empty() {
+                        let parts: Vec<&str> = entry.split("=>").collect();
+                        if parts.len() == 2 {
+                            if let Ok(k) = parts[0].trim().parse::<usize>() {
+                                res.push((k, parts[1].trim().to_string()));
+                            }
+                        }
+                    }
+                    search = rb + 1;
+                    continue;
                 }
             }
+            // advance search to avoid infinite loop
+            search = start + mac.len();
         }
-        Vec::new()
+        res
     }
 
     for (i, rhs) in extract_macro_map(&lag_text, "lag!") {
@@ -852,11 +1326,29 @@ pub fn load_ir_ode(ir_path: PathBuf) -> Result<(ODE, Meta, usize), io::Error> {
         rest = src;
         while let Some(pos) = rest.find("fetch_param!") {
             if let Some(lb) = rest[pos..].find('(') {
-                let tail = &rest[pos + lb + 1..];
-                if let Some(rb) = tail.find(')') {
-                    let body = &tail[..rb];
+                // find matching ')' allowing nested parentheses
+                let mut i = pos + lb + 1;
+                let mut depth = 0isize;
+                let bytes = rest.as_bytes();
+                let mut found = None;
+                while i < rest.len() {
+                    match bytes[i] as char {
+                        '(' => depth += 1,
+                        ')' => {
+                            if depth == 0 {
+                                found = Some(i);
+                                break;
+                            }
+                            depth -= 1;
+                        }
+                        _ => {}
+                    }
+                    i += 1;
+                }
+                if let Some(rb) = found {
+                    let body = &rest[pos + lb + 1..rb];
                     res.push(body.to_string());
-                    rest = &tail[rb + 1..];
+                    rest = &rest[rb + 1..];
                     continue;
                 }
             }
@@ -874,7 +1366,8 @@ pub fn load_ir_ode(ir_path: PathBuf) -> Result<(ODE, Meta, usize), io::Error> {
         // split by ',' and trim
         let parts: Vec<String> = body
             .split(',')
-            .map(|s| s.trim().trim_matches(|c| c == '"' || c == '\'')).map(|s| s.to_string())
+            .map(|s| s.trim().trim_matches(|c| c == '"' || c == '\''))
+            .map(|s| s.to_string())
             .collect();
         // expect first arg to be 'p' (the param vector)
         if parts.is_empty() {
@@ -928,27 +1421,44 @@ pub fn load_ir_ode(ir_path: PathBuf) -> Result<(ODE, Meta, usize), io::Error> {
             .map(|s| s.to_string())
             .collect();
         if parts.len() < 3 {
-            parse_errors.push(format!("fetch_cov! macro expects at least (cov, t, name...), got '{}'", body));
+            parse_errors.push(format!(
+                "fetch_cov! macro expects at least (cov, t, name...), got '{}'",
+                body
+            ));
             continue;
         }
         // first arg: cov variable (identifier)
         let cov_var = parts[0].clone();
         if cov_var.is_empty() || !cov_var.chars().next().unwrap().is_ascii_alphabetic() {
-            parse_errors.push(format!("invalid first argument '{}' in fetch_cov! macro", cov_var));
+            parse_errors.push(format!(
+                "invalid first argument '{}' in fetch_cov! macro",
+                cov_var
+            ));
         }
         // second arg: time variable (allow t or _t or identifier)
         let _tvar = parts[1].clone();
         if _tvar.is_empty() {
-            parse_errors.push(format!("invalid time argument '{}' in fetch_cov! macro", _tvar));
+            parse_errors.push(format!(
+                "invalid time argument '{}' in fetch_cov! macro",
+                _tvar
+            ));
         }
         // remaining args: covariate names (can't validate existence here)
         for name in parts.iter().skip(2) {
             if name.is_empty() {
-                parse_errors.push(format!("empty covariate name in fetch_cov! macro body '{}'", body));
+                parse_errors.push(format!(
+                    "empty covariate name in fetch_cov! macro body '{}'",
+                    body
+                ));
             }
             // allow underscore-prefixed names
-            if !name.starts_with('_') && !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-                parse_errors.push(format!("invalid covariate identifier '{}' in fetch_cov! macro", name));
+            if !name.starts_with('_')
+                && !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            {
+                parse_errors.push(format!(
+                    "invalid covariate identifier '{}' in fetch_cov! macro",
+                    name
+                ));
             }
         }
     }
@@ -1011,23 +1521,37 @@ pub fn load_ir_ode(ir_path: PathBuf) -> Result<(ODE, Meta, usize), io::Error> {
                 }
                 errors.push(format!("unknown identifier '{}'", name));
             }
-            Expr::Indexed(name, idx) => {
-                match name.as_str() {
-                    "x" | "rateiv" => {
-                        if *idx >= nstates {
-                            errors.push(format!("index out of bounds '{}'[{}] (nstates={})", name, idx, nstates));
+            Expr::Indexed(name, idx_expr) => {
+                // If index is a literal number we can statically validate bounds, otherwise validate the index expression only
+                match &**idx_expr {
+                    Expr::Number(n) => {
+                        let idx = *n as usize;
+                        match name.as_str() {
+                            "x" | "rateiv" => {
+                                if idx >= nstates {
+                                    errors.push(format!(
+                                        "index out of bounds '{}'[{}] (nstates={})",
+                                        name, idx, nstates
+                                    ));
+                                }
+                            }
+                            "p" | "params" => {
+                                if idx >= nparams {
+                                    errors.push(format!(
+                                        "parameter index out of bounds '{}'[{}] (nparams={})",
+                                        name, idx, nparams
+                                    ));
+                                }
+                            }
+                            "y" => {}
+                            _ => {
+                                errors.push(format!("unknown indexed symbol '{}'", name));
+                            }
                         }
                     }
-                    "p" | "params" => {
-                        if *idx >= nparams {
-                            errors.push(format!("parameter index out of bounds '{}'[{}] (nparams={})", name, idx, nparams));
-                        }
-                    }
-                    "y" => {
-                        // outputs may be validated elsewhere; allow any non-negative index
-                    }
-                    _ => {
-                        errors.push(format!("unknown indexed symbol '{}'", name));
+                    other => {
+                        // validate nested expressions inside the index
+                        validate_expr(other, pmap, nstates, nparams, errors);
                     }
                 }
             }
@@ -1041,7 +1565,11 @@ pub fn load_ir_ode(ir_path: PathBuf) -> Result<(ODE, Meta, usize), io::Error> {
                     validate_expr(a, pmap, nstates, nparams, errors);
                 }
             }
-            Expr::MethodCall { receiver, name: _, args } => {
+            Expr::MethodCall {
+                receiver,
+                name: _,
+                args,
+            } => {
                 validate_expr(receiver, pmap, nstates, nparams, errors);
                 for a in args.iter() {
                     validate_expr(a, pmap, nstates, nparams, errors);
