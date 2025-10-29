@@ -25,7 +25,9 @@ fn main() {
         },
         |_p, _t, _cov| lag! {},
         |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
+        |_p, _t, _cov, x| {
+            x[0] = 100.0;
+        },
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ke, v);
             y[0] = x[0] / v;
@@ -38,7 +40,11 @@ fn main() {
     let ir_path = test_dir.join("test_model_ir.pkm");
     // This emits a JSON IR file for the same ODE model
     let _ir_file = exa::build::emit_ir::<equation::ODE>(
-        "|x, p, _t, dx, rateiv, _cov| { fetch_params!(p, ke, _v); dx[0] = -ke * x[0] + rateiv[0]; } \n|x, p, _t, _cov, y| { fetch_params!(p, _ke, v); y[0] = x[0] / v; }".to_string(),
+        "|x, p, _t, dx, rateiv, _cov| { fetch_params!(p, ke, _v); dx[0] = -ke * x[0] + rateiv[0]; }".to_string(),
+        None,
+        None,
+        Some("|p, _t, _cov, x| { x[0] = 100.0; }".to_string()),
+        Some("|x, p, _t, _cov, y| { fetch_params!(p, _ke, v); y[0] = x[0] / v; }".to_string()),
         Some(ir_path.clone()),
         vec!["ke".to_string(), "v".to_string()],
     ).expect("emit_ir failed");

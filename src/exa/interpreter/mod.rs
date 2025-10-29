@@ -16,6 +16,59 @@ struct IrFile {
     kind: Option<String>,
     params: Option<Vec<String>>,
     model_text: Option<String>,
+    diffeq: Option<String>,
+    lag: Option<String>,
+    fa: Option<String>,
+    init: Option<String>,
+    out: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tokenize_and_parse_simple() {
+        let s = "-ke * x[0] + rateiv[0] / 2";
+        let toks = tokenize(s);
+        let mut p = Parser::new(toks);
+        let expr = p.parse_expr().expect("parse failed");
+        // evaluate with dummy vectors
+        use crate::simulator::{T, V};
+        let x = V::zeros(1, diffsol::NalgebraContext);
+        let mut pvec = V::zeros(1, diffsol::NalgebraContext);
+        pvec[0] = 3.0; // ke
+        let rateiv = V::zeros(1, diffsol::NalgebraContext);
+        // evaluation should succeed (ke resolves via pmap not provided -> 0)
+        let val = eval_expr(&expr, &x, &pvec, &rateiv, None, Some(0.0), None);
+        // numeric result must be finite
+        assert!(val.is_finite());
+    }
+
+    #[test]
+    fn test_emit_ir_and_load_roundtrip() {
+        // create a temporary IR file via emit_ir and load it with load_ir_ode
+        use std::env;
+        use std::fs;
+        let tmp = env::temp_dir().join("exa_test_ir.json");
+        let diffeq = "|x, p, _t, dx, rateiv, _cov| { dx[0] = 100.0; }".to_string();
+        let out = "|x, p, _t, _cov, y| { y[0] = x[0]; }".to_string();
+        let path = exa::build::emit_ir::<crate::equation::ODE>(
+            diffeq,
+            None,
+            None,
+            Some("|p, t, cov, x| { x[0] = 1.0; }".to_string()),
+            Some(out),
+            Some(tmp.clone()),
+            vec!["ke".to_string()],
+        )
+        .expect("emit_ir failed");
+        let (ode, _meta, id) = load_ir_ode(tmp.clone()).expect("load_ir_ode failed");
+        // clean up
+        fs::remove_file(tmp).ok();
+        // ensure ode_for_id returns an ODE
+        assert!(ode_for_id(id).is_some());
+    }
 }
 
 // Small expression AST for arithmetic used in model RHS and outputs.
@@ -305,6 +358,8 @@ fn eval_expr(
     p: &crate::simulator::V,
     rateiv: &crate::simulator::V,
     pmap: Option<&HashMap<String, usize>>,
+    t: Option<crate::simulator::T>,
+    cov: Option<&crate::data::Covariates>,
 ) -> f64 {
     match expr {
         Expr::Number(v) => *v,
@@ -313,6 +368,20 @@ fn eval_expr(
             if let Some(map) = pmap {
                 if let Some(idx) = map.get(name) {
                     return p[*idx];
+                }
+            }
+            // special identifier: t
+            if name == "t" {
+                return t.unwrap_or(0.0);
+            }
+            // covariate lookup by name (if cov provided)
+            if let Some(covariates) = cov {
+                if let Some(covariate) = covariates.get_covariate(name) {
+                    if let Some(time) = t {
+                        if let Ok(v) = covariate.interpolate(time) {
+                            return v;
+                        }
+                    }
                 }
             }
             0.0
@@ -324,15 +393,15 @@ fn eval_expr(
             _ => 0.0,
         },
         Expr::UnaryOp { op, rhs } => {
-            let v = eval_expr(rhs, x, p, rateiv, pmap);
+            let v = eval_expr(rhs, x, p, rateiv, pmap, t, cov);
             match op {
                 '-' => -v,
                 _ => v,
             }
         }
         Expr::BinaryOp { lhs, op, rhs } => {
-            let a = eval_expr(lhs, x, p, rateiv, pmap);
-            let b = eval_expr(rhs, x, p, rateiv, pmap);
+            let a = eval_expr(lhs, x, p, rateiv, pmap, t, cov);
+            let b = eval_expr(rhs, x, p, rateiv, pmap, t, cov);
             match op {
                 '+' => a + b,
                 '-' => a - b,
@@ -363,7 +432,7 @@ fn diffeq_dispatch(
         if let Some(entry) = guard.get(&id) {
             // evaluate each dx expression present in the entry
             for (i, expr) in entry.dx.iter() {
-                let val = eval_expr(expr, x, p, &rateiv, Some(&entry.pmap));
+                let val = eval_expr(expr, x, p, &rateiv, Some(&entry.pmap), Some(_t), Some(_cov));
                 dx[*i] = val;
             }
         }
@@ -384,7 +453,7 @@ fn out_dispatch(
     if let Some(id) = cur {
         if let Some(entry) = guard.get(&id) {
             for (i, expr) in entry.out.iter() {
-                let val = eval_expr(expr, x, p, &tmp, Some(&entry.pmap));
+                let val = eval_expr(expr, x, p, &tmp, Some(&entry.pmap), Some(_t), Some(_cov));
                 y[*i] = val;
             }
         }
@@ -406,7 +475,15 @@ fn lag_dispatch(
             let zero_x = crate::simulator::V::zeros(entry.nstates, diffsol::NalgebraContext);
             let zero_rate = crate::simulator::V::zeros(entry.nstates, diffsol::NalgebraContext);
             for (i, expr) in entry.lag.iter() {
-                let v = eval_expr(expr, &zero_x, p, &zero_rate, Some(&entry.pmap));
+                let v = eval_expr(
+                    expr,
+                    &zero_x,
+                    p,
+                    &zero_rate,
+                    Some(&entry.pmap),
+                    Some(_t),
+                    Some(_cov),
+                );
                 out.insert(*i, v);
             }
         }
@@ -429,7 +506,15 @@ fn fa_dispatch(
             let zero_x = crate::simulator::V::zeros(entry.nstates, diffsol::NalgebraContext);
             let zero_rate = crate::simulator::V::zeros(entry.nstates, diffsol::NalgebraContext);
             for (i, expr) in entry.fa.iter() {
-                let v = eval_expr(expr, &zero_x, p, &zero_rate, Some(&entry.pmap));
+                let v = eval_expr(
+                    expr,
+                    &zero_x,
+                    p,
+                    &zero_rate,
+                    Some(&entry.pmap),
+                    Some(_t),
+                    Some(_cov),
+                );
                 out.insert(*i, v);
             }
         }
@@ -441,7 +526,7 @@ fn fa_dispatch(
 fn init_dispatch(
     p: &crate::simulator::V,
     _t: crate::simulator::T,
-    _cov: &crate::data::Covariates,
+    cov: &crate::data::Covariates,
     x: &mut crate::simulator::V,
 ) {
     let guard = EXPR_REGISTRY.lock().unwrap();
@@ -456,6 +541,8 @@ fn init_dispatch(
                     p,
                     &zero_rate,
                     Some(&entry.pmap),
+                    Some(_t),
+                    Some(cov),
                 );
                 x[*i] = v;
             }
@@ -484,8 +571,15 @@ pub fn load_ir_ode(ir_path: PathBuf) -> Result<(ODE, Meta, usize), io::Error> {
         pmap.insert(name.clone(), i);
     }
 
-    // Extract expressions from model_text
-    let model_text = ir.model_text.unwrap_or_default();
+    // Extract expressions from structured IR fields (fall back to legacy `model_text`)
+    let diffeq_text = ir
+        .diffeq
+        .clone()
+        .unwrap_or_else(|| ir.model_text.clone().unwrap_or_default());
+    let out_text = ir.out.clone().unwrap_or_default();
+    let init_text = ir.init.clone().unwrap_or_default();
+    let lag_text = ir.lag.clone().unwrap_or_default();
+    let fa_text = ir.fa.clone().unwrap_or_default();
 
     // (removed: unused single-assignment helper)
 
@@ -495,6 +589,9 @@ pub fn load_ir_ode(ir_path: PathBuf) -> Result<(ODE, Meta, usize), io::Error> {
     let mut init_map: HashMap<usize, Expr> = HashMap::new();
     let mut lag_map: HashMap<usize, Expr> = HashMap::new();
     let mut fa_map: HashMap<usize, Expr> = HashMap::new();
+
+    // Collect parse errors and return them to the caller instead of silently continuing.
+    let mut parse_errors: Vec<String> = Vec::new();
 
     // helper: find all occurrences of a pattern like "dx[<n>]" and capture the RHS until ';'
     fn extract_all_assign(src: &str, lhs_prefix: &str) -> Vec<(usize, String)> {
@@ -524,34 +621,31 @@ pub fn load_ir_ode(ir_path: PathBuf) -> Result<(ODE, Meta, usize), io::Error> {
         res
     }
 
-    for (i, rhs) in extract_all_assign(&model_text, "dx[") {
+    for (i, rhs) in extract_all_assign(&diffeq_text, "dx[") {
         let toks = tokenize(&rhs);
         let mut p = Parser::new(toks);
         if let Some(expr) = p.parse_expr() {
             dx_map.insert(i, expr);
         } else {
-            eprintln!("exa::interpreter: failed to parse dx[{}] RHS='{}'", i, rhs);
+            parse_errors.push(format!("failed to parse dx[{}] RHS='{}'", i, rhs));
         }
     }
-    for (i, rhs) in extract_all_assign(&model_text, "y[") {
+    for (i, rhs) in extract_all_assign(&out_text, "y[") {
         let toks = tokenize(&rhs);
         let mut p = Parser::new(toks);
         if let Some(expr) = p.parse_expr() {
             out_map.insert(i, expr);
         } else {
-            eprintln!("exa::interpreter: failed to parse y[{}] RHS='{}'", i, rhs);
+            parse_errors.push(format!("failed to parse y[{}] RHS='{}'", i, rhs));
         }
     }
-    for (i, rhs) in extract_all_assign(&model_text, "x[") {
+    for (i, rhs) in extract_all_assign(&init_text, "x[") {
         let toks = tokenize(&rhs);
         let mut p = Parser::new(toks);
         if let Some(expr) = p.parse_expr() {
             init_map.insert(i, expr);
         } else {
-            eprintln!(
-                "exa::interpreter: failed to parse init x[{}] RHS='{}'",
-                i, rhs
-            );
+            parse_errors.push(format!("failed to parse init x[{}] RHS='{}'", i, rhs));
         }
     }
 
@@ -581,36 +675,30 @@ pub fn load_ir_ode(ir_path: PathBuf) -> Result<(ODE, Meta, usize), io::Error> {
         Vec::new()
     }
 
-    for (i, rhs) in extract_macro_map(&model_text, "lag!") {
+    for (i, rhs) in extract_macro_map(&lag_text, "lag!") {
         let toks = tokenize(&rhs);
         let mut p = Parser::new(toks);
         if let Some(expr) = p.parse_expr() {
             lag_map.insert(i, expr);
         } else {
-            eprintln!(
-                "exa::interpreter: failed to parse lag! entry {} => '{}'",
-                i, rhs
-            );
+            parse_errors.push(format!("failed to parse lag! entry {} => '{}'", i, rhs));
         }
     }
-    for (i, rhs) in extract_macro_map(&model_text, "fa!") {
+    for (i, rhs) in extract_macro_map(&fa_text, "fa!") {
         let toks = tokenize(&rhs);
         let mut p = Parser::new(toks);
         if let Some(expr) = p.parse_expr() {
             fa_map.insert(i, expr);
         } else {
-            eprintln!(
-                "exa::interpreter: failed to parse fa! entry {} => '{}'",
-                i, rhs
-            );
+            parse_errors.push(format!("failed to parse fa! entry {} => '{}'", i, rhs));
         }
     }
 
     // Heuristics: if no dx statements found, try to extract single expression inside closure-like text
     if dx_map.is_empty() {
-        if let Some(start) = model_text.find("dx") {
-            if let Some(semi) = model_text[start..].find(';') {
-                let rhs = model_text[start..start + semi].to_string();
+        if let Some(start) = diffeq_text.find("dx") {
+            if let Some(semi) = diffeq_text[start..].find(';') {
+                let rhs = diffeq_text[start..start + semi].to_string();
                 if let Some(eqpos) = rhs.find('=') {
                     let rhs_expr = rhs[eqpos + 1..].trim().to_string();
                     let toks = tokenize(&rhs_expr);
@@ -618,14 +706,19 @@ pub fn load_ir_ode(ir_path: PathBuf) -> Result<(ODE, Meta, usize), io::Error> {
                     if let Some(expr) = p.parse_expr() {
                         dx_map.insert(0, expr);
                     } else {
-                        eprintln!(
-                            "exa::interpreter: failed to parse fallback dx RHS='{}'",
-                            rhs_expr
-                        );
+                        parse_errors
+                            .push(format!("failed to parse fallback dx RHS='{}'", rhs_expr));
                     }
                 }
             }
         }
+    }
+
+    if !parse_errors.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("parse errors: {}", parse_errors.join("; ")),
+        ));
     }
 
     // Now build closures. We'll create closures that map parameter names to indices by

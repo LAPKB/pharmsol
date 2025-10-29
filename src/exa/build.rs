@@ -129,7 +129,11 @@ pub fn clear_build() {
 /// parse or validate the model text; downstream components should parse/compile
 /// the `model_text` string into an AST or bytecode as needed.
 pub fn emit_ir<E: Equation>(
-    model_txt: String,
+    diffeq_txt: String,
+    lag_txt: Option<String>,
+    fa_txt: Option<String>,
+    init_txt: Option<String>,
+    out_txt: Option<String>,
     output: Option<PathBuf>,
     params: Vec<String>,
 ) -> Result<String, io::Error> {
@@ -139,7 +143,11 @@ pub fn emit_ir<E: Equation>(
         "ir_version": "1.0",
         "kind": E::kind().to_str(),
         "params": params,
-        "model_text": model_txt,
+        "diffeq": diffeq_txt,
+        "lag": lag_txt,
+        "fa": fa_txt,
+        "init": init_txt,
+        "out": out_txt,
     });
 
     let output_path = output.unwrap_or_else(|| {
@@ -148,10 +156,7 @@ pub fn emit_ir<E: Equation>(
             .take(5)
             .map(char::from)
             .collect();
-        let default_name = format!(
-            "model_ir_{}_{}.json",
-            env::consts::OS, random_suffix
-        );
+        let default_name = format!("model_ir_{}_{}.json", env::consts::OS, random_suffix);
         env::temp_dir().join("exa_tmp").with_file_name(default_name)
     });
 
