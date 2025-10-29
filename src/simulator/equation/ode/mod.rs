@@ -232,24 +232,18 @@ impl Equation for ODE {
         // restore them on Drop. Using a single guard type avoids type-mismatch
         // issues across cfg branches.
         struct RestoreGuard {
-            exa_prev: Option<usize>,
             exa_wasm_prev: Option<usize>,
         }
         impl Drop for RestoreGuard {
             fn drop(&mut self) {
-                // Native `exa` no longer provides an interpreter module; skip restoring it.
                 // Always restore the exa_wasm interpreter id if present.
                 let _ = crate::exa_wasm::interpreter::set_current_expr_id(self.exa_wasm_prev);
             }
         }
 
         // Native `exa` does not provide an interpreter registry in this branch.
-        let exa_prev: Option<usize> = None;
         let exa_wasm_prev = crate::exa_wasm::interpreter::set_current_expr_id(self.registry_id);
-        let _restore_current = RestoreGuard {
-            exa_prev,
-            exa_wasm_prev,
-        };
+        let _restore_current = RestoreGuard { exa_wasm_prev };
 
         // let lag = self.get_lag(support_point);
         // let fa = self.get_fa(support_point);

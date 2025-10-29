@@ -10,6 +10,58 @@ use serde::Deserialize;
 
 use crate::simulator::equation::{Meta, ODE};
 
+mod ast;
+mod parser;
+use crate::exa_wasm::interpreter::ast::Expr;
+pub use parser::tokenize;
+pub use parser::Parser;
+
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+#[derive(Clone, Debug)]
+struct RegistryEntry {
+    dx: HashMap<usize, Expr>,
+    out: HashMap<usize, Expr>,
+    init: HashMap<usize, Expr>,
+    lag: HashMap<usize, Expr>,
+    fa: HashMap<usize, Expr>,
+    pmap: HashMap<String, usize>,
+    nstates: usize,
+    _nouteqs: usize,
+}
+
+static EXPR_REGISTRY: Lazy<Mutex<HashMap<usize, RegistryEntry>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+static NEXT_EXPR_ID: Lazy<AtomicUsize> = Lazy::new(|| AtomicUsize::new(1));
+
+thread_local! {
+    static CURRENT_EXPR_ID: std::cell::Cell<Option<usize>> = std::cell::Cell::new(None);
+    static LAST_RUNTIME_ERROR: std::cell::RefCell<Option<String>> = std::cell::RefCell::new(None);
+}
+
+pub(crate) fn set_current_expr_id(id: Option<usize>) -> Option<usize> {
+    let prev = CURRENT_EXPR_ID.with(|c| {
+        let p = c.get();
+        c.set(id);
+        p
+    });
+    prev
+}
+
+// Runtime error helpers: interpreter code can set an error message when a
+// runtime problem (invalid index, unknown function, etc.) occurs. The
+// simulator will poll for this error and convert it into a `PharmsolError`.
+pub fn set_runtime_error(msg: String) {
+    LAST_RUNTIME_ERROR.with(|c| {
+        *c.borrow_mut() = Some(msg);
+    });
+}
+
+pub fn take_runtime_error() -> Option<String> {
+    LAST_RUNTIME_ERROR.with(|c| c.borrow_mut().take())
+}
+
 #[allow(dead_code)]
 #[derive(Deserialize, Debug)]
 struct IrFile {
@@ -217,708 +269,10 @@ mod load_negative_tests {
 
         let res = load_ir_ode(tmp.clone());
         fs::remove_file(tmp).ok();
-        assert!(res.is_err(), "loader should reject IR missing structured maps");
-    }
-}
-
-// --- rest of interpreter implementation follows (copy of original) ---
-
-// Small expression AST for arithmetic used in model RHS and outputs.
-#[derive(Debug, Clone)]
-enum Expr {
-    Number(f64),
-    Ident(String),              // e.g. ke
-    Indexed(String, Box<Expr>), // e.g. x[0], rateiv[0], y[0] where index can be expr
-    UnaryOp {
-        op: String,
-        rhs: Box<Expr>,
-    },
-    BinaryOp {
-        lhs: Box<Expr>,
-        op: String,
-        rhs: Box<Expr>,
-    },
-    Call {
-        name: String,
-        args: Vec<Expr>,
-    },
-    MethodCall {
-        receiver: Box<Expr>,
-        name: String,
-        args: Vec<Expr>,
-    },
-    Ternary {
-        cond: Box<Expr>,
-        then_branch: Box<Expr>,
-        else_branch: Box<Expr>,
-    },
-}
-
-use std::sync::atomic::{AtomicUsize, Ordering};
-
-#[derive(Clone, Debug)]
-struct RegistryEntry {
-    dx: HashMap<usize, Expr>,
-    out: HashMap<usize, Expr>,
-    init: HashMap<usize, Expr>,
-    lag: HashMap<usize, Expr>,
-    fa: HashMap<usize, Expr>,
-    pmap: HashMap<String, usize>,
-    nstates: usize,
-    _nouteqs: usize,
-}
-
-static EXPR_REGISTRY: Lazy<Mutex<HashMap<usize, RegistryEntry>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
-
-static NEXT_EXPR_ID: Lazy<AtomicUsize> = Lazy::new(|| AtomicUsize::new(1));
-
-thread_local! {
-    static CURRENT_EXPR_ID: std::cell::Cell<Option<usize>> = std::cell::Cell::new(None);
-    static LAST_RUNTIME_ERROR: std::cell::RefCell<Option<String>> = std::cell::RefCell::new(None);
-}
-
-pub(crate) fn set_current_expr_id(id: Option<usize>) -> Option<usize> {
-    let prev = CURRENT_EXPR_ID.with(|c| {
-        let p = c.get();
-        c.set(id);
-        p
-    });
-    prev
-}
-
-// Runtime error helpers: interpreter code can set an error message when a
-// runtime problem (invalid index, unknown function, etc.) occurs. The
-// simulator will poll for this error and convert it into a `PharmsolError`.
-pub fn set_runtime_error(msg: String) {
-    LAST_RUNTIME_ERROR.with(|c| {
-        *c.borrow_mut() = Some(msg);
-    });
-}
-
-pub fn take_runtime_error() -> Option<String> {
-    LAST_RUNTIME_ERROR.with(|c| c.borrow_mut().take())
-}
-
-#[derive(Debug, Clone)]
-enum Token {
-    Num(f64),
-    Ident(String),
-    LBracket,
-    RBracket,
-    LParen,
-    RParen,
-    Comma,
-    Dot,
-    Op(char),
-    Lt,
-    Gt,
-    Le,
-    Ge,
-    EqEq,
-    Ne,
-    And,
-    Or,
-    Bang,
-    Question,
-    Colon,
-    Semicolon,
-}
-
-#[derive(Debug, Clone)]
-struct ParseError {
-    pos: usize,
-    found: Option<Token>,
-    expected: Vec<String>,
-}
-
-impl std::fmt::Display for ParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if !self.expected.is_empty() {
-            write!(f, "parse error at pos {} found={:?} expected={:?}", self.pos, self.found, self.expected)
-        } else if let Some(tok) = &self.found {
-            write!(f, "parse error at pos {} found={:?}", self.pos, tok)
-        } else {
-            write!(f, "parse error at pos {} found=<end>", self.pos)
-        }
-    }
-}
-
-impl std::error::Error for ParseError {}
-
-fn tokenize(s: &str) -> Vec<Token> {
-    let mut toks = Vec::new();
-    let mut chars = s.chars().peekable();
-    while let Some(&c) = chars.peek() {
-        if c.is_whitespace() {
-            chars.next();
-            continue;
-        }
-        if c.is_ascii_digit() || c == '.' {
-            let mut num = String::new();
-            while let Some(&d) = chars.peek() {
-                // allow digits, dot, exponent markers, and a sign only when
-                // it follows an exponent marker (e or E)
-                if d.is_ascii_digit()
-                    || d == '.'
-                    || d == 'e'
-                    || d == 'E'
-                    || ((d == '+' || d == '-') && (num.ends_with('e') || num.ends_with('E')))
-                {
-                    num.push(d);
-                    chars.next();
-                } else {
-                    break;
-                }
-            }
-            if let Ok(v) = num.parse::<f64>() {
-                toks.push(Token::Num(v));
-            }
-            continue;
-        }
-        if c.is_ascii_alphabetic() || c == '_' {
-            let mut id = String::new();
-            while let Some(&d) = chars.peek() {
-                if d.is_ascii_alphanumeric() || d == '_' {
-                    id.push(d);
-                    chars.next();
-                } else {
-                    break;
-                }
-            }
-            toks.push(Token::Ident(id));
-            continue;
-        }
-        match c {
-            '[' => {
-                toks.push(Token::LBracket);
-                chars.next();
-            }
-            '?' => {
-                toks.push(Token::Question);
-                chars.next();
-            }
-            ':' => {
-                toks.push(Token::Colon);
-                chars.next();
-            }
-            ']' => {
-                toks.push(Token::RBracket);
-                chars.next();
-            }
-            '(' => {
-                toks.push(Token::LParen);
-                chars.next();
-            }
-            ')' => {
-                toks.push(Token::RParen);
-                chars.next();
-            }
-            ',' => {
-                toks.push(Token::Comma);
-                chars.next();
-            }
-            ';' => {
-                toks.push(Token::Semicolon);
-                chars.next();
-            }
-            '+' | '-' | '*' | '/' => {
-                toks.push(Token::Op(c));
-                chars.next();
-            }
-            '^' => {
-                toks.push(Token::Op('^'));
-                chars.next();
-            }
-            '.' => {
-                toks.push(Token::Dot);
-                chars.next();
-            }
-            '<' => {
-                chars.next();
-                if let Some(&'=') = chars.peek() {
-                    chars.next();
-                    toks.push(Token::Le);
-                } else {
-                    toks.push(Token::Lt);
-                }
-            }
-            '>' => {
-                chars.next();
-                if let Some(&'=') = chars.peek() {
-                    chars.next();
-                    toks.push(Token::Ge);
-                } else {
-                    toks.push(Token::Gt);
-                }
-            }
-            '=' => {
-                chars.next();
-                if let Some(&'=') = chars.peek() {
-                    chars.next();
-                    toks.push(Token::EqEq);
-                } else {
-                    // single '=' not used, skip
-                }
-            }
-            '!' => {
-                chars.next();
-                if let Some(&'=') = chars.peek() {
-                    chars.next();
-                    toks.push(Token::Ne);
-                } else {
-                    toks.push(Token::Bang);
-                }
-            }
-            '&' => {
-                chars.next();
-                if let Some(&'&') = chars.peek() {
-                    chars.next();
-                    toks.push(Token::And);
-                }
-            }
-            '|' => {
-                chars.next();
-                if let Some(&'|') = chars.peek() {
-                    chars.next();
-                    toks.push(Token::Or);
-                }
-            }
-            _ => {
-                chars.next();
-            }
-        }
-    }
-    toks
-}
-
-struct Parser {
-    tokens: Vec<Token>,
-    pos: usize,
-    expected: Vec<String>,
-}
-
-impl Parser {
-    fn new(tokens: Vec<Token>) -> Self {
-        Self {
-            tokens,
-            pos: 0,
-            expected: Vec::new(),
-        }
-    }
-    fn expected_push(&mut self, s: &str) {
-        if !self.expected.contains(&s.to_string()) {
-            self.expected.push(s.to_string());
-        }
-    }
-    fn peek(&self) -> Option<&Token> {
-        self.tokens.get(self.pos)
-    }
-    fn next(&mut self) -> Option<&Token> {
-        let r = self.tokens.get(self.pos);
-        if r.is_some() {
-            self.pos += 1;
-        }
-        r
-    }
-
-    fn parse_expr(&mut self) -> Option<Expr> {
-        self.parse_ternary()
-    }
-
-    fn parse_ternary(&mut self) -> Option<Expr> {
-        // parse conditional ternary: cond ? then : else
-        let cond = self.parse_or()?;
-        if let Some(Token::Question) = self.peek().cloned() {
-            self.next();
-            let then_branch = self.parse_expr()?;
-            if let Some(Token::Colon) = self.peek().cloned() {
-                self.next();
-                let else_branch = self.parse_expr()?;
-                return Some(Expr::Ternary {
-                    cond: Box::new(cond),
-                    then_branch: Box::new(then_branch),
-                    else_branch: Box::new(else_branch),
-                });
-            } else {
-                self.expected_push(":");
-                return None;
-            }
-        }
-        Some(cond)
-    }
-
-    /// Parse and return a Result with an informative error message on failure.
-    fn parse_expr_result(&mut self) -> Result<Expr, ParseError> {
-        if let Some(expr) = self.parse_expr() {
-            Ok(expr)
-        } else {
-            Err(ParseError {
-                pos: self.pos,
-                found: self.peek().cloned(),
-                expected: self.expected.clone(),
-            })
-        }
-    }
-
-    fn parse_or(&mut self) -> Option<Expr> {
-        let mut node = self.parse_and()?;
-        while let Some(Token::Or) = self.peek().cloned() {
-            self.next();
-            let rhs = self.parse_and()?;
-            node = Expr::BinaryOp {
-                lhs: Box::new(node),
-                op: "||".to_string(),
-                rhs: Box::new(rhs),
-            };
-        }
-        Some(node)
-    }
-
-    fn parse_and(&mut self) -> Option<Expr> {
-        let mut node = self.parse_eq()?;
-        while let Some(Token::And) = self.peek().cloned() {
-            self.next();
-            let rhs = self.parse_eq()?;
-            node = Expr::BinaryOp {
-                lhs: Box::new(node),
-                op: "&&".to_string(),
-                rhs: Box::new(rhs),
-            };
-        }
-        Some(node)
-    }
-
-    fn parse_eq(&mut self) -> Option<Expr> {
-        let mut node = self.parse_cmp()?;
-        loop {
-            match self.peek() {
-                Some(Token::EqEq) => {
-                    self.next();
-                    let rhs = self.parse_cmp()?;
-                    node = Expr::BinaryOp {
-                        lhs: Box::new(node),
-                        op: "==".to_string(),
-                        rhs: Box::new(rhs),
-                    };
-                }
-                Some(Token::Ne) => {
-                    self.next();
-                    let rhs = self.parse_cmp()?;
-                    node = Expr::BinaryOp {
-                        lhs: Box::new(node),
-                        op: "!=".to_string(),
-                        rhs: Box::new(rhs),
-                    };
-                }
-                _ => break,
-            }
-        }
-        Some(node)
-    }
-
-    fn parse_cmp(&mut self) -> Option<Expr> {
-        let mut node = self.parse_add_sub()?;
-        loop {
-            match self.peek() {
-                Some(Token::Lt) => {
-                    self.next();
-                    let rhs = self.parse_add_sub()?;
-                    node = Expr::BinaryOp {
-                        lhs: Box::new(node),
-                        op: "<".to_string(),
-                        rhs: Box::new(rhs),
-                    };
-                }
-                Some(Token::Gt) => {
-                    self.next();
-                    let rhs = self.parse_add_sub()?;
-                    node = Expr::BinaryOp {
-                        lhs: Box::new(node),
-                        op: ">".to_string(),
-                        rhs: Box::new(rhs),
-                    };
-                }
-                Some(Token::Le) => {
-                    self.next();
-                    let rhs = self.parse_add_sub()?;
-                    node = Expr::BinaryOp {
-                        lhs: Box::new(node),
-                        op: "<=".to_string(),
-                        rhs: Box::new(rhs),
-                    };
-                }
-                Some(Token::Ge) => {
-                    self.next();
-                    let rhs = self.parse_add_sub()?;
-                    node = Expr::BinaryOp {
-                        lhs: Box::new(node),
-                        op: ">=".to_string(),
-                        rhs: Box::new(rhs),
-                    };
-                }
-                _ => break,
-            }
-        }
-        Some(node)
-    }
-
-    fn parse_add_sub(&mut self) -> Option<Expr> {
-        let mut node = self.parse_mul_div()?;
-        while let Some(tok) = self.peek() {
-            match tok {
-                Token::Op('+') => {
-                    self.next();
-                    let rhs = self.parse_mul_div()?;
-                    node = Expr::BinaryOp {
-                        lhs: Box::new(node),
-                        op: "+".to_string(),
-                        rhs: Box::new(rhs),
-                    };
-                }
-                Token::Op('-') => {
-                    self.next();
-                    let rhs = self.parse_mul_div()?;
-                    node = Expr::BinaryOp {
-                        lhs: Box::new(node),
-                        op: "-".to_string(),
-                        rhs: Box::new(rhs),
-                    };
-                }
-                _ => break,
-            }
-        }
-        Some(node)
-    }
-
-    fn parse_mul_div(&mut self) -> Option<Expr> {
-        let mut node = self.parse_power()?;
-        while let Some(tok) = self.peek() {
-            match tok {
-                Token::Op('*') => {
-                    self.next();
-                    let rhs = self.parse_unary()?;
-                    node = Expr::BinaryOp {
-                        lhs: Box::new(node),
-                        op: "*".to_string(),
-                        rhs: Box::new(rhs),
-                    };
-                }
-                Token::Op('/') => {
-                    self.next();
-                    let rhs = self.parse_unary()?;
-                    node = Expr::BinaryOp {
-                        lhs: Box::new(node),
-                        op: "/".to_string(),
-                        rhs: Box::new(rhs),
-                    };
-                }
-                _ => break,
-            }
-        }
-        Some(node)
-    }
-
-    // right-associative power
-    fn parse_power(&mut self) -> Option<Expr> {
-        let node = self.parse_unary()?;
-        if let Some(Token::Op('^')) = self.peek() {
-            self.next();
-            let rhs = self.parse_power()?; // right-associative
-            return Some(Expr::BinaryOp {
-                lhs: Box::new(node),
-                op: "^".to_string(),
-                rhs: Box::new(rhs),
-            });
-        }
-        Some(node)
-    }
-
-    fn parse_unary(&mut self) -> Option<Expr> {
-        if let Some(Token::Op('-')) = self.peek() {
-            self.next();
-            let rhs = self.parse_unary()?;
-            return Some(Expr::UnaryOp {
-                op: '-'.to_string(),
-                rhs: Box::new(rhs),
-            });
-        }
-        if let Some(Token::Bang) = self.peek() {
-            self.next();
-            let rhs = self.parse_unary()?;
-            // represent logical not as Call if needed, but use unary op '!'
-            return Some(Expr::UnaryOp {
-                op: '!'.to_string(),
-                rhs: Box::new(rhs),
-            });
-        }
-        self.parse_primary()
-    }
-
-    fn parse_primary(&mut self) -> Option<Expr> {
-        let mut node = match self.next().cloned()? {
-            Token::Num(v) => Expr::Number(v),
-            Token::Ident(id) => {
-                // Function call: ident(...)
-                if let Some(Token::LParen) = self.peek() {
-                    self.next();
-                    let mut args: Vec<Expr> = Vec::new();
-                    if let Some(Token::RParen) = self.peek() {
-                        // empty arglist
-                        self.next();
-                        Expr::Call {
-                            name: id.clone(),
-                            args,
-                        }
-                    } else {
-                        loop {
-                            if let Some(expr) = self.parse_expr() {
-                                args.push(expr);
-                            } else {
-                                        self.expected_push("expression");
-                                        return None;
-                            }
-                            match self.peek() {
-                                Some(Token::Comma) => {
-                                    self.next();
-                                    continue;
-                                }
-                                        Some(Token::RParen) => {
-                                    self.next();
-                                    break;
-                                }
-                                        _ => {
-                                            self.expected_push(",|)");
-                                            return None;
-                                        }
-                            }
-                        }
-                        Expr::Call {
-                            name: id.clone(),
-                            args,
-                        }
-                    }
-                } else if let Some(Token::LBracket) = self.peek() {
-                    // Indexing: Ident[expr]
-                    // To avoid the inner parse consuming the closing ']' we locate
-                    // the matching RBracket in the token stream, parse only the
-                    // tokens inside with a fresh Parser, and advance the main
-                    // parser past the closing bracket. This supports nested
-                    // parentheses and nested brackets inside the index.
-                    self.next(); // consume '['
-                    #[cfg(test)]
-                    {
-                        eprintln!(
-                            "parsing index: pos={} remaining={:?}",
-                            self.pos,
-                            &self.tokens[self.pos..]
-                        );
-                    }
-                    let mut depth = 1isize;
-                    let mut i = self.pos;
-                    while i < self.tokens.len() {
-                        match &self.tokens[i] {
-                            Token::LBracket => depth += 1,
-                            Token::RBracket => {
-                                depth -= 1;
-                                if depth == 0 {
-                                    break;
-                                }
-                            }
-                            _ => {}
-                        }
-                        i += 1;
-                    }
-                    if i >= self.tokens.len() {
-                        self.expected_push("]");
-                        return None; // no matching ']'
-                    }
-                    // parse tokens in range [self.pos, i) as a sub-expression
-                    let slice = self.tokens[self.pos..i].to_vec();
-                    let mut sub = Parser::new(slice);
-                    let idx_expr = sub.parse_expr()?;
-                    // advance main parser past the matched RBracket
-                    self.pos = i + 1;
-                    Expr::Indexed(id.clone(), Box::new(idx_expr))
-                } else {
-                    Expr::Ident(id.clone())
-                }
-            }
-            Token::LParen => {
-                let expr = self.parse_expr();
-                if let Some(Token::RParen) = self.next().cloned() {
-                    if let Some(e) = expr {
-                        e
-                    } else {
-                        self.expected_push("expression");
-                        return None;
-                    }
-                } else {
-                    self.expected_push(")");
-                    return None;
-                }
-            }
-            _ => {
-                self.expected_push("number|identifier|'('");
-                return None;
-            }
-        };
-
-        // Postfix method-call chaining like primary.ident(arg1, ...)
-        loop {
-            if let Some(Token::Dot) = self.peek() {
-                // consume dot
-                self.next();
-                // expect identifier
-                let name = if let Some(Token::Ident(n)) = self.next().cloned() {
-                    n
-                } else {
-                    self.expected_push("identifier");
-                    return None;
-                };
-                // optional arglist
-                let mut args: Vec<Expr> = Vec::new();
-                if let Some(Token::LParen) = self.peek() {
-                    self.next();
-                    // empty arglist
-                    if let Some(Token::RParen) = self.peek() {
-                        self.next();
-                    } else {
-                        loop {
-                            if let Some(expr) = self.parse_expr() {
-                                args.push(expr);
-                            } else {
-                                self.expected_push("expression");
-                                return None;
-                            }
-                            match self.peek() {
-                                Some(Token::Comma) => {
-                                    self.next();
-                                    continue;
-                                }
-                                Some(Token::RParen) => {
-                                    self.next();
-                                    break;
-                                }
-                                _ => {
-                                    self.expected_push(",|)");
-                                    return None;
-                                }
-                            }
-                        }
-                    }
-                }
-                node = Expr::MethodCall {
-                    receiver: Box::new(node),
-                    name,
-                    args,
-                };
-                continue;
-            }
-            break;
-        }
-
-        Some(node)
+        assert!(
+            res.is_err(),
+            "loader should reject IR missing structured maps"
+        );
     }
 }
 
@@ -1670,7 +1024,10 @@ pub fn load_ir_ode(ir_path: PathBuf) -> Result<(ODE, Meta, usize), io::Error> {
     }
 
     if dx_map.is_empty() {
-        parse_errors.push("no dx[...] assignments found in diffeq; emit_ir must populate dx entries in the IR".to_string());
+        parse_errors.push(
+            "no dx[...] assignments found in diffeq; emit_ir must populate dx entries in the IR"
+                .to_string(),
+        );
     }
 
     if !parse_errors.is_empty() {
