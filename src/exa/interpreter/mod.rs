@@ -1,9 +1,9 @@
+use diffsol::Vector;
+use std::collections::HashMap;
 use std::fs;
 use std::io;
 use std::path::PathBuf;
-use std::sync::Mutex;
-use std::collections::HashMap;
-use diffsol::Vector; // bring zeros/len helpers into scope
+use std::sync::Mutex; // bring zeros/len helpers into scope
 
 use once_cell::sync::Lazy;
 use serde::Deserialize;
@@ -22,10 +22,17 @@ struct IrFile {
 #[derive(Debug, Clone)]
 enum Expr {
     Number(f64),
-    Ident(String),            // e.g. ke
-    Indexed(String, usize),   // e.g. x[0], rateiv[0], y[0]
-    UnaryOp { op: char, rhs: Box<Expr> },
-    BinaryOp { lhs: Box<Expr>, op: char, rhs: Box<Expr> },
+    Ident(String),          // e.g. ke
+    Indexed(String, usize), // e.g. x[0], rateiv[0], y[0]
+    UnaryOp {
+        op: char,
+        rhs: Box<Expr>,
+    },
+    BinaryOp {
+        lhs: Box<Expr>,
+        op: char,
+        rhs: Box<Expr>,
+    },
 }
 
 // A tiny global registry to hold the parsed expressions for the current
@@ -35,7 +42,26 @@ enum Expr {
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 // Registry mapping id -> (dx_expr, y_expr, param_name->index)
-static EXPR_REGISTRY: Lazy<Mutex<HashMap<usize, (Expr, Expr, HashMap<String, usize>)>>> =
+// Registry entry holds parsed expressions for all supported pieces of a model.
+#[derive(Clone, Debug)]
+struct RegistryEntry {
+    // dx expressions keyed by state index
+    dx: HashMap<usize, Expr>,
+    // output expressions keyed by output index
+    out: HashMap<usize, Expr>,
+    // init expressions keyed by state index
+    init: HashMap<usize, Expr>,
+    // lag/fa maps keyed by index
+    lag: HashMap<usize, Expr>,
+    fa: HashMap<usize, Expr>,
+    // parameter name -> index
+    pmap: HashMap<String, usize>,
+    // sizes
+    nstates: usize,
+    _nouteqs: usize,
+}
+
+static EXPR_REGISTRY: Lazy<Mutex<HashMap<usize, RegistryEntry>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
 // Global id source for entries in EXPR_REGISTRY
@@ -47,7 +73,11 @@ thread_local! {
 }
 
 pub(crate) fn set_current_expr_id(id: Option<usize>) -> Option<usize> {
-    let prev = CURRENT_EXPR_ID.with(|c| { let p = c.get(); c.set(id); p });
+    let prev = CURRENT_EXPR_ID.with(|c| {
+        let p = c.get();
+        c.set(id);
+        p
+    });
     prev
 }
 
@@ -76,7 +106,13 @@ fn tokenize(s: &str) -> Vec<Token> {
         if c.is_ascii_digit() || c == '.' {
             let mut num = String::new();
             while let Some(&d) = chars.peek() {
-                if d.is_ascii_digit() || d == '.' || d == 'e' || d == 'E' || d == '+' || d == '-' && num.ends_with('e') {
+                if d.is_ascii_digit()
+                    || d == '.'
+                    || d == 'e'
+                    || d == 'E'
+                    || d == '+'
+                    || d == '-' && num.ends_with('e')
+                {
                     num.push(d);
                     chars.next();
                 } else {
@@ -102,35 +138,89 @@ fn tokenize(s: &str) -> Vec<Token> {
             continue;
         }
         match c {
-            '[' => { toks.push(Token::LBracket); chars.next(); }
-            ']' => { toks.push(Token::RBracket); chars.next(); }
-            '(' => { toks.push(Token::LParen); chars.next(); }
-            ')' => { toks.push(Token::RParen); chars.next(); }
-            ',' => { toks.push(Token::Comma); chars.next(); }
-            ';' => { toks.push(Token::Semicolon); chars.next(); }
-            '+'|'-'|'*'|'/' => { toks.push(Token::Op(c)); chars.next(); }
-            _ => { chars.next(); }
+            '[' => {
+                toks.push(Token::LBracket);
+                chars.next();
+            }
+            ']' => {
+                toks.push(Token::RBracket);
+                chars.next();
+            }
+            '(' => {
+                toks.push(Token::LParen);
+                chars.next();
+            }
+            ')' => {
+                toks.push(Token::RParen);
+                chars.next();
+            }
+            ',' => {
+                toks.push(Token::Comma);
+                chars.next();
+            }
+            ';' => {
+                toks.push(Token::Semicolon);
+                chars.next();
+            }
+            '+' | '-' | '*' | '/' => {
+                toks.push(Token::Op(c));
+                chars.next();
+            }
+            _ => {
+                chars.next();
+            }
         }
     }
     toks
 }
 
 // Recursive descent parser for expressions with operator precedence
-struct Parser { tokens: Vec<Token>, pos: usize }
+struct Parser {
+    tokens: Vec<Token>,
+    pos: usize,
+}
 
 impl Parser {
-    fn new(tokens: Vec<Token>) -> Self { Self { tokens, pos: 0 } }
-    fn peek(&self) -> Option<&Token> { self.tokens.get(self.pos) }
-    fn next(&mut self) -> Option<&Token> { let r = self.tokens.get(self.pos); if r.is_some() { self.pos += 1; } r }
+    fn new(tokens: Vec<Token>) -> Self {
+        Self { tokens, pos: 0 }
+    }
+    fn peek(&self) -> Option<&Token> {
+        self.tokens.get(self.pos)
+    }
+    fn next(&mut self) -> Option<&Token> {
+        let r = self.tokens.get(self.pos);
+        if r.is_some() {
+            self.pos += 1;
+        }
+        r
+    }
 
-    fn parse_expr(&mut self) -> Option<Expr> { self.parse_add_sub() }
+    fn parse_expr(&mut self) -> Option<Expr> {
+        self.parse_add_sub()
+    }
 
     fn parse_add_sub(&mut self) -> Option<Expr> {
         let mut node = self.parse_mul_div()?;
         while let Some(tok) = self.peek() {
             match tok {
-                Token::Op('+') => { self.next(); let rhs = self.parse_mul_div()?; node = Expr::BinaryOp { lhs: Box::new(node), op: '+', rhs: Box::new(rhs) }; }
-                Token::Op('-') => { self.next(); let rhs = self.parse_mul_div()?; node = Expr::BinaryOp { lhs: Box::new(node), op: '-', rhs: Box::new(rhs) }; }
+                Token::Op('+') => {
+                    self.next();
+                    let rhs = self.parse_mul_div()?;
+                    node = Expr::BinaryOp {
+                        lhs: Box::new(node),
+                        op: '+',
+                        rhs: Box::new(rhs),
+                    };
+                }
+                Token::Op('-') => {
+                    self.next();
+                    let rhs = self.parse_mul_div()?;
+                    node = Expr::BinaryOp {
+                        lhs: Box::new(node),
+                        op: '-',
+                        rhs: Box::new(rhs),
+                    };
+                }
                 _ => break,
             }
         }
@@ -141,8 +231,24 @@ impl Parser {
         let mut node = self.parse_unary()?;
         while let Some(tok) = self.peek() {
             match tok {
-                Token::Op('*') => { self.next(); let rhs = self.parse_unary()?; node = Expr::BinaryOp { lhs: Box::new(node), op: '*', rhs: Box::new(rhs) }; }
-                Token::Op('/') => { self.next(); let rhs = self.parse_unary()?; node = Expr::BinaryOp { lhs: Box::new(node), op: '/', rhs: Box::new(rhs) }; }
+                Token::Op('*') => {
+                    self.next();
+                    let rhs = self.parse_unary()?;
+                    node = Expr::BinaryOp {
+                        lhs: Box::new(node),
+                        op: '*',
+                        rhs: Box::new(rhs),
+                    };
+                }
+                Token::Op('/') => {
+                    self.next();
+                    let rhs = self.parse_unary()?;
+                    node = Expr::BinaryOp {
+                        lhs: Box::new(node),
+                        op: '/',
+                        rhs: Box::new(rhs),
+                    };
+                }
                 _ => break,
             }
         }
@@ -151,7 +257,12 @@ impl Parser {
 
     fn parse_unary(&mut self) -> Option<Expr> {
         if let Some(Token::Op('-')) = self.peek() {
-            self.next(); let rhs = self.parse_unary()?; return Some(Expr::UnaryOp { op: '-', rhs: Box::new(rhs) });
+            self.next();
+            let rhs = self.parse_unary()?;
+            return Some(Expr::UnaryOp {
+                op: '-',
+                rhs: Box::new(rhs),
+            });
         }
         self.parse_primary()
     }
@@ -178,7 +289,9 @@ impl Parser {
                 let expr = self.parse_expr();
                 if let Some(Token::RParen) = self.next().cloned() {
                     expr
-                } else { None }
+                } else {
+                    None
+                }
             }
             _ => None,
         }
@@ -186,7 +299,13 @@ impl Parser {
 }
 
 // Evaluate expression given runtime variables
-fn eval_expr(expr: &Expr, x: &crate::simulator::V, p: &crate::simulator::V, rateiv: &crate::simulator::V, pmap: Option<&HashMap<String, usize>>) -> f64 {
+fn eval_expr(
+    expr: &Expr,
+    x: &crate::simulator::V,
+    p: &crate::simulator::V,
+    rateiv: &crate::simulator::V,
+    pmap: Option<&HashMap<String, usize>>,
+) -> f64 {
     match expr {
         Expr::Number(v) => *v,
         Expr::Ident(name) => {
@@ -198,17 +317,18 @@ fn eval_expr(expr: &Expr, x: &crate::simulator::V, p: &crate::simulator::V, rate
             }
             0.0
         }
-        Expr::Indexed(name, idx) => {
-            match name.as_str() {
-                "x" => x[*idx],
-                "p" | "params" => p[*idx],
-                "rateiv" => rateiv[*idx],
-                _ => 0.0,
-            }
-        }
+        Expr::Indexed(name, idx) => match name.as_str() {
+            "x" => x[*idx],
+            "p" | "params" => p[*idx],
+            "rateiv" => rateiv[*idx],
+            _ => 0.0,
+        },
         Expr::UnaryOp { op, rhs } => {
             let v = eval_expr(rhs, x, p, rateiv, pmap);
-            match op { '-' => -v, _ => v }
+            match op {
+                '-' => -v,
+                _ => v,
+            }
         }
         Expr::BinaryOp { lhs, op, rhs } => {
             let a = eval_expr(lhs, x, p, rateiv, pmap);
@@ -240,9 +360,12 @@ fn diffeq_dispatch(
     // pick registry entry based on current thread-local id
     let cur = CURRENT_EXPR_ID.with(|c| c.get());
     if let Some(id) = cur {
-        if let Some((dx_expr, _y_expr, pmap)) = guard.get(&id) {
-            let val = eval_expr(dx_expr, x, p, &rateiv, Some(pmap));
-            dx[0] = val;
+        if let Some(entry) = guard.get(&id) {
+            // evaluate each dx expression present in the entry
+            for (i, expr) in entry.dx.iter() {
+                let val = eval_expr(expr, x, p, &rateiv, Some(&entry.pmap));
+                dx[*i] = val;
+            }
         }
     }
 }
@@ -259,9 +382,83 @@ fn out_dispatch(
     let guard = EXPR_REGISTRY.lock().unwrap();
     let cur = CURRENT_EXPR_ID.with(|c| c.get());
     if let Some(id) = cur {
-        if let Some((_dx_expr, y_expr, pmap)) = guard.get(&id) {
-            let val = eval_expr(y_expr, x, p, &tmp, Some(pmap));
-            y[0] = val;
+        if let Some(entry) = guard.get(&id) {
+            for (i, expr) in entry.out.iter() {
+                let val = eval_expr(expr, x, p, &tmp, Some(&entry.pmap));
+                y[*i] = val;
+            }
+        }
+    }
+}
+
+// Lag dispatcher: returns a HashMap of lag times for compartments
+fn lag_dispatch(
+    p: &crate::simulator::V,
+    _t: crate::simulator::T,
+    _cov: &crate::data::Covariates,
+) -> std::collections::HashMap<usize, crate::simulator::T> {
+    let mut out: std::collections::HashMap<usize, crate::simulator::T> =
+        std::collections::HashMap::new();
+    let guard = EXPR_REGISTRY.lock().unwrap();
+    let cur = CURRENT_EXPR_ID.with(|c| c.get());
+    if let Some(id) = cur {
+        if let Some(entry) = guard.get(&id) {
+            let zero_x = crate::simulator::V::zeros(entry.nstates, diffsol::NalgebraContext);
+            let zero_rate = crate::simulator::V::zeros(entry.nstates, diffsol::NalgebraContext);
+            for (i, expr) in entry.lag.iter() {
+                let v = eval_expr(expr, &zero_x, p, &zero_rate, Some(&entry.pmap));
+                out.insert(*i, v);
+            }
+        }
+    }
+    out
+}
+
+// Fa dispatcher: returns a HashMap of fraction absorbed
+fn fa_dispatch(
+    p: &crate::simulator::V,
+    _t: crate::simulator::T,
+    _cov: &crate::data::Covariates,
+) -> std::collections::HashMap<usize, crate::simulator::T> {
+    let mut out: std::collections::HashMap<usize, crate::simulator::T> =
+        std::collections::HashMap::new();
+    let guard = EXPR_REGISTRY.lock().unwrap();
+    let cur = CURRENT_EXPR_ID.with(|c| c.get());
+    if let Some(id) = cur {
+        if let Some(entry) = guard.get(&id) {
+            let zero_x = crate::simulator::V::zeros(entry.nstates, diffsol::NalgebraContext);
+            let zero_rate = crate::simulator::V::zeros(entry.nstates, diffsol::NalgebraContext);
+            for (i, expr) in entry.fa.iter() {
+                let v = eval_expr(expr, &zero_x, p, &zero_rate, Some(&entry.pmap));
+                out.insert(*i, v);
+            }
+        }
+    }
+    out
+}
+
+// Init dispatcher: sets initial state values
+fn init_dispatch(
+    p: &crate::simulator::V,
+    _t: crate::simulator::T,
+    _cov: &crate::data::Covariates,
+    x: &mut crate::simulator::V,
+) {
+    let guard = EXPR_REGISTRY.lock().unwrap();
+    let cur = CURRENT_EXPR_ID.with(|c| c.get());
+    if let Some(id) = cur {
+        if let Some(entry) = guard.get(&id) {
+            let zero_rate = crate::simulator::V::zeros(entry.nstates, diffsol::NalgebraContext);
+            for (i, expr) in entry.init.iter() {
+                let v = eval_expr(
+                    expr,
+                    &crate::simulator::V::zeros(entry.nstates, diffsol::NalgebraContext),
+                    p,
+                    &zero_rate,
+                    Some(&entry.pmap),
+                );
+                x[*i] = v;
+            }
         }
     }
 }
@@ -283,71 +480,178 @@ pub fn load_ir_ode(ir_path: PathBuf) -> Result<(ODE, Meta), io::Error> {
 
     // Prepare parameter name -> index map
     let mut pmap = std::collections::HashMap::new();
-    for (i, name) in params.iter().enumerate() { pmap.insert(name.clone(), i); }
+    for (i, name) in params.iter().enumerate() {
+        pmap.insert(name.clone(), i);
+    }
 
     // Extract expressions from model_text
     let model_text = ir.model_text.unwrap_or_default();
 
-    // helper to extract between a pattern and ';'
-    fn extract_assign(src: &str, lhs: &str) -> Option<String> {
-        if let Some(pos) = src.find(lhs) {
-            let tail = &src[pos + lhs.len()..];
-            if let Some(semi) = tail.find(';') {
-                return Some(tail[..semi].trim().to_string());
+    // (removed: unused single-assignment helper)
+
+    // Parse all dx[i] and y[i] assignments, init x[i] assignments, and lag/fa macros.
+    let mut dx_map: HashMap<usize, Expr> = HashMap::new();
+    let mut out_map: HashMap<usize, Expr> = HashMap::new();
+    let mut init_map: HashMap<usize, Expr> = HashMap::new();
+    let mut lag_map: HashMap<usize, Expr> = HashMap::new();
+    let mut fa_map: HashMap<usize, Expr> = HashMap::new();
+
+    // helper: find all occurrences of a pattern like "dx[<n>]" and capture the RHS until ';'
+    fn extract_all_assign(src: &str, lhs_prefix: &str) -> Vec<(usize, String)> {
+        let mut res = Vec::new();
+        let mut rest = src;
+        while let Some(pos) = rest.find(lhs_prefix) {
+            let after = &rest[pos + lhs_prefix.len()..];
+            // read digits until ']'
+            if let Some(rb) = after.find(']') {
+                let idx_str = &after[..rb];
+                if let Ok(idx) = idx_str.trim().parse::<usize>() {
+                    // find '=' somewhere after the bracket
+                    if let Some(eqpos) = after.find('=') {
+                        let tail = &after[eqpos + 1..];
+                        if let Some(semi) = tail.find(';') {
+                            let rhs = tail[..semi].trim().to_string();
+                            res.push((idx, rhs));
+                            rest = &tail[semi + 1..];
+                            continue;
+                        }
+                    }
+                }
             }
+            // if we didn't parse, advance to avoid infinite loop
+            rest = &rest[pos + lhs_prefix.len()..];
         }
-        None
+        res
     }
 
-    let dx0_rhs = extract_assign(&model_text, "dx[0]").or_else(|| extract_assign(&model_text, "dx[0] =")).unwrap_or_else(|| "-ke * x[0] + rateiv[0]".to_string());
-    let y0_rhs = extract_assign(&model_text, "y[0]").or_else(|| extract_assign(&model_text, "y[0] =")).unwrap_or_else(|| "x[0] / v".to_string());
+    for (i, rhs) in extract_all_assign(&model_text, "dx[") {
+        let toks = tokenize(&rhs);
+        let mut p = Parser::new(toks);
+        if let Some(expr) = p.parse_expr() {
+            dx_map.insert(i, expr);
+        }
+    }
+    for (i, rhs) in extract_all_assign(&model_text, "y[") {
+        let toks = tokenize(&rhs);
+        let mut p = Parser::new(toks);
+        if let Some(expr) = p.parse_expr() {
+            out_map.insert(i, expr);
+        }
+    }
+    for (i, rhs) in extract_all_assign(&model_text, "x[") {
+        let toks = tokenize(&rhs);
+        let mut p = Parser::new(toks);
+        if let Some(expr) = p.parse_expr() {
+            init_map.insert(i, expr);
+        }
+    }
 
-    // Tokenize and parse expressions
-    let dx_tokens = tokenize(&dx0_rhs);
-    let mut dx_parser = Parser::new(dx_tokens);
-    let dx_expr = dx_parser.parse_expr().expect("Failed to parse dx expression");
+    // Parse lag!{...} and fa!{...} simple maps like 0=>tlag,1=>0.3
+    fn extract_macro_map(src: &str, mac: &str) -> Vec<(usize, String)> {
+        if let Some(pos) = src.find(mac) {
+            if let Some(lb) = src[pos..].find('{') {
+                let tail = &src[pos + lb + 1..];
+                if let Some(rb) = tail.find('}') {
+                    let body = &tail[..rb];
+                    // split by ',' and parse 'k => expr'
+                    return body
+                        .split(',')
+                        .filter_map(|s| {
+                            let parts: Vec<&str> = s.split("=>").collect();
+                            if parts.len() == 2 {
+                                if let Ok(k) = parts[0].trim().parse::<usize>() {
+                                    return Some((k, parts[1].trim().to_string()));
+                                }
+                            }
+                            None
+                        })
+                        .collect();
+                }
+            }
+        }
+        Vec::new()
+    }
 
-    let y_tokens = tokenize(&y0_rhs);
-    let mut y_parser = Parser::new(y_tokens);
-    let y_expr = y_parser.parse_expr().expect("Failed to parse y expression");
+    for (i, rhs) in extract_macro_map(&model_text, "lag!") {
+        let toks = tokenize(&rhs);
+        let mut p = Parser::new(toks);
+        if let Some(expr) = p.parse_expr() {
+            lag_map.insert(i, expr);
+        }
+    }
+    for (i, rhs) in extract_macro_map(&model_text, "fa!") {
+        let toks = tokenize(&rhs);
+        let mut p = Parser::new(toks);
+        if let Some(expr) = p.parse_expr() {
+            fa_map.insert(i, expr);
+        }
+    }
+
+    // Heuristics: if no dx statements found, try to extract single expression inside closure-like text
+    if dx_map.is_empty() {
+        if let Some(start) = model_text.find("dx") {
+            if let Some(semi) = model_text[start..].find(';') {
+                let rhs = model_text[start..start + semi].to_string();
+                if let Some(eqpos) = rhs.find('=') {
+                    let rhs_expr = rhs[eqpos + 1..].trim().to_string();
+                    let toks = tokenize(&rhs_expr);
+                    let mut p = Parser::new(toks);
+                    if let Some(expr) = p.parse_expr() {
+                        dx_map.insert(0, expr);
+                    }
+                }
+            }
+        }
+    }
 
     // Now build closures. We'll create closures that map parameter names to indices by
     // creating a parameter vector `pvec` where param names are placed at their index.
-    use crate::simulator::{T, V};
     use crate::data::Covariates;
+    use crate::simulator::{T, V};
 
-    // Build parameter name -> index map and store along with parsed Exprs
-    // into the global registry so the non-capturing dispatchers can
-    // resolve parameter identifiers.
+    // Build parameter name -> index map
     let mut pmap = std::collections::HashMap::new();
     for (i, name) in params.iter().enumerate() {
         pmap.insert(name.clone(), i);
     }
 
+    // determine sizes from parsed maps
+    let max_dx = dx_map.keys().copied().max().unwrap_or(0);
+    let max_y = out_map.keys().copied().max().unwrap_or(0);
+    let nstates = max_dx + 1;
+    let nouteqs = max_y + 1;
+
+    // Construct registry entry and insert
+    let entry = RegistryEntry {
+        dx: dx_map,
+        out: out_map,
+        init: init_map,
+        lag: lag_map,
+        fa: fa_map,
+        pmap: pmap.clone(),
+        nstates,
+        _nouteqs: nouteqs,
+    };
+
     // allocate id and insert into the registry
     let id = NEXT_EXPR_ID.fetch_add(1, Ordering::SeqCst);
     {
         let mut guard = EXPR_REGISTRY.lock().unwrap();
-        guard.insert(id, (dx_expr.clone(), y_expr.clone(), pmap));
+        guard.insert(id, entry);
     }
 
-    let lag = |_p: &V, _t: T, _cov: &Covariates| -> std::collections::HashMap<usize, T> {
-        std::collections::HashMap::new()
-    };
-    let fa = |_p: &V, _t: T, _cov: &Covariates| -> std::collections::HashMap<usize, T> {
-        std::collections::HashMap::new()
-    };
-    let init = |_p: &V, _t: T, _cov: &Covariates, _x: &mut V| {};
+    // local placeholder closures removed; we use the dispatcher functions
 
     // Use the dispatcher functions (plain fn pointers) so they can be used
     // with the existing ODE::new signature that expects fn types.
+    // Build ODE with proper sizes and dispatchers
     let ode = ODE::with_registry_id(
         diffeq_dispatch,
-        lag,
-        fa,
-        init,
+        lag_dispatch,
+        fa_dispatch,
+        init_dispatch,
         out_dispatch,
-        (1_usize, 1_usize),
+        (nstates, nouteqs),
         Some(id),
     );
     Ok((ode, meta))

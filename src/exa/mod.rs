@@ -5,5 +5,5 @@
 //! - `load`: Contains functions for loading compiled models.
 
 pub mod build;
-pub mod load;
 pub mod interpreter;
+pub mod load;

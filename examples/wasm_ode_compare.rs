@@ -2,7 +2,7 @@
 
 #[cfg(feature = "exa")]
 fn main() {
-    use pharmsol::{exa, equation, *};
+    use pharmsol::{equation, exa, *};
     // use std::path::PathBuf; // not needed
 
     let subject = Subject::builder("1")
@@ -38,13 +38,14 @@ fn main() {
     let ir_path = test_dir.join("test_model_ir.pkm");
     // This emits a JSON IR file for the same ODE model
     let ir_file = exa::build::emit_ir::<equation::ODE>(
-        "|x, p, _t, dx, rateiv, _cov| { fetch_params!(p, ke, _v); dx[0] = -ke * x[0] + rateiv[0]; }".to_string(),
+        "|x, p, _t, dx, rateiv, _cov| { fetch_params!(p, ke, _v); dx[0] = -ke * x[0] + rateiv[0]; } \n|x, p, _t, _cov, y| { fetch_params!(p, _ke, v); y[0] = x[0] / v; }".to_string(),
         Some(ir_path.clone()),
         vec!["ke".to_string(), "v".to_string()],
     ).expect("emit_ir failed");
 
     // Load the IR model using the WASM-capable interpreter
-    let (wasm_ode, _meta) = exa::interpreter::load_ir_ode(ir_path.clone()).expect("load_ir_ode failed");
+    let (wasm_ode, _meta) =
+        exa::interpreter::load_ir_ode(ir_path.clone()).expect("load_ir_ode failed");
 
     let params = vec![1.02282724609375, 194.51904296875];
 
@@ -74,8 +75,12 @@ fn main() {
             ErrorModel::proportional(ErrorPoly::new(0.0, 0.05, 0.0, 0.0), 0.0),
         )
         .unwrap();
-    let ll_ode = ode.estimate_likelihood(&subject, &params, &ems, false).unwrap();
-    let ll_wasm = wasm_ode.estimate_likelihood(&subject, &params, &ems, false).unwrap();
+    let ll_ode = ode
+        .estimate_likelihood(&subject, &params, &ems, false)
+        .unwrap();
+    let ll_wasm = wasm_ode
+        .estimate_likelihood(&subject, &params, &ems, false)
+        .unwrap();
     println!("\nLikelihoods:");
     println!("ODE\tWASM ODE");
     println!("{:.6}\t{:.6}", -2.0 * ll_ode, -2.0 * ll_wasm);
