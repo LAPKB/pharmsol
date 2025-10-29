@@ -8,8 +8,9 @@ license = "GPL-3.0"
 documentation = "https://lapkb.github.io/pharmsol/"
 
 [features]
-default = []
+default = ["exa-wasm"]
 exa = ["libloading"]
+exa-wasm = []
 
 [dependencies]
 cached = { version = "0.56.0" }

@@ -231,6 +231,7 @@ impl Equation for ODE {
             #[cfg(feature = "exa")]
             {
                 let prev = crate::exa::interpreter::set_current_expr_id(self.registry_id);
+                #[allow(dead_code)]
                 struct Restore(Option<usize>);
                 impl Drop for Restore {
                     fn drop(&mut self) {
@@ -239,8 +240,21 @@ impl Equation for ODE {
                 }
                 Restore(prev)
             }
-            #[cfg(not(feature = "exa"))]
+            #[cfg(feature = "exa-wasm")]
             {
+                let prev = crate::exa_wasm::interpreter::set_current_expr_id(self.registry_id);
+                #[allow(dead_code)]
+                struct Restore(Option<usize>);
+                impl Drop for Restore {
+                    fn drop(&mut self) {
+                        let _ = crate::exa_wasm::interpreter::set_current_expr_id(self.0);
+                    }
+                }
+                Restore(prev)
+            }
+            #[cfg(not(any(feature = "exa", feature = "exa-wasm")))]
+            {
+                #[allow(dead_code)]
                 struct Restore(Option<usize>);
                 impl Drop for Restore {
                     fn drop(&mut self) {}
