@@ -121,6 +121,53 @@ pub fn clear_build() {
     }
 }
 
+/// Emit a minimal JSON IR for a model.
+///
+/// This function is a lightweight serializer that captures the model text, parameter
+/// list and equation kind into a versioned JSON blob suitable for consumption by
+/// an interpreter or a WASM-hosted runtime. It intentionally does not attempt to
+/// parse or validate the model text; downstream components should parse/compile
+/// the `model_text` string into an AST or bytecode as needed.
+pub fn emit_ir<E: Equation>(
+    model_txt: String,
+    output: Option<PathBuf>,
+    params: Vec<String>,
+) -> Result<String, io::Error> {
+    use serde_json::json;
+
+    let ir_obj = json!({
+        "ir_version": "1.0",
+        "kind": E::kind().to_str(),
+        "params": params,
+        "model_text": model_txt,
+    });
+
+    let output_path = output.unwrap_or_else(|| {
+        let random_suffix: String = rand::rng()
+            .sample_iter(&Alphanumeric)
+            .take(5)
+            .map(char::from)
+            .collect();
+        let default_name = format!(
+            "model_ir_{}_{}.json",
+            env::consts::OS, random_suffix
+        );
+        env::temp_dir().join("exa_tmp").with_file_name(default_name)
+    });
+
+    let serialized = serde_json::to_vec_pretty(&ir_obj)
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("serde_json error: {}", e)))?;
+
+    if let Some(parent) = output_path.parent() {
+        if !parent.exists() {
+            fs::create_dir_all(parent)?;
+        }
+    }
+
+    fs::write(&output_path, serialized)?;
+    Ok(output_path.to_string_lossy().to_string())
+}
+
 /// Creates a new template project for model compilation.
 ///
 /// This function creates a Rust project structure with the necessary dependencies
