@@ -33,6 +33,8 @@ pub struct ODE {
     init: Init,
     out: Out,
     neqs: Neqs,
+    // Optional registry id pointing to interpreter expressions
+    registry_id: Option<usize>,
 }
 
 impl ODE {
@@ -44,6 +46,28 @@ impl ODE {
             init,
             out,
             neqs,
+            registry_id: None,
+        }
+    }
+
+    /// Create an ODE with an associated interpreter registry id.
+    pub fn with_registry_id(
+        diffeq: DiffEq,
+        lag: Lag,
+        fa: Fa,
+        init: Init,
+        out: Out,
+        neqs: Neqs,
+        registry_id: Option<usize>,
+    ) -> Self {
+        Self {
+            diffeq,
+            lag,
+            fa,
+            init,
+            out,
+            neqs,
+            registry_id,
         }
     }
 }
@@ -199,6 +223,32 @@ impl Equation for ODE {
         support_point: &Vec<f64>,
         error_models: Option<&ErrorModels>,
     ) -> Result<(Self::P, Option<f64>), PharmsolError> {
+        // Ensure the interpreter dispatchers use this ODE's registry id (if any).
+        // We set the thread-local current id for the duration of this call and
+        // restore it on exit via a small RAII guard. When the `exa` feature is
+        // disabled these are no-ops.
+        let _restore_current = {
+            #[cfg(feature = "exa")]
+            {
+                let prev = crate::exa::interpreter::set_current_expr_id(self.registry_id);
+                struct Restore(Option<usize>);
+                impl Drop for Restore {
+                    fn drop(&mut self) {
+                        let _ = crate::exa::interpreter::set_current_expr_id(self.0);
+                    }
+                }
+                Restore(prev)
+            }
+            #[cfg(not(feature = "exa"))]
+            {
+                struct Restore(Option<usize>);
+                impl Drop for Restore {
+                    fn drop(&mut self) {}
+                }
+                Restore(None)
+            }
+        };
+
         // let lag = self.get_lag(support_point);
         // let fa = self.get_fa(support_point);
         let mut output = Self::P::new(self.nparticles());
