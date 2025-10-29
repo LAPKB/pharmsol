@@ -1,3 +1,5 @@
+use diffsol::Vector;
+
 use crate::data::Covariates;
 use crate::exa_wasm::interpreter::ast::Expr;
 use crate::simulator::T;
@@ -6,7 +8,7 @@ use std::collections::HashMap;
 
 // Evaluator extracted from mod.rs. Uses super::set_runtime_error to report
 // runtime problems so the parent module can expose them to the simulator.
-fn eval_call(name: &str, args: &[f64]) -> f64 {
+pub(crate) fn eval_call(name: &str, args: &[f64]) -> f64 {
     match name {
         "exp" => args.get(0).cloned().unwrap_or(0.0).exp(),
         "if" => {
@@ -47,7 +49,7 @@ fn eval_call(name: &str, args: &[f64]) -> f64 {
     }
 }
 
-fn eval_expr(
+pub(crate) fn eval_expr(
     expr: &Expr,
     x: &V,
     p: &V,
@@ -315,5 +317,4 @@ fn eval_expr(
     }
 }
 
-pub(crate) use eval_call;
-pub(crate) use eval_expr;
+// functions are exported as `pub(crate)` above for use by parent module

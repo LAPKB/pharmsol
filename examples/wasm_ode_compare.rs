@@ -37,14 +37,27 @@ fn main() {
     let ir_path = test_dir.join("test_model_ir.pkm");
     // This emits a JSON IR file for the same ODE model
     let _ir_file = exa_wasm::build::emit_ir::<equation::ODE>(
-        "|x, p, _t, dx, rateiv, _cov| { fetch_params!(p, ke, _v); dx[0] = -ke * x[0] + rateiv[0]; }".to_string(),
+        "|x, p, _t, dx, rateiv, _cov| {
+            fetch_params!(p, ke, _v);
+            // test comment
+            ke = ke+0.5;
+            dx[0] = -ke * x[0] + rateiv[0];
+        }"
+        .to_string(),
         None,
         None,
         Some("|p, _t, _cov, x| { }".to_string()),
-        Some("|x, p, _t, _cov, y| { fetch_params!(p, _ke, v); y[0] = x[0] / v; }".to_string()),
+        Some(
+            "|x, p, _t, _cov, y| {
+            fetch_params!(p, _ke, v);
+            y[0] = x[0] / v;
+        }"
+            .to_string(),
+        ),
         Some(ir_path.clone()),
         vec!["ke".to_string(), "v".to_string()],
-    ).expect("emit_ir failed");
+    )
+    .expect("emit_ir failed");
 
     //debug the contents of the ir file
     let ir_contents = std::fs::read_to_string(&ir_path).expect("Failed to read IR file");
