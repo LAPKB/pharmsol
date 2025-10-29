@@ -470,7 +470,7 @@ fn init_dispatch(
 /// compile them into small expression ASTs. It uses parameter ordering from
 /// the IR `params` array: callers must ensure `emit_ir` provided the correct
 /// parameter ordering.
-pub fn load_ir_ode(ir_path: PathBuf) -> Result<(ODE, Meta), io::Error> {
+pub fn load_ir_ode(ir_path: PathBuf) -> Result<(ODE, Meta, usize), io::Error> {
     let contents = fs::read_to_string(&ir_path)?;
     let ir: IrFile = serde_json::from_str(&contents)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("serde_json: {}", e)))?;
@@ -529,6 +529,8 @@ pub fn load_ir_ode(ir_path: PathBuf) -> Result<(ODE, Meta), io::Error> {
         let mut p = Parser::new(toks);
         if let Some(expr) = p.parse_expr() {
             dx_map.insert(i, expr);
+        } else {
+            eprintln!("exa::interpreter: failed to parse dx[{}] RHS='{}'", i, rhs);
         }
     }
     for (i, rhs) in extract_all_assign(&model_text, "y[") {
@@ -536,6 +538,8 @@ pub fn load_ir_ode(ir_path: PathBuf) -> Result<(ODE, Meta), io::Error> {
         let mut p = Parser::new(toks);
         if let Some(expr) = p.parse_expr() {
             out_map.insert(i, expr);
+        } else {
+            eprintln!("exa::interpreter: failed to parse y[{}] RHS='{}'", i, rhs);
         }
     }
     for (i, rhs) in extract_all_assign(&model_text, "x[") {
@@ -543,6 +547,11 @@ pub fn load_ir_ode(ir_path: PathBuf) -> Result<(ODE, Meta), io::Error> {
         let mut p = Parser::new(toks);
         if let Some(expr) = p.parse_expr() {
             init_map.insert(i, expr);
+        } else {
+            eprintln!(
+                "exa::interpreter: failed to parse init x[{}] RHS='{}'",
+                i, rhs
+            );
         }
     }
 
@@ -577,6 +586,11 @@ pub fn load_ir_ode(ir_path: PathBuf) -> Result<(ODE, Meta), io::Error> {
         let mut p = Parser::new(toks);
         if let Some(expr) = p.parse_expr() {
             lag_map.insert(i, expr);
+        } else {
+            eprintln!(
+                "exa::interpreter: failed to parse lag! entry {} => '{}'",
+                i, rhs
+            );
         }
     }
     for (i, rhs) in extract_macro_map(&model_text, "fa!") {
@@ -584,6 +598,11 @@ pub fn load_ir_ode(ir_path: PathBuf) -> Result<(ODE, Meta), io::Error> {
         let mut p = Parser::new(toks);
         if let Some(expr) = p.parse_expr() {
             fa_map.insert(i, expr);
+        } else {
+            eprintln!(
+                "exa::interpreter: failed to parse fa! entry {} => '{}'",
+                i, rhs
+            );
         }
     }
 
@@ -598,6 +617,11 @@ pub fn load_ir_ode(ir_path: PathBuf) -> Result<(ODE, Meta), io::Error> {
                     let mut p = Parser::new(toks);
                     if let Some(expr) = p.parse_expr() {
                         dx_map.insert(0, expr);
+                    } else {
+                        eprintln!(
+                            "exa::interpreter: failed to parse fallback dx RHS='{}'",
+                            rhs_expr
+                        );
                     }
                 }
             }
@@ -654,5 +678,34 @@ pub fn load_ir_ode(ir_path: PathBuf) -> Result<(ODE, Meta), io::Error> {
         (nstates, nouteqs),
         Some(id),
     );
-    Ok((ode, meta))
+    Ok((ode, meta, id))
+}
+
+/// Unregister a previously inserted model by id. Safe to call multiple times.
+pub fn unregister_model(id: usize) {
+    let mut guard = EXPR_REGISTRY.lock().unwrap();
+    guard.remove(&id);
+}
+
+/// Construct an `ODE` that references an existing registry entry by id.
+/// Returns None if the id is not present.
+pub fn ode_for_id(id: usize) -> Option<ODE> {
+    let guard = EXPR_REGISTRY.lock().unwrap();
+    if let Some(entry) = guard.get(&id) {
+        let nstates = entry.nstates;
+        // entry._nouteqs is private but accessible here
+        let nouteqs = entry._nouteqs;
+        let ode = ODE::with_registry_id(
+            diffeq_dispatch,
+            lag_dispatch,
+            fa_dispatch,
+            init_dispatch,
+            out_dispatch,
+            (nstates, nouteqs),
+            Some(id),
+        );
+        Some(ode)
+    } else {
+        None
+    }
 }
