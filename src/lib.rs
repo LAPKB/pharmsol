@@ -2,7 +2,6 @@ pub mod data;
 pub mod error;
 #[cfg(feature = "exa")]
 pub mod exa;
-#[cfg(feature = "exa-wasm")]
 pub mod exa_wasm;
 pub mod optimize;
 pub mod simulator;
@@ -18,7 +17,6 @@ pub use crate::simulator::equation::{self, ODE};
 pub use error::PharmsolError;
 #[cfg(feature = "exa")]
 pub use exa::*;
-#[cfg(feature = "exa-wasm")]
 pub use exa_wasm::*;
 pub use nalgebra::dmatrix;
 pub use std::collections::HashMap;

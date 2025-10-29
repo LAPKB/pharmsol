@@ -1,6 +1,5 @@
 //cargo run --example wasm_ode_compare --features exa
 
-#[cfg(feature = "exa-wasm")]
 fn main() {
     use pharmsol::{equation, exa_wasm, *};
     // use std::path::PathBuf; // not needed
@@ -95,7 +94,3 @@ fn main() {
     std::fs::remove_file(ir_path).ok();
 }
 
-#[cfg(not(any(feature = "exa", feature = "exa-wasm")))]
-fn main() {
-    panic!("This example requires the 'exa' or 'exa-wasm' feature. Please run with `cargo run --example wasm_ode_compare --features exa-wasm` or enable exa`.");
-}

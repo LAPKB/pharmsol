@@ -240,7 +240,6 @@ impl Equation for ODE {
                 }
                 Restore(prev)
             }
-            #[cfg(feature = "exa-wasm")]
             {
                 let prev = crate::exa_wasm::interpreter::set_current_expr_id(self.registry_id);
                 #[allow(dead_code)]
@@ -252,15 +251,7 @@ impl Equation for ODE {
                 }
                 Restore(prev)
             }
-            #[cfg(not(any(feature = "exa", feature = "exa-wasm")))]
-            {
-                #[allow(dead_code)]
-                struct Restore(Option<usize>);
-                impl Drop for Restore {
-                    fn drop(&mut self) {}
-                }
-                Restore(None)
-            }
+            
         };
 
         // let lag = self.get_lag(support_point);
