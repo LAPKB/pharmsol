@@ -37,6 +37,9 @@ pub enum Token {
     Ident(String),
     LBracket,
     RBracket,
+    LBrace,
+    RBrace,
+    Assign,
     LParen,
     RParen,
     Comma,
@@ -54,6 +57,24 @@ pub enum Token {
     Question,
     Colon,
     Semicolon,
+}
+
+#[derive(Debug, Clone)]
+pub enum Lhs {
+    Ident(String),
+    Indexed(String, Box<Expr>),
+}
+
+#[derive(Debug, Clone)]
+pub enum Stmt {
+    Expr(Expr),
+    Assign(Lhs, Expr),
+    Block(Vec<Stmt>),
+    If {
+        cond: Expr,
+        then_branch: Box<Stmt>,
+        else_branch: Option<Box<Stmt>>,
+    },
 }
 
 #[derive(Debug, Clone)]

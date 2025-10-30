@@ -47,6 +47,14 @@ pub fn tokenize(s: &str) -> Vec<Token> {
                 toks.push(Token::LBracket);
                 chars.next();
             }
+            '{' => {
+                toks.push(Token::LBrace);
+                chars.next();
+            }
+            '}' => {
+                toks.push(Token::RBrace);
+                chars.next();
+            }
             '?' => {
                 toks.push(Token::Question);
                 chars.next();
@@ -110,6 +118,8 @@ pub fn tokenize(s: &str) -> Vec<Token> {
                 if let Some(&'=') = chars.peek() {
                     chars.next();
                     toks.push(Token::EqEq);
+                } else {
+                    toks.push(Token::Assign);
                 }
             }
             '!' => {
@@ -521,5 +531,182 @@ impl Parser {
         }
 
         Some(node)
+    }
+}
+
+// Statement parsing (small recursive-descent on top of the expression parser)
+impl Parser {
+    pub fn parse_statements(&mut self) -> Option<Vec<crate::exa_wasm::interpreter::ast::Stmt>> {
+        let mut stmts = Vec::new();
+        while let Some(tok) = self.peek() {
+            match tok {
+                Token::RBrace => break,
+                _ => {
+                    if let Some(s) = self.parse_statement() {
+                        stmts.push(s);
+                        continue;
+                    } else {
+                        return None;
+                    }
+                }
+            }
+        }
+        Some(stmts)
+    }
+
+    fn parse_statement(&mut self) -> Option<crate::exa_wasm::interpreter::ast::Stmt> {
+        use crate::exa_wasm::interpreter::ast::{Lhs, Stmt};
+        // handle `if` as identifier token
+        if let Some(Token::Ident(id)) = self.peek().cloned() {
+            if id == "if" {
+                // consume 'if'
+                self.next();
+                // allow optional parens around condition
+                let cond = if let Some(Token::LParen) = self.peek().cloned() {
+                    self.next();
+                    let e = self.parse_expr()?;
+                    if let Some(Token::RParen) = self.peek().cloned() {
+                        self.next();
+                    } else {
+                        self.expected_push(")");
+                        return None;
+                    }
+                    e
+                } else {
+                    self.parse_expr()?
+                };
+                // then branch must be a block
+                let then_branch = if let Some(Token::LBrace) = self.peek().cloned() {
+                    self.next();
+                    let mut pstmts = Vec::new();
+                    while let Some(tok) = self.peek().cloned() {
+                        if let Token::RBrace = tok {
+                            self.next();
+                            break;
+                        }
+                        pstmts.push(self.parse_statement()?);
+                    }
+                    Stmt::Block(pstmts)
+                } else {
+                    // single statement as then branch
+                    self.parse_statement()
+                        .map(Box::new)
+                        .map(|b| *b)
+                        .unwrap_or(Stmt::Block(vec![]))
+                };
+                // optional else
+                let else_branch = if let Some(Token::Ident(eid)) = self.peek().cloned() {
+                    if eid == "else" {
+                        self.next();
+                        if let Some(Token::LBrace) = self.peek().cloned() {
+                            self.next();
+                            let mut estmts = Vec::new();
+                            while let Some(tok) = self.peek().cloned() {
+                                if let Token::RBrace = tok {
+                                    self.next();
+                                    break;
+                                }
+                                estmts.push(self.parse_statement()?);
+                            }
+                            Some(Box::new(Stmt::Block(estmts)))
+                        } else if let Some(Token::Ident(_)) = self.peek().cloned() {
+                            Some(Box::new(self.parse_statement()?))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                return Some(Stmt::If {
+                    cond,
+                    then_branch: Box::new(then_branch),
+                    else_branch,
+                });
+            }
+        }
+
+        // Attempt assignment: lookahead without consuming
+        if let Some(Token::Ident(_)) = self.peek() {
+            // lookahead for simple `Ident =` or `Ident [ ... ] =`
+            let mut is_assign = false;
+            // check immediate next token
+            if let Some(next_tok) = self.tokens.get(self.pos + 1) {
+                match next_tok {
+                    Token::Assign => is_assign = true,
+                    Token::LBracket => {
+                        // find matching RBracket
+                        let mut depth = 0isize;
+                        let mut j = self.pos + 1;
+                        while j < self.tokens.len() {
+                            match self.tokens[j] {
+                                Token::LBracket => depth += 1,
+                                Token::RBracket => {
+                                    depth -= 1;
+                                    if depth == 0 {
+                                        // check token after RBracket
+                                        if let Some(tok_after) = self.tokens.get(j + 1) {
+                                            if let Token::Assign = tok_after {
+                                                is_assign = true;
+                                            }
+                                        }
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            j += 1;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            if is_assign {
+                // parse lhs
+                let lhs = if let Some(Token::Ident(name)) = self.next().cloned() {
+                    if let Some(Token::LBracket) = self.peek().cloned() {
+                        self.next();
+                        let idx = self.parse_expr()?;
+                        if let Some(Token::RBracket) = self.peek().cloned() {
+                            self.next();
+                            Lhs::Indexed(name, Box::new(idx))
+                        } else {
+                            self.expected_push("]");
+                            return None;
+                        }
+                    } else {
+                        Lhs::Ident(name)
+                    }
+                } else {
+                    return None;
+                };
+                // expect assign
+                if let Some(Token::Assign) = self.peek().cloned() {
+                    self.next();
+                    let rhs = self.parse_expr()?;
+                    // expect semicolon
+                    if let Some(Token::Semicolon) = self.peek().cloned() {
+                        self.next();
+                    } else {
+                        self.expected_push(";");
+                        return None;
+                    }
+                    return Some(Stmt::Assign(lhs, rhs));
+                }
+            }
+        }
+
+        // Expression statement: expr ;
+        let expr = self.parse_expr()?;
+        if let Some(Token::Semicolon) = self.peek().cloned() {
+            self.next();
+        } else {
+            self.expected_push(";");
+            return None;
+        }
+        Some(Stmt::Expr(expr))
     }
 }

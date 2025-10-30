@@ -18,8 +18,8 @@ pub use registry::{
 #[cfg(test)]
 mod tests {
     use super::*;
-    use diffsol::Vector;
     use crate::exa_wasm::interpreter::eval::eval_expr;
+    use diffsol::Vector;
 
     #[test]
     fn test_tokenize_and_parse_simple() {
@@ -34,7 +34,7 @@ mod tests {
         pvec[0] = 3.0; // ke
         let rateiv = V::zeros(1, diffsol::NalgebraContext);
         // evaluation should succeed (ke resolves via pmap not provided -> 0)
-        let val = eval_expr(&expr, &x, &pvec, &rateiv, None, Some(0.0), None);
+        let val = eval_expr(&expr, &x, &pvec, &rateiv, None, None, Some(0.0), None);
         // numeric result must be finite
         assert!(val.is_finite());
     }

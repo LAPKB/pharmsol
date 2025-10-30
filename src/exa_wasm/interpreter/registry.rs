@@ -3,15 +3,19 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
-use crate::exa_wasm::interpreter::ast::Expr;
+use crate::exa_wasm::interpreter::ast::{Expr, Stmt};
 
 #[derive(Clone, Debug)]
 pub struct RegistryEntry {
-    pub dx: HashMap<usize, Expr>,
-    pub out: HashMap<usize, Expr>,
-    pub init: HashMap<usize, Expr>,
+    // statement-level representations for closures; each Vec contains
+    // the top-level statements parsed from the corresponding closure
+    pub diffeq_stmts: Vec<Stmt>,
+    pub out_stmts: Vec<Stmt>,
+    pub init_stmts: Vec<Stmt>,
     pub lag: HashMap<usize, Expr>,
     pub fa: HashMap<usize, Expr>,
+    // prelude assignments executed before dx evaluation: ordered (name, expr)
+    pub prelude: Vec<(String, Expr)>,
     pub pmap: HashMap<String, usize>,
     pub nstates: usize,
     pub _nouteqs: usize,

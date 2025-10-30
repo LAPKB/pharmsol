@@ -20,7 +20,10 @@ fn main() {
     let ode = equation::ODE::new(
         |x, p, _t, dx, _b, rateiv, _cov| {
             fetch_params!(p, ke, _v);
-            dx[0] = -ke * x[0] + rateiv[0];
+            if true {
+                dx[0] = -ke * x[0] + rateiv[0];
+            }
+            // dx[0] = -ke * x[0] + rateiv[0];
         },
         |_p, _t, _cov| lag! {},
         |_p, _t, _cov| fa! {},
@@ -39,9 +42,9 @@ fn main() {
     let _ir_file = exa_wasm::build::emit_ir::<equation::ODE>(
         "|x, p, _t, dx, rateiv, _cov| {
             fetch_params!(p, ke, _v);
-            // test comment
-            ke = ke+0.5;
-            dx[0] = -ke * x[0] + rateiv[0];
+            if false {
+                dx[0] = -ke * x[0] + rateiv[0];
+            }
         }"
         .to_string(),
         None,
