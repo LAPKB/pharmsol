@@ -5,12 +5,12 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum Opcode {
     // stack and constants
-    PushConst(f64),       // push constant
-    LoadParam(usize),     // push p[idx]
-    LoadX(usize),         // push x[idx]
-    LoadRateiv(usize),    // push rateiv[idx]
-    LoadLocal(usize),     // push local slot
-    LoadT,                // push t
+    PushConst(f64),    // push constant
+    LoadParam(usize),  // push p[idx]
+    LoadX(usize),      // push x[idx]
+    LoadRateiv(usize), // push rateiv[idx]
+    LoadLocal(usize),  // push local slot
+    LoadT,             // push t
 
     // arithmetic
     Add,
@@ -28,17 +28,17 @@ pub enum Opcode {
     Ne,
 
     // control flow
-    Jump(usize),          // absolute pc
-    JumpIfFalse(usize),   // pop cond, if false jump
+    Jump(usize),        // absolute pc
+    JumpIfFalse(usize), // pop cond, if false jump
 
     // builtin call: index into func table, arg count
     CallBuiltin(usize, usize),
 
     // stores
-    StoreDx(usize),       // pop value and assign to dx[index]
-    StoreX(usize),        // pop value into x[index]
-    StoreY(usize),        // pop value into y[index]
-    StoreLocal(usize),    // pop value into local slot
+    StoreDx(usize),    // pop value and assign to dx[index]
+    StoreX(usize),     // pop value into x[index]
+    StoreY(usize),     // pop value into y[index]
+    StoreLocal(usize), // pop value into local slot
 }
 
 /// Execute a sequence of opcodes with full VM context.
@@ -216,7 +216,19 @@ where
     let mut locals: Vec<f64> = Vec::new();
     let funcs: Vec<String> = Vec::new();
     let builtins = |_: &str, _: &[f64]| -> f64 { 0.0 };
-    run_bytecode_full(code, &x, p, &rateiv, 0.0, &mut locals, &funcs, &builtins, |n,i,v| {
-        if n == "dx" { assign_dx(i,v); }
-    });
+    run_bytecode_full(
+        code,
+        &x,
+        p,
+        &rateiv,
+        0.0,
+        &mut locals,
+        &funcs,
+        &builtins,
+        |n, i, v| {
+            if n == "dx" {
+                assign_dx(i, v);
+            }
+        },
+    );
 }

@@ -20,7 +20,8 @@ pub struct RegistryEntry {
     pub nstates: usize,
     pub _nouteqs: usize,
     // optional compiled bytecode blobs for closures (index -> opcode sequence)
-    pub bytecode_diffeq: std::collections::HashMap<usize, Vec<crate::exa_wasm::interpreter::Opcode>>,
+    pub bytecode_diffeq:
+        std::collections::HashMap<usize, Vec<crate::exa_wasm::interpreter::Opcode>>,
     // support for out/init/lag/fa as maps of index -> opcode sequences
     pub bytecode_out: std::collections::HashMap<usize, Vec<crate::exa_wasm::interpreter::Opcode>>,
     pub bytecode_init: std::collections::HashMap<usize, Vec<crate::exa_wasm::interpreter::Opcode>>,

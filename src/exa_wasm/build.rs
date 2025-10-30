@@ -117,6 +117,10 @@ pub fn emit_ir<E: crate::Equation>(
     }
 
     // helper to parse a closure text into Vec<Stmt>
+    // This emitter requires closures to parse successfully; if parsing fails
+    // we return an error rather than emitting textual closures. That lets the
+    // runtime rely on a single robust pipeline (AST + bytecode) instead of
+    // fragile textual fallbacks.
     fn try_parse_and_rewrite(
         src: &str,
         pmap: &std::collections::HashMap<String, usize>,
@@ -250,38 +254,170 @@ pub fn emit_ir<E: crate::Equation>(
         ir_obj["init_ast"] = init_ast_val;
     }
 
-    // Attempt to compile a tiny bytecode for simple dx assignments found in
-    // the parsed diffeq AST. This is a conservative, best-effort POC: only
-    // compile assignments where the LHS is `dx[const]` and RHS contains
-    // numeric constants, Params and binary ops (+ - * / ^).
-    // small expression compiler reused for diffeq/out/init compilation
+    // Compile expressions into bytecode. This compiler covers numeric
+    // literals, Param(i), simple indexed loads with constant indices (x/p/rateiv),
+    // locals, unary -, binary ops, calls to known builtins, and ternary.
     fn compile_expr_top(
         expr: &crate::exa_wasm::interpreter::Expr,
         out: &mut Vec<crate::exa_wasm::interpreter::Opcode>,
+        funcs: &mut Vec<String>,
+        locals: &Vec<String>,
     ) -> bool {
+    use crate::exa_wasm::interpreter::{Expr, Opcode};
         match expr {
-            crate::exa_wasm::interpreter::Expr::Number(n) => {
-                out.push(crate::exa_wasm::interpreter::Opcode::PushConst(*n));
+            Expr::Number(n) => {
+                out.push(Opcode::PushConst(*n));
                 true
             }
-            crate::exa_wasm::interpreter::Expr::Param(i) => {
-                out.push(crate::exa_wasm::interpreter::Opcode::LoadParam(*i));
+            Expr::Param(i) => {
+                out.push(Opcode::LoadParam(*i));
                 true
             }
-            crate::exa_wasm::interpreter::Expr::BinaryOp { lhs, op, rhs } => {
-                if !compile_expr_top(lhs, out) {
+            Expr::Ident(name) => {
+                // treat as local if present
+                if let Some(pos) = locals.iter().position(|n| n == name) {
+                    out.push(Opcode::LoadLocal(pos));
+                    true
+                } else {
+                    // unknown bare identifier — compilation fails; loader will
+                    // catch this earlier via typecheck, but be conservative here
+                    false
+                }
+            }
+            Expr::Indexed(name, idx_expr) => {
+                // only support constant numeric indices in compiled form
+                if let Expr::Number(n) = &**idx_expr {
+                    let idx = *n as usize;
+                    match name.as_str() {
+                        "x" => {
+                            out.push(Opcode::LoadX(idx));
+                            true
+                        }
+                        "rateiv" => {
+                            out.push(Opcode::LoadRateiv(idx));
+                            true
+                        }
+                        "p" | "params" => {
+                            out.push(Opcode::LoadParam(idx));
+                            true
+                        }
+                        _ => false,
+                    }
+                } else {
+                    false
+                }
+            }
+            Expr::UnaryOp { op, rhs } => {
+                if op == "-" {
+                    if !compile_expr_top(rhs, out, funcs, locals) {
+                        return false;
+                    }
+                    // multiply by -1.0
+                    out.push(Opcode::PushConst(-1.0));
+                    out.push(Opcode::Mul);
+                    true
+                } else {
+                    false
+                }
+            }
+            Expr::BinaryOp { lhs, op, rhs } => {
+                if !compile_expr_top(lhs, out, funcs, locals) {
                     return false;
                 }
-                if !compile_expr_top(rhs, out) {
+                if !compile_expr_top(rhs, out, funcs, locals) {
                     return false;
                 }
                 match op.as_str() {
-                    "+" => out.push(crate::exa_wasm::interpreter::Opcode::Add),
-                    "-" => out.push(crate::exa_wasm::interpreter::Opcode::Sub),
-                    "*" => out.push(crate::exa_wasm::interpreter::Opcode::Mul),
-                    "/" => out.push(crate::exa_wasm::interpreter::Opcode::Div),
-                    "^" => out.push(crate::exa_wasm::interpreter::Opcode::Pow),
+                    "+" => out.push(Opcode::Add),
+                    "-" => out.push(Opcode::Sub),
+                    "*" => out.push(Opcode::Mul),
+                    "/" => out.push(Opcode::Div),
+                    "^" => out.push(Opcode::Pow),
+                    "<" => out.push(Opcode::Lt),
+                    ">" => out.push(Opcode::Gt),
+                    "<=" => out.push(Opcode::Le),
+                    ">=" => out.push(Opcode::Ge),
+                    "==" => out.push(Opcode::Eq),
+                    "!=" => out.push(Opcode::Ne),
                     _ => return false,
+                }
+                true
+            }
+            Expr::Call { name, args } => {
+                // only compile known builtins
+                if crate::exa_wasm::interpreter::is_known_function(name.as_str()) {
+                    // compile args
+                    for a in args.iter() {
+                        if !compile_expr_top(a, out, funcs, locals) {
+                            return false;
+                        }
+                    }
+                    // register function in funcs table
+                    let idx = match funcs.iter().position(|f| f == name) {
+                        Some(i) => i,
+                        None => {
+                            funcs.push(name.clone());
+                            funcs.len() - 1
+                        }
+                    };
+                    out.push(Opcode::CallBuiltin(idx, args.len()));
+                    true
+                } else {
+                    false
+                }
+            }
+            Expr::MethodCall { receiver, name, args } => {
+                // lower method call to function with receiver as first arg
+                if crate::exa_wasm::interpreter::is_known_function(name.as_str()) {
+                    if !compile_expr_top(receiver, out, funcs, locals) {
+                        return false;
+                    }
+                    for a in args.iter() {
+                        if !compile_expr_top(a, out, funcs, locals) {
+                            return false;
+                        }
+                    }
+                    let idx = match funcs.iter().position(|f| f == name) {
+                        Some(i) => i,
+                        None => {
+                            funcs.push(name.clone());
+                            funcs.len() - 1
+                        }
+                    };
+                    out.push(Opcode::CallBuiltin(idx, 1 + args.len()));
+                    true
+                } else {
+                    false
+                }
+            }
+            Expr::Ternary { cond, then_branch, else_branch } => {
+                // compile cond
+                if !compile_expr_top(cond, out, funcs, locals) {
+                    return false;
+                }
+                // emit JumpIfFalse to else
+                let jf_pos = out.len();
+                out.push(Opcode::JumpIfFalse(0));
+                // then
+                if !compile_expr_top(then_branch, out, funcs, locals) {
+                    return false;
+                }
+                // jump over else
+                let jmp_pos = out.len();
+                out.push(Opcode::Jump(0));
+                // fix JumpIfFalse target
+                let else_pos = out.len();
+                if let Opcode::JumpIfFalse(ref mut addr) = out[jf_pos] {
+                    *addr = else_pos;
+                }
+                // else
+                if !compile_expr_top(else_branch, out, funcs, locals) {
+                    return false;
+                }
+                // fix Jump target
+                let end_pos = out.len();
+                if let Opcode::Jump(ref mut addr) = out[jmp_pos] {
+                    *addr = end_pos;
                 }
                 true
             }
@@ -289,25 +425,37 @@ pub fn emit_ir<E: crate::Equation>(
         }
     }
 
-    let mut bytecode_map: HashMap<usize, Vec<crate::exa_wasm::interpreter::Opcode>> =
-        HashMap::new();
+    let mut bytecode_map: HashMap<usize, Vec<crate::exa_wasm::interpreter::Opcode>> = HashMap::new();
     if let Some(v) = ir_obj.get("diffeq_ast") {
         // try to deserialize back into AST
         match serde_json::from_value::<Vec<crate::exa_wasm::interpreter::Stmt>>(v.clone()) {
             Ok(stmts) => {
-                // reuse compile_expr_top defined above for expression compilation
+                // collect local variable names from non-indexed assignments
+                let mut locals: Vec<String> = Vec::new();
+                for st in stmts.iter() {
+                    if let crate::exa_wasm::interpreter::Stmt::Assign(lhs, _rhs) = st {
+                        if let crate::exa_wasm::interpreter::Lhs::Ident(name) = lhs {
+                            if !locals.iter().any(|n| n == name) {
+                                locals.push(name.clone());
+                            }
+                        }
+                    }
+                }
+                // function table discovered during compilation
+                let mut funcs: Vec<String> = Vec::new();
 
+                // reuse compile_expr_top defined above for expression compilation
                 for st in stmts.iter() {
                     if let crate::exa_wasm::interpreter::Stmt::Assign(lhs, rhs) = st {
-                        if let crate::exa_wasm::interpreter::Lhs::Indexed(name, idx_expr) = lhs {
-                            if name == "dx" {
+                        if let crate::exa_wasm::interpreter::Lhs::Indexed(_name, idx_expr) = lhs {
+                            if _name == "dx" {
                                 // only constant numeric index supported in POC
                                 match &**idx_expr {
                                     crate::exa_wasm::interpreter::Expr::Number(n) => {
                                         let idx = *n as usize;
                                         let mut code: Vec<crate::exa_wasm::interpreter::Opcode> =
                                             Vec::new();
-                                        if compile_expr_top(rhs, &mut code) {
+                                        if compile_expr_top(rhs, &mut code, &mut funcs, &locals) {
                                             code.push(
                                                 crate::exa_wasm::interpreter::Opcode::StoreDx(idx),
                                             );
@@ -319,6 +467,14 @@ pub fn emit_ir<E: crate::Equation>(
                             }
                         }
                     }
+                }
+
+                // attach discovered funcs/locals to the IR object if we compiled
+                if !funcs.is_empty() {
+                    ir_obj["funcs"] = serde_json::to_value(&funcs).unwrap_or(serde_json::Value::Null);
+                }
+                if !locals.is_empty() {
+                    ir_obj["locals"] = serde_json::to_value(&locals).unwrap_or(serde_json::Value::Null);
                 }
             }
             Err(_) => {}
@@ -345,14 +501,19 @@ pub fn emit_ir<E: crate::Equation>(
 
     // Helper to compile an Assign stmt into bytecode when LHS is y[idx] or x[idx]
     if let Some(v) = ir_obj.get("out_ast") {
-        if let Ok(stmts) = serde_json::from_value::<Vec<crate::exa_wasm::interpreter::Stmt>>(v.clone()) {
+        if let Ok(stmts) =
+            serde_json::from_value::<Vec<crate::exa_wasm::interpreter::Stmt>>(v.clone())
+        {
             for st in stmts.iter() {
                 if let crate::exa_wasm::interpreter::Stmt::Assign(lhs, rhs) = st {
-                    if let crate::exa_wasm::interpreter::Lhs::Indexed(name, idx_expr) = lhs {
+                    if let crate::exa_wasm::interpreter::Lhs::Indexed(_name, idx_expr) = lhs {
                         if let crate::exa_wasm::interpreter::Expr::Number(n) = &**idx_expr {
                             let idx = *n as usize;
                             let mut code: Vec<crate::exa_wasm::interpreter::Opcode> = Vec::new();
-                            if compile_expr_top(rhs, &mut code) {
+                            // reuse locals/funcs from surrounding scope if present
+                            let mut funcs: Vec<String> = Vec::new();
+                            let locals: Vec<String> = Vec::new();
+                            if compile_expr_top(rhs, &mut code, &mut funcs, &locals) {
                                 code.push(crate::exa_wasm::interpreter::Opcode::StoreY(idx));
                                 out_bytecode_map.insert(idx, code);
                             }
@@ -364,14 +525,18 @@ pub fn emit_ir<E: crate::Equation>(
     }
 
     if let Some(v) = ir_obj.get("init_ast") {
-        if let Ok(stmts) = serde_json::from_value::<Vec<crate::exa_wasm::interpreter::Stmt>>(v.clone()) {
+        if let Ok(stmts) =
+            serde_json::from_value::<Vec<crate::exa_wasm::interpreter::Stmt>>(v.clone())
+        {
             for st in stmts.iter() {
                 if let crate::exa_wasm::interpreter::Stmt::Assign(lhs, rhs) = st {
-                    if let crate::exa_wasm::interpreter::Lhs::Indexed(name, idx_expr) = lhs {
+                    if let crate::exa_wasm::interpreter::Lhs::Indexed(_name, idx_expr) = lhs {
                         if let crate::exa_wasm::interpreter::Expr::Number(n) = &**idx_expr {
                             let idx = *n as usize;
                             let mut code: Vec<crate::exa_wasm::interpreter::Opcode> = Vec::new();
-                            if compile_expr_top(rhs, &mut code) {
+                            let mut funcs: Vec<String> = Vec::new();
+                            let locals: Vec<String> = Vec::new();
+                            if compile_expr_top(rhs, &mut code, &mut funcs, &locals) {
                                 code.push(crate::exa_wasm::interpreter::Opcode::StoreX(idx));
                                 init_bytecode_map.insert(idx, code);
                             }
@@ -383,10 +548,12 @@ pub fn emit_ir<E: crate::Equation>(
     }
 
     if !out_bytecode_map.is_empty() {
-        ir_obj["out_bytecode"] = serde_json::to_value(&out_bytecode_map).unwrap_or(serde_json::Value::Null);
+        ir_obj["out_bytecode"] =
+            serde_json::to_value(&out_bytecode_map).unwrap_or(serde_json::Value::Null);
     }
     if !init_bytecode_map.is_empty() {
-        ir_obj["init_bytecode"] = serde_json::to_value(&init_bytecode_map).unwrap_or(serde_json::Value::Null);
+        ir_obj["init_bytecode"] =
+            serde_json::to_value(&init_bytecode_map).unwrap_or(serde_json::Value::Null);
     }
 
     let output_path = output.unwrap_or_else(|| {

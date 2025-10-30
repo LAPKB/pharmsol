@@ -29,11 +29,16 @@ struct IrFile {
     out_ast: Option<Vec<crate::exa_wasm::interpreter::ast::Stmt>>,
     init_ast: Option<Vec<crate::exa_wasm::interpreter::ast::Stmt>>,
     // optional compiled bytecode emitted by `emit_ir`
-    diffeq_bytecode: Option<std::collections::HashMap<usize, Vec<crate::exa_wasm::interpreter::Opcode>>>,
-    out_bytecode: Option<std::collections::HashMap<usize, Vec<crate::exa_wasm::interpreter::Opcode>>>,
-    init_bytecode: Option<std::collections::HashMap<usize, Vec<crate::exa_wasm::interpreter::Opcode>>>,
-    lag_bytecode: Option<std::collections::HashMap<usize, Vec<crate::exa_wasm::interpreter::Opcode>>>,
-    fa_bytecode: Option<std::collections::HashMap<usize, Vec<crate::exa_wasm::interpreter::Opcode>>>,
+    diffeq_bytecode:
+        Option<std::collections::HashMap<usize, Vec<crate::exa_wasm::interpreter::Opcode>>>,
+    out_bytecode:
+        Option<std::collections::HashMap<usize, Vec<crate::exa_wasm::interpreter::Opcode>>>,
+    init_bytecode:
+        Option<std::collections::HashMap<usize, Vec<crate::exa_wasm::interpreter::Opcode>>>,
+    lag_bytecode:
+        Option<std::collections::HashMap<usize, Vec<crate::exa_wasm::interpreter::Opcode>>>,
+    fa_bytecode:
+        Option<std::collections::HashMap<usize, Vec<crate::exa_wasm::interpreter::Opcode>>>,
     // optional emitted function table and local slot ordering
     funcs: Option<Vec<String>>,
     locals: Option<Vec<String>>,
@@ -70,7 +75,6 @@ pub fn load_ir_ode(
     let lag_text = ir.lag.clone().unwrap_or_default();
     let fa_text = ir.fa.clone().unwrap_or_default();
 
-    
     let mut lag_map: HashMap<usize, Expr> = HashMap::new();
     let mut fa_map: HashMap<usize, Expr> = HashMap::new();
     let mut prelude: Vec<(String, Expr)> = Vec::new();
@@ -90,90 +94,45 @@ pub fn load_ir_ode(
     // extract_all_assign delegated to loader_helpers
 
     // Prefer pre-parsed AST emitted by the IR emitter. If the emitter
-    // provided bytecode we consume it when populating the RegistryEntry
-    // below; otherwise parse textual closures only when the parser succeeds.
+    // provided bytecode we will accept it; textual parsing of closure
+    // strings is no longer supported at runtime. This guarantees a single
+    // robust pipeline: AST + bytecode emitted by `emit_ir`.
     if let Some(ast) = ir.diffeq_ast.clone() {
-        // ensure the AST types are valid
-        if let Err(e) = typecheck::check_statements(&ast) {
+        // Extract prelude assignments (non-indexed Ident = expr) into `prelude`
+        // and keep the remaining statements for execution. We do not run the
+        // global typechecker here because prelude locals must be known to
+        // validate the remainder; later validation steps will cover the
+        // full statement set with prelude information.
+        let mut main_stmts: Vec<crate::exa_wasm::interpreter::ast::Stmt> = Vec::new();
+        for st in ast.into_iter() {
+            match st {
+                crate::exa_wasm::interpreter::ast::Stmt::Assign(lhs, rhs) => {
+                    if let crate::exa_wasm::interpreter::ast::Lhs::Ident(name) = lhs {
+                        prelude.push((name, rhs));
+                        continue;
+                    }
+                    main_stmts.push(crate::exa_wasm::interpreter::ast::Stmt::Assign(lhs, rhs));
+                }
+                other => main_stmts.push(other),
+            }
+        }
+        diffeq_stmts = main_stmts;
+    } else if ir.diffeq_bytecode.is_some() {
+        // bytecode present without AST: accept but require func/local metadata
+        if ir.funcs.is_none() || ir.locals.is_none() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("type errors in diffeq AST in IR: {:?}", e),
+                "diffeq bytecode present but missing funcs/locals metadata in IR",
             ));
         }
-        diffeq_stmts = ast;
+    } else {
+        parse_errors.push("diffeq closure missing: emit_ir must provide diffeq_ast or diffeq_bytecode".to_string());
     }
 
-    // Prefer structural parsing of the closure body using the new statement
-    // parser when no pre-parsed AST is provided. This is more robust than
-    // substring scanning and allows us to convert top-level `if` statements
-    // into conditional RHS expressions. closure extraction and macro-stripping
-    // delegated to loader_helpers
-
-    // boolean literals are parsed by the tokenizer (Token::Bool). No normalization needed.
-
-    if diffeq_stmts.is_empty() {
-        if let Some(body) = crate::exa_wasm::interpreter::loader_helpers::extract_closure_body(&diffeq_text)
-        {
-            let mut cleaned = body.clone();
-            cleaned = crate::exa_wasm::interpreter::loader_helpers::strip_macro_calls(
-                &cleaned,
-                "fetch_params!",
-            );
-            cleaned = crate::exa_wasm::interpreter::loader_helpers::strip_macro_calls(
-                &cleaned,
-                "fetch_param!",
-            );
-            cleaned =
-                crate::exa_wasm::interpreter::loader_helpers::strip_macro_calls(&cleaned, "fetch_cov!");
-
-            let toks = tokenize(&cleaned);
-            let mut p = Parser::new(toks);
-            if let Some(mut stmts) = p.parse_statements() {
-                // rewrite param identifiers into Param(index) nodes for faster lookup
-                crate::exa_wasm::interpreter::loader_helpers::rewrite_params_in_stmts(
-                    &mut stmts,
-                    &pmap,
-                );
-
-                // run a lightweight type-check pass and reject obviously bad IR
-                if let Err(e) = typecheck::check_statements(&stmts) {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!("type errors in diffeq closure: {:?}", e),
-                    ));
-                }
-                // keep the parsed statements for later execution
-                diffeq_stmts = stmts;
-            } else {
-                parse_errors.push(format!(
-                    "failed to parse diffeq closure text; emit_ir must provide bytecode or valid AST/closure"
-                ));
-            }
-        } else {
-            // no closure body found and no diffeq_ast/diffeq_bytecode provided
-            parse_errors.push("diffeq closure missing or empty; emit_ir must provide bytecode or valid AST/closure".to_string());
-        }
-    }
-
-    // extract non-indexed assignments like `ke = ke + 0.5;` from diffeq prelude
-    for (name, rhs) in crate::exa_wasm::interpreter::loader_helpers::extract_prelude(&diffeq_text) {
-        let toks = tokenize(&rhs);
-        let mut p = Parser::new(toks);
-        match p.parse_expr_result() {
-            Ok(expr) => prelude.push((name, expr)),
-            Err(e) => parse_errors.push(format!(
-                "failed to parse prelude assignment '{} = {}' : {}",
-                name, rhs, e
-            )),
-        }
-    }
-    if !prelude.is_empty() {
-        eprintln!(
-            "[loader] parsed prelude assignments: {:?}",
-            prelude.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>()
-        );
-    }
-    // If the IR includes a pre-parsed out AST, use it.
+    // prelude is extracted from diffeq_ast above (if present). If diffeq
+    // bytecode was provided without AST, prelude will remain empty and
+    // `locals` should be provided by emit_ir to define local slots.
+    // prefer pre-parsed AST for out; if not present, bytecode_out may be supplied
     if let Some(ast) = ir.out_ast.clone() {
         if let Err(e) = typecheck::check_statements(&ast) {
             return Err(io::Error::new(
@@ -182,43 +141,18 @@ pub fn load_ir_ode(
             ));
         }
         out_stmts = ast;
-    }
-
-    // parse out closure into statements
-    if let Some(body) = crate::exa_wasm::interpreter::loader_helpers::extract_closure_body(&out_text)
-    {
-        let mut cleaned = body.clone();
-        // strip macros
-        cleaned = crate::exa_wasm::interpreter::loader_helpers::strip_macro_calls(
-            &cleaned,
-            "fetch_params!",
-        );
-        cleaned = crate::exa_wasm::interpreter::loader_helpers::strip_macro_calls(
-            &cleaned,
-            "fetch_param!",
-        );
-        cleaned =
-            crate::exa_wasm::interpreter::loader_helpers::strip_macro_calls(&cleaned, "fetch_cov!");
-        let toks = tokenize(&cleaned);
-        let mut p = Parser::new(toks);
-        if let Some(mut stmts) = p.parse_statements() {
-            crate::exa_wasm::interpreter::loader_helpers::rewrite_params_in_stmts(&mut stmts, &pmap);
-            if let Err(e) = typecheck::check_statements(&stmts) {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("type errors in out closure: {:?}", e),
-                ));
-            }
-            out_stmts = stmts;
-        } else {
-            parse_errors.push("failed to parse out closure text; emit_ir must provide bytecode or valid AST/closure".to_string());
+    } else if ir.out_bytecode.is_some() {
+        if ir.funcs.is_none() || ir.locals.is_none() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "out bytecode present but missing funcs/locals metadata in IR",
+            ));
         }
     } else {
-    // out closure missing: that's acceptable (out_stmts may be empty)
-    // leave out_stmts empty and continue
+        // out closure missing: acceptable
     }
 
-    // If the IR includes a pre-parsed init AST, use it.
+    // prefer pre-parsed AST for init; if not present, bytecode_init may be supplied
     if let Some(ast) = ir.init_ast.clone() {
         if let Err(e) = typecheck::check_statements(&ast) {
             return Err(io::Error::new(
@@ -227,38 +161,15 @@ pub fn load_ir_ode(
             ));
         }
         init_stmts = ast;
-    }
-
-    // parse init closure into statements
-    if let Some(body) = crate::exa_wasm::interpreter::loader_helpers::extract_closure_body(&init_text)
-    {
-        let mut cleaned = body.clone();
-        cleaned = crate::exa_wasm::interpreter::loader_helpers::strip_macro_calls(
-            &cleaned,
-            "fetch_params!",
-        );
-        cleaned = crate::exa_wasm::interpreter::loader_helpers::strip_macro_calls(
-            &cleaned,
-            "fetch_param!",
-        );
-        cleaned =
-            crate::exa_wasm::interpreter::loader_helpers::strip_macro_calls(&cleaned, "fetch_cov!");
-        let toks = tokenize(&cleaned);
-        let mut p = Parser::new(toks);
-        if let Some(mut stmts) = p.parse_statements() {
-            crate::exa_wasm::interpreter::loader_helpers::rewrite_params_in_stmts(&mut stmts, &pmap);
-            if let Err(e) = typecheck::check_statements(&stmts) {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("type errors in init closure: {:?}", e),
-                ));
-            }
-            init_stmts = stmts;
-        } else {
-            parse_errors.push("failed to parse init closure text; emit_ir must provide bytecode or valid AST/closure".to_string());
+    } else if ir.init_bytecode.is_some() {
+        if ir.funcs.is_none() || ir.locals.is_none() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "init bytecode present but missing funcs/locals metadata in IR",
+            ));
         }
     } else {
-    // init closure missing: acceptable — init_stmts may be empty
+        // init closure missing: acceptable
     }
 
     if let Some(lmap) = ir.lag_map.clone() {

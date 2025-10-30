@@ -21,6 +21,9 @@ pub use vm::{run_bytecode, Opcode};
 // Re-export some AST and helper symbols for other sibling modules (e.g. build)
 pub use ast::{Expr, Lhs, Stmt};
 pub use loader_helpers::{extract_closure_body, strip_macro_calls};
+// Re-export builtin helpers so other modules (like the emitter) can query
+// builtin metadata without depending on private module paths.
+pub use builtins::{is_known_function, arg_count_range};
 
 // Keep a small set of unit tests that exercise the parser/eval and loader
 // wiring. Runtime dispatch and registry behavior live in the `dispatch`
@@ -93,25 +96,22 @@ mod tests {
         use std::env;
         use std::fs;
         let tmp = env::temp_dir().join("exa_test_ir_unknown_fn.json");
-        let ir_json = serde_json::json!({
-            "ir_version": "1.0",
-            "kind": "EqnKind::ODE",
-            "params": ["ke","v"],
-            "diffeq": "|x, p, _t, dx, rateiv, _cov| { dx[0] = foobar(1.0); }",
-            "lag": "",
-            "fa": "",
-            "init": "",
-            "out": ""
-        });
-        let s = serde_json::to_string_pretty(&ir_json).expect("serialize");
-        fs::write(&tmp, s.as_bytes()).expect("write tmp");
-
+        // Use the emitter to create IR that includes parsed AST; loader will
+        // then validate and reject unknown function calls.
+        let diffeq = "|x, p, _t, dx, rateiv, _cov| { dx[0] = foobar(1.0); }".to_string();
+        let _path = crate::exa_wasm::build::emit_ir::<crate::equation::ODE>(
+            diffeq,
+            None,
+            None,
+            None,
+            None,
+            Some(tmp.clone()),
+            vec!["ke".to_string(), "v".to_string()],
+        )
+        .expect("emit_ir failed");
         let res = crate::exa_wasm::interpreter::loader::load_ir_ode(tmp.clone());
         fs::remove_file(tmp).ok();
-        assert!(
-            res.is_err(),
-            "loader should reject IR with unknown function calls"
-        );
+        assert!(res.is_err(), "loader should reject IR with unknown function calls");
     }
 
     #[test]
@@ -251,19 +251,17 @@ mod tests {
         use std::fs;
 
         let tmp = env::temp_dir().join("exa_test_ir_param_rewrite.json");
-        let ir_json = serde_json::json!({
-            "ir_version": "1.0",
-            "kind": "EqnKind::ODE",
-            "params": ["ke", "v"],
-            "diffeq": "|x, p, _t, dx, rateiv, _cov| { dx[0] = ke * x[0]; }",
-            "lag": "",
-            "fa": "",
-            "init": "",
-            "out": ""
-        });
-        let s = serde_json::to_string_pretty(&ir_json).expect("serialize");
-        fs::write(&tmp, s.as_bytes()).expect("write tmp");
-
+        let diffeq = "|x, p, _t, dx, rateiv, _cov| { dx[0] = ke * x[0]; }".to_string();
+        let _path = crate::exa_wasm::build::emit_ir::<crate::equation::ODE>(
+            diffeq,
+            None,
+            None,
+            None,
+            None,
+            Some(tmp.clone()),
+            vec!["ke".to_string(), "v".to_string()],
+        )
+        .expect("emit_ir failed");
         let res = crate::exa_wasm::interpreter::loader::load_ir_ode(tmp.clone());
         fs::remove_file(tmp).ok();
         assert!(res.is_ok(), "loader should accept valid IR");
@@ -378,25 +376,20 @@ mod tests {
         use std::env;
         use std::fs;
         let tmp = env::temp_dir().join("exa_test_ir_bad_arity.json");
-        let ir_json = serde_json::json!({
-            "ir_version": "1.0",
-            "kind": "EqnKind::ODE",
-            "params": ["ke"],
-            "diffeq": "|x, p, _t, dx, rateiv, _cov| { dx[0] = pow(1.0); }",
-            "lag": "",
-            "fa": "",
-            "init": "",
-            "out": ""
-        });
-        let s = serde_json::to_string_pretty(&ir_json).expect("serialize");
-        fs::write(&tmp, s.as_bytes()).expect("write tmp");
-
+        let diffeq = "|x, p, _t, dx, rateiv, _cov| { dx[0] = pow(1.0); }".to_string();
+        let _path = crate::exa_wasm::build::emit_ir::<crate::equation::ODE>(
+            diffeq,
+            None,
+            None,
+            None,
+            None,
+            Some(tmp.clone()),
+            vec!["ke".to_string()],
+        )
+        .expect("emit_ir failed");
         let res = crate::exa_wasm::interpreter::loader::load_ir_ode(tmp.clone());
         fs::remove_file(tmp).ok();
-        assert!(
-            res.is_err(),
-            "loader should reject builtin calls with wrong arity"
-        );
+        assert!(res.is_err(), "loader should reject builtin calls with wrong arity");
     }
 
     mod load_negative_tests {

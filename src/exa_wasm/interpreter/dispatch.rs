@@ -2,9 +2,9 @@ use diffsol::Vector;
 use diffsol::VectorHost;
 use std::collections::HashMap;
 
+use crate::exa_wasm::interpreter::eval;
 use crate::exa_wasm::interpreter::registry;
 use crate::exa_wasm::interpreter::vm;
-use crate::exa_wasm::interpreter::eval;
 
 fn current_id() -> Option<usize> {
     registry::current_expr_id()
@@ -72,7 +72,8 @@ pub fn diffeq_dispatch(
             if !entry.bytecode_diffeq.is_empty() {
                 // builtin dispatch closure: translate f64 args -> eval::Value and call eval::eval_call
                 let builtins_dispatch = |name: &str, args: &[f64]| -> f64 {
-                    let vals: Vec<eval::Value> = args.iter().map(|a| eval::Value::Number(*a)).collect();
+                    let vals: Vec<eval::Value> =
+                        args.iter().map(|a| eval::Value::Number(*a)).collect();
                     eval::eval_call(name, &vals).as_number()
                 };
                 // assignment closure maps VM stores to simulator vectors
@@ -202,7 +203,8 @@ pub fn out_dispatch(
 
             if !entry.bytecode_out.is_empty() {
                 let builtins_dispatch = |name: &str, args: &[f64]| -> f64 {
-                    let vals: Vec<eval::Value> = args.iter().map(|a| eval::Value::Number(*a)).collect();
+                    let vals: Vec<eval::Value> =
+                        args.iter().map(|a| eval::Value::Number(*a)).collect();
                     eval::eval_call(name, &vals).as_number()
                 };
                 let mut assign = |name: &str, idx: usize, val: f64| match name {
@@ -373,7 +375,8 @@ pub fn init_dispatch(
 
             if !entry.bytecode_init.is_empty() {
                 let builtins_dispatch = |name: &str, args: &[f64]| -> f64 {
-                    let vals: Vec<eval::Value> = args.iter().map(|a| eval::Value::Number(*a)).collect();
+                    let vals: Vec<eval::Value> =
+                        args.iter().map(|a| eval::Value::Number(*a)).collect();
                     eval::eval_call(name, &vals).as_number()
                 };
                 let mut assign = |name: &str, idx: usize, val: f64| match name {
@@ -399,7 +402,8 @@ pub fn init_dispatch(
                     let mut locals_mut = locals_vec.clone();
                     vm::run_bytecode_full(
                         code.as_slice(),
-                        &crate::simulator::V::zeros(entry.nstates, diffsol::NalgebraContext).as_slice(),
+                        &crate::simulator::V::zeros(entry.nstates, diffsol::NalgebraContext)
+                            .as_slice(),
                         p.as_slice(),
                         zero_rate.as_slice(),
                         _t,

@@ -54,7 +54,10 @@ pub fn rewrite_params_in_stmts(
         }
     }
 
-    fn rewrite_stmt(s: &mut crate::exa_wasm::interpreter::ast::Stmt, pmap: &std::collections::HashMap<String, usize>) {
+    fn rewrite_stmt(
+        s: &mut crate::exa_wasm::interpreter::ast::Stmt,
+        pmap: &std::collections::HashMap<String, usize>,
+    ) {
         use crate::exa_wasm::interpreter::ast::*;
         match s {
             Stmt::Expr(e) => rewrite_expr(e, pmap),
