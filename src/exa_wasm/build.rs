@@ -263,7 +263,7 @@ pub fn emit_ir<E: crate::Equation>(
         funcs: &mut Vec<String>,
         locals: &Vec<String>,
     ) -> bool {
-    use crate::exa_wasm::interpreter::{Expr, Opcode};
+        use crate::exa_wasm::interpreter::{Expr, Opcode};
         match expr {
             Expr::Number(n) => {
                 out.push(Opcode::PushConst(*n));
@@ -285,7 +285,7 @@ pub fn emit_ir<E: crate::Equation>(
                 }
             }
             Expr::Indexed(name, idx_expr) => {
-                // only support constant numeric indices in compiled form
+                // support constant numeric indices and dynamic indices
                 if let Expr::Number(n) = &**idx_expr {
                     let idx = *n as usize;
                     match name.as_str() {
@@ -304,7 +304,25 @@ pub fn emit_ir<E: crate::Equation>(
                         _ => false,
                     }
                 } else {
-                    false
+                    // dynamic index: compile index expression then emit a dyn-load
+                    if !compile_expr_top(idx_expr, out, funcs, locals) {
+                        return false;
+                    }
+                    match name.as_str() {
+                        "x" => {
+                            out.push(Opcode::LoadXDyn);
+                            true
+                        }
+                        "rateiv" => {
+                            out.push(Opcode::LoadRateivDyn);
+                            true
+                        }
+                        "p" | "params" => {
+                            out.push(Opcode::LoadParamDyn);
+                            true
+                        }
+                        _ => false,
+                    }
                 }
             }
             Expr::UnaryOp { op, rhs } => {
@@ -366,7 +384,11 @@ pub fn emit_ir<E: crate::Equation>(
                     false
                 }
             }
-            Expr::MethodCall { receiver, name, args } => {
+            Expr::MethodCall {
+                receiver,
+                name,
+                args,
+            } => {
                 // lower method call to function with receiver as first arg
                 if crate::exa_wasm::interpreter::is_known_function(name.as_str()) {
                     if !compile_expr_top(receiver, out, funcs, locals) {
@@ -390,7 +412,11 @@ pub fn emit_ir<E: crate::Equation>(
                     false
                 }
             }
-            Expr::Ternary { cond, then_branch, else_branch } => {
+            Expr::Ternary {
+                cond,
+                then_branch,
+                else_branch,
+            } => {
                 // compile cond
                 if !compile_expr_top(cond, out, funcs, locals) {
                     return false;
@@ -425,56 +451,71 @@ pub fn emit_ir<E: crate::Equation>(
         }
     }
 
-    let mut bytecode_map: HashMap<usize, Vec<crate::exa_wasm::interpreter::Opcode>> = HashMap::new();
+    let mut bytecode_map: HashMap<usize, Vec<crate::exa_wasm::interpreter::Opcode>> =
+        HashMap::new();
+    // shared tables discovered during compilation
+    let mut shared_funcs: Vec<String> = Vec::new();
+    let mut shared_locals: Vec<String> = Vec::new();
+
     if let Some(v) = ir_obj.get("diffeq_ast") {
         // try to deserialize back into AST
         match serde_json::from_value::<Vec<crate::exa_wasm::interpreter::Stmt>>(v.clone()) {
             Ok(stmts) => {
                 // collect local variable names from non-indexed assignments
-                let mut locals: Vec<String> = Vec::new();
                 for st in stmts.iter() {
                     if let crate::exa_wasm::interpreter::Stmt::Assign(lhs, _rhs) = st {
                         if let crate::exa_wasm::interpreter::Lhs::Ident(name) = lhs {
-                            if !locals.iter().any(|n| n == name) {
-                                locals.push(name.clone());
+                            if !shared_locals.iter().any(|n| n == name) {
+                                shared_locals.push(name.clone());
                             }
                         }
                     }
                 }
-                // function table discovered during compilation
-                let mut funcs: Vec<String> = Vec::new();
 
                 // reuse compile_expr_top defined above for expression compilation
                 for st in stmts.iter() {
                     if let crate::exa_wasm::interpreter::Stmt::Assign(lhs, rhs) = st {
                         if let crate::exa_wasm::interpreter::Lhs::Indexed(_name, idx_expr) = lhs {
                             if _name == "dx" {
-                                // only constant numeric index supported in POC
-                                match &**idx_expr {
-                                    crate::exa_wasm::interpreter::Expr::Number(n) => {
-                                        let idx = *n as usize;
-                                        let mut code: Vec<crate::exa_wasm::interpreter::Opcode> =
-                                            Vec::new();
-                                        if compile_expr_top(rhs, &mut code, &mut funcs, &locals) {
-                                            code.push(
-                                                crate::exa_wasm::interpreter::Opcode::StoreDx(idx),
-                                            );
-                                            bytecode_map.insert(idx, code);
-                                        }
+                                // constant index
+                                if let crate::exa_wasm::interpreter::Expr::Number(n) = &**idx_expr {
+                                    let idx = *n as usize;
+                                    let mut code: Vec<crate::exa_wasm::interpreter::Opcode> =
+                                        Vec::new();
+                                    if compile_expr_top(
+                                        rhs,
+                                        &mut code,
+                                        &mut shared_funcs,
+                                        &shared_locals,
+                                    ) {
+                                        code.push(crate::exa_wasm::interpreter::Opcode::StoreDx(
+                                            idx,
+                                        ));
+                                        bytecode_map.insert(idx, code);
                                     }
-                                    _ => {}
+                                } else {
+                                    // dynamic index: compile index then rhs then StoreDxDyn
+                                    let mut code: Vec<crate::exa_wasm::interpreter::Opcode> =
+                                        Vec::new();
+                                    if compile_expr_top(
+                                        idx_expr,
+                                        &mut code,
+                                        &mut shared_funcs,
+                                        &shared_locals,
+                                    ) && compile_expr_top(
+                                        rhs,
+                                        &mut code,
+                                        &mut shared_funcs,
+                                        &shared_locals,
+                                    ) {
+                                        code.push(crate::exa_wasm::interpreter::Opcode::StoreDxDyn);
+                                        // use a special key for dynamic-indexed entries
+                                        bytecode_map.insert(usize::MAX, code);
+                                    }
                                 }
                             }
                         }
                     }
-                }
-
-                // attach discovered funcs/locals to the IR object if we compiled
-                if !funcs.is_empty() {
-                    ir_obj["funcs"] = serde_json::to_value(&funcs).unwrap_or(serde_json::Value::Null);
-                }
-                if !locals.is_empty() {
-                    ir_obj["locals"] = serde_json::to_value(&locals).unwrap_or(serde_json::Value::Null);
                 }
             }
             Err(_) => {}
@@ -488,9 +529,15 @@ pub fn emit_ir<E: crate::Equation>(
         // new field expected by loader: diffeq_bytecode (index -> opcode sequence)
         ir_obj["diffeq_bytecode"] =
             serde_json::to_value(&bytecode_map).unwrap_or(serde_json::Value::Null);
-        // emit empty funcs/locals placeholders for now
-        ir_obj["funcs"] = serde_json::to_value(Vec::<String>::new()).unwrap();
-        ir_obj["locals"] = serde_json::to_value(Vec::<String>::new()).unwrap();
+        // emit discovered funcs/locals if any
+        if !shared_funcs.is_empty() {
+            ir_obj["funcs"] =
+                serde_json::to_value(&shared_funcs).unwrap_or(serde_json::Value::Null);
+        }
+        if !shared_locals.is_empty() {
+            ir_obj["locals"] =
+                serde_json::to_value(&shared_locals).unwrap_or(serde_json::Value::Null);
+        }
     }
 
     // Attempt to compile out/init closures into bytecode similarly to diffeq POC
@@ -510,12 +557,25 @@ pub fn emit_ir<E: crate::Equation>(
                         if let crate::exa_wasm::interpreter::Expr::Number(n) = &**idx_expr {
                             let idx = *n as usize;
                             let mut code: Vec<crate::exa_wasm::interpreter::Opcode> = Vec::new();
-                            // reuse locals/funcs from surrounding scope if present
-                            let mut funcs: Vec<String> = Vec::new();
-                            let locals: Vec<String> = Vec::new();
-                            if compile_expr_top(rhs, &mut code, &mut funcs, &locals) {
+                            if compile_expr_top(rhs, &mut code, &mut shared_funcs, &shared_locals) {
                                 code.push(crate::exa_wasm::interpreter::Opcode::StoreY(idx));
                                 out_bytecode_map.insert(idx, code);
+                            }
+                        } else {
+                            let mut code: Vec<crate::exa_wasm::interpreter::Opcode> = Vec::new();
+                            if compile_expr_top(
+                                idx_expr,
+                                &mut code,
+                                &mut shared_funcs,
+                                &shared_locals,
+                            ) && compile_expr_top(
+                                rhs,
+                                &mut code,
+                                &mut shared_funcs,
+                                &shared_locals,
+                            ) {
+                                code.push(crate::exa_wasm::interpreter::Opcode::StoreYDyn);
+                                out_bytecode_map.insert(usize::MAX, code);
                             }
                         }
                     }
@@ -534,11 +594,25 @@ pub fn emit_ir<E: crate::Equation>(
                         if let crate::exa_wasm::interpreter::Expr::Number(n) = &**idx_expr {
                             let idx = *n as usize;
                             let mut code: Vec<crate::exa_wasm::interpreter::Opcode> = Vec::new();
-                            let mut funcs: Vec<String> = Vec::new();
-                            let locals: Vec<String> = Vec::new();
-                            if compile_expr_top(rhs, &mut code, &mut funcs, &locals) {
+                            if compile_expr_top(rhs, &mut code, &mut shared_funcs, &shared_locals) {
                                 code.push(crate::exa_wasm::interpreter::Opcode::StoreX(idx));
                                 init_bytecode_map.insert(idx, code);
+                            }
+                        } else {
+                            let mut code: Vec<crate::exa_wasm::interpreter::Opcode> = Vec::new();
+                            if compile_expr_top(
+                                idx_expr,
+                                &mut code,
+                                &mut shared_funcs,
+                                &shared_locals,
+                            ) && compile_expr_top(
+                                rhs,
+                                &mut code,
+                                &mut shared_funcs,
+                                &shared_locals,
+                            ) {
+                                code.push(crate::exa_wasm::interpreter::Opcode::StoreXDyn);
+                                init_bytecode_map.insert(usize::MAX, code);
                             }
                         }
                     }
@@ -554,6 +628,70 @@ pub fn emit_ir<E: crate::Equation>(
     if !init_bytecode_map.is_empty() {
         ir_obj["init_bytecode"] =
             serde_json::to_value(&init_bytecode_map).unwrap_or(serde_json::Value::Null);
+    }
+
+    // Compile lag_map/fa_map entries into bytecode when present. The
+    // IR contains textual RHS strings for each entry; parse and compile
+    // them here so the runtime loader can consume bytecode directly.
+    let mut lag_bytecode_map: HashMap<usize, Vec<crate::exa_wasm::interpreter::Opcode>> =
+        HashMap::new();
+    if let Some(v) = ir_obj.get("lag_map") {
+        if let Some(map) = v.as_object() {
+            for (k, val) in map.iter() {
+                if let Ok(idx) = k.parse::<usize>() {
+                    if let Some(rhs_str) = val.as_str() {
+                        let toks = crate::exa_wasm::interpreter::tokenize(rhs_str);
+                        let mut p = crate::exa_wasm::interpreter::Parser::new(toks);
+                        if let Ok(expr) = p.parse_expr_result() {
+                            let mut code: Vec<crate::exa_wasm::interpreter::Opcode> = Vec::new();
+                            if compile_expr_top(&expr, &mut code, &mut shared_funcs, &shared_locals)
+                            {
+                                lag_bytecode_map.insert(idx, code);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if !lag_bytecode_map.is_empty() {
+        ir_obj["lag_bytecode"] =
+            serde_json::to_value(&lag_bytecode_map).unwrap_or(serde_json::Value::Null);
+    }
+
+    let mut fa_bytecode_map: HashMap<usize, Vec<crate::exa_wasm::interpreter::Opcode>> =
+        HashMap::new();
+    if let Some(v) = ir_obj.get("fa_map") {
+        if let Some(map) = v.as_object() {
+            for (k, val) in map.iter() {
+                if let Ok(idx) = k.parse::<usize>() {
+                    if let Some(rhs_str) = val.as_str() {
+                        let toks = crate::exa_wasm::interpreter::tokenize(rhs_str);
+                        let mut p = crate::exa_wasm::interpreter::Parser::new(toks);
+                        if let Ok(expr) = p.parse_expr_result() {
+                            let mut code: Vec<crate::exa_wasm::interpreter::Opcode> = Vec::new();
+                            if compile_expr_top(&expr, &mut code, &mut shared_funcs, &shared_locals)
+                            {
+                                fa_bytecode_map.insert(idx, code);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if !fa_bytecode_map.is_empty() {
+        ir_obj["fa_bytecode"] =
+            serde_json::to_value(&fa_bytecode_map).unwrap_or(serde_json::Value::Null);
+    }
+
+    // Ensure shared function table and locals are present in the IR when
+    // we discovered any during compilation.
+    if !shared_funcs.is_empty() {
+        ir_obj["funcs"] = serde_json::to_value(&shared_funcs).unwrap_or(serde_json::Value::Null);
+    }
+    if !shared_locals.is_empty() {
+        ir_obj["locals"] = serde_json::to_value(&shared_locals).unwrap_or(serde_json::Value::Null);
     }
 
     let output_path = output.unwrap_or_else(|| {

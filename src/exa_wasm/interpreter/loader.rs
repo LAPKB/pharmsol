@@ -126,7 +126,10 @@ pub fn load_ir_ode(
             ));
         }
     } else {
-        parse_errors.push("diffeq closure missing: emit_ir must provide diffeq_ast or diffeq_bytecode".to_string());
+        parse_errors.push(
+            "diffeq closure missing: emit_ir must provide diffeq_ast or diffeq_bytecode"
+                .to_string(),
+        );
     }
 
     // prelude is extracted from diffeq_ast above (if present). If diffeq
@@ -388,6 +391,242 @@ pub fn load_ir_ode(
                 &mut parse_errors,
             );
             known.insert(name.clone());
+        }
+    }
+
+    // Validate that pre-parsed ASTs do not call unknown builtin functions.
+    // This mirrors the bytecode arity checks but runs on ASTs emitted by the
+    // emitter so loaders reject IR that references unknown functions.
+    fn validate_builtin_calls_in_expr(
+        e: &crate::exa_wasm::interpreter::ast::Expr,
+        errors: &mut Vec<String>,
+    ) {
+        use crate::exa_wasm::interpreter::ast::*;
+        match e {
+            Expr::Call { name, args } => {
+                if !crate::exa_wasm::interpreter::is_known_function(name.as_str()) {
+                    errors.push(format!("unknown function call '{}' in AST", name));
+                }
+                for a in args.iter() {
+                    validate_builtin_calls_in_expr(a, errors);
+                }
+            }
+            Expr::MethodCall {
+                receiver,
+                name,
+                args,
+            } => {
+                if !crate::exa_wasm::interpreter::is_known_function(name.as_str()) {
+                    errors.push(format!("unknown method call '{}' in AST", name));
+                }
+                validate_builtin_calls_in_expr(receiver, errors);
+                for a in args.iter() {
+                    validate_builtin_calls_in_expr(a, errors);
+                }
+            }
+            Expr::Indexed(_, idx) => validate_builtin_calls_in_expr(idx, errors),
+            Expr::UnaryOp { rhs, .. } => validate_builtin_calls_in_expr(rhs, errors),
+            Expr::BinaryOp { lhs, rhs, .. } => {
+                validate_builtin_calls_in_expr(lhs, errors);
+                validate_builtin_calls_in_expr(rhs, errors);
+            }
+            Expr::Ternary {
+                cond,
+                then_branch,
+                else_branch,
+            } => {
+                validate_builtin_calls_in_expr(cond, errors);
+                validate_builtin_calls_in_expr(then_branch, errors);
+                validate_builtin_calls_in_expr(else_branch, errors);
+            }
+            _ => {}
+        }
+    }
+    fn validate_builtin_calls_in_stmt(
+        s: &crate::exa_wasm::interpreter::ast::Stmt,
+        errors: &mut Vec<String>,
+    ) {
+        match s {
+            crate::exa_wasm::interpreter::ast::Stmt::Assign(_, rhs) => {
+                validate_builtin_calls_in_expr(rhs, errors)
+            }
+            crate::exa_wasm::interpreter::ast::Stmt::Expr(e) => {
+                validate_builtin_calls_in_expr(e, errors)
+            }
+            crate::exa_wasm::interpreter::ast::Stmt::Block(v) => {
+                for st in v.iter() {
+                    validate_builtin_calls_in_stmt(st, errors);
+                }
+            }
+            crate::exa_wasm::interpreter::ast::Stmt::If {
+                cond,
+                then_branch,
+                else_branch,
+            } => {
+                validate_builtin_calls_in_expr(cond, errors);
+                validate_builtin_calls_in_stmt(then_branch, errors);
+                if let Some(eb) = else_branch {
+                    validate_builtin_calls_in_stmt(eb, errors);
+                }
+            }
+        }
+    }
+
+    for s in diffeq_stmts.iter() {
+        validate_builtin_calls_in_stmt(s, &mut parse_errors);
+    }
+    for s in out_stmts.iter() {
+        validate_builtin_calls_in_stmt(s, &mut parse_errors);
+    }
+    for s in init_stmts.iter() {
+        validate_builtin_calls_in_stmt(s, &mut parse_errors);
+    }
+
+    // Validate any bytecode maps present in the IR now that we know nstates
+    // and nparams. This checks param/x/local bounds and builtin arities.
+    {
+        use crate::exa_wasm::interpreter::Opcode;
+        fn validate_code(
+            code: &Vec<crate::exa_wasm::interpreter::Opcode>,
+            nstates: usize,
+            nparams: usize,
+            locals_len: usize,
+            funcs: &Vec<String>,
+            parse_errors: &mut Vec<String>,
+        ) {
+            for (pc, op) in code.iter().enumerate() {
+                match op {
+                    Opcode::LoadParam(i) => {
+                        if *i >= nparams {
+                            parse_errors.push(format!(
+                                "LoadParam index out of bounds at pc {}: {} >= nparams {}",
+                                pc, i, nparams
+                            ));
+                        }
+                    }
+                    Opcode::LoadX(i)
+                    | Opcode::StoreX(i)
+                    | Opcode::StoreY(i)
+                    | Opcode::StoreDx(i) => {
+                        if *i >= nstates {
+                            parse_errors.push(format!(
+                                "x/dx/index out of bounds at pc {}: {} >= nstates {}",
+                                pc, i, nstates
+                            ));
+                        }
+                    }
+                    Opcode::LoadRateiv(i) => {
+                        if *i >= nstates {
+                            parse_errors.push(format!(
+                                "rateiv index out of bounds at pc {}: {} >= nstates {}",
+                                pc, i, nstates
+                            ));
+                        }
+                    }
+                    Opcode::LoadLocal(i) | Opcode::StoreLocal(i) => {
+                        if *i >= locals_len {
+                            parse_errors.push(format!(
+                                "local slot out of bounds at pc {}: {} >= locals_len {}",
+                                pc, i, locals_len
+                            ));
+                        }
+                    }
+                    Opcode::CallBuiltin(func_idx, argc) => {
+                        if *func_idx >= funcs.len() {
+                            parse_errors.push(format!(
+                                "CallBuiltin references unknown func index {} at pc {}",
+                                func_idx, pc
+                            ));
+                        } else {
+                            let fname = funcs.get(*func_idx).unwrap().as_str();
+                            match crate::exa_wasm::interpreter::arg_count_range(fname) {
+                                Some(range) => {
+                                    if !range.contains(argc) {
+                                        parse_errors.push(format!("builtin '{}' called with wrong arity {} at pc {} (allowed {:?})", fname, argc, pc, range));
+                                    }
+                                }
+                                None => parse_errors.push(format!(
+                                    "unknown builtin '{}' referenced in funcs table at pc {}",
+                                    fname, pc
+                                )),
+                            }
+                        }
+                    }
+                    // dynamic ops not fully checkable at compile time
+                    Opcode::LoadParamDyn
+                    | Opcode::LoadXDyn
+                    | Opcode::LoadRateivDyn
+                    | Opcode::StoreDxDyn
+                    | Opcode::StoreXDyn
+                    | Opcode::StoreYDyn => {}
+                    _ => {}
+                }
+            }
+        }
+
+        let funcs_table = ir.funcs.clone().unwrap_or_default();
+        let locals_table = ir.locals.clone().unwrap_or_default();
+
+        let nparams = params.len();
+        if let Some(map) = ir.diffeq_bytecode.clone() {
+            for (_k, code) in map.into_iter() {
+                validate_code(
+                    &code,
+                    nstates,
+                    nparams,
+                    locals_table.len(),
+                    &funcs_table,
+                    &mut parse_errors,
+                );
+            }
+        }
+        if let Some(map) = ir.out_bytecode.clone() {
+            for (_k, code) in map.into_iter() {
+                validate_code(
+                    &code,
+                    nstates,
+                    nparams,
+                    locals_table.len(),
+                    &funcs_table,
+                    &mut parse_errors,
+                );
+            }
+        }
+        if let Some(map) = ir.init_bytecode.clone() {
+            for (_k, code) in map.into_iter() {
+                validate_code(
+                    &code,
+                    nstates,
+                    nparams,
+                    locals_table.len(),
+                    &funcs_table,
+                    &mut parse_errors,
+                );
+            }
+        }
+        if let Some(map) = ir.lag_bytecode.clone() {
+            for (_k, code) in map.into_iter() {
+                validate_code(
+                    &code,
+                    nstates,
+                    nparams,
+                    locals_table.len(),
+                    &funcs_table,
+                    &mut parse_errors,
+                );
+            }
+        }
+        if let Some(map) = ir.fa_bytecode.clone() {
+            for (_k, code) in map.into_iter() {
+                validate_code(
+                    &code,
+                    nstates,
+                    nparams,
+                    locals_table.len(),
+                    &funcs_table,
+                    &mut parse_errors,
+                );
+            }
         }
     }
 

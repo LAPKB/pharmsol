@@ -11,6 +11,10 @@ pub enum Opcode {
     LoadRateiv(usize), // push rateiv[idx]
     LoadLocal(usize),  // push local slot
     LoadT,             // push t
+    // dynamic indexed loads/stores (index evaluated at runtime)
+    LoadParamDyn,  // pop index -> push p[idx]
+    LoadXDyn,      // pop index -> push x[idx]
+    LoadRateivDyn, // pop index -> push rateiv[idx]
 
     // arithmetic
     Add,
@@ -39,6 +43,10 @@ pub enum Opcode {
     StoreX(usize),     // pop value into x[index]
     StoreY(usize),     // pop value into y[index]
     StoreLocal(usize), // pop value into local slot
+    // dynamic stores: pop value then pop index (index is f64 -> usize)
+    StoreDxDyn, // pop value, pop index -> assign to dx[idx]
+    StoreXDyn,  // pop value, pop index -> assign to x[idx]
+    StoreYDyn,  // pop value, pop index -> assign to y[idx]
 }
 
 /// Execute a sequence of opcodes with full VM context.
@@ -77,6 +85,28 @@ pub fn run_bytecode_full<F>(
             }
             Opcode::LoadRateiv(i) => {
                 let v = if *i < rateiv.len() { rateiv[*i] } else { 0.0 };
+                stack.push(v);
+                pc += 1;
+            }
+            Opcode::LoadParamDyn => {
+                // index is expected on stack as f64
+                let idxf = stack.pop().unwrap_or(0.0);
+                let idx = idxf as usize;
+                let v = if idx < p.len() { p[idx] } else { 0.0 };
+                stack.push(v);
+                pc += 1;
+            }
+            Opcode::LoadXDyn => {
+                let idxf = stack.pop().unwrap_or(0.0);
+                let idx = idxf as usize;
+                let v = if idx < x.len() { x[idx] } else { 0.0 };
+                stack.push(v);
+                pc += 1;
+            }
+            Opcode::LoadRateivDyn => {
+                let idxf = stack.pop().unwrap_or(0.0);
+                let idx = idxf as usize;
+                let v = if idx < rateiv.len() { rateiv[idx] } else { 0.0 };
                 stack.push(v);
                 pc += 1;
             }
@@ -191,6 +221,28 @@ pub fn run_bytecode_full<F>(
             Opcode::StoreY(i) => {
                 let v = stack.pop().unwrap_or(0.0);
                 assign_indexed("y", *i, v);
+                pc += 1;
+            }
+            Opcode::StoreDxDyn => {
+                // pop value then index
+                let v = stack.pop().unwrap_or(0.0);
+                let idxf = stack.pop().unwrap_or(0.0);
+                let idx = idxf as usize;
+                assign_indexed("dx", idx, v);
+                pc += 1;
+            }
+            Opcode::StoreXDyn => {
+                let v = stack.pop().unwrap_or(0.0);
+                let idxf = stack.pop().unwrap_or(0.0);
+                let idx = idxf as usize;
+                assign_indexed("x", idx, v);
+                pc += 1;
+            }
+            Opcode::StoreYDyn => {
+                let v = stack.pop().unwrap_or(0.0);
+                let idxf = stack.pop().unwrap_or(0.0);
+                let idx = idxf as usize;
+                assign_indexed("y", idx, v);
                 pc += 1;
             }
             Opcode::StoreLocal(i) => {

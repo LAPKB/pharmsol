@@ -23,7 +23,7 @@ pub use ast::{Expr, Lhs, Stmt};
 pub use loader_helpers::{extract_closure_body, strip_macro_calls};
 // Re-export builtin helpers so other modules (like the emitter) can query
 // builtin metadata without depending on private module paths.
-pub use builtins::{is_known_function, arg_count_range};
+pub use builtins::{arg_count_range, is_known_function};
 
 // Keep a small set of unit tests that exercise the parser/eval and loader
 // wiring. Runtime dispatch and registry behavior live in the `dispatch`
@@ -111,7 +111,10 @@ mod tests {
         .expect("emit_ir failed");
         let res = crate::exa_wasm::interpreter::loader::load_ir_ode(tmp.clone());
         fs::remove_file(tmp).ok();
-        assert!(res.is_err(), "loader should reject IR with unknown function calls");
+        assert!(
+            res.is_err(),
+            "loader should reject IR with unknown function calls"
+        );
     }
 
     #[test]
@@ -389,7 +392,10 @@ mod tests {
         .expect("emit_ir failed");
         let res = crate::exa_wasm::interpreter::loader::load_ir_ode(tmp.clone());
         fs::remove_file(tmp).ok();
-        assert!(res.is_err(), "loader should reject builtin calls with wrong arity");
+        assert!(
+            res.is_err(),
+            "loader should reject builtin calls with wrong arity"
+        );
     }
 
     mod load_negative_tests {

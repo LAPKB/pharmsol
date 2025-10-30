@@ -16,10 +16,12 @@ fn main() {
         None,
         Some(path1.clone()),
         vec!["ke".to_string()],
-    ) .expect("emit_ir model1");
+    )
+    .expect("emit_ir model1");
 
     // Model 2: prelude/local and rate
-    let diffeq2 = "|x, p, _t, dx, rateiv, _cov| { ke = 0.5; dx[0] = -ke * x[0] + rateiv[0]; }".to_string();
+    let diffeq2 =
+        "|x, p, _t, dx, rateiv, _cov| { ke = 0.5; dx[0] = -ke * x[0] + rateiv[0]; }".to_string();
     let path2 = tmp.join("exa_example_model2.json");
     let _ = pharmsol::exa_wasm::build::emit_ir::<pharmsol::equation::ODE>(
         diffeq2,
@@ -29,10 +31,12 @@ fn main() {
         None,
         Some(path2.clone()),
         vec!["ke".to_string()],
-    ) .expect("emit_ir model2");
+    )
+    .expect("emit_ir model2");
 
     // Model 3: builtin and ternary
-    let diffeq3 = "|x, p, _t, dx, rateiv, _cov| { dx[0] = if(t>0, exp(-ke * t) * x[0], 0.0); }".to_string();
+    let diffeq3 =
+        "|x, p, _t, dx, rateiv, _cov| { dx[0] = if(t>0, exp(-ke * t) * x[0], 0.0); }".to_string();
     let path3 = tmp.join("exa_example_model3.json");
     let _ = pharmsol::exa_wasm::build::emit_ir::<pharmsol::equation::ODE>(
         diffeq3,
@@ -42,9 +46,13 @@ fn main() {
         None,
         Some(path3.clone()),
         vec!["ke".to_string()],
-    ) .expect("emit_ir model3");
+    )
+    .expect("emit_ir model3");
 
-    println!("Emitted IR to:\n  {:?}\n  {:?}\n  {:?}", path1, path2, path3);
+    println!(
+        "Emitted IR to:\n  {:?}\n  {:?}\n  {:?}",
+        path1, path2, path3
+    );
 
     // Load them via the public API and print emitted IR metadata from the
     // emitted JSON (avoids accessing private registry internals from an
@@ -67,13 +75,25 @@ fn main() {
                     let has_bc = v.get("diffeq_bytecode").is_some();
                     let funcs = v
                         .get("funcs")
-                        .and_then(|j| j.as_array().map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>()))
+                        .and_then(|j| {
+                            j.as_array()
+                                .map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>())
+                        })
                         .unwrap_or_default();
                     let locals = v
                         .get("locals")
-                        .and_then(|j| j.as_array().map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>()))
+                        .and_then(|j| {
+                            j.as_array()
+                                .map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>())
+                        })
                         .unwrap_or_default();
-                    println!("IR {:?}: diffeq_bytecode={} funcs={:?} locals={:?}", p.file_name().unwrap_or_default(), has_bc, funcs, locals);
+                    println!(
+                        "IR {:?}: diffeq_bytecode={} funcs={:?} locals={:?}",
+                        p.file_name().unwrap_or_default(),
+                        has_bc,
+                        funcs,
+                        locals
+                    );
                 }
                 Err(e) => eprintln!("failed to parse emitted IR {:?}: {}", p, e),
             },
