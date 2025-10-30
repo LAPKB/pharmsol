@@ -39,7 +39,14 @@ pub fn tokenize(s: &str) -> Vec<Token> {
                     break;
                 }
             }
-            toks.push(Token::Ident(id));
+            // treat true/false as boolean tokens
+            if id.eq_ignore_ascii_case("true") {
+                toks.push(Token::Bool(true));
+            } else if id.eq_ignore_ascii_case("false") {
+                toks.push(Token::Bool(false));
+            } else {
+                toks.push(Token::Ident(id));
+            }
             continue;
         }
         match c {
@@ -403,6 +410,7 @@ impl Parser {
         let tok = self.next().cloned()?;
         let mut node = match tok {
             Token::Num(v) => Expr::Number(v),
+            Token::Bool(b) => Expr::Bool(b),
             Token::Ident(id) => {
                 // function call?
                 if let Some(Token::LParen) = self.peek().cloned() {

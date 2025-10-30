@@ -4,6 +4,7 @@ use std::fmt;
 #[derive(Debug, Clone)]
 pub enum Expr {
     Number(f64),
+    Bool(bool),
     Ident(String),              // e.g. ke
     Indexed(String, Box<Expr>), // e.g. x[0], rateiv[0], y[0] where index can be expr
     UnaryOp {
@@ -34,6 +35,7 @@ pub enum Expr {
 #[derive(Debug, Clone)]
 pub enum Token {
     Num(f64),
+    Bool(bool),
     Ident(String),
     LBracket,
     RBracket,

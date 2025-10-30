@@ -62,6 +62,13 @@ pub(crate) fn eval_expr(
     use crate::exa_wasm::interpreter::set_runtime_error;
 
     match expr {
+        Expr::Bool(b) => {
+            if *b {
+                1.0
+            } else {
+                0.0
+            }
+        }
         Expr::Number(v) => *v,
         Expr::Ident(name) => {
             if name.starts_with('_') {

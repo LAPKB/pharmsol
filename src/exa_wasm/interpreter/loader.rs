@@ -948,6 +948,7 @@ pub fn load_ir_ode(
     ) {
         match expr {
             Expr::Number(_) => {}
+            Expr::Bool(_) => {}
             Expr::Ident(name) => {
                 if name == "t" {
                     return;
@@ -1083,6 +1084,7 @@ pub fn load_ir_ode(
     ) {
         match expr {
             Expr::Number(_) => {}
+            Expr::Bool(_) => {}
             Expr::Ident(name) => {
                 if name == "t" {
                     return;
@@ -1285,9 +1287,16 @@ mod tests {
                 _ => false,
             },
             Stmt::Block(v) => v.iter().any(|s| contains_dx_assign(s, idx_expected)),
-            Stmt::If { then_branch, else_branch, .. } => {
+            Stmt::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
                 contains_dx_assign(then_branch, idx_expected)
-                    || else_branch.as_ref().map(|b| contains_dx_assign(b, idx_expected)).unwrap_or(false)
+                    || else_branch
+                        .as_ref()
+                        .map(|b| contains_dx_assign(b, idx_expected))
+                        .unwrap_or(false)
             }
             Stmt::Expr(_) => false,
         }
@@ -1300,7 +1309,10 @@ mod tests {
         assert!(!stmts.is_empty());
         let mut found = false;
         for st in stmts.iter() {
-            if let Stmt::If { cond, then_branch, .. } = st {
+            if let Stmt::If {
+                cond, then_branch, ..
+            } = st
+            {
                 if let Expr::Number(n) = cond {
                     assert_eq!(*n, 1.0f64);
                 } else {
@@ -1321,7 +1333,10 @@ mod tests {
         assert!(!stmts.is_empty());
         let mut found = false;
         for st in stmts.iter() {
-            if let Stmt::If { cond, then_branch, .. } = st {
+            if let Stmt::If {
+                cond, then_branch, ..
+            } = st
+            {
                 if let Expr::Number(n) = cond {
                     assert_eq!(*n, 0.0f64);
                 } else {
