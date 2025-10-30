@@ -19,6 +19,17 @@ pub struct RegistryEntry {
     pub pmap: HashMap<String, usize>,
     pub nstates: usize,
     pub _nouteqs: usize,
+    // optional compiled bytecode blobs for closures (index -> opcode sequence)
+    pub bytecode_diffeq: std::collections::HashMap<usize, Vec<crate::exa_wasm::interpreter::Opcode>>,
+    // support for out/init/lag/fa as maps of index -> opcode sequences
+    pub bytecode_out: std::collections::HashMap<usize, Vec<crate::exa_wasm::interpreter::Opcode>>,
+    pub bytecode_init: std::collections::HashMap<usize, Vec<crate::exa_wasm::interpreter::Opcode>>,
+    pub bytecode_lag: std::collections::HashMap<usize, Vec<crate::exa_wasm::interpreter::Opcode>>,
+    pub bytecode_fa: std::collections::HashMap<usize, Vec<crate::exa_wasm::interpreter::Opcode>>,
+    // local slot names in evaluation order
+    pub locals: Vec<String>,
+    // builtin function table emitted by the compiler/emit_ir
+    pub funcs: Vec<String>,
 }
 
 static EXPR_REGISTRY: Lazy<Mutex<HashMap<usize, RegistryEntry>>> =

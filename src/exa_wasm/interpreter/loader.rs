@@ -7,6 +7,7 @@ use serde::Deserialize;
 
 use crate::exa_wasm::interpreter::ast::Expr;
 use crate::exa_wasm::interpreter::parser::{tokenize, Parser};
+use crate::exa_wasm::interpreter::Opcode;
 use crate::exa_wasm::interpreter::registry;
 use crate::exa_wasm::interpreter::typecheck;
 
@@ -28,6 +29,15 @@ struct IrFile {
     diffeq_ast: Option<Vec<crate::exa_wasm::interpreter::ast::Stmt>>,
     out_ast: Option<Vec<crate::exa_wasm::interpreter::ast::Stmt>>,
     init_ast: Option<Vec<crate::exa_wasm::interpreter::ast::Stmt>>,
+    // optional compiled bytecode emitted by `emit_ir`
+    diffeq_bytecode: Option<std::collections::HashMap<usize, Vec<crate::exa_wasm::interpreter::Opcode>>>,
+    out_bytecode: Option<std::collections::HashMap<usize, Vec<crate::exa_wasm::interpreter::Opcode>>>,
+    init_bytecode: Option<std::collections::HashMap<usize, Vec<crate::exa_wasm::interpreter::Opcode>>>,
+    lag_bytecode: Option<std::collections::HashMap<usize, Vec<crate::exa_wasm::interpreter::Opcode>>>,
+    fa_bytecode: Option<std::collections::HashMap<usize, Vec<crate::exa_wasm::interpreter::Opcode>>>,
+    // optional emitted function table and local slot ordering
+    funcs: Option<Vec<String>>,
+    locals: Option<Vec<String>>,
 }
 
 pub fn load_ir_ode(
@@ -61,9 +71,7 @@ pub fn load_ir_ode(
     let lag_text = ir.lag.clone().unwrap_or_default();
     let fa_text = ir.fa.clone().unwrap_or_default();
 
-    let mut dx_map: HashMap<usize, Expr> = HashMap::new();
-    let mut out_map: HashMap<usize, Expr> = HashMap::new();
-    let mut init_map: HashMap<usize, Expr> = HashMap::new();
+    
     let mut lag_map: HashMap<usize, Expr> = HashMap::new();
     let mut fa_map: HashMap<usize, Expr> = HashMap::new();
     let mut prelude: Vec<(String, Expr)> = Vec::new();
@@ -82,8 +90,9 @@ pub fn load_ir_ode(
     // runtime equations.
     // extract_all_assign delegated to loader_helpers
 
-    // Prefer a pre-parsed AST emitted by the IR emitter when available.
-    // This allows us to skip textual parsing/fallbacks at runtime.
+    // Prefer pre-parsed AST emitted by the IR emitter. If the emitter
+    // provided bytecode we consume it when populating the RegistryEntry
+    // below; otherwise parse textual closures only when the parser succeeds.
     if let Some(ast) = ir.diffeq_ast.clone() {
         // ensure the AST types are valid
         if let Err(e) = typecheck::check_statements(&ast) {
@@ -103,8 +112,7 @@ pub fn load_ir_ode(
 
     // boolean literals are parsed by the tokenizer (Token::Bool). No normalization needed.
 
-    if let Some(body) =
-        crate::exa_wasm::interpreter::loader_helpers::extract_closure_body(&diffeq_text)
+    if let Some(body) = crate::exa_wasm::interpreter::loader_helpers::extract_closure_body(&diffeq_text)
     {
         let mut cleaned = body.clone();
         cleaned = crate::exa_wasm::interpreter::loader_helpers::strip_macro_calls(
@@ -122,81 +130,10 @@ pub fn load_ir_ode(
         let mut p = Parser::new(toks);
         if let Some(mut stmts) = p.parse_statements() {
             // rewrite param identifiers into Param(index) nodes for faster lookup
-            fn rewrite_params_in_expr(
-                e: &mut crate::exa_wasm::interpreter::ast::Expr,
-                pmap: &HashMap<String, usize>,
-            ) {
-                use crate::exa_wasm::interpreter::ast::*;
-                match e {
-                    Expr::Ident(name) => {
-                        if let Some(idx) = pmap.get(name) {
-                            *e = Expr::Param(*idx);
-                        }
-                    }
-                    Expr::Indexed(_, idx_expr) => rewrite_params_in_expr(idx_expr, pmap),
-                    Expr::UnaryOp { rhs, .. } => rewrite_params_in_expr(rhs, pmap),
-                    Expr::BinaryOp { lhs, rhs, .. } => {
-                        rewrite_params_in_expr(lhs, pmap);
-                        rewrite_params_in_expr(rhs, pmap);
-                    }
-                    Expr::Call { args, .. } => {
-                        for a in args.iter_mut() {
-                            rewrite_params_in_expr(a, pmap);
-                        }
-                    }
-                    Expr::MethodCall { receiver, args, .. } => {
-                        rewrite_params_in_expr(receiver, pmap);
-                        for a in args.iter_mut() {
-                            rewrite_params_in_expr(a, pmap);
-                        }
-                    }
-                    Expr::Ternary {
-                        cond,
-                        then_branch,
-                        else_branch,
-                    } => {
-                        rewrite_params_in_expr(cond, pmap);
-                        rewrite_params_in_expr(then_branch, pmap);
-                        rewrite_params_in_expr(else_branch, pmap);
-                    }
-                    _ => {}
-                }
-            }
-            fn rewrite_params_in_stmt(
-                s: &mut crate::exa_wasm::interpreter::ast::Stmt,
-                pmap: &HashMap<String, usize>,
-            ) {
-                use crate::exa_wasm::interpreter::ast::*;
-                match s {
-                    Stmt::Expr(e) => rewrite_params_in_expr(e, pmap),
-                    Stmt::Assign(lhs, rhs) => {
-                        if let Lhs::Indexed(_, idx_expr) = lhs {
-                            rewrite_params_in_expr(idx_expr, pmap);
-                        }
-                        rewrite_params_in_expr(rhs, pmap);
-                    }
-                    Stmt::Block(v) => {
-                        for ss in v.iter_mut() {
-                            rewrite_params_in_stmt(ss, pmap);
-                        }
-                    }
-                    Stmt::If {
-                        cond,
-                        then_branch,
-                        else_branch,
-                    } => {
-                        rewrite_params_in_expr(cond, pmap);
-                        rewrite_params_in_stmt(then_branch, pmap);
-                        if let Some(eb) = else_branch {
-                            rewrite_params_in_stmt(eb, pmap);
-                        }
-                    }
-                }
-            }
-
-            for st in stmts.iter_mut() {
-                rewrite_params_in_stmt(st, &pmap);
-            }
+            crate::exa_wasm::interpreter::loader_helpers::rewrite_params_in_stmts(
+                &mut stmts,
+                &pmap,
+            );
 
             // run a lightweight type-check pass and reject obviously bad IR
             if let Err(e) = typecheck::check_statements(&stmts) {
@@ -208,63 +145,13 @@ pub fn load_ir_ode(
             // keep the parsed statements for later execution
             diffeq_stmts = stmts;
         } else {
-            // fallback: extract dx[...] assignments into synthetic Assign stmts
-            for (i, rhs) in crate::exa_wasm::interpreter::loader_helpers::extract_all_assign(
-                &diffeq_text,
-                "dx[",
-            ) {
-                let toks = tokenize(&rhs);
-                let mut p = Parser::new(toks);
-                let res = p.parse_expr_result();
-                match res {
-                    Ok(expr) => {
-                        dx_map.insert(i, expr.clone());
-                    }
-                    Err(e) => {
-                        parse_errors
-                            .push(format!("failed to parse dx[{}] RHS='{}' : {}", i, rhs, e));
-                    }
-                }
-            }
-            // convert dx_map into simple Assign statements
-            for (i, expr) in dx_map.iter() {
-                let lhs = crate::exa_wasm::interpreter::ast::Lhs::Indexed(
-                    "dx".to_string(),
-                    Box::new(crate::exa_wasm::interpreter::ast::Expr::Number(*i as f64)),
-                );
-                diffeq_stmts.push(crate::exa_wasm::interpreter::ast::Stmt::Assign(
-                    lhs,
-                    expr.clone(),
-                ));
-            }
-        }
-    } else {
-        // no closure body: attempt substring scan fallback
-        for (i, rhs) in
-            crate::exa_wasm::interpreter::loader_helpers::extract_all_assign(&diffeq_text, "dx[")
-        {
-            let toks = tokenize(&rhs);
-            let mut p = Parser::new(toks);
-            let res = p.parse_expr_result();
-            match res {
-                Ok(expr) => {
-                    dx_map.insert(i, expr.clone());
-                }
-                Err(e) => {
-                    parse_errors.push(format!("failed to parse dx[{}] RHS='{}' : {}", i, rhs, e));
-                }
-            }
-        }
-        for (i, expr) in dx_map.iter() {
-            let lhs = crate::exa_wasm::interpreter::ast::Lhs::Indexed(
-                "dx".to_string(),
-                Box::new(crate::exa_wasm::interpreter::ast::Expr::Number(*i as f64)),
-            );
-            diffeq_stmts.push(crate::exa_wasm::interpreter::ast::Stmt::Assign(
-                lhs,
-                expr.clone(),
+            parse_errors.push(format!(
+                "failed to parse diffeq closure text; emit_ir must provide bytecode or valid AST/closure"
             ));
         }
+    } else {
+        // no closure body found and no diffeq_ast/diffeq_bytecode provided
+        parse_errors.push("diffeq closure missing or empty; emit_ir must provide bytecode or valid AST/closure".to_string());
     }
 
     // extract non-indexed assignments like `ke = ke + 0.5;` from diffeq prelude
@@ -296,9 +183,8 @@ pub fn load_ir_ode(
         out_stmts = ast;
     }
 
-    // parse out closure into statements (fall back to extraction)
-    if let Some(body) =
-        crate::exa_wasm::interpreter::loader_helpers::extract_closure_body(&out_text)
+    // parse out closure into statements
+    if let Some(body) = crate::exa_wasm::interpreter::loader_helpers::extract_closure_body(&out_text)
     {
         let mut cleaned = body.clone();
         // strip macros
@@ -315,83 +201,7 @@ pub fn load_ir_ode(
         let toks = tokenize(&cleaned);
         let mut p = Parser::new(toks);
         if let Some(mut stmts) = p.parse_statements() {
-            // rewrite params into Param(index)
-            fn rewrite_params_in_expr(
-                e: &mut crate::exa_wasm::interpreter::ast::Expr,
-                pmap: &HashMap<String, usize>,
-            ) {
-                use crate::exa_wasm::interpreter::ast::*;
-                match e {
-                    Expr::Ident(name) => {
-                        if let Some(idx) = pmap.get(name) {
-                            *e = Expr::Param(*idx);
-                        }
-                    }
-                    Expr::Indexed(_, idx_expr) => rewrite_params_in_expr(idx_expr, pmap),
-                    Expr::UnaryOp { rhs, .. } => rewrite_params_in_expr(rhs, pmap),
-                    Expr::BinaryOp { lhs, rhs, .. } => {
-                        rewrite_params_in_expr(lhs, pmap);
-                        rewrite_params_in_expr(rhs, pmap);
-                    }
-                    Expr::Call { args, .. } => {
-                        for a in args.iter_mut() {
-                            rewrite_params_in_expr(a, pmap);
-                        }
-                    }
-                    Expr::MethodCall { receiver, args, .. } => {
-                        rewrite_params_in_expr(receiver, pmap);
-                        for a in args.iter_mut() {
-                            rewrite_params_in_expr(a, pmap);
-                        }
-                    }
-                    Expr::Ternary {
-                        cond,
-                        then_branch,
-                        else_branch,
-                    } => {
-                        rewrite_params_in_expr(cond, pmap);
-                        rewrite_params_in_expr(then_branch, pmap);
-                        rewrite_params_in_expr(else_branch, pmap);
-                    }
-                    _ => {}
-                }
-            }
-            fn rewrite_params_in_stmt(
-                s: &mut crate::exa_wasm::interpreter::ast::Stmt,
-                pmap: &HashMap<String, usize>,
-            ) {
-                use crate::exa_wasm::interpreter::ast::*;
-                match s {
-                    Stmt::Expr(e) => rewrite_params_in_expr(e, pmap),
-                    Stmt::Assign(lhs, rhs) => {
-                        if let Lhs::Indexed(_, idx_expr) = lhs {
-                            rewrite_params_in_expr(idx_expr, pmap);
-                        }
-                        rewrite_params_in_expr(rhs, pmap);
-                    }
-                    Stmt::Block(v) => {
-                        for ss in v.iter_mut() {
-                            rewrite_params_in_stmt(ss, pmap);
-                        }
-                    }
-                    Stmt::If {
-                        cond,
-                        then_branch,
-                        else_branch,
-                    } => {
-                        rewrite_params_in_expr(cond, pmap);
-                        rewrite_params_in_stmt(then_branch, pmap);
-                        if let Some(eb) = else_branch {
-                            rewrite_params_in_stmt(eb, pmap);
-                        }
-                    }
-                }
-            }
-
-            for st in stmts.iter_mut() {
-                rewrite_params_in_stmt(st, &pmap);
-            }
-
+            crate::exa_wasm::interpreter::loader_helpers::rewrite_params_in_stmts(&mut stmts, &pmap);
             if let Err(e) = typecheck::check_statements(&stmts) {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -400,59 +210,10 @@ pub fn load_ir_ode(
             }
             out_stmts = stmts;
         } else {
-            for (i, rhs) in
-                crate::exa_wasm::interpreter::loader_helpers::extract_all_assign(&out_text, "y[")
-            {
-                let toks = tokenize(&rhs);
-                let mut p = Parser::new(toks);
-                let res = p.parse_expr_result();
-                match res {
-                    Ok(expr) => {
-                        out_map.insert(i, expr);
-                    }
-                    Err(e) => {
-                        parse_errors
-                            .push(format!("failed to parse y[{}] RHS='{}' : {}", i, rhs, e));
-                    }
-                }
-            }
-            for (i, expr) in out_map.iter() {
-                let lhs = crate::exa_wasm::interpreter::ast::Lhs::Indexed(
-                    "y".to_string(),
-                    Box::new(crate::exa_wasm::interpreter::ast::Expr::Number(*i as f64)),
-                );
-                out_stmts.push(crate::exa_wasm::interpreter::ast::Stmt::Assign(
-                    lhs,
-                    expr.clone(),
-                ));
-            }
+            parse_errors.push("failed to parse out closure text; emit_ir must provide bytecode or valid AST/closure".to_string());
         }
     } else {
-        for (i, rhs) in
-            crate::exa_wasm::interpreter::loader_helpers::extract_all_assign(&out_text, "y[")
-        {
-            let toks = tokenize(&rhs);
-            let mut p = Parser::new(toks);
-            let res = p.parse_expr_result();
-            match res {
-                Ok(expr) => {
-                    out_map.insert(i, expr);
-                }
-                Err(e) => {
-                    parse_errors.push(format!("failed to parse y[{}] RHS='{}' : {}", i, rhs, e));
-                }
-            }
-        }
-        for (i, expr) in out_map.iter() {
-            let lhs = crate::exa_wasm::interpreter::ast::Lhs::Indexed(
-                "y".to_string(),
-                Box::new(crate::exa_wasm::interpreter::ast::Expr::Number(*i as f64)),
-            );
-            out_stmts.push(crate::exa_wasm::interpreter::ast::Stmt::Assign(
-                lhs,
-                expr.clone(),
-            ));
-        }
+        parse_errors.push("out closure missing or empty; emit_ir must provide bytecode or valid AST/closure".to_string());
     }
 
     // If the IR includes a pre-parsed init AST, use it.
@@ -467,8 +228,7 @@ pub fn load_ir_ode(
     }
 
     // parse init closure into statements
-    if let Some(body) =
-        crate::exa_wasm::interpreter::loader_helpers::extract_closure_body(&init_text)
+    if let Some(body) = crate::exa_wasm::interpreter::loader_helpers::extract_closure_body(&init_text)
     {
         let mut cleaned = body.clone();
         cleaned = crate::exa_wasm::interpreter::loader_helpers::strip_macro_calls(
@@ -484,82 +244,7 @@ pub fn load_ir_ode(
         let toks = tokenize(&cleaned);
         let mut p = Parser::new(toks);
         if let Some(mut stmts) = p.parse_statements() {
-            for st in stmts.iter_mut() {
-                // reuse the same rewrite helpers as above
-                fn rewrite_params_in_expr(
-                    e: &mut crate::exa_wasm::interpreter::ast::Expr,
-                    pmap: &HashMap<String, usize>,
-                ) {
-                    use crate::exa_wasm::interpreter::ast::*;
-                    match e {
-                        Expr::Ident(name) => {
-                            if let Some(idx) = pmap.get(name) {
-                                *e = Expr::Param(*idx);
-                            }
-                        }
-                        Expr::Indexed(_, idx_expr) => rewrite_params_in_expr(idx_expr, pmap),
-                        Expr::UnaryOp { rhs, .. } => rewrite_params_in_expr(rhs, pmap),
-                        Expr::BinaryOp { lhs, rhs, .. } => {
-                            rewrite_params_in_expr(lhs, pmap);
-                            rewrite_params_in_expr(rhs, pmap);
-                        }
-                        Expr::Call { args, .. } => {
-                            for a in args.iter_mut() {
-                                rewrite_params_in_expr(a, pmap);
-                            }
-                        }
-                        Expr::MethodCall { receiver, args, .. } => {
-                            rewrite_params_in_expr(receiver, pmap);
-                            for a in args.iter_mut() {
-                                rewrite_params_in_expr(a, pmap);
-                            }
-                        }
-                        Expr::Ternary {
-                            cond,
-                            then_branch,
-                            else_branch,
-                        } => {
-                            rewrite_params_in_expr(cond, pmap);
-                            rewrite_params_in_expr(then_branch, pmap);
-                            rewrite_params_in_expr(else_branch, pmap);
-                        }
-                        _ => {}
-                    }
-                }
-                fn rewrite_params_in_stmt(
-                    s: &mut crate::exa_wasm::interpreter::ast::Stmt,
-                    pmap: &HashMap<String, usize>,
-                ) {
-                    use crate::exa_wasm::interpreter::ast::*;
-                    match s {
-                        Stmt::Expr(e) => rewrite_params_in_expr(e, pmap),
-                        Stmt::Assign(lhs, rhs) => {
-                            if let Lhs::Indexed(_, idx_expr) = lhs {
-                                rewrite_params_in_expr(idx_expr, pmap);
-                            }
-                            rewrite_params_in_expr(rhs, pmap);
-                        }
-                        Stmt::Block(v) => {
-                            for ss in v.iter_mut() {
-                                rewrite_params_in_stmt(ss, pmap);
-                            }
-                        }
-                        Stmt::If {
-                            cond,
-                            then_branch,
-                            else_branch,
-                        } => {
-                            rewrite_params_in_expr(cond, pmap);
-                            rewrite_params_in_stmt(then_branch, pmap);
-                            if let Some(eb) = else_branch {
-                                rewrite_params_in_stmt(eb, pmap);
-                            }
-                        }
-                    }
-                }
-                rewrite_params_in_stmt(st, &pmap);
-            }
-
+            crate::exa_wasm::interpreter::loader_helpers::rewrite_params_in_stmts(&mut stmts, &pmap);
             if let Err(e) = typecheck::check_statements(&stmts) {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -568,64 +253,10 @@ pub fn load_ir_ode(
             }
             init_stmts = stmts;
         } else {
-            for (i, rhs) in
-                crate::exa_wasm::interpreter::loader_helpers::extract_all_assign(&init_text, "x[")
-            {
-                let toks = tokenize(&rhs);
-                let mut p = Parser::new(toks);
-                let res = p.parse_expr_result();
-                match res {
-                    Ok(expr) => {
-                        init_map.insert(i, expr);
-                    }
-                    Err(e) => {
-                        parse_errors.push(format!(
-                            "failed to parse init x[{}] RHS='{}' : {}",
-                            i, rhs, e
-                        ));
-                    }
-                }
-            }
-            for (i, expr) in init_map.iter() {
-                let lhs = crate::exa_wasm::interpreter::ast::Lhs::Indexed(
-                    "x".to_string(),
-                    Box::new(crate::exa_wasm::interpreter::ast::Expr::Number(*i as f64)),
-                );
-                init_stmts.push(crate::exa_wasm::interpreter::ast::Stmt::Assign(
-                    lhs,
-                    expr.clone(),
-                ));
-            }
+            parse_errors.push("failed to parse init closure text; emit_ir must provide bytecode or valid AST/closure".to_string());
         }
     } else {
-        for (i, rhs) in
-            crate::exa_wasm::interpreter::loader_helpers::extract_all_assign(&init_text, "x[")
-        {
-            let toks = tokenize(&rhs);
-            let mut p = Parser::new(toks);
-            let res = p.parse_expr_result();
-            match res {
-                Ok(expr) => {
-                    init_map.insert(i, expr);
-                }
-                Err(e) => {
-                    parse_errors.push(format!(
-                        "failed to parse init x[{}] RHS='{}' : {}",
-                        i, rhs, e
-                    ));
-                }
-            }
-        }
-        for (i, expr) in init_map.iter() {
-            let lhs = crate::exa_wasm::interpreter::ast::Lhs::Indexed(
-                "x".to_string(),
-                Box::new(crate::exa_wasm::interpreter::ast::Expr::Number(*i as f64)),
-            );
-            init_stmts.push(crate::exa_wasm::interpreter::ast::Stmt::Assign(
-                lhs,
-                expr.clone(),
-            ));
-        }
+        parse_errors.push("init closure missing or empty; emit_ir must provide bytecode or valid AST/closure".to_string());
     }
 
     if let Some(lmap) = ir.lag_map.clone() {
@@ -776,9 +407,9 @@ pub fn load_ir_ode(
     // Determine number of states and output eqs from parsed assignments
     let max_dx =
         crate::exa_wasm::interpreter::loader_helpers::collect_max_index(&diffeq_stmts, "dx")
-            .unwrap_or_else(|| dx_map.keys().copied().max().unwrap_or(0));
+            .unwrap_or(0);
     let max_y = crate::exa_wasm::interpreter::loader_helpers::collect_max_index(&out_stmts, "y")
-        .unwrap_or_else(|| out_map.keys().copied().max().unwrap_or(0));
+        .unwrap_or(0);
     let nstates = max_dx + 1;
     let nouteqs = max_y + 1;
 
@@ -864,6 +495,15 @@ pub fn load_ir_ode(
         pmap: pmap.clone(),
         nstates,
         _nouteqs: nouteqs,
+        // attach any emitted bytecode maps (empty if emitter didn't provide them)
+        bytecode_diffeq: ir.diffeq_bytecode.unwrap_or_default(),
+        bytecode_out: ir.out_bytecode.unwrap_or_default(),
+        bytecode_init: ir.init_bytecode.unwrap_or_default(),
+        bytecode_lag: ir.lag_bytecode.unwrap_or_default(),
+        bytecode_fa: ir.fa_bytecode.unwrap_or_default(),
+        // function table and locals ordering emitted by the compiler
+        funcs: ir.funcs.unwrap_or_default(),
+        locals: ir.locals.unwrap_or_default(),
     };
 
     let id = registry::register_entry(entry);

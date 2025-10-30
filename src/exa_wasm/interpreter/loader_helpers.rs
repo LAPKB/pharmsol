@@ -9,276 +9,83 @@ use std::collections::HashMap;
 
 // ongoing refactor can wire them into `loader.rs` incrementally.
 
-/// Extract top-level assignments like `dx[i] = expr;` from an IR closure
-/// body string. The function attempts to only collect assignments that
-/// live at the first brace nesting level (i.e. direct children of the
-/// closure body). For simple top-level `if cond { dx[i] = rhs; }`
-/// constructs the helper will convert those into a ternary-style RHS
-/// string `cond ? rhs : 0.0` and return it as if it were a direct
-/// assignment.
-pub fn extract_all_assign(src: &str, lhs_prefix: &str) -> Vec<(usize, String)> {
-    let mut res = Vec::new();
+/// Rewrite parameter identifier `Ident(name)` nodes in a parsed statement
+/// vector into `Expr::Param(index)` nodes using the provided `pmap`.
+pub fn rewrite_params_in_stmts(
+    stmts: &mut Vec<crate::exa_wasm::interpreter::ast::Stmt>,
+    pmap: &std::collections::HashMap<String, usize>,
+) {
+    use crate::exa_wasm::interpreter::ast::*;
 
-    let mut brace_depth: isize = 0;
-    let mut paren_depth: isize = 0;
-    let mut stmt = String::new();
-
-    // scan a collected statement for direct lhs_prefix assignments
-    fn scan_stmt_collect(s: &str, lhs_prefix: &str, res: &mut Vec<(usize, String)>) {
-        let bytes = s.as_bytes();
-        let mut i: usize = 0;
-        while i < bytes.len() {
-            let ch = bytes[i] as char;
-            if ch == '{' || ch == '}' {
-                i += 1;
-                continue;
-            }
-            if let Some(rel) = s[i..].find(lhs_prefix) {
-                let pos = i + rel;
-                let after = &s[pos + lhs_prefix.len()..];
-                if let Some(rb) = after.find(']') {
-                    let idx_str = &after[..rb];
-                    if let Ok(idx) = idx_str.trim().parse::<usize>() {
-                        if let Some(eqpos) = after.find('=') {
-                            if let Some(semi) = after[eqpos + 1..].find(';') {
-                                let rhs = after[eqpos + 1..eqpos + 1 + semi].trim().to_string();
-                                res.push((idx, rhs));
-                            }
-                        }
-                    }
-                    i = pos + lhs_prefix.len() + rb + 1;
-                    continue;
+    fn rewrite_expr(e: &mut Expr, pmap: &std::collections::HashMap<String, usize>) {
+        match e {
+            Expr::Ident(name) => {
+                if let Some(idx) = pmap.get(name) {
+                    *e = Expr::Param(*idx);
                 }
             }
-            i += 1;
+            Expr::Indexed(_, idx_expr) => rewrite_expr(idx_expr, pmap),
+            Expr::UnaryOp { rhs, .. } => rewrite_expr(rhs, pmap),
+            Expr::BinaryOp { lhs, rhs, .. } => {
+                rewrite_expr(lhs, pmap);
+                rewrite_expr(rhs, pmap);
+            }
+            Expr::Call { args, .. } => {
+                for a in args.iter_mut() {
+                    rewrite_expr(a, pmap);
+                }
+            }
+            Expr::MethodCall { receiver, args, .. } => {
+                rewrite_expr(receiver, pmap);
+                for a in args.iter_mut() {
+                    rewrite_expr(a, pmap);
+                }
+            }
+            Expr::Ternary {
+                cond,
+                then_branch,
+                else_branch,
+            } => {
+                rewrite_expr(cond, pmap);
+                rewrite_expr(then_branch, pmap);
+                rewrite_expr(else_branch, pmap);
+            }
+            _ => {}
         }
     }
 
-    for ch in src.chars() {
-        match ch {
-            '{' => {
-                brace_depth += 1;
-                if brace_depth >= 1 {
-                    stmt.push(ch);
+    fn rewrite_stmt(s: &mut crate::exa_wasm::interpreter::ast::Stmt, pmap: &std::collections::HashMap<String, usize>) {
+        use crate::exa_wasm::interpreter::ast::*;
+        match s {
+            Stmt::Expr(e) => rewrite_expr(e, pmap),
+            Stmt::Assign(lhs, rhs) => {
+                if let Lhs::Indexed(_, idx_expr) = lhs {
+                    rewrite_expr(idx_expr, pmap);
+                }
+                rewrite_expr(rhs, pmap);
+            }
+            Stmt::Block(v) => {
+                for ss in v.iter_mut() {
+                    rewrite_stmt(ss, pmap);
                 }
             }
-            '}' => {
-                if brace_depth > 0 {
-                    brace_depth -= 1;
-                }
-                if brace_depth >= 1 {
-                    stmt.push(ch);
-                    if paren_depth == 0 && brace_depth == 1 {
-                        let s = stmt.trim();
-                        if !s.is_empty() {
-                            let s_trim = s.trim_start();
-                            let s_work = if s_trim.starts_with('{') {
-                                s_trim[1..].trim_start()
-                            } else {
-                                s_trim
-                            };
-                            if s_work.starts_with("if") {
-                                if let Some(lb_rel) = s_work.find('{') {
-                                    // find matching '}' for this inner block
-                                    let mut depth3: isize = 0;
-                                    let bytes3 = s_work.as_bytes();
-                                    let mut jj = lb_rel;
-                                    let mut rb2_opt: Option<usize> = None;
-                                    while jj < bytes3.len() {
-                                        let ch3 = bytes3[jj] as char;
-                                        if ch3 == '{' {
-                                            depth3 += 1;
-                                        } else if ch3 == '}' {
-                                            depth3 -= 1;
-                                            if depth3 == 0 {
-                                                rb2_opt = Some(jj);
-                                                break;
-                                            }
-                                        }
-                                        jj += 1;
-                                    }
-                                    if let Some(rb2) = rb2_opt {
-                                        let cond_txt_raw =
-                                            &s_work[2..s_work.find('{').unwrap_or(s_work.len())];
-                                        let mut cond_txt = cond_txt_raw.trim().to_string();
-                                        if cond_txt.eq_ignore_ascii_case("true") {
-                                            cond_txt = "1.0".to_string();
-                                        } else if cond_txt.eq_ignore_ascii_case("false") {
-                                            cond_txt = "0.0".to_string();
-                                        }
-                                        let inner_block = &s_work[lb_rel + 1..rb2];
-                                        // collect assignments inside inner_block
-                                        let mut kk = 0usize;
-                                        while kk < inner_block.len() {
-                                            if inner_block[kk..].starts_with(lhs_prefix) {
-                                                let after3 = &inner_block[kk + lhs_prefix.len()..];
-                                                if let Some(rb3) = after3.find(']') {
-                                                    let idx_str3 = &after3[..rb3];
-                                                    if let Ok(idx3) =
-                                                        idx_str3.trim().parse::<usize>()
-                                                    {
-                                                        if let Some(eqpos3) = after3.find('=') {
-                                                            if let Some(semi3) =
-                                                                after3[eqpos3 + 1..].find(';')
-                                                            {
-                                                                let rhs3 = after3[eqpos3 + 1
-                                                                    ..eqpos3 + 1 + semi3]
-                                                                    .trim();
-                                                                let tern3 = format!(
-                                                                    "({}) ? ({}) : 0.0",
-                                                                    cond_txt, rhs3
-                                                                );
-                                                                res.push((idx3, tern3));
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                                if let Some(next_semi3) =
-                                                    inner_block[kk..].find(';')
-                                                {
-                                                    kk += next_semi3 + 1;
-                                                    continue;
-                                                } else {
-                                                    break;
-                                                }
-                                            }
-                                            kk += 1;
-                                        }
-                                    }
-                                }
-                            } else {
-                                scan_stmt_collect(s, lhs_prefix, &mut res);
-                            }
-                        }
-                        stmt.clear();
-                    }
-                }
-            }
-            '(' => {
-                paren_depth += 1;
-                if brace_depth >= 1 {
-                    stmt.push(ch);
-                }
-            }
-            ')' => {
-                if paren_depth > 0 {
-                    paren_depth -= 1;
-                }
-                if brace_depth >= 1 {
-                    stmt.push(ch);
-                }
-            }
-            ';' => {
-                if brace_depth >= 1 {
-                    if paren_depth == 0 && brace_depth == 1 {
-                        stmt.push(';');
-                        let s = stmt.trim();
-                        if !s.is_empty() {
-                            let s_trim = s.trim_start();
-                            let s_work = if s_trim.starts_with('{') {
-                                s_trim[1..].trim_start()
-                            } else {
-                                s_trim
-                            };
-                            if s_work.starts_with("if") {
-                                if let Some(lb_rel2) = s_work.find('{') {
-                                    let lb2 = lb_rel2;
-                                    let mut depth3: isize = 0;
-                                    let bytes3 = s_work.as_bytes();
-                                    let mut jj = lb2;
-                                    let mut rb2_opt: Option<usize> = None;
-                                    while jj < bytes3.len() {
-                                        let ch3 = bytes3[jj] as char;
-                                        if ch3 == '{' {
-                                            depth3 += 1;
-                                        } else if ch3 == '}' {
-                                            depth3 -= 1;
-                                            if depth3 == 0 {
-                                                rb2_opt = Some(jj);
-                                                break;
-                                            }
-                                        }
-                                        jj += 1;
-                                    }
-                                    if let Some(rb2) = rb2_opt {
-                                        let cond_txt_raw =
-                                            &s_work[2..s_work.find('{').unwrap_or(s_work.len())];
-                                        let mut cond_txt = cond_txt_raw.trim().to_string();
-                                        if cond_txt.eq_ignore_ascii_case("true") {
-                                            cond_txt = "1.0".to_string();
-                                        } else if cond_txt.eq_ignore_ascii_case("false") {
-                                            cond_txt = "0.0".to_string();
-                                        }
-                                        let inner_block = &s_work[lb2 + 1..rb2];
-                                        let mut kk = 0usize;
-                                        while kk < inner_block.len() {
-                                            if inner_block[kk..].starts_with(lhs_prefix) {
-                                                let after3 = &inner_block[kk + lhs_prefix.len()..];
-                                                if let Some(rb3) = after3.find(']') {
-                                                    let idx_str3 = &after3[..rb3];
-                                                    if let Ok(idx3) =
-                                                        idx_str3.trim().parse::<usize>()
-                                                    {
-                                                        if let Some(eqpos3) = after3.find('=') {
-                                                            if let Some(semi3) =
-                                                                after3[eqpos3 + 1..].find(';')
-                                                            {
-                                                                let rhs3 = after3[eqpos3 + 1
-                                                                    ..eqpos3 + 1 + semi3]
-                                                                    .trim();
-                                                                let tern3 = format!(
-                                                                    "({}) ? ({}) : 0.0",
-                                                                    cond_txt, rhs3
-                                                                );
-                                                                res.push((idx3, tern3));
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                                if let Some(next_semi3) =
-                                                    inner_block[kk..].find(';')
-                                                {
-                                                    kk += next_semi3 + 1;
-                                                    continue;
-                                                } else {
-                                                    break;
-                                                }
-                                            }
-                                            kk += 1;
-                                        }
-                                    }
-                                }
-                            } else {
-                                scan_stmt_collect(s, lhs_prefix, &mut res);
-                            }
-                        }
-                        stmt.clear();
-                        continue;
-                    } else {
-                        stmt.push(';');
-                        continue;
-                    }
-                } else {
-                    stmt.clear();
-                    continue;
-                }
-            }
-            _ => {
-                if brace_depth >= 1 {
-                    stmt.push(ch);
+            Stmt::If {
+                cond,
+                then_branch,
+                else_branch,
+            } => {
+                rewrite_expr(cond, pmap);
+                rewrite_stmt(then_branch, pmap);
+                if let Some(eb) = else_branch {
+                    rewrite_stmt(eb, pmap);
                 }
             }
         }
     }
 
-    // final stmt without trailing semicolon
-    let s = stmt.trim();
-    if !s.is_empty() {
-        // reuse scan helper to catch any trailing assignment
-        scan_stmt_collect(s, lhs_prefix, &mut res);
+    for s in stmts.iter_mut() {
+        rewrite_stmt(s, pmap);
     }
-
-    res
 }
 
 /// Return the body text inside the first top-level pair of braces.
