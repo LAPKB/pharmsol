@@ -132,6 +132,17 @@ pub fn load_ir_ode(
         );
     }
 
+    // Now that prelude has been extracted (if any), run the full typechecker
+    // on diffeq statements so we catch builtin arity and type errors early.
+    if !diffeq_stmts.is_empty() {
+        if let Err(e) = typecheck::check_statements(&diffeq_stmts) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("type errors in diffeq AST in IR: {:?}", e),
+            ));
+        }
+    }
+
     // prelude is extracted from diffeq_ast above (if present). If diffeq
     // bytecode was provided without AST, prelude will remain empty and
     // `locals` should be provided by emit_ir to define local slots.

@@ -254,6 +254,64 @@ pub fn emit_ir<E: crate::Equation>(
         ir_obj["init_ast"] = init_ast_val;
     }
 
+    // Extract fetch_params! and fetch_cov! macro bodies from closure texts and
+    // attach to IR so loader can validate without scanning raw text at runtime.
+    fn extract_fetch_bodies(src: &str, name: &str) -> Vec<String> {
+        let mut res = Vec::new();
+        let mut rest = src;
+        while let Some(pos) = rest.find(name) {
+            if let Some(lb_rel) = rest[pos..].find('(') {
+                let tail = &rest[pos + lb_rel + 1..];
+                let mut depth: isize = 0;
+                let mut i = 0usize;
+                let bytes = tail.as_bytes();
+                let mut found: Option<usize> = None;
+                while i < tail.len() {
+                    match bytes[i] as char {
+                        '(' => depth += 1,
+                        ')' => {
+                            if depth == 0 {
+                                found = Some(i);
+                                break;
+                            }
+                            depth -= 1;
+                        }
+                        _ => {}
+                    }
+                    i += 1;
+                }
+                if let Some(rb) = found {
+                    let body = &tail[..rb];
+                    res.push(body.to_string());
+                    rest = &tail[rb + 1..];
+                    continue;
+                }
+            }
+            rest = &rest[pos + name.len()..];
+        }
+        res
+    }
+
+    let mut fetch_params_bodies: Vec<String> = Vec::new();
+    fetch_params_bodies.extend(extract_fetch_bodies(&diffeq_txt, "fetch_params!"));
+    fetch_params_bodies.extend(extract_fetch_bodies(&diffeq_txt, "fetch_param!"));
+    fetch_params_bodies.extend(extract_fetch_bodies(out_txt.as_deref().unwrap_or(""), "fetch_params!"));
+    fetch_params_bodies.extend(extract_fetch_bodies(out_txt.as_deref().unwrap_or(""), "fetch_param!"));
+    fetch_params_bodies.extend(extract_fetch_bodies(init_txt.as_deref().unwrap_or(""), "fetch_params!"));
+    fetch_params_bodies.extend(extract_fetch_bodies(init_txt.as_deref().unwrap_or(""), "fetch_param!"));
+
+    let mut fetch_cov_bodies: Vec<String> = Vec::new();
+    fetch_cov_bodies.extend(extract_fetch_bodies(&diffeq_txt, "fetch_cov!"));
+    fetch_cov_bodies.extend(extract_fetch_bodies(out_txt.as_deref().unwrap_or(""), "fetch_cov!"));
+    fetch_cov_bodies.extend(extract_fetch_bodies(init_txt.as_deref().unwrap_or(""), "fetch_cov!"));
+
+    if !fetch_params_bodies.is_empty() {
+        ir_obj["fetch_params"] = serde_json::to_value(&fetch_params_bodies).unwrap_or(serde_json::Value::Null);
+    }
+    if !fetch_cov_bodies.is_empty() {
+        ir_obj["fetch_cov"] = serde_json::to_value(&fetch_cov_bodies).unwrap_or(serde_json::Value::Null);
+    }
+
     // Compile expressions into bytecode. This compiler covers numeric
     // literals, Param(i), simple indexed loads with constant indices (x/p/rateiv),
     // locals, unary -, binary ops, calls to known builtins, and ternary.
@@ -267,6 +325,10 @@ pub fn emit_ir<E: crate::Equation>(
         match expr {
             Expr::Number(n) => {
                 out.push(Opcode::PushConst(*n));
+                true
+            }
+            Expr::Bool(b) => {
+                out.push(Opcode::PushConst(if *b { 1.0 } else { 0.0 }));
                 true
             }
             Expr::Param(i) => {
@@ -362,8 +424,14 @@ pub fn emit_ir<E: crate::Equation>(
                 true
             }
             Expr::Call { name, args } => {
-                // only compile known builtins
+                // only compile known builtins and check arity
                 if crate::exa_wasm::interpreter::is_known_function(name.as_str()) {
+                    // verify arity where possible
+                    if let Some(rng) = crate::exa_wasm::interpreter::arg_count_range(name.as_str()) {
+                        if !rng.contains(&args.len()) {
+                            return false;
+                        }
+                    }
                     // compile args
                     for a in args.iter() {
                         if !compile_expr_top(a, out, funcs, locals) {
@@ -391,6 +459,12 @@ pub fn emit_ir<E: crate::Equation>(
             } => {
                 // lower method call to function with receiver as first arg
                 if crate::exa_wasm::interpreter::is_known_function(name.as_str()) {
+                    // verify arity for method-style calls
+                    if let Some(rng) = crate::exa_wasm::interpreter::arg_count_range(name.as_str()) {
+                        if !rng.contains(&(1 + args.len())) {
+                            return false;
+                        }
+                    }
                     if !compile_expr_top(receiver, out, funcs, locals) {
                         return false;
                     }
@@ -447,7 +521,6 @@ pub fn emit_ir<E: crate::Equation>(
                 }
                 true
             }
-            _ => false,
         }
     }
 
