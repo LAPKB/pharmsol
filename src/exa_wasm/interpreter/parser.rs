@@ -9,7 +9,20 @@ pub fn tokenize(s: &str) -> Vec<Token> {
             chars.next();
             continue;
         }
-        if c.is_ascii_digit() || c == '.' {
+        // Numbers: start with digit, or a dot followed by a digit (e.g. .5)
+        if c.is_ascii_digit()
+            || (c == '.' && {
+                // lookahead: only treat '.' as start of number when followed by a digit
+                let mut tmp = chars.clone();
+                // consume current '.'
+                tmp.next();
+                if let Some(&d) = tmp.peek() {
+                    d.is_ascii_digit()
+                } else {
+                    false
+                }
+            })
+        {
             let mut num = String::new();
             while let Some(&d) = chars.peek() {
                 if d.is_ascii_digit()

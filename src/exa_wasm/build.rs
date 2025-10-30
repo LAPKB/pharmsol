@@ -421,27 +421,117 @@ pub fn emit_ir<E: crate::Equation>(
                 }
             }
             Expr::BinaryOp { lhs, op, rhs } => {
-                if !compile_expr_top(lhs, out, funcs, locals) {
-                    return false;
-                }
-                if !compile_expr_top(rhs, out, funcs, locals) {
-                    return false;
-                }
+                // handle short-circuit logical operators specially so we
+                // preserve AST semantics (avoid evaluating rhs when not
+                // necessary). For arithmetic/comparison operators we
+                // compile both sides in order.
                 match op.as_str() {
-                    "+" => out.push(Opcode::Add),
-                    "-" => out.push(Opcode::Sub),
-                    "*" => out.push(Opcode::Mul),
-                    "/" => out.push(Opcode::Div),
-                    "^" => out.push(Opcode::Pow),
-                    "<" => out.push(Opcode::Lt),
-                    ">" => out.push(Opcode::Gt),
-                    "<=" => out.push(Opcode::Le),
-                    ">=" => out.push(Opcode::Ge),
-                    "==" => out.push(Opcode::Eq),
-                    "!=" => out.push(Opcode::Ne),
-                    _ => return false,
+                    "&&" => {
+                        // lhs && rhs -> if lhs==0.0 jump to push 0.0; else evaluate rhs and return rhs!=0 as 0/1
+                        if !compile_expr_top(lhs, out, funcs, locals) {
+                            return false;
+                        }
+                        // JumpIfFalse to false path if lhs is false
+                        let jf_pos = out.len();
+                        out.push(Opcode::JumpIfFalse(0));
+
+                        // evaluate rhs
+                        if !compile_expr_top(rhs, out, funcs, locals) {
+                            return false;
+                        }
+                        // if rhs is false -> push 0, else push 1
+                        let jf2_pos = out.len();
+                        out.push(Opcode::JumpIfFalse(0));
+                        // rhs true -> push 1
+                        out.push(Opcode::PushConst(1.0));
+                        // jump to end
+                        let jmp_pos = out.len();
+                        out.push(Opcode::Jump(0));
+                        // false path
+                        let false_pos = out.len();
+                        // set first JumpIfFalse target to false_pos
+                        if let Opcode::JumpIfFalse(ref mut addr) = out[jf_pos] {
+                            *addr = false_pos;
+                        }
+                        // push 0.0 for false
+                        out.push(Opcode::PushConst(0.0));
+                        // fix jumps
+                        let end_pos = out.len();
+                        if let Opcode::Jump(ref mut addr) = out[jmp_pos] {
+                            *addr = end_pos;
+                        }
+                        if let Opcode::JumpIfFalse(ref mut addr) = out[jf2_pos] {
+                            *addr = false_pos;
+                        }
+                        true
+                    }
+                    "||" => {
+                        // lhs || rhs -> if lhs != 0 -> push 1 and skip rhs; else evaluate rhs and return rhs!=0 as 0/1
+                        if !compile_expr_top(lhs, out, funcs, locals) {
+                            return false;
+                        }
+                        // if lhs is false, evaluate rhs; JumpIfFalse should jump to rhs
+                        let jf_pos = out.len();
+                        out.push(Opcode::JumpIfFalse(0));
+                        // lhs true -> push 1
+                        out.push(Opcode::PushConst(1.0));
+                        // jump to end
+                        let jmp_pos = out.len();
+                        out.push(Opcode::Jump(0));
+                        // else/rhs path
+                        let else_pos = out.len();
+                        if let Opcode::JumpIfFalse(ref mut addr) = out[jf_pos] {
+                            *addr = else_pos;
+                        }
+                        // evaluate rhs
+                        if !compile_expr_top(rhs, out, funcs, locals) {
+                            return false;
+                        }
+                        // now convert rhs to 0/1
+                        let jf2_pos = out.len();
+                        out.push(Opcode::JumpIfFalse(0));
+                        out.push(Opcode::PushConst(1.0));
+                        let jmp2 = out.len();
+                        out.push(Opcode::Jump(0));
+                        let false_pos = out.len();
+                        if let Opcode::JumpIfFalse(ref mut addr) = out[jf2_pos] {
+                            *addr = false_pos;
+                        }
+                        out.push(Opcode::PushConst(0.0));
+                        let end_pos = out.len();
+                        if let Opcode::Jump(ref mut addr) = out[jmp_pos] {
+                            *addr = end_pos;
+                        }
+                        if let Opcode::Jump(ref mut addr) = out[jmp2] {
+                            *addr = end_pos;
+                        }
+                        true
+                    }
+                    _ => {
+                        // default: arithmetic/comparison operators compile lhs then rhs
+                        if !compile_expr_top(lhs, out, funcs, locals) {
+                            return false;
+                        }
+                        if !compile_expr_top(rhs, out, funcs, locals) {
+                            return false;
+                        }
+                        match op.as_str() {
+                            "+" => out.push(Opcode::Add),
+                            "-" => out.push(Opcode::Sub),
+                            "*" => out.push(Opcode::Mul),
+                            "/" => out.push(Opcode::Div),
+                            "^" => out.push(Opcode::Pow),
+                            "<" => out.push(Opcode::Lt),
+                            ">" => out.push(Opcode::Gt),
+                            "<=" => out.push(Opcode::Le),
+                            ">=" => out.push(Opcode::Ge),
+                            "==" => out.push(Opcode::Eq),
+                            "!=" => out.push(Opcode::Ne),
+                            _ => return false,
+                        }
+                        true
+                    }
                 }
-                true
             }
             Expr::Call { name, args } => {
                 // only compile known builtins and check arity
@@ -568,49 +658,86 @@ pub fn emit_ir<E: crate::Equation>(
                 }
 
                 // reuse compile_expr_top defined above for expression compilation
-                for st in stmts.iter() {
-                    if let crate::exa_wasm::interpreter::Stmt::Assign(lhs, rhs) = st {
-                        if let crate::exa_wasm::interpreter::Lhs::Indexed(_name, idx_expr) = lhs {
-                            if _name == "dx" {
-                                // constant index
-                                if let crate::exa_wasm::interpreter::Expr::Number(n) = &**idx_expr {
-                                    let idx = *n as usize;
-                                    let mut code: Vec<crate::exa_wasm::interpreter::Opcode> =
-                                        Vec::new();
-                                    if compile_expr_top(
-                                        rhs,
-                                        &mut code,
-                                        &mut shared_funcs,
-                                        &shared_locals,
-                                    ) {
-                                        code.push(crate::exa_wasm::interpreter::Opcode::StoreDx(
-                                            idx,
-                                        ));
-                                        bytecode_map.insert(idx, code);
-                                    }
-                                } else {
-                                    // dynamic index: compile index then rhs then StoreDxDyn
-                                    let mut code: Vec<crate::exa_wasm::interpreter::Opcode> =
-                                        Vec::new();
-                                    if compile_expr_top(
-                                        idx_expr,
-                                        &mut code,
-                                        &mut shared_funcs,
-                                        &shared_locals,
-                                    ) && compile_expr_top(
-                                        rhs,
-                                        &mut code,
-                                        &mut shared_funcs,
-                                        &shared_locals,
-                                    ) {
-                                        code.push(crate::exa_wasm::interpreter::Opcode::StoreDxDyn);
-                                        // use a special key for dynamic-indexed entries
-                                        bytecode_map.insert(usize::MAX, code);
+                // but visit statements recursively so nested Blocks/Ifs are
+                // handled (previous code only inspected top-level stmts).
+                fn visit_stmt(
+                    st: &crate::exa_wasm::interpreter::Stmt,
+                    bytecode_map: &mut std::collections::HashMap<
+                        usize,
+                        Vec<crate::exa_wasm::interpreter::Opcode>,
+                    >,
+                    shared_funcs: &mut Vec<String>,
+                    shared_locals: &Vec<String>,
+                ) {
+                    match st {
+                        crate::exa_wasm::interpreter::Stmt::Assign(lhs, rhs) => {
+                            if let crate::exa_wasm::interpreter::Lhs::Indexed(_name, idx_expr) = lhs
+                            {
+                                if _name == "dx" {
+                                    // constant index
+                                    if let crate::exa_wasm::interpreter::Expr::Number(n) =
+                                        &**idx_expr
+                                    {
+                                        let idx = *n as usize;
+                                        let mut code: Vec<crate::exa_wasm::interpreter::Opcode> =
+                                            Vec::new();
+                                        if compile_expr_top(
+                                            rhs,
+                                            &mut code,
+                                            shared_funcs,
+                                            shared_locals,
+                                        ) {
+                                            code.push(
+                                                crate::exa_wasm::interpreter::Opcode::StoreDx(idx),
+                                            );
+                                            bytecode_map.insert(idx, code);
+                                        }
+                                    } else {
+                                        // dynamic index: compile index then rhs then StoreDxDyn
+                                        let mut code: Vec<crate::exa_wasm::interpreter::Opcode> =
+                                            Vec::new();
+                                        if compile_expr_top(
+                                            idx_expr,
+                                            &mut code,
+                                            shared_funcs,
+                                            shared_locals,
+                                        ) && compile_expr_top(
+                                            rhs,
+                                            &mut code,
+                                            shared_funcs,
+                                            shared_locals,
+                                        ) {
+                                            code.push(
+                                                crate::exa_wasm::interpreter::Opcode::StoreDxDyn,
+                                            );
+                                            // use a special key for dynamic-indexed entries
+                                            bytecode_map.insert(usize::MAX, code);
+                                        }
                                     }
                                 }
                             }
                         }
+                        crate::exa_wasm::interpreter::Stmt::Block(v) => {
+                            for ss in v.iter() {
+                                visit_stmt(ss, bytecode_map, shared_funcs, shared_locals);
+                            }
+                        }
+                        crate::exa_wasm::interpreter::Stmt::If {
+                            then_branch,
+                            else_branch,
+                            ..
+                        } => {
+                            visit_stmt(then_branch, bytecode_map, shared_funcs, shared_locals);
+                            if let Some(eb) = else_branch {
+                                visit_stmt(eb, bytecode_map, shared_funcs, shared_locals);
+                            }
+                        }
+                        crate::exa_wasm::interpreter::Stmt::Expr(_) => {}
                     }
+                }
+
+                for st in stmts.iter() {
+                    visit_stmt(st, &mut bytecode_map, &mut shared_funcs, &shared_locals);
                 }
             }
             Err(_) => {}
@@ -640,48 +767,83 @@ pub fn emit_ir<E: crate::Equation>(
                     }
                 }
 
-                for st in stmts.iter() {
-                    if let crate::exa_wasm::interpreter::Stmt::Assign(lhs, rhs) = st {
-                        if let crate::exa_wasm::interpreter::Lhs::Indexed(_name, idx_expr) = lhs {
-                            if _name == "dx" {
-                                // constant index
-                                if let crate::exa_wasm::interpreter::Expr::Number(n) = &**idx_expr {
-                                    let idx = *n as usize;
-                                    let mut code: Vec<crate::exa_wasm::interpreter::Opcode> =
-                                        Vec::new();
-                                    if compile_expr_top(
-                                        rhs,
-                                        &mut code,
-                                        &mut shared_funcs,
-                                        &shared_locals,
-                                    ) {
-                                        code.push(crate::exa_wasm::interpreter::Opcode::StoreDx(
-                                            idx,
-                                        ));
-                                        bytecode_map.insert(idx, code);
-                                    }
-                                } else {
-                                    // dynamic index
-                                    let mut code: Vec<crate::exa_wasm::interpreter::Opcode> =
-                                        Vec::new();
-                                    if compile_expr_top(
-                                        idx_expr,
-                                        &mut code,
-                                        &mut shared_funcs,
-                                        &shared_locals,
-                                    ) && compile_expr_top(
-                                        rhs,
-                                        &mut code,
-                                        &mut shared_funcs,
-                                        &shared_locals,
-                                    ) {
-                                        code.push(crate::exa_wasm::interpreter::Opcode::StoreDxDyn);
-                                        bytecode_map.insert(usize::MAX, code);
+                // Visit statements recursively to find dx[...] assignments even
+                // when nested in blocks/ifs and compile them into bytecode.
+                fn visit_stmt(
+                    st: &crate::exa_wasm::interpreter::Stmt,
+                    bytecode_map: &mut std::collections::HashMap<
+                        usize,
+                        Vec<crate::exa_wasm::interpreter::Opcode>,
+                    >,
+                    shared_funcs: &mut Vec<String>,
+                    shared_locals: &Vec<String>,
+                ) {
+                    match st {
+                        crate::exa_wasm::interpreter::Stmt::Assign(lhs, rhs) => {
+                            if let crate::exa_wasm::interpreter::Lhs::Indexed(_name, idx_expr) = lhs
+                            {
+                                if _name == "dx" {
+                                    if let crate::exa_wasm::interpreter::Expr::Number(n) =
+                                        &**idx_expr
+                                    {
+                                        let idx = *n as usize;
+                                        let mut code: Vec<crate::exa_wasm::interpreter::Opcode> =
+                                            Vec::new();
+                                        if compile_expr_top(
+                                            rhs,
+                                            &mut code,
+                                            shared_funcs,
+                                            &shared_locals,
+                                        ) {
+                                            code.push(
+                                                crate::exa_wasm::interpreter::Opcode::StoreDx(idx),
+                                            );
+                                            bytecode_map.insert(idx, code);
+                                        }
+                                    } else {
+                                        let mut code: Vec<crate::exa_wasm::interpreter::Opcode> =
+                                            Vec::new();
+                                        if compile_expr_top(
+                                            idx_expr,
+                                            &mut code,
+                                            shared_funcs,
+                                            &shared_locals,
+                                        ) && compile_expr_top(
+                                            rhs,
+                                            &mut code,
+                                            shared_funcs,
+                                            &shared_locals,
+                                        ) {
+                                            code.push(
+                                                crate::exa_wasm::interpreter::Opcode::StoreDxDyn,
+                                            );
+                                            bytecode_map.insert(usize::MAX, code);
+                                        }
                                     }
                                 }
                             }
                         }
+                        crate::exa_wasm::interpreter::Stmt::Block(v) => {
+                            for ss in v.iter() {
+                                visit_stmt(ss, bytecode_map, shared_funcs, shared_locals);
+                            }
+                        }
+                        crate::exa_wasm::interpreter::Stmt::If {
+                            then_branch,
+                            else_branch,
+                            ..
+                        } => {
+                            visit_stmt(then_branch, bytecode_map, shared_funcs, shared_locals);
+                            if let Some(eb) = else_branch {
+                                visit_stmt(eb, bytecode_map, shared_funcs, shared_locals);
+                            }
+                        }
+                        crate::exa_wasm::interpreter::Stmt::Expr(_) => {}
                     }
+                }
+
+                for st in stmts.iter() {
+                    visit_stmt(st, &mut bytecode_map, &mut shared_funcs, &shared_locals);
                 }
             }
         }

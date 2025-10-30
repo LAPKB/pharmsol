@@ -508,6 +508,15 @@ mod tests {
         let x_vals: Vec<f64> = vec![x[0]];
         let p_vals: Vec<f64> = vec![];
         let rateiv_vals: Vec<f64> = vec![];
+        let mut funcs: Vec<String> = Vec::new();
+        if let Some(fv) = v.get("funcs") {
+            funcs = serde_json::from_value(fv.clone()).unwrap_or_default();
+        }
+
+        // debug: show discovered funcs and expr_code
+        eprintln!("debug funcs: {:?}", funcs);
+        eprintln!("debug expr_code: {:?}", expr_code);
+
         let vm_val = run_bytecode_eval(
             &expr_code,
             &x_vals,
@@ -515,7 +524,7 @@ mod tests {
             &rateiv_vals,
             0.0,
             &mut locals_slice,
-            &Vec::new(),
+            &funcs,
             &builtins,
         );
 
@@ -818,6 +827,14 @@ mod tests {
         let x_vals: Vec<f64> = vec![x[0]];
         let p_vals: Vec<f64> = vec![];
         let rateiv_vals: Vec<f64> = vec![];
+
+        let mut funcs: Vec<String> = Vec::new();
+        if let Some(fv) = v.get("funcs") {
+            funcs = serde_json::from_value(fv.clone()).unwrap_or_default();
+        }
+        eprintln!("debug funcs: {:?}", funcs);
+        eprintln!("debug expr_code: {:?}", expr_code);
+
         let vm_val = run_bytecode_eval(
             &expr_code,
             &x_vals,
@@ -825,7 +842,7 @@ mod tests {
             &rateiv_vals,
             0.0,
             &mut locals_slice,
-            &Vec::new(),
+            &funcs,
             &builtins,
         );
 
@@ -1120,6 +1137,14 @@ mod tests {
         let x_vals: Vec<f64> = vec![x[0]];
         let p_vals: Vec<f64> = vec![];
         let rateiv_vals: Vec<f64> = vec![];
+
+        let mut funcs: Vec<String> = Vec::new();
+        if let Some(fv) = v.get("funcs") {
+            funcs = serde_json::from_value(fv.clone()).unwrap_or_default();
+        }
+        eprintln!("debug funcs: {:?}", funcs);
+        eprintln!("debug expr_code: {:?}", expr_code);
+
         let vm_val = run_bytecode_eval(
             &expr_code,
             &x_vals,
@@ -1127,7 +1152,7 @@ mod tests {
             &rateiv_vals,
             0.0,
             &mut locals_slice,
-            &Vec::new(),
+            &funcs,
             &builtins,
         );
 
@@ -1325,6 +1350,13 @@ mod tests {
         let x_vals: Vec<f64> = vec![x[0]];
         let p_vals: Vec<f64> = vec![];
         let rateiv_vals: Vec<f64> = vec![];
+
+        // use funcs table emitted in IR so builtins can be looked up by name
+        let mut funcs: Vec<String> = Vec::new();
+        if let Some(fv) = v.get("funcs") {
+            funcs = serde_json::from_value(fv.clone()).unwrap_or_default();
+        }
+
         let vm_val = run_bytecode_eval(
             &expr_code,
             &x_vals,
@@ -1332,10 +1364,18 @@ mod tests {
             &rateiv_vals,
             0.0,
             &mut locals_slice,
-            &Vec::new(),
+            &funcs,
             &builtins,
         );
 
-        assert_eq!(ast_val.as_number(), vm_val);
+        if (ast_val.as_number() - vm_val).abs() > 1e-12 {
+            panic!(
+                "parity mismatch: ast={} vm={} funcs={:?} code={:?}",
+                ast_val.as_number(),
+                vm_val,
+                funcs,
+                expr_code
+            );
+        }
     }
 }
