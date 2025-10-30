@@ -1,11 +1,13 @@
 // AST types for the exa_wasm interpreter
 use std::fmt;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Expr {
     Number(f64),
     Bool(bool),
     Ident(String),              // e.g. ke
+    Param(usize),               // parameter by index (p[0] rewritten to Param(0))
     Indexed(String, Box<Expr>), // e.g. x[0], rateiv[0], y[0] where index can be expr
     UnaryOp {
         op: String,
@@ -61,13 +63,13 @@ pub enum Token {
     Semicolon,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Lhs {
     Ident(String),
     Indexed(String, Box<Expr>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Stmt {
     Expr(Expr),
     Assign(Lhs, Expr),

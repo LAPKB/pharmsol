@@ -38,6 +38,8 @@ impl Value {
 // runtime problems so the parent module can expose them to the simulator.
 pub(crate) fn eval_call(name: &str, args: &[Value]) -> Value {
     use Value::Number;
+    // If the function is unknown, report runtime error (safety) and fall through
+    // to returning 0.0 to preserve previous behavior for callers that expect a numeric value.
     match name {
         "exp" => Number(
             args.get(0)
@@ -140,7 +142,13 @@ pub(crate) fn eval_call(name: &str, args: &[Value]) -> Value {
                 .as_number()
                 .tan(),
         ),
-        _ => Number(0.0),
+        _ => {
+            // Unknown function: report a runtime error so callers/users
+            // can detect mistakes (typos, missing builtins) instead of
+            // silently receiving 0.0 which hides problems.
+            crate::exa_wasm::interpreter::set_runtime_error(format!("unknown function '{}'", name));
+            Number(0.0)
+        }
     }
 }
 
@@ -190,6 +198,19 @@ pub(crate) fn eval_expr(
             }
             set_runtime_error(format!("unknown identifier '{}'", name));
             Value::Number(0.0)
+        }
+        Expr::Param(idx) => {
+            let i = *idx;
+            if i < p.len() {
+                Value::Number(p[i])
+            } else {
+                set_runtime_error(format!(
+                    "parameter index out of bounds p[{}] (nparams={})",
+                    i,
+                    p.len()
+                ));
+                Value::Number(0.0)
+            }
         }
         Expr::Indexed(name, idx_expr) => {
             let idxv = eval_expr(idx_expr, x, p, rateiv, locals, pmap, t, cov);
