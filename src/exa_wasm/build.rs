@@ -254,47 +254,48 @@ pub fn emit_ir<E: crate::Equation>(
     // the parsed diffeq AST. This is a conservative, best-effort POC: only
     // compile assignments where the LHS is `dx[const]` and RHS contains
     // numeric constants, Params and binary ops (+ - * / ^).
+    // small expression compiler reused for diffeq/out/init compilation
+    fn compile_expr_top(
+        expr: &crate::exa_wasm::interpreter::Expr,
+        out: &mut Vec<crate::exa_wasm::interpreter::Opcode>,
+    ) -> bool {
+        match expr {
+            crate::exa_wasm::interpreter::Expr::Number(n) => {
+                out.push(crate::exa_wasm::interpreter::Opcode::PushConst(*n));
+                true
+            }
+            crate::exa_wasm::interpreter::Expr::Param(i) => {
+                out.push(crate::exa_wasm::interpreter::Opcode::LoadParam(*i));
+                true
+            }
+            crate::exa_wasm::interpreter::Expr::BinaryOp { lhs, op, rhs } => {
+                if !compile_expr_top(lhs, out) {
+                    return false;
+                }
+                if !compile_expr_top(rhs, out) {
+                    return false;
+                }
+                match op.as_str() {
+                    "+" => out.push(crate::exa_wasm::interpreter::Opcode::Add),
+                    "-" => out.push(crate::exa_wasm::interpreter::Opcode::Sub),
+                    "*" => out.push(crate::exa_wasm::interpreter::Opcode::Mul),
+                    "/" => out.push(crate::exa_wasm::interpreter::Opcode::Div),
+                    "^" => out.push(crate::exa_wasm::interpreter::Opcode::Pow),
+                    _ => return false,
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
     let mut bytecode_map: HashMap<usize, Vec<crate::exa_wasm::interpreter::Opcode>> =
         HashMap::new();
     if let Some(v) = ir_obj.get("diffeq_ast") {
         // try to deserialize back into AST
         match serde_json::from_value::<Vec<crate::exa_wasm::interpreter::Stmt>>(v.clone()) {
             Ok(stmts) => {
-                // helper to compile expressions
-                fn compile_expr(
-                    expr: &crate::exa_wasm::interpreter::Expr,
-                    out: &mut Vec<crate::exa_wasm::interpreter::Opcode>,
-                ) -> bool {
-                    match expr {
-                        crate::exa_wasm::interpreter::Expr::Number(n) => {
-                            out.push(crate::exa_wasm::interpreter::Opcode::PushConst(*n));
-                            true
-                        }
-                        crate::exa_wasm::interpreter::Expr::Param(i) => {
-                            out.push(crate::exa_wasm::interpreter::Opcode::LoadParam(*i));
-                            true
-                        }
-                        crate::exa_wasm::interpreter::Expr::BinaryOp { lhs, op, rhs } => {
-                            // post-order: compile lhs, rhs, then op
-                            if !compile_expr(lhs, out) {
-                                return false;
-                            }
-                            if !compile_expr(rhs, out) {
-                                return false;
-                            }
-                            match op.as_str() {
-                                "+" => out.push(crate::exa_wasm::interpreter::Opcode::Add),
-                                "-" => out.push(crate::exa_wasm::interpreter::Opcode::Sub),
-                                "*" => out.push(crate::exa_wasm::interpreter::Opcode::Mul),
-                                "/" => out.push(crate::exa_wasm::interpreter::Opcode::Div),
-                                "^" => out.push(crate::exa_wasm::interpreter::Opcode::Pow),
-                                _ => return false,
-                            }
-                            true
-                        }
-                        _ => false,
-                    }
-                }
+                // reuse compile_expr_top defined above for expression compilation
 
                 for st in stmts.iter() {
                     if let crate::exa_wasm::interpreter::Stmt::Assign(lhs, rhs) = st {
@@ -306,7 +307,7 @@ pub fn emit_ir<E: crate::Equation>(
                                         let idx = *n as usize;
                                         let mut code: Vec<crate::exa_wasm::interpreter::Opcode> =
                                             Vec::new();
-                                        if compile_expr(rhs, &mut code) {
+                                        if compile_expr_top(rhs, &mut code) {
                                             code.push(
                                                 crate::exa_wasm::interpreter::Opcode::StoreDx(idx),
                                             );
@@ -325,8 +326,67 @@ pub fn emit_ir<E: crate::Equation>(
     }
 
     if !bytecode_map.is_empty() {
+        // emit the conservative diffeq bytecode map under the new IR field names
         ir_obj["bytecode_map"] =
             serde_json::to_value(&bytecode_map).unwrap_or(serde_json::Value::Null);
+        // new field expected by loader: diffeq_bytecode (index -> opcode sequence)
+        ir_obj["diffeq_bytecode"] =
+            serde_json::to_value(&bytecode_map).unwrap_or(serde_json::Value::Null);
+        // emit empty funcs/locals placeholders for now
+        ir_obj["funcs"] = serde_json::to_value(Vec::<String>::new()).unwrap();
+        ir_obj["locals"] = serde_json::to_value(Vec::<String>::new()).unwrap();
+    }
+
+    // Attempt to compile out/init closures into bytecode similarly to diffeq POC
+    let mut out_bytecode_map: HashMap<usize, Vec<crate::exa_wasm::interpreter::Opcode>> =
+        HashMap::new();
+    let mut init_bytecode_map: HashMap<usize, Vec<crate::exa_wasm::interpreter::Opcode>> =
+        HashMap::new();
+
+    // Helper to compile an Assign stmt into bytecode when LHS is y[idx] or x[idx]
+    if let Some(v) = ir_obj.get("out_ast") {
+        if let Ok(stmts) = serde_json::from_value::<Vec<crate::exa_wasm::interpreter::Stmt>>(v.clone()) {
+            for st in stmts.iter() {
+                if let crate::exa_wasm::interpreter::Stmt::Assign(lhs, rhs) = st {
+                    if let crate::exa_wasm::interpreter::Lhs::Indexed(name, idx_expr) = lhs {
+                        if let crate::exa_wasm::interpreter::Expr::Number(n) = &**idx_expr {
+                            let idx = *n as usize;
+                            let mut code: Vec<crate::exa_wasm::interpreter::Opcode> = Vec::new();
+                            if compile_expr_top(rhs, &mut code) {
+                                code.push(crate::exa_wasm::interpreter::Opcode::StoreY(idx));
+                                out_bytecode_map.insert(idx, code);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some(v) = ir_obj.get("init_ast") {
+        if let Ok(stmts) = serde_json::from_value::<Vec<crate::exa_wasm::interpreter::Stmt>>(v.clone()) {
+            for st in stmts.iter() {
+                if let crate::exa_wasm::interpreter::Stmt::Assign(lhs, rhs) = st {
+                    if let crate::exa_wasm::interpreter::Lhs::Indexed(name, idx_expr) = lhs {
+                        if let crate::exa_wasm::interpreter::Expr::Number(n) = &**idx_expr {
+                            let idx = *n as usize;
+                            let mut code: Vec<crate::exa_wasm::interpreter::Opcode> = Vec::new();
+                            if compile_expr_top(rhs, &mut code) {
+                                code.push(crate::exa_wasm::interpreter::Opcode::StoreX(idx));
+                                init_bytecode_map.insert(idx, code);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if !out_bytecode_map.is_empty() {
+        ir_obj["out_bytecode"] = serde_json::to_value(&out_bytecode_map).unwrap_or(serde_json::Value::Null);
+    }
+    if !init_bytecode_map.is_empty() {
+        ir_obj["init_bytecode"] = serde_json::to_value(&init_bytecode_map).unwrap_or(serde_json::Value::Null);
     }
 
     let output_path = output.unwrap_or_else(|| {
