@@ -606,49 +606,6 @@ pub fn load_ir_ode(
     if let Some(body) = extract_closure_body(&out_text) {
         let mut cleaned = body.clone();
         // strip macros
-        fn strip_macro_calls_local(s: &str, name: &str) -> String {
-            let mut out = String::new();
-            let mut i = 0usize;
-            while i < s.len() {
-                if s[i..].starts_with(name) {
-                    if let Some(lb_rel) = s[i..].find('(') {
-                        let lb = i + lb_rel;
-                        let mut depth: isize = 0;
-                        let mut j = lb;
-                        let mut found = None;
-                        while j < s.len() {
-                            match s.as_bytes()[j] as char {
-                                '(' => depth += 1,
-                                ')' => {
-                                    depth -= 1;
-                                    if depth == 0 {
-                                        found = Some(j);
-                                        break;
-                                    }
-                                }
-                                _ => {}
-                            }
-                            j += 1;
-                        }
-                        if let Some(rb) = found {
-                            let mut k = rb + 1;
-                            while k < s.len() && s.as_bytes()[k].is_ascii_whitespace() {
-                                k += 1;
-                            }
-                            if k < s.len() && s.as_bytes()[k] as char == ';' {
-                                i = k + 1;
-                                continue;
-                            }
-                            i = rb + 1;
-                            continue;
-                        }
-                    }
-                }
-                out.push(s.as_bytes()[i] as char);
-                i += 1;
-            }
-            out
-        }
         cleaned = strip_macro_calls(&cleaned, "fetch_params!");
         cleaned = strip_macro_calls(&cleaned, "fetch_param!");
         cleaned = strip_macro_calls(&cleaned, "fetch_cov!");
@@ -1291,4 +1248,91 @@ pub fn load_ir_ode(
         Some(id),
     );
     Ok((ode, meta, id))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::exa_wasm::interpreter::ast::{Expr, Lhs, Stmt};
+    use crate::exa_wasm::interpreter::parser::{tokenize, Parser};
+
+    // simple extractor for the inner closure body used in tests
+    fn extract_body(src: &str) -> String {
+        let lb = src.find('{').expect("no '{' found");
+        let rb = src.rfind('}').expect("no '}' found");
+        src[lb + 1..rb].to_string()
+    }
+
+    fn extract_and_parse(src: &str) -> Vec<Stmt> {
+        let mut cleaned = extract_body(src);
+        // normalize booleans for parser (tests don't include macros)
+        cleaned = cleaned.replace("true", "1.0").replace("false", "0.0");
+        let toks = tokenize(&cleaned);
+        let mut p = Parser::new(toks);
+        p.parse_statements().expect("parse_statements failed")
+    }
+
+    fn contains_dx_assign(stmt: &Stmt, idx_expected: usize) -> bool {
+        match stmt {
+            Stmt::Assign(lhs, _rhs) => match lhs {
+                Lhs::Indexed(name, idx_expr) => {
+                    if name == "dx" {
+                        if let Expr::Number(n) = &**idx_expr {
+                            return (*n as usize) == idx_expected;
+                        }
+                    }
+                    false
+                }
+                _ => false,
+            },
+            Stmt::Block(v) => v.iter().any(|s| contains_dx_assign(s, idx_expected)),
+            Stmt::If { then_branch, else_branch, .. } => {
+                contains_dx_assign(then_branch, idx_expected)
+                    || else_branch.as_ref().map(|b| contains_dx_assign(b, idx_expected)).unwrap_or(false)
+            }
+            Stmt::Expr(_) => false,
+        }
+    }
+
+    #[test]
+    fn test_if_true_parsed_cond_is_one_and_assign_present() {
+        let src = "|x, p, _t, dx, rateiv, _cov| { if true { dx[0] = -ke * x[0]; } }";
+        let stmts = extract_and_parse(src);
+        assert!(!stmts.is_empty());
+        let mut found = false;
+        for st in stmts.iter() {
+            if let Stmt::If { cond, then_branch, .. } = st {
+                if let Expr::Number(n) = cond {
+                    assert_eq!(*n, 1.0f64);
+                } else {
+                    panic!("cond not normalized to number for 'true'");
+                }
+                assert!(contains_dx_assign(then_branch, 0));
+                found = true;
+                break;
+            }
+        }
+        assert!(found, "No If statement found in parsed stmts");
+    }
+
+    #[test]
+    fn test_if_false_parsed_cond_is_zero_and_assign_present() {
+        let src = "|x, p, _t, dx, rateiv, _cov| { if false { dx[0] = -ke * x[0]; } }";
+        let stmts = extract_and_parse(src);
+        assert!(!stmts.is_empty());
+        let mut found = false;
+        for st in stmts.iter() {
+            if let Stmt::If { cond, then_branch, .. } = st {
+                if let Expr::Number(n) = cond {
+                    assert_eq!(*n, 0.0f64);
+                } else {
+                    panic!("cond not normalized to number for 'false'");
+                }
+                // parser still preserves the assignment in the then-branch
+                assert!(contains_dx_assign(then_branch, 0));
+                found = true;
+                break;
+            }
+        }
+        assert!(found, "No If statement found in parsed stmts");
+    }
 }

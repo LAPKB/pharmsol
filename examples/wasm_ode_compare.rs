@@ -42,8 +42,10 @@ fn main() {
     let _ir_file = exa_wasm::build::emit_ir::<equation::ODE>(
         "|x, p, _t, dx, rateiv, _cov| {
             fetch_params!(p, ke, _v);
-            if false {
-                dx[0] = -ke * x[0] + rateiv[0];
+            if true {
+                if true {
+                    dx[0] = -ke * x[0] + rateiv[0];
+                }
             }
         }"
         .to_string(),
