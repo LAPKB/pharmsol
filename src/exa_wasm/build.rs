@@ -617,6 +617,76 @@ pub fn emit_ir<E: crate::Equation>(
         }
     }
 
+    // If we didn't produce a bytecode_map above (e.g. try_parse_and_rewrite
+    // failed or the AST wasn't attached), attempt a best-effort parse of the
+    // raw diffeq closure text and compile it into bytecode. This increases
+    // emitter coverage for forms that may have been missed earlier and helps
+    // the parity tests exercise the VM path.
+    if bytecode_map.is_empty() {
+        if let Some(body) = crate::exa_wasm::interpreter::extract_closure_body(
+            &ir_obj["diffeq"].as_str().unwrap_or(&"".to_string()),
+        ) {
+            let toks = crate::exa_wasm::interpreter::tokenize(&body);
+            let mut p = crate::exa_wasm::interpreter::Parser::new(toks);
+            if let Some(stmts) = p.parse_statements() {
+                // collect local variable names from non-indexed assignments
+                for st in stmts.iter() {
+                    if let crate::exa_wasm::interpreter::Stmt::Assign(lhs, _rhs) = st {
+                        if let crate::exa_wasm::interpreter::Lhs::Ident(name) = lhs {
+                            if !shared_locals.iter().any(|n| n == name) {
+                                shared_locals.push(name.clone());
+                            }
+                        }
+                    }
+                }
+
+                for st in stmts.iter() {
+                    if let crate::exa_wasm::interpreter::Stmt::Assign(lhs, rhs) = st {
+                        if let crate::exa_wasm::interpreter::Lhs::Indexed(_name, idx_expr) = lhs {
+                            if _name == "dx" {
+                                // constant index
+                                if let crate::exa_wasm::interpreter::Expr::Number(n) = &**idx_expr {
+                                    let idx = *n as usize;
+                                    let mut code: Vec<crate::exa_wasm::interpreter::Opcode> =
+                                        Vec::new();
+                                    if compile_expr_top(
+                                        rhs,
+                                        &mut code,
+                                        &mut shared_funcs,
+                                        &shared_locals,
+                                    ) {
+                                        code.push(crate::exa_wasm::interpreter::Opcode::StoreDx(
+                                            idx,
+                                        ));
+                                        bytecode_map.insert(idx, code);
+                                    }
+                                } else {
+                                    // dynamic index
+                                    let mut code: Vec<crate::exa_wasm::interpreter::Opcode> =
+                                        Vec::new();
+                                    if compile_expr_top(
+                                        idx_expr,
+                                        &mut code,
+                                        &mut shared_funcs,
+                                        &shared_locals,
+                                    ) && compile_expr_top(
+                                        rhs,
+                                        &mut code,
+                                        &mut shared_funcs,
+                                        &shared_locals,
+                                    ) {
+                                        code.push(crate::exa_wasm::interpreter::Opcode::StoreDxDyn);
+                                        bytecode_map.insert(usize::MAX, code);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     if !bytecode_map.is_empty() {
         // emit the conservative diffeq bytecode map under the new IR field names
         ir_obj["bytecode_map"] =
