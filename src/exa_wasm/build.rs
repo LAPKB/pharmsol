@@ -126,10 +126,66 @@ pub fn emit_ir<E: crate::Equation>(
         pmap: &std::collections::HashMap<String, usize>,
     ) -> Option<Vec<crate::exa_wasm::interpreter::Stmt>> {
         if let Some(body) = crate::exa_wasm::interpreter::extract_closure_body(src) {
-            let mut cleaned = body.clone();
-            cleaned = crate::exa_wasm::interpreter::strip_macro_calls(&cleaned, "fetch_params!");
-            cleaned = crate::exa_wasm::interpreter::strip_macro_calls(&cleaned, "fetch_param!");
-            cleaned = crate::exa_wasm::interpreter::strip_macro_calls(&cleaned, "fetch_cov!");
+            // remove fetch_* macro invocations from the body so the parser
+            // (which doesn't understand macros) can parse the remaining
+            // statements. We strip the entire macro invocation including
+            // parentheses and nested contents.
+            let mut rest = body.as_str();
+            let mut cleaned = String::new();
+            let macro_names = ["fetch_params!", "fetch_param!", "fetch_cov!"];
+            loop {
+                // find earliest macro occurrence
+                let mut earliest: Option<(usize, &str)> = None;
+                for &name in macro_names.iter() {
+                    if let Some(pos) = rest.find(name) {
+                        if earliest.is_none() || pos < earliest.unwrap().0 {
+                            earliest = Some((pos, name));
+                        }
+                    }
+                }
+                match earliest {
+                    None => {
+                        cleaned.push_str(rest);
+                        break;
+                    }
+                    Some((pos, name)) => {
+                        // append preceding text
+                        cleaned.push_str(&rest[..pos]);
+                        // find the '(' following the macro name
+                        if let Some(lb_rel) = rest[pos..].find('(') {
+                            let tail = &rest[pos + lb_rel + 1..];
+                            let mut depth: isize = 0;
+                            let mut i = 0usize;
+                            let bytes = tail.as_bytes();
+                            let mut found: Option<usize> = None;
+                            while i < tail.len() {
+                                match bytes[i] as char {
+                                    '(' => depth += 1,
+                                    ')' => {
+                                        if depth == 0 {
+                                            found = Some(i);
+                                            break;
+                                        }
+                                        depth -= 1;
+                                    }
+                                    _ => {}
+                                }
+                                i += 1;
+                            }
+                            if let Some(rb) = found {
+                                rest = &tail[rb + 1..];
+                                continue;
+                            }
+                        }
+                        // fallback: skip past the macro name if we couldn't find a proper '('
+                        rest = &rest[pos + name.len()..];
+                    }
+                }
+            }
+
+            // trim leading/trailing whitespace and drop any leading semicolons
+            // that may remain after removing macro invocations.
+            let cleaned = cleaned.trim().trim_start_matches(';').trim().to_string();
             let toks = crate::exa_wasm::interpreter::tokenize(&cleaned);
             let mut p = crate::exa_wasm::interpreter::Parser::new(toks);
             if let Some(mut stmts) = p.parse_statements() {
@@ -723,13 +779,27 @@ pub fn emit_ir<E: crate::Equation>(
                             }
                         }
                         crate::exa_wasm::interpreter::Stmt::If {
+                            cond,
                             then_branch,
                             else_branch,
-                            ..
                         } => {
-                            visit_stmt(then_branch, bytecode_map, shared_funcs, shared_locals);
-                            if let Some(eb) = else_branch {
-                                visit_stmt(eb, bytecode_map, shared_funcs, shared_locals);
+                            // Only lower conditional assignments into bytecode when
+                            // the condition is a compile-time constant boolean. For
+                            // unknown/runtime conditions we skip bytecode lowering
+                            // so the runtime can evaluate the AST (preserves
+                            // short-circuit/conditional semantics).
+                            match cond {
+                                crate::exa_wasm::interpreter::Expr::Bool(b) => {
+                                    if *b {
+                                        visit_stmt(then_branch, bytecode_map, shared_funcs, shared_locals);
+                                    } else if let Some(eb) = else_branch {
+                                        visit_stmt(eb, bytecode_map, shared_funcs, shared_locals);
+                                    }
+                                }
+                                _ => {
+                                    // runtime condition: do not emit bytecode for
+                                    // nested assignments under this If
+                                }
                             }
                         }
                         crate::exa_wasm::interpreter::Stmt::Expr(_) => {}
@@ -744,110 +814,9 @@ pub fn emit_ir<E: crate::Equation>(
         }
     }
 
-    // If we didn't produce a bytecode_map above (e.g. try_parse_and_rewrite
-    // failed or the AST wasn't attached), attempt a best-effort parse of the
-    // raw diffeq closure text and compile it into bytecode. This increases
-    // emitter coverage for forms that may have been missed earlier and helps
-    // the parity tests exercise the VM path.
-    if bytecode_map.is_empty() {
-        if let Some(body) = crate::exa_wasm::interpreter::extract_closure_body(
-            &ir_obj["diffeq"].as_str().unwrap_or(&"".to_string()),
-        ) {
-            let toks = crate::exa_wasm::interpreter::tokenize(&body);
-            let mut p = crate::exa_wasm::interpreter::Parser::new(toks);
-            if let Some(stmts) = p.parse_statements() {
-                // collect local variable names from non-indexed assignments
-                for st in stmts.iter() {
-                    if let crate::exa_wasm::interpreter::Stmt::Assign(lhs, _rhs) = st {
-                        if let crate::exa_wasm::interpreter::Lhs::Ident(name) = lhs {
-                            if !shared_locals.iter().any(|n| n == name) {
-                                shared_locals.push(name.clone());
-                            }
-                        }
-                    }
-                }
-
-                // Visit statements recursively to find dx[...] assignments even
-                // when nested in blocks/ifs and compile them into bytecode.
-                fn visit_stmt(
-                    st: &crate::exa_wasm::interpreter::Stmt,
-                    bytecode_map: &mut std::collections::HashMap<
-                        usize,
-                        Vec<crate::exa_wasm::interpreter::Opcode>,
-                    >,
-                    shared_funcs: &mut Vec<String>,
-                    shared_locals: &Vec<String>,
-                ) {
-                    match st {
-                        crate::exa_wasm::interpreter::Stmt::Assign(lhs, rhs) => {
-                            if let crate::exa_wasm::interpreter::Lhs::Indexed(_name, idx_expr) = lhs
-                            {
-                                if _name == "dx" {
-                                    if let crate::exa_wasm::interpreter::Expr::Number(n) =
-                                        &**idx_expr
-                                    {
-                                        let idx = *n as usize;
-                                        let mut code: Vec<crate::exa_wasm::interpreter::Opcode> =
-                                            Vec::new();
-                                        if compile_expr_top(
-                                            rhs,
-                                            &mut code,
-                                            shared_funcs,
-                                            &shared_locals,
-                                        ) {
-                                            code.push(
-                                                crate::exa_wasm::interpreter::Opcode::StoreDx(idx),
-                                            );
-                                            bytecode_map.insert(idx, code);
-                                        }
-                                    } else {
-                                        let mut code: Vec<crate::exa_wasm::interpreter::Opcode> =
-                                            Vec::new();
-                                        if compile_expr_top(
-                                            idx_expr,
-                                            &mut code,
-                                            shared_funcs,
-                                            &shared_locals,
-                                        ) && compile_expr_top(
-                                            rhs,
-                                            &mut code,
-                                            shared_funcs,
-                                            &shared_locals,
-                                        ) {
-                                            code.push(
-                                                crate::exa_wasm::interpreter::Opcode::StoreDxDyn,
-                                            );
-                                            bytecode_map.insert(usize::MAX, code);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        crate::exa_wasm::interpreter::Stmt::Block(v) => {
-                            for ss in v.iter() {
-                                visit_stmt(ss, bytecode_map, shared_funcs, shared_locals);
-                            }
-                        }
-                        crate::exa_wasm::interpreter::Stmt::If {
-                            then_branch,
-                            else_branch,
-                            ..
-                        } => {
-                            visit_stmt(then_branch, bytecode_map, shared_funcs, shared_locals);
-                            if let Some(eb) = else_branch {
-                                visit_stmt(eb, bytecode_map, shared_funcs, shared_locals);
-                            }
-                        }
-                        crate::exa_wasm::interpreter::Stmt::Expr(_) => {}
-                    }
-                }
-
-                for st in stmts.iter() {
-                    visit_stmt(st, &mut bytecode_map, &mut shared_funcs, &shared_locals);
-                }
-            }
-        }
-    }
+    // NOTE: textual fallback parsing/compilation was removed. The emitter
+    // must provide `diffeq_ast` or `diffeq_bytecode` in the IR; runtime
+    // parsing of closure text is no longer supported.
 
     if !bytecode_map.is_empty() {
         // emit the conservative diffeq bytecode map under the new IR field names

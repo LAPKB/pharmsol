@@ -20,7 +20,7 @@ pub use vm::{run_bytecode, Opcode};
 
 // Re-export some AST and helper symbols for other sibling modules (e.g. build)
 pub use ast::{Expr, Lhs, Stmt};
-pub use loader_helpers::{extract_closure_body, strip_macro_calls};
+pub use loader_helpers::extract_closure_body;
 // Re-export builtin helpers so other modules (like the emitter) can query
 // builtin metadata without depending on private module paths.
 pub use builtins::{arg_count_range, is_known_function};

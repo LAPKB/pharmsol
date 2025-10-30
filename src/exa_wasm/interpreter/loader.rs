@@ -24,6 +24,9 @@ struct IrFile {
     out: Option<String>,
     lag_map: Option<std::collections::HashMap<usize, String>>,
     fa_map: Option<std::collections::HashMap<usize, String>>,
+    // optional fetch macro bodies extracted at emit time
+    fetch_params: Option<Vec<String>>,
+    fetch_cov: Option<Vec<String>>,
     // optional pre-parsed ASTs emitted by `emit_ir`
     diffeq_ast: Option<Vec<crate::exa_wasm::interpreter::ast::Stmt>>,
     out_ast: Option<Vec<crate::exa_wasm::interpreter::ast::Stmt>>,
@@ -66,12 +69,6 @@ pub fn load_ir_ode(
         pmap.insert(name.clone(), i);
     }
 
-    let diffeq_text = ir
-        .diffeq
-        .clone()
-        .unwrap_or_else(|| ir.model_text.clone().unwrap_or_default());
-    let out_text = ir.out.clone().unwrap_or_default();
-    let init_text = ir.init.clone().unwrap_or_default();
     let lag_text = ir.lag.clone().unwrap_or_default();
     let fa_text = ir.fa.clone().unwrap_or_default();
 
@@ -229,15 +226,12 @@ pub fn load_ir_ode(
         }
     }
 
-    // fetch_params / fetch_cov helpers delegated to loader_helpers
-
+    // fetch_params / fetch_cov bodies should be emitted into the IR by the
+    // emitter. Runtime textual scanning is no longer supported.
     let mut fetch_macro_bodies: Vec<String> = Vec::new();
-    fetch_macro_bodies
-        .extend(crate::exa_wasm::interpreter::loader_helpers::extract_fetch_params(&diffeq_text));
-    fetch_macro_bodies
-        .extend(crate::exa_wasm::interpreter::loader_helpers::extract_fetch_params(&out_text));
-    fetch_macro_bodies
-        .extend(crate::exa_wasm::interpreter::loader_helpers::extract_fetch_params(&init_text));
+    if let Some(fp) = ir.fetch_params.clone() {
+        fetch_macro_bodies.extend(fp);
+    }
 
     for body in fetch_macro_bodies.iter() {
         let parts: Vec<String> = body
@@ -263,12 +257,9 @@ pub fn load_ir_ode(
     }
 
     let mut fetch_cov_bodies: Vec<String> = Vec::new();
-    fetch_cov_bodies
-        .extend(crate::exa_wasm::interpreter::loader_helpers::extract_fetch_cov(&diffeq_text));
-    fetch_cov_bodies
-        .extend(crate::exa_wasm::interpreter::loader_helpers::extract_fetch_cov(&out_text));
-    fetch_cov_bodies
-        .extend(crate::exa_wasm::interpreter::loader_helpers::extract_fetch_cov(&init_text));
+    if let Some(fc) = ir.fetch_cov.clone() {
+        fetch_cov_bodies.extend(fc);
+    }
 
     for body in fetch_cov_bodies.iter() {
         let parts: Vec<String> = body
