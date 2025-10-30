@@ -284,3 +284,190 @@ where
         },
     );
 }
+
+/// Run a sequence of opcodes and return the top-of-stack value at the end.
+/// This is useful for bytecode fragments that compute an expression value
+/// (e.g., lag/fa entries) rather than performing stores.
+pub fn run_bytecode_eval(
+    code: &[Opcode],
+    x: &[f64],
+    p: &[f64],
+    rateiv: &[f64],
+    t: f64,
+    locals: &mut [f64],
+    funcs: &Vec<String>,
+    builtins_dispatch: &dyn Fn(&str, &[f64]) -> f64,
+) -> f64 {
+    let mut stack: Vec<f64> = Vec::new();
+    let mut pc: usize = 0;
+    let code_len = code.len();
+    while pc < code_len {
+        match &code[pc] {
+            Opcode::PushConst(v) => {
+                stack.push(*v);
+                pc += 1;
+            }
+            Opcode::LoadParam(i) => {
+                let v = if *i < p.len() { p[*i] } else { 0.0 };
+                stack.push(v);
+                pc += 1;
+            }
+            Opcode::LoadX(i) => {
+                let v = if *i < x.len() { x[*i] } else { 0.0 };
+                stack.push(v);
+                pc += 1;
+            }
+            Opcode::LoadRateiv(i) => {
+                let v = if *i < rateiv.len() { rateiv[*i] } else { 0.0 };
+                stack.push(v);
+                pc += 1;
+            }
+            Opcode::LoadParamDyn => {
+                let idxf = stack.pop().unwrap_or(0.0);
+                let idx = idxf as usize;
+                let v = if idx < p.len() { p[idx] } else { 0.0 };
+                stack.push(v);
+                pc += 1;
+            }
+            Opcode::LoadXDyn => {
+                let idxf = stack.pop().unwrap_or(0.0);
+                let idx = idxf as usize;
+                let v = if idx < x.len() { x[idx] } else { 0.0 };
+                stack.push(v);
+                pc += 1;
+            }
+            Opcode::LoadRateivDyn => {
+                let idxf = stack.pop().unwrap_or(0.0);
+                let idx = idxf as usize;
+                let v = if idx < rateiv.len() { rateiv[idx] } else { 0.0 };
+                stack.push(v);
+                pc += 1;
+            }
+            Opcode::LoadLocal(i) => {
+                let v = if *i < locals.len() { locals[*i] } else { 0.0 };
+                stack.push(v);
+                pc += 1;
+            }
+            Opcode::LoadT => {
+                stack.push(t);
+                pc += 1;
+            }
+            Opcode::Add => {
+                let b = stack.pop().unwrap_or(0.0);
+                let a = stack.pop().unwrap_or(0.0);
+                stack.push(a + b);
+                pc += 1;
+            }
+            Opcode::Sub => {
+                let b = stack.pop().unwrap_or(0.0);
+                let a = stack.pop().unwrap_or(0.0);
+                stack.push(a - b);
+                pc += 1;
+            }
+            Opcode::Mul => {
+                let b = stack.pop().unwrap_or(0.0);
+                let a = stack.pop().unwrap_or(0.0);
+                stack.push(a * b);
+                pc += 1;
+            }
+            Opcode::Div => {
+                let b = stack.pop().unwrap_or(0.0);
+                let a = stack.pop().unwrap_or(0.0);
+                stack.push(a / b);
+                pc += 1;
+            }
+            Opcode::Pow => {
+                let b = stack.pop().unwrap_or(0.0);
+                let a = stack.pop().unwrap_or(0.0);
+                stack.push(a.powf(b));
+                pc += 1;
+            }
+            Opcode::Lt => {
+                let b = stack.pop().unwrap_or(0.0);
+                let a = stack.pop().unwrap_or(0.0);
+                stack.push(if a < b { 1.0 } else { 0.0 });
+                pc += 1;
+            }
+            Opcode::Gt => {
+                let b = stack.pop().unwrap_or(0.0);
+                let a = stack.pop().unwrap_or(0.0);
+                stack.push(if a > b { 1.0 } else { 0.0 });
+                pc += 1;
+            }
+            Opcode::Le => {
+                let b = stack.pop().unwrap_or(0.0);
+                let a = stack.pop().unwrap_or(0.0);
+                stack.push(if a <= b { 1.0 } else { 0.0 });
+                pc += 1;
+            }
+            Opcode::Ge => {
+                let b = stack.pop().unwrap_or(0.0);
+                let a = stack.pop().unwrap_or(0.0);
+                stack.push(if a >= b { 1.0 } else { 0.0 });
+                pc += 1;
+            }
+            Opcode::Eq => {
+                let b = stack.pop().unwrap_or(0.0);
+                let a = stack.pop().unwrap_or(0.0);
+                stack.push(if a == b { 1.0 } else { 0.0 });
+                pc += 1;
+            }
+            Opcode::Ne => {
+                let b = stack.pop().unwrap_or(0.0);
+                let a = stack.pop().unwrap_or(0.0);
+                stack.push(if a != b { 1.0 } else { 0.0 });
+                pc += 1;
+            }
+            Opcode::Jump(addr) => {
+                pc = *addr;
+            }
+            Opcode::JumpIfFalse(addr) => {
+                let c = stack.pop().unwrap_or(0.0);
+                if c == 0.0 {
+                    pc = *addr;
+                } else {
+                    pc += 1;
+                }
+            }
+            Opcode::CallBuiltin(func_idx, argc) => {
+                let mut args: Vec<f64> = Vec::with_capacity(*argc);
+                for _ in 0..*argc {
+                    args.push(stack.pop().unwrap_or(0.0));
+                }
+                args.reverse();
+                let func_name = funcs.get(*func_idx).map(|s| s.as_str()).unwrap_or("");
+                let res = builtins_dispatch(func_name, &args);
+                stack.push(res);
+                pc += 1;
+            }
+            Opcode::StoreDx(i) => {
+                // for eval, treat like push value (no-op)
+                let _ = stack.pop().unwrap_or(0.0);
+                pc += 1;
+            }
+            Opcode::StoreX(i) => {
+                let _ = stack.pop().unwrap_or(0.0);
+                pc += 1;
+            }
+            Opcode::StoreY(i) => {
+                let _ = stack.pop().unwrap_or(0.0);
+                pc += 1;
+            }
+            Opcode::StoreLocal(i) => {
+                let v = stack.pop().unwrap_or(0.0);
+                if *i < locals.len() {
+                    locals[*i] = v;
+                }
+                pc += 1;
+            }
+            Opcode::StoreDxDyn | Opcode::StoreXDyn | Opcode::StoreYDyn => {
+                // pop value then index and ignore for eval
+                let _v = stack.pop().unwrap_or(0.0);
+                let _idxf = stack.pop().unwrap_or(0.0);
+                pc += 1;
+            }
+        }
+    }
+
+    stack.pop().unwrap_or(0.0)
+}

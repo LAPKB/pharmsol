@@ -295,21 +295,41 @@ pub fn emit_ir<E: crate::Equation>(
     let mut fetch_params_bodies: Vec<String> = Vec::new();
     fetch_params_bodies.extend(extract_fetch_bodies(&diffeq_txt, "fetch_params!"));
     fetch_params_bodies.extend(extract_fetch_bodies(&diffeq_txt, "fetch_param!"));
-    fetch_params_bodies.extend(extract_fetch_bodies(out_txt.as_deref().unwrap_or(""), "fetch_params!"));
-    fetch_params_bodies.extend(extract_fetch_bodies(out_txt.as_deref().unwrap_or(""), "fetch_param!"));
-    fetch_params_bodies.extend(extract_fetch_bodies(init_txt.as_deref().unwrap_or(""), "fetch_params!"));
-    fetch_params_bodies.extend(extract_fetch_bodies(init_txt.as_deref().unwrap_or(""), "fetch_param!"));
+    fetch_params_bodies.extend(extract_fetch_bodies(
+        out_txt.as_deref().unwrap_or(""),
+        "fetch_params!",
+    ));
+    fetch_params_bodies.extend(extract_fetch_bodies(
+        out_txt.as_deref().unwrap_or(""),
+        "fetch_param!",
+    ));
+    fetch_params_bodies.extend(extract_fetch_bodies(
+        init_txt.as_deref().unwrap_or(""),
+        "fetch_params!",
+    ));
+    fetch_params_bodies.extend(extract_fetch_bodies(
+        init_txt.as_deref().unwrap_or(""),
+        "fetch_param!",
+    ));
 
     let mut fetch_cov_bodies: Vec<String> = Vec::new();
     fetch_cov_bodies.extend(extract_fetch_bodies(&diffeq_txt, "fetch_cov!"));
-    fetch_cov_bodies.extend(extract_fetch_bodies(out_txt.as_deref().unwrap_or(""), "fetch_cov!"));
-    fetch_cov_bodies.extend(extract_fetch_bodies(init_txt.as_deref().unwrap_or(""), "fetch_cov!"));
+    fetch_cov_bodies.extend(extract_fetch_bodies(
+        out_txt.as_deref().unwrap_or(""),
+        "fetch_cov!",
+    ));
+    fetch_cov_bodies.extend(extract_fetch_bodies(
+        init_txt.as_deref().unwrap_or(""),
+        "fetch_cov!",
+    ));
 
     if !fetch_params_bodies.is_empty() {
-        ir_obj["fetch_params"] = serde_json::to_value(&fetch_params_bodies).unwrap_or(serde_json::Value::Null);
+        ir_obj["fetch_params"] =
+            serde_json::to_value(&fetch_params_bodies).unwrap_or(serde_json::Value::Null);
     }
     if !fetch_cov_bodies.is_empty() {
-        ir_obj["fetch_cov"] = serde_json::to_value(&fetch_cov_bodies).unwrap_or(serde_json::Value::Null);
+        ir_obj["fetch_cov"] =
+            serde_json::to_value(&fetch_cov_bodies).unwrap_or(serde_json::Value::Null);
     }
 
     // Compile expressions into bytecode. This compiler covers numeric
@@ -427,7 +447,8 @@ pub fn emit_ir<E: crate::Equation>(
                 // only compile known builtins and check arity
                 if crate::exa_wasm::interpreter::is_known_function(name.as_str()) {
                     // verify arity where possible
-                    if let Some(rng) = crate::exa_wasm::interpreter::arg_count_range(name.as_str()) {
+                    if let Some(rng) = crate::exa_wasm::interpreter::arg_count_range(name.as_str())
+                    {
                         if !rng.contains(&args.len()) {
                             return false;
                         }
@@ -460,7 +481,8 @@ pub fn emit_ir<E: crate::Equation>(
                 // lower method call to function with receiver as first arg
                 if crate::exa_wasm::interpreter::is_known_function(name.as_str()) {
                     // verify arity for method-style calls
-                    if let Some(rng) = crate::exa_wasm::interpreter::arg_count_range(name.as_str()) {
+                    if let Some(rng) = crate::exa_wasm::interpreter::arg_count_range(name.as_str())
+                    {
                         if !rng.contains(&(1 + args.len())) {
                             return false;
                         }

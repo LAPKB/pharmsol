@@ -427,4 +427,258 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_bytecode_parity_constant_index() {
+        use crate::exa_wasm::interpreter::eval::eval_expr;
+        use crate::exa_wasm::interpreter::vm::run_bytecode_eval;
+        use crate::exa_wasm::interpreter::Opcode;
+        use std::env;
+        use std::fs;
+
+        let tmp = env::temp_dir().join("exa_test_parity_const.json");
+        let diffeq = "|x, p, _t, dx, rateiv, _cov| { dx[0] = x[0] + 2.0; }".to_string();
+        let _path = crate::exa_wasm::build::emit_ir::<crate::equation::ODE>(
+            diffeq,
+            None,
+            None,
+            None,
+            None,
+            Some(tmp.clone()),
+            vec![],
+        )
+        .expect("emit_ir failed");
+        let s = fs::read_to_string(&tmp).expect("read emitted ir");
+        let v: serde_json::Value = serde_json::from_str(&s).expect("parse json");
+        fs::remove_file(&tmp).ok();
+
+        // extract AST rhs expression
+        let diffeq_ast = v.get("diffeq_ast").expect("diffeq_ast");
+        let stmts: Vec<crate::exa_wasm::interpreter::Stmt> =
+            serde_json::from_value(diffeq_ast.clone()).expect("deserialize stmts");
+        // expect first stmt to be Assign(_, rhs)
+        let rhs_expr = match &stmts[0] {
+            crate::exa_wasm::interpreter::Stmt::Assign(_, rhs) => rhs.clone(),
+            _ => panic!("expected assign stmt"),
+        };
+
+        use diffsol::NalgebraContext;
+        let x = crate::simulator::V::zeros(1, NalgebraContext);
+        let mut x = x;
+        x[0] = 5.0;
+        let p = crate::simulator::V::zeros(0, NalgebraContext);
+        let rateiv = crate::simulator::V::zeros(0, NalgebraContext);
+
+        let ast_val = eval_expr(&rhs_expr, &x, &p, &rateiv, None, None, Some(0.0), None);
+
+        // extract bytecode for index 0
+        let bc = v.get("diffeq_bytecode").expect("diffeq_bytecode");
+        let map: std::collections::HashMap<usize, Vec<Opcode>> =
+            serde_json::from_value(bc.clone()).expect("deserialize bytecode_map");
+        let code = map.get(&0usize).expect("code for idx 0");
+        // strip trailing StoreDx
+        let mut expr_code = code.clone();
+        if let Some(last) = expr_code.last() {
+            match last {
+                Opcode::StoreDx(_) => {
+                    expr_code.pop();
+                }
+                _ => {}
+            }
+        }
+
+        // builtins dispatch
+        let builtins = |name: &str, args: &[f64]| -> f64 {
+            use crate::exa_wasm::interpreter::eval::{eval_call, Value};
+            let vals: Vec<Value> = args.iter().map(|v| Value::Number(*v)).collect();
+            eval_call(name, &vals).as_number()
+        };
+
+        let mut locals: Vec<f64> = Vec::new();
+        let mut locals_slice = locals.as_mut_slice();
+        let x_vals: Vec<f64> = vec![x[0]];
+        let p_vals: Vec<f64> = vec![];
+        let rateiv_vals: Vec<f64> = vec![];
+        let vm_val = run_bytecode_eval(
+            &expr_code,
+            &x_vals,
+            &p_vals,
+            &rateiv_vals,
+            0.0,
+            &mut locals_slice,
+            &Vec::new(),
+            &builtins,
+        );
+
+        assert_eq!(ast_val.as_number(), vm_val);
+    }
+
+    #[test]
+    fn test_bytecode_parity_dynamic_index() {
+        use crate::exa_wasm::interpreter::eval::eval_expr;
+        use crate::exa_wasm::interpreter::vm::run_bytecode_eval;
+        use crate::exa_wasm::interpreter::Opcode;
+        use std::env;
+        use std::fs;
+
+        let tmp = env::temp_dir().join("exa_test_parity_dyn.json");
+        let diffeq = "|x, p, _t, dx, rateiv, _cov| { dx[0] = x[ke]; }".to_string();
+        let params = vec!["ke".to_string()];
+        let _path = crate::exa_wasm::build::emit_ir::<crate::equation::ODE>(
+            diffeq,
+            None,
+            None,
+            None,
+            None,
+            Some(tmp.clone()),
+            params.clone(),
+        )
+        .expect("emit_ir failed");
+        let s = fs::read_to_string(&tmp).expect("read emitted ir");
+        let v: serde_json::Value = serde_json::from_str(&s).expect("parse json");
+        fs::remove_file(&tmp).ok();
+
+        // extract AST rhs expression
+        let diffeq_ast = v.get("diffeq_ast").expect("diffeq_ast");
+        let stmts: Vec<crate::exa_wasm::interpreter::Stmt> =
+            serde_json::from_value(diffeq_ast.clone()).expect("deserialize stmts");
+        let rhs_expr = match &stmts[0] {
+            crate::exa_wasm::interpreter::Stmt::Assign(_, rhs) => rhs.clone(),
+            _ => panic!("expected assign stmt"),
+        };
+
+        use diffsol::NalgebraContext;
+        let mut x = crate::simulator::V::zeros(2, NalgebraContext);
+        x[0] = 7.0;
+        x[1] = 9.0;
+        let mut p = crate::simulator::V::zeros(1, NalgebraContext);
+        p[0] = 0.0; // ke -> picks x[0]
+        let rateiv = crate::simulator::V::zeros(0, NalgebraContext);
+
+        let ast_val = eval_expr(&rhs_expr, &x, &p, &rateiv, None, None, Some(0.0), None);
+
+        // extract bytecode for index 0
+        let bc = v.get("diffeq_bytecode").expect("diffeq_bytecode");
+        let map: std::collections::HashMap<usize, Vec<Opcode>> =
+            serde_json::from_value(bc.clone()).expect("deserialize bytecode_map");
+        let code = map.get(&0usize).expect("code for idx 0");
+        // strip trailing StoreDx
+        let mut expr_code = code.clone();
+        if let Some(last) = expr_code.last() {
+            match last {
+                Opcode::StoreDx(_) => {
+                    expr_code.pop();
+                }
+                _ => {}
+            }
+        }
+
+        let builtins = |name: &str, args: &[f64]| -> f64 {
+            use crate::exa_wasm::interpreter::eval::{eval_call, Value};
+            let vals: Vec<Value> = args.iter().map(|v| Value::Number(*v)).collect();
+            eval_call(name, &vals).as_number()
+        };
+
+        let mut locals: Vec<f64> = Vec::new();
+        let mut locals_slice = locals.as_mut_slice();
+        let x_vals: Vec<f64> = vec![x[0], x[1]];
+        let p_vals: Vec<f64> = vec![p[0]];
+        let rateiv_vals: Vec<f64> = vec![];
+        let vm_val = run_bytecode_eval(
+            &expr_code,
+            &x_vals,
+            &p_vals,
+            &rateiv_vals,
+            0.0,
+            &mut locals_slice,
+            &Vec::new(),
+            &builtins,
+        );
+
+        assert_eq!(ast_val.as_number(), vm_val);
+    }
+
+    #[test]
+    fn test_bytecode_parity_lag_entry() {
+        use crate::exa_wasm::interpreter::eval::eval_expr;
+        use crate::exa_wasm::interpreter::vm::run_bytecode_eval;
+        use crate::exa_wasm::interpreter::Opcode;
+        use std::env;
+        use std::fs;
+
+        let tmp = env::temp_dir().join("exa_test_parity_lag.json");
+        let diffeq = "|x, p, _t, dx, rateiv, _cov| { dx[0] = 0.0; }".to_string();
+        // use an expression that only references params so the conservative
+        // bytecode compiler can produce code (compile_expr_top does not
+        // accept bare 't' or unknown idents).
+        let lag = Some("|p, t, _cov| { lag!{0 => p[0] * 2.0} }".to_string());
+        let _path = crate::exa_wasm::build::emit_ir::<crate::equation::ODE>(
+            diffeq,
+            lag,
+            None,
+            None,
+            None,
+            Some(tmp.clone()),
+            vec![],
+        )
+        .expect("emit_ir failed");
+        let s = fs::read_to_string(&tmp).expect("read emitted ir");
+        let v: serde_json::Value = serde_json::from_str(&s).expect("parse json");
+        fs::remove_file(&tmp).ok();
+
+        // parse textual lag entry back to Expr for AST eval
+        let lag_map = v.get("lag_map").expect("lag_map");
+        let lag_entry = lag_map
+            .get("0")
+            .expect("lag entry 0")
+            .as_str()
+            .expect("string");
+        let toks = crate::exa_wasm::interpreter::tokenize(lag_entry);
+        let mut p = crate::exa_wasm::interpreter::Parser::new(toks);
+        let expr = p.parse_expr().expect("parse lag expr");
+
+        use diffsol::NalgebraContext;
+        let x = crate::simulator::V::zeros(0, NalgebraContext);
+        let rateiv = crate::simulator::V::zeros(0, NalgebraContext);
+
+        // evaluate AST with p[0] = 3.0 -> expected 6.0
+        let mut pvec = crate::simulator::V::zeros(1, diffsol::NalgebraContext);
+        pvec[0] = 3.0;
+        let ast_val = eval_expr(&expr, &x, &pvec, &rateiv, None, None, Some(0.0), None);
+
+        // get lag_bytecode
+        let bc = v.get("lag_bytecode").expect("lag_bytecode");
+        let map: std::collections::HashMap<usize, Vec<Opcode>> =
+            serde_json::from_value(bc.clone()).expect("deserialize lag_bytecode");
+        let code = map.get(&0usize).expect("code for lag 0");
+
+        let mut funcs: Vec<String> = Vec::new();
+        if let Some(fv) = v.get("funcs") {
+            funcs = serde_json::from_value(fv.clone()).unwrap_or_default();
+        }
+
+        let builtins = |name: &str, args: &[f64]| -> f64 {
+            use crate::exa_wasm::interpreter::eval::{eval_call, Value};
+            let vals: Vec<Value> = args.iter().map(|v| Value::Number(*v)).collect();
+            eval_call(name, &vals).as_number()
+        };
+
+        let mut locals: Vec<f64> = Vec::new();
+        let mut locals_slice = locals.as_mut_slice();
+        let x_vals: Vec<f64> = vec![];
+        let p_vals: Vec<f64> = vec![3.0];
+        let rateiv_vals: Vec<f64> = vec![];
+        let vm_val = run_bytecode_eval(
+            &code,
+            &x_vals,
+            &p_vals,
+            &rateiv_vals,
+            2.0,
+            &mut locals_slice,
+            &funcs,
+            &builtins,
+        );
+
+        assert_eq!(ast_val.as_number(), vm_val);
+    }
 }
