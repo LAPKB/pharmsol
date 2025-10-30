@@ -8,6 +8,7 @@ use serde::Deserialize;
 use crate::exa_wasm::interpreter::ast::Expr;
 use crate::exa_wasm::interpreter::parser::{tokenize, Parser};
 use crate::exa_wasm::interpreter::registry;
+use crate::exa_wasm::interpreter::typecheck;
 
 #[allow(dead_code)]
 #[derive(Deserialize, Debug)]
@@ -446,52 +447,24 @@ pub fn load_ir_ode(
         out
     }
 
-    // normalize boolean literals `true`/`false` into numeric 1.0/0.0 so the
-    // existing numeric expression parser can handle them.
-    fn normalize_booleans(s: &str) -> String {
-        let mut out = String::new();
-        let mut i = 0usize;
-        let bytes = s.as_bytes();
-        while i < s.len() {
-            let ch = bytes[i] as char;
-            if ch.is_ascii_alphabetic() || ch == '_' {
-                // parse an identifier
-                let start = i;
-                i += 1;
-                while i < s.len() {
-                    let c = s.as_bytes()[i] as char;
-                    if c.is_ascii_alphanumeric() || c == '_' {
-                        i += 1;
-                        continue;
-                    }
-                    break;
-                }
-                let ident = &s[start..i];
-                if ident.eq_ignore_ascii_case("true") {
-                    out.push_str("1.0");
-                } else if ident.eq_ignore_ascii_case("false") {
-                    out.push_str("0.0");
-                } else {
-                    out.push_str(ident);
-                }
-                continue;
-            }
-            out.push(ch);
-            i += 1;
-        }
-        out
-    }
+    // boolean literals are parsed by the tokenizer (Token::Bool). No normalization needed.
 
     if let Some(body) = extract_closure_body(&diffeq_text) {
         let mut cleaned = body.clone();
         cleaned = strip_macro_calls(&cleaned, "fetch_params!");
         cleaned = strip_macro_calls(&cleaned, "fetch_param!");
         cleaned = strip_macro_calls(&cleaned, "fetch_cov!");
-        cleaned = normalize_booleans(&cleaned);
 
         let toks = tokenize(&cleaned);
         let mut p = Parser::new(toks);
         if let Some(stmts) = p.parse_statements() {
+            // run a lightweight type-check pass and reject obviously bad IR
+            if let Err(e) = typecheck::check_statements(&stmts) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("type errors in diffeq closure: {:?}", e),
+                ));
+            }
             // keep the parsed statements for later execution
             diffeq_stmts = stmts;
         } else {
@@ -609,10 +582,15 @@ pub fn load_ir_ode(
         cleaned = strip_macro_calls(&cleaned, "fetch_params!");
         cleaned = strip_macro_calls(&cleaned, "fetch_param!");
         cleaned = strip_macro_calls(&cleaned, "fetch_cov!");
-        cleaned = normalize_booleans(&cleaned);
         let toks = tokenize(&cleaned);
         let mut p = Parser::new(toks);
         if let Some(stmts) = p.parse_statements() {
+            if let Err(e) = typecheck::check_statements(&stmts) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("type errors in out closure: {:?}", e),
+                ));
+            }
             out_stmts = stmts;
         } else {
             for (i, rhs) in extract_all_assign(&out_text, "y[") {
@@ -672,10 +650,15 @@ pub fn load_ir_ode(
         cleaned = strip_macro_calls(&cleaned, "fetch_params!");
         cleaned = strip_macro_calls(&cleaned, "fetch_param!");
         cleaned = strip_macro_calls(&cleaned, "fetch_cov!");
-        cleaned = normalize_booleans(&cleaned);
         let toks = tokenize(&cleaned);
         let mut p = Parser::new(toks);
         if let Some(stmts) = p.parse_statements() {
+            if let Err(e) = typecheck::check_statements(&stmts) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("type errors in init closure: {:?}", e),
+                ));
+            }
             init_stmts = stmts;
         } else {
             for (i, rhs) in extract_all_assign(&init_text, "x[") {

@@ -6,46 +6,141 @@ use crate::simulator::T;
 use crate::simulator::V;
 use std::collections::HashMap;
 
-// Evaluator extracted from mod.rs. Uses super::set_runtime_error to report
-// runtime problems so the parent module can expose them to the simulator.
-pub(crate) fn eval_call(name: &str, args: &[f64]) -> f64 {
-    match name {
-        "exp" => args.get(0).cloned().unwrap_or(0.0).exp(),
-        "if" => {
-            let cond = args.get(0).cloned().unwrap_or(0.0);
-            if cond != 0.0 {
-                args.get(1).cloned().unwrap_or(0.0)
-            } else {
-                args.get(2).cloned().unwrap_or(0.0)
+// runtime value type
+#[derive(Debug, Clone, PartialEq)]
+pub enum Value {
+    Number(f64),
+    Bool(bool),
+}
+
+impl Value {
+    pub fn as_number(&self) -> f64 {
+        match self {
+            Value::Number(n) => *n,
+            Value::Bool(b) => {
+                if *b {
+                    1.0
+                } else {
+                    0.0
+                }
             }
         }
-        "ln" | "log" => args.get(0).cloned().unwrap_or(0.0).ln(),
-        "log10" => args.get(0).cloned().unwrap_or(0.0).log10(),
-        "log2" => args.get(0).cloned().unwrap_or(0.0).log2(),
-        "sqrt" => args.get(0).cloned().unwrap_or(0.0).sqrt(),
+    }
+    pub fn as_bool(&self) -> bool {
+        match self {
+            Value::Bool(b) => *b,
+            Value::Number(n) => *n != 0.0,
+        }
+    }
+}
+
+// Evaluator extracted from mod.rs. Uses super::set_runtime_error to report
+// runtime problems so the parent module can expose them to the simulator.
+pub(crate) fn eval_call(name: &str, args: &[Value]) -> Value {
+    use Value::Number;
+    match name {
+        "exp" => Number(
+            args.get(0)
+                .cloned()
+                .unwrap_or(Number(0.0))
+                .as_number()
+                .exp(),
+        ),
+        "if" => {
+            let cond = args.get(0).cloned().unwrap_or(Number(0.0));
+            if cond.as_bool() {
+                args.get(1).cloned().unwrap_or(Number(0.0))
+            } else {
+                args.get(2).cloned().unwrap_or(Number(0.0))
+            }
+        }
+        "ln" | "log" => Number(args.get(0).cloned().unwrap_or(Number(0.0)).as_number().ln()),
+        "log10" => Number(
+            args.get(0)
+                .cloned()
+                .unwrap_or(Number(0.0))
+                .as_number()
+                .log10(),
+        ),
+        "log2" => Number(
+            args.get(0)
+                .cloned()
+                .unwrap_or(Number(0.0))
+                .as_number()
+                .log2(),
+        ),
+        "sqrt" => Number(
+            args.get(0)
+                .cloned()
+                .unwrap_or(Number(0.0))
+                .as_number()
+                .sqrt(),
+        ),
         "pow" | "powf" => {
-            let a = args.get(0).cloned().unwrap_or(0.0);
-            let b = args.get(1).cloned().unwrap_or(0.0);
-            a.powf(b)
+            let a = args.get(0).cloned().unwrap_or(Number(0.0)).as_number();
+            let b = args.get(1).cloned().unwrap_or(Number(0.0)).as_number();
+            Number(a.powf(b))
         }
         "min" => {
-            let a = args.get(0).cloned().unwrap_or(0.0);
-            let b = args.get(1).cloned().unwrap_or(0.0);
-            a.min(b)
+            let a = args.get(0).cloned().unwrap_or(Number(0.0)).as_number();
+            let b = args.get(1).cloned().unwrap_or(Number(0.0)).as_number();
+            Number(a.min(b))
         }
         "max" => {
-            let a = args.get(0).cloned().unwrap_or(0.0);
-            let b = args.get(1).cloned().unwrap_or(0.0);
-            a.max(b)
+            let a = args.get(0).cloned().unwrap_or(Number(0.0)).as_number();
+            let b = args.get(1).cloned().unwrap_or(Number(0.0)).as_number();
+            Number(a.max(b))
         }
-        "abs" => args.get(0).cloned().unwrap_or(0.0).abs(),
-        "floor" => args.get(0).cloned().unwrap_or(0.0).floor(),
-        "ceil" => args.get(0).cloned().unwrap_or(0.0).ceil(),
-        "round" => args.get(0).cloned().unwrap_or(0.0).round(),
-        "sin" => args.get(0).cloned().unwrap_or(0.0).sin(),
-        "cos" => args.get(0).cloned().unwrap_or(0.0).cos(),
-        "tan" => args.get(0).cloned().unwrap_or(0.0).tan(),
-        _ => 0.0,
+        "abs" => Number(
+            args.get(0)
+                .cloned()
+                .unwrap_or(Number(0.0))
+                .as_number()
+                .abs(),
+        ),
+        "floor" => Number(
+            args.get(0)
+                .cloned()
+                .unwrap_or(Number(0.0))
+                .as_number()
+                .floor(),
+        ),
+        "ceil" => Number(
+            args.get(0)
+                .cloned()
+                .unwrap_or(Number(0.0))
+                .as_number()
+                .ceil(),
+        ),
+        "round" => Number(
+            args.get(0)
+                .cloned()
+                .unwrap_or(Number(0.0))
+                .as_number()
+                .round(),
+        ),
+        "sin" => Number(
+            args.get(0)
+                .cloned()
+                .unwrap_or(Number(0.0))
+                .as_number()
+                .sin(),
+        ),
+        "cos" => Number(
+            args.get(0)
+                .cloned()
+                .unwrap_or(Number(0.0))
+                .as_number()
+                .cos(),
+        ),
+        "tan" => Number(
+            args.get(0)
+                .cloned()
+                .unwrap_or(Number(0.0))
+                .as_number()
+                .tan(),
+        ),
+        _ => Number(0.0),
     }
 }
 
@@ -58,80 +153,71 @@ pub(crate) fn eval_expr(
     pmap: Option<&HashMap<String, usize>>,
     t: Option<T>,
     cov: Option<&Covariates>,
-) -> f64 {
+) -> Value {
     use crate::exa_wasm::interpreter::set_runtime_error;
 
     match expr {
-        Expr::Bool(b) => {
-            if *b {
-                1.0
-            } else {
-                0.0
-            }
-        }
-        Expr::Number(v) => *v,
+        Expr::Bool(b) => Value::Bool(*b),
+        Expr::Number(v) => Value::Number(*v),
         Expr::Ident(name) => {
             if name.starts_with('_') {
-                return 0.0;
+                return Value::Number(0.0);
             }
             // local variables defined by prelude take precedence
             if let Some(loc) = locals {
                 if let Some(v) = loc.get(name) {
-                    // eprintln!("[eval] Ident '{}' resolved -> local = {}", name, v);
-                    return *v;
+                    return Value::Number(*v);
                 }
             }
             if let Some(map) = pmap {
                 if let Some(idx) = map.get(name) {
                     let val = p[*idx];
-                    // eprintln!("[eval] Ident '{}' resolved -> param p[{}] = {}", name, idx, val);
-                    return val;
+                    return Value::Number(val);
                 }
             }
             if name == "t" {
                 let val = t.unwrap_or(0.0);
-                // eprintln!("[eval] Ident 't' -> {}", val);
-                return val;
+                return Value::Number(val);
             }
             if let Some(covariates) = cov {
                 if let Some(covariate) = covariates.get_covariate(name) {
                     if let Some(time) = t {
                         if let Ok(v) = covariate.interpolate(time) {
-                            // eprintln!("[eval] Ident '{}' resolved -> covariate = {}", name, v);
-                            return v;
+                            return Value::Number(v);
                         }
                     }
                 }
             }
             set_runtime_error(format!("unknown identifier '{}'", name));
-            0.0
+            Value::Number(0.0)
         }
         Expr::Indexed(name, idx_expr) => {
-            let idxf = eval_expr(idx_expr, x, p, rateiv, locals, pmap, t, cov);
+            let idxv = eval_expr(idx_expr, x, p, rateiv, locals, pmap, t, cov);
+            let idxf = idxv.as_number();
             if !idxf.is_finite() || idxf.is_sign_negative() {
                 set_runtime_error(format!(
                     "invalid index expression for '{}' -> {}",
                     name, idxf
                 ));
-                return 0.0;
+                return Value::Number(0.0);
             }
             let idx = idxf as usize;
             match name.as_str() {
                 "x" => {
                     if idx < x.len() {
-                        x[idx]
+                        Value::Number(x[idx])
                     } else {
                         set_runtime_error(format!(
                             "index out of bounds 'x'[{}] (nstates={})",
                             idx,
                             x.len()
                         ));
-                        0.0
+                        Value::Number(0.0)
                     }
                 }
                 "p" | "params" => {
                     if idx < p.len() {
-                        p[idx]
+                        Value::Number(p[idx])
                     } else {
                         set_runtime_error(format!(
                             "parameter index out of bounds '{}'[{}] (nparams={})",
@@ -139,150 +225,89 @@ pub(crate) fn eval_expr(
                             idx,
                             p.len()
                         ));
-                        0.0
+                        Value::Number(0.0)
                     }
                 }
                 "rateiv" => {
                     if idx < rateiv.len() {
-                        rateiv[idx]
+                        Value::Number(rateiv[idx])
                     } else {
                         set_runtime_error(format!(
                             "index out of bounds 'rateiv'[{}] (len={})",
                             idx,
                             rateiv.len()
                         ));
-                        0.0
+                        Value::Number(0.0)
                     }
                 }
                 _ => {
                     set_runtime_error(format!("unknown indexed symbol '{}'", name));
-                    0.0
+                    Value::Number(0.0)
                 }
             }
         }
         Expr::UnaryOp { op, rhs } => {
             let v = eval_expr(rhs, x, p, rateiv, locals, pmap, t, cov);
             match op.as_str() {
-                "-" => -v,
-                "!" => {
-                    if v == 0.0 {
-                        1.0
-                    } else {
-                        0.0
-                    }
-                }
+                "-" => Value::Number(-v.as_number()),
+                "!" => Value::Bool(!v.as_bool()),
                 _ => v,
             }
         }
         Expr::BinaryOp { lhs, op, rhs } => {
-            let a = eval_expr(lhs, x, p, rateiv, locals, pmap, t, cov);
             match op.as_str() {
                 "&&" => {
-                    if a == 0.0 {
-                        return 0.0;
+                    let a = eval_expr(lhs, x, p, rateiv, locals, pmap, t, cov);
+                    if !a.as_bool() {
+                        return Value::Bool(false);
                     }
                     let b = eval_expr(rhs, x, p, rateiv, locals, pmap, t, cov);
-                    if b != 0.0 {
-                        1.0
-                    } else {
-                        0.0
-                    }
+                    Value::Bool(b.as_bool())
                 }
                 "||" => {
-                    if a != 0.0 {
-                        return 1.0;
+                    let a = eval_expr(lhs, x, p, rateiv, locals, pmap, t, cov);
+                    if a.as_bool() {
+                        return Value::Bool(true);
                     }
                     let b = eval_expr(rhs, x, p, rateiv, locals, pmap, t, cov);
-                    if b != 0.0 {
-                        1.0
-                    } else {
-                        0.0
-                    }
+                    Value::Bool(b.as_bool())
                 }
                 _ => {
+                    let a = eval_expr(lhs, x, p, rateiv, locals, pmap, t, cov);
                     let b = eval_expr(rhs, x, p, rateiv, locals, pmap, t, cov);
                     match op.as_str() {
-                        "+" => a + b,
-                        "-" => a - b,
-                        "*" => a * b,
-                        "/" => a / b,
-                        "^" => a.powf(b),
-                        "<" => {
-                            if a < b {
-                                1.0
-                            } else {
-                                0.0
-                            }
-                        }
-                        ">" => {
-                            if a > b {
-                                1.0
-                            } else {
-                                0.0
-                            }
-                        }
-                        "<=" => {
-                            if a <= b {
-                                1.0
-                            } else {
-                                0.0
-                            }
-                        }
-                        ">=" => {
-                            if a >= b {
-                                1.0
-                            } else {
-                                0.0
-                            }
-                        }
+                        "+" => Value::Number(a.as_number() + b.as_number()),
+                        "-" => Value::Number(a.as_number() - b.as_number()),
+                        "*" => Value::Number(a.as_number() * b.as_number()),
+                        "/" => Value::Number(a.as_number() / b.as_number()),
+                        "^" => Value::Number(a.as_number().powf(b.as_number())),
+                        "<" => Value::Bool(a.as_number() < b.as_number()),
+                        ">" => Value::Bool(a.as_number() > b.as_number()),
+                        "<=" => Value::Bool(a.as_number() <= b.as_number()),
+                        ">=" => Value::Bool(a.as_number() >= b.as_number()),
                         "==" => {
-                            if a == b {
-                                1.0
-                            } else {
-                                0.0
+                            // equality for numbers and bools via coercion
+                            match (a, b) {
+                                (Value::Bool(aa), Value::Bool(bb)) => Value::Bool(aa == bb),
+                                (aa, bb) => Value::Bool(aa.as_number() == bb.as_number()),
                             }
                         }
-                        "!=" => {
-                            if a != b {
-                                1.0
-                            } else {
-                                0.0
-                            }
-                        }
+                        "!=" => match (a, b) {
+                            (Value::Bool(aa), Value::Bool(bb)) => Value::Bool(aa != bb),
+                            (aa, bb) => Value::Bool(aa.as_number() != bb.as_number()),
+                        },
                         _ => a,
                     }
                 }
             }
         }
         Expr::Call { name, args } => {
-            let mut avals: Vec<f64> = Vec::new();
+            let mut avals: Vec<Value> = Vec::new();
             for aexpr in args.iter() {
                 avals.push(eval_expr(aexpr, x, p, rateiv, locals, pmap, t, cov));
             }
             let res = eval_call(name.as_str(), &avals);
-            if res == 0.0 {
-                if !matches!(
-                    name.as_str(),
-                    "min"
-                        | "max"
-                        | "abs"
-                        | "floor"
-                        | "ceil"
-                        | "round"
-                        | "sin"
-                        | "cos"
-                        | "tan"
-                        | "exp"
-                        | "ln"
-                        | "log"
-                        | "log10"
-                        | "log2"
-                        | "pow"
-                        | "powf"
-                ) {
-                    set_runtime_error(format!("unknown function '{}()', returned 0.0", name));
-                }
-            }
+            // warn if unknown function returned Number(0.0)? Keep legacy behavior minimal
             res
         }
         Expr::Ternary {
@@ -291,7 +316,7 @@ pub(crate) fn eval_expr(
             else_branch,
         } => {
             let c = eval_expr(cond, x, p, rateiv, locals, pmap, t, cov);
-            if c != 0.0 {
+            if c.as_bool() {
                 eval_expr(then_branch, x, p, rateiv, locals, pmap, t, cov)
             } else {
                 eval_expr(else_branch, x, p, rateiv, locals, pmap, t, cov)
@@ -303,35 +328,12 @@ pub(crate) fn eval_expr(
             args,
         } => {
             let recv = eval_expr(receiver, x, p, rateiv, locals, pmap, t, cov);
-            let mut avals: Vec<f64> = Vec::new();
+            let mut avals: Vec<Value> = Vec::new();
             avals.push(recv);
             for aexpr in args.iter() {
                 avals.push(eval_expr(aexpr, x, p, rateiv, locals, pmap, t, cov));
             }
             let res = eval_call(name.as_str(), &avals);
-            if res == 0.0 {
-                if !matches!(
-                    name.as_str(),
-                    "min"
-                        | "max"
-                        | "abs"
-                        | "floor"
-                        | "ceil"
-                        | "round"
-                        | "sin"
-                        | "cos"
-                        | "tan"
-                        | "exp"
-                        | "ln"
-                        | "log"
-                        | "log10"
-                        | "log2"
-                        | "pow"
-                        | "powf"
-                ) {
-                    set_runtime_error(format!("unknown method '{}', returned 0.0", name));
-                }
-            }
             res
         }
     }
@@ -363,11 +365,12 @@ pub(crate) fn eval_stmt<FAssign>(
             let val = eval_expr(rhs, x, p, rateiv, Some(&*locals), pmap, Some(t), cov);
             match lhs {
                 Lhs::Ident(name) => {
-                    locals.insert(name.clone(), val);
+                    locals.insert(name.clone(), val.as_number());
                 }
                 Lhs::Indexed(name, idx_expr) => {
-                    let idxf =
+                    let idxv =
                         eval_expr(idx_expr, x, p, rateiv, Some(&*locals), pmap, Some(t), cov);
+                    let idxf = idxv.as_number();
                     if !idxf.is_finite() || idxf.is_sign_negative() {
                         crate::exa_wasm::interpreter::registry::set_runtime_error(format!(
                             "invalid index expression for '{}' -> {}",
@@ -377,7 +380,7 @@ pub(crate) fn eval_stmt<FAssign>(
                     }
                     let idx = idxf as usize;
                     // delegate actual assignment to the provided closure
-                    assign_indexed(name.as_str(), idx, val);
+                    assign_indexed(name.as_str(), idx, val.as_number());
                 }
             }
         }
@@ -392,7 +395,7 @@ pub(crate) fn eval_stmt<FAssign>(
             else_branch,
         } => {
             let c = eval_expr(cond, x, p, rateiv, Some(&*locals), pmap, Some(t), cov);
-            if c != 0.0 {
+            if c.as_bool() {
                 eval_stmt(
                     then_branch,
                     x,

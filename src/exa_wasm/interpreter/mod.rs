@@ -3,6 +3,7 @@ mod dispatch;
 mod eval;
 mod loader;
 mod parser;
+mod typecheck;
 mod registry;
 
 pub use loader::load_ir_ode;
@@ -36,7 +37,7 @@ mod tests {
         // evaluation should succeed (ke resolves via pmap not provided -> 0)
         let val = eval_expr(&expr, &x, &pvec, &rateiv, None, None, Some(0.0), None);
         // numeric result must be finite
-        assert!(val.is_finite());
+        assert!(val.as_number().is_finite());
     }
 
     #[test]

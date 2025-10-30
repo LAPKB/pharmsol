@@ -31,7 +31,7 @@ pub fn diffeq_dispatch(
                     Some(_t),
                     Some(_cov),
                 );
-                locals.insert(name.clone(), val);
+                locals.insert(name.clone(), val.as_number());
             }
             // debug: print locals to stderr to verify prelude execution
             if !locals.is_empty() {
@@ -143,7 +143,7 @@ pub fn lag_dispatch(
                     Some(_t),
                     Some(_cov),
                 );
-                out.insert(*i, v);
+                out.insert(*i, v.as_number());
             }
         }
     }
@@ -172,7 +172,7 @@ pub fn fa_dispatch(
                     Some(_t),
                     Some(_cov),
                 );
-                out.insert(*i, v);
+                out.insert(*i, v.as_number());
             }
         }
     }
