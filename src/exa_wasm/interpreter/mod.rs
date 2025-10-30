@@ -7,6 +7,7 @@ mod loader_helpers;
 mod parser;
 mod registry;
 mod typecheck;
+mod vm;
 
 pub use loader::load_ir_ode;
 pub use parser::tokenize;
@@ -14,6 +15,8 @@ pub use parser::Parser;
 pub use registry::{
     ode_for_id, set_current_expr_id, set_runtime_error, take_runtime_error, unregister_model,
 };
+
+pub use vm::{run_bytecode, Opcode};
 
 // Re-export some AST and helper symbols for other sibling modules (e.g. build)
 pub use ast::{Expr, Lhs, Stmt};
@@ -61,6 +64,25 @@ mod tests {
         let msg = err.unwrap();
         assert!(
             msg.contains("unknown function"),
+            "unexpected error message: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_eval_call_rejects_wrong_arity() {
+        use crate::exa_wasm::interpreter::eval::eval_call;
+        use crate::exa_wasm::interpreter::eval::Value;
+        // clear any prior runtime error
+        crate::exa_wasm::interpreter::take_runtime_error();
+        // call pow with wrong arity (should be 2 args)
+        let val = eval_call("pow", &[Value::Number(1.0)]);
+        assert_eq!(val, Value::Number(0.0));
+        let err = crate::exa_wasm::interpreter::take_runtime_error();
+        assert!(err.is_some(), "expected runtime error for wrong arity");
+        let msg = err.unwrap();
+        assert!(
+            msg.contains("wrong arity") || msg.contains("unknown function"),
             "unexpected error message: {}",
             msg
         );
@@ -115,6 +137,111 @@ mod tests {
         let res = load_ir_ode(tmp.clone());
         fs::remove_file(tmp).ok();
         assert!(res.is_ok());
+    }
+
+    #[test]
+    fn test_emit_ir_includes_diffeq_ast_and_schema() {
+        use std::env;
+        use std::fs;
+
+        let tmp = env::temp_dir().join("exa_test_emit_ir_diffeq_ast_and_schema.json");
+        let diffeq =
+            "|x, p, _t, dx, rateiv, _cov| { if (t > 0) { dx[0] = 1.0; } else { dx[0] = 2.0; } }"
+                .to_string();
+        let _path = crate::exa_wasm::build::emit_ir::<crate::equation::ODE>(
+            diffeq,
+            None,
+            None,
+            None,
+            None,
+            Some(tmp.clone()),
+            vec!["ke".to_string()],
+        )
+        .expect("emit_ir failed");
+        let s = fs::read_to_string(&tmp).expect("read emitted ir");
+        let v: serde_json::Value = serde_json::from_str(&s).expect("parse json");
+        fs::remove_file(&tmp).ok();
+        assert!(
+            v.get("diffeq_ast").is_some(),
+            "emit_ir should include diffeq_ast"
+        );
+        // schema metadata should be present
+        assert!(
+            v.get("ir_schema").is_some(),
+            "emit_ir should include ir_schema"
+        );
+    }
+
+    #[test]
+    fn test_emit_ir_includes_out_and_init_ast() {
+        use std::env;
+        use std::fs;
+
+        let tmp = env::temp_dir().join("exa_test_emit_ir_out_init_ast.json");
+        let out = "|x, p, _t, _cov, y| { y[0] = x[0] + 1.0; }".to_string();
+        let init = "|p, _t, _cov, x| { x[0] = 0.0; }".to_string();
+        let _path = crate::exa_wasm::build::emit_ir::<crate::equation::ODE>(
+            "".to_string(),
+            None,
+            None,
+            Some(init.clone()),
+            Some(out.clone()),
+            Some(tmp.clone()),
+            vec![],
+        )
+        .expect("emit_ir failed");
+        let s = fs::read_to_string(&tmp).expect("read emitted ir");
+        let v: serde_json::Value = serde_json::from_str(&s).expect("parse json");
+        fs::remove_file(&tmp).ok();
+        assert!(v.get("out_ast").is_some(), "emit_ir should include out_ast");
+        assert!(
+            v.get("init_ast").is_some(),
+            "emit_ir should include init_ast"
+        );
+    }
+
+    #[test]
+    fn test_emit_ir_includes_bytecode_map_and_vm_exec() {
+        use crate::exa_wasm::interpreter::{run_bytecode, Opcode};
+        use std::env;
+        use std::fs;
+
+        let tmp = env::temp_dir().join("exa_test_emit_ir_bytecode.json");
+        let diffeq = "|x, p, _t, dx, rateiv, _cov| { dx[0] = ke * 2.0; }".to_string();
+        let params = vec!["ke".to_string()];
+        let _path = crate::exa_wasm::build::emit_ir::<crate::equation::ODE>(
+            diffeq,
+            None,
+            None,
+            None,
+            None,
+            Some(tmp.clone()),
+            params.clone(),
+        )
+        .expect("emit_ir failed");
+        let s = fs::read_to_string(&tmp).expect("read emitted ir");
+        let v: serde_json::Value = serde_json::from_str(&s).expect("parse json");
+        fs::remove_file(&tmp).ok();
+        // ensure bytecode_map present
+        let bc = v
+            .get("bytecode_map")
+            .expect("bytecode_map should be present")
+            .clone();
+        // deserialize into map
+        let map: std::collections::HashMap<usize, Vec<Opcode>> =
+            serde_json::from_value(bc).expect("deserialize bytecode_map");
+        assert!(map.contains_key(&0usize));
+        let code = map.get(&0usize).unwrap();
+        // execute bytecode with p = [3.0]
+        let pvals = vec![3.0f64];
+        let mut assigned: Option<(usize, f64)> = None;
+        run_bytecode(&code, &pvals, |i, v| {
+            assigned = Some((i, v));
+        });
+        assert!(assigned.is_some());
+        let (i, val) = assigned.unwrap();
+        assert_eq!(i, 0usize);
+        assert_eq!(val, 6.0f64);
     }
 
     #[test]
@@ -214,9 +341,9 @@ mod tests {
 
     #[test]
     fn test_loader_accepts_preparsed_ast_in_ir() {
+        use crate::exa_wasm::interpreter::ast::{Expr, Lhs, Stmt};
         use std::env;
         use std::fs;
-        use crate::exa_wasm::interpreter::ast::{Expr, Lhs, Stmt};
 
         let tmp = env::temp_dir().join("exa_test_ir_preparsed_ast.json");
         // build a tiny diffeq AST: dx[0] = 1.0;
@@ -240,7 +367,10 @@ mod tests {
 
         let res = crate::exa_wasm::interpreter::loader::load_ir_ode(tmp.clone());
         fs::remove_file(tmp).ok();
-        assert!(res.is_ok(), "loader should accept IR with pre-parsed diffeq_ast");
+        assert!(
+            res.is_ok(),
+            "loader should accept IR with pre-parsed diffeq_ast"
+        );
     }
 
     #[test]

@@ -2,6 +2,7 @@ use diffsol::Vector;
 
 use crate::data::Covariates;
 use crate::exa_wasm::interpreter::ast::Expr;
+use crate::exa_wasm::interpreter::builtins;
 use crate::simulator::T;
 use crate::simulator::V;
 use std::collections::HashMap;
@@ -38,8 +39,28 @@ impl Value {
 // runtime problems so the parent module can expose them to the simulator.
 pub(crate) fn eval_call(name: &str, args: &[Value]) -> Value {
     use Value::Number;
-    // If the function is unknown, report runtime error (safety) and fall through
-    // to returning 0.0 to preserve previous behavior for callers that expect a numeric value.
+    // runtime arity and known-function checks using centralized builtins table
+    if let Some(range) = builtins::arg_count_range(name) {
+        if !range.contains(&args.len()) {
+            crate::exa_wasm::interpreter::set_runtime_error(format!(
+                "builtin '{}' called with wrong arity: got {}, expected {:?}",
+                name,
+                args.len(),
+                range
+            ));
+            return Number(0.0);
+        }
+    } else {
+        // if arg_count_range returns None, it's unknown to our builtin table
+        if !builtins::is_known_function(name) {
+            crate::exa_wasm::interpreter::set_runtime_error(format!(
+                "unknown function '{}', not present in builtins table",
+                name
+            ));
+            return Number(0.0);
+        }
+    }
+
     match name {
         "exp" => Number(
             args.get(0)

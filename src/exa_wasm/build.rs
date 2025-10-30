@@ -130,31 +130,84 @@ pub fn emit_ir<E: crate::Equation>(
             let mut p = crate::exa_wasm::interpreter::Parser::new(toks);
             if let Some(mut stmts) = p.parse_statements() {
                 // rewrite idents -> Param(index)
-                fn rewrite_expr(e: &mut crate::exa_wasm::interpreter::Expr, pmap: &std::collections::HashMap<String, usize>) {
+                fn rewrite_expr(
+                    e: &mut crate::exa_wasm::interpreter::Expr,
+                    pmap: &std::collections::HashMap<String, usize>,
+                ) {
                     match e {
                         crate::exa_wasm::interpreter::Expr::Ident(name) => {
                             if let Some(idx) = pmap.get(name) {
                                 *e = crate::exa_wasm::interpreter::Expr::Param(*idx);
                             }
                         }
-                        crate::exa_wasm::interpreter::Expr::Indexed(_, idx_expr) => rewrite_expr(idx_expr, pmap),
-                        crate::exa_wasm::interpreter::Expr::UnaryOp { rhs, .. } => rewrite_expr(rhs, pmap),
-                        crate::exa_wasm::interpreter::Expr::BinaryOp { lhs, rhs, .. } => { rewrite_expr(lhs, pmap); rewrite_expr(rhs, pmap); },
-                        crate::exa_wasm::interpreter::Expr::Call { args, .. } => { for a in args.iter_mut() { rewrite_expr(a, pmap); } },
-                        crate::exa_wasm::interpreter::Expr::MethodCall { receiver, args, .. } => { rewrite_expr(receiver, pmap); for a in args.iter_mut() { rewrite_expr(a, pmap); } },
-                        crate::exa_wasm::interpreter::Expr::Ternary { cond, then_branch, else_branch } => { rewrite_expr(cond, pmap); rewrite_expr(then_branch, pmap); rewrite_expr(else_branch, pmap); },
+                        crate::exa_wasm::interpreter::Expr::Indexed(_, idx_expr) => {
+                            rewrite_expr(idx_expr, pmap)
+                        }
+                        crate::exa_wasm::interpreter::Expr::UnaryOp { rhs, .. } => {
+                            rewrite_expr(rhs, pmap)
+                        }
+                        crate::exa_wasm::interpreter::Expr::BinaryOp { lhs, rhs, .. } => {
+                            rewrite_expr(lhs, pmap);
+                            rewrite_expr(rhs, pmap);
+                        }
+                        crate::exa_wasm::interpreter::Expr::Call { args, .. } => {
+                            for a in args.iter_mut() {
+                                rewrite_expr(a, pmap);
+                            }
+                        }
+                        crate::exa_wasm::interpreter::Expr::MethodCall {
+                            receiver, args, ..
+                        } => {
+                            rewrite_expr(receiver, pmap);
+                            for a in args.iter_mut() {
+                                rewrite_expr(a, pmap);
+                            }
+                        }
+                        crate::exa_wasm::interpreter::Expr::Ternary {
+                            cond,
+                            then_branch,
+                            else_branch,
+                        } => {
+                            rewrite_expr(cond, pmap);
+                            rewrite_expr(then_branch, pmap);
+                            rewrite_expr(else_branch, pmap);
+                        }
                         _ => {}
                     }
                 }
-                fn rewrite_stmt(s: &mut crate::exa_wasm::interpreter::Stmt, pmap: &std::collections::HashMap<String, usize>) {
+                fn rewrite_stmt(
+                    s: &mut crate::exa_wasm::interpreter::Stmt,
+                    pmap: &std::collections::HashMap<String, usize>,
+                ) {
                     match s {
                         crate::exa_wasm::interpreter::Stmt::Expr(e) => rewrite_expr(e, pmap),
-                        crate::exa_wasm::interpreter::Stmt::Assign(lhs, rhs) => { if let crate::exa_wasm::interpreter::Lhs::Indexed(_, idx_expr) = lhs { rewrite_expr(idx_expr, pmap); } rewrite_expr(rhs, pmap); },
-                        crate::exa_wasm::interpreter::Stmt::Block(v) => { for ss in v.iter_mut() { rewrite_stmt(ss, pmap); } },
-                        crate::exa_wasm::interpreter::Stmt::If { cond, then_branch, else_branch } => { rewrite_expr(cond, pmap); rewrite_stmt(then_branch, pmap); if let Some(eb) = else_branch { rewrite_stmt(eb, pmap); } }
+                        crate::exa_wasm::interpreter::Stmt::Assign(lhs, rhs) => {
+                            if let crate::exa_wasm::interpreter::Lhs::Indexed(_, idx_expr) = lhs {
+                                rewrite_expr(idx_expr, pmap);
+                            }
+                            rewrite_expr(rhs, pmap);
+                        }
+                        crate::exa_wasm::interpreter::Stmt::Block(v) => {
+                            for ss in v.iter_mut() {
+                                rewrite_stmt(ss, pmap);
+                            }
+                        }
+                        crate::exa_wasm::interpreter::Stmt::If {
+                            cond,
+                            then_branch,
+                            else_branch,
+                        } => {
+                            rewrite_expr(cond, pmap);
+                            rewrite_stmt(then_branch, pmap);
+                            if let Some(eb) = else_branch {
+                                rewrite_stmt(eb, pmap);
+                            }
+                        }
                     }
                 }
-                for st in stmts.iter_mut() { rewrite_stmt(st, pmap); }
+                for st in stmts.iter_mut() {
+                    rewrite_stmt(st, pmap);
+                }
                 return Some(stmts);
             }
         }
@@ -182,6 +235,8 @@ pub fn emit_ir<E: crate::Equation>(
         "fa_map": fa_map,
         "init": init_txt,
         "out": out_txt,
+        // IR schema field so consumers can be resilient to future AST/IR changes
+        "ir_schema": { "version": "1.0", "ast_version": "1" },
     });
 
     // attach parsed ASTs when present
@@ -193,6 +248,85 @@ pub fn emit_ir<E: crate::Equation>(
     }
     if !init_ast_val.is_null() {
         ir_obj["init_ast"] = init_ast_val;
+    }
+
+    // Attempt to compile a tiny bytecode for simple dx assignments found in
+    // the parsed diffeq AST. This is a conservative, best-effort POC: only
+    // compile assignments where the LHS is `dx[const]` and RHS contains
+    // numeric constants, Params and binary ops (+ - * / ^).
+    let mut bytecode_map: HashMap<usize, Vec<crate::exa_wasm::interpreter::Opcode>> =
+        HashMap::new();
+    if let Some(v) = ir_obj.get("diffeq_ast") {
+        // try to deserialize back into AST
+        match serde_json::from_value::<Vec<crate::exa_wasm::interpreter::Stmt>>(v.clone()) {
+            Ok(stmts) => {
+                // helper to compile expressions
+                fn compile_expr(
+                    expr: &crate::exa_wasm::interpreter::Expr,
+                    out: &mut Vec<crate::exa_wasm::interpreter::Opcode>,
+                ) -> bool {
+                    match expr {
+                        crate::exa_wasm::interpreter::Expr::Number(n) => {
+                            out.push(crate::exa_wasm::interpreter::Opcode::PushConst(*n));
+                            true
+                        }
+                        crate::exa_wasm::interpreter::Expr::Param(i) => {
+                            out.push(crate::exa_wasm::interpreter::Opcode::LoadParam(*i));
+                            true
+                        }
+                        crate::exa_wasm::interpreter::Expr::BinaryOp { lhs, op, rhs } => {
+                            // post-order: compile lhs, rhs, then op
+                            if !compile_expr(lhs, out) {
+                                return false;
+                            }
+                            if !compile_expr(rhs, out) {
+                                return false;
+                            }
+                            match op.as_str() {
+                                "+" => out.push(crate::exa_wasm::interpreter::Opcode::Add),
+                                "-" => out.push(crate::exa_wasm::interpreter::Opcode::Sub),
+                                "*" => out.push(crate::exa_wasm::interpreter::Opcode::Mul),
+                                "/" => out.push(crate::exa_wasm::interpreter::Opcode::Div),
+                                "^" => out.push(crate::exa_wasm::interpreter::Opcode::Pow),
+                                _ => return false,
+                            }
+                            true
+                        }
+                        _ => false,
+                    }
+                }
+
+                for st in stmts.iter() {
+                    if let crate::exa_wasm::interpreter::Stmt::Assign(lhs, rhs) = st {
+                        if let crate::exa_wasm::interpreter::Lhs::Indexed(name, idx_expr) = lhs {
+                            if name == "dx" {
+                                // only constant numeric index supported in POC
+                                match &**idx_expr {
+                                    crate::exa_wasm::interpreter::Expr::Number(n) => {
+                                        let idx = *n as usize;
+                                        let mut code: Vec<crate::exa_wasm::interpreter::Opcode> =
+                                            Vec::new();
+                                        if compile_expr(rhs, &mut code) {
+                                            code.push(
+                                                crate::exa_wasm::interpreter::Opcode::StoreDx(idx),
+                                            );
+                                            bytecode_map.insert(idx, code);
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Err(_) => {}
+        }
+    }
+
+    if !bytecode_map.is_empty() {
+        ir_obj["bytecode_map"] =
+            serde_json::to_value(&bytecode_map).unwrap_or(serde_json::Value::Null);
     }
 
     let output_path = output.unwrap_or_else(|| {

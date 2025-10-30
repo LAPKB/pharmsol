@@ -1,6 +1,6 @@
 // AST types for the exa_wasm interpreter
-use std::fmt;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Expr {
