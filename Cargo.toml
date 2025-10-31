@@ -14,7 +14,7 @@ exa = ["libloading"]
 [dependencies]
 cached = { version = "0.56.0" }
 csv = "1.3.0"
-diffsol = "=0.7.0"
+diffsol = { version = "=0.7.0" }
 libloading = { version = "0.8.6", optional = true, features = [] }
 nalgebra = "0.34.1"
 ndarray = { version = "0.16.1", features = ["rayon"] }
@@ -28,6 +28,7 @@ thiserror = "2.0.11"
 argmin = "0.11.0"
 argmin-math = "0.5.1"
 tracing = "0.1.41"
+once_cell = "1.18.0"
 
 [dev-dependencies]
 criterion = { version = "0.7.0", features = ["html_reports"] }
@@ -47,3 +48,8 @@ harness = false
 [[bench]]
 name = "ode"
 harness = false
+
+[[bench]]
+name = "wasm_ode_compare"
+harness = false
+required-features = ["exa"]
