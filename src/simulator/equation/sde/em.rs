@@ -94,6 +94,10 @@ impl EM {
             state[i] +=
                 // drift_term[i] * dt + diffusion_term[i] * normal_dist.sample(&mut rng) * dt.sqrt();
                 drift_term[i] * dt + diffusion_term[i] * sigma * dt.sqrt();
+            // reflection:
+            if state[i] < 0.0 {
+                state[i] = state[i].abs();
+            }
         }
     }
 
