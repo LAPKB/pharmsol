@@ -48,3 +48,8 @@ harness = false
 [[bench]]
 name = "ode"
 harness = false
+
+[[bench]]
+name = "wasm_ode_compare"
+harness = false
+required-features = ["exa"]
