@@ -22,6 +22,8 @@ pub enum Opcode {
     Mul,
     Div,
     Pow,
+    // pop top of stack (discard)
+    Pop,
 
     // comparisons / logical (push 0.0/1.0)
     Lt,
@@ -252,6 +254,10 @@ pub fn run_bytecode_full<F>(
                 }
                 pc += 1;
             }
+            Opcode::Pop => {
+                let _ = stack.pop();
+                pc += 1;
+            }
         }
     }
 }
@@ -464,6 +470,10 @@ pub fn run_bytecode_eval(
                 // pop value then index and ignore for eval
                 let _v = stack.pop().unwrap_or(0.0);
                 let _idxf = stack.pop().unwrap_or(0.0);
+                pc += 1;
+            }
+            Opcode::Pop => {
+                let _ = stack.pop();
                 pc += 1;
             }
         }

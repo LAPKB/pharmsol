@@ -68,8 +68,52 @@ pub fn diffeq_dispatch(
                 }
             }
             // debug: locals are in `locals_vec` and `local_index`
-            // If emitted bytecode exists for diffeq, prefer executing it
-            if !entry.bytecode_diffeq.is_empty() {
+            // If emitted function-level bytecode exists for diffeq, prefer executing it.
+            // Fallback to per-index bytecode map for backwards compatibility.
+            if !entry.bytecode_diffeq_func.is_empty() {
+                let builtins_dispatch = |name: &str, args: &[f64]| -> f64 {
+                    let vals: Vec<eval::Value> =
+                        args.iter().map(|a| eval::Value::Number(*a)).collect();
+                    eval::eval_call(name, &vals).as_number()
+                };
+                let mut locals_mut = locals_vec.clone();
+                let mut assign = |name: &str, idx: usize, val: f64| match name {
+                    "dx" => {
+                        if idx < dx.len() {
+                            dx[idx] = val;
+                        } else {
+                            crate::exa_wasm::interpreter::registry::set_runtime_error(format!(
+                                "index out of bounds 'dx'[{}] (nstates={})",
+                                idx,
+                                dx.len()
+                            ));
+                        }
+                    }
+                    "x" | "y" => {
+                        crate::exa_wasm::interpreter::registry::set_runtime_error(format!(
+                            "write to '{}' not allowed in diffeq bytecode",
+                            name
+                        ));
+                    }
+                    _ => {
+                        crate::exa_wasm::interpreter::registry::set_runtime_error(format!(
+                            "unsupported indexed assignment '{}' in diffeq",
+                            name
+                        ));
+                    }
+                };
+                vm::run_bytecode_full(
+                    entry.bytecode_diffeq_func.as_slice(),
+                    x.as_slice(),
+                    p.as_slice(),
+                    rateiv.as_slice(),
+                    _t,
+                    &mut locals_mut,
+                    &entry.funcs,
+                    &builtins_dispatch,
+                    |n, i, v| assign(n, i, v),
+                );
+            } else if !entry.bytecode_diffeq.is_empty() {
                 // builtin dispatch closure: translate f64 args -> eval::Value and call eval::eval_call
                 let builtins_dispatch = |name: &str, args: &[f64]| -> f64 {
                     let vals: Vec<eval::Value> =

@@ -129,147 +129,130 @@ pub fn emit_ir<E: crate::Equation>(
             // remove fetch_* macro invocations from the body so the parser
             // (which doesn't understand macros) can parse the remaining
             // statements. We strip the entire macro invocation including
-            // parentheses and nested contents.
-            let mut rest = body.as_str();
-            let mut cleaned = String::new();
+            // its balanced parentheses or braces.
+            let mut cleaned = body.to_string();
             let macro_names = ["fetch_params!", "fetch_param!", "fetch_cov!"];
-            loop {
-                // find earliest macro occurrence
-                let mut earliest: Option<(usize, &str)> = None;
-                for &name in macro_names.iter() {
-                    if let Some(pos) = rest.find(name) {
-                        if earliest.is_none() || pos < earliest.unwrap().0 {
-                            earliest = Some((pos, name));
+            for mac in macro_names.iter() {
+                loop {
+                    if let Some(pos) = cleaned.find(mac) {
+                        // find next delimiter '(' or '{' after the macro name
+                        let after = pos + mac.len();
+                        if after >= cleaned.len() {
+                            cleaned.replace_range(pos..after, "");
+                            break;
                         }
-                    }
-                }
-                match earliest {
-                    None => {
-                        cleaned.push_str(rest);
-                        break;
-                    }
-                    Some((pos, name)) => {
-                        // append preceding text
-                        cleaned.push_str(&rest[..pos]);
-                        // find the '(' following the macro name
-                        if let Some(lb_rel) = rest[pos..].find('(') {
-                            let tail = &rest[pos + lb_rel + 1..];
+                        let ch = cleaned.as_bytes()[after] as char;
+                        if ch == '(' || ch == '{' {
+                            let open = ch;
+                            let close = if open == '(' { ')' } else { '}' };
                             let mut depth: isize = 0;
-                            let mut i = 0usize;
-                            let bytes = tail.as_bytes();
+                            let mut i = after;
                             let mut found: Option<usize> = None;
-                            while i < tail.len() {
-                                match bytes[i] as char {
-                                    '(' => depth += 1,
-                                    ')' => {
-                                        if depth == 0 {
-                                            found = Some(i);
-                                            break;
-                                        }
-                                        depth -= 1;
+                            while i < cleaned.len() {
+                                let c = cleaned.as_bytes()[i] as char;
+                                if c == open {
+                                    depth += 1;
+                                } else if c == close {
+                                    depth -= 1;
+                                    if depth == 0 {
+                                        found = Some(i);
+                                        break;
                                     }
-                                    _ => {}
                                 }
                                 i += 1;
                             }
                             if let Some(rb) = found {
-                                rest = &tail[rb + 1..];
+                                // remove from pos..=rb
+                                cleaned.replace_range(pos..=rb, "");
+                                continue;
+                            } else {
+                                // nothing balanced: remove macro name only
+                                cleaned.replace_range(pos..after + 1, "");
                                 continue;
                             }
+                        } else {
+                            // no delimiter: remove the macro token only
+                            cleaned.replace_range(pos..after, "");
+                            continue;
                         }
-                        // fallback: skip past the macro name if we couldn't find a proper '('
-                        rest = &rest[pos + name.len()..];
+                    }
+                    break;
+                }
+            }
+
+            // tidy up stray semicolons resulting from macro removals
+            while cleaned.contains(";;") {
+                cleaned = cleaned.replace(";;", ";");
+            }
+            // remove leading whitespace and any stray leading semicolon left by macro removal
+            cleaned = cleaned.trim_start().to_string();
+            if cleaned.starts_with(';') {
+                cleaned = cleaned[1..].to_string();
+            }
+            // cleaned closure ready for tokenization
+            let toks = crate::exa_wasm::interpreter::tokenize(&cleaned);
+            let mut p = crate::exa_wasm::interpreter::Parser::new(toks);
+            let mut stmts = match p.parse_statements() {
+                Some(s) => s,
+                None => return None,
+            };
+
+            // rewrite identifiers that refer to parameters into Param(index)
+            fn rewrite_expr(e: &mut crate::exa_wasm::interpreter::Expr, pmap: &std::collections::HashMap<String, usize>) {
+                use crate::exa_wasm::interpreter::Expr::*;
+                match e {
+                    Number(_) | Bool(_) | Param(_) => {}
+                    Ident(name) => {
+                        if let Some(i) = pmap.get(name) {
+                            *e = Param(*i);
+                        }
+                    }
+                    Indexed(_, idx) => {
+                        rewrite_expr(idx, pmap);
+                    }
+                    UnaryOp { rhs, .. } => rewrite_expr(rhs, pmap),
+                    BinaryOp { lhs, rhs, .. } => {
+                        rewrite_expr(lhs, pmap);
+                        rewrite_expr(rhs, pmap);
+                    }
+                    Call { args, .. } => {
+                        for a in args.iter_mut() { rewrite_expr(a, pmap); }
+                    }
+                    MethodCall { receiver, args, .. } => {
+                        rewrite_expr(receiver, pmap);
+                        for a in args.iter_mut() { rewrite_expr(a, pmap); }
+                    }
+                    Ternary { cond, then_branch, else_branch } => {
+                        rewrite_expr(cond, pmap);
+                        rewrite_expr(then_branch, pmap);
+                        rewrite_expr(else_branch, pmap);
                     }
                 }
             }
 
-            // trim leading/trailing whitespace and drop any leading semicolons
-            // that may remain after removing macro invocations.
-            let cleaned = cleaned.trim().trim_start_matches(';').trim().to_string();
-            let toks = crate::exa_wasm::interpreter::tokenize(&cleaned);
-            let mut p = crate::exa_wasm::interpreter::Parser::new(toks);
-            if let Some(mut stmts) = p.parse_statements() {
-                // rewrite idents -> Param(index)
-                fn rewrite_expr(
-                    e: &mut crate::exa_wasm::interpreter::Expr,
-                    pmap: &std::collections::HashMap<String, usize>,
-                ) {
-                    match e {
-                        crate::exa_wasm::interpreter::Expr::Ident(name) => {
-                            if let Some(idx) = pmap.get(name) {
-                                *e = crate::exa_wasm::interpreter::Expr::Param(*idx);
-                            }
+            fn rewrite_stmt(s: &mut crate::exa_wasm::interpreter::Stmt, pmap: &std::collections::HashMap<String, usize>) {
+                match s {
+                    crate::exa_wasm::interpreter::Stmt::Expr(e) => rewrite_expr(e, pmap),
+                    crate::exa_wasm::interpreter::Stmt::Assign(lhs, rhs) => {
+                        match lhs {
+                            crate::exa_wasm::interpreter::Lhs::Indexed(_, idx) => rewrite_expr(idx, pmap),
+                            crate::exa_wasm::interpreter::Lhs::Ident(_) => {}
                         }
-                        crate::exa_wasm::interpreter::Expr::Indexed(_, idx_expr) => {
-                            rewrite_expr(idx_expr, pmap)
-                        }
-                        crate::exa_wasm::interpreter::Expr::UnaryOp { rhs, .. } => {
-                            rewrite_expr(rhs, pmap)
-                        }
-                        crate::exa_wasm::interpreter::Expr::BinaryOp { lhs, rhs, .. } => {
-                            rewrite_expr(lhs, pmap);
-                            rewrite_expr(rhs, pmap);
-                        }
-                        crate::exa_wasm::interpreter::Expr::Call { args, .. } => {
-                            for a in args.iter_mut() {
-                                rewrite_expr(a, pmap);
-                            }
-                        }
-                        crate::exa_wasm::interpreter::Expr::MethodCall {
-                            receiver, args, ..
-                        } => {
-                            rewrite_expr(receiver, pmap);
-                            for a in args.iter_mut() {
-                                rewrite_expr(a, pmap);
-                            }
-                        }
-                        crate::exa_wasm::interpreter::Expr::Ternary {
-                            cond,
-                            then_branch,
-                            else_branch,
-                        } => {
-                            rewrite_expr(cond, pmap);
-                            rewrite_expr(then_branch, pmap);
-                            rewrite_expr(else_branch, pmap);
-                        }
-                        _ => {}
+                        rewrite_expr(rhs, pmap);
+                    }
+                    crate::exa_wasm::interpreter::Stmt::Block(v) => {
+                        for st in v.iter_mut() { rewrite_stmt(st, pmap); }
+                    }
+                    crate::exa_wasm::interpreter::Stmt::If { cond, then_branch, else_branch } => {
+                        rewrite_expr(cond, pmap);
+                        rewrite_stmt(then_branch, pmap);
+                        if let Some(eb) = else_branch { rewrite_stmt(eb, pmap); }
                     }
                 }
-                fn rewrite_stmt(
-                    s: &mut crate::exa_wasm::interpreter::Stmt,
-                    pmap: &std::collections::HashMap<String, usize>,
-                ) {
-                    match s {
-                        crate::exa_wasm::interpreter::Stmt::Expr(e) => rewrite_expr(e, pmap),
-                        crate::exa_wasm::interpreter::Stmt::Assign(lhs, rhs) => {
-                            if let crate::exa_wasm::interpreter::Lhs::Indexed(_, idx_expr) = lhs {
-                                rewrite_expr(idx_expr, pmap);
-                            }
-                            rewrite_expr(rhs, pmap);
-                        }
-                        crate::exa_wasm::interpreter::Stmt::Block(v) => {
-                            for ss in v.iter_mut() {
-                                rewrite_stmt(ss, pmap);
-                            }
-                        }
-                        crate::exa_wasm::interpreter::Stmt::If {
-                            cond,
-                            then_branch,
-                            else_branch,
-                        } => {
-                            rewrite_expr(cond, pmap);
-                            rewrite_stmt(then_branch, pmap);
-                            if let Some(eb) = else_branch {
-                                rewrite_stmt(eb, pmap);
-                            }
-                        }
-                    }
-                }
-                for st in stmts.iter_mut() {
-                    rewrite_stmt(st, pmap);
-                }
-                return Some(stmts);
             }
+
+            for st in stmts.iter_mut() { rewrite_stmt(st, pmap); }
+            return Some(stmts);
         }
         None
     }
@@ -791,7 +774,12 @@ pub fn emit_ir<E: crate::Equation>(
                             match cond {
                                 crate::exa_wasm::interpreter::Expr::Bool(b) => {
                                     if *b {
-                                        visit_stmt(then_branch, bytecode_map, shared_funcs, shared_locals);
+                                        visit_stmt(
+                                            then_branch,
+                                            bytecode_map,
+                                            shared_funcs,
+                                            shared_locals,
+                                        );
                                     } else if let Some(eb) = else_branch {
                                         visit_stmt(eb, bytecode_map, shared_funcs, shared_locals);
                                     }
@@ -833,6 +821,135 @@ pub fn emit_ir<E: crate::Equation>(
         if !shared_locals.is_empty() {
             ir_obj["locals"] =
                 serde_json::to_value(&shared_locals).unwrap_or(serde_json::Value::Null);
+        }
+    }
+
+    // If we have a parsed diffeq AST, attempt to lower the entire statement
+    // vector into a single function-level bytecode vector. This preserves
+    // full control-flow and scoping semantics for arbitrary If/Block nests.
+    if let Some(v) = ir_obj.get("diffeq_ast") {
+        if let Ok(stmts) = serde_json::from_value::<Vec<crate::exa_wasm::interpreter::Stmt>>(v.clone()) {
+            // shared tables discovered during compilation
+            let mut funcs_for_func: Vec<String> = shared_funcs.clone();
+
+            // helper to compile statements into a single code vector
+            fn compile_stmt(
+                st: &crate::exa_wasm::interpreter::Stmt,
+                out: &mut Vec<crate::exa_wasm::interpreter::Opcode>,
+                funcs: &mut Vec<String>,
+                locals: &Vec<String>,
+            ) -> bool {
+                use crate::exa_wasm::interpreter::{Expr, Opcode, Stmt, Lhs};
+                match st {
+                    Stmt::Assign(lhs, rhs) => {
+                        match lhs {
+                            Lhs::Indexed(name, idx_expr) => {
+                                if name == "dx" {
+                                    if let Expr::Number(n) = &**idx_expr {
+                                        let idx = *n as usize;
+                                        if !compile_expr_top(rhs, out, funcs, locals) {
+                                            return false;
+                                        }
+                                        out.push(Opcode::StoreDx(idx));
+                                        true
+                                    } else {
+                                        // dynamic index: compile index then rhs then StoreDxDyn
+                                        if !compile_expr_top(idx_expr, out, funcs, locals) { return false; }
+                                        if !compile_expr_top(rhs, out, funcs, locals) { return false; }
+                                        out.push(Opcode::StoreDxDyn);
+                                        true
+                                    }
+                                } else if name == "x" || name == "y" {
+                                    // support writes to x/y (e.g., init/out contexts)
+                                    if let Expr::Number(n) = &**idx_expr {
+                                        let idx = *n as usize;
+                                        if !compile_expr_top(rhs, out, funcs, locals) { return false; }
+                                        if name == "x" {
+                                            out.push(Opcode::StoreX(idx));
+                                        } else {
+                                            out.push(Opcode::StoreY(idx));
+                                        }
+                                        true
+                                    } else {
+                                        if !compile_expr_top(idx_expr, out, funcs, locals) { return false; }
+                                        if !compile_expr_top(rhs, out, funcs, locals) { return false; }
+                                        if name == "x" { out.push(Opcode::StoreXDyn); } else { out.push(Opcode::StoreYDyn); }
+                                        true
+                                    }
+                                } else {
+                                    false
+                                }
+                            }
+                            Lhs::Ident(name) => {
+                                // local assignment: find slot in locals
+                                if let Some(pos) = locals.iter().position(|n| n == name) {
+                                    if !compile_expr_top(rhs, out, funcs, locals) { return false; }
+                                    out.push(Opcode::StoreLocal(pos));
+                                    true
+                                } else {
+                                    // unknown local: fail
+                                    false
+                                }
+                            }
+                        }
+                    }
+                    Stmt::Expr(e) => {
+                        if !compile_expr_top(e, out, funcs, locals) { return false; }
+                        // discard expression result
+                        out.push(Opcode::Pop);
+                        true
+                    }
+                    Stmt::Block(v) => {
+                        for s in v.iter() {
+                            if !compile_stmt(s, out, funcs, locals) { return false; }
+                        }
+                        true
+                    }
+                    Stmt::If { cond, then_branch, else_branch } => {
+                        // compile condition
+                        if !compile_expr_top(cond, out, funcs, locals) { return false; }
+                        // placeholder JumpIfFalse
+                        let jf_pos = out.len();
+                        out.push(Opcode::JumpIfFalse(0));
+                        // then branch
+                        if !compile_stmt(then_branch, out, funcs, locals) { return false; }
+                        // jump over else
+                        let jmp_pos = out.len();
+                        out.push(Opcode::Jump(0));
+                        // else position
+                        let else_pos = out.len();
+                        if let Opcode::JumpIfFalse(ref mut addr) = out[jf_pos] {
+                            *addr = else_pos;
+                        }
+                        if let Some(eb) = else_branch {
+                            if !compile_stmt(eb, out, funcs, locals) { return false; }
+                        }
+                        // fix jump target
+                        let end_pos = out.len();
+                        if let Opcode::Jump(ref mut addr) = out[jmp_pos] {
+                            *addr = end_pos;
+                        }
+                        true
+                    }
+                }
+            }
+
+            let mut func_code: Vec<crate::exa_wasm::interpreter::Opcode> = Vec::new();
+            for st in stmts.iter() {
+                if !compile_stmt(st, &mut func_code, &mut funcs_for_func, &shared_locals) {
+                    func_code.clear();
+                    break;
+                }
+            }
+            if !func_code.is_empty() {
+                ir_obj["diffeq_func"] = serde_json::to_value(&func_code).unwrap_or(serde_json::Value::Null);
+                if !funcs_for_func.is_empty() {
+                    ir_obj["funcs"] = serde_json::to_value(&funcs_for_func).unwrap_or(serde_json::Value::Null);
+                }
+                if !shared_locals.is_empty() {
+                    ir_obj["locals"] = serde_json::to_value(&shared_locals).unwrap_or(serde_json::Value::Null);
+                }
+            }
         }
     }
 

@@ -34,6 +34,8 @@ struct IrFile {
     // optional compiled bytecode emitted by `emit_ir`
     diffeq_bytecode:
         Option<std::collections::HashMap<usize, Vec<crate::exa_wasm::interpreter::Opcode>>>,
+    // optional compiled function-level bytecode (single code vector)
+    diffeq_func: Option<Vec<crate::exa_wasm::interpreter::Opcode>>,
     out_bytecode:
         Option<std::collections::HashMap<usize, Vec<crate::exa_wasm::interpreter::Opcode>>>,
     init_bytecode:
@@ -554,6 +556,7 @@ pub fn load_ir_ode(
                             }
                         }
                     }
+                    crate::exa_wasm::interpreter::Opcode::Pop => {}
                     // dynamic ops not fully checkable at compile time
                     Opcode::LoadParamDyn
                     | Opcode::LoadXDyn
@@ -581,6 +584,10 @@ pub fn load_ir_ode(
                     &mut parse_errors,
                 );
             }
+        }
+        // validate function-level diffeq bytecode if present
+        if let Some(code) = ir.diffeq_func.clone() {
+            validate_code(&code, nstates, nparams, locals_table.len(), &funcs_table, &mut parse_errors);
         }
         if let Some(map) = ir.out_bytecode.clone() {
             for (_k, code) in map.into_iter() {
@@ -655,6 +662,8 @@ pub fn load_ir_ode(
         bytecode_init: ir.init_bytecode.unwrap_or_default(),
         bytecode_lag: ir.lag_bytecode.unwrap_or_default(),
         bytecode_fa: ir.fa_bytecode.unwrap_or_default(),
+    // optional function-level bytecode
+    bytecode_diffeq_func: ir.diffeq_func.unwrap_or_default(),
         // function table and locals ordering emitted by the compiler
         funcs: ir.funcs.unwrap_or_default(),
         locals: ir.locals.unwrap_or_default(),
