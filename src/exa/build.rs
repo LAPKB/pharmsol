@@ -187,7 +187,7 @@ pub fn temp_path() -> PathBuf {
 ///
 /// # Returns
 ///
-/// The path to the template directory, or an error if injection failed.
+/// Returns `()` on success, or an error if injection failed.
 fn inject_model<E: Equation>(
     model_txt: String,
     params: Vec<String>,
