@@ -2,10 +2,7 @@
 
 #[cfg(feature = "exa")]
 fn main() {
-    use pharmsol::{
-        build::{clear_build, temp_path},
-        *,
-    };
+    use pharmsol::{build::temp_path, *};
     use std::path::PathBuf;
     let subject = Subject::builder("1")
         .infusion(0.0, 500.0, 0, 0.5)
@@ -17,8 +14,6 @@ fn main() {
         .observation(6.0, 0.009099384, 0)
         .observation(8.0, 0.001017932, 0)
         .build();
-    // optional: clear build directory if you want to compile the model again
-    //exa::build::clear_build();
 
     // Create ODE model directly
     let ode = equation::ODE::new(
@@ -35,9 +30,6 @@ fn main() {
         },
         (1, 1),
     );
-
-    //clear build
-    clear_build(temp_path());
 
     let test_dir = std::env::current_dir().expect("Failed to get current directory");
     let model_output_path = test_dir.join("test_model.pkm");
