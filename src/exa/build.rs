@@ -173,7 +173,7 @@ fn create_template(temp_dir: PathBuf) -> Result<PathBuf, io::Error> {
 ///
 /// # Returns
 ///
-/// A string representing the path to the template directory.
+/// A PathBuf representing the path to the temporary directory.
 pub fn temp_path() -> PathBuf {
     env::temp_dir().join("exa_tmp")
 }
