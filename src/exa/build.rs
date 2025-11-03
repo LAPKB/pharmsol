@@ -178,15 +178,6 @@ pub fn temp_path() -> PathBuf {
     env::temp_dir().join("exa_tmp")
 }
 
-/// Clears all build artifacts from the temporary directory.
-///
-/// This function removes the entire temporary directory used for building models.
-pub fn clear_build(template_path: PathBuf) {
-    if template_path.exists() {
-        fs::remove_dir_all(template_path).expect("Failed to remove template directory");
-    }
-}
-
 /// Injects model text and parameters into the template project.
 ///
 /// # Arguments
