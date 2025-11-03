@@ -31,9 +31,10 @@ pub fn compile<E: Equation>(
     model_txt: String,
     output: Option<PathBuf>,
     params: Vec<String>,
+    template_path: PathBuf,
     event_callback: fn(String, String),
 ) -> Result<String, io::Error> {
-    let _template_path = match create_template() {
+    let template_dir = match create_template(template_path.clone()) {
         Ok(path) => path,
         Err(e) => {
             event_callback(
@@ -43,15 +44,16 @@ pub fn compile<E: Equation>(
             return Err(e);
         }
     };
-    let template_path = match inject_model::<E>(model_txt, params) {
-        Ok(path) => path,
+
+    match inject_model::<E>(model_txt, params, template_dir.clone()) {
+        Ok(()) => (),
         Err(e) => {
             event_callback("build-log".into(), format!("Failed to inject model: {}", e));
             return Err(e);
         }
     };
 
-    let dynlib_path = match build_template(template_path.clone(), event_callback) {
+    let dynlib_path = match build_template(template_dir.clone(), event_callback) {
         Ok(path) => path,
         Err(e) => {
             event_callback(
@@ -73,7 +75,7 @@ pub fn compile<E: Equation>(
             env::consts::ARCH,
             random_suffix
         );
-        let temp_dir = env::temp_dir().join("exa_tmp");
+        let temp_dir = PathBuf::from(template_path);
         temp_dir.with_file_name(default_name)
     });
 
@@ -90,35 +92,14 @@ pub fn compile<E: Equation>(
 /// * `event_callback` - Callback function for emitting events during compilation.
 ///
 /// # Returns
-///
 /// The path to the template directory, or an error if creation failed.
-pub fn dummy_compile(event_callback: fn(String, String)) -> Result<String, io::Error> {
-    let template_path = create_template()?;
+pub fn dummy_compile(
+    template_path: PathBuf,
+    event_callback: fn(String, String),
+) -> Result<String, io::Error> {
+    create_template(template_path.clone())?;
     build_template(template_path.clone(), event_callback)?;
     Ok(template_path.to_string_lossy().to_string())
-}
-
-/// Returns the path to the template directory.
-///
-/// # Returns
-///
-/// A string representing the path to the template directory.
-pub fn template_path() -> String {
-    env::temp_dir()
-        .join("exa_tmp")
-        .join("template")
-        .to_string_lossy()
-        .to_string()
-}
-
-/// Clears all build artifacts from the temporary directory.
-///
-/// This function removes the entire temporary directory used for building models.
-pub fn clear_build() {
-    let temp_dir = env::temp_dir().join("exa_tmp");
-    if temp_dir.exists() {
-        fs::remove_dir_all(temp_dir).expect("Failed to remove temporary directory");
-    }
 }
 
 /// Creates a new template project for model compilation.
@@ -127,10 +108,8 @@ pub fn clear_build() {
 /// for compiling ODE models.
 ///
 /// # Returns
-///
 /// The path to the created template directory, or an error if creation failed.
-fn create_template() -> Result<PathBuf, io::Error> {
-    let temp_dir = env::temp_dir().join("exa_tmp");
+fn create_template(temp_dir: PathBuf) -> Result<PathBuf, io::Error> {
     if !temp_dir.exists() {
         fs::create_dir_all(&temp_dir)?;
     }
@@ -190,6 +169,24 @@ fn create_template() -> Result<PathBuf, io::Error> {
     Ok(template_dir)
 }
 
+/// Utility function to get the temporary path for building models.
+///
+/// # Returns
+///
+/// A string representing the path to the template directory.
+pub fn temp_path() -> PathBuf {
+    env::temp_dir().join("exa_tmp")
+}
+
+/// Clears all build artifacts from the temporary directory.
+///
+/// This function removes the entire temporary directory used for building models.
+pub fn clear_build(template_path: PathBuf) {
+    if template_path.exists() {
+        fs::remove_dir_all(template_path).expect("Failed to remove template directory");
+    }
+}
+
 /// Injects model text and parameters into the template project.
 ///
 /// # Arguments
@@ -200,8 +197,11 @@ fn create_template() -> Result<PathBuf, io::Error> {
 /// # Returns
 ///
 /// The path to the template directory, or an error if injection failed.
-fn inject_model<E: Equation>(model_txt: String, params: Vec<String>) -> Result<PathBuf, io::Error> {
-    let template_dir = env::temp_dir().join("exa_tmp").join("template");
+fn inject_model<E: Equation>(
+    model_txt: String,
+    params: Vec<String>,
+    template_dir: PathBuf,
+) -> Result<(), io::Error> {
     let lib_rs_path = template_dir.join("src").join("lib.rs");
     let lib_rs_content = format!(
         r#"
@@ -245,7 +245,7 @@ fn inject_model<E: Equation>(model_txt: String, params: Vec<String>) -> Result<P
         .current_dir(&template_dir)
         .output()
         .expect("Failed to format cargo project");
-    Ok(template_dir)
+    Ok(())
 }
 
 /// Builds the template project and creates a dynamic library.

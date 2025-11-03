@@ -1,7 +1,7 @@
 #[cfg(feature = "exa")]
 mod exa_tests {
     use approx::assert_relative_eq;
-    use pharmsol::*;
+    use pharmsol::{build::temp_path, *};
     use std::path::PathBuf;
 
     #[test]
@@ -60,6 +60,7 @@ mod exa_tests {
             ),
             Some(model_output_path),
             vec!["ke".to_string(), "v".to_string()],
+            temp_path(),
             |_, _| {}, // Empty callback for tests
         )
         .unwrap();

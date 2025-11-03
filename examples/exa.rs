@@ -2,7 +2,10 @@
 
 #[cfg(feature = "exa")]
 fn main() {
-    use pharmsol::{build::clear_build, *};
+    use pharmsol::{
+        build::{clear_build, temp_path},
+        *,
+    };
     use std::path::PathBuf;
     let subject = Subject::builder("1")
         .infusion(0.0, 500.0, 0, 0.5)
@@ -34,7 +37,7 @@ fn main() {
     );
 
     //clear build
-    clear_build();
+    clear_build(temp_path());
 
     let test_dir = std::env::current_dir().expect("Failed to get current directory");
     let model_output_path = test_dir.join("test_model.pkm");
@@ -44,7 +47,7 @@ fn main() {
         format!(
             r#"
                 equation::ODE::new(
-            |x, p, _t, dx, rateiv, _cov| {{
+            |x, p, _t, dx, _p,rateiv, _cov| {{
                 fetch_params!(p, ke, _v);
                 dx[0] = -ke * x[0] + rateiv[0];
             }},
@@ -61,6 +64,7 @@ fn main() {
         ),
         Some(model_output_path),
         vec!["ke".to_string(), "v".to_string()],
+        temp_path(),
         |key, msg| println!("{key}-{msg}"), // Empty callback for tests
     )
     .unwrap();
@@ -87,6 +91,7 @@ fn main() {
         ),
         Some(analytic_output_path),
         vec!["ke".to_string(), "v".to_string()],
+        temp_path(),
         |key, msg| println!("{key}-{msg}"), // Empty callback for tests
     )
     .unwrap();
