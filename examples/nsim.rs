@@ -13,7 +13,7 @@ fn main() {
         .build();
     println!("{subject}");
     let ode = equation::ODE::new(
-        |x, p, t, dx, _b, _rateiv, cov| {
+        |x, p, t, dx, b, _rateiv, cov| {
             fetch_cov!(cov, t, wt, age);
             fetch_params!(p, ka, ke, _tlag, _v);
             // Secondary Eqs
@@ -21,7 +21,7 @@ fn main() {
             let ke = ke * wt.powf(0.75) * (age / 25.0).powf(0.5);
 
             //Struct
-            dx[0] = -ka * x[0];
+            dx[0] = -ka * x[0] + b[0];
             dx[1] = ka * x[0] - ke * x[1];
         },
         |p, _t, _cov| {

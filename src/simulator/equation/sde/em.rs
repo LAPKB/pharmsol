@@ -6,6 +6,99 @@ use crate::{
 use nalgebra::DVector;
 use rand::rng;
 use rand_distr::{Distribution, Normal};
+use std::collections::BTreeMap;
+
+/// Pre-computed infusion schedule for efficient rate lookups during integration.
+///
+/// Instead of iterating through all infusions at every time step, this structure
+/// maintains a sorted list of time points where infusion rates change and the
+/// corresponding rate vectors for efficient binary search lookups.
+#[derive(Clone, Debug)]
+struct InfusionSchedule {
+    /// Sorted time points where infusion rates change
+    time_points: Vec<f64>,
+    /// Infusion rate vector for each time interval
+    rates: Vec<DVector<f64>>,
+}
+
+impl InfusionSchedule {
+    /// Creates a new infusion schedule from a list of infusions.
+    ///
+    /// # Arguments
+    ///
+    /// * `infusions` - Vector of infusion events
+    /// * `nstates` - Number of states in the system
+    /// * `t_start` - Start time of simulation
+    /// * `t_end` - End time of simulation
+    ///
+    /// # Returns
+    ///
+    /// A pre-computed schedule for O(log n) rate lookups
+    fn new(infusions: &[Infusion], nstates: usize, t_start: f64, t_end: f64) -> Self {
+        // Build a map of time points to rate changes
+        let mut events: BTreeMap<String, DVector<f64>> = BTreeMap::new();
+
+        for inf in infusions {
+            let start = inf.time();
+            let end = start + inf.duration();
+            let rate = inf.amount() / inf.duration();
+            let input = inf.input();
+
+            // Add rate at start time
+            if start >= t_start && start <= t_end {
+                let key = format!("{:.15}", start);
+                events.entry(key).or_insert_with(|| DVector::zeros(nstates))[input] += rate;
+            }
+
+            // Subtract rate at end time
+            if end >= t_start && end <= t_end {
+                let key = format!("{:.15}", end);
+                events.entry(key).or_insert_with(|| DVector::zeros(nstates))[input] -= rate;
+            }
+        }
+
+        // Convert to sorted vectors with cumulative rates
+        let mut time_points = Vec::new();
+        let mut rates = Vec::new();
+        let mut current_rate = DVector::zeros(nstates);
+
+        // Add initial zero rate
+        time_points.push(t_start);
+        rates.push(current_rate.clone());
+
+        // Process events in chronological order
+        for (time_str, rate_change) in events {
+            let time: f64 = time_str.parse().unwrap();
+            current_rate += rate_change;
+            time_points.push(time);
+            rates.push(current_rate.clone());
+        }
+
+        Self { time_points, rates }
+    }
+
+    /// Gets the infusion rate vector at a given time.
+    ///
+    /// Uses binary search for O(log n) lookup complexity.
+    ///
+    /// # Arguments
+    ///
+    /// * `time` - The time at which to get infusion rates
+    /// * `out` - Output vector to store the rates
+    fn get_rate(&self, time: f64, out: &mut DVector<f64>) {
+        // Binary search for the appropriate interval
+        let idx = match self
+            .time_points
+            .binary_search_by(|t| t.partial_cmp(&time).unwrap_or(std::cmp::Ordering::Equal))
+        {
+            Ok(i) => i,
+            Err(i) => i.saturating_sub(1),
+        };
+
+        let idx = idx.min(self.rates.len() - 1);
+        out.copy_from(&self.rates[idx]);
+    }
+}
 
 /// Implementation of the Euler-Maruyama method for solving stochastic differential equations.
 ///
@@ -19,7 +112,8 @@ pub struct EM {
     params: DVector<f64>,
     state: DVector<f64>,
     cov: Covariates,
-    infusions: Vec<Infusion>,
+    infusion_schedule: InfusionSchedule,
+    rateiv_buffer: DVector<f64>,
     rtol: f64,
     atol: f64,
     max_step: f64,
@@ -39,6 +133,8 @@ impl EM {
     /// * `infusions` - Vector of infusion events to be applied during simulation
     /// * `rtol` - Relative tolerance for adaptive step size control
     /// * `atol` - Absolute tolerance for adaptive step size control
+    /// * `t0` - Start time for infusion schedule computation
+    /// * `tf` - End time for infusion schedule computation
     ///
     /// # Returns
     ///
@@ -52,14 +148,21 @@ impl EM {
         infusions: Vec<Infusion>,
         rtol: f64,
         atol: f64,
+        t0: f64,
+        tf: f64,
     ) -> Self {
+        let nstates = initial_state.len();
+        let infusion_schedule = InfusionSchedule::new(&infusions, nstates, t0, tf);
+        let rateiv_buffer = DVector::zeros(nstates);
+
         Self {
             drift,
             diffusion,
             params,
             state: initial_state,
             cov,
-            infusions,
+            infusion_schedule,
+            rateiv_buffer,
             rtol,
             atol,
             max_step: 0.1,  // Can be made configurable
@@ -113,22 +216,20 @@ impl EM {
     /// * `time` - Current simulation time
     /// * `dt` - Step size
     /// * `state` - Current state of the system (modified in-place)
-    fn euler_maruyama_step(&self, time: f64, dt: f64, state: &mut DVector<f64>) {
+    fn euler_maruyama_step(&mut self, time: f64, dt: f64, state: &mut DVector<f64>) {
         let n = state.len();
-        let mut rateiv = DVector::from_vec(vec![0.0, 0.0, 0.0]);
-        //TODO: This should be pre-calculated
-        for infusion in &self.infusions {
-            if time >= infusion.time() && time <= infusion.duration() + infusion.time() {
-                rateiv[infusion.input()] += infusion.amount() / infusion.duration();
-            }
-        }
+
+        // Get pre-computed infusion rates at this time (O(log n) instead of O(n))
+        self.infusion_schedule
+            .get_rate(time, &mut self.rateiv_buffer);
+
         let mut drift_term = DVector::zeros(n).into();
         (self.drift)(
             &state.clone().into(),
             &self.params.clone().into(),
             time,
             &mut drift_term,
-            rateiv.into(),
+            self.rateiv_buffer.clone().into(),
             &self.cov,
         );
 

@@ -66,6 +66,8 @@ pub(crate) fn simulate_sde_event(
         infusions.to_vec(),
         1e-2,
         1e-2,
+        ti,
+        tf,
     );
     let (_time, solution) = sde.solve(ti, tf);
     solution.last().unwrap().clone().into()
@@ -274,12 +276,15 @@ impl EquationPriv for SDE {
         likelihood: &mut Vec<f64>,
         output: &mut Self::P,
     ) -> Result<(), PharmsolError> {
+        // Pre-convert support point once to avoid O(nparticles) clones
+        let spp_v = V::from_vec(support_point.to_vec(), NalgebraContext);
+
         let mut pred = vec![Prediction::default(); self.nparticles];
         pred.par_iter_mut().enumerate().for_each(|(i, p)| {
             let mut y = V::zeros(self.get_nouteqs(), NalgebraContext);
             (self.out)(
                 &x[i].clone().into(),
-                &V::from_vec(support_point.clone(), NalgebraContext),
+                &spp_v, // Reuse pre-converted support point
                 observation.time(),
                 covariates,
                 &mut y,
@@ -399,6 +404,9 @@ fn _estimate_likelihood(
 
 /// Performs systematic resampling of particles based on weights.
 ///
+/// Uses binary search for large particle counts (>100) for better performance,
+/// and linear search for smaller counts.
+///
 /// # Arguments
 ///
 /// * `q` - Vector of particle weights
@@ -407,23 +415,40 @@ fn _estimate_likelihood(
 ///
 /// Vector of indices to use for resampling.
 fn sysresample(q: &[f64]) -> Vec<usize> {
-    let mut qc = vec![0.0; q.len()];
-    qc[0] = q[0];
-    for i in 1..q.len() {
-        qc[i] = qc[i - 1] + q[i];
-    }
     let m = q.len();
-    let mut rng = rng();
-    let u: Vec<f64> = (0..m)
-        .map(|i| (i as f64 + rng.random::<f64>()) / m as f64)
-        .collect();
-    let mut i = vec![0; m];
-    let mut k = 0;
-    for j in 0..m {
-        while qc[k] < u[j] {
-            k += 1;
-        }
-        i[j] = k;
+
+    // Compute cumulative sum
+    let mut qc = Vec::with_capacity(m);
+    let mut sum = 0.0;
+    for &qi in q {
+        sum += qi;
+        qc.push(sum);
     }
-    i
+
+    // Single random offset for systematic resampling
+    let mut rng = rng();
+    let u_base = rng.random::<f64>() / m as f64;
+
+    // Use binary search for large particle counts, linear search for small counts
+    if m > 100 {
+        // Binary search is more efficient for large particle counts
+        (0..m)
+            .map(|j| {
+                let u = u_base + (j as f64) / (m as f64);
+                qc.partition_point(|&qcj| qcj < u)
+            })
+            .collect()
+    } else {
+        // Linear search is simpler and faster for small particle counts
+        let mut indices = Vec::with_capacity(m);
+        let mut k = 0;
+        for j in 0..m {
+            let u = u_base + (j as f64) / (m as f64);
+            while k < m && qc[k] < u {
+                k += 1;
+            }
+            indices.push(k.min(m - 1));
+        }
+        indices
+    }
 }

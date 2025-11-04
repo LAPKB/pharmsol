@@ -496,6 +496,12 @@ pub struct Occasion {
     pub(crate) events: Vec<Event>,
     pub(crate) covariates: Covariates,
     pub(crate) index: usize,
+    /// Cached initial time to avoid recomputing
+    #[serde(skip)]
+    cached_initial_time: Option<f64>,
+    /// Cached infusion references to avoid filtering on every call
+    #[serde(skip)]
+    cached_infusions: Vec<Infusion>,
 }
 
 impl Occasion {
@@ -511,7 +517,38 @@ impl Occasion {
             events: Vec::new(),
             covariates: Covariates::new(),
             index,
+            cached_initial_time: None,
+            cached_infusions: Vec::new(),
         }
+    }
+
+    /// Update cached metadata after events are modified
+    ///
+    /// This should be called after any modification to events to ensure
+    /// the cached values remain consistent
+    fn update_cache(&mut self) {
+        // Compute initial time
+        self.cached_initial_time = Some(
+            self.events
+                .iter()
+                .filter_map(|event| match event {
+                    Event::Observation(observation) => Some(observation.time()),
+                    Event::Bolus(bolus) => Some(bolus.time()),
+                    Event::Infusion(infusion) => Some(infusion.time()),
+                })
+                .min_by(|a, b| a.partial_cmp(b).unwrap())
+                .unwrap_or(0.0),
+        );
+
+        // Extract infusions
+        self.cached_infusions = self
+            .events
+            .iter()
+            .filter_map(|event| match event {
+                Event::Infusion(infusion) => Some(infusion.clone()),
+                _ => None,
+            })
+            .collect();
     }
 
     /// Get a vector of references to all events in this occasion
@@ -561,6 +598,7 @@ impl Occasion {
             }
         }
         self.sort();
+        self.update_cache();
     }
 
     fn add_bioavailability(&mut self, reorder: Option<(&Fa, &Lag, &Vec<f64>, &Covariates)>) {
@@ -580,6 +618,8 @@ impl Occasion {
     }
 
     /// Sort events by time, then by [Event] type so that [Bolus] and [Infusion] come before [Observation]
+    ///
+    /// Note: This does NOT automatically update the cache. Call update_cache() separately if needed.
     pub(crate) fn sort(&mut self) {
         self.events.sort_by(|a, b| {
             // Helper function to get event type order
@@ -658,6 +698,7 @@ impl Occasion {
     pub(crate) fn add_event(&mut self, event: Event) {
         self.events.push(event);
         self.sort();
+        self.update_cache();
     }
 
     /// Add an [Observation] event to the [Occasion]
@@ -734,27 +775,35 @@ impl Occasion {
     }
 
     pub(crate) fn initial_time(&self) -> f64 {
-        //TODO this can be pre-computed when the struct is initially created
-        self.events
-            .iter()
-            .filter_map(|event| match event {
-                Event::Observation(observation) => Some(observation.time()),
-                Event::Bolus(bolus) => Some(bolus.time()),
-                Event::Infusion(infusion) => Some(infusion.time()),
-            })
-            .min_by(|a, b| a.partial_cmp(b).unwrap())
-            .unwrap_or(0.0)
+        // Return cached value if available, otherwise compute on-the-fly
+        // This handles cases where cache may not have been initialized
+        self.cached_initial_time.unwrap_or_else(|| {
+            self.events
+                .iter()
+                .filter_map(|event| match event {
+                    Event::Observation(observation) => Some(observation.time()),
+                    Event::Bolus(bolus) => Some(bolus.time()),
+                    Event::Infusion(infusion) => Some(infusion.time()),
+                })
+                .min_by(|a, b| a.partial_cmp(b).unwrap())
+                .unwrap_or(0.0)
+        })
     }
 
     pub(crate) fn infusions_ref(&self) -> Vec<&Infusion> {
-        //TODO this can be pre-computed when the struct is initially created
-        self.events
-            .iter()
-            .filter_map(|event| match event {
-                Event::Infusion(infusion) => Some(infusion),
-                _ => None,
-            })
-            .collect()
+        // Return references to cached infusions if available
+        if !self.cached_infusions.is_empty() || self.events.is_empty() {
+            self.cached_infusions.iter().collect()
+        } else {
+            // Fallback for cases where cache wasn't initialized
+            self.events
+                .iter()
+                .filter_map(|event| match event {
+                    Event::Infusion(infusion) => Some(infusion),
+                    _ => None,
+                })
+                .collect()
+        }
     }
 
     /// Get an iterator over all events

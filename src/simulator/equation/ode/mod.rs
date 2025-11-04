@@ -57,21 +57,35 @@ impl State for V {
 
 // Hash the support points by converting them to bits and summing them
 // The wrapping_add is used to avoid overflow, and prevent panics
+/// Fast hash function for support point vectors using FNV-1a algorithm.
+///
+/// This is faster than DefaultHasher (SipHash) for internal caching purposes
+/// while maintaining the critical negative zero normalization for floating-point
+/// consistency.
 fn spphash(spp: &[f64]) -> u64 {
-    let mut hasher = std::hash::DefaultHasher::new();
-    spp.iter().for_each(|&value| {
+    // FNV-1a constants
+    const FNV_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME: u64 = 0x100000001b3;
+
+    let mut hash = FNV_OFFSET_BASIS;
+
+    for &value in spp {
         // Normalize negative zero to zero, e.g. -0.0 -> 0.0
         let normalized_value = if value == 0.0 && value.is_sign_negative() {
             0.0
         } else {
             value
         };
-        // Convert the value to bits and hash it
-        let bits = normalized_value.to_bits();
-        std::hash::Hash::hash(&bits, &mut hasher);
-    });
 
-    std::hash::Hasher::finish(&hasher)
+        // Convert the value to bits
+        let bits = normalized_value.to_bits();
+
+        // FNV-1a hash
+        hash ^= bits;
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+
+    hash
 }
 
 fn _estimate_likelihood(
@@ -203,13 +217,17 @@ impl Equation for ODE {
         // let fa = self.get_fa(support_point);
         let mut output = Self::P::new(self.nparticles());
         let mut likelihood = Vec::new();
+
+        // Pre-convert support point once at subject level to avoid repeated cloning
+        let spp_dvector = DVector::from_column_slice(support_point);
+        let spp_v: V = spp_dvector.clone().into();
+
         // Preallocate bolus vectors
         let mut bolus_vec = vec![0.0; self.get_nstates()];
         let mut state_with_bolus = V::zeros(self.get_nstates(), NalgebraContext);
         let mut state_without_bolus = V::zeros(self.get_nstates(), NalgebraContext);
         let zero_vector = V::zeros(self.get_nstates(), NalgebraContext);
-        let spp_v = DVector::from_vec(support_point.clone());
-        let spp_v: V = spp_v.into();
+
         for occasion in subject.occasions() {
             let covariates = occasion.covariates();
             let infusions = occasion.infusions_ref();
@@ -218,16 +236,18 @@ impl Equation for ODE {
                 true,
             );
 
+            // Note: OdeBuilder and PMProblem require ownership of parameters (diffsol API constraint)
+            // We convert from our pre-allocated DVector to avoid multiple from_vec allocations
             let problem = OdeBuilder::<M>::new()
                 .atol(vec![ATOL])
                 .rtol(RTOL)
                 .t0(occasion.initial_time())
                 .h0(1e-3)
-                .p(support_point.clone())
+                .p(spp_dvector.as_slice().to_vec())
                 .build_from_eqn(PMProblem::new(
                     self.diffeq,
                     self.get_nstates(),
-                    support_point.clone(), //TODO: Avoid cloning the support point
+                    spp_dvector.as_slice().to_vec(),
                     covariates,
                     infusions,
                     self.initial_state(support_point, covariates, occasion.index())
@@ -291,10 +311,10 @@ impl Equation for ODE {
                         //START PROCESS_OBSERVATION
                         let mut y = V::zeros(self.get_nouteqs(), NalgebraContext);
                         let out = &self.out;
-                        let spp = DVector::from_vec(support_point.clone()); // TODO: Avoid clone
+                        // Reuse pre-converted support point
                         (out)(
                             solver.state().y,
-                            &spp.into(),
+                            &spp_v,
                             observation.time(),
                             covariates,
                             &mut y,

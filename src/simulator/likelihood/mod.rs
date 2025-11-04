@@ -37,9 +37,34 @@ impl Predictions for SubjectPredictions {
 }
 
 impl SubjectPredictions {
+    /// Calculate the log-likelihood of the predictions given an error model.
+    ///
+    /// This sums the log-likelihood of each prediction for better numerical stability
+    /// when dealing with many observations.
+    ///
+    /// # Parameters
+    /// - `error_models`: The error models to use for calculating the log-likelihood
+    ///
+    /// # Returns
+    /// The sum of all individual prediction log-likelihoods
+    pub fn log_likelihood(&self, error_models: &ErrorModels) -> Result<f64, PharmsolError> {
+        if self.predictions.is_empty() {
+            return Ok(f64::NEG_INFINITY); // log(0)
+        }
+
+        self.predictions
+            .iter()
+            .filter(|p| p.observation.is_some())
+            .try_fold(0.0, |acc, p| {
+                let lik = p.likelihood(error_models)?;
+                Ok(acc + lik.ln())
+            })
+    }
+
     /// Calculate the likelihood of the predictions given an error model.
     ///
     /// This multiplies the likelihood of each prediction to get the joint likelihood.
+    /// For better numerical stability with many observations, consider using `log_likelihood()`.
     ///
     /// # Parameters
     /// - `error_model`: The error model to use for calculating the likelihood
@@ -47,17 +72,7 @@ impl SubjectPredictions {
     /// # Returns
     /// The product of all individual prediction likelihoods
     pub fn likelihood(&self, error_models: &ErrorModels) -> Result<f64, PharmsolError> {
-        match self.predictions.is_empty() {
-            true => Ok(0.0),
-            false => self
-                .predictions
-                .iter()
-                .filter(|p| p.observation.is_some())
-                .map(|p| p.likelihood(error_models))
-                .collect::<Result<Vec<f64>, _>>()
-                .map(|likelihoods| likelihoods.iter().product())
-                .map_err(PharmsolError::from),
-        }
+        self.log_likelihood(error_models).map(|ll| ll.exp())
     }
 
     /// Add a new prediction to the collection.
