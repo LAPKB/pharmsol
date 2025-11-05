@@ -430,7 +430,7 @@ mod tests {
         let mut outeq_1_count = 0;
         let mut times_outeq_0 = Vec::new();
         let mut times_outeq_1 = Vec::new();
-        
+
         for event in events {
             if let Event::Observation(obs) = event {
                 if obs.outeq() == 0 {
@@ -454,9 +454,12 @@ mod tests {
         // Both should have observations at times 0.0, 0.1, 0.2, ..., 1.0
         assert_eq!(times_outeq_0.len(), 11);
         assert_eq!(times_outeq_1.len(), 11);
-        
+
         for (t0, t1) in times_outeq_0.iter().zip(times_outeq_1.iter()) {
-            assert!((t0 - t1).abs() < 1e-10, "Times should match for both outeqs");
+            assert!(
+                (t0 - t1).abs() < 1e-10,
+                "Times should match for both outeqs"
+            );
         }
     }
 }
