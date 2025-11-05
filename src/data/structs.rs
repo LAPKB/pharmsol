@@ -714,15 +714,6 @@ impl Occasion {
         self.add_event(Event::Infusion(infusion));
     }
 
-    /// Get the last event in this occasion
-    ///
-    /// # Returns
-    ///
-    /// Reference to the last event, if any
-    pub(crate) fn last_event(&self) -> Option<&Event> {
-        self.events.last()
-    }
-
     /// Get a mutable reference to the events
     pub fn events_mut(&mut self) -> &mut Vec<Event> {
         &mut self.events
