@@ -29,6 +29,7 @@ impl SubjectBuilderExt for Subject {
             occasions: Vec::new(),
             current_occasion: occasion,
             covariates: Covariates::new(),
+            last_added_event: None,
         }
     }
 }
@@ -44,6 +45,7 @@ pub struct SubjectBuilder {
     occasions: Vec<Occasion>,
     current_occasion: Occasion,
     covariates: Covariates,
+    last_added_event: Option<Event>,
 }
 
 impl SubjectBuilder {
@@ -53,6 +55,7 @@ impl SubjectBuilder {
     ///
     /// * `event` - The event to add
     pub fn event(mut self, event: Event) -> Self {
+        self.last_added_event = Some(event.clone());
         self.current_occasion.add_event(event);
         self
     }
@@ -198,8 +201,8 @@ impl SubjectBuilder {
     ///     .build();
     /// ```
     pub fn repeat(mut self, n: usize, delta: f64) -> Self {
-        let last_event = match self.current_occasion.last_event() {
-            Some(event) => event.clone(),
+        let last_event = match self.last_added_event.clone() {
+            Some(event) => event,
             None => panic!("There is no event to repeat"),
         };
         for i in 1..=n {
@@ -268,6 +271,7 @@ impl SubjectBuilder {
         let occasion = Occasion::new(block_index);
         self.current_occasion = occasion;
         self.covariates = Covariates::new();
+        self.last_added_event = None;
         self
     }
 
@@ -397,5 +401,62 @@ mod tests {
             .filter(|e| matches!(e, Event::Observation(_)))
             .count();
         assert_eq!(observation_count, 4);
+    }
+
+    #[test]
+    fn test_repeat_with_multiple_outeqs() {
+        // Test the fix for repeat() after observation() with multiple output equations
+        // This reproduces the issue from v019.0 where repeat() was not correctly
+        // repeating the last added observation when events were sorted
+        let subject = Subject::builder("test_repeat")
+            .bolus(0.0, 500.0, 0)
+            .observation(0.0, 0.0, 0)
+            .repeat(10, 0.1)
+            .observation(0.0, 0.0, 1)
+            .repeat(10, 0.1)
+            .build();
+
+        assert_eq!(subject.id(), "test_repeat");
+        assert_eq!(subject.occasions().len(), 1);
+
+        let occasion = &subject.occasions()[0];
+        let events = occasion.events();
+
+        // Should have 1 bolus + 11 observations for outeq=0 + 11 observations for outeq=1 = 23 events
+        assert_eq!(events.len(), 23);
+
+        // Count observations by outeq and collect times
+        let mut outeq_0_count = 0;
+        let mut outeq_1_count = 0;
+        let mut times_outeq_0 = Vec::new();
+        let mut times_outeq_1 = Vec::new();
+        
+        for event in events {
+            if let Event::Observation(obs) = event {
+                if obs.outeq() == 0 {
+                    outeq_0_count += 1;
+                    times_outeq_0.push(obs.time());
+                } else if obs.outeq() == 1 {
+                    outeq_1_count += 1;
+                    times_outeq_1.push(obs.time());
+                }
+            }
+        }
+
+        // Should have 11 observations for each outeq
+        assert_eq!(outeq_0_count, 11, "Expected 11 observations for outeq=0");
+        assert_eq!(outeq_1_count, 11, "Expected 11 observations for outeq=1");
+
+        // Verify that observations appear at the same times for both outeqs
+        times_outeq_0.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        times_outeq_1.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+        // Both should have observations at times 0.0, 0.1, 0.2, ..., 1.0
+        assert_eq!(times_outeq_0.len(), 11);
+        assert_eq!(times_outeq_1.len(), 11);
+        
+        for (t0, t1) in times_outeq_0.iter().zip(times_outeq_1.iter()) {
+            assert!((t0 - t1).abs() < 1e-10, "Times should match for both outeqs");
+        }
     }
 }
