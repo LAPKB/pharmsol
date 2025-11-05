@@ -203,7 +203,9 @@ impl SubjectBuilder {
     pub fn repeat(mut self, n: usize, delta: f64) -> Self {
         let last_event = match &self.last_added_event {
             Some(event) => event.clone(),
-            None => panic!("There is no event to repeat"),
+            None => {
+                return self; // No event to repeat
+            }
         };
         for i in 1..=n {
             self = match last_event.clone() {
