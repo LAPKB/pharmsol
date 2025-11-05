@@ -119,9 +119,9 @@ impl Predictions for Array2<Prediction> {
                 .sum::<f64>()
                 / self.nrows() as f64;
 
-                let mut prediction = column.first().unwrap().clone();
-                prediction.set_prediction(mean_prediction);
-                result.push(prediction);
+            let mut prediction = column.first().unwrap().clone();
+            prediction.set_prediction(mean_prediction);
+            result.push(prediction);
         }
 
         result
@@ -227,16 +227,18 @@ impl EquationPriv for SDE {
             // wmy centering_function is a running Chi^2 w/expected value = support point value
             // let centering_function = p.pred[2]; // move this inside the iteration.
             //
-            
+
             // if no centering_function {
             //   pred.iter().for_each(|p| q.push(p.likelihood(em)));
             // } else
             // pred.iter().enumerate().for_each(|(i,p)| q.push(p.likelihood(em) * x[i][4])); // pred[i][2]
 
             // if no centering function // for example w/the ODE
-                 pred.iter().enumerate().for_each(|(i,p)| q.push(p.likelihood(em) )); // pred[i][2]
-            // else
-            //    pred.iter().enumerate().for_each(|(i,p)| q.push(p.likelihood(em) * x[i][4]));
+            pred.iter()
+                .enumerate()
+                .for_each(|(i, p)| q.push(p.likelihood(em))); // pred[i][2]
+                                                              // else
+                                                              //    pred.iter().enumerate().for_each(|(i,p)| q.push(p.likelihood(em) * x[i][4]));
 
             // for (i,p) in pred.iter().enumerate() { // does the same thing as above.
             //    q.push(p.likelihood(em) * x[i][4]);
@@ -285,9 +287,9 @@ impl Equation for SDE {
         cache: bool,
     ) -> f64 {
         if cache {
-            _estimate_likelihood(self, subject, support_point, error_model)
+            _estimate_likelihood_cached(self, subject, support_point, error_model)
         } else {
-            _estimate_likelihood_no_cache(self, subject, support_point, error_model)
+            _estimate_likelihood_single(self, subject, support_point, error_model)
         }
     }
 }
@@ -296,13 +298,71 @@ fn spphash(spp: &[f64]) -> u64 {
     spp.iter().fold(0, |acc, x| acc + x.to_bits())
 }
 
+/// Adaptive Monte Carlo likelihood estimation with convergence criteria
+/// Runs simulations until the mean stabilizes within a tolerance threshold
 #[inline(always)]
 #[cached(
     ty = "UnboundCache<String, f64>",
     create = "{ UnboundCache::with_capacity(100_000) }",
     convert = r#"{ format!("{}{}{}", subject.id(), spphash(support_point), error_model.gl()) }"#
 )]
-fn _estimate_likelihood(
+fn _estimate_likelihood_cached(
+    sde: &SDE,
+    subject: &Subject,
+    support_point: &Vec<f64>,
+    error_model: &ErrorModel,
+) -> f64 {
+    // Configuration for adaptive Monte Carlo
+    const MIN_RUNS: usize = 5; // Minimum number of simulations
+    const MAX_RUNS: usize = 50; // Maximum number of simulations to prevent infinite loops
+    const REL_TOL: f64 = 0.01; // Relative tolerance: 1% change in mean
+    const ABS_TOL: f64 = 1e-6; // Absolute tolerance for near-zero likelihoods
+    const WINDOW_SIZE: usize = 3; // Check stability over last N runs
+
+    let mut likelihoods = Vec::with_capacity(MAX_RUNS);
+
+    // Run minimum number of simulations
+    for _ in 0..MIN_RUNS {
+        let ypred = sde.simulate_subject(subject, support_point, Some(error_model));
+        likelihoods.push(ypred.1.unwrap());
+    }
+
+    // Continue until convergence or max runs
+    for run in MIN_RUNS..MAX_RUNS {
+        let ypred = sde.simulate_subject(subject, support_point, Some(error_model));
+        likelihoods.push(ypred.1.unwrap());
+
+        // Check convergence: compare current window mean with previous window mean
+        if run >= MIN_RUNS + WINDOW_SIZE {
+            let current_mean: f64 =
+                likelihoods[run - WINDOW_SIZE + 1..=run].iter().sum::<f64>() / WINDOW_SIZE as f64;
+
+            let previous_mean: f64 = likelihoods[run - 2 * WINDOW_SIZE + 1..=run - WINDOW_SIZE]
+                .iter()
+                .sum::<f64>()
+                / WINDOW_SIZE as f64;
+
+            // Check relative and absolute change
+            let abs_change = (current_mean - previous_mean).abs();
+            let rel_change = if previous_mean.abs() > ABS_TOL {
+                abs_change / previous_mean.abs()
+            } else {
+                abs_change
+            };
+
+            if rel_change < REL_TOL || abs_change < ABS_TOL {
+                // Converged! Return mean of all runs
+                return likelihoods.iter().sum::<f64>() / likelihoods.len() as f64;
+            }
+        }
+    }
+
+    // Max runs reached, return mean of all runs
+    likelihoods.iter().sum::<f64>() / likelihoods.len() as f64
+}
+
+/// Single run likelihood estimation (no caching, no convergence checking)
+fn _estimate_likelihood_single(
     sde: &SDE,
     subject: &Subject,
     support_point: &Vec<f64>,
