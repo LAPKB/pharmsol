@@ -3,7 +3,7 @@ use argmin::{
     solver::neldermead::NelderMead,
 };
 
-use ndarray::{Array1, Axis};
+use faer::Mat;
 
 use crate::{prelude::simulator::psi, Data, Equation, ErrorModels};
 
@@ -11,14 +11,15 @@ pub struct SppOptimizer<'a, E: Equation> {
     equation: &'a E,
     data: &'a Data,
     sig: &'a ErrorModels,
-    pyl: &'a Array1<f64>,
+    pyl: &'a Vec<f64>,
 }
 
 impl<E: Equation> CostFunction for SppOptimizer<'_, E> {
     type Param = Vec<f64>;
     type Output = f64;
     fn cost(&self, spp: &Self::Param) -> Result<Self::Output, Error> {
-        let theta = Array1::from(spp.clone()).insert_axis(Axis(0));
+        // Create a 1xN matrix (1 support point with N parameters)
+        let theta = Mat::from_fn(1, spp.len(), |_, j| spp[j]);
 
         let psi = psi(self.equation, self.data, &theta, self.sig, false, false)?;
 
@@ -44,12 +45,7 @@ impl<E: Equation> CostFunction for SppOptimizer<'_, E> {
 }
 
 impl<'a, E: Equation> SppOptimizer<'a, E> {
-    pub fn new(
-        equation: &'a E,
-        data: &'a Data,
-        sig: &'a ErrorModels,
-        pyl: &'a Array1<f64>,
-    ) -> Self {
+    pub fn new(equation: &'a E, data: &'a Data, sig: &'a ErrorModels, pyl: &'a Vec<f64>) -> Self {
         Self {
             equation,
             data,
@@ -57,14 +53,14 @@ impl<'a, E: Equation> SppOptimizer<'a, E> {
             pyl,
         }
     }
-    pub fn optimize_point(self, spp: Array1<f64>) -> Result<Array1<f64>, Error> {
-        let simplex = create_initial_simplex(&spp.to_vec());
+    pub fn optimize_point(self, spp: Vec<f64>) -> Result<Vec<f64>, Error> {
+        let simplex = create_initial_simplex(&spp);
         let solver: NelderMead<Vec<f64>, f64> = NelderMead::new(simplex).with_sd_tolerance(1e-2)?;
         let res = Executor::new(self, solver)
             .configure(|state| state.max_iters(5))
             // .add_observer(SlogLogger::term(), ObserverMode::Always)
             .run()?;
-        Ok(Array1::from(res.state.best_param.unwrap()))
+        Ok(res.state.best_param.unwrap())
     }
 }
 

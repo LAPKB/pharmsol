@@ -2,7 +2,6 @@ mod em;
 
 use diffsol::{NalgebraContext, Vector};
 use nalgebra::DVector;
-use ndarray::{concatenate, Array2, Axis};
 use rand::{rng, Rng};
 use rayon::prelude::*;
 
@@ -13,7 +12,7 @@ use crate::{
     data::{Covariates, Infusion},
     error_model::ErrorModels,
     prelude::simulator::Prediction,
-    simulator::{Diffusion, Drift, Fa, Init, Lag, Neqs, Out, V},
+    simulator::{likelihood::PredictionMatrix, Diffusion, Drift, Fa, Init, Lag, Neqs, Out, V},
     Subject,
 };
 
@@ -151,9 +150,9 @@ impl State for Vec<DVector<f64>> {
 /// Predictions implementation for particle-based SDE simulation outputs.
 ///
 /// This implementation manages and processes predictions from multiple particles.
-impl Predictions for Array2<Prediction> {
+impl Predictions for PredictionMatrix<Prediction> {
     fn new(nparticles: usize) -> Self {
-        Array2::from_shape_fn((nparticles, 0), |_| Prediction::default())
+        PredictionMatrix::new(nparticles, 0)
     }
     fn squared_error(&self) -> f64 {
         unimplemented!();
@@ -171,11 +170,11 @@ impl Predictions for Array2<Prediction> {
 
             let mean_prediction: f64 = column
                 .iter()
-                .map(|pred: &Prediction| pred.prediction())
+                .map(|pred: &&Prediction| pred.prediction())
                 .sum::<f64>()
                 / self.nrows() as f64;
 
-            let mut prediction = column.first().unwrap().clone();
+            let mut prediction = (*column.first().unwrap()).clone();
             prediction.set_prediction(mean_prediction);
             result.push(prediction);
         }
@@ -186,7 +185,7 @@ impl Predictions for Array2<Prediction> {
 
 impl EquationTypes for SDE {
     type S = Vec<DVector<f64>>; // Vec -> particles, DVector -> state
-    type P = Array2<Prediction>; // Rows -> particles, Columns -> time
+    type P = PredictionMatrix<Prediction>; // Rows -> particles, Columns -> time
 }
 
 impl EquationPriv for SDE {
@@ -286,8 +285,10 @@ impl EquationPriv for SDE {
             );
             *p = observation.to_prediction(y[observation.outeq()], x[i].as_slice().to_vec());
         });
-        let out = Array2::from_shape_vec((self.nparticles, 1), pred.clone())?;
-        *output = concatenate(Axis(1), &[output.view(), out.view()]).unwrap();
+
+        // Append the new column of predictions
+        output.append_column(pred.clone())?;
+
         //e = y[t] .- x[:,1]
         // q = pdf.(Distributions.Normal(0, 0.5), e)
         if let Some(em) = error_models {
