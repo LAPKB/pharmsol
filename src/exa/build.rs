@@ -4,6 +4,7 @@ use std::io::Read;
 use std::io::Write;
 use std::io::{self};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use rand::Rng;
 use rand_distr::Alphanumeric;
@@ -32,8 +33,10 @@ pub fn compile<E: Equation>(
     output: Option<PathBuf>,
     params: Vec<String>,
     template_path: PathBuf,
-    event_callback: fn(String, String),
+    event_callback: impl Fn(String, String) + Send + Sync + 'static,
 ) -> Result<String, io::Error> {
+    let event_callback = Arc::new(event_callback);
+
     let template_dir = match create_template(template_path.clone()) {
         Ok(path) => path,
         Err(e) => {
@@ -53,7 +56,7 @@ pub fn compile<E: Equation>(
         }
     };
 
-    let dynlib_path = match build_template(template_dir.clone(), event_callback) {
+    let dynlib_path = match build_template(template_dir.clone(), event_callback.clone()) {
         Ok(path) => path,
         Err(e) => {
             event_callback(
@@ -63,6 +66,13 @@ pub fn compile<E: Equation>(
             return Err(e);
         }
     };
+
+    // Emit completion message
+    event_callback(
+        "build-complete".into(),
+        "Compilation finished successfully".into(),
+    );
+
     let output_path = output.unwrap_or_else(|| {
         let random_suffix: String = rand::rng()
             .sample_iter(&Alphanumeric)
@@ -95,11 +105,20 @@ pub fn compile<E: Equation>(
 /// The path to the template directory, or an error if creation failed.
 pub fn dummy_compile(
     template_path: PathBuf,
-    event_callback: fn(String, String),
+    event_callback: impl Fn(String, String) + Send + Sync + 'static,
 ) -> Result<String, io::Error> {
-    create_template(template_path.clone())?;
-    build_template(template_path.clone(), event_callback)?;
-    Ok(template_path.to_string_lossy().to_string())
+    let event_callback = Arc::new(event_callback);
+
+    let template_dir = create_template(template_path.clone())?;
+    build_template(template_dir.clone(), event_callback.clone())?;
+
+    // Emit completion message
+    event_callback(
+        "build-complete".into(),
+        "Compilation finished successfully".into(),
+    );
+
+    Ok(template_dir.to_string_lossy().to_string())
 }
 
 /// Creates a new template project for model compilation.
@@ -251,7 +270,7 @@ fn inject_model<E: Equation>(
 /// The path to the compiled dynamic library, or an error if build failed.
 fn build_template(
     template_path: PathBuf,
-    event_callback: fn(String, String),
+    event_callback: Arc<dyn Fn(String, String) + Send + Sync + 'static>,
 ) -> Result<PathBuf, io::Error> {
     let mut command = Command::new("cargo");
     command
@@ -267,8 +286,8 @@ fn build_template(
     let stdout = child.stdout.take().expect("Failed to capture stdout");
     let stderr = child.stderr.take().expect("Failed to capture stderr");
 
-    let stdout_handle = stream_output(stdout, event_callback);
-    let stderr_handle = stream_output(stderr, event_callback);
+    let stdout_handle = stream_output(stdout, event_callback.clone());
+    let stderr_handle = stream_output(stderr, event_callback.clone());
 
     let status = child.wait()?;
     stdout_handle
@@ -311,7 +330,7 @@ fn build_template(
 /// A join handle for the streaming thread.
 fn stream_output<R: Read + Send + 'static>(
     reader: R,
-    event_callback: fn(String, String),
+    event_callback: Arc<dyn Fn(String, String) + Send + Sync + 'static>,
 ) -> thread::JoinHandle<Result<(), io::Error>> {
     thread::spawn(move || {
         let mut buffer = [0; 4096];
