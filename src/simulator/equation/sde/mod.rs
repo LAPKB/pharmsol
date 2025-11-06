@@ -150,7 +150,7 @@ impl State for Vec<DVector<f64>> {
 /// Predictions implementation for particle-based SDE simulation outputs.
 ///
 /// This implementation manages and processes predictions from multiple particles.
-impl Predictions for PredictionMatrix<Prediction> {
+impl Predictions for PredictionMatrix {
     fn new(nparticles: usize) -> Self {
         PredictionMatrix::new(nparticles, 0)
     }
@@ -185,7 +185,7 @@ impl Predictions for PredictionMatrix<Prediction> {
 
 impl EquationTypes for SDE {
     type S = Vec<DVector<f64>>; // Vec -> particles, DVector -> state
-    type P = PredictionMatrix<Prediction>; // Rows -> particles, Columns -> time
+    type P = PredictionMatrix; // Rows -> particles, Columns -> time
 }
 
 impl EquationPriv for SDE {

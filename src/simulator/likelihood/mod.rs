@@ -7,6 +7,8 @@ use crate::{
 };
 use faer::Mat;
 use rayon::prelude::*;
+use serde::Deserialize;
+use serde::Serialize;
 use statrs::distribution::ContinuousCDF;
 use statrs::distribution::Normal;
 
@@ -123,19 +125,19 @@ impl From<Vec<Prediction>> for SubjectPredictions {
 }
 
 /// Matrix structure for storing predictions in a 2D layout.
-/// Organized as rows x columns.
-#[derive(Clone, Debug, Default)]
-pub struct PredictionMatrix<T> {
-    data: Vec<Vec<T>>,
+/// Organized as rows x columns, where each element is a [Prediction].
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct PredictionMatrix {
+    data: Vec<Vec<Prediction>>,
     nrows: usize,
     ncols: usize,
 }
 
-impl<T: Clone + Default> PredictionMatrix<T> {
+impl PredictionMatrix {
     /// Create a new matrix with the given dimensions
     pub fn new(nrows: usize, ncols: usize) -> Self {
         Self {
-            data: vec![vec![T::default(); ncols]; nrows],
+            data: vec![vec![Prediction::default(); ncols]; nrows],
             nrows,
             ncols,
         }
@@ -157,32 +159,32 @@ impl<T: Clone + Default> PredictionMatrix<T> {
     }
 
     /// Get a reference to a specific element
-    pub fn get(&self, row: usize, col: usize) -> Option<&T> {
+    pub fn get(&self, row: usize, col: usize) -> Option<&Prediction> {
         self.data.get(row).and_then(|r| r.get(col))
     }
 
     /// Get a mutable reference to a specific element
-    pub fn get_mut(&mut self, row: usize, col: usize) -> Option<&mut T> {
+    pub fn get_mut(&mut self, row: usize, col: usize) -> Option<&mut Prediction> {
         self.data.get_mut(row).and_then(|r| r.get_mut(col))
     }
 
     /// Get a reference to a row
-    pub fn row(&self, row: usize) -> Option<&Vec<T>> {
+    pub fn row(&self, row: usize) -> Option<&Vec<Prediction>> {
         self.data.get(row)
     }
 
     /// Get an iterator over rows
-    pub fn rows(&self) -> impl Iterator<Item = &Vec<T>> {
+    pub fn rows(&self) -> impl Iterator<Item = &Vec<Prediction>> {
         self.data.iter()
     }
 
     /// Get a column as a vector
-    pub fn column(&self, col: usize) -> Vec<&T> {
+    pub fn column(&self, col: usize) -> Vec<&Prediction> {
         self.data.iter().filter_map(|row| row.get(col)).collect()
     }
 
     /// Append a column to the matrix
-    pub fn append_column(&mut self, column: Vec<T>) -> Result<(), PharmsolError> {
+    pub fn append_column(&mut self, column: Vec<Prediction>) -> Result<(), PharmsolError> {
         if column.len() != self.nrows {
             return Err(PharmsolError::OtherError(format!(
                 "Column length {} does not match matrix rows {}",
@@ -195,30 +197,6 @@ impl<T: Clone + Default> PredictionMatrix<T> {
         }
         self.ncols += 1;
         Ok(())
-    }
-}
-
-/// Container for predictions across a population of subjects.
-///
-/// This struct holds predictions for multiple subjects organized in a 2D matrix.
-pub struct PopulationPredictions {
-    /// 2D matrix of subject predictions
-    pub subject_predictions: PredictionMatrix<SubjectPredictions>,
-}
-
-impl Default for PopulationPredictions {
-    fn default() -> Self {
-        Self {
-            subject_predictions: PredictionMatrix::new(0, 0),
-        }
-    }
-}
-
-impl From<PredictionMatrix<SubjectPredictions>> for PopulationPredictions {
-    fn from(subject_predictions: PredictionMatrix<SubjectPredictions>) -> Self {
-        Self {
-            subject_predictions,
-        }
     }
 }
 
@@ -300,7 +278,7 @@ pub fn psi(
 }
 
 /// Prediction holds an observation and its prediction
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Prediction {
     pub(crate) time: f64,
     pub(crate) observation: Option<f64>,
