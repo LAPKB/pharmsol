@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.1](https://github.com/LAPKB/pharmsol/compare/v0.19.0...v0.20.0) - 2025-11-04
+
+### Added
+
+- Template path is now user defined ([#153](https://github.com/LAPKB/pharmsol/pull/153))
+
 ## [0.19.0](https://github.com/LAPKB/pharmsol/compare/v0.18.1...v0.19.0) - 2025-10-23
 
 ### Other
