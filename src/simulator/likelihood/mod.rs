@@ -5,7 +5,8 @@ use crate::{
     data::error_model::ErrorModels, Data, Equation, ErrorPoly, Observation, PharmsolError,
     Predictions,
 };
-use ndarray::{Array2, Axis, ShapeBuilder};
+use faer::Mat;
+use ndarray::Array2;
 use rayon::prelude::*;
 use statrs::distribution::ContinuousCDF;
 use statrs::distribution::Normal;
@@ -157,7 +158,7 @@ impl From<Array2<SubjectPredictions>> for PopulationPredictions {
 /// - `cache`: Whether to use caching
 ///
 /// # Returns
-/// A 2D array of likelihoods
+/// A 2D matrix of likelihoods
 pub fn psi(
     equation: &impl Equation,
     subjects: &Data,
@@ -165,33 +166,33 @@ pub fn psi(
     error_models: &ErrorModels,
     progress: bool,
     cache: bool,
-) -> Result<Array2<f64>, PharmsolError> {
-    let mut psi: Array2<f64> = Array2::default((subjects.len(), support_points.nrows()).f());
+) -> Result<Mat<f64>, PharmsolError> {
+    let nrows = subjects.len();
+    let ncols = support_points.nrows();
 
-    let subjects = subjects.subjects();
+    let subjects_vec = subjects.subjects();
 
     let progress_tracker = if progress {
-        let total = subjects.len() * support_points.nrows();
+        let total = nrows * ncols;
         println!(
             "Simulating {} subjects with {} support points each...",
-            subjects.len(),
-            support_points.nrows()
+            nrows, ncols
         );
         Some(ProgressTracker::new(total))
     } else {
         None
     };
 
-    let result: Result<(), PharmsolError> = psi
-        .axis_iter_mut(Axis(0))
-        .into_par_iter()
-        .enumerate()
-        .try_for_each(|(i, mut row)| {
-            row.axis_iter_mut(Axis(0))
-                .into_par_iter()
-                .enumerate()
-                .try_for_each(|(j, mut element)| {
-                    let subject = subjects.get(i).unwrap();
+    // Collect results into a flat vector in row-major order
+    let mut results: Vec<f64> = vec![0.0; nrows * ncols];
+
+    let result: Result<(), PharmsolError> =
+        results
+            .par_chunks_mut(ncols)
+            .enumerate()
+            .try_for_each(|(i, row)| {
+                row.par_iter_mut().enumerate().try_for_each(|(j, element)| {
+                    let subject = subjects_vec.get(i).unwrap();
                     match equation.estimate_likelihood(
                         subject,
                         support_points.row(j).to_vec().as_ref(),
@@ -199,22 +200,27 @@ pub fn psi(
                         cache,
                     ) {
                         Ok(likelihood) => {
-                            element.fill(likelihood);
+                            *element = likelihood;
                             if let Some(ref tracker) = progress_tracker {
                                 tracker.inc();
                             }
+                            Ok(())
                         }
-                        Err(e) => return Err(e),
-                    };
-                    Ok(())
+                        Err(e) => Err(e),
+                    }
                 })
-        });
+            });
 
     if let Some(tracker) = progress_tracker {
         tracker.finish();
     }
 
     result?;
+
+    // Convert flat vector to faer::Mat
+    // faer uses column-major order by default, so we need to transpose or use from_fn
+    let psi = Mat::from_fn(nrows, ncols, |i, j| results[i * ncols + j]);
+
     Ok(psi)
 }
 

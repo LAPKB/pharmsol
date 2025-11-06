@@ -28,6 +28,7 @@ thiserror = "2.0.11"
 argmin = "0.11.0"
 argmin-math = "0.5.1"
 tracing = "0.1.41"
+faer = "0.23.2"
 
 [dev-dependencies]
 criterion = { version = "0.7.0", features = ["html_reports"] }

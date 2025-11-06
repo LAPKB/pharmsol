@@ -34,7 +34,9 @@ impl<E: Equation> CostFunction for SppOptimizer<'_, E> {
         }
         let nsub = psi.nrows() as f64;
         let mut sum = -nsub;
-        for (p_i, pyl_i) in psi.iter().zip(self.pyl.iter()) {
+        // Iterate through each row of psi (which has only 1 column)
+        for (i, pyl_i) in self.pyl.iter().enumerate() {
+            let p_i = psi[(i, 0)];
             sum += p_i / pyl_i;
         }
         Ok(-sum)
