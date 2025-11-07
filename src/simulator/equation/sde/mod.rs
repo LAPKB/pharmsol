@@ -333,7 +333,8 @@ fn _estimate_likelihood_cached(
         likelihoods.push(ypred.1.unwrap());
 
         // Check convergence: compare current window mean with previous window mean
-        if run >= MIN_RUNS + WINDOW_SIZE {
+        // Need at least 2*WINDOW_SIZE samples to compare two windows
+        if run >= 2 * WINDOW_SIZE - 1 {
             let current_mean: f64 =
                 likelihoods[run - WINDOW_SIZE + 1..=run].iter().sum::<f64>() / WINDOW_SIZE as f64;
 
