@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     collections::{BTreeMap, HashMap},
     fmt,
@@ -23,12 +23,50 @@ pub enum Interpolation {
     CarryForward { value: f64 },
 }
 
+/// Custom serializer for f64 that handles Infinity
+fn serialize_f64_infinity<S>(value: &f64, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    if value.is_infinite() {
+        serializer.serialize_str("Infinity")
+    } else {
+        serializer.serialize_f64(*value)
+    }
+}
+
+/// Custom deserializer for f64 that handles Infinity
+fn deserialize_f64_infinity<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::Error;
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StringOrF64 {
+        String(String),
+        F64(f64),
+    }
+
+    match StringOrF64::deserialize(deserializer)? {
+        StringOrF64::String(s) => {
+            if s == "Infinity" {
+                Ok(f64::INFINITY)
+            } else {
+                s.parse().map_err(Error::custom)
+            }
+        }
+        StringOrF64::F64(f) => Ok(f),
+    }
+}
+
 /// A segment of a piecewise interpolation function for a covariate
 ///
 /// Each segment defines how to interpolate values within its time range.
 #[derive(Serialize, Clone, Debug, Deserialize)]
 struct CovariateSegment {
     from: f64,
+    #[serde(serialize_with = "serialize_f64_infinity", deserialize_with = "deserialize_f64_infinity")]
     to: f64,
     method: Interpolation,
 }
