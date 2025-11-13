@@ -5,8 +5,10 @@ use crate::{
     data::error_model::ErrorModels, Data, Equation, ErrorPoly, Observation, PharmsolError,
     Predictions,
 };
-use ndarray::{Array2, Axis, ShapeBuilder};
+use faer::Mat;
 use rayon::prelude::*;
+use serde::Deserialize;
+use serde::Serialize;
 use statrs::distribution::ContinuousCDF;
 use statrs::distribution::Normal;
 
@@ -122,27 +124,79 @@ impl From<Vec<Prediction>> for SubjectPredictions {
     }
 }
 
-/// Container for predictions across a population of subjects.
-///
-/// This struct holds predictions for multiple subjects organized in a 2D array.
-pub struct PopulationPredictions {
-    /// 2D array of subject predictions
-    pub subject_predictions: Array2<SubjectPredictions>,
+/// Matrix structure for storing predictions in a 2D layout.
+/// Organized as rows x columns, where each element is a [Prediction].
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct PredictionMatrix {
+    data: Vec<Vec<Prediction>>,
+    nrows: usize,
+    ncols: usize,
 }
 
-impl Default for PopulationPredictions {
-    fn default() -> Self {
+impl PredictionMatrix {
+    /// Create a new matrix with the given dimensions
+    pub fn new(nrows: usize, ncols: usize) -> Self {
         Self {
-            subject_predictions: Array2::default((0, 0)),
+            data: vec![vec![Prediction::default(); ncols]; nrows],
+            nrows,
+            ncols,
         }
     }
-}
 
-impl From<Array2<SubjectPredictions>> for PopulationPredictions {
-    fn from(subject_predictions: Array2<SubjectPredictions>) -> Self {
-        Self {
-            subject_predictions,
+    /// Get the number of rows
+    pub fn nrows(&self) -> usize {
+        self.nrows
+    }
+
+    /// Get the number of columns
+    pub fn ncols(&self) -> usize {
+        self.ncols
+    }
+
+    /// Check if the matrix is empty
+    pub fn is_empty(&self) -> bool {
+        self.nrows == 0 || self.ncols == 0
+    }
+
+    /// Get a reference to a specific element
+    pub fn get(&self, row: usize, col: usize) -> Option<&Prediction> {
+        self.data.get(row).and_then(|r| r.get(col))
+    }
+
+    /// Get a mutable reference to a specific element
+    pub fn get_mut(&mut self, row: usize, col: usize) -> Option<&mut Prediction> {
+        self.data.get_mut(row).and_then(|r| r.get_mut(col))
+    }
+
+    /// Get a reference to a row
+    pub fn row(&self, row: usize) -> Option<&Vec<Prediction>> {
+        self.data.get(row)
+    }
+
+    /// Get an iterator over rows
+    pub fn rows(&self) -> impl Iterator<Item = &Vec<Prediction>> {
+        self.data.iter()
+    }
+
+    /// Get a column as a vector
+    pub fn column(&self, col: usize) -> Vec<&Prediction> {
+        self.data.iter().filter_map(|row| row.get(col)).collect()
+    }
+
+    /// Append a column to the matrix
+    pub fn append_column(&mut self, column: Vec<Prediction>) -> Result<(), PharmsolError> {
+        if column.len() != self.nrows {
+            return Err(PharmsolError::OtherError(format!(
+                "Column length {} does not match matrix rows {}",
+                column.len(),
+                self.nrows
+            )));
         }
+        for (row, item) in self.data.iter_mut().zip(column.into_iter()) {
+            row.push(item);
+        }
+        self.ncols += 1;
+        Ok(())
     }
 }
 
@@ -151,75 +205,80 @@ impl From<Array2<SubjectPredictions>> for PopulationPredictions {
 /// # Parameters
 /// - `equation`: The equation to use for simulation
 /// - `subjects`: The subject data
-/// - `support_points`: The support points to evaluate
+/// - `support_points`: The support points to evaluate (rows = support points, cols = parameters)
 /// - `error_model`: The error model to use
 /// - `progress`: Whether to show a progress bar
 /// - `cache`: Whether to use caching
 ///
 /// # Returns
-/// A 2D array of likelihoods
+/// A 2D matrix of likelihoods
 pub fn psi(
     equation: &impl Equation,
     subjects: &Data,
-    support_points: &Array2<f64>,
+    support_points: &Mat<f64>,
     error_models: &ErrorModels,
     progress: bool,
     cache: bool,
-) -> Result<Array2<f64>, PharmsolError> {
-    let mut psi: Array2<f64> = Array2::default((subjects.len(), support_points.nrows()).f());
+) -> Result<Mat<f64>, PharmsolError> {
+    let nrows = subjects.len();
+    let ncols = support_points.nrows();
 
-    let subjects = subjects.subjects();
+    let subjects_vec = subjects.subjects();
 
     let progress_tracker = if progress {
-        let total = subjects.len() * support_points.nrows();
+        let total = nrows * ncols;
         println!(
             "Simulating {} subjects with {} support points each...",
-            subjects.len(),
-            support_points.nrows()
+            nrows, ncols
         );
         Some(ProgressTracker::new(total))
     } else {
         None
     };
 
-    let result: Result<(), PharmsolError> = psi
-        .axis_iter_mut(Axis(0))
-        .into_par_iter()
-        .enumerate()
-        .try_for_each(|(i, mut row)| {
-            row.axis_iter_mut(Axis(0))
-                .into_par_iter()
-                .enumerate()
-                .try_for_each(|(j, mut element)| {
-                    let subject = subjects.get(i).unwrap();
-                    match equation.estimate_likelihood(
-                        subject,
-                        support_points.row(j).to_vec().as_ref(),
-                        error_models,
-                        cache,
-                    ) {
+    // Collect results into a flat vector in row-major order
+    let mut results: Vec<f64> = vec![0.0; nrows * ncols];
+
+    let result: Result<(), PharmsolError> =
+        results
+            .par_chunks_mut(ncols)
+            .enumerate()
+            .try_for_each(|(i, row)| {
+                row.par_iter_mut().enumerate().try_for_each(|(j, element)| {
+                    let subject = subjects_vec.get(i).unwrap();
+                    // Convert Mat row to Vec
+                    let support_point: Vec<f64> = (0..support_points.ncols())
+                        .map(|k| support_points[(j, k)])
+                        .collect();
+                    match equation.estimate_likelihood(subject, &support_point, error_models, cache)
+                    {
                         Ok(likelihood) => {
-                            element.fill(likelihood);
+                            *element = likelihood;
                             if let Some(ref tracker) = progress_tracker {
                                 tracker.inc();
                             }
+                            Ok(())
                         }
-                        Err(e) => return Err(e),
-                    };
-                    Ok(())
+                        Err(e) => Err(e),
+                    }
                 })
-        });
+            });
 
     if let Some(tracker) = progress_tracker {
         tracker.finish();
     }
 
     result?;
+
+    // Convert flat vector to faer::Mat
+    // faer uses column-major order by default, so we need to transpose or use from_fn
+    let psi = Mat::from_fn(nrows, ncols, |i, j| results[i * ncols + j]);
+
     Ok(psi)
 }
 
 /// Prediction holds an observation and its prediction
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Prediction {
     pub(crate) time: f64,
     pub(crate) observation: Option<f64>,
