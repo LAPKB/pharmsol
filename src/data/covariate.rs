@@ -66,7 +66,10 @@ where
 #[derive(Serialize, Clone, Debug, Deserialize)]
 struct CovariateSegment {
     from: f64,
-    #[serde(serialize_with = "serialize_f64_infinity", deserialize_with = "deserialize_f64_infinity")]
+    #[serde(
+        serialize_with = "serialize_f64_infinity",
+        deserialize_with = "deserialize_f64_infinity"
+    )]
     to: f64,
     method: Interpolation,
 }
