@@ -18,11 +18,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Repeat in subject builder ([#157](https://github.com/LAPKB/pharmsol/pull/157)) ([#158](https://github.com/LAPKB/pharmsol/pull/158))
 
-### Other
-
-- Downgrade ndarray version from 0.17.1 to 0.16.1 ([#165](https://github.com/LAPKB/pharmsol/pull/165))
-- Update ndarray requirement from 0.16.1 to 0.17.1 ([#154](https://github.com/LAPKB/pharmsol/pull/154))
-
 ## [0.19.1](https://github.com/LAPKB/pharmsol/compare/v0.19.0...v0.20.0) - 2025-11-04
 
 ### Added
