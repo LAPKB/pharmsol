@@ -29,7 +29,7 @@ pub enum Interpolation {
 #[derive(Serialize, Clone, Debug, Deserialize)]
 struct CovariateSegment {
     from: f64,
-    to: f64,
+    to: Option<f64>,
     method: Interpolation,
 }
 
@@ -39,9 +39,9 @@ impl CovariateSegment {
     /// # Arguments
     ///
     /// * `from` - Start time of the segment
-    /// * `to` - End time of the segment
+    /// * `to` - End time of the segment (None for unbounded)
     /// * `method` - Interpolation method to use within this segment
-    pub(crate) fn new(from: f64, to: f64, method: Interpolation) -> Self {
+    pub(crate) fn new(from: f64, to: Option<f64>, method: Interpolation) -> Self {
         CovariateSegment { from, to, method }
     }
 
@@ -76,7 +76,7 @@ impl CovariateSegment {
     /// Check if a given time is within this segment's interval
     #[inline]
     fn in_interval(&self, time: f64) -> bool {
-        self.from <= time && time < self.to
+        self.from <= time && self.to.map_or(true, |to| time < to)
     }
 }
 
@@ -137,7 +137,7 @@ impl Covariate {
         // Add a temporary segment to store the new observation
         self.segments.push(CovariateSegment::new(
             time,
-            time,
+            Some(time),
             Interpolation::CarryForward { value },
         ));
 
@@ -187,7 +187,7 @@ impl Covariate {
         for i in 0..observations.len() {
             let current_obs = &observations[i];
             let next_obs = observations.get(i + 1);
-            let to_time = next_obs.map_or(f64::INFINITY, |next| next.0);
+            let to_time = next_obs.map(|next| next.0);
 
             if self.fixed {
                 // Use CarryForward for fixed covariates
@@ -202,7 +202,7 @@ impl Covariate {
                 let slope = (next.1 - current_obs.1) / (next.0 - current_obs.0);
                 self.segments.push(CovariateSegment::new(
                     current_obs.0,
-                    next.0,
+                    Some(next.0),
                     Interpolation::Linear {
                         slope,
                         intercept: current_obs.1 - slope * current_obs.0,
@@ -212,7 +212,7 @@ impl Covariate {
                 // Single observation, not fixed - create a CarryForward segment to infinity
                 self.segments.push(CovariateSegment::new(
                     current_obs.0,
-                    f64::INFINITY,
+                    None,
                     Interpolation::CarryForward {
                         value: current_obs.1,
                     },
@@ -289,12 +289,13 @@ impl fmt::Display for Covariate {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "Covariate '{}':", self.name)?;
         for (index, segment) in self.segments.iter().enumerate() {
+            let to_str = segment.to.map_or("∞".to_string(), |t| format!("{:.2}", t));
             write!(
                 f,
-                "  Segment {}: from {:.2} to {:.2}, ",
+                "  Segment {}: from {:.2} to {}, ",
                 index + 1,
                 segment.from,
-                segment.to
+                to_str
             )?;
             match &segment.method {
                 Interpolation::Linear { slope, intercept } => {
@@ -479,7 +480,7 @@ mod tests {
     fn test_covariate_linear_interpolation() {
         let segment = CovariateSegment {
             from: 0.0,
-            to: 10.0,
+            to: Some(10.0),
             method: Interpolation::Linear {
                 slope: 1.0,
                 intercept: 0.0,
@@ -496,7 +497,7 @@ mod tests {
     fn test_covariate_carry_forward() {
         let segment = CovariateSegment {
             from: 0.0,
-            to: 10.0,
+            to: Some(10.0),
             method: Interpolation::CarryForward { value: 5.0 },
         };
 
