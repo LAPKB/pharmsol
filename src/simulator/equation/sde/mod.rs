@@ -4,6 +4,8 @@ use diffsol::{NalgebraContext, Vector};
 use nalgebra::DVector;
 use ndarray::{concatenate, Array2, Axis};
 use rand::{rng, Rng};
+
+#[cfg(feature = "native")]
 use rayon::prelude::*;
 
 use cached::proc_macro::cached;
@@ -142,9 +144,18 @@ impl State for Vec<DVector<f64>> {
     /// * `input` - Index of the input compartment
     /// * `amount` - Amount to add to the compartment
     fn add_bolus(&mut self, input: usize, amount: f64) {
-        self.par_iter_mut().for_each(|particle| {
-            particle[input] += amount;
-        });
+        #[cfg(feature = "native")]
+        {
+            self.par_iter_mut().for_each(|particle| {
+                particle[input] += amount;
+            });
+        }
+        #[cfg(not(feature = "native"))]
+        {
+            self.iter_mut().for_each(|particle| {
+                particle[input] += amount;
+            });
+        }
     }
 }
 
@@ -239,20 +250,40 @@ impl EquationPriv for SDE {
         ti: f64,
         tf: f64,
     ) -> Result<(), PharmsolError> {
-        state.par_iter_mut().for_each(|particle| {
-            *particle = simulate_sde_event(
-                &self.drift,
-                &self.diffusion,
-                particle.clone().into(),
-                support_point,
-                covariates,
-                infusions,
-                ti,
-                tf,
-            )
-            .inner()
-            .clone();
-        });
+        #[cfg(feature = "native")]
+        {
+            state.par_iter_mut().for_each(|particle| {
+                *particle = simulate_sde_event(
+                    &self.drift,
+                    &self.diffusion,
+                    particle.clone().into(),
+                    support_point,
+                    covariates,
+                    infusions,
+                    ti,
+                    tf,
+                )
+                .inner()
+                .clone();
+            });
+        }
+        #[cfg(not(feature = "native"))]
+        {
+            for particle in state.iter_mut() {
+                *particle = simulate_sde_event(
+                    &self.drift,
+                    &self.diffusion,
+                    particle.clone().into(),
+                    support_point,
+                    covariates,
+                    infusions,
+                    ti,
+                    tf,
+                )
+                .inner()
+                .clone();
+            }
+        }
         Ok(())
     }
     fn nparticles(&self) -> usize {
@@ -275,17 +306,34 @@ impl EquationPriv for SDE {
         output: &mut Self::P,
     ) -> Result<(), PharmsolError> {
         let mut pred = vec![Prediction::default(); self.nparticles];
-        pred.par_iter_mut().enumerate().for_each(|(i, p)| {
-            let mut y = V::zeros(self.get_nouteqs(), NalgebraContext);
-            (self.out)(
-                &x[i].clone().into(),
-                &V::from_vec(support_point.clone(), NalgebraContext),
-                observation.time(),
-                covariates,
-                &mut y,
-            );
-            *p = observation.to_prediction(y[observation.outeq()], x[i].as_slice().to_vec());
-        });
+        #[cfg(feature = "native")]
+        {
+            pred.par_iter_mut().enumerate().for_each(|(i, p)| {
+                let mut y = V::zeros(self.get_nouteqs(), NalgebraContext);
+                (self.out)(
+                    &x[i].clone().into(),
+                    &V::from_vec(support_point.clone(), NalgebraContext),
+                    observation.time(),
+                    covariates,
+                    &mut y,
+                );
+                *p = observation.to_prediction(y[observation.outeq()], x[i].as_slice().to_vec());
+            });
+        }
+        #[cfg(not(feature = "native"))]
+        {
+            for (i, p) in pred.iter_mut().enumerate() {
+                let mut y = V::zeros(self.get_nouteqs(), NalgebraContext);
+                (self.out)(
+                    &x[i].clone().into(),
+                    &V::from_vec(support_point.clone(), NalgebraContext),
+                    observation.time(),
+                    covariates,
+                    &mut y,
+                );
+                *p = observation.to_prediction(y[observation.outeq()], x[i].as_slice().to_vec());
+            }
+        }
         let out = Array2::from_shape_vec((self.nparticles, 1), pred.clone())?;
         *output = concatenate(Axis(1), &[output.view(), out.view()]).unwrap();
         //e = y[t] .- x[:,1]

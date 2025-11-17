@@ -1,8 +1,10 @@
+#[cfg(feature = "native")]
 use argmin::{
     core::{CostFunction, Executor, TerminationReason, TerminationStatus},
     solver::neldermead::NelderMead,
 };
 
+#[cfg(feature = "native")]
 #[derive(Debug, Clone)]
 struct BestM0 {
     a: f64,
@@ -14,6 +16,7 @@ struct BestM0 {
 }
 
 /// We'll optimize over y = ln(xm), so Param = f64 (the log of xm)
+#[cfg(feature = "native")]
 impl CostFunction for BestM0 {
     type Param = f64; // this is ln(xm)
     type Output = f64;
@@ -59,12 +62,14 @@ impl CostFunction for BestM0 {
     }
 }
 
+#[cfg(feature = "native")]
 #[derive(thiserror::Error, Debug)]
 pub enum BestM0Error {
     #[error("Optimization error: {0}")]
     OptimizationError(String),
 }
 
+#[cfg(feature = "native")]
 impl BestM0 {
     /// start and step are in log-space (ln(x))
     fn get_best(&self, start_log: f64, step_log: f64) -> Result<(f64, f64, bool), BestM0Error> {
@@ -111,8 +116,7 @@ impl BestM0 {
     }
 }
 
-/// find_m0 left largely as-is, but consider returning Result<f64>
-/// Keep in mind it expects a,b,h1,h2 in valid ranges
+#[cfg(feature = "native")]
 fn find_m0(afinal: f64, b: f64, alpha: f64, h1: f64, h2: f64) -> f64 {
     let noint = 1000;
     let del_a = afinal / (noint as f64);
@@ -150,6 +154,7 @@ fn find_m0(afinal: f64, b: f64, alpha: f64, h1: f64, h2: f64) -> f64 {
     xm
 }
 
+#[cfg(feature = "native")]
 pub fn get_e2(a: f64, b: f64, w: f64, h1: f64, h2: f64, alpha_s: f64) -> f64 {
     // trivial cases
     if a.abs() < 1.0e-12 && b.abs() < 1.0e-12 {
@@ -236,4 +241,12 @@ pub fn get_e2(a: f64, b: f64, w: f64, h1: f64, h2: f64, alpha_s: f64) -> f64 {
             }
         }
     }
+}
+
+// Non-native (wasm) stub implementation
+#[cfg(not(feature = "native"))]
+pub fn get_e2(_a: f64, _b: f64, _w: f64, _h1: f64, _h2: f64, _alpha_s: f64) -> f64 {
+    // Provide a conservative default for wasm builds. This is a best-effort
+    // stub — accurate behavior requires the native optimizer.
+    0.0
 }
