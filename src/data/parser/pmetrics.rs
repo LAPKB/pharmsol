@@ -483,7 +483,7 @@ impl Data {
                                     &inf.amount().to_string(),
                                     &".".to_string(),
                                     &".".to_string(),
-                                    &".".to_string(),
+                                    &(inf.input() + 1).to_string(),
                                     &".".to_string(),
                                     &".".to_string(),
                                     &".".to_string(),
@@ -525,6 +525,10 @@ impl Data {
 mod tests {
 
     use super::*;
+    use crate::SubjectBuilderExt;
+    use csv::ReaderBuilder;
+    use std::io::Cursor;
+    use tempfile::NamedTempFile;
 
     #[test]
     fn test_addl() {
@@ -566,5 +570,30 @@ mod tests {
             s2_times,
             vec![0.0, 9.0, 12.0, 24.0, 36.0, 48.0, 60.0, 72.0, 84.0, 96.0, 108.0, 120.0]
         );
+    }
+
+    #[test]
+    fn write_pmetrics_preserves_infusion_input() {
+        let subject = Subject::builder("writer")
+            .infusion(0.0, 200.0, 2, 1.0)
+            .observation(1.0, 0.0, 0)
+            .build();
+        let data = Data::new(vec![subject]);
+
+        let file = NamedTempFile::new().unwrap();
+        data.write_pmetrics(file.as_file()).unwrap();
+
+        let contents = std::fs::read_to_string(file.path()).unwrap();
+        let mut reader = ReaderBuilder::new()
+            .has_headers(true)
+            .from_reader(Cursor::new(contents));
+
+        let infusion_row = reader
+            .records()
+            .filter_map(Result::ok)
+            .find(|record| record.get(3) != Some("0"))
+            .expect("infusion row missing");
+
+        assert_eq!(infusion_row.get(7), Some("3"));
     }
 }
