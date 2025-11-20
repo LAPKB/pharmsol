@@ -48,7 +48,7 @@ impl SubjectPredictions {
     /// The product of all individual prediction likelihoods
     pub fn likelihood(&self, error_models: &ErrorModels) -> Result<f64, PharmsolError> {
         match self.predictions.is_empty() {
-            true => Ok(0.0),
+            true => Ok(1.0),
             false => self
                 .predictions
                 .iter()
@@ -369,5 +369,32 @@ impl std::fmt::Display for Prediction {
             "Time: {:.2}\tObs: {:.4}\tPred: {:.4}\tOuteq: {:.2}",
             self.time, obs_str, self.prediction, self.outeq
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::data::error_model::{ErrorModel, ErrorPoly};
+    use crate::data::event::Observation;
+    use crate::Censor;
+
+    #[test]
+    fn empty_predictions_have_neutral_likelihood() {
+        let preds = SubjectPredictions::default();
+        let errors = ErrorModels::new();
+        assert_eq!(preds.likelihood(&errors).unwrap(), 1.0);
+    }
+
+    #[test]
+    fn likelihood_combines_observations() {
+        let mut preds = SubjectPredictions::default();
+        let obs = Observation::new(0.0, Some(1.0), 0, None, 0, Censor::None);
+        preds.add_prediction(obs.to_prediction(1.0, vec![]));
+
+        let error_model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 0.0);
+        let errors = ErrorModels::new().add(0, error_model).unwrap();
+
+        assert!(preds.likelihood(&errors).unwrap() > 0.0);
     }
 }
