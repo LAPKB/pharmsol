@@ -443,8 +443,8 @@ impl Data {
 
         writer
             .write_record([
-                "ID", "EVID", "TIME", "DUR", "DOSE", "ADDL", "II", "INPUT", "OUT", "OUTEQ", "C0",
-                "C1", "C2", "C3",
+                "ID", "EVID", "TIME", "DUR", "DOSE", "ADDL", "II", "INPUT", "OUT", "OUTEQ", "CENS",
+                "C0", "C1", "C2", "C3",
             ])
             .map_err(|e| PharmsolError::OtherError(e.to_string()))?;
 
@@ -453,23 +453,54 @@ impl Data {
                 for event in occasion.process_events(None, false) {
                     match event {
                         Event::Observation(obs) => {
+                            let time = obs.time().to_string();
+                            let value = obs
+                                .value()
+                                .map_or_else(|| ".".to_string(), |v| v.to_string());
+                            let outeq = (obs.outeq() + 1).to_string();
+                            let censor = match obs.censoring() {
+                                Censor::None => "0".to_string(),
+                                Censor::BLOQ => "1".to_string(),
+                                Censor::ALOQ => "-1".to_string(),
+                            };
+                            let (c0, c1, c2, c3) = obs
+                                .errorpoly()
+                                .map(|poly| {
+                                    let (c0, c1, c2, c3) = poly.coefficients();
+                                    (
+                                        c0.to_string(),
+                                        c1.to_string(),
+                                        c2.to_string(),
+                                        c3.to_string(),
+                                    )
+                                })
+                                .unwrap_or_else(|| {
+                                    (
+                                        ".".to_string(),
+                                        ".".to_string(),
+                                        ".".to_string(),
+                                        ".".to_string(),
+                                    )
+                                });
+
                             // Write each field individually
                             writer
                                 .write_record([
                                     subject.id(),
                                     &"0".to_string(),
-                                    &obs.time().to_string(),
+                                    &time,
                                     &".".to_string(),
                                     &".".to_string(),
                                     &".".to_string(),
                                     &".".to_string(),
                                     &".".to_string(),
-                                    &obs.value().map_or(".".to_string(), |v| v.to_string()),
-                                    &(obs.outeq() + 1).to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
+                                    &value,
+                                    &outeq,
+                                    &censor,
+                                    &c0,
+                                    &c1,
+                                    &c2,
+                                    &c3,
                                 ])
                                 .map_err(|e| PharmsolError::OtherError(e.to_string()))?;
                         }
@@ -483,6 +514,7 @@ impl Data {
                                     &inf.amount().to_string(),
                                     &".".to_string(),
                                     &".".to_string(),
+                                    &(inf.input() + 1).to_string(),
                                     &".".to_string(),
                                     &".".to_string(),
                                     &".".to_string(),
@@ -510,6 +542,7 @@ impl Data {
                                     &".".to_string(),
                                     &".".to_string(),
                                     &".".to_string(),
+                                    &".".to_string(),
                                 ])
                                 .map_err(|e| PharmsolError::OtherError(e.to_string()))?;
                         }
@@ -525,6 +558,10 @@ impl Data {
 mod tests {
 
     use super::*;
+    use crate::{Censor, ErrorPoly, SubjectBuilderExt};
+    use csv::ReaderBuilder;
+    use std::io::Cursor;
+    use tempfile::NamedTempFile;
 
     #[test]
     fn test_addl() {
@@ -566,5 +603,73 @@ mod tests {
             s2_times,
             vec![0.0, 9.0, 12.0, 24.0, 36.0, 48.0, 60.0, 72.0, 84.0, 96.0, 108.0, 120.0]
         );
+    }
+
+    #[test]
+    fn write_pmetrics_preserves_infusion_input() {
+        let subject = Subject::builder("writer")
+            .infusion(0.0, 200.0, 2, 1.0)
+            .observation(1.0, 0.0, 0)
+            .build();
+        let data = Data::new(vec![subject]);
+
+        let file = NamedTempFile::new().unwrap();
+        data.write_pmetrics(file.as_file()).unwrap();
+
+        let contents = std::fs::read_to_string(file.path()).unwrap();
+        let mut reader = ReaderBuilder::new()
+            .has_headers(true)
+            .from_reader(Cursor::new(contents));
+
+        let infusion_row = reader
+            .records()
+            .filter_map(Result::ok)
+            .find(|record| record.get(3) != Some("0"))
+            .expect("infusion row missing");
+
+        assert_eq!(infusion_row.get(7), Some("3"));
+    }
+
+    #[test]
+    fn write_pmetrics_preserves_censoring_and_errorpoly() {
+        let subject = Subject::builder("writer")
+            .observation_with_error(
+                0.0,
+                2.5,
+                0,
+                ErrorPoly::new(0.1, 0.2, 0.3, 0.4),
+                Censor::BLOQ,
+            )
+            .censored_observation(1.0, 3.5, 1, Censor::ALOQ)
+            .build();
+        let data = Data::new(vec![subject]);
+
+        let file = NamedTempFile::new().unwrap();
+        data.write_pmetrics(file.as_file()).unwrap();
+
+        let contents = std::fs::read_to_string(file.path()).unwrap();
+        let mut reader = ReaderBuilder::new()
+            .has_headers(true)
+            .from_reader(Cursor::new(contents));
+
+        let mut observations: Vec<_> = reader
+            .records()
+            .filter_map(Result::ok)
+            .filter(|record| record.get(1) == Some("0"))
+            .collect();
+
+        assert_eq!(observations.len(), 2, "expected two observation rows");
+
+        let first = observations.remove(0);
+        assert_eq!(first.get(10), Some("1"));
+        assert_eq!(first.get(11), Some("0.1"));
+        assert_eq!(first.get(12), Some("0.2"));
+        assert_eq!(first.get(13), Some("0.3"));
+        assert_eq!(first.get(14), Some("0.4"));
+
+        let second = observations.remove(0);
+        assert_eq!(second.get(10), Some("-1"));
+        assert_eq!(second.get(11), Some("."));
+        assert_eq!(second.get(14), Some("."));
     }
 }
