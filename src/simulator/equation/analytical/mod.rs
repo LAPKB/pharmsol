@@ -140,10 +140,12 @@ impl EquationPriv for Analytical {
 
         // 2) March over each sub-interval
         let mut current_t = ts[0];
+        let mut sp = V::from_vec(support_point.to_owned(), NalgebraContext);
+        let mut rateiv = V::zeros(self.get_nstates(), NalgebraContext);
+
         for &next_t in &ts[1..] {
             // prepare support and infusion rate for [current_t .. next_t]
-            let mut sp = V::from_vec(support_point.to_owned(), NalgebraContext);
-            let mut rateiv = V::from_vec(vec![0.0; 3], NalgebraContext);
+            rateiv.fill(0.0);
             for inf in infusions {
                 let s = inf.time();
                 let e = s + inf.duration();
@@ -157,7 +159,7 @@ impl EquationPriv for Analytical {
 
             // advance state by dt
             let dt = next_t - current_t;
-            *x = (self.eq)(x, &sp, dt, rateiv, covariates);
+            *x = (self.eq)(x, &sp, dt, rateiv.clone(), covariates);
 
             current_t = next_t;
         }
@@ -210,6 +212,76 @@ impl EquationPriv for Analytical {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SubjectBuilderExt;
+    use std::collections::HashMap;
+
+    #[test]
+    fn secondary_equations_accumulate_within_single_solve() {
+        let eq = |x: &V, p: &V, dt: f64, _rateiv: V, _cov: &Covariates| {
+            let mut next = x.clone();
+            next[0] += p[0] * dt;
+            next
+        };
+        let seq_eq = |params: &mut V, _t: f64, _cov: &Covariates| {
+            params[0] += 1.0;
+        };
+        let lag = |_p: &V, _t: f64, _cov: &Covariates| HashMap::new();
+        let fa = |_p: &V, _t: f64, _cov: &Covariates| HashMap::new();
+        let init = |_p: &V, _t: f64, _cov: &Covariates, x: &mut V| {
+            x.fill(0.0);
+        };
+        let out = |x: &V, _p: &V, _t: f64, _cov: &Covariates, y: &mut V| {
+            y[0] = x[0];
+        };
+
+        let analytical = Analytical::new(eq, seq_eq, lag, fa, init, out, (1, 1));
+        let subject = Subject::builder("seq")
+            .bolus(0.0, 0.0, 0)
+            .infusion(0.25, 1.0, 0, 0.25)
+            .observation(1.0, 0.0, 0)
+            .build();
+
+        let predictions = analytical
+            .estimate_predictions(&subject, &vec![1.0])
+            .unwrap();
+
+        let value = predictions.predictions()[0].prediction();
+        assert!((value - 2.5).abs() < 1e-12);
+    }
+
+    #[test]
+    fn infusion_inputs_match_state_dimension() {
+        let eq = |x: &V, _p: &V, dt: f64, rateiv: V, _cov: &Covariates| {
+            let mut next = x.clone();
+            next[0] += rateiv[3] * dt;
+            next
+        };
+        let seq_eq = |_params: &mut V, _t: f64, _cov: &Covariates| {};
+        let lag = |_p: &V, _t: f64, _cov: &Covariates| HashMap::new();
+        let fa = |_p: &V, _t: f64, _cov: &Covariates| HashMap::new();
+        let init = |_p: &V, _t: f64, _cov: &Covariates, x: &mut V| {
+            x.fill(0.0);
+        };
+        let out = |x: &V, _p: &V, _t: f64, _cov: &Covariates, y: &mut V| {
+            y[0] = x[0];
+        };
+
+        let analytical = Analytical::new(eq, seq_eq, lag, fa, init, out, (4, 1));
+        let subject = Subject::builder("inf")
+            .infusion(0.0, 4.0, 3, 1.0)
+            .observation(1.0, 0.0, 0)
+            .build();
+
+        let predictions = analytical
+            .estimate_predictions(&subject, &vec![0.0])
+            .unwrap();
+
+        assert_eq!(predictions.predictions()[0].prediction(), 4.0);
+    }
+}
 impl Equation for Analytical {
     fn estimate_likelihood(
         &self,
