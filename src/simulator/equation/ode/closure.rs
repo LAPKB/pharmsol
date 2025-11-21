@@ -4,11 +4,117 @@ use diffsol::{
     NonLinearOpJacobian, OdeEquations, OdeEquationsRef, Op, Vector, VectorCommon,
 };
 use nalgebra::DVector;
-use std::cell::RefCell;
+use std::{cell::RefCell, cmp::Ordering};
 type M = NalgebraMat<f64>;
 type V = <M as MatrixCommon>::V;
 type C = <M as MatrixCommon>::C;
 type T = <M as MatrixCommon>::T;
+
+#[derive(Debug, Clone)]
+struct InfusionChannel {
+    input: usize,
+    event_times: Vec<f64>,
+    cumulative_rates: Vec<f64>,
+}
+
+impl InfusionChannel {
+    fn new(input: usize, mut events: Vec<(f64, f64)>) -> Self {
+        events.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal));
+
+        let mut event_times = Vec::with_capacity(events.len());
+        let mut cumulative_rates = Vec::with_capacity(events.len());
+        let mut current_rate = 0.0;
+
+        for (time, delta) in events {
+            current_rate += delta;
+            event_times.push(time);
+            cumulative_rates.push(current_rate);
+        }
+
+        Self {
+            input,
+            event_times,
+            cumulative_rates,
+        }
+    }
+
+    fn rate_at(&self, time: f64) -> f64 {
+        if self.event_times.is_empty() {
+            return 0.0;
+        }
+
+        match self
+            .event_times
+            .binary_search_by(|probe| probe.partial_cmp(&time).unwrap_or(Ordering::Less))
+        {
+            Ok(mut idx) => {
+                while idx + 1 < self.event_times.len()
+                    && self.event_times[idx + 1] == self.event_times[idx]
+                {
+                    idx += 1;
+                }
+                self.cumulative_rates[idx]
+            }
+            Err(0) => 0.0,
+            Err(idx) => self.cumulative_rates[idx - 1],
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct InfusionSchedule {
+    channels: Vec<InfusionChannel>,
+}
+
+impl InfusionSchedule {
+    fn new(nstates: usize, infusions: &[&Infusion]) -> Self {
+        if nstates == 0 || infusions.is_empty() {
+            return Self {
+                channels: Vec::new(),
+            };
+        }
+
+        let mut per_input: Vec<Vec<(f64, f64)>> = vec![Vec::new(); nstates];
+        for infusion in infusions {
+            if infusion.duration() <= 0.0 {
+                continue;
+            }
+
+            let input = infusion.input();
+            if input >= nstates {
+                continue;
+            }
+
+            let rate = infusion.amount() / infusion.duration();
+            per_input[input].push((infusion.time(), rate));
+            per_input[input].push((infusion.time() + infusion.duration(), -rate));
+        }
+
+        let channels = per_input
+            .into_iter()
+            .enumerate()
+            .filter_map(|(input, events)| {
+                if events.is_empty() {
+                    None
+                } else {
+                    Some(InfusionChannel::new(input, events))
+                }
+            })
+            .collect();
+
+        Self { channels }
+    }
+
+    fn fill_rate_vector(&self, time: f64, rateiv: &mut V) {
+        rateiv.fill(0.0);
+        for channel in &self.channels {
+            let rate = channel.rate_at(time);
+            if rate != 0.0 {
+                rateiv[channel.input] = rate;
+            }
+        }
+    }
+}
 
 pub struct PmRhs<'a, F>
 where
@@ -16,7 +122,7 @@ where
 {
     nstates: usize,
     nparams: usize,
-    infusions: &'a [&'a Infusion], // Change from Vec to slice reference
+    infusion_schedule: &'a InfusionSchedule,
     covariates: &'a Covariates,
     p: &'a Vec<f64>,
     func: &'a F,
@@ -157,15 +263,8 @@ where
     F: Fn(&V, &V, T, &mut V, V, V, &Covariates),
 {
     fn call_inplace(&self, x: &Self::V, t: Self::T, y: &mut Self::V) {
-        // Compute rate IV at the current time
         let mut rateiv_ref = self.rateiv_buffer.borrow_mut();
-        rateiv_ref.fill(0.0);
-
-        for infusion in self.infusions {
-            if t >= infusion.time() && t <= infusion.duration() + infusion.time() {
-                rateiv_ref[infusion.input()] += infusion.amount() / infusion.duration();
-            }
-        }
+        self.infusion_schedule.fill_rate_vector(t, &mut rateiv_ref);
 
         // We need to drop the mutable borrow before calling the function
         // to avoid potential conflicts with future borrows in the function
@@ -261,7 +360,7 @@ where
     init: V,
     p: Vec<f64>,
     covariates: &'a Covariates,
-    infusions: Vec<&'a Infusion>,
+    infusion_schedule: InfusionSchedule,
     rateiv_buffer: RefCell<V>,
 }
 
@@ -274,11 +373,12 @@ where
         nstates: usize,
         p: Vec<f64>,
         covariates: &'a Covariates,
-        infusions: Vec<&'a Infusion>,
+        infusions: &[&'a Infusion],
         init: V,
     ) -> Self {
         let nparams = p.len();
         let rateiv_buffer = RefCell::new(V::zeros(nstates, NalgebraContext));
+        let infusion_schedule = InfusionSchedule::new(nstates, infusions);
 
         Self {
             func,
@@ -287,7 +387,7 @@ where
             init,
             p,
             covariates,
-            infusions,
+            infusion_schedule,
             rateiv_buffer,
         }
     }
@@ -336,7 +436,7 @@ where
         PmRhs {
             nstates: self.nstates,
             nparams: self.nparams,
-            infusions: &self.infusions, // Use reference instead of clone
+            infusion_schedule: &self.infusion_schedule,
             covariates: self.covariates,
             p: &self.p,
             func: &self.func,
