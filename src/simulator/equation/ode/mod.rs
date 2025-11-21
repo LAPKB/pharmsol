@@ -229,7 +229,7 @@ impl Equation for ODE {
                     self.get_nstates(),
                     support_point.clone(), //TODO: Avoid cloning the support point
                     covariates,
-                    infusions,
+                    infusions.as_slice(),
                     self.initial_state(support_point, covariates, occasion.index())
                         .into(),
                 ))?;
