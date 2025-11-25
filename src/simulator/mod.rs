@@ -38,7 +38,7 @@ pub type M = NalgebraMat<T>;
 ///  dx[1] = ka * x[0] - ke * x[1];
 /// };
 /// ```
-pub type DiffEq = fn(&V, &V, T, &mut V, V, V, &Covariates);
+pub type DiffEq = fn(&V, &V, T, &mut V, &V, &V, &Covariates);
 
 /// This closure represents an Analytical solution of the model.
 /// See [analytical] module for examples.

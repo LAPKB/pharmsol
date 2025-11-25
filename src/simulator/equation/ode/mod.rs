@@ -264,8 +264,8 @@ impl Equation for ODE {
                             &spp_v,
                             event.time(),
                             &mut state_without_bolus,
-                            zero_vector.clone(),
-                            zero_vector.clone(),
+                            &zero_vector,
+                            &zero_vector,
                             covariates,
                         );
 
@@ -275,8 +275,8 @@ impl Equation for ODE {
                             &spp_v,
                             event.time(),
                             &mut state_with_bolus,
-                            bolus_v.clone(),
-                            zero_vector.clone(),
+                            &bolus_v,
+                            &zero_vector,
                             covariates,
                         );
 

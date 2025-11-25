@@ -118,7 +118,7 @@ impl InfusionSchedule {
 
 pub struct PmRhs<'a, F>
 where
-    F: Fn(&V, &V, T, &mut V, V, V, &Covariates),
+    F: Fn(&V, &V, T, &mut V, &V, &V, &Covariates),
 {
     nstates: usize,
     nparams: usize,
@@ -132,7 +132,7 @@ where
 
 impl<F> Op for PmRhs<'_, F>
 where
-    F: Fn(&V, &V, T, &mut V, V, V, &Covariates),
+    F: Fn(&V, &V, T, &mut V, &V, &V, &Covariates),
 {
     type T = T;
     type V = V;
@@ -261,23 +261,19 @@ impl Op for PmOut {
 
 impl<F> NonLinearOp for PmRhs<'_, F>
 where
-    F: Fn(&V, &V, T, &mut V, V, V, &Covariates),
+    F: Fn(&V, &V, T, &mut V, &V, &V, &Covariates),
 {
     fn call_inplace(&self, x: &Self::V, t: Self::T, y: &mut Self::V) {
         let mut rateiv_ref = self.rateiv_buffer.borrow_mut();
         self.infusion_schedule.fill_rate_vector(t, &mut rateiv_ref);
-
-        // Swap filled buffer with a zero vector to take ownership without cloning
-        let rateiv = std::mem::replace(&mut *rateiv_ref, self.zero_bolus.clone());
-        drop(rateiv_ref);
 
         (self.func)(
             x,
             self.p_as_v,
             t,
             y,
-            self.zero_bolus.clone(),
-            rateiv,
+            self.zero_bolus,
+            &rateiv_ref,
             self.covariates,
         );
     }
@@ -285,7 +281,7 @@ where
 
 impl<F> NonLinearOpJacobian for PmRhs<'_, F>
 where
-    F: Fn(&V, &V, T, &mut V, V, V, &Covariates),
+    F: Fn(&V, &V, T, &mut V, &V, &V, &Covariates),
 {
     fn jac_mul_inplace(&self, _x: &Self::V, t: Self::T, v: &Self::V, y: &mut Self::V) {
         (self.func)(
@@ -293,8 +289,8 @@ where
             self.p_as_v,
             t,
             y,
-            self.zero_bolus.clone(),
-            self.zero_bolus.clone(),
+            self.zero_bolus,
+            self.zero_bolus,
             self.covariates,
         );
     }
@@ -315,7 +311,7 @@ impl NonLinearOp for PmOut {
 // Completely revised PMProblem to fix lifetime issues and improve performance
 pub struct PMProblem<'a, F>
 where
-    F: Fn(&V, &V, T, &mut V, V, V, &Covariates) + 'a,
+    F: Fn(&V, &V, T, &mut V, &V, &V, &Covariates) + 'a,
 {
     func: F,
     nstates: usize,
@@ -331,7 +327,7 @@ where
 
 impl<'a, F> PMProblem<'a, F>
 where
-    F: Fn(&V, &V, T, &mut V, V, V, &Covariates) + 'a,
+    F: Fn(&V, &V, T, &mut V, &V, &V, &Covariates) + 'a,
 {
     /// Creates a new PMProblem with a pre-converted parameter vector.
     /// This avoids an allocation when the caller already has a V representation.
@@ -367,7 +363,7 @@ where
 
 impl<'a, F> Op for PMProblem<'a, F>
 where
-    F: Fn(&V, &V, T, &mut V, V, V, &Covariates) + 'a,
+    F: Fn(&V, &V, T, &mut V, &V, &V, &Covariates) + 'a,
 {
     type T = T;
     type V = V;
@@ -390,7 +386,7 @@ where
 // Implement OdeEquationsRef for PMProblem for any lifetime 'b
 impl<'a, 'b, F> OdeEquationsRef<'b> for PMProblem<'a, F>
 where
-    F: Fn(&V, &V, T, &mut V, V, V, &Covariates) + 'a,
+    F: Fn(&V, &V, T, &mut V, &V, &V, &Covariates) + 'a,
 {
     type Rhs = PmRhs<'b, F>;
     type Mass = PmMass;
@@ -402,7 +398,7 @@ where
 // Implement OdeEquations with correct lifetime handling
 impl<'a, F> OdeEquations for PMProblem<'a, F>
 where
-    F: Fn(&V, &V, T, &mut V, V, V, &Covariates) + 'a,
+    F: Fn(&V, &V, T, &mut V, &V, &V, &Covariates) + 'a,
 {
     fn rhs(&self) -> PmRhs<'_, F> {
         PmRhs {
