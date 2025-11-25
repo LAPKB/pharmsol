@@ -202,12 +202,15 @@ impl Equation for ODE {
         // let lag = self.get_lag(support_point);
         // let fa = self.get_fa(support_point);
         let mut output = Self::P::new(self.nparticles());
-        let mut likelihood = Vec::new();
+        // Pre-allocate likelihood with estimated capacity based on number of occasions
+        let mut likelihood = Vec::with_capacity(subject.occasions().len() * 10);
+        // Cache nstates to avoid repeated method calls
+        let nstates = self.get_nstates();
         // Preallocate reusable vectors for bolus computation
-        let mut state_with_bolus = V::zeros(self.get_nstates(), NalgebraContext);
-        let mut state_without_bolus = V::zeros(self.get_nstates(), NalgebraContext);
-        let zero_vector = V::zeros(self.get_nstates(), NalgebraContext);
-        let mut bolus_v = V::zeros(self.get_nstates(), NalgebraContext);
+        let mut state_with_bolus = V::zeros(nstates, NalgebraContext);
+        let mut state_without_bolus = V::zeros(nstates, NalgebraContext);
+        let zero_vector = V::zeros(nstates, NalgebraContext);
+        let mut bolus_v = V::zeros(nstates, NalgebraContext);
         let spp_v: V = DVector::from_vec(support_point.clone()).into();
         // Pre-allocate output vector for observations
         let mut y_out = V::zeros(self.get_nouteqs(), NalgebraContext);
@@ -227,7 +230,7 @@ impl Equation for ODE {
                 .p(support_point.clone())
                 .build_from_eqn(PMProblem::with_params_v(
                     self.diffeq,
-                    self.get_nstates(),
+                    nstates,
                     support_point.clone(),
                     spp_v.clone(), // Reuse pre-converted V
                     covariates,
@@ -281,10 +284,11 @@ impl Equation for ODE {
                         );
 
                         // The difference between the two states is the actual bolus effect
-                        // Apply the computed changes to the state
-                        for i in 0..self.get_nstates() {
-                            solver.state_mut().y[i] += state_with_bolus[i] - state_without_bolus[i];
-                        }
+                        // Apply the computed changes to the state using vectorized operations
+                        // state_with_bolus now contains (with_bolus - without_bolus) after axpy
+                        state_with_bolus.axpy(-1.0, &state_without_bolus, 1.0);
+                        // Add the difference to the solver state
+                        solver.state_mut().y.axpy(1.0, &state_with_bolus, 1.0);
                     }
                     Event::Infusion(_infusion) => {}
                     Event::Observation(observation) => {
