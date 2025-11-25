@@ -333,10 +333,13 @@ impl<'a, F> PMProblem<'a, F>
 where
     F: Fn(&V, &V, T, &mut V, V, V, &Covariates) + 'a,
 {
-    pub fn new(
+    /// Creates a new PMProblem with a pre-converted parameter vector.
+    /// This avoids an allocation when the caller already has a V representation.
+    pub fn with_params_v(
         func: F,
         nstates: usize,
         p: Vec<f64>,
+        p_as_v: V,
         covariates: &'a Covariates,
         infusions: &[&'a Infusion],
         init: V,
@@ -344,8 +347,6 @@ where
         let nparams = p.len();
         let rateiv_buffer = RefCell::new(V::zeros(nstates, NalgebraContext));
         let infusion_schedule = InfusionSchedule::new(nstates, infusions);
-        // Pre-convert parameter vector to V to avoid allocation in hot path
-        let p_as_v: V = DVector::from_vec(p.clone()).into();
         // Pre-allocate zero bolus vector
         let zero_bolus = V::zeros(nstates, NalgebraContext);
 

@@ -209,6 +209,8 @@ impl Equation for ODE {
         let zero_vector = V::zeros(self.get_nstates(), NalgebraContext);
         let mut bolus_v = V::zeros(self.get_nstates(), NalgebraContext);
         let spp_v: V = DVector::from_vec(support_point.clone()).into();
+        // Pre-allocate output vector for observations
+        let mut y_out = V::zeros(self.get_nouteqs(), NalgebraContext);
         for occasion in subject.occasions() {
             let covariates = occasion.covariates();
             let infusions = occasion.infusions_ref();
@@ -223,10 +225,11 @@ impl Equation for ODE {
                 .t0(occasion.initial_time())
                 .h0(1e-3)
                 .p(support_point.clone())
-                .build_from_eqn(PMProblem::new(
+                .build_from_eqn(PMProblem::with_params_v(
                     self.diffeq,
                     self.get_nstates(),
-                    support_point.clone(), //TODO: Avoid cloning the support point
+                    support_point.clone(),
+                    spp_v.clone(), // Reuse pre-converted V
                     covariates,
                     infusions.as_slice(),
                     self.initial_state(support_point, covariates, occasion.index())
@@ -285,25 +288,23 @@ impl Equation for ODE {
                     }
                     Event::Infusion(_infusion) => {}
                     Event::Observation(observation) => {
-                        //START PROCESS_OBSERVATION
-                        let mut y = V::zeros(self.get_nouteqs(), NalgebraContext);
+                        // Reuse pre-allocated output vector
+                        y_out.fill(0.0);
                         let out = &self.out;
-                        let spp = DVector::from_vec(support_point.clone()); // TODO: Avoid clone
                         (out)(
                             solver.state().y,
-                            &spp.into(),
+                            &spp_v,
                             observation.time(),
                             covariates,
-                            &mut y,
+                            &mut y_out,
                         );
-                        let pred = y[observation.outeq()];
+                        let pred = y_out[observation.outeq()];
                         let pred =
                             observation.to_prediction(pred, solver.state().y.as_slice().to_vec());
                         if let Some(error_models) = error_models {
                             likelihood.push(pred.likelihood(error_models)?);
                         }
                         output.add_prediction(pred);
-                        //END PROCESS_OBSERVATION
                     }
                 }
                 // START SOLVE
