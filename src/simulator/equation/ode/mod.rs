@@ -203,13 +203,12 @@ impl Equation for ODE {
         // let fa = self.get_fa(support_point);
         let mut output = Self::P::new(self.nparticles());
         let mut likelihood = Vec::new();
-        // Preallocate bolus vectors
-        let mut bolus_vec = vec![0.0; self.get_nstates()];
+        // Preallocate reusable vectors for bolus computation
         let mut state_with_bolus = V::zeros(self.get_nstates(), NalgebraContext);
         let mut state_without_bolus = V::zeros(self.get_nstates(), NalgebraContext);
         let zero_vector = V::zeros(self.get_nstates(), NalgebraContext);
-        let spp_v = DVector::from_vec(support_point.clone());
-        let spp_v: V = spp_v.into();
+        let mut bolus_v = V::zeros(self.get_nstates(), NalgebraContext);
+        let spp_v: V = DVector::from_vec(support_point.clone()).into();
         for occasion in subject.occasions() {
             let covariates = occasion.covariates();
             let infusions = occasion.infusions_ref();
@@ -248,15 +247,13 @@ impl Equation for ODE {
                     //     solver.state_mut().y[bolus.input()] += bolus.amount();
                     // }
                     Event::Bolus(bolus) => {
-                        // Reset and reuse the bolus vector
-                        bolus_vec.fill(0.0);
-                        bolus_vec[bolus.input()] = bolus.amount();
+                        // Reset and reuse the pre-allocated bolus vector
+                        bolus_v.fill(0.0);
+                        bolus_v[bolus.input()] = bolus.amount();
 
-                        // Reset and reuse the bolus changes vector
+                        // Reset and reuse the bolus changes vectors
                         state_with_bolus.fill(0.0);
                         state_without_bolus.fill(0.0);
-
-                        let bolus_v: V = DVector::from_vec(bolus_vec.clone()).into();
 
                         // Call the differential equation closure without bolus
                         (self.diffeq)(
@@ -264,7 +261,7 @@ impl Equation for ODE {
                             &spp_v,
                             event.time(),
                             &mut state_without_bolus,
-                            zero_vector.clone(), // Zero bolus
+                            zero_vector.clone(),
                             zero_vector.clone(),
                             covariates,
                         );
@@ -275,7 +272,7 @@ impl Equation for ODE {
                             &spp_v,
                             event.time(),
                             &mut state_with_bolus,
-                            bolus_v,
+                            bolus_v.clone(),
                             zero_vector.clone(),
                             covariates,
                         );

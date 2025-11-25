@@ -124,9 +124,10 @@ where
     nparams: usize,
     infusion_schedule: &'a InfusionSchedule,
     covariates: &'a Covariates,
-    p: &'a Vec<f64>,
+    p_as_v: &'a V,
     func: &'a F,
     rateiv_buffer: &'a RefCell<V>,
+    zero_bolus: &'a V,
 }
 
 impl<F> Op for PmRhs<'_, F>
@@ -266,36 +267,19 @@ where
         let mut rateiv_ref = self.rateiv_buffer.borrow_mut();
         self.infusion_schedule.fill_rate_vector(t, &mut rateiv_ref);
 
-        // We need to drop the mutable borrow before calling the function
-        // to avoid potential conflicts with future borrows in the function
-        let rateiv = rateiv_ref.clone();
+        // Swap filled buffer with a zero vector to take ownership without cloning
+        let rateiv = std::mem::replace(&mut *rateiv_ref, self.zero_bolus.clone());
         drop(rateiv_ref);
 
-        // Avoid creating a new DVector when possible
-        let p_len = self.p.len();
-        let mut p_dvector: DVector<f64>;
-        let p_ref: &DVector<f64>;
-
-        // Use stack allocation for small parameter vectors
-        if p_len <= 16 {
-            let mut stack_p = [0.0; 16];
-            stack_p[..p_len].copy_from_slice(self.p);
-            p_dvector = DVector::from_row_slice(&stack_p[..p_len]);
-            p_ref = &p_dvector;
-        } else {
-            // For larger vectors, use the more efficient approach with unsafe
-            p_dvector = DVector::zeros(p_len);
-            unsafe {
-                std::ptr::copy_nonoverlapping(self.p.as_ptr(), p_dvector.as_mut_ptr(), p_len);
-            }
-            p_ref = &p_dvector;
-        }
-
-        let pnew = p_ref.to_owned().into();
-
-        let bolus = V::zeros(self.nstates, NalgebraContext);
-
-        (self.func)(x, &pnew, t, y, bolus, rateiv, self.covariates);
+        (self.func)(
+            x,
+            self.p_as_v,
+            t,
+            y,
+            self.zero_bolus.clone(),
+            rateiv,
+            self.covariates,
+        );
     }
 }
 
@@ -304,34 +288,13 @@ where
     F: Fn(&V, &V, T, &mut V, V, V, &Covariates),
 {
     fn jac_mul_inplace(&self, _x: &Self::V, t: Self::T, v: &Self::V, y: &mut Self::V) {
-        let rateiv = V::zeros(self.nstates, NalgebraContext);
-
-        // Avoid creating a new DVector when possible
-        let p_len = self.p.len();
-        let mut p_dvector: DVector<f64>;
-
-        // Use stack allocation for small parameter vectors
-        if p_len <= 16 {
-            let mut stack_p = [0.0; 16];
-            stack_p[..p_len].copy_from_slice(self.p);
-            p_dvector = DVector::from_row_slice(&stack_p[..p_len]);
-        } else {
-            // For larger vectors, use the more efficient approach with unsafe
-            p_dvector = DVector::zeros(p_len);
-            unsafe {
-                std::ptr::copy_nonoverlapping(self.p.as_ptr(), p_dvector.as_mut_ptr(), p_len);
-            }
-        }
-
-        let bolus = V::zeros(self.nstates, NalgebraContext);
-
         (self.func)(
             v,
-            &p_dvector.to_owned().into(),
+            self.p_as_v,
             t,
             y,
-            bolus,
-            rateiv,
+            self.zero_bolus.clone(),
+            self.zero_bolus.clone(),
             self.covariates,
         );
     }
@@ -359,6 +322,8 @@ where
     nparams: usize,
     init: V,
     p: Vec<f64>,
+    p_as_v: V,
+    zero_bolus: V,
     covariates: &'a Covariates,
     infusion_schedule: InfusionSchedule,
     rateiv_buffer: RefCell<V>,
@@ -379,6 +344,10 @@ where
         let nparams = p.len();
         let rateiv_buffer = RefCell::new(V::zeros(nstates, NalgebraContext));
         let infusion_schedule = InfusionSchedule::new(nstates, infusions);
+        // Pre-convert parameter vector to V to avoid allocation in hot path
+        let p_as_v: V = DVector::from_vec(p.clone()).into();
+        // Pre-allocate zero bolus vector
+        let zero_bolus = V::zeros(nstates, NalgebraContext);
 
         Self {
             func,
@@ -386,6 +355,8 @@ where
             nparams,
             init,
             p,
+            p_as_v,
+            zero_bolus,
             covariates,
             infusion_schedule,
             rateiv_buffer,
@@ -438,9 +409,10 @@ where
             nparams: self.nparams,
             infusion_schedule: &self.infusion_schedule,
             covariates: self.covariates,
-            p: &self.p,
+            p_as_v: &self.p_as_v,
             func: &self.func,
             rateiv_buffer: &self.rateiv_buffer,
+            zero_bolus: &self.zero_bolus,
         }
     }
 
@@ -480,9 +452,11 @@ where
         if self.p.len() == p.len() {
             for i in 0..p.len() {
                 self.p[i] = p[i];
+                self.p_as_v[i] = p[i];
             }
         } else {
             self.p = p.inner().iter().cloned().collect();
+            self.p_as_v = p.clone();
         }
     }
 }
