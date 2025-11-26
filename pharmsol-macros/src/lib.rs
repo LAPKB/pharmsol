@@ -81,6 +81,7 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
 
     // Generate the macro name for this struct
     let macro_name = format_ident!("{}_params", name);
+    let destructure_macro_name = format_ident!("__destructure_{}", name);
 
     let expanded = quote! {
         impl pharmsol::Params for #name {
@@ -135,10 +136,20 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
             }
         }
 
-        /// Macro to destructure parameters into local variables
+        /// Macro to destructure parameters into local variables (legacy)
         #[macro_export]
         macro_rules! #macro_name {
             ($p:expr) => {
+                let #name { #(#field_names),* } = $p;
+            };
+        }
+
+        /// Internal macro for destructuring params - used by diffeq!/out! macros
+        #[macro_export]
+        #[doc(hidden)]
+        macro_rules! #destructure_macro_name {
+            ($p:expr) => {
+                #[allow(unused_variables)]
                 let #name { #(#field_names),* } = $p;
             };
         }

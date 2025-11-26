@@ -53,11 +53,11 @@ fn main() {
     // ========================================================================
     // Example 1: Simple one-compartment model without covariates
     // ========================================================================
-    
+
     println!("--- Example 1: Simple One-Compartment Model ---");
-    
+
     let subject = Subject::builder("patient_1")
-        .infusion(0.0, 500.0, 0, 0.5)  // 500mg infusion over 0.5h
+        .infusion(0.0, 500.0, 0, 0.5) // 500mg infusion over 0.5h
         .observation(0.5, 0.0, 0)
         .observation(1.0, 0.0, 0)
         .observation(2.0, 0.0, 0)
@@ -82,18 +82,26 @@ fn main() {
     );
 
     // NEW ergonomic API with macros!
-    // Use |vars| params: [names] => { body } syntax
+    // Use Pk { field1, field2 } |vars| { body } - ORDER INDEPENDENT params!
     let ode_new = equation::ODE::builder()
-        .diffeq(diffeq!(|x, dx, rateiv| params: [ke, _v] => {
-            // Variables x, dx, rateiv are requested in |...|
-            // Parameters ke, _v are extracted automatically
-            dx[0] = -ke * x[0] + rateiv[0];
-        }))
-        .out(out!(|x, y| params: [_ke, v] => {
-            // Variables x, y are requested
-            // Parameters _ke, v are extracted automatically
-            y[0] = x[0] / v;
-        }))
+        .diffeq(diffeq!(
+            Pk { ke, v } | x,
+            dx,
+            rateiv | {
+                // Fields from Pk struct are destructured - order doesn't matter!
+                // The struct definition determines which index maps to which field
+                let _ = v; // suppress unused warning
+                dx[0] = -ke * x[0] + rateiv[0];
+            }
+        ))
+        .out(out!(
+            Pk { ke, v } | x,
+            y | {
+                // Fields from Pk struct are destructured
+                let _ = ke; // suppress unused warning
+                y[0] = x[0] / v;
+            }
+        ))
         .nstates(1)
         .nouteqs(1)
         .build();
@@ -116,29 +124,33 @@ fn main() {
     println!("\n");
 
     // Verify they match
-    let match_result = pred_old.flat_predictions()
+    let match_result = pred_old
+        .flat_predictions()
         .iter()
         .zip(pred_new.flat_predictions().iter())
         .all(|(a, b)| (a - b).abs() < 1e-12);
-    
+
     println!("Results match: {} ✓\n", match_result);
 
     // ========================================================================
     // Example 2: Using the Params struct for type-safe parameter creation
     // ========================================================================
-    
+
     println!("--- Example 2: Type-Safe Parameter Creation ---");
-    
+
     // Create params using the struct
-    let pk = Pk { ke: 1.02282724609375, v: 194.51904296875 };
+    let pk = Pk {
+        ke: 1.02282724609375,
+        v: 194.51904296875,
+    };
     println!("Pk struct: {:?}", pk);
-    
+
     // Convert to Vec for use with existing API
     let params_vec = pk.to_vec();
     println!("As Vec: {:?}", params_vec);
-    
+
     // Can also create from HashMap
-    let params_map: std::collections::HashMap<&str, f64> = 
+    let params_map: std::collections::HashMap<&str, f64> =
         [("ke", 1.02), ("v", 194.5)].into_iter().collect();
     let pk_from_map: Pk = params_map.into();
     println!("From HashMap: {:?}\n", pk_from_map);
@@ -146,13 +158,13 @@ fn main() {
     // ========================================================================
     // Example 3: Model with covariates
     // ========================================================================
-    
+
     println!("--- Example 3: Model with Covariates ---");
-    
+
     // Subject with weight covariate
     let subject_with_cov = Subject::builder("patient_2")
         .infusion(0.0, 500.0, 0, 0.5)
-        .covariate("wt", 0.0, 70.0)  // 70 kg at time 0
+        .covariate("wt", 0.0, 70.0) // 70 kg at time 0
         .observation(0.5, 0.0, 0)
         .observation(1.0, 0.0, 0)
         .observation(2.0, 0.0, 0)
@@ -161,11 +173,13 @@ fn main() {
         .build();
 
     let ode_with_cov = equation::ODE::builder()
-        .diffeq(diffeq!(|x, dx, rateiv, cov, t| params: [ke, _v, theta_wt] => {
-            fetch_cov!(cov, t, wt);
-            let cl = ke * (wt / 70.0_f64).powf(theta_wt);
-            dx[0] = -cl * x[0] + rateiv[0];
-        }))
+        .diffeq(
+            diffeq!(|x, dx, rateiv, cov, t| params: [ke, _v, theta_wt] => {
+                fetch_cov!(cov, t, wt);
+                let cl = ke * (wt / 70.0_f64).powf(theta_wt);
+                dx[0] = -cl * x[0] + rateiv[0];
+            }),
+        )
         .out(out!(|x, y| params: [_ke, v, _theta_wt] => {
             y[0] = x[0] / v;
         }))
@@ -174,9 +188,11 @@ fn main() {
         .build();
 
     let params_with_theta = vec![1.02, 194.5, 0.75]; // ke, v, theta_wt
-    
-    let pred_cov = ode_with_cov.estimate_predictions(&subject_with_cov, &params_with_theta).unwrap();
-    
+
+    let pred_cov = ode_with_cov
+        .estimate_predictions(&subject_with_cov, &params_with_theta)
+        .unwrap();
+
     println!("Predictions with covariate model:");
     for p in pred_cov.flat_predictions() {
         print!("{:.6} ", p);
@@ -186,18 +202,24 @@ fn main() {
     // ========================================================================
     // Summary: API Comparison
     // ========================================================================
-    
+
     println!("=== API Comparison ===\n");
-    
+
     println!("OLD API (verbose closure with 7 arguments):");
     println!("  |x, p, _t, dx, _b, rateiv, _cov| {{");
     println!("      fetch_params!(p, ke, _v);");
     println!("      dx[0] = -ke * x[0] + rateiv[0];");
     println!("  }}");
     println!();
-    
-    println!("NEW API (diffeq! macro - specify only what you need):");
+
+    println!("NEW API Option 1 - Positional params (order matters):");
     println!("  diffeq!(|x, dx, rateiv| params: [ke, _v] => {{");
+    println!("      dx[0] = -ke * x[0] + rateiv[0];");
+    println!("  }})");
+    println!();
+
+    println!("NEW API Option 2 - Typed struct (ORDER INDEPENDENT!):");
+    println!("  diffeq!(Pk {{ ke, v }} |x, dx, rateiv| {{");
     println!("      dx[0] = -ke * x[0] + rateiv[0];");
     println!("  }})");
     println!();
@@ -205,7 +227,7 @@ fn main() {
     println!("BENEFITS:");
     println!("  ✓ Only specify variables you actually use");
     println!("  ✓ No need to remember closure argument order");
-    println!("  ✓ Automatic parameter extraction with params: [...]");
+    println!("  ✓ With Pk {{...}} syntax - parameter order doesn't matter!");
     println!("  ✓ Params struct enables type-safe parameter creation");
     println!("  ✓ Covariates struct enables compile-time covariate checking");
 }
