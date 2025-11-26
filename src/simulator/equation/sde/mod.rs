@@ -209,7 +209,14 @@ impl SDE {
 ///     .nparticles(1000)
 ///     .build();
 /// ```
-pub struct SDEBuilder<DriftState, DiffusionState, OutState, NStatesState, NOuteqsState, NParticlesState> {
+pub struct SDEBuilder<
+    DriftState,
+    DiffusionState,
+    OutState,
+    NStatesState,
+    NOuteqsState,
+    NParticlesState,
+> {
     drift: Option<Drift>,
     diffusion: Option<Diffusion>,
     lag: Option<Lag>,
@@ -219,7 +226,14 @@ pub struct SDEBuilder<DriftState, DiffusionState, OutState, NStatesState, NOuteq
     nstates: Option<usize>,
     nouteqs: Option<usize>,
     nparticles: Option<usize>,
-    _phantom: PhantomData<(DriftState, DiffusionState, OutState, NStatesState, NOuteqsState, NParticlesState)>,
+    _phantom: PhantomData<(
+        DriftState,
+        DiffusionState,
+        OutState,
+        NStatesState,
+        NOuteqsState,
+        NParticlesState,
+    )>,
 }
 
 impl SDEBuilder<Missing, Missing, Missing, Missing, Missing, Missing> {
@@ -283,7 +297,8 @@ impl<DiffusionState, OutState, NStatesState, NOuteqsState, NParticlesState>
     pub fn drift(
         self,
         drift: Drift,
-    ) -> SDEBuilder<Provided, DiffusionState, OutState, NStatesState, NOuteqsState, NParticlesState> {
+    ) -> SDEBuilder<Provided, DiffusionState, OutState, NStatesState, NOuteqsState, NParticlesState>
+    {
         SDEBuilder {
             drift: Some(drift),
             diffusion: self.diffusion,
@@ -308,7 +323,8 @@ impl<DriftState, OutState, NStatesState, NOuteqsState, NParticlesState>
     pub fn diffusion(
         self,
         diffusion: Diffusion,
-    ) -> SDEBuilder<DriftState, Provided, OutState, NStatesState, NOuteqsState, NParticlesState> {
+    ) -> SDEBuilder<DriftState, Provided, OutState, NStatesState, NOuteqsState, NParticlesState>
+    {
         SDEBuilder {
             drift: self.drift,
             diffusion: Some(diffusion),
@@ -331,7 +347,8 @@ impl<DriftState, DiffusionState, NStatesState, NOuteqsState, NParticlesState>
     pub fn out(
         self,
         out: Out,
-    ) -> SDEBuilder<DriftState, DiffusionState, Provided, NStatesState, NOuteqsState, NParticlesState> {
+    ) -> SDEBuilder<DriftState, DiffusionState, Provided, NStatesState, NOuteqsState, NParticlesState>
+    {
         SDEBuilder {
             drift: self.drift,
             diffusion: self.diffusion,
@@ -354,7 +371,8 @@ impl<DriftState, DiffusionState, OutState, NOuteqsState, NParticlesState>
     pub fn nstates(
         self,
         nstates: usize,
-    ) -> SDEBuilder<DriftState, DiffusionState, OutState, Provided, NOuteqsState, NParticlesState> {
+    ) -> SDEBuilder<DriftState, DiffusionState, OutState, Provided, NOuteqsState, NParticlesState>
+    {
         SDEBuilder {
             drift: self.drift,
             diffusion: self.diffusion,
@@ -377,7 +395,8 @@ impl<DriftState, DiffusionState, OutState, NStatesState, NParticlesState>
     pub fn nouteqs(
         self,
         nouteqs: usize,
-    ) -> SDEBuilder<DriftState, DiffusionState, OutState, NStatesState, Provided, NParticlesState> {
+    ) -> SDEBuilder<DriftState, DiffusionState, OutState, NStatesState, Provided, NParticlesState>
+    {
         SDEBuilder {
             drift: self.drift,
             diffusion: self.diffusion,
@@ -424,7 +443,8 @@ impl<DriftState, DiffusionState, OutState, NStatesState, NOuteqsState>
     pub fn nparticles(
         self,
         nparticles: usize,
-    ) -> SDEBuilder<DriftState, DiffusionState, OutState, NStatesState, NOuteqsState, Provided> {
+    ) -> SDEBuilder<DriftState, DiffusionState, OutState, NStatesState, NOuteqsState, Provided>
+    {
         SDEBuilder {
             drift: self.drift,
             diffusion: self.diffusion,
