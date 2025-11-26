@@ -28,7 +28,7 @@ fn main() {
             fetch_params!(p, _ke, v);
             y[0] = x[0] / v;
         },
-        (1, 1),
+        States::new(1, 1),
     );
 
     let test_dir = std::env::current_dir().expect("Failed to get current directory");
@@ -50,7 +50,7 @@ fn main() {
                 fetch_params!(p, _ke, v);
                 y[0] = x[0] / v;
             }},
-            (1, 1),
+            States::new(1, 1),
         )
         "#
         ),

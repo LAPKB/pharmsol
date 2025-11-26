@@ -6,6 +6,9 @@ mod exa_tests {
 
     #[test]
     fn test_exa_predictions_match_ode_predictions() {
+        // Use local pharmsol for testing (required when testing unreleased features)
+        std::env::set_var("PHARMSOL_LOCAL_EXA", "1");
+
         // Create subject with observations
         let subject = Subject::builder("1")
             .infusion(0.0, 500.0, 0, 0.5)
@@ -31,7 +34,7 @@ mod exa_tests {
                 fetch_params!(p, _ke, v);
                 y[0] = x[0] / v;
             },
-            (1, 1),
+            States::new(1, 1),
         );
 
         // Compile the same model using exa
@@ -54,7 +57,7 @@ mod exa_tests {
                 fetch_params!(p, _ke, v);
                 y[0] = x[0] / v;
             }},
-            (1, 1),
+            States::new(1, 1),
         )
         "#
             ),
