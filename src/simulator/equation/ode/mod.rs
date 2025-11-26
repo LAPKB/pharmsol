@@ -218,33 +218,22 @@ impl Equation for ODE {
         support_point: &Vec<f64>,
         error_models: Option<&ErrorModels>,
     ) -> Result<(Self::P, Option<f64>), PharmsolError> {
+        // let lag = self.get_lag(support_point);
+        // let fa = self.get_fa(support_point);
         let mut output = Self::P::new(self.nparticles());
-        // Cache nstates/nouteqs to avoid repeated method calls
+        // Preallocate likelihood vector
+        let event_count: usize = subject.occasions().iter().map(|o| o.events().len()).sum();
+        let mut likelihood = Vec::with_capacity(event_count);
+        // Cache nstates to avoid repeated method calls
         let nstates = self.get_nstates();
-        let nouteqs = self.get_nouteqs();
-
-        // Preallocate likelihood vector with reasonable capacity
-        let mut likelihood = if error_models.is_some() {
-            Vec::with_capacity(32) // Most subjects have < 32 observations
-        } else {
-            Vec::new()
-        };
-
-        // Preallocate reusable vectors for bolus computation (outside occasion loop)
+        // Preallocate reusable vectors for bolus computation
         let mut state_with_bolus = V::zeros(nstates, NalgebraContext);
         let mut state_without_bolus = V::zeros(nstates, NalgebraContext);
         let zero_vector = V::zeros(nstates, NalgebraContext);
         let mut bolus_v = V::zeros(nstates, NalgebraContext);
-
-        // Convert support point to V once (avoid cloning in loop)
         let spp_v: V = DVector::from_vec(support_point.clone()).into();
-
         // Pre-allocate output vector for observations
-        let mut y_out = V::zeros(nouteqs, NalgebraContext);
-
-        // Pre-allocate atol vector (reused across occasions)
-        let atol = vec![ATOL; nstates];
-
+        let mut y_out = V::zeros(self.get_nouteqs(), NalgebraContext);
         for occasion in subject.occasions() {
             let covariates = occasion.covariates();
             let infusions = occasion.infusions_ref();
@@ -254,7 +243,7 @@ impl Equation for ODE {
             );
 
             let problem = OdeBuilder::<M>::new()
-                .atol(atol.clone())
+                .atol(vec![ATOL])
                 .rtol(RTOL)
                 .t0(occasion.initial_time())
                 .h0(1e-3)
@@ -263,7 +252,7 @@ impl Equation for ODE {
                     self.diffeq,
                     nstates,
                     support_point.clone(),
-                    spp_v.clone(),
+                    spp_v.clone(), // Reuse pre-converted V
                     covariates,
                     infusions.as_slice(),
                     self.initial_state(support_point, covariates, occasion.index())
@@ -274,11 +263,15 @@ impl Equation for ODE {
                 '_,
                 PMProblem<DiffEq>,
                 NewtonNonlinearSolver<M, diffsol::NalgebraLU<f64>>,
-            > = problem.bdf::<diffsol::NalgebraLU<f64>>()?;
+            > = problem.bdf::<diffsol::NalgebraLU<f64>>()?; // TODO: Result
 
             for (index, event) in events.iter().enumerate() {
                 let next_event = events.get(index + 1);
+                //START SIMULATE_EVENT
                 match event {
+                    // Event::Bolus(bolus) => {
+                    //     solver.state_mut().y[bolus.input()] += bolus.amount();
+                    // }
                     Event::Bolus(bolus) => {
                         // Reset and reuse the pre-allocated bolus vector
                         bolus_v.fill(0.0);
@@ -311,14 +304,18 @@ impl Equation for ODE {
                         );
 
                         // The difference between the two states is the actual bolus effect
+                        // Apply the computed changes to the state using vectorized operations
+                        // state_with_bolus now contains (with_bolus - without_bolus) after axpy
                         state_with_bolus.axpy(-1.0, &state_without_bolus, 1.0);
+                        // Add the difference to the solver state
                         solver.state_mut().y.axpy(1.0, &state_with_bolus, 1.0);
                     }
                     Event::Infusion(_infusion) => {}
                     Event::Observation(observation) => {
                         // Reuse pre-allocated output vector
                         y_out.fill(0.0);
-                        (self.out)(
+                        let out = &self.out;
+                        (out)(
                             solver.state().y,
                             &spp_v,
                             observation.time(),
@@ -334,34 +331,49 @@ impl Equation for ODE {
                         output.add_prediction(pred);
                     }
                 }
-                // Solve to next event time
+                // START SOLVE
                 if let Some(next_event) = next_event {
-                    if event.time() != next_event.time() {
+                    if !event.time().eq(&next_event.time()) {
                         match solver.set_stop_time(next_event.time()) {
                             Ok(_) => loop {
-                                match solver.step() {
+                                let ret = solver.step();
+                                match ret {
                                     Ok(OdeSolverStopReason::InternalTimestep) => continue,
                                     Ok(OdeSolverStopReason::TstopReached) => break,
-                                    Err(diffsol::error::DiffsolError::OdeSolverError(
-                                        OdeSolverError::StepSizeTooSmall { .. },
-                                    )) => {
-                                        return Err(PharmsolError::OtherError(
-                                            "The step size of the ODE solver went to zero, this means one of your parameters is getting really close to 0.0 or INFINITE. Check your model".to_string()
-                                        ));
-                                    }
-                                    Err(err) => panic!("Unexpected solver error: {:?}", err),
-                                    Ok(reason) => {
-                                        panic!("Unexpected solver return value: {:?}", reason)
+                                    Err(err) => match err {
+                                        diffsol::error::DiffsolError::OdeSolverError(
+                                            OdeSolverError::StepSizeTooSmall { time },
+                                        ) => {
+                                            let _time = time;
+                                            return Err(PharmsolError::OtherError("The step size of the ODE solver went to zero, this means one of your parameters is getting really close to 0.0 or INFINITE. Check your model".to_string()));
+                                        }
+                                        _ => {
+                                            panic!("Unexpected solver error: {:?}", err)
+                                        }
+                                    },
+                                    _ => {
+                                        panic!("Unexpected solver return value: {:?}", ret);
                                     }
                                 }
                             },
-                            Err(diffsol::error::DiffsolError::OdeSolverError(
-                                OdeSolverError::StopTimeAtCurrentTime,
-                            )) => continue,
-                            Err(e) => panic!("Unexpected solver error: {:?}", e),
+                            Err(e) => {
+                                match e {
+                                    diffsol::error::DiffsolError::OdeSolverError(
+                                        OdeSolverError::StopTimeAtCurrentTime,
+                                    ) => {
+                                        // If the stop time is at the current state time, we can just continue
+                                        continue;
+                                    }
+                                    _ => {
+                                        panic!("Unexpected solver error: {:?}", e)
+                                    }
+                                }
+                            }
                         }
                     }
                 }
+                //End SOLVE
+                //END SIMULATE_EVENT
             }
         }
         let ll = error_models.map(|_| likelihood.iter().product::<f64>());
