@@ -13,8 +13,10 @@ fn main() {
         .repeat(5, 0.2)
         .build();
 
-    let sde = equation::SDE::new(
-        |x, p, _t, dx, _rateiv, _cov| {
+    // Type-state builder: only required fields + init (which is used here)
+    // lag and fa are optional and default to no-op
+    let sde = equation::SDE::builder()
+        .drift(|x, p, _t, dx, _rateiv, _cov| {
             // automatically defined
             fetch_params!(p, ke0);
             // let ke0 = 1.2;
@@ -22,24 +24,24 @@ fn main() {
             let ke = x[1];
             // user defined
             dx[0] = -ke * x[0];
-        },
-        |p, d| {
+        })
+        .diffusion(|p, d| {
             fetch_params!(p, _ke0);
             d[1] = 0.1;
-        },
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |p, _t, _cov, x| {
+        })
+        // init is specified because we need non-zero initial state
+        .init(|p, _t, _cov, x| {
             fetch_params!(p, ke0);
             x[1] = ke0;
-        },
-        |x, p, _t, _cov, y| {
+        })
+        .out(|x, p, _t, _cov, y| {
             fetch_params!(p, _ke0);
             y[0] = x[0] / 50.0;
-        },
-        (2, 1),
-        1,
-    );
+        })
+        .nstates(2)
+        .nouteqs(1)
+        .nparticles(1)
+        .build();
 
     let ke_dist = rand_distr::Normal::new(1.2, 0.12).unwrap();
     // let v_dist = rand_distr::Normal::new(50.0, 10.0).unwrap();

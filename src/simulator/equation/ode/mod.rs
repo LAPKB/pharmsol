@@ -1,6 +1,8 @@
 mod closure;
 
 use core::panic;
+use std::collections::HashMap;
+use std::marker::PhantomData;
 
 use crate::{
     data::{Covariates, Infusion},
@@ -20,7 +22,7 @@ use diffsol::{
 };
 use nalgebra::DVector;
 
-use super::{Equation, EquationPriv, EquationTypes, State};
+use super::{Equation, EquationPriv, EquationTypes, Missing, Provided, State};
 
 const RTOL: f64 = 1e-4;
 const ATOL: f64 = 1e-4;
@@ -36,14 +38,315 @@ pub struct ODE {
 }
 
 impl ODE {
-    pub fn new(diffeq: DiffEq, lag: Lag, fa: Fa, init: Init, out: Out, neqs: Neqs) -> Self {
+    /// Creates a new ODE equation.
+    ///
+    /// For a more ergonomic API, consider using [`ODEBuilder`] instead.
+    ///
+    /// # Parameters
+    /// - `diffeq`: The differential equation closure
+    /// - `lag`: Lag time function
+    /// - `fa`: Bioavailability function
+    /// - `init`: Initial state function
+    /// - `out`: Output equation function
+    /// - `neqs`: Number of states and output equations (can be a tuple or [`Neqs`])
+    pub fn new(
+        diffeq: DiffEq,
+        lag: Lag,
+        fa: Fa,
+        init: Init,
+        out: Out,
+        neqs: impl Into<Neqs>,
+    ) -> Self {
         Self {
             diffeq,
             lag,
             fa,
             init,
             out,
-            neqs,
+            neqs: neqs.into(),
+        }
+    }
+
+    /// Returns a new [`ODEBuilder`] for constructing an ODE equation.
+    ///
+    /// # Example
+    /// ```ignore
+    /// use pharmsol::prelude::*;
+    ///
+    /// // Minimal builder - only required fields
+    /// let ode = ODE::builder()
+    ///     .diffeq(diffeq)
+    ///     .out(out)
+    ///     .nstates(2)
+    ///     .nouteqs(1)
+    ///     .build();
+    ///
+    /// // With optional fields
+    /// let ode = ODE::builder()
+    ///     .diffeq(diffeq)
+    ///     .out(out)
+    ///     .nstates(2)
+    ///     .nouteqs(1)
+    ///     .lag(|p, _t, _cov| lag! { 0 => p[2] })
+    ///     .fa(|p, _t, _cov| fa! { 0 => 0.8 })
+    ///     .init(|p, _t, _cov, x| { x[0] = p[3]; })
+    ///     .build();
+    /// ```
+    pub fn builder() -> ODEBuilder<Missing, Missing, Missing, Missing> {
+        ODEBuilder::new()
+    }
+}
+
+// =============================================================================
+// Type-State Builder Pattern
+// =============================================================================
+
+// Note: Missing and Provided marker types are defined in the parent module
+// and imported via `use super::{..., Missing, Provided, ...}`
+
+/// Builder for constructing [`ODE`] equations with compile-time validation.
+///
+/// This builder uses the type-state pattern to ensure all required fields
+/// are set before `build()` can be called. Optional fields (`lag`, `fa`, `init`)
+/// have sensible defaults.
+///
+/// # Required Fields (enforced at compile time)
+/// - `diffeq`: The differential equation closure
+/// - `out`: Output equation function
+/// - `nstates`: Number of state variables
+/// - `nouteqs`: Number of output equations
+///
+/// # Optional Fields (with defaults)
+/// - `lag`: Lag time function (defaults to no lag)
+/// - `fa`: Bioavailability function (defaults to 100% bioavailability)
+/// - `init`: Initial state function (defaults to zero initial state)
+///
+/// # Example
+/// ```ignore
+/// use pharmsol::prelude::*;
+///
+/// // Minimal example - only required fields
+/// let ode = ODE::builder()
+///     .diffeq(|x, p, _t, dx, _b, rateiv, _cov| {
+///         fetch_params!(p, ke, _v);
+///         dx[0] = -ke * x[0] + rateiv[0];
+///     })
+///     .out(|x, p, _t, _cov, y| {
+///         fetch_params!(p, _ke, v);
+///         y[0] = x[0] / v;
+///     })
+///     .nstates(1)
+///     .nouteqs(1)
+///     .build();
+/// ```
+pub struct ODEBuilder<DiffEqState, OutState, NStatesState, NOuteqsState> {
+    diffeq: Option<DiffEq>,
+    lag: Option<Lag>,
+    fa: Option<Fa>,
+    init: Option<Init>,
+    out: Option<Out>,
+    nstates: Option<usize>,
+    nouteqs: Option<usize>,
+    _phantom: PhantomData<(DiffEqState, OutState, NStatesState, NOuteqsState)>,
+}
+
+impl ODEBuilder<Missing, Missing, Missing, Missing> {
+    /// Creates a new ODEBuilder with all required fields unset.
+    pub fn new() -> Self {
+        Self {
+            diffeq: None,
+            lag: None,
+            fa: None,
+            init: None,
+            out: None,
+            nstates: None,
+            nouteqs: None,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl Default for ODEBuilder<Missing, Missing, Missing, Missing> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<DiffEqState, OutState, NStatesState, NOuteqsState>
+    ODEBuilder<DiffEqState, OutState, NStatesState, NOuteqsState>
+{
+    /// Sets the lag time function (optional).
+    ///
+    /// If not set, defaults to no lag for any compartment.
+    pub fn lag(mut self, lag: Lag) -> Self {
+        self.lag = Some(lag);
+        self
+    }
+
+    /// Sets the bioavailability function (optional).
+    ///
+    /// If not set, defaults to 100% bioavailability for all compartments.
+    pub fn fa(mut self, fa: Fa) -> Self {
+        self.fa = Some(fa);
+        self
+    }
+
+    /// Sets the initial state function (optional).
+    ///
+    /// If not set, defaults to zero initial state for all compartments.
+    pub fn init(mut self, init: Init) -> Self {
+        self.init = Some(init);
+        self
+    }
+}
+
+impl<OutState, NStatesState, NOuteqsState>
+    ODEBuilder<Missing, OutState, NStatesState, NOuteqsState>
+{
+    /// Sets the differential equation closure (required).
+    ///
+    /// This closure defines the system of ODEs: dx/dt = f(x, p, t, ...)
+    ///
+    /// # Parameters
+    /// The closure receives:
+    /// - `x`: Current state vector
+    /// - `p`: Parameter vector
+    /// - `t`: Current time
+    /// - `dx`: Output vector for derivatives (mutated by the closure)
+    /// - `bolus`: Bolus amounts
+    /// - `rateiv`: IV infusion rates
+    /// - `cov`: Covariates
+    pub fn diffeq(
+        self,
+        diffeq: DiffEq,
+    ) -> ODEBuilder<Provided, OutState, NStatesState, NOuteqsState> {
+        ODEBuilder {
+            diffeq: Some(diffeq),
+            lag: self.lag,
+            fa: self.fa,
+            init: self.init,
+            out: self.out,
+            nstates: self.nstates,
+            nouteqs: self.nouteqs,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<DiffEqState, NStatesState, NOuteqsState>
+    ODEBuilder<DiffEqState, Missing, NStatesState, NOuteqsState>
+{
+    /// Sets the output equation function (required).
+    ///
+    /// This closure computes observable outputs from the state.
+    pub fn out(self, out: Out) -> ODEBuilder<DiffEqState, Provided, NStatesState, NOuteqsState> {
+        ODEBuilder {
+            diffeq: self.diffeq,
+            lag: self.lag,
+            fa: self.fa,
+            init: self.init,
+            out: Some(out),
+            nstates: self.nstates,
+            nouteqs: self.nouteqs,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<DiffEqState, OutState, NOuteqsState> ODEBuilder<DiffEqState, OutState, Missing, NOuteqsState> {
+    /// Sets the number of state variables (compartments) (required).
+    pub fn nstates(
+        self,
+        nstates: usize,
+    ) -> ODEBuilder<DiffEqState, OutState, Provided, NOuteqsState> {
+        ODEBuilder {
+            diffeq: self.diffeq,
+            lag: self.lag,
+            fa: self.fa,
+            init: self.init,
+            out: self.out,
+            nstates: Some(nstates),
+            nouteqs: self.nouteqs,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<DiffEqState, OutState, NStatesState> ODEBuilder<DiffEqState, OutState, NStatesState, Missing> {
+    /// Sets the number of output equations (required).
+    pub fn nouteqs(
+        self,
+        nouteqs: usize,
+    ) -> ODEBuilder<DiffEqState, OutState, NStatesState, Provided> {
+        ODEBuilder {
+            diffeq: self.diffeq,
+            lag: self.lag,
+            fa: self.fa,
+            init: self.init,
+            out: self.out,
+            nstates: self.nstates,
+            nouteqs: Some(nouteqs),
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<DiffEqState, OutState> ODEBuilder<DiffEqState, OutState, Missing, Missing> {
+    /// Sets both nstates and nouteqs from a [`Neqs`] struct or tuple (required).
+    pub fn neqs(
+        self,
+        neqs: impl Into<Neqs>,
+    ) -> ODEBuilder<DiffEqState, OutState, Provided, Provided> {
+        let neqs = neqs.into();
+        ODEBuilder {
+            diffeq: self.diffeq,
+            lag: self.lag,
+            fa: self.fa,
+            init: self.init,
+            out: self.out,
+            nstates: Some(neqs.nstates),
+            nouteqs: Some(neqs.nouteqs),
+            _phantom: PhantomData,
+        }
+    }
+}
+
+/// Default lag function: no lag for any compartment
+fn default_lag(_p: &V, _t: f64, _cov: &Covariates) -> HashMap<usize, f64> {
+    HashMap::new()
+}
+
+/// Default fa function: 100% bioavailability for all compartments
+fn default_fa(_p: &V, _t: f64, _cov: &Covariates) -> HashMap<usize, f64> {
+    HashMap::new()
+}
+
+/// Default init function: zero initial state
+fn default_init(_p: &V, _t: f64, _cov: &Covariates, _x: &mut V) {
+    // State is already zero-initialized
+}
+
+impl ODEBuilder<Provided, Provided, Provided, Provided> {
+    /// Builds the [`ODE`] equation.
+    ///
+    /// This method is only available when all required fields have been set:
+    /// - `diffeq`
+    /// - `out`
+    /// - `nstates`
+    /// - `nouteqs`
+    ///
+    /// Optional fields use defaults if not set:
+    /// - `lag`: No lag (empty HashMap)
+    /// - `fa`: 100% bioavailability (empty HashMap)
+    /// - `init`: Zero initial state
+    pub fn build(self) -> ODE {
+        ODE {
+            diffeq: self.diffeq.unwrap(),
+            lag: self.lag.unwrap_or(default_lag),
+            fa: self.fa.unwrap_or(default_fa),
+            init: self.init.unwrap_or(default_init),
+            out: self.out.unwrap(),
+            neqs: Neqs::new(self.nstates.unwrap(), self.nouteqs.unwrap()),
         }
     }
 }
@@ -132,12 +435,12 @@ impl EquationPriv for ODE {
     }
     #[inline(always)]
     fn get_nstates(&self) -> usize {
-        self.neqs.0
+        self.neqs.nstates
     }
 
     #[inline(always)]
     fn get_nouteqs(&self) -> usize {
-        self.neqs.1
+        self.neqs.nouteqs
     }
     #[inline(always)]
     fn solve(

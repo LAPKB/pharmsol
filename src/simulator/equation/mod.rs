@@ -16,6 +16,22 @@ use crate::{
 
 use super::likelihood::Prediction;
 
+// =============================================================================
+// Type-State Builder Marker Types
+// =============================================================================
+
+/// Marker type indicating a required field is missing in a builder.
+///
+/// This is used in the type-state builder pattern to enforce at compile time
+/// that all required fields are set before `build()` can be called.
+pub struct Missing;
+
+/// Marker type indicating a required field has been provided in a builder.
+///
+/// This is used in the type-state builder pattern to track which required
+/// fields have been set.
+pub struct Provided;
+
 /// Trait for state vectors that can receive bolus doses.
 pub trait State {
     /// Add a bolus dose to the state at the specified input compartment.
