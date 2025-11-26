@@ -202,14 +202,19 @@ impl Equation for ODE {
         // let lag = self.get_lag(support_point);
         // let fa = self.get_fa(support_point);
         let mut output = Self::P::new(self.nparticles());
-        let mut likelihood = Vec::new();
-        // Preallocate bolus vectors
-        let mut bolus_vec = vec![0.0; self.get_nstates()];
-        let mut state_with_bolus = V::zeros(self.get_nstates(), NalgebraContext);
-        let mut state_without_bolus = V::zeros(self.get_nstates(), NalgebraContext);
-        let zero_vector = V::zeros(self.get_nstates(), NalgebraContext);
-        let spp_v = DVector::from_vec(support_point.clone());
-        let spp_v: V = spp_v.into();
+        // Preallocate likelihood vector
+        let event_count: usize = subject.occasions().iter().map(|o| o.events().len()).sum();
+        let mut likelihood = Vec::with_capacity(event_count);
+        // Cache nstates to avoid repeated method calls
+        let nstates = self.get_nstates();
+        // Preallocate reusable vectors for bolus computation
+        let mut state_with_bolus = V::zeros(nstates, NalgebraContext);
+        let mut state_without_bolus = V::zeros(nstates, NalgebraContext);
+        let zero_vector = V::zeros(nstates, NalgebraContext);
+        let mut bolus_v = V::zeros(nstates, NalgebraContext);
+        let spp_v: V = DVector::from_vec(support_point.clone()).into();
+        // Pre-allocate output vector for observations
+        let mut y_out = V::zeros(self.get_nouteqs(), NalgebraContext);
         for occasion in subject.occasions() {
             let covariates = occasion.covariates();
             let infusions = occasion.infusions_ref();
@@ -224,12 +229,13 @@ impl Equation for ODE {
                 .t0(occasion.initial_time())
                 .h0(1e-3)
                 .p(support_point.clone())
-                .build_from_eqn(PMProblem::new(
+                .build_from_eqn(PMProblem::with_params_v(
                     self.diffeq,
-                    self.get_nstates(),
-                    support_point.clone(), //TODO: Avoid cloning the support point
+                    nstates,
+                    support_point.clone(),
+                    spp_v.clone(), // Reuse pre-converted V
                     covariates,
-                    infusions,
+                    infusions.as_slice(),
                     self.initial_state(support_point, covariates, occasion.index())
                         .into(),
                 ))?;
@@ -248,15 +254,13 @@ impl Equation for ODE {
                     //     solver.state_mut().y[bolus.input()] += bolus.amount();
                     // }
                     Event::Bolus(bolus) => {
-                        // Reset and reuse the bolus vector
-                        bolus_vec.fill(0.0);
-                        bolus_vec[bolus.input()] = bolus.amount();
+                        // Reset and reuse the pre-allocated bolus vector
+                        bolus_v.fill(0.0);
+                        bolus_v[bolus.input()] = bolus.amount();
 
-                        // Reset and reuse the bolus changes vector
+                        // Reset and reuse the bolus changes vectors
                         state_with_bolus.fill(0.0);
                         state_without_bolus.fill(0.0);
-
-                        let bolus_v: V = DVector::from_vec(bolus_vec.clone()).into();
 
                         // Call the differential equation closure without bolus
                         (self.diffeq)(
@@ -264,8 +268,8 @@ impl Equation for ODE {
                             &spp_v,
                             event.time(),
                             &mut state_without_bolus,
-                            zero_vector.clone(), // Zero bolus
-                            zero_vector.clone(),
+                            &zero_vector,
+                            &zero_vector,
                             covariates,
                         );
 
@@ -275,38 +279,37 @@ impl Equation for ODE {
                             &spp_v,
                             event.time(),
                             &mut state_with_bolus,
-                            bolus_v,
-                            zero_vector.clone(),
+                            &bolus_v,
+                            &zero_vector,
                             covariates,
                         );
 
                         // The difference between the two states is the actual bolus effect
-                        // Apply the computed changes to the state
-                        for i in 0..self.get_nstates() {
-                            solver.state_mut().y[i] += state_with_bolus[i] - state_without_bolus[i];
-                        }
+                        // Apply the computed changes to the state using vectorized operations
+                        // state_with_bolus now contains (with_bolus - without_bolus) after axpy
+                        state_with_bolus.axpy(-1.0, &state_without_bolus, 1.0);
+                        // Add the difference to the solver state
+                        solver.state_mut().y.axpy(1.0, &state_with_bolus, 1.0);
                     }
                     Event::Infusion(_infusion) => {}
                     Event::Observation(observation) => {
-                        //START PROCESS_OBSERVATION
-                        let mut y = V::zeros(self.get_nouteqs(), NalgebraContext);
+                        // Reuse pre-allocated output vector
+                        y_out.fill(0.0);
                         let out = &self.out;
-                        let spp = DVector::from_vec(support_point.clone()); // TODO: Avoid clone
                         (out)(
                             solver.state().y,
-                            &spp.into(),
+                            &spp_v,
                             observation.time(),
                             covariates,
-                            &mut y,
+                            &mut y_out,
                         );
-                        let pred = y[observation.outeq()];
+                        let pred = y_out[observation.outeq()];
                         let pred =
                             observation.to_prediction(pred, solver.state().y.as_slice().to_vec());
                         if let Some(error_models) = error_models {
                             likelihood.push(pred.likelihood(error_models)?);
                         }
                         output.add_prediction(pred);
-                        //END PROCESS_OBSERVATION
                     }
                 }
                 // START SOLVE

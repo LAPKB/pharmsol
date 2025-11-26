@@ -4,28 +4,135 @@ use diffsol::{
     NonLinearOpJacobian, OdeEquations, OdeEquationsRef, Op, Vector, VectorCommon,
 };
 use nalgebra::DVector;
-use std::cell::RefCell;
+use std::{cell::RefCell, cmp::Ordering};
 type M = NalgebraMat<f64>;
 type V = <M as MatrixCommon>::V;
 type C = <M as MatrixCommon>::C;
 type T = <M as MatrixCommon>::T;
 
+#[derive(Debug, Clone)]
+struct InfusionChannel {
+    input: usize,
+    event_times: Vec<f64>,
+    cumulative_rates: Vec<f64>,
+}
+
+impl InfusionChannel {
+    fn new(input: usize, mut events: Vec<(f64, f64)>) -> Self {
+        events.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal));
+
+        let mut event_times = Vec::with_capacity(events.len());
+        let mut cumulative_rates = Vec::with_capacity(events.len());
+        let mut current_rate = 0.0;
+
+        for (time, delta) in events {
+            current_rate += delta;
+            event_times.push(time);
+            cumulative_rates.push(current_rate);
+        }
+
+        Self {
+            input,
+            event_times,
+            cumulative_rates,
+        }
+    }
+
+    fn rate_at(&self, time: f64) -> f64 {
+        if self.event_times.is_empty() {
+            return 0.0;
+        }
+
+        match self
+            .event_times
+            .binary_search_by(|probe| probe.partial_cmp(&time).unwrap_or(Ordering::Less))
+        {
+            Ok(mut idx) => {
+                while idx + 1 < self.event_times.len()
+                    && self.event_times[idx + 1] == self.event_times[idx]
+                {
+                    idx += 1;
+                }
+                self.cumulative_rates[idx]
+            }
+            Err(0) => 0.0,
+            Err(idx) => self.cumulative_rates[idx - 1],
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct InfusionSchedule {
+    channels: Vec<InfusionChannel>,
+}
+
+impl InfusionSchedule {
+    fn new(nstates: usize, infusions: &[&Infusion]) -> Self {
+        if nstates == 0 || infusions.is_empty() {
+            return Self {
+                channels: Vec::new(),
+            };
+        }
+
+        let mut per_input: Vec<Vec<(f64, f64)>> = vec![Vec::new(); nstates];
+        for infusion in infusions {
+            if infusion.duration() <= 0.0 {
+                continue;
+            }
+
+            let input = infusion.input();
+            if input >= nstates {
+                continue;
+            }
+
+            let rate = infusion.amount() / infusion.duration();
+            per_input[input].push((infusion.time(), rate));
+            per_input[input].push((infusion.time() + infusion.duration(), -rate));
+        }
+
+        let channels = per_input
+            .into_iter()
+            .enumerate()
+            .filter_map(|(input, events)| {
+                if events.is_empty() {
+                    None
+                } else {
+                    Some(InfusionChannel::new(input, events))
+                }
+            })
+            .collect();
+
+        Self { channels }
+    }
+
+    fn fill_rate_vector(&self, time: f64, rateiv: &mut V) {
+        rateiv.fill(0.0);
+        for channel in &self.channels {
+            let rate = channel.rate_at(time);
+            if rate != 0.0 {
+                rateiv[channel.input] = rate;
+            }
+        }
+    }
+}
+
 pub struct PmRhs<'a, F>
 where
-    F: Fn(&V, &V, T, &mut V, V, V, &Covariates),
+    F: Fn(&V, &V, T, &mut V, &V, &V, &Covariates),
 {
     nstates: usize,
     nparams: usize,
-    infusions: &'a [&'a Infusion], // Change from Vec to slice reference
+    infusion_schedule: &'a InfusionSchedule,
     covariates: &'a Covariates,
-    p: &'a Vec<f64>,
+    p_as_v: &'a V,
     func: &'a F,
     rateiv_buffer: &'a RefCell<V>,
+    zero_bolus: &'a V,
 }
 
 impl<F> Op for PmRhs<'_, F>
 where
-    F: Fn(&V, &V, T, &mut V, V, V, &Covariates),
+    F: Fn(&V, &V, T, &mut V, &V, &V, &Covariates),
 {
     type T = T;
     type V = V;
@@ -154,85 +261,36 @@ impl Op for PmOut {
 
 impl<F> NonLinearOp for PmRhs<'_, F>
 where
-    F: Fn(&V, &V, T, &mut V, V, V, &Covariates),
+    F: Fn(&V, &V, T, &mut V, &V, &V, &Covariates),
 {
     fn call_inplace(&self, x: &Self::V, t: Self::T, y: &mut Self::V) {
-        // Compute rate IV at the current time
         let mut rateiv_ref = self.rateiv_buffer.borrow_mut();
-        rateiv_ref.fill(0.0);
+        self.infusion_schedule.fill_rate_vector(t, &mut rateiv_ref);
 
-        for infusion in self.infusions {
-            if t >= infusion.time() && t <= infusion.duration() + infusion.time() {
-                rateiv_ref[infusion.input()] += infusion.amount() / infusion.duration();
-            }
-        }
-
-        // We need to drop the mutable borrow before calling the function
-        // to avoid potential conflicts with future borrows in the function
-        let rateiv = rateiv_ref.clone();
-        drop(rateiv_ref);
-
-        // Avoid creating a new DVector when possible
-        let p_len = self.p.len();
-        let mut p_dvector: DVector<f64>;
-        let p_ref: &DVector<f64>;
-
-        // Use stack allocation for small parameter vectors
-        if p_len <= 16 {
-            let mut stack_p = [0.0; 16];
-            stack_p[..p_len].copy_from_slice(self.p);
-            p_dvector = DVector::from_row_slice(&stack_p[..p_len]);
-            p_ref = &p_dvector;
-        } else {
-            // For larger vectors, use the more efficient approach with unsafe
-            p_dvector = DVector::zeros(p_len);
-            unsafe {
-                std::ptr::copy_nonoverlapping(self.p.as_ptr(), p_dvector.as_mut_ptr(), p_len);
-            }
-            p_ref = &p_dvector;
-        }
-
-        let pnew = p_ref.to_owned().into();
-
-        let bolus = V::zeros(self.nstates, NalgebraContext);
-
-        (self.func)(x, &pnew, t, y, bolus, rateiv, self.covariates);
+        (self.func)(
+            x,
+            self.p_as_v,
+            t,
+            y,
+            self.zero_bolus,
+            &rateiv_ref,
+            self.covariates,
+        );
     }
 }
 
 impl<F> NonLinearOpJacobian for PmRhs<'_, F>
 where
-    F: Fn(&V, &V, T, &mut V, V, V, &Covariates),
+    F: Fn(&V, &V, T, &mut V, &V, &V, &Covariates),
 {
     fn jac_mul_inplace(&self, _x: &Self::V, t: Self::T, v: &Self::V, y: &mut Self::V) {
-        let rateiv = V::zeros(self.nstates, NalgebraContext);
-
-        // Avoid creating a new DVector when possible
-        let p_len = self.p.len();
-        let mut p_dvector: DVector<f64>;
-
-        // Use stack allocation for small parameter vectors
-        if p_len <= 16 {
-            let mut stack_p = [0.0; 16];
-            stack_p[..p_len].copy_from_slice(self.p);
-            p_dvector = DVector::from_row_slice(&stack_p[..p_len]);
-        } else {
-            // For larger vectors, use the more efficient approach with unsafe
-            p_dvector = DVector::zeros(p_len);
-            unsafe {
-                std::ptr::copy_nonoverlapping(self.p.as_ptr(), p_dvector.as_mut_ptr(), p_len);
-            }
-        }
-
-        let bolus = V::zeros(self.nstates, NalgebraContext);
-
         (self.func)(
             v,
-            &p_dvector.to_owned().into(),
+            self.p_as_v,
             t,
             y,
-            bolus,
-            rateiv,
+            self.zero_bolus,
+            self.zero_bolus,
             self.covariates,
         );
     }
@@ -253,32 +311,40 @@ impl NonLinearOp for PmOut {
 // Completely revised PMProblem to fix lifetime issues and improve performance
 pub struct PMProblem<'a, F>
 where
-    F: Fn(&V, &V, T, &mut V, V, V, &Covariates) + 'a,
+    F: Fn(&V, &V, T, &mut V, &V, &V, &Covariates) + 'a,
 {
     func: F,
     nstates: usize,
     nparams: usize,
     init: V,
     p: Vec<f64>,
+    p_as_v: V,
+    zero_bolus: V,
     covariates: &'a Covariates,
-    infusions: Vec<&'a Infusion>,
+    infusion_schedule: InfusionSchedule,
     rateiv_buffer: RefCell<V>,
 }
 
 impl<'a, F> PMProblem<'a, F>
 where
-    F: Fn(&V, &V, T, &mut V, V, V, &Covariates) + 'a,
+    F: Fn(&V, &V, T, &mut V, &V, &V, &Covariates) + 'a,
 {
-    pub fn new(
+    /// Creates a new PMProblem with a pre-converted parameter vector.
+    /// This avoids an allocation when the caller already has a V representation.
+    pub fn with_params_v(
         func: F,
         nstates: usize,
         p: Vec<f64>,
+        p_as_v: V,
         covariates: &'a Covariates,
-        infusions: Vec<&'a Infusion>,
+        infusions: &[&'a Infusion],
         init: V,
     ) -> Self {
         let nparams = p.len();
         let rateiv_buffer = RefCell::new(V::zeros(nstates, NalgebraContext));
+        let infusion_schedule = InfusionSchedule::new(nstates, infusions);
+        // Pre-allocate zero bolus vector
+        let zero_bolus = V::zeros(nstates, NalgebraContext);
 
         Self {
             func,
@@ -286,8 +352,10 @@ where
             nparams,
             init,
             p,
+            p_as_v,
+            zero_bolus,
             covariates,
-            infusions,
+            infusion_schedule,
             rateiv_buffer,
         }
     }
@@ -295,7 +363,7 @@ where
 
 impl<'a, F> Op for PMProblem<'a, F>
 where
-    F: Fn(&V, &V, T, &mut V, V, V, &Covariates) + 'a,
+    F: Fn(&V, &V, T, &mut V, &V, &V, &Covariates) + 'a,
 {
     type T = T;
     type V = V;
@@ -318,7 +386,7 @@ where
 // Implement OdeEquationsRef for PMProblem for any lifetime 'b
 impl<'a, 'b, F> OdeEquationsRef<'b> for PMProblem<'a, F>
 where
-    F: Fn(&V, &V, T, &mut V, V, V, &Covariates) + 'a,
+    F: Fn(&V, &V, T, &mut V, &V, &V, &Covariates) + 'a,
 {
     type Rhs = PmRhs<'b, F>;
     type Mass = PmMass;
@@ -330,17 +398,18 @@ where
 // Implement OdeEquations with correct lifetime handling
 impl<'a, F> OdeEquations for PMProblem<'a, F>
 where
-    F: Fn(&V, &V, T, &mut V, V, V, &Covariates) + 'a,
+    F: Fn(&V, &V, T, &mut V, &V, &V, &Covariates) + 'a,
 {
     fn rhs(&self) -> PmRhs<'_, F> {
         PmRhs {
             nstates: self.nstates,
             nparams: self.nparams,
-            infusions: &self.infusions, // Use reference instead of clone
+            infusion_schedule: &self.infusion_schedule,
             covariates: self.covariates,
-            p: &self.p,
+            p_as_v: &self.p_as_v,
             func: &self.func,
             rateiv_buffer: &self.rateiv_buffer,
+            zero_bolus: &self.zero_bolus,
         }
     }
 
@@ -380,9 +449,11 @@ where
         if self.p.len() == p.len() {
             for i in 0..p.len() {
                 self.p[i] = p[i];
+                self.p_as_v[i] = p[i];
             }
         } else {
             self.p = p.inner().iter().cloned().collect();
+            self.p_as_v = p.clone();
         }
     }
 }
