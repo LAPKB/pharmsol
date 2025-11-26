@@ -21,6 +21,8 @@ where
     p: &'a Vec<f64>,
     func: &'a F,
     rateiv_buffer: &'a RefCell<V>,
+    /// Pre-allocated parameter vector to avoid repeated allocations
+    p_buffer: &'a RefCell<V>,
 }
 
 impl<F> Op for PmRhs<'_, F>
@@ -157,7 +159,7 @@ where
     F: Fn(&V, &V, T, &mut V, V, V, &Covariates),
 {
     fn call_inplace(&self, x: &Self::V, t: Self::T, y: &mut Self::V) {
-        // Compute rate IV at the current time
+        // Compute rate IV at the current time using pre-allocated buffer
         let mut rateiv_ref = self.rateiv_buffer.borrow_mut();
         rateiv_ref.fill(0.0);
 
@@ -167,32 +169,17 @@ where
             }
         }
 
-        // We need to drop the mutable borrow before calling the function
-        // to avoid potential conflicts with future borrows in the function
+        // Clone rateiv before dropping the borrow
         let rateiv = rateiv_ref.clone();
         drop(rateiv_ref);
 
-        // Avoid creating a new DVector when possible
-        let p_len = self.p.len();
-        let mut p_dvector: DVector<f64>;
-        let p_ref: &DVector<f64>;
-
-        // Use stack allocation for small parameter vectors
-        if p_len <= 16 {
-            let mut stack_p = [0.0; 16];
-            stack_p[..p_len].copy_from_slice(self.p);
-            p_dvector = DVector::from_row_slice(&stack_p[..p_len]);
-            p_ref = &p_dvector;
-        } else {
-            // For larger vectors, use the more efficient approach with unsafe
-            p_dvector = DVector::zeros(p_len);
-            unsafe {
-                std::ptr::copy_nonoverlapping(self.p.as_ptr(), p_dvector.as_mut_ptr(), p_len);
-            }
-            p_ref = &p_dvector;
+        // Use pre-allocated parameter buffer
+        let mut p_ref = self.p_buffer.borrow_mut();
+        for (i, &val) in self.p.iter().enumerate() {
+            p_ref[i] = val;
         }
-
-        let pnew = p_ref.to_owned().into();
+        let pnew = p_ref.clone();
+        drop(p_ref);
 
         let bolus = V::zeros(self.nstates, NalgebraContext);
 
@@ -207,34 +194,17 @@ where
     fn jac_mul_inplace(&self, _x: &Self::V, t: Self::T, v: &Self::V, y: &mut Self::V) {
         let rateiv = V::zeros(self.nstates, NalgebraContext);
 
-        // Avoid creating a new DVector when possible
-        let p_len = self.p.len();
-        let mut p_dvector: DVector<f64>;
-
-        // Use stack allocation for small parameter vectors
-        if p_len <= 16 {
-            let mut stack_p = [0.0; 16];
-            stack_p[..p_len].copy_from_slice(self.p);
-            p_dvector = DVector::from_row_slice(&stack_p[..p_len]);
-        } else {
-            // For larger vectors, use the more efficient approach with unsafe
-            p_dvector = DVector::zeros(p_len);
-            unsafe {
-                std::ptr::copy_nonoverlapping(self.p.as_ptr(), p_dvector.as_mut_ptr(), p_len);
-            }
+        // Use pre-allocated parameter buffer
+        let mut p_ref = self.p_buffer.borrow_mut();
+        for (i, &val) in self.p.iter().enumerate() {
+            p_ref[i] = val;
         }
+        let pnew = p_ref.clone();
+        drop(p_ref);
 
         let bolus = V::zeros(self.nstates, NalgebraContext);
 
-        (self.func)(
-            v,
-            &p_dvector.to_owned().into(),
-            t,
-            y,
-            bolus,
-            rateiv,
-            self.covariates,
-        );
+        (self.func)(v, &pnew, t, y, bolus, rateiv, self.covariates);
     }
 }
 
@@ -263,6 +233,8 @@ where
     covariates: &'a Covariates,
     infusions: Vec<&'a Infusion>,
     rateiv_buffer: RefCell<V>,
+    /// Pre-allocated parameter vector buffer
+    p_buffer: RefCell<V>,
 }
 
 impl<'a, F> PMProblem<'a, F>
@@ -279,6 +251,7 @@ where
     ) -> Self {
         let nparams = p.len();
         let rateiv_buffer = RefCell::new(V::zeros(nstates, NalgebraContext));
+        let p_buffer = RefCell::new(V::zeros(nparams, NalgebraContext));
 
         Self {
             func,
@@ -289,6 +262,7 @@ where
             covariates,
             infusions,
             rateiv_buffer,
+            p_buffer,
         }
     }
 }
@@ -341,6 +315,7 @@ where
             p: &self.p,
             func: &self.func,
             rateiv_buffer: &self.rateiv_buffer,
+            p_buffer: &self.p_buffer,
         }
     }
 

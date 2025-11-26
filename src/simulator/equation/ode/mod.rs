@@ -91,9 +91,9 @@ fn _estimate_likelihood(
 
 #[inline(always)]
 #[cached(
-    ty = "UnboundCache<String, SubjectPredictions>",
+    ty = "UnboundCache<(u64, u64), SubjectPredictions>",
     create = "{ UnboundCache::with_capacity(100_000) }",
-    convert = r#"{ format!("{}{}", subject.id(), spphash(support_point)) }"#,
+    convert = r#"{ (subject.hash(), spphash(support_point)) }"#,
     result = "true"
 )]
 fn _subject_predictions(
@@ -204,12 +204,13 @@ impl Equation for ODE {
         let mut output = Self::P::new(self.nparticles());
         let mut likelihood = Vec::new();
         // Preallocate bolus vectors
-        let mut bolus_vec = vec![0.0; self.get_nstates()];
-        let mut state_with_bolus = V::zeros(self.get_nstates(), NalgebraContext);
-        let mut state_without_bolus = V::zeros(self.get_nstates(), NalgebraContext);
-        let zero_vector = V::zeros(self.get_nstates(), NalgebraContext);
-        let spp_v = DVector::from_vec(support_point.clone());
-        let spp_v: V = spp_v.into();
+        let nstates = self.get_nstates();
+        let mut bolus_vec = vec![0.0; nstates];
+        let mut state_with_bolus = V::zeros(nstates, NalgebraContext);
+        let mut state_without_bolus = V::zeros(nstates, NalgebraContext);
+        let zero_vector = V::zeros(nstates, NalgebraContext);
+        // Pre-allocate support point vector once outside the loop
+        let spp_v: V = DVector::from_column_slice(support_point).into();
         for occasion in subject.occasions() {
             let covariates = occasion.covariates();
             let infusions = occasion.infusions_ref();
@@ -256,7 +257,8 @@ impl Equation for ODE {
                         state_with_bolus.fill(0.0);
                         state_without_bolus.fill(0.0);
 
-                        let bolus_v: V = DVector::from_vec(bolus_vec.clone()).into();
+                        // Reuse bolus_vec by converting slice to DVector without clone
+                        let bolus_v: V = DVector::from_column_slice(&bolus_vec).into();
 
                         // Call the differential equation closure without bolus
                         (self.diffeq)(
@@ -264,7 +266,7 @@ impl Equation for ODE {
                             &spp_v,
                             event.time(),
                             &mut state_without_bolus,
-                            zero_vector.clone(), // Zero bolus
+                            zero_vector.clone(),
                             zero_vector.clone(),
                             covariates,
                         );
@@ -282,7 +284,7 @@ impl Equation for ODE {
 
                         // The difference between the two states is the actual bolus effect
                         // Apply the computed changes to the state
-                        for i in 0..self.get_nstates() {
+                        for i in 0..nstates {
                             solver.state_mut().y[i] += state_with_bolus[i] - state_without_bolus[i];
                         }
                     }
@@ -291,10 +293,10 @@ impl Equation for ODE {
                         //START PROCESS_OBSERVATION
                         let mut y = V::zeros(self.get_nouteqs(), NalgebraContext);
                         let out = &self.out;
-                        let spp = DVector::from_vec(support_point.clone()); // TODO: Avoid clone
+                        // Reuse the pre-allocated spp_v instead of cloning
                         (out)(
                             solver.state().y,
-                            &spp.into(),
+                            &spp_v,
                             observation.time(),
                             covariates,
                             &mut y,

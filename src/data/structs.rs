@@ -369,6 +369,19 @@ impl Subject {
         &self.id
     }
 
+    /// Compute a hash of the subject ID for caching purposes
+    ///
+    /// # Returns
+    ///
+    /// A u64 hash value derived from the subject's ID
+    #[inline]
+    pub fn hash(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::hash::DefaultHasher::new();
+        self.id.hash(&mut hasher);
+        hasher.finish()
+    }
+
     /// Create a new subject from one or more occasions
     ///
     /// This is useful when you want to create a subject from specific occasions
