@@ -184,7 +184,7 @@ mod tests {
                 fetch_params!(p, _ke, _kcp, _kpc, v);
                 y[0] = x[0] / v;
             },
-            (2, 1),
+            States::new(2, 1),
         );
 
         let analytical = equation::Analytical::new(
@@ -197,7 +197,7 @@ mod tests {
                 fetch_params!(p, _ke, _kcp, _kpc, v);
                 y[0] = x[0] / v;
             },
-            (2, 1),
+            States::new(2, 1),
         );
 
         let op_ode = ode
@@ -238,7 +238,7 @@ mod tests {
                 fetch_params!(p, _ke, _ka, _kcp, _kpc, v);
                 y[0] = x[1] / v;
             },
-            (3, 1),
+            States::new(3, 1),
         );
 
         let analytical = equation::Analytical::new(
@@ -251,7 +251,7 @@ mod tests {
                 fetch_params!(p, _ke, _ka, _kcp, _kpc, v);
                 y[0] = x[1] / v;
             },
-            (3, 1),
+            States::new(3, 1),
         );
 
         let op_ode = ode

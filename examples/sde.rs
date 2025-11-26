@@ -13,7 +13,7 @@ fn one_c_ode() -> ODE {
         |x, _p, _t, _cov, y| {
             y[0] = x[0] / 50.0;
         },
-        (1, 1),
+        States::new(1, 1),
     )
 }
 
@@ -42,7 +42,7 @@ fn one_c_sde() -> SDE {
             fetch_params!(p, _ke0, _ske);
             y[0] = x[0] / 50.0;
         },
-        (2, 1),
+        States::new(2, 1),
         2,
     )
 }
@@ -63,7 +63,7 @@ fn three_c_ode() -> ODE {
             fetch_params!(p, _ka, _ke, _kcp, _kpc, vol);
             y[0] = x[1] / vol;
         },
-        (3, 3),
+        States::new(3, 3),
     )
 }
 
@@ -91,7 +91,7 @@ fn three_c_sde() -> SDE {
             fetch_params!(p, _ka, _ke0, _kcp0, _kpc0, vol, _ske);
             y[0] = x[1] / vol;
         },
-        (4, 1),
+        States::new(4, 1),
         2,
     )
 }

@@ -115,7 +115,7 @@ mod tests {
                 fetch_params!(p, _ke, v);
                 y[0] = x[0] / v;
             },
-            (1, 1),
+            States::new(1, 1),
         );
 
         let analytical = equation::Analytical::new(
@@ -128,7 +128,7 @@ mod tests {
                 fetch_params!(p, _ke, v);
                 y[0] = x[0] / v;
             },
-            (1, 1),
+            States::new(1, 1),
         );
 
         let op_ode = ode.estimate_predictions(&subject, &vec![0.1, 1.0]).unwrap();
@@ -166,7 +166,7 @@ mod tests {
                 fetch_params!(p, _ka, _ke, v);
                 y[0] = x[1] / v;
             },
-            (2, 1),
+            States::new(2, 1),
         );
 
         let analytical = equation::Analytical::new(
@@ -179,7 +179,7 @@ mod tests {
                 fetch_params!(p, _ka, _ke, v);
                 y[0] = x[1] / v;
             },
-            (2, 1),
+            States::new(2, 1),
         );
 
         let op_ode = ode

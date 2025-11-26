@@ -23,7 +23,7 @@ fn main() {
             fetch_params!(p, _ke, v);
             y[0] = x[0] / v;
         },
-        (1, 1),
+        States::new(1, 1),
     );
 
     let ode = equation::ODE::new(
@@ -39,7 +39,7 @@ fn main() {
             fetch_params!(p, _ke, v);
             y[0] = x[0] / v;
         },
-        (1, 1),
+        States::new(1, 1),
     );
 
     let mut ems = ErrorModels::new()

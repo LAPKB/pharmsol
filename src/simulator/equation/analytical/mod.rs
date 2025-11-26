@@ -27,7 +27,7 @@ pub struct Analytical {
     fa: Fa,
     init: Init,
     out: Out,
-    neqs: Neqs,
+    states: States,
 }
 
 impl Analytical {
@@ -40,7 +40,7 @@ impl Analytical {
     /// - `fa`: The fraction absorbed function
     /// - `init`: The initial state function
     /// - `out`: The output equation function
-    /// - `neqs`: The number of states and output equations
+    /// - `states`: The number of states and output equations
     pub fn new(
         eq: AnalyticalEq,
         seq_eq: SecEq,
@@ -48,7 +48,7 @@ impl Analytical {
         fa: Fa,
         init: Init,
         out: Out,
-        neqs: Neqs,
+        states: States,
     ) -> Self {
         Self {
             eq,
@@ -57,7 +57,7 @@ impl Analytical {
             fa,
             init,
             out,
-            neqs,
+            states,
         }
     }
 }
@@ -100,12 +100,12 @@ impl EquationPriv for Analytical {
 
     #[inline(always)]
     fn get_nstates(&self) -> usize {
-        self.neqs.0
+        self.states.nstates()
     }
 
     #[inline(always)]
     fn get_nouteqs(&self) -> usize {
-        self.neqs.1
+        self.states.nout()
     }
     #[inline(always)]
     fn solve(

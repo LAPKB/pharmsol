@@ -6,7 +6,7 @@ use crate::{
     data::{Covariates, Infusion},
     error_model::ErrorModels,
     prelude::simulator::SubjectPredictions,
-    simulator::{DiffEq, Fa, Init, Lag, Neqs, Out, M, V},
+    simulator::{DiffEq, Fa, Init, Lag, Out, States, M, V},
     Event, Observation, PharmsolError, Subject,
 };
 use cached::proc_macro::cached;
@@ -32,18 +32,18 @@ pub struct ODE {
     fa: Fa,
     init: Init,
     out: Out,
-    neqs: Neqs,
+    states: States,
 }
 
 impl ODE {
-    pub fn new(diffeq: DiffEq, lag: Lag, fa: Fa, init: Init, out: Out, neqs: Neqs) -> Self {
+    pub fn new(diffeq: DiffEq, lag: Lag, fa: Fa, init: Init, out: Out, states: States) -> Self {
         Self {
             diffeq,
             lag,
             fa,
             init,
             out,
-            neqs,
+            states,
         }
     }
 }
@@ -132,12 +132,12 @@ impl EquationPriv for ODE {
     }
     #[inline(always)]
     fn get_nstates(&self) -> usize {
-        self.neqs.0
+        self.states.nstates()
     }
 
     #[inline(always)]
     fn get_nouteqs(&self) -> usize {
-        self.neqs.1
+        self.states.nout()
     }
     #[inline(always)]
     fn solve(

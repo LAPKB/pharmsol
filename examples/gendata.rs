@@ -37,7 +37,7 @@ fn main() {
             fetch_params!(p, _ke0);
             y[0] = x[0] / 50.0;
         },
-        (2, 1),
+        States::new(2, 1),
         1,
     );
 

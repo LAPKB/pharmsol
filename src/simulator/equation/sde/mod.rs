@@ -13,7 +13,7 @@ use crate::{
     data::{Covariates, Infusion},
     error_model::ErrorModels,
     prelude::simulator::Prediction,
-    simulator::{Diffusion, Drift, Fa, Init, Lag, Neqs, Out, V},
+    simulator::{Diffusion, Drift, Fa, Init, Lag, Out, States, V},
     Subject,
 };
 
@@ -86,7 +86,7 @@ pub struct SDE {
     fa: Fa,
     init: Init,
     out: Out,
-    neqs: Neqs,
+    states: States,
     nparticles: usize,
 }
 
@@ -101,7 +101,7 @@ impl SDE {
     /// * `fa` - Function to compute bioavailability fractions
     /// * `init` - Function to initialize the system state
     /// * `out` - Function to compute output equations
-    /// * `neqs` - Tuple containing the number of state and output equations
+    /// * `states` - States structure containing the number of state and output equations
     /// * `nparticles` - Number of particles to use in the simulation
     ///
     /// # Returns
@@ -115,7 +115,7 @@ impl SDE {
         fa: Fa,
         init: Init,
         out: Out,
-        neqs: Neqs,
+        states: States,
         nparticles: usize,
     ) -> Self {
         Self {
@@ -125,7 +125,7 @@ impl SDE {
             fa,
             init,
             out,
-            neqs,
+            states,
             nparticles,
         }
     }
@@ -222,12 +222,12 @@ impl EquationPriv for SDE {
 
     #[inline(always)]
     fn get_nstates(&self) -> usize {
-        self.neqs.0
+        self.states.nstates()
     }
 
     #[inline(always)]
     fn get_nouteqs(&self) -> usize {
-        self.neqs.1
+        self.states.nout()
     }
     #[inline(always)]
     fn solve(

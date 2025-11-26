@@ -30,7 +30,7 @@ fn main() {
             let V = V0 / (WT / 85.0);
             y[0] = x[0] / V;
         },
-        (2, 1),
+        States::new(2, 1),
     );
 
     let subject = data::Subject::builder("id1")

@@ -34,7 +34,7 @@ fn main() {
             fetch_params!(p, _ka, _ke, _tlag, v);
             y[0] = x[1] / v;
         },
-        (2, 1),
+        States::new(2, 1),
     );
     // let ode = simulator::Equation::new_ode(
     //     |x, p, t, dx, _rateiv, cov| {

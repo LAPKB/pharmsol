@@ -36,7 +36,7 @@ fn readme(n: usize) {
             fetch_params!(p, _ka, _ke, _tlag, v);
             y[0] = x[1] / v;
         },
-        (2, 1),
+        States::new(2, 1),
     );
     for _ in 0..n {
         let op = ode

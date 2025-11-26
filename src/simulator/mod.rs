@@ -199,15 +199,32 @@ pub type Fa = fn(&V, T, &Covariates) -> HashMap<usize, T>;
 /// The number of states and output equations of the model.
 ///
 /// # Components
-/// - The first element is the number of states
-/// - The second element is the number of output equations
+/// - `nstates`: The number of state variables in the system
+/// - `nout`: The number of output equations
 ///
 /// This is used to initialize the state vector and the output vector.
 ///
 /// # Example
 /// ```ignore
-/// let neqs = (2, 1);
+/// let states = States::new(2, 1);
 /// ```
 /// This means that the system of equations has 2 states and there is only 1 output equation.
-///
-pub type Neqs = (usize, usize);
+#[derive(Debug, Clone, Copy)]
+pub struct States {
+    nstates: usize,
+    nout: usize,
+}
+
+impl States {
+    pub fn new(nstates: usize, nout: usize) -> Self {
+        States { nstates, nout }
+    }
+
+    pub fn nstates(&self) -> usize {
+        self.nstates
+    }
+
+    pub fn nout(&self) -> usize {
+        self.nout
+    }
+}
