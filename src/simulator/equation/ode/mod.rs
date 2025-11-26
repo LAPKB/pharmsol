@@ -222,29 +222,29 @@ impl Equation for ODE {
         // Cache nstates/nouteqs to avoid repeated method calls
         let nstates = self.get_nstates();
         let nouteqs = self.get_nouteqs();
-        
+
         // Preallocate likelihood vector with reasonable capacity
         let mut likelihood = if error_models.is_some() {
             Vec::with_capacity(32) // Most subjects have < 32 observations
         } else {
             Vec::new()
         };
-        
+
         // Preallocate reusable vectors for bolus computation (outside occasion loop)
         let mut state_with_bolus = V::zeros(nstates, NalgebraContext);
         let mut state_without_bolus = V::zeros(nstates, NalgebraContext);
         let zero_vector = V::zeros(nstates, NalgebraContext);
         let mut bolus_v = V::zeros(nstates, NalgebraContext);
-        
+
         // Convert support point to V once (avoid cloning in loop)
         let spp_v: V = DVector::from_vec(support_point.clone()).into();
-        
+
         // Pre-allocate output vector for observations
         let mut y_out = V::zeros(nouteqs, NalgebraContext);
-        
+
         // Pre-allocate atol vector (reused across occasions)
         let atol = vec![ATOL; nstates];
-        
+
         for occasion in subject.occasions() {
             let covariates = occasion.covariates();
             let infusions = occasion.infusions_ref();
@@ -350,7 +350,9 @@ impl Equation for ODE {
                                         ));
                                     }
                                     Err(err) => panic!("Unexpected solver error: {:?}", err),
-                                    Ok(reason) => panic!("Unexpected solver return value: {:?}", reason),
+                                    Ok(reason) => {
+                                        panic!("Unexpected solver return value: {:?}", reason)
+                                    }
                                 }
                             },
                             Err(diffsol::error::DiffsolError::OdeSolverError(
