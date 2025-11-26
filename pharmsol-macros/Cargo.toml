@@ -1,0 +1,15 @@
+[package]
+name = "pharmsol-macros"
+version = "0.1.0"
+edition = "2021"
+authors = ["Julián D. Otálvaro <juliandavid347@gmail.com>", "Markus Hovd"]
+description = "Procedural macros for pharmsol - ergonomic PK/PD model definitions"
+license = "GPL-3.0"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1.0"
+quote = "1.0"
+syn = { version = "2.0", features = ["full", "parsing", "extra-traits"] }

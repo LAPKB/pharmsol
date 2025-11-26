@@ -29,6 +29,10 @@ pub enum PharmsolError {
     ZeroLikelihood,
     #[error("Missing observation in prediction")]
     MissingObservation,
+    #[error("Covariate not found: {0}")]
+    CovariateNotFound(String),
+    #[error("Parameter not found: {0}")]
+    ParameterNotFound(String),
 }
 
 impl From<diffsol::error::DiffsolError> for PharmsolError {
