@@ -459,6 +459,16 @@ impl Subject {
     pub fn is_empty(&self) -> bool {
         self.occasions.is_empty()
     }
+
+    /// Hash the subject ID
+    ///
+    /// Note that this does not provide any methods to invalidate the cache if the subject is modified!
+    pub fn hash(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::hash::DefaultHasher::new();
+        self.id.hash(&mut hasher);
+        hasher.finish()
+    }
 }
 
 impl IntoIterator for Subject {

@@ -37,8 +37,7 @@ pub mod prelude {
             equation::ode::ODEBuilder,
             equation::sde::{SDEBuilder, SDE},
             equation::Equation,
-            likelihood::{psi, PopulationPredictions, Prediction, SubjectPredictions},
-            Neqs,
+            likelihood::{log_psi, psi, PopulationPredictions, Prediction, SubjectPredictions},
         };
     }
     pub mod models {

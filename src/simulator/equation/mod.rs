@@ -66,6 +66,18 @@ pub trait Predictions: Default {
     /// # Returns
     /// Vector of prediction objects
     fn get_predictions(&self) -> Vec<Prediction>;
+
+    /// Calculate the log-likelihood of the predictions given an error model.
+    ///
+    /// This is numerically more stable than computing the likelihood and taking its log,
+    /// especially for extreme values or many observations.
+    ///
+    /// # Parameters
+    /// - `error_models`: The error models for computing observation variance
+    ///
+    /// # Returns
+    /// The sum of log-likelihoods for all predictions
+    fn log_likelihood(&self, error_models: &ErrorModels) -> Result<f64, PharmsolError>;
 }
 
 /// Trait defining the associated types for equations.
@@ -187,8 +199,30 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
     /// - `cache`: Whether to use caching
     ///
     /// # Returns
-    /// The log-likelihood value
+    /// The likelihood value (product of individual observation likelihoods)
     fn estimate_likelihood(
+        &self,
+        subject: &Subject,
+        support_point: &Vec<f64>,
+        error_models: &ErrorModels,
+        cache: bool,
+    ) -> Result<f64, PharmsolError>;
+
+    /// Estimate the log-likelihood of the subject given the support point and error model.
+    ///
+    /// This function calculates the log of how likely the observed data is given the model
+    /// parameters and error model. It is numerically more stable than `estimate_likelihood`
+    /// for extreme values or many observations.
+    ///
+    /// # Parameters
+    /// - `subject`: The subject data
+    /// - `support_point`: The parameter values
+    /// - `error_model`: The error model
+    /// - `cache`: Whether to use caching
+    ///
+    /// # Returns
+    /// The log-likelihood value (sum of individual observation log-likelihoods)
+    fn estimate_log_likelihood(
         &self,
         subject: &Subject,
         support_point: &Vec<f64>,

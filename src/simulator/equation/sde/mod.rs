@@ -555,6 +555,21 @@ impl Predictions for Array2<Prediction> {
 
         result
     }
+    fn log_likelihood(&self, error_models: &ErrorModels) -> Result<f64, crate::PharmsolError> {
+        // For SDE, compute log-likelihood using mean predictions across particles
+        let predictions = self.get_predictions();
+        if predictions.is_empty() {
+            return Ok(0.0);
+        }
+
+        let log_liks: Result<Vec<f64>, _> = predictions
+            .iter()
+            .filter(|p| p.observation().is_some())
+            .map(|p| p.log_likelihood(error_models))
+            .collect();
+
+        log_liks.map(|lls| lls.iter().sum())
+    }
 }
 
 impl EquationTypes for SDE {
@@ -735,29 +750,50 @@ impl Equation for SDE {
         }
     }
 
+    fn estimate_log_likelihood(
+        &self,
+        subject: &Subject,
+        support_point: &Vec<f64>,
+        error_models: &ErrorModels,
+        cache: bool,
+    ) -> Result<f64, PharmsolError> {
+        // For SDE, the particle filter computes likelihood in regular space.
+        // We take the log of the cached/computed likelihood.
+        // Note: For extreme underflow cases, this may return -inf.
+        let lik = self.estimate_likelihood(subject, support_point, error_models, cache)?;
+        if lik > 0.0 {
+            Ok(lik.ln())
+        } else {
+            Ok(f64::NEG_INFINITY)
+        }
+    }
+
     fn kind() -> crate::EqnKind {
         crate::EqnKind::SDE
     }
 }
 
-/// Computes a hash value for a parameter vector.
-///
-/// # Arguments
-///
-/// * `spp` - Parameter vector
-///
-/// # Returns
-///
-/// A u64 hash value representing the parameter vector.
+//TODO: Add hash impl on dedicated structure!
+/// Hash support points to a u64 for cache key generation.
+/// Uses DefaultHasher for good distribution and collision resistance.
+#[inline(always)]
+
 fn spphash(spp: &[f64]) -> u64 {
-    spp.iter().fold(0, |acc, x| acc + x.to_bits())
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::hash::DefaultHasher::new();
+    for &value in spp {
+        // Normalize -0.0 to 0.0 for consistent hashing
+        let bits = if value == 0.0 { 0u64 } else { value.to_bits() };
+        bits.hash(&mut hasher);
+    }
+    hasher.finish()
 }
 
 #[inline(always)]
 #[cached(
-    ty = "UnboundCache<String, f64>",
+    ty = "UnboundCache<(u64, u64, u64), f64>",
     create = "{ UnboundCache::with_capacity(100_000) }",
-    convert = r#"{ format!("{}{}{:#?}", subject.id(), spphash(support_point), error_models.hash()) }"#,
+    convert = r#"{ ((subject.hash()), spphash(support_point), error_models.hash()) }"#,
     result = "true"
 )]
 fn _estimate_likelihood(

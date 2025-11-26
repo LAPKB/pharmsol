@@ -1,6 +1,5 @@
 mod closure;
 
-use core::panic;
 use std::collections::HashMap;
 use std::marker::PhantomData;
 
@@ -358,24 +357,21 @@ impl State for V {
     }
 }
 
-// Hash the support points by converting them to bits and summing them
-// The wrapping_add is used to avoid overflow, and prevent panics
+/// Hash support points to a u64 for cache key generation.
+/// Uses DefaultHasher for good distribution and collision resistance.
+#[inline(always)]
 fn spphash(spp: &[f64]) -> u64 {
+    use std::hash::{Hash, Hasher};
     let mut hasher = std::hash::DefaultHasher::new();
-    spp.iter().for_each(|&value| {
-        // Normalize negative zero to zero, e.g. -0.0 -> 0.0
-        let normalized_value = if value == 0.0 && value.is_sign_negative() {
-            0.0
-        } else {
-            value
-        };
-        // Convert the value to bits and hash it
-        let bits = normalized_value.to_bits();
-        std::hash::Hash::hash(&bits, &mut hasher);
-    });
-
-    std::hash::Hasher::finish(&hasher)
+    for &value in spp {
+        // Normalize -0.0 to 0.0 for consistent hashing
+        let bits = if value == 0.0 { 0u64 } else { value.to_bits() };
+        bits.hash(&mut hasher);
+    }
+    hasher.finish()
 }
+
+/// Hash a subject ID string to u64 for cache key generation.
 
 fn _estimate_likelihood(
     ode: &ODE,
@@ -394,9 +390,9 @@ fn _estimate_likelihood(
 
 #[inline(always)]
 #[cached(
-    ty = "UnboundCache<String, SubjectPredictions>",
+    ty = "UnboundCache<(u64, u64), SubjectPredictions>",
     create = "{ UnboundCache::with_capacity(100_000) }",
-    convert = r#"{ format!("{}{}", subject.id(), spphash(support_point)) }"#,
+    convert = r#"{ ((subject.hash()), spphash(support_point)) }"#,
     result = "true"
 )]
 fn _subject_predictions(
@@ -492,6 +488,21 @@ impl Equation for ODE {
         _estimate_likelihood(self, subject, support_point, error_models, cache)
     }
 
+    fn estimate_log_likelihood(
+        &self,
+        subject: &Subject,
+        support_point: &Vec<f64>,
+        error_models: &ErrorModels,
+        cache: bool,
+    ) -> Result<f64, PharmsolError> {
+        let ypred = if cache {
+            _subject_predictions(self, subject, support_point)
+        } else {
+            _subject_predictions_no_cache(self, subject, support_point)
+        }?;
+        ypred.log_likelihood(error_models)
+    }
+
     fn kind() -> crate::EqnKind {
         crate::EqnKind::ODE
     }
@@ -502,22 +513,26 @@ impl Equation for ODE {
         support_point: &Vec<f64>,
         error_models: Option<&ErrorModels>,
     ) -> Result<(Self::P, Option<f64>), PharmsolError> {
-        // let lag = self.get_lag(support_point);
-        // let fa = self.get_fa(support_point);
         let mut output = Self::P::new(self.nparticles());
+
         // Preallocate likelihood vector
         let event_count: usize = subject.occasions().iter().map(|o| o.events().len()).sum();
         let mut likelihood = Vec::with_capacity(event_count);
+
         // Cache nstates to avoid repeated method calls
         let nstates = self.get_nstates();
+
         // Preallocate reusable vectors for bolus computation
         let mut state_with_bolus = V::zeros(nstates, NalgebraContext);
         let mut state_without_bolus = V::zeros(nstates, NalgebraContext);
         let zero_vector = V::zeros(nstates, NalgebraContext);
         let mut bolus_v = V::zeros(nstates, NalgebraContext);
         let spp_v: V = DVector::from_vec(support_point.clone()).into();
+
         // Pre-allocate output vector for observations
         let mut y_out = V::zeros(self.get_nouteqs(), NalgebraContext);
+
+        // Iterate over occasions
         for occasion in subject.occasions() {
             let covariates = occasion.covariates();
             let infusions = occasion.infusions_ref();
@@ -547,15 +562,15 @@ impl Equation for ODE {
                 '_,
                 PMProblem<DiffEq>,
                 NewtonNonlinearSolver<M, diffsol::NalgebraLU<f64>>,
-            > = problem.bdf::<diffsol::NalgebraLU<f64>>()?; // TODO: Result
+            > = problem.bdf::<diffsol::NalgebraLU<f64>>()?;
 
+            // Iterate over events
             for (index, event) in events.iter().enumerate() {
+                // Check if we have a next event
                 let next_event = events.get(index + 1);
-                //START SIMULATE_EVENT
+
+                // Handle events accordingly
                 match event {
-                    // Event::Bolus(bolus) => {
-                    //     solver.state_mut().y[bolus.input()] += bolus.amount();
-                    // }
                     Event::Bolus(bolus) => {
                         // Reset and reuse the pre-allocated bolus vector
                         bolus_v.fill(0.0);
@@ -591,10 +606,13 @@ impl Equation for ODE {
                         // Apply the computed changes to the state using vectorized operations
                         // state_with_bolus now contains (with_bolus - without_bolus) after axpy
                         state_with_bolus.axpy(-1.0, &state_without_bolus, 1.0);
+
                         // Add the difference to the solver state
                         solver.state_mut().y.axpy(1.0, &state_with_bolus, 1.0);
                     }
-                    Event::Infusion(_infusion) => {}
+                    Event::Infusion(_infusion) => {
+                        // Infusions are handled within the ODE function itself
+                    }
                     Event::Observation(observation) => {
                         // Reuse pre-allocated output vector
                         y_out.fill(0.0);
@@ -615,7 +633,8 @@ impl Equation for ODE {
                         output.add_prediction(pred);
                     }
                 }
-                // START SOLVE
+
+                // Advance to the next event time if it exists
                 if let Some(next_event) = next_event {
                     if !event.time().eq(&next_event.time()) {
                         match solver.set_stop_time(next_event.time()) {
@@ -632,11 +651,15 @@ impl Equation for ODE {
                                             return Err(PharmsolError::OtherError("The step size of the ODE solver went to zero, this means one of your parameters is getting really close to 0.0 or INFINITE. Check your model".to_string()));
                                         }
                                         _ => {
-                                            panic!("Unexpected solver error: {:?}", err)
+                                            return Err(PharmsolError::OtherError(
+                                                "Unexpected solver error: {:?}".to_string(),
+                                            ));
                                         }
                                     },
                                     _ => {
-                                        panic!("Unexpected solver return value: {:?}", ret);
+                                        return Err(PharmsolError::OtherError(
+                                            "Unexpected solver error: {:?}".to_string(),
+                                        ));
                                     }
                                 }
                             },
@@ -649,15 +672,15 @@ impl Equation for ODE {
                                         continue;
                                     }
                                     _ => {
-                                        panic!("Unexpected solver error: {:?}", e)
+                                        return Err(PharmsolError::OtherError(
+                                            "Unexpected solver error: {:?}".to_string(),
+                                        ));
                                     }
                                 }
                             }
                         }
                     }
                 }
-                //End SOLVE
-                //END SIMULATE_EVENT
             }
         }
         let ll = error_models.map(|_| likelihood.iter().product::<f64>());
