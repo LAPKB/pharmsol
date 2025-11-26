@@ -202,8 +202,9 @@ impl Equation for ODE {
         // let lag = self.get_lag(support_point);
         // let fa = self.get_fa(support_point);
         let mut output = Self::P::new(self.nparticles());
-        // Pre-allocate likelihood with estimated capacity based on number of occasions
-        let mut likelihood = Vec::with_capacity(subject.occasions().len() * 10);
+        // Preallocate likelihood vector
+        let event_count: usize = subject.occasions().iter().map(|o| o.events().len()).sum();
+        let mut likelihood = Vec::with_capacity(event_count);
         // Cache nstates to avoid repeated method calls
         let nstates = self.get_nstates();
         // Preallocate reusable vectors for bolus computation
