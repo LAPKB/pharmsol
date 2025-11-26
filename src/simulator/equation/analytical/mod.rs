@@ -255,20 +255,11 @@ fn spphash(spp: &[f64]) -> u64 {
     hasher.finish()
 }
 
-/// Hash a subject ID string to u64 for cache key generation.
-#[inline(always)]
-fn subject_id_hash(id: &str) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::hash::DefaultHasher::new();
-    id.hash(&mut hasher);
-    hasher.finish()
-}
-
 #[inline(always)]
 #[cached(
     ty = "UnboundCache<(u64, u64), SubjectPredictions>",
     create = "{ UnboundCache::with_capacity(100_000) }",
-    convert = r#"{ (subject_id_hash(subject.id()), spphash(support_point)) }"#,
+    convert = r#"{ (subject.hash(), spphash(support_point)) }"#,
     result = "true"
 )]
 fn _subject_predictions(

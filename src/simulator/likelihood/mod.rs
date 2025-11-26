@@ -15,6 +15,9 @@ mod progress;
 const FRAC_1_SQRT_2PI: f64 =
     std::f64::consts::FRAC_2_SQRT_PI * std::f64::consts::FRAC_1_SQRT_2 / 2.0;
 
+// ln(2π) = ln(2) + ln(π) ≈ 1.8378770664093453
+const LOG_2PI: f64 = 1.8378770664093453_f64;
+
 /// Container for predictions associated with a single subject.
 ///
 /// This struct holds all predictions for a subject along with the corresponding
@@ -76,7 +79,7 @@ impl SubjectPredictions {
     /// The sum of all individual prediction log-likelihoods
     pub fn log_likelihood(&self, error_models: &ErrorModels) -> Result<f64, PharmsolError> {
         if self.predictions.is_empty() {
-            return Ok(f64::NEG_INFINITY); // log(0) for empty predictions
+            return Ok(0.0); // log(0) for empty predictions
         }
 
         let log_liks: Result<Vec<f64>, _> = self
@@ -144,7 +147,6 @@ fn normpdf(obs: f64, pred: f64, sigma: f64) -> f64 {
 /// Returns: -0.5 * ln(2π) - ln(σ) - (obs - pred)² / (2σ²)
 #[inline(always)]
 fn lognormpdf(obs: f64, pred: f64, sigma: f64) -> f64 {
-    const LOG_2PI: f64 = 1.8378770664093453; // ln(2π)
     let diff = obs - pred;
     -0.5 * LOG_2PI - sigma.ln() - (diff * diff) / (2.0 * sigma * sigma)
 }
@@ -332,7 +334,7 @@ pub fn log_psi(
     let progress_tracker = if progress {
         let total = subjects.len() * support_points.nrows();
         println!(
-            "Computing log-likelihoods for {} subjects with {} support points each...",
+            "Simulating {} subjects with {} support points each...",
             subjects.len(),
             support_points.nrows()
         );

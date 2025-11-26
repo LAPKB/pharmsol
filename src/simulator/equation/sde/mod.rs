@@ -186,7 +186,7 @@ impl Predictions for Array2<Prediction> {
         // For SDE, compute log-likelihood using mean predictions across particles
         let predictions = self.get_predictions();
         if predictions.is_empty() {
-            return Ok(f64::NEG_INFINITY);
+            return Ok(0.0);
         }
 
         let log_liks: Result<Vec<f64>, _> = predictions
@@ -400,9 +400,11 @@ impl Equation for SDE {
     }
 }
 
+//TODO: Add hash impl on dedicated structure!
 /// Hash support points to a u64 for cache key generation.
 /// Uses DefaultHasher for good distribution and collision resistance.
 #[inline(always)]
+
 fn spphash(spp: &[f64]) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::hash::DefaultHasher::new();
@@ -414,20 +416,11 @@ fn spphash(spp: &[f64]) -> u64 {
     hasher.finish()
 }
 
-/// Hash a subject ID string to u64 for cache key generation.
-#[inline(always)]
-fn subject_id_hash(id: &str) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::hash::DefaultHasher::new();
-    id.hash(&mut hasher);
-    hasher.finish()
-}
-
 #[inline(always)]
 #[cached(
     ty = "UnboundCache<(u64, u64, u64), f64>",
     create = "{ UnboundCache::with_capacity(100_000) }",
-    convert = r#"{ (subject_id_hash(subject.id()), spphash(support_point), error_models.hash()) }"#,
+    convert = r#"{ ((subject.hash()), spphash(support_point), error_models.hash()) }"#,
     result = "true"
 )]
 fn _estimate_likelihood(
