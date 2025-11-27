@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.0](https://github.com/LAPKB/pharmsol/compare/v0.21.0...v0.22.0) - 2025-11-27
+
+### Added
+
+- Add a function to calculate the psi matrix directly in log space ([#174](https://github.com/LAPKB/pharmsol/pull/174))
+- optimize ODE ([#167](https://github.com/LAPKB/pharmsol/pull/167))
+
+### Fixed
+
+- address parser and simulator regressions ([#166](https://github.com/LAPKB/pharmsol/pull/166))
+
+### Other
+
+- Bump actions/checkout from 5 to 6 ([#169](https://github.com/LAPKB/pharmsol/pull/169))
+
 ## [0.21.0](https://github.com/LAPKB/pharmsol/compare/v0.20.0...v0.21.0) - 2025-11-16
 
 ### Added
