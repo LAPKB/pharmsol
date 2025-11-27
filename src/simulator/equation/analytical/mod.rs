@@ -292,19 +292,46 @@ impl Equation for Analytical {
     ) -> Result<f64, PharmsolError> {
         _estimate_likelihood(self, subject, support_point, error_models, cache)
     }
+
+    fn estimate_log_likelihood(
+        &self,
+        subject: &Subject,
+        support_point: &Vec<f64>,
+        error_models: &ErrorModels,
+        cache: bool,
+    ) -> Result<f64, PharmsolError> {
+        let ypred = if cache {
+            _subject_predictions(self, subject, support_point)
+        } else {
+            _subject_predictions_no_cache(self, subject, support_point)
+        }?;
+        ypred.log_likelihood(error_models)
+    }
+
     fn kind() -> crate::EqnKind {
         crate::EqnKind::Analytical
     }
 }
+
+/// Hash support points to a u64 for cache key generation.
+/// Uses DefaultHasher for good distribution and collision resistance.
+#[inline(always)]
 fn spphash(spp: &[f64]) -> u64 {
-    spp.iter().fold(0, |acc, x| acc + x.to_bits())
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::hash::DefaultHasher::new();
+    for &value in spp {
+        // Normalize -0.0 to 0.0 for consistent hashing
+        let bits = if value == 0.0 { 0u64 } else { value.to_bits() };
+        bits.hash(&mut hasher);
+    }
+    hasher.finish()
 }
 
 #[inline(always)]
 #[cached(
-    ty = "UnboundCache<String, SubjectPredictions>",
+    ty = "UnboundCache<(u64, u64), SubjectPredictions>",
     create = "{ UnboundCache::with_capacity(100_000) }",
-    convert = r#"{ format!("{}{}", subject.id(), spphash(support_point)) }"#,
+    convert = r#"{ (subject.hash(), spphash(support_point)) }"#,
     result = "true"
 )]
 fn _subject_predictions(

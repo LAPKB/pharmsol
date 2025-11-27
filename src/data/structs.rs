@@ -355,9 +355,9 @@ impl Subject {
     ///
     /// # Returns
     ///
-    /// Vector of references to all occasions
-    pub fn occasions(&self) -> Vec<&Occasion> {
-        self.occasions.iter().collect()
+    /// A slice of all occasions for this subject
+    pub fn occasions(&self) -> &[Occasion] {
+        &self.occasions
     }
 
     /// Get the ID of the subject
@@ -459,6 +459,16 @@ impl Subject {
     pub fn is_empty(&self) -> bool {
         self.occasions.is_empty()
     }
+
+    /// Hash the subject ID
+    ///
+    /// Note that this does not provide any methods to invalidate the cache if the subject is modified!
+    pub fn hash(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::hash::DefaultHasher::new();
+        self.id.hash(&mut hasher);
+        hasher.finish()
+    }
 }
 
 impl IntoIterator for Subject {
@@ -518,9 +528,9 @@ impl Occasion {
     ///
     /// # Returns
     ///
-    /// Vector of references to all events
-    pub fn events(&self) -> Vec<&Event> {
-        self.events.iter().collect()
+    /// A slice of all events in this occasion
+    pub fn events(&self) -> &[Event] {
+        &self.events
     }
 
     /// Get the index of the occasion
@@ -1130,7 +1140,7 @@ mod tests {
             .find(|e| matches!(e, Event::Bolus(_)))
         {
             let mut event_count = 0;
-            for event in *bolus_event {
+            for event in bolus_event {
                 assert_eq!(event.time(), 2.0); // Bolus time from sample data
                 assert!(matches!(event, Event::Bolus(_)));
                 if let Event::Bolus(bolus) = event {
@@ -1158,7 +1168,7 @@ mod tests {
             .iter()
             .find(|e| matches!(e, Event::Observation(_)))
         {
-            for event in *obs_event {
+            for event in obs_event {
                 assert_eq!(event.time(), 1.0); // Observation time from sample data
                 if let Event::Observation(observation) = event {
                     assert_eq!(observation.value(), Some(10.0)); // Value from sample data
