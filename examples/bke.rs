@@ -13,34 +13,30 @@ fn main() {
         .missing_observation(12.0, 0)
         .build();
 
-    let an = equation::Analytical::new(
-        one_compartment,
-        |_p, _t, _cov| {},
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
-        |x, p, _t, _cov, y| {
+    let an = equation::Analytical::builder()
+        .eq(one_compartment)
+        .seq_eq(|_p, _t, _cov| {})
+        .out(|x, p, _t, _cov, y| {
             fetch_params!(p, _ke, v);
             y[0] = x[0] / v;
-        },
-        (1, 1),
-    );
+        })
+        .nstates(1)
+        .nouteqs(1)
+        .build();
 
-    let ode = equation::ODE::new(
-        |x, p, _t, dx, _b, rateiv, _cov| {
+    let ode = equation::ODE::builder()
+        .diffeq(|x, p, _t, dx, _b, rateiv, _cov| {
             // fetch_cov!(cov, t, wt);
             fetch_params!(p, ke, _v);
             dx[0] = -ke * x[0] + rateiv[0];
-        },
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
-        |x, p, _t, _cov, y| {
+        })
+        .out(|x, p, _t, _cov, y| {
             fetch_params!(p, _ke, v);
             y[0] = x[0] / v;
-        },
-        (1, 1),
-    );
+        })
+        .nstates(1)
+        .nouteqs(1)
+        .build();
 
     let mut ems = ErrorModels::new()
         .add(

@@ -4,8 +4,8 @@
 use pharmsol::*;
 
 fn main() {
-    let ode = equation::ODE::new(
-        |x, p, t, dx, _b, rateiv, cov| {
+    let ode = equation::ODE::builder()
+        .diffeq(|x, p, t, dx, _b, rateiv, cov| {
             fetch_cov!(cov, t, WT);
             fetch_params!(p, CL0, V0, Vp0, Q0);
 
@@ -20,18 +20,16 @@ fn main() {
 
             dx[0] = -Ke * x[0] - KCP * x[0] + KPC * x[1] + rateiv[0];
             dx[1] = KCP * x[0] - KPC * x[1];
-        },
-        |p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
-        |x, p, t, cov, y| {
+        })
+        .out(|x, p, t, cov, y| {
             fetch_cov!(cov, t, WT);
             fetch_params!(p, CL0, V0, Vp0, Q0);
             let V = V0 / (WT / 85.0);
             y[0] = x[0] / V;
-        },
-        (2, 1),
-    );
+        })
+        .nstates(2)
+        .nouteqs(1)
+        .build();
 
     let subject = data::Subject::builder("id1")
         .infusion(0.0, 3235.0, 0, 0.005)

@@ -16,20 +16,18 @@ fn main() {
         .build();
 
     // Create ODE model directly
-    let ode = equation::ODE::new(
-        |x, p, _t, dx, b, rateiv, _cov| {
+    let ode = equation::ODE::builder()
+        .diffeq(|x, p, _t, dx, b, rateiv, _cov| {
             fetch_params!(p, ke, _v);
             dx[0] = -ke * x[0] + rateiv[0] + b[0];
-        },
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
-        |x, p, _t, _cov, y| {
+        })
+        .out(|x, p, _t, _cov, y| {
             fetch_params!(p, _ke, v);
             y[0] = x[0] / v;
-        },
-        (1, 1),
-    );
+        })
+        .nstates(1)
+        .nouteqs(1)
+        .build();
 
     let test_dir = std::env::current_dir().expect("Failed to get current directory");
     let model_output_path = test_dir.join("test_model.pkm");

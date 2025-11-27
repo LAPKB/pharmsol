@@ -10,24 +10,23 @@ fn main() {
         .observation(1.0, 7.5170, 0)
         .build();
 
-    let sde = equation::SDE::new(
-        |x, p, _t, dx, _rateiv, _cov| {
+    let sde = equation::SDE::builder()
+        .drift(|x, p, _t, dx, _rateiv, _cov| {
             dx[0] = -x[0] * x[1]; // ke *x[0]
             dx[1] = -x[1] + p[0]; // mean reverting
-        },
-        |_p, d| {
+        })
+        .diffusion(|_p, d| {
             d[0] = 1.0;
             d[1] = 0.01;
-        },
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, x| x[1] = 1.0,
-        |x, _p, _t, _cov, y| {
+        })
+        .init(|_p, _t, _cov, x| x[1] = 1.0)
+        .out(|x, _p, _t, _cov, y| {
             y[0] = x[0];
-        },
-        (2, 1),
-        10000,
-    );
+        })
+        .nstates(2)
+        .nouteqs(1)
+        .nparticles(10000)
+        .build();
 
     let ems = ErrorModels::new()
         .add(

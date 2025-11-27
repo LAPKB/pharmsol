@@ -89,33 +89,29 @@ fn infusion_subject() -> Subject {
 }
 
 fn infusion_models() -> (equation::Analytical, equation::ODE) {
-    let analytical = equation::Analytical::new(
-        one_compartment,
-        |_p, _t, _cov| {},
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
-        |x, p, _t, _cov, y| {
+    let analytical = equation::Analytical::builder()
+        .eq(one_compartment)
+        .seq_eq(|_p, _t, _cov| {})
+        .out(|x, p, _t, _cov, y| {
             fetch_params!(p, _ke, v);
             y[0] = x[0] / v;
-        },
-        (1, 1),
-    );
+        })
+        .nstates(1)
+        .nouteqs(1)
+        .build();
 
-    let ode = equation::ODE::new(
-        |x, p, _t, dx, b, rateiv, _cov| {
+    let ode = equation::ODE::builder()
+        .diffeq(|x, p, _t, dx, b, rateiv, _cov| {
             fetch_params!(p, ke, _v);
             dx[0] = -ke * x[0] + rateiv[0] + b[0];
-        },
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
-        |x, p, _t, _cov, y| {
+        })
+        .out(|x, p, _t, _cov, y| {
             fetch_params!(p, _ke, v);
             y[0] = x[0] / v;
-        },
-        (1, 1),
-    );
+        })
+        .nstates(1)
+        .nouteqs(1)
+        .build();
 
     (analytical, ode)
 }
@@ -137,34 +133,30 @@ fn absorption_subject() -> Subject {
 }
 
 fn absorption_models() -> (equation::Analytical, equation::ODE) {
-    let analytical = equation::Analytical::new(
-        one_compartment_with_absorption,
-        |_p, _t, _cov| {},
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
-        |x, p, _t, _cov, y| {
+    let analytical = equation::Analytical::builder()
+        .eq(one_compartment_with_absorption)
+        .seq_eq(|_p, _t, _cov| {})
+        .out(|x, p, _t, _cov, y| {
             fetch_params!(p, _ka, _ke, v);
             y[0] = x[1] / v;
-        },
-        (2, 1),
-    );
+        })
+        .nstates(2)
+        .nouteqs(1)
+        .build();
 
-    let ode = equation::ODE::new(
-        |x, p, _t, dx, b, rateiv, _cov| {
+    let ode = equation::ODE::builder()
+        .diffeq(|x, p, _t, dx, b, rateiv, _cov| {
             fetch_params!(p, ka, ke, _v);
             dx[0] = -ka * x[0] + b[0];
             dx[1] = ka * x[0] - ke * x[1] + rateiv[0] + b[1];
-        },
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
-        |x, p, _t, _cov, y| {
+        })
+        .out(|x, p, _t, _cov, y| {
             fetch_params!(p, _ka, _ke, v);
             y[0] = x[1] / v;
-        },
-        (2, 1),
-    );
+        })
+        .nstates(2)
+        .nouteqs(1)
+        .build();
 
     (analytical, ode)
 }
@@ -184,34 +176,30 @@ fn two_compartment_subject() -> Subject {
 }
 
 fn two_compartment_models() -> (equation::Analytical, equation::ODE) {
-    let analytical = equation::Analytical::new(
-        two_compartments,
-        |_p, _t, _cov| {},
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
-        |x, p, _t, _cov, y| {
+    let analytical = equation::Analytical::builder()
+        .eq(two_compartments)
+        .seq_eq(|_p, _t, _cov| {})
+        .out(|x, p, _t, _cov, y| {
             fetch_params!(p, _ke, _kcp, _kpc, v);
             y[0] = x[0] / v;
-        },
-        (2, 1),
-    );
+        })
+        .nstates(2)
+        .nouteqs(1)
+        .build();
 
-    let ode = equation::ODE::new(
-        |x, p, _t, dx, b, rateiv, _cov| {
+    let ode = equation::ODE::builder()
+        .diffeq(|x, p, _t, dx, b, rateiv, _cov| {
             fetch_params!(p, ke, kcp, kpc, _v);
             dx[0] = rateiv[0] - ke * x[0] - kcp * x[0] + kpc * x[1] + b[0];
             dx[1] = kcp * x[0] - kpc * x[1] + b[1];
-        },
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
-        |x, p, _t, _cov, y| {
+        })
+        .out(|x, p, _t, _cov, y| {
             fetch_params!(p, _ke, _kcp, _kpc, v);
             y[0] = x[0] / v;
-        },
-        (2, 1),
-    );
+        })
+        .nstates(2)
+        .nouteqs(1)
+        .build();
 
     (analytical, ode)
 }
