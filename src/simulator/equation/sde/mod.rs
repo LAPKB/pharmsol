@@ -1,5 +1,8 @@
 mod em;
 
+use std::collections::HashMap;
+use std::marker::PhantomData;
+
 use diffsol::{NalgebraContext, Vector};
 use nalgebra::DVector;
 use ndarray::{concatenate, Array2, Axis};
@@ -14,7 +17,7 @@ use crate::{
     error_model::ErrorModels,
     prelude::simulator::Prediction,
     simulator::{Diffusion, Drift, Fa, Init, Lag, Neqs, Out, V},
-    Subject,
+    Missing, Provided, Subject,
 };
 
 use diffsol::VectorCommon;
@@ -93,6 +96,8 @@ pub struct SDE {
 impl SDE {
     /// Creates a new stochastic differential equation solver.
     ///
+    /// For a more ergonomic API, consider using [`SDEBuilder`] instead.
+    ///
     /// # Arguments
     ///
     /// * `drift` - Function defining the deterministic component of the SDE
@@ -101,7 +106,7 @@ impl SDE {
     /// * `fa` - Function to compute bioavailability fractions
     /// * `init` - Function to initialize the system state
     /// * `out` - Function to compute output equations
-    /// * `neqs` - Tuple containing the number of state and output equations
+    /// * `neqs` - Number of states and output equations (can be a tuple or [`Neqs`])
     /// * `nparticles` - Number of particles to use in the simulation
     ///
     /// # Returns
@@ -115,7 +120,7 @@ impl SDE {
         fa: Fa,
         init: Init,
         out: Out,
-        neqs: Neqs,
+        neqs: impl Into<Neqs>,
         nparticles: usize,
     ) -> Self {
         Self {
@@ -125,8 +130,376 @@ impl SDE {
             fa,
             init,
             out,
-            neqs,
+            neqs: neqs.into(),
             nparticles,
+        }
+    }
+
+    /// Returns a new [`SDEBuilder`] for constructing an SDE equation.
+    ///
+    /// # Example
+    /// ```ignore
+    /// use pharmsol::prelude::*;
+    ///
+    /// // Minimal builder - only required fields
+    /// let sde = SDE::builder()
+    ///     .drift(drift)
+    ///     .diffusion(diffusion)
+    ///     .out(out)
+    ///     .nstates(2)
+    ///     .nouteqs(1)
+    ///     .nparticles(1000)
+    ///     .build();
+    ///
+    /// // With optional fields
+    /// let sde = SDE::builder()
+    ///     .drift(drift)
+    ///     .diffusion(diffusion)
+    ///     .out(out)
+    ///     .nstates(2)
+    ///     .nouteqs(1)
+    ///     .nparticles(1000)
+    ///     .lag(|p, _t, _cov| lag! { 0 => p[2] })
+    ///     .fa(|p, _t, _cov| fa! { 0 => 0.8 })
+    ///     .init(|p, _t, _cov, x| { x[0] = p[3]; })
+    ///     .build();
+    /// ```
+    pub fn builder() -> SDEBuilder<Missing, Missing, Missing, Missing, Missing, Missing> {
+        SDEBuilder::new()
+    }
+}
+
+// =============================================================================
+// Type-State Builder Pattern
+// =============================================================================
+
+// Note: Missing and Provided marker types are defined in the parent module
+// and imported via `use crate::{..., Missing, Provided, ...}`
+
+/// Builder for constructing [`SDE`] equations with compile-time validation.
+///
+/// This builder uses the type-state pattern to ensure all required fields
+/// are set before `build()` can be called. Optional fields (`lag`, `fa`, `init`)
+/// have sensible defaults.
+///
+/// # Required Fields (enforced at compile time)
+/// - `drift`: The drift (deterministic) function
+/// - `diffusion`: The diffusion (stochastic) function
+/// - `out`: Output equation function
+/// - `nstates`: Number of state variables
+/// - `nouteqs`: Number of output equations
+/// - `nparticles`: Number of particles for simulation
+///
+/// # Optional Fields (with defaults)
+/// - `lag`: Lag time function (defaults to no lag)
+/// - `fa`: Bioavailability function (defaults to 100% bioavailability)
+/// - `init`: Initial state function (defaults to zero initial state)
+///
+/// # Example
+/// ```ignore
+/// use pharmsol::prelude::*;
+///
+/// // Minimal example - only required fields
+/// let sde = SDE::builder()
+///     .drift(|x, p, t, dx, rateiv, cov| { /* ... */ })
+///     .diffusion(|x, p, t, dx, cov| { /* ... */ })
+///     .out(|x, p, _t, _cov, y| { y[0] = x[0] / p[1]; })
+///     .nstates(1)
+///     .nouteqs(1)
+///     .nparticles(1000)
+///     .build();
+/// ```
+pub struct SDEBuilder<
+    DriftState,
+    DiffusionState,
+    OutState,
+    NStatesState,
+    NOuteqsState,
+    NParticlesState,
+> {
+    drift: Option<Drift>,
+    diffusion: Option<Diffusion>,
+    lag: Option<Lag>,
+    fa: Option<Fa>,
+    init: Option<Init>,
+    out: Option<Out>,
+    nstates: Option<usize>,
+    nouteqs: Option<usize>,
+    nparticles: Option<usize>,
+    _phantom: PhantomData<(
+        DriftState,
+        DiffusionState,
+        OutState,
+        NStatesState,
+        NOuteqsState,
+        NParticlesState,
+    )>,
+}
+
+impl SDEBuilder<Missing, Missing, Missing, Missing, Missing, Missing> {
+    /// Creates a new SDEBuilder with all required fields unset.
+    pub fn new() -> Self {
+        Self {
+            drift: None,
+            diffusion: None,
+            lag: None,
+            fa: None,
+            init: None,
+            out: None,
+            nstates: None,
+            nouteqs: None,
+            nparticles: None,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl Default for SDEBuilder<Missing, Missing, Missing, Missing, Missing, Missing> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<DriftState, DiffusionState, OutState, NStatesState, NOuteqsState, NParticlesState>
+    SDEBuilder<DriftState, DiffusionState, OutState, NStatesState, NOuteqsState, NParticlesState>
+{
+    /// Sets the lag time function (optional).
+    ///
+    /// If not set, defaults to no lag for any compartment.
+    pub fn lag(mut self, lag: Lag) -> Self {
+        self.lag = Some(lag);
+        self
+    }
+
+    /// Sets the bioavailability function (optional).
+    ///
+    /// If not set, defaults to 100% bioavailability for all compartments.
+    pub fn fa(mut self, fa: Fa) -> Self {
+        self.fa = Some(fa);
+        self
+    }
+
+    /// Sets the initial state function (optional).
+    ///
+    /// If not set, defaults to zero initial state for all compartments.
+    pub fn init(mut self, init: Init) -> Self {
+        self.init = Some(init);
+        self
+    }
+}
+
+impl<DiffusionState, OutState, NStatesState, NOuteqsState, NParticlesState>
+    SDEBuilder<Missing, DiffusionState, OutState, NStatesState, NOuteqsState, NParticlesState>
+{
+    /// Sets the drift (deterministic) function (required).
+    ///
+    /// The drift function defines the deterministic component of the SDE: dx/dt = f(x, p, t, ...)
+    pub fn drift(
+        self,
+        drift: Drift,
+    ) -> SDEBuilder<Provided, DiffusionState, OutState, NStatesState, NOuteqsState, NParticlesState>
+    {
+        SDEBuilder {
+            drift: Some(drift),
+            diffusion: self.diffusion,
+            lag: self.lag,
+            fa: self.fa,
+            init: self.init,
+            out: self.out,
+            nstates: self.nstates,
+            nouteqs: self.nouteqs,
+            nparticles: self.nparticles,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<DriftState, OutState, NStatesState, NOuteqsState, NParticlesState>
+    SDEBuilder<DriftState, Missing, OutState, NStatesState, NOuteqsState, NParticlesState>
+{
+    /// Sets the diffusion (stochastic) function (required).
+    ///
+    /// The diffusion function defines the stochastic component of the SDE.
+    pub fn diffusion(
+        self,
+        diffusion: Diffusion,
+    ) -> SDEBuilder<DriftState, Provided, OutState, NStatesState, NOuteqsState, NParticlesState>
+    {
+        SDEBuilder {
+            drift: self.drift,
+            diffusion: Some(diffusion),
+            lag: self.lag,
+            fa: self.fa,
+            init: self.init,
+            out: self.out,
+            nstates: self.nstates,
+            nouteqs: self.nouteqs,
+            nparticles: self.nparticles,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<DriftState, DiffusionState, NStatesState, NOuteqsState, NParticlesState>
+    SDEBuilder<DriftState, DiffusionState, Missing, NStatesState, NOuteqsState, NParticlesState>
+{
+    /// Sets the output equation function (required).
+    pub fn out(
+        self,
+        out: Out,
+    ) -> SDEBuilder<DriftState, DiffusionState, Provided, NStatesState, NOuteqsState, NParticlesState>
+    {
+        SDEBuilder {
+            drift: self.drift,
+            diffusion: self.diffusion,
+            lag: self.lag,
+            fa: self.fa,
+            init: self.init,
+            out: Some(out),
+            nstates: self.nstates,
+            nouteqs: self.nouteqs,
+            nparticles: self.nparticles,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<DriftState, DiffusionState, OutState, NOuteqsState, NParticlesState>
+    SDEBuilder<DriftState, DiffusionState, OutState, Missing, NOuteqsState, NParticlesState>
+{
+    /// Sets the number of state variables (compartments) (required).
+    pub fn nstates(
+        self,
+        nstates: usize,
+    ) -> SDEBuilder<DriftState, DiffusionState, OutState, Provided, NOuteqsState, NParticlesState>
+    {
+        SDEBuilder {
+            drift: self.drift,
+            diffusion: self.diffusion,
+            lag: self.lag,
+            fa: self.fa,
+            init: self.init,
+            out: self.out,
+            nstates: Some(nstates),
+            nouteqs: self.nouteqs,
+            nparticles: self.nparticles,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<DriftState, DiffusionState, OutState, NStatesState, NParticlesState>
+    SDEBuilder<DriftState, DiffusionState, OutState, NStatesState, Missing, NParticlesState>
+{
+    /// Sets the number of output equations (required).
+    pub fn nouteqs(
+        self,
+        nouteqs: usize,
+    ) -> SDEBuilder<DriftState, DiffusionState, OutState, NStatesState, Provided, NParticlesState>
+    {
+        SDEBuilder {
+            drift: self.drift,
+            diffusion: self.diffusion,
+            lag: self.lag,
+            fa: self.fa,
+            init: self.init,
+            out: self.out,
+            nstates: self.nstates,
+            nouteqs: Some(nouteqs),
+            nparticles: self.nparticles,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<DriftState, DiffusionState, OutState, NParticlesState>
+    SDEBuilder<DriftState, DiffusionState, OutState, Missing, Missing, NParticlesState>
+{
+    /// Sets both nstates and nouteqs from a [`Neqs`] struct or tuple (required).
+    pub fn neqs(
+        self,
+        neqs: impl Into<Neqs>,
+    ) -> SDEBuilder<DriftState, DiffusionState, OutState, Provided, Provided, NParticlesState> {
+        let neqs = neqs.into();
+        SDEBuilder {
+            drift: self.drift,
+            diffusion: self.diffusion,
+            lag: self.lag,
+            fa: self.fa,
+            init: self.init,
+            out: self.out,
+            nstates: Some(neqs.nstates),
+            nouteqs: Some(neqs.nouteqs),
+            nparticles: self.nparticles,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<DriftState, DiffusionState, OutState, NStatesState, NOuteqsState>
+    SDEBuilder<DriftState, DiffusionState, OutState, NStatesState, NOuteqsState, Missing>
+{
+    /// Sets the number of particles for simulation (required).
+    pub fn nparticles(
+        self,
+        nparticles: usize,
+    ) -> SDEBuilder<DriftState, DiffusionState, OutState, NStatesState, NOuteqsState, Provided>
+    {
+        SDEBuilder {
+            drift: self.drift,
+            diffusion: self.diffusion,
+            lag: self.lag,
+            fa: self.fa,
+            init: self.init,
+            out: self.out,
+            nstates: self.nstates,
+            nouteqs: self.nouteqs,
+            nparticles: Some(nparticles),
+            _phantom: PhantomData,
+        }
+    }
+}
+
+/// Default lag function: no lag for any compartment
+fn default_lag(_p: &V, _t: f64, _cov: &Covariates) -> HashMap<usize, f64> {
+    HashMap::new()
+}
+
+/// Default fa function: 100% bioavailability for all compartments
+fn default_fa(_p: &V, _t: f64, _cov: &Covariates) -> HashMap<usize, f64> {
+    HashMap::new()
+}
+
+/// Default init function: zero initial state
+fn default_init(_p: &V, _t: f64, _cov: &Covariates, _x: &mut V) {
+    // State is already zero-initialized
+}
+
+impl SDEBuilder<Provided, Provided, Provided, Provided, Provided, Provided> {
+    /// Builds the [`SDE`] equation.
+    ///
+    /// This method is only available when all required fields have been set:
+    /// - `drift`
+    /// - `diffusion`
+    /// - `out`
+    /// - `nstates`
+    /// - `nouteqs`
+    /// - `nparticles`
+    ///
+    /// Optional fields use defaults if not set:
+    /// - `lag`: No lag (empty HashMap)
+    /// - `fa`: 100% bioavailability (empty HashMap)
+    /// - `init`: Zero initial state
+    pub fn build(self) -> SDE {
+        SDE {
+            drift: self.drift.unwrap(),
+            diffusion: self.diffusion.unwrap(),
+            lag: self.lag.unwrap_or(default_lag),
+            fa: self.fa.unwrap_or(default_fa),
+            init: self.init.unwrap_or(default_init),
+            out: self.out.unwrap(),
+            neqs: Neqs::new(self.nstates.unwrap(), self.nouteqs.unwrap()),
+            nparticles: self.nparticles.unwrap(),
         }
     }
 }
@@ -237,12 +610,12 @@ impl EquationPriv for SDE {
 
     #[inline(always)]
     fn get_nstates(&self) -> usize {
-        self.neqs.0
+        self.neqs.nstates
     }
 
     #[inline(always)]
     fn get_nouteqs(&self) -> usize {
-        self.neqs.1
+        self.neqs.nouteqs
     }
     #[inline(always)]
     fn solve(

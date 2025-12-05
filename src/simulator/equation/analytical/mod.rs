@@ -2,6 +2,9 @@ pub mod one_compartment_models;
 pub mod three_compartment_models;
 pub mod two_compartment_models;
 
+use std::collections::HashMap;
+use std::marker::PhantomData;
+
 use diffsol::{NalgebraContext, Vector, VectorHost};
 pub use one_compartment_models::*;
 pub use three_compartment_models::*;
@@ -9,7 +12,8 @@ pub use two_compartment_models::*;
 
 use crate::PharmsolError;
 use crate::{
-    data::Covariates, simulator::*, Equation, EquationPriv, EquationTypes, Observation, Subject,
+    data::Covariates, simulator::*, Equation, EquationPriv, EquationTypes, Missing, Observation,
+    Provided, Subject,
 };
 use cached::proc_macro::cached;
 use cached::UnboundCache;
@@ -33,6 +37,8 @@ pub struct Analytical {
 impl Analytical {
     /// Create a new Analytical equation model.
     ///
+    /// For a more ergonomic API, consider using [`AnalyticalBuilder`] instead.
+    ///
     /// # Parameters
     /// - `eq`: The analytical equation function
     /// - `seq_eq`: The secondary equation function
@@ -40,7 +46,7 @@ impl Analytical {
     /// - `fa`: The fraction absorbed function
     /// - `init`: The initial state function
     /// - `out`: The output equation function
-    /// - `neqs`: The number of states and output equations
+    /// - `neqs`: The number of states and output equations (can be a tuple or [`Neqs`])
     pub fn new(
         eq: AnalyticalEq,
         seq_eq: SecEq,
@@ -48,7 +54,7 @@ impl Analytical {
         fa: Fa,
         init: Init,
         out: Out,
-        neqs: Neqs,
+        neqs: impl Into<Neqs>,
     ) -> Self {
         Self {
             eq,
@@ -57,7 +63,316 @@ impl Analytical {
             fa,
             init,
             out,
-            neqs,
+            neqs: neqs.into(),
+        }
+    }
+
+    /// Returns a new [`AnalyticalBuilder`] for constructing an Analytical equation.
+    ///
+    /// # Example
+    /// ```ignore
+    /// use pharmsol::prelude::*;
+    ///
+    /// // Minimal builder - only required fields
+    /// let analytical = Analytical::builder()
+    ///     .eq(one_compartment)
+    ///     .seq_eq(|p, _t, _cov| {})
+    ///     .out(|x, p, _t, _cov, y| { y[0] = x[0] / p[1]; })
+    ///     .nstates(1)
+    ///     .nouteqs(1)
+    ///     .build();
+    ///
+    /// // With optional fields
+    /// let analytical = Analytical::builder()
+    ///     .eq(one_compartment)
+    ///     .seq_eq(|p, _t, _cov| {})
+    ///     .out(|x, p, _t, _cov, y| { y[0] = x[0] / p[1]; })
+    ///     .nstates(1)
+    ///     .nouteqs(1)
+    ///     .lag(|p, _t, _cov| lag! { 0 => p[2] })
+    ///     .fa(|p, _t, _cov| fa! { 0 => 0.8 })
+    ///     .init(|p, _t, _cov, x| { x[0] = p[3]; })
+    ///     .build();
+    /// ```
+    pub fn builder() -> AnalyticalBuilder<Missing, Missing, Missing, Missing, Missing> {
+        AnalyticalBuilder::new()
+    }
+}
+
+// =============================================================================
+// Type-State Builder Pattern
+// =============================================================================
+
+// Note: Missing and Provided marker types are defined in the parent module
+// and imported via `use crate::{..., Missing, Provided, ...}`
+
+/// Builder for constructing [`Analytical`] equations with compile-time validation.
+///
+/// This builder uses the type-state pattern to ensure all required fields
+/// are set before `build()` can be called. Optional fields (`lag`, `fa`, `init`)
+/// have sensible defaults.
+///
+/// # Required Fields (enforced at compile time)
+/// - `eq`: The analytical equation function
+/// - `seq_eq`: The secondary equation function
+/// - `out`: Output equation function
+/// - `nstates`: Number of state variables
+/// - `nouteqs`: Number of output equations
+///
+/// # Optional Fields (with defaults)
+/// - `lag`: Lag time function (defaults to no lag)
+/// - `fa`: Bioavailability function (defaults to 100% bioavailability)
+/// - `init`: Initial state function (defaults to zero initial state)
+///
+/// # Example
+/// ```ignore
+/// use pharmsol::prelude::*;
+///
+/// // Minimal example - only required fields
+/// let analytical = Analytical::builder()
+///     .eq(one_compartment)
+///     .seq_eq(|p, _t, _cov| {})
+///     .out(|x, p, _t, _cov, y| { y[0] = x[0] / p[1]; })
+///     .nstates(1)
+///     .nouteqs(1)
+///     .build();
+/// ```
+pub struct AnalyticalBuilder<EqState, SeqEqState, OutState, NStatesState, NOuteqsState> {
+    eq: Option<AnalyticalEq>,
+    seq_eq: Option<SecEq>,
+    lag: Option<Lag>,
+    fa: Option<Fa>,
+    init: Option<Init>,
+    out: Option<Out>,
+    nstates: Option<usize>,
+    nouteqs: Option<usize>,
+    _phantom: PhantomData<(EqState, SeqEqState, OutState, NStatesState, NOuteqsState)>,
+}
+
+impl AnalyticalBuilder<Missing, Missing, Missing, Missing, Missing> {
+    /// Creates a new AnalyticalBuilder with all required fields unset.
+    pub fn new() -> Self {
+        Self {
+            eq: None,
+            seq_eq: None,
+            lag: None,
+            fa: None,
+            init: None,
+            out: None,
+            nstates: None,
+            nouteqs: None,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl Default for AnalyticalBuilder<Missing, Missing, Missing, Missing, Missing> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<EqState, SeqEqState, OutState, NStatesState, NOuteqsState>
+    AnalyticalBuilder<EqState, SeqEqState, OutState, NStatesState, NOuteqsState>
+{
+    /// Sets the lag time function (optional).
+    ///
+    /// If not set, defaults to no lag for any compartment.
+    pub fn lag(mut self, lag: Lag) -> Self {
+        self.lag = Some(lag);
+        self
+    }
+
+    /// Sets the bioavailability function (optional).
+    ///
+    /// If not set, defaults to 100% bioavailability for all compartments.
+    pub fn fa(mut self, fa: Fa) -> Self {
+        self.fa = Some(fa);
+        self
+    }
+
+    /// Sets the initial state function (optional).
+    ///
+    /// If not set, defaults to zero initial state for all compartments.
+    pub fn init(mut self, init: Init) -> Self {
+        self.init = Some(init);
+        self
+    }
+}
+
+impl<SeqEqState, OutState, NStatesState, NOuteqsState>
+    AnalyticalBuilder<Missing, SeqEqState, OutState, NStatesState, NOuteqsState>
+{
+    /// Sets the analytical equation function (required).
+    pub fn eq(
+        self,
+        eq: AnalyticalEq,
+    ) -> AnalyticalBuilder<Provided, SeqEqState, OutState, NStatesState, NOuteqsState> {
+        AnalyticalBuilder {
+            eq: Some(eq),
+            seq_eq: self.seq_eq,
+            lag: self.lag,
+            fa: self.fa,
+            init: self.init,
+            out: self.out,
+            nstates: self.nstates,
+            nouteqs: self.nouteqs,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<EqState, OutState, NStatesState, NOuteqsState>
+    AnalyticalBuilder<EqState, Missing, OutState, NStatesState, NOuteqsState>
+{
+    /// Sets the secondary equation function (required).
+    ///
+    /// This function is used to update parameters at each time step.
+    pub fn seq_eq(
+        self,
+        seq_eq: SecEq,
+    ) -> AnalyticalBuilder<EqState, Provided, OutState, NStatesState, NOuteqsState> {
+        AnalyticalBuilder {
+            eq: self.eq,
+            seq_eq: Some(seq_eq),
+            lag: self.lag,
+            fa: self.fa,
+            init: self.init,
+            out: self.out,
+            nstates: self.nstates,
+            nouteqs: self.nouteqs,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<EqState, SeqEqState, NStatesState, NOuteqsState>
+    AnalyticalBuilder<EqState, SeqEqState, Missing, NStatesState, NOuteqsState>
+{
+    /// Sets the output equation function (required).
+    pub fn out(
+        self,
+        out: Out,
+    ) -> AnalyticalBuilder<EqState, SeqEqState, Provided, NStatesState, NOuteqsState> {
+        AnalyticalBuilder {
+            eq: self.eq,
+            seq_eq: self.seq_eq,
+            lag: self.lag,
+            fa: self.fa,
+            init: self.init,
+            out: Some(out),
+            nstates: self.nstates,
+            nouteqs: self.nouteqs,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<EqState, SeqEqState, OutState, NOuteqsState>
+    AnalyticalBuilder<EqState, SeqEqState, OutState, Missing, NOuteqsState>
+{
+    /// Sets the number of state variables (compartments) (required).
+    pub fn nstates(
+        self,
+        nstates: usize,
+    ) -> AnalyticalBuilder<EqState, SeqEqState, OutState, Provided, NOuteqsState> {
+        AnalyticalBuilder {
+            eq: self.eq,
+            seq_eq: self.seq_eq,
+            lag: self.lag,
+            fa: self.fa,
+            init: self.init,
+            out: self.out,
+            nstates: Some(nstates),
+            nouteqs: self.nouteqs,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<EqState, SeqEqState, OutState, NStatesState>
+    AnalyticalBuilder<EqState, SeqEqState, OutState, NStatesState, Missing>
+{
+    /// Sets the number of output equations (required).
+    pub fn nouteqs(
+        self,
+        nouteqs: usize,
+    ) -> AnalyticalBuilder<EqState, SeqEqState, OutState, NStatesState, Provided> {
+        AnalyticalBuilder {
+            eq: self.eq,
+            seq_eq: self.seq_eq,
+            lag: self.lag,
+            fa: self.fa,
+            init: self.init,
+            out: self.out,
+            nstates: self.nstates,
+            nouteqs: Some(nouteqs),
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<EqState, SeqEqState, OutState>
+    AnalyticalBuilder<EqState, SeqEqState, OutState, Missing, Missing>
+{
+    /// Sets both nstates and nouteqs from a [`Neqs`] struct or tuple (required).
+    pub fn neqs(
+        self,
+        neqs: impl Into<Neqs>,
+    ) -> AnalyticalBuilder<EqState, SeqEqState, OutState, Provided, Provided> {
+        let neqs = neqs.into();
+        AnalyticalBuilder {
+            eq: self.eq,
+            seq_eq: self.seq_eq,
+            lag: self.lag,
+            fa: self.fa,
+            init: self.init,
+            out: self.out,
+            nstates: Some(neqs.nstates),
+            nouteqs: Some(neqs.nouteqs),
+            _phantom: PhantomData,
+        }
+    }
+}
+
+/// Default lag function: no lag for any compartment
+fn default_lag(_p: &V, _t: f64, _cov: &Covariates) -> HashMap<usize, f64> {
+    HashMap::new()
+}
+
+/// Default fa function: 100% bioavailability for all compartments
+fn default_fa(_p: &V, _t: f64, _cov: &Covariates) -> HashMap<usize, f64> {
+    HashMap::new()
+}
+
+/// Default init function: zero initial state
+fn default_init(_p: &V, _t: f64, _cov: &Covariates, _x: &mut V) {
+    // State is already zero-initialized
+}
+
+impl AnalyticalBuilder<Provided, Provided, Provided, Provided, Provided> {
+    /// Builds the [`Analytical`] equation.
+    ///
+    /// This method is only available when all required fields have been set:
+    /// - `eq`
+    /// - `seq_eq`
+    /// - `out`
+    /// - `nstates`
+    /// - `nouteqs`
+    ///
+    /// Optional fields use defaults if not set:
+    /// - `lag`: No lag (empty HashMap)
+    /// - `fa`: 100% bioavailability (empty HashMap)
+    /// - `init`: Zero initial state
+    pub fn build(self) -> Analytical {
+        Analytical {
+            eq: self.eq.unwrap(),
+            seq_eq: self.seq_eq.unwrap(),
+            lag: self.lag.unwrap_or(default_lag),
+            fa: self.fa.unwrap_or(default_fa),
+            init: self.init.unwrap_or(default_init),
+            out: self.out.unwrap(),
+            neqs: Neqs::new(self.nstates.unwrap(), self.nouteqs.unwrap()),
         }
     }
 }
@@ -100,12 +415,12 @@ impl EquationPriv for Analytical {
 
     #[inline(always)]
     fn get_nstates(&self) -> usize {
-        self.neqs.0
+        self.neqs.nstates
     }
 
     #[inline(always)]
     fn get_nouteqs(&self) -> usize {
-        self.neqs.1
+        self.neqs.nouteqs
     }
     #[inline(always)]
     fn solve(

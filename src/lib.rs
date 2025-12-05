@@ -12,7 +12,11 @@ pub use crate::data::*;
 pub use crate::equation::*;
 pub use crate::optimize::effect::get_e2;
 pub use crate::optimize::spp::SppOptimizer;
-pub use crate::simulator::equation::{self, ODE};
+pub use crate::simulator::equation::analytical::{Analytical, AnalyticalBuilder};
+pub use crate::simulator::equation::ode::ODEBuilder;
+pub use crate::simulator::equation::sde::{SDEBuilder, SDE};
+pub use crate::simulator::equation::{self, Missing, Provided, ODE};
+pub use crate::simulator::Neqs;
 pub use error::PharmsolError;
 #[cfg(feature = "exa")]
 pub use exa::*;
@@ -29,6 +33,9 @@ pub mod prelude {
     pub mod simulator {
         pub use crate::simulator::{
             equation,
+            equation::analytical::{Analytical, AnalyticalBuilder},
+            equation::ode::ODEBuilder,
+            equation::sde::{SDEBuilder, SDE},
             equation::Equation,
             likelihood::{log_psi, psi, PopulationPredictions, Prediction, SubjectPredictions},
         };

@@ -198,16 +198,53 @@ pub type Fa = fn(&V, T, &Covariates) -> HashMap<usize, T>;
 
 /// The number of states and output equations of the model.
 ///
-/// # Components
-/// - The first element is the number of states
-/// - The second element is the number of output equations
-///
-/// This is used to initialize the state vector and the output vector.
+/// This struct specifies the dimensions of the model:
+/// - `nstates`: Number of state variables (compartments)
+/// - `nouteqs`: Number of output equations (observable outputs)
 ///
 /// # Example
 /// ```ignore
-/// let neqs = (2, 1);
+/// use pharmsol::Neqs;
+/// // A two-compartment model with one output equation
+/// let neqs = Neqs::new(2, 1);
+/// // Or using the tuple shorthand for backward compatibility
+/// let neqs: Neqs = (2, 1).into();
 /// ```
-/// This means that the system of equations has 2 states and there is only 1 output equation.
-///
-pub type Neqs = (usize, usize);
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Neqs {
+    /// Number of state variables (compartments)
+    pub nstates: usize,
+    /// Number of output equations (observable outputs)
+    pub nouteqs: usize,
+}
+
+impl Neqs {
+    /// Create a new Neqs with the specified dimensions.
+    ///
+    /// # Parameters
+    /// - `nstates`: Number of state variables (compartments)
+    /// - `nouteqs`: Number of output equations (observable outputs)
+    #[inline]
+    pub const fn new(nstates: usize, nouteqs: usize) -> Self {
+        Self { nstates, nouteqs }
+    }
+}
+
+/// Allow construction from tuple for backward compatibility
+impl From<(usize, usize)> for Neqs {
+    #[inline]
+    fn from(tuple: (usize, usize)) -> Self {
+        Self {
+            nstates: tuple.0,
+            nouteqs: tuple.1,
+        }
+    }
+}
+
+/// Allow conversion to tuple for backward compatibility
+impl From<Neqs> for (usize, usize) {
+    #[inline]
+    fn from(neqs: Neqs) -> Self {
+        (neqs.nstates, neqs.nouteqs)
+    }
+}

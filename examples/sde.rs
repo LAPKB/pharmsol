@@ -1,25 +1,26 @@
 use pharmsol::{prelude::data::read_pmetrics, *};
 
+// Simplified builder API: lag, fa, and init are now optional with sensible defaults
+// Only required fields need to be specified
+
 fn one_c_ode() -> ODE {
-    equation::ODE::new(
-        |x, p, _t, dx, _b, _rateiv, _cov| {
+    equation::ODE::builder()
+        .diffeq(|x, p, _t, dx, _b, _rateiv, _cov| {
             // fetch_cov!(cov, t, wt);
             fetch_params!(p, ke);
             dx[0] = -ke * x[0];
-        },
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
-        |x, _p, _t, _cov, y| {
+        })
+        .out(|x, _p, _t, _cov, y| {
             y[0] = x[0] / 50.0;
-        },
-        (1, 1),
-    )
+        })
+        .nstates(1)
+        .nouteqs(1)
+        .build()
 }
 
 fn one_c_sde() -> SDE {
-    equation::SDE::new(
-        |x, p, _t, dx, _rateiv, _cov| {
+    equation::SDE::builder()
+        .drift(|x, p, _t, dx, _rateiv, _cov| {
             // automatically defined
             fetch_params!(p, ke0, _ske);
             // let ke0 = 1.2;
@@ -27,73 +28,71 @@ fn one_c_sde() -> SDE {
             let ke = x[1];
             // user defined
             dx[0] = -ke * x[0];
-        },
-        |p, d| {
+        })
+        .diffusion(|p, d| {
             fetch_params!(p, _ke0, ske);
             d[1] = ske;
-        },
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |p, _t, _cov, x| {
+        })
+        // init is specified because we need non-zero initial state for the ke parameter
+        .init(|p, _t, _cov, x| {
             fetch_params!(p, ke0, _ske);
             x[1] = ke0;
-        },
-        |x, p, _t, _cov, y| {
+        })
+        .out(|x, p, _t, _cov, y| {
             fetch_params!(p, _ke0, _ske);
             y[0] = x[0] / 50.0;
-        },
-        (2, 1),
-        2,
-    )
+        })
+        .nstates(2)
+        .nouteqs(1)
+        .nparticles(2)
+        .build()
 }
 
 fn three_c_ode() -> ODE {
-    equation::ODE::new(
-        |x, p, _t, dx, _b, _rateiv, _cov| {
+    equation::ODE::builder()
+        .diffeq(|x, p, _t, dx, _b, _rateiv, _cov| {
             // fetch_cov!(cov, t, wt);
             fetch_params!(p, ka, ke, kcp, kpc, _vol);
             dx[0] = -ka * x[0];
             dx[1] = ka * x[0] - (ke + kcp) * x[1] + kpc * x[2];
             dx[2] = kcp * x[1] - kpc * x[2];
-        },
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
-        |x, p, _t, _cov, y| {
+        })
+        .out(|x, p, _t, _cov, y| {
             fetch_params!(p, _ka, _ke, _kcp, _kpc, vol);
             y[0] = x[1] / vol;
-        },
-        (3, 3),
-    )
+        })
+        .nstates(3)
+        .nouteqs(3)
+        .build()
 }
 
 fn three_c_sde() -> SDE {
-    equation::SDE::new(
-        |x, p, _t, dx, _rateiv, _cov| {
+    equation::SDE::builder()
+        .drift(|x, p, _t, dx, _rateiv, _cov| {
             fetch_params!(p, ka, ke0, kcp, kpc, _vol, _ske);
             dx[3] = -x[3] + ke0;
             let ke = x[3];
             dx[0] = -ka * x[0];
             dx[1] = ka * x[0] - (ke + kcp) * x[1] + kpc * x[2];
             dx[2] = kcp * x[1] - kpc * x[2];
-        },
-        |p, d| {
+        })
+        .diffusion(|p, d| {
             fetch_params!(p, _ka, _ke0, _kcp, _kpc, _vol, ske);
             d[3] = ske;
-        },
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |p, _t, _cov, x| {
+        })
+        // init is specified because we need non-zero initial state
+        .init(|p, _t, _cov, x| {
             fetch_params!(p, _ka, ke0, _kcp, _kpc, _vol, _ske);
             x[3] = ke0;
-        },
-        |x, p, _t, _cov, y| {
+        })
+        .out(|x, p, _t, _cov, y| {
             fetch_params!(p, _ka, _ke0, _kcp0, _kpc0, vol, _ske);
             y[0] = x[1] / vol;
-        },
-        (4, 1),
-        2,
-    )
+        })
+        .nstates(4)
+        .nouteqs(1)
+        .nparticles(2)
+        .build()
 }
 
 fn main() {
