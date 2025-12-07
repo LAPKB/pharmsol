@@ -11,7 +11,23 @@ use rand_distr::Alphanumeric;
 use std::process::{Command, Stdio};
 use std::thread;
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 use crate::Equation;
+
+/// Windows flag to prevent console window from appearing
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+/// Creates a new Command with platform-specific settings to hide console windows on Windows
+#[allow(unused_mut)]
+fn new_command(program: &str) -> Command {
+    let mut cmd = Command::new(program);
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    cmd
+}
 
 /// Compiles model text into a dynamically loadable library.
 ///
@@ -170,7 +186,7 @@ fn create_template(temp_dir: PathBuf) -> Result<PathBuf, io::Error> {
     );
 
     if !template_dir.exists() {
-        let output = Command::new("cargo")
+        let output = new_command("cargo")
             .arg("new")
             .arg("template")
             .arg("--lib")
@@ -250,7 +266,7 @@ fn inject_model<E: Equation>(
             .join(", ")
     );
     fs::write(lib_rs_path, lib_rs_content)?;
-    Command::new("cargo")
+    new_command("cargo")
         .arg("fmt")
         .current_dir(&template_dir)
         .output()
@@ -272,7 +288,7 @@ fn build_template(
     template_path: PathBuf,
     event_callback: Arc<dyn Fn(String, String) + Send + Sync + 'static>,
 ) -> Result<PathBuf, io::Error> {
-    let mut command = Command::new("cargo");
+    let mut command = new_command("cargo");
     command
         .arg("build")
         .arg("--release")
