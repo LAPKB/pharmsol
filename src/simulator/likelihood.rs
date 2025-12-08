@@ -136,7 +136,7 @@ pub fn psi(
                         error_model,
                         cache,
                     );
-    //                println!("{}, {}, {}", i, j, likelihood); // Some subjects are hanging cargo run ... > debug.txt
+    //  println!("{}, {}, {}", subject.id(), j, likelihood); // Some subjects are hanging cargo run ... > debug.txt
                     element.fill(likelihood);
                     if let Some(pb_ref) = pb.as_ref() {
                         pb_ref.inc(1);
@@ -224,6 +224,11 @@ impl Prediction {
         let sigma = error_model.estimate_sigma(self);
         // println!("state {:#?}",self.state);
 
+        // 2025.11.19 -- I want to carry the chi^2 stat in output 2 and 3 ... but I don't want it
+        // to affect the calculation of likelihood. So,
+        if self.outeq() < 2 {
+        // ... calculate the likelihood as usual; else likelihood <- 1.0, below
+
         // if deviation is too big, set likelihood to 0
         /*
         if (self.observation - self.prediction).abs() > 4.417*sigma { // 99.999 CI
@@ -248,6 +253,11 @@ impl Prediction {
             */
         }
         */
+
+        } // I think the chi^2 will get estimated, BUT it will have 0 effect on likelihood
+        else {
+            1.0
+        }
 
     }
     pub fn state(&self) -> &Vec<f64> {

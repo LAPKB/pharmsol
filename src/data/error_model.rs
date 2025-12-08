@@ -29,9 +29,9 @@ impl<'a> ErrorModel<'_> {
             None => (self.c.0, self.c.1, self.c.2, self.c.3),
         };
         let alpha = c0
-            + c1 * prediction.observation()
-            + c2 * prediction.observation().powi(2)
-            + c3 * prediction.observation().powi(3);
+            + c1 * prediction.prediction()
+            + c2 * prediction.prediction().powi(2)
+            + c3 * prediction.prediction().powi(3);
 
         let res = match self.e_type {
             ErrorType::Add => (alpha.powi(2) + self.gl.powi(2)).sqrt(),

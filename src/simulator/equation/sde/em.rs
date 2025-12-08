@@ -108,6 +108,12 @@ impl EM {
         let mut times = vec![t0];
         let mut solution = vec![self.state.clone()];
 
+        //
+        // I think the std_dev = 1.0 below is wrong, it should reference state ... Maybe not!
+        // if diffusion_term[i] * sigma, above, in euler_maruyama_step, is the true stochastic
+        // sigma, then all is well! :-D
+        //
+
         let mut rng = rng();
         let normal_dist = Normal::new(0.0, 1.0).unwrap();
         // sigma = normal_dist.sample(&mut rng); // oops!!! this makes one sigma for ENTIRE time
@@ -116,6 +122,9 @@ impl EM {
             let mut y2 = self.state.clone();
 
             let sigma = normal_dist.sample(&mut rng); // here is correct, only affects one step of the variable time step
+
+            // sample from a trimodal; MH suggests append eps to the support point; modify teh adaptive grid (only update first L-1) ... or append it
+            // just before ... something. so not reason to modify teh adaptive grid.
 
             // Single step
             self.euler_maruyama_step(t, dt, &mut y1, sigma);

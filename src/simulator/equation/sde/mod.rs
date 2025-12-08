@@ -317,7 +317,7 @@ fn _estimate_likelihood_cached(
     const MAX_RUNS: usize = 50; // Maximum number of simulations to prevent infinite loops
     const REL_TOL: f64 = 0.01; // Relative tolerance: 1% change in mean
     const ABS_TOL: f64 = 1e-6; // Absolute tolerance for near-zero likelihoods
-    const WINDOW_SIZE: usize = 3; // Check stability over last N runs
+    const WINDOW_SIZE: usize = 9; // Check stability over last N runs
 
     let mut likelihoods = Vec::with_capacity(MAX_RUNS);
 
