@@ -13,6 +13,107 @@ use std::thread;
 
 use crate::Equation;
 
+/// Finds the cargo executable, checking common installation locations.
+///
+/// This is necessary because bundled GUI applications (like macOS .app bundles,
+/// Windows .exe installers, or Linux AppImages) don't inherit the user's shell
+/// PATH, so `cargo` may not be found directly.
+///
+/// Checks in order:
+/// 1. Direct `cargo` command (if PATH is set correctly)
+/// 2. `CARGO_HOME/bin/cargo` (custom rustup installation)
+/// 3. Standard rustup location: `~/.cargo/bin/cargo`
+/// 4. Platform-specific fallback locations
+///
+/// # Returns
+///
+/// The path to the cargo executable as a String.
+fn find_cargo() -> String {
+    // First, check if cargo is directly available in PATH
+    if let Ok(output) = Command::new("cargo").arg("--version").output() {
+        if output.status.success() {
+            return "cargo".to_string();
+        }
+    }
+
+    // Check CARGO_HOME environment variable (custom rustup installation)
+    if let Ok(cargo_home) = env::var("CARGO_HOME") {
+        let cargo_path = PathBuf::from(&cargo_home)
+            .join("bin")
+            .join(cargo_exe_name());
+        if cargo_path.exists() {
+            return cargo_path.to_string_lossy().to_string();
+        }
+    }
+
+    // Get home directory (works on all platforms)
+    // Unix: $HOME, Windows: %USERPROFILE%
+    let home = env::var("HOME")
+        .or_else(|_| env::var("USERPROFILE"))
+        .unwrap_or_default();
+
+    if !home.is_empty() {
+        // Standard rustup installation path: ~/.cargo/bin/cargo
+        let standard_path = PathBuf::from(&home)
+            .join(".cargo")
+            .join("bin")
+            .join(cargo_exe_name());
+        if standard_path.exists() {
+            return standard_path.to_string_lossy().to_string();
+        }
+    }
+
+    // Platform-specific fallback locations
+    #[cfg(target_os = "windows")]
+    {
+        let candidates = [
+            "C:\\Program Files\\Rust stable MSVC\\bin\\cargo.exe",
+            "C:\\Program Files\\Rust stable GNU\\bin\\cargo.exe",
+        ];
+        for candidate in &candidates {
+            if PathBuf::from(candidate).exists() {
+                return candidate.to_string();
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let candidates = ["/opt/homebrew/bin/cargo", "/usr/local/bin/cargo"];
+        for candidate in &candidates {
+            if PathBuf::from(candidate).exists() {
+                return candidate.to_string();
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let candidates = ["/usr/local/bin/cargo", "/usr/bin/cargo", "/snap/bin/cargo"];
+        for candidate in &candidates {
+            if PathBuf::from(candidate).exists() {
+                return candidate.to_string();
+            }
+        }
+    }
+
+    // Fallback to "cargo" and let it fail with a clear error
+    "cargo".to_string()
+}
+
+/// Returns the cargo executable name for the current platform.
+#[inline]
+fn cargo_exe_name() -> &'static str {
+    #[cfg(target_os = "windows")]
+    {
+        "cargo.exe"
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        "cargo"
+    }
+}
+
 /// Compiles model text into a dynamically loadable library.
 ///
 /// This function creates a Rust project from a template, injects the model text,
@@ -170,7 +271,7 @@ fn create_template(temp_dir: PathBuf) -> Result<PathBuf, io::Error> {
     );
 
     if !template_dir.exists() {
-        let output = Command::new("cargo")
+        let output = Command::new(find_cargo())
             .arg("new")
             .arg("template")
             .arg("--lib")
@@ -250,11 +351,11 @@ fn inject_model<E: Equation>(
             .join(", ")
     );
     fs::write(lib_rs_path, lib_rs_content)?;
-    Command::new("cargo")
+    // cargo fmt is optional - don't fail if it's not available
+    let _ = Command::new(find_cargo())
         .arg("fmt")
         .current_dir(&template_dir)
-        .output()
-        .expect("Failed to format cargo project");
+        .output();
     Ok(())
 }
 
@@ -272,7 +373,8 @@ fn build_template(
     template_path: PathBuf,
     event_callback: Arc<dyn Fn(String, String) + Send + Sync + 'static>,
 ) -> Result<PathBuf, io::Error> {
-    let mut command = Command::new("cargo");
+    let cargo_path = find_cargo();
+    let mut command = Command::new(&cargo_path);
     command
         .arg("build")
         .arg("--release")
