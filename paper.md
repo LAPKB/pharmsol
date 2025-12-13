@@ -57,7 +57,8 @@ Data → Subject → Occasion → Event (Bolus, Infusion, Observation)
 
 Data is a collection of subjects, which may have one or more occasions, i.e. pharmacokinetic investigations separated by time. Each occasion consists of one or more events, e.g. an instantaneous dose (bolus), infusions of drug, or observed concentrations at given times.
 
-`pharmsol` also provides methods to read data in the Pmetrics data format.[@pmetrics] In the future, we also aim to provide parsers for all common data formats, such as those used by NONMEM, Monolix, and others.
+`pharmsol` also provides methods to read data in the Pmetrics data format.[@pmetrics] 
+In the future, we also aim to provide parsers for all common data formats, such as those used by NONMEM, Monolix, and others.
 
 ## Equation Module
 
@@ -65,14 +66,7 @@ The equation module provides the mathematical foundation for representing PK/PD 
 
 ### Analytical Solutions
 
-For standard compartmental models, pharmsol provides optimized closed-form solutions:
-
-- One-compartment models (with/without absorption)
-- Two-compartment models (with/without absorption)
-- Support for various administration routes and dosing patterns
-
-These analytical solutions maintain the same interface as ODE-based models, allowing seamless interchangeability while providing significant computational advantages for supported model structures.
-
+For standard compartmental models, pharmsol provides optimized closed-form solutions for one- and two-compartment models, with and without oral absorption. These have been verified against their differential equation counterparts. For these models, significant improvements in runtime can be obtained without loss of precision.
 
 # Conclusion and Future Work
 
