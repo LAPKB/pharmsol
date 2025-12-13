@@ -6,7 +6,6 @@ tags:
   - pharmacodynamics
   - modeling
   - simulation
-  - ODE
   - compartmental models
 authors:
   - name: Julián D. Otálvaro
@@ -20,22 +19,23 @@ affiliations:
     index: 1
   - name: Department of Transplantation Medicine, Oslo University Hospital, Oslo, Norway
     index: 2
-date: 14 June 2024
+date: 12 December 2025
 bibliography: paper.bib
 ---
 
 # Summary
 
-`pharmsol` is a modern, high-performance library for pharmacokinetic/pharmacodynamic (PK/PD) modeling and simulation written in Rust. It provides a flexible, declarative approach to defining, solving, and analyzing compartmental models. The library addresses significant performance challenges in PK/PD modeling through a systems-based architecture that leverages Rust's zero-cost abstractions and memory safety guarantees while maintaining an accessible interface for researchers and practitioners.
-
+`pharmsol` is a library for pharmacokinetic/pharmacodynamic (PK/PD) modeling and simulation written in Rust. It provides the necessary tools and frameworks for defining, solving, and analyzing compartmental models, with support for differential equations, their analytical solutons, and experimental support for stochastic differential equations. The library addresses significant performance challenges in PK/PD modeling through a systems-based architecture that leverages Rust's zero-cost abstractions and memory safety guarantees while maintaining an accessible interface for researchers and developers.
 
 # Statement of Need
 
-Pharmacokinetic and pharmacodynamic simulation faces increasing complexity as drug development workflows incorporate more sophisticated dosing regimens, mechanistic models, and individualized approaches. `pharmsol` addresses these challenges by providing a high-performance simulation library with three specialized backends (analytical, ODE, and SDE) for efficient execution of PK/PD simulations.
+Pharmacokinetic and pharmacodynamic simulation faces increasing demands with the use of more sophisticated dosing regimens, mechanistic models, and individualized approaches. Si
 
-Unlike comprehensive pharmacometric platforms such as NONMEM [@beal1989nonmem], Phoenix NLME [@phoenixnlme], or Monolix [@monolix], `pharmsol` is purpose-built as a simulation engine that pharmacometricians and modelers can leverage to rapidly execute simulations for individuals or populations with pre- and user-defined models. While the library includes basic functionality for individual parameter fitting, its primary focus is on delivering a fully open-source solution that empowers users to inspect, modify, and extend the simulation capabilities without licensing constraints.
+ as drug development workflows incorporate . `pharmsol` addresses these challenges by providing a high-performance simulation library with three specialized backends (analytical, ODE, and SDE) for efficient execution of PK/PD simulations.
 
-pharmsol addresses these challenges through three specialized backends:
+Unlike comprehensive pharmacometric platforms such as NONMEM, Phoenix NLME, or Monolix, `pharmsol` is purpose-built as a simulation engine that pharmacometricians and modelers can leverage to rapidly execute simulations for individuals or populations with pre- and user-defined models. While the library includes basic functionality for individual parameter fitting, its primary focus is on delivering a fully open-source solution that empowers users to inspect, modify, and extend the simulation capabilities without licensing constraints.
+
+`pharmsol` addresses these challenges through three specialized backends:
 
 - **Analytical Backend**: Provides closed-form solutions for standard compartmental models, offering maximum performance for common PK structures.
 - **ODE Backend**: Enables simulation of custom differential equation systems with optimized numerical methods.
@@ -57,7 +57,7 @@ Data → Subject → Occasion → Event (Bolus, Infusion, Observation)
 
 Data is a collection of subjects, which may have one or more occasions, i.e. pharmacokinetic investigations separated by time. Each occasion consists of one or more events, e.g. an instantaneous dose (bolus), infusions of drug, or observed concentrations at given times.
 
-`pharmsol` also provides methods to read data in the Pmetrics data format. In the future, we also aim to provide parsers for all common data formats, such as those used by NONMEM, Monolix, and others.
+`pharmsol` also provides methods to read data in the Pmetrics data format.[@pmetrics] In the future, we also aim to provide parsers for all common data formats, such as those used by NONMEM, Monolix, and others.
 
 ## Equation Module
 
@@ -76,8 +76,7 @@ These analytical solutions maintain the same interface as ODE-based models, allo
 
 # Conclusion and Future Work
 
-
-pharmsol aims to support the evolving needs of pharmacometric research by providing a modern, efficient platform that can adapt to the increasing complexity of pharmaceutical development while remaining accessible through its open-source licensing model.
+`pharmsol` aims to support the evolving needs of pharmacometric research by providing a modern, efficient platform that can adapt to the increasing complexity of pharmaceutical development while remaining accessible through its open-source licensing model.
 
 # Acknowledgements
 
