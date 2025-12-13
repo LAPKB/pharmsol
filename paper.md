@@ -29,19 +29,9 @@ bibliography: paper.bib
 
 # Statement of Need
 
-Pharmacokinetic and pharmacodynamic simulation faces increasing demands with the use of more sophisticated dosing regimens, mechanistic models, and individualized approaches. Si
+Pharmacokinetic and pharmacodynamic simulation faces increasing demands with the use of more sophisticated dosing regimens, mechanistic models, and individualized approaches. Unlike comprehensive pharmacometric platforms such as NONMEM, Phoenix NLME, or Monolix, `pharmsol` is purpose-built as a simulation engine that pharmacometricians and modelers can leverage to rapidly execute simulations for individuals or populations with pre- and user-defined models. 
 
- as drug development workflows incorporate . `pharmsol` addresses these challenges by providing a high-performance simulation library with three specialized backends (analytical, ODE, and SDE) for efficient execution of PK/PD simulations.
-
-Unlike comprehensive pharmacometric platforms such as NONMEM, Phoenix NLME, or Monolix, `pharmsol` is purpose-built as a simulation engine that pharmacometricians and modelers can leverage to rapidly execute simulations for individuals or populations with pre- and user-defined models. While the library includes basic functionality for individual parameter fitting, its primary focus is on delivering a fully open-source solution that empowers users to inspect, modify, and extend the simulation capabilities without licensing constraints.
-
-`pharmsol` addresses these challenges through three specialized backends:
-
-- **Analytical Backend**: Provides closed-form solutions for standard compartmental models, offering maximum performance for common PK structures.
-- **ODE Backend**: Enables simulation of custom differential equation systems with optimized numerical methods.
-- **SDE Backend**: Supports stochastic differential equations for systems with inherent variability.
-
-The library's open-source architecture (available at [https://github.com/LAPKB/pharmsol](https://github.com/LAPKB/pharmsol)) is designed for extensibility, allowing additional backends to be added as pharmacometric methods evolve. To our knowledge, pharmsol represents the first open-source pharmacometric simulator written in Rust.
+While the library includes basic functionality for individual parameter fitting, its primary focus is on delivering a fully open-source solution that empowers users to inspect, modify, and extend the simulation capabilities without licensing constraints. Furthermore, `pharmsol` is readily integrated in more user-friendly languages such as R using `extendr` [@extendr].
 
 # Architecture
 
@@ -62,7 +52,7 @@ In the future, we also aim to provide parsers for all common data formats, such 
 
 ## Equation Module
 
-The equation module provides the mathematical foundation for representing PK/PD systems through two complementary approaches: Ordinary Differential Equations (ODEs) and analytical (closed-form) solutions.
+The equation module provides the mathematical foundation for representing PK/PD systems through differential equations, their analytical solutions, and with experimental support for stochastic differential equations.
 
 ### Analytical Solutions
 
