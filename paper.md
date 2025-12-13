@@ -9,7 +9,7 @@ tags:
   - compartmental models
 authors:
   - name: Julián D. Otálvaro
-    orcid: 0000-0000-0000-0000
+    orcid: 0000-0001-5202-1645
     affiliation: 1
   - name: Markus Hovd
     orcid: 0000-0002-6077-0934
