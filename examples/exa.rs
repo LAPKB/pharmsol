@@ -24,7 +24,7 @@ fn main() {
         .build();
 
     // Parameters: ke (elimination rate constant), v (volume of distribution)
-    let params = vec![1.02282724609375, 194.51904296875];
+    let params = vec![1.2, 50.0];
 
     // =========================================================================
     // 1. Create ODE model directly (static compilation)
