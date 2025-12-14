@@ -14,6 +14,7 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
         .observation(6., 0.009, 0)
         .observation(8., 0.001, 0)
         // A missing observation, to force the simulator to predict to this time point
+        // For missing observations, predictions are made but no likelihood contribution is computed
         .missing_observation(12.0, 0)
         // Build the subject
         .build();
