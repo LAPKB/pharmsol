@@ -55,7 +55,9 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
     );
 
     // Define the error models for the observations
-    let ems = ErrorModels::new().add(
+    let ems = ErrorModels::new().
+    // For this example, we use a simple additive error model with 5% error
+    add(
         0,
         ErrorModel::additive(ErrorPoly::new(0.0, 0.05, 0.0, 0.0), 0.0),
     )?;
