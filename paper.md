@@ -35,25 +35,35 @@ Its primary focus is on delivering a fully open-source solution that empowers us
 
 # Data format
 
-`pharmsol` is designed around a hierarchical data structure that models the typical organization of pharmacometric data:
+`pharmsol` is designed around a hierarchical data structure that models the typical organization of pharmacometric data. The primary data struct, `Data`, is a collection of `Subject`s, which may have one or more `Occasion`s, i.e. separate pharmacokinetic investigations. Each occasion consists of one or more `Event`s, e.g. an instantaneous dose (bolus), infusions of drug, or observed concentrations at given times.
 
 ```
 Data → Subject → Occasion → Event (Bolus, Infusion, Observation)
 ```
 
-Data is a collection of subjects, which may have one or more occasions, i.e. pharmacokinetic investigations separated by time. Each occasion consists of one or more events, e.g. an instantaneous dose (bolus), infusions of drug, or observed concentrations at given times.
+`pharmsol` also provides methods to read data in the Pmetrics data format [@pmetrics]. 
 
-`pharmsol` also provides methods to read data in the Pmetrics data format.[@pmetrics] 
-In the future, we also aim to provide parsers for all common data formats, such as those used by NONMEM, Monolix, and others.
+# Equation Module
 
+The equation module provides the mathematical foundation for representing PK/PD systems through three solver types.
+The simulator module orchestrates the execution of models across subjects and populations. It computes model predictions at observation times and calculates likelihoods given an error model. Furthermore, the simulator utilizes both parallelization and caching.
 
 ## Analytical Solutions
 
-For standard compartmental models, pharmsol provides optimized closed-form solutions for one- and two-compartment models, with and without oral absorption. These have been verified against their differential equation counterparts. For these models, significant improvements in runtime can be obtained without loss of precision.
+For standard compartmental models, `pharmsol` provides closed-form solutions for one- and two-compartment models, with and without oral absorption. These have been verified against their differential equation counterparts. For these models, significant improvements in runtime can be obtained without loss of precision.
+
+## Ordinary Differential Equations
+
+For more complex or non-standard models, `pharmsol` supports user-defined ordinary differential equations (ODEs). The numerical integration is performed using the `diffsol` library [@diffsol], which provides efficient BDF solvers suitable for the stiff systems often encountered in pharmacometric modeling.
+
+## Stochastic Differential Equations
+
+Experimental support for stochastic differential equations (SDEs) is available using the Euler-Maruyama method. SDEs allow modeling of within-subject variability as a continuous stochastic process.
+
 
 # Conclusion and Future Work
 
-`pharmsol` aims to support the evolving needs of pharmacometric research by providing a modern, efficient platform that can adapt to the increasing complexity of pharmaceutical development while remaining accessible through its open-source licensing model.
+`pharmsol` aims to support the evolving needs of pharmacometric research by providing a modern, efficient platform that can adapt to the increasing complexity of pharmaceutical development while remaining accessible through its open-source licensing model. Future development will focus on additional analytical model implementations, support for common data formats used by other pharmacometric software, and continued performance improvements.
 
 # Acknowledgements
 
