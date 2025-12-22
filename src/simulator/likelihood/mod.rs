@@ -201,7 +201,7 @@ fn normcdf(obs: f64, pred: f64, sigma: f64) -> Result<f64, ErrorModelError> {
 impl From<Vec<Prediction>> for SubjectPredictions {
     fn from(predictions: Vec<Prediction>) -> Self {
         Self {
-            predictions: predictions.iter().cloned().collect(),
+            predictions: predictions.to_vec(),
         }
     }
 }
@@ -462,11 +462,11 @@ impl Prediction {
         };
 
         if likelihood.is_finite() {
-            return Ok(likelihood);
+            Ok(likelihood)
         } else if likelihood == 0.0 {
-            return Err(PharmsolError::ZeroLikelihood);
+            Err(PharmsolError::ZeroLikelihood)
         } else {
-            return Err(PharmsolError::NonFiniteLikelihood(likelihood));
+            Err(PharmsolError::NonFiniteLikelihood(likelihood))
         }
     }
 
