@@ -43,14 +43,13 @@ Data → Subject → Occasion → Event (Bolus, Infusion, Observation)
 
 Currently, `pharmsol` only provides methods to parse the Pmetrics [@pmetrics] data format. In the future, we aim to also support additional formats, such as those used by NONMEM, Monolix [@monolix], and more.
 
-# Equation Module
+# Supported equation formats
 
-The equation module provides the mathematical foundation for representing PK/PD systems through three solver types.
-The simulator module orchestrates the execution of models across subjects and populations. It computes model predictions at observation times and calculates likelihoods given an error model. Furthermore, the simulator utilizes both parallelization and caching.
+The equation module provides the mathematical foundation for representing PK/PD systems through three solver types, analytical solutions, ordinary differential equations, and experimental suppoert for stochastic differential equations.
 
 ## Analytical Solutions
 
-For standard compartmental models, `pharmsol` provides closed-form solutions for one- and two-compartment models, with and without oral absorption. These have been verified against their differential equation counterparts. For these models, significant improvements in runtime can be obtained without loss of precision.
+For standard compartmental models, `pharmsol` provides closed-form solutions for one- and two-compartment models, with and without oral absorption. These have been verified against their differential equation counterparts. For these models, significant improvements in runtime can be obtained without loss of precision. Additional analytical solutions will be added in future versions.
 
 ## Ordinary Differential Equations
 
