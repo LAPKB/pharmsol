@@ -41,7 +41,7 @@ Its primary focus is on delivering a fully open-source solution that empowers us
 Data → Subject → Occasion → Event (Bolus, Infusion, Observation)
 ```
 
-`pharmsol` also provides methods to read data in the Pmetrics data format [@pmetrics]. 
+Currently, `pharmsol` only provides methods to parse the Pmetrics [@pmetrics] data format. In the future, we aim to also support additional formats, such as those used by NONMEN, Monolix, and more.
 
 # Equation Module
 
@@ -59,7 +59,6 @@ For more complex or non-standard models, `pharmsol` supports user-defined ordina
 ## Stochastic Differential Equations
 
 Experimental support for stochastic differential equations (SDEs) is available using the Euler-Maruyama method. SDEs allow modeling of within-subject variability as a continuous stochastic process.
-
 
 # Conclusion and Future Work
 
