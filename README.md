@@ -8,11 +8,10 @@ A high-performance Rust library for pharmacokinetic/pharmacodynamic (PK/PD) simu
 
 ## Installation
 
-Add `pharmsol` to your `Cargo.toml`:
+Add `pharmsol` to your `Cargo.toml`, either manually or using
 
-```toml
-[dependencies]
-pharmsol = "0.22"
+```bash
+cargo add pharmsol
 ```
 
 ## Quick Start
