@@ -48,3 +48,7 @@ harness = false
 [[bench]]
 name = "ode"
 harness = false
+
+[[bench]]
+name = "analytical_vs_ode"
+harness = false
