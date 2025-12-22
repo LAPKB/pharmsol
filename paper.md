@@ -29,7 +29,7 @@ bibliography: paper.bib
 
 # Statement of Need
 
-Pharmacokinetic and pharmacodynamic simulation faces increasing demands with the use of more sophisticated dosing regimens, mechanistic models, and individualized approaches. Unlike comprehensive pharmacometric platforms such as NONMEM, Phoenix NLME, or Monolix, `pharmsol` is purpose-built as a simulation engine that pharmacometricians and modelers can leverage to rapidly execute simulations for individuals or populations with pre- and user-defined models. 
+Pharmacokinetic and pharmacodynamic simulation faces increasing demands with the use of more sophisticated dosing regimens, mechanistic models, and individualized approaches. Unlike comprehensive pharmacometric platforms such as NONMEM [@nonmem], Phoenix NLME, or Monolix, `pharmsol` is purpose-built as a simulation engine that pharmacometricians and modelers can leverage to rapidly execute simulations for individuals or populations with pre- and user-defined models. 
 
 Its primary focus is on delivering a fully open-source solution that empowers users to inspect, modify, and extend the simulation capabilities without licensing constraints. Furthermore, `pharmsol` is readily integrated in more user-friendly languages such as R using `extendr` [@extendr].
 
@@ -41,7 +41,7 @@ Its primary focus is on delivering a fully open-source solution that empowers us
 Data → Subject → Occasion → Event (Bolus, Infusion, Observation)
 ```
 
-Currently, `pharmsol` only provides methods to parse the Pmetrics [@pmetrics] data format. In the future, we aim to also support additional formats, such as those used by NONMEN, Monolix, and more.
+Currently, `pharmsol` only provides methods to parse the Pmetrics [@pmetrics] data format. In the future, we aim to also support additional formats, such as those used by NONMEM, Monolix [@monolix], and more.
 
 # Equation Module
 
