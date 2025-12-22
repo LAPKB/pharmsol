@@ -54,7 +54,8 @@ fn test_particle_filter_likelihood() {
 
     // Calculate mean and standard deviation
     let mean: f64 = likelihoods.iter().sum::<f64>() / NUM_RUNS as f64;
-    let variance: f64 = likelihoods.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / NUM_RUNS as f64;
+    let variance: f64 =
+        likelihoods.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / NUM_RUNS as f64;
     let std_dev = variance.sqrt();
 
     println!("\n=== Particle Filter Likelihood Statistics ===");
@@ -62,8 +63,17 @@ fn test_particle_filter_likelihood() {
     println!("Likelihoods: {:?}", likelihoods);
     println!("Mean likelihood: {}", mean);
     println!("Std deviation: {}", std_dev);
-    println!("Min: {}", likelihoods.iter().cloned().fold(f64::INFINITY, f64::min));
-    println!("Max: {}", likelihoods.iter().cloned().fold(f64::NEG_INFINITY, f64::max));
+    println!(
+        "Min: {}",
+        likelihoods.iter().cloned().fold(f64::INFINITY, f64::min)
+    );
+    println!(
+        "Max: {}",
+        likelihoods
+            .iter()
+            .cloned()
+            .fold(f64::NEG_INFINITY, f64::max)
+    );
 
     // The likelihood should be a reasonable negative value (log-likelihood)
     // This assertion is loose since particle filters have stochastic variation
