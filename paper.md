@@ -49,7 +49,7 @@ The equation module provides the mathematical foundation for representing PK/PD 
 
 ## Analytical Solutions
 
-For standard compartmental models, `pharmsol` provides closed-form solutions for one- and two-compartment models, with and without oral absorption. These have been verified against their differential equation counterparts. For these models, significant improvements in runtime can be obtained without loss of precision. Additional analytical solutions will be added in future versions.
+For standard compartmental models, `pharmsol` provides closed-form solutions for one- and two-compartment models, with and without oral absorption. These have been verified against their differential equation counterparts. Benchmarks demonstrate 20-33× speedups compared to equivalent ODE formulations without loss of precision (see repository benchmarks for details). Additional analytical solutions will be added in future versions.
 
 ## Ordinary Differential Equations
 
