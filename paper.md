@@ -63,7 +63,7 @@ For more complex or non-standard models, `pharmsol` supports user-defined ordina
 
 ## Stochastic Differential Equations
 
-Experimental support for stochastic differential equations (SDEs) is available using the Euler-Maruyama method. SDEs allow modeling of within-subject variability as a continuous stochastic process. However, particular care should be taken if applying SDEs in a non-parametric approach to population pharmacokinetic modelling, such as when using the non-parametric adaptive grid algorithm (NPAG) [@npag] for parameter estimation.
+Experimental support for stochastic differential equations (SDEs) is available using the Euler-Maruyama method. SDEs allow modeling of within-subject variability as a continuous stochastic process. However, particular care should be taken if applying SDEs in a non-parametric approach to population pharmacokinetic modeling, such as when using the non-parametric adaptive grid algorithm (NPAG) [@npag] for parameter estimation.
 
 # Conclusion and Future Work
 
