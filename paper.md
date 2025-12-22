@@ -14,6 +14,12 @@ authors:
   - name: Markus Hovd
     orcid: 0000-0002-6077-0934
     affiliation: 2
+  - name: Walter M. Yamada
+    orcid: 0000-0003-3512-9202
+    affiliation: 1
+  - name: Michael Neely
+    orcid: 0000-0002-1675-8276
+    affiliation: 1
 affiliations:
   - name: Laboratory of Applied Pharmacokinetics and Bioinformatics, Children's Hospital of Los Angeles, Los Angeles, USA
     index: 1
