@@ -29,7 +29,7 @@ bibliography: paper.bib
 
 # Statement of Need
 
-Pharmacokinetic and pharmacodynamic simulation faces increasing demands with the use of more sophisticated dosing regimens, mechanistic models, and individualized approaches. Unlike comprehensive pharmacometric platforms such as NONMEM [@nonmem], Phoenix NLME, or Monolix, `pharmsol` is purpose-built as a simulation engine that pharmacometricians and modelers can leverage to rapidly execute simulations for individuals or populations with pre- and user-defined models. 
+Pharmacokinetic and pharmacodynamic simulation faces increasing demands with the use of more sophisticated dosing regimens, mechanistic models, and individualized approaches. Unlike comprehensive pharmacometric platforms such as NONMEM [@nonmem], Phoenix NLME [@phoenix], or Monolix, `pharmsol` is purpose-built as a simulation engine that pharmacometricians and modelers can leverage to rapidly execute simulations for individuals or populations with pre- and user-defined models. 
 
 Its primary focus is on delivering a fully open-source solution that empowers users to inspect, modify, and extend the simulation capabilities without licensing constraints. Furthermore, `pharmsol` is readily integrated in more user-friendly languages such as R using `extendr` [@extendr].
 
@@ -45,7 +45,7 @@ Currently, `pharmsol` only provides methods to parse the Pmetrics [@pmetrics] da
 
 # Supported equation formats
 
-The equation module provides the mathematical foundation for representing PK/PD systems through three solver types, analytical solutions, ordinary differential equations, and experimental suppoert for stochastic differential equations.
+The equation module provides the mathematical foundation for representing PK/PD systems through three solver types: analytical solutions, ordinary differential equations, and experimental support for stochastic differential equations.
 
 ## Analytical Solutions
 
@@ -57,7 +57,7 @@ For more complex or non-standard models, `pharmsol` supports user-defined ordina
 
 ## Stochastic Differential Equations
 
-Experimental support for stochastic differential equations (SDEs) is available using the Euler-Maruyama method. SDEs allow modeling of within-subject variability as a continuous stochastic process.
+Experimental support for stochastic differential equations (SDEs) is available using the Euler-Maruyama method. SDEs allow modeling of within-subject variability as a continuous stochastic process. However, particular care should be taken if applying SDEs in a non-parametric approach to population pharmacokinetic modelling, such as when using the non-parametric adaptive grid algorithm (NPAG) [@npag] for parameter estimation.
 
 # Conclusion and Future Work
 
