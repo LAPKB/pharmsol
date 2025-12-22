@@ -4,83 +4,78 @@
 [![Documentation](https://github.com/LAPKB/pharmsol/actions/workflows/docs.yml/badge.svg)](https://github.com/LAPKB/pharmsol/actions/workflows/docs.yml)
 [![crates.io](https://img.shields.io/crates/v/pharmsol.svg)](https://crates.io/crates/pharmsol)
 
-Simulate PK/PD profiles using ordinary and stochastic differential equations, or analytical models.
+A high-performance Rust library for pharmacokinetic/pharmacodynamic (PK/PD) simulation using analytical solutions, ordinary differential equations (ODEs), or stochastic differential equations (SDEs).
 
-## Example
+## Installation
 
-ODE based model.
+Add `pharmsol` to your `Cargo.toml`:
 
-```rust
-    use pharmsol::*;
-
-    // Subject data can be generated using the builder pattern
-    let subject = Subject::builder("id1")
-        .bolus(0.0, 100.0, 0)
-        .repeat(2, 0.5)
-        .observation(0.5, 0.1, 0)
-        .observation(1.0, 0.4, 0)
-        .observation(2.0, 1.0, 0)
-        .observation(2.5, 1.1, 0)
-        .covariate("wt", 0.0, 80.0)
-        .covariate("wt", 1.0, 83.0)
-        .covariate("age", 0.0, 25.0)
-        .build();
-
-    let ode = equation::ODE::new(
-        |x, p, t, dx, _rateiv, cov| {
-            // The following are helper functions to fetch parameters and covariates
-            fetch_cov!(cov, t, _wt, _age);
-            fetch_params!(p, ka, ke, _tlag, _v);
-
-            // The ODEs are defined here
-            dx[0] = -ka * x[0];
-            dx[1] = ka * x[0] - ke * x[1];
-        },
-        |p| {
-            fetch_params!(p, _ka, _ke, tlag, _v);
-            lag! {0=>tlag}
-        },
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
-        |x, p, _t, _cov, y| {
-            fetch_params!(p, _ka, _ke, _tlag, v);
-            // This equation specifies the output, e.g. the measured concentrations
-            y[0] = x[1] / v;
-        },
-        (2, 1),
-    );
-
-    let op = ode.estimate_predictions(&subject, &vec![0.3, 0.5, 0.1, 70.0]);
-    // println!("{op:#?}");
-    let _ = op.run();
+```toml
+[dependencies]
+pharmsol = "0.22"
 ```
 
-Analytic based model.
+## Quick Start
 
 ```rust
 use pharmsol::*;
+
+// Create a subject with an IV infusion and observations
+let subject = Subject::builder("patient_001")
+    .infusion(0.0, 500.0, 0, 0.5)  // 500 units over 0.5 hours
+    .observation(0.5, 1.645, 0)
+    .observation(1.0, 1.216, 0)
+    .observation(2.0, 0.462, 0)
+    .observation(4.0, 0.063, 0)
+    .build();
+
+// Define parameters: ke (elimination rate), v (volume)
+let ke = 1.022;
+let v = 194.0;
+
+// Use the built-in one-compartment analytical solution
 let analytical = equation::Analytical::new(
-    one_compartment_with_absorption,
-    |_p, _cov| {},
-    |p| {
-        fetch_params!(p, _ka, _ke, tlag, _v);
-        lag! {0=>tlag}
-    },
+    one_compartment,
+    |_p, _t, _cov| {},
+    |_p, _t, _cov| lag! {},
     |_p, _t, _cov| fa! {},
     |_p, _t, _cov, _x| {},
     |x, p, _t, _cov, y| {
-        fetch_params!(p, _ka, _ke, _tlag, v);
-        y[0] = x[1] / v;
+        fetch_params!(p, _ke, v);
+        y[0] = x[0] / v;  // Concentration = Amount / Volume
     },
-    (2, 1),
+    (1, 1),  // (compartments, outputs)
 );
-let op = analytical.simulate_subject(&subject, &vec![0.3, 0.5, 0.1, 70.0]);
-println!("{op:#?}");
+
+// Get predictions
+let predictions = analytical.estimate_predictions(&subject, &vec![ke, v]).unwrap();
 ```
 
-## Supported analytical models
+## ODE-Based Models
 
-We are working to support all the standard analytical models.
+For custom or complex models, define your own ODEs:
+
+```rust
+use pharmsol::*;
+
+let ode = equation::ODE::new(
+    |x, p, _t, dx, _b, rateiv, _cov| {
+        fetch_params!(p, ke, _v);
+        // One-compartment model with IV infusion support
+        dx[0] = -ke * x[0] + rateiv[0];
+    },
+    |_p, _t, _cov| lag! {},
+    |_p, _t, _cov| fa! {},
+    |_p, _t, _cov, _x| {},
+    |x, p, _t, _cov, y| {
+        fetch_params!(p, _ke, v);
+        y[0] = x[0] / v;
+    },
+    (1, 1),
+);
+```
+
+## Supported Analytical Models
 
 - [x] One-compartment with IV infusion
 - [x] One-compartment with IV infusion and oral absorption
@@ -88,6 +83,11 @@ We are working to support all the standard analytical models.
 - [x] Two-compartment with IV infusion and oral absorption
 - [ ] Three-compartmental models
 
-# Documentation
+## Performance
 
-[Documentation](https://lapkb.github.io/pharmsol/pharmsol/)
+Analytical solutions provide 20-33× speedups compared to equivalent ODE formulations. See [benchmarks](benches/) for details.
+
+## Documentation
+
+- [API Documentation](https://lapkb.github.io/pharmsol/pharmsol/)
+- [Examples](examples/)
