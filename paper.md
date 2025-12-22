@@ -25,7 +25,7 @@ bibliography: paper.bib
 
 # Summary
 
-`pharmsol` is a library for pharmacokinetic/pharmacodynamic (PK/PD) modeling and simulation written in Rust. It provides the necessary tools and frameworks for defining, solving, and analyzing compartmental models, with support for differential equations, their analytical solutions, and experimental support for stochastic differential equations. The library addresses significant performance challenges in PK/PD modeling through a systems-based architecture that leverages Rust's zero-cost abstractions and memory safety guarantees while maintaining an accessible interface for researchers and developers.
+`pharmsol` is a library for pharmacokinetic/pharmacodynamic (PK/PD) modeling and simulation written in Rust. It provides the necessary tools and frameworks for defining, solving, and analyzing compartmental models, with support for differential equations, their analytical solutions, and experimental support for stochastic differential equations. The library addresses significant performance challenges in PK/PD modeling through a systems-based architecture that leverages Rust's zero-cost abstractions and memory safety guarantees while maintaining an accessible interface for researchers and developers. The library is distributed via crates.io with comprehensive API documentation, usage examples, and a test suite validated through continuous integration.
 
 # Statement of Need
 
