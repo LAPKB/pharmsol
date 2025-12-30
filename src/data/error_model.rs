@@ -400,11 +400,46 @@ impl ErrorModels {
         Ok(())
     }
 
-    /// Computes the standard deviation (sigma) for the specified output equation and prediction.
+    /// Check if the error model for a specific output equation is proportional
     ///
     /// # Arguments
     ///
-    /// * `outeq` - The index of the output equation.
+    /// * `outeq` - The index of the output equation
+    ///
+    /// # Returns
+    ///
+    /// `true` if the error model for `outeq` is proportional, `false` otherwise
+    pub fn is_proportional(&self, outeq: usize) -> bool {
+        if outeq >= self.models.len() {
+            return false;
+        }
+        self.models[outeq].is_proportional()
+    }
+
+    /// Check if the error model for a specific output equation is additive
+    ///
+    /// # Arguments
+    ///
+    /// * `outeq` - The index of the output equation
+    ///
+    /// # Returns
+    ///
+    /// `true` if the error model for `outeq` is additive, `false` otherwise
+    pub fn is_additive(&self, outeq: usize) -> bool {
+        if outeq >= self.models.len() {
+            return false;
+        }
+        self.models[outeq].is_additive()
+    }
+
+    /// Computes the standard deviation (sigma) for the specified output equation and prediction.
+    ///
+    /// This always uses the **observation** value to compute sigma, which is appropriate
+    /// for non-parametric algorithms (NPAG, NPOD). For parametric algorithms (SAEM, FOCE),
+    /// use [`ResidualErrorModels`] instead, which computes sigma from the prediction.
+    ///
+    /// # Arguments
+    ///
     /// * `prediction` - The [`Prediction`] to use for the calculation.
     ///
     /// # Returns
@@ -741,6 +776,24 @@ impl ErrorModel {
             Self::Proportional { gamma, .. } => gamma.make_variable(),
             Self::None => {}
         }
+    }
+
+    /// Check if this is a proportional error model
+    ///
+    /// # Returns
+    ///
+    /// `true` if this is a `Proportional` variant, `false` otherwise
+    pub fn is_proportional(&self) -> bool {
+        matches!(self, Self::Proportional { .. })
+    }
+
+    /// Check if this is an additive error model
+    ///
+    /// # Returns
+    ///
+    /// `true` if this is an `Additive` variant, `false` otherwise
+    pub fn is_additive(&self) -> bool {
+        matches!(self, Self::Additive { .. })
     }
 
     /// Estimate the standard deviation for a prediction
@@ -1094,6 +1147,7 @@ mod tests {
         let observation = Observation::new(0.0, Some(20.0), 0, None, 0, Censor::None);
         let prediction = observation.to_prediction(10.0, vec![]);
 
+        // Non-parametric: sigma from observation
         let sigma = models.sigma(&prediction).unwrap();
         assert_eq!(sigma, (26.0_f64).sqrt());
     }

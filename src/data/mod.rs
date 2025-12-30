@@ -10,6 +10,9 @@
 //! - **Covariates**: Time-varying subject characteristics
 //! - **Subjects**: Collections of events and covariates for a single individual
 //! - **Data**: Collections of subjects, representing a complete dataset
+//! - **Error Models**: Two types for different algorithm families:
+//!   - [`ErrorModel`]: Observation-based (assay error) for non-parametric algorithms
+//!   - [`ResidualErrorModel`]: Prediction-based (residual error) for parametric algorithms
 //!
 //! # Examples
 //!
@@ -31,8 +34,10 @@ pub mod covariate;
 pub mod error_model;
 pub mod event;
 pub mod parser;
+pub mod residual_error;
 pub mod structs;
 pub use covariate::*;
 pub use error_model::*;
 pub use event::*;
+pub use residual_error::*;
 pub use structs::{Data, Occasion, Subject};

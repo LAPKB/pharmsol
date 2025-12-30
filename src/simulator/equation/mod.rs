@@ -198,10 +198,13 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
     /// parameters and error model. It is numerically more stable than `estimate_likelihood`
     /// for extreme values or many observations.
     ///
+    /// Uses observation-based sigma, appropriate for non-parametric algorithms.
+    /// For parametric algorithms (SAEM, FOCE), use [`ResidualErrorModels`] directly.
+    ///
     /// # Parameters
     /// - `subject`: The subject data
     /// - `support_point`: The parameter values
-    /// - `error_model`: The error model
+    /// - `error_models`: The error model
     /// - `cache`: Whether to use caching
     ///
     /// # Returns
