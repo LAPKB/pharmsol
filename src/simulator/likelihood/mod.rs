@@ -72,6 +72,9 @@ impl SubjectPredictions {
     /// This is numerically more stable than computing the product of likelihoods,
     /// especially for many observations or extreme values.
     ///
+    /// This uses observation-based sigma, appropriate for non-parametric algorithms.
+    /// For parametric algorithms, use [`ResidualErrorModels`] directly.
+    ///
     /// # Parameters
     /// - `error_models`: The error models to use for calculating the likelihood
     ///
@@ -79,7 +82,7 @@ impl SubjectPredictions {
     /// The sum of all individual prediction log-likelihoods
     pub fn log_likelihood(&self, error_models: &ErrorModels) -> Result<f64, PharmsolError> {
         if self.predictions.is_empty() {
-            return Ok(0.0); // log(0) for empty predictions
+            return Ok(0.0);
         }
 
         let log_liks: Result<Vec<f64>, _> = self
@@ -379,6 +382,120 @@ pub fn log_psi(
     Ok(log_psi)
 }
 
+/// Compute log-likelihoods for all subjects in parallel, where each subject
+/// has its own parameter vector.
+///
+/// This function simulates each subject with their individual parameters and
+/// computes log-likelihood using prediction-based sigma (appropriate for
+/// parametric algorithms like SAEM, FOCE).
+///
+/// # Parameters
+/// - `equation`: The equation to use for simulation
+/// - `subjects`: The subject data (N subjects)
+/// - `parameters`: Parameter vectors for each subject (N × P matrix, row i = params for subject i)
+/// - `residual_error_models`: The residual error models (prediction-based sigma)
+///
+/// # Returns
+/// A vector of N log-likelihoods, one per subject
+///
+/// # Example
+/// ```ignore
+/// use pharmsol::{log_likelihood_batch, ResidualErrorModel, ResidualErrorModels};
+///
+/// let residual_error = ResidualErrorModels::new()
+///     .add(0, ResidualErrorModel::constant(0.5));
+///
+/// let log_liks = log_likelihood_batch(
+///     &equation,
+///     &data,
+///     &parameters,
+///     &residual_error,
+/// )?;
+/// ```
+pub fn log_likelihood_batch(
+    equation: &impl Equation,
+    subjects: &Data,
+    parameters: &Array2<f64>,
+    residual_error_models: &crate::ResidualErrorModels,
+) -> Result<Vec<f64>, PharmsolError> {
+    let subjects_vec = subjects.subjects();
+    let n_subjects = subjects_vec.len();
+
+    if parameters.nrows() != n_subjects {
+        return Err(PharmsolError::OtherError(format!(
+            "parameters has {} rows but there are {} subjects",
+            parameters.nrows(),
+            n_subjects
+        )));
+    }
+
+    // Parallel computation across subjects
+    let results: Vec<f64> = (0..n_subjects)
+        .into_par_iter()
+        .map(|i| {
+            let subject = &subjects_vec[i];
+            let params = parameters.row(i).to_vec();
+
+            // Simulate to get predictions
+            let predictions = match equation.estimate_predictions(subject, &params) {
+                Ok(preds) => preds,
+                Err(_) => return f64::NEG_INFINITY,
+            };
+
+            // Extract (outeq, observation, prediction) tuples and compute log-likelihood
+            let obs_pred_pairs = predictions
+                .get_predictions()
+                .into_iter()
+                .filter_map(|pred| {
+                    pred.observation()
+                        .map(|obs| (pred.outeq(), obs, pred.prediction()))
+                });
+
+            residual_error_models.total_log_likelihood(obs_pred_pairs)
+        })
+        .collect();
+
+    Ok(results)
+}
+
+/// Compute log-likelihood for a single subject using prediction-based sigma.
+///
+/// This is the single-subject equivalent of [`log_likelihood_batch`].
+/// It simulates the model, extracts observation-prediction pairs, and computes
+/// the log-likelihood using [`ResidualErrorModels`].
+///
+/// # Parameters
+/// - `equation`: The equation to use for simulation
+/// - `subject`: The subject data
+/// - `params`: Parameter vector for this subject
+/// - `residual_error_models`: The residual error models (prediction-based sigma)
+///
+/// # Returns
+/// The log-likelihood for this subject. Returns `f64::NEG_INFINITY` on simulation error.
+pub fn log_likelihood_subject(
+    equation: &impl Equation,
+    subject: &crate::Subject,
+    params: &[f64],
+    residual_error_models: &crate::ResidualErrorModels,
+) -> f64 {
+    // Simulate to get predictions
+    let predictions = match equation.estimate_predictions(subject, &params.to_vec()) {
+        Ok(preds) => preds,
+        Err(_) => return f64::NEG_INFINITY,
+    };
+
+    // Extract (outeq, observation, prediction) tuples and compute log-likelihood
+    let obs_pred_pairs = predictions
+        .get_predictions()
+        .into_iter()
+        .filter_map(|pred| {
+            pred.observation()
+                .map(|obs| (pred.outeq(), obs, pred.prediction()))
+        });
+
+    residual_error_models.total_log_likelihood(obs_pred_pairs)
+}
+
 /// Prediction holds an observation and its prediction
 #[derive(Debug, Clone)]
 pub struct Prediction {
@@ -446,6 +563,9 @@ impl Prediction {
 
     /// Calculate the likelihood of this prediction given an error model.
     ///
+    /// Uses observation-based sigma, appropriate for non-parametric algorithms.
+    /// For parametric algorithms, use [`ResidualErrorModels`] directly.
+    ///
     /// Returns an error if the observation is missing or if the likelihood is either zero or non-finite.
     pub fn likelihood(&self, error_models: &ErrorModels) -> Result<f64, PharmsolError> {
         if self.observation.is_none() {
@@ -474,6 +594,9 @@ impl Prediction {
     ///
     /// This method is numerically stable and avoids underflow issues that can occur
     /// with the standard likelihood calculation for extreme values.
+    ///
+    /// Uses observation-based sigma, appropriate for non-parametric algorithms.
+    /// For parametric algorithms, use [`ResidualErrorModels`] directly.
     ///
     /// Returns an error if the observation is missing or if the log-likelihood is non-finite.
     #[inline]

@@ -238,95 +238,37 @@ struct Row {
 }
 
 impl Row {
-    /// Get the error polynomial coefficients
-    fn get_errorpoly(&self) -> Option<ErrorPoly> {
-        match (self.c0, self.c1, self.c2, self.c3) {
-            (Some(c0), Some(c1), Some(c2), Some(c3)) => Some(ErrorPoly::new(c0, c1, c2, c3)),
-            _ => None,
+    /// Convert this Row to a NormalizedRow for parsing
+    fn to_normalized(&self) -> super::normalized::NormalizedRow {
+        super::normalized::NormalizedRow {
+            id: self.id.clone(),
+            time: self.time,
+            evid: self.evid as i32,
+            dose: self.dose,
+            dur: self.dur,
+            addl: self.addl.map(|a| a as i64),
+            ii: self.ii,
+            input: self.input,
+            // Treat -99 as missing value (Pmetrics convention)
+            out: self
+                .out
+                .and_then(|v| if v == -99.0 { None } else { Some(v) }),
+            outeq: self.outeq,
+            cens: self.cens,
+            c0: self.c0,
+            c1: self.c1,
+            c2: self.c2,
+            c3: self.c3,
+            covariates: self
+                .covs
+                .iter()
+                .filter_map(|(k, v)| v.map(|val| (k.clone(), val)))
+                .collect(),
         }
     }
+
     fn parse_events(self) -> Result<Vec<Event>, PmetricsError> {
-        let mut events: Vec<Event> = Vec::new();
-
-        match self.evid {
-            0 => events.push(Event::Observation(Observation::new(
-                self.time,
-                if self.out == Some(-99.0) {
-                    None
-                } else {
-                    self.out
-                },
-                self.outeq
-                    .ok_or_else(|| PmetricsError::MissingObservationOuteq {
-                        id: self.id.clone(),
-                        time: self.time,
-                    })?
-                    - 1,
-                self.get_errorpoly(),
-                0,
-                self.cens.unwrap_or(Censor::None),
-            ))),
-            1 | 4 => {
-                let event = if self.dur.unwrap_or(0.0) > 0.0 {
-                    Event::Infusion(Infusion::new(
-                        self.time,
-                        self.dose
-                            .ok_or_else(|| PmetricsError::MissingInfusionDose {
-                                id: self.id.clone(),
-                                time: self.time,
-                            })?,
-                        self.input
-                            .ok_or_else(|| PmetricsError::MissingInfusionInput {
-                                id: self.id.clone(),
-                                time: self.time,
-                            })?
-                            - 1,
-                        self.dur.ok_or_else(|| PmetricsError::MissingInfusionDur {
-                            id: self.id.clone(),
-                            time: self.time,
-                        })?,
-                        0,
-                    ))
-                } else {
-                    Event::Bolus(Bolus::new(
-                        self.time,
-                        self.dose.ok_or_else(|| PmetricsError::MissingBolusDose {
-                            id: self.id.clone(),
-                            time: self.time,
-                        })?,
-                        self.input.ok_or(PmetricsError::MissingBolusInput {
-                            id: self.id,
-                            time: self.time,
-                        })? - 1,
-                        0,
-                    ))
-                };
-                if self.addl.is_some()
-                    && self.ii.is_some()
-                    && self.addl.unwrap_or(0) != 0
-                    && self.ii.unwrap_or(0.0) > 0.0
-                {
-                    let mut ev = event.clone();
-                    let interval = &self.ii.unwrap().abs();
-                    let repetitions = &self.addl.unwrap().abs();
-                    let direction = &self.addl.unwrap().signum();
-
-                    for _ in 0..*repetitions {
-                        ev.inc_time((*direction as f64) * interval);
-                        events.push(ev.clone());
-                    }
-                }
-                events.push(event);
-            }
-            _ => {
-                return Err(PmetricsError::UnknownEvid {
-                    evid: self.evid,
-                    id: self.id.clone(),
-                    time: self.time,
-                });
-            }
-        };
-        Ok(events)
+        self.to_normalized().into_events()
     }
 }
 

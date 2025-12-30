@@ -386,7 +386,6 @@ impl Equation for SDE {
     ) -> Result<f64, PharmsolError> {
         // For SDE, the particle filter computes likelihood in regular space.
         // We take the log of the cached/computed likelihood.
-        // Note: For extreme underflow cases, this may return -inf.
         let lik = self.estimate_likelihood(subject, support_point, error_models, cache)?;
         if lik > 0.0 {
             Ok(lik.ln())

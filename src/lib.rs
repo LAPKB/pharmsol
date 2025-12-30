@@ -22,15 +22,20 @@ pub use std::collections::HashMap;
 pub mod prelude {
     pub mod data {
         pub use crate::data::{
-            error_model::ErrorModels, parser::read_pmetrics, Covariates, Data, Event, Occasion,
-            Subject,
+            error_model::ErrorModels,
+            parser::{read_pmetrics, NormalizedRow, NormalizedRowBuilder},
+            residual_error::{ResidualErrorModel, ResidualErrorModels},
+            Covariates, Data, Event, Occasion, Subject,
         };
     }
     pub mod simulator {
         pub use crate::simulator::{
             equation,
             equation::Equation,
-            likelihood::{log_psi, psi, PopulationPredictions, Prediction, SubjectPredictions},
+            likelihood::{
+                log_likelihood_batch, log_likelihood_subject, log_psi, psi, PopulationPredictions,
+                Prediction, SubjectPredictions,
+            },
         };
     }
     pub mod models {
