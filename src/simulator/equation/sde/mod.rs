@@ -306,23 +306,31 @@ impl EquationPriv for SDE {
         //e = y[t] .- x[:,1]
         // q = pdf.(Distributions.Normal(0, 0.5), e)
         if let Some(em) = error_models {
-            let mut q: Vec<f64> = Vec::with_capacity(self.nparticles);
+            // Compute log-likelihoods for each particle
+            let mut log_q: Vec<f64> = Vec::with_capacity(self.nparticles);
 
             pred.iter().for_each(|p| {
-                let lik = p.likelihood(em);
-                match lik {
-                    Ok(l) => q.push(l),
-                    Err(e) => panic!("Error in likelihood calculation: {:?}", e),
+                let log_lik = p.log_likelihood(em);
+                match log_lik {
+                    Ok(l) => log_q.push(l),
+                    Err(e) => panic!("Error in log-likelihood calculation: {:?}", e),
                 }
             });
-            let sum_q: f64 = q.iter().sum();
-            let w: Vec<f64> = q.iter().map(|qi| qi / sum_q).collect();
+
+            // Use log-sum-exp trick for numerical stability
+            let max_log_q = log_q.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            let sum_exp: f64 = log_q.iter().map(|&lq| (lq - max_log_q).exp()).sum();
+            let log_sum_q = max_log_q + sum_exp.ln();
+
+            // Compute normalized weights from log-likelihoods
+            let w: Vec<f64> = log_q.iter().map(|&lq| (lq - log_sum_q).exp()).collect();
             let i = sysresample(&w);
             let a: Vec<DVector<f64>> = i.iter().map(|&i| x[i].clone()).collect();
             *x = a;
-            likelihood.push(sum_q / self.nparticles as f64);
-            // let qq: Vec<f64> = i.iter().map(|&i| q[i]).collect();
-            // likelihood.push(qq.iter().sum::<f64>() / self.nparticles as f64);
+
+            // Push the average likelihood (in regular space) for final computation
+            // log(mean(likelihood)) = log(sum(exp(log_lik))) - log(n)
+            likelihood.push((log_sum_q - (self.nparticles as f64).ln()).exp());
         }
         Ok(())
     }
@@ -351,7 +359,7 @@ impl EquationPriv for SDE {
 }
 
 impl Equation for SDE {
-    /// Estimates the likelihood of observed data given a model and parameters.
+    /// Estimates the log-likelihood of observed data given a model and parameters.
     ///
     /// # Arguments
     ///
@@ -363,20 +371,6 @@ impl Equation for SDE {
     /// # Returns
     ///
     /// The log-likelihood of the observed data given the model and parameters.
-    fn estimate_likelihood(
-        &self,
-        subject: &Subject,
-        support_point: &Vec<f64>,
-        error_models: &ErrorModels,
-        cache: bool,
-    ) -> Result<f64, PharmsolError> {
-        if cache {
-            _estimate_likelihood(self, subject, support_point, error_models)
-        } else {
-            _estimate_likelihood_no_cache(self, subject, support_point, error_models)
-        }
-    }
-
     fn estimate_log_likelihood(
         &self,
         subject: &Subject,
@@ -384,10 +378,13 @@ impl Equation for SDE {
         error_models: &ErrorModels,
         cache: bool,
     ) -> Result<f64, PharmsolError> {
-        // For SDE, the particle filter computes likelihood in regular space.
-        // We take the log of the cached/computed likelihood.
-        // Note: For extreme underflow cases, this may return -inf.
-        let lik = self.estimate_likelihood(subject, support_point, error_models, cache)?;
+        // For SDE, the particle filter computes likelihood in regular space internally.
+        // We take the log of the final likelihood.
+        let lik = if cache {
+            _estimate_likelihood(self, subject, support_point, error_models)
+        } else {
+            _estimate_likelihood_no_cache(self, subject, support_point, error_models)
+        }?;
         if lik > 0.0 {
             Ok(lik.ln())
         } else {

@@ -67,28 +67,28 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
     let ke = 1.022; // Elimination rate constant
     let v = 194.0; // Volume of distribution
 
-    // Compute likelihoods and predictions for both models
-    let analytical_likelihoods = an.estimate_likelihood(&subject, &vec![ke, v], &ems, false)?;
+    // Compute log-likelihoods and predictions for both models
+    let analytical_log_lik = an.estimate_log_likelihood(&subject, &vec![ke, v], &ems, false)?;
 
     let analytical_predictions = an.estimate_predictions(&subject, &vec![ke, v])?;
 
-    let ode_likelihoods = ode.estimate_likelihood(&subject, &vec![ke, v], &ems, false)?;
+    let ode_log_lik = ode.estimate_log_likelihood(&subject, &vec![ke, v], &ems, false)?;
 
     let ode_predictions = ode.estimate_predictions(&subject, &vec![ke, v])?;
 
     // Print comparison table
-    println!("\n┌───────────┬─────────────────┬─────────────────┬─────────────────────┐");
-    println!("│           │   Analytical    │       ODE       │     Difference      │");
-    println!("├───────────┼─────────────────┼─────────────────┼─────────────────────┤");
+    println!("\n┌─────────────────┬─────────────────┬─────────────────┬─────────────────────┐");
+    println!("│                 │   Analytical    │       ODE       │     Difference      │");
+    println!("├─────────────────┼─────────────────┼─────────────────┼─────────────────────┤");
     println!(
-        "│ Likelihood│ {:>15.6} │ {:>15.6} │ {:>19.2e} │",
-        analytical_likelihoods,
-        ode_likelihoods,
-        analytical_likelihoods - ode_likelihoods
+        "│ Log-Likelihood  │ {:>15.6} │ {:>15.6} │ {:>19.2e} │",
+        analytical_log_lik,
+        ode_log_lik,
+        analytical_log_lik - ode_log_lik
     );
-    println!("├───────────┼─────────────────┼─────────────────┼─────────────────────┤");
-    println!("│   Time    │   Prediction    │   Prediction    │                     │");
-    println!("├───────────┼─────────────────┼─────────────────┼─────────────────────┤");
+    println!("├─────────────────┼─────────────────┼─────────────────┼─────────────────────┤");
+    println!("│   Time          │   Prediction    │   Prediction    │                     │");
+    println!("├─────────────────┼─────────────────┼─────────────────┼─────────────────────┤");
 
     let times = analytical_predictions.flat_times();
     let analytical_preds = analytical_predictions.flat_predictions();
@@ -101,12 +101,12 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
     {
         let diff = a - b;
         println!(
-            "│ {:>9.2} │ {:>15.9} │ {:>15.9} │ {:>19.2e} │",
+            "│ {:>15.2} │ {:>15.9} │ {:>15.9} │ {:>19.2e} │",
             t, a, b, diff
         );
     }
 
-    println!("└───────────┴─────────────────┴─────────────────┴─────────────────────┘\n");
+    println!("└─────────────────┴─────────────────┴─────────────────┴─────────────────────┘\n");
 
     Ok(())
 }

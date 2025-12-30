@@ -69,21 +69,6 @@ fn spphash(spp: &[f64]) -> u64 {
 
 /// Hash a subject ID string to u64 for cache key generation.
 
-fn _estimate_likelihood(
-    ode: &ODE,
-    subject: &Subject,
-    support_point: &Vec<f64>,
-    error_models: &ErrorModels,
-    cache: bool,
-) -> Result<f64, PharmsolError> {
-    let ypred = if cache {
-        _subject_predictions(ode, subject, support_point)
-    } else {
-        _subject_predictions_no_cache(ode, subject, support_point)
-    }?;
-    ypred.likelihood(error_models)
-}
-
 #[inline(always)]
 #[cached(
     ty = "UnboundCache<(u64, u64), SubjectPredictions>",
@@ -174,16 +159,6 @@ impl EquationPriv for ODE {
 }
 
 impl Equation for ODE {
-    fn estimate_likelihood(
-        &self,
-        subject: &Subject,
-        support_point: &Vec<f64>,
-        error_models: &ErrorModels,
-        cache: bool,
-    ) -> Result<f64, PharmsolError> {
-        _estimate_likelihood(self, subject, support_point, error_models, cache)
-    }
-
     fn estimate_log_likelihood(
         &self,
         subject: &Subject,
@@ -324,7 +299,7 @@ impl Equation for ODE {
                         let pred =
                             observation.to_prediction(pred, solver.state().y.as_slice().to_vec());
                         if let Some(error_models) = error_models {
-                            likelihood.push(pred.likelihood(error_models)?);
+                            likelihood.push(pred.log_likelihood(error_models)?);
                         }
                         output.add_prediction(pred);
                     }
@@ -379,7 +354,7 @@ impl Equation for ODE {
                 }
             }
         }
-        let ll = error_models.map(|_| likelihood.iter().product::<f64>());
+        let ll = error_models.map(|_| likelihood.iter().sum::<f64>());
         Ok((output, ll))
     }
 }
