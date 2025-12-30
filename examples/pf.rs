@@ -37,11 +37,11 @@ fn main() {
         .unwrap();
 
     let ll = sde
-        .estimate_likelihood(&subject, &vec![1.0], &ems, false)
+        .estimate_log_likelihood(&subject, &vec![1.0], &ems, false)
         .unwrap();
 
     dbg!(sde
-        .estimate_likelihood(&subject, &vec![1.0], &ems, false)
+        .estimate_log_likelihood(&subject, &vec![1.0], &ems, false)
         .unwrap());
     println!("{ll:#?}");
 }

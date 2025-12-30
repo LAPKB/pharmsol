@@ -881,21 +881,20 @@ fn likelihood_calculation_matches_analytical() {
     let params = vec![0.1, 50.0];
 
     let ll_analytical = analytical
-        .estimate_likelihood(&subject, &params, &error_models, false)
-        .expect("analytical likelihood");
+        .estimate_log_likelihood(&subject, &params, &error_models, false)
+        .expect("analytical log-likelihood");
 
     let ll_ode = ode
-        .estimate_likelihood(&subject, &params, &error_models, false)
-        .expect("ode likelihood");
+        .estimate_log_likelihood(&subject, &params, &error_models, false)
+        .expect("ode log-likelihood");
 
     let ll_diff = (ll_analytical - ll_ode).abs();
-    let ll_rel_diff = ll_diff / ll_analytical.abs().max(1e-10);
-
+    // For log-likelihoods, we compare absolute differences rather than relative
     assert!(
-        ll_rel_diff < 0.01, // Within 1%
-        "Likelihoods should match: analytical={:.6}, ode={:.6}, rel_diff={:.2e}",
+        ll_diff < 0.01, // Within 0.01 log-likelihood units
+        "Log-likelihoods should match: analytical={:.6}, ode={:.6}, diff={:.2e}",
         ll_analytical,
         ll_ode,
-        ll_rel_diff
+        ll_diff
     );
 }

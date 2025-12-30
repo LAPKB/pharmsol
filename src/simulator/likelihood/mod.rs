@@ -12,9 +12,6 @@ use statrs::distribution::Normal;
 
 mod progress;
 
-const FRAC_1_SQRT_2PI: f64 =
-    std::f64::consts::FRAC_2_SQRT_PI * std::f64::consts::FRAC_1_SQRT_2 / 2.0;
-
 // ln(2π) = ln(2) + ln(π) ≈ 1.8378770664093453
 const LOG_2PI: f64 = 1.8378770664093453_f64;
 
@@ -43,29 +40,6 @@ impl Predictions for SubjectPredictions {
 }
 
 impl SubjectPredictions {
-    /// Calculate the likelihood of the predictions given an error model.
-    ///
-    /// This multiplies the likelihood of each prediction to get the joint likelihood.
-    ///
-    /// # Parameters
-    /// - `error_model`: The error model to use for calculating the likelihood
-    ///
-    /// # Returns
-    /// The product of all individual prediction likelihoods
-    pub fn likelihood(&self, error_models: &ErrorModels) -> Result<f64, PharmsolError> {
-        match self.predictions.is_empty() {
-            true => Ok(1.0),
-            false => self
-                .predictions
-                .iter()
-                .filter(|p| p.observation.is_some())
-                .map(|p| p.likelihood(error_models))
-                .collect::<Result<Vec<f64>, _>>()
-                .map(|likelihoods| likelihoods.iter().product())
-                .map_err(PharmsolError::from),
-        }
-    }
-
     /// Calculate the log-likelihood of the predictions given an error model.
     ///
     /// This sums the log-likelihood of each prediction to get the joint log-likelihood.
@@ -135,12 +109,6 @@ impl SubjectPredictions {
     }
 }
 
-/// Probability density function of the normal distribution
-#[inline(always)]
-fn normpdf(obs: f64, pred: f64, sigma: f64) -> f64 {
-    (FRAC_1_SQRT_2PI / sigma) * (-((obs - pred) * (obs - pred)) / (2.0 * sigma * sigma)).exp()
-}
-
 /// Log of the probability density function of the normal distribution.
 ///
 /// This is numerically stable and avoids underflow for extreme values.
@@ -192,12 +160,6 @@ fn lognormccdf(obs: f64, pred: f64, sigma: f64) -> Result<f64, ErrorModelError> 
     }
 }
 
-#[inline(always)]
-fn normcdf(obs: f64, pred: f64, sigma: f64) -> Result<f64, ErrorModelError> {
-    let norm = Normal::new(pred, sigma).map_err(|_| ErrorModelError::NegativeSigma)?;
-    Ok(norm.cdf(obs))
-}
-
 impl From<Vec<Prediction>> for SubjectPredictions {
     fn from(predictions: Vec<Prediction>) -> Self {
         Self {
@@ -230,78 +192,6 @@ impl From<Array2<SubjectPredictions>> for PopulationPredictions {
     }
 }
 
-/// Calculate the psi matrix for maximum likelihood estimation.
-///
-/// # Parameters
-/// - `equation`: The equation to use for simulation
-/// - `subjects`: The subject data
-/// - `support_points`: The support points to evaluate
-/// - `error_model`: The error model to use
-/// - `progress`: Whether to show a progress bar
-/// - `cache`: Whether to use caching
-///
-/// # Returns
-/// A 2D array of likelihoods
-pub fn psi(
-    equation: &impl Equation,
-    subjects: &Data,
-    support_points: &Array2<f64>,
-    error_models: &ErrorModels,
-    progress: bool,
-    cache: bool,
-) -> Result<Array2<f64>, PharmsolError> {
-    let mut psi: Array2<f64> = Array2::default((subjects.len(), support_points.nrows()).f());
-
-    let subjects = subjects.subjects();
-
-    let progress_tracker = if progress {
-        let total = subjects.len() * support_points.nrows();
-        println!(
-            "Simulating {} subjects with {} support points each...",
-            subjects.len(),
-            support_points.nrows()
-        );
-        Some(ProgressTracker::new(total))
-    } else {
-        None
-    };
-
-    let result: Result<(), PharmsolError> = psi
-        .axis_iter_mut(Axis(0))
-        .into_par_iter()
-        .enumerate()
-        .try_for_each(|(i, mut row)| {
-            row.axis_iter_mut(Axis(0))
-                .into_par_iter()
-                .enumerate()
-                .try_for_each(|(j, mut element)| {
-                    let subject = subjects.get(i).unwrap();
-                    match equation.estimate_likelihood(
-                        subject,
-                        support_points.row(j).to_vec().as_ref(),
-                        error_models,
-                        cache,
-                    ) {
-                        Ok(likelihood) => {
-                            element.fill(likelihood);
-                            if let Some(ref tracker) = progress_tracker {
-                                tracker.inc();
-                            }
-                        }
-                        Err(e) => return Err(e),
-                    };
-                    Ok(())
-                })
-        });
-
-    if let Some(tracker) = progress_tracker {
-        tracker.finish();
-    }
-
-    result?;
-    Ok(psi)
-}
-
 /// Calculate the log-likelihood matrix for all subjects and support points.
 ///
 /// This function computes log-likelihoods directly in log-space, which is numerically
@@ -319,7 +209,7 @@ pub fn psi(
 ///
 /// # Returns
 /// A 2D array of log-likelihoods with shape (n_subjects, n_support_points)
-pub fn log_psi(
+pub fn psi(
     equation: &impl Equation,
     subjects: &Data,
     support_points: &Array2<f64>,
@@ -444,32 +334,6 @@ impl Prediction {
         self.observation.map(|obs| (self.prediction - obs).powi(2))
     }
 
-    /// Calculate the likelihood of this prediction given an error model.
-    ///
-    /// Returns an error if the observation is missing or if the likelihood is either zero or non-finite.
-    pub fn likelihood(&self, error_models: &ErrorModels) -> Result<f64, PharmsolError> {
-        if self.observation.is_none() {
-            return Err(PharmsolError::MissingObservation);
-        }
-
-        let sigma = error_models.sigma(self)?;
-
-        //TODO: For the BLOQ and ALOQ cases, we should be using the LOQ values, not the observation values.
-        let likelihood = match self.censoring {
-            Censor::None => normpdf(self.observation.unwrap(), self.prediction, sigma),
-            Censor::BLOQ => normcdf(self.observation.unwrap(), self.prediction, sigma)?,
-            Censor::ALOQ => 1.0 - normcdf(self.observation.unwrap(), self.prediction, sigma)?,
-        };
-
-        if likelihood.is_finite() {
-            return Ok(likelihood);
-        } else if likelihood == 0.0 {
-            return Err(PharmsolError::ZeroLikelihood);
-        } else {
-            return Err(PharmsolError::NonFiniteLikelihood(likelihood));
-        }
-    }
-
     /// Calculate the log-likelihood of this prediction given an error model.
     ///
     /// This method is numerically stable and avoids underflow issues that can occur
@@ -569,14 +433,14 @@ mod tests {
     use crate::Censor;
 
     #[test]
-    fn empty_predictions_have_neutral_likelihood() {
+    fn empty_predictions_have_neutral_log_likelihood() {
         let preds = SubjectPredictions::default();
         let errors = ErrorModels::new();
-        assert_eq!(preds.likelihood(&errors).unwrap(), 1.0);
+        assert_eq!(preds.log_likelihood(&errors).unwrap(), 0.0); // log(1) = 0
     }
 
     #[test]
-    fn likelihood_combines_observations() {
+    fn log_likelihood_combines_observations() {
         let mut preds = SubjectPredictions::default();
         let obs = Observation::new(0.0, Some(1.0), 0, None, 0, Censor::None);
         preds.add_prediction(obs.to_prediction(1.0, vec![]));
@@ -584,11 +448,13 @@ mod tests {
         let error_model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 0.0);
         let errors = ErrorModels::new().add(0, error_model).unwrap();
 
-        assert!(preds.likelihood(&errors).unwrap() > 0.0);
+        // log_likelihood should be finite and negative (log of a probability < 1)
+        let ll = preds.log_likelihood(&errors).unwrap();
+        assert!(ll.is_finite());
     }
 
     #[test]
-    fn test_log_likelihood_equals_log_of_likelihood() {
+    fn test_log_likelihood_basic() {
         // Create a prediction with an observation
         let prediction = Prediction {
             time: 1.0,
@@ -609,17 +475,11 @@ mod tests {
             )
             .unwrap();
 
-        let lik = prediction.likelihood(&error_models).unwrap();
         let log_lik = prediction.log_likelihood(&error_models).unwrap();
 
-        // log_likelihood should equal ln(likelihood)
-        let expected_log_lik = lik.ln();
-        assert!(
-            (log_lik - expected_log_lik).abs() < 1e-10,
-            "log_likelihood ({}) should equal ln(likelihood) ({})",
-            log_lik,
-            expected_log_lik
-        );
+        // log_likelihood should be finite and negative (log of probability < 1)
+        assert!(log_lik.is_finite());
+        assert!(log_lik < 0.0, "log_likelihood should be negative");
     }
 
     #[test]
@@ -644,9 +504,6 @@ mod tests {
             )
             .unwrap();
 
-        // Regular likelihood will be extremely small but non-zero
-        let lik = prediction.likelihood(&error_models).unwrap();
-
         // log_likelihood should give a finite (very negative) value
         let log_lik = prediction.log_likelihood(&error_models).unwrap();
 
@@ -655,23 +512,11 @@ mod tests {
             log_lik < -100.0,
             "log_likelihood should be very negative for large mismatch"
         );
-
-        // They should match: log_lik ≈ ln(lik)
-        if lik > 0.0 && lik.ln().is_finite() {
-            let diff = (log_lik - lik.ln()).abs();
-            assert!(
-                diff < 1e-6,
-                "log_likelihood ({}) should equal ln(likelihood) ({}) for non-extreme cases, diff={}",
-                log_lik,
-                lik.ln(),
-                diff
-            );
-        }
     }
 
     #[test]
     fn test_log_likelihood_extreme_underflow() {
-        // Test with truly extreme values where regular likelihood underflows to 0
+        // Test with truly extreme values where regular likelihood would underflow to 0
         let prediction = Prediction {
             time: 1.0,
             observation: Some(10.0),
@@ -691,10 +536,7 @@ mod tests {
             )
             .unwrap();
 
-        // Regular likelihood may underflow to 0
-        let _lik_result = prediction.likelihood(&error_models);
-
-        // log_likelihood should still work
+        // log_likelihood should still work even for extreme values
         let log_lik = prediction.log_likelihood(&error_models).unwrap();
 
         assert!(
@@ -744,17 +586,11 @@ mod tests {
             )
             .unwrap();
 
-        let lik = subject_predictions.likelihood(&error_models).unwrap();
         let log_lik = subject_predictions.log_likelihood(&error_models).unwrap();
 
-        // Sum of log likelihoods should equal log of product of likelihoods
-        let expected_log_lik = lik.ln();
-        assert!(
-            (log_lik - expected_log_lik).abs() < 1e-10,
-            "Subject log_likelihood ({}) should equal ln(likelihood) ({})",
-            log_lik,
-            expected_log_lik
-        );
+        // log_likelihood should be finite and negative
+        assert!(log_lik.is_finite());
+        assert!(log_lik < 0.0, "Combined log_likelihood should be negative");
     }
 
     #[test]
@@ -764,12 +600,16 @@ mod tests {
         let pred = 0.0;
         let sigma = 1.0;
 
-        let pdf = normpdf(obs, pred, sigma);
         let log_pdf = lognormpdf(obs, pred, sigma);
 
+        // For standard normal at x=0: pdf = 1/sqrt(2*pi) ≈ 0.3989
+        // log(pdf) ≈ -0.9189
+        let expected = -0.5 * LOG_2PI; // -0.5 * ln(2π)
         assert!(
-            (log_pdf - pdf.ln()).abs() < 1e-12,
-            "lognormpdf should equal ln(normpdf)"
+            (log_pdf - expected).abs() < 1e-12,
+            "lognormpdf at x=0 should equal -0.5*ln(2π), got {} expected {}",
+            log_pdf,
+            expected
         );
     }
 }

@@ -191,7 +191,7 @@ impl EquationPriv for Analytical {
         let pred = y[observation.outeq()];
         let pred = observation.to_prediction(pred, x.as_slice().to_vec());
         if let Some(error_models) = error_models {
-            likelihood.push(pred.likelihood(error_models)?);
+            likelihood.push(pred.log_likelihood(error_models)?);
         }
         output.add_prediction(pred);
         Ok(())
@@ -283,16 +283,6 @@ mod tests {
     }
 }
 impl Equation for Analytical {
-    fn estimate_likelihood(
-        &self,
-        subject: &Subject,
-        support_point: &Vec<f64>,
-        error_models: &ErrorModels,
-        cache: bool,
-    ) -> Result<f64, PharmsolError> {
-        _estimate_likelihood(self, subject, support_point, error_models, cache)
-    }
-
     fn estimate_log_likelihood(
         &self,
         subject: &Subject,
@@ -340,19 +330,4 @@ fn _subject_predictions(
     support_point: &Vec<f64>,
 ) -> Result<SubjectPredictions, PharmsolError> {
     Ok(ode.simulate_subject(subject, support_point, None)?.0)
-}
-
-fn _estimate_likelihood(
-    ode: &Analytical,
-    subject: &Subject,
-    support_point: &Vec<f64>,
-    error_models: &ErrorModels,
-    cache: bool,
-) -> Result<f64, PharmsolError> {
-    let ypred = if cache {
-        _subject_predictions(ode, subject, support_point)
-    } else {
-        _subject_predictions_no_cache(ode, subject, support_point)
-    }?;
-    ypred.likelihood(error_models)
 }

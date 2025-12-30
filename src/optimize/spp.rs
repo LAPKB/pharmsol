@@ -11,7 +11,7 @@ pub struct SppOptimizer<'a, E: Equation> {
     equation: &'a E,
     data: &'a Data,
     sig: &'a ErrorModels,
-    pyl: &'a Array1<f64>,
+    log_pyl: &'a Array1<f64>,
 }
 
 impl<E: Equation> CostFunction for SppOptimizer<'_, E> {
@@ -20,22 +20,23 @@ impl<E: Equation> CostFunction for SppOptimizer<'_, E> {
     fn cost(&self, spp: &Self::Param) -> Result<Self::Output, Error> {
         let theta = Array1::from(spp.clone()).insert_axis(Axis(0));
 
-        let psi = psi(self.equation, self.data, &theta, self.sig, false, false)?;
+        let log_psi = psi(self.equation, self.data, &theta, self.sig, false, false)?;
 
-        if psi.ncols() > 1 {
-            tracing::error!("Psi in SppOptimizer has more than one column");
+        if log_psi.ncols() > 1 {
+            tracing::error!("log_psi in SppOptimizer has more than one column");
         }
-        if psi.nrows() != self.pyl.len() {
+        if log_psi.nrows() != self.log_pyl.len() {
             tracing::error!(
-                "Psi in SppOptimizer has {} rows, but spp has {}",
-                psi.nrows(),
-                self.pyl.len()
+                "log_psi in SppOptimizer has {} rows, but spp has {}",
+                log_psi.nrows(),
+                self.log_pyl.len()
             );
         }
-        let nsub = psi.nrows() as f64;
+        let nsub = log_psi.nrows() as f64;
         let mut sum = -nsub;
-        for (p_i, pyl_i) in psi.iter().zip(self.pyl.iter()) {
-            sum += p_i / pyl_i;
+        // Convert log-likelihoods back to likelihood ratio: exp(log_psi - log_pyl)
+        for (log_p_i, log_pyl_i) in log_psi.iter().zip(self.log_pyl.iter()) {
+            sum += (log_p_i - log_pyl_i).exp();
         }
         Ok(-sum)
     }
@@ -46,13 +47,13 @@ impl<'a, E: Equation> SppOptimizer<'a, E> {
         equation: &'a E,
         data: &'a Data,
         sig: &'a ErrorModels,
-        pyl: &'a Array1<f64>,
+        log_pyl: &'a Array1<f64>,
     ) -> Self {
         Self {
             equation,
             data,
             sig,
-            pyl,
+            log_pyl,
         }
     }
     pub fn optimize_point(self, spp: Array1<f64>) -> Result<Array1<f64>, Error> {

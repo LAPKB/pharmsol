@@ -171,32 +171,10 @@ pub(crate) trait EquationPriv: EquationTypes {
 /// and estimate parameters.
 #[allow(private_bounds)]
 pub trait Equation: EquationPriv + 'static + Clone + Sync {
-    /// Estimate the likelihood of the subject given the support point and error model.
-    ///
-    /// This function calculates how likely the observed data is given the model
-    /// parameters and error model. It may use caching for performance.
-    ///
-    /// # Parameters
-    /// - `subject`: The subject data
-    /// - `support_point`: The parameter values
-    /// - `error_model`: The error model
-    /// - `cache`: Whether to use caching
-    ///
-    /// # Returns
-    /// The likelihood value (product of individual observation likelihoods)
-    fn estimate_likelihood(
-        &self,
-        subject: &Subject,
-        support_point: &Vec<f64>,
-        error_models: &ErrorModels,
-        cache: bool,
-    ) -> Result<f64, PharmsolError>;
-
     /// Estimate the log-likelihood of the subject given the support point and error model.
     ///
     /// This function calculates the log of how likely the observed data is given the model
-    /// parameters and error model. It is numerically more stable than `estimate_likelihood`
-    /// for extreme values or many observations.
+    /// parameters and error model. It is numerically stable for extreme values or many observations.
     ///
     /// # Parameters
     /// - `subject`: The subject data
@@ -282,7 +260,8 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
                 )?;
             }
         }
-        let ll = error_models.map(|_| likelihood.iter().product::<f64>());
+        // Return log-likelihood (sum of log-likelihoods) when error_models is provided
+        let ll = error_models.map(|_| likelihood.iter().sum::<f64>());
         Ok((output, ll))
     }
 }
