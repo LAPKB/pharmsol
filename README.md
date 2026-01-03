@@ -80,7 +80,8 @@ let ode = equation::ODE::new(
 - [x] One-compartment with IV infusion and oral absorption
 - [x] Two-compartment with IV infusion
 - [x] Two-compartment with IV infusion and oral absorption
-- [ ] Three-compartmental models
+- [x] Three-compartment with IV infusion
+- [x] Three-compartment with IV infusion and oral absorption
 
 ## Performance
 
