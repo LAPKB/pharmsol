@@ -17,7 +17,7 @@
 ///   Kpc = Q / Vp   (peripheral to central rate constant)
 
 fn main() -> Result<(), pharmsol::PharmsolError> {
-    use pharmsol::*;
+    use pharmsol::prelude::*;
 
     // Create a subject using the builder pattern
     let subject = Subject::builder("subject_001")

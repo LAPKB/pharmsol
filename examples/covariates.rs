@@ -1,5 +1,5 @@
 fn main() {
-    use pharmsol::*;
+    use pharmsol::prelude::*;
 
     // Create a subject with a bolus dose, observations, and covariates
     let subject = Subject::builder("id1")

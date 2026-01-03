@@ -1,6 +1,5 @@
 fn main() {
-    use data::Subject;
-    use pharmsol::*;
+    use pharmsol::prelude::*;
 
     let subject = Subject::builder("id1")
         .bolus(0.0, 100.0, 0)
