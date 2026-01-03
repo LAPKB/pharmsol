@@ -285,6 +285,26 @@ impl Data {
         outeq_values.dedup();
         outeq_values
     }
+
+    /// Perform Non-Compartmental Analysis (NCA) on all subjects in the dataset
+    ///
+    /// This method iterates through all subjects and performs NCA analysis
+    /// for each subject's data, returning a collection of results.
+    ///
+    /// # Arguments
+    ///
+    /// * `options` - NCA calculation options
+    /// * `outeq` - Output equation index to analyze
+    ///
+    /// # Returns
+    ///
+    /// Vector of `NCAResult` for each subject-occasion combination
+    pub fn nca(&self, options: &crate::nca::NCAOptions, outeq: usize) -> Vec<crate::nca::NCAResult> {
+        self.subjects
+            .iter()
+            .flat_map(|subject| subject.nca(options, outeq))
+            .collect()
+    }
 }
 
 impl IntoIterator for Data {
@@ -468,6 +488,114 @@ impl Subject {
         let mut hasher = std::hash::DefaultHasher::new();
         self.id.hash(&mut hasher);
         hasher.finish()
+    }
+
+    /// Perform Non-Compartmental Analysis (NCA) on this subject's data
+    ///
+    /// Calculates standard NCA parameters (Cmax, Tmax, AUC, half-life, etc.)
+    /// from the subject's observed concentration-time data.
+    ///
+    /// # Arguments
+    ///
+    /// * `options` - NCA calculation options
+    /// * `outeq` - Output equation index to analyze (default: 0)
+    ///
+    /// # Returns
+    ///
+    /// Vector of `NCAResult`, one per occasion
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use pharmsol::prelude::*;
+    /// use pharmsol::nca::NCAOptions;
+    ///
+    /// let subject = Subject::builder("patient_001")
+    ///     .bolus(0.0, 100.0, 0)
+    ///     .observation(1.0, 10.0, 0)
+    ///     .observation(2.0, 8.0, 0)
+    ///     .observation(4.0, 4.0, 0)
+    ///     .build();
+    ///
+    /// let results = subject.nca(&NCAOptions::default(), 0);
+    /// println!("Cmax: {:.2}", results[0].cmax);
+    /// ```
+    pub fn nca(
+        &self,
+        options: &crate::nca::NCAOptions,
+        outeq: usize,
+    ) -> Vec<crate::nca::NCAResult> {
+        let mut results = Vec::new();
+
+        for occasion in &self.occasions {
+            let result = occasion.nca(options, outeq, Some(self.id.clone()));
+            results.push(result);
+        }
+
+        results
+    }
+
+    /// Extract time-concentration data for a specific output equation
+    ///
+    /// Returns vectors of (times, concentrations) for the specified outeq.
+    /// This is useful for NCA calculations or other analysis.
+    ///
+    /// # Arguments
+    ///
+    /// * `outeq` - Output equation index to extract
+    ///
+    /// # Returns
+    ///
+    /// Tuple of (times, concentrations) vectors
+    pub fn get_observations(&self, outeq: usize) -> (Vec<f64>, Vec<f64>) {
+        let mut times = Vec::new();
+        let mut concs = Vec::new();
+
+        for occasion in &self.occasions {
+            for event in occasion.events() {
+                if let Event::Observation(obs) = event {
+                    if obs.outeq() == outeq {
+                        if let Some(value) = obs.value() {
+                            times.push(obs.time());
+                            concs.push(value);
+                        }
+                    }
+                }
+            }
+        }
+
+        (times, concs)
+    }
+
+    /// Get total dose administered to a specific input compartment
+    ///
+    /// Sums all bolus and infusion doses to the specified compartment.
+    ///
+    /// # Arguments
+    ///
+    /// * `input` - Input compartment index
+    ///
+    /// # Returns
+    ///
+    /// Total dose amount
+    pub fn get_total_dose(&self, input: usize) -> f64 {
+        let mut total = 0.0;
+
+        for occasion in &self.occasions {
+            for event in occasion.events() {
+                match event {
+                    Event::Bolus(bolus) if bolus.input() == input => {
+                        total += bolus.amount();
+                    }
+                    Event::Infusion(infusion) if infusion.input() == input => {
+                        total += infusion.amount();
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        total
     }
 }
 
@@ -792,6 +920,93 @@ impl Occasion {
     /// `true` if there are no events, `false` otherwise
     pub fn is_empty(&self) -> bool {
         self.events.is_empty()
+    }
+
+    /// Perform Non-Compartmental Analysis (NCA) on this occasion's data
+    ///
+    /// # Arguments
+    ///
+    /// * `options` - NCA calculation options
+    /// * `outeq` - Output equation index to analyze
+    /// * `subject_id` - Optional subject ID for result identification
+    ///
+    /// # Returns
+    ///
+    /// `NCAResult` containing calculated parameters
+    pub fn nca(
+        &self,
+        options: &crate::nca::NCAOptions,
+        outeq: usize,
+        subject_id: Option<String>,
+    ) -> crate::nca::NCAResult {
+        // Extract observations for this outeq
+        let (times, concs) = self.get_observations(outeq);
+
+        // Get total dose
+        let dose = self.get_total_dose(0); // Assume input 0 for now
+        let dose_opt = if dose > 0.0 { Some(dose) } else { None };
+
+        // Calculate NCA
+        let mut result = crate::nca::calculate_nca(&times, &concs, dose_opt, options);
+        result.subject_id = subject_id;
+        result.occasion = Some(self.index);
+        result.outeq = outeq;
+
+        result
+    }
+
+    /// Extract time-concentration data for a specific output equation
+    ///
+    /// # Arguments
+    ///
+    /// * `outeq` - Output equation index to extract
+    ///
+    /// # Returns
+    ///
+    /// Tuple of (times, concentrations) vectors
+    pub fn get_observations(&self, outeq: usize) -> (Vec<f64>, Vec<f64>) {
+        let mut times = Vec::new();
+        let mut concs = Vec::new();
+
+        for event in &self.events {
+            if let Event::Observation(obs) = event {
+                if obs.outeq() == outeq {
+                    if let Some(value) = obs.value() {
+                        times.push(obs.time());
+                        concs.push(value);
+                    }
+                }
+            }
+        }
+
+        (times, concs)
+    }
+
+    /// Get total dose administered to a specific input compartment
+    ///
+    /// # Arguments
+    ///
+    /// * `input` - Input compartment index
+    ///
+    /// # Returns
+    ///
+    /// Total dose amount
+    pub fn get_total_dose(&self, input: usize) -> f64 {
+        let mut total = 0.0;
+
+        for event in &self.events {
+            match event {
+                Event::Bolus(bolus) if bolus.input() == input => {
+                    total += bolus.amount();
+                }
+                Event::Infusion(infusion) if infusion.input() == input => {
+                    total += infusion.amount();
+                }
+                _ => {}
+            }
+        }
+
+        total
     }
 }
 
