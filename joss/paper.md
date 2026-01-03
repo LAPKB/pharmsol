@@ -31,11 +31,11 @@ bibliography: paper.bib
 
 # Summary
 
-`pharmsol` is a library for pharmacokinetic/pharmacodynamic (PK/PD) modeling and simulation written in Rust. It provides the necessary tools and frameworks for defining, solving, and analyzing compartmental models, with support for differential equations, their analytical solutions, and experimental support for stochastic differential equations. The library addresses significant performance challenges in PK/PD modeling through a systems-based architecture that leverages Rust's zero-cost <!-- needs clarification? --> abstractions and memory safety guarantees while maintaining an accessible interface for researchers and developers. The library is distributed via crates.io with comprehensive API documentation, usage examples, and a test suite validated through continuous integration.
+`pharmsol` is a library for pharmacokinetic/pharmacodynamic (PK/PD) modeling and simulation written in Rust. It provides the necessary tools and frameworks for defining, solving, and analyzing compartmental models, with support for differential equations, their analytical solutions, and experimental support for stochastic differential equations. Written in Rust, the library aims to provide researchers and developers with a framework for pharmacokinetic simulation in a memory-safe and performant language. The library is distributed via crates.io with comprehensive API documentation, usage examples, and a test suite validated through continuous integration.
 
 # Statement of Need
 
-Pharmacokinetic and pharmacodynamic modeling and simulation are computationally intense when applied to modern, complex, and sophisticated dosing regimens, mechanistic models, and individualized approaches. Unlike comprehensive pharmacometric platforms such as NONMEM [@nonmem], Phoenix NLME [@phoenix], or Monolix <!-- citation? -->, `pharmsol` is purpose-built as a simulation engine that pharmacometricians ~~and modelers~~ can leverage to rapidly execute simulations for individuals or populations with pre- and user-defined models.
+Pharmacokinetic and pharmacodynamic modeling and simulation are computationally intense when applied to modern, complex, and sophisticated dosing regimens, mechanistic models, and individualized approaches. Unlike comprehensive pharmacometric platforms such as NONMEM [@nonmem], Phoenix NLME [@phoenix], or Monolix [@monolix], `pharmsol` is purpose-built as a simulation engine that pharmacometricians can leverage to rapidly execute simulations for individuals or populations with pre- and user-defined models.
 
 Its primary focus is on delivering a fully open-source solution that empowers users to inspect, modify, and extend <!-- how? --> the simulation capabilities without licensing constraints. Furthermore, `pharmsol` is readily integrated in more user-friendly languages such as R using `extendr` [@extendr].
 
@@ -47,7 +47,7 @@ Its primary focus is on delivering a fully open-source solution that empowers us
 Data → Subject → Occasion → Event (Bolus, Infusion, Observation)
 ```
 
-Currently, `pharmsol` only provides methods to parse the Pmetrics [@pmetrics] data format. In the future, we aim to also support additional formats, such as those used by NONMEM, Monolix [@monolix], and more.
+Currently, `pharmsol` provides methods to parse the Pmetrics [@pmetrics] data format. In the future, we aim to also support additional formats, such as those used by NONMEM, Monolix [@monolix], and more.
 
 # Supported equation formats
 
@@ -55,8 +55,7 @@ The equation module provides the mathematical foundation for simulating PK/PD ou
 
 ## Analytical Solutions
 
-For standard compartmental models, `pharmsol` provides closed-form solutions <!-- this implies model fitting; isn't pharmsol just simulation? --> for one- and two-compartment models, with and without oral absorption. These have been verified against their differential equation counterparts. Benchmarks demonstrate 20-33× speedups compared to equivalent ODE formulations without loss of precision (see repository benchmarks
-for details). Additional analytical solutions will be added in future versions.
+For standard compartmental models, `pharmsol` provides closed-form solutions for one- and two-compartment models, with and without oral absorption. These have been verified against their differential equation counterparts. Benchmarks demonstrate 20-33× speedups compared to equivalent ODE formulations without loss of precision (see repository benchmarks for details). Additional analytical solutions will be added in future versions.
 
 ## Ordinary Differential Equations
 
@@ -66,13 +65,6 @@ For more complex or non-standard models, `pharmsol` supports user-defined ordina
 
 Experimental support for stochastic differential equations (SDEs) is available using the Euler-Maruyama method. SDEs allow modeling of within-subject variability as a continuous stochastic process. However, particular care should be taken if applying SDEs in a non-parametric approach to population pharmacokinetic modeling, such as when using the non-parametric adaptive grid algorithm (NPAG) [@npag] for parameter estimation.
 
-# Simulation Algorithm??
-
-Multimodal?
-Cholesky decomposition?
-
-# Output Format??
-
 # Conclusion and Future Work
 
 `pharmsol` aims to support the evolving needs of pharmacometric research by providing a modern, efficient platform that can adapt to the increasing complexity of pharmaceutical development while remaining accessible through its open-source licensing model. Future development will focus on additional analytical model implementations, support for common data formats used by other pharmacometric software, and continued performance improvements.
@@ -81,6 +73,6 @@ Cholesky decomposition?
 
 We acknowledge the intellectual contributions to the package by members of the Laboratory of Applied Pharmacokinetics and Bioinformatics (LAPKB), and feedback from the pharmacokinetics research group at the University of Oslo.
 
-We are especially grateful to the authors of packages on which `pharmsol` relies, in particular Martin Robinson (diffsol), Sarah Quinones (faer), and Mossa Reimert (extendr). Their help and discussions are much appreciated.
+We are especially grateful to the authors of the packages on which `pharmsol` relies, in particular Martin Robinson (diffsol), Sarah Quinones (faer), and Mossa Reimert (extendr). Their help and discussions are much appreciated.
 
 # References
