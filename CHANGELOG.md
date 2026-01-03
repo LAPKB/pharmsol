@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.0](https://github.com/LAPKB/pharmsol/compare/v0.22.1...v0.23.0) - 2026-01-03
+
+### Other
+
+- Prepare for submission to JOSS ([#186](https://github.com/LAPKB/pharmsol/pull/186))
+- Update examples ([#183](https://github.com/LAPKB/pharmsol/pull/183))
+
 ## [0.22.1](https://github.com/LAPKB/pharmsol/compare/v0.22.0...v0.22.1) - 2025-12-11
 
 ### Other
