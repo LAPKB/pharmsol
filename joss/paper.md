@@ -37,7 +37,7 @@ bibliography: paper.bib
 
 Pharmacokinetic and pharmacodynamic modeling and simulation are computationally intense when applied to modern, complex, and sophisticated dosing regimens, mechanistic models, and individualized approaches. Unlike comprehensive pharmacometric platforms such as NONMEM [@nonmem], Phoenix NLME [@phoenix], or Monolix [@monolix], `pharmsol` is purpose-built as a simulation engine that pharmacometricians can leverage to rapidly execute simulations for individuals or populations with pre- and user-defined models.
 
-Its primary focus is on delivering a fully open-source solution that empowers users to inspect, modify, and extend <!-- how? --> the simulation capabilities without licensing constraints. Furthermore, `pharmsol` is readily integrated in more user-friendly languages such as R using `extendr` [@extendr].
+As a fully open-source solution, `pharmsol` empowers users to inspect, modify, and extend the simulation capabilities without licensing constraints. Users can define custom models by specifying their own differential equations as closures, or use the provided analytical solutions for standard compartmental models. Additionally, `pharmsol` can be integrated in more user-friendly languages such as R using `extendr` [@extendr], making it accessible to pharmacometricians who may prefer higher-level interfaces.
 
 # Data format
 
