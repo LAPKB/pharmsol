@@ -319,6 +319,7 @@ pub fn psi(
 ///
 /// # Returns
 /// A 2D array of log-likelihoods with shape (n_subjects, n_support_points)
+#[allow(dead_code)]
 pub fn log_psi(
     equation: &impl Equation,
     subjects: &Data,
