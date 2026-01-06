@@ -213,9 +213,6 @@ pub struct NCAResult {
     /// IV Infusion-specific parameters
     pub iv_infusion: Option<IVInfusionParams>,
 
-    /// Extravascular-specific parameters
-    pub extravascular: Option<ExtravascularParams>,
-
     /// Steady-state parameters (if tau specified)
     pub steady_state: Option<SteadyStateParams>,
 
@@ -337,6 +334,8 @@ pub struct ExposureParams {
     pub aumc_last: Option<f64>,
     /// AUMC extrapolated to infinity
     pub aumc_inf: Option<f64>,
+    /// Lag time (extravascular only)
+    pub tlag: Option<f64>,
 }
 
 /// Terminal phase parameters
@@ -400,15 +399,6 @@ pub struct IVInfusionParams {
     pub mrt_iv: Option<f64>,
     /// Volume at steady state
     pub vss: Option<f64>,
-}
-
-/// Extravascular-specific parameters
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExtravascularParams {
-    /// Lag time
-    pub tlag: Option<f64>,
-    /// Bioavailability (requires IV reference)
-    pub bioavailability: Option<f64>,
 }
 
 /// Steady-state parameters

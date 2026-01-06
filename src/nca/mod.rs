@@ -62,7 +62,7 @@
 //! ```
 
 // Internal modules
-pub mod analyze;
+mod analyze;
 mod calc;
 mod error;
 mod profile;
@@ -71,50 +71,13 @@ mod types;
 #[cfg(test)]
 mod tests;
 
+// Crate-internal re-exports (for data/structs.rs)
+pub(crate) use analyze::{analyze_arrays, DoseContext};
+
 // Public API
-pub use analyze::DoseContext;
 pub use error::NCAError;
 pub use types::{
-    AUCMethod, BLQRule, ClearanceParams, ExposureParams, ExtravascularParams,
-    IVBolusParams, IVInfusionParams, LambdaZMethod, LambdaZOptions, NCAOptions, NCAResult,
-    Quality, RegressionStats, Route, SteadyStateParams, TerminalParams, Warning,
+    AUCMethod, BLQRule, ClearanceParams, ExposureParams, IVBolusParams, IVInfusionParams,
+    LambdaZMethod, LambdaZOptions, NCAOptions, NCAResult, Quality, RegressionStats, Route,
+    SteadyStateParams, TerminalParams, Warning,
 };
-
-use profile::Profile;
-
-/// Perform NCA analysis from raw time and concentration arrays
-///
-/// This is the primary entry point for NCA analysis when working with
-/// raw data arrays rather than pharmsol data structures.
-///
-/// # Arguments
-///
-/// * `times` - Time points (must be monotonically increasing)
-/// * `concentrations` - Concentration values at each time point
-/// * `options` - Analysis configuration
-///
-/// # Returns
-///
-/// Complete [`NCAResult`] with all computable parameters, or [`NCAError`] if analysis fails.
-///
-/// # Example
-///
-/// ```rust
-/// use pharmsol::nca::{NCAOptions, nca_from_arrays};
-///
-/// let times = vec![0.0, 1.0, 2.0, 4.0, 8.0, 12.0];
-/// let concs = vec![0.0, 8.5, 6.2, 3.1, 1.2, 0.4];
-///
-/// // Without dose - basic exposure metrics only
-/// let result = nca_from_arrays(&times, &concs, None, &NCAOptions::default()).unwrap();
-/// assert!(result.exposure.cmax > 0.0);
-/// ```
-pub fn nca_from_arrays(
-    times: &[f64],
-    concentrations: &[f64],
-    dose: Option<&DoseContext>,
-    options: &NCAOptions,
-) -> Result<NCAResult, NCAError> {
-    let profile = Profile::from_arrays(times, concentrations, options.loq, options.blq_rule)?;
-    analyze::analyze(&profile, dose, options)
-}

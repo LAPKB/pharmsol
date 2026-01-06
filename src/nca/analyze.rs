@@ -9,15 +9,14 @@ use super::profile::Profile;
 use super::types::*;
 
 // ============================================================================
-// Dose Context (passed from data structures, not from options)
+// Dose Context (internal - auto-detected from data structures)
 // ============================================================================
 
 /// Dose and route information detected from data
 ///
-/// This is constructed by `Occasion::nca()` from the dose events in the data.
-/// Users never construct this directly.
+/// This is constructed internally by `Occasion::nca()` from the dose events in the data.
 #[derive(Debug, Clone)]
-pub struct DoseContext {
+pub(crate) struct DoseContext {
     /// Total dose amount
     pub amount: f64,
     /// Infusion duration (None for bolus)
@@ -29,24 +28,10 @@ pub struct DoseContext {
 impl DoseContext {
     /// Create a new dose context
     pub fn new(amount: f64, duration: Option<f64>, route: Route) -> Self {
-        Self { amount, duration, route }
-    }
-    
-    /// Create from bolus dose
-    pub fn bolus(amount: f64, is_extravascular: bool) -> Self {
         Self {
             amount,
-            duration: None,
-            route: if is_extravascular { Route::Extravascular } else { Route::IVBolus },
-        }
-    }
-    
-    /// Create from infusion
-    pub fn infusion(amount: f64, duration: f64) -> Self {
-        Self {
-            amount,
-            duration: Some(duration),
-            route: Route::IVInfusion,
+            duration,
+            route,
         }
     }
 }
@@ -90,14 +75,21 @@ pub(crate) fn analyze(
         .map(|(d, lz)| compute_clearance(d.amount, exposure.auc_inf, lz.lambda_z));
 
     // Route-specific parameters
-    let (iv_bolus, iv_infusion, extravascular) =
+    let (iv_bolus, iv_infusion) =
         compute_route_specific(profile, dose, lambda_z_result.as_ref(), options);
 
     // Steady-state parameters (if tau specified)
-    let steady_state = options.tau.map(|tau| compute_steady_state(profile, tau, options));
+    let steady_state = options
+        .tau
+        .map(|tau| compute_steady_state(profile, tau, options));
 
     // Build quality summary
-    let quality = build_quality(&exposure, terminal.as_ref(), lambda_z_result.as_ref(), options);
+    let quality = build_quality(
+        &exposure,
+        terminal.as_ref(),
+        lambda_z_result.as_ref(),
+        options,
+    );
 
     Ok(NCAResult {
         subject_id: None,
@@ -107,7 +99,6 @@ pub(crate) fn analyze(
         clearance,
         iv_bolus,
         iv_infusion,
-        extravascular,
         steady_state,
         quality,
     })
@@ -122,6 +113,7 @@ fn compute_exposure(profile: &Profile, options: &NCAOptions) -> Result<ExposureP
 
     let auc_last = calc::auc_last(profile, options.auc_method);
     let aumc_last = calc::aumc_last(profile);
+    let tlag = calc::tlag(profile, options.loq);
 
     // AUCinf will be computed in terminal phase if lambda-z is available
     Ok(ExposureParams {
@@ -135,6 +127,7 @@ fn compute_exposure(profile: &Profile, options: &NCAOptions) -> Result<ExposureP
         auc_partial: None, // Could be added via optional interval parameter
         aumc_last: Some(aumc_last),
         aumc_inf: None,
+        tlag,
     })
 }
 
@@ -182,13 +175,13 @@ fn compute_clearance(dose: f64, auc_inf: Option<f64>, lambda_z: f64) -> Clearanc
     }
 }
 
-/// Compute route-specific parameters
+/// Compute route-specific parameters (IV only - extravascular tlag is in exposure)
 fn compute_route_specific(
     profile: &Profile,
     dose: Option<&DoseContext>,
     lz_result: Option<&calc::LambdaZResult>,
     options: &NCAOptions,
-) -> (Option<IVBolusParams>, Option<IVInfusionParams>, Option<ExtravascularParams>) {
+) -> (Option<IVBolusParams>, Option<IVInfusionParams>) {
     let route = dose.map(|d| d.route).unwrap_or(Route::Extravascular);
 
     match route {
@@ -215,11 +208,7 @@ fn compute_route_specific(
                 })
             });
 
-            (
-                Some(IVBolusParams { c0, vd, vss }),
-                None,
-                None,
-            )
+            (Some(IVBolusParams { c0, vd, vss }), None)
         }
         Route::IVInfusion => {
             let duration = dose.and_then(|d| d.duration).unwrap_or(0.0);
@@ -260,21 +249,11 @@ fn compute_route_specific(
                     mrt_iv,
                     vss,
                 }),
-                None,
             )
         }
         Route::Extravascular => {
-            let tlag = calc::tlag(profile, options.loq);
-
-            // Bioavailability requires IV reference (not computed here)
-            (
-                None,
-                None,
-                Some(ExtravascularParams {
-                    tlag,
-                    bioavailability: None,
-                }),
-            )
+            // Tlag is computed in exposure params
+            (None, None)
         }
     }
 }
@@ -320,14 +299,14 @@ fn build_quality(
         if pct_extrap > options.max_auc_extrap_pct {
             warnings.push(Warning::HighExtrapolation);
         }
-        
+
         // Check span ratio
         if let Some(stats) = terminal.and_then(|t| t.regression.as_ref()) {
             if stats.span_ratio < options.lambda_z.min_span_ratio {
                 warnings.push(Warning::ShortTerminalPhase);
             }
         }
-        
+
         // Check R²
         if lz.r_squared < options.lambda_z.min_r_squared {
             warnings.push(Warning::PoorFit);
@@ -365,7 +344,7 @@ fn update_exposure_with_terminal(
 // ============================================================================
 
 /// Analyze from raw arrays (used internally by Occasion::nca)
-pub fn analyze_arrays(
+pub(crate) fn analyze_arrays(
     times: &[f64],
     concentrations: &[f64],
     dose: Option<&DoseContext>,
@@ -407,7 +386,7 @@ mod tests {
     fn test_analyze_with_dose() {
         let profile = test_profile();
         let options = NCAOptions::default();
-        let dose = DoseContext::bolus(100.0, true);
+        let dose = DoseContext::new(100.0, None, Route::Extravascular);
 
         let result = analyze(&profile, Some(&dose), &options).unwrap();
 
@@ -415,34 +394,33 @@ mod tests {
         if result.terminal.is_some() {
             assert!(result.clearance.is_some());
         }
-        // Should have extravascular params
-        assert!(result.extravascular.is_some());
+        // Tlag is now in exposure, not a separate struct
+        // Exposure params are always present
+        assert!(result.exposure.auc_last > 0.0);
     }
 
     #[test]
     fn test_analyze_iv_bolus() {
         let profile = test_profile();
         let options = NCAOptions::default();
-        let dose = DoseContext::bolus(100.0, false); // IV bolus
+        let dose = DoseContext::new(100.0, None, Route::IVBolus);
 
         let result = analyze(&profile, Some(&dose), &options).unwrap();
 
         assert!(result.iv_bolus.is_some());
         assert!(result.iv_infusion.is_none());
-        assert!(result.extravascular.is_none());
     }
 
     #[test]
     fn test_analyze_iv_infusion() {
         let profile = test_profile();
         let options = NCAOptions::default();
-        let dose = DoseContext::infusion(100.0, 1.0);
+        let dose = DoseContext::new(100.0, Some(1.0), Route::IVInfusion);
 
         let result = analyze(&profile, Some(&dose), &options).unwrap();
 
         assert!(result.iv_bolus.is_none());
         assert!(result.iv_infusion.is_some());
-        assert!(result.extravascular.is_none());
         assert_eq!(result.iv_infusion.as_ref().unwrap().infusion_duration, 1.0);
     }
 
@@ -450,7 +428,7 @@ mod tests {
     fn test_analyze_steady_state() {
         let profile = test_profile();
         let options = NCAOptions::default().with_tau(12.0);
-        let dose = DoseContext::bolus(100.0, true);
+        let dose = DoseContext::new(100.0, None, Route::Extravascular);
 
         let result = analyze(&profile, Some(&dose), &options).unwrap();
 

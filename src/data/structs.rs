@@ -967,7 +967,8 @@ impl Occasion {
         let dose_context = self.detect_dose_context();
 
         // Calculate NCA using the analyze module
-        let mut result = crate::nca::analyze::analyze_arrays(&times, &concs, dose_context.as_ref(), options)?;
+        let mut result =
+            crate::nca::analyze_arrays(&times, &concs, dose_context.as_ref(), options)?;
         result.subject_id = subject_id;
         result.occasion = Some(self.index);
 
@@ -975,7 +976,7 @@ impl Occasion {
     }
 
     /// Detect dose information from dose events in this occasion
-    fn detect_dose_context(&self) -> Option<crate::nca::analyze::DoseContext> {
+    fn detect_dose_context(&self) -> Option<crate::nca::DoseContext> {
         let mut total_dose = 0.0;
         let mut infusion_duration: Option<f64> = None;
         let mut is_extravascular = false;
@@ -1011,7 +1012,11 @@ impl Occasion {
             crate::nca::Route::IVBolus
         };
 
-        Some(crate::nca::analyze::DoseContext::new(total_dose, infusion_duration, route))
+        Some(crate::nca::DoseContext::new(
+            total_dose,
+            infusion_duration,
+            route,
+        ))
     }
 
     /// Extract time-concentration data for a specific output equation

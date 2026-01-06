@@ -4,41 +4,48 @@
 //!
 //! Run with: `cargo run --example nca`
 
-use pharmsol::nca::{BLQRule, DoseContext, NCAOptions, nca_from_arrays};
+use pharmsol::nca::{BLQRule, NCAOptions};
 use pharmsol::prelude::*;
 
 fn main() {
     println!("=== pharmsol NCA Example ===\n");
 
-    // Example 1: Basic NCA from arrays
-    basic_nca_example();
+    // Example 1: Basic oral PK analysis
+    basic_oral_example();
 
     // Example 2: IV Bolus analysis
     iv_bolus_example();
 
-    // Example 3: Oral (extravascular) analysis
-    oral_example();
+    // Example 3: IV Infusion analysis
+    iv_infusion_example();
 
     // Example 4: Steady-state analysis
     steady_state_example();
 
-    // Example 5: NCA on Subject data
-    subject_nca_example();
+    // Example 5: BLQ handling
+    blq_handling_example();
 }
 
-/// Basic NCA analysis from time-concentration arrays
-fn basic_nca_example() {
-    println!("--- Basic NCA Example ---\n");
+/// Basic oral PK NCA analysis
+fn basic_oral_example() {
+    println!("--- Basic Oral PK Example ---\n");
 
-    // Typical single-dose PK profile
-    let times = vec![0.0, 0.5, 1.0, 2.0, 4.0, 8.0, 12.0, 24.0];
-    let concs = vec![0.0, 5.0, 10.0, 8.0, 4.0, 2.0, 1.0, 0.25];
+    // Build subject with oral dose and observations
+    let subject = Subject::builder("patient_001")
+        .bolus(0.0, 100.0, 0) // 100 mg oral dose (input 0 = depot)
+        .observation(0.0, 0.0, 0)
+        .observation(0.5, 5.0, 0)
+        .observation(1.0, 10.0, 0)
+        .observation(2.0, 8.0, 0)
+        .observation(4.0, 4.0, 0)
+        .observation(8.0, 2.0, 0)
+        .observation(12.0, 1.0, 0)
+        .observation(24.0, 0.25, 0)
+        .build();
 
-    // Default options (LinUpLogDown AUC, exclude BLQ)
     let options = NCAOptions::default();
-    let dose = DoseContext::bolus(100.0, true); // 100 mg extravascular
-
-    let result = nca_from_arrays(&times, &concs, Some(&dose), &options).expect("NCA analysis failed");
+    let results = subject.nca(&options, 0);
+    let result = results[0].as_ref().expect("NCA analysis failed");
 
     println!("Exposure Parameters:");
     println!("  Cmax:     {:.2}", result.exposure.cmax);
@@ -69,14 +76,21 @@ fn basic_nca_example() {
 fn iv_bolus_example() {
     println!("--- IV Bolus Example ---\n");
 
-    // IV bolus profile (high initial concentration)
-    let times = vec![0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 12.0];
-    let concs = vec![95.0, 82.0, 61.0, 34.0, 10.0, 3.0, 0.9];
+    // Build subject with IV bolus (input 1 = central compartment)
+    let subject = Subject::builder("iv_patient")
+        .bolus(0.0, 500.0, 1) // 500 mg IV bolus
+        .observation(0.25, 95.0, 0)
+        .observation(0.5, 82.0, 0)
+        .observation(1.0, 61.0, 0)
+        .observation(2.0, 34.0, 0)
+        .observation(4.0, 10.0, 0)
+        .observation(8.0, 3.0, 0)
+        .observation(12.0, 0.9, 0)
+        .build();
 
     let options = NCAOptions::default();
-    let dose = DoseContext::bolus(500.0, false); // 500 mg IV bolus
-
-    let result = nca_from_arrays(&times, &concs, Some(&dose), &options).expect("NCA analysis failed");
+    let results = subject.nca(&options, 0);
+    let result = results[0].as_ref().expect("NCA analysis failed");
 
     println!("Exposure:");
     println!("  Cmax:     {:.1}", result.exposure.cmax);
@@ -94,28 +108,36 @@ fn iv_bolus_example() {
     println!();
 }
 
-/// Oral (extravascular) analysis
-fn oral_example() {
-    println!("--- Oral (Extravascular) Example ---\n");
+/// IV Infusion analysis
+fn iv_infusion_example() {
+    println!("--- IV Infusion Example ---\n");
 
-    // Oral absorption profile with lag time
-    let times = vec![0.0, 0.25, 0.5, 1.0, 1.5, 2.0, 4.0, 8.0, 12.0, 24.0];
-    let concs = vec![0.0, 0.0, 2.0, 8.0, 10.0, 9.0, 5.0, 2.0, 0.8, 0.1];
+    // Build subject with IV infusion
+    let subject = Subject::builder("infusion_patient")
+        .infusion(0.0, 100.0, 1, 0.5) // 100 mg over 0.5h to central
+        .observation(0.0, 0.0, 0)
+        .observation(0.5, 15.0, 0)
+        .observation(1.0, 12.0, 0)
+        .observation(2.0, 8.0, 0)
+        .observation(4.0, 4.0, 0)
+        .observation(8.0, 1.5, 0)
+        .observation(12.0, 0.5, 0)
+        .build();
 
-    let options = NCAOptions::default().with_blq(0.05, BLQRule::Exclude);
-    let dose = DoseContext::bolus(200.0, true); // 200 mg oral
-
-    let result = nca_from_arrays(&times, &concs, Some(&dose), &options).expect("NCA analysis failed");
+    let options = NCAOptions::default();
+    let results = subject.nca(&options, 0);
+    let result = results[0].as_ref().expect("NCA analysis failed");
 
     println!("Exposure:");
     println!("  Cmax:     {:.1}", result.exposure.cmax);
     println!("  Tmax:     {:.2} h", result.exposure.tmax);
     println!("  AUClast:  {:.1}", result.exposure.auc_last);
 
-    if let Some(ref oral) = result.extravascular {
-        if let Some(tlag) = oral.tlag {
-            println!("\nExtravascular Parameters:");
-            println!("  Tlag:     {:.2} h", tlag);
+    if let Some(ref infusion) = result.iv_infusion {
+        println!("\nIV Infusion Parameters:");
+        println!("  Infusion duration: {:.2} h", infusion.infusion_duration);
+        if let Some(mrt_iv) = infusion.mrt_iv {
+            println!("  MRT (corrected):   {:.2} h", mrt_iv);
         }
     }
 
@@ -126,14 +148,21 @@ fn oral_example() {
 fn steady_state_example() {
     println!("--- Steady-State Example ---\n");
 
-    // Steady-state profile (Q12H dosing)
-    let times = vec![0.0, 1.0, 2.0, 4.0, 6.0, 8.0, 12.0];
-    let concs = vec![5.0, 15.0, 12.0, 8.0, 6.0, 5.5, 5.0];
+    // Build subject at steady-state (Q12H dosing)
+    let subject = Subject::builder("ss_patient")
+        .bolus(0.0, 100.0, 0) // 100 mg oral
+        .observation(0.0, 5.0, 0)
+        .observation(1.0, 15.0, 0)
+        .observation(2.0, 12.0, 0)
+        .observation(4.0, 8.0, 0)
+        .observation(6.0, 6.0, 0)
+        .observation(8.0, 5.5, 0)
+        .observation(12.0, 5.0, 0)
+        .build();
 
     let options = NCAOptions::default().with_tau(12.0); // 12-hour dosing interval
-    let dose = DoseContext::bolus(100.0, true); // 100 mg oral
-
-    let result = nca_from_arrays(&times, &concs, Some(&dose), &options).expect("NCA analysis failed");
+    let results = subject.nca(&options, 0);
+    let result = results[0].as_ref().expect("NCA analysis failed");
 
     println!("Exposure:");
     println!("  Cmax:     {:.1}", result.exposure.cmax);
@@ -152,55 +181,44 @@ fn steady_state_example() {
     println!();
 }
 
-/// NCA analysis using pharmsol's Subject data structure
-fn subject_nca_example() {
-    println!("--- Subject NCA Example ---\n");
+/// BLQ handling demonstration
+fn blq_handling_example() {
+    println!("--- BLQ Handling Example ---\n");
 
-    // Build a subject with dose and observations
-    let subject = Subject::builder("patient_001")
-        .bolus(0.0, 100.0, 0) // 100 mg dose to depot
-        .observation(0.5, 5.0, 0)
+    // Build subject with BLQ observations
+    let subject = Subject::builder("blq_patient")
+        .bolus(0.0, 100.0, 0)
+        .observation(0.0, 0.0, 0)
         .observation(1.0, 10.0, 0)
         .observation(2.0, 8.0, 0)
         .observation(4.0, 4.0, 0)
         .observation(8.0, 2.0, 0)
-        .observation(12.0, 1.0, 0)
-        .observation(24.0, 0.25, 0)
+        .observation(12.0, 0.5, 0)
+        .observation(24.0, 0.02, 0) // Below LOQ of 0.05
         .build();
 
-    // NCA automatically detects dose and route from events
-    let options = NCAOptions::default();
+    // With BLQ exclusion
+    let options_exclude = NCAOptions::default().with_blq(0.05, BLQRule::Exclude);
+    let results_exclude = subject.nca(&options_exclude, 0);
+    let result_exclude = results_exclude[0].as_ref().unwrap();
 
-    // Analyze all occasions
-    let results = subject.nca(&options, 0);
+    // With BLQ = 0
+    let options_zero = NCAOptions::default().with_blq(0.05, BLQRule::Zero);
+    let results_zero = subject.nca(&options_zero, 0);
+    let result_zero = results_zero[0].as_ref().unwrap();
 
-    for (i, result) in results.iter().enumerate() {
-        match result {
-            Ok(r) => {
-                println!("Occasion {} Results:", i);
-                println!("  Subject: {:?}", r.subject_id);
-                println!("  Cmax: {:.2}", r.exposure.cmax);
-                println!("  Tmax: {:.2} h", r.exposure.tmax);
-                println!("  AUClast: {:.2}", r.exposure.auc_last);
+    println!("BLQ Handling Comparison (LOQ = 0.05):");
+    println!("\n  Exclude BLQ:");
+    println!("    Tlast:   {:.1} h", result_exclude.exposure.tlast);
+    println!("    AUClast: {:.2}", result_exclude.exposure.auc_last);
 
-                if let Some(ref term) = r.terminal {
-                    println!("  Half-life: {:.2} h", term.half_life);
-                }
+    println!("\n  BLQ = 0:");
+    println!("    Tlast:   {:.1} h", result_zero.exposure.tlast);
+    println!("    AUClast: {:.2}", result_zero.exposure.auc_last);
 
-                if let Some(ref cl) = r.clearance {
-                    println!("  CL/F: {:.2} L/h", cl.cl_f);
-                }
+    println!();
 
-                println!();
-            }
-            Err(e) => {
-                println!("Occasion {} failed: {:?}\n", i, e);
-            }
-        }
-    }
-
-    // Display full result
-    if let Some(Ok(result)) = results.first() {
-        println!("Full Result Display:\n{}", result);
-    }
+    // Full result display
+    println!("--- Full Result Display ---\n");
+    println!("{}", result_exclude);
 }
