@@ -2,11 +2,11 @@
 //!
 //! This module provides a clean, powerful API for calculating standard NCA parameters
 //! from concentration-time data. It integrates seamlessly with pharmsol's data structures
-//! ([`Data`], [`Subject`], [`Occasion`]).
+//! ([`Subject`], [`Occasion`]).
 //!
 //! # Design Philosophy
 //!
-//! - **Simple**: Single entry point via `nca()` method on data structures
+//! - **Simple**: Single entry point via `.nca()` method on data structures
 //! - **Powerful**: Full support for all standard NCA parameters
 //! - **Data-aware**: Doses and routes are auto-detected from the data
 //! - **Configurable**: Analysis options via [`NCAOptions`]
@@ -29,21 +29,27 @@
 //!
 //! # Usage
 //!
-//! NCA is performed by calling `nca()` on data structures. Dose and route
+//! NCA is performed by calling `.nca()` on a `Subject`. Dose and route
 //! information are automatically detected from the dose events in the data.
 //!
 //! ```rust,ignore
 //! use pharmsol::prelude::*;
 //! use pharmsol::nca::NCAOptions;
 //!
-//! // Load data with dose and observation events
-//! let data = read_pmetrics("study.csv")?;
+//! // Build subject with dose and observation events
+//! let subject = Subject::builder("patient_001")
+//!     .bolus(0.0, 100.0, 0)  // 100 mg oral dose
+//!     .observation(1.0, 10.0, 0)
+//!     .observation(2.0, 8.0, 0)
+//!     .observation(4.0, 4.0, 0)
+//!     .build();
 //!
-//! // Analyze all subjects with default options
-//! let results = data.nca(&NCAOptions::default())?;
+//! // Perform NCA with default options
+//! let results = subject.nca(&NCAOptions::default(), 0);
+//! let result = results[0].as_ref().expect("NCA failed");
 //!
-//! // Or analyze a single subject
-//! let subject_results = data.get_subject("001")?.nca(&NCAOptions::default())?;
+//! println!("Cmax: {:.2}", result.exposure.cmax);
+//! println!("AUClast: {:.2}", result.exposure.auc_last);
 //! ```
 //!
 //! # Steady-State Analysis
@@ -53,9 +59,9 @@
 //!
 //! // Configure for steady-state with 12h dosing interval
 //! let options = NCAOptions::default().with_tau(12.0);
-//! let result = subject.nca(&options)?;
+//! let results = subject.nca(&options, 0);
 //!
-//! if let Some(ss) = &result[0].steady_state {
+//! if let Some(ref ss) = results[0].as_ref().unwrap().steady_state {
 //!     println!("Cavg: {:.2}", ss.cavg);
 //!     println!("Fluctuation: {:.1}%", ss.fluctuation);
 //! }
