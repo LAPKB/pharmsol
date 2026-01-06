@@ -118,6 +118,7 @@ if let Some(ref term) = result.terminal {
 ```
 
 **Supported NCA Parameters:**
+
 - Exposure: Cmax, Tmax, Clast, Tlast, AUClast, AUCinf, tlag
 - Terminal: λz, t½, MRT
 - Clearance: CL/F, Vz/F, Vss
