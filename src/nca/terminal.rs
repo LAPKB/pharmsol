@@ -28,6 +28,42 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Lambda-z selection method
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LambdaZMethod {
+    /// Optimize adjusted R² (Best Fit) - default
+    AdjustedR2,
+    /// Optimize raw R² value
+    R2,
+    /// User-defined time interval
+    Interval,
+    /// Use last N points
+    Points,
+}
+
+impl Default for LambdaZMethod {
+    fn default() -> Self {
+        Self::AdjustedR2
+    }
+}
+
+/// Regression weighting method for lambda-z calculation
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RegressionWeight {
+    /// No weighting (uniform) - default
+    Uniform,
+    /// Weight by 1/Y
+    InverseY,
+    /// Weight by 1/Y²
+    InverseYSquared,
+}
+
+impl Default for RegressionWeight {
+    fn default() -> Self {
+        Self::Uniform
+    }
+}
+
 /// Result of λz estimation
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LambdaZResult {
@@ -51,31 +87,56 @@ pub struct LambdaZResult {
     pub clast_pred: f64,
     /// Intercept of ln(C) vs time regression
     pub intercept: f64,
+    /// Method used for selection
+    pub method: LambdaZMethod,
+    /// Weighting used for regression
+    pub weighting: RegressionWeight,
 }
 
 /// Options for λz calculation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LambdaZOptions {
+    /// Selection method (default: AdjustedR2)
+    pub method: LambdaZMethod,
+    /// Regression weighting (default: Uniform)
+    pub weighting: RegressionWeight,
     /// Minimum number of points to use in regression (default: 3)
     pub min_points: usize,
+    /// Maximum number of points (None = no limit)
+    pub max_points: Option<usize>,
     /// Whether to allow Tmax in the regression (default: false)
     pub allow_tmax: bool,
     /// Minimum R² to accept (default: 0.9)
     pub min_r_squared: f64,
     /// Minimum span ratio to accept (default: 2.0)
     pub min_span_ratio: f64,
+    /// Minimum time for regression start (default: 0.0)
+    pub min_time: f64,
     /// Tolerance for comparing R² values (default: 1e-4)
     pub r_squared_tolerance: f64,
+    /// For Interval method: start time
+    pub interval_start_time: Option<f64>,
+    /// For Interval method: end time
+    pub interval_end_time: Option<f64>,
+    /// For Points method: number of points to use
+    pub n_points: Option<usize>,
 }
 
 impl Default for LambdaZOptions {
     fn default() -> Self {
         Self {
+            method: LambdaZMethod::AdjustedR2,
+            weighting: RegressionWeight::Uniform,
             min_points: 3,
+            max_points: None,
             allow_tmax: false,
             min_r_squared: 0.9,
             min_span_ratio: 2.0,
+            min_time: 0.0,
             r_squared_tolerance: 1e-4,
+            interval_start_time: None,
+            interval_end_time: None,
+            n_points: None,
         }
     }
 }
@@ -129,13 +190,36 @@ pub fn lambda_z(
         return None;
     }
 
+    // Route to appropriate method
+    match options.method {
+        LambdaZMethod::AdjustedR2 => {
+            lambda_z_adjusted_r2(times, concentrations, tmax_idx, tlast_idx, options)
+        }
+        LambdaZMethod::R2 => lambda_z_r2(times, concentrations, tmax_idx, tlast_idx, options),
+        LambdaZMethod::Interval => {
+            lambda_z_interval(times, concentrations, tmax_idx, tlast_idx, options)
+        }
+        LambdaZMethod::Points => {
+            lambda_z_points(times, concentrations, tmax_idx, tlast_idx, options)
+        }
+    }
+}
+
+/// Lambda-z using Adjusted R² method (Best Fit)
+fn lambda_z_adjusted_r2(
+    times: &[f64],
+    concentrations: &[f64],
+    tmax_idx: usize,
+    tlast_idx: usize,
+    options: &LambdaZOptions,
+) -> Option<LambdaZResult> {
+    if times.len() != concentrations.len() || tlast_idx >= times.len() {
+        return None;
+    }
+
     // Determine starting point for regression
     // If allow_tmax is false, start after tmax
-    let start_idx = if options.allow_tmax {
-        0
-    } else {
-        tmax_idx + 1
-    };
+    let start_idx = if options.allow_tmax { 0 } else { tmax_idx + 1 };
 
     // Need at least min_points between start and tlast
     if tlast_idx < start_idx + options.min_points - 1 {
@@ -144,9 +228,16 @@ pub fn lambda_z(
 
     let mut best_result: Option<LambdaZResult> = None;
 
+    // Determine maximum number of points to try
+    let max_n_points = if let Some(max_pts) = options.max_points {
+        (tlast_idx - start_idx + 1).min(max_pts)
+    } else {
+        tlast_idx - start_idx + 1
+    };
+
     // Try all possible point sets from tlast backwards
     // Start with minimum points, increase to maximum
-    for n_points in options.min_points..=(tlast_idx - start_idx + 1) {
+    for n_points in options.min_points..=max_n_points {
         // Calculate starting index for this number of points
         let first_idx = tlast_idx - n_points + 1;
 
@@ -155,14 +246,21 @@ pub fn lambda_z(
             continue;
         }
 
+        // Skip if first point is before min_time
+        if times[first_idx] < options.min_time {
+            continue;
+        }
+
         // Extract points for regression (only positive concentrations)
         let mut reg_times = Vec::with_capacity(n_points);
         let mut reg_log_conc = Vec::with_capacity(n_points);
+        let mut reg_conc = Vec::with_capacity(n_points);
 
         for i in first_idx..=tlast_idx {
             if concentrations[i] > 0.0 {
                 reg_times.push(times[i]);
                 reg_log_conc.push(concentrations[i].ln());
+                reg_conc.push(concentrations[i]);
             }
         }
 
@@ -171,9 +269,9 @@ pub fn lambda_z(
             continue;
         }
 
-        // Perform linear regression: ln(C) = intercept + slope * t
+        // Perform weighted linear regression: ln(C) = intercept + slope * t
         if let Some((slope, intercept, r_squared)) =
-            linear_regression(&reg_times, &reg_log_conc)
+            weighted_linear_regression(&reg_times, &reg_log_conc, &reg_conc, &options.weighting)
         {
             let lambda = -slope;
 
@@ -204,6 +302,8 @@ pub fn lambda_z(
                 span_ratio,
                 clast_pred,
                 intercept,
+                method: LambdaZMethod::AdjustedR2,
+                weighting: options.weighting,
             };
 
             // Check quality criteria
@@ -232,6 +332,249 @@ pub fn lambda_z(
     }
 
     best_result
+}
+
+/// Lambda-z using R² method (optimize raw R² without adjustment)
+fn lambda_z_r2(
+    times: &[f64],
+    concentrations: &[f64],
+    tmax_idx: usize,
+    tlast_idx: usize,
+    options: &LambdaZOptions,
+) -> Option<LambdaZResult> {
+    if times.len() != concentrations.len() || tlast_idx >= times.len() {
+        return None;
+    }
+
+    let start_idx = if options.allow_tmax { 0 } else { tmax_idx + 1 };
+
+    if tlast_idx < start_idx + options.min_points - 1 {
+        return None;
+    }
+
+    let mut best_result: Option<LambdaZResult> = None;
+
+    let max_n_points = if let Some(max_pts) = options.max_points {
+        (tlast_idx - start_idx + 1).min(max_pts)
+    } else {
+        tlast_idx - start_idx + 1
+    };
+
+    for n_points in options.min_points..=max_n_points {
+        let first_idx = tlast_idx - n_points + 1;
+
+        if first_idx < start_idx {
+            continue;
+        }
+
+        if times[first_idx] < options.min_time {
+            continue;
+        }
+
+        let mut reg_times = Vec::with_capacity(n_points);
+        let mut reg_log_conc = Vec::with_capacity(n_points);
+        let mut reg_conc = Vec::with_capacity(n_points);
+
+        for i in first_idx..=tlast_idx {
+            if concentrations[i] > 0.0 {
+                reg_times.push(times[i]);
+                reg_log_conc.push(concentrations[i].ln());
+                reg_conc.push(concentrations[i]);
+            }
+        }
+
+        if reg_times.len() < options.min_points {
+            continue;
+        }
+
+        if let Some((slope, intercept, r_squared)) =
+            weighted_linear_regression(&reg_times, &reg_log_conc, &reg_conc, &options.weighting)
+        {
+            let lambda = -slope;
+
+            if lambda <= 0.0 {
+                continue;
+            }
+
+            let half_life = std::f64::consts::LN_2 / lambda;
+            let time_span = reg_times[reg_times.len() - 1] - reg_times[0];
+            let span_ratio = time_span / half_life;
+
+            let n = reg_times.len() as f64;
+            let adj_r_squared = 1.0 - (1.0 - r_squared) * (n - 1.0) / (n - 2.0);
+            let clast_pred = (intercept + slope * times[tlast_idx]).exp();
+
+            let result = LambdaZResult {
+                lambda_z: lambda,
+                half_life,
+                r_squared,
+                adj_r_squared,
+                n_points: reg_times.len(),
+                time_first: reg_times[0],
+                time_last: reg_times[reg_times.len() - 1],
+                span_ratio,
+                clast_pred,
+                intercept,
+                method: LambdaZMethod::R2,
+                weighting: options.weighting,
+            };
+
+            if r_squared < options.min_r_squared {
+                continue;
+            }
+
+            // For R² method, optimize raw R² (not adjusted)
+            match &best_result {
+                None => best_result = Some(result),
+                Some(best) => {
+                    let r_diff = result.r_squared - best.r_squared;
+                    if r_diff > options.r_squared_tolerance {
+                        best_result = Some(result);
+                    } else if r_diff >= -options.r_squared_tolerance
+                        && result.n_points > best.n_points
+                    {
+                        best_result = Some(result);
+                    }
+                }
+            }
+        }
+    }
+
+    best_result
+}
+
+/// Lambda-z using Interval method (user-defined time range)
+fn lambda_z_interval(
+    times: &[f64],
+    concentrations: &[f64],
+    _tmax_idx: usize,
+    _tlast_idx: usize,
+    options: &LambdaZOptions,
+) -> Option<LambdaZResult> {
+    let start_time = options.interval_start_time?;
+    let end_time = options.interval_end_time?;
+
+    if start_time >= end_time {
+        return None;
+    }
+
+    // Find all points within the interval
+    let mut reg_times = Vec::new();
+    let mut reg_log_conc = Vec::new();
+    let mut reg_conc = Vec::new();
+
+    for i in 0..times.len() {
+        if times[i] >= start_time && times[i] <= end_time && concentrations[i] > 0.0 {
+            reg_times.push(times[i]);
+            reg_log_conc.push(concentrations[i].ln());
+            reg_conc.push(concentrations[i]);
+        }
+    }
+
+    if reg_times.len() < options.min_points {
+        return None;
+    }
+
+    let (slope, intercept, r_squared) =
+        weighted_linear_regression(&reg_times, &reg_log_conc, &reg_conc, &options.weighting)?;
+
+    let lambda = -slope;
+    if lambda <= 0.0 {
+        return None;
+    }
+
+    let half_life = std::f64::consts::LN_2 / lambda;
+    let time_span = reg_times[reg_times.len() - 1] - reg_times[0];
+    let span_ratio = time_span / half_life;
+
+    let n = reg_times.len() as f64;
+    let adj_r_squared = 1.0 - (1.0 - r_squared) * (n - 1.0) / (n - 2.0);
+
+    // Predict at last point in data
+    let last_data_idx = times.len() - 1;
+    let clast_pred = (intercept + slope * times[last_data_idx]).exp();
+
+    Some(LambdaZResult {
+        lambda_z: lambda,
+        half_life,
+        r_squared,
+        adj_r_squared,
+        n_points: reg_times.len(),
+        time_first: reg_times[0],
+        time_last: reg_times[reg_times.len() - 1],
+        span_ratio,
+        clast_pred,
+        intercept,
+        method: LambdaZMethod::Interval,
+        weighting: options.weighting,
+    })
+}
+
+/// Lambda-z using Points method (use last N points)
+fn lambda_z_points(
+    times: &[f64],
+    concentrations: &[f64],
+    _tmax_idx: usize,
+    tlast_idx: usize,
+    options: &LambdaZOptions,
+) -> Option<LambdaZResult> {
+    let n_points = options.n_points?;
+
+    if n_points < options.min_points {
+        return None;
+    }
+
+    // Find last n_points with positive concentrations, working backwards from tlast
+    let mut reg_times = Vec::new();
+    let mut reg_log_conc = Vec::new();
+    let mut reg_conc = Vec::new();
+
+    for i in (0..=tlast_idx).rev() {
+        if concentrations[i] > 0.0 {
+            reg_times.insert(0, times[i]);
+            reg_log_conc.insert(0, concentrations[i].ln());
+            reg_conc.insert(0, concentrations[i]);
+
+            if reg_times.len() == n_points {
+                break;
+            }
+        }
+    }
+
+    if reg_times.len() < options.min_points {
+        return None;
+    }
+
+    let (slope, intercept, r_squared) =
+        weighted_linear_regression(&reg_times, &reg_log_conc, &reg_conc, &options.weighting)?;
+
+    let lambda = -slope;
+    if lambda <= 0.0 {
+        return None;
+    }
+
+    let half_life = std::f64::consts::LN_2 / lambda;
+    let time_span = reg_times[reg_times.len() - 1] - reg_times[0];
+    let span_ratio = time_span / half_life;
+
+    let n = reg_times.len() as f64;
+    let adj_r_squared = 1.0 - (1.0 - r_squared) * (n - 1.0) / (n - 2.0);
+    let clast_pred = (intercept + slope * times[tlast_idx]).exp();
+
+    Some(LambdaZResult {
+        lambda_z: lambda,
+        half_life,
+        r_squared,
+        adj_r_squared,
+        n_points: reg_times.len(),
+        time_first: reg_times[0],
+        time_last: reg_times[reg_times.len() - 1],
+        span_ratio,
+        clast_pred,
+        intercept,
+        method: LambdaZMethod::Points,
+        weighting: options.weighting,
+    })
 }
 
 /// Calculate λz with automatic Tmax and Tlast detection
@@ -384,6 +727,234 @@ pub fn mrt(aumc: f64, auc: f64) -> f64 {
         return f64::NAN;
     }
     aumc / auc
+}
+
+/// Calculate initial concentration (C0) for IV Bolus
+///
+/// C0 is extrapolated to time 0 using lambda_z:
+/// C0 = Clast × exp(lambda_z × Tlast)
+///
+/// # Arguments
+///
+/// * `clast` - Last measured concentration
+/// * `tlast` - Time of last measurement
+/// * `lambda_z` - Terminal elimination rate constant
+///
+/// # Returns
+///
+/// Initial concentration at time 0
+pub fn c0_iv_bolus(clast: f64, tlast: f64, lambda_z: f64) -> f64 {
+    if lambda_z <= 0.0 {
+        return f64::NAN;
+    }
+    clast * (lambda_z * tlast).exp()
+}
+
+/// Calculate volume of distribution (Vd) for IV Bolus
+///
+/// Vd = Dose / C0
+///
+/// # Arguments
+///
+/// * `dose` - Administered dose
+/// * `c0` - Initial concentration
+///
+/// # Returns
+///
+/// Volume of distribution
+pub fn vd_iv_bolus(dose: f64, c0: f64) -> f64 {
+    if c0 <= 0.0 {
+        return f64::NAN;
+    }
+    dose / c0
+}
+
+/// Calculate volume of distribution at steady state (Vss) for IV administration
+///
+/// Vss = Dose × AUMC / AUC²
+///
+/// This formula applies to both IV Bolus and IV Infusion
+///
+/// # Arguments
+///
+/// * `dose` - Administered dose
+/// * `aumc` - Area under the first moment curve
+/// * `auc` - Area under the concentration curve
+///
+/// # Returns
+///
+/// Volume of distribution at steady state
+pub fn vss_iv(dose: f64, aumc: f64, auc: f64) -> f64 {
+    if auc <= 0.0 {
+        return f64::NAN;
+    }
+    dose * aumc / (auc * auc)
+}
+
+/// Estimate absorption rate constant (Ka) for extravascular administration
+///
+/// This uses the method of residuals (feathering) on the terminal phase.
+/// The absorption rate constant is estimated from the residual line.
+///
+/// Note: This is a simplified estimation. For more accurate Ka, use
+/// population modeling or fitting approaches.
+///
+/// # Arguments
+///
+/// * `times` - Time points
+/// * `_concentrations` - Observed concentrations
+/// * `lambda_z` - Terminal elimination rate constant
+///
+/// # Returns
+///
+/// Estimated absorption rate constant (if successful)
+pub fn ka_extravascular(times: &[f64], _concentrations: &[f64], lambda_z: f64) -> Option<f64> {
+    // Need at least 4 points for reasonable ka estimation
+    if times.len() < 4 || lambda_z <= 0.0 {
+        return None;
+    }
+
+    // For now, return None - full implementation would require:
+    // 1. Extrapolate terminal phase backwards using lambda_z
+    // 2. Calculate residuals (observed - extrapolated)
+    // 3. Fit log(residuals) vs time to get ka
+    // This is complex and often unreliable without good data
+    None
+}
+
+/// Estimate lag time (Tlag) for extravascular administration
+///
+/// Tlag is the time delay before absorption begins.
+/// It's identified as the time of the first non-zero concentration.
+///
+/// # Arguments
+///
+/// * `times` - Time points
+/// * `concentrations` - Observed concentrations
+/// * `loq` - Limit of quantification
+///
+/// # Returns
+///
+/// Estimated lag time (time of first quantifiable concentration)
+pub fn tlag_extravascular(times: &[f64], concentrations: &[f64], loq: f64) -> Option<f64> {
+    for (i, &conc) in concentrations.iter().enumerate() {
+        if conc > loq && i > 0 {
+            // If there are zero/BLQ values before this point, take previous time as tlag
+            return Some(times[i - 1]);
+        }
+    }
+    None
+}
+
+/// Weighted linear regression: y = a + b*x
+///
+/// Supports different weighting schemes for lambda-z calculation
+///
+/// Returns (slope, intercept, r_squared)
+fn weighted_linear_regression(
+    x: &[f64],
+    y: &[f64],
+    conc: &[f64],
+    weighting: &RegressionWeight,
+) -> Option<(f64, f64, f64)> {
+    let n = x.len();
+    if n < 2 || n != y.len() || n != conc.len() {
+        return None;
+    }
+
+    match weighting {
+        RegressionWeight::Uniform => {
+            // No weighting - use simple linear regression
+            linear_regression(x, y)
+        }
+        RegressionWeight::InverseY => {
+            // Weight by 1/Y (where Y is concentration, not log-conc)
+            let mut weights = Vec::with_capacity(n);
+            for &c in conc {
+                if c <= 0.0 {
+                    return None; // Invalid concentration for weighting
+                }
+                weights.push(1.0 / c);
+            }
+            weighted_linear_regression_impl(x, y, &weights)
+        }
+        RegressionWeight::InverseYSquared => {
+            // Weight by 1/Y²
+            let mut weights = Vec::with_capacity(n);
+            for &c in conc {
+                if c <= 0.0 {
+                    return None;
+                }
+                weights.push(1.0 / (c * c));
+            }
+            weighted_linear_regression_impl(x, y, &weights)
+        }
+    }
+}
+
+/// Weighted linear regression implementation
+fn weighted_linear_regression_impl(
+    x: &[f64],
+    y: &[f64],
+    weights: &[f64],
+) -> Option<(f64, f64, f64)> {
+    let n = x.len();
+    if n < 2 || n != y.len() || n != weights.len() {
+        return None;
+    }
+
+    // Calculate weighted sums
+    let sum_w: f64 = weights.iter().sum();
+    if sum_w <= 0.0 {
+        return None;
+    }
+
+    let sum_wx: f64 = weights.iter().zip(x.iter()).map(|(w, xi)| w * xi).sum();
+    let sum_wy: f64 = weights.iter().zip(y.iter()).map(|(w, yi)| w * yi).sum();
+    let sum_wxx: f64 = weights
+        .iter()
+        .zip(x.iter())
+        .map(|(w, xi)| w * xi * xi)
+        .sum();
+    let sum_wxy: f64 = weights
+        .iter()
+        .zip(x.iter())
+        .zip(y.iter())
+        .map(|((w, xi), yi)| w * xi * yi)
+        .sum();
+
+    // Calculate weighted means
+    let x_mean = sum_wx / sum_w;
+    let y_mean = sum_wy / sum_w;
+
+    // Calculate slope and intercept using weighted formulas
+    let denominator = sum_wxx - sum_wx * sum_wx / sum_w;
+    if denominator.abs() < 1e-15 {
+        return None;
+    }
+
+    let slope = (sum_wxy - sum_wx * sum_wy / sum_w) / denominator;
+    let intercept = y_mean - slope * x_mean;
+
+    // Calculate weighted R²
+    let mut ss_tot = 0.0;
+    let mut ss_res = 0.0;
+
+    for i in 0..n {
+        let y_pred = intercept + slope * x[i];
+        let y_diff = y[i] - y_mean;
+        let res = y[i] - y_pred;
+        ss_tot += weights[i] * y_diff * y_diff;
+        ss_res += weights[i] * res * res;
+    }
+
+    let r_squared = if ss_tot.abs() < 1e-15 {
+        1.0 // Perfect fit
+    } else {
+        1.0 - ss_res / ss_tot
+    };
+
+    Some((slope, intercept, r_squared))
 }
 
 /// Simple linear regression: y = a + b*x

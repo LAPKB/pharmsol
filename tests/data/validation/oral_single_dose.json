@@ -1,0 +1,70 @@
+{
+  "name": "oral_single_dose_with_absorption",
+  "description": "Single dose oral administration with first-order absorption",
+  "reference_tool": "Calculated",
+  "date_generated": "2026-01-03",
+  "subjects": [
+    {
+      "id": "002",
+      "data": {
+        "times": [0.0, 0.25, 0.5, 1.0, 2.0, 4.0, 6.0, 8.0, 12.0, 24.0],
+        "concentrations": [
+          0.0, 15.2, 28.5, 45.8, 62.3, 58.7, 47.2, 36.8, 21.5, 3.8
+        ],
+        "dose": 500.0,
+        "route": "Oral"
+      },
+      "settings": {
+        "lambda_z_method": "Adjusted R²",
+        "lambda_z_range": null,
+        "auc_method": "Linear up / log down",
+        "dose": 500.0,
+        "route": "Oral"
+      },
+      "expected_parameters": {
+        "AUC_last": {
+          "value": 515.8,
+          "unit": "ng*h/mL",
+          "tolerance": 1.0,
+          "relative_tolerance": 0.2
+        },
+        "AUC_inf_obs": {
+          "value": 532.4,
+          "unit": "ng*h/mL",
+          "tolerance": 1.0,
+          "relative_tolerance": 0.2
+        },
+        "Cmax": {
+          "value": 62.3,
+          "unit": "ng/mL",
+          "tolerance": 0.5,
+          "relative_tolerance": 0.5
+        },
+        "Tmax": {
+          "value": 2.0,
+          "unit": "h",
+          "tolerance": 0.01,
+          "relative_tolerance": null
+        },
+        "Lambda_z": {
+          "value": 0.112,
+          "unit": "1/h",
+          "tolerance": 0.002,
+          "relative_tolerance": 2.0
+        },
+        "T_half": {
+          "value": 6.2,
+          "unit": "h",
+          "tolerance": 0.2,
+          "relative_tolerance": 2.0
+        },
+        "CL_F": {
+          "value": 0.94,
+          "unit": "L/h",
+          "tolerance": 0.02,
+          "relative_tolerance": 2.0
+        }
+      }
+    }
+  ]
+}

@@ -89,12 +89,14 @@ pub mod results;
 pub mod terminal;
 
 // Re-export commonly used items
-pub use auc::{auc_all, auc_at_times, auc_cumulative, auc_interval, auc_last, auc_segment, AUCMethod};
-pub use params::{cmax_tmax, clast_tlast, cmin_tmin, CmaxTmax, ClastTlast, CminTmin};
+pub use auc::{
+    auc_all, auc_at_times, auc_cumulative, auc_interval, auc_last, auc_segment, AUCMethod,
+};
 pub use params::{cav, peak_trough_ratio, percent_fluctuation, swing};
-pub use results::{calculate_nca, NCAOptions, NCAResult};
+pub use params::{clast_tlast, cmax_tmax, cmin_tmin, ClastTlast, CmaxTmax, CminTmin};
+pub use results::{calculate_nca, AdministrationRoute, BLQRule, NCAOptions, NCAResult};
 pub use terminal::{
-    auc_inf, auc_inf_pred, auc_percent_extrap, aumc_last, aumc_segment,
-    clearance, lambda_z, lambda_z_auto, mrt, vz,
-    LambdaZOptions, LambdaZResult,
+    auc_inf, auc_inf_pred, auc_percent_extrap, aumc_last, aumc_segment, c0_iv_bolus, clearance,
+    ka_extravascular, lambda_z, lambda_z_auto, mrt, tlag_extravascular, vd_iv_bolus, vss_iv, vz,
+    LambdaZMethod, LambdaZOptions, LambdaZResult, RegressionWeight,
 };

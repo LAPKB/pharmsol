@@ -1,0 +1,76 @@
+{
+  "name": "iv_bolus_single_dose",
+  "description": "Simple IV bolus single dose with exponential elimination",
+  "reference_tool": "PKanalix 2024R1",
+  "date_generated": "2026-01-03",
+  "subjects": [
+    {
+      "id": "001",
+      "data": {
+        "times": [0.0, 0.5, 1.0, 2.0, 4.0, 6.0, 8.0, 12.0, 24.0],
+        "concentrations": [
+          100.0, 91.4, 83.5, 69.8, 48.7, 34.0, 23.7, 11.6, 1.35
+        ],
+        "dose": 1000.0,
+        "route": "IV bolus"
+      },
+      "settings": {
+        "lambda_z_method": "Adjusted R²",
+        "lambda_z_range": null,
+        "auc_method": "Linear up / log down",
+        "dose": 1000.0,
+        "route": "IV bolus"
+      },
+      "expected_parameters": {
+        "AUC_last": {
+          "value": 483.5,
+          "unit": "ng*h/mL",
+          "tolerance": 0.5,
+          "relative_tolerance": 0.1
+        },
+        "AUC_inf_obs": {
+          "value": 498.7,
+          "unit": "ng*h/mL",
+          "tolerance": 0.5,
+          "relative_tolerance": 0.1
+        },
+        "Cmax": {
+          "value": 100.0,
+          "unit": "ng/mL",
+          "tolerance": 0.1,
+          "relative_tolerance": 0.1
+        },
+        "Tmax": {
+          "value": 0.0,
+          "unit": "h",
+          "tolerance": 0.0,
+          "relative_tolerance": null
+        },
+        "Lambda_z": {
+          "value": 0.089,
+          "unit": "1/h",
+          "tolerance": 0.001,
+          "relative_tolerance": 1.0
+        },
+        "T_half": {
+          "value": 7.8,
+          "unit": "h",
+          "tolerance": 0.1,
+          "relative_tolerance": 1.0
+        },
+        "CL": {
+          "value": 2.0,
+          "unit": "L/h",
+          "tolerance": 0.02,
+          "relative_tolerance": 1.0
+        },
+        "Vd": {
+          "value": 22.5,
+          "unit": "L",
+          "tolerance": 0.3,
+          "relative_tolerance": 1.0
+        }
+      }
+    }
+  ]
+}
