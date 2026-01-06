@@ -49,6 +49,3 @@ harness = false
 name = "ode"
 harness = false
 
-[[bench]]
-name = "nca_benchmarks"
-harness = false

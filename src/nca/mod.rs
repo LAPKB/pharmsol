@@ -1,15 +1,15 @@
 //! Non-Compartmental Analysis (NCA) for pharmacokinetic data
 //!
-//! This module provides functions for calculating standard NCA parameters from
-//! concentration-time data. It is designed to work directly with pharmsol's
-//! data structures ([`Subject`], [`Occasion`]) and also provides lower-level
-//! functions for use with raw time/concentration arrays (useful for PMcore's bestdose).
+//! This module provides a clean, powerful API for calculating standard NCA parameters
+//! from concentration-time data. It integrates seamlessly with pharmsol's data structures
+//! ([`Data`], [`Subject`], [`Occasion`]).
 //!
-//! # Overview
+//! # Design Philosophy
 //!
-//! NCA is a model-independent approach to pharmacokinetic analysis that calculates
-//! exposure metrics directly from observed concentration-time data without assuming
-//! a specific compartmental model.
+//! - **Simple**: Single entry point via `nca()` method on data structures
+//! - **Powerful**: Full support for all standard NCA parameters
+//! - **Data-aware**: Doses and routes are auto-detected from the data
+//! - **Configurable**: Analysis options via [`NCAOptions`]
 //!
 //! # Key Parameters
 //!
@@ -25,78 +25,96 @@
 //! | t½ | Terminal half-life (ln(2)/λz) |
 //! | CL/F | Apparent clearance |
 //! | Vz/F | Apparent volume of distribution |
+//! | MRT | Mean residence time |
 //!
-//! # AUC Calculation Methods
+//! # Usage
 //!
-//! Two methods are supported:
-//!
-//! - **Linear Trapezoidal**: Simple average of adjacent concentrations
-//!   ```text
-//!   AUC = Σ (C[i] + C[i-1])/2 × (t[i] - t[i-1])
-//!   ```
-//!
-//! - **Linear Up/Log Down** (recommended): Linear for ascending concentrations,
-//!   log-linear for descending. This is the industry standard.
-//!   ```text
-//!   Ascending:  AUC = (C[i] + C[i-1])/2 × Δt
-//!   Descending: AUC = (C[i-1] - C[i]) × Δt / ln(C[i-1]/C[i])
-//!   ```
-//!
-//! # Examples
-//!
-//! ## Direct calculation from arrays (PMcore-compatible)
-//!
-//! ```rust
-//! use pharmsol::nca::{auc_last, AUCMethod};
-//!
-//! let times = vec![0.0, 1.0, 2.0, 4.0, 8.0, 12.0];
-//! let concs = vec![0.0, 8.5, 6.2, 3.1, 1.2, 0.4];
-//!
-//! let auc = auc_last(&times, &concs, AUCMethod::LinUpLogDown);
-//! println!("AUClast = {:.2}", auc);
-//! ```
-//!
-//! ## Full NCA on a Subject
+//! NCA is performed by calling `nca()` on data structures. Dose and route
+//! information are automatically detected from the dose events in the data.
 //!
 //! ```rust,ignore
 //! use pharmsol::prelude::*;
-//! use pharmsol::nca::{NCAOptions, NCAResult};
+//! use pharmsol::nca::NCAOptions;
 //!
-//! let subject = Subject::builder("patient_001")
-//!     .bolus(0.0, 100.0, 0)
-//!     .observation(1.0, 8.5, 0)
-//!     .observation(2.0, 6.2, 0)
-//!     .observation(4.0, 3.1, 0)
-//!     .build();
+//! // Load data with dose and observation events
+//! let data = read_pmetrics("study.csv")?;
 //!
-//! let options = NCAOptions::default();
-//! let result = subject.nca(&options);
+//! // Analyze all subjects with default options
+//! let results = data.nca(&NCAOptions::default())?;
 //!
-//! println!("Cmax: {:.2}", result.cmax);
-//! println!("AUClast: {:.2}", result.auc_last);
+//! // Or analyze a single subject
+//! let subject_results = data.get_subject("001")?.nca(&NCAOptions::default())?;
 //! ```
 //!
-//! # Module Structure
+//! # Steady-State Analysis
 //!
-//! - [`auc`]: AUC calculation functions (trapezoidal integration)
-//! - [`params`]: Primary NCA parameters (Cmax, Tmax, Clast, Tlast)
-//! - [`terminal`]: Terminal phase analysis (λz, half-life)
-//! - [`results`]: Result structures and options
+//! ```rust,ignore
+//! use pharmsol::nca::NCAOptions;
+//!
+//! // Configure for steady-state with 12h dosing interval
+//! let options = NCAOptions::default().with_tau(12.0);
+//! let result = subject.nca(&options)?;
+//!
+//! if let Some(ss) = &result[0].steady_state {
+//!     println!("Cavg: {:.2}", ss.cavg);
+//!     println!("Fluctuation: {:.1}%", ss.fluctuation);
+//! }
+//! ```
 
-pub mod auc;
-pub mod params;
-pub mod results;
-pub mod terminal;
+// Internal modules
+pub mod analyze;
+mod calc;
+mod error;
+mod profile;
+mod types;
 
-// Re-export commonly used items
-pub use auc::{
-    auc_all, auc_at_times, auc_cumulative, auc_interval, auc_last, auc_segment, AUCMethod,
+#[cfg(test)]
+mod tests;
+
+// Public API
+pub use analyze::DoseContext;
+pub use error::NCAError;
+pub use types::{
+    AUCMethod, BLQRule, ClearanceParams, ExposureParams, ExtravascularParams,
+    IVBolusParams, IVInfusionParams, LambdaZMethod, LambdaZOptions, NCAOptions, NCAResult,
+    Quality, RegressionStats, Route, SteadyStateParams, TerminalParams, Warning,
 };
-pub use params::{cav, peak_trough_ratio, percent_fluctuation, swing};
-pub use params::{clast_tlast, cmax_tmax, cmin_tmin, ClastTlast, CmaxTmax, CminTmin};
-pub use results::{calculate_nca, AdministrationRoute, BLQRule, NCAOptions, NCAResult};
-pub use terminal::{
-    auc_inf, auc_inf_pred, auc_percent_extrap, aumc_last, aumc_segment, c0_iv_bolus, clearance,
-    ka_extravascular, lambda_z, lambda_z_auto, mrt, tlag_extravascular, vd_iv_bolus, vss_iv, vz,
-    LambdaZMethod, LambdaZOptions, LambdaZResult, RegressionWeight,
-};
+
+use profile::Profile;
+
+/// Perform NCA analysis from raw time and concentration arrays
+///
+/// This is the primary entry point for NCA analysis when working with
+/// raw data arrays rather than pharmsol data structures.
+///
+/// # Arguments
+///
+/// * `times` - Time points (must be monotonically increasing)
+/// * `concentrations` - Concentration values at each time point
+/// * `options` - Analysis configuration
+///
+/// # Returns
+///
+/// Complete [`NCAResult`] with all computable parameters, or [`NCAError`] if analysis fails.
+///
+/// # Example
+///
+/// ```rust
+/// use pharmsol::nca::{NCAOptions, nca_from_arrays};
+///
+/// let times = vec![0.0, 1.0, 2.0, 4.0, 8.0, 12.0];
+/// let concs = vec![0.0, 8.5, 6.2, 3.1, 1.2, 0.4];
+///
+/// // Without dose - basic exposure metrics only
+/// let result = nca_from_arrays(&times, &concs, None, &NCAOptions::default()).unwrap();
+/// assert!(result.exposure.cmax > 0.0);
+/// ```
+pub fn nca_from_arrays(
+    times: &[f64],
+    concentrations: &[f64],
+    dose: Option<&DoseContext>,
+    options: &NCAOptions,
+) -> Result<NCAResult, NCAError> {
+    let profile = Profile::from_arrays(times, concentrations, options.loq, options.blq_rule)?;
+    analyze::analyze(&profile, dose, options)
+}

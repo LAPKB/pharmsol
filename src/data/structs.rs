@@ -294,12 +294,16 @@ impl Data {
     /// # Arguments
     ///
     /// * `options` - NCA calculation options
-    /// * `outeq` - Output equation index to analyze
+    /// * `outeq` - Output equation index to analyze (0-indexed)
     ///
     /// # Returns
     ///
-    /// Vector of `NCAResult` for each subject-occasion combination
-    pub fn nca(&self, options: &crate::nca::NCAOptions, outeq: usize) -> Vec<crate::nca::NCAResult> {
+    /// Vector of `Result<NCAResult, NCAError>` for each subject-occasion combination
+    pub fn nca(
+        &self,
+        options: &crate::nca::NCAOptions,
+        outeq: usize,
+    ) -> Vec<Result<crate::nca::NCAResult, crate::nca::NCAError>> {
         self.subjects
             .iter()
             .flat_map(|subject| subject.nca(options, outeq))
@@ -518,21 +522,19 @@ impl Subject {
     ///     .build();
     ///
     /// let results = subject.nca(&NCAOptions::default(), 0);
-    /// println!("Cmax: {:.2}", results[0].cmax);
+    /// if let Ok(res) = &results[0] {
+    ///     println!("Cmax: {:.2}", res.exposure.cmax);
+    /// }
     /// ```
     pub fn nca(
         &self,
         options: &crate::nca::NCAOptions,
         outeq: usize,
-    ) -> Vec<crate::nca::NCAResult> {
-        let mut results = Vec::new();
-
-        for occasion in &self.occasions {
-            let result = occasion.nca(options, outeq, Some(self.id.clone()));
-            results.push(result);
-        }
-
-        results
+    ) -> Vec<Result<crate::nca::NCAResult, crate::nca::NCAError>> {
+        self.occasions
+            .iter()
+            .map(|occasion| occasion.nca(options, outeq, Some(self.id.clone())))
+            .collect()
     }
 
     /// Extract time-concentration data for a specific output equation
@@ -924,35 +926,92 @@ impl Occasion {
 
     /// Perform Non-Compartmental Analysis (NCA) on this occasion's data
     ///
+    /// Automatically extracts dose information and route from events in this occasion.
+    ///
     /// # Arguments
     ///
     /// * `options` - NCA calculation options
-    /// * `outeq` - Output equation index to analyze
+    /// * `outeq` - Output equation index to analyze (0-indexed)
     /// * `subject_id` - Optional subject ID for result identification
     ///
     /// # Returns
     ///
-    /// `NCAResult` containing calculated parameters
+    /// `Result<NCAResult, NCAError>` containing calculated parameters or an error
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use pharmsol::prelude::*;
+    /// use pharmsol::nca::NCAOptions;
+    ///
+    /// let subject = Subject::builder("patient_001")
+    ///     .bolus(0.0, 100.0, 0)
+    ///     .observation(1.0, 10.0, 0)
+    ///     .observation(2.0, 8.0, 0)
+    ///     .build();
+    ///
+    /// let occasion = &subject.occasions()[0];
+    /// let result = occasion.nca(&NCAOptions::default(), 0, Some("patient_001".into()))?;
+    /// println!("Cmax: {:.2}", result.exposure.cmax);
+    /// ```
     pub fn nca(
         &self,
         options: &crate::nca::NCAOptions,
         outeq: usize,
         subject_id: Option<String>,
-    ) -> crate::nca::NCAResult {
+    ) -> Result<crate::nca::NCAResult, crate::nca::NCAError> {
         // Extract observations for this outeq
         let (times, concs) = self.get_observations(outeq);
 
-        // Get total dose
-        let dose = self.get_total_dose(0); // Assume input 0 for now
-        let dose_opt = if dose > 0.0 { Some(dose) } else { None };
+        // Auto-detect dose and route from events
+        let dose_context = self.detect_dose_context();
 
-        // Calculate NCA
-        let mut result = crate::nca::calculate_nca(&times, &concs, dose_opt, options);
+        // Calculate NCA using the analyze module
+        let mut result = crate::nca::analyze::analyze_arrays(&times, &concs, dose_context.as_ref(), options)?;
         result.subject_id = subject_id;
         result.occasion = Some(self.index);
-        result.outeq = outeq;
 
-        result
+        Ok(result)
+    }
+
+    /// Detect dose information from dose events in this occasion
+    fn detect_dose_context(&self) -> Option<crate::nca::analyze::DoseContext> {
+        let mut total_dose = 0.0;
+        let mut infusion_duration: Option<f64> = None;
+        let mut is_extravascular = false;
+
+        for event in &self.events {
+            match event {
+                Event::Bolus(bolus) => {
+                    total_dose += bolus.amount();
+                    // Input 0 = depot (extravascular), Input >= 1 = central (IV)
+                    if bolus.input() == 0 {
+                        is_extravascular = true;
+                    }
+                }
+                Event::Infusion(infusion) => {
+                    total_dose += infusion.amount();
+                    infusion_duration = Some(infusion.duration());
+                    // Infusions are IV
+                }
+                _ => {}
+            }
+        }
+
+        if total_dose == 0.0 {
+            return None;
+        }
+
+        // Determine route
+        let route = if infusion_duration.is_some() {
+            crate::nca::Route::IVInfusion
+        } else if is_extravascular {
+            crate::nca::Route::Extravascular
+        } else {
+            crate::nca::Route::IVBolus
+        };
+
+        Some(crate::nca::analyze::DoseContext::new(total_dose, infusion_duration, route))
     }
 
     /// Extract time-concentration data for a specific output equation
