@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Other
 
-- *(Exa)* when installing Vial on MacOs, the environment varaibles are not completly shared to the sandbox in which Vial is running, this changes are meant to provide vial a better way to approach finding the rust binary ([#181](https://github.com/LAPKB/pharmsol/pull/181))
+- _(Exa)_ when installing Papir on MacOs, the environment varaibles are not completly shared to the sandbox in which Papir is running, this changes are meant to provide papir a better way to approach finding the rust binary ([#181](https://github.com/LAPKB/pharmsol/pull/181))
 - Update diffsol requirement from =0.7.0 to =0.8.0 ([#176](https://github.com/LAPKB/pharmsol/pull/176))
 - Update criterion requirement from 0.7.0 to 0.8.0 ([#177](https://github.com/LAPKB/pharmsol/pull/177))
 - Update libloading requirement from 0.8.6 to 0.9.0 ([#162](https://github.com/LAPKB/pharmsol/pull/162))
@@ -218,7 +218,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Add events to occasions
 - Expose functions for number of states and outeqs
-- Add support for multiple error models  ([#65](https://github.com/LAPKB/pharmsol/pull/65))
+- Add support for multiple error models ([#65](https://github.com/LAPKB/pharmsol/pull/65))
 
 ## [0.9.1](https://github.com/LAPKB/pharmsol/compare/v0.9.0...v0.9.1) - 2025-05-22
 
