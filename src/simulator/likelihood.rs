@@ -229,32 +229,32 @@ impl Prediction {
         if self.outeq() < 2 {
         // ... calculate the likelihood as usual; else likelihood <- 1.0, below
 
-        // if deviation is too big, set likelihood to 0
-        /*
-        if (self.observation - self.prediction).abs() > 4.417*sigma { // 99.999 CI
-            0.0
-        }
-        else {
-        */
-            normpdf(self.observation, self.prediction, sigma)
-        /*
-            /* if self.observation() > 4.0 {
-               normpdf(self.observation, self.prediction, sigma)
+            /*
+            // if deviation is too big, set likelihood to 0
+            if (self.observation - self.prediction).abs() > 4.417*sigma { // 99.999 CI
+                0.0
             }
             else {
-                if self.prediction() <= (4.0 + 1.97*sigma) { // obs is BLQ, but prediction can be 5% above BLQ, this is a cluge, should be BLQ + sigma
-                // println!("obs > 4; pred <= 4");
-                // sigma = BLQ(); or the return value of BLQ(self.observation, self.prediction)
-                    normpdf(self.prediction, self.prediction, sigma)
-                } else {
-                  0.0 // std::f64::MIN
-                }
-            }
             */
-        }
-        */
-
-        } // I think the chi^2 will get estimated, BUT it will have 0 effect on likelihood
+                /* // use this for ALL remaining obs ... 
+                normpdf(self.observation, self.prediction, sigma)
+                */
+                // /* // or do this.
+                if self.observation() > 4.0 {
+                    normpdf(self.observation, self.prediction, sigma)
+                }
+                else {
+                    if self.prediction() <= (4.0 + sigma) { // obs is BLQ, but prediction can be above BLQ. e.g. true mean = BLQ+sigma => 20% chance of a BLQ measurement
+                    // println!("obs > 4; pred <= 4");
+                    // sigma = BLQ(); or the return value of BLQ(self.observation, self.prediction)
+                        normpdf(self.prediction, self.prediction, sigma)
+                    } else {
+                        0.0 // std::f64::MIN
+                    }
+                }
+                // */
+            // } // end deviation too big
+        } // chi^2 will get estimated in an outeq, BUT it will have no effect on likelihood
         else {
             1.0
         }
