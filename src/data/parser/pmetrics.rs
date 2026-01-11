@@ -95,95 +95,15 @@ pub fn read_pmetrics(path: impl Into<String>) -> Result<Data, PmetricsError> {
         .collect::<Vec<_>>();
     reader.set_headers(csv::StringRecord::from(headers));
 
-    // This is the object we are building, which can be converted to [Data]
-    // Read the datafile into a hashmap of rows by ID
-    let mut rows_map: HashMap<String, Vec<Row>> = HashMap::new();
-    let mut subjects: Vec<Subject> = Vec::new();
+    // Parse CSV rows and convert to NormalizedRows
+    let mut normalized_rows: Vec<super::normalized::NormalizedRow> = Vec::new();
     for row_result in reader.deserialize() {
         let row: Row = row_result.map_err(|e| PmetricsError::CSVError(e.to_string()))?;
-
-        rows_map.entry(row.id.clone()).or_default().push(row);
+        normalized_rows.push(row.to_normalized());
     }
 
-    // For each ID, we ultimately create a [Subject] object
-    for (id, rows) in rows_map {
-        // Split rows into vectors of rows, creating the occasions
-        let split_indices: Vec<usize> = rows
-            .iter()
-            .enumerate()
-            .filter_map(|(i, row)| if row.evid == 4 { Some(i) } else { None })
-            .collect();
-
-        let mut block_rows_vec = Vec::new();
-        let mut start = 0;
-        for &split_index in &split_indices {
-            let end = split_index;
-            if start < rows.len() {
-                block_rows_vec.push(&rows[start..end]);
-            }
-            start = end;
-        }
-
-        if start < rows.len() {
-            block_rows_vec.push(&rows[start..]);
-        }
-
-        let block_rows: Vec<Vec<Row>> = block_rows_vec.iter().map(|block| block.to_vec()).collect();
-        let mut occasions: Vec<Occasion> = Vec::new();
-        for (block_index, rows) in block_rows.clone().iter().enumerate() {
-            // Collector for all events
-            let mut events: Vec<Event> = Vec::new();
-
-            // Parse events
-            for row in rows.clone() {
-                match row.parse_events() {
-                    Ok(ev) => events.extend(ev),
-                    Err(e) => {
-                        // dbg!(&row);
-                        // dbg!(&e);
-                        return Err(e);
-                    }
-                }
-            }
-
-            // Parse covariates - collect raw observations
-            let mut cloned_rows = rows.clone();
-            cloned_rows.retain(|row| !row.covs.is_empty());
-
-            // Collect all covariates by name
-            let mut observed_covariates: HashMap<String, Vec<(f64, Option<f64>)>> = HashMap::new();
-            for row in &cloned_rows {
-                for (key, value) in &row.covs {
-                    if let Some(val) = value {
-                        observed_covariates
-                            .entry(key.clone())
-                            .or_default()
-                            .push((row.time, Some(*val)));
-                    }
-                }
-            }
-
-            // Parse the raw covariate observations and build covariates
-            let covariates = Covariates::from_pmetrics_observations(&observed_covariates);
-
-            // Create the occasion
-            let mut occasion = Occasion::new(block_index);
-            events.iter_mut().for_each(|e| e.set_occasion(block_index));
-            occasion.events = events;
-            occasion.covariates = covariates;
-            occasion.sort();
-            occasions.push(occasion);
-        }
-
-        let subject = Subject::new(id, occasions);
-        subjects.push(subject);
-    }
-
-    // Sort subjects alphabetically by ID to get consistent ordering
-    subjects.sort_by(|a, b| a.id().cmp(b.id()));
-    let data = Data::new(subjects);
-
-    Ok(data)
+    // Use the shared build_data logic
+    super::normalized::build_data(normalized_rows)
 }
 
 /// A [Row] represents a row in the Pmetrics data format
@@ -265,10 +185,6 @@ impl Row {
                 .filter_map(|(k, v)| v.map(|val| (k.clone(), val)))
                 .collect(),
         }
-    }
-
-    fn parse_events(self) -> Result<Vec<Event>, PmetricsError> {
-        self.to_normalized().into_events()
     }
 }
 

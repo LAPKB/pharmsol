@@ -456,6 +456,116 @@ impl NormalizedRowBuilder {
     }
 }
 
+/// Build a [Data] object from an iterator of [NormalizedRow]s
+///
+/// This function handles all the complex assembly logic:
+/// - Groups rows by subject ID
+/// - Splits into occasions at EVID=4 boundaries
+/// - Converts rows to events via [`NormalizedRow::into_events()`]
+/// - Builds covariates from row covariate data
+///
+/// # Example
+///
+/// ```rust
+/// use pharmsol::data::parser::{NormalizedRow, build_data};
+///
+/// let rows = vec![
+///     // Subject 1, Occasion 0
+///     NormalizedRow::builder("pt1", 0.0)
+///         .evid(1).dose(100.0).input(1).build(),
+///     NormalizedRow::builder("pt1", 1.0)
+///         .evid(0).out(50.0).outeq(1).build(),
+///     // Subject 1, Occasion 1 (EVID=4 starts new occasion)
+///     NormalizedRow::builder("pt1", 24.0)
+///         .evid(4).dose(100.0).input(1).build(),
+///     NormalizedRow::builder("pt1", 25.0)
+///         .evid(0).out(48.0).outeq(1).build(),
+///     // Subject 2
+///     NormalizedRow::builder("pt2", 0.0)
+///         .evid(1).dose(50.0).input(1).build(),
+/// ];
+///
+/// let data = build_data(rows).unwrap();
+/// assert_eq!(data.subjects().len(), 2);
+/// ```
+pub fn build_data(rows: impl IntoIterator<Item = NormalizedRow>) -> Result<Data, PmetricsError> {
+    // Group rows by subject ID
+    let mut rows_map: std::collections::HashMap<String, Vec<NormalizedRow>> =
+        std::collections::HashMap::new();
+    for row in rows {
+        rows_map.entry(row.id.clone()).or_default().push(row);
+    }
+
+    let mut subjects: Vec<Subject> = Vec::new();
+
+    for (id, rows) in rows_map {
+        // Split rows into occasion blocks at EVID=4 boundaries
+        let split_indices: Vec<usize> = rows
+            .iter()
+            .enumerate()
+            .filter_map(|(i, row)| if row.evid == 4 { Some(i) } else { None })
+            .collect();
+
+        let mut block_rows_vec: Vec<&[NormalizedRow]> = Vec::new();
+        let mut start = 0;
+        for &split_index in &split_indices {
+            if start < split_index {
+                block_rows_vec.push(&rows[start..split_index]);
+            }
+            start = split_index;
+        }
+        if start < rows.len() {
+            block_rows_vec.push(&rows[start..]);
+        }
+
+        // Build occasions
+        let mut occasions: Vec<Occasion> = Vec::new();
+        for (block_index, block) in block_rows_vec.iter().enumerate() {
+            let mut events: Vec<Event> = Vec::new();
+
+            // Collect covariate observations for this block
+            let mut observed_covariates: std::collections::HashMap<
+                String,
+                Vec<(f64, Option<f64>)>,
+            > = std::collections::HashMap::new();
+
+            for row in *block {
+                // Parse events
+                let row_events = row.clone().into_events()?;
+                events.extend(row_events);
+
+                // Collect covariates
+                for (name, value) in &row.covariates {
+                    observed_covariates
+                        .entry(name.clone())
+                        .or_default()
+                        .push((row.time, Some(*value)));
+                }
+            }
+
+            // Set occasion index on all events
+            events.iter_mut().for_each(|e| e.set_occasion(block_index));
+
+            // Build covariates
+            let covariates = Covariates::from_pmetrics_observations(&observed_covariates);
+
+            // Create occasion
+            let mut occasion = Occasion::new(block_index);
+            occasion.events = events;
+            occasion.covariates = covariates;
+            occasion.sort();
+            occasions.push(occasion);
+        }
+
+        subjects.push(Subject::new(id, occasions));
+    }
+
+    // Sort subjects alphabetically by ID for consistent ordering
+    subjects.sort_by(|a, b| a.id().cmp(b.id()));
+
+    Ok(Data::new(subjects))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
