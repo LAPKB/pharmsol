@@ -12,7 +12,7 @@
 //! 2. **Event Creation** - Convert normalized rows into pharmsol Events (with ADDL expansion, etc.)
 //!
 //! This allows any consumer (GUI applications, scripts, other tools) to bring their own
-//! "column mapping" while reusing 100% of the complex parsing logic.
+//! "column mapping" while reusing parsing logic.
 //!
 //! # Example
 //!
@@ -32,14 +32,6 @@
 //! assert_eq!(events.len(), 4); // Original + 3 additional doses
 //! ```
 //!
-//! # Comparison with SubjectBuilder
-//!
-//! | Aspect | SubjectBuilder | NormalizedRow |
-//! |--------|---------------|---------------|
-//! | Purpose | Programmatic construction | Parsing tabular data |
-//! | Input | Known values at compile time | Runtime values from files |
-//! | ADDL | `repeat()` - forward only | Full Pmetrics semantics (±) |
-//! | Use case | Tests, simulations | CSV/Excel import |
 
 use super::PmetricsError;
 use crate::data::*;

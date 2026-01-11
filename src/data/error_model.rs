@@ -118,8 +118,8 @@ impl ErrorPoly {
     }
 }
 
-impl From<Vec<ErrorModel>> for AssayErrorModels {
-    fn from(models: Vec<ErrorModel>) -> Self {
+impl From<Vec<AssayErrorModel>> for AssayErrorModels {
+    fn from(models: Vec<AssayErrorModel>) -> Self {
         Self { models }
     }
 }
@@ -135,11 +135,11 @@ impl From<Vec<ErrorModel>> for AssayErrorModels {
 /// For parametric algorithms (SAEM, FOCE), use [`crate::ResidualErrorModels`] instead,
 /// which computes sigma from the **prediction**.
 ///
-/// This is a wrapper around a vector of [ErrorModel]s, its size is determined by
+/// This is a wrapper around a vector of [AssayErrorModel]s, its size is determined by
 /// the number of outputs in the model/dataset.
 #[derive(Serialize, Debug, Clone, Deserialize)]
 pub struct AssayErrorModels {
-    models: Vec<ErrorModel>,
+    models: Vec<AssayErrorModel>,
 }
 
 /// Deprecated alias for [`AssayErrorModels`].
@@ -172,10 +172,10 @@ impl AssayErrorModels {
     /// # Arguments
     /// * `outeq` - The index of the output equation for which to retrieve the error model.
     /// # Returns
-    /// A reference to the [ErrorModel] for the specified output equation.
+    /// A reference to the [AssayErrorModel] for the specified output equation.
     /// # Errors
     /// If the output equation index is invalid, an [ErrorModelError::InvalidOutputEquation] is returned.
-    pub fn error_model(&self, outeq: usize) -> Result<&ErrorModel, ErrorModelError> {
+    pub fn error_model(&self, outeq: usize) -> Result<&AssayErrorModel, ErrorModelError> {
         if outeq >= self.models.len() {
             return Err(ErrorModelError::InvalidOutputEquation(outeq));
         }
@@ -185,16 +185,16 @@ impl AssayErrorModels {
     /// Add a new error model for a specific output equation
     /// # Arguments
     /// * `outeq` - The index of the output equation for which to add the error model.
-    /// * `model` - The [ErrorModel] to add for the specified output equation.
+    /// * `model` - The [AssayErrorModel] to add for the specified output equation.
     /// # Returns
-    /// A new instance of ErrorModels with the added model.
+    /// A new instance of AssayErrorModels with the added model.
     /// # Errors
     /// If the output equation index is invalid or if a model already exists for that output equation, an [ErrorModelError::ExistingOutputEquation] is returned.
-    pub fn add(mut self, outeq: usize, model: ErrorModel) -> Result<Self, ErrorModelError> {
+    pub fn add(mut self, outeq: usize, model: AssayErrorModel) -> Result<Self, ErrorModelError> {
         if outeq >= self.models.len() {
-            self.models.resize(outeq + 1, ErrorModel::None);
+            self.models.resize(outeq + 1, AssayErrorModel::None);
         }
-        if self.models[outeq] != ErrorModel::None {
+        if self.models[outeq] != AssayErrorModel::None {
             return Err(ErrorModelError::ExistingOutputEquation(outeq));
         }
         self.models[outeq] = model;
@@ -203,22 +203,22 @@ impl AssayErrorModels {
     /// Returns an iterator over the error models in the collection.
     ///
     /// # Returns
-    /// An iterator that yields tuples containing the index and a reference to each [ErrorModel].
-    pub fn iter(&self) -> impl Iterator<Item = (usize, &ErrorModel)> {
+    /// An iterator that yields tuples containing the index and a reference to each [AssayErrorModel].
+    pub fn iter(&self) -> impl Iterator<Item = (usize, &AssayErrorModel)> {
         self.models.iter().enumerate()
     }
 
     /// Returns an iterator that yields mutable references to the error models in the collection.
     /// # Returns
-    /// An iterator that yields tuples containing the index and a mutable reference to each [ErrorModel].
-    pub fn into_iter(self) -> impl Iterator<Item = (usize, ErrorModel)> {
+    /// An iterator that yields tuples containing the index and a mutable reference to each [AssayErrorModel].
+    pub fn into_iter(self) -> impl Iterator<Item = (usize, AssayErrorModel)> {
         self.models.into_iter().enumerate()
     }
 
     /// Returns a mutable iterator that yields mutable references to the error models in the collection.
     /// # Returns
-    /// An iterator that yields tuples containing the index and a mutable reference to each [ErrorModel].
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = (usize, &mut ErrorModel)> {
+    /// An iterator that yields tuples containing the index and a mutable reference to each [AssayErrorModel].
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (usize, &mut AssayErrorModel)> {
         self.models.iter_mut().enumerate()
     }
 
@@ -236,17 +236,17 @@ impl AssayErrorModels {
             outeq.hash(&mut hasher);
 
             match model {
-                ErrorModel::Additive { lambda, poly: _ } => {
+                AssayErrorModel::Additive { lambda, poly: _ } => {
                     0u8.hash(&mut hasher); // Use 0 for additive model
                     lambda.value().to_bits().hash(&mut hasher);
                     lambda.is_fixed().hash(&mut hasher); // Include fixed/variable state in hash
                 }
-                ErrorModel::Proportional { gamma, poly: _ } => {
+                AssayErrorModel::Proportional { gamma, poly: _ } => {
                     1u8.hash(&mut hasher); // Use 1 for proportional model
                     gamma.value().to_bits().hash(&mut hasher);
                     gamma.is_fixed().hash(&mut hasher); // Include fixed/variable state in hash
                 }
-                ErrorModel::None => {
+                AssayErrorModel::None => {
                     2u8.hash(&mut hasher); // Use 2 for no model
                 }
             }
@@ -272,7 +272,7 @@ impl AssayErrorModels {
         if outeq >= self.models.len() {
             return Err(ErrorModelError::InvalidOutputEquation(outeq));
         }
-        if self.models[outeq] == ErrorModel::None {
+        if self.models[outeq] == AssayErrorModel::None {
             return Err(ErrorModelError::NoneErrorModel(outeq));
         }
         self.models[outeq].errorpoly()
@@ -291,7 +291,7 @@ impl AssayErrorModels {
         if outeq >= self.models.len() {
             return Err(ErrorModelError::InvalidOutputEquation(outeq));
         }
-        if self.models[outeq] == ErrorModel::None {
+        if self.models[outeq] == AssayErrorModel::None {
             return Err(ErrorModelError::NoneErrorModel(outeq));
         }
         Ok(self.models[outeq].factor()?)
@@ -307,7 +307,7 @@ impl AssayErrorModels {
         if outeq >= self.models.len() {
             return Err(ErrorModelError::InvalidOutputEquation(outeq));
         }
-        if self.models[outeq] == ErrorModel::None {
+        if self.models[outeq] == AssayErrorModel::None {
             return Err(ErrorModelError::NoneErrorModel(outeq));
         }
         self.models[outeq].set_errorpoly(poly);
@@ -324,7 +324,7 @@ impl AssayErrorModels {
         if outeq >= self.models.len() {
             return Err(ErrorModelError::InvalidOutputEquation(outeq));
         }
-        if self.models[outeq] == ErrorModel::None {
+        if self.models[outeq] == AssayErrorModel::None {
             return Err(ErrorModelError::NoneErrorModel(outeq));
         }
         self.models[outeq].set_factor(factor);
@@ -344,7 +344,7 @@ impl AssayErrorModels {
         if outeq >= self.models.len() {
             return Err(ErrorModelError::InvalidOutputEquation(outeq));
         }
-        if self.models[outeq] == ErrorModel::None {
+        if self.models[outeq] == AssayErrorModel::None {
             return Err(ErrorModelError::NoneErrorModel(outeq));
         }
         self.models[outeq].factor_param()
@@ -360,7 +360,7 @@ impl AssayErrorModels {
         if outeq >= self.models.len() {
             return Err(ErrorModelError::InvalidOutputEquation(outeq));
         }
-        if self.models[outeq] == ErrorModel::None {
+        if self.models[outeq] == AssayErrorModel::None {
             return Err(ErrorModelError::NoneErrorModel(outeq));
         }
         self.models[outeq].set_factor_param(param);
@@ -380,7 +380,7 @@ impl AssayErrorModels {
         if outeq >= self.models.len() {
             return Err(ErrorModelError::InvalidOutputEquation(outeq));
         }
-        if self.models[outeq] == ErrorModel::None {
+        if self.models[outeq] == AssayErrorModel::None {
             return Err(ErrorModelError::NoneErrorModel(outeq));
         }
         self.models[outeq].is_factor_fixed()
@@ -395,7 +395,7 @@ impl AssayErrorModels {
         if outeq >= self.models.len() {
             return Err(ErrorModelError::InvalidOutputEquation(outeq));
         }
-        if self.models[outeq] == ErrorModel::None {
+        if self.models[outeq] == AssayErrorModel::None {
             return Err(ErrorModelError::NoneErrorModel(outeq));
         }
         self.models[outeq].fix_factor();
@@ -411,7 +411,7 @@ impl AssayErrorModels {
         if outeq >= self.models.len() {
             return Err(ErrorModelError::InvalidOutputEquation(outeq));
         }
-        if self.models[outeq] == ErrorModel::None {
+        if self.models[outeq] == AssayErrorModel::None {
             return Err(ErrorModelError::NoneErrorModel(outeq));
         }
         self.models[outeq].unfix_factor();
@@ -468,7 +468,7 @@ impl AssayErrorModels {
         if outeq >= self.models.len() {
             return Err(ErrorModelError::InvalidOutputEquation(outeq));
         }
-        if self.models[outeq] == ErrorModel::None {
+        if self.models[outeq] == AssayErrorModel::None {
             return Err(ErrorModelError::NoneErrorModel(outeq));
         }
         self.models[prediction.outeq].sigma(prediction)
@@ -489,7 +489,7 @@ impl AssayErrorModels {
         if outeq >= self.models.len() {
             return Err(ErrorModelError::InvalidOutputEquation(outeq));
         }
-        if self.models[outeq] == ErrorModel::None {
+        if self.models[outeq] == AssayErrorModel::None {
             return Err(ErrorModelError::NoneErrorModel(outeq));
         }
         self.models[prediction.outeq].variance(prediction)
@@ -509,7 +509,7 @@ impl AssayErrorModels {
         if outeq >= self.models.len() {
             return Err(ErrorModelError::InvalidOutputEquation(outeq));
         }
-        if self.models[outeq] == ErrorModel::None {
+        if self.models[outeq] == AssayErrorModel::None {
             return Err(ErrorModelError::NoneErrorModel(outeq));
         }
         self.models[outeq].sigma_from_value(value)
@@ -529,7 +529,7 @@ impl AssayErrorModels {
         if outeq >= self.models.len() {
             return Err(ErrorModelError::InvalidOutputEquation(outeq));
         }
-        if self.models[outeq] == ErrorModel::None {
+        if self.models[outeq] == AssayErrorModel::None {
             return Err(ErrorModelError::NoneErrorModel(outeq));
         }
         self.models[outeq].variance_from_value(value)
@@ -537,7 +537,7 @@ impl AssayErrorModels {
 }
 
 impl IntoIterator for AssayErrorModels {
-    type Item = (usize, ErrorModel);
+    type Item = (usize, AssayErrorModel);
     type IntoIter = std::vec::IntoIter<Self::Item>;
 
     fn into_iter(self) -> Self::IntoIter {
@@ -550,8 +550,8 @@ impl IntoIterator for AssayErrorModels {
 }
 
 impl<'a> IntoIterator for &'a AssayErrorModels {
-    type Item = (usize, &'a ErrorModel);
-    type IntoIter = std::iter::Enumerate<std::slice::Iter<'a, ErrorModel>>;
+    type Item = (usize, &'a AssayErrorModel);
+    type IntoIter = std::iter::Enumerate<std::slice::Iter<'a, AssayErrorModel>>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.models.iter().enumerate()
@@ -559,8 +559,8 @@ impl<'a> IntoIterator for &'a AssayErrorModels {
 }
 
 impl<'a> IntoIterator for &'a mut AssayErrorModels {
-    type Item = (usize, &'a mut ErrorModel);
-    type IntoIter = std::iter::Enumerate<std::slice::IterMut<'a, ErrorModel>>;
+    type Item = (usize, &'a mut AssayErrorModel);
+    type IntoIter = std::iter::Enumerate<std::slice::IterMut<'a, AssayErrorModel>>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.models.iter_mut().enumerate()
@@ -569,10 +569,10 @@ impl<'a> IntoIterator for &'a mut AssayErrorModels {
 
 /// Model for calculating observation errors in pharmacometric analyses
 ///
-/// An [ErrorModel] defines how the standard deviation of observations is calculated
+/// An [AssayErrorModel] defines how the standard deviation of observations is calculated
 /// based on the type of error model used and its parameters.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
-pub enum ErrorModel {
+pub enum AssayErrorModel {
     /// Additive error model, where error is independent of concentration
     ///
     /// Contains:
@@ -600,14 +600,23 @@ pub enum ErrorModel {
     None,
 }
 
-impl ErrorModel {
+/// Deprecated alias for [`AssayErrorModel`].
+///
+/// This type alias is provided for backward compatibility.
+/// New code should use [`AssayErrorModel`] directly.
+#[deprecated(
+    since = "0.23.0",
+    note = "Use AssayErrorModel instead. ErrorModel has been renamed to better reflect its purpose (assay/measurement error)."
+)]
+pub type ErrorModel = AssayErrorModel;
+
+impl AssayErrorModel {
     /// Create a new additive error model with a variable lambda parameter
     ///
     /// # Arguments
     ///
     /// * `poly` - Error polynomial coefficients (c0, c1, c2, c3)
     /// * `lambda` - Lambda parameter for scaling errors (will be variable)
-    /// * `lloq` - Optional lower limit of quantification
     ///
     /// # Returns
     ///
@@ -625,7 +634,6 @@ impl ErrorModel {
     ///
     /// * `poly` - Error polynomial coefficients (c0, c1, c2, c3)
     /// * `lambda` - Lambda parameter for scaling errors (will be fixed)
-    /// * `lloq` - Optional lower limit of quantification
     ///
     /// # Returns
     ///
@@ -643,7 +651,6 @@ impl ErrorModel {
     ///
     /// * `poly` - Error polynomial coefficients (c0, c1, c2, c3)
     /// * `lambda` - Lambda parameter (can be Variable or Fixed) using [Factor]
-    /// * `lloq` - Optional lower limit of quantification
     ///
     /// # Returns
     ///
@@ -658,7 +665,6 @@ impl ErrorModel {
     ///
     /// * `poly` - Error polynomial coefficients (c0, c1, c2, c3)
     /// * `gamma` - Gamma parameter for scaling errors (will be variable)
-    /// * `lloq` - Optional lower limit of quantification
     ///
     /// # Returns
     ///
@@ -676,7 +682,6 @@ impl ErrorModel {
     ///
     /// * `poly` - Error polynomial coefficients (c0, c1, c2, c3)
     /// * `gamma` - Gamma parameter for scaling errors (will be fixed)
-    /// * `lloq` - Optional lower limit of quantification
     ///
     /// # Returns
     ///
@@ -694,7 +699,6 @@ impl ErrorModel {
     ///
     /// * `poly` - Error polynomial coefficients (c0, c1, c2, c3)
     /// * `gamma` - Gamma parameter (can be Variable or Fixed) using [Factor]
-    /// * `lloq` - Optional lower limit of quantification
     ///
     /// # Returns
     ///
@@ -866,7 +870,7 @@ impl ErrorModel {
 
     /// Estimate the variance of the observation
     ///
-    /// This is a conveniecen function which calls [ErrorModel::sigma], and squares the result.
+    /// This is a convenience function which calls [AssayErrorModel::sigma], and squares the result.
     pub fn variance(&self, prediction: &Prediction) -> Result<f64, ErrorModelError> {
         let sigma = self.sigma(prediction)?;
         Ok(sigma.powi(2))
@@ -913,7 +917,7 @@ impl ErrorModel {
 
     /// Estimate the variance for a raw observation value
     ///
-    /// This is a conveniecen function which calls [ErrorModel::sigma_from_value], and squares the result.
+    /// This is a convenience function which calls [AssayErrorModel::sigma_from_value], and squares the result.
     pub fn variance_from_value(&self, value: f64) -> Result<f64, ErrorModelError> {
         let sigma = self.sigma_from_value(value)?;
         Ok(sigma.powi(2))

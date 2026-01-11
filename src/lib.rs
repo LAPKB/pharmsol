@@ -23,15 +23,15 @@ pub use std::collections::HashMap;
 pub mod prelude {
     pub mod data {
         pub use crate::data::{
-            error_model::AssayErrorModels,
+            error_model::{AssayErrorModel, AssayErrorModels},
             parser::{read_pmetrics, NormalizedRow, NormalizedRowBuilder},
             residual_error::{ResidualErrorModel, ResidualErrorModels},
             Covariates, Data, Event, Occasion, Subject,
         };
 
-        /// Deprecated alias for [`AssayErrorModels`].
+        /// Deprecated aliases for backward compatibility.
         #[allow(deprecated)]
-        pub use crate::data::error_model::ErrorModels;
+        pub use crate::data::error_model::{ErrorModel, ErrorModels};
     }
     pub mod simulator {
         pub use crate::simulator::{
