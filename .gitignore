@@ -4,3 +4,5 @@ Cargo.lock
 /.vscode
 /.idea
 *.pkm
+/paper_files
+paper.html
