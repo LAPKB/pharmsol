@@ -116,8 +116,17 @@ for (scenario in scenarios) {
                 aumcinf.obs = TRUE,
                 aumcinf.pred = TRUE,
                 mrt.obs = TRUE,
-                tlag = TRUE
+                tlag = TRUE,
+                span.ratio = TRUE
             )
+
+            # Add steady-state parameters if tau is specified
+            if (!is.null(scenario$tau)) {
+                tau_val <- scenario$tau
+                intervals$end <- tau_val # Use tau as the interval end
+                intervals$cmin <- TRUE
+                intervals$cav <- TRUE
+            }
 
             # Add route-specific parameters
             if (scenario$route == "iv_bolus") {
@@ -128,6 +137,7 @@ for (scenario in scenarios) {
             } else if (scenario$route == "iv_infusion") {
                 intervals$cl.obs <- TRUE
                 intervals$vss.obs <- TRUE
+                intervals$mrt.iv.obs <- TRUE
             } else {
                 intervals$vz.obs <- TRUE
                 intervals$cl.obs <- TRUE

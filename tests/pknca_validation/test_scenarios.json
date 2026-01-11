@@ -267,6 +267,67 @@
         0.002
       ],
       "test_params": ["auc_last", "auc_inf", "lambda_z", "half_life"]
+    },
+    {
+      "id": "steady_state_oral",
+      "name": "Steady-state oral dosing",
+      "description": "Profile at steady state with tau=12h for cmin, cavg, fluctuation, swing",
+      "route": "extravascular",
+      "dose": { "amount": 100, "time": 0 },
+      "tau": 12,
+      "times": [0, 0.5, 1, 2, 4, 6, 8, 10, 12],
+      "concentrations": [1.5, 5.0, 10.0, 12.0, 8.0, 5.5, 3.5, 2.2, 1.5],
+      "test_params": ["cmax", "cmin", "cavg", "auc_tau", "fluctuation", "swing"]
+    },
+    {
+      "id": "steady_state_iv",
+      "name": "Steady-state IV infusion",
+      "description": "IV infusion at steady state with tau=24h",
+      "route": "iv_infusion",
+      "dose": { "amount": 500, "time": 0, "duration": 2.0 },
+      "tau": 24,
+      "times": [0, 1, 2, 4, 6, 8, 12, 18, 24],
+      "concentrations": [2.0, 12.0, 18.0, 14.0, 10.5, 7.5, 4.0, 1.5, 0.5],
+      "test_params": ["cmax", "cmin", "cavg", "auc_tau", "mrt_iv"]
+    },
+    {
+      "id": "c0_logslope",
+      "name": "C0 back-extrapolation test",
+      "description": "IV bolus with C0 estimated via log-linear back-extrapolation",
+      "route": "iv_bolus",
+      "dose": { "amount": 100, "time": 0 },
+      "times": [0, 0.5, 1, 2, 4, 6, 8],
+      "concentrations": [0, 8.0, 6.5, 4.3, 1.9, 0.8, 0.35],
+      "test_params": ["c0", "auc_last", "auc_inf", "vd", "vss"]
+    },
+    {
+      "id": "span_ratio_test",
+      "name": "Span ratio quality metric",
+      "description": "Test span ratio calculation for lambda-z regression",
+      "route": "extravascular",
+      "dose": { "amount": 100, "time": 0 },
+      "times": [0, 1, 2, 4, 8, 12, 24, 48],
+      "concentrations": [0, 8.0, 12.0, 9.0, 5.0, 2.8, 0.9, 0.1],
+      "test_params": [
+        "lambda_z",
+        "half_life",
+        "span_ratio",
+        "r_squared",
+        "n_points_lambda_z"
+      ]
+    },
+    {
+      "id": "auc_all_terminal_blq",
+      "name": "AUCall with terminal BLQ",
+      "description": "Profile with BLQ values at end to test AUCall vs AUClast",
+      "route": "extravascular",
+      "dose": { "amount": 100, "time": 0 },
+      "times": [0, 1, 2, 4, 6, 8, 10, 12],
+      "concentrations": [0, 5.0, 10.0, 6.0, 3.0, 1.5, 0, 0],
+      "blq_indices": [0, 6, 7],
+      "loq": 0.5,
+      "blq_rule": "exclude",
+      "test_params": ["auc_last", "auc_all", "tlast", "clast"]
     }
   ]
 }

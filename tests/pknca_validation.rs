@@ -52,6 +52,8 @@ struct Scenario {
     loq: Option<f64>,
     #[serde(default)]
     partial_auc_interval: Option<Vec<f64>>,
+    #[serde(default)]
+    tau: Option<f64>,
     test_params: Vec<String>,
 }
 
@@ -114,6 +116,7 @@ fn map_param_name(pknca_name: &str) -> &str {
         "tlast" => "tlast",
         "clast.obs" => "clast",
         "auclast" => "auc_last",
+        "aucall" => "auc_all",
         "aumclast" => "aumc_last",
         "aucinf.obs" => "auc_inf",
         "aucinf.pred" => "auc_inf_pred",
@@ -123,8 +126,10 @@ fn map_param_name(pknca_name: &str) -> &str {
         "r.squared" => "r_squared",
         "adj.r.squared" => "adj_r_squared",
         "lambda.z.n.points" => "n_points",
+        "span.ratio" => "span_ratio",
         "clast.pred" => "clast_pred",
         "mrt.obs" => "mrt",
+        "mrt.iv.obs" => "mrt_iv",
         "tlag" => "tlag",
         "c0" => "c0",
         "cl.obs" => "cl",
@@ -132,6 +137,11 @@ fn map_param_name(pknca_name: &str) -> &str {
         "vz.obs" => "vz",
         "vss.obs" => "vss",
         "auc_extrap_pct" => "auc_pct_extrap",
+        "cmin" => "cmin",
+        "cav" => "cavg",
+        "auc_tau" => "auc_tau",
+        "fluctuation" => "fluctuation",
+        "swing" => "swing",
         _ => pknca_name,
     }
 }
@@ -226,6 +236,11 @@ fn validate_scenario(
         }
     }
 
+    // Add tau for steady-state analysis
+    if let Some(tau) = scenario.tau {
+        options = options.with_tau(tau);
+    }
+
     // Run NCA
     let results = subject.nca(&options, 0);
     let result = results
@@ -253,6 +268,7 @@ fn validate_scenario(
             "lambda_z" => result.terminal.as_ref().map(|t| t.lambda_z),
             "half_life" => result.terminal.as_ref().map(|t| t.half_life),
             "mrt" => result.terminal.as_ref().and_then(|t| t.mrt),
+            "mrt_iv" => result.iv_infusion.as_ref().and_then(|iv| iv.mrt_iv),
             "r_squared" => result
                 .terminal
                 .as_ref()
@@ -268,6 +284,11 @@ fn validate_scenario(
                 .as_ref()
                 .and_then(|t| t.regression.as_ref())
                 .map(|r| r.n_points as f64),
+            "span_ratio" => result
+                .terminal
+                .as_ref()
+                .and_then(|t| t.regression.as_ref())
+                .map(|r| r.span_ratio),
             "tlag" => result.exposure.tlag,
             "c0" => result.iv_bolus.as_ref().map(|iv| iv.c0),
             "vd" => result.iv_bolus.as_ref().map(|iv| iv.vd),
@@ -278,6 +299,12 @@ fn validate_scenario(
                 .or_else(|| result.iv_infusion.as_ref().and_then(|iv| iv.vss)),
             "cl" | "cl_f" => result.clearance.as_ref().map(|c| c.cl_f),
             "vz" | "vz_f" => result.clearance.as_ref().map(|c| c.vz_f),
+            // Steady-state parameters
+            "cmin" => result.steady_state.as_ref().map(|ss| ss.cmin),
+            "cavg" => result.steady_state.as_ref().map(|ss| ss.cavg),
+            "auc_tau" => result.steady_state.as_ref().map(|ss| ss.auc_tau),
+            "fluctuation" => result.steady_state.as_ref().map(|ss| ss.fluctuation),
+            "swing" => result.steady_state.as_ref().map(|ss| ss.swing),
             _ => None,
         };
 
