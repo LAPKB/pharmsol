@@ -2,6 +2,7 @@ pub mod data;
 pub mod error;
 #[cfg(feature = "exa")]
 pub mod exa;
+pub mod nca;
 pub mod optimize;
 pub mod simulator;
 
@@ -22,21 +23,35 @@ pub use std::collections::HashMap;
 pub mod prelude {
     pub mod data {
         pub use crate::data::{
-            error_model::ErrorModels,
+            error_model::{AssayErrorModel, AssayErrorModels},
             parser::{read_pmetrics, NormalizedRow, NormalizedRowBuilder},
             residual_error::{ResidualErrorModel, ResidualErrorModels},
             Covariates, Data, Event, Occasion, Subject,
         };
+
+        /// Deprecated aliases for backward compatibility.
+        #[allow(deprecated)]
+        pub use crate::data::error_model::{ErrorModel, ErrorModels};
     }
     pub mod simulator {
         pub use crate::simulator::{
             equation,
             equation::Equation,
             likelihood::{
-                log_likelihood_batch, log_likelihood_subject, log_psi, psi, PopulationPredictions,
-                Prediction, SubjectPredictions,
+                // Primary API (recommended)
+                log_likelihood_batch,
+                log_likelihood_matrix,
+                log_likelihood_subject,
+                LikelihoodMatrixOptions,
+                PopulationPredictions,
+                Prediction,
+                SubjectPredictions,
             },
         };
+
+        // Deprecated re-exports for backward compatibility
+        #[allow(deprecated)]
+        pub use crate::simulator::likelihood::{log_psi, psi};
     }
     pub mod models {
         pub use crate::simulator::equation::analytical::one_compartment;

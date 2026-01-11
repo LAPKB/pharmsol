@@ -206,7 +206,7 @@ fn find_m0(afinal: f64, b: f64, alpha: f64, h1: f64, h2: f64) -> f64 {
 /// assert!(e2 > 0.0 && e2 < 1.0);
 /// ```
 pub fn get_e2(a: f64, b: f64, w: f64, h1: f64, h2: f64, alpha_s: f64) -> f64 {
-    // trivial cases
+    // tripapir cases
     if a.abs() < 1.0e-12 && b.abs() < 1.0e-12 {
         return 0.0;
     }
