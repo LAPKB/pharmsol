@@ -83,7 +83,7 @@ pub(crate) use analyze::{analyze_arrays, DoseContext};
 // Public API
 pub use error::NCAError;
 pub use types::{
-    AUCMethod, BLQRule, ClearanceParams, ExposureParams, IVBolusParams, IVInfusionParams,
-    LambdaZMethod, LambdaZOptions, NCAOptions, NCAResult, Quality, RegressionStats, Route,
-    SteadyStateParams, TerminalParams, Warning,
+    AUCMethod, BLQRule, C0Method, ClastType, ClearanceParams, ExposureParams, IVBolusParams,
+    IVInfusionParams, LambdaZMethod, LambdaZOptions, NCAOptions, NCAResult, Quality,
+    RegressionStats, Route, SteadyStateParams, TerminalParams, Warning,
 };

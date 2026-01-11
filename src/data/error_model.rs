@@ -964,7 +964,7 @@ mod tests {
     fn test_additive_error_model() {
         let observation = Observation::new(0.0, Some(20.0), 0, None, 0, Censor::None);
         let prediction = observation.to_prediction(10.0, vec![]);
-        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         assert_eq!(model.sigma(&prediction).unwrap(), (26.0_f64).sqrt());
     }
 
@@ -972,13 +972,13 @@ mod tests {
     fn test_proportional_error_model() {
         let observation = Observation::new(0.0, Some(20.0), 0, None, 0, Censor::None);
         let prediction = observation.to_prediction(10.0, vec![]);
-        let model = ErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0);
+        let model = AssayErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0);
         assert_eq!(model.sigma(&prediction).unwrap(), 2.0);
     }
 
     #[test]
     fn test_polynomial() {
-        let model = ErrorModel::additive(ErrorPoly::new(1.0, 2.0, 3.0, 4.0), 5.0);
+        let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 2.0, 3.0, 4.0), 5.0);
         assert_eq!(
             model.errorpoly().unwrap().coefficients(),
             (1.0, 2.0, 3.0, 4.0)
@@ -987,7 +987,7 @@ mod tests {
 
     #[test]
     fn test_set_errorpoly() {
-        let mut model = ErrorModel::additive(ErrorPoly::new(1.0, 2.0, 3.0, 4.0), 5.0);
+        let mut model = AssayErrorModel::additive(ErrorPoly::new(1.0, 2.0, 3.0, 4.0), 5.0);
         assert_eq!(
             model.errorpoly().unwrap().coefficients(),
             (1.0, 2.0, 3.0, 4.0)
@@ -1001,7 +1001,7 @@ mod tests {
 
     #[test]
     fn test_set_factor() {
-        let mut model = ErrorModel::additive(ErrorPoly::new(1.0, 2.0, 3.0, 4.0), 5.0);
+        let mut model = AssayErrorModel::additive(ErrorPoly::new(1.0, 2.0, 3.0, 4.0), 5.0);
         assert_eq!(model.factor().unwrap(), 5.0);
         model.set_factor(10.0);
         assert_eq!(model.factor().unwrap(), 10.0);
@@ -1009,10 +1009,10 @@ mod tests {
 
     #[test]
     fn test_sigma_from_value() {
-        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         assert_eq!(model.sigma_from_value(20.0).unwrap(), (26.0_f64).sqrt());
 
-        let model = ErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0);
+        let model = AssayErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0);
         assert_eq!(model.sigma_from_value(20.0).unwrap(), 2.0);
     }
 
@@ -1030,15 +1030,15 @@ mod tests {
 
     #[test]
     fn test_error_models_add_single() {
-        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         let models = AssayErrorModels::new().add(0, model).unwrap();
         assert_eq!(models.len(), 1);
     }
 
     #[test]
     fn test_error_models_add_multiple() {
-        let model1 = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let model2 = ErrorModel::proportional(ErrorPoly::new(2.0, 0.0, 0.0, 0.0), 3.0);
+        let model1 = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let model2 = AssayErrorModel::proportional(ErrorPoly::new(2.0, 0.0, 0.0, 0.0), 3.0);
 
         let models = AssayErrorModels::new()
             .add(0, model1)
@@ -1051,8 +1051,8 @@ mod tests {
 
     #[test]
     fn test_error_models_add_duplicate_outeq_fails() {
-        let model1 = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let model2 = ErrorModel::proportional(ErrorPoly::new(2.0, 0.0, 0.0, 0.0), 3.0);
+        let model1 = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let model2 = AssayErrorModel::proportional(ErrorPoly::new(2.0, 0.0, 0.0, 0.0), 3.0);
 
         let result = AssayErrorModels::new()
             .add(0, model1)
@@ -1068,7 +1068,7 @@ mod tests {
 
     #[test]
     fn test_error_models_factor() {
-        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         let models = AssayErrorModels::new().add(0, model).unwrap();
 
         assert_eq!(models.factor(0).unwrap(), 5.0);
@@ -1076,7 +1076,7 @@ mod tests {
 
     #[test]
     fn test_error_models_factor_invalid_outeq() {
-        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         let models = AssayErrorModels::new().add(0, model).unwrap();
 
         let result = models.factor(1);
@@ -1089,7 +1089,7 @@ mod tests {
 
     #[test]
     fn test_error_models_set_factor() {
-        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         let mut models = AssayErrorModels::new().add(0, model).unwrap();
 
         assert_eq!(models.factor(0).unwrap(), 5.0);
@@ -1099,7 +1099,7 @@ mod tests {
 
     #[test]
     fn test_error_models_set_factor_invalid_outeq() {
-        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         let mut models = AssayErrorModels::new().add(0, model).unwrap();
 
         let result = models.set_factor(1, 10.0);
@@ -1113,7 +1113,7 @@ mod tests {
     #[test]
     fn test_error_models_errorpoly() {
         let poly = ErrorPoly::new(1.0, 2.0, 3.0, 4.0);
-        let model = ErrorModel::additive(poly, 5.0);
+        let model = AssayErrorModel::additive(poly, 5.0);
         let models = AssayErrorModels::new().add(0, model).unwrap();
 
         let retrieved_poly = models.errorpoly(0).unwrap();
@@ -1122,7 +1122,7 @@ mod tests {
 
     #[test]
     fn test_error_models_errorpoly_invalid_outeq() {
-        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         let models = AssayErrorModels::new().add(0, model).unwrap();
 
         let result = models.errorpoly(1);
@@ -1137,7 +1137,7 @@ mod tests {
     fn test_error_models_set_errorpoly() {
         let poly1 = ErrorPoly::new(1.0, 2.0, 3.0, 4.0);
         let poly2 = ErrorPoly::new(5.0, 6.0, 7.0, 8.0);
-        let model = ErrorModel::additive(poly1, 5.0);
+        let model = AssayErrorModel::additive(poly1, 5.0);
         let mut models = AssayErrorModels::new().add(0, model).unwrap();
 
         assert_eq!(
@@ -1153,7 +1153,7 @@ mod tests {
 
     #[test]
     fn test_error_models_set_errorpoly_invalid_outeq() {
-        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         let mut models = AssayErrorModels::new().add(0, model).unwrap();
 
         let result = models.set_errorpoly(1, ErrorPoly::new(5.0, 6.0, 7.0, 8.0));
@@ -1166,7 +1166,7 @@ mod tests {
 
     #[test]
     fn test_error_models_sigma() {
-        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         let models = AssayErrorModels::new().add(0, model).unwrap();
 
         let observation = Observation::new(0.0, Some(20.0), 0, None, 0, Censor::None);
@@ -1179,7 +1179,7 @@ mod tests {
 
     #[test]
     fn test_error_models_sigma_invalid_outeq() {
-        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         let models = AssayErrorModels::new().add(0, model).unwrap();
 
         let observation = Observation::new(0.0, Some(20.0), 1, None, 0, Censor::None); // outeq=1 not in models
@@ -1195,7 +1195,7 @@ mod tests {
 
     #[test]
     fn test_error_models_variance() {
-        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         let models = AssayErrorModels::new().add(0, model).unwrap();
 
         let observation = Observation::new(0.0, Some(20.0), 0, None, 0, Censor::None);
@@ -1208,7 +1208,7 @@ mod tests {
 
     #[test]
     fn test_error_models_variance_invalid_outeq() {
-        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         let models = AssayErrorModels::new().add(0, model).unwrap();
 
         let observation = Observation::new(0.0, Some(20.0), 1, None, 0, Censor::None); // outeq=1 not in models
@@ -1224,7 +1224,7 @@ mod tests {
 
     #[test]
     fn test_error_models_sigma_from_value() {
-        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         let models = AssayErrorModels::new().add(0, model).unwrap();
 
         let sigma = models.sigma_from_value(0, 20.0).unwrap();
@@ -1233,7 +1233,7 @@ mod tests {
 
     #[test]
     fn test_error_models_sigma_from_value_invalid_outeq() {
-        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         let models = AssayErrorModels::new().add(0, model).unwrap();
 
         let result = models.sigma_from_value(1, 20.0);
@@ -1246,7 +1246,7 @@ mod tests {
 
     #[test]
     fn test_error_models_variance_from_value() {
-        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         let models = AssayErrorModels::new().add(0, model).unwrap();
 
         let variance = models.variance_from_value(0, 20.0).unwrap();
@@ -1256,7 +1256,7 @@ mod tests {
 
     #[test]
     fn test_error_models_variance_from_value_invalid_outeq() {
-        let model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         let models = AssayErrorModels::new().add(0, model).unwrap();
 
         let result = models.variance_from_value(1, 20.0);
@@ -1269,8 +1269,8 @@ mod tests {
 
     #[test]
     fn test_error_models_hash_consistency() {
-        let model1 = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let model2 = ErrorModel::proportional(ErrorPoly::new(2.0, 0.0, 0.0, 0.0), 3.0);
+        let model1 = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let model2 = AssayErrorModel::proportional(ErrorPoly::new(2.0, 0.0, 0.0, 0.0), 3.0);
 
         let models1 = AssayErrorModels::new()
             .add(0, model1.clone())
@@ -1290,8 +1290,8 @@ mod tests {
 
     #[test]
     fn test_error_models_hash_order_independence() {
-        let model1 = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let model2 = ErrorModel::proportional(ErrorPoly::new(2.0, 0.0, 0.0, 0.0), 3.0);
+        let model1 = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let model2 = AssayErrorModel::proportional(ErrorPoly::new(2.0, 0.0, 0.0, 0.0), 3.0);
 
         // Add in different orders
         let models1 = AssayErrorModels::new()
@@ -1312,8 +1312,9 @@ mod tests {
 
     #[test]
     fn test_error_models_multiple_outeqs() {
-        let additive_model = ErrorModel::additive(ErrorPoly::new(1.0, 0.1, 0.0, 0.0), 0.5);
-        let proportional_model = ErrorModel::proportional(ErrorPoly::new(0.0, 0.05, 0.0, 0.0), 0.1);
+        let additive_model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.1, 0.0, 0.0), 0.5);
+        let proportional_model =
+            AssayErrorModel::proportional(ErrorPoly::new(0.0, 0.05, 0.0, 0.0), 0.1);
 
         let models = AssayErrorModels::new()
             .add(0, additive_model)
@@ -1340,8 +1341,9 @@ mod tests {
 
     #[test]
     fn test_error_models_with_predictions_different_outeqs() {
-        let additive_model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let proportional_model = ErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0);
+        let additive_model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let proportional_model =
+            AssayErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0);
 
         let models = AssayErrorModels::new()
             .add(0, additive_model)
@@ -1365,31 +1367,34 @@ mod tests {
     #[test]
     fn test_factor_param_new_constructors() {
         // Test variable constructors (default behavior)
-        let additive = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let additive = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         assert_eq!(additive.factor().unwrap(), 5.0);
         assert!(!additive.is_factor_fixed().unwrap());
 
-        let proportional = ErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0);
+        let proportional = AssayErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0);
         assert_eq!(proportional.factor().unwrap(), 2.0);
         assert!(!proportional.is_factor_fixed().unwrap());
 
         // Test fixed constructors
-        let additive_fixed = ErrorModel::additive_fixed(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let additive_fixed =
+            AssayErrorModel::additive_fixed(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         assert_eq!(additive_fixed.factor().unwrap(), 5.0);
         assert!(additive_fixed.is_factor_fixed().unwrap());
 
         let proportional_fixed =
-            ErrorModel::proportional_fixed(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0);
+            AssayErrorModel::proportional_fixed(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0);
         assert_eq!(proportional_fixed.factor().unwrap(), 2.0);
         assert!(proportional_fixed.is_factor_fixed().unwrap());
 
         // Test Factor constructors
-        let additive_with_param =
-            ErrorModel::additive_with_param(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), Factor::Fixed(5.0));
+        let additive_with_param = AssayErrorModel::additive_with_param(
+            ErrorPoly::new(1.0, 0.0, 0.0, 0.0),
+            Factor::Fixed(5.0),
+        );
         assert_eq!(additive_with_param.factor().unwrap(), 5.0);
         assert!(additive_with_param.is_factor_fixed().unwrap());
 
-        let proportional_with_param = ErrorModel::proportional_with_param(
+        let proportional_with_param = AssayErrorModel::proportional_with_param(
             ErrorPoly::new(1.0, 0.0, 0.0, 0.0),
             Factor::Variable(2.0),
         );
@@ -1399,7 +1404,7 @@ mod tests {
 
     #[test]
     fn test_factor_param_methods() {
-        let mut model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let mut model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
 
         // Test initial state
         assert_eq!(model.factor().unwrap(), 5.0);
@@ -1455,8 +1460,10 @@ mod tests {
 
     #[test]
     fn test_error_models_factor_param_methods() {
-        let additive_model = ErrorModel::additive_fixed(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let proportional_model = ErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0);
+        let additive_model =
+            AssayErrorModel::additive_fixed(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let proportional_model =
+            AssayErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0);
 
         let mut models = AssayErrorModels::new()
             .add(0, additive_model)
@@ -1496,8 +1503,8 @@ mod tests {
         let observation = Observation::new(0.0, Some(20.0), 0, None, 0, Censor::None);
         let prediction = observation.to_prediction(10.0, vec![]);
 
-        let model_variable = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let model_fixed = ErrorModel::additive_fixed(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let model_variable = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let model_fixed = AssayErrorModel::additive_fixed(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
 
         let sigma_variable = model_variable.sigma(&prediction).unwrap();
         let sigma_fixed = model_fixed.sigma(&prediction).unwrap();
@@ -1515,8 +1522,8 @@ mod tests {
 
     #[test]
     fn test_hash_includes_fixed_state() {
-        let model1_variable = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let model1_fixed = ErrorModel::additive_fixed(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let model1_variable = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let model1_fixed = AssayErrorModel::additive_fixed(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
 
         let models1 = AssayErrorModels::new().add(0, model1_variable).unwrap();
         let models2 = AssayErrorModels::new().add(0, model1_fixed).unwrap();
@@ -1527,8 +1534,9 @@ mod tests {
 
     #[test]
     fn test_error_models_into_iter_functionality() {
-        let additive_model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
-        let proportional_model = ErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0);
+        let additive_model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let proportional_model =
+            AssayErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0);
 
         let mut models = AssayErrorModels::new()
             .add(0, additive_model)
@@ -1587,7 +1595,7 @@ mod tests {
         assert_eq!(count, 2);
 
         // Test consuming iteration with into_iter()
-        let collected_models: Vec<(usize, ErrorModel)> = models.into_iter().collect();
+        let collected_models: Vec<(usize, AssayErrorModel)> = models.into_iter().collect();
         assert_eq!(collected_models.len(), 2);
 
         // Verify the collected models retain their state
