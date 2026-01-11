@@ -10,6 +10,37 @@ use super::types::{AUCMethod, LambdaZMethod, LambdaZOptions, RegressionStats};
 // AUC Calculations
 // ============================================================================
 
+/// Check if log-linear method should be used for this segment
+#[inline]
+fn use_log_linear(c1: f64, c2: f64) -> bool {
+    c2 < c1 && c1 > 0.0 && c2 > 0.0 && ((c1 / c2) - 1.0).abs() >= 1e-10
+}
+
+/// Linear trapezoidal AUC for a segment
+#[inline]
+fn auc_linear(c1: f64, c2: f64, dt: f64) -> f64 {
+    (c1 + c2) / 2.0 * dt
+}
+
+/// Log-linear AUC for a segment (assumes c1 > c2 > 0)
+#[inline]
+fn auc_log(c1: f64, c2: f64, dt: f64) -> f64 {
+    (c1 - c2) * dt / (c1 / c2).ln()
+}
+
+/// Linear trapezoidal AUMC for a segment
+#[inline]
+fn aumc_linear(t1: f64, c1: f64, t2: f64, c2: f64, dt: f64) -> f64 {
+    (t1 * c1 + t2 * c2) / 2.0 * dt
+}
+
+/// Log-linear AUMC for a segment (PKNCA formula)
+#[inline]
+fn aumc_log(t1: f64, c1: f64, t2: f64, c2: f64, dt: f64) -> f64 {
+    let k = (c1 / c2).ln() / dt;
+    (t1 * c1 - t2 * c2) / k + (c1 - c2) / (k * k)
+}
+
 /// Calculate AUC for a single segment between two time points
 ///
 /// For [`AUCMethod::LinLog`], this uses linear trapezoidal since segment-level
@@ -17,24 +48,17 @@ use super::types::{AUCMethod, LambdaZMethod, LambdaZOptions, RegressionStats};
 #[inline]
 pub fn auc_segment(t1: f64, c1: f64, t2: f64, c2: f64, method: AUCMethod) -> f64 {
     let dt = t2 - t1;
-
     if dt <= 0.0 {
         return 0.0;
     }
 
     match method {
-        AUCMethod::Linear | AUCMethod::LinLog => (c1 + c2) / 2.0 * dt,
+        AUCMethod::Linear | AUCMethod::LinLog => auc_linear(c1, c2, dt),
         AUCMethod::LinUpLogDown => {
-            // Linear for ascending, log-linear for descending
-            if c2 >= c1 || c1 <= 0.0 || c2 <= 0.0 {
-                (c1 + c2) / 2.0 * dt
+            if use_log_linear(c1, c2) {
+                auc_log(c1, c2, dt)
             } else {
-                let ratio = c1 / c2;
-                if (ratio - 1.0).abs() < 1e-10 {
-                    (c1 + c2) / 2.0 * dt
-                } else {
-                    (c1 - c2) * dt / ratio.ln()
-                }
+                auc_linear(c1, c2, dt)
             }
         }
     }
@@ -44,38 +68,25 @@ pub fn auc_segment(t1: f64, c1: f64, t2: f64, c2: f64, method: AUCMethod) -> f64
 #[inline]
 fn auc_segment_with_tmax(t1: f64, c1: f64, t2: f64, c2: f64, tmax: f64, method: AUCMethod) -> f64 {
     let dt = t2 - t1;
-
     if dt <= 0.0 {
         return 0.0;
     }
 
     match method {
-        AUCMethod::Linear => (c1 + c2) / 2.0 * dt,
+        AUCMethod::Linear => auc_linear(c1, c2, dt),
         AUCMethod::LinUpLogDown => {
-            if c2 >= c1 || c1 <= 0.0 || c2 <= 0.0 {
-                (c1 + c2) / 2.0 * dt
+            if use_log_linear(c1, c2) {
+                auc_log(c1, c2, dt)
             } else {
-                let ratio = c1 / c2;
-                if (ratio - 1.0).abs() < 1e-10 {
-                    (c1 + c2) / 2.0 * dt
-                } else {
-                    (c1 - c2) * dt / ratio.ln()
-                }
+                auc_linear(c1, c2, dt)
             }
         }
         AUCMethod::LinLog => {
             // Linear before/at Tmax, log-linear after Tmax (for descending)
-            // Per PKNCA: use linear if t2 <= tmax OR if either conc is zero/negative
-            if t2 <= tmax || c1 <= 0.0 || c2 <= 0.0 || c2 >= c1 {
-                (c1 + c2) / 2.0 * dt
+            if t2 <= tmax || !use_log_linear(c1, c2) {
+                auc_linear(c1, c2, dt)
             } else {
-                // Post-Tmax descending: use log-linear
-                let ratio = c1 / c2;
-                if (ratio - 1.0).abs() < 1e-10 {
-                    (c1 + c2) / 2.0 * dt
-                } else {
-                    (c1 - c2) * dt / ratio.ln()
-                }
+                auc_log(c1, c2, dt)
             }
         }
     }
@@ -100,79 +111,29 @@ pub fn auc_last(profile: &Profile, method: AUCMethod) -> f64 {
     auc
 }
 
-/// Calculate AUMC for a single segment
-///
-/// For log-linear method (LinUpLogDown), uses the analytically derived formula
-/// from PKNCA which properly integrates t*C(t) under the log-linear assumption.
-#[inline]
-pub fn aumc_segment(t1: f64, c1: f64, t2: f64, c2: f64, method: AUCMethod) -> f64 {
-    let dt = t2 - t1;
-
-    if dt <= 0.0 {
-        return 0.0;
-    }
-
-    match method {
-        AUCMethod::Linear | AUCMethod::LinLog => {
-            // Linear trapezoidal for AUMC: (t1*c1 + t2*c2) / 2 * dt
-            (t1 * c1 + t2 * c2) / 2.0 * dt
-        }
-        AUCMethod::LinUpLogDown => {
-            // Linear for ascending, log-linear for descending
-            if c2 >= c1 || c1 <= 0.0 || c2 <= 0.0 {
-                (t1 * c1 + t2 * c2) / 2.0 * dt
-            } else {
-                let ln_ratio = (c1 / c2).ln();
-                if ln_ratio.abs() < 1e-10 {
-                    (t1 * c1 + t2 * c2) / 2.0 * dt
-                } else {
-                    // PKNCA formula: (t1*c1 - t2*c2)/k + (c1-c2)/k²  where k = ln(c1/c2)/dt
-                    let k = ln_ratio / dt;
-                    (t1 * c1 - t2 * c2) / k + (c1 - c2) / (k * k)
-                }
-            }
-        }
-    }
-}
-
 /// Calculate AUMC for a segment with Tmax context (for LinLog method)
 #[inline]
 fn aumc_segment_with_tmax(t1: f64, c1: f64, t2: f64, c2: f64, tmax: f64, method: AUCMethod) -> f64 {
     let dt = t2 - t1;
-
     if dt <= 0.0 {
         return 0.0;
     }
 
     match method {
-        AUCMethod::Linear => (t1 * c1 + t2 * c2) / 2.0 * dt,
+        AUCMethod::Linear => aumc_linear(t1, c1, t2, c2, dt),
         AUCMethod::LinUpLogDown => {
-            if c2 >= c1 || c1 <= 0.0 || c2 <= 0.0 {
-                (t1 * c1 + t2 * c2) / 2.0 * dt
+            if use_log_linear(c1, c2) {
+                aumc_log(t1, c1, t2, c2, dt)
             } else {
-                let ln_ratio = (c1 / c2).ln();
-                if ln_ratio.abs() < 1e-10 {
-                    (t1 * c1 + t2 * c2) / 2.0 * dt
-                } else {
-                    // PKNCA formula: (t1*c1 - t2*c2)/k + (c1-c2)/k²  where k = ln(c1/c2)/dt
-                    let k = ln_ratio / dt;
-                    (t1 * c1 - t2 * c2) / k + (c1 - c2) / (k * k)
-                }
+                aumc_linear(t1, c1, t2, c2, dt)
             }
         }
         AUCMethod::LinLog => {
             // Linear before/at Tmax, log-linear after Tmax (for descending)
-            if t2 <= tmax || c1 <= 0.0 || c2 <= 0.0 || c2 >= c1 {
-                (t1 * c1 + t2 * c2) / 2.0 * dt
+            if t2 <= tmax || !use_log_linear(c1, c2) {
+                aumc_linear(t1, c1, t2, c2, dt)
             } else {
-                let ln_ratio = (c1 / c2).ln();
-                if ln_ratio.abs() < 1e-10 {
-                    (t1 * c1 + t2 * c2) / 2.0 * dt
-                } else {
-                    // PKNCA formula: (t1*c1 - t2*c2)/k + (c1-c2)/k²  where k = ln(c1/c2)/dt
-                    let k = ln_ratio / dt;
-                    (t1 * c1 - t2 * c2) / k + (c1 - c2) / (k * k)
-                }
+                aumc_log(t1, c1, t2, c2, dt)
             }
         }
     }
@@ -388,9 +349,7 @@ fn lambda_z_best_fit(
                         _ => result.r_squared,
                     };
                     let best_score = match options.method {
-                        LambdaZMethod::AdjR2 => {
-                            best.adj_r_squared + factor * best.n_points as f64
-                        }
+                        LambdaZMethod::AdjR2 => best.adj_r_squared + factor * best.n_points as f64,
                         _ => best.r_squared,
                     };
 
@@ -580,7 +539,7 @@ pub fn c0(profile: &Profile, methods: &[C0Method], lambda_z: f64) -> f64 {
 }
 
 /// Try a single C0 estimation method
-fn try_c0_method(profile: &Profile, method: C0Method, lambda_z: f64) -> Option<f64> {
+fn try_c0_method(profile: &Profile, method: C0Method, _lambda_z: f64) -> Option<f64> {
     match method {
         C0Method::Observed => {
             // Use concentration at t=0 if present and positive
@@ -595,11 +554,7 @@ fn try_c0_method(profile: &Profile, method: C0Method, lambda_z: f64) -> Option<f
         C0Method::LogSlope => c0_logslope(profile),
         C0Method::FirstConc => {
             // Use first positive concentration
-            profile
-                .concentrations
-                .iter()
-                .find(|&&c| c > 0.0)
-                .copied()
+            profile.concentrations.iter().find(|&&c| c > 0.0).copied()
         }
         C0Method::Cmin => {
             // Use minimum positive concentration
@@ -649,6 +604,7 @@ fn c0_logslope(profile: &Profile) -> Option<f64> {
 
 /// Legacy C0 back-extrapolation (kept for compatibility)
 #[deprecated(note = "Use c0() with C0Method cascade instead")]
+#[allow(dead_code)]
 pub fn c0_backextrap(profile: &Profile, _lambda_z: f64) -> f64 {
     c0(
         profile,

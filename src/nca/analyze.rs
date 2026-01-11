@@ -49,6 +49,7 @@ impl DoseContext {
 /// * `profile` - Validated concentration-time profile
 /// * `dose` - Dose context (detected from data, None if no dosing info)
 /// * `options` - Analysis configuration
+#[allow(dead_code)] // Used only in tests; main entry point is analyze_arrays
 pub(crate) fn analyze(
     profile: &Profile,
     dose: Option<&DoseContext>,

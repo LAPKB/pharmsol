@@ -119,14 +119,6 @@ impl Profile {
                                 proc_times.push(time);
                                 proc_concs.push(0.0);
                             }
-                            super::types::BlqAction::SetLoqOver2 => {
-                                proc_times.push(time);
-                                proc_concs.push(conc / 2.0);
-                            }
-                            super::types::BlqAction::SetZero => {
-                                proc_times.push(time);
-                                proc_concs.push(0.0);
-                            }
                             super::types::BlqAction::Drop => {
                                 // Skip middle BLQ points
                             }

@@ -252,8 +252,6 @@ pub enum BLQRule {
 pub(crate) enum BlqAction {
     Keep,
     Drop,
-    SetZero,
-    SetLoqOver2,
 }
 
 /// Administration route
