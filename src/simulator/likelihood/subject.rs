@@ -164,7 +164,7 @@ impl From<Array2<SubjectPredictions>> for PopulationPredictions {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::error_model::{ErrorModel, ErrorPoly};
+    use crate::data::error_model::{AssayErrorModel, ErrorPoly};
     use crate::data::event::Observation;
     use crate::Censor;
 
@@ -172,7 +172,7 @@ mod tests {
         AssayErrorModels::new()
             .add(
                 0,
-                ErrorModel::additive(ErrorPoly::new(0.0, 1.0, 0.0, 0.0), 0.0),
+                AssayErrorModel::additive(ErrorPoly::new(0.0, 1.0, 0.0, 0.0), 0.0),
             )
             .unwrap()
     }
@@ -198,7 +198,7 @@ mod tests {
         let obs = Observation::new(0.0, Some(1.0), 0, None, 0, Censor::None);
         preds.add_prediction(obs.to_prediction(1.0, vec![]));
 
-        let error_model = ErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 0.0);
+        let error_model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 0.0);
         let errors = AssayErrorModels::new().add(0, error_model).unwrap();
 
         let log_lik = preds.log_likelihood(&errors).unwrap();

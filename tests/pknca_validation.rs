@@ -11,7 +11,7 @@
 //! Run with: `cargo test pknca_validation`
 
 use pharmsol::nca::{AUCMethod, BLQRule, NCAOptions, Route};
-use pharmsol::prelude::*;
+use pharmsol::{prelude::*, Censor};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs;
@@ -34,6 +34,7 @@ struct TestScenarios {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct Scenario {
     id: String,
     name: String,
@@ -70,6 +71,7 @@ struct ExpectedValues {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct ScenarioResult {
     id: String,
     name: String,
@@ -135,6 +137,7 @@ fn map_param_name(pknca_name: &str) -> &str {
 }
 
 /// Convert scenario route string to pharmsol Route
+#[allow(dead_code)]
 fn parse_route(route: &str) -> Route {
     match route {
         "iv_bolus" => Route::IVBolus,
@@ -197,7 +200,12 @@ fn validate_scenario(
     let loq = scenario.loq.unwrap_or(0.1);
     let blq_indices: Vec<usize> = scenario.blq_indices.clone().unwrap_or_default();
 
-    for (i, (&time, &conc)) in scenario.times.iter().zip(&scenario.concentrations).enumerate() {
+    for (i, (&time, &conc)) in scenario
+        .times
+        .iter()
+        .zip(&scenario.concentrations)
+        .enumerate()
+    {
         if blq_indices.contains(&i) {
             builder = builder.censored_observation(time, loq, 0, Censor::BLOQ);
         } else {
@@ -301,8 +309,8 @@ mod tests {
             "Failed to read test_scenarios.json from {:?}",
             scenarios_path
         ));
-        let scenarios: TestScenarios = serde_json::from_str(&scenarios_json)
-            .expect("Failed to parse test_scenarios.json");
+        let scenarios: TestScenarios =
+            serde_json::from_str(&scenarios_json).expect("Failed to parse test_scenarios.json");
 
         // Try to load expected values (may not exist if R script hasn't been run)
         let expected_path = base_path.join("expected_values.json");
@@ -359,10 +367,17 @@ mod tests {
                                     scenario_known_diff += 1;
                                     let reason = known_differences
                                         .iter()
-                                        .find(|(sid, pname, _)| *sid == scenario.id && *pname == name.as_str())
+                                        .find(|(sid, pname, _)| {
+                                            *sid == scenario.id && *pname == name.as_str()
+                                        })
                                         .map(|(_, _, r)| *r)
                                         .unwrap_or("convention difference");
-                                    known_diffs.push((name.clone(), *expected_val, *actual_val, reason));
+                                    known_diffs.push((
+                                        name.clone(),
+                                        *expected_val,
+                                        *actual_val,
+                                        reason,
+                                    ));
                                 } else {
                                     failures.push((name.clone(), *expected_val, *actual_val));
                                 }
@@ -378,7 +393,9 @@ mod tests {
                             } else {
                                 println!(
                                     "✓ ({}/{} params, {} known diffs)",
-                                    scenario_passed, scenario_total, known_diffs.len()
+                                    scenario_passed,
+                                    scenario_total,
+                                    known_diffs.len()
                                 );
                                 for (name, expected_val, actual_val, reason) in &known_diffs {
                                     println!(
@@ -390,7 +407,9 @@ mod tests {
                         } else {
                             println!(
                                 "✗ ({}/{} params, {} failures)",
-                                scenario_passed, scenario_total, failures.len()
+                                scenario_passed,
+                                scenario_total,
+                                failures.len()
                             );
                             for (name, expected_val, actual_val) in &failures {
                                 println!(

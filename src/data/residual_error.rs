@@ -51,7 +51,7 @@ use serde::{Deserialize, Serialize};
 /// # Examples
 ///
 /// ```rust
-/// use pharmsol::prelude::ResidualErrorModel;
+/// use pharmsol::ResidualErrorModel;
 ///
 /// // Constant (additive) error: σ = 0.5
 /// let constant = ResidualErrorModel::Constant { a: 0.5 };

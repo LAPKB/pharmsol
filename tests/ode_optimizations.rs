@@ -871,22 +871,24 @@ fn likelihood_calculation_matches_analytical() {
         (1, 1),
     );
 
-    let error_models = ErrorModels::new()
+    let error_models = AssayErrorModels::new()
         .add(
             0,
-            ErrorModel::additive(ErrorPoly::new(0.0, 0.1, 0.0, 0.0), 0.0),
+            AssayErrorModel::additive(ErrorPoly::new(0.0, 0.1, 0.0, 0.0), 0.0),
         )
         .unwrap();
 
     let params = vec![0.1, 50.0];
 
     let ll_analytical = analytical
-        .estimate_likelihood(&subject, &params, &error_models, false)
-        .expect("analytical likelihood");
+        .estimate_log_likelihood(&subject, &params, &error_models, false)
+        .expect("analytical likelihood")
+        .exp();
 
     let ll_ode = ode
-        .estimate_likelihood(&subject, &params, &error_models, false)
-        .expect("ode likelihood");
+        .estimate_log_likelihood(&subject, &params, &error_models, false)
+        .expect("ode likelihood")
+        .exp();
 
     let ll_diff = (ll_analytical - ll_ode).abs();
     let ll_rel_diff = ll_diff / ll_analytical.abs().max(1e-10);

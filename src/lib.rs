@@ -46,16 +46,12 @@ pub mod prelude {
             residual_error::{ResidualErrorModel, ResidualErrorModels},
             Covariates, Data, Event, Occasion, Subject,
         };
-
-        /// Deprecated aliases for backward compatibility.
-        #[allow(deprecated)]
-        pub use crate::data::error_model::{ErrorModel, ErrorModels};
     }
 
     // Direct data re-exports for convenience
     pub use crate::data::{
         builder::SubjectBuilderExt,
-        error_model::{ErrorModel, ErrorModels, ErrorPoly},
+        error_model::{AssayErrorModel, AssayErrorModels, ErrorPoly},
         Covariates, Data, Event, Interpolation, Occasion, Subject,
     };
 
@@ -65,13 +61,8 @@ pub mod prelude {
             equation,
             equation::Equation,
             likelihood::{
-                log_likelihood_batch,
-                log_likelihood_matrix,
-                log_likelihood_subject,
-                LikelihoodMatrixOptions,
-                PopulationPredictions,
-                Prediction,
-                SubjectPredictions,
+                log_likelihood_batch, log_likelihood_matrix, log_likelihood_subject,
+                LikelihoodMatrixOptions, PopulationPredictions, Prediction, SubjectPredictions,
             },
         };
 
