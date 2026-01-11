@@ -6,6 +6,7 @@
 
 use pharmsol::nca::{BLQRule, NCAOptions};
 use pharmsol::prelude::*;
+use pharmsol::Censor;
 
 fn main() {
     println!("=== pharmsol NCA Example ===\n");
@@ -185,7 +186,10 @@ fn steady_state_example() {
 fn blq_handling_example() {
     println!("--- BLQ Handling Example ---\n");
 
-    // Build subject with BLQ observations
+    // Build subject with BLQ observations marked using Censor::BLOQ
+    // This is the proper way to indicate BLQ samples - the censoring
+    // information is stored with each observation, not determined
+    // retroactively by a numeric threshold.
     let subject = Subject::builder("blq_patient")
         .bolus(0.0, 100.0, 0)
         .observation(0.0, 0.0, 0)
@@ -194,20 +198,27 @@ fn blq_handling_example() {
         .observation(4.0, 4.0, 0)
         .observation(8.0, 2.0, 0)
         .observation(12.0, 0.5, 0)
-        .observation(24.0, 0.02, 0) // Below LOQ of 0.05
+        // The last observation is BLQ - mark it with Censor::BLOQ
+        // The value (0.02) represents the LOQ threshold
+        .censored_observation(24.0, 0.02, 0, Censor::BLOQ)
         .build();
 
-    // With BLQ exclusion
-    let options_exclude = NCAOptions::default().with_blq(0.05, BLQRule::Exclude);
+    // With BLQ exclusion - BLOQ-marked samples are excluded
+    let options_exclude = NCAOptions::default().with_blq_rule(BLQRule::Exclude);
     let results_exclude = subject.nca(&options_exclude, 0);
     let result_exclude = results_exclude[0].as_ref().unwrap();
 
-    // With BLQ = 0
-    let options_zero = NCAOptions::default().with_blq(0.05, BLQRule::Zero);
+    // With BLQ = 0 - BLOQ-marked samples are set to zero
+    let options_zero = NCAOptions::default().with_blq_rule(BLQRule::Zero);
     let results_zero = subject.nca(&options_zero, 0);
     let result_zero = results_zero[0].as_ref().unwrap();
 
-    println!("BLQ Handling Comparison (LOQ = 0.05):");
+    // With LOQ/2 - BLOQ-marked samples are set to LOQ/2 (0.02/2 = 0.01)
+    let options_loq2 = NCAOptions::default().with_blq_rule(BLQRule::LoqOver2);
+    let results_loq2 = subject.nca(&options_loq2, 0);
+    let result_loq2 = results_loq2[0].as_ref().unwrap();
+
+    println!("BLQ Handling Comparison (using Censor::BLOQ marking):");
     println!("\n  Exclude BLQ:");
     println!("    Tlast:   {:.1} h", result_exclude.exposure.tlast);
     println!("    AUClast: {:.2}", result_exclude.exposure.auc_last);
@@ -215,6 +226,10 @@ fn blq_handling_example() {
     println!("\n  BLQ = 0:");
     println!("    Tlast:   {:.1} h", result_zero.exposure.tlast);
     println!("    AUClast: {:.2}", result_zero.exposure.auc_last);
+
+    println!("\n  BLQ = LOQ/2:");
+    println!("    Tlast:   {:.1} h", result_loq2.exposure.tlast);
+    println!("    AUClast: {:.2}", result_loq2.exposure.auc_last);
 
     println!();
 

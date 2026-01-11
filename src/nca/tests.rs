@@ -72,6 +72,8 @@ fn steady_state_subject() -> Subject {
 
 /// Create a subject with BLQ values
 fn blq_subject() -> Subject {
+    use crate::Censor;
+
     Subject::builder("test")
         .bolus(0.0, 100.0, 0)
         .observation(0.0, 0.0, 0)
@@ -80,7 +82,7 @@ fn blq_subject() -> Subject {
         .observation(4.0, 4.0, 0)
         .observation(8.0, 2.0, 0)
         .observation(12.0, 0.5, 0)
-        .observation(24.0, 0.0, 0) // BLQ
+        .censored_observation(24.0, 0.1, 0, Censor::BLOQ) // BLQ with LOQ=0.1
         .build()
 }
 
@@ -312,18 +314,18 @@ fn test_steady_state_parameters() {
 #[test]
 fn test_blq_exclude() {
     let subject = blq_subject();
-    let options = NCAOptions::default().with_blq(0.1, BLQRule::Exclude);
+    let options = NCAOptions::default().with_blq_rule(BLQRule::Exclude);
     let results = subject.nca(&options, 0);
     let result = results[0].as_ref().unwrap();
 
-    // Tlast should be at t=12 (last point above LOQ)
+    // Tlast should be at t=12 (last non-BLQ point)
     assert_eq!(result.exposure.tlast, 12.0, "Tlast should exclude BLQ");
 }
 
 #[test]
 fn test_blq_zero() {
     let subject = blq_subject();
-    let options = NCAOptions::default().with_blq(0.1, BLQRule::Zero);
+    let options = NCAOptions::default().with_blq_rule(BLQRule::Zero);
     let results = subject.nca(&options, 0);
     let result = results[0].as_ref().unwrap();
 
@@ -334,11 +336,11 @@ fn test_blq_zero() {
 #[test]
 fn test_blq_loq_over_2() {
     let subject = blq_subject();
-    let options = NCAOptions::default().with_blq(0.1, BLQRule::LoqOver2);
+    let options = NCAOptions::default().with_blq_rule(BLQRule::LoqOver2);
     let results = subject.nca(&options, 0);
     let result = results[0].as_ref().unwrap();
 
-    // Should include the BLQ points as LOQ/2
+    // Should include the BLQ points as LOQ/2 (0.1 / 2 = 0.05)
     assert!(result.exposure.auc_last > 0.0);
 }
 
@@ -513,3 +515,59 @@ fn test_sparse_preset() {
     assert_eq!(options.lambda_z.min_r_squared, 0.80);
     assert_eq!(options.max_auc_extrap_pct, 30.0);
 }
+
+// ============================================================================
+// Partial AUC tests
+// ============================================================================
+
+#[test]
+fn test_partial_auc_interval() {
+    let subject = single_dose_oral();
+    let options = NCAOptions::default().with_auc_interval(0.0, 4.0);
+    let results = subject.nca(&options, 0);
+    let result = results[0].as_ref().unwrap();
+
+    // Partial AUC should be calculated
+    assert!(
+        result.exposure.auc_partial.is_some(),
+        "Partial AUC should be computed when interval specified"
+    );
+
+    let auc_partial = result.exposure.auc_partial.unwrap();
+    assert!(auc_partial > 0.0, "Partial AUC should be positive");
+
+    // Partial AUC (0-4h) should be less than AUClast (0-24h)
+    assert!(
+        auc_partial < result.exposure.auc_last,
+        "Partial AUC should be less than AUClast"
+    );
+}
+
+#[test]
+fn test_positional_blq_rule() {
+    use crate::Censor;
+
+    // Create subject with BLQ at start, middle, and end
+    let subject = Subject::builder("test")
+        .bolus(0.0, 100.0, 0)
+        .censored_observation(0.0, 0.1, 0, Censor::BLOQ) // First - keep as 0
+        .observation(1.0, 10.0, 0)
+        .censored_observation(2.0, 0.1, 0, Censor::BLOQ) // Middle - drop
+        .observation(4.0, 4.0, 0)
+        .observation(8.0, 2.0, 0)
+        .censored_observation(12.0, 0.1, 0, Censor::BLOQ) // Last - keep as 0
+        .build();
+
+    // With positional BLQ handling
+    let options = NCAOptions::default().with_blq_rule(BLQRule::Positional);
+    let results = subject.nca(&options, 0);
+    let result = results[0].as_ref().unwrap();
+
+    // Middle BLQ at t=2 should be dropped, but first and last kept as 0 (PKNCA behavior)
+    // With last BLQ kept as 0 (not LOQ), tlast remains at 8.0 (last positive conc)
+    assert_eq!(result.exposure.cmax, 10.0, "Cmax should be 10.0");
+    // tlast is the last time with positive concentration (8.0), the BLQ at 12 is 0
+    assert_eq!(result.exposure.tlast, 8.0, "Tlast should be 8.0 (last positive concentration)");
+    assert_eq!(result.exposure.clast, 2.0, "Clast should be 2.0 (last positive value)");
+}
+

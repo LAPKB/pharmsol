@@ -539,7 +539,7 @@ impl Subject {
 
     /// Extract time-concentration data for a specific output equation
     ///
-    /// Returns vectors of (times, concentrations) for the specified outeq.
+    /// Returns vectors of (times, concentrations, censoring) for the specified outeq.
     /// This is useful for NCA calculations or other analysis.
     ///
     /// # Arguments
@@ -548,10 +548,11 @@ impl Subject {
     ///
     /// # Returns
     ///
-    /// Tuple of (times, concentrations) vectors
-    pub fn get_observations(&self, outeq: usize) -> (Vec<f64>, Vec<f64>) {
+    /// Tuple of (times, concentrations, censoring) vectors
+    pub fn get_observations(&self, outeq: usize) -> (Vec<f64>, Vec<f64>, Vec<Censor>) {
         let mut times = Vec::new();
         let mut concs = Vec::new();
+        let mut censoring = Vec::new();
 
         for occasion in &self.occasions {
             for event in occasion.events() {
@@ -560,13 +561,14 @@ impl Subject {
                         if let Some(value) = obs.value() {
                             times.push(obs.time());
                             concs.push(value);
+                            censoring.push(obs.censoring());
                         }
                     }
                 }
             }
         }
 
-        (times, concs)
+        (times, concs, censoring)
     }
 
     /// Get total dose administered to a specific input compartment
@@ -960,15 +962,15 @@ impl Occasion {
         outeq: usize,
         subject_id: Option<String>,
     ) -> Result<crate::nca::NCAResult, crate::nca::NCAError> {
-        // Extract observations for this outeq
-        let (times, concs) = self.get_observations(outeq);
+        // Extract observations for this outeq (including censoring info)
+        let (times, concs, censoring) = self.get_observations(outeq);
 
         // Auto-detect dose and route from events
         let dose_context = self.detect_dose_context();
 
         // Calculate NCA using the analyze module
         let mut result =
-            crate::nca::analyze_arrays(&times, &concs, dose_context.as_ref(), options)?;
+            crate::nca::analyze_arrays(&times, &concs, &censoring, dose_context.as_ref(), options)?;
         result.subject_id = subject_id;
         result.occasion = Some(self.index);
 
@@ -1027,10 +1029,11 @@ impl Occasion {
     ///
     /// # Returns
     ///
-    /// Tuple of (times, concentrations) vectors
-    pub fn get_observations(&self, outeq: usize) -> (Vec<f64>, Vec<f64>) {
+    /// Tuple of (times, concentrations, censoring) vectors
+    pub fn get_observations(&self, outeq: usize) -> (Vec<f64>, Vec<f64>, Vec<Censor>) {
         let mut times = Vec::new();
         let mut concs = Vec::new();
+        let mut censoring = Vec::new();
 
         for event in &self.events {
             if let Event::Observation(obs) = event {
@@ -1038,12 +1041,13 @@ impl Occasion {
                     if let Some(value) = obs.value() {
                         times.push(obs.time());
                         concs.push(value);
+                        censoring.push(obs.censoring());
                     }
                 }
             }
         }
 
-        (times, concs)
+        (times, concs, censoring)
     }
 
     /// Get total dose administered to a specific input compartment
