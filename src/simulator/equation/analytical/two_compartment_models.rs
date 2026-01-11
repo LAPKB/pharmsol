@@ -9,7 +9,7 @@ use nalgebra::{DVector, Matrix2, Vector2};
 /// - `rateiv` is a vector of length 1 with the value of the infusion rate (only one drug)
 /// - `x` is a vector of length 2
 /// - covariates are not used
-pub fn two_compartments(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {
+pub fn two_compartments(x: &V, p: &V, t: T, rateiv: &V, _cov: &Covariates) -> V {
     let ke = p[0];
     let kcp = p[1];
     let kpc = p[2];
@@ -52,7 +52,7 @@ pub fn two_compartments(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {
 /// - `rateiv` is a vector of length 1 with the value of the infusion rate (only one drug)
 /// - `x` is a vector of length 3
 /// - covariates are not used
-pub fn two_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {
+pub fn two_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: &V, _cov: &Covariates) -> V {
     let ke = p[0];
     let ka = p[1];
     let kcp = p[2];
@@ -107,63 +107,10 @@ pub fn two_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &Co
 
 #[cfg(test)]
 mod tests {
+    use super::super::tests::SubjectInfo;
     use super::{two_compartments, two_compartments_with_absorption};
     use crate::*;
     use approx::assert_relative_eq;
-
-    enum SubjectInfo {
-        InfusionDosing,
-        OralInfusionDosage,
-    }
-
-    impl SubjectInfo {
-        fn get_subject(&self) -> Subject {
-            match self {
-                SubjectInfo::InfusionDosing => Subject::builder("id1")
-                    .bolus(0.0, 100.0, 0)
-                    .infusion(24.0, 150.0, 0, 3.0)
-                    .missing_observation(0.0, 0)
-                    .missing_observation(1.0, 0)
-                    .missing_observation(2.0, 0)
-                    .missing_observation(4.0, 0)
-                    .missing_observation(8.0, 0)
-                    .missing_observation(12.0, 0)
-                    .missing_observation(24.0, 0)
-                    .missing_observation(25.0, 0)
-                    .missing_observation(26.0, 0)
-                    .missing_observation(27.0, 0)
-                    .missing_observation(28.0, 0)
-                    .missing_observation(32.0, 0)
-                    .missing_observation(36.0, 0)
-                    .build(),
-
-                SubjectInfo::OralInfusionDosage => Subject::builder("id1")
-                    .bolus(0.0, 100.0, 1)
-                    .infusion(24.0, 150.0, 0, 3.0)
-                    .bolus(48.0, 100.0, 0)
-                    .missing_observation(0.0, 0)
-                    .missing_observation(1.0, 0)
-                    .missing_observation(2.0, 0)
-                    .missing_observation(4.0, 0)
-                    .missing_observation(8.0, 0)
-                    .missing_observation(12.0, 0)
-                    .missing_observation(24.0, 0)
-                    .missing_observation(25.0, 0)
-                    .missing_observation(26.0, 0)
-                    .missing_observation(27.0, 0)
-                    .missing_observation(28.0, 0)
-                    .missing_observation(32.0, 0)
-                    .missing_observation(36.0, 0)
-                    .missing_observation(48.0, 0)
-                    .missing_observation(49.0, 0)
-                    .missing_observation(50.0, 0)
-                    .missing_observation(52.0, 0)
-                    .missing_observation(56.0, 0)
-                    .missing_observation(60.0, 0)
-                    .build(),
-            }
-        }
-    }
 
     #[test]
     fn test_two_compartments() {
@@ -175,7 +122,7 @@ mod tests {
                 fetch_params!(p, ke, kcp, kpc, _v);
 
                 dx[0] = rateiv[0] - ke * x[0] - kcp * x[0] + kpc * x[1] + b[0];
-                dx[1] = kcp * x[0] - kpc * x[1] + b[1];
+                dx[1] = kcp * x[0] - kpc * x[1];
             },
             |_p, _t, _cov| lag! {},
             |_p, _t, _cov| fa! {},
@@ -184,8 +131,10 @@ mod tests {
                 fetch_params!(p, _ke, _kcp, _kpc, v);
                 y[0] = x[0] / v;
             },
-            (2, 1),
-        );
+        )
+        .with_nstates(2)
+        .with_ndrugs(1)
+        .with_nout(1);
 
         let analytical = equation::Analytical::new(
             two_compartments,
@@ -197,8 +146,10 @@ mod tests {
                 fetch_params!(p, _ke, _kcp, _kpc, v);
                 y[0] = x[0] / v;
             },
-            (2, 1),
-        );
+        )
+        .with_nstates(2)
+        .with_ndrugs(1)
+        .with_nout(1);
 
         let op_ode = ode
             .estimate_predictions(&subject, &vec![0.1, 3.0, 1.0, 1.0])
@@ -229,7 +180,7 @@ mod tests {
 
                 dx[0] = -ka * x[0] + b[0];
                 dx[1] = rateiv[0] - ke * x[1] + ka * x[0] - kcp * x[1] + kpc * x[2] + b[1];
-                dx[2] = kcp * x[1] - kpc * x[2] + b[2];
+                dx[2] = kcp * x[1] - kpc * x[2];
             },
             |_p, _t, _cov| lag! {},
             |_p, _t, _cov| fa! {},
@@ -238,8 +189,10 @@ mod tests {
                 fetch_params!(p, _ke, _ka, _kcp, _kpc, v);
                 y[0] = x[1] / v;
             },
-            (3, 1),
-        );
+        )
+        .with_nstates(3)
+        .with_ndrugs(2)
+        .with_nout(1);
 
         let analytical = equation::Analytical::new(
             two_compartments_with_absorption,
@@ -251,8 +204,10 @@ mod tests {
                 fetch_params!(p, _ke, _ka, _kcp, _kpc, v);
                 y[0] = x[1] / v;
             },
-            (3, 1),
-        );
+        )
+        .with_nstates(3)
+        .with_ndrugs(2)
+        .with_nout(1);
 
         let op_ode = ode
             .estimate_predictions(&subject, &vec![0.1, 1.0, 3.0, 1.0, 1.0])

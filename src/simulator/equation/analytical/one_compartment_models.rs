@@ -7,7 +7,7 @@ use crate::{data::Covariates, simulator::*};
 /// - `rateiv` is a vector of length 1 with the value of the infusion rate (only one drug)
 /// - `x` is a vector of length 1
 /// - covariates are not used
-pub fn one_compartment(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {
+pub fn one_compartment(x: &V, p: &V, t: T, rateiv: &V, _cov: &Covariates) -> V {
     let mut xout = x.clone();
     let ke = p[0];
 
@@ -23,7 +23,7 @@ pub fn one_compartment(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {
 /// - `rateiv` is a vector of length 1 with the value of the infusion rate (only one drug)
 /// - `x` is a vector of length 2
 /// - covariates are not used
-pub fn one_compartment_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {
+pub fn one_compartment_with_absorption(x: &V, p: &V, t: T, rateiv: &V, _cov: &Covariates) -> V {
     let mut xout = x.clone();
     let ka = p[0];
     let ke = p[1];
@@ -39,63 +39,10 @@ pub fn one_compartment_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &Cov
 
 #[cfg(test)]
 mod tests {
+    use super::super::tests::SubjectInfo;
     use super::{one_compartment, one_compartment_with_absorption};
     use crate::*;
     use approx::assert_relative_eq;
-
-    enum SubjectInfo {
-        InfusionDosing,
-        OralInfusionDosage,
-    }
-
-    impl SubjectInfo {
-        fn get_subject(&self) -> Subject {
-            match self {
-                SubjectInfo::InfusionDosing => Subject::builder("id1")
-                    .bolus(0.0, 100.0, 0)
-                    .infusion(24.0, 150.0, 0, 3.0)
-                    .missing_observation(0.0, 0)
-                    .missing_observation(1.0, 0)
-                    .missing_observation(2.0, 0)
-                    .missing_observation(4.0, 0)
-                    .missing_observation(8.0, 0)
-                    .missing_observation(12.0, 0)
-                    .missing_observation(24.0, 0)
-                    .missing_observation(25.0, 0)
-                    .missing_observation(26.0, 0)
-                    .missing_observation(27.0, 0)
-                    .missing_observation(28.0, 0)
-                    .missing_observation(32.0, 0)
-                    .missing_observation(36.0, 0)
-                    .build(),
-
-                SubjectInfo::OralInfusionDosage => Subject::builder("id1")
-                    .bolus(0.0, 100.0, 1)
-                    .infusion(24.0, 150.0, 0, 3.0)
-                    .bolus(48.0, 100.0, 0)
-                    .missing_observation(0.0, 0)
-                    .missing_observation(1.0, 0)
-                    .missing_observation(2.0, 0)
-                    .missing_observation(4.0, 0)
-                    .missing_observation(8.0, 0)
-                    .missing_observation(12.0, 0)
-                    .missing_observation(24.0, 0)
-                    .missing_observation(25.0, 0)
-                    .missing_observation(26.0, 0)
-                    .missing_observation(27.0, 0)
-                    .missing_observation(28.0, 0)
-                    .missing_observation(32.0, 0)
-                    .missing_observation(36.0, 0)
-                    .missing_observation(48.0, 0)
-                    .missing_observation(49.0, 0)
-                    .missing_observation(50.0, 0)
-                    .missing_observation(52.0, 0)
-                    .missing_observation(56.0, 0)
-                    .missing_observation(60.0, 0)
-                    .build(),
-            }
-        }
-    }
 
     #[test]
     fn test_one_compartment() {
@@ -115,8 +62,10 @@ mod tests {
                 fetch_params!(p, _ke, v);
                 y[0] = x[0] / v;
             },
-            (1, 1),
-        );
+        )
+        .with_nstates(1)
+        .with_ndrugs(1)
+        .with_nout(1);
 
         let analytical = equation::Analytical::new(
             one_compartment,
@@ -128,8 +77,10 @@ mod tests {
                 fetch_params!(p, _ke, v);
                 y[0] = x[0] / v;
             },
-            (1, 1),
-        );
+        )
+        .with_nstates(1)
+        .with_ndrugs(1)
+        .with_nout(1);
 
         let op_ode = ode.estimate_predictions(&subject, &vec![0.1, 1.0]).unwrap();
         let op_analytical = analytical
@@ -166,8 +117,10 @@ mod tests {
                 fetch_params!(p, _ka, _ke, v);
                 y[0] = x[1] / v;
             },
-            (2, 1),
-        );
+        )
+        .with_nstates(2)
+        .with_ndrugs(2)
+        .with_nout(1);
 
         let analytical = equation::Analytical::new(
             one_compartment_with_absorption,
@@ -179,8 +132,10 @@ mod tests {
                 fetch_params!(p, _ka, _ke, v);
                 y[0] = x[1] / v;
             },
-            (2, 1),
-        );
+        )
+        .with_nstates(2)
+        .with_ndrugs(2)
+        .with_nout(1);
 
         let op_ode = ode
             .estimate_predictions(&subject, &vec![1.0, 0.1, 1.0])

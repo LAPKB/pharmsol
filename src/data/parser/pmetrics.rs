@@ -4,45 +4,11 @@ use serde::de::{MapAccess, Visitor};
 use serde::{de, Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 
+use crate::data::row::build_data;
+use crate::data::row::DataError;
+use crate::data::row::DataRow;
 use std::fmt;
 use std::str::FromStr;
-use thiserror::Error;
-
-/// Custom error type for the module
-#[allow(private_interfaces)]
-#[derive(Error, Debug, Clone)]
-pub enum PmetricsError {
-    /// Error encountered when reading CSV data
-    #[error("CSV error: {0}")]
-    CSVError(String),
-    /// Error during data deserialization
-    #[error("Parse error: {0}")]
-    SerdeError(String),
-    /// Encountered an unknown EVID value
-    #[error("Unknown EVID: {evid} for ID {id} at time {time}")]
-    UnknownEvid { evid: isize, id: String, time: f64 },
-    /// Required observation value (OUT) is missing
-    #[error("Observation OUT is missing for {id} at time {time}")]
-    MissingObservationOut { id: String, time: f64 },
-    /// Required observation output equation (OUTEQ) is missing
-    #[error("Observation OUTEQ is missing in for {id} at time {time}")]
-    MissingObservationOuteq { id: String, time: f64 },
-    /// Required infusion dose amount is missing
-    #[error("Infusion amount (DOSE) is missing for {id} at time {time}")]
-    MissingInfusionDose { id: String, time: f64 },
-    /// Required infusion input compartment is missing
-    #[error("Infusion compartment (INPUT) is missing for {id} at time {time}")]
-    MissingInfusionInput { id: String, time: f64 },
-    /// Required infusion duration is missing
-    #[error("Infusion duration (DUR) is missing for {id} at time {time}")]
-    MissingInfusionDur { id: String, time: f64 },
-    /// Required bolus dose amount is missing
-    #[error("Bolus amount (DOSE) is missing for {id} at time {time}")]
-    MissingBolusDose { id: String, time: f64 },
-    /// Required bolus input compartment is missing
-    #[error("Bolus compartment (INPUT) is missing for {id} at time {time}")]
-    MissingBolusInput { id: String, time: f64 },
-}
 
 /// Read a Pmetrics datafile and convert it to a [Data] object
 ///
@@ -56,7 +22,7 @@ pub enum PmetricsError {
 ///
 /// # Returns
 ///
-/// * `Result<Data, PmetricsError>` - A result containing either the parsed [Data] object or an error
+/// * `Result<Data, DataError>` - A result containing either the parsed [Data] object or an error
 ///
 /// # Example
 ///
@@ -76,114 +42,34 @@ pub enum PmetricsError {
 /// - Parse covariates and create appropriate interpolations
 /// - Handle additional doses via ADDL and II fields
 ///
-/// For specific column definitions, see the [Row] struct.
+/// For specific column definitions, see the `Row` struct.
 #[allow(dead_code)]
-pub fn read_pmetrics(path: impl Into<String>) -> Result<Data, PmetricsError> {
+pub fn read_pmetrics(path: impl Into<String>) -> Result<Data, DataError> {
     let path = path.into();
 
     let mut reader = csv::ReaderBuilder::new()
         .comment(Some(b'#'))
         .has_headers(true)
         .from_path(&path)
-        .map_err(|e| PmetricsError::CSVError(e.to_string()))?;
+        .map_err(|e| DataError::CSVError(e.to_string()))?;
     // Convert headers to lowercase
     let headers = reader
         .headers()
-        .map_err(|e| PmetricsError::CSVError(e.to_string()))?
+        .map_err(|e| DataError::CSVError(e.to_string()))?
         .iter()
         .map(|h| h.to_lowercase())
         .collect::<Vec<_>>();
     reader.set_headers(csv::StringRecord::from(headers));
 
-    // This is the object we are building, which can be converted to [Data]
-    // Read the datafile into a hashmap of rows by ID
-    let mut rows_map: HashMap<String, Vec<Row>> = HashMap::new();
-    let mut subjects: Vec<Subject> = Vec::new();
+    // Parse CSV rows and convert to DataRows
+    let mut data_rows: Vec<DataRow> = Vec::new();
     for row_result in reader.deserialize() {
-        let row: Row = row_result.map_err(|e| PmetricsError::CSVError(e.to_string()))?;
-
-        rows_map.entry(row.id.clone()).or_default().push(row);
+        let row: Row = row_result.map_err(|e| DataError::CSVError(e.to_string()))?;
+        data_rows.push(row.to_datarow());
     }
 
-    // For each ID, we ultimately create a [Subject] object
-    for (id, rows) in rows_map {
-        // Split rows into vectors of rows, creating the occasions
-        let split_indices: Vec<usize> = rows
-            .iter()
-            .enumerate()
-            .filter_map(|(i, row)| if row.evid == 4 { Some(i) } else { None })
-            .collect();
-
-        let mut block_rows_vec = Vec::new();
-        let mut start = 0;
-        for &split_index in &split_indices {
-            let end = split_index;
-            if start < rows.len() {
-                block_rows_vec.push(&rows[start..end]);
-            }
-            start = end;
-        }
-
-        if start < rows.len() {
-            block_rows_vec.push(&rows[start..]);
-        }
-
-        let block_rows: Vec<Vec<Row>> = block_rows_vec.iter().map(|block| block.to_vec()).collect();
-        let mut occasions: Vec<Occasion> = Vec::new();
-        for (block_index, rows) in block_rows.clone().iter().enumerate() {
-            // Collector for all events
-            let mut events: Vec<Event> = Vec::new();
-
-            // Parse events
-            for row in rows.clone() {
-                match row.parse_events() {
-                    Ok(ev) => events.extend(ev),
-                    Err(e) => {
-                        // dbg!(&row);
-                        // dbg!(&e);
-                        return Err(e);
-                    }
-                }
-            }
-
-            // Parse covariates - collect raw observations
-            let mut cloned_rows = rows.clone();
-            cloned_rows.retain(|row| !row.covs.is_empty());
-
-            // Collect all covariates by name
-            let mut observed_covariates: HashMap<String, Vec<(f64, Option<f64>)>> = HashMap::new();
-            for row in &cloned_rows {
-                for (key, value) in &row.covs {
-                    if let Some(val) = value {
-                        observed_covariates
-                            .entry(key.clone())
-                            .or_default()
-                            .push((row.time, Some(*val)));
-                    }
-                }
-            }
-
-            // Parse the raw covariate observations and build covariates
-            let covariates = Covariates::from_pmetrics_observations(&observed_covariates);
-
-            // Create the occasion
-            let mut occasion = Occasion::new(block_index);
-            events.iter_mut().for_each(|e| e.set_occasion(block_index));
-            occasion.events = events;
-            occasion.covariates = covariates;
-            occasion.sort();
-            occasions.push(occasion);
-        }
-
-        let subject = Subject::new(id, occasions);
-        subjects.push(subject);
-    }
-
-    // Sort subjects alphabetically by ID to get consistent ordering
-    subjects.sort_by(|a, b| a.id().cmp(b.id()));
-    let data = Data::new(subjects);
-
-    Ok(data)
+    // Use the shared build_data logic
+    build_data(data_rows)
 }
 
 /// A [Row] represents a row in the Pmetrics data format
@@ -238,95 +124,33 @@ struct Row {
 }
 
 impl Row {
-    /// Get the error polynomial coefficients
-    fn get_errorpoly(&self) -> Option<ErrorPoly> {
-        match (self.c0, self.c1, self.c2, self.c3) {
-            (Some(c0), Some(c1), Some(c2), Some(c3)) => Some(ErrorPoly::new(c0, c1, c2, c3)),
-            _ => None,
+    /// Convert this Row to a DataRow for parsing
+    fn to_datarow(&self) -> DataRow {
+        DataRow {
+            id: self.id.clone(),
+            time: self.time,
+            evid: self.evid as i32,
+            dose: self.dose,
+            dur: self.dur,
+            addl: self.addl.map(|a| a as i64),
+            ii: self.ii,
+            input: self.input,
+            // Treat -99 as missing value (Pmetrics convention)
+            out: self
+                .out
+                .and_then(|v| if v == -99.0 { None } else { Some(v) }),
+            outeq: self.outeq,
+            cens: self.cens,
+            c0: self.c0,
+            c1: self.c1,
+            c2: self.c2,
+            c3: self.c3,
+            covariates: self
+                .covs
+                .iter()
+                .filter_map(|(k, v)| v.map(|val| (k.clone(), val)))
+                .collect(),
         }
-    }
-    fn parse_events(self) -> Result<Vec<Event>, PmetricsError> {
-        let mut events: Vec<Event> = Vec::new();
-
-        match self.evid {
-            0 => events.push(Event::Observation(Observation::new(
-                self.time,
-                if self.out == Some(-99.0) {
-                    None
-                } else {
-                    self.out
-                },
-                self.outeq
-                    .ok_or_else(|| PmetricsError::MissingObservationOuteq {
-                        id: self.id.clone(),
-                        time: self.time,
-                    })?
-                    - 1,
-                self.get_errorpoly(),
-                0,
-                self.cens.unwrap_or(Censor::None),
-            ))),
-            1 | 4 => {
-                let event = if self.dur.unwrap_or(0.0) > 0.0 {
-                    Event::Infusion(Infusion::new(
-                        self.time,
-                        self.dose
-                            .ok_or_else(|| PmetricsError::MissingInfusionDose {
-                                id: self.id.clone(),
-                                time: self.time,
-                            })?,
-                        self.input
-                            .ok_or_else(|| PmetricsError::MissingInfusionInput {
-                                id: self.id.clone(),
-                                time: self.time,
-                            })?
-                            - 1,
-                        self.dur.ok_or_else(|| PmetricsError::MissingInfusionDur {
-                            id: self.id.clone(),
-                            time: self.time,
-                        })?,
-                        0,
-                    ))
-                } else {
-                    Event::Bolus(Bolus::new(
-                        self.time,
-                        self.dose.ok_or_else(|| PmetricsError::MissingBolusDose {
-                            id: self.id.clone(),
-                            time: self.time,
-                        })?,
-                        self.input.ok_or(PmetricsError::MissingBolusInput {
-                            id: self.id,
-                            time: self.time,
-                        })? - 1,
-                        0,
-                    ))
-                };
-                if self.addl.is_some()
-                    && self.ii.is_some()
-                    && self.addl.unwrap_or(0) != 0
-                    && self.ii.unwrap_or(0.0) > 0.0
-                {
-                    let mut ev = event.clone();
-                    let interval = &self.ii.unwrap().abs();
-                    let repetitions = &self.addl.unwrap().abs();
-                    let direction = &self.addl.unwrap().signum();
-
-                    for _ in 0..*repetitions {
-                        ev.inc_time((*direction as f64) * interval);
-                        events.push(ev.clone());
-                    }
-                }
-                events.push(event);
-            }
-            _ => {
-                return Err(PmetricsError::UnknownEvid {
-                    evid: self.evid,
-                    id: self.id.clone(),
-                    time: self.time,
-                });
-            }
-        };
-        Ok(events)
     }
 }
 
@@ -457,7 +281,7 @@ impl Data {
                             let value = obs
                                 .value()
                                 .map_or_else(|| ".".to_string(), |v| v.to_string());
-                            let outeq = (obs.outeq() + 1).to_string();
+                            let outeq = obs.outeq().to_string();
                             let censor = match obs.censoring() {
                                 Censor::None => "0".to_string(),
                                 Censor::BLOQ => "1".to_string(),
@@ -514,7 +338,7 @@ impl Data {
                                     &inf.amount().to_string(),
                                     &".".to_string(),
                                     &".".to_string(),
-                                    &(inf.input() + 1).to_string(),
+                                    &inf.input().to_string(),
                                     &".".to_string(),
                                     &".".to_string(),
                                     &".".to_string(),
@@ -535,7 +359,7 @@ impl Data {
                                     &bol.amount().to_string(),
                                     &".".to_string(),
                                     &".".to_string(),
-                                    &(bol.input() + 1).to_string(),
+                                    &bol.input().to_string(),
                                     &".".to_string(),
                                     &".".to_string(),
                                     &".".to_string(),
@@ -608,8 +432,8 @@ mod tests {
     #[test]
     fn write_pmetrics_preserves_infusion_input() {
         let subject = Subject::builder("writer")
-            .infusion(0.0, 200.0, 2, 1.0)
-            .observation(1.0, 0.0, 0)
+            .infusion(0.0, 200.0, 3, 1.0) // input=3 (1-indexed)
+            .observation(1.0, 0.0, 1) // outeq=1 (1-indexed)
             .build();
         let data = Data::new(vec![subject]);
 
@@ -627,7 +451,7 @@ mod tests {
             .find(|record| record.get(3) != Some("0"))
             .expect("infusion row missing");
 
-        assert_eq!(infusion_row.get(7), Some("3"));
+        assert_eq!(infusion_row.get(7), Some("3")); // Written as-is (1-indexed)
     }
 
     #[test]

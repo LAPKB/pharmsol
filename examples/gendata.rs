@@ -3,11 +3,10 @@ use std::{fs::File, path::Path};
 
 // use error_model::{ErrorModel, ErrorType};
 // use ndarray::Array2;
-use pharmsol::*;
-// use prelude::simulator::pf_psi;
+use pharmsol::prelude::*;
 use rand_distr::Distribution;
 fn main() {
-    let subject = data::Subject::builder("id1")
+    let subject = Subject::builder("id1")
         .bolus(0.0, 20.0, 0)
         .missing_observation(0.0, 0)
         .repeat(5, 0.2)
@@ -37,9 +36,10 @@ fn main() {
             fetch_params!(p, _ke0);
             y[0] = x[0] / 50.0;
         },
-        (2, 1),
         1,
-    );
+    )
+    .with_nstates(2)
+    .with_nout(1);
 
     let ke_dist = rand_distr::Normal::new(1.2, 0.12).unwrap();
     // let v_dist = rand_distr::Normal::new(50.0, 10.0).unwrap();
@@ -65,13 +65,13 @@ fn main() {
         let trajectories = sde.estimate_predictions(&subject, spp).unwrap();
         let trajectory = trajectories.row(0);
         // dbg!(&trajectory);
-        let mut sb = data::Subject::builder(format!("id{}", i)).bolus(0.0, 20.0, 0);
+        let mut sb = Subject::builder(format!("id{}", i)).bolus(0.0, 20.0, 0);
         for (t, point) in trajectory.iter().enumerate() {
             sb = sb.observation((t) as f64 * 0.2, point.prediction(), 0);
         }
         data.push(sb.build());
     }
-    let data = data::Data::new(data);
+    let data = Data::new(data);
     data.write_pmetrics(&File::create(Path::new("test.csv")).unwrap())
         .unwrap();
     // let mut theta = Array2::zeros((1, 3));

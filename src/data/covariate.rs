@@ -374,6 +374,33 @@ impl Covariates {
             .collect()
     }
 
+    /// Produce a content-based hash of all covariates.
+    ///
+    /// The internal `BTreeMap` guarantees deterministic iteration order.
+    pub fn hash(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = ahash::AHasher::default();
+        for (name, cov) in &self.covariates {
+            name.hash(&mut hasher);
+            for seg in &cov.segments {
+                seg.from.to_bits().hash(&mut hasher);
+                seg.to.map(|t| t.to_bits()).hash(&mut hasher);
+                match &seg.method {
+                    crate::data::covariate::Interpolation::Linear { slope, intercept } => {
+                        0u8.hash(&mut hasher);
+                        slope.to_bits().hash(&mut hasher);
+                        intercept.to_bits().hash(&mut hasher);
+                    }
+                    crate::data::covariate::Interpolation::CarryForward { value } => {
+                        1u8.hash(&mut hasher);
+                        value.to_bits().hash(&mut hasher);
+                    }
+                }
+            }
+        }
+        hasher.finish()
+    }
+
     /// Add a covariate to the collection
     ///
     /// This method allows you to add a new covariate with a specific name and its associated data.
@@ -743,5 +770,45 @@ mod tests {
             69.0,
             "Subject 2 weight at time 48 should be 69.0"
         );
+    }
+
+    #[test]
+    fn covariates_hash_deterministic() {
+        let mut covs = Covariates::new();
+        let mut cov = Covariate::new("wt".into(), false);
+        cov.add_observation(0.0, 70.0);
+        cov.add_observation(24.0, 72.0);
+        covs.add_covariate("wt".into(), cov);
+        assert_eq!(covs.hash(), covs.hash());
+    }
+
+    #[test]
+    fn covariates_hash_differs_on_value_change() {
+        let mut covs_a = Covariates::new();
+        let mut cov_a = Covariate::new("wt".into(), false);
+        cov_a.add_observation(0.0, 70.0);
+        covs_a.add_covariate("wt".into(), cov_a);
+
+        let mut covs_b = Covariates::new();
+        let mut cov_b = Covariate::new("wt".into(), false);
+        cov_b.add_observation(0.0, 80.0);
+        covs_b.add_covariate("wt".into(), cov_b);
+
+        assert_ne!(covs_a.hash(), covs_b.hash());
+    }
+
+    #[test]
+    fn covariates_hash_differs_on_name() {
+        let mut covs_a = Covariates::new();
+        let mut cov_a = Covariate::new("wt".into(), false);
+        cov_a.add_observation(0.0, 70.0);
+        covs_a.add_covariate("wt".into(), cov_a);
+
+        let mut covs_b = Covariates::new();
+        let mut cov_b = Covariate::new("ht".into(), false);
+        cov_b.add_observation(0.0, 70.0);
+        covs_b.add_covariate("ht".into(), cov_b);
+
+        assert_ne!(covs_a.hash(), covs_b.hash());
     }
 }

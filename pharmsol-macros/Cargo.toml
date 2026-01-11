@@ -1,0 +1,16 @@
+[package]
+name = "pharmsol-macros"
+version = "0.1.0"
+edition = "2021"
+description = "Procedural macros for pharmsol. Not intended for direct use."
+license = "GPL-3.0"
+repository = "https://github.com/LAPKB/pharmsol"
+readme = "README.md"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full"] }

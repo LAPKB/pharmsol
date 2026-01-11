@@ -1,6 +1,5 @@
 fn main() {
-    use data::Subject;
-    use pharmsol::*;
+    use pharmsol::prelude::*;
 
     let subject = Subject::builder("id1")
         .bolus(0.0, 100.0, 0)
@@ -15,11 +14,11 @@ fn main() {
         .build();
     println!("{subject}");
     let ode = equation::ODE::new(
-        |x, p, _t, dx, _b, _rateiv, _cov| {
+        |x, p, _t, dx, b, _rateiv, _cov| {
             // fetch_cov!(cov, t,);
             fetch_params!(p, ka, ke, _tlag, _v);
             //Struct
-            dx[0] = -ka * x[0];
+            dx[0] = -ka * x[0] + b[0];
             dx[1] = ka * x[0] - ke * x[1];
         },
         |p, _t, _cov| {
@@ -32,8 +31,10 @@ fn main() {
             fetch_params!(p, _ka, _ke, _tlag, v);
             y[0] = x[1] / v;
         },
-        (2, 1),
-    );
+    )
+    .with_nstates(2)
+    .with_ndrugs(5)
+    .with_nout(1);
 
     let op = ode
         .estimate_predictions(&subject, &vec![0.3, 0.5, 0.1, 70.0])

@@ -36,8 +36,9 @@ fn readme(n: usize) {
             fetch_params!(p, _ka, _ke, _tlag, v);
             y[0] = x[1] / v;
         },
-        (2, 1),
-    );
+    )
+    .with_nstates(2)
+    .with_nout(1);
     for _ in 0..n {
         let op = ode
             .estimate_predictions(&subject, &vec![0.3, 0.5, 0.1, 70.0])

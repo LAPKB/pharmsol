@@ -7,11 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.0](https://github.com/LAPKB/pharmsol/compare/v0.23.0...v0.24.0) - 2026-03-23
+
+### Added
+
+- Improved functionality for defining equations ([#226](https://github.com/LAPKB/pharmsol/pull/226))
+- Add CL-based one and two compartment models ([#227](https://github.com/LAPKB/pharmsol/pull/227))
+
+## [0.23.0](https://github.com/LAPKB/pharmsol/compare/v0.22.1...v0.23.0) - 2026-03-16
+
+### Added
+
+- Remove LikelihoodMatrixOptions ([#222](https://github.com/LAPKB/pharmsol/pull/222))
+- Use a sized cache with new subject hashing ([#214](https://github.com/LAPKB/pharmsol/pull/214))
+- Normalized rows  ([#205](https://github.com/LAPKB/pharmsol/pull/205))
+
+### Fixed
+
+- Fix test and capture error to drop ([#220](https://github.com/LAPKB/pharmsol/pull/220))
+- Prevents creating a terminal on windows ([#179](https://github.com/LAPKB/pharmsol/pull/179))
+- *(exa)* invalidate compilation cache when pharmsol version changes ([#217](https://github.com/LAPKB/pharmsol/pull/217))
+- Update sort order of events ([#219](https://github.com/LAPKB/pharmsol/pull/219))
+
+### Other
+
+- Bump actions/upload-artifact from 6 to 7 ([#215](https://github.com/LAPKB/pharmsol/pull/215))
+- Update ndarray requirement from 0.16.1 to 0.17.2 ([#195](https://github.com/LAPKB/pharmsol/pull/195))
+- Update rand requirement from 0.9.0 to 0.10.0 ([#207](https://github.com/LAPKB/pharmsol/pull/207))
+- Update diffsol requirement from =0.8.0 to =0.10.4 ([#206](https://github.com/LAPKB/pharmsol/pull/206))
+- Bump actions/cache from 4 to 5 ([#184](https://github.com/LAPKB/pharmsol/pull/184))
+- Delete .DS_Store ([#191](https://github.com/LAPKB/pharmsol/pull/191))
+- Bump actions/upload-artifact from 4 to 6 ([#193](https://github.com/LAPKB/pharmsol/pull/193))
+- Bump actions/checkout from 4 to 6 ([#192](https://github.com/LAPKB/pharmsol/pull/192))
+- Prepare for submission to JOSS ([#186](https://github.com/LAPKB/pharmsol/pull/186))
+- Update examples ([#183](https://github.com/LAPKB/pharmsol/pull/183))
+
 ## [0.22.1](https://github.com/LAPKB/pharmsol/compare/v0.22.0...v0.22.1) - 2025-12-11
 
 ### Other
 
-- *(Exa)* when installing Vial on MacOs, the environment varaibles are not completly shared to the sandbox in which Vial is running, this changes are meant to provide vial a better way to approach finding the rust binary ([#181](https://github.com/LAPKB/pharmsol/pull/181))
+- _(Exa)_ when installing Papir on MacOs, the environment variables are not completely shared to the sandbox in which Papir is running, this changes are meant to provide papir a better way to approach finding the rust binary ([#181](https://github.com/LAPKB/pharmsol/pull/181))
 - Update diffsol requirement from =0.7.0 to =0.8.0 ([#176](https://github.com/LAPKB/pharmsol/pull/176))
 - Update criterion requirement from 0.7.0 to 0.8.0 ([#177](https://github.com/LAPKB/pharmsol/pull/177))
 - Update libloading requirement from 0.8.6 to 0.9.0 ([#162](https://github.com/LAPKB/pharmsol/pull/162))
@@ -218,7 +253,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Add events to occasions
 - Expose functions for number of states and outeqs
-- Add support for multiple error models  ([#65](https://github.com/LAPKB/pharmsol/pull/65))
+- Add support for multiple error models ([#65](https://github.com/LAPKB/pharmsol/pull/65))
 
 ## [0.9.1](https://github.com/LAPKB/pharmsol/compare/v0.9.0...v0.9.1) - 2025-05-22
 

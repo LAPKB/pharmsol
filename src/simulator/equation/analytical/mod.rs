@@ -1,18 +1,27 @@
+pub mod one_compartment_cl_models;
 pub mod one_compartment_models;
+pub mod three_compartment_cl_models;
 pub mod three_compartment_models;
+pub mod two_compartment_cl_models;
 pub mod two_compartment_models;
 
 use diffsol::{NalgebraContext, Vector, VectorHost};
+pub use one_compartment_cl_models::*;
 pub use one_compartment_models::*;
+pub use three_compartment_cl_models::*;
 pub use three_compartment_models::*;
+pub use two_compartment_cl_models::*;
 pub use two_compartment_models::*;
 
+use super::id_hash;
+use super::spphash;
+
+use crate::data::error_model::AssayErrorModels;
+use crate::simulator::cache::{ana_cache_lock_read, cache_enabled};
 use crate::PharmsolError;
 use crate::{
     data::Covariates, simulator::*, Equation, EquationPriv, EquationTypes, Observation, Subject,
 };
-use cached::proc_macro::cached;
-use cached::UnboundCache;
 
 /// Model equation using analytical solutions.
 ///
@@ -31,25 +40,16 @@ pub struct Analytical {
 }
 
 impl Analytical {
-    /// Create a new Analytical equation model.
+    /// Create a new Analytical equation model with default Neqs (all sizes = 5).
     ///
-    /// # Parameters
-    /// - `eq`: The analytical equation function
-    /// - `seq_eq`: The secondary equation function
-    /// - `lag`: The lag time function
-    /// - `fa`: The fraction absorbed function
-    /// - `init`: The initial state function
-    /// - `out`: The output equation function
-    /// - `neqs`: The number of states and output equations
-    pub fn new(
-        eq: AnalyticalEq,
-        seq_eq: SecEq,
-        lag: Lag,
-        fa: Fa,
-        init: Init,
-        out: Out,
-        neqs: Neqs,
-    ) -> Self {
+    /// Use builder methods to configure dimensions:
+    /// ```ignore
+    /// Analytical::new(eq, seq_eq, lag, fa, init, out)
+    ///     .with_nstates(2)
+    ///     .with_ndrugs(1)
+    ///     .with_nout(1)
+    /// ```
+    pub fn new(eq: AnalyticalEq, seq_eq: SecEq, lag: Lag, fa: Fa, init: Init, out: Out) -> Self {
         Self {
             eq,
             seq_eq,
@@ -57,8 +57,26 @@ impl Analytical {
             fa,
             init,
             out,
-            neqs,
+            neqs: Neqs::default(),
         }
+    }
+
+    /// Set the number of state variables.
+    pub fn with_nstates(mut self, nstates: usize) -> Self {
+        self.neqs.nstates = nstates;
+        self
+    }
+
+    /// Set the number of drug input channels (size of bolus[] and rateiv[]).
+    pub fn with_ndrugs(mut self, ndrugs: usize) -> Self {
+        self.neqs.ndrugs = ndrugs;
+        self
+    }
+
+    /// Set the number of output equations.
+    pub fn with_nout(mut self, nout: usize) -> Self {
+        self.neqs.nout = nout;
+        self
     }
 }
 
@@ -100,12 +118,17 @@ impl EquationPriv for Analytical {
 
     #[inline(always)]
     fn get_nstates(&self) -> usize {
-        self.neqs.0
+        self.neqs.nstates
+    }
+
+    #[inline(always)]
+    fn get_ndrugs(&self) -> usize {
+        self.neqs.ndrugs
     }
 
     #[inline(always)]
     fn get_nouteqs(&self) -> usize {
-        self.neqs.1
+        self.neqs.nout
     }
     #[inline(always)]
     fn solve(
@@ -141,7 +164,7 @@ impl EquationPriv for Analytical {
         // 2) March over each sub-interval
         let mut current_t = ts[0];
         let mut sp = V::from_vec(support_point.to_owned(), NalgebraContext);
-        let mut rateiv = V::zeros(self.get_nstates(), NalgebraContext);
+        let mut rateiv = V::zeros(self.get_ndrugs(), NalgebraContext);
 
         for &next_t in &ts[1..] {
             // prepare support and infusion rate for [current_t .. next_t]
@@ -150,6 +173,12 @@ impl EquationPriv for Analytical {
                 let s = inf.time();
                 let e = s + inf.duration();
                 if current_t >= s && next_t <= e {
+                    if inf.input() >= self.get_ndrugs() {
+                        return Err(PharmsolError::InputOutOfRange {
+                            input: inf.input(),
+                            ndrugs: self.get_ndrugs(),
+                        });
+                    }
                     rateiv[inf.input()] += inf.amount() / inf.duration();
                 }
             }
@@ -159,7 +188,7 @@ impl EquationPriv for Analytical {
 
             // advance state by dt
             let dt = next_t - current_t;
-            *x = (self.eq)(x, &sp, dt, rateiv.clone(), covariates);
+            *x = (self.eq)(x, &sp, dt, &rateiv, covariates);
 
             current_t = next_t;
         }
@@ -172,7 +201,7 @@ impl EquationPriv for Analytical {
         &self,
         support_point: &Vec<f64>,
         observation: &Observation,
-        error_models: Option<&ErrorModels>,
+        error_models: Option<&AssayErrorModels>,
         _time: f64,
         covariates: &Covariates,
         x: &mut Self::S,
@@ -191,7 +220,7 @@ impl EquationPriv for Analytical {
         let pred = y[observation.outeq()];
         let pred = observation.to_prediction(pred, x.as_slice().to_vec());
         if let Some(error_models) = error_models {
-            likelihood.push(pred.likelihood(error_models)?);
+            likelihood.push(pred.log_likelihood(error_models)?.exp());
         }
         output.add_prediction(pred);
         Ok(())
@@ -213,14 +242,67 @@ impl EquationPriv for Analytical {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::SubjectBuilderExt;
     use std::collections::HashMap;
 
+    pub(crate) enum SubjectInfo {
+        InfusionDosing,
+        OralInfusionDosage,
+    }
+    impl SubjectInfo {
+        pub(crate) fn get_subject(&self) -> Subject {
+            match self {
+                SubjectInfo::InfusionDosing => Subject::builder("id1")
+                    .bolus(0.0, 100.0, 0)
+                    .infusion(24.0, 150.0, 0, 3.0)
+                    .missing_observation(0.0, 0)
+                    .missing_observation(1.0, 0)
+                    .missing_observation(2.0, 0)
+                    .missing_observation(4.0, 0)
+                    .missing_observation(8.0, 0)
+                    .missing_observation(12.0, 0)
+                    .missing_observation(24.0, 0)
+                    .missing_observation(25.0, 0)
+                    .missing_observation(26.0, 0)
+                    .missing_observation(27.0, 0)
+                    .missing_observation(28.0, 0)
+                    .missing_observation(32.0, 0)
+                    .missing_observation(36.0, 0)
+                    .build(),
+
+                SubjectInfo::OralInfusionDosage => Subject::builder("id1")
+                    .bolus(0.0, 100.0, 1)
+                    .infusion(24.0, 150.0, 0, 3.0)
+                    .bolus(48.0, 100.0, 0)
+                    .missing_observation(0.0, 0)
+                    .missing_observation(1.0, 0)
+                    .missing_observation(2.0, 0)
+                    .missing_observation(4.0, 0)
+                    .missing_observation(8.0, 0)
+                    .missing_observation(12.0, 0)
+                    .missing_observation(24.0, 0)
+                    .missing_observation(25.0, 0)
+                    .missing_observation(26.0, 0)
+                    .missing_observation(27.0, 0)
+                    .missing_observation(28.0, 0)
+                    .missing_observation(32.0, 0)
+                    .missing_observation(36.0, 0)
+                    .missing_observation(48.0, 0)
+                    .missing_observation(49.0, 0)
+                    .missing_observation(50.0, 0)
+                    .missing_observation(52.0, 0)
+                    .missing_observation(56.0, 0)
+                    .missing_observation(60.0, 0)
+                    .build(),
+            }
+        }
+    }
+
     #[test]
     fn secondary_equations_accumulate_within_single_solve() {
-        let eq = |x: &V, p: &V, dt: f64, _rateiv: V, _cov: &Covariates| {
+        let eq = |x: &V, p: &V, dt: f64, _rateiv: &V, _cov: &Covariates| {
             let mut next = x.clone();
             next[0] += p[0] * dt;
             next
@@ -237,7 +319,10 @@ mod tests {
             y[0] = x[0];
         };
 
-        let analytical = Analytical::new(eq, seq_eq, lag, fa, init, out, (1, 1));
+        let analytical = Analytical::new(eq, seq_eq, lag, fa, init, out)
+            .with_nstates(1)
+            .with_ndrugs(1)
+            .with_nout(1);
         let subject = Subject::builder("seq")
             .bolus(0.0, 0.0, 0)
             .infusion(0.25, 1.0, 0, 0.25)
@@ -254,7 +339,7 @@ mod tests {
 
     #[test]
     fn infusion_inputs_match_state_dimension() {
-        let eq = |x: &V, _p: &V, dt: f64, rateiv: V, _cov: &Covariates| {
+        let eq = |x: &V, _p: &V, dt: f64, rateiv: &V, _cov: &Covariates| {
             let mut next = x.clone();
             next[0] += rateiv[3] * dt;
             next
@@ -269,7 +354,10 @@ mod tests {
             y[0] = x[0];
         };
 
-        let analytical = Analytical::new(eq, seq_eq, lag, fa, init, out, (4, 1));
+        let analytical = Analytical::new(eq, seq_eq, lag, fa, init, out)
+            .with_nstates(4)
+            .with_ndrugs(4)
+            .with_nout(1);
         let subject = Subject::builder("inf")
             .infusion(0.0, 4.0, 3, 1.0)
             .observation(1.0, 0.0, 0)
@@ -287,24 +375,18 @@ impl Equation for Analytical {
         &self,
         subject: &Subject,
         support_point: &Vec<f64>,
-        error_models: &ErrorModels,
-        cache: bool,
+        error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
-        _estimate_likelihood(self, subject, support_point, error_models, cache)
+        _estimate_likelihood(self, subject, support_point, error_models)
     }
 
     fn estimate_log_likelihood(
         &self,
         subject: &Subject,
         support_point: &Vec<f64>,
-        error_models: &ErrorModels,
-        cache: bool,
+        error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
-        let ypred = if cache {
-            _subject_predictions(self, subject, support_point)
-        } else {
-            _subject_predictions_no_cache(self, subject, support_point)
-        }?;
+        let ypred = _subject_predictions(self, subject, support_point)?;
         ypred.log_likelihood(error_models)
     }
 
@@ -313,46 +395,35 @@ impl Equation for Analytical {
     }
 }
 
-/// Hash support points to a u64 for cache key generation.
-/// Uses DefaultHasher for good distribution and collision resistance.
 #[inline(always)]
-fn spphash(spp: &[f64]) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::hash::DefaultHasher::new();
-    for &value in spp {
-        // Normalize -0.0 to 0.0 for consistent hashing
-        let bits = if value == 0.0 { 0u64 } else { value.to_bits() };
-        bits.hash(&mut hasher);
-    }
-    hasher.finish()
-}
-
-#[inline(always)]
-#[cached(
-    ty = "UnboundCache<(u64, u64), SubjectPredictions>",
-    create = "{ UnboundCache::with_capacity(100_000) }",
-    convert = r#"{ (subject.hash(), spphash(support_point)) }"#,
-    result = "true"
-)]
 fn _subject_predictions(
     ode: &Analytical,
     subject: &Subject,
     support_point: &Vec<f64>,
 ) -> Result<SubjectPredictions, PharmsolError> {
-    Ok(ode.simulate_subject(subject, support_point, None)?.0)
+    if cache_enabled() {
+        let key = (id_hash(subject.id()), spphash(support_point));
+        let cache_guard = ana_cache_lock_read()?;
+        if let Some(cached) = cache_guard.get(&key) {
+            return Ok(cached);
+        }
+        drop(cache_guard);
+
+        let result = ode.simulate_subject(subject, support_point, None)?.0;
+        let cache_guard = ana_cache_lock_read()?;
+        cache_guard.insert(key, result.clone());
+        Ok(result)
+    } else {
+        Ok(ode.simulate_subject(subject, support_point, None)?.0)
+    }
 }
 
 fn _estimate_likelihood(
     ode: &Analytical,
     subject: &Subject,
     support_point: &Vec<f64>,
-    error_models: &ErrorModels,
-    cache: bool,
+    error_models: &AssayErrorModels,
 ) -> Result<f64, PharmsolError> {
-    let ypred = if cache {
-        _subject_predictions(ode, subject, support_point)
-    } else {
-        _subject_predictions_no_cache(ode, subject, support_point)
-    }?;
-    ypred.likelihood(error_models)
+    let ypred = _subject_predictions(ode, subject, support_point)?;
+    Ok(ypred.log_likelihood(error_models)?.exp())
 }

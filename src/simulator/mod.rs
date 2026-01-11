@@ -1,10 +1,10 @@
+pub mod cache;
 pub mod equation;
 pub(crate) mod likelihood;
 use diffsol::{NalgebraMat, NalgebraVec};
 
 use crate::{
     data::{Covariates, Infusion},
-    error_model::ErrorModels,
     simulator::likelihood::SubjectPredictions,
 };
 
@@ -21,12 +21,12 @@ pub type M = NalgebraMat<T>;
 ///
 /// # Parameters
 /// - `x`: The state vector at time t
-/// - `p`: The parameters of the model; Use the [fetch_params!] macro to extract the parameters
+/// - `p`: The parameters of the model; Use the `fetch_params!` macro to extract the parameters
 /// - `t`: The time at which the differential equation is evaluated
 /// - `dx`: A mutable reference to the derivative of the state vector at time t
 /// - `bolus`: A vector of bolus amounts at time t
 /// - `rateiv`: A vector of infusion rates at time t
-/// - `cov`: A reference to the covariates at time t; Use the [fetch_cov!] macro to extract the covariates
+/// - `cov`: A reference to the covariates at time t; Use the `fetch_cov!` macro to extract the covariates
 ///
 /// # Example
 /// ```ignore
@@ -41,27 +41,27 @@ pub type M = NalgebraMat<T>;
 pub type DiffEq = fn(&V, &V, T, &mut V, &V, &V, &Covariates);
 
 /// This closure represents an Analytical solution of the model.
-/// See [analytical] module for examples.
+/// See [`equation::analytical`] module for examples.
 ///
 /// # Parameters
 /// - `x`: The state vector at time t
-/// - `p`: The parameters of the model; Use the [fetch_params!] macro to extract the parameters
+/// - `p`: The parameters of the model; Use the `fetch_params!` macro to extract the parameters
 /// - `t`: The time at which the output equation is evaluated
-/// - `rateiv`: A vector of infusion rates at time t
-/// - `cov`: A reference to the covariates at time t; Use the [fetch_cov!] macro to extract the covariates
+/// - `rateiv`: A reference to a vector of infusion rates at time t
+/// - `cov`: A reference to the covariates at time t; Use the `fetch_cov!` macro to extract the covariates
 ///
 /// TODO: Remove covariates. They are not used in the analytical solution
-pub type AnalyticalEq = fn(&V, &V, T, V, &Covariates) -> V;
+pub type AnalyticalEq = fn(&V, &V, T, &V, &Covariates) -> V;
 
 /// This closure represents the drift term of a stochastic differential equation model.
 ///
 /// # Parameters
 /// - `x`: The state vector at time t
-/// - `p`: The parameters of the model; Use the [fetch_params!] macro to extract the parameters
+/// - `p`: The parameters of the model; Use the `fetch_params!` macro to extract the parameters
 /// - `t`: The time at which the drift term is evaluated
 /// - `dx`: A mutable reference to the derivative of the state vector at time t
 /// - `rateiv`: A vector of infusion rates at time t
-/// - `cov`: A reference to the covariates at time t; Use the [fetch_cov!] macro to extract the covariates
+/// - `cov`: A reference to the covariates at time t; Use the `fetch_cov!` macro to extract the covariates
 ///
 /// # Example
 /// ```ignore
@@ -78,12 +78,12 @@ pub type AnalyticalEq = fn(&V, &V, T, V, &Covariates) -> V;
 /// };
 /// ```
 // pub type Drift = DiffEq;
-pub type Drift = fn(&V, &V, T, &mut V, V, &Covariates);
+pub type Drift = fn(&V, &V, T, &mut V, &V, &Covariates);
 
 /// This closure represents the diffusion term of a stochastic differential equation model.
 ///
 /// # Parameters
-/// - `p`: The parameters of the model; Use the [fetch_params!] macro to extract the parameters
+/// - `p`: The parameters of the model; Use the `fetch_params!` macro to extract the parameters
 /// - `d`: A mutable reference to the diffusion term for each state variable
 ///   (This vector should have the same length as the x, and dx vectors on the drift closure)
 pub type Diffusion = fn(&V, &mut V);
@@ -91,9 +91,9 @@ pub type Diffusion = fn(&V, &mut V);
 /// This closure represents the initial state of the system.
 ///
 /// # Parameters
-/// - `p`: The parameters of the model; Use the [fetch_params!] macro to extract the parameters
+/// - `p`: The parameters of the model; Use the `fetch_params!` macro to extract the parameters
 /// - `t`: The time at which the initial state is evaluated; Hardcoded to 0.0
-/// - `cov`: A reference to the covariates at time t; Use the [fetch_cov!] macro to extract the covariates
+/// - `cov`: A reference to the covariates at time t; Use the `fetch_cov!` macro to extract the covariates
 /// - `x`: A mutable reference to the state vector at time t
 ///
 /// # Example
@@ -112,9 +112,9 @@ pub type Init = fn(&V, T, &Covariates, &mut V);
 ///
 /// # Parameters
 /// - `x`: The state vector at time t
-/// - `p`: The parameters of the model; Use the [fetch_params!] macro to extract the parameters
+/// - `p`: The parameters of the model; Use the `fetch_params!` macro to extract the parameters
 /// - `t`: The time at which the output equation is evaluated
-/// - `cov`: A reference to the covariates at time t; Use the [fetch_cov!] macro to extract the covariates
+/// - `cov`: A reference to the covariates at time t; Use the `fetch_cov!` macro to extract the covariates
 /// - `y`: A mutable reference to the output vector at time t
 ///
 /// # Example
@@ -132,9 +132,9 @@ pub type Out = fn(&V, &V, T, &Covariates, &mut V);
 /// Secondary equations are used to update the parameter values based on the covariates.
 ///
 /// # Parameters
-/// - `p`: The parameters of the model; Use the [fetch_params!] macro to extract the parameters
+/// - `p`: The parameters of the model; Use the `fetch_params!` macro to extract the parameters
 /// - `t`: The time at which the secondary equation is evaluated
-/// - `cov`: A reference to the covariates at time t; Use the [fetch_cov!] macro to extract the covariates
+/// - `cov`: A reference to the covariates at time t; Use the `fetch_cov!` macro to extract the covariates
 ///
 /// # Example
 /// ```ignore
@@ -152,12 +152,12 @@ pub type SecEq = fn(&mut V, T, &Covariates);
 /// The lag term delays only the boluses going into a specific compartment.
 ///
 /// # Parameters
-/// - `p`: The parameters of the model; Use the [fetch_params!] macro to extract the parameters
+/// - `p`: The parameters of the model; Use the `fetch_params!` macro to extract the parameters
 ///
 /// # Returns
 /// - A hashmap with the lag times for each compartment. If not present, lag is assumed to be 0.
 ///
-/// There is a convenience macro [lag!] to create the hashmap
+/// There is a convenience macro `lag!` to create the hashmap
 ///
 /// # Example
 /// ```ignore
@@ -177,12 +177,12 @@ pub type Lag = fn(&V, T, &Covariates) -> HashMap<usize, T>;
 /// The fa term is used to adjust the amount of drug that is absorbed into the system.
 ///
 /// # Parameters
-/// - `p`: The parameters of the model; Use the [fetch_params!] macro to extract the parameters
+/// - `p`: The parameters of the model; Use the `fetch_params!` macro to extract the parameters
 ///
 /// # Returns
 /// - A hashmap with the fraction absorbed for each compartment. If not present, it is assumed to be 1.
 ///
-/// There is a convenience macro [fa!] to create the hashmap
+/// There is a convenience macro `fa!` to create the hashmap
 ///
 /// # Example
 /// ```ignore
@@ -196,18 +196,46 @@ pub type Lag = fn(&V, T, &Covariates) -> HashMap<usize, T>;
 /// absorbed into the second compartment by 0.3
 pub type Fa = fn(&V, T, &Covariates) -> HashMap<usize, T>;
 
-/// The number of states and output equations of the model.
+/// The dimensions of the model: number of states, drug inputs, and output equations.
 ///
-/// # Components
-/// - The first element is the number of states
-/// - The second element is the number of output equations
+/// # Fields
+/// - `nstates`: Number of state variables (ODE compartments)
+/// - `ndrugs`: Number of drug input channels (size of bolus[] and rateiv[])
+/// - `nout`: Number of output equations
 ///
-/// This is used to initialize the state vector and the output vector.
+/// # Defaults
+/// All dimensions default to 5 if not explicitly set via builder methods.
 ///
 /// # Example
 /// ```ignore
-/// let neqs = (2, 1);
+/// // Using the builder pattern on ODE/Analytical/SDE
+/// let ode = equation::ODE::new(diffeq, lag, fa, init, out)
+///     .with_nstates(2)
+///     .with_ndrugs(1)
+///     .with_nout(1);
 /// ```
-/// This means that the system of equations has 2 states and there is only 1 output equation.
-///
-pub type Neqs = (usize, usize);
+#[derive(Clone, Copy, Debug)]
+pub struct Neqs {
+    /// Number of state variables
+    pub nstates: usize,
+    /// Number of drug input channels (bolus/rateiv size)
+    pub ndrugs: usize,
+    /// Number of output equations
+    pub nout: usize,
+}
+
+impl Default for Neqs {
+    fn default() -> Self {
+        Self {
+            nstates: 5,
+            ndrugs: 5,
+            nout: 5,
+        }
+    }
+}
+
+// Re-export cache API at the simulator level for convenience.
+pub use cache::{
+    cache_enabled, cache_settings, configure_cache, disable_cache, enable_cache, reset_caches,
+    CacheSettings,
+};

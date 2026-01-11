@@ -150,6 +150,61 @@ fn find_m0(afinal: f64, b: f64, alpha: f64, h1: f64, h2: f64) -> f64 {
     xm
 }
 
+/// Computes the effect metric for a dual-site pharmacodynamic model.
+///
+/// This function calculates the maximum effect for a model where two binding sites
+/// contribute to the overall effect. The effect is computed as `xm / (xm + 1)` where `xm`
+/// is the optimal concentration that maximizes the combined effect from both sites.
+///
+/// # Model Description
+///
+/// The underlying model assumes the total effect is:
+/// ```text
+/// Effect = a / xm^h1 + b / xm^h2 + w / xm^((h1+h2)/2)
+/// ```
+/// where:
+/// - `a` and `b` are the coefficients for the two binding sites
+/// - `h1` and `h2` are the Hill coefficients for each site
+/// - `w` is a cross-interaction term
+/// - `xm` is the concentration
+///
+/// The function finds the optimal `xm` that makes this sum equal to 1, then returns
+/// the corresponding effect value `xm / (xm + 1)`.
+///
+/// # Arguments
+///
+/// * `a` - Coefficient for the first binding site (typically positive)
+/// * `b` - Coefficient for the second binding site (typically positive)
+/// * `w` - Cross-interaction term between the two sites
+/// * `h1` - Hill coefficient for the first binding site
+/// * `h2` - Hill coefficient for the second binding site
+/// * `alpha_s` - Scaling factor used in the fallback numerical estimator
+///
+/// # Returns
+///
+/// The E2 effect value in the range [0, 1), representing the maximum achievable effect.
+/// Returns 0.0 if both `a` and `b` are essentially zero.
+///
+/// # Algorithm
+///
+/// 1. If both coefficients are near zero, returns 0.0
+/// 2. If only one coefficient is positive, uses a closed-form solution
+/// 3. Otherwise, uses Nelder-Mead optimization in log-space to find the optimal `xm`
+/// 4. Falls back to an iterative numerical estimator if optimization fails to converge
+///
+/// # Example
+///
+/// ```
+/// use pharmsol::get_e2;
+///
+/// // Single-site model (b = 0)
+/// let e2 = get_e2(1.0, 0.0, 0.0, 1.0, 1.0, 0.5);
+/// assert!((e2 - 0.5).abs() < 1e-6); // xm = 1, so E2 = 1/(1+1) = 0.5
+///
+/// // Dual-site model
+/// let e2 = get_e2(1.0, 1.0, 0.0, 1.0, 2.0, 0.5);
+/// assert!(e2 > 0.0 && e2 < 1.0);
+/// ```
 pub fn get_e2(a: f64, b: f64, w: f64, h1: f64, h2: f64, alpha_s: f64) -> f64 {
     // trivial cases
     if a.abs() < 1.0e-12 && b.abs() < 1.0e-12 {
