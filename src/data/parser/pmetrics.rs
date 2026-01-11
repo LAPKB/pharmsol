@@ -76,7 +76,7 @@ pub enum PmetricsError {
 /// - Parse covariates and create appropriate interpolations
 /// - Handle additional doses via ADDL and II fields
 ///
-/// For specific column definitions, see the [Row] struct.
+/// For specific column definitions, see the `Row` struct.
 #[allow(dead_code)]
 pub fn read_pmetrics(path: impl Into<String>) -> Result<Data, PmetricsError> {
     let path = path.into();

@@ -2,7 +2,7 @@
 //!
 //! This module provides a clean, powerful API for calculating standard NCA parameters
 //! from concentration-time data. It integrates seamlessly with pharmsol's data structures
-//! ([`Subject`], [`Occasion`]).
+//! ([`crate::Subject`], [`crate::Occasion`]).
 //!
 //! # Design Philosophy
 //!

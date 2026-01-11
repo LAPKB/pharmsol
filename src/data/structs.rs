@@ -41,7 +41,7 @@ pub struct Data {
 impl Data {
     /// Constructs a new [Data] object from a vector of [Subject]s
     ///
-    /// It is recommended to construct subjects using the [SubjectBuilder] to ensure proper data formatting.
+    /// It is recommended to construct subjects using the [`crate::data::builder::SubjectBuilder`] to ensure proper data formatting.
     ///
     /// # Arguments
     ///

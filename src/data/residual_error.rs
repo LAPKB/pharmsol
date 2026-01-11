@@ -3,9 +3,9 @@
 //! This module provides error model implementations that use the **prediction**
 //! (model output) rather than the **observation** for computing residual error.
 //!
-//! # Conceptual Difference from [`ErrorModel`]
+//! # Conceptual Difference from [`crate::ErrorModel`]
 //!
-//! - [`ErrorModel`] (in `error_model.rs`): Represents **measurement/assay noise**.
+//! - [`crate::ErrorModel`] (in `error_model.rs`): Represents **measurement/assay noise**.
 //!   Sigma is computed from the **observation** using polynomial characterization.
 //!   Used by non-parametric algorithms (NPAG, NPOD, etc.).
 //!
@@ -39,7 +39,7 @@ use serde::{Deserialize, Serialize};
 
 /// Residual error model for parametric estimation algorithms.
 ///
-/// Unlike [`ErrorModel`] which uses observations, this uses
+/// Unlike [`crate::ErrorModel`] which uses observations, this uses
 /// the model **prediction** to compute the standard deviation.
 ///
 /// # Usage in SAEM
@@ -336,7 +336,7 @@ impl ResidualErrorModel {
 
 /// Collection of residual error models for multiple output equations
 ///
-/// This mirrors [`ErrorModels`] but for parametric algorithms.
+/// This mirrors [`crate::ErrorModels`] but for parametric algorithms.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ResidualErrorModels {
     models: Vec<ResidualErrorModel>,

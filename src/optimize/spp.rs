@@ -5,12 +5,15 @@ use argmin::{
 
 use ndarray::{Array1, Axis};
 
-use crate::{prelude::simulator::psi, Data, Equation, ErrorModels};
+use crate::{
+    prelude::simulator::{log_likelihood_matrix, LikelihoodMatrixOptions},
+    AssayErrorModels, Data, Equation,
+};
 
 pub struct SppOptimizer<'a, E: Equation> {
     equation: &'a E,
     data: &'a Data,
-    sig: &'a ErrorModels,
+    sig: &'a AssayErrorModels,
     pyl: &'a Array1<f64>,
 }
 
@@ -20,7 +23,14 @@ impl<E: Equation> CostFunction for SppOptimizer<'_, E> {
     fn cost(&self, spp: &Self::Param) -> Result<Self::Output, Error> {
         let theta = Array1::from(spp.clone()).insert_axis(Axis(0));
 
-        let psi = psi(self.equation, self.data, &theta, self.sig, false, false)?;
+        let log_psi = log_likelihood_matrix(
+            self.equation,
+            self.data,
+            &theta,
+            self.sig,
+            LikelihoodMatrixOptions::default(),
+        )?;
+        let psi = log_psi.mapv(f64::exp);
 
         if psi.ncols() > 1 {
             tracing::error!("Psi in SppOptimizer has more than one column");
@@ -45,7 +55,7 @@ impl<'a, E: Equation> SppOptimizer<'a, E> {
     pub fn new(
         equation: &'a E,
         data: &'a Data,
-        sig: &'a ErrorModels,
+        sig: &'a AssayErrorModels,
         pyl: &'a Array1<f64>,
     ) -> Self {
         Self {

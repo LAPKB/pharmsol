@@ -9,7 +9,7 @@ pub use ode::*;
 pub use sde::*;
 
 use crate::{
-    error_model::ErrorModels,
+    error_model::AssayErrorModels,
     simulator::{Fa, Lag},
     Covariates, Event, Infusion, Observation, PharmsolError, Subject,
 };
@@ -61,7 +61,7 @@ pub trait Predictions: Default {
     ///
     /// # Returns
     /// The sum of log-likelihoods for all predictions
-    fn log_likelihood(&self, error_models: &ErrorModels) -> Result<f64, PharmsolError>;
+    fn log_likelihood(&self, error_models: &AssayErrorModels) -> Result<f64, PharmsolError>;
 }
 
 /// Trait defining the associated types for equations.
@@ -101,7 +101,7 @@ pub(crate) trait EquationPriv: EquationTypes {
         &self,
         support_point: &Vec<f64>,
         observation: &Observation,
-        error_models: Option<&ErrorModels>,
+        error_models: Option<&AssayErrorModels>,
         time: f64,
         covariates: &Covariates,
         x: &mut Self::S,
@@ -122,7 +122,7 @@ pub(crate) trait EquationPriv: EquationTypes {
         support_point: &Vec<f64>,
         event: &Event,
         next_event: Option<&Event>,
-        error_models: Option<&ErrorModels>,
+        error_models: Option<&AssayErrorModels>,
         covariates: &Covariates,
         x: &mut Self::S,
         infusions: &mut Vec<Infusion>,
@@ -169,9 +169,18 @@ pub(crate) trait EquationPriv: EquationTypes {
 /// This trait defines the interface for different types of model equations
 /// (ODE, SDE, analytical) that can be simulated to generate predictions
 /// and estimate parameters.
+///
+/// # Likelihood Calculation
+///
+/// Use [`estimate_log_likelihood`](Self::estimate_log_likelihood) for numerically stable
+/// likelihood computation. The deprecated [`estimate_likelihood`](Self::estimate_likelihood)
+/// is provided for backward compatibility.
 #[allow(private_bounds)]
 pub trait Equation: EquationPriv + 'static + Clone + Sync {
     /// Estimate the likelihood of the subject given the support point and error model.
+    ///
+    /// **Deprecated**: Use [`estimate_log_likelihood`](Self::estimate_log_likelihood) instead
+    /// for better numerical stability, especially with many observations or extreme parameter values.
     ///
     /// This function calculates how likely the observed data is given the model
     /// parameters and error model. It may use caching for performance.
@@ -184,11 +193,15 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
     ///
     /// # Returns
     /// The likelihood value (product of individual observation likelihoods)
+    #[deprecated(
+        since = "0.23.0",
+        note = "Use estimate_log_likelihood() instead for better numerical stability"
+    )]
     fn estimate_likelihood(
         &self,
         subject: &Subject,
         support_point: &Vec<f64>,
-        error_models: &ErrorModels,
+        error_models: &AssayErrorModels,
         cache: bool,
     ) -> Result<f64, PharmsolError>;
 
@@ -199,7 +212,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
     /// for extreme values or many observations.
     ///
     /// Uses observation-based sigma, appropriate for non-parametric algorithms.
-    /// For parametric algorithms (SAEM, FOCE), use [`ResidualErrorModels`] directly.
+    /// For parametric algorithms (SAEM, FOCE), use [`crate::ResidualErrorModels`] directly.
     ///
     /// # Parameters
     /// - `subject`: The subject data
@@ -213,7 +226,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
         &self,
         subject: &Subject,
         support_point: &Vec<f64>,
-        error_models: &ErrorModels,
+        error_models: &AssayErrorModels,
         cache: bool,
     ) -> Result<f64, PharmsolError>;
 
@@ -258,7 +271,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
         &self,
         subject: &Subject,
         support_point: &Vec<f64>,
-        error_models: Option<&ErrorModels>,
+        error_models: Option<&AssayErrorModels>,
     ) -> Result<(Self::P, Option<f64>), PharmsolError> {
         let mut output = Self::P::new(self.nparticles());
         let mut likelihood = Vec::new();
