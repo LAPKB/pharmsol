@@ -395,7 +395,7 @@ impl Equation for SDE {
             let ypred = self.simulate_subject(subject, support_point, Some(error_models))?;
             ypred.1.unwrap()
         };
-        
+
         if lik > 0.0 {
             Ok(lik.ln())
         } else {

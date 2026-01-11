@@ -567,7 +567,12 @@ fn test_positional_blq_rule() {
     // With last BLQ kept as 0 (not LOQ), tlast remains at 8.0 (last positive conc)
     assert_eq!(result.exposure.cmax, 10.0, "Cmax should be 10.0");
     // tlast is the last time with positive concentration (8.0), the BLQ at 12 is 0
-    assert_eq!(result.exposure.tlast, 8.0, "Tlast should be 8.0 (last positive concentration)");
-    assert_eq!(result.exposure.clast, 2.0, "Clast should be 2.0 (last positive value)");
+    assert_eq!(
+        result.exposure.tlast, 8.0,
+        "Tlast should be 8.0 (last positive concentration)"
+    );
+    assert_eq!(
+        result.exposure.clast, 2.0,
+        "Clast should be 2.0 (last positive value)"
+    );
 }
-
