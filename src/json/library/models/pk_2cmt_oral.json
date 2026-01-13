@@ -1,0 +1,17 @@
+{
+  "schema": "1.0",
+  "id": "pk/2cmt-oral",
+  "type": "analytical",
+  "analytical": "two_compartments_with_absorption",
+  "parameters": ["ke", "ka", "kcp", "kpc", "V"],
+  "output": "x[1] / V",
+  "neqs": [3, 1],
+  "display": {
+    "name": "Two-Compartment First-Order Absorption",
+    "category": "pk",
+    "tags": ["2-compartment", "oral", "linear", "first-order-absorption"]
+  },
+  "documentation": {
+    "summary": "Two-compartment model with first-order oral absorption and first-order elimination"
+  }
+}
