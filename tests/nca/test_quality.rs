@@ -31,7 +31,11 @@ fn test_quality_good_data_no_warnings() {
     let options = NCAOptions::default();
 
     let results = subject.nca(&options, 0);
-    let result = results.first().unwrap().as_ref().expect("NCA should succeed");
+    let result = results
+        .first()
+        .unwrap()
+        .as_ref()
+        .expect("NCA should succeed");
 
     // Good data should have few or no warnings
     // (may have some due to extrapolation)
@@ -52,7 +56,11 @@ fn test_quality_high_extrapolation_warning() {
     });
 
     let results = subject.nca(&options, 0);
-    let result = results.first().unwrap().as_ref().expect("NCA should succeed");
+    let result = results
+        .first()
+        .unwrap()
+        .as_ref()
+        .expect("NCA should succeed");
 
     // May have high extrapolation warning
     let has_high_extrap = result
@@ -76,7 +84,11 @@ fn test_quality_lambda_z_not_estimable() {
     let options = NCAOptions::default();
 
     let results = subject.nca(&options, 0);
-    let result = results.first().unwrap().as_ref().expect("NCA should succeed");
+    let result = results
+        .first()
+        .unwrap()
+        .as_ref()
+        .expect("NCA should succeed");
 
     // Should not have terminal phase
     assert!(result.terminal.is_none());
@@ -104,7 +116,11 @@ fn test_quality_poor_fit_warning() {
     });
 
     let results = subject.nca(&options, 0);
-    let result = results.first().unwrap().as_ref().expect("NCA should succeed");
+    let result = results
+        .first()
+        .unwrap()
+        .as_ref()
+        .expect("NCA should succeed");
 
     println!(
         "Terminal phase: {:?}, Warnings: {:?}",
@@ -126,7 +142,11 @@ fn test_quality_short_terminal_phase() {
     });
 
     let results = subject.nca(&options, 0);
-    let result = results.first().unwrap().as_ref().expect("NCA should succeed");
+    let result = results
+        .first()
+        .unwrap()
+        .as_ref()
+        .expect("NCA should succeed");
 
     // Check for short terminal phase warning
     let has_short_warning = result
@@ -151,12 +171,20 @@ fn test_regression_stats_available() {
     let options = NCAOptions::default();
 
     let results = subject.nca(&options, 0);
-    let result = results.first().unwrap().as_ref().expect("NCA should succeed");
+    let result = results
+        .first()
+        .unwrap()
+        .as_ref()
+        .expect("NCA should succeed");
 
     if let Some(ref terminal) = result.terminal {
         if let Some(ref stats) = terminal.regression {
             // Good fit should have high R-squared
-            assert!(stats.r_squared > 0.95, "R-squared too low: {}", stats.r_squared);
+            assert!(
+                stats.r_squared > 0.95,
+                "R-squared too low: {}",
+                stats.r_squared
+            );
             assert!(stats.adj_r_squared > 0.95);
             assert!(stats.n_points >= 3);
             assert!(stats.span_ratio > 2.0);
@@ -175,7 +203,11 @@ fn test_bioequivalence_preset_quality() {
     let options = NCAOptions::bioequivalence();
 
     let results = subject.nca(&options, 0);
-    let result = results.first().unwrap().as_ref().expect("NCA should succeed");
+    let result = results
+        .first()
+        .unwrap()
+        .as_ref()
+        .expect("NCA should succeed");
 
     // BE preset should have stricter quality requirements
     // Good data should still pass
@@ -199,7 +231,11 @@ fn test_sparse_preset_quality() {
     let options = NCAOptions::sparse();
 
     let results = subject.nca(&options, 0);
-    let result = results.first().unwrap().as_ref().expect("NCA should succeed");
+    let result = results
+        .first()
+        .unwrap()
+        .as_ref()
+        .expect("NCA should succeed");
 
     // Sparse preset should still be able to estimate terminal phase
     // with fewer points

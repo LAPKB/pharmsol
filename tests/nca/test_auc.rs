@@ -31,7 +31,11 @@ fn test_linear_trapezoidal_simple_decreasing() {
     let options = NCAOptions::default().with_auc_method(AUCMethod::Linear);
 
     let results = subject.nca(&options, 0);
-    let result = results.first().unwrap().as_ref().expect("NCA should succeed");
+    let result = results
+        .first()
+        .unwrap()
+        .as_ref()
+        .expect("NCA should succeed");
 
     // Manual calculation: (10+8)/2*1 + (8+6)/2*1 + (6+4)/2*2 + (4+2)/2*4 = 38.0
     assert_relative_eq!(result.exposure.auc_last, 38.0, epsilon = 1e-6);
@@ -46,7 +50,11 @@ fn test_linear_trapezoidal_exponential_decay() {
     let options = NCAOptions::default().with_auc_method(AUCMethod::Linear);
 
     let results = subject.nca(&options, 0);
-    let result = results.first().unwrap().as_ref().expect("NCA should succeed");
+    let result = results
+        .first()
+        .unwrap()
+        .as_ref()
+        .expect("NCA should succeed");
 
     // For exponential decay with lambda = 0.1, true AUC to 24h is around 909
     assert!(
@@ -65,7 +73,11 @@ fn test_linear_up_log_down() {
     let options = NCAOptions::default().with_auc_method(AUCMethod::LinUpLogDown);
 
     let results = subject.nca(&options, 0);
-    let result = results.first().unwrap().as_ref().expect("NCA should succeed");
+    let result = results
+        .first()
+        .unwrap()
+        .as_ref()
+        .expect("NCA should succeed");
 
     assert!(result.exposure.auc_last > 0.0);
     assert!(result.exposure.auc_last < 50.0);
@@ -80,7 +92,11 @@ fn test_auc_with_zero_concentration() {
     let options = NCAOptions::default().with_auc_method(AUCMethod::Linear);
 
     let results = subject.nca(&options, 0);
-    let result = results.first().unwrap().as_ref().expect("NCA should succeed");
+    let result = results
+        .first()
+        .unwrap()
+        .as_ref()
+        .expect("NCA should succeed");
 
     // NCA calculates AUC to Tlast (last positive concentration)
     // Tlast = 1.0 (concentration 5.0), so AUC is only segment 1: (10+5)/2*1 = 7.5
@@ -97,7 +113,11 @@ fn test_auc_two_points() {
     let options = NCAOptions::default().with_auc_method(AUCMethod::Linear);
 
     let results = subject.nca(&options, 0);
-    let result = results.first().unwrap().as_ref().expect("NCA should succeed");
+    let result = results
+        .first()
+        .unwrap()
+        .as_ref()
+        .expect("NCA should succeed");
 
     // (10+6)/2 * 4 = 32.0
     assert_relative_eq!(result.exposure.auc_last, 32.0, epsilon = 1e-6);
@@ -112,7 +132,11 @@ fn test_auc_plateau() {
     let options = NCAOptions::default().with_auc_method(AUCMethod::Linear);
 
     let results = subject.nca(&options, 0);
-    let result = results.first().unwrap().as_ref().expect("NCA should succeed");
+    let result = results
+        .first()
+        .unwrap()
+        .as_ref()
+        .expect("NCA should succeed");
 
     // 5.0 * 4.0 = 20.0
     assert_relative_eq!(result.exposure.auc_last, 20.0, epsilon = 1e-6);
@@ -127,7 +151,11 @@ fn test_auc_unequal_spacing() {
     let options = NCAOptions::default().with_auc_method(AUCMethod::Linear);
 
     let results = subject.nca(&options, 0);
-    let result = results.first().unwrap().as_ref().expect("NCA should succeed");
+    let result = results
+        .first()
+        .unwrap()
+        .as_ref()
+        .expect("NCA should succeed");
 
     // Total: 397.5
     assert_relative_eq!(result.exposure.auc_last, 397.5, epsilon = 1e-6);
@@ -146,8 +174,20 @@ fn test_auc_methods_comparison() {
     let results_linear = subject.nca(&options_linear, 0);
     let results_linlog = subject.nca(&options_linlog, 0);
 
-    let auc_linear = results_linear.first().unwrap().as_ref().unwrap().exposure.auc_last;
-    let auc_linlog = results_linlog.first().unwrap().as_ref().unwrap().exposure.auc_last;
+    let auc_linear = results_linear
+        .first()
+        .unwrap()
+        .as_ref()
+        .unwrap()
+        .exposure
+        .auc_last;
+    let auc_linlog = results_linlog
+        .first()
+        .unwrap()
+        .as_ref()
+        .unwrap()
+        .exposure
+        .auc_last;
 
     // Both should be reasonably close (within 5%)
     let true_auc = 555.6;
@@ -166,7 +206,11 @@ fn test_partial_auc() {
         .with_auc_interval(2.0, 8.0);
 
     let results = subject.nca(&options, 0);
-    let result = results.first().unwrap().as_ref().expect("NCA should succeed");
+    let result = results
+        .first()
+        .unwrap()
+        .as_ref()
+        .expect("NCA should succeed");
 
     if let Some(auc_partial) = result.exposure.auc_partial {
         // (80+60)/2*2 + (60+35)/2*4 = 330
@@ -184,7 +228,11 @@ fn test_auc_inf_calculation() {
     let options = NCAOptions::default();
 
     let results = subject.nca(&options, 0);
-    let result = results.first().unwrap().as_ref().expect("NCA should succeed");
+    let result = results
+        .first()
+        .unwrap()
+        .as_ref()
+        .expect("NCA should succeed");
 
     if let Some(auc_inf) = result.exposure.auc_inf {
         assert!(auc_inf > result.exposure.auc_last);
