@@ -1,0 +1,17 @@
+{
+  "schema": "1.0",
+  "id": "pk/2cmt-iv",
+  "type": "analytical",
+  "analytical": "two_compartments",
+  "parameters": ["ke", "kcp", "kpc", "V"],
+  "output": "x[0] / V",
+  "neqs": [2, 1],
+  "display": {
+    "name": "Two-Compartment IV Bolus",
+    "category": "pk",
+    "tags": ["2-compartment", "iv", "linear"]
+  },
+  "documentation": {
+    "summary": "Two-compartment model with intravenous bolus administration and first-order elimination"
+  }
+}

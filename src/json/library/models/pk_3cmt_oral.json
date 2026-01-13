@@ -1,0 +1,17 @@
+{
+  "schema": "1.0",
+  "id": "pk/3cmt-oral",
+  "type": "analytical",
+  "analytical": "three_compartments_with_absorption",
+  "parameters": ["ka", "k10", "k12", "k13", "k21", "k31", "V"],
+  "output": "x[1] / V",
+  "neqs": [4, 1],
+  "display": {
+    "name": "Three-Compartment First-Order Absorption",
+    "category": "pk",
+    "tags": ["3-compartment", "oral", "linear", "first-order-absorption"]
+  },
+  "documentation": {
+    "summary": "Three-compartment model with first-order oral absorption and first-order elimination"
+  }
+}
