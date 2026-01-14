@@ -129,7 +129,7 @@ impl DataRow {
         }
     }
 
-    /// Convert this normalized row into pharmsol Events
+    /// Convert this row into pharmsol Events
     ///
     /// This method contains all the complex parsing logic:
     /// - EVID interpretation (0=observation, 1=dose, 4=reset)

@@ -62,14 +62,14 @@ pub fn read_pmetrics(path: impl Into<String>) -> Result<Data, DataError> {
     reader.set_headers(csv::StringRecord::from(headers));
 
     // Parse CSV rows and convert to DataRows
-    let mut normalized_rows: Vec<DataRow> = Vec::new();
+    let mut data_rows: Vec<DataRow> = Vec::new();
     for row_result in reader.deserialize() {
         let row: Row = row_result.map_err(|e| DataError::CSVError(e.to_string()))?;
-        normalized_rows.push(row.to_datarow());
+        data_rows.push(row.to_datarow());
     }
 
     // Use the shared build_data logic
-    build_data(normalized_rows)
+    build_data(data_rows)
 }
 
 /// A [Row] represents a row in the Pmetrics data format
