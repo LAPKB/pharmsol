@@ -35,6 +35,7 @@ pub mod error_model;
 pub mod event;
 pub mod parser;
 pub mod residual_error;
+pub mod row;
 pub mod structs;
 pub use covariate::*;
 pub use error_model::*;
