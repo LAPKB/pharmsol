@@ -139,7 +139,7 @@ impl Row {
             out: self
                 .out
                 .and_then(|v| if v == -99.0 { None } else { Some(v) }),
-            outeq: self.outeq,
+            outeq: self.outeq.map(|v| v.saturating_sub(1)),
             cens: self.cens,
             c0: self.c0,
             c1: self.c1,

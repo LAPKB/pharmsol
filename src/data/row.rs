@@ -187,8 +187,7 @@ impl DataRow {
                         .ok_or_else(|| DataError::MissingObservationOuteq {
                             id: self.id.clone(),
                             time: self.time,
-                        })?
-                        .saturating_sub(1), // Convert 1-indexed to 0-indexed
+                        })?, // Convert 1-indexed to 0-indexed
                     self.get_errorpoly(),
                     0, // occasion set later
                     self.cens.unwrap_or(Censor::None),
@@ -196,13 +195,10 @@ impl DataRow {
             }
             1 | 4 => {
                 // Dosing event (1) or reset with dose (4)
-                let input_0indexed = self
-                    .input
-                    .ok_or_else(|| DataError::MissingBolusInput {
-                        id: self.id.clone(),
-                        time: self.time,
-                    })?
-                    .saturating_sub(1); // Convert 1-indexed to 0-indexed
+                let input = self.input.ok_or_else(|| DataError::MissingBolusInput {
+                    id: self.id.clone(),
+                    time: self.time,
+                })?;
 
                 let event = if self.dur.unwrap_or(0.0) > 0.0 {
                     // Infusion
@@ -212,7 +208,7 @@ impl DataRow {
                             id: self.id.clone(),
                             time: self.time,
                         })?,
-                        input_0indexed,
+                        input,
                         self.dur.ok_or_else(|| DataError::MissingInfusionDur {
                             id: self.id.clone(),
                             time: self.time,
@@ -227,7 +223,7 @@ impl DataRow {
                             id: self.id.clone(),
                             time: self.time,
                         })?,
-                        input_0indexed,
+                        input,
                         0,
                     ))
                 };
