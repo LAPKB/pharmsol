@@ -315,7 +315,7 @@ impl Data {
                             let value = obs
                                 .value()
                                 .map_or_else(|| ".".to_string(), |v| v.to_string());
-                            let outeq = (obs.outeq() + 1).to_string();
+                            let outeq = obs.outeq().to_string();
                             let censor = match obs.censoring() {
                                 Censor::None => "0".to_string(),
                                 Censor::BLOQ => "1".to_string(),
@@ -372,7 +372,7 @@ impl Data {
                                     &inf.amount().to_string(),
                                     &".".to_string(),
                                     &".".to_string(),
-                                    &(inf.input() + 1).to_string(),
+                                    &inf.input().to_string(),
                                     &".".to_string(),
                                     &".".to_string(),
                                     &".".to_string(),
@@ -393,7 +393,7 @@ impl Data {
                                     &bol.amount().to_string(),
                                     &".".to_string(),
                                     &".".to_string(),
-                                    &(bol.input() + 1).to_string(),
+                                    &bol.input().to_string(),
                                     &".".to_string(),
                                     &".".to_string(),
                                     &".".to_string(),
@@ -466,8 +466,8 @@ mod tests {
     #[test]
     fn write_pmetrics_preserves_infusion_input() {
         let subject = Subject::builder("writer")
-            .infusion(0.0, 200.0, 2, 1.0)
-            .observation(1.0, 0.0, 0)
+            .infusion(0.0, 200.0, 3, 1.0) // input=3 (1-indexed)
+            .observation(1.0, 0.0, 1) // outeq=1 (1-indexed)
             .build();
         let data = Data::new(vec![subject]);
 
@@ -485,7 +485,7 @@ mod tests {
             .find(|record| record.get(3) != Some("0"))
             .expect("infusion row missing");
 
-        assert_eq!(infusion_row.get(7), Some("3"));
+        assert_eq!(infusion_row.get(7), Some("3")); // Written as-is (1-indexed)
     }
 
     #[test]

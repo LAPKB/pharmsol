@@ -47,7 +47,7 @@ use std::collections::HashMap;
 /// # Fields
 ///
 /// All fields use Pmetrics conventions:
-/// - `input` and `outeq` are **1-indexed** (will be converted to 0-indexed internally)
+/// - `input` and `outeq` are **1-indexed** (kept as-is, user must size arrays accordingly)
 /// - `evid`: 0=observation, 1=dose, 4=reset/new occasion
 /// - `addl`: positive=forward in time, negative=backward in time
 ///
@@ -92,11 +92,11 @@ pub struct NormalizedRow {
     pub addl: Option<i64>,
     /// Interdose interval for ADDL
     pub ii: Option<f64>,
-    /// Input compartment (1-indexed in Pmetrics convention)
+    /// Input compartment
     pub input: Option<usize>,
     /// Observed value (for EVID=0)
     pub out: Option<f64>,
-    /// Output equation number (1-indexed)
+    /// Output equation number
     pub outeq: Option<usize>,
     /// Censoring indicator
     pub cens: Option<Censor>,
@@ -201,8 +201,7 @@ impl NormalizedRow {
                         .ok_or_else(|| PmetricsError::MissingObservationOuteq {
                             id: self.id.clone(),
                             time: self.time,
-                        })?
-                        .saturating_sub(1), // Convert 1-indexed to 0-indexed
+                        })?, // Keep 1-indexed as provided by Pmetrics
                     self.get_errorpoly(),
                     0, // occasion set later
                     self.cens.unwrap_or(Censor::None),
@@ -210,13 +209,10 @@ impl NormalizedRow {
             }
             1 | 4 => {
                 // Dosing event (1) or reset with dose (4)
-                let input_0indexed = self
-                    .input
-                    .ok_or_else(|| PmetricsError::MissingBolusInput {
-                        id: self.id.clone(),
-                        time: self.time,
-                    })?
-                    .saturating_sub(1); // Convert 1-indexed to 0-indexed
+                let input = self.input.ok_or_else(|| PmetricsError::MissingBolusInput {
+                    id: self.id.clone(),
+                    time: self.time,
+                })?; // Keep 1-indexed as provided by Pmetrics
 
                 let event = if self.dur.unwrap_or(0.0) > 0.0 {
                     // Infusion
@@ -227,7 +223,7 @@ impl NormalizedRow {
                                 id: self.id.clone(),
                                 time: self.time,
                             })?,
-                        input_0indexed,
+                        input,
                         self.dur.ok_or_else(|| PmetricsError::MissingInfusionDur {
                             id: self.id.clone(),
                             time: self.time,
@@ -242,7 +238,7 @@ impl NormalizedRow {
                             id: self.id.clone(),
                             time: self.time,
                         })?,
-                        input_0indexed,
+                        input,
                         0,
                     ))
                 };
@@ -388,7 +384,7 @@ impl NormalizedRowBuilder {
     /// Set the input compartment (1-indexed)
     ///
     /// Required for EVID=1 (dosing events).
-    /// Will be converted to 0-indexed internally.
+    /// Kept as 1-indexed; user must size state arrays accordingly.
     pub fn input(mut self, input: usize) -> Self {
         self.row.input = Some(input);
         self
@@ -577,7 +573,7 @@ mod tests {
             Event::Observation(obs) => {
                 assert_eq!(obs.time(), 1.0);
                 assert_eq!(obs.value(), Some(25.5));
-                assert_eq!(obs.outeq(), 0); // Converted to 0-indexed
+                assert_eq!(obs.outeq(), 1); // Kept as 1-indexed
             }
             _ => panic!("Expected observation event"),
         }
@@ -598,7 +594,7 @@ mod tests {
             Event::Bolus(bolus) => {
                 assert_eq!(bolus.time(), 0.0);
                 assert_eq!(bolus.amount(), 100.0);
-                assert_eq!(bolus.input(), 0); // Converted to 0-indexed
+                assert_eq!(bolus.input(), 1); // Kept as 1-indexed
             }
             _ => panic!("Expected bolus event"),
         }
@@ -621,7 +617,7 @@ mod tests {
                 assert_eq!(inf.time(), 0.0);
                 assert_eq!(inf.amount(), 100.0);
                 assert_eq!(inf.duration(), 2.0);
-                assert_eq!(inf.input(), 0);
+                assert_eq!(inf.input(), 1); // Kept as 1-indexed
             }
             _ => panic!("Expected infusion event"),
         }
