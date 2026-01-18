@@ -39,6 +39,22 @@ Pharmacokinetic and pharmacodynamic modeling and simulation are computationally 
 
 As a fully open-source solution, `pharmsol` empowers users to inspect, modify, and extend the simulation capabilities without licensing constraints. Users can define custom models by specifying their own differential equations as closures, or use the provided analytical solutions for standard compartmental models. Additionally, `pharmsol` can be integrated in more user-friendly languages such as R using `extendr` [@extendr], making it accessible to pharmacometricians who may prefer higher-level interfaces.
 
+# Software design
+
+To the authors' knowledge, `pharmsol` is the first software written in Rust for pharmacokinetic modeling and simulation. The design of `pharmsol` is to provide a flexible and efficient API for solving pharmacokinetic problems. It aims to provide researchers and pharmacometricians with a fast and flexible solver for pharmacokinetic problems. 
+
+These problems are defined by two key aspects: the pharmacokinetic data, and the structural model. While the data structure is explained in detail below, the structural model is more complex. In `pharmsol`, models are defined using a set of closures, providing methods to define the set of equations that describe the mass transfer of drug, as well as initial conditions and output equations, i.e. detailing the initial and observed states of the system. Bioavailability terms and lag-time of absorption is also supported. Covariates may be applied on both parameters and state values. Importantly, `pharmsol` provides both linear interpolation and carry-forward for covariates, both common in population pharmacokinetic models.
+
+The three different solver types, i.e. analytical, ODE, and SDE based, are all build around a common `Equation` trait. This allows for 
+
+# Research impact statement
+
+As a tool for pharmacokinetic modelling and simulation, `pharmsol` has already demonstrated research impact. Most notably, it is used as a simulation engine for the Rust crate `PMcore` and `Pmetrics` [@pmetrics] - the _de facto_ R package for non-parametric population pharmacokinetic modelling and simulation. 
+
+Additionally, `pharmsol` has been used to generate results in scientific publications, such as the creation of a new algorithm for non-parametric parameter estimation [@npod].
+
+Internally, `pharmsol` is also used for simulating alternative dose regimens to individualize drug therapy in patients.
+
 # Data format
 
 `pharmsol` is designed around a hierarchical data structure that models the typical organization of pharmacometric data. The primary data struct, `Data`, is a collection of `Subject`s, which may have one or more `Occasion`s, i.e. separate pharmacokinetic investigations. Each occasion consists of one or more `Event`s, e.g. an instantaneous dose (bolus), infusions of drug, or observed concentrations at given times.
@@ -47,7 +63,7 @@ As a fully open-source solution, `pharmsol` empowers users to inspect, modify, a
 Data → Subject → Occasion → Event (Bolus, Infusion, Observation)
 ```
 
-Currently, `pharmsol` provides methods to parse the Pmetrics [@pmetrics] data format. In the future, we aim to also support additional formats, such as those used by NONMEM, Monolix [@monolix], and more.
+Currently, `pharmsol` provides methods to parse the Pmetrics [@pmetrics] data format. In the future, we aim to also support additional formats, such as those used by NONMEM, Monolix [@monolix], and more. Data may also be built using a provided builder-pattern, providing a flexible method for defining subjects on the go for pharmacometricians comfortable with Rust. This is especially useful when integrating `pharmsol` with third-party software, as it allows for reading and generating data that is not in a supported format.
 
 # Supported equation formats
 
@@ -68,6 +84,10 @@ Experimental support for stochastic differential equations (SDEs) is available u
 # Conclusion and Future Work
 
 `pharmsol` aims to support the evolving needs of pharmacometric research by providing a modern, efficient platform that can adapt to the increasing complexity of pharmaceutical development while remaining accessible through its open-source licensing model. Future development will focus on additional analytical model implementations, support for common data formats used by other pharmacometric software, non-compartmental analysis and continued performance improvements.
+
+# AI usage disclosure
+
+The authors declare that generative AI has been used during software development and manuscript preparation. For software development, generative AI has been used to generate code by instruction, refactor existing code, produce tests and write documentation. For the manuscript, generative AI was used to improve the language of the submission. The use of generative AI was reviewed, edited, and verified by the authors. The authors take full responsibility for the contents of the submission, and for the software within the scopes of the software license.
 
 # Acknowledgements
 
