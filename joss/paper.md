@@ -45,7 +45,7 @@ To the authors' knowledge, `pharmsol` is the first software written in Rust for 
 
 These problems are defined by two key aspects: the pharmacokinetic data, and the structural model. While the data structure is explained in detail below, the structural model is more complex. In `pharmsol`, models are defined using a set of closures, providing methods to define the set of equations that describe the mass transfer of drug, as well as initial conditions and output equations, i.e. detailing the initial and observed states of the system. Bioavailability terms and lag-time of absorption is also supported. Covariates may be applied on both parameters and state values. Importantly, `pharmsol` provides both linear interpolation and carry-forward for covariates, both common in population pharmacokinetic models.
 
-The three different solver types, i.e. analytical, ODE, and SDE based, are all build around a common `Equation` trait. This allows for 
+The three different solver types, i.e. analytical, ODE, and SDE based, are all built around a common `Equation` trait. This allows for 
 
 # Research impact statement
 
