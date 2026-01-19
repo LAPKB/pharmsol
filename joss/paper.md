@@ -41,15 +41,15 @@ As a fully open-source solution, `pharmsol` empowers users to inspect, modify, a
 
 # Software design
 
-To the authors' knowledge, `pharmsol` is the first software written in Rust for pharmacokinetic modeling and simulation. The design of `pharmsol` is to provide a flexible and efficient API for solving pharmacokinetic problems. It aims to provide researchers and pharmacometricians with a fast and flexible solver for pharmacokinetic problems. 
+To the authors' knowledge, `pharmsol` is the first software written in Rust for pharmacokinetic modeling and simulation. The design principle of `pharmsol` is to provide researchers and pharmacometricians a flexible and efficient library for solving pharmacokinetic problems.
 
 These problems are defined by two key aspects: the pharmacokinetic data, and the structural model. While the data structure is explained in detail below, the structural model is more complex. In `pharmsol`, models are defined using a set of closures, providing methods to define the set of equations that describe the mass transfer of drug, as well as initial conditions and output equations, i.e. detailing the initial and observed states of the system. Bioavailability terms and lag-time of absorption is also supported. Covariates may be applied on both parameters and state values. Importantly, `pharmsol` provides both linear interpolation and carry-forward for covariates, both common in population pharmacokinetic models.
 
-The three different solver types, i.e. analytical, ODE, and SDE based, are all built around a common `Equation` trait. This allows for 
+The three different solver types, i.e. analytical, ODE, and SDE based, are all built around a common `Equation` trait. This gives `Pharmsol` a modular design, allowing users to easily extend the library with new solvers or to rely on it while being agnostic on the underlying solver type. This flexibility is particularly useful when integrating `pharmsol` with other software, as it allows users to select the most appropriate solver for their specific use case (e.g., speed vs. model complexity).
 
 # Research impact statement
 
-As a tool for pharmacokinetic modelling and simulation, `pharmsol` has already demonstrated research impact. Most notably, it is used as a simulation engine for the Rust crate `PMcore` and `Pmetrics` [@pmetrics] - the _de facto_ R package for non-parametric population pharmacokinetic modelling and simulation. 
+As a tool for pharmacokinetic modelling and simulation, `pharmsol` has already demonstrated research impact. Most notably, it is used as a simulation engine for the Rust crate `PMcore` and `Pmetrics` [@pmetrics] - the _de facto_ R package for non-parametric population pharmacokinetic modelling and simulation.
 
 Additionally, `pharmsol` has been used to generate results in scientific publications, such as the creation of a new algorithm for non-parametric parameter estimation [@npod].
 
@@ -67,11 +67,11 @@ Currently, `pharmsol` provides methods to parse the Pmetrics [@pmetrics] data fo
 
 # Supported equation formats
 
-The equation module provides the mathematical foundation for simulating PK/PD output with three model equation solver types: analytical solutions, ordinary differential equations, and experimental support for stochastic differential equations.
+As stated before the `Equation` trait provides the architectural backbone for simulating PK/PD profiles. Pharmsol currently also provides three solvers implementing this trait: analytical solutions, ordinary differential equations, and experimental support for stochastic differential equations.
 
 ## Analytical Solutions
 
-For standard compartmental models, `pharmsol` provides closed-form solutions for one- and two-compartment models, with and without oral absorption. These have been verified against their differential equation counterparts. Benchmarks demonstrate 20-33× speedups compared to equivalent ODE formulations without loss of precision (see repository benchmarks for details). Additional analytical solutions will be added in future versions.
+For standard compartmental models, `pharmsol` provides closed-form solutions for one-, two- and three-compartment models, with and without oral absorption. These have been verified against their differential equation counterparts. Benchmarks demonstrate 20-33× speedups compared to equivalent ODE formulations without loss of precision (see repository benchmarks for details). Additional analytical solutions will be added in future versions.
 
 ## Ordinary Differential Equations
 
