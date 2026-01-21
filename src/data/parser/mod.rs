@@ -1,5 +1,4 @@
-pub mod normalized;
 pub mod pmetrics;
 
-pub use normalized::{build_data, NormalizedRow, NormalizedRowBuilder};
+pub use crate::data::row::{build_data, DataError, DataRow, DataRowBuilder};
 pub use pmetrics::*;
