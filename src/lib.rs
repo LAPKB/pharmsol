@@ -2,6 +2,7 @@ pub mod data;
 pub mod error;
 #[cfg(feature = "exa")]
 pub mod exa;
+pub mod nca;
 pub mod optimize;
 pub mod simulator;
 
@@ -40,17 +41,17 @@ pub mod prelude {
     // Data submodule for organized access and backward compatibility
     pub mod data {
         pub use crate::data::{
-            builder::SubjectBuilderExt,
-            error_model::{ErrorModel, ErrorModels, ErrorPoly},
-            parser::read_pmetrics,
-            Covariates, Data, Event, Interpolation, Occasion, Subject,
+            error_model::{AssayErrorModel, AssayErrorModels},
+            parser::{read_pmetrics, DataRow, DataRowBuilder},
+            residual_error::{ResidualErrorModel, ResidualErrorModels},
+            Covariates, Data, Event, Occasion, Subject,
         };
     }
 
     // Direct data re-exports for convenience
     pub use crate::data::{
         builder::SubjectBuilderExt,
-        error_model::{ErrorModel, ErrorModels, ErrorPoly},
+        error_model::{AssayErrorModel, AssayErrorModels, ErrorPoly},
         Covariates, Data, Event, Interpolation, Occasion, Subject,
     };
 
@@ -59,8 +60,15 @@ pub mod prelude {
         pub use crate::simulator::{
             equation,
             equation::Equation,
-            likelihood::{psi, PopulationPredictions, Prediction, SubjectPredictions},
+            likelihood::{
+                log_likelihood_batch, log_likelihood_matrix, log_likelihood_subject,
+                LikelihoodMatrixOptions, PopulationPredictions, Prediction, SubjectPredictions,
+            },
         };
+
+        // Deprecated re-exports for backward compatibility
+        #[allow(deprecated)]
+        pub use crate::simulator::likelihood::{log_psi, psi};
     }
 
     // Direct simulator re-exports for convenience
