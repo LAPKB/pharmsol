@@ -15,7 +15,7 @@ pub enum PharmsolError {
     CovariateError(#[from] CovariateError),
     #[error("Shape error: {0}")]
     NdarrayShapeError(#[from] ShapeError),
-    #[error("Error parsing Pmetrics datafile: {0}")]
+    #[error("Error parsing data: {0}")]
     DataError(#[from] DataError),
     #[error("Diffsol error: {0}")]
     DiffsolError(String),
