@@ -1,5 +1,5 @@
 ---
-title: "pharmsol: A high-performance Rust library for pharmacokinetic/pharmacodynamic modeling and simulation"
+title: "pharmsol: A high-performance Rust library for pharmacokinetic and pharmacodynamic modeling and simulation"
 tags:
   - Rust
   - pharmacokinetics
@@ -33,11 +33,18 @@ bibliography: paper.bib
 
 `pharmsol` is a library for pharmacokinetic/pharmacodynamic (PK/PD) simulation written in Rust. It provides the necessary tools and frameworks for defining, solving, and analyzing compartmental models, with support for differential equations, their analytical solutions, and experimental support for stochastic differential equations. Written in Rust, the library aims to provide researchers and developers with a framework for pharmacokinetic simulation in a memory-safe and performant language. The library is distributed via crates.io with comprehensive API documentation, usage examples, and a test suite validated through continuous integration.
 
-# Statement of Need
+# Statement of need
 
 Pharmacokinetic and pharmacodynamic modeling and simulation are computationally intense when applied to modern, complex, and sophisticated dosing regimens, mechanistic models, and individualized approaches. Unlike comprehensive pharmacometric platforms such as NONMEM [@nonmem], Phoenix NLME [@phoenix], or Monolix [@monolix], `pharmsol` is purpose-built as a simulation engine that pharmacometricians can leverage to rapidly execute simulations for individuals or populations with pre- and user-defined models.
 
 As a fully open-source solution, `pharmsol` empowers users to inspect, modify, and extend the simulation capabilities without licensing constraints. Users can define custom models by specifying their own differential equations as closures, or use the provided analytical solutions for standard compartmental models. Additionally, `pharmsol` can be integrated in more user-friendly languages such as R using `extendr` [@extendr], making it accessible to pharmacometricians who may prefer higher-level interfaces.
+
+# State of the field
+
+Several tools exists for performing pharmacokinetic and pharmacodynamic modelling and simulation. Most well known are the full-suite applications such as NONMEM [@nonmem], Phoenix NLME [@phoenix], Monolix [@monolix], and more. For R, packages such as `Pmetrics`[@pmetrics] and `mrgsolve` [@mrgsolve] provide an interface for lower-level solvers, written in Fortran and C++, respectively. Similar alternatives exists in languages such as Python, Julia, and more, a witness to the important of such software.
+
+The aim of `pharmsol` is to provide developers of higher-level software with an API for performing efficient and memory-safe pharmacokinetic modeling and simulation. As such, it aims to build something new instead of contributing to existing alternatives.
+
 
 # Software design
 
@@ -87,7 +94,7 @@ Experimental support for stochastic differential equations (SDEs) is available u
 
 # AI usage disclosure
 
-The authors declare that generative AI has been used during software development and manuscript preparation. For software development, generative AI has been used to generate code by instruction, refactor existing code, produce tests and write documentation. For the manuscript, generative AI was used to improve the language of the submission. The use of generative AI was reviewed, edited, and verified by the authors. The authors take full responsibility for the contents of the submission, and for the software within the scopes of the software license.
+The authors declare that generative AI has been used during software development and manuscript preparation. For software development, generative AI has been used to generate code by instruction, refactor existing code, produce tests and write documentation. For the manuscript, generative AI was used to improve the language of the submission. All use of generative AI was reviewed, edited, and verified by the authors. The authors take full responsibility for the contents of the submission, and for the software within the scopes of the software license.
 
 # Acknowledgements
 
