@@ -41,10 +41,9 @@ As a fully open-source solution, `pharmsol` empowers users to inspect, modify, a
 
 # State of the field
 
-Several tools exists for performing pharmacokinetic and pharmacodynamic modelling and simulation. Most well known are the full-suite applications such as NONMEM [@nonmem], Phoenix NLME [@phoenix], Monolix [@monolix], and more. For R, packages such as `Pmetrics`[@pmetrics] and `mrgsolve` [@mrgsolve] provide an interface for lower-level solvers, written in Fortran and C++, respectively. Similar alternatives exists in languages such as Python, Julia, and more, a witness to the important of such software.
+Several tools exist for performing pharmacokinetic and pharmacodynamic modelling and simulation. Most well known are the full-suite applications such as NONMEM [@nonmem], Phoenix NLME [@phoenix], Monolix [@monolix], and Pumas [@rackauckas2020pumas]. These are generally commercial or proprietary, while open-source alternatives include the R packages `Pmetrics`[@pmetrics] and `mrgsolve`[@mrgsolve], as well as implementations in Python and Julia.
 
-The aim of `pharmsol` is to provide developers of higher-level software with an API for performing efficient and memory-safe pharmacokinetic modeling and simulation. As such, it aims to build something new instead of contributing to existing alternatives.
-
+The aim of `pharmsol` is to provide developers of higher-level software with an API for performing efficient and memory-safe pharmacokinetic modeling and simulation; as a fully open-source project, it allows users to inspect, extend, and integrate the library without licensing constraints. As such, it aims to build something new instead of contributing to existing alternatives.
 
 # Software design
 
