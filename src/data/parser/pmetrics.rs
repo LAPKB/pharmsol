@@ -4,45 +4,11 @@ use serde::de::{MapAccess, Visitor};
 use serde::{de, Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 
+use crate::data::row::build_data;
+use crate::data::row::DataError;
+use crate::data::row::DataRow;
 use std::fmt;
 use std::str::FromStr;
-use thiserror::Error;
-
-/// Custom error type for the module
-#[allow(private_interfaces)]
-#[derive(Error, Debug, Clone)]
-pub enum PmetricsError {
-    /// Error encountered when reading CSV data
-    #[error("CSV error: {0}")]
-    CSVError(String),
-    /// Error during data deserialization
-    #[error("Parse error: {0}")]
-    SerdeError(String),
-    /// Encountered an unknown EVID value
-    #[error("Unknown EVID: {evid} for ID {id} at time {time}")]
-    UnknownEvid { evid: isize, id: String, time: f64 },
-    /// Required observation value (OUT) is missing
-    #[error("Observation OUT is missing for {id} at time {time}")]
-    MissingObservationOut { id: String, time: f64 },
-    /// Required observation output equation (OUTEQ) is missing
-    #[error("Observation OUTEQ is missing in for {id} at time {time}")]
-    MissingObservationOuteq { id: String, time: f64 },
-    /// Required infusion dose amount is missing
-    #[error("Infusion amount (DOSE) is missing for {id} at time {time}")]
-    MissingInfusionDose { id: String, time: f64 },
-    /// Required infusion input compartment is missing
-    #[error("Infusion compartment (INPUT) is missing for {id} at time {time}")]
-    MissingInfusionInput { id: String, time: f64 },
-    /// Required infusion duration is missing
-    #[error("Infusion duration (DUR) is missing for {id} at time {time}")]
-    MissingInfusionDur { id: String, time: f64 },
-    /// Required bolus dose amount is missing
-    #[error("Bolus amount (DOSE) is missing for {id} at time {time}")]
-    MissingBolusDose { id: String, time: f64 },
-    /// Required bolus input compartment is missing
-    #[error("Bolus compartment (INPUT) is missing for {id} at time {time}")]
-    MissingBolusInput { id: String, time: f64 },
-}
 
 /// Read a Pmetrics datafile and convert it to a [Data] object
 ///
@@ -56,7 +22,7 @@ pub enum PmetricsError {
 ///
 /// # Returns
 ///
-/// * `Result<Data, PmetricsError>` - A result containing either the parsed [Data] object or an error
+/// * `Result<Data, DataError>` - A result containing either the parsed [Data] object or an error
 ///
 /// # Example
 ///
@@ -78,32 +44,32 @@ pub enum PmetricsError {
 ///
 /// For specific column definitions, see the `Row` struct.
 #[allow(dead_code)]
-pub fn read_pmetrics(path: impl Into<String>) -> Result<Data, PmetricsError> {
+pub fn read_pmetrics(path: impl Into<String>) -> Result<Data, DataError> {
     let path = path.into();
 
     let mut reader = csv::ReaderBuilder::new()
         .comment(Some(b'#'))
         .has_headers(true)
         .from_path(&path)
-        .map_err(|e| PmetricsError::CSVError(e.to_string()))?;
+        .map_err(|e| DataError::CSVError(e.to_string()))?;
     // Convert headers to lowercase
     let headers = reader
         .headers()
-        .map_err(|e| PmetricsError::CSVError(e.to_string()))?
+        .map_err(|e| DataError::CSVError(e.to_string()))?
         .iter()
         .map(|h| h.to_lowercase())
         .collect::<Vec<_>>();
     reader.set_headers(csv::StringRecord::from(headers));
 
-    // Parse CSV rows and convert to NormalizedRows
-    let mut normalized_rows: Vec<super::normalized::NormalizedRow> = Vec::new();
+    // Parse CSV rows and convert to DataRows
+    let mut data_rows: Vec<DataRow> = Vec::new();
     for row_result in reader.deserialize() {
-        let row: Row = row_result.map_err(|e| PmetricsError::CSVError(e.to_string()))?;
-        normalized_rows.push(row.to_normalized());
+        let row: Row = row_result.map_err(|e| DataError::CSVError(e.to_string()))?;
+        data_rows.push(row.to_datarow());
     }
 
     // Use the shared build_data logic
-    super::normalized::build_data(normalized_rows)
+    build_data(data_rows)
 }
 
 /// A [Row] represents a row in the Pmetrics data format
@@ -158,9 +124,9 @@ struct Row {
 }
 
 impl Row {
-    /// Convert this Row to a NormalizedRow for parsing
-    fn to_normalized(&self) -> super::normalized::NormalizedRow {
-        super::normalized::NormalizedRow {
+    /// Convert this Row to a DataRow for parsing
+    fn to_datarow(&self) -> DataRow {
+        DataRow {
             id: self.id.clone(),
             time: self.time,
             evid: self.evid as i32,
@@ -315,7 +281,7 @@ impl Data {
                             let value = obs
                                 .value()
                                 .map_or_else(|| ".".to_string(), |v| v.to_string());
-                            let outeq = (obs.outeq() + 1).to_string();
+                            let outeq = obs.outeq().to_string();
                             let censor = match obs.censoring() {
                                 Censor::None => "0".to_string(),
                                 Censor::BLOQ => "1".to_string(),
@@ -372,7 +338,7 @@ impl Data {
                                     &inf.amount().to_string(),
                                     &".".to_string(),
                                     &".".to_string(),
-                                    &(inf.input() + 1).to_string(),
+                                    &inf.input().to_string(),
                                     &".".to_string(),
                                     &".".to_string(),
                                     &".".to_string(),
@@ -393,7 +359,7 @@ impl Data {
                                     &bol.amount().to_string(),
                                     &".".to_string(),
                                     &".".to_string(),
-                                    &(bol.input() + 1).to_string(),
+                                    &bol.input().to_string(),
                                     &".".to_string(),
                                     &".".to_string(),
                                     &".".to_string(),
@@ -466,8 +432,8 @@ mod tests {
     #[test]
     fn write_pmetrics_preserves_infusion_input() {
         let subject = Subject::builder("writer")
-            .infusion(0.0, 200.0, 2, 1.0)
-            .observation(1.0, 0.0, 0)
+            .infusion(0.0, 200.0, 3, 1.0) // input=3 (1-indexed)
+            .observation(1.0, 0.0, 1) // outeq=1 (1-indexed)
             .build();
         let data = Data::new(vec![subject]);
 
@@ -485,7 +451,7 @@ mod tests {
             .find(|record| record.get(3) != Some("0"))
             .expect("infusion row missing");
 
-        assert_eq!(infusion_row.get(7), Some("3"));
+        assert_eq!(infusion_row.get(7), Some("3")); // Written as-is (1-indexed)
     }
 
     #[test]

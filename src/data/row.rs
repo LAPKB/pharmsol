@@ -1,26 +1,12 @@
-//! Normalized row representation for flexible data parsing
-//!
-//! This module provides a format-agnostic intermediate representation that decouples
-//! column naming/mapping from event creation logic. Any data source (CSV with custom
-//! columns, Excel, DataFrames) can construct [`NormalizedRow`] instances, then use
-//! [`NormalizedRow::into_events()`] to get properly parsed pharmsol Events.
-//!
-//! # Design Philosophy
-//!
-//! The key insight is separating two concerns:
-//! 1. **Row Normalization** - Transform arbitrary input formats into a standard representation
-//! 2. **Event Creation** - Convert normalized rows into pharmsol Events (with ADDL expansion, etc.)
-//!
-//! This allows any consumer (GUI applications, scripts, other tools) to bring their own
-//! "column mapping" while reusing parsing logic.
+//! Row representation of [Data] for flexible parsing
 //!
 //! # Example
 //!
 //! ```rust
-//! use pharmsol::data::parser::NormalizedRow;
+//! use pharmsol::data::parser::DataRow;
 //!
 //! // Create a dosing row with ADDL expansion
-//! let row = NormalizedRow::builder("subject_1", 0.0)
+//! let row = DataRow::builder("subject_1", 0.0)
 //!     .evid(1)
 //!     .dose(100.0)
 //!     .input(1)
@@ -33,38 +19,38 @@
 //! ```
 //!
 
-use super::PmetricsError;
 use crate::data::*;
 use std::collections::HashMap;
+use thiserror::Error;
 
 /// A format-agnostic representation of a single data row
 ///
 /// This struct represents the canonical fields needed to create pharmsol Events.
 /// Consumers construct this from their source data (regardless of column names),
-/// then call [`into_events()`](NormalizedRow::into_events) to get properly parsed
+/// then call [`into_events()`](DataRow::into_events) to get properly parsed
 /// Events with full ADDL expansion, EVID handling, censoring, etc.
 ///
 /// # Fields
 ///
 /// All fields use Pmetrics conventions:
-/// - `input` and `outeq` are **1-indexed** (will be converted to 0-indexed internally)
+/// - `input` and `outeq` are **1-indexed** (kept as-is, user must size arrays accordingly)
 /// - `evid`: 0=observation, 1=dose, 4=reset/new occasion
 /// - `addl`: positive=forward in time, negative=backward in time
 ///
 /// # Example
 ///
 /// ```rust
-/// use pharmsol::data::parser::NormalizedRow;
+/// use pharmsol::data::parser::DataRow;
 ///
 /// // Observation row
-/// let obs = NormalizedRow::builder("pt1", 1.0)
+/// let obs = DataRow::builder("pt1", 1.0)
 ///     .evid(0)
 ///     .out(25.5)
 ///     .outeq(1)
 ///     .build();
 ///
 /// // Dosing row with negative ADDL (doses before time 0)
-/// let dose = NormalizedRow::builder("pt1", 0.0)
+/// let dose = DataRow::builder("pt1", 0.0)
 ///     .evid(1)
 ///     .dose(100.0)
 ///     .input(1)
@@ -77,7 +63,7 @@ use std::collections::HashMap;
 /// assert_eq!(events.len(), 11);
 /// ```
 #[derive(Debug, Clone, Default)]
-pub struct NormalizedRow {
+pub struct DataRow {
     /// Subject identifier (required)
     pub id: String,
     /// Event time (required)
@@ -92,11 +78,11 @@ pub struct NormalizedRow {
     pub addl: Option<i64>,
     /// Interdose interval for ADDL
     pub ii: Option<f64>,
-    /// Input compartment (1-indexed in Pmetrics convention)
+    /// Input compartment
     pub input: Option<usize>,
     /// Observed value (for EVID=0)
     pub out: Option<f64>,
-    /// Output equation number (1-indexed)
+    /// Output equation number
     pub outeq: Option<usize>,
     /// Censoring indicator
     pub cens: Option<Censor>,
@@ -112,8 +98,8 @@ pub struct NormalizedRow {
     pub covariates: HashMap<String, f64>,
 }
 
-impl NormalizedRow {
-    /// Create a new builder for constructing a NormalizedRow
+impl DataRow {
+    /// Create a new builder for constructing a DataRow
     ///
     /// # Arguments
     ///
@@ -123,16 +109,16 @@ impl NormalizedRow {
     /// # Example
     ///
     /// ```rust
-    /// use pharmsol::data::parser::NormalizedRow;
+    /// use pharmsol::data::parser::DataRow;
     ///
-    /// let row = NormalizedRow::builder("patient_001", 0.0)
+    /// let row = DataRow::builder("patient_001", 0.0)
     ///     .evid(1)
     ///     .dose(100.0)
     ///     .input(1)
     ///     .build();
     /// ```
-    pub fn builder(id: impl Into<String>, time: f64) -> NormalizedRowBuilder {
-        NormalizedRowBuilder::new(id, time)
+    pub fn builder(id: impl Into<String>, time: f64) -> DataRowBuilder {
+        DataRowBuilder::new(id, time)
     }
 
     /// Get error polynomial if all coefficients are present
@@ -143,7 +129,7 @@ impl NormalizedRow {
         }
     }
 
-    /// Convert this normalized row into pharmsol Events
+    /// Convert this row into pharmsol Events
     ///
     /// This method contains all the complex parsing logic:
     /// - EVID interpretation (0=observation, 1=dose, 4=reset)
@@ -165,16 +151,16 @@ impl NormalizedRow {
     ///
     /// # Errors
     ///
-    /// Returns [`PmetricsError`] if required fields are missing for the given EVID:
+    /// Returns [`DataError`] if required fields are missing for the given EVID:
     /// - EVID=0: Requires `outeq`
     /// - EVID=1: Requires `dose` and `input`; if `dur > 0`, it's an infusion
     ///
     /// # Example
     ///
     /// ```rust
-    /// use pharmsol::data::parser::NormalizedRow;
+    /// use pharmsol::data::parser::DataRow;
     ///
-    /// let row = NormalizedRow::builder("pt1", 0.0)
+    /// let row = DataRow::builder("pt1", 0.0)
     ///     .evid(1)
     ///     .dose(100.0)
     ///     .input(1)
@@ -188,7 +174,7 @@ impl NormalizedRow {
     /// let times: Vec<f64> = events.iter().map(|e| e.time()).collect();
     /// assert_eq!(times, vec![24.0, 48.0, 0.0]);
     /// ```
-    pub fn into_events(self) -> Result<Vec<Event>, PmetricsError> {
+    pub fn into_events(self) -> Result<Vec<Event>, DataError> {
         let mut events: Vec<Event> = Vec::new();
 
         match self.evid {
@@ -198,11 +184,10 @@ impl NormalizedRow {
                     self.time,
                     self.out,
                     self.outeq
-                        .ok_or_else(|| PmetricsError::MissingObservationOuteq {
+                        .ok_or_else(|| DataError::MissingObservationOuteq {
                             id: self.id.clone(),
                             time: self.time,
-                        })?
-                        .saturating_sub(1), // Convert 1-indexed to 0-indexed
+                        })?, // Keep 1-indexed as provided by Pmetrics
                     self.get_errorpoly(),
                     0, // occasion set later
                     self.cens.unwrap_or(Censor::None),
@@ -210,25 +195,22 @@ impl NormalizedRow {
             }
             1 | 4 => {
                 // Dosing event (1) or reset with dose (4)
-                let input_0indexed = self
-                    .input
-                    .ok_or_else(|| PmetricsError::MissingBolusInput {
-                        id: self.id.clone(),
-                        time: self.time,
-                    })?
-                    .saturating_sub(1); // Convert 1-indexed to 0-indexed
+
+                let input = self.input.ok_or_else(|| DataError::MissingBolusInput {
+                    id: self.id.clone(),
+                    time: self.time,
+                })?; // Keep 1-indexed as provided by Pmetrics
 
                 let event = if self.dur.unwrap_or(0.0) > 0.0 {
                     // Infusion
                     Event::Infusion(Infusion::new(
                         self.time,
-                        self.dose
-                            .ok_or_else(|| PmetricsError::MissingInfusionDose {
-                                id: self.id.clone(),
-                                time: self.time,
-                            })?,
-                        input_0indexed,
-                        self.dur.ok_or_else(|| PmetricsError::MissingInfusionDur {
+                        self.dose.ok_or_else(|| DataError::MissingInfusionDose {
+                            id: self.id.clone(),
+                            time: self.time,
+                        })?,
+                        input,
+                        self.dur.ok_or_else(|| DataError::MissingInfusionDur {
                             id: self.id.clone(),
                             time: self.time,
                         })?,
@@ -238,11 +220,11 @@ impl NormalizedRow {
                     // Bolus
                     Event::Bolus(Bolus::new(
                         self.time,
-                        self.dose.ok_or_else(|| PmetricsError::MissingBolusDose {
+                        self.dose.ok_or_else(|| DataError::MissingBolusDose {
                             id: self.id.clone(),
                             time: self.time,
                         })?,
-                        input_0indexed,
+                        input,
                         0,
                     ))
                 };
@@ -265,7 +247,7 @@ impl NormalizedRow {
                 events.push(event);
             }
             _ => {
-                return Err(PmetricsError::UnknownEvid {
+                return Err(DataError::UnknownEvid {
                     evid: self.evid as isize,
                     id: self.id.clone(),
                     time: self.time,
@@ -299,15 +281,15 @@ impl NormalizedRow {
     }
 }
 
-/// Builder for constructing NormalizedRow with a fluent API
+/// Builder for constructing DataRow with a fluent API
 ///
 /// # Example
 ///
 /// ```rust
-/// use pharmsol::data::parser::NormalizedRow;
+/// use pharmsol::data::parser::DataRow;
 /// use pharmsol::data::Censor;
 ///
-/// let row = NormalizedRow::builder("patient_001", 1.5)
+/// let row = DataRow::builder("patient_001", 1.5)
 ///     .evid(0)
 ///     .out(25.5)
 ///     .outeq(1)
@@ -317,11 +299,11 @@ impl NormalizedRow {
 ///     .build();
 /// ```
 #[derive(Debug, Clone)]
-pub struct NormalizedRowBuilder {
-    row: NormalizedRow,
+pub struct DataRowBuilder {
+    row: DataRow,
 }
 
-impl NormalizedRowBuilder {
+impl DataRowBuilder {
     /// Create a new builder with required fields
     ///
     /// # Arguments
@@ -330,7 +312,7 @@ impl NormalizedRowBuilder {
     /// * `time` - Event time
     pub fn new(id: impl Into<String>, time: f64) -> Self {
         Self {
-            row: NormalizedRow {
+            row: DataRow {
                 id: id.into(),
                 time,
                 evid: 0, // Default to observation
@@ -388,7 +370,7 @@ impl NormalizedRowBuilder {
     /// Set the input compartment (1-indexed)
     ///
     /// Required for EVID=1 (dosing events).
-    /// Will be converted to 0-indexed internally.
+    /// Kept as 1-indexed; user must size state arrays accordingly.
     pub fn input(mut self, input: usize) -> Self {
         self.row.input = Some(input);
         self
@@ -442,47 +424,47 @@ impl NormalizedRowBuilder {
         self
     }
 
-    /// Build the NormalizedRow
-    pub fn build(self) -> NormalizedRow {
+    /// Build the DataRow
+    pub fn build(self) -> DataRow {
         self.row
     }
 }
 
-/// Build a [Data] object from an iterator of [NormalizedRow]s
+/// Build a [Data] object from an iterator of [DataRow]s
 ///
 /// This function handles all the complex assembly logic:
 /// - Groups rows by subject ID
 /// - Splits into occasions at EVID=4 boundaries
-/// - Converts rows to events via [`NormalizedRow::into_events()`]
+/// - Converts rows to events via [`DataRow::into_events()`]
 /// - Builds covariates from row covariate data
 ///
 /// # Example
 ///
 /// ```rust
-/// use pharmsol::data::parser::{NormalizedRow, build_data};
+/// use pharmsol::data::parser::{DataRow, build_data};
 ///
 /// let rows = vec![
 ///     // Subject 1, Occasion 0
-///     NormalizedRow::builder("pt1", 0.0)
+///     DataRow::builder("pt1", 0.0)
 ///         .evid(1).dose(100.0).input(1).build(),
-///     NormalizedRow::builder("pt1", 1.0)
+///     DataRow::builder("pt1", 1.0)
 ///         .evid(0).out(50.0).outeq(1).build(),
 ///     // Subject 1, Occasion 1 (EVID=4 starts new occasion)
-///     NormalizedRow::builder("pt1", 24.0)
+///     DataRow::builder("pt1", 24.0)
 ///         .evid(4).dose(100.0).input(1).build(),
-///     NormalizedRow::builder("pt1", 25.0)
+///     DataRow::builder("pt1", 25.0)
 ///         .evid(0).out(48.0).outeq(1).build(),
 ///     // Subject 2
-///     NormalizedRow::builder("pt2", 0.0)
+///     DataRow::builder("pt2", 0.0)
 ///         .evid(1).dose(50.0).input(1).build(),
 /// ];
 ///
 /// let data = build_data(rows).unwrap();
 /// assert_eq!(data.subjects().len(), 2);
 /// ```
-pub fn build_data(rows: impl IntoIterator<Item = NormalizedRow>) -> Result<Data, PmetricsError> {
+pub fn build_data(rows: impl IntoIterator<Item = DataRow>) -> Result<Data, DataError> {
     // Group rows by subject ID
-    let mut rows_map: std::collections::HashMap<String, Vec<NormalizedRow>> =
+    let mut rows_map: std::collections::HashMap<String, Vec<DataRow>> =
         std::collections::HashMap::new();
     for row in rows {
         rows_map.entry(row.id.clone()).or_default().push(row);
@@ -498,7 +480,7 @@ pub fn build_data(rows: impl IntoIterator<Item = NormalizedRow>) -> Result<Data,
             .filter_map(|(i, row)| if row.evid == 4 { Some(i) } else { None })
             .collect();
 
-        let mut block_rows_vec: Vec<&[NormalizedRow]> = Vec::new();
+        let mut block_rows_vec: Vec<&[DataRow]> = Vec::new();
         let mut start = 0;
         for &split_index in &split_indices {
             if start < split_index {
@@ -558,13 +540,49 @@ pub fn build_data(rows: impl IntoIterator<Item = NormalizedRow>) -> Result<Data,
     Ok(Data::new(subjects))
 }
 
+/// Custom error type for the module
+#[allow(private_interfaces)]
+#[derive(Error, Debug, Clone)]
+pub enum DataError {
+    /// Error encountered when reading CSV data
+    #[error("CSV error: {0}")]
+    CSVError(String),
+    /// Error during data deserialization
+    #[error("Parse error: {0}")]
+    SerdeError(String),
+    /// Encountered an unknown EVID value
+    #[error("Unknown EVID: {evid} for ID {id} at time {time}")]
+    UnknownEvid { evid: isize, id: String, time: f64 },
+    /// Required observation value (OUT) is missing
+    #[error("Observation OUT is missing for {id} at time {time}")]
+    MissingObservationOut { id: String, time: f64 },
+    /// Required observation output equation (OUTEQ) is missing
+    #[error("Observation OUTEQ is missing in for {id} at time {time}")]
+    MissingObservationOuteq { id: String, time: f64 },
+    /// Required infusion dose amount is missing
+    #[error("Infusion amount (DOSE) is missing for {id} at time {time}")]
+    MissingInfusionDose { id: String, time: f64 },
+    /// Required infusion input compartment is missing
+    #[error("Infusion compartment (INPUT) is missing for {id} at time {time}")]
+    MissingInfusionInput { id: String, time: f64 },
+    /// Required infusion duration is missing
+    #[error("Infusion duration (DUR) is missing for {id} at time {time}")]
+    MissingInfusionDur { id: String, time: f64 },
+    /// Required bolus dose amount is missing
+    #[error("Bolus amount (DOSE) is missing for {id} at time {time}")]
+    MissingBolusDose { id: String, time: f64 },
+    /// Required bolus input compartment is missing
+    #[error("Bolus compartment (INPUT) is missing for {id} at time {time}")]
+    MissingBolusInput { id: String, time: f64 },
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_observation_row() {
-        let row = NormalizedRow::builder("pt1", 1.0)
+        let row = DataRow::builder("pt1", 1.0)
             .evid(0)
             .out(25.5)
             .outeq(1)
@@ -577,7 +595,7 @@ mod tests {
             Event::Observation(obs) => {
                 assert_eq!(obs.time(), 1.0);
                 assert_eq!(obs.value(), Some(25.5));
-                assert_eq!(obs.outeq(), 0); // Converted to 0-indexed
+                assert_eq!(obs.outeq(), 1); // Kept as 1-indexed
             }
             _ => panic!("Expected observation event"),
         }
@@ -585,7 +603,7 @@ mod tests {
 
     #[test]
     fn test_bolus_row() {
-        let row = NormalizedRow::builder("pt1", 0.0)
+        let row = DataRow::builder("pt1", 0.0)
             .evid(1)
             .dose(100.0)
             .input(1)
@@ -598,7 +616,7 @@ mod tests {
             Event::Bolus(bolus) => {
                 assert_eq!(bolus.time(), 0.0);
                 assert_eq!(bolus.amount(), 100.0);
-                assert_eq!(bolus.input(), 0); // Converted to 0-indexed
+                assert_eq!(bolus.input(), 1); // Kept as 1-indexed
             }
             _ => panic!("Expected bolus event"),
         }
@@ -606,7 +624,7 @@ mod tests {
 
     #[test]
     fn test_infusion_row() {
-        let row = NormalizedRow::builder("pt1", 0.0)
+        let row = DataRow::builder("pt1", 0.0)
             .evid(1)
             .dose(100.0)
             .dur(2.0)
@@ -621,7 +639,7 @@ mod tests {
                 assert_eq!(inf.time(), 0.0);
                 assert_eq!(inf.amount(), 100.0);
                 assert_eq!(inf.duration(), 2.0);
-                assert_eq!(inf.input(), 0);
+                assert_eq!(inf.input(), 1); // Kept as 1-indexed
             }
             _ => panic!("Expected infusion event"),
         }
@@ -629,7 +647,7 @@ mod tests {
 
     #[test]
     fn test_positive_addl() {
-        let row = NormalizedRow::builder("pt1", 0.0)
+        let row = DataRow::builder("pt1", 0.0)
             .evid(1)
             .dose(100.0)
             .input(1)
@@ -647,7 +665,7 @@ mod tests {
 
     #[test]
     fn test_negative_addl() {
-        let row = NormalizedRow::builder("pt1", 0.0)
+        let row = DataRow::builder("pt1", 0.0)
             .evid(1)
             .dose(100.0)
             .input(1)
@@ -666,7 +684,7 @@ mod tests {
     #[test]
     fn test_large_negative_addl() {
         // Match the pharmsol pmetrics test case
-        let row = NormalizedRow::builder("pt1", 0.0)
+        let row = DataRow::builder("pt1", 0.0)
             .evid(1)
             .dose(100.0)
             .input(1)
@@ -686,7 +704,7 @@ mod tests {
 
     #[test]
     fn test_infusion_with_addl() {
-        let row = NormalizedRow::builder("pt1", 0.0)
+        let row = DataRow::builder("pt1", 0.0)
             .evid(1)
             .dose(100.0)
             .dur(1.0)
@@ -712,7 +730,7 @@ mod tests {
 
     #[test]
     fn test_covariates() {
-        let row = NormalizedRow::builder("pt1", 0.0)
+        let row = DataRow::builder("pt1", 0.0)
             .evid(0)
             .out(25.0)
             .outeq(1)
@@ -727,7 +745,7 @@ mod tests {
 
     #[test]
     fn test_error_poly() {
-        let row = NormalizedRow::builder("pt1", 1.0)
+        let row = DataRow::builder("pt1", 1.0)
             .evid(0)
             .out(25.0)
             .outeq(1)
@@ -746,7 +764,7 @@ mod tests {
 
     #[test]
     fn test_censoring() {
-        let row = NormalizedRow::builder("pt1", 1.0)
+        let row = DataRow::builder("pt1", 1.0)
             .evid(0)
             .out(0.5)
             .outeq(1)
@@ -765,7 +783,7 @@ mod tests {
 
     #[test]
     fn test_missing_outeq_error() {
-        let row = NormalizedRow::builder("pt1", 1.0)
+        let row = DataRow::builder("pt1", 1.0)
             .evid(0)
             .out(25.0)
             // Missing outeq
@@ -775,13 +793,13 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
-            PmetricsError::MissingObservationOuteq { .. }
+            DataError::MissingObservationOuteq { .. }
         ));
     }
 
     #[test]
     fn test_missing_dose_error() {
-        let row = NormalizedRow::builder("pt1", 0.0)
+        let row = DataRow::builder("pt1", 0.0)
             .evid(1)
             .input(1)
             // Missing dose
@@ -793,7 +811,7 @@ mod tests {
 
     #[test]
     fn test_missing_input_error() {
-        let row = NormalizedRow::builder("pt1", 0.0)
+        let row = DataRow::builder("pt1", 0.0)
             .evid(1)
             .dose(100.0)
             // Missing input
@@ -805,19 +823,19 @@ mod tests {
 
     #[test]
     fn test_unknown_evid_error() {
-        let row = NormalizedRow::builder("pt1", 0.0).evid(99).build();
+        let row = DataRow::builder("pt1", 0.0).evid(99).build();
 
         let result = row.into_events();
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
-            PmetricsError::UnknownEvid { evid: 99, .. }
+            DataError::UnknownEvid { evid: 99, .. }
         ));
     }
 
     #[test]
     fn test_addl_zero_has_no_effect() {
-        let row = NormalizedRow::builder("pt1", 0.0)
+        let row = DataRow::builder("pt1", 0.0)
             .evid(1)
             .dose(100.0)
             .input(1)
@@ -831,7 +849,7 @@ mod tests {
 
     #[test]
     fn test_addl_without_ii_has_no_effect() {
-        let row = NormalizedRow::builder("pt1", 0.0)
+        let row = DataRow::builder("pt1", 0.0)
             .evid(1)
             .dose(100.0)
             .input(1)
@@ -845,7 +863,7 @@ mod tests {
 
     #[test]
     fn test_evid_4_reset() {
-        let row = NormalizedRow::builder("pt1", 24.0)
+        let row = DataRow::builder("pt1", 24.0)
             .evid(4)
             .dose(100.0)
             .input(1)

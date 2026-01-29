@@ -43,7 +43,7 @@ pub mod prelude {
     pub mod data {
         pub use crate::data::{
             error_model::{AssayErrorModel, AssayErrorModels},
-            parser::{read_pmetrics, NormalizedRow, NormalizedRowBuilder},
+            parser::{read_pmetrics, DataRow, DataRowBuilder},
             residual_error::{ResidualErrorModel, ResidualErrorModels},
             Covariates, Data, Event, Occasion, Subject,
         };
