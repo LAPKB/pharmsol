@@ -51,15 +51,15 @@ The aim of `pharmsol` is to provide developers of higher-level software with a l
 
 To the authors' knowledge, `pharmsol` is the first software written in Rust for pharmacokinetic modeling and simulation. The design principle of `pharmsol` is to provide researchers and pharmacometricians a flexible and efficient library for solving pharmacokinetic problems.
 
-These problems are defined by two key aspects: the pharmacokinetic data, and the structural model. While the data structure is explained in detail below, the structural model is more complex. In `pharmsol`, models are defined using a set of closures, providing methods to define the set of equations that describe the mass transfer of drug, as well as initial conditions and output equations, i.e. detailing the initial and observed states of the system. Bioavailability terms and lag-time of absorption is also supported. Covariates may be applied on both parameters and state values. Importantly, `pharmsol` provides both linear interpolation and carry-forward for covariates, both common in population pharmacokinetic models.
+These problems are defined by two key aspects: the pharmacokinetic data, and the structural model. While the data structure is explained in detail below, the structural model is more complex. In `pharmsol`, models are defined using a set of closures, providing methods to define the set of equations that describe the mass transfer of drug, as well as initial conditions and output equations, i.e. detailing the initial and observed states of the system. Bioavailability terms and lag-time of absorption are also supported. Covariates may be applied on both parameters and state values. Importantly, `pharmsol` provides both linear interpolation and carry-forward for covariates, both common in population pharmacokinetic models.
 
-The three different solver types, i.e. analytical, ODE, and SDE based, are all built around a common `Equation` trait. This gives `Pharmsol` a modular design, allowing users to easily extend the library with new solvers or to rely on it while being agnostic on the underlying solver type. This flexibility is particularly useful when integrating `pharmsol` with other software, as it allows users to select the most appropriate solver for their specific use case (e.g., speed vs. model complexity).
+The three different solver types, i.e. analytical, ODE, and SDE based, are all built around a common `Equation` trait. This gives `pharmsol` a modular design, allowing users to easily extend the library with new solvers or to rely on it while being agnostic on the underlying solver type. This flexibility is particularly useful when integrating `pharmsol` with other software, as it allows users to select the most appropriate solver for their specific use case (e.g., speed vs. model complexity).
 
 # Research impact statement
 
-As a tool for pharmacokinetic modelling and simulation, `pharmsol` has already demonstrated research impact. Most notably, it is used as a simulation engine for the Rust crate `PMcore` and `Pmetrics` [@pmetrics] - the _de facto_ R package for non-parametric population pharmacokinetic modelling and simulation.
+As a tool for pharmacokinetic modelling and simulation, `pharmsol` has already demonstrated research impact. Most importantly, it is used as the simulation engine for `PMcore`, the Rust implementation of `Pmetrics` [@pmetrics] - the _de facto_ R package for non-parametric population pharmacokinetic modelling and simulation. In this regard, `pharmsol` has been used to generate results in scientific publications, such as the creation of a new algorithm for non-parametric parameter estimation [@npod].
 
-Additionally, `pharmsol` has been used to generate results in scientific publications, such as the creation of a new algorithm for non-parametric parameter estimation [@npod].
+`pharmsol` and its SDE solver 
 
 Internally, `pharmsol` is also used for simulating alternative dose regimens to individualize drug therapy in patients.
 
@@ -71,11 +71,11 @@ Internally, `pharmsol` is also used for simulating alternative dose regimens to 
 Data → Subject → Occasion → Event (Bolus, Infusion, Observation)
 ```
 
-Currently, `pharmsol` provides methods to parse the Pmetrics [@pmetrics] data format. In the future, we aim to also support additional formats, such as those used by NONMEM, Monolix [@monolix], and more. Data may also be built using a provided builder-pattern, providing a flexible method for defining subjects on the go for pharmacometricians comfortable with Rust. This is especially useful when integrating `pharmsol` with third-party software, as it allows for reading and generating data that is not in a supported format.
+Currently, `pharmsol` provides methods to parse the Pmetrics [@pmetrics] data format. In the future, we aim to also support additional formats, such as those used by NONMEM, Monolix [@monolix], and more. Data may also be built using a provided builder-pattern, providing a flexible method for defining subjects programmatically. This is especially useful when integrating `pharmsol` with third-party software, as it allows for reading and generating data that is not in an already supported format.
 
 # Supported equation formats
 
-As stated before the `Equation` trait provides the architectural backbone for simulating PK/PD profiles. Pharmsol currently also provides three solvers implementing this trait: analytical solutions, ordinary differential equations, and experimental support for stochastic differential equations.
+As stated before, the `Equation` trait provides the architectural backbone for simulating PK/PD profiles. Pharmsol currently also provides three solvers implementing this trait: analytical solutions, ordinary differential equations, and experimental support for stochastic differential equations.
 
 ## Analytical Solutions
 
