@@ -41,9 +41,11 @@ As a fully open-source solution, `pharmsol` empowers users to inspect, modify, a
 
 # State of the field
 
-Several tools exist for performing pharmacokinetic and pharmacodynamic modelling and simulation. Most well known are the full-suite applications such as NONMEM [@nonmem], Phoenix NLME [@phoenix], Monolix [@monolix], and Pumas [@rackauckas2020pumas]. These are generally commercial or proprietary, while open-source alternatives include the R packages `Pmetrics`[@pmetrics] and `mrgsolve`[@mrgsolve], as well as implementations in Python and Julia. The latter two are powered by Fortran and C++, respectively.
+Several tools exist for performing pharmacokinetic and pharmacodynamic modelling and simulation. Most well known are the full-suite applications such as NONMEM [@nonmem], Phoenix NLME [@phoenix], Monolix [@monolix], and Pumas [@rackauckas2020pumas]. These are generally commercial or proprietary, while open-source alternatives include the R packages `Pmetrics` [@pmetrics] and `mrgsolve` [@mrgsolve], as well as implementations in Python and Julia. The latter two are powered by Fortran and C++, respectively.
 
-The aim of `pharmsol` is to provide developers of higher-level software with a library for performing efficient and memory-safe pharmacokinetic modeling and simulation. Importantly, `pharmsol` is open-source with a liberal license, allowing developers to inspect, extend, and integrate the library into new or exisitng solutions.
+The choice to develop `pharmsol` as a new library rather than contribute to the existing solutions is motivated by several factors. First, Rust provides compile-time memory safety guarantees which are not available in Fortran or C++, without sacrificing performance. This is especially important for software used in healthcare settings. Second, existing alternatives are coupled to their parent frameworks, and may be difficult to integrate with new solutions or software. 
+
+The aim of `pharmsol` is to provide developers of higher-level software with a library for performing efficient and memory-safe pharmacokinetic modeling and simulation. Importantly, `pharmsol` is open-source with a permissive license, allowing developers to inspect, extend, and integrate the library into new or existing solutions.
 
 # Software design
 
