@@ -59,9 +59,7 @@ The three different solver types, i.e. analytical, ODE, and SDE based, are all b
 
 As a tool for pharmacokinetic modelling and simulation, `pharmsol` has already demonstrated research impact. Most importantly, it is used as the simulation engine for `PMcore`, the Rust implementation of `Pmetrics` [@pmetrics] - the _de facto_ R package for non-parametric population pharmacokinetic modelling and simulation. In this regard, `pharmsol` has been used to generate results in scientific publications, such as the creation of a new algorithm for non-parametric parameter estimation [@npod].
 
-`pharmsol` and its SDE solver 
-
-Internally, `pharmsol` is also used for simulating alternative dose regimens to individualize drug therapy in patients.
+By utilizing the SDE solver in `pharmsol`, our research group is currently researching the use of SDEs in a non-parametric pharmacokinetic framework. We have also developed internal applications which rely on `pharmsol` for simulating alternative dose regimens to individualize drug therapy.
 
 # Data format
 
