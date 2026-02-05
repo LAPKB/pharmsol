@@ -410,16 +410,19 @@ impl Equation for ODE {
         let nstates = self.get_nstates();
         let ndrugs = self.get_ndrugs();
 
-        // Preallocate reusable vectors for bolus computation (sized by ndrugs)
-        let mut state_with_bolus = V::zeros(nstates, NalgebraContext);
-        let mut state_without_bolus = V::zeros(nstates, NalgebraContext);
-        let zero_bolus = V::zeros(ndrugs, NalgebraContext);
-        let zero_rateiv = V::zeros(ndrugs, NalgebraContext);
-        let mut bolus_v = V::zeros(ndrugs, NalgebraContext);
+        // Use nstates + 1 and nouteqs + 1 to support both 0-indexed and 1-indexed data
+        let state_buffer_size = nstates + 1;
+        let output_buffer_size = self.get_nouteqs() + 1;
+
+        // Preallocate reusable vectors for bolus computation
+        let mut state_with_bolus = V::zeros(state_buffer_size, NalgebraContext);
+        let mut state_without_bolus = V::zeros(state_buffer_size, NalgebraContext);
+        let zero_vector = V::zeros(state_buffer_size, NalgebraContext);
+        let mut bolus_v = V::zeros(state_buffer_size, NalgebraContext);
         let spp_v: V = DVector::from_vec(support_point.clone()).into();
 
         // Pre-allocate output vector for observations
-        let mut y_out = V::zeros(self.get_nouteqs(), NalgebraContext);
+        let mut y_out = V::zeros(output_buffer_size, NalgebraContext);
 
         // Iterate over occasions
         for occasion in subject.occasions() {
