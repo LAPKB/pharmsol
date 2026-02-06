@@ -8,7 +8,8 @@
 
 #[cfg(feature = "exa")]
 fn main() {
-    use pharmsol::{build::temp_path, *};
+    use pharmsol::prelude::*;
+    use pharmsol::{build::temp_path, exa, Analytical, ODE};
     use std::path::PathBuf;
 
     // Create test subject with infusion and observations
