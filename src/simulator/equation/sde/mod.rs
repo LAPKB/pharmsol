@@ -11,7 +11,7 @@ use cached::UnboundCache;
 
 use crate::{
     data::{Covariates, Infusion},
-    error_model::ErrorModels,
+    error_model::AssayErrorModels,
     prelude::simulator::Prediction,
     simulator::{Diffusion, Drift, Fa, Init, Lag, Neqs, Out, V},
     Subject,
@@ -182,7 +182,7 @@ impl Predictions for Array2<Prediction> {
 
         result
     }
-    fn log_likelihood(&self, error_models: &ErrorModels) -> Result<f64, crate::PharmsolError> {
+    fn log_likelihood(&self, error_models: &AssayErrorModels) -> Result<f64, crate::PharmsolError> {
         // For SDE, compute log-likelihood using mean predictions across particles
         let predictions = self.get_predictions();
         if predictions.is_empty() {
@@ -282,7 +282,7 @@ impl EquationPriv for SDE {
         &self,
         support_point: &Vec<f64>,
         observation: &crate::Observation,
-        error_models: Option<&ErrorModels>,
+        error_models: Option<&AssayErrorModels>,
         _time: f64,
         covariates: &Covariates,
         x: &mut Self::S,
@@ -309,7 +309,7 @@ impl EquationPriv for SDE {
             let mut q: Vec<f64> = Vec::with_capacity(self.nparticles);
 
             pred.iter().for_each(|p| {
-                let lik = p.likelihood(em);
+                let lik = p.log_likelihood(em).map(f64::exp);
                 match lik {
                     Ok(l) => q.push(l),
                     Err(e) => panic!("Error in likelihood calculation: {:?}", e),
@@ -367,13 +367,15 @@ impl Equation for SDE {
         &self,
         subject: &Subject,
         support_point: &Vec<f64>,
-        error_models: &ErrorModels,
+        error_models: &AssayErrorModels,
         cache: bool,
     ) -> Result<f64, PharmsolError> {
         if cache {
             _estimate_likelihood(self, subject, support_point, error_models)
         } else {
-            _estimate_likelihood_no_cache(self, subject, support_point, error_models)
+            // No cache version: directly simulate
+            let ypred = self.simulate_subject(subject, support_point, Some(error_models))?;
+            Ok(ypred.1.unwrap())
         }
     }
 
@@ -381,13 +383,19 @@ impl Equation for SDE {
         &self,
         subject: &Subject,
         support_point: &Vec<f64>,
-        error_models: &ErrorModels,
+        error_models: &AssayErrorModels,
         cache: bool,
     ) -> Result<f64, PharmsolError> {
         // For SDE, the particle filter computes likelihood in regular space.
-        // We take the log of the cached/computed likelihood.
-        // Note: For extreme underflow cases, this may return -inf.
-        let lik = self.estimate_likelihood(subject, support_point, error_models, cache)?;
+        // We compute it directly and then take the log.
+        let lik = if cache {
+            _estimate_likelihood(self, subject, support_point, error_models)?
+        } else {
+            // No cache version: directly simulate
+            let ypred = self.simulate_subject(subject, support_point, Some(error_models))?;
+            ypred.1.unwrap()
+        };
+
         if lik > 0.0 {
             Ok(lik.ln())
         } else {
@@ -427,7 +435,7 @@ fn _estimate_likelihood(
     sde: &SDE,
     subject: &Subject,
     support_point: &Vec<f64>,
-    error_models: &ErrorModels,
+    error_models: &AssayErrorModels,
 ) -> Result<f64, PharmsolError> {
     let ypred = sde.simulate_subject(subject, support_point, Some(error_models))?;
     Ok(ypred.1.unwrap())

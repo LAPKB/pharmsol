@@ -87,7 +87,9 @@ let ode = equation::ODE::new(
 
 Analytical solutions provide 20-33× speedups compared to equivalent ODE formulations. See [benchmarks](benches/) for details.
 
-## Documentation
+
+
+# Links
 
 - [API Documentation](https://lapkb.github.io/pharmsol/pharmsol/)
 - [Examples](examples/)
