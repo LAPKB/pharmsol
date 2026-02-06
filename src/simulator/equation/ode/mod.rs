@@ -219,9 +219,8 @@ impl Equation for ODE {
         // Cache nstates to avoid repeated method calls
         let nstates = self.get_nstates();
 
-        // Use nstates + 1 and nouteqs + 1 to support both 0-indexed and 1-indexed data
-        let state_buffer_size = nstates + 1;
-        let output_buffer_size = self.get_nouteqs() + 1;
+        let state_buffer_size = nstates;
+        let output_buffer_size = self.get_nouteqs();
 
         // Preallocate reusable vectors for bolus computation
         let mut state_with_bolus = V::zeros(state_buffer_size, NalgebraContext);

@@ -74,8 +74,7 @@ impl InfusionSchedule {
             };
         }
 
-        // Use nstates + 1 to support both 0-indexed and 1-indexed data
-        let buffer_size = nstates + 1;
+        let buffer_size = nstates;
         let mut per_input: Vec<Vec<(f64, f64)>> = vec![Vec::new(); buffer_size];
         for infusion in infusions {
             if infusion.duration() <= 0.0 {
@@ -343,8 +342,7 @@ where
         init: V,
     ) -> Self {
         let nparams = p.len();
-        // Use nstates + 1 to support both 0-indexed and 1-indexed data
-        let buffer_size = nstates + 1;
+        let buffer_size = nstates;
         let rateiv_buffer = RefCell::new(V::zeros(buffer_size, NalgebraContext));
         let infusion_schedule = InfusionSchedule::new(nstates, infusions);
         // Pre-allocate zero bolus vector

@@ -142,8 +142,7 @@ impl EquationPriv for Analytical {
         // 2) March over each sub-interval
         let mut current_t = ts[0];
         let mut sp = V::from_vec(support_point.to_owned(), NalgebraContext);
-        // Use nstates + 1 to support both 0-indexed and 1-indexed data
-        let mut rateiv = V::zeros(self.get_nstates() + 1, NalgebraContext);
+        let mut rateiv = V::zeros(self.get_nstates(), NalgebraContext);
 
         for &next_t in &ts[1..] {
             // prepare support and infusion rate for [current_t .. next_t]
@@ -181,8 +180,7 @@ impl EquationPriv for Analytical {
         likelihood: &mut Vec<f64>,
         output: &mut Self::P,
     ) -> Result<(), PharmsolError> {
-        // Use nouteqs + 1 to support both 0-indexed and 1-indexed data
-        let mut y = V::zeros(self.get_nouteqs() + 1, NalgebraContext);
+        let mut y = V::zeros(self.get_nouteqs(), NalgebraContext);
         let out = &self.out;
         (out)(
             x,
