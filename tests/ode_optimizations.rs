@@ -84,13 +84,14 @@ fn single_iv_bolus_matches_analytical() {
 
     let analytical = equation::Analytical::new(
         one_compartment,
-        |_p, _t, _cov| {},
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
+        |_p, _t, _cov| Ok(()),
+        |_p, _t, _cov| Ok(lag! {}),
+        |_p, _t, _cov| Ok(fa! {}),
+        |_p, _t, _cov, _x| Ok(()),
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ke, v);
             y[0] = x[0] / v;
+            Ok(())
         },
         (1, 1),
     );
@@ -100,13 +101,15 @@ fn single_iv_bolus_matches_analytical() {
             fetch_params!(p, ke, _v);
             // Bolus appears in derivative as instantaneous input
             dx[0] = -ke * x[0] + b[0];
+            Ok(())
         },
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
+        |_p, _t, _cov| Ok(lag! {}),
+        |_p, _t, _cov| Ok(fa! {}),
+        |_p, _t, _cov, _x| Ok(()),
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ke, v);
             y[0] = x[0] / v;
+            Ok(())
         },
         (1, 1),
     );
@@ -135,13 +138,14 @@ fn multiple_iv_boluses_match_analytical() {
 
     let analytical = equation::Analytical::new(
         one_compartment,
-        |_p, _t, _cov| {},
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
+        |_p, _t, _cov| Ok(()),
+        |_p, _t, _cov| Ok(lag! {}),
+        |_p, _t, _cov| Ok(fa! {}),
+        |_p, _t, _cov, _x| Ok(()),
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ke, v);
             y[0] = x[0] / v;
+            Ok(())
         },
         (1, 1),
     );
@@ -150,13 +154,15 @@ fn multiple_iv_boluses_match_analytical() {
         |x, p, _t, dx, b, _rateiv, _cov| {
             fetch_params!(p, ke, _v);
             dx[0] = -ke * x[0] + b[0];
+            Ok(())
         },
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
+        |_p, _t, _cov| Ok(lag! {}),
+        |_p, _t, _cov| Ok(fa! {}),
+        |_p, _t, _cov, _x| Ok(()),
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ke, v);
             y[0] = x[0] / v;
+            Ok(())
         },
         (1, 1),
     );
@@ -186,13 +192,14 @@ fn oral_bolus_with_absorption_matches_analytical() {
 
     let analytical = equation::Analytical::new(
         one_compartment_with_absorption,
-        |_p, _t, _cov| {},
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
+        |_p, _t, _cov| Ok(()),
+        |_p, _t, _cov| Ok(lag! {}),
+        |_p, _t, _cov| Ok(fa! {}),
+        |_p, _t, _cov, _x| Ok(()),
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ka, _ke, v);
             y[0] = x[1] / v; // Central compartment is x[1]
+            Ok(())
         },
         (2, 1),
     );
@@ -202,13 +209,15 @@ fn oral_bolus_with_absorption_matches_analytical() {
             fetch_params!(p, ka, ke, _v);
             dx[0] = -ka * x[0] + b[0]; // Gut compartment with oral bolus
             dx[1] = ka * x[0] - ke * x[1]; // Central compartment
+            Ok(())
         },
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
+        |_p, _t, _cov| Ok(lag! {}),
+        |_p, _t, _cov| Ok(fa! {}),
+        |_p, _t, _cov, _x| Ok(()),
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ka, _ke, v);
             y[0] = x[1] / v;
+            Ok(())
         },
         (2, 1),
     );
@@ -245,13 +254,14 @@ fn multiple_oral_doses_match_analytical() {
 
     let analytical = equation::Analytical::new(
         one_compartment_with_absorption,
-        |_p, _t, _cov| {},
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
+        |_p, _t, _cov| Ok(()),
+        |_p, _t, _cov| Ok(lag! {}),
+        |_p, _t, _cov| Ok(fa! {}),
+        |_p, _t, _cov, _x| Ok(()),
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ka, _ke, v);
             y[0] = x[1] / v;
+            Ok(())
         },
         (2, 1),
     );
@@ -261,13 +271,15 @@ fn multiple_oral_doses_match_analytical() {
             fetch_params!(p, ka, ke, _v);
             dx[0] = -ka * x[0] + b[0];
             dx[1] = ka * x[0] - ke * x[1];
+            Ok(())
         },
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
+        |_p, _t, _cov| Ok(lag! {}),
+        |_p, _t, _cov| Ok(fa! {}),
+        |_p, _t, _cov, _x| Ok(()),
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ka, _ke, v);
             y[0] = x[1] / v;
+            Ok(())
         },
         (2, 1),
     );
@@ -301,13 +313,14 @@ fn single_infusion_matches_analytical() {
 
     let analytical = equation::Analytical::new(
         one_compartment,
-        |_p, _t, _cov| {},
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
+        |_p, _t, _cov| Ok(()),
+        |_p, _t, _cov| Ok(lag! {}),
+        |_p, _t, _cov| Ok(fa! {}),
+        |_p, _t, _cov, _x| Ok(()),
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ke, v);
             y[0] = x[0] / v;
+            Ok(())
         },
         (1, 1),
     );
@@ -316,13 +329,15 @@ fn single_infusion_matches_analytical() {
         |x, p, _t, dx, _b, rateiv, _cov| {
             fetch_params!(p, ke, _v);
             dx[0] = -ke * x[0] + rateiv[0];
+            Ok(())
         },
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
+        |_p, _t, _cov| Ok(lag! {}),
+        |_p, _t, _cov| Ok(fa! {}),
+        |_p, _t, _cov, _x| Ok(()),
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ke, v);
             y[0] = x[0] / v;
+            Ok(())
         },
         (1, 1),
     );
@@ -348,13 +363,14 @@ fn overlapping_infusions_match_analytical() {
 
     let analytical = equation::Analytical::new(
         one_compartment,
-        |_p, _t, _cov| {},
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
+        |_p, _t, _cov| Ok(()),
+        |_p, _t, _cov| Ok(lag! {}),
+        |_p, _t, _cov| Ok(fa! {}),
+        |_p, _t, _cov, _x| Ok(()),
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ke, v);
             y[0] = x[0] / v;
+            Ok(())
         },
         (1, 1),
     );
@@ -363,13 +379,15 @@ fn overlapping_infusions_match_analytical() {
         |x, p, _t, dx, _b, rateiv, _cov| {
             fetch_params!(p, ke, _v);
             dx[0] = -ke * x[0] + rateiv[0];
+            Ok(())
         },
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
+        |_p, _t, _cov| Ok(lag! {}),
+        |_p, _t, _cov| Ok(fa! {}),
+        |_p, _t, _cov, _x| Ok(()),
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ke, v);
             y[0] = x[0] / v;
+            Ok(())
         },
         (1, 1),
     );
@@ -404,13 +422,14 @@ fn bolus_plus_infusion_matches_analytical() {
 
     let analytical = equation::Analytical::new(
         one_compartment,
-        |_p, _t, _cov| {},
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
+        |_p, _t, _cov| Ok(()),
+        |_p, _t, _cov| Ok(lag! {}),
+        |_p, _t, _cov| Ok(fa! {}),
+        |_p, _t, _cov, _x| Ok(()),
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ke, v);
             y[0] = x[0] / v;
+            Ok(())
         },
         (1, 1),
     );
@@ -419,13 +438,15 @@ fn bolus_plus_infusion_matches_analytical() {
         |x, p, _t, dx, b, rateiv, _cov| {
             fetch_params!(p, ke, _v);
             dx[0] = -ke * x[0] + b[0] + rateiv[0];
+            Ok(())
         },
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
+        |_p, _t, _cov| Ok(lag! {}),
+        |_p, _t, _cov| Ok(fa! {}),
+        |_p, _t, _cov, _x| Ok(()),
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ke, v);
             y[0] = x[0] / v;
+            Ok(())
         },
         (1, 1),
     );
@@ -461,13 +482,14 @@ fn complex_dosing_scenario_matches_analytical() {
 
     let analytical = equation::Analytical::new(
         one_compartment_with_absorption,
-        |_p, _t, _cov| {},
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
+        |_p, _t, _cov| Ok(()),
+        |_p, _t, _cov| Ok(lag! {}),
+        |_p, _t, _cov| Ok(fa! {}),
+        |_p, _t, _cov, _x| Ok(()),
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ka, _ke, v);
             y[0] = x[1] / v;
+            Ok(())
         },
         (2, 1),
     );
@@ -477,13 +499,15 @@ fn complex_dosing_scenario_matches_analytical() {
             fetch_params!(p, ka, ke, _v);
             dx[0] = -ka * x[0] + b[0]; // Gut: oral doses
             dx[1] = ka * x[0] - ke * x[1]; // Central
+            Ok(())
         },
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
+        |_p, _t, _cov| Ok(lag! {}),
+        |_p, _t, _cov| Ok(fa! {}),
+        |_p, _t, _cov, _x| Ok(()),
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ka, _ke, v);
             y[0] = x[1] / v;
+            Ok(())
         },
         (2, 1),
     );
@@ -519,13 +543,14 @@ fn mixed_bolus_infusion_iv_matches_analytical() {
 
     let analytical = equation::Analytical::new(
         one_compartment,
-        |_p, _t, _cov| {},
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
+        |_p, _t, _cov| Ok(()),
+        |_p, _t, _cov| Ok(lag! {}),
+        |_p, _t, _cov| Ok(fa! {}),
+        |_p, _t, _cov, _x| Ok(()),
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ke, v);
             y[0] = x[0] / v;
+            Ok(())
         },
         (1, 1),
     );
@@ -534,13 +559,15 @@ fn mixed_bolus_infusion_iv_matches_analytical() {
         |x, p, _t, dx, b, rateiv, _cov| {
             fetch_params!(p, ke, _v);
             dx[0] = -ke * x[0] + b[0] + rateiv[0];
+            Ok(())
         },
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
+        |_p, _t, _cov| Ok(lag! {}),
+        |_p, _t, _cov| Ok(fa! {}),
+        |_p, _t, _cov, _x| Ok(()),
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ke, v);
             y[0] = x[0] / v;
+            Ok(())
         },
         (1, 1),
     );
@@ -573,13 +600,14 @@ fn bolus_at_observation_time_matches_analytical() {
 
     let analytical = equation::Analytical::new(
         one_compartment,
-        |_p, _t, _cov| {},
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
+        |_p, _t, _cov| Ok(()),
+        |_p, _t, _cov| Ok(lag! {}),
+        |_p, _t, _cov| Ok(fa! {}),
+        |_p, _t, _cov, _x| Ok(()),
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ke, v);
             y[0] = x[0] / v;
+            Ok(())
         },
         (1, 1),
     );
@@ -588,13 +616,15 @@ fn bolus_at_observation_time_matches_analytical() {
         |x, p, _t, dx, b, _rateiv, _cov| {
             fetch_params!(p, ke, _v);
             dx[0] = -ke * x[0] + b[0];
+            Ok(())
         },
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
+        |_p, _t, _cov| Ok(lag! {}),
+        |_p, _t, _cov| Ok(fa! {}),
+        |_p, _t, _cov, _x| Ok(()),
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ke, v);
             y[0] = x[0] / v;
+            Ok(())
         },
         (1, 1),
     );
@@ -622,13 +652,14 @@ fn very_fast_elimination_matches_analytical() {
 
     let analytical = equation::Analytical::new(
         one_compartment,
-        |_p, _t, _cov| {},
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
+        |_p, _t, _cov| Ok(()),
+        |_p, _t, _cov| Ok(lag! {}),
+        |_p, _t, _cov| Ok(fa! {}),
+        |_p, _t, _cov, _x| Ok(()),
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ke, v);
             y[0] = x[0] / v;
+            Ok(())
         },
         (1, 1),
     );
@@ -637,13 +668,15 @@ fn very_fast_elimination_matches_analytical() {
         |x, p, _t, dx, b, _rateiv, _cov| {
             fetch_params!(p, ke, _v);
             dx[0] = -ke * x[0] + b[0];
+            Ok(())
         },
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
+        |_p, _t, _cov| Ok(lag! {}),
+        |_p, _t, _cov| Ok(fa! {}),
+        |_p, _t, _cov, _x| Ok(()),
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ke, v);
             y[0] = x[0] / v;
+            Ok(())
         },
         (1, 1),
     );
@@ -672,13 +705,14 @@ fn very_slow_elimination_matches_analytical() {
 
     let analytical = equation::Analytical::new(
         one_compartment,
-        |_p, _t, _cov| {},
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
+        |_p, _t, _cov| Ok(()),
+        |_p, _t, _cov| Ok(lag! {}),
+        |_p, _t, _cov| Ok(fa! {}),
+        |_p, _t, _cov, _x| Ok(()),
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ke, v);
             y[0] = x[0] / v;
+            Ok(())
         },
         (1, 1),
     );
@@ -687,13 +721,15 @@ fn very_slow_elimination_matches_analytical() {
         |x, p, _t, dx, b, _rateiv, _cov| {
             fetch_params!(p, ke, _v);
             dx[0] = -ke * x[0] + b[0];
+            Ok(())
         },
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
+        |_p, _t, _cov| Ok(lag! {}),
+        |_p, _t, _cov| Ok(fa! {}),
+        |_p, _t, _cov, _x| Ok(()),
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ke, v);
             y[0] = x[0] / v;
+            Ok(())
         },
         (1, 1),
     );
@@ -723,13 +759,14 @@ fn rapid_absorption_matches_analytical() {
 
     let analytical = equation::Analytical::new(
         one_compartment_with_absorption,
-        |_p, _t, _cov| {},
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
+        |_p, _t, _cov| Ok(()),
+        |_p, _t, _cov| Ok(lag! {}),
+        |_p, _t, _cov| Ok(fa! {}),
+        |_p, _t, _cov, _x| Ok(()),
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ka, _ke, v);
             y[0] = x[1] / v;
+            Ok(())
         },
         (2, 1),
     );
@@ -739,13 +776,15 @@ fn rapid_absorption_matches_analytical() {
             fetch_params!(p, ka, ke, _v);
             dx[0] = -ka * x[0] + b[0];
             dx[1] = ka * x[0] - ke * x[1];
+            Ok(())
         },
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
+        |_p, _t, _cov| Ok(lag! {}),
+        |_p, _t, _cov| Ok(fa! {}),
+        |_p, _t, _cov, _x| Ok(()),
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ka, _ke, v);
             y[0] = x[1] / v;
+            Ok(())
         },
         (2, 1),
     );
@@ -787,13 +826,15 @@ fn time_varying_covariates_work_correctly() {
             // Allometric scaling: CL proportional to weight^0.75
             let ke = ke_ref * (wt / 70.0_f64).powf(0.75);
             dx[0] = -ke * x[0] + b[0];
+            Ok(())
         },
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
+        |_p, _t, _cov| Ok(lag! {}),
+        |_p, _t, _cov| Ok(fa! {}),
+        |_p, _t, _cov, _x| Ok(()),
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ke, v);
             y[0] = x[0] / v;
+            Ok(())
         },
         (1, 1),
     );
@@ -845,13 +886,14 @@ fn likelihood_calculation_matches_analytical() {
 
     let analytical = equation::Analytical::new(
         one_compartment,
-        |_p, _t, _cov| {},
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
+        |_p, _t, _cov| Ok(()),
+        |_p, _t, _cov| Ok(lag! {}),
+        |_p, _t, _cov| Ok(fa! {}),
+        |_p, _t, _cov, _x| Ok(()),
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ke, v);
             y[0] = x[0] / v;
+            Ok(())
         },
         (1, 1),
     );
@@ -860,13 +902,15 @@ fn likelihood_calculation_matches_analytical() {
         |x, p, _t, dx, b, _rateiv, _cov| {
             fetch_params!(p, ke, _v);
             dx[0] = -ke * x[0] + b[0];
+            Ok(())
         },
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
+        |_p, _t, _cov| Ok(lag! {}),
+        |_p, _t, _cov| Ok(fa! {}),
+        |_p, _t, _cov, _x| Ok(()),
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ke, v);
             y[0] = x[0] / v;
+            Ok(())
         },
         (1, 1),
     );

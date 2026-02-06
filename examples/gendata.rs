@@ -21,20 +21,24 @@ fn main() {
             let ke = x[1];
             // user defined
             dx[0] = -ke * x[0];
+            Ok(())
         },
         |p, d| {
             fetch_params!(p, _ke0);
             d[1] = 0.1;
+            Ok(())
         },
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
+        |_p, _t, _cov| Ok(lag! {}),
+        |_p, _t, _cov| Ok(fa! {}),
         |p, _t, _cov, x| {
             fetch_params!(p, ke0);
             x[1] = ke0;
+            Ok(())
         },
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ke0);
             y[0] = x[0] / 50.0;
+            Ok(())
         },
         (2, 1),
         1,

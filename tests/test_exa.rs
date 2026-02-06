@@ -23,13 +23,15 @@ mod exa_tests {
             |x, p, _t, dx, b, rateiv, _cov| {
                 fetch_params!(p, ke, _v);
                 dx[0] = -ke * x[0] + rateiv[0] + b[0];
+                Ok(())
             },
-            |_p, _t, _cov| lag! {},
-            |_p, _t, _cov| fa! {},
-            |_p, _t, _cov, _x| {},
+            |_p, _t, _cov| Ok(lag! {}),
+            |_p, _t, _cov| Ok(fa! {}),
+            |_p, _t, _cov, _x| Ok(()),
             |x, p, _t, _cov, y| {
                 fetch_params!(p, _ke, v);
                 y[0] = x[0] / v;
+                Ok(())
             },
             (1, 1),
         );

@@ -22,14 +22,15 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
     // Define the one-compartment analytical solution function
     let an = equation::Analytical::new(
         one_compartment,
-        |_p, _t, _cov| {},
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
+        |_p, _t, _cov| Ok(()),
+        |_p, _t, _cov| Ok(lag! {}),
+        |_p, _t, _cov| Ok(fa! {}),
+        |_p, _t, _cov, _x| Ok(()),
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ke, v);
             // Calculate the output concentration, here defined as amount over volume
             y[0] = x[0] / v;
+            Ok(())
         },
         (1, 1),
     );
@@ -43,14 +44,16 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
             // Define the ODE for the one-compartment model
             // Note that rateiv is used to include infusion rates
             dx[0] = -ke * x[0] + rateiv[0];
+            Ok(())
         },
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
+        |_p, _t, _cov| Ok(lag! {}),
+        |_p, _t, _cov| Ok(fa! {}),
+        |_p, _t, _cov, _x| Ok(()),
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ke, v);
             // Calculate the output concentration, here defined as amount over volume
             y[0] = x[0] / v;
+            Ok(())
         },
         (1, 1),
     );

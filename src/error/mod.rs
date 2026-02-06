@@ -29,6 +29,8 @@ pub enum PharmsolError {
     ZeroLikelihood,
     #[error("Missing observation in prediction")]
     MissingObservation,
+    #[error("Error in model closure: {0}")]
+    ClosureError(String),
 }
 
 impl From<diffsol::error::DiffsolError> for PharmsolError {

@@ -1,4 +1,4 @@
-use crate::{data::Covariates, simulator::*};
+use crate::{data::Covariates, simulator::*, PharmsolError};
 use diffsol::VectorCommon;
 use nalgebra::{DVector, Matrix2, Vector2};
 
@@ -9,14 +9,14 @@ use nalgebra::{DVector, Matrix2, Vector2};
 /// - `rateiv` is a vector of length 1 with the value of the infusion rate (only one drug)
 /// - `x` is a vector of length 2
 /// - covariates are not used
-pub fn two_compartments(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {
+pub fn two_compartments(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> Result<V, PharmsolError> {
     let ke = p[0];
     let kcp = p[1];
     let kpc = p[2];
 
     let sqrt = (ke + kcp + kpc).powi(2) - 4.0 * ke * kpc;
     if sqrt < 0.0 {
-        panic!("Imaginary solutions, program stopped!");
+        return Err(PharmsolError::ClosureError("Imaginary solutions in two_compartments".to_string()));
     }
     let sqrt = sqrt.sqrt();
     let l1 = (ke + kcp + kpc + sqrt) / 2.0;
@@ -42,7 +42,7 @@ pub fn two_compartments(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {
     let result_vector = non_zero + infusion;
 
     // Convert Vector2 to DVector
-    DVector::from_vec(vec![result_vector[0], result_vector[1]]).into()
+    Ok(DVector::from_vec(vec![result_vector[0], result_vector[1]]).into())
 }
 
 /// Analytical solution for two compartment model with first-order absorption.
@@ -52,7 +52,7 @@ pub fn two_compartments(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {
 /// - `rateiv` is a vector of length 1 with the value of the infusion rate (only one drug)
 /// - `x` is a vector of length 3
 /// - covariates are not used
-pub fn two_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {
+pub fn two_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> Result<V, PharmsolError> {
     let ke = p[0];
     let ka = p[1];
     let kcp = p[2];
@@ -61,7 +61,7 @@ pub fn two_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &Co
 
     let sqrt = (ke + kcp + kpc).powi(2) - 4.0 * ke * kpc;
     if sqrt < 0.0 {
-        panic!("Imaginary solutions, program stopped!");
+        return Err(PharmsolError::ClosureError("Imaginary solutions in two_compartments_with_absorption".to_string()));
     }
     let sqrt = sqrt.sqrt();
     let l1 = (ke + kcp + kpc + sqrt) / 2.0;
@@ -102,7 +102,7 @@ pub fn two_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &Co
     xout[1] = aux[0];
     xout[2] = aux[1];
 
-    xout
+    Ok(xout)
 }
 
 #[cfg(test)]
@@ -176,26 +176,29 @@ mod tests {
 
                 dx[0] = rateiv[0] - ke * x[0] - kcp * x[0] + kpc * x[1] + b[0];
                 dx[1] = kcp * x[0] - kpc * x[1] + b[1];
+                Ok(())
             },
-            |_p, _t, _cov| lag! {},
-            |_p, _t, _cov| fa! {},
-            |_p, _t, _cov, _x| {},
+            |_p, _t, _cov| Ok(lag! {}),
+            |_p, _t, _cov| Ok(fa! {}),
+            |_p, _t, _cov, _x| Ok(()),
             |x, p, _t, _cov, y| {
                 fetch_params!(p, _ke, _kcp, _kpc, v);
                 y[0] = x[0] / v;
+                Ok(())
             },
             (2, 1),
         );
 
         let analytical = equation::Analytical::new(
             two_compartments,
-            |_p, _t, _cov| {},
-            |_p, _t, _cov| lag! {},
-            |_p, _t, _cov| fa! {},
-            |_p, _t, _cov, _x| {},
+            |_p, _t, _cov| Ok(()),
+            |_p, _t, _cov| Ok(lag! {}),
+            |_p, _t, _cov| Ok(fa! {}),
+            |_p, _t, _cov, _x| Ok(()),
             |x, p, _t, _cov, y| {
                 fetch_params!(p, _ke, _kcp, _kpc, v);
                 y[0] = x[0] / v;
+                Ok(())
             },
             (2, 1),
         );
@@ -230,26 +233,29 @@ mod tests {
                 dx[0] = -ka * x[0] + b[0];
                 dx[1] = rateiv[0] - ke * x[1] + ka * x[0] - kcp * x[1] + kpc * x[2] + b[1];
                 dx[2] = kcp * x[1] - kpc * x[2] + b[2];
+                Ok(())
             },
-            |_p, _t, _cov| lag! {},
-            |_p, _t, _cov| fa! {},
-            |_p, _t, _cov, _x| {},
+            |_p, _t, _cov| Ok(lag! {}),
+            |_p, _t, _cov| Ok(fa! {}),
+            |_p, _t, _cov, _x| Ok(()),
             |x, p, _t, _cov, y| {
                 fetch_params!(p, _ke, _ka, _kcp, _kpc, v);
                 y[0] = x[1] / v;
+                Ok(())
             },
             (3, 1),
         );
 
         let analytical = equation::Analytical::new(
             two_compartments_with_absorption,
-            |_p, _t, _cov| {},
-            |_p, _t, _cov| lag! {},
-            |_p, _t, _cov| fa! {},
-            |_p, _t, _cov, _x| {},
+            |_p, _t, _cov| Ok(()),
+            |_p, _t, _cov| Ok(lag! {}),
+            |_p, _t, _cov| Ok(fa! {}),
+            |_p, _t, _cov, _x| Ok(()),
             |x, p, _t, _cov, y| {
                 fetch_params!(p, _ke, _ka, _kcp, _kpc, v);
                 y[0] = x[1] / v;
+                Ok(())
             },
             (3, 1),
         );

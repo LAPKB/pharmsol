@@ -18,16 +18,22 @@ fn test_particle_filter_likelihood() {
         |x, p, _t, dx, _rateiv, _cov| {
             dx[0] = -x[0] * x[1]; // ke *x[0]
             dx[1] = -x[1] + p[0]; // mean reverting
+            Ok(())
         },
         |_p, d| {
             d[0] = 1.0;
             d[1] = 0.01;
+            Ok(())
         },
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, x| x[1] = 1.0,
+        |_p, _t, _cov| Ok(lag! {}),
+        |_p, _t, _cov| Ok(fa! {}),
+        |_p, _t, _cov, x| {
+            x[1] = 1.0;
+            Ok(())
+        },
         |x, _p, _t, _cov, y| {
             y[0] = x[0];
+            Ok(())
         },
         (2, 1),
         10000,

@@ -1,4 +1,4 @@
-use crate::{data::Covariates, simulator::*};
+use crate::{data::Covariates, simulator::*, PharmsolError};
 use diffsol::VectorCommon;
 use nalgebra::{DVector, Matrix3, Vector3};
 
@@ -12,7 +12,7 @@ use nalgebra::{DVector, Matrix3, Vector3};
 ///   - x is a vector of length 3
 ///   - covariates are not used
 ///
-pub fn three_compartments(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {
+pub fn three_compartments(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> Result<V, PharmsolError> {
     let k10 = p[0];
     let k12 = p[1];
     let k13 = p[2];
@@ -103,7 +103,7 @@ pub fn three_compartments(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V
     let result_vector = non_zero + infusion;
 
     // Convert Vector2 to DVector
-    DVector::from_vec(vec![result_vector[0], result_vector[1], result_vector[2]]).into()
+    Ok(DVector::from_vec(vec![result_vector[0], result_vector[1], result_vector[2]]).into())
 }
 
 ///
@@ -117,7 +117,7 @@ pub fn three_compartments(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V
 ///   - x is a vector of length 4
 ///   - covariates are not used
 ///
-pub fn three_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {
+pub fn three_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> Result<V, PharmsolError> {
     let ka = p[0];
     let k10 = p[1];
     let k12 = p[2];
@@ -135,7 +135,7 @@ pub fn three_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &
     let q = (n.powi(2)) / 4.0 + (m.powi(3)) / 27.0;
 
     if q > 0.0 {
-        panic!("Imaginary solutions, program stopped!");
+        return Err(PharmsolError::ClosureError("Imaginary solutions in three_compartments_with_absorption".to_string()));
     }
 
     let alpha = (-1.0 * q).sqrt();
@@ -230,7 +230,7 @@ pub fn three_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &
     xout[2] = aux[1];
     xout[3] = aux[2];
 
-    xout
+    Ok(xout)
 }
 
 #[cfg(test)]
@@ -305,26 +305,29 @@ mod tests {
                 dx[0] = rateiv[0] - (k10 + k12 + k13) * x[0] + k21 * x[1] + k31 * x[2] + b[0];
                 dx[1] = k12 * x[0] - k21 * x[1] + b[1];
                 dx[2] = k13 * x[0] - k31 * x[2] + b[2];
+                Ok(())
             },
-            |_p, _t, _cov| lag! {},
-            |_p, _t, _cov| fa! {},
-            |_p, _t, _cov, _x| {},
+            |_p, _t, _cov| Ok(lag! {}),
+            |_p, _t, _cov| Ok(fa! {}),
+            |_p, _t, _cov, _x| Ok(()),
             |x, p, _t, _cov, y| {
                 fetch_params!(p, _k10, _k12, _k13, _k21, _k31, v);
                 y[0] = x[0] / v;
+                Ok(())
             },
             (3, 1),
         );
 
         let analytical = equation::Analytical::new(
             three_compartments,
-            |_p, _t, _cov| {},
-            |_p, _t, _cov| lag! {},
-            |_p, _t, _cov| fa! {},
-            |_p, _t, _cov, _x| {},
+            |_p, _t, _cov| Ok(()),
+            |_p, _t, _cov| Ok(lag! {}),
+            |_p, _t, _cov| Ok(fa! {}),
+            |_p, _t, _cov, _x| Ok(()),
             |x, p, _t, _cov, y| {
                 fetch_params!(p, _k10, _k12, _k13, _k21, _k31, v);
                 y[0] = x[0] / v;
+                Ok(())
             },
             (3, 1),
         );
@@ -364,26 +367,29 @@ mod tests {
                     + b[1];
                 dx[2] = k12 * x[1] - k21 * x[2] + b[2];
                 dx[3] = k13 * x[1] - k31 * x[3] + b[3];
+                Ok(())
             },
-            |_p, _t, _cov| lag! {},
-            |_p, _t, _cov| fa! {},
-            |_p, _t, _cov, _x| {},
+            |_p, _t, _cov| Ok(lag! {}),
+            |_p, _t, _cov| Ok(fa! {}),
+            |_p, _t, _cov, _x| Ok(()),
             |x, p, _t, _cov, y| {
                 fetch_params!(p, _ka, _k10, _k12, _k13, _k21, _k31, v);
                 y[0] = x[1] / v;
+                Ok(())
             },
             (4, 1),
         );
 
         let analytical = equation::Analytical::new(
             three_compartments_with_absorption,
-            |_p, _t, _cov| {},
-            |_p, _t, _cov| lag! {},
-            |_p, _t, _cov| fa! {},
-            |_p, _t, _cov, _x| {},
+            |_p, _t, _cov| Ok(()),
+            |_p, _t, _cov| Ok(lag! {}),
+            |_p, _t, _cov| Ok(fa! {}),
+            |_p, _t, _cov, _x| Ok(()),
             |x, p, _t, _cov, y| {
                 fetch_params!(p, _ka, _k10, _k12, _k13, _k21, _k31, v);
                 y[0] = x[1] / v;
+                Ok(())
             },
             (4, 1),
         );

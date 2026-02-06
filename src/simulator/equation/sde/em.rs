@@ -1,7 +1,7 @@
 use crate::{
     data::Covariates,
     simulator::{Diffusion, Drift},
-    Infusion,
+    Infusion, PharmsolError,
 };
 use nalgebra::DVector;
 use rand::rng;
@@ -113,7 +113,7 @@ impl EM {
     /// * `time` - Current simulation time
     /// * `dt` - Step size
     /// * `state` - Current state of the system (modified in-place)
-    fn euler_maruyama_step(&self, time: f64, dt: f64, state: &mut DVector<f64>) {
+    fn euler_maruyama_step(&self, time: f64, dt: f64, state: &mut DVector<f64>) -> Result<(), PharmsolError> {
         let n = state.len();
         let mut rateiv = DVector::from_vec(vec![0.0, 0.0, 0.0]);
         //TODO: This should be pre-calculated
@@ -130,10 +130,10 @@ impl EM {
             &mut drift_term,
             rateiv.into(),
             &self.cov,
-        );
+        )?;
 
         let mut diffusion_term = DVector::zeros(n).into();
-        (self.diffusion)(&self.params.clone().into(), &mut diffusion_term);
+        (self.diffusion)(&self.params.clone().into(), &mut diffusion_term)?;
 
         let mut rng = rng();
         let normal_dist = Normal::new(0.0, 1.0).unwrap();
@@ -142,6 +142,7 @@ impl EM {
             state[i] +=
                 drift_term[i] * dt + diffusion_term[i] * normal_dist.sample(&mut rng) * dt.sqrt();
         }
+        Ok(())
     }
 
     /// Solves the SDE system over the specified time interval.
@@ -158,7 +159,7 @@ impl EM {
     /// A tuple containing:
     /// * Vector of time points where solutions were computed
     /// * Vector of state vectors corresponding to each time point
-    pub fn solve(&mut self, t0: f64, tf: f64) -> (Vec<f64>, Vec<DVector<f64>>) {
+    pub fn solve(&mut self, t0: f64, tf: f64) -> Result<(Vec<f64>, Vec<DVector<f64>>), PharmsolError> {
         let mut t = t0;
         let mut dt = self.max_step;
         let safety = 0.9;
@@ -170,11 +171,11 @@ impl EM {
             let mut y2 = self.state.clone();
 
             // Single step
-            self.euler_maruyama_step(t, dt, &mut y1);
+            self.euler_maruyama_step(t, dt, &mut y1)?;
 
             // Two half steps
-            self.euler_maruyama_step(t, dt / 2.0, &mut y2);
-            self.euler_maruyama_step(t + dt / 2.0, dt / 2.0, &mut y2);
+            self.euler_maruyama_step(t, dt / 2.0, &mut y2)?;
+            self.euler_maruyama_step(t + dt / 2.0, dt / 2.0, &mut y2)?;
 
             let error = self.calculate_error(&y1, &y2);
 
@@ -190,6 +191,6 @@ impl EM {
             }
         }
 
-        (times, solution)
+        Ok((times, solution))
     }
 }

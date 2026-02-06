@@ -69,13 +69,14 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
             dx[0] = -ke * x[0] - kcp * x[0] + kpc * x[1] + rateiv[0];
             // Peripheral compartment: distribution equilibrium
             dx[1] = kcp * x[0] - kpc * x[1];
+            Ok(())
         },
         // Lag time block (no lag in this model)
-        |_p, _t, _cov| lag! {},
+        |_p, _t, _cov| Ok(lag! {}),
         // Bioavailability block (100% for IV, so not needed)
-        |_p, _t, _cov| fa! {},
+        |_p, _t, _cov| Ok(fa! {}),
         // Secondary equations block (not used here)
-        |_p, _t, _cov, _x| {},
+        |_p, _t, _cov, _x| Ok(()),
         // Output equation block - calculates observed concentration
         |x, p, t, cov, y| {
             fetch_cov!(cov, t, wt);
@@ -87,6 +88,7 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
 
             // Concentration = Amount / Volume
             y[0] = x[0] / v_scaled;
+            Ok(())
         },
         // Model dimensions: (number of compartments, number of outputs)
         (2, 1),

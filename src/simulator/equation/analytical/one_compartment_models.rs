@@ -1,4 +1,4 @@
-use crate::{data::Covariates, simulator::*};
+use crate::{data::Covariates, simulator::*, PharmsolError};
 
 /// Analytical solution for one compartment model.
 ///
@@ -7,13 +7,13 @@ use crate::{data::Covariates, simulator::*};
 /// - `rateiv` is a vector of length 1 with the value of the infusion rate (only one drug)
 /// - `x` is a vector of length 1
 /// - covariates are not used
-pub fn one_compartment(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {
+pub fn one_compartment(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> Result<V, PharmsolError> {
     let mut xout = x.clone();
     let ke = p[0];
 
     xout[0] = x[0] * (-ke * t).exp() + rateiv[0] / ke * (1.0 - (-ke * t).exp());
     // dbg!(t, &rateiv, x, &xout);
-    xout
+    Ok(xout)
 }
 
 /// Analytical solution for one compartment model with first-order absorption.
@@ -23,7 +23,7 @@ pub fn one_compartment(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {
 /// - `rateiv` is a vector of length 1 with the value of the infusion rate (only one drug)
 /// - `x` is a vector of length 2
 /// - covariates are not used
-pub fn one_compartment_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {
+pub fn one_compartment_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> Result<V, PharmsolError> {
     let mut xout = x.clone();
     let ka = p[0];
     let ke = p[1];
@@ -34,7 +34,7 @@ pub fn one_compartment_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &Cov
         + rateiv[0] / ke * (1.0 - (-ke * t).exp())
         + ((ka * x[0]) / (ka - ke)) * ((-ke * t).exp() - (-ka * t).exp());
 
-    xout
+    Ok(xout)
 }
 
 #[cfg(test)]
@@ -107,26 +107,29 @@ mod tests {
                 fetch_params!(p, ke, _v);
 
                 dx[0] = -ke * x[0] + rateiv[0] + b[0];
+                Ok(())
             },
-            |_p, _t, _cov| lag! {},
-            |_p, _t, _cov| fa! {},
-            |_p, _t, _cov, _x| {},
+            |_p, _t, _cov| Ok(lag! {}),
+            |_p, _t, _cov| Ok(fa! {}),
+            |_p, _t, _cov, _x| Ok(()),
             |x, p, _t, _cov, y| {
                 fetch_params!(p, _ke, v);
                 y[0] = x[0] / v;
+                Ok(())
             },
             (1, 1),
         );
 
         let analytical = equation::Analytical::new(
             one_compartment,
-            |_p, _t, _cov| {},
-            |_p, _t, _cov| lag! {},
-            |_p, _t, _cov| fa! {},
-            |_p, _t, _cov, _x| {},
+            |_p, _t, _cov| Ok(()),
+            |_p, _t, _cov| Ok(lag! {}),
+            |_p, _t, _cov| Ok(fa! {}),
+            |_p, _t, _cov, _x| Ok(()),
             |x, p, _t, _cov, y| {
                 fetch_params!(p, _ke, v);
                 y[0] = x[0] / v;
+                Ok(())
             },
             (1, 1),
         );
@@ -158,26 +161,29 @@ mod tests {
 
                 dx[0] = -ka * x[0] + b[0];
                 dx[1] = ka * x[0] - ke * x[1] + rateiv[0] + b[1];
+                Ok(())
             },
-            |_p, _t, _cov| lag! {},
-            |_p, _t, _cov| fa! {},
-            |_p, _t, _cov, _x| {},
+            |_p, _t, _cov| Ok(lag! {}),
+            |_p, _t, _cov| Ok(fa! {}),
+            |_p, _t, _cov, _x| Ok(()),
             |x, p, _t, _cov, y| {
                 fetch_params!(p, _ka, _ke, v);
                 y[0] = x[1] / v;
+                Ok(())
             },
             (2, 1),
         );
 
         let analytical = equation::Analytical::new(
             one_compartment_with_absorption,
-            |_p, _t, _cov| {},
-            |_p, _t, _cov| lag! {},
-            |_p, _t, _cov| fa! {},
-            |_p, _t, _cov, _x| {},
+            |_p, _t, _cov| Ok(()),
+            |_p, _t, _cov| Ok(lag! {}),
+            |_p, _t, _cov| Ok(fa! {}),
+            |_p, _t, _cov, _x| Ok(()),
             |x, p, _t, _cov, y| {
                 fetch_params!(p, _ka, _ke, v);
                 y[0] = x[1] / v;
+                Ok(())
             },
             (2, 1),
         );

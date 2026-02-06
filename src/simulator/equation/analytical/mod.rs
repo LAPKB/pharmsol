@@ -156,11 +156,11 @@ impl EquationPriv for Analytical {
             }
 
             // advance the support-point to next_t
-            (self.seq_eq)(&mut sp, next_t, covariates);
+            (self.seq_eq)(&mut sp, next_t, covariates)?;
 
             // advance state by dt
             let dt = next_t - current_t;
-            *x = (self.eq)(x, &sp, dt, rateiv.clone(), covariates);
+            *x = (self.eq)(x, &sp, dt, rateiv.clone(), covariates)?;
 
             current_t = next_t;
         }
@@ -188,7 +188,7 @@ impl EquationPriv for Analytical {
             observation.time(),
             covariates,
             &mut y,
-        );
+        )?;
         let pred = y[observation.outeq()];
         let pred = observation.to_prediction(pred, x.as_slice().to_vec());
         if let Some(error_models) = error_models {
@@ -198,7 +198,7 @@ impl EquationPriv for Analytical {
         Ok(())
     }
     #[inline(always)]
-    fn initial_state(&self, spp: &Vec<f64>, covariates: &Covariates, occasion_index: usize) -> V {
+    fn initial_state(&self, spp: &Vec<f64>, covariates: &Covariates, occasion_index: usize) -> Result<V, PharmsolError> {
         let init = &self.init;
         let mut x = V::zeros(self.get_nstates(), NalgebraContext);
         if occasion_index == 0 {
@@ -207,9 +207,9 @@ impl EquationPriv for Analytical {
                 0.0,
                 covariates,
                 &mut x,
-            );
+            )?;
         }
-        x
+        Ok(x)
     }
 }
 
@@ -221,21 +221,24 @@ mod tests {
 
     #[test]
     fn secondary_equations_accumulate_within_single_solve() {
-        let eq = |x: &V, p: &V, dt: f64, _rateiv: V, _cov: &Covariates| {
+        let eq = |x: &V, p: &V, dt: f64, _rateiv: V, _cov: &Covariates| -> Result<V, PharmsolError> {
             let mut next = x.clone();
             next[0] += p[0] * dt;
-            next
+            Ok(next)
         };
-        let seq_eq = |params: &mut V, _t: f64, _cov: &Covariates| {
+        let seq_eq = |params: &mut V, _t: f64, _cov: &Covariates| -> Result<(), PharmsolError> {
             params[0] += 1.0;
+            Ok(())
         };
-        let lag = |_p: &V, _t: f64, _cov: &Covariates| HashMap::new();
-        let fa = |_p: &V, _t: f64, _cov: &Covariates| HashMap::new();
-        let init = |_p: &V, _t: f64, _cov: &Covariates, x: &mut V| {
+        let lag = |_p: &V, _t: f64, _cov: &Covariates| Ok(HashMap::new());
+        let fa = |_p: &V, _t: f64, _cov: &Covariates| Ok(HashMap::new());
+        let init = |_p: &V, _t: f64, _cov: &Covariates, x: &mut V| -> Result<(), PharmsolError> {
             x.fill(0.0);
+            Ok(())
         };
-        let out = |x: &V, _p: &V, _t: f64, _cov: &Covariates, y: &mut V| {
+        let out = |x: &V, _p: &V, _t: f64, _cov: &Covariates, y: &mut V| -> Result<(), PharmsolError> {
             y[0] = x[0];
+            Ok(())
         };
 
         let analytical = Analytical::new(eq, seq_eq, lag, fa, init, out, (1, 1));
@@ -255,19 +258,21 @@ mod tests {
 
     #[test]
     fn infusion_inputs_match_state_dimension() {
-        let eq = |x: &V, _p: &V, dt: f64, rateiv: V, _cov: &Covariates| {
+        let eq = |x: &V, _p: &V, dt: f64, rateiv: V, _cov: &Covariates| -> Result<V, PharmsolError> {
             let mut next = x.clone();
             next[0] += rateiv[3] * dt;
-            next
+            Ok(next)
         };
-        let seq_eq = |_params: &mut V, _t: f64, _cov: &Covariates| {};
-        let lag = |_p: &V, _t: f64, _cov: &Covariates| HashMap::new();
-        let fa = |_p: &V, _t: f64, _cov: &Covariates| HashMap::new();
-        let init = |_p: &V, _t: f64, _cov: &Covariates, x: &mut V| {
+        let seq_eq = |_params: &mut V, _t: f64, _cov: &Covariates| Ok(());
+        let lag = |_p: &V, _t: f64, _cov: &Covariates| Ok(HashMap::new());
+        let fa = |_p: &V, _t: f64, _cov: &Covariates| Ok(HashMap::new());
+        let init = |_p: &V, _t: f64, _cov: &Covariates, x: &mut V| -> Result<(), PharmsolError> {
             x.fill(0.0);
+            Ok(())
         };
-        let out = |x: &V, _p: &V, _t: f64, _cov: &Covariates, y: &mut V| {
+        let out = |x: &V, _p: &V, _t: f64, _cov: &Covariates, y: &mut V| -> Result<(), PharmsolError> {
             y[0] = x[0];
+            Ok(())
         };
 
         let analytical = Analytical::new(eq, seq_eq, lag, fa, init, out, (4, 1));

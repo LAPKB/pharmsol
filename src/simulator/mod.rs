@@ -5,6 +5,7 @@ use diffsol::{NalgebraMat, NalgebraVec};
 use crate::{
     data::{Covariates, Infusion},
     simulator::likelihood::SubjectPredictions,
+    PharmsolError,
 };
 
 use std::collections::HashMap;
@@ -37,7 +38,7 @@ pub type M = NalgebraMat<T>;
 ///  dx[1] = ka * x[0] - ke * x[1];
 /// };
 /// ```
-pub type DiffEq = fn(&V, &V, T, &mut V, &V, &V, &Covariates);
+pub type DiffEq = fn(&V, &V, T, &mut V, &V, &V, &Covariates) -> Result<(), PharmsolError>;
 
 /// This closure represents an Analytical solution of the model.
 /// See [`equation::analytical`] module for examples.
@@ -50,7 +51,7 @@ pub type DiffEq = fn(&V, &V, T, &mut V, &V, &V, &Covariates);
 /// - `cov`: A reference to the covariates at time t; Use the `fetch_cov!` macro to extract the covariates
 ///
 /// TODO: Remove covariates. They are not used in the analytical solution
-pub type AnalyticalEq = fn(&V, &V, T, V, &Covariates) -> V;
+pub type AnalyticalEq = fn(&V, &V, T, V, &Covariates) -> Result<V, PharmsolError>;
 
 /// This closure represents the drift term of a stochastic differential equation model.
 ///
@@ -77,7 +78,7 @@ pub type AnalyticalEq = fn(&V, &V, T, V, &Covariates) -> V;
 /// };
 /// ```
 // pub type Drift = DiffEq;
-pub type Drift = fn(&V, &V, T, &mut V, V, &Covariates);
+pub type Drift = fn(&V, &V, T, &mut V, V, &Covariates) -> Result<(), PharmsolError>;
 
 /// This closure represents the diffusion term of a stochastic differential equation model.
 ///
@@ -85,7 +86,7 @@ pub type Drift = fn(&V, &V, T, &mut V, V, &Covariates);
 /// - `p`: The parameters of the model; Use the `fetch_params!` macro to extract the parameters
 /// - `d`: A mutable reference to the diffusion term for each state variable
 ///   (This vector should have the same length as the x, and dx vectors on the drift closure)
-pub type Diffusion = fn(&V, &mut V);
+pub type Diffusion = fn(&V, &mut V) -> Result<(), PharmsolError>;
 
 /// This closure represents the initial state of the system.
 ///
@@ -105,7 +106,7 @@ pub type Diffusion = fn(&V, &mut V);
 ///  x[1] = 0.0;
 /// };
 /// ```
-pub type Init = fn(&V, T, &Covariates, &mut V);
+pub type Init = fn(&V, T, &Covariates, &mut V) -> Result<(), PharmsolError>;
 
 /// This closure represents the output equation of the model.
 ///
@@ -124,7 +125,7 @@ pub type Init = fn(&V, T, &Covariates, &mut V);
 ///   y[0] = x[1] / v;
 /// };
 /// ```
-pub type Out = fn(&V, &V, T, &Covariates, &mut V);
+pub type Out = fn(&V, &V, T, &Covariates, &mut V) -> Result<(), PharmsolError>;
 
 /// This closure represents the secondary equation of the model.
 ///
@@ -144,7 +145,7 @@ pub type Out = fn(&V, &V, T, &Covariates, &mut V);
 ///    ka = ka * wt;
 /// };
 /// ```
-pub type SecEq = fn(&mut V, T, &Covariates);
+pub type SecEq = fn(&mut V, T, &Covariates) -> Result<(), PharmsolError>;
 
 /// This closure represents the lag time of the model.
 ///
@@ -168,7 +169,7 @@ pub type SecEq = fn(&mut V, T, &Covariates);
 /// ```
 /// This will lag the bolus going into the first compartment by tlag and the bolus going into the
 /// second compartment by 0.3
-pub type Lag = fn(&V, T, &Covariates) -> HashMap<usize, T>;
+pub type Lag = fn(&V, T, &Covariates) -> Result<HashMap<usize, T>, PharmsolError>;
 
 /// This closure represents the fraction absorbed (also called bioavailability or protein binding)
 /// of the model.
@@ -193,7 +194,7 @@ pub type Lag = fn(&V, T, &Covariates) -> HashMap<usize, T>;
 /// ```
 /// This will adjust the amount of drug absorbed into the first compartment by fa and the amount of drug
 /// absorbed into the second compartment by 0.3
-pub type Fa = fn(&V, T, &Covariates) -> HashMap<usize, T>;
+pub type Fa = fn(&V, T, &Covariates) -> Result<HashMap<usize, T>, PharmsolError>;
 
 /// The number of states and output equations of the model.
 ///

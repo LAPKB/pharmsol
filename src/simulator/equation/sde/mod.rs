@@ -52,9 +52,9 @@ pub(crate) fn simulate_sde_event(
     infusions: &[Infusion],
     ti: f64,
     tf: f64,
-) -> V {
+) -> Result<V, PharmsolError> {
     if ti == tf {
-        return x;
+        return Ok(x);
     }
 
     let mut sde = em::EM::new(
@@ -67,8 +67,8 @@ pub(crate) fn simulate_sde_event(
         1e-2,
         1e-2,
     );
-    let (_time, solution) = sde.solve(ti, tf);
-    solution.last().unwrap().clone().into()
+    let (_time, solution) = sde.solve(ti, tf)?;
+    Ok(solution.last().unwrap().clone().into())
 }
 
 /// Stochastic Differential Equation solver for pharmacometric models.
@@ -254,20 +254,26 @@ impl EquationPriv for SDE {
         ti: f64,
         tf: f64,
     ) -> Result<(), PharmsolError> {
-        state.par_iter_mut().for_each(|particle| {
-            *particle = simulate_sde_event(
-                &self.drift,
-                &self.diffusion,
-                particle.clone().into(),
-                support_point,
-                covariates,
-                infusions,
-                ti,
-                tf,
-            )
-            .inner()
-            .clone();
-        });
+        // Collect results to propagate errors from par_iter
+        let results: Vec<Result<DVector<f64>, PharmsolError>> = state
+            .par_iter()
+            .map(|particle| {
+                let result = simulate_sde_event(
+                    &self.drift,
+                    &self.diffusion,
+                    particle.clone().into(),
+                    support_point,
+                    covariates,
+                    infusions,
+                    ti,
+                    tf,
+                )?;
+                Ok(result.inner().clone())
+            })
+            .collect();
+        for (particle, result) in state.iter_mut().zip(results) {
+            *particle = result?;
+        }
         Ok(())
     }
     fn nparticles(&self) -> usize {
@@ -290,17 +296,23 @@ impl EquationPriv for SDE {
         output: &mut Self::P,
     ) -> Result<(), PharmsolError> {
         let mut pred = vec![Prediction::default(); self.nparticles];
-        pred.par_iter_mut().enumerate().for_each(|(i, p)| {
-            let mut y = V::zeros(self.get_nouteqs(), NalgebraContext);
-            (self.out)(
-                &x[i].clone().into(),
-                &V::from_vec(support_point.clone(), NalgebraContext),
-                observation.time(),
-                covariates,
-                &mut y,
-            );
-            *p = observation.to_prediction(y[observation.outeq()], x[i].as_slice().to_vec());
-        });
+        let out_results: Vec<Result<Prediction, PharmsolError>> = (0..self.nparticles)
+            .into_par_iter()
+            .map(|i| {
+                let mut y = V::zeros(self.get_nouteqs(), NalgebraContext);
+                (self.out)(
+                    &x[i].clone().into(),
+                    &V::from_vec(support_point.clone(), NalgebraContext),
+                    observation.time(),
+                    covariates,
+                    &mut y,
+                )?;
+                Ok(observation.to_prediction(y[observation.outeq()], x[i].as_slice().to_vec()))
+            })
+            .collect();
+        for (p, result) in pred.iter_mut().zip(out_results) {
+            *p = result?;
+        }
         let out = Array2::from_shape_vec((self.nparticles, 1), pred.clone())?;
         *output = concatenate(Axis(1), &[output.view(), out.view()]).unwrap();
         //e = y[t] .- x[:,1]
@@ -332,7 +344,7 @@ impl EquationPriv for SDE {
         support_point: &Vec<f64>,
         covariates: &Covariates,
         occasion_index: usize,
-    ) -> Self::S {
+    ) -> Result<Self::S, PharmsolError> {
         let mut x = Vec::with_capacity(self.nparticles);
         for _ in 0..self.nparticles {
             let mut state: V = DVector::zeros(self.get_nstates()).into();
@@ -342,11 +354,11 @@ impl EquationPriv for SDE {
                     0.0,
                     covariates,
                     &mut state,
-                );
+                )?;
             }
             x.push(state.inner().clone());
         }
-        x
+        Ok(x)
     }
 }
 

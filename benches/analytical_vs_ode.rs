@@ -39,13 +39,15 @@ fn one_compartment_iv_ode(subject: &Subject, params: &Vec<f64>) {
         |x, p, _t, dx, _b, rateiv, _cov| {
             fetch_params!(p, ke, _v);
             dx[0] = -ke * x[0] + rateiv[0];
+            Ok(())
         },
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
+        |_p, _t, _cov| Ok(lag! {}),
+        |_p, _t, _cov| Ok(fa! {}),
+        |_p, _t, _cov, _x| Ok(()),
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ke, v);
             y[0] = x[0] / v;
+            Ok(())
         },
         (1, 1),
     );
@@ -55,13 +57,14 @@ fn one_compartment_iv_ode(subject: &Subject, params: &Vec<f64>) {
 fn one_compartment_iv_analytical(subject: &Subject, params: &Vec<f64>) {
     let analytical = equation::Analytical::new(
         one_compartment,
-        |_p, _t, _cov| {},
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
+        |_p, _t, _cov| Ok(()),
+        |_p, _t, _cov| Ok(lag! {}),
+        |_p, _t, _cov| Ok(fa! {}),
+        |_p, _t, _cov, _x| Ok(()),
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ke, v);
             y[0] = x[0] / v;
+            Ok(())
         },
         (1, 1),
     );
@@ -78,13 +81,15 @@ fn one_compartment_oral_ode(subject: &Subject, params: &Vec<f64>) {
             fetch_params!(p, ka, ke, _v);
             dx[0] = -ka * x[0];
             dx[1] = ka * x[0] - ke * x[1];
+            Ok(())
         },
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
+        |_p, _t, _cov| Ok(lag! {}),
+        |_p, _t, _cov| Ok(fa! {}),
+        |_p, _t, _cov, _x| Ok(()),
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ka, _ke, v);
             y[0] = x[1] / v;
+            Ok(())
         },
         (2, 1),
     );
@@ -94,13 +99,14 @@ fn one_compartment_oral_ode(subject: &Subject, params: &Vec<f64>) {
 fn one_compartment_oral_analytical(subject: &Subject, params: &Vec<f64>) {
     let analytical = equation::Analytical::new(
         one_compartment_with_absorption,
-        |_p, _t, _cov| {},
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
+        |_p, _t, _cov| Ok(()),
+        |_p, _t, _cov| Ok(lag! {}),
+        |_p, _t, _cov| Ok(fa! {}),
+        |_p, _t, _cov, _x| Ok(()),
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ka, _ke, v);
             y[0] = x[1] / v;
+            Ok(())
         },
         (2, 1),
     );
@@ -117,13 +123,15 @@ fn two_compartment_iv_ode(subject: &Subject, params: &Vec<f64>) {
             fetch_params!(p, ke, k12, k21, _v);
             dx[0] = -ke * x[0] - k12 * x[0] + k21 * x[1] + rateiv[0];
             dx[1] = k12 * x[0] - k21 * x[1];
+            Ok(())
         },
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
+        |_p, _t, _cov| Ok(lag! {}),
+        |_p, _t, _cov| Ok(fa! {}),
+        |_p, _t, _cov, _x| Ok(()),
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ke, _k12, _k21, v);
             y[0] = x[0] / v;
+            Ok(())
         },
         (2, 1),
     );
@@ -133,13 +141,14 @@ fn two_compartment_iv_ode(subject: &Subject, params: &Vec<f64>) {
 fn two_compartment_iv_analytical(subject: &Subject, params: &Vec<f64>) {
     let analytical = equation::Analytical::new(
         two_compartments,
-        |_p, _t, _cov| {},
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
+        |_p, _t, _cov| Ok(()),
+        |_p, _t, _cov| Ok(lag! {}),
+        |_p, _t, _cov| Ok(fa! {}),
+        |_p, _t, _cov, _x| Ok(()),
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ke, _k12, _k21, v);
             y[0] = x[0] / v;
+            Ok(())
         },
         (2, 1),
     );
@@ -157,13 +166,15 @@ fn two_compartment_oral_ode(subject: &Subject, params: &Vec<f64>) {
             dx[0] = -ka * x[0];
             dx[1] = ka * x[0] - ke * x[1] - k12 * x[1] + k21 * x[2];
             dx[2] = k12 * x[1] - k21 * x[2];
+            Ok(())
         },
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
+        |_p, _t, _cov| Ok(lag! {}),
+        |_p, _t, _cov| Ok(fa! {}),
+        |_p, _t, _cov, _x| Ok(()),
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ka, _ke, _k12, _k21, v);
             y[0] = x[1] / v;
+            Ok(())
         },
         (3, 1),
     );
@@ -173,13 +184,14 @@ fn two_compartment_oral_ode(subject: &Subject, params: &Vec<f64>) {
 fn two_compartment_oral_analytical(subject: &Subject, params: &Vec<f64>) {
     let analytical = equation::Analytical::new(
         two_compartments_with_absorption,
-        |_p, _t, _cov| {},
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
+        |_p, _t, _cov| Ok(()),
+        |_p, _t, _cov| Ok(lag! {}),
+        |_p, _t, _cov| Ok(fa! {}),
+        |_p, _t, _cov, _x| Ok(()),
         |x, p, _t, _cov, y| {
             fetch_params!(p, _ka, _ke, _k12, _k21, v);
             y[0] = x[1] / v;
+            Ok(())
         },
         (3, 1),
     );

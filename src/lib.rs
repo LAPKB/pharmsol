@@ -99,14 +99,28 @@ pub mod prelude {
     pub use crate::fetch_params;
     #[doc(inline)]
     pub use crate::lag;
+
+    // Re-export diffsol::VectorCommon so fetch_params! bounds checking works
+    // in downstream crates (examples, tests, user code)
+    pub use diffsol::vector::Vector;
 }
 
 #[macro_export]
 macro_rules! fetch_params {
     ($p:expr, $($name:ident),*) => {
         let p = $p;
+        let __param_len = {
+            use $crate::prelude::Vector as __Vector;
+            __Vector::len(p)
+        };
         let mut idx = 0;
         $(
+            if idx >= __param_len {
+                return Err($crate::PharmsolError::ClosureError(
+                    format!("Parameter '{}' at index {} is out of bounds (vector length {})",
+                            stringify!($name), idx, __param_len)
+                ));
+            }
             #[allow(unused_mut)]
             let mut $name = p[idx];
             idx += 1;
@@ -119,11 +133,14 @@ macro_rules! fetch_params {
 macro_rules! fetch_cov {
     ($cov:expr, $t:expr, $($name:ident),*) => {
         $(
-            let $name = match $cov.get_covariate(stringify!($name)) {
-                Some(cov) => cov.interpolate($t).unwrap(),
-                None => panic!("Covariate {} not found", stringify!($name)),
-            };
-
+            let $name = $cov.get_covariate(stringify!($name))
+                .ok_or_else(|| $crate::PharmsolError::ClosureError(
+                    format!("Covariate '{}' not found", stringify!($name))
+                ))?
+                .interpolate($t)
+                .map_err(|e| $crate::PharmsolError::ClosureError(
+                    format!("Failed to interpolate covariate '{}' at time {}: {}", stringify!($name), $t, e)
+                ))?;
         )*
     };
 }
@@ -144,15 +161,20 @@ macro_rules! fa {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn test_fetch_params_macro() {
-        // Test basic parameter fetching
-        let params = vec![1.0, 2.5, 3.7];
+    use crate::PharmsolError;
+    use diffsol::NalgebraVec;
+    use nalgebra::DVector;
 
-        fetch_params!(params, ka, ke, v);
+    #[test]
+    fn test_fetch_params_macro() -> Result<(), PharmsolError> {
+        // Test basic parameter fetching
+        let params: NalgebraVec<f64> = DVector::from_vec(vec![1.0, 2.5, 3.7]).into();
+
+        fetch_params!(&params, ka, ke, v);
 
         assert_eq!(ka, 1.0);
         assert_eq!(ke, 2.5);
         assert_eq!(v, 3.7);
+        Ok(())
     }
 }

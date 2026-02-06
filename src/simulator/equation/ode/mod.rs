@@ -163,14 +163,14 @@ impl EquationPriv for ODE {
     }
 
     #[inline(always)]
-    fn initial_state(&self, spp: &Vec<f64>, covariates: &Covariates, occasion_index: usize) -> V {
+    fn initial_state(&self, spp: &Vec<f64>, covariates: &Covariates, occasion_index: usize) -> Result<V, PharmsolError> {
         let init = &self.init;
         let mut x = V::zeros(self.get_nstates(), NalgebraContext);
         if occasion_index == 0 {
             let spp = DVector::from_vec(spp.clone());
-            (init)(&spp.into(), 0.0, covariates, &mut x);
+            (init)(&spp.into(), 0.0, covariates, &mut x)?;
         }
-        x
+        Ok(x)
     }
 }
 
@@ -236,7 +236,18 @@ impl Equation for ODE {
             let events = occasion.process_events(
                 Some((self.fa(), self.lag(), support_point, covariates)),
                 true,
+            )?;
+
+            let pm_problem = PMProblem::with_params_v(
+                self.diffeq,
+                nstates,
+                support_point.clone(),
+                spp_v.clone(), // Reuse pre-converted V
+                covariates,
+                infusions.as_slice(),
+                self.initial_state(support_point, covariates, occasion.index())?,
             );
+            let error_handle = pm_problem.error_handle();
 
             let problem = OdeBuilder::<M>::new()
                 .atol(vec![ATOL])
@@ -244,16 +255,7 @@ impl Equation for ODE {
                 .t0(occasion.initial_time())
                 .h0(1e-3)
                 .p(support_point.clone())
-                .build_from_eqn(PMProblem::with_params_v(
-                    self.diffeq,
-                    nstates,
-                    support_point.clone(),
-                    spp_v.clone(), // Reuse pre-converted V
-                    covariates,
-                    infusions.as_slice(),
-                    self.initial_state(support_point, covariates, occasion.index())
-                        .into(),
-                ))?;
+                .build_from_eqn(pm_problem)?;
 
             let mut solver: Bdf<
                 '_,
@@ -286,7 +288,7 @@ impl Equation for ODE {
                             &zero_vector,
                             &zero_vector,
                             covariates,
-                        );
+                        )?;
 
                         // Call the differential equation closure with bolus
                         (self.diffeq)(
@@ -297,7 +299,7 @@ impl Equation for ODE {
                             &bolus_v,
                             &zero_vector,
                             covariates,
-                        );
+                        )?;
 
                         // The difference between the two states is the actual bolus effect
                         // Apply the computed changes to the state using vectorized operations
@@ -320,7 +322,7 @@ impl Equation for ODE {
                             observation.time(),
                             covariates,
                             &mut y_out,
-                        );
+                        )?;
                         let pred = y_out[observation.outeq()];
                         let pred =
                             observation.to_prediction(pred, solver.state().y.as_slice().to_vec());
@@ -336,9 +338,19 @@ impl Equation for ODE {
                     if !event.time().eq(&next_event.time()) {
                         match solver.set_stop_time(next_event.time()) {
                             Ok(_) => loop {
+                                // Check for closure errors stashed during solver step
+                                if let Some(err) = error_handle.borrow_mut().take() {
+                                    return Err(err);
+                                }
                                 let ret = solver.step();
                                 match ret {
-                                    Ok(OdeSolverStopReason::InternalTimestep) => continue,
+                                    Ok(OdeSolverStopReason::InternalTimestep) => {
+                                        // Check for closure errors after each step
+                                        if let Some(err) = error_handle.borrow_mut().take() {
+                                            return Err(err);
+                                        }
+                                        continue;
+                                    }
                                     Ok(OdeSolverStopReason::TstopReached) => break,
                                     Err(err) => match err {
                                         diffsol::error::DiffsolError::OdeSolverError(
