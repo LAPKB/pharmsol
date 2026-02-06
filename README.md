@@ -87,42 +87,7 @@ let ode = equation::ODE::new(
 
 Analytical solutions provide 20-33× speedups compared to equivalent ODE formulations. See [benchmarks](benches/) for details.
 
-## Non-Compartmental Analysis (NCA)
 
-pharmsol includes a complete NCA module for calculating standard pharmacokinetic parameters.
-
-```rust
-use pharmsol::prelude::*;
-use pharmsol::nca::NCAOptions;
-
-let subject = Subject::builder("patient_001")
-    .bolus(0.0, 100.0, 0)  // 100 mg oral dose
-    .observation(0.5, 5.0, 0)
-    .observation(1.0, 10.0, 0)
-    .observation(2.0, 8.0, 0)
-    .observation(4.0, 4.0, 0)
-    .observation(8.0, 2.0, 0)
-    .build();
-
-let results = subject.nca(&NCAOptions::default(), 0);
-let result = results[0].as_ref().expect("NCA failed");
-
-println!("Cmax: {:.2}", result.exposure.cmax);
-println!("Tmax: {:.2} h", result.exposure.tmax);
-println!("AUClast: {:.2}", result.exposure.auc_last);
-
-if let Some(ref term) = result.terminal {
-    println!("Half-life: {:.2} h", term.half_life);
-}
-```
-
-**Supported NCA Parameters:**
-
-- Exposure: Cmax, Tmax, Clast, Tlast, AUClast, AUCinf, tlag
-- Terminal: λz, t½, MRT
-- Clearance: CL/F, Vz/F, Vss
-- IV-specific: C0 (back-extrapolation), Vd
-- Steady-state: AUCtau, Cmin, Cavg, fluctuation, swing
 
 # Links
 
