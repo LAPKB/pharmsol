@@ -234,17 +234,14 @@ fn test_iv_bolus_route() {
 
     // Should have IV bolus parameters
     assert!(
-        result.iv_bolus.is_some(),
+        matches!(result.route_params, Some(RouteParams::IVBolus(_))),
         "IV bolus parameters should be present"
     );
 
-    if let Some(ref bolus) = result.iv_bolus {
+    if let Some(RouteParams::IVBolus(ref bolus)) = result.route_params {
         assert!(bolus.c0 > 0.0, "C0 should be positive");
         assert!(bolus.vd > 0.0, "Vd should be positive");
     }
-
-    // Should not have infusion params
-    assert!(result.iv_infusion.is_none());
 }
 
 #[test]
@@ -256,11 +253,11 @@ fn test_iv_infusion_route() {
 
     // Should have IV infusion parameters
     assert!(
-        result.iv_infusion.is_some(),
+        matches!(result.route_params, Some(RouteParams::IVInfusion(_))),
         "IV infusion parameters should be present"
     );
 
-    if let Some(ref infusion) = result.iv_infusion {
+    if let Some(RouteParams::IVInfusion(ref infusion)) = result.route_params {
         assert_eq!(
             infusion.infusion_duration, 0.5,
             "Infusion duration should be 0.5"
@@ -276,9 +273,11 @@ fn test_extravascular_route() {
     let result = results[0].as_ref().unwrap();
 
     // Tlag should be in exposure params (may be None if no lag detected)
-    // For extravascular, should not have IV-specific params
-    assert!(result.iv_bolus.is_none());
-    assert!(result.iv_infusion.is_none());
+    // For extravascular, should have Extravascular route params
+    assert!(
+        matches!(result.route_params, Some(RouteParams::Extravascular)),
+        "Extravascular route should not have IV-specific params"
+    );
 }
 
 // ============================================================================
@@ -574,5 +573,255 @@ fn test_positional_blq_rule() {
     assert_eq!(
         result.exposure.clast, 2.0,
         "Clast should be 2.0 (last positive value)"
+    );
+}
+
+// ============================================================================
+// Lambda-z Candidates API tests
+// ============================================================================
+
+#[test]
+fn test_lambda_z_candidates_returns_multiple() {
+    let subject = single_dose_oral();
+    let options = NCAOptions::default();
+    let results = subject.nca(&options, 0);
+    let result = results[0].as_ref().unwrap();
+    let auc_last = result.exposure.auc_last;
+
+    // Get ObservationProfile for the first occasion
+    let occasion = &subject.occasions()[0];
+    let profile = ObservationProfile::from_occasion(occasion, 0, &options.blq_rule).unwrap();
+
+    let candidates = lambda_z_candidates(&profile, &options.lambda_z, auc_last);
+    assert!(
+        candidates.len() >= 2,
+        "Should produce multiple candidates, got {}",
+        candidates.len()
+    );
+
+    // Exactly one should be selected
+    let selected_count = candidates.iter().filter(|c| c.is_selected).count();
+    assert_eq!(
+        selected_count, 1,
+        "Exactly one candidate should be selected"
+    );
+}
+
+#[test]
+fn test_lambda_z_candidates_selected_matches_nca_result() {
+    let subject = single_dose_oral();
+    let options = NCAOptions::default();
+    let results = subject.nca(&options, 0);
+    let result = results[0].as_ref().unwrap();
+    let auc_last = result.exposure.auc_last;
+
+    let occasion = &subject.occasions()[0];
+    let profile = ObservationProfile::from_occasion(occasion, 0, &options.blq_rule).unwrap();
+
+    let candidates = lambda_z_candidates(&profile, &options.lambda_z, auc_last);
+    let selected = candidates.iter().find(|c| c.is_selected).unwrap();
+
+    // Selected candidate's lambda_z should match what NCA computed
+    let terminal = result.terminal.as_ref().unwrap();
+    let rel_diff = (selected.lambda_z - terminal.lambda_z).abs() / terminal.lambda_z;
+    assert!(
+        rel_diff < 1e-10,
+        "Selected λz ({}) should match NCA result ({})",
+        selected.lambda_z,
+        terminal.lambda_z
+    );
+
+    // Half-life should also match
+    let hl_diff = (selected.half_life - terminal.half_life).abs() / terminal.half_life;
+    assert!(
+        hl_diff < 1e-10,
+        "Selected t½ ({}) should match NCA result ({})",
+        selected.half_life,
+        terminal.half_life
+    );
+}
+
+#[test]
+fn test_lambda_z_candidates_all_have_positive_lambda_z() {
+    let subject = single_dose_oral();
+    let options = NCAOptions::default();
+    let results = subject.nca(&options, 0);
+    let auc_last = results[0].as_ref().unwrap().exposure.auc_last;
+
+    let occasion = &subject.occasions()[0];
+    let profile = ObservationProfile::from_occasion(occasion, 0, &options.blq_rule).unwrap();
+
+    let candidates = lambda_z_candidates(&profile, &options.lambda_z, auc_last);
+    for c in &candidates {
+        assert!(c.lambda_z > 0.0, "λz must be positive, got {}", c.lambda_z);
+        assert!(
+            c.half_life > 0.0,
+            "t½ must be positive, got {}",
+            c.half_life
+        );
+        assert!(c.n_points >= 3, "Must have at least 3 points");
+        assert!(c.r_squared >= 0.0 && c.r_squared <= 1.0, "R² out of range");
+    }
+}
+
+#[test]
+fn test_lambda_z_candidates_empty_for_insufficient_points() {
+    // Subject with too few observations for terminal regression
+    let subject = Subject::builder("short")
+        .bolus(0.0, 100.0, 0)
+        .observation(0.0, 0.0, 0)
+        .observation(1.0, 10.0, 0)
+        .observation(2.0, 5.0, 0)
+        .build();
+
+    let options = NCAOptions::default();
+    let occasion = &subject.occasions()[0];
+
+    if let Ok(profile) = ObservationProfile::from_occasion(occasion, 0, &options.blq_rule) {
+        let candidates = lambda_z_candidates(&profile, &options.lambda_z, 10.0);
+        // Either empty or no selected candidate (not enough points after Cmax)
+        let selected = candidates.iter().filter(|c| c.is_selected).count();
+        assert!(
+            candidates.is_empty() || selected == 0,
+            "Should have no selected candidate with insufficient terminal points"
+        );
+    }
+}
+
+#[test]
+fn test_lambda_z_candidates_span_ratio_and_extrap() {
+    let subject = single_dose_oral();
+    let options = NCAOptions::default();
+    let results = subject.nca(&options, 0);
+    let auc_last = results[0].as_ref().unwrap().exposure.auc_last;
+
+    let occasion = &subject.occasions()[0];
+    let profile = ObservationProfile::from_occasion(occasion, 0, &options.blq_rule).unwrap();
+
+    let candidates = lambda_z_candidates(&profile, &options.lambda_z, auc_last);
+    for c in &candidates {
+        // span_ratio = (end_time - start_time) / half_life
+        let expected_span = (c.end_time - c.start_time) / c.half_life;
+        let diff = (c.span_ratio - expected_span).abs();
+        assert!(
+            diff < 1e-10,
+            "Span ratio mismatch: {} vs expected {}",
+            c.span_ratio,
+            expected_span
+        );
+
+        // auc_inf should be >= auc_last
+        assert!(
+            c.auc_inf >= auc_last,
+            "AUC∞ ({}) should be >= AUClast ({})",
+            c.auc_inf,
+            auc_last
+        );
+
+        // extrap pct should be 0..100
+        assert!(
+            c.auc_pct_extrap >= 0.0 && c.auc_pct_extrap <= 100.0,
+            "Extrap % ({}) out of range",
+            c.auc_pct_extrap
+        );
+    }
+}
+
+// ============================================================================
+// Phase 8: nca_first() and to_row() tests
+// ============================================================================
+
+#[test]
+fn test_nca_first_returns_single_result() {
+    let subject = single_dose_oral();
+    let options = NCAOptions::default();
+    let result = subject.nca_first(&options, 0);
+    assert!(
+        result.is_ok(),
+        "nca_first() should succeed for a valid subject"
+    );
+    let r = result.unwrap();
+    assert!(r.exposure.cmax > 0.0);
+    assert_eq!(r.subject_id.as_deref(), Some("test"));
+}
+
+#[test]
+fn test_nca_first_matches_nca_vec() {
+    let subject = single_dose_oral();
+    let options = NCAOptions::default();
+
+    let first = subject.nca_first(&options, 0).unwrap();
+    let vec_result = subject.nca(&options, 0);
+    let vec_first = vec_result[0].as_ref().unwrap();
+
+    assert!((first.exposure.cmax - vec_first.exposure.cmax).abs() < 1e-10);
+    assert!((first.exposure.auc_last - vec_first.exposure.auc_last).abs() < 1e-10);
+}
+
+#[test]
+fn test_nca_first_error_on_empty_subject() {
+    // A subject with no observations for outeq=99
+    let subject = Subject::builder("empty")
+        .bolus(0.0, 100.0, 0)
+        .observation(1.0, 10.0, 0)
+        .build();
+    let options = NCAOptions::default();
+    let result = subject.nca_first(&options, 99);
+    assert!(result.is_err(), "nca_first() should fail for missing outeq");
+}
+
+#[test]
+fn test_to_row_contains_expected_keys() {
+    let subject = single_dose_oral();
+    let options = NCAOptions::default();
+    let result = subject.nca_first(&options, 0).unwrap();
+    let row = result.to_row();
+
+    let keys: Vec<&str> = row.iter().map(|(k, _)| *k).collect();
+    assert!(keys.contains(&"cmax"), "to_row should contain cmax");
+    assert!(keys.contains(&"tmax"), "to_row should contain tmax");
+    assert!(keys.contains(&"auc_last"), "to_row should contain auc_last");
+    assert!(keys.contains(&"clast"), "to_row should contain clast");
+    assert!(keys.contains(&"tlast"), "to_row should contain tlast");
+}
+
+#[test]
+fn test_to_row_values_match_result() {
+    let subject = single_dose_oral();
+    let options = NCAOptions::default();
+    let result = subject.nca_first(&options, 0).unwrap();
+    let row = result.to_row();
+
+    let find =
+        |key: &str| -> Option<f64> { row.iter().find(|(k, _)| *k == key).and_then(|(_, v)| *v) };
+
+    assert!((find("cmax").unwrap() - result.exposure.cmax).abs() < 1e-10);
+    assert!((find("tmax").unwrap() - result.exposure.tmax).abs() < 1e-10);
+    assert!((find("auc_last").unwrap() - result.exposure.auc_last).abs() < 1e-10);
+}
+
+#[test]
+fn test_to_row_terminal_params_present_when_lambda_z_succeeds() {
+    let subject = single_dose_oral();
+    let options = NCAOptions::default();
+    let result = subject.nca_first(&options, 0).unwrap();
+
+    // Verify terminal phase succeeded
+    assert!(
+        result.terminal.is_some(),
+        "Expected terminal phase to succeed"
+    );
+
+    let row = result.to_row();
+    let find =
+        |key: &str| -> Option<f64> { row.iter().find(|(k, _)| *k == key).and_then(|(_, v)| *v) };
+
+    assert!(
+        find("lambda_z").is_some(),
+        "to_row should have lambda_z when terminal succeeds"
+    );
+    assert!(
+        find("half_life").is_some(),
+        "to_row should have half_life when terminal succeeds"
     );
 }

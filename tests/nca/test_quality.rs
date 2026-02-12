@@ -8,7 +8,7 @@
 //! Note: These tests use the public NCA API via Subject::builder().nca()
 
 use pharmsol::data::Subject;
-use pharmsol::nca::{LambdaZOptions, NCAOptions, Warning};
+use pharmsol::nca::{LambdaZOptions, NCAOptions, Warning, NCA};
 use pharmsol::SubjectBuilderExt;
 
 /// Helper to create a subject from time/concentration arrays
@@ -67,7 +67,7 @@ fn test_quality_high_extrapolation_warning() {
         .quality
         .warnings
         .iter()
-        .any(|w| matches!(w, Warning::HighExtrapolation));
+        .any(|w| matches!(w, Warning::HighExtrapolation { .. }));
     println!(
         "Has high extrapolation warning: {}, warnings: {:?}",
         has_high_extrap, result.quality.warnings
@@ -153,7 +153,7 @@ fn test_quality_short_terminal_phase() {
         .quality
         .warnings
         .iter()
-        .any(|w| matches!(w, Warning::ShortTerminalPhase));
+        .any(|w| matches!(w, Warning::ShortTerminalPhase { .. }));
     println!(
         "Has short terminal phase warning: {}, warnings: {:?}",
         has_short_warning, result.quality.warnings

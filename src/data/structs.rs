@@ -286,28 +286,19 @@ impl Data {
         outeq_values
     }
 
-    /// Perform Non-Compartmental Analysis (NCA) on all subjects in the dataset
-    ///
-    /// This method iterates through all subjects and performs NCA analysis
-    /// for each subject's data, returning a collection of results.
-    ///
-    /// # Arguments
-    ///
-    /// * `options` - NCA calculation options
-    /// * `outeq` - Output equation index to analyze (0-indexed)
-    ///
-    /// # Returns
-    ///
-    /// Vector of `Result<NCAResult, NCAError>` for each subject-occasion combination
-    pub fn nca(
-        &self,
-        options: &crate::nca::NCAOptions,
-        outeq: usize,
-    ) -> Vec<Result<crate::nca::NCAResult, crate::nca::NCAError>> {
-        self.subjects
-            .iter()
-            .flat_map(|subject| subject.nca(options, outeq))
-            .collect()
+    /// Total dose per subject
+    pub fn total_dose(&self) -> Vec<f64> {
+        self.subjects.iter().map(|s| s.total_dose()).collect()
+    }
+
+    /// Route per subject (detected from first dosed occasion)
+    pub fn route(&self) -> Vec<Route> {
+        self.subjects.iter().map(|s| s.route()).collect()
+    }
+
+    /// Dose events per subject
+    pub fn doses(&self) -> Vec<Vec<(f64, f64, usize)>> {
+        self.subjects.iter().map(|s| s.doses()).collect()
     }
 }
 
@@ -494,53 +485,10 @@ impl Subject {
         hasher.finish()
     }
 
-    /// Perform Non-Compartmental Analysis (NCA) on this subject's data
-    ///
-    /// Calculates standard NCA parameters (Cmax, Tmax, AUC, half-life, etc.)
-    /// from the subject's observed concentration-time data.
-    ///
-    /// # Arguments
-    ///
-    /// * `options` - NCA calculation options
-    /// * `outeq` - Output equation index to analyze (default: 0)
-    ///
-    /// # Returns
-    ///
-    /// Vector of `NCAResult`, one per occasion
-    ///
-    /// # Examples
-    ///
-    /// ```rust,ignore
-    /// use pharmsol::prelude::*;
-    /// use pharmsol::nca::NCAOptions;
-    ///
-    /// let subject = Subject::builder("patient_001")
-    ///     .bolus(0.0, 100.0, 0)
-    ///     .observation(1.0, 10.0, 0)
-    ///     .observation(2.0, 8.0, 0)
-    ///     .observation(4.0, 4.0, 0)
-    ///     .build();
-    ///
-    /// let results = subject.nca(&NCAOptions::default(), 0);
-    /// if let Ok(res) = &results[0] {
-    ///     println!("Cmax: {:.2}", res.exposure.cmax);
-    /// }
-    /// ```
-    pub fn nca(
-        &self,
-        options: &crate::nca::NCAOptions,
-        outeq: usize,
-    ) -> Vec<Result<crate::nca::NCAResult, crate::nca::NCAError>> {
-        self.occasions
-            .iter()
-            .map(|occasion| occasion.nca(options, outeq, Some(self.id.clone())))
-            .collect()
-    }
-
     /// Extract time-concentration data for a specific output equation
     ///
-    /// Returns vectors of (times, concentrations, censoring) for the specified outeq.
-    /// This is useful for NCA calculations or other analysis.
+    /// Returns vectors of (times, concentrations, censoring) for the specified outeq
+    /// across all occasions.
     ///
     /// # Arguments
     ///
@@ -555,52 +503,54 @@ impl Subject {
         let mut censoring = Vec::new();
 
         for occasion in &self.occasions {
-            for event in occasion.events() {
-                if let Event::Observation(obs) = event {
-                    if obs.outeq() == outeq {
-                        if let Some(value) = obs.value() {
-                            times.push(obs.time());
-                            concs.push(value);
-                            censoring.push(obs.censoring());
-                        }
-                    }
-                }
-            }
+            let (t, c, cens) = occasion.get_observations(outeq);
+            times.extend(t);
+            concs.extend(c);
+            censoring.extend(cens);
         }
 
         (times, concs, censoring)
     }
 
-    /// Get total dose administered to a specific input compartment
-    ///
-    /// Sums all bolus and infusion doses to the specified compartment.
-    ///
-    /// # Arguments
-    ///
-    /// * `input` - Input compartment index
-    ///
-    /// # Returns
-    ///
-    /// Total dose amount
-    pub fn get_total_dose(&self, input: usize) -> f64 {
-        let mut total = 0.0;
+    // ========================================================================
+    // Dose Introspection (delegates to occasions)
+    // ========================================================================
 
-        for occasion in &self.occasions {
-            for event in occasion.events() {
-                match event {
-                    Event::Bolus(bolus) if bolus.input() == input => {
-                        total += bolus.amount();
-                    }
-                    Event::Infusion(infusion) if infusion.input() == input => {
-                        total += infusion.amount();
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        total
+    /// Total dose administered across all occasions
+    pub fn total_dose(&self) -> f64 {
+        self.occasions.iter().map(|o| o.total_dose()).sum()
     }
+
+    /// Route detected from the first occasion that has doses
+    ///
+    /// In multi-occasion subjects, returns the route from the first
+    /// occasion containing dose events.
+    pub fn route(&self) -> Route {
+        self.occasions
+            .iter()
+            .find(|o| o.total_dose() > 0.0)
+            .map(|o| o.route())
+            .unwrap_or_default()
+    }
+
+    /// All dose events across all occasions as (time, amount, input) tuples
+    pub fn doses(&self) -> Vec<(f64, f64, usize)> {
+        self.occasions.iter().flat_map(|o| o.doses()).collect()
+    }
+
+    /// Whether any occasion contains an infusion event
+    pub fn has_infusion(&self) -> bool {
+        self.occasions.iter().any(|o| o.has_infusion())
+    }
+
+    /// Duration of the first infusion across all occasions, if any
+    pub fn infusion_duration(&self) -> Option<f64> {
+        self.occasions.iter().find_map(|o| o.infusion_duration())
+    }
+
+    // ========================================================================
+    // Filtered Observations
+    // ========================================================================
 }
 
 impl IntoIterator for Subject {
@@ -926,100 +876,118 @@ impl Occasion {
         self.events.is_empty()
     }
 
-    /// Perform Non-Compartmental Analysis (NCA) on this occasion's data
+    // ========================================================================
+    // Dose Introspection
+    // ========================================================================
+
+    /// Total dose administered in this occasion
     ///
-    /// Automatically extracts dose information and route from events in this occasion.
-    ///
-    /// # Arguments
-    ///
-    /// * `options` - NCA calculation options
-    /// * `outeq` - Output equation index to analyze (0-indexed)
-    /// * `subject_id` - Optional subject ID for result identification
-    ///
-    /// # Returns
-    ///
-    /// `Result<NCAResult, NCAError>` containing calculated parameters or an error
+    /// Sums the amounts of all [`Event::Bolus`] and [`Event::Infusion`] events.
+    /// Returns 0.0 if there are no dose events.
     ///
     /// # Example
     ///
-    /// ```ignore
-    /// use pharmsol::prelude::*;
-    /// use pharmsol::nca::NCAOptions;
+    /// ```rust
+    /// use pharmsol::*;
     ///
-    /// let subject = Subject::builder("patient_001")
-    ///     .bolus(0.0, 100.0, 0)
+    /// let subject = Subject::builder("pt1")
+    ///     .bolus(0.0, 50.0, 0)
+    ///     .bolus(0.0, 50.0, 0)
     ///     .observation(1.0, 10.0, 0)
-    ///     .observation(2.0, 8.0, 0)
     ///     .build();
     ///
     /// let occasion = &subject.occasions()[0];
-    /// let result = occasion.nca(&NCAOptions::default(), 0, Some("patient_001".into()))?;
-    /// println!("Cmax: {:.2}", result.exposure.cmax);
+    /// assert_eq!(occasion.total_dose(), 100.0);
     /// ```
-    pub fn nca(
-        &self,
-        options: &crate::nca::NCAOptions,
-        outeq: usize,
-        subject_id: Option<String>,
-    ) -> Result<crate::nca::NCAResult, crate::nca::NCAError> {
-        // Extract observations for this outeq (including censoring info)
-        let (times, concs, censoring) = self.get_observations(outeq);
-
-        // Auto-detect dose and route from events
-        let dose_context = self.detect_dose_context();
-
-        // Calculate NCA using the analyze module
-        let mut result =
-            crate::nca::analyze_arrays(&times, &concs, &censoring, dose_context.as_ref(), options)?;
-        result.subject_id = subject_id;
-        result.occasion = Some(self.index);
-
-        Ok(result)
+    pub fn total_dose(&self) -> f64 {
+        self.events.iter().fold(0.0, |acc, e| match e {
+            Event::Bolus(b) => acc + b.amount(),
+            Event::Infusion(inf) => acc + inf.amount(),
+            _ => acc,
+        })
     }
 
-    /// Detect dose information from dose events in this occasion
-    fn detect_dose_context(&self) -> Option<crate::nca::DoseContext> {
-        let mut total_dose = 0.0;
-        let mut infusion_duration: Option<f64> = None;
-        let mut is_extravascular = false;
+    /// Administration route detected from dose events
+    ///
+    /// Route is determined by the following rules:
+    /// - If any infusion is present → [`Route::IVInfusion`]
+    /// - If all boluses target depot compartment (`input == 0`) → [`Route::Extravascular`]
+    /// - If any bolus targets central compartment (`input >= 1`) → [`Route::IVBolus`]
+    /// - If no doses → [`Route::Extravascular`] (default)
+    ///
+    /// # Input convention
+    ///
+    /// The `input` field on [`Bolus`] and [`Infusion`] events encodes the target compartment:
+    /// - `input == 0`: Depot compartment (extravascular absorption — oral, SC, IM, etc.)
+    /// - `input >= 1`: Central compartment (intravenous)
+    pub fn route(&self) -> Route {
+        let mut has_infusion = false;
+        let mut has_extravascular = false;
+        let mut has_dose = false;
 
         for event in &self.events {
             match event {
-                Event::Bolus(bolus) => {
-                    total_dose += bolus.amount();
-                    // Input 0 = depot (extravascular), Input >= 1 = central (IV)
-                    if bolus.input() == 0 {
-                        is_extravascular = true;
-                    }
+                Event::Infusion(_) => {
+                    has_infusion = true;
+                    has_dose = true;
                 }
-                Event::Infusion(infusion) => {
-                    total_dose += infusion.amount();
-                    infusion_duration = Some(infusion.duration());
-                    // Infusions are IV
+                Event::Bolus(b) => {
+                    has_dose = true;
+                    if b.input() == 0 {
+                        has_extravascular = true;
+                    }
                 }
                 _ => {}
             }
         }
 
-        if total_dose == 0.0 {
-            return None;
+        if !has_dose {
+            return Route::Extravascular; // default
         }
 
-        // Determine route
-        let route = if infusion_duration.is_some() {
-            crate::nca::Route::IVInfusion
-        } else if is_extravascular {
-            crate::nca::Route::Extravascular
+        if has_infusion {
+            Route::IVInfusion
+        } else if has_extravascular {
+            Route::Extravascular
         } else {
-            crate::nca::Route::IVBolus
-        };
-
-        Some(crate::nca::DoseContext::new(
-            total_dose,
-            infusion_duration,
-            route,
-        ))
+            Route::IVBolus
+        }
     }
+
+    /// Whether this occasion contains any infusion events
+    pub fn has_infusion(&self) -> bool {
+        self.events.iter().any(|e| matches!(e, Event::Infusion(_)))
+    }
+
+    /// Duration of the (first) infusion, if any
+    ///
+    /// Returns `None` if there are no infusion events.
+    /// If multiple infusions exist, returns the duration of the first.
+    pub fn infusion_duration(&self) -> Option<f64> {
+        self.events.iter().find_map(|e| match e {
+            Event::Infusion(inf) => Some(inf.duration()),
+            _ => None,
+        })
+    }
+
+    /// All dose events as (time, amount, input) tuples
+    ///
+    /// Returns a vector of all bolus and infusion doses with their timing,
+    /// amount, and target compartment. Useful for multi-dose analysis.
+    pub fn doses(&self) -> Vec<(f64, f64, usize)> {
+        self.events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Bolus(b) => Some((b.time(), b.amount(), b.input())),
+                Event::Infusion(inf) => Some((inf.time(), inf.amount(), inf.input())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    // ========================================================================
+    // Observation Extraction
+    // ========================================================================
 
     /// Extract time-concentration data for a specific output equation
     ///
@@ -1048,33 +1016,6 @@ impl Occasion {
         }
 
         (times, concs, censoring)
-    }
-
-    /// Get total dose administered to a specific input compartment
-    ///
-    /// # Arguments
-    ///
-    /// * `input` - Input compartment index
-    ///
-    /// # Returns
-    ///
-    /// Total dose amount
-    pub fn get_total_dose(&self, input: usize) -> f64 {
-        let mut total = 0.0;
-
-        for event in &self.events {
-            match event {
-                Event::Bolus(bolus) if bolus.input() == input => {
-                    total += bolus.amount();
-                }
-                Event::Infusion(infusion) if infusion.input() == input => {
-                    total += infusion.amount();
-                }
-                _ => {}
-            }
-        }
-
-        total
     }
 }
 

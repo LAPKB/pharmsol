@@ -10,7 +10,7 @@
 //!
 //! Run with: `cargo test pknca_validation`
 
-use pharmsol::nca::{AUCMethod, BLQRule, NCAOptions, Route};
+use pharmsol::nca::{AUCMethod, BLQRule, NCAOptions, Route, RouteParams};
 use pharmsol::{prelude::*, Censor};
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -118,7 +118,7 @@ fn map_param_name(pknca_name: &str) -> &str {
         "auclast" => "auc_last",
         "aucall" => "auc_all",
         "aumclast" => "aumc_last",
-        "aucinf.obs" => "auc_inf",
+        "aucinf.obs" => "auc_inf_obs",
         "aucinf.pred" => "auc_inf_pred",
         "aumcinf.obs" => "aumc_inf",
         "lambda.z" => "lambda_z",
@@ -262,13 +262,18 @@ fn validate_scenario(
             "clast" => Some(result.exposure.clast),
             "auc_last" => Some(result.exposure.auc_last),
             "aumc_last" => result.exposure.aumc_last,
-            "auc_inf" => result.exposure.auc_inf,
+            "auc_inf" | "auc_inf_obs" => result.exposure.auc_inf_obs,
+            "auc_inf_pred" => result.exposure.auc_inf_pred,
             "aumc_inf" => result.exposure.aumc_inf,
-            "auc_pct_extrap" => result.exposure.auc_pct_extrap,
+            "auc_pct_extrap" | "auc_pct_extrap_obs" => result.exposure.auc_pct_extrap_obs,
+            "auc_pct_extrap_pred" => result.exposure.auc_pct_extrap_pred,
             "lambda_z" => result.terminal.as_ref().map(|t| t.lambda_z),
             "half_life" => result.terminal.as_ref().map(|t| t.half_life),
             "mrt" => result.terminal.as_ref().and_then(|t| t.mrt),
-            "mrt_iv" => result.iv_infusion.as_ref().and_then(|iv| iv.mrt_iv),
+            "mrt_iv" => result.route_params.as_ref().and_then(|rp| match rp {
+                RouteParams::IVInfusion(ref iv) => iv.mrt_iv,
+                _ => None,
+            }),
             "r_squared" => result
                 .terminal
                 .as_ref()
@@ -290,13 +295,19 @@ fn validate_scenario(
                 .and_then(|t| t.regression.as_ref())
                 .map(|r| r.span_ratio),
             "tlag" => result.exposure.tlag,
-            "c0" => result.iv_bolus.as_ref().map(|iv| iv.c0),
-            "vd" => result.iv_bolus.as_ref().map(|iv| iv.vd),
-            "vss" => result
-                .iv_bolus
-                .as_ref()
-                .and_then(|iv| iv.vss)
-                .or_else(|| result.iv_infusion.as_ref().and_then(|iv| iv.vss)),
+            "c0" => result.route_params.as_ref().and_then(|rp| match rp {
+                RouteParams::IVBolus(ref iv) => Some(iv.c0),
+                _ => None,
+            }),
+            "vd" => result.route_params.as_ref().and_then(|rp| match rp {
+                RouteParams::IVBolus(ref iv) => Some(iv.vd),
+                _ => None,
+            }),
+            "vss" => result.route_params.as_ref().and_then(|rp| match rp {
+                RouteParams::IVBolus(ref iv) => iv.vss,
+                RouteParams::IVInfusion(ref iv) => iv.vss,
+                _ => None,
+            }),
             "cl" | "cl_f" => result.clearance.as_ref().map(|c| c.cl_f),
             "vz" | "vz_f" => result.clearance.as_ref().map(|c| c.vz_f),
             // Steady-state parameters

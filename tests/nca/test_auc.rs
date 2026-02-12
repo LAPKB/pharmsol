@@ -10,7 +10,7 @@
 
 use approx::assert_relative_eq;
 use pharmsol::data::Subject;
-use pharmsol::nca::{AUCMethod, NCAOptions};
+use pharmsol::nca::{AUCMethod, NCAOptions, NCA};
 use pharmsol::SubjectBuilderExt;
 
 /// Helper to create a subject from time/concentration arrays
@@ -234,7 +234,7 @@ fn test_auc_inf_calculation() {
         .as_ref()
         .expect("NCA should succeed");
 
-    if let Some(auc_inf) = result.exposure.auc_inf {
+    if let Some(auc_inf) = result.exposure.auc_inf_obs {
         assert!(auc_inf > result.exposure.auc_last);
         // True AUCinf = C0/lambda = 100/0.1 = 1000
         assert_relative_eq!(auc_inf, 1000.0, epsilon = 50.0);

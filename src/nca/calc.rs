@@ -2,230 +2,13 @@
 //!
 //! This module contains stateless functions that compute individual NCA parameters.
 //! All functions take validated inputs and return calculated values.
+//!
+//! AUC segment calculations are delegated to [`crate::data::auc`].
 
-use super::profile::Profile;
-use super::types::{AUCMethod, LambdaZMethod, LambdaZOptions, RegressionStats};
+use crate::observation::Profile;
 
-// ============================================================================
-// AUC Calculations
-// ============================================================================
-
-/// Check if log-linear method should be used for this segment
-#[inline]
-fn use_log_linear(c1: f64, c2: f64) -> bool {
-    c2 < c1 && c1 > 0.0 && c2 > 0.0 && ((c1 / c2) - 1.0).abs() >= 1e-10
-}
-
-/// Linear trapezoidal AUC for a segment
-#[inline]
-fn auc_linear(c1: f64, c2: f64, dt: f64) -> f64 {
-    (c1 + c2) / 2.0 * dt
-}
-
-/// Log-linear AUC for a segment (assumes c1 > c2 > 0)
-#[inline]
-fn auc_log(c1: f64, c2: f64, dt: f64) -> f64 {
-    (c1 - c2) * dt / (c1 / c2).ln()
-}
-
-/// Linear trapezoidal AUMC for a segment
-#[inline]
-fn aumc_linear(t1: f64, c1: f64, t2: f64, c2: f64, dt: f64) -> f64 {
-    (t1 * c1 + t2 * c2) / 2.0 * dt
-}
-
-/// Log-linear AUMC for a segment (PKNCA formula)
-#[inline]
-fn aumc_log(t1: f64, c1: f64, t2: f64, c2: f64, dt: f64) -> f64 {
-    let k = (c1 / c2).ln() / dt;
-    (t1 * c1 - t2 * c2) / k + (c1 - c2) / (k * k)
-}
-
-/// Calculate AUC for a single segment between two time points
-///
-/// For [`AUCMethod::LinLog`], this uses linear trapezoidal since segment-level
-/// calculation cannot know Tmax context. Use [`auc_last`] for proper LinLog handling.
-#[inline]
-pub fn auc_segment(t1: f64, c1: f64, t2: f64, c2: f64, method: AUCMethod) -> f64 {
-    let dt = t2 - t1;
-    if dt <= 0.0 {
-        return 0.0;
-    }
-
-    match method {
-        AUCMethod::Linear | AUCMethod::LinLog => auc_linear(c1, c2, dt),
-        AUCMethod::LinUpLogDown => {
-            if use_log_linear(c1, c2) {
-                auc_log(c1, c2, dt)
-            } else {
-                auc_linear(c1, c2, dt)
-            }
-        }
-    }
-}
-
-/// Calculate AUC for a segment with Tmax context (for LinLog method)
-#[inline]
-fn auc_segment_with_tmax(t1: f64, c1: f64, t2: f64, c2: f64, tmax: f64, method: AUCMethod) -> f64 {
-    let dt = t2 - t1;
-    if dt <= 0.0 {
-        return 0.0;
-    }
-
-    match method {
-        AUCMethod::Linear => auc_linear(c1, c2, dt),
-        AUCMethod::LinUpLogDown => {
-            if use_log_linear(c1, c2) {
-                auc_log(c1, c2, dt)
-            } else {
-                auc_linear(c1, c2, dt)
-            }
-        }
-        AUCMethod::LinLog => {
-            // Linear before/at Tmax, log-linear after Tmax (for descending)
-            if t2 <= tmax || !use_log_linear(c1, c2) {
-                auc_linear(c1, c2, dt)
-            } else {
-                auc_log(c1, c2, dt)
-            }
-        }
-    }
-}
-
-/// Calculate AUC from time 0 to Tlast
-pub fn auc_last(profile: &Profile, method: AUCMethod) -> f64 {
-    let mut auc = 0.0;
-    let tmax = profile.tmax(); // Get Tmax for LinLog method
-
-    for i in 1..=profile.tlast_idx {
-        auc += auc_segment_with_tmax(
-            profile.times[i - 1],
-            profile.concentrations[i - 1],
-            profile.times[i],
-            profile.concentrations[i],
-            tmax,
-            method,
-        );
-    }
-
-    auc
-}
-
-/// Calculate AUMC for a segment with Tmax context (for LinLog method)
-#[inline]
-fn aumc_segment_with_tmax(t1: f64, c1: f64, t2: f64, c2: f64, tmax: f64, method: AUCMethod) -> f64 {
-    let dt = t2 - t1;
-    if dt <= 0.0 {
-        return 0.0;
-    }
-
-    match method {
-        AUCMethod::Linear => aumc_linear(t1, c1, t2, c2, dt),
-        AUCMethod::LinUpLogDown => {
-            if use_log_linear(c1, c2) {
-                aumc_log(t1, c1, t2, c2, dt)
-            } else {
-                aumc_linear(t1, c1, t2, c2, dt)
-            }
-        }
-        AUCMethod::LinLog => {
-            // Linear before/at Tmax, log-linear after Tmax (for descending)
-            if t2 <= tmax || !use_log_linear(c1, c2) {
-                aumc_linear(t1, c1, t2, c2, dt)
-            } else {
-                aumc_log(t1, c1, t2, c2, dt)
-            }
-        }
-    }
-}
-
-/// Calculate AUMC from time 0 to Tlast
-pub fn aumc_last(profile: &Profile, method: AUCMethod) -> f64 {
-    let mut aumc = 0.0;
-    let tmax_val = profile.tmax();
-
-    for i in 1..=profile.tlast_idx {
-        aumc += aumc_segment_with_tmax(
-            profile.times[i - 1],
-            profile.concentrations[i - 1],
-            profile.times[i],
-            profile.concentrations[i],
-            tmax_val,
-            method,
-        );
-    }
-
-    aumc
-}
-
-/// Calculate AUC over a specific interval (for steady-state AUCτ)
-pub fn auc_interval(profile: &Profile, start: f64, end: f64, method: AUCMethod) -> f64 {
-    if end <= start {
-        return 0.0;
-    }
-
-    let mut auc = 0.0;
-
-    for i in 1..profile.times.len() {
-        let t1 = profile.times[i - 1];
-        let t2 = profile.times[i];
-
-        // Skip segments entirely outside the interval
-        if t2 <= start || t1 >= end {
-            continue;
-        }
-
-        // Clamp to interval boundaries
-        let seg_start = t1.max(start);
-        let seg_end = t2.min(end);
-
-        // Interpolate concentrations at boundaries if needed
-        let c1 = if t1 < start {
-            interpolate_concentration(profile, start)
-        } else {
-            profile.concentrations[i - 1]
-        };
-
-        let c2 = if t2 > end {
-            interpolate_concentration(profile, end)
-        } else {
-            profile.concentrations[i]
-        };
-
-        auc += auc_segment(seg_start, c1, seg_end, c2, method);
-    }
-
-    auc
-}
-
-/// Linear interpolation of concentration at a given time
-fn interpolate_concentration(profile: &Profile, time: f64) -> f64 {
-    if time <= profile.times[0] {
-        return profile.concentrations[0];
-    }
-    if time >= profile.times[profile.times.len() - 1] {
-        return profile.concentrations[profile.times.len() - 1];
-    }
-
-    // Find bracketing indices
-    let upper_idx = profile
-        .times
-        .iter()
-        .position(|&t| t >= time)
-        .unwrap_or(profile.times.len() - 1);
-    let lower_idx = upper_idx.saturating_sub(1);
-
-    let t1 = profile.times[lower_idx];
-    let t2 = profile.times[upper_idx];
-    let c1 = profile.concentrations[lower_idx];
-    let c2 = profile.concentrations[upper_idx];
-
-    if (t2 - t1).abs() < 1e-10 {
-        c1
-    } else {
-        c1 + (c2 - c1) * (time - t1) / (t2 - t1)
-    }
-}
+use super::types::*;
+use serde::{Deserialize, Serialize};
 
 // ============================================================================
 // Lambda-z Calculations
@@ -248,15 +31,170 @@ impl From<LambdaZResult> for RegressionStats {
     fn from(lz: LambdaZResult) -> Self {
         let half_life = std::f64::consts::LN_2 / lz.lambda_z;
         let span = lz.time_last - lz.time_first;
+        // corrxy is -sqrt(R²) since the terminal slope is negative
+        let corrxy = if lz.r_squared >= 0.0 {
+            -(lz.r_squared.sqrt())
+        } else {
+            f64::NAN
+        };
         RegressionStats {
             r_squared: lz.r_squared,
             adj_r_squared: lz.adj_r_squared,
+            corrxy,
             n_points: lz.n_points,
             time_first: lz.time_first,
             time_last: lz.time_last,
             span_ratio: span / half_life,
         }
     }
+}
+
+/// A single candidate regression for λz estimation
+///
+/// Each candidate represents a different set of terminal points used for
+/// log-linear regression. Use [`lambda_z_candidates`] to enumerate all
+/// valid candidates, or call `.nca()` which auto-selects the best.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use pharmsol::nca::{lambda_z_candidates, LambdaZOptions, ObservationProfile};
+///
+/// let candidates = lambda_z_candidates(&profile, &LambdaZOptions::default(), auc_last);
+/// for c in &candidates {
+///     println!("{} pts: λz={:.4} t½={:.2} R²={:.4} {}",
+///         c.n_points, c.lambda_z, c.half_life, c.r_squared,
+///         if c.is_selected { "← selected" } else { "" });
+/// }
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LambdaZCandidate {
+    /// Number of points used in regression
+    pub n_points: usize,
+    /// Index of first point in the profile
+    pub start_idx: usize,
+    /// Index of last point in the profile
+    pub end_idx: usize,
+    /// Time of first point
+    pub start_time: f64,
+    /// Time of last point
+    pub end_time: f64,
+    /// Terminal elimination rate constant
+    pub lambda_z: f64,
+    /// Terminal half-life (ln(2) / λz)
+    pub half_life: f64,
+    /// Regression intercept (in log-concentration space)
+    pub intercept: f64,
+    /// Coefficient of determination
+    pub r_squared: f64,
+    /// Adjusted R²
+    pub adj_r_squared: f64,
+    /// Span ratio (time span / half-life)
+    pub span_ratio: f64,
+    /// AUC∞ computed from this candidate's λz
+    pub auc_inf: f64,
+    /// Percentage of AUC extrapolated
+    pub auc_pct_extrap: f64,
+    /// Whether this candidate was auto-selected as best
+    pub is_selected: bool,
+}
+
+/// Enumerate all valid λz regression candidates for a profile
+///
+/// Returns every valid regression from `min_points` to `max_points` terminal
+/// points, each with its computed λz, half-life, R², and derived AUC∞. The
+/// auto-selected best candidate has `is_selected = true`.
+///
+/// This is useful for interactive exploration: a GUI can display all candidates
+/// and let the user override the automatic selection.
+///
+/// # Arguments
+/// * `profile` - Validated observation profile
+/// * `options` - Lambda-z estimation options (controls point range, R² thresholds)
+/// * `auc_last` - AUC from time 0 to Tlast (needed to compute AUC∞ for each candidate)
+pub fn lambda_z_candidates(
+    profile: &Profile,
+    options: &LambdaZOptions,
+    auc_last: f64,
+) -> Vec<LambdaZCandidate> {
+    let start_idx = if options.include_tmax {
+        0
+    } else {
+        profile.cmax_idx + 1
+    };
+
+    if profile.tlast_idx < start_idx + options.min_points - 1 {
+        return Vec::new();
+    }
+
+    let max_n = if let Some(max) = options.max_points {
+        (profile.tlast_idx - start_idx + 1).min(max)
+    } else {
+        profile.tlast_idx - start_idx + 1
+    };
+
+    let clast_obs = profile.concentrations[profile.tlast_idx];
+
+    let mut candidates = Vec::new();
+    let mut best_idx: Option<usize> = None;
+    let mut best_score = f64::NEG_INFINITY;
+
+    for n_points in options.min_points..=max_n {
+        let first_idx = profile.tlast_idx - n_points + 1;
+        if first_idx < start_idx {
+            continue;
+        }
+
+        if let Some(result) = fit_lambda_z(profile, first_idx, profile.tlast_idx, options) {
+            let hl = std::f64::consts::LN_2 / result.lambda_z;
+            let span = result.time_last - result.time_first;
+            let span_ratio = span / hl;
+            let auc_inf_val = auc_inf(auc_last, clast_obs, result.lambda_z);
+            let extrap_pct = auc_extrap_pct(auc_last, auc_inf_val);
+
+            let candidate = LambdaZCandidate {
+                n_points: result.n_points,
+                start_idx: first_idx,
+                end_idx: profile.tlast_idx,
+                start_time: result.time_first,
+                end_time: result.time_last,
+                lambda_z: result.lambda_z,
+                half_life: hl,
+                intercept: result.intercept,
+                r_squared: result.r_squared,
+                adj_r_squared: result.adj_r_squared,
+                span_ratio,
+                auc_inf: auc_inf_val,
+                auc_pct_extrap: extrap_pct,
+                is_selected: false,
+            };
+
+            // Check if this candidate qualifies for "best" selection
+            let qualifies =
+                result.r_squared >= options.min_r_squared && span_ratio >= options.min_span_ratio;
+
+            if qualifies {
+                let factor = options.adj_r_squared_factor;
+                let score = match options.method {
+                    LambdaZMethod::AdjR2 => result.adj_r_squared + factor * result.n_points as f64,
+                    _ => result.r_squared,
+                };
+                if score > best_score {
+                    best_score = score;
+                    best_idx = Some(candidates.len());
+                }
+            }
+
+            candidates.push(candidate);
+        }
+    }
+
+    // Mark the selected candidate
+    if let Some(idx) = best_idx {
+        candidates[idx].is_selected = true;
+    }
+
+    candidates
 }
 
 /// Estimate lambda-z using log-linear regression
@@ -299,71 +237,32 @@ fn lambda_z_with_n_points(
 }
 
 /// Lambda-z with best fit selection
+///
+/// Delegates to [`lambda_z_candidates`] and returns the selected candidate's
+/// underlying [`LambdaZResult`]. We use `auc_last = 0.0` here because the
+/// caller only needs the regression result, not AUC∞ (which is computed later).
 fn lambda_z_best_fit(
     profile: &Profile,
-    start_idx: usize,
+    _start_idx: usize,
     options: &LambdaZOptions,
 ) -> Option<LambdaZResult> {
-    let mut best_result: Option<LambdaZResult> = None;
+    let candidates = lambda_z_candidates(profile, options, 0.0);
+    let selected = candidates.iter().find(|c| c.is_selected)?;
 
-    // Determine max points to try
-    let max_n = if let Some(max) = options.max_points {
-        (profile.tlast_idx - start_idx + 1).min(max)
-    } else {
-        profile.tlast_idx - start_idx + 1
-    };
+    // Reconstruct LambdaZResult from the selected candidate
+    let clast_pred =
+        (selected.intercept - selected.lambda_z * profile.times[selected.end_idx]).exp();
 
-    // Try all valid point counts
-    for n_points in options.min_points..=max_n {
-        let first_idx = profile.tlast_idx - n_points + 1;
-
-        if first_idx < start_idx {
-            continue;
-        }
-
-        if let Some(result) = fit_lambda_z(profile, first_idx, profile.tlast_idx, options) {
-            // Check quality criteria
-            if result.r_squared < options.min_r_squared {
-                continue;
-            }
-
-            let half_life = std::f64::consts::LN_2 / result.lambda_z;
-            let span = result.time_last - result.time_first;
-            let span_ratio = span / half_life;
-
-            if span_ratio < options.min_span_ratio {
-                continue;
-            }
-
-            // Select best based on method, using adj_r_squared_factor to prefer more points
-            let is_better = match &best_result {
-                None => true,
-                Some(best) => {
-                    // PKNCA formula: adj_r_squared + factor * n_points
-                    // This allows preferring regressions with more points when R² is similar
-                    let factor = options.adj_r_squared_factor;
-                    let current_score = match options.method {
-                        LambdaZMethod::AdjR2 => {
-                            result.adj_r_squared + factor * result.n_points as f64
-                        }
-                        _ => result.r_squared,
-                    };
-                    let best_score = match options.method {
-                        LambdaZMethod::AdjR2 => best.adj_r_squared + factor * best.n_points as f64,
-                        _ => best.r_squared,
-                    };
-
-                    current_score > best_score
-                }
-            };
-
-            if is_better {
-                best_result = Some(result);
-            }
-        }
-    }
-
-    best_result
+    Some(LambdaZResult {
+        lambda_z: selected.lambda_z,
+        intercept: selected.intercept,
+        r_squared: selected.r_squared,
+        adj_r_squared: selected.adj_r_squared,
+        n_points: selected.n_points,
+        time_first: selected.start_time,
+        time_last: selected.end_time,
+        clast_pred,
+    })
 }
 
 /// Fit log-linear regression for lambda-z
@@ -371,13 +270,17 @@ fn fit_lambda_z(
     profile: &Profile,
     first_idx: usize,
     last_idx: usize,
-    _options: &LambdaZOptions,
+    options: &LambdaZOptions,
 ) -> Option<LambdaZResult> {
-    // Extract points with positive concentrations
+    // Extract points with positive concentrations, respecting exclusion list
     let mut times = Vec::new();
     let mut log_concs = Vec::new();
 
     for i in first_idx..=last_idx {
+        // Skip excluded indices
+        if options.exclude_indices.contains(&i) {
+            continue;
+        }
         if profile.concentrations[i] > 0.0 {
             times.push(profile.times[i]);
             log_concs.push(profile.concentrations[i].ln());
@@ -416,7 +319,11 @@ fn fit_lambda_z(
     })
 }
 
-/// Simple linear regression: y = a + b*x
+/// Numerically stable linear regression using Kahan (compensated) summation.
+///
+/// Uses compensated summation for all accumulations to avoid catastrophic
+/// cancellation with large time values (e.g., time in minutes > 10,000).
+///
 /// Returns (slope, intercept, r_squared)
 fn linear_regression(x: &[f64], y: &[f64]) -> Option<(f64, f64, f64)> {
     let n = x.len() as f64;
@@ -424,11 +331,11 @@ fn linear_regression(x: &[f64], y: &[f64]) -> Option<(f64, f64, f64)> {
         return None;
     }
 
-    let sum_x: f64 = x.iter().sum();
-    let sum_y: f64 = y.iter().sum();
-    let sum_xy: f64 = x.iter().zip(y.iter()).map(|(xi, yi)| xi * yi).sum();
-    let sum_x2: f64 = x.iter().map(|xi| xi * xi).sum();
-    let sum_y2: f64 = y.iter().map(|yi| yi * yi).sum();
+    // Kahan compensated summation for all sums
+    let sum_x = kahan_sum(x.iter().copied());
+    let sum_y = kahan_sum(y.iter().copied());
+    let sum_xy = kahan_sum(x.iter().zip(y.iter()).map(|(xi, yi)| xi * yi));
+    let sum_x2 = kahan_sum(x.iter().map(|xi| xi * xi));
 
     let denom = n * sum_x2 - sum_x * sum_x;
     if denom.abs() < 1e-15 {
@@ -438,16 +345,13 @@ fn linear_regression(x: &[f64], y: &[f64]) -> Option<(f64, f64, f64)> {
     let slope = (n * sum_xy - sum_x * sum_y) / denom;
     let intercept = (sum_y - slope * sum_x) / n;
 
-    // Calculate R²
-    let ss_tot = sum_y2 - sum_y * sum_y / n;
-    let ss_res: f64 = x
-        .iter()
-        .zip(y.iter())
-        .map(|(xi, yi)| {
-            let pred = intercept + slope * xi;
-            (yi - pred).powi(2)
-        })
-        .sum();
+    // Calculate R² using residuals (more stable than sum_y2 formula)
+    let mean_y = sum_y / n;
+    let ss_tot = kahan_sum(y.iter().map(|yi| (yi - mean_y).powi(2)));
+    let ss_res = kahan_sum(x.iter().zip(y.iter()).map(|(xi, yi)| {
+        let pred = intercept + slope * xi;
+        (yi - pred).powi(2)
+    }));
 
     let r_squared = if ss_tot.abs() < 1e-15 {
         1.0
@@ -456,6 +360,23 @@ fn linear_regression(x: &[f64], y: &[f64]) -> Option<(f64, f64, f64)> {
     };
 
     Some((slope, intercept, r_squared))
+}
+
+/// Kahan (compensated) summation for improved numerical precision.
+///
+/// Reduces floating-point accumulation error from O(n·ε) to O(ε) where
+/// ε is machine epsilon, making it safe for large values and long sums.
+#[inline]
+fn kahan_sum(iter: impl Iterator<Item = f64>) -> f64 {
+    let mut sum = 0.0_f64;
+    let mut comp = 0.0_f64; // compensation for lost low-order bits
+    for val in iter {
+        let y = val - comp;
+        let t = sum + y;
+        comp = (t - sum) - y;
+        sum = t;
+    }
+    sum
 }
 
 // ============================================================================
@@ -530,12 +451,15 @@ use super::types::C0Method;
 /// Estimate C0 using a cascade of methods (first success wins)
 ///
 /// Methods are tried in order. Default cascade: `[Observed, LogSlope, FirstConc]`
-pub fn c0(profile: &Profile, methods: &[C0Method], lambda_z: f64) -> f64 {
-    methods
-        .iter()
-        .filter_map(|m| try_c0_method(profile, *m, lambda_z))
-        .next()
-        .unwrap_or(f64::NAN)
+///
+/// Returns `(c0_value, method_used)` or `(NaN, None)` if all methods fail.
+pub fn c0(profile: &Profile, methods: &[C0Method], lambda_z: f64) -> (f64, Option<C0Method>) {
+    for m in methods {
+        if let Some(val) = try_c0_method(profile, *m, lambda_z) {
+            return (val, Some(*m));
+        }
+    }
+    (f64::NAN, None)
 }
 
 /// Try a single C0 estimation method
@@ -602,17 +526,6 @@ fn c0_logslope(profile: &Profile) -> Option<f64> {
     Some((c1.ln() - slope * t1).exp())
 }
 
-/// Legacy C0 back-extrapolation (kept for compatibility)
-#[deprecated(note = "Use c0() with C0Method cascade instead")]
-#[allow(dead_code)]
-pub fn c0_backextrap(profile: &Profile, _lambda_z: f64) -> f64 {
-    c0(
-        profile,
-        &[C0Method::Observed, C0Method::LogSlope, C0Method::FirstConc],
-        _lambda_z,
-    )
-}
-
 /// Calculate Vd for IV bolus
 #[inline]
 pub fn vd_bolus(dose: f64, c0: f64) -> f64 {
@@ -653,8 +566,9 @@ pub fn tlag_from_raw(
         return None;
     }
 
-    // Convert BLQ to 0, keep other values as-is (matching PKNCA)
-    let concs: Vec<f64> = concentrations
+    // Use iterator-based approach to avoid allocating a Vec for BLQ-converted concentrations.
+    // Convert BLQ to 0 on-the-fly, keep other values as-is (matching PKNCA).
+    let conc_iter = concentrations
         .iter()
         .zip(censoring.iter())
         .map(|(&c, censor)| {
@@ -663,34 +577,18 @@ pub fn tlag_from_raw(
             } else {
                 c
             }
-        })
-        .collect();
+        });
 
     // Find first time when concentration increases (PKNCA method)
-    for i in 0..concs.len().saturating_sub(1) {
-        if concs[i + 1] > concs[i] {
-            return Some(times[i]);
+    // We need to compare adjacent elements, so we use a sliding window via zip
+    let mut prev = None;
+    for (i, c) in conc_iter.enumerate() {
+        if let Some(prev_c) = prev {
+            if c > prev_c {
+                return Some(times[i - 1]);
+            }
         }
-    }
-    // No increase found - either flat or all decreasing
-    None
-}
-
-/// Detect lag time for extravascular administration from processed profile
-///
-/// Returns the time at which concentration first increases (PKNCA method).
-/// This is more appropriate than finding "time before first positive" because
-/// it captures when absorption actually begins, not just when drug is detectable.
-///
-/// For profiles starting at t=0 with C=0, this returns the time point where
-/// C[i+1] > C[i] for the first time.
-#[deprecated(note = "Use tlag_from_raw for PKNCA-compatible tlag calculation")]
-pub fn tlag(profile: &Profile) -> Option<f64> {
-    // Find first time when concentration increases
-    for i in 0..profile.concentrations.len().saturating_sub(1) {
-        if profile.concentrations[i + 1] > profile.concentrations[i] {
-            return Some(profile.times[i]);
-        }
+        prev = Some(c);
     }
     // No increase found - either flat or all decreasing
     None
@@ -747,35 +645,116 @@ pub fn accumulation(auc_tau: f64, auc_inf_single: f64) -> f64 {
 }
 
 // ============================================================================
+// Derived Parameters — Phase 2 additions
+// ============================================================================
+
+/// Calculate effective half-life: t½,eff = ln(2) × MRT
+///
+/// Useful for drugs with nonlinear pharmacokinetics where terminal half-life
+/// may not reflect the effective duration of drug persistence.
+#[inline]
+pub fn effective_half_life(mrt: f64) -> f64 {
+    if !mrt.is_finite() || mrt <= 0.0 {
+        return f64::NAN;
+    }
+    std::f64::consts::LN_2 * mrt
+}
+
+/// Calculate elimination rate constant: Kel = 1 / MRT
+///
+/// Alternative representation of overall elimination.
+#[inline]
+pub fn kel(mrt: f64) -> f64 {
+    if !mrt.is_finite() || mrt <= 0.0 {
+        return f64::NAN;
+    }
+    1.0 / mrt
+}
+
+/// Calculate peak-to-trough ratio: PTR = Cmax / Cmin
+///
+/// Used in steady-state analysis to assess PK variability within a dosing interval.
+#[inline]
+pub fn peak_trough_ratio(cmax: f64, cmin: f64) -> f64 {
+    if cmin <= 0.0 || !cmin.is_finite() {
+        return f64::NAN;
+    }
+    cmax / cmin
+}
+
+/// Calculate time above a target concentration
+///
+/// Uses linear interpolation to find exact crossing times.
+/// Returns the total time spent above the threshold within the profile.
+///
+/// This is PD-relevant for concentration-dependent drugs (e.g., antibiotics)
+/// where efficacy correlates with the time the drug concentration exceeds
+/// a minimum inhibitory concentration (MIC).
+pub fn time_above_concentration(times: &[f64], concentrations: &[f64], threshold: f64) -> f64 {
+    if times.len() < 2 || concentrations.len() < 2 {
+        return 0.0;
+    }
+
+    let mut total_time = 0.0;
+
+    for i in 0..times.len() - 1 {
+        let (t1, c1) = (times[i], concentrations[i]);
+        let (t2, c2) = (times[i + 1], concentrations[i + 1]);
+        let dt = t2 - t1;
+
+        if c1 >= threshold && c2 >= threshold {
+            // Both above: entire interval counts
+            total_time += dt;
+        } else if c1 >= threshold && c2 < threshold {
+            // Crosses below: interpolate the crossing time
+            let t_cross = t1 + dt * (c1 - threshold) / (c1 - c2);
+            total_time += t_cross - t1;
+        } else if c1 < threshold && c2 >= threshold {
+            // Crosses above: interpolate the crossing time
+            let t_cross = t1 + dt * (threshold - c1) / (c2 - c1);
+            total_time += t2 - t_cross;
+        }
+        // Both below: nothing added
+    }
+
+    total_time
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Censor;
+    use crate::data::auc::auc_segment;
+    use crate::data::builder::SubjectBuilderExt;
+    use crate::Subject;
 
     fn make_test_profile() -> Profile {
-        let censoring = vec![Censor::None; 6];
-        Profile::from_arrays(
-            &[0.0, 1.0, 2.0, 4.0, 8.0, 12.0],
-            &[0.0, 10.0, 8.0, 4.0, 2.0, 1.0],
-            &censoring,
-            super::super::types::BLQRule::Exclude,
-        )
-        .unwrap()
+        let subject = Subject::builder("test")
+            .bolus(0.0, 100.0, 0)
+            .observation(0.0, 0.0, 0)
+            .observation(1.0, 10.0, 0)
+            .observation(2.0, 8.0, 0)
+            .observation(4.0, 4.0, 0)
+            .observation(8.0, 2.0, 0)
+            .observation(12.0, 1.0, 0)
+            .build();
+        let occ = &subject.occasions()[0];
+        Profile::from_occasion(occ, 0, &BLQRule::Exclude).unwrap()
     }
 
     #[test]
     fn test_auc_segment_linear() {
-        let auc = auc_segment(0.0, 10.0, 1.0, 8.0, AUCMethod::Linear);
+        let auc = auc_segment(0.0, 10.0, 1.0, 8.0, &AUCMethod::Linear);
         assert!((auc - 9.0).abs() < 1e-10); // (10 + 8) / 2 * 1
     }
 
     #[test]
     fn test_auc_segment_log_down() {
         // Descending - should use log-linear
-        let auc = auc_segment(0.0, 10.0, 1.0, 5.0, AUCMethod::LinUpLogDown);
+        let auc = auc_segment(0.0, 10.0, 1.0, 5.0, &AUCMethod::LinUpLogDown);
         let expected = 5.0 / (10.0_f64 / 5.0).ln(); // (C1-C2) * dt / ln(C1/C2)
         assert!((auc - expected).abs() < 1e-10);
     }
@@ -783,7 +762,7 @@ mod tests {
     #[test]
     fn test_auc_last() {
         let profile = make_test_profile();
-        let auc = auc_last(&profile, AUCMethod::Linear);
+        let auc = profile.auc_last(&AUCMethod::Linear);
 
         // Manual calculation:
         // 0-1: (0 + 10) / 2 * 1 = 5

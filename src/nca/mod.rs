@@ -71,19 +71,34 @@
 mod analyze;
 mod calc;
 mod error;
-mod profile;
+pub mod summary;
+mod traits;
 mod types;
+
+// Feature modules
+pub mod bioavailability;
+pub mod sparse;
+pub mod superposition;
 
 #[cfg(test)]
 mod tests;
 
-// Crate-internal re-exports (for data/structs.rs)
-pub(crate) use analyze::{analyze_arrays, DoseContext};
+// Crate-internal re-exports
+// (traits.rs accesses analyze::analyze and calc::tlag_from_raw directly)
 
 // Public API
+pub use calc::{lambda_z_candidates, LambdaZCandidate};
 pub use error::NCAError;
+pub use summary::{nca_to_csv, summarize, ParameterSummary, PopulationSummary};
+pub use traits::{ObservationMetrics, NCA};
 pub use types::{
-    AUCMethod, BLQRule, C0Method, ClastType, ClearanceParams, ExposureParams, IVBolusParams,
-    IVInfusionParams, LambdaZMethod, LambdaZOptions, NCAOptions, NCAResult, Quality,
-    RegressionStats, Route, SteadyStateParams, TerminalParams, Warning,
+    C0Method, ClearanceParams, DoseContext, ExposureParams, IVBolusParams, IVInfusionParams,
+    LambdaZMethod, LambdaZOptions, NCAOptions, NCAResult, Quality, RegressionStats, RouteParams,
+    SteadyStateParams, TerminalParams, Warning,
 };
+pub use bioavailability::{bioavailability, BioavailabilityResult};
+pub use sparse::{sparse_auc, SparseObservation, SparsePKResult};
+pub use superposition::{predict as superposition_predict, SuperpositionResult};
+// Re-export shared types (backwards compatible)
+pub use crate::data::event::{AUCMethod, BLQRule, Route};
+pub use crate::data::observation::ObservationProfile;

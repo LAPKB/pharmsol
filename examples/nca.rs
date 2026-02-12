@@ -4,7 +4,7 @@
 //!
 //! Run with: `cargo run --example nca`
 
-use pharmsol::nca::{BLQRule, NCAOptions};
+use pharmsol::nca::{summarize, BLQRule, NCAOptions, RouteParams};
 use pharmsol::prelude::*;
 use pharmsol::Censor;
 
@@ -25,15 +25,18 @@ fn main() {
 
     // Example 5: BLQ handling
     blq_handling_example();
+
+    // Example 6: Population summary
+    population_summary_example();
 }
 
 /// Basic oral PK NCA analysis
 fn basic_oral_example() {
     println!("--- Basic Oral PK Example ---\n");
 
-    // Build subject with oral dose and observations
+    // Build subject with oral dose using the bolus_ev() alias
     let subject = Subject::builder("patient_001")
-        .bolus(0.0, 100.0, 0) // 100 mg oral dose (input 0 = depot)
+        .bolus_ev(0.0, 100.0) // 100 mg oral dose (depot compartment)
         .observation(0.0, 0.0, 0)
         .observation(0.5, 5.0, 0)
         .observation(1.0, 10.0, 0)
@@ -45,8 +48,9 @@ fn basic_oral_example() {
         .build();
 
     let options = NCAOptions::default();
-    let results = subject.nca(&options, 0);
-    let result = results[0].as_ref().expect("NCA analysis failed");
+
+    // nca_first() is a convenience that returns the first occasion's result directly
+    let result = subject.nca_first(&options, 0).expect("NCA analysis failed");
 
     println!("Exposure Parameters:");
     println!("  Cmax:     {:.2}", result.exposure.cmax);
@@ -77,9 +81,9 @@ fn basic_oral_example() {
 fn iv_bolus_example() {
     println!("--- IV Bolus Example ---\n");
 
-    // Build subject with IV bolus (input 1 = central compartment)
+    // Build subject with IV bolus using bolus_iv() alias
     let subject = Subject::builder("iv_patient")
-        .bolus(0.0, 500.0, 1) // 500 mg IV bolus
+        .bolus_iv(0.0, 500.0) // 500 mg IV bolus (central compartment)
         .observation(0.25, 95.0, 0)
         .observation(0.5, 82.0, 0)
         .observation(1.0, 61.0, 0)
@@ -97,7 +101,7 @@ fn iv_bolus_example() {
     println!("  Cmax:     {:.1}", result.exposure.cmax);
     println!("  AUClast:  {:.1}", result.exposure.auc_last);
 
-    if let Some(ref bolus) = result.iv_bolus {
+    if let Some(RouteParams::IVBolus(ref bolus)) = result.route_params {
         println!("\nIV Bolus Parameters:");
         println!("  C0 (back-extrap): {:.1}", bolus.c0);
         println!("  Vd:               {:.1} L", bolus.vd);
@@ -113,9 +117,9 @@ fn iv_bolus_example() {
 fn iv_infusion_example() {
     println!("--- IV Infusion Example ---\n");
 
-    // Build subject with IV infusion
+    // Build subject with IV infusion using infusion_iv() alias
     let subject = Subject::builder("infusion_patient")
-        .infusion(0.0, 100.0, 1, 0.5) // 100 mg over 0.5h to central
+        .infusion_iv(0.0, 100.0, 0.5) // 100 mg over 0.5h to central
         .observation(0.0, 0.0, 0)
         .observation(0.5, 15.0, 0)
         .observation(1.0, 12.0, 0)
@@ -134,7 +138,7 @@ fn iv_infusion_example() {
     println!("  Tmax:     {:.2} h", result.exposure.tmax);
     println!("  AUClast:  {:.1}", result.exposure.auc_last);
 
-    if let Some(ref infusion) = result.iv_infusion {
+    if let Some(RouteParams::IVInfusion(ref infusion)) = result.route_params {
         println!("\nIV Infusion Parameters:");
         println!("  Infusion duration: {:.2} h", infusion.infusion_duration);
         if let Some(mrt_iv) = infusion.mrt_iv {
@@ -151,7 +155,7 @@ fn steady_state_example() {
 
     // Build subject at steady-state (Q12H dosing)
     let subject = Subject::builder("ss_patient")
-        .bolus(0.0, 100.0, 0) // 100 mg oral
+        .bolus_ev(0.0, 100.0) // 100 mg oral
         .observation(0.0, 5.0, 0)
         .observation(1.0, 15.0, 0)
         .observation(2.0, 12.0, 0)
@@ -191,7 +195,7 @@ fn blq_handling_example() {
     // information is stored with each observation, not determined
     // retroactively by a numeric threshold.
     let subject = Subject::builder("blq_patient")
-        .bolus(0.0, 100.0, 0)
+        .bolus_ev(0.0, 100.0)
         .observation(0.0, 0.0, 0)
         .observation(1.0, 10.0, 0)
         .observation(2.0, 8.0, 0)
@@ -236,4 +240,73 @@ fn blq_handling_example() {
     // Full result display
     println!("--- Full Result Display ---\n");
     println!("{}", result_exclude);
+}
+
+/// Population summary statistics
+fn population_summary_example() {
+    println!("--- Population Summary Example ---\n");
+
+    // Build a small population dataset
+    let subjects = vec![
+        Subject::builder("subj_01")
+            .bolus_ev(0.0, 100.0)
+            .observation(0.5, 4.0, 0)
+            .observation(1.0, 9.0, 0)
+            .observation(2.0, 7.0, 0)
+            .observation(4.0, 3.5, 0)
+            .observation(8.0, 1.5, 0)
+            .observation(24.0, 0.2, 0)
+            .build(),
+        Subject::builder("subj_02")
+            .bolus_ev(0.0, 100.0)
+            .observation(0.5, 5.5, 0)
+            .observation(1.0, 12.0, 0)
+            .observation(2.0, 9.0, 0)
+            .observation(4.0, 5.0, 0)
+            .observation(8.0, 2.0, 0)
+            .observation(24.0, 0.3, 0)
+            .build(),
+        Subject::builder("subj_03")
+            .bolus_ev(0.0, 100.0)
+            .observation(0.5, 3.0, 0)
+            .observation(1.0, 8.0, 0)
+            .observation(2.0, 6.5, 0)
+            .observation(4.0, 3.0, 0)
+            .observation(8.0, 1.0, 0)
+            .observation(24.0, 0.1, 0)
+            .build(),
+    ];
+
+    let options = NCAOptions::default();
+
+    // Collect successful NCA results
+    let results: Vec<_> = subjects
+        .iter()
+        .filter_map(|s| s.nca_first(&options, 0).ok())
+        .collect();
+
+    // Compute population summary
+    let summary = summarize(&results);
+    println!(
+        "Population: {} subjects\n",
+        summary.n_subjects
+    );
+
+    for stats in &summary.parameters {
+        println!(
+            "  {:<12} mean={:>8.2}  CV%={:>6.1}  [{:.2} - {:.2}]",
+            stats.name, stats.mean, stats.cv_pct, stats.min, stats.max
+        );
+    }
+
+    // Demonstrate to_row() for CSV-like output
+    println!("\n--- Individual Results (to_row headers) ---\n");
+    if let Some(first) = results.first() {
+        let row = first.to_row();
+        let headers: Vec<&str> = row.iter().map(|(k, _)| *k).collect();
+        println!("  Columns: {:?}", &headers[..headers.len().min(8)]);
+        println!("  ...(and {} more)", headers.len().saturating_sub(8));
+    }
+
+    println!();
 }

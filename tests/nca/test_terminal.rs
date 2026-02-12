@@ -10,7 +10,7 @@
 
 use approx::assert_relative_eq;
 use pharmsol::data::Subject;
-use pharmsol::nca::{LambdaZMethod, LambdaZOptions, NCAOptions};
+use pharmsol::nca::{LambdaZMethod, LambdaZOptions, NCAOptions, NCA};
 use pharmsol::SubjectBuilderExt;
 
 /// Helper to create a subject from time/concentration arrays
@@ -277,7 +277,7 @@ fn test_auc_inf_extrapolation() {
 
     // If terminal phase estimated, AUCinf should be > AUClast
     if result.terminal.is_some() {
-        if let Some(auc_inf) = result.exposure.auc_inf {
+        if let Some(auc_inf) = result.exposure.auc_inf_obs {
             assert!(
                 auc_inf > result.exposure.auc_last,
                 "AUCinf should be > AUClast"

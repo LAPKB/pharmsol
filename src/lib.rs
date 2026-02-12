@@ -53,8 +53,16 @@ pub mod prelude {
     pub use crate::data::{
         builder::SubjectBuilderExt,
         error_model::{AssayErrorModel, AssayErrorModels, ErrorPoly},
+        event::{AUCMethod, BLQRule, Route},
+        observation::ObservationProfile,
         Covariates, Data, Event, Interpolation, Occasion, Subject,
     };
+
+    // NCA extension traits (provides .nca(), .auc(), .cmax(), etc. on data types)
+    pub use crate::nca::{ObservationMetrics, NCA};
+
+    // AUC primitives for direct use on raw arrays
+    pub use crate::data::auc::{auc, auc_interval, aumc, interpolate_linear};
 
     // Simulator submodule for internal use and advanced users
     pub mod simulator {

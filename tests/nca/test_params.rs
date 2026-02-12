@@ -11,7 +11,7 @@
 
 use approx::assert_relative_eq;
 use pharmsol::data::Subject;
-use pharmsol::nca::{LambdaZOptions, NCAOptions};
+use pharmsol::nca::{LambdaZOptions, NCAOptions, NCA};
 use pharmsol::SubjectBuilderExt;
 
 /// Helper to create a subject from time/concentration arrays with a specific dose
@@ -202,7 +202,7 @@ fn test_extrapolation_percent() {
         .expect("NCA should succeed");
 
     // Extrapolation percent should be reasonable for good data
-    if let Some(extrap_pct) = result.exposure.auc_pct_extrap {
+    if let Some(extrap_pct) = result.exposure.auc_pct_extrap_obs {
         // For well-sampled data, extrapolation should be under 30%
         assert!(extrap_pct < 50.0, "Extrapolation too high: {}", extrap_pct);
     }
@@ -246,7 +246,7 @@ fn test_complete_parameter_workflow() {
     println!("  Cmax: {:.2}", result.exposure.cmax);
     println!("  Tmax: {:.2}", result.exposure.tmax);
     println!("  AUClast: {:.2}", result.exposure.auc_last);
-    if let Some(auc_inf) = result.exposure.auc_inf {
+    if let Some(auc_inf) = result.exposure.auc_inf_obs {
         println!("  AUCinf: {:.2}", auc_inf);
     }
     if let Some(ref terminal) = result.terminal {
