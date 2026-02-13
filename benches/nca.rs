@@ -1,6 +1,6 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use pharmsol::nca::{lambda_z_candidates, NCAOptions, NCA};
 use pharmsol::prelude::*;
-use pharmsol::nca::{lambda_z_candidates, NCAOptions};
 use std::hint::black_box;
 
 /// Build a typical PK subject with 12 time points (oral dose)
@@ -53,8 +53,8 @@ fn bench_single_subject_nca(c: &mut Criterion) {
 
     c.bench_function("nca_single_subject", |b| {
         b.iter(|| {
-            let result = black_box(&subject).nca(black_box(&opts), 0);
-            black_box(result);
+            let result = black_box(&subject).nca(black_box(&opts));
+            let _ = black_box(result);
         });
     });
 }
@@ -68,7 +68,7 @@ fn bench_population_nca(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, _| {
             b.iter(|| {
-                let results = black_box(&data).nca(black_box(&opts), 0);
+                let results = black_box(&data).nca_all(black_box(&opts));
                 black_box(results);
             });
         });
@@ -78,9 +78,9 @@ fn bench_population_nca(c: &mut Criterion) {
 }
 
 fn bench_lambda_z_candidates(c: &mut Criterion) {
+    use pharmsol::data::event::{AUCMethod, BLQRule};
     use pharmsol::data::observation::ObservationProfile;
     use pharmsol::nca::LambdaZOptions;
-    use pharmsol::data::event::{AUCMethod, BLQRule};
 
     let subject = typical_oral_subject("bench_subj");
     let occ = &subject.occasions()[0];
@@ -93,8 +93,11 @@ fn bench_lambda_z_candidates(c: &mut Criterion) {
 
     c.bench_function("nca_lambda_z_candidates", |b| {
         b.iter(|| {
-            let candidates =
-                lambda_z_candidates(black_box(&profile), black_box(&lz_opts), black_box(auc_last));
+            let candidates = lambda_z_candidates(
+                black_box(&profile),
+                black_box(&lz_opts),
+                black_box(auc_last),
+            );
             black_box(candidates);
         });
     });

@@ -41,12 +41,7 @@ fn test_lambda_z_simple_exponential() {
         ..Default::default()
     });
 
-    let results = subject.nca(&options, 0);
-    let result = results
-        .first()
-        .unwrap()
-        .as_ref()
-        .expect("NCA should succeed");
+    let result = subject.nca(&options).expect("NCA should succeed");
 
     // Terminal params should exist
     let terminal = result
@@ -76,12 +71,7 @@ fn test_lambda_z_with_noise() {
         ..Default::default()
     });
 
-    let results = subject.nca(&options, 0);
-    let result = results
-        .first()
-        .unwrap()
-        .as_ref()
-        .expect("NCA should succeed");
+    let result = subject.nca(&options).expect("NCA should succeed");
 
     let terminal = result
         .terminal
@@ -117,12 +107,7 @@ fn test_lambda_z_manual_points() {
         ..Default::default()
     });
 
-    let results = subject.nca(&options, 0);
-    let result = results
-        .first()
-        .unwrap()
-        .as_ref()
-        .expect("NCA should succeed");
+    let result = subject.nca(&options).expect("NCA should succeed");
 
     if let Some(ref terminal) = result.terminal {
         if let Some(ref stats) = terminal.regression {
@@ -143,12 +128,7 @@ fn test_lambda_z_insufficient_points() {
     let subject = build_subject(&times, &concs);
     let options = NCAOptions::default();
 
-    let results = subject.nca(&options, 0);
-    let result = results
-        .first()
-        .unwrap()
-        .as_ref()
-        .expect("NCA should succeed");
+    let result = subject.nca(&options).expect("NCA should succeed");
 
     // Terminal params should be None due to insufficient data
     assert!(
@@ -171,12 +151,7 @@ fn test_adjusted_r2_vs_r2_method() {
         ..Default::default()
     });
 
-    let results_adj = subject.nca(&options_adj, 0);
-    let result_adj = results_adj
-        .first()
-        .unwrap()
-        .as_ref()
-        .expect("NCA should succeed");
+    let result_adj = subject.nca(&options_adj).expect("NCA should succeed");
 
     if let Some(ref terminal) = result_adj.terminal {
         if let Some(ref stats) = terminal.regression {
@@ -202,12 +177,7 @@ fn test_half_life_from_lambda_z() {
         ..Default::default()
     });
 
-    let results = subject.nca(&options, 0);
-    let result = results
-        .first()
-        .unwrap()
-        .as_ref()
-        .expect("NCA should succeed");
+    let result = subject.nca(&options).expect("NCA should succeed");
 
     let terminal = result
         .terminal
@@ -226,12 +196,7 @@ fn test_lambda_z_quality_metrics() {
     let subject = build_subject(&times, &concs);
     let options = NCAOptions::default();
 
-    let results = subject.nca(&options, 0);
-    let result = results
-        .first()
-        .unwrap()
-        .as_ref()
-        .expect("NCA should succeed");
+    let result = subject.nca(&options).expect("NCA should succeed");
 
     // Check quality metrics in terminal.regression
     if let Some(ref terminal) = result.terminal {
@@ -265,12 +230,7 @@ fn test_auc_inf_extrapolation() {
         ..Default::default()
     });
 
-    let results = subject.nca(&options, 0);
-    let result = results
-        .first()
-        .unwrap()
-        .as_ref()
-        .expect("NCA should succeed");
+    let result = subject.nca(&options).expect("NCA should succeed");
 
     // AUClast should exist
     assert!(result.exposure.auc_last > 0.0);
@@ -295,12 +255,7 @@ fn test_terminal_phase_with_absorption() {
     let subject = build_subject(&times, &concs);
     let options = NCAOptions::default();
 
-    let results = subject.nca(&options, 0);
-    let result = results
-        .first()
-        .unwrap()
-        .as_ref()
-        .expect("NCA should succeed");
+    let result = subject.nca(&options).expect("NCA should succeed");
 
     // Cmax should be at 1.0h
     assert_eq!(result.exposure.cmax, 10.0);

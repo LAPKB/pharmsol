@@ -6,6 +6,7 @@
 use crate::data::Subject;
 use crate::nca::*;
 use crate::SubjectBuilderExt;
+use crate::Data;
 
 // ============================================================================
 // Test subject builders
@@ -104,7 +105,7 @@ fn no_dose_subject() -> Subject {
 fn test_nca_basic_exposure() {
     let subject = single_dose_oral();
     let options = NCAOptions::default();
-    let results = subject.nca(&options, 0);
+    let results = subject.nca_all(&options);
     let result = results[0].as_ref().unwrap();
 
     // Check Cmax/Tmax
@@ -123,7 +124,7 @@ fn test_nca_basic_exposure() {
 fn test_nca_with_dose() {
     let subject = single_dose_oral();
     let options = NCAOptions::default();
-    let results = subject.nca(&options, 0);
+    let results = subject.nca_all(&options);
     let result = results[0].as_ref().unwrap();
 
     // Should have clearance parameters if lambda-z was estimated
@@ -137,7 +138,7 @@ fn test_nca_with_dose() {
 fn test_nca_without_dose() {
     let subject = no_dose_subject();
     let options = NCAOptions::default();
-    let results = subject.nca(&options, 0);
+    let results = subject.nca_all(&options);
     let result = results[0].as_ref().unwrap();
 
     // Exposure should still be computed
@@ -150,7 +151,7 @@ fn test_nca_without_dose() {
 fn test_nca_terminal_phase() {
     let subject = single_dose_oral();
     let options = NCAOptions::default();
-    let results = subject.nca(&options, 0);
+    let results = subject.nca_all(&options);
     let result = results[0].as_ref().unwrap();
 
     // Check terminal phase was estimated
@@ -180,7 +181,7 @@ fn test_nca_terminal_phase() {
 fn test_auc_linear_method() {
     let subject = single_dose_oral();
     let options = NCAOptions::default().with_auc_method(AUCMethod::Linear);
-    let results = subject.nca(&options, 0);
+    let results = subject.nca_all(&options);
     let result = results[0].as_ref().unwrap();
 
     assert!(result.exposure.auc_last > 0.0);
@@ -190,7 +191,7 @@ fn test_auc_linear_method() {
 fn test_auc_linuplogdown_method() {
     let subject = single_dose_oral();
     let options = NCAOptions::default().with_auc_method(AUCMethod::LinUpLogDown);
-    let results = subject.nca(&options, 0);
+    let results = subject.nca_all(&options);
     let result = results[0].as_ref().unwrap();
 
     assert!(result.exposure.auc_last > 0.0);
@@ -203,12 +204,12 @@ fn test_auc_methods_differ() {
     let linear = NCAOptions::default().with_auc_method(AUCMethod::Linear);
     let logdown = NCAOptions::default().with_auc_method(AUCMethod::LinUpLogDown);
 
-    let result_linear = subject.nca(&linear, 0)[0]
+    let result_linear = subject.nca_all(&linear)[0]
         .as_ref()
         .unwrap()
         .exposure
         .auc_last;
-    let result_logdown = subject.nca(&logdown, 0)[0]
+    let result_logdown = subject.nca_all(&logdown)[0]
         .as_ref()
         .unwrap()
         .exposure
@@ -229,7 +230,7 @@ fn test_auc_methods_differ() {
 fn test_iv_bolus_route() {
     let subject = iv_bolus_subject();
     let options = NCAOptions::default();
-    let results = subject.nca(&options, 0);
+    let results = subject.nca_all(&options);
     let result = results[0].as_ref().unwrap();
 
     // Should have IV bolus parameters
@@ -248,7 +249,7 @@ fn test_iv_bolus_route() {
 fn test_iv_infusion_route() {
     let subject = iv_infusion_subject();
     let options = NCAOptions::default();
-    let results = subject.nca(&options, 0);
+    let results = subject.nca_all(&options);
     let result = results[0].as_ref().unwrap();
 
     // Should have IV infusion parameters
@@ -269,7 +270,7 @@ fn test_iv_infusion_route() {
 fn test_extravascular_route() {
     let subject = single_dose_oral();
     let options = NCAOptions::default();
-    let results = subject.nca(&options, 0);
+    let results = subject.nca_all(&options);
     let result = results[0].as_ref().unwrap();
 
     // Tlag should be in exposure params (may be None if no lag detected)
@@ -288,7 +289,7 @@ fn test_extravascular_route() {
 fn test_steady_state_parameters() {
     let subject = steady_state_subject();
     let options = NCAOptions::default().with_tau(12.0);
-    let results = subject.nca(&options, 0);
+    let results = subject.nca_all(&options);
     let result = results[0].as_ref().unwrap();
 
     // Should have steady-state parameters
@@ -314,7 +315,7 @@ fn test_steady_state_parameters() {
 fn test_blq_exclude() {
     let subject = blq_subject();
     let options = NCAOptions::default().with_blq_rule(BLQRule::Exclude);
-    let results = subject.nca(&options, 0);
+    let results = subject.nca_all(&options);
     let result = results[0].as_ref().unwrap();
 
     // Tlast should be at t=12 (last non-BLQ point)
@@ -325,7 +326,7 @@ fn test_blq_exclude() {
 fn test_blq_zero() {
     let subject = blq_subject();
     let options = NCAOptions::default().with_blq_rule(BLQRule::Zero);
-    let results = subject.nca(&options, 0);
+    let results = subject.nca_all(&options);
     let result = results[0].as_ref().unwrap();
 
     // Should include the BLQ points as zeros
@@ -336,7 +337,7 @@ fn test_blq_zero() {
 fn test_blq_loq_over_2() {
     let subject = blq_subject();
     let options = NCAOptions::default().with_blq_rule(BLQRule::LoqOver2);
-    let results = subject.nca(&options, 0);
+    let results = subject.nca_all(&options);
     let result = results[0].as_ref().unwrap();
 
     // Should include the BLQ points as LOQ/2 (0.1 / 2 = 0.05)
@@ -354,7 +355,7 @@ fn test_lambda_z_auto_selection() {
         method: LambdaZMethod::AdjR2,
         ..Default::default()
     });
-    let results = subject.nca(&options, 0);
+    let results = subject.nca_all(&options);
     let result = results[0].as_ref().unwrap();
 
     // Should have terminal phase
@@ -376,7 +377,7 @@ fn test_lambda_z_manual_points() {
         method: LambdaZMethod::Manual(4),
         ..Default::default()
     });
-    let results = subject.nca(&options, 0);
+    let results = subject.nca_all(&options);
     let result = results[0].as_ref().unwrap();
 
     if let Some(ref term) = result.terminal {
@@ -397,7 +398,7 @@ fn test_insufficient_observations() {
         .observation(1.0, 10.0, 0)
         .build();
 
-    let results = subject.nca(&NCAOptions::default(), 0);
+    let results = subject.nca_all(&NCAOptions::default());
     // Should fail with insufficient data
     assert!(
         results[0].is_err(),
@@ -415,7 +416,7 @@ fn test_all_zero_concentrations() {
         .observation(4.0, 0.0, 0)
         .build();
 
-    let results = subject.nca(&NCAOptions::default(), 0);
+    let results = subject.nca_all(&NCAOptions::default());
     assert!(results[0].is_err(), "All zero concentrations should fail");
 }
 
@@ -433,7 +434,7 @@ fn test_quality_warnings_lambda_z() {
         .observation(2.0, 8.0, 0)
         .build();
 
-    let results = subject.nca(&NCAOptions::default(), 0);
+    let results = subject.nca_all(&NCAOptions::default());
     let result = results[0].as_ref().unwrap();
 
     // Should have lambda-z warning
@@ -454,7 +455,7 @@ fn test_quality_warnings_lambda_z() {
 #[test]
 fn test_result_to_params() {
     let subject = single_dose_oral();
-    let results = subject.nca(&NCAOptions::default(), 0);
+    let results = subject.nca_all(&NCAOptions::default());
     let result = results[0].as_ref().unwrap();
 
     let params = result.to_params();
@@ -468,7 +469,7 @@ fn test_result_to_params() {
 #[test]
 fn test_result_display() {
     let subject = single_dose_oral();
-    let results = subject.nca(&NCAOptions::default(), 0);
+    let results = subject.nca_all(&NCAOptions::default());
     let result = results[0].as_ref().unwrap();
 
     let display = format!("{}", result);
@@ -490,7 +491,7 @@ fn test_result_subject_id() {
         .observation(8.0, 2.0, 0)
         .build();
 
-    let results = subject.nca(&NCAOptions::default(), 0);
+    let results = subject.nca_all(&NCAOptions::default());
     let result = results[0].as_ref().unwrap();
 
     assert_eq!(result.subject_id.as_deref(), Some("patient_001"));
@@ -523,7 +524,7 @@ fn test_sparse_preset() {
 fn test_partial_auc_interval() {
     let subject = single_dose_oral();
     let options = NCAOptions::default().with_auc_interval(0.0, 4.0);
-    let results = subject.nca(&options, 0);
+    let results = subject.nca_all(&options);
     let result = results[0].as_ref().unwrap();
 
     // Partial AUC should be calculated
@@ -559,7 +560,7 @@ fn test_positional_blq_rule() {
 
     // With positional BLQ handling
     let options = NCAOptions::default().with_blq_rule(BLQRule::Positional);
-    let results = subject.nca(&options, 0);
+    let results = subject.nca_all(&options);
     let result = results[0].as_ref().unwrap();
 
     // Middle BLQ at t=2 should be dropped, but first and last kept as 0 (PKNCA behavior)
@@ -584,7 +585,7 @@ fn test_positional_blq_rule() {
 fn test_lambda_z_candidates_returns_multiple() {
     let subject = single_dose_oral();
     let options = NCAOptions::default();
-    let results = subject.nca(&options, 0);
+    let results = subject.nca_all(&options);
     let result = results[0].as_ref().unwrap();
     let auc_last = result.exposure.auc_last;
 
@@ -611,7 +612,7 @@ fn test_lambda_z_candidates_returns_multiple() {
 fn test_lambda_z_candidates_selected_matches_nca_result() {
     let subject = single_dose_oral();
     let options = NCAOptions::default();
-    let results = subject.nca(&options, 0);
+    let results = subject.nca_all(&options);
     let result = results[0].as_ref().unwrap();
     let auc_last = result.exposure.auc_last;
 
@@ -645,7 +646,7 @@ fn test_lambda_z_candidates_selected_matches_nca_result() {
 fn test_lambda_z_candidates_all_have_positive_lambda_z() {
     let subject = single_dose_oral();
     let options = NCAOptions::default();
-    let results = subject.nca(&options, 0);
+    let results = subject.nca_all(&options);
     let auc_last = results[0].as_ref().unwrap().exposure.auc_last;
 
     let occasion = &subject.occasions()[0];
@@ -692,7 +693,7 @@ fn test_lambda_z_candidates_empty_for_insufficient_points() {
 fn test_lambda_z_candidates_span_ratio_and_extrap() {
     let subject = single_dose_oral();
     let options = NCAOptions::default();
-    let results = subject.nca(&options, 0);
+    let results = subject.nca_all(&options);
     let auc_last = results[0].as_ref().unwrap().exposure.auc_last;
 
     let occasion = &subject.occasions()[0];
@@ -728,17 +729,17 @@ fn test_lambda_z_candidates_span_ratio_and_extrap() {
 }
 
 // ============================================================================
-// Phase 8: nca_first() and to_row() tests
+// Phase 8: nca() / nca_all() and to_row() tests
 // ============================================================================
 
 #[test]
-fn test_nca_first_returns_single_result() {
+fn test_nca_returns_single_result() {
     let subject = single_dose_oral();
     let options = NCAOptions::default();
-    let result = subject.nca_first(&options, 0);
+    let result = subject.nca(&options);
     assert!(
         result.is_ok(),
-        "nca_first() should succeed for a valid subject"
+        "nca() should succeed for a valid subject"
     );
     let r = result.unwrap();
     assert!(r.exposure.cmax > 0.0);
@@ -746,12 +747,12 @@ fn test_nca_first_returns_single_result() {
 }
 
 #[test]
-fn test_nca_first_matches_nca_vec() {
+fn test_nca_matches_nca_all_vec() {
     let subject = single_dose_oral();
     let options = NCAOptions::default();
 
-    let first = subject.nca_first(&options, 0).unwrap();
-    let vec_result = subject.nca(&options, 0);
+    let first = subject.nca(&options).unwrap();
+    let vec_result = subject.nca_all(&options);
     let vec_first = vec_result[0].as_ref().unwrap();
 
     assert!((first.exposure.cmax - vec_first.exposure.cmax).abs() < 1e-10);
@@ -759,22 +760,22 @@ fn test_nca_first_matches_nca_vec() {
 }
 
 #[test]
-fn test_nca_first_error_on_empty_subject() {
+fn test_nca_error_on_empty_outeq() {
     // A subject with no observations for outeq=99
     let subject = Subject::builder("empty")
         .bolus(0.0, 100.0, 0)
         .observation(1.0, 10.0, 0)
         .build();
-    let options = NCAOptions::default();
-    let result = subject.nca_first(&options, 99);
-    assert!(result.is_err(), "nca_first() should fail for missing outeq");
+    let options = NCAOptions::default().with_outeq(99);
+    let result = subject.nca(&options);
+    assert!(result.is_err(), "nca() should fail for missing outeq");
 }
 
 #[test]
 fn test_to_row_contains_expected_keys() {
     let subject = single_dose_oral();
     let options = NCAOptions::default();
-    let result = subject.nca_first(&options, 0).unwrap();
+    let result = subject.nca(&options).unwrap();
     let row = result.to_row();
 
     let keys: Vec<&str> = row.iter().map(|(k, _)| *k).collect();
@@ -789,7 +790,7 @@ fn test_to_row_contains_expected_keys() {
 fn test_to_row_values_match_result() {
     let subject = single_dose_oral();
     let options = NCAOptions::default();
-    let result = subject.nca_first(&options, 0).unwrap();
+    let result = subject.nca(&options).unwrap();
     let row = result.to_row();
 
     let find =
@@ -804,7 +805,7 @@ fn test_to_row_values_match_result() {
 fn test_to_row_terminal_params_present_when_lambda_z_succeeds() {
     let subject = single_dose_oral();
     let options = NCAOptions::default();
-    let result = subject.nca_first(&options, 0).unwrap();
+    let result = subject.nca(&options).unwrap();
 
     // Verify terminal phase succeeded
     assert!(
@@ -824,4 +825,103 @@ fn test_to_row_terminal_params_present_when_lambda_z_succeeds() {
         find("half_life").is_some(),
         "to_row should have half_life when terminal succeeds"
     );
+}
+
+// ============================================================================
+// Phase 9: ObservationProfile NCA tests
+// ============================================================================
+
+#[test]
+fn test_nca_with_dose_matches_subject() {
+    use crate::data::observation::ObservationProfile;
+    use crate::data::Route;
+
+    let subject = single_dose_oral();
+    let options = NCAOptions::default();
+    let subject_result = subject.nca(&options).unwrap();
+
+    // Build a profile from the same raw data as single_dose_oral()
+    let times = vec![0.0, 0.5, 1.0, 2.0, 4.0, 8.0, 12.0, 24.0];
+    let concs = vec![0.0, 5.0, 10.0, 8.0, 4.0, 2.0, 1.0, 0.25];
+    let profile = ObservationProfile::from_raw(&times, &concs).unwrap();
+    let profile_result = profile
+        .nca_with_dose(Some(100.0), Route::Extravascular, None, &options)
+        .unwrap();
+
+    // Cmax and tmax should match exactly (same data, same filtering)
+    assert!(
+        (subject_result.exposure.cmax - profile_result.exposure.cmax).abs() < 1e-10,
+        "Cmax should match"
+    );
+    assert!(
+        (subject_result.exposure.tmax - profile_result.exposure.tmax).abs() < 1e-10,
+        "Tmax should match"
+    );
+    // AUClast should be very close (tlag may differ slightly)
+    assert!(
+        (subject_result.exposure.auc_last - profile_result.exposure.auc_last).abs()
+            / subject_result.exposure.auc_last
+            < 0.01,
+        "AUClast should be within 1%"
+    );
+}
+
+#[test]
+fn test_nca_with_dose_no_dose() {
+    use crate::data::observation::ObservationProfile;
+    use crate::data::Route;
+
+    let profile = ObservationProfile::from_raw(&[0.0, 1.0, 4.0, 8.0], &[0.0, 10.0, 5.0, 1.0]).unwrap();
+    let options = NCAOptions::default();
+    let result = profile
+        .nca_with_dose(None, Route::Extravascular, None, &options)
+        .unwrap();
+
+    // Should work but dose-normalized params should be None
+    assert!(result.exposure.cmax > 0.0);
+    assert!(result.exposure.cmax_dn.is_none());
+}
+
+// ============================================================================
+// Phase 10: Population error isolation (Task 4.5)
+// ============================================================================
+
+#[test]
+fn test_population_error_isolation() {
+    // Create a population: one good subject, one with no observations (will fail)
+    let good = Subject::builder("good")
+        .bolus(0.0, 100.0, 0)
+        .observation(1.0, 10.0, 0)
+        .observation(2.0, 8.0, 0)
+        .observation(4.0, 4.0, 0)
+        .observation(8.0, 2.0, 0)
+        .build();
+
+    let bad = Subject::builder("bad")
+        .bolus(0.0, 100.0, 0)
+        // No observations → will fail
+        .build();
+
+    let data = Data::new(vec![good, bad]);
+    let opts = NCAOptions::default();
+    let grouped = data.nca_grouped(&opts);
+
+    assert_eq!(grouped.len(), 2);
+
+    // Good subject
+    let good_result = grouped.iter().find(|r| r.subject_id == "good").unwrap();
+    assert_eq!(good_result.successes().len(), 1);
+    assert_eq!(good_result.errors().len(), 0);
+
+    // Bad subject
+    let bad_result = grouped.iter().find(|r| r.subject_id == "bad").unwrap();
+    assert_eq!(bad_result.successes().len(), 0);
+    assert_eq!(bad_result.errors().len(), 1);
+
+    // nca_all() should have both success and failure
+    let all = data.nca_all(&opts);
+    let ok_count = all.iter().filter(|r| r.is_ok()).count();
+    let err_count = all.iter().filter(|r| r.is_err()).count();
+    assert_eq!(ok_count, 1);
+    assert_eq!(err_count, 1);
 }

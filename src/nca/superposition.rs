@@ -6,8 +6,26 @@
 //!
 //! This is a standard NCA technique for dose selection and steady-state prediction
 //! without requiring actual multiple-dose study data.
+//!
+//! # Usage
+//!
+//! The simplest way is via the [`Superposition`] trait on [`Subject`]:
+//!
+//! ```rust,ignore
+//! use pharmsol::prelude::*;
+//! use pharmsol::nca::{NCAOptions, Superposition};
+//!
+//! let result = subject.superposition(12.0, &NCAOptions::default(), None)?;
+//! println!("Predicted Cmax_ss: {:.2}", result.cmax_ss);
+//! ```
 
+use crate::data::auc::auc as compute_auc;
+use crate::data::event::{AUCMethod, BLQRule};
 use crate::data::observation::ObservationProfile;
+use crate::nca::error::NCAError;
+use crate::nca::traits::NCA;
+use crate::nca::types::{NCAOptions, NCAResult};
+use crate::Subject;
 use serde::{Deserialize, Serialize};
 
 /// Result of a superposition prediction
@@ -55,7 +73,7 @@ pub struct SuperpositionResult {
 /// ```rust,ignore
 /// use pharmsol::nca::{superposition, NCAOptions, NCA, ObservationProfile};
 ///
-/// let result = subject.nca_first(&NCAOptions::default(), 0)?;
+/// let result = subject.nca(&NCAOptions::default())?;
 /// if let Some(lz) = result.terminal.as_ref().map(|t| t.lambda_z) {
 ///     let profile = subject.filtered_observations(0, &BLQRule::Exclude)[0].as_ref().unwrap();
 ///     let ss = superposition::predict(profile, lz, 12.0, None).unwrap();
@@ -190,13 +208,9 @@ fn concentration_at_time(
     }
 }
 
-/// Simple trapezoidal AUC
+/// Simple trapezoidal AUC — delegates to data::auc::auc
 fn trapezoidal_auc(times: &[f64], concentrations: &[f64]) -> f64 {
-    let mut auc = 0.0;
-    for i in 0..times.len().saturating_sub(1) {
-        auc += (concentrations[i] + concentrations[i + 1]) * (times[i + 1] - times[i]) / 2.0;
-    }
-    auc
+    compute_auc(times, concentrations, &AUCMethod::Linear)
 }
 
 /// Single-dose AUC over [0, tau] from profile with extrapolation
@@ -213,6 +227,111 @@ fn trapezoidal_auc_from_profile(
         .map(|&t| concentration_at_time(profile, clast, tlast, lambda_z, t.min(tau)))
         .collect();
     trapezoidal_auc(eval_times, &concs)
+}
+
+/// Convenience wrapper: run superposition using an existing [`NCAResult`].
+///
+/// Extracts `lambda_z` from the terminal phase and delegates to [`predict()`].
+///
+/// # Arguments
+/// * `profile` - Observation profile (single-dose)
+/// * `nca_result` - NCA result containing terminal phase parameters
+/// * `tau` - Dosing interval
+/// * `n_eval_points` - Number of evaluation points (None = use observed times)
+///
+/// # Errors
+/// Returns [`NCAError::LambdaZFailed`] if the NCA result has no terminal phase.
+pub fn predict_from_nca(
+    profile: &ObservationProfile,
+    nca_result: &NCAResult,
+    tau: f64,
+    n_eval_points: Option<usize>,
+) -> Result<SuperpositionResult, NCAError> {
+    let lambda_z = nca_result
+        .terminal
+        .as_ref()
+        .map(|t| t.lambda_z)
+        .ok_or_else(|| NCAError::LambdaZFailed {
+            reason: "λz not estimable; cannot perform superposition".to_string(),
+        })?;
+
+    predict(profile, lambda_z, tau, n_eval_points).ok_or_else(|| NCAError::InvalidParameter {
+        param: "superposition".to_string(),
+        value: "prediction returned None (check lambda_z and tau)".to_string(),
+    })
+}
+
+/// Extension trait for running superposition directly from a [`Subject`]
+///
+/// Chains NCA → λz extraction → superposition in a single call.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use pharmsol::prelude::*;
+/// use pharmsol::nca::{NCAOptions, Superposition};
+///
+/// let subject = Subject::builder("pt1")
+///     .bolus(0.0, 100.0, 0)
+///     .observation(0.0, 10.0, 0)
+///     .observation(1.0, 9.0, 0)
+///     .observation(4.0, 6.0, 0)
+///     .observation(12.0, 3.0, 0)
+///     .observation(24.0, 0.9, 0)
+///     .build();
+///
+/// let ss = subject.superposition(12.0, &NCAOptions::default(), None)?;
+/// println!("Cmax_ss: {:.2}, Cmin_ss: {:.2}", ss.cmax_ss, ss.cmin_ss);
+/// ```
+pub trait Superposition {
+    /// Predict steady-state profile via superposition
+    ///
+    /// Performs NCA to estimate λz, then runs superposition to predict
+    /// the steady-state concentration-time profile.
+    ///
+    /// # Arguments
+    /// * `tau` - Dosing interval
+    /// * `options` - NCA options (used for λz estimation; `outeq` is read from here)
+    /// * `n_eval_points` - Number of evaluation points (None = use observed times)
+    fn superposition(
+        &self,
+        tau: f64,
+        options: &NCAOptions,
+        n_eval_points: Option<usize>,
+    ) -> Result<SuperpositionResult, NCAError>;
+}
+
+impl Superposition for Subject {
+    fn superposition(
+        &self,
+        tau: f64,
+        options: &NCAOptions,
+        n_eval_points: Option<usize>,
+    ) -> Result<SuperpositionResult, NCAError> {
+        let outeq = options.outeq;
+        // Run NCA to get lambda_z
+        let nca_result = self.nca(options)?;
+
+        let lambda_z = nca_result
+            .terminal
+            .as_ref()
+            .map(|t| t.lambda_z)
+            .ok_or_else(|| NCAError::LambdaZFailed {
+                reason: "λz not estimable; cannot perform superposition".to_string(),
+            })?;
+
+        // Get profile from first occasion
+        let occ = self.occasions().first().ok_or_else(|| NCAError::InvalidParameter {
+            param: "occasion".to_string(),
+            value: "no occasions found".to_string(),
+        })?;
+        let profile = ObservationProfile::from_occasion(occ, outeq, &BLQRule::Exclude)?;
+
+        predict(&profile, lambda_z, tau, n_eval_points).ok_or_else(|| NCAError::InvalidParameter {
+            param: "superposition".to_string(),
+            value: "prediction returned None (check lambda_z and tau)".to_string(),
+        })
+    }
 }
 
 #[cfg(test)]

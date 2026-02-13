@@ -34,12 +34,7 @@ fn test_clearance_calculation() {
     let subject = build_subject_with_dose(&times, &concs, dose);
     let options = NCAOptions::default();
 
-    let results = subject.nca(&options, 0);
-    let result = results
-        .first()
-        .unwrap()
-        .as_ref()
-        .expect("NCA should succeed");
+    let result = subject.nca(&options).expect("NCA should succeed");
 
     // If we have clearance, verify it's reasonable
     // CL = Dose / AUCinf, for this profile AUCinf should be around 1000
@@ -59,12 +54,7 @@ fn test_volume_distribution() {
     let subject = build_subject_with_dose(&times, &concs, dose);
     let options = NCAOptions::default();
 
-    let results = subject.nca(&options, 0);
-    let result = results
-        .first()
-        .unwrap()
-        .as_ref()
-        .expect("NCA should succeed");
+    let result = subject.nca(&options).expect("NCA should succeed");
 
     // Vz = CL / lambda_z
     // If CL ~ 1.0 and lambda ~ 0.1, then Vz ~ 10 L
@@ -86,12 +76,7 @@ fn test_half_life() {
         ..Default::default()
     });
 
-    let results = subject.nca(&options, 0);
-    let result = results
-        .first()
-        .unwrap()
-        .as_ref()
-        .expect("NCA should succeed");
+    let result = subject.nca(&options).expect("NCA should succeed");
 
     if let Some(ref terminal) = result.terminal {
         // Half-life should be close to 10 hours
@@ -108,12 +93,7 @@ fn test_cmax_tmax() {
     let subject = build_subject_with_dose(&times, &concs, 100.0);
     let options = NCAOptions::default();
 
-    let results = subject.nca(&options, 0);
-    let result = results
-        .first()
-        .unwrap()
-        .as_ref()
-        .expect("NCA should succeed");
+    let result = subject.nca(&options).expect("NCA should succeed");
 
     assert_relative_eq!(result.exposure.cmax, 90.0, epsilon = 0.001);
     assert_relative_eq!(result.exposure.tmax, 2.0, epsilon = 0.001);
@@ -128,12 +108,7 @@ fn test_iv_bolus_cmax_at_first_point() {
     let subject = build_subject_with_dose(&times, &concs, 100.0);
     let options = NCAOptions::default();
 
-    let results = subject.nca(&options, 0);
-    let result = results
-        .first()
-        .unwrap()
-        .as_ref()
-        .expect("NCA should succeed");
+    let result = subject.nca(&options).expect("NCA should succeed");
 
     assert_relative_eq!(result.exposure.cmax, 100.0, epsilon = 0.001);
     assert_relative_eq!(result.exposure.tmax, 0.0, epsilon = 0.001);
@@ -147,12 +122,7 @@ fn test_clast_tlast() {
     let subject = build_subject_with_dose(&times, &concs, 100.0);
     let options = NCAOptions::default();
 
-    let results = subject.nca(&options, 0);
-    let result = results
-        .first()
-        .unwrap()
-        .as_ref()
-        .expect("NCA should succeed");
+    let result = subject.nca(&options).expect("NCA should succeed");
 
     // Last positive concentration
     assert_relative_eq!(result.exposure.clast, 10.0, epsilon = 0.001);
@@ -169,12 +139,7 @@ fn test_steady_state_parameters() {
     let subject = build_subject_with_dose(&times, &concs, 100.0);
     let options = NCAOptions::default().with_tau(tau);
 
-    let results = subject.nca(&options, 0);
-    let result = results
-        .first()
-        .unwrap()
-        .as_ref()
-        .expect("NCA should succeed");
+    let result = subject.nca(&options).expect("NCA should succeed");
 
     if let Some(ref ss) = result.steady_state {
         // Cmin should be around 45-50
@@ -194,12 +159,7 @@ fn test_extrapolation_percent() {
     let subject = build_subject_with_dose(&times, &concs, 100.0);
     let options = NCAOptions::default();
 
-    let results = subject.nca(&options, 0);
-    let result = results
-        .first()
-        .unwrap()
-        .as_ref()
-        .expect("NCA should succeed");
+    let result = subject.nca(&options).expect("NCA should succeed");
 
     // Extrapolation percent should be reasonable for good data
     if let Some(extrap_pct) = result.exposure.auc_pct_extrap_obs {
@@ -218,12 +178,7 @@ fn test_complete_parameter_workflow() {
     let subject = build_subject_with_dose(&times, &concs, dose);
     let options = NCAOptions::default();
 
-    let results = subject.nca(&options, 0);
-    let result = results
-        .first()
-        .unwrap()
-        .as_ref()
-        .expect("NCA should succeed");
+    let result = subject.nca(&options).expect("NCA should succeed");
 
     // Verify basic parameters exist
     assert_eq!(result.exposure.cmax, 100.0);

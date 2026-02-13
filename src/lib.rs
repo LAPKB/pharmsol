@@ -58,8 +58,10 @@ pub mod prelude {
         Covariates, Data, Event, Interpolation, Occasion, Subject,
     };
 
-    // NCA extension traits (provides .nca(), .auc(), .cmax(), etc. on data types)
-    pub use crate::nca::{ObservationMetrics, NCA};
+    // NCA extension traits (provides .nca(), .nca_all(), etc. on data types)
+    pub use crate::nca::NCA;
+    pub use crate::nca::{NCAOptions, NCAPopulation, SubjectNCAResult};
+    pub use crate::data::traits::{ObservationMetrics, MetricsError};
 
     // AUC primitives for direct use on raw arrays
     pub use crate::data::auc::{auc, auc_interval, aumc, interpolate_linear};

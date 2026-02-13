@@ -9,8 +9,7 @@
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt};
 
-// Re-export shared analysis types that now live in data::event
-pub use crate::data::event::{AUCMethod, BLQRule, Route};
+use crate::data::event::{AUCMethod, BLQRule, Route};
 
 // ============================================================================
 // Configuration Types
@@ -62,6 +61,25 @@ pub struct NCAOptions {
     /// the concentration profile is above this threshold. Uses linear interpolation
     /// at crossing points. Commonly set to MIC for antibiotics.
     pub concentration_threshold: Option<f64>,
+
+    /// Override the auto-detected route
+    ///
+    /// By default, the administration route is inferred from dose events
+    /// (compartment number). Set this to override the heuristic when the
+    /// auto-detection gives wrong results (e.g., models where compartment 1
+    /// is a depot, not central).
+    pub route_override: Option<Route>,
+
+    /// Output equation index to analyze (default: 0)
+    ///
+    /// For multi-output models, select which output equation to run NCA on.
+    pub outeq: usize,
+
+    /// Dose times for multi-dose NCA (None = single-dose)
+    ///
+    /// When set, AUC/Cmax/Tmax will be computed for each dosing interval
+    /// and stored in [`NCAResult::multi_dose`].
+    pub dose_times: Option<Vec<f64>>,
 }
 
 impl Default for NCAOptions {
@@ -75,6 +93,9 @@ impl Default for NCAOptions {
             c0_methods: vec![C0Method::Observed, C0Method::LogSlope, C0Method::FirstConc],
             max_auc_extrap_pct: 20.0,
             concentration_threshold: None,
+            route_override: None,
+            outeq: 0,
+            dose_times: None,
         }
     }
 }
@@ -160,6 +181,31 @@ impl NCAOptions {
         self.concentration_threshold = Some(threshold);
         self
     }
+
+    /// Override the auto-detected route
+    ///
+    /// Use this when the auto-detection from compartment numbers gives wrong
+    /// results. For example, if your model uses compartment 1 as a depot
+    /// (not central), the auto-detection would incorrectly classify it as IV.
+    pub fn with_route(mut self, route: Route) -> Self {
+        self.route_override = Some(route);
+        self
+    }
+
+    /// Set output equation index (default: 0)
+    pub fn with_outeq(mut self, outeq: usize) -> Self {
+        self.outeq = outeq;
+        self
+    }
+
+    /// Set dose times for multi-dose NCA (interval-based AUC, Cmax, Tmax)
+    ///
+    /// When set, `analyze` will compute AUC, Cmax, and Tmax for each dosing
+    /// interval and store them in [`NCAResult::multi_dose`].
+    pub fn with_dose_times(mut self, times: Vec<f64>) -> Self {
+        self.dose_times = Some(times);
+        self
+    }
 }
 
 /// Lambda-z estimation options
@@ -237,32 +283,6 @@ pub enum C0Method {
 }
 
 // ============================================================================
-// Dose Context
-// ============================================================================
-
-/// Dose and route information attached to NCA results
-///
-/// This is produced automatically from the occasion's dose events
-/// and stored in [`NCAResult::dose`] for downstream consumption.
-///
-/// # Limitations
-///
-/// Currently this captures only total dose and a single route per occasion.
-/// Multi-dose occasions with mixed routes (e.g., an oral dose followed by an
-/// IV rescue dose within the same occasion) are not fully represented —
-/// the route is determined by [`Occasion::route()`](crate::data::structs::Occasion::route)
-/// priority rules (infusion > IV bolus > extravascular).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DoseContext {
-    /// Total dose amount
-    pub amount: f64,
-    /// Infusion duration (None for bolus/extravascular)
-    pub duration: Option<f64>,
-    /// Administration route
-    pub route: Route,
-}
-
-// ============================================================================
 // Result Types
 // ============================================================================
 
@@ -274,8 +294,12 @@ pub struct NCAResult {
     /// Occasion index
     pub occasion: Option<usize>,
 
-    /// Dose context (if dose events are present)
-    pub dose: Option<DoseContext>,
+    /// Total dose amount (None if no dose events)
+    pub dose_amount: Option<f64>,
+    /// Administration route (auto-detected or overridden)
+    pub route: Option<Route>,
+    /// Infusion duration (None for bolus/extravascular)
+    pub infusion_duration: Option<f64>,
 
     /// Core exposure parameters (always computed)
     pub exposure: ExposureParams,
@@ -292,6 +316,9 @@ pub struct NCAResult {
     /// Steady-state parameters (if tau specified)
     pub steady_state: Option<SteadyStateParams>,
 
+    /// Multi-dose interval parameters (if dose_times specified)
+    pub multi_dose: Option<MultiDoseParams>,
+
     /// Quality metrics and warnings
     pub quality: Quality,
 }
@@ -300,6 +327,43 @@ impl NCAResult {
     /// Get half-life if available
     pub fn half_life(&self) -> Option<f64> {
         self.terminal.as_ref().map(|t| t.half_life)
+    }
+
+    /// C0 (IV Bolus only) — back-extrapolated initial concentration
+    pub fn c0(&self) -> Option<f64> {
+        match &self.route_params {
+            Some(RouteParams::IVBolus(p)) => Some(p.c0),
+            _ => None,
+        }
+    }
+
+    /// Volume of distribution by back-extrapolated C0 (IV Bolus only)
+    pub fn vd(&self) -> Option<f64> {
+        match &self.route_params {
+            Some(RouteParams::IVBolus(p)) => Some(p.vd),
+            _ => None,
+        }
+    }
+
+    /// Volume of distribution at steady state (from [`ClearanceParams`])
+    pub fn vss(&self) -> Option<f64> {
+        self.clearance.as_ref().and_then(|c| c.vss)
+    }
+
+    /// Concentration at end of infusion (IV Infusion only)
+    pub fn ceoi(&self) -> Option<f64> {
+        match &self.route_params {
+            Some(RouteParams::IVInfusion(p)) => p.ceoi,
+            _ => None,
+        }
+    }
+
+    /// MRT for IV Infusion (adjusted for infusion time)
+    pub fn mrt_iv(&self) -> Option<f64> {
+        match &self.route_params {
+            Some(RouteParams::IVInfusion(p)) => p.mrt_iv,
+            _ => None,
+        }
     }
 
     /// Flatten result to parameter name-value pairs for export
@@ -355,9 +419,9 @@ impl NCAResult {
             p.insert("time_above_mic", v);
         }
 
-        // Dose context
-        if let Some(ref d) = self.dose {
-            p.insert("dose", d.amount);
+        // Dose
+        if let Some(v) = self.dose_amount {
+            p.insert("dose", v);
         }
 
         // Terminal
@@ -395,17 +459,11 @@ impl NCAResult {
                 RouteParams::IVBolus(ref b) => {
                     p.insert("c0", b.c0);
                     p.insert("vd", b.vd);
-                    if let Some(vss) = b.vss {
-                        p.insert("vss_iv", vss);
-                    }
                 }
                 RouteParams::IVInfusion(ref inf) => {
                     p.insert("infusion_duration", inf.infusion_duration);
                     if let Some(mrt_iv) = inf.mrt_iv {
                         p.insert("mrt_iv", mrt_iv);
-                    }
-                    if let Some(vss) = inf.vss {
-                        p.insert("vss_iv", vss);
                     }
                     if let Some(ceoi) = inf.ceoi {
                         p.insert("ceoi", ceoi);
@@ -486,22 +544,29 @@ impl NCAResult {
             row.push(("vss", None));
         }
 
-        // Route-specific
-        if let Some(ref rp) = self.route_params {
-            match rp {
-                RouteParams::IVBolus(ref b) => {
-                    row.push(("c0", Some(b.c0)));
-                    row.push(("vd", Some(b.vd)));
-                }
-                RouteParams::IVInfusion(ref inf) => {
-                    row.push(("infusion_duration", Some(inf.infusion_duration)));
-                    row.push(("ceoi", inf.ceoi));
-                }
-                RouteParams::Extravascular => {}
+        // Route-specific — always emit all columns, None when not applicable
+        match self.route_params.as_ref() {
+            Some(RouteParams::IVBolus(ref b)) => {
+                row.push(("c0", Some(b.c0)));
+                row.push(("vd", Some(b.vd)));
+                row.push(("infusion_duration", None));
+                row.push(("ceoi", None));
+            }
+            Some(RouteParams::IVInfusion(ref inf)) => {
+                row.push(("c0", None));
+                row.push(("vd", None));
+                row.push(("infusion_duration", Some(inf.infusion_duration)));
+                row.push(("ceoi", inf.ceoi));
+            }
+            Some(RouteParams::Extravascular) | None => {
+                row.push(("c0", None));
+                row.push(("vd", None));
+                row.push(("infusion_duration", None));
+                row.push(("ceoi", None));
             }
         }
 
-        // Steady-state
+        // Steady-state — always emit all columns
         if let Some(ref ss) = self.steady_state {
             row.push(("tau", Some(ss.tau)));
             row.push(("auc_tau", Some(ss.auc_tau)));
@@ -512,6 +577,16 @@ impl NCAResult {
             row.push(("swing", Some(ss.swing)));
             row.push(("peak_trough_ratio", Some(ss.peak_trough_ratio)));
             row.push(("accumulation", ss.accumulation));
+        } else {
+            row.push(("tau", None));
+            row.push(("auc_tau", None));
+            row.push(("cmin", None));
+            row.push(("cmax_ss", None));
+            row.push(("cavg", None));
+            row.push(("fluctuation", None));
+            row.push(("swing", None));
+            row.push(("peak_trough_ratio", None));
+            row.push(("accumulation", None));
         }
 
         // Dose-normalized
@@ -521,7 +596,7 @@ impl NCAResult {
         row.push(("time_above_mic", self.exposure.time_above_mic));
 
         // Dose
-        row.push(("dose", self.dose.as_ref().map(|d| d.amount)));
+        row.push(("dose", self.dose_amount));
 
         row
     }
@@ -539,8 +614,16 @@ impl fmt::Display for NCAResult {
         if let Some(occ) = self.occasion {
             writeln!(f, "║ Occasion: {:<26} ║", occ)?;
         }
-        if let Some(ref d) = self.dose {
-            writeln!(f, "║ Dose: {:<30} ║", format!("{:.2} ({:?})", d.amount, d.route))?;
+        if let Some(amount) = self.dose_amount {
+            let route_str = self
+                .route
+                .map(|r| format!("{:?}", r))
+                .unwrap_or_else(|| "Unknown".to_string());
+            writeln!(
+                f,
+                "║ Dose: {:<30} ║",
+                format!("{:.2} ({})", amount, route_str)
+            )?;
         }
 
         writeln!(f, "╠══════════════════════════════════════╣")?;
@@ -604,7 +687,11 @@ impl fmt::Display for NCAResult {
                 RouteParams::IVInfusion(ref inf) => {
                     writeln!(f, "╠══════════════════════════════════════╣")?;
                     writeln!(f, "║ IV INFUSION                          ║")?;
-                    writeln!(f, "║   Dur:     {:>10.4}               ║", inf.infusion_duration)?;
+                    writeln!(
+                        f,
+                        "║   Dur:     {:>10.4}               ║",
+                        inf.infusion_duration
+                    )?;
                 }
                 RouteParams::Extravascular => {}
             }
@@ -656,7 +743,6 @@ pub struct ExposureParams {
     pub tlag: Option<f64>,
 
     // Dose-normalized parameters (computed when dose > 0)
-
     /// Cmax normalized by dose (Cmax / dose)
     pub cmax_dn: Option<f64>,
     /// AUClast normalized by dose (AUClast / dose)
@@ -718,14 +804,16 @@ pub struct ClearanceParams {
 }
 
 /// IV Bolus-specific parameters
+///
+/// Note: Volume of distribution at steady state (Vss) is computed from clearance
+/// and is therefore located in [`ClearanceParams::vss`], not here. Use
+/// [`NCAResult::vss()`] for convenient access.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IVBolusParams {
     /// Back-extrapolated initial concentration
     pub c0: f64,
     /// Volume of distribution
     pub vd: f64,
-    /// Volume at steady state
-    pub vss: Option<f64>,
     /// Which C0 estimation method succeeded
     pub c0_method: Option<C0Method>,
 }
@@ -737,8 +825,6 @@ pub struct IVInfusionParams {
     pub infusion_duration: f64,
     /// MRT corrected for infusion
     pub mrt_iv: Option<f64>,
-    /// Volume at steady state
-    pub vss: Option<f64>,
     /// Concentration at end of infusion
     pub ceoi: Option<f64>,
 }
@@ -779,11 +865,81 @@ pub struct SteadyStateParams {
     pub accumulation: Option<f64>,
 }
 
+/// Per-interval parameters for multi-dose NCA
+///
+/// Computed when [`NCAOptions::dose_times`] is set. Contains AUC, Cmax, and Tmax
+/// for each dosing interval defined by consecutive dose times.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MultiDoseParams {
+    /// Dose time marking the start of each interval
+    pub dose_times: Vec<f64>,
+    /// AUC for each dosing interval (dose_i → dose_{i+1}, or dose_last → tlast)
+    pub auc_intervals: Vec<f64>,
+    /// Cmax within each dosing interval
+    pub cmax_intervals: Vec<f64>,
+    /// Tmax within each dosing interval
+    pub tmax_intervals: Vec<f64>,
+}
+
 /// Quality metrics and warnings
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Quality {
     /// List of warnings
     pub warnings: Vec<Warning>,
+}
+
+impl Quality {
+    /// Get only critical warnings (errors that may invalidate results)
+    pub fn errors(&self) -> Vec<&Warning> {
+        self.warnings
+            .iter()
+            .filter(|w| w.severity() == Severity::Error)
+            .collect()
+    }
+
+    /// Get non-critical warnings (suboptimal but usable results)
+    pub fn warnings_only(&self) -> Vec<&Warning> {
+        self.warnings
+            .iter()
+            .filter(|w| w.severity() == Severity::Warning)
+            .collect()
+    }
+
+    /// Get informational notices
+    pub fn info(&self) -> Vec<&Warning> {
+        self.warnings
+            .iter()
+            .filter(|w| w.severity() == Severity::Info)
+            .collect()
+    }
+
+    /// Check if any critical errors are present
+    pub fn has_errors(&self) -> bool {
+        self.warnings
+            .iter()
+            .any(|w| w.severity() == Severity::Error)
+    }
+}
+
+/// Severity level for NCA warnings
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum Severity {
+    /// Informational — results are valid but of note
+    Info,
+    /// Warning — results are usable but suboptimal
+    Warning,
+    /// Error — results may be invalid or analysis failed
+    Error,
+}
+
+impl fmt::Display for Severity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Severity::Info => write!(f, "INFO"),
+            Severity::Warning => write!(f, "WARN"),
+            Severity::Error => write!(f, "ERROR"),
+        }
+    }
 }
 
 /// NCA analysis warnings
@@ -814,6 +970,26 @@ pub enum Warning {
     },
     /// Cmax is zero or negative
     LowCmax,
+    /// Multiple routes detected in a single occasion without explicit override
+    MixedRoutes {
+        /// Routes detected in the occasion
+        routes: Vec<Route>,
+    },
+}
+
+impl Warning {
+    /// Get the severity level of this warning
+    ///
+    /// - **Error**: `LambdaZNotEstimable`, `LowCmax` — analysis may be invalid
+    /// - **Warning**: `HighExtrapolation`, `PoorFit` — results usable but suboptimal
+    /// - **Info**: `ShortTerminalPhase` — informational only
+    pub fn severity(&self) -> Severity {
+        match self {
+            Warning::LambdaZNotEstimable | Warning::LowCmax => Severity::Error,
+            Warning::HighExtrapolation { .. } | Warning::PoorFit { .. } => Severity::Warning,
+            Warning::ShortTerminalPhase { .. } | Warning::MixedRoutes { .. } => Severity::Info,
+        }
+    }
 }
 
 impl fmt::Display for Warning {
@@ -830,11 +1006,7 @@ impl fmt::Display for Warning {
                 r_squared,
                 threshold,
             } => {
-                write!(
-                    f,
-                    "λz R²={:.4} below minimum {:.4}",
-                    r_squared, threshold
-                )
+                write!(f, "λz R²={:.4} below minimum {:.4}", r_squared, threshold)
             }
             Warning::LambdaZNotEstimable => write!(f, "λz could not be estimated"),
             Warning::ShortTerminalPhase {
@@ -848,6 +1020,9 @@ impl fmt::Display for Warning {
                 )
             }
             Warning::LowCmax => write!(f, "Cmax ≤ 0"),
+            Warning::MixedRoutes { routes } => {
+                write!(f, "Mixed routes detected: {:?}", routes)
+            }
         }
     }
 }
@@ -888,5 +1063,106 @@ mod tests {
         let sparse = NCAOptions::sparse();
         assert_eq!(sparse.lambda_z.min_r_squared, 0.80);
         assert_eq!(sparse.max_auc_extrap_pct, 30.0);
+    }
+
+    /// Helper: minimal NCAResult with given route_params and clearance
+    fn make_result_with(
+        route_params: Option<RouteParams>,
+        clearance: Option<ClearanceParams>,
+    ) -> NCAResult {
+        NCAResult {
+            subject_id: None,
+            occasion: None,
+            dose_amount: Some(100.0),
+            route: Some(crate::data::Route::Extravascular),
+            infusion_duration: None,
+            exposure: ExposureParams {
+                cmax: 10.0,
+                tmax: 1.0,
+                clast: 1.0,
+                tlast: 8.0,
+                tfirst: None,
+                auc_last: 50.0,
+                auc_inf_obs: None,
+                auc_inf_pred: None,
+                auc_pct_extrap_obs: None,
+                auc_pct_extrap_pred: None,
+                auc_partial: None,
+                aumc_last: None,
+                aumc_inf: None,
+                tlag: None,
+                cmax_dn: None,
+                auc_last_dn: None,
+                auc_inf_dn: None,
+                time_above_mic: None,
+            },
+            terminal: None,
+            clearance,
+            route_params,
+            steady_state: None,
+            multi_dose: None,
+            quality: Quality::default(),
+        }
+    }
+
+    #[test]
+    fn test_accessor_c0_iv_bolus() {
+        let result = make_result_with(
+            Some(RouteParams::IVBolus(IVBolusParams {
+                c0: 25.0,
+                vd: 20.0,
+                c0_method: None,
+            })),
+            None,
+        );
+        assert_eq!(result.c0(), Some(25.0));
+        assert_eq!(result.vd(), Some(20.0));
+    }
+
+    #[test]
+    fn test_accessor_c0_not_bolus() {
+        let result = make_result_with(Some(RouteParams::Extravascular), None);
+        assert_eq!(result.c0(), None);
+        assert_eq!(result.vd(), None);
+    }
+
+    #[test]
+    fn test_accessor_vss() {
+        let result = make_result_with(
+            None,
+            Some(ClearanceParams {
+                cl_f: 5.0,
+                vz_f: 10.0,
+                vss: Some(15.0),
+            }),
+        );
+        assert_eq!(result.vss(), Some(15.0));
+    }
+
+    #[test]
+    fn test_accessor_vss_none() {
+        let result = make_result_with(None, None);
+        assert_eq!(result.vss(), None);
+    }
+
+    #[test]
+    fn test_accessor_ceoi_infusion() {
+        let result = make_result_with(
+            Some(RouteParams::IVInfusion(IVInfusionParams {
+                infusion_duration: 1.0,
+                mrt_iv: Some(4.0),
+                ceoi: Some(30.0),
+            })),
+            None,
+        );
+        assert_eq!(result.ceoi(), Some(30.0));
+        assert_eq!(result.mrt_iv(), Some(4.0));
+    }
+
+    #[test]
+    fn test_accessor_ceoi_not_infusion() {
+        let result = make_result_with(Some(RouteParams::Extravascular), None);
+        assert_eq!(result.ceoi(), None);
+        assert_eq!(result.mrt_iv(), None);
     }
 }

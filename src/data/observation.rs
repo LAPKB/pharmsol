@@ -62,7 +62,6 @@ pub struct ObservationProfile {
     /// Index of Clast (last positive concentration)
     pub tlast_idx: usize,
 }
-pub(crate) type Profile = crate::data::observation::ObservationProfile;
 
 // ============================================================================
 // Error type
@@ -312,6 +311,49 @@ impl ObservationProfile {
 
         finalize(times.to_vec(), values.to_vec())
     }
+
+    /// Create a profile from [`SubjectPredictions`](crate::simulator::likelihood::SubjectPredictions)
+    ///
+    /// Bridges pharmsol's simulation engine to NCA/observation analysis.
+    /// Extracts predicted concentrations (not observed values) at each time point
+    /// for the specified output equation, producing a profile that can be used
+    /// with NCA or any observation-level metrics.
+    ///
+    /// # Arguments
+    /// * `predictions` - Simulation predictions for a single subject
+    /// * `outeq` - Output equation index to extract
+    ///
+    /// # Errors
+    /// Returns error if fewer than 2 predictions match the requested outeq
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// use pharmsol::prelude::*;
+    ///
+    /// let predictions = simulate(equation, &subject, &params);
+    /// let profile = ObservationProfile::from_predictions(&predictions, 0)?;
+    /// let auc = profile.auc_last(&AUCMethod::Linear);
+    /// ```
+    pub fn from_predictions(
+        predictions: &crate::simulator::likelihood::SubjectPredictions,
+        outeq: usize,
+    ) -> Result<Self, ObservationError> {
+        let mut times = Vec::new();
+        let mut values = Vec::new();
+
+        for pred in predictions.predictions() {
+            if pred.outeq() == outeq {
+                times.push(pred.time());
+                values.push(pred.prediction());
+            }
+        }
+
+        if times.is_empty() {
+            return Err(ObservationError::NoObservations { outeq });
+        }
+
+        finalize(times, values)
+    }
 }
 
 // ============================================================================
@@ -345,8 +387,7 @@ impl ObservationProfile {
     /// Linear interpolation of concentration at a given time
     ///
     /// Delegates to [`crate::data::auc::interpolate_linear`].
-    #[allow(dead_code)] // Used by NCA analysis (nca::analyze), tested here
-    pub(crate) fn interpolate(&self, time: f64) -> f64 {
+    pub fn interpolate(&self, time: f64) -> f64 {
         auc::interpolate_linear(&self.times, &self.concentrations, time)
     }
 }

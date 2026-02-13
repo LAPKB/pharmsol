@@ -4,7 +4,7 @@
 //!
 //! Run with: `cargo run --example nca`
 
-use pharmsol::nca::{summarize, BLQRule, NCAOptions, RouteParams};
+use pharmsol::nca::{summarize, BLQRule, NCAOptions, RouteParams, NCA, NCAPopulation};
 use pharmsol::prelude::*;
 use pharmsol::Censor;
 
@@ -49,8 +49,8 @@ fn basic_oral_example() {
 
     let options = NCAOptions::default();
 
-    // nca_first() is a convenience that returns the first occasion's result directly
-    let result = subject.nca_first(&options, 0).expect("NCA analysis failed");
+    // .nca() returns the first occasion result directly
+    let result = subject.nca(&options).expect("NCA analysis failed");
 
     println!("Exposure Parameters:");
     println!("  Cmax:     {:.2}", result.exposure.cmax);
@@ -94,8 +94,7 @@ fn iv_bolus_example() {
         .build();
 
     let options = NCAOptions::default();
-    let results = subject.nca(&options, 0);
-    let result = results[0].as_ref().expect("NCA analysis failed");
+    let result = subject.nca(&options).expect("NCA analysis failed");
 
     println!("Exposure:");
     println!("  Cmax:     {:.1}", result.exposure.cmax);
@@ -105,7 +104,7 @@ fn iv_bolus_example() {
         println!("\nIV Bolus Parameters:");
         println!("  C0 (back-extrap): {:.1}", bolus.c0);
         println!("  Vd:               {:.1} L", bolus.vd);
-        if let Some(vss) = bolus.vss {
+        if let Some(vss) = result.vss() {
             println!("  Vss:              {:.1} L", vss);
         }
     }
@@ -130,8 +129,7 @@ fn iv_infusion_example() {
         .build();
 
     let options = NCAOptions::default();
-    let results = subject.nca(&options, 0);
-    let result = results[0].as_ref().expect("NCA analysis failed");
+    let result = subject.nca(&options).expect("NCA analysis failed");
 
     println!("Exposure:");
     println!("  Cmax:     {:.1}", result.exposure.cmax);
@@ -166,8 +164,7 @@ fn steady_state_example() {
         .build();
 
     let options = NCAOptions::default().with_tau(12.0); // 12-hour dosing interval
-    let results = subject.nca(&options, 0);
-    let result = results[0].as_ref().expect("NCA analysis failed");
+    let result = subject.nca(&options).expect("NCA analysis failed");
 
     println!("Exposure:");
     println!("  Cmax:     {:.1}", result.exposure.cmax);
@@ -191,9 +188,6 @@ fn blq_handling_example() {
     println!("--- BLQ Handling Example ---\n");
 
     // Build subject with BLQ observations marked using Censor::BLOQ
-    // This is the proper way to indicate BLQ samples - the censoring
-    // information is stored with each observation, not determined
-    // retroactively by a numeric threshold.
     let subject = Subject::builder("blq_patient")
         .bolus_ev(0.0, 100.0)
         .observation(0.0, 0.0, 0)
@@ -209,18 +203,15 @@ fn blq_handling_example() {
 
     // With BLQ exclusion - BLOQ-marked samples are excluded
     let options_exclude = NCAOptions::default().with_blq_rule(BLQRule::Exclude);
-    let results_exclude = subject.nca(&options_exclude, 0);
-    let result_exclude = results_exclude[0].as_ref().unwrap();
+    let result_exclude = subject.nca(&options_exclude).unwrap();
 
     // With BLQ = 0 - BLOQ-marked samples are set to zero
     let options_zero = NCAOptions::default().with_blq_rule(BLQRule::Zero);
-    let results_zero = subject.nca(&options_zero, 0);
-    let result_zero = results_zero[0].as_ref().unwrap();
+    let result_zero = subject.nca(&options_zero).unwrap();
 
     // With LOQ/2 - BLOQ-marked samples are set to LOQ/2 (0.02/2 = 0.01)
     let options_loq2 = NCAOptions::default().with_blq_rule(BLQRule::LoqOver2);
-    let results_loq2 = subject.nca(&options_loq2, 0);
-    let result_loq2 = results_loq2[0].as_ref().unwrap();
+    let result_loq2 = subject.nca(&options_loq2).unwrap();
 
     println!("BLQ Handling Comparison (using Censor::BLOQ marking):");
     println!("\n  Exclude BLQ:");
@@ -279,24 +270,31 @@ fn population_summary_example() {
 
     let options = NCAOptions::default();
 
-    // Collect successful NCA results
+    // .nca() returns the first occasion directly
     let results: Vec<_> = subjects
         .iter()
-        .filter_map(|s| s.nca_first(&options, 0).ok())
+        .filter_map(|s| s.nca(&options).ok())
         .collect();
 
     // Compute population summary
     let summary = summarize(&results);
-    println!(
-        "Population: {} subjects\n",
-        summary.n_subjects
-    );
+    println!("Population: {} subjects\n", summary.n_subjects);
 
     for stats in &summary.parameters {
         println!(
             "  {:<12} mean={:>8.2}  CV%={:>6.1}  [{:.2} - {:.2}]",
             stats.name, stats.mean, stats.cv_pct, stats.min, stats.max
         );
+    }
+
+    // Demonstrate nca_grouped() for population analysis
+    println!("\n--- Population Grouped Analysis ---\n");
+    let data = pharmsol::Data::new(subjects.clone());
+    let grouped = data.nca_grouped(&options);
+    for subj_result in &grouped {
+        let n_ok = subj_result.successes().len();
+        let n_err = subj_result.errors().len();
+        println!("  {}: {} ok, {} errors", subj_result.subject_id, n_ok, n_err);
     }
 
     // Demonstrate to_row() for CSV-like output

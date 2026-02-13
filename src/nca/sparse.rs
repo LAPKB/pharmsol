@@ -5,9 +5,21 @@
 //! traditional NCA. Bailer's method computes a population AUC with standard error
 //! by using the trapezoidal rule on mean concentrations at each time point.
 //!
+//! # Usage
+//!
+//! The simplest way is via [`sparse_auc_from_data`] which accepts a [`Data`] object:
+//!
+//! ```rust,ignore
+//! use pharmsol::nca::sparse::sparse_auc_from_data;
+//!
+//! let result = sparse_auc_from_data(&data, 0, None).unwrap();
+//! println!("Population AUC: {:.2} ± {:.2}", result.auc, result.auc_se);
+//! ```
+//!
 //! Reference: Bailer AJ. "Testing for the equality of area under the curves when
 //! using destructive measurement techniques." J Pharmacokinet Biopharm. 1988;16(3):303-309.
 
+use crate::Data;
 use serde::{Deserialize, Serialize};
 
 /// Result of sparse PK analysis using Bailer's method
@@ -31,15 +43,6 @@ pub struct SparsePKResult {
     pub times: Vec<f64>,
 }
 
-/// Time-concentration observation for sparse PK
-#[derive(Debug, Clone)]
-pub struct SparseObservation {
-    /// Nominal sampling time
-    pub time: f64,
-    /// Observed concentration
-    pub concentration: f64,
-}
-
 /// Compute population AUC from sparse/destructive sampling using Bailer's method
 ///
 /// Groups observations by time point, computes mean and variance at each time,
@@ -47,9 +50,10 @@ pub struct SparseObservation {
 /// error is computed using the variance propagation formula for the trapezoidal rule.
 ///
 /// # Arguments
-/// * `observations` - All concentration-time observations (multiple subjects, sparse per subject)
-/// * `time_tolerance` - Tolerance for grouping time points (default: observations at times
-///   within this tolerance are considered the same nominal time). If `None`, exact matching is used.
+/// * `times` - Observation times (parallel with `concentrations`)
+/// * `concentrations` - Observed concentrations (parallel with `times`)
+/// * `time_tolerance` - Tolerance for grouping time points (default: exact matching).
+///   Observations at times within this tolerance are considered the same nominal time.
 ///
 /// # Returns
 /// `None` if fewer than 2 unique time points with data
@@ -57,28 +61,21 @@ pub struct SparseObservation {
 /// # Example
 ///
 /// ```rust,ignore
-/// use pharmsol::nca::sparse::{sparse_auc, SparseObservation};
+/// use pharmsol::nca::sparse::sparse_auc;
 ///
-/// let obs = vec![
-///     SparseObservation { time: 0.0, concentration: 0.0 },  // Subject 1
-///     SparseObservation { time: 0.0, concentration: 0.0 },  // Subject 2
-///     SparseObservation { time: 1.0, concentration: 10.5 }, // Subject 3
-///     SparseObservation { time: 1.0, concentration: 12.0 }, // Subject 4
-///     SparseObservation { time: 4.0, concentration: 5.0 },  // Subject 5
-///     SparseObservation { time: 4.0, concentration: 4.5 },  // Subject 6
-///     SparseObservation { time: 8.0, concentration: 1.5 },  // Subject 7
-///     SparseObservation { time: 8.0, concentration: 2.0 },  // Subject 8
-/// ];
+/// let times = vec![0.0, 0.0, 1.0, 1.0, 4.0, 4.0, 8.0, 8.0];
+/// let concs = vec![0.0, 0.0, 10.5, 12.0, 5.0, 4.5, 1.5, 2.0];
 ///
-/// let result = sparse_auc(&obs, None).unwrap();
+/// let result = sparse_auc(&times, &concs, None).unwrap();
 /// println!("Population AUC: {:.2} ± {:.2}", result.auc, result.auc_se);
 /// println!("95% CI: [{:.2}, {:.2}]", result.auc_ci_lower, result.auc_ci_upper);
 /// ```
 pub fn sparse_auc(
-    observations: &[SparseObservation],
+    times: &[f64],
+    concentrations: &[f64],
     time_tolerance: Option<f64>,
 ) -> Option<SparsePKResult> {
-    if observations.is_empty() {
+    if times.is_empty() || times.len() != concentrations.len() {
         return None;
     }
 
@@ -87,16 +84,18 @@ pub fn sparse_auc(
     // Group observations by time point
     let mut time_groups: Vec<(f64, Vec<f64>)> = Vec::new();
 
-    // Sort observations by time
-    let mut sorted_obs: Vec<&SparseObservation> = observations.iter().collect();
-    sorted_obs.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap());
+    // Sort by time using indices
+    let mut indices: Vec<usize> = (0..times.len()).collect();
+    indices.sort_by(|&a, &b| times[a].partial_cmp(&times[b]).unwrap());
 
-    for obs in &sorted_obs {
-        let matched = time_groups.iter_mut().find(|(t, _)| (obs.time - *t).abs() <= tol);
+    for &idx in &indices {
+        let t = times[idx];
+        let c = concentrations[idx];
+        let matched = time_groups.iter_mut().find(|(gt, _)| (t - *gt).abs() <= tol);
         if let Some((_, group)) = matched {
-            group.push(obs.concentration);
+            group.push(c);
         } else {
-            time_groups.push((obs.time, vec![obs.concentration]));
+            time_groups.push((t, vec![c]));
         }
     }
 
@@ -108,7 +107,7 @@ pub fn sparse_auc(
     }
 
     let n_timepoints = time_groups.len();
-    let times: Vec<f64> = time_groups.iter().map(|(t, _)| *t).collect();
+    let group_times: Vec<f64> = time_groups.iter().map(|(t, _)| *t).collect();
     let n_per_timepoint: Vec<usize> = time_groups.iter().map(|(_, g)| g.len()).collect();
 
     // Compute mean and variance at each time point
@@ -135,20 +134,14 @@ pub fn sparse_auc(
     // Bailer's AUC: trapezoidal rule on mean concentrations
     let mut auc = 0.0;
     for i in 0..n_timepoints - 1 {
-        let dt = times[i + 1] - times[i];
+        let dt = group_times[i + 1] - group_times[i];
         auc += (mean_concentrations[i] + mean_concentrations[i + 1]) * dt / 2.0;
     }
 
     // Bailer's variance: sum of weighted variances
-    // Var(AUC) = Σ (dt_i/2)² × (Var(C_i)/n_i + Var(C_{i+1})/n_{i+1})
-    // But the exact formula sums the squared coefficients for each time point
-    // The coefficient for time point j in the trapezoidal rule is:
-    //   w_0 = dt_0/2, w_j = (dt_{j-1} + dt_j)/2 for 1 ≤ j ≤ k-1, w_k = dt_{k-1}/2
-    // Var(AUC) = Σ w_j² × Var(C_j) / n_j
-
     let mut weights = vec![0.0; n_timepoints];
     for i in 0..n_timepoints - 1 {
-        let dt = times[i + 1] - times[i];
+        let dt = group_times[i + 1] - group_times[i];
         weights[i] += dt / 2.0;
         weights[i + 1] += dt / 2.0;
     }
@@ -179,8 +172,47 @@ pub fn sparse_auc(
         n_timepoints,
         mean_concentrations,
         n_per_timepoint,
-        times,
+        times: group_times,
     })
+}
+
+/// Compute population AUC from sparse/destructive sampling using a [`Data`] dataset
+///
+/// Extracts all observations for the given `outeq` from every subject and occasion
+/// in the dataset, then applies Bailer's method.
+///
+/// # Arguments
+/// * `data` - Population dataset with sparsely-sampled subjects
+/// * `outeq` - Output equation index to extract observations for
+/// * `time_tolerance` - Tolerance for grouping time points (None = exact matching)
+///
+/// # Returns
+/// `None` if fewer than 2 unique time points with data
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use pharmsol::prelude::*;
+/// use pharmsol::nca::sparse::sparse_auc_from_data;
+///
+/// let data: Data = /* load or build population data */;
+/// let result = sparse_auc_from_data(&data, 0, None).unwrap();
+/// println!("Population AUC: {:.2} ± {:.2}", result.auc, result.auc_se);
+/// ```
+pub fn sparse_auc_from_data(
+    data: &Data,
+    outeq: usize,
+    time_tolerance: Option<f64>,
+) -> Option<SparsePKResult> {
+    let (mut all_times, mut all_concs) = (Vec::new(), Vec::new());
+    for subject in data.subjects() {
+        for occasion in subject.occasions() {
+            let (times, concs, _censoring) = occasion.get_observations(outeq);
+            all_times.extend(times);
+            all_concs.extend(concs);
+        }
+    }
+    sparse_auc(&all_times, &all_concs, time_tolerance)
 }
 
 #[cfg(test)]
@@ -190,22 +222,20 @@ mod tests {
     #[test]
     fn test_sparse_auc_basic() {
         // 4 time points, 3 subjects each
-        let obs = vec![
-            SparseObservation { time: 0.0, concentration: 0.0 },
-            SparseObservation { time: 0.0, concentration: 0.0 },
-            SparseObservation { time: 0.0, concentration: 0.0 },
-            SparseObservation { time: 1.0, concentration: 10.0 },
-            SparseObservation { time: 1.0, concentration: 12.0 },
-            SparseObservation { time: 1.0, concentration: 11.0 },
-            SparseObservation { time: 4.0, concentration: 5.0 },
-            SparseObservation { time: 4.0, concentration: 4.0 },
-            SparseObservation { time: 4.0, concentration: 6.0 },
-            SparseObservation { time: 8.0, concentration: 1.0 },
-            SparseObservation { time: 8.0, concentration: 1.5 },
-            SparseObservation { time: 8.0, concentration: 1.2 },
+        let times = vec![
+            0.0, 0.0, 0.0,
+            1.0, 1.0, 1.0,
+            4.0, 4.0, 4.0,
+            8.0, 8.0, 8.0,
+        ];
+        let concs = vec![
+            0.0, 0.0, 0.0,
+            10.0, 12.0, 11.0,
+            5.0, 4.0, 6.0,
+            1.0, 1.5, 1.2,
         ];
 
-        let result = sparse_auc(&obs, None).unwrap();
+        let result = sparse_auc(&times, &concs, None).unwrap();
 
         assert_eq!(result.n_timepoints, 4);
         assert!(result.auc > 0.0);
@@ -214,7 +244,6 @@ mod tests {
         assert!(result.auc_ci_upper >= result.auc);
 
         // Manual: means = [0, 11, 5, ~1.23]
-        // AUC ~= (0+11)/2 * 1 + (11+5)/2 * 3 + (5+1.23)/2 * 4 = 5.5 + 24 + 12.47 = 41.97
         assert!((result.mean_concentrations[0] - 0.0).abs() < 1e-10);
         assert!((result.mean_concentrations[1] - 11.0).abs() < 1e-10);
         assert!((result.mean_concentrations[2] - 5.0).abs() < 1e-10);
@@ -222,44 +251,34 @@ mod tests {
 
     #[test]
     fn test_sparse_auc_single_timepoint() {
-        let obs = vec![
-            SparseObservation { time: 0.0, concentration: 10.0 },
-            SparseObservation { time: 0.0, concentration: 12.0 },
-        ];
+        let times = vec![0.0, 0.0];
+        let concs = vec![10.0, 12.0];
 
-        assert!(sparse_auc(&obs, None).is_none());
+        assert!(sparse_auc(&times, &concs, None).is_none());
     }
 
     #[test]
     fn test_sparse_auc_with_tolerance() {
-        let obs = vec![
-            SparseObservation { time: 0.0, concentration: 0.0 },
-            SparseObservation { time: 0.01, concentration: 0.0 },  // Should group with t=0
-            SparseObservation { time: 1.0, concentration: 10.0 },
-            SparseObservation { time: 0.99, concentration: 12.0 }, // Should group with t=1
-        ];
+        let times = vec![0.0, 0.01, 1.0, 0.99];
+        let concs = vec![0.0, 0.0, 10.0, 12.0];
 
-        let result = sparse_auc(&obs, Some(0.05)).unwrap();
+        let result = sparse_auc(&times, &concs, Some(0.05)).unwrap();
         assert_eq!(result.n_timepoints, 2); // Should have 2 groups, not 4
     }
 
     #[test]
     fn test_sparse_auc_empty() {
-        assert!(sparse_auc(&[], None).is_none());
+        assert!(sparse_auc(&[], &[], None).is_none());
     }
 
     #[test]
     fn test_sparse_auc_known_values() {
         // If all subjects have the same concentration at each time point,
         // variance = 0, SE = 0, and AUC = simple trapezoidal
-        let obs = vec![
-            SparseObservation { time: 0.0, concentration: 10.0 },
-            SparseObservation { time: 0.0, concentration: 10.0 },
-            SparseObservation { time: 2.0, concentration: 5.0 },
-            SparseObservation { time: 2.0, concentration: 5.0 },
-        ];
+        let times = vec![0.0, 0.0, 2.0, 2.0];
+        let concs = vec![10.0, 10.0, 5.0, 5.0];
 
-        let result = sparse_auc(&obs, None).unwrap();
+        let result = sparse_auc(&times, &concs, None).unwrap();
 
         // AUC = (10 + 5) / 2 * 2 = 15
         assert!((result.auc - 15.0).abs() < 1e-10);

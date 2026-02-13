@@ -258,6 +258,9 @@ pub fn auc_interval(
         return 0.0;
     }
 
+    // Auto-detect tmax for LinLog (same as auc())
+    let tmax = tmax_from_arrays(times, values);
+
     let mut total = 0.0;
 
     for i in 1..times.len() {
@@ -284,7 +287,7 @@ pub fn auc_interval(
             values[i]
         };
 
-        total += auc_segment(seg_start, c1, seg_end, c2, method);
+        total += auc_segment_with_tmax(seg_start, c1, seg_end, c2, tmax, method);
     }
 
     total

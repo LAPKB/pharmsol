@@ -11,8 +11,9 @@
 use super::calc;
 use super::error::NCAError;
 use super::types::*;
+use crate::data::event::{AUCMethod, Route};
+use crate::data::observation::ObservationProfile as Profile;
 use crate::data::observation_error::ObservationError;
-use crate::observation::Profile;
 
 // ============================================================================
 // Precomputed values (computed once, threaded through)
@@ -59,14 +60,22 @@ impl Precomputed {
 ///
 /// # Arguments
 /// * `profile` - Validated concentration-time profile
-/// * `dose` - Dose information (None if no dosing data available)
+/// * `dose_amount` - Total dose amount (None if no dosing data)
+/// * `route` - Administration route
+/// * `infusion_duration` - Infusion duration (None for bolus/extravascular)
 /// * `options` - Analysis configuration
 /// * `raw_tlag` - Tlag computed from raw (unfiltered) data, or None
+/// * `subject_id` - Subject identifier (None for ad-hoc profiles)
+/// * `occasion` - Occasion index (None for ad-hoc profiles)
 pub(crate) fn analyze(
     profile: &Profile,
-    dose: Option<&DoseContext>,
+    dose_amount: Option<f64>,
+    route: Route,
+    infusion_duration: Option<f64>,
     options: &NCAOptions,
     raw_tlag: Option<f64>,
+    subject_id: Option<&str>,
+    occasion: Option<usize>,
 ) -> Result<NCAResult, NCAError> {
     if profile.times.is_empty() {
         return Err(ObservationError::InsufficientData { n: 0, required: 2 }.into());
@@ -101,15 +110,17 @@ pub(crate) fn analyze(
 
     // Clearance parameters (if we have dose and terminal phase)
     // Uses auc_inf_obs by convention (standard practice)
-    let clearance = dose
+    let clearance = dose_amount
         .and_then(|d| lambda_z_result.as_ref().map(|lz| (d, lz)))
-        .map(|(d, lz)| compute_clearance(d.amount, exposure.auc_inf_obs, lz.lambda_z));
+        .map(|(d, lz)| compute_clearance(d, exposure.auc_inf_obs, lz.lambda_z, route, &pre));
 
     // Route-specific parameters (uses observed Clast for extrapolation)
     let route_params = compute_route_specific(
         &pre,
         profile,
-        dose,
+        dose_amount,
+        route,
+        infusion_duration,
         lambda_z_result.as_ref(),
         pre.clast,
         options,
@@ -121,15 +132,55 @@ pub(crate) fn analyze(
         .map(|tau| compute_steady_state(&pre, profile, tau, options));
 
     // Dose-normalized parameters
-    if let Some(d) = dose {
-        if d.amount > 0.0 {
-            exposure.cmax_dn = Some(exposure.cmax / d.amount);
-            exposure.auc_last_dn = Some(exposure.auc_last / d.amount);
+    if let Some(d) = dose_amount {
+        if d > 0.0 {
+            exposure.cmax_dn = Some(exposure.cmax / d);
+            exposure.auc_last_dn = Some(exposure.auc_last / d);
             if let Some(auc_inf_obs) = exposure.auc_inf_obs {
-                exposure.auc_inf_dn = Some(auc_inf_obs / d.amount);
+                exposure.auc_inf_dn = Some(auc_inf_obs / d);
             }
         }
     }
+
+    // Multi-dose interval parameters (if dose_times specified)
+    let multi_dose = options.dose_times.as_ref().and_then(|times| {
+        if times.is_empty() {
+            return None;
+        }
+        let mut sorted_times = times.clone();
+        sorted_times.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+        let last_obs_time = *profile.times.last()?;
+        let n = sorted_times.len();
+
+        let mut auc_intervals = Vec::with_capacity(n);
+        let mut cmax_intervals = Vec::with_capacity(n);
+        let mut tmax_intervals = Vec::with_capacity(n);
+
+        for i in 0..n {
+            let start = sorted_times[i];
+            let end = if i + 1 < n {
+                sorted_times[i + 1]
+            } else {
+                last_obs_time
+            };
+
+            // AUC over interval
+            auc_intervals.push(profile.auc_interval(start, end, &options.auc_method));
+
+            // Cmax/Tmax within [start, end]
+            let (cmax, tmax) = cmax_tmax_in_window(profile, start, end);
+            cmax_intervals.push(cmax);
+            tmax_intervals.push(tmax);
+        }
+
+        Some(MultiDoseParams {
+            dose_times: sorted_times,
+            auc_intervals,
+            cmax_intervals,
+            tmax_intervals,
+        })
+    });
 
     // Build quality summary
     let quality = build_quality(
@@ -140,14 +191,17 @@ pub(crate) fn analyze(
     );
 
     Ok(NCAResult {
-        subject_id: None,
-        occasion: None,
-        dose: dose.cloned(),
+        subject_id: subject_id.map(|s| s.to_string()),
+        occasion,
+        dose_amount,
+        route: Some(route),
+        infusion_duration,
         exposure,
         terminal,
         clearance,
         route_params,
         steady_state,
+        multi_dose,
         quality,
     })
 }
@@ -241,15 +295,31 @@ fn compute_terminal(
 }
 
 /// Compute clearance parameters
-fn compute_clearance(dose: f64, auc_inf: Option<f64>, lambda_z: f64) -> ClearanceParams {
+fn compute_clearance(
+    dose: f64,
+    auc_inf: Option<f64>,
+    lambda_z: f64,
+    route: Route,
+    pre: &Precomputed,
+) -> ClearanceParams {
     let auc = auc_inf.unwrap_or(f64::NAN);
     let cl = calc::clearance(dose, auc);
     let vz = calc::vz(dose, lambda_z, auc);
 
+    // Vss is computed for IV routes: Vss = Dose * AUMC_inf / AUC_inf^2
+    let vss = match route {
+        Route::IVBolus | Route::IVInfusion => {
+            let auc_inf_val = pre.auc_inf(pre.clast, lambda_z);
+            let aumc_inf_val = pre.aumc_inf(pre.clast, lambda_z);
+            Some(calc::vss(dose, aumc_inf_val, auc_inf_val))
+        }
+        Route::Extravascular => None,
+    };
+
     ClearanceParams {
         cl_f: cl,
         vz_f: vz,
-        vss: None, // Computed for IV routes
+        vss,
     }
 }
 
@@ -257,40 +327,26 @@ fn compute_clearance(dose: f64, auc_inf: Option<f64>, lambda_z: f64) -> Clearanc
 fn compute_route_specific(
     pre: &Precomputed,
     profile: &Profile,
-    dose: Option<&DoseContext>,
+    dose_amount: Option<f64>,
+    route: Route,
+    infusion_duration: Option<f64>,
     lz_result: Option<&calc::LambdaZResult>,
     eff_clast: f64,
     options: &NCAOptions,
 ) -> Option<RouteParams> {
-    let route = dose.map(|d| d.route).unwrap_or(Route::Extravascular);
-
     match route {
         Route::IVBolus => {
             let lambda_z = lz_result.map(|lz| lz.lambda_z).unwrap_or(f64::NAN);
             let (c0, c0_method) = calc::c0(profile, &options.c0_methods, lambda_z);
 
-            let vd = dose
-                .map(|d| calc::vd_bolus(d.amount, c0))
+            let vd = dose_amount
+                .map(|d| calc::vd_bolus(d, c0))
                 .unwrap_or(f64::NAN);
 
-            // VSS for IV
-            let vss = lz_result.and_then(|lz| {
-                dose.map(|d| {
-                    let auc_inf = pre.auc_inf(eff_clast, lz.lambda_z);
-                    let aumc_inf = pre.aumc_inf(eff_clast, lz.lambda_z);
-                    calc::vss(d.amount, aumc_inf, auc_inf)
-                })
-            });
-
-            Some(RouteParams::IVBolus(IVBolusParams {
-                c0,
-                vd,
-                vss,
-                c0_method,
-            }))
+            Some(RouteParams::IVBolus(IVBolusParams { c0, vd, c0_method }))
         }
         Route::IVInfusion => {
-            let duration = dose.and_then(|d| d.duration).unwrap_or(0.0);
+            let duration = infusion_duration.unwrap_or(0.0);
 
             // MRT adjusted for infusion
             let mrt_iv = lz_result.map(|lz| {
@@ -298,15 +354,6 @@ fn compute_route_specific(
                 let aumc_inf = pre.aumc_inf(eff_clast, lz.lambda_z);
                 let mrt_uncorrected = calc::mrt(aumc_inf, auc_inf);
                 calc::mrt_infusion(mrt_uncorrected, duration)
-            });
-
-            // VSS for IV infusion
-            let vss = lz_result.and_then(|lz| {
-                dose.map(|d| {
-                    let auc_inf = pre.auc_inf(eff_clast, lz.lambda_z);
-                    let aumc_inf = pre.aumc_inf(eff_clast, lz.lambda_z);
-                    calc::vss(d.amount, aumc_inf, auc_inf)
-                })
             });
 
             // Concentration at end of infusion (interpolate at dose end time)
@@ -319,7 +366,6 @@ fn compute_route_specific(
             Some(RouteParams::IVInfusion(IVInfusionParams {
                 infusion_duration: duration,
                 mrt_iv,
-                vss,
                 ceoi,
             }))
         }
@@ -402,10 +448,32 @@ fn build_quality(
     Quality { warnings }
 }
 
+/// Cmax and Tmax within a time window [start, end] (inclusive)
+fn cmax_tmax_in_window(profile: &Profile, start: f64, end: f64) -> (f64, f64) {
+    let mut cmax = f64::NEG_INFINITY;
+    let mut tmax = start;
+    for (i, &t) in profile.times.iter().enumerate() {
+        if t >= start && t <= end {
+            let c = profile.concentrations[i];
+            if c > cmax {
+                cmax = c;
+                tmax = t;
+            }
+        }
+    }
+    if cmax == f64::NEG_INFINITY {
+        // No observations in window
+        (0.0, start)
+    } else {
+        (cmax, tmax)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::data::builder::SubjectBuilderExt;
+    use crate::data::event::BLQRule;
     use crate::Subject;
 
     fn test_profile() -> Profile {
@@ -429,7 +497,17 @@ mod tests {
         let profile = test_profile();
         let options = NCAOptions::default();
 
-        let result = analyze(&profile, None, &options, None).unwrap();
+        let result = analyze(
+            &profile,
+            None,
+            Route::Extravascular,
+            None,
+            &options,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
 
         assert_eq!(result.exposure.cmax, 10.0);
         assert_eq!(result.exposure.tmax, 1.0);
@@ -442,19 +520,23 @@ mod tests {
     fn test_analyze_with_dose() {
         let profile = test_profile();
         let options = NCAOptions::default();
-        let dose = DoseContext {
-            amount: 100.0,
-            duration: None,
-            route: Route::Extravascular,
-        };
 
-        let result = analyze(&profile, Some(&dose), &options, None).unwrap();
+        let result = analyze(
+            &profile,
+            Some(100.0),
+            Route::Extravascular,
+            None,
+            &options,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
 
         // Should have clearance if terminal phase estimated
         if result.terminal.is_some() {
             assert!(result.clearance.is_some());
         }
-        // Tlag is now in exposure, not a separate struct
         // Exposure params are always present
         assert!(result.exposure.auc_last > 0.0);
     }
@@ -463,13 +545,18 @@ mod tests {
     fn test_analyze_iv_bolus() {
         let profile = test_profile();
         let options = NCAOptions::default();
-        let dose = DoseContext {
-            amount: 100.0,
-            duration: None,
-            route: Route::IVBolus,
-        };
 
-        let result = analyze(&profile, Some(&dose), &options, None).unwrap();
+        let result = analyze(
+            &profile,
+            Some(100.0),
+            Route::IVBolus,
+            None,
+            &options,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
 
         assert!(matches!(result.route_params, Some(RouteParams::IVBolus(_))));
     }
@@ -478,13 +565,18 @@ mod tests {
     fn test_analyze_iv_infusion() {
         let profile = test_profile();
         let options = NCAOptions::default();
-        let dose = DoseContext {
-            amount: 100.0,
-            duration: Some(1.0),
-            route: Route::IVInfusion,
-        };
 
-        let result = analyze(&profile, Some(&dose), &options, None).unwrap();
+        let result = analyze(
+            &profile,
+            Some(100.0),
+            Route::IVInfusion,
+            Some(1.0),
+            &options,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
 
         assert!(matches!(
             result.route_params,
@@ -499,17 +591,81 @@ mod tests {
     fn test_analyze_steady_state() {
         let profile = test_profile();
         let options = NCAOptions::default().with_tau(12.0);
-        let dose = DoseContext {
-            amount: 100.0,
-            duration: None,
-            route: Route::Extravascular,
-        };
 
-        let result = analyze(&profile, Some(&dose), &options, None).unwrap();
+        let result = analyze(
+            &profile,
+            Some(100.0),
+            Route::Extravascular,
+            None,
+            &options,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
 
         assert!(result.steady_state.is_some());
         let ss = result.steady_state.unwrap();
         assert_eq!(ss.tau, 12.0);
         assert!(ss.auc_tau > 0.0);
+    }
+
+    #[test]
+    fn test_analyze_multi_dose() {
+        let profile = test_profile(); // times: 0,1,2,4,8,12,24 concs: 0,10,8,6,3,1.5,0.5
+        let options = NCAOptions::default().with_dose_times(vec![0.0, 8.0]);
+
+        let result = analyze(
+            &profile,
+            Some(100.0),
+            Route::Extravascular,
+            None,
+            &options,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert!(result.multi_dose.is_some());
+        let md = result.multi_dose.unwrap();
+        assert_eq!(md.dose_times.len(), 2);
+        assert_eq!(md.auc_intervals.len(), 2);
+        assert_eq!(md.cmax_intervals.len(), 2);
+        assert_eq!(md.tmax_intervals.len(), 2);
+
+        // First interval [0, 8]: Cmax should be 10 at t=1
+        assert_eq!(md.cmax_intervals[0], 10.0);
+        assert_eq!(md.tmax_intervals[0], 1.0);
+
+        // Second interval [8, 24]: Cmax should be 2.0 at t=8
+        assert_eq!(md.cmax_intervals[1], 2.0);
+        assert_eq!(md.tmax_intervals[1], 8.0);
+
+        // AUC intervals should be positive and sum ≈ AUC_last
+        assert!(md.auc_intervals[0] > 0.0);
+        assert!(md.auc_intervals[1] > 0.0);
+        let auc_sum: f64 = md.auc_intervals.iter().sum();
+        assert!((auc_sum - result.exposure.auc_last).abs() / result.exposure.auc_last < 0.01);
+    }
+
+    #[test]
+    fn test_analyze_no_multi_dose_by_default() {
+        let profile = test_profile();
+        let options = NCAOptions::default();
+
+        let result = analyze(
+            &profile,
+            Some(100.0),
+            Route::Extravascular,
+            None,
+            &options,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert!(result.multi_dose.is_none());
     }
 }

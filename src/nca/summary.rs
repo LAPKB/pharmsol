@@ -9,7 +9,7 @@
 //! use pharmsol::nca::{summarize, NCAOptions, NCA};
 //!
 //! let results: Vec<NCAResult> = subjects.iter()
-//!     .flat_map(|s| s.nca(&NCAOptions::default(), 0))
+//!     .flat_map(|s| s.nca_all(&NCAOptions::default()))
 //!     .filter_map(|r| r.ok())
 //!     .collect();
 //!
@@ -187,46 +187,37 @@ pub fn nca_to_csv(results: &[NCAResult]) -> String {
 // ============================================================================
 
 fn compute_parameter_summary(name: &str, values: &[f64]) -> ParameterSummary {
+    use statrs::statistics::{Data, Distribution, Max, Min, OrderStatistics};
+
     let n = values.len();
     assert!(n > 0);
 
-    let mut sorted = values.to_vec();
-    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let mut data = Data::new(values.to_vec());
 
-    let sum: f64 = sorted.iter().sum();
-    let mean = sum / n as f64;
-
-    let variance = if n > 1 {
-        sorted.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1) as f64
+    let mean = data.mean().unwrap_or(f64::NAN);
+    let sd = if n > 1 {
+        data.std_dev().unwrap_or(0.0)
     } else {
         0.0
     };
-    let sd = variance.sqrt();
     let cv_pct = if mean.abs() > f64::EPSILON {
         (sd / mean) * 100.0
     } else {
         f64::NAN
     };
 
-    let median = percentile(&sorted, 50.0);
-    let min = sorted[0];
-    let max = sorted[n - 1];
+    let median = data.median();
+    let min = data.min();
+    let max = data.max();
 
     // Geometric statistics (only valid for positive values)
-    let (geo_mean, geo_cv_pct) = if sorted.iter().all(|&v| v > 0.0) {
-        let log_values: Vec<f64> = sorted.iter().map(|v| v.ln()).collect();
-        let log_mean = log_values.iter().sum::<f64>() / n as f64;
+    let (geo_mean, geo_cv_pct) = if values.iter().all(|&v| v > 0.0) {
+        let log_values: Vec<f64> = values.iter().map(|v| v.ln()).collect();
+        let log_data = Data::new(log_values);
+        let log_mean = log_data.mean().unwrap_or(f64::NAN);
         let gm = log_mean.exp();
 
-        let log_var = if n > 1 {
-            log_values
-                .iter()
-                .map(|x| (x - log_mean).powi(2))
-                .sum::<f64>()
-                / (n - 1) as f64
-        } else {
-            0.0
-        };
+        let log_var = log_data.variance().unwrap_or(0.0);
         // Geometric CV% = sqrt(exp(s²) - 1) * 100
         let gcv = (log_var.exp() - 1.0).sqrt() * 100.0;
         (gm, gcv)
@@ -245,32 +236,10 @@ fn compute_parameter_summary(name: &str, values: &[f64]) -> ParameterSummary {
         max,
         geo_mean,
         geo_cv_pct,
-        p5: percentile(&sorted, 5.0),
-        p25: percentile(&sorted, 25.0),
-        p75: percentile(&sorted, 75.0),
-        p95: percentile(&sorted, 95.0),
-    }
-}
-
-/// Linear interpolation percentile (same method as R's `quantile(type=7)`)
-fn percentile(sorted: &[f64], pct: f64) -> f64 {
-    let n = sorted.len();
-    if n == 0 {
-        return f64::NAN;
-    }
-    if n == 1 {
-        return sorted[0];
-    }
-
-    let rank = (pct / 100.0) * (n - 1) as f64;
-    let lower = rank.floor() as usize;
-    let upper = rank.ceil() as usize;
-    let frac = rank - lower as f64;
-
-    if lower == upper {
-        sorted[lower]
-    } else {
-        sorted[lower] * (1.0 - frac) + sorted[upper] * frac
+        p5: data.percentile(5),
+        p25: data.percentile(25),
+        p75: data.percentile(75),
+        p95: data.percentile(95),
     }
 }
 
@@ -294,11 +263,9 @@ mod tests {
         NCAResult {
             subject_id: Some(subject_id.to_string()),
             occasion: Some(0),
-            dose: Some(DoseContext {
-                amount: 100.0,
-                route: Route::Extravascular,
-                duration: None,
-            }),
+            dose_amount: Some(100.0),
+            route: Some(Route::Extravascular),
+            infusion_duration: None,
             exposure: ExposureParams {
                 cmax,
                 tmax: 1.0,
@@ -342,6 +309,7 @@ mod tests {
             }),
             route_params: Some(RouteParams::Extravascular),
             steady_state: None,
+            multi_dose: None,
             quality: Quality {
                 warnings: vec![],
             },
@@ -475,16 +443,5 @@ mod tests {
     fn test_nca_to_csv_empty() {
         let csv = nca_to_csv(&[]);
         assert!(csv.is_empty());
-    }
-
-    #[test]
-    fn test_percentile_fn() {
-        // [1, 2, 3, 4, 5]
-        let data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
-        assert!((percentile(&data, 0.0) - 1.0).abs() < 1e-10);
-        assert!((percentile(&data, 50.0) - 3.0).abs() < 1e-10);
-        assert!((percentile(&data, 100.0) - 5.0).abs() < 1e-10);
-        assert!((percentile(&data, 25.0) - 2.0).abs() < 1e-10);
-        assert!((percentile(&data, 75.0) - 4.0).abs() < 1e-10);
     }
 }

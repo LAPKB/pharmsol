@@ -242,11 +242,9 @@ fn validate_scenario(
     }
 
     // Run NCA
-    let results = subject.nca(&options, 0);
-    let result = results
-        .first()
-        .and_then(|r| r.as_ref().ok())
-        .ok_or("NCA failed to produce results")?;
+    let result = subject
+        .nca(&options)
+        .map_err(|e| format!("NCA failed: {e}"))?;
 
     // Compare parameters
     let mut comparisons = Vec::new();
@@ -303,11 +301,7 @@ fn validate_scenario(
                 RouteParams::IVBolus(ref iv) => Some(iv.vd),
                 _ => None,
             }),
-            "vss" => result.route_params.as_ref().and_then(|rp| match rp {
-                RouteParams::IVBolus(ref iv) => iv.vss,
-                RouteParams::IVInfusion(ref iv) => iv.vss,
-                _ => None,
-            }),
+            "vss" => result.clearance.as_ref().and_then(|c| c.vss),
             "cl" | "cl_f" => result.clearance.as_ref().map(|c| c.cl_f),
             "vz" | "vz_f" => result.clearance.as_ref().map(|c| c.vz_f),
             // Steady-state parameters
@@ -514,8 +508,7 @@ mod tests {
             .build();
 
         let options = NCAOptions::default();
-        let results = subject.nca(&options, 0);
-        let result = results[0].as_ref().expect("NCA should succeed");
+        let result = subject.nca(&options).expect("NCA should succeed");
 
         // Basic sanity checks
         assert_eq!(result.exposure.cmax, 10.0);

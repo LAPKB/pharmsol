@@ -1,31 +1,63 @@
 //! Extension traits for NCA analysis on pharmsol data types
 //!
-//! These traits add NCA functionality to [`Data`], [`Subject`], and [`Occasion`]
-//! without creating a dependency from `data` → `nca`. Import them via the prelude:
+//! The [`NCA`] trait adds full non-compartmental analysis to [`Data`], [`Subject`],
+//! and [`Occasion`] without creating a dependency from `data` → `nca`.
+//!
 //!
 //! ```rust,ignore
 //! use pharmsol::prelude::*;
 //!
-//! let results = subject.nca(&NCAOptions::default(), 0);
+//! let result = subject.nca(&NCAOptions::default())?;
 //! ```
 
-use crate::data::event::{AUCMethod, BLQRule};
 use crate::data::observation::ObservationProfile;
-use crate::data::observation_error::ObservationError;
 use crate::nca::analyze::analyze;
 use crate::nca::calc::tlag_from_raw;
 use crate::nca::error::NCAError;
-use crate::nca::types::{DoseContext, NCAOptions, NCAResult};
+use crate::nca::types::{NCAOptions, NCAResult, Warning};
 use crate::{Data, Occasion, Subject};
 use rayon::prelude::*;
 
+/// Structured NCA result for a single subject
+///
+/// Groups occasion-level results under a subject identifier,
+/// making it easy to associate results back to subjects.
+#[derive(Debug, Clone)]
+pub struct SubjectNCAResult {
+    /// Subject identifier
+    pub subject_id: String,
+    /// NCA results for each occasion
+    pub occasions: Vec<Result<NCAResult, NCAError>>,
+}
+
+impl SubjectNCAResult {
+    /// Collect all successful NCA results across occasions
+    pub fn successes(&self) -> Vec<&NCAResult> {
+        self.occasions
+            .iter()
+            .filter_map(|r| r.as_ref().ok())
+            .collect()
+    }
+
+    /// Collect all errors across occasions
+    pub fn errors(&self) -> Vec<&NCAError> {
+        self.occasions
+            .iter()
+            .filter_map(|r| r.as_ref().err())
+            .collect()
+    }
+}
+
 // ============================================================================
-// Trait 1: Full NCA analysis
+// Trait: Full NCA analysis
 // ============================================================================
 
 /// Extension trait for Non-Compartmental Analysis
 ///
-/// Provides the `.nca()` method on [`Data`], [`Subject`], and [`Occasion`].
+/// Provides `.nca()` (first occasion) and `.nca_all()` (all occasions)
+/// on [`Data`], [`Subject`], and [`Occasion`].
+///
+/// The output equation is controlled by [`NCAOptions::outeq`] (default 0).
 ///
 /// # Example
 ///
@@ -40,73 +72,161 @@ use rayon::prelude::*;
 ///     .observation(4.0, 4.0, 0)
 ///     .build();
 ///
-/// let results = subject.nca(&NCAOptions::default(), 0);
-/// if let Ok(res) = &results[0] {
-///     println!("Cmax: {:.2}", res.exposure.cmax);
-/// }
+/// // Single-occasion (the common case)
+/// let result = subject.nca(&NCAOptions::default())?;
+/// println!("Cmax: {:.2}", result.exposure.cmax);
+///
+/// // All occasions
+/// let all = subject.nca_all(&NCAOptions::default());
 /// ```
 pub trait NCA {
-    /// Perform Non-Compartmental Analysis
-    ///
-    /// # Arguments
-    ///
-    /// * `options` - NCA calculation options
-    /// * `outeq` - Output equation index to analyze (0-indexed)
-    ///
-    /// # Returns
-    ///
-    /// Vector of `Result<NCAResult, NCAError>` for each occasion
-    fn nca(&self, options: &NCAOptions, outeq: usize) -> Vec<Result<NCAResult, NCAError>>;
+    /// NCA on the first occasion (the common case). Returns a single result.
+    fn nca(&self, options: &NCAOptions) -> Result<NCAResult, NCAError>;
 
-    /// Perform NCA on the first occasion and return a single result
+    /// NCA on all occasions. Returns a Vec of results.
+    fn nca_all(&self, options: &NCAOptions) -> Vec<Result<NCAResult, NCAError>>;
+}
+
+/// Extension trait for structured population-level NCA
+///
+/// Returns results grouped by subject, making it easy to associate
+/// NCA results back to their source subjects.
+pub trait NCAPopulation {
+    /// Perform NCA and return results grouped by subject
     ///
-    /// Convenience method that avoids the `Vec<Result<...>>` pattern when
-    /// you only have one occasion (the common case).
+    /// Unlike [`NCA::nca_all`] which returns a flat `Vec`, this returns
+    /// a `Vec<SubjectNCAResult>` where each entry groups all occasion
+    /// results for a single subject.
     ///
     /// # Example
     ///
     /// ```rust,ignore
     /// use pharmsol::prelude::*;
-    /// use pharmsol::nca::NCAOptions;
+    /// use pharmsol::nca::{NCAOptions, NCAPopulation};
     ///
-    /// let result = subject.nca_first(&NCAOptions::default(), 0)?;
+    /// let population_results = data.nca_grouped(&NCAOptions::default());
+    /// for subject_result in &population_results {
+    ///     println!("Subject {}: {} occasions", subject_result.subject_id, subject_result.occasions.len());
+    /// }
+    /// ```
+    fn nca_grouped(&self, options: &NCAOptions) -> Vec<SubjectNCAResult>;
+}
+
+// ============================================================================
+// NCA on ObservationProfile (simulated / raw data)
+// ============================================================================
+
+use crate::data::Route;
+
+impl ObservationProfile {
+    /// Run NCA directly on an observation profile with explicit dose information.
+    ///
+    /// This is the entry point for simulated or predicted data where there is
+    /// no `Subject` or `Occasion` to attach to.
+    ///
+    /// # Arguments
+    /// * `dose_amount` - Total dose amount (None = no dose-normalized params)
+    /// * `route` - Administration route
+    /// * `infusion_duration` - Duration of infusion (for IV infusion route)
+    /// * `options` - NCA options (outeq is ignored; the profile is already filtered)
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use pharmsol::data::observation::ObservationProfile;
+    /// use pharmsol::nca::NCAOptions;
+    /// use pharmsol::data::Route;
+    ///
+    /// let profile = ObservationProfile::from_raw(
+    ///     &[0.0, 1.0, 2.0, 4.0, 8.0],
+    ///     &[0.0, 10.0, 8.0, 4.0, 1.0],
+    /// );
+    /// let result = profile.nca_with_dose(Some(100.0), Route::Extravascular, None, &NCAOptions::default())?;
     /// println!("Cmax: {:.2}", result.exposure.cmax);
     /// ```
-    fn nca_first(&self, options: &NCAOptions, outeq: usize) -> Result<NCAResult, NCAError> {
-        self.nca(options, outeq)
-            .into_iter()
-            .next()
+    pub fn nca_with_dose(
+        &self,
+        dose_amount: Option<f64>,
+        route: Route,
+        infusion_duration: Option<f64>,
+        options: &NCAOptions,
+    ) -> Result<NCAResult, NCAError> {
+        analyze(
+            self,
+            dose_amount,
+            route,
+            infusion_duration,
+            options,
+            None,
+            None,
+            None,
+        )
+    }
+}
+
+impl NCA for Occasion {
+    fn nca(&self, options: &NCAOptions) -> Result<NCAResult, NCAError> {
+        nca_occasion(self, options, None)
+    }
+
+    fn nca_all(&self, options: &NCAOptions) -> Vec<Result<NCAResult, NCAError>> {
+        vec![self.nca(options)]
+    }
+}
+
+impl NCA for Subject {
+    fn nca(&self, options: &NCAOptions) -> Result<NCAResult, NCAError> {
+        self.occasions()
+            .first()
+            .map(|occ| nca_occasion(occ, options, Some(self.id())))
             .unwrap_or(Err(NCAError::InvalidParameter {
                 param: "occasion".to_string(),
                 value: "none found".to_string(),
             }))
     }
-}
 
-impl NCA for Occasion {
-    fn nca(&self, options: &NCAOptions, outeq: usize) -> Vec<Result<NCAResult, NCAError>> {
-        vec![nca_occasion(self, options, outeq)]
-    }
-}
-
-impl NCA for Subject {
-    fn nca(&self, options: &NCAOptions, outeq: usize) -> Vec<Result<NCAResult, NCAError>> {
+    fn nca_all(&self, options: &NCAOptions) -> Vec<Result<NCAResult, NCAError>> {
         self.occasions()
-            .iter()
-            .map(|occasion| {
-                let mut result = nca_occasion(occasion, options, outeq)?;
-                result.subject_id = Some(self.id().to_string());
-                Ok(result)
-            })
+            .par_iter()
+            .map(|occasion| nca_occasion(occasion, options, Some(self.id())))
             .collect()
     }
 }
 
 impl NCA for Data {
-    fn nca(&self, options: &NCAOptions, outeq: usize) -> Vec<Result<NCAResult, NCAError>> {
+    fn nca(&self, options: &NCAOptions) -> Result<NCAResult, NCAError> {
+        self.subjects()
+            .first()
+            .map(|s| s.nca(options))
+            .unwrap_or(Err(NCAError::InvalidParameter {
+                param: "subject".to_string(),
+                value: "none found".to_string(),
+            }))
+    }
+
+    fn nca_all(&self, options: &NCAOptions) -> Vec<Result<NCAResult, NCAError>> {
         self.subjects()
             .par_iter()
-            .flat_map(|subject| subject.nca(options, outeq))
+            .flat_map(|subject| subject.nca_all(options))
+            .collect()
+    }
+}
+
+impl NCAPopulation for Data {
+    fn nca_grouped(&self, options: &NCAOptions) -> Vec<SubjectNCAResult> {
+        self.subjects()
+            .par_iter()
+            .map(|subject| {
+                let occasions = subject
+                    .occasions()
+                    .par_iter()
+                    .map(|occasion| nca_occasion(occasion, options, Some(subject.id())))
+                    .collect();
+                SubjectNCAResult {
+                    subject_id: subject.id().to_string(),
+                    occasions,
+                }
+            })
             .collect()
     }
 }
@@ -115,8 +235,10 @@ impl NCA for Data {
 fn nca_occasion(
     occasion: &Occasion,
     options: &NCAOptions,
-    outeq: usize,
+    subject_id: Option<&str>,
 ) -> Result<NCAResult, NCAError> {
+    let outeq = options.outeq;
+
     // Build profile directly from the occasion
     let profile = ObservationProfile::from_occasion(occasion, outeq, &options.blq_rule)?;
 
@@ -124,382 +246,38 @@ fn nca_occasion(
     let (times, concs, censoring) = occasion.get_observations(outeq);
     let raw_tlag = tlag_from_raw(&times, &concs, &censoring);
 
-    // Build dose context from introspection methods
-    let dose = dose_info(occasion);
+    // Extract dose info from Occasion directly (no DoseContext)
+    let dose_amount = {
+        let d = occasion.total_dose();
+        if d > 0.0 {
+            Some(d)
+        } else {
+            None
+        }
+    };
+    let route = options.route_override.unwrap_or_else(|| occasion.route());
+    let infusion_duration = occasion.infusion_duration();
 
     // Calculate NCA directly on the profile
-    let mut result = analyze(&profile, dose.as_ref(), options, raw_tlag)?;
-    result.occasion = Some(occasion.index());
+    let mut result = analyze(
+        &profile,
+        dose_amount,
+        route,
+        infusion_duration,
+        options,
+        raw_tlag,
+        subject_id,
+        Some(occasion.index()),
+    )?;
+
+    // Warn about mixed routes if no explicit override was given
+    let routes = occasion.routes();
+    if routes.len() > 1 && options.route_override.is_none() {
+        result
+            .quality
+            .warnings
+            .push(Warning::MixedRoutes { routes });
+    }
 
     Ok(result)
-}
-
-/// Build dose context from an occasion's dose events
-///
-/// Returns `Some(DoseContext)` if the occasion contains dose events,
-/// or `None` if there are no doses.
-fn dose_info(occasion: &Occasion) -> Option<DoseContext> {
-    if occasion.total_dose() > 0.0 {
-        Some(DoseContext {
-            amount: occasion.total_dose(),
-            duration: occasion.infusion_duration(),
-            route: occasion.route(),
-        })
-    } else {
-        None
-    }
-}
-
-// ============================================================================
-// Trait 2: Observation metric convenience methods
-// ============================================================================
-
-/// Extension trait for observation-level pharmacokinetic metrics
-///
-/// Provides convenient access to AUC, Cmax, Tmax, etc. without running
-/// full NCA analysis. Each method returns one result per occasion.
-///
-/// # Example
-///
-/// ```rust,ignore
-/// use pharmsol::prelude::*;
-///
-/// let subject = Subject::builder("pt1")
-///     .bolus(0.0, 100.0, 0)
-///     .observation(1.0, 10.0, 0)
-///     .observation(2.0, 8.0, 0)
-///     .observation(4.0, 4.0, 0)
-///     .build();
-///
-/// let auc = subject.auc(0, &AUCMethod::Linear, &BLQRule::Exclude);
-/// let cmax = subject.cmax(0, &BLQRule::Exclude);
-/// ```
-pub trait ObservationMetrics {
-    /// Calculate AUC from time 0 to Tlast
-    fn auc(
-        &self,
-        outeq: usize,
-        method: &AUCMethod,
-        blq_rule: &BLQRule,
-    ) -> Vec<Result<f64, NCAError>>;
-
-    /// Calculate partial AUC over a time interval
-    fn auc_interval(
-        &self,
-        outeq: usize,
-        start: f64,
-        end: f64,
-        method: &AUCMethod,
-        blq_rule: &BLQRule,
-    ) -> Vec<Result<f64, NCAError>>;
-
-    /// Get Cmax (maximum concentration)
-    fn cmax(&self, outeq: usize, blq_rule: &BLQRule) -> Vec<Result<f64, NCAError>>;
-
-    /// Get Tmax (time of maximum concentration)
-    fn tmax(&self, outeq: usize, blq_rule: &BLQRule) -> Vec<Result<f64, NCAError>>;
-
-    /// Get Clast (last quantifiable concentration)
-    fn clast(&self, outeq: usize, blq_rule: &BLQRule) -> Vec<Result<f64, NCAError>>;
-
-    /// Get Tlast (time of last quantifiable concentration)
-    fn tlast(&self, outeq: usize, blq_rule: &BLQRule) -> Vec<Result<f64, NCAError>>;
-
-    /// Calculate AUMC (Area Under the first Moment Curve)
-    fn aumc(
-        &self,
-        outeq: usize,
-        method: &AUCMethod,
-        blq_rule: &BLQRule,
-    ) -> Vec<Result<f64, NCAError>>;
-
-    /// Get filtered observation profiles
-    fn filtered_observations(
-        &self,
-        outeq: usize,
-        blq_rule: &BLQRule,
-    ) -> Vec<Result<ObservationProfile, ObservationError>>;
-}
-
-// ============================================================================
-// Occasion implementations (core logic)
-// ============================================================================
-
-impl ObservationMetrics for Occasion {
-    fn auc(
-        &self,
-        outeq: usize,
-        method: &AUCMethod,
-        blq_rule: &BLQRule,
-    ) -> Vec<Result<f64, NCAError>> {
-        vec![auc_occasion(self, outeq, method, blq_rule)]
-    }
-
-    fn auc_interval(
-        &self,
-        outeq: usize,
-        start: f64,
-        end: f64,
-        method: &AUCMethod,
-        blq_rule: &BLQRule,
-    ) -> Vec<Result<f64, NCAError>> {
-        vec![auc_interval_occasion(
-            self, outeq, start, end, method, blq_rule,
-        )]
-    }
-
-    fn cmax(&self, outeq: usize, blq_rule: &BLQRule) -> Vec<Result<f64, NCAError>> {
-        vec![cmax_occasion(self, outeq, blq_rule)]
-    }
-
-    fn tmax(&self, outeq: usize, blq_rule: &BLQRule) -> Vec<Result<f64, NCAError>> {
-        vec![tmax_occasion(self, outeq, blq_rule)]
-    }
-
-    fn clast(&self, outeq: usize, blq_rule: &BLQRule) -> Vec<Result<f64, NCAError>> {
-        vec![clast_occasion(self, outeq, blq_rule)]
-    }
-
-    fn tlast(&self, outeq: usize, blq_rule: &BLQRule) -> Vec<Result<f64, NCAError>> {
-        vec![tlast_occasion(self, outeq, blq_rule)]
-    }
-
-    fn aumc(
-        &self,
-        outeq: usize,
-        method: &AUCMethod,
-        blq_rule: &BLQRule,
-    ) -> Vec<Result<f64, NCAError>> {
-        vec![aumc_occasion(self, outeq, method, blq_rule)]
-    }
-
-    fn filtered_observations(
-        &self,
-        outeq: usize,
-        blq_rule: &BLQRule,
-    ) -> Vec<Result<ObservationProfile, ObservationError>> {
-        vec![ObservationProfile::from_occasion(self, outeq, blq_rule)]
-    }
-}
-
-// ============================================================================
-// Subject implementations (iterate occasions)
-// ============================================================================
-
-impl ObservationMetrics for Subject {
-    fn auc(
-        &self,
-        outeq: usize,
-        method: &AUCMethod,
-        blq_rule: &BLQRule,
-    ) -> Vec<Result<f64, NCAError>> {
-        self.occasions()
-            .iter()
-            .map(|o| auc_occasion(o, outeq, method, blq_rule))
-            .collect()
-    }
-
-    fn auc_interval(
-        &self,
-        outeq: usize,
-        start: f64,
-        end: f64,
-        method: &AUCMethod,
-        blq_rule: &BLQRule,
-    ) -> Vec<Result<f64, NCAError>> {
-        self.occasions()
-            .iter()
-            .map(|o| auc_interval_occasion(o, outeq, start, end, method, blq_rule))
-            .collect()
-    }
-
-    fn cmax(&self, outeq: usize, blq_rule: &BLQRule) -> Vec<Result<f64, NCAError>> {
-        self.occasions()
-            .iter()
-            .map(|o| cmax_occasion(o, outeq, blq_rule))
-            .collect()
-    }
-
-    fn tmax(&self, outeq: usize, blq_rule: &BLQRule) -> Vec<Result<f64, NCAError>> {
-        self.occasions()
-            .iter()
-            .map(|o| tmax_occasion(o, outeq, blq_rule))
-            .collect()
-    }
-
-    fn clast(&self, outeq: usize, blq_rule: &BLQRule) -> Vec<Result<f64, NCAError>> {
-        self.occasions()
-            .iter()
-            .map(|o| clast_occasion(o, outeq, blq_rule))
-            .collect()
-    }
-
-    fn tlast(&self, outeq: usize, blq_rule: &BLQRule) -> Vec<Result<f64, NCAError>> {
-        self.occasions()
-            .iter()
-            .map(|o| tlast_occasion(o, outeq, blq_rule))
-            .collect()
-    }
-
-    fn aumc(
-        &self,
-        outeq: usize,
-        method: &AUCMethod,
-        blq_rule: &BLQRule,
-    ) -> Vec<Result<f64, NCAError>> {
-        self.occasions()
-            .iter()
-            .map(|o| aumc_occasion(o, outeq, method, blq_rule))
-            .collect()
-    }
-
-    fn filtered_observations(
-        &self,
-        outeq: usize,
-        blq_rule: &BLQRule,
-    ) -> Vec<Result<ObservationProfile, ObservationError>> {
-        self.occasions()
-            .iter()
-            .map(|o| ObservationProfile::from_occasion(o, outeq, blq_rule))
-            .collect()
-    }
-}
-
-// ============================================================================
-// Data implementations (iterate subjects, flatten)
-// ============================================================================
-
-impl ObservationMetrics for Data {
-    fn auc(
-        &self,
-        outeq: usize,
-        method: &AUCMethod,
-        blq_rule: &BLQRule,
-    ) -> Vec<Result<f64, NCAError>> {
-        self.subjects()
-            .par_iter()
-            .flat_map(|s| s.auc(outeq, method, blq_rule))
-            .collect()
-    }
-
-    fn auc_interval(
-        &self,
-        outeq: usize,
-        start: f64,
-        end: f64,
-        method: &AUCMethod,
-        blq_rule: &BLQRule,
-    ) -> Vec<Result<f64, NCAError>> {
-        self.subjects()
-            .par_iter()
-            .flat_map(|s| s.auc_interval(outeq, start, end, method, blq_rule))
-            .collect()
-    }
-
-    fn cmax(&self, outeq: usize, blq_rule: &BLQRule) -> Vec<Result<f64, NCAError>> {
-        self.subjects()
-            .par_iter()
-            .flat_map(|s| s.cmax(outeq, blq_rule))
-            .collect()
-    }
-
-    fn tmax(&self, outeq: usize, blq_rule: &BLQRule) -> Vec<Result<f64, NCAError>> {
-        self.subjects()
-            .par_iter()
-            .flat_map(|s| s.tmax(outeq, blq_rule))
-            .collect()
-    }
-
-    fn clast(&self, outeq: usize, blq_rule: &BLQRule) -> Vec<Result<f64, NCAError>> {
-        self.subjects()
-            .par_iter()
-            .flat_map(|s| s.clast(outeq, blq_rule))
-            .collect()
-    }
-
-    fn tlast(&self, outeq: usize, blq_rule: &BLQRule) -> Vec<Result<f64, NCAError>> {
-        self.subjects()
-            .par_iter()
-            .flat_map(|s| s.tlast(outeq, blq_rule))
-            .collect()
-    }
-
-    fn aumc(
-        &self,
-        outeq: usize,
-        method: &AUCMethod,
-        blq_rule: &BLQRule,
-    ) -> Vec<Result<f64, NCAError>> {
-        self.subjects()
-            .par_iter()
-            .flat_map(|s| s.aumc(outeq, method, blq_rule))
-            .collect()
-    }
-
-    fn filtered_observations(
-        &self,
-        outeq: usize,
-        blq_rule: &BLQRule,
-    ) -> Vec<Result<ObservationProfile, ObservationError>> {
-        self.subjects()
-            .par_iter()
-            .flat_map(|s| s.filtered_observations(outeq, blq_rule))
-            .collect()
-    }
-}
-
-// ============================================================================
-// Private helper functions for Occasion-level implementations
-// ============================================================================
-
-fn auc_occasion(
-    occasion: &Occasion,
-    outeq: usize,
-    method: &AUCMethod,
-    blq_rule: &BLQRule,
-) -> Result<f64, NCAError> {
-    let profile = ObservationProfile::from_occasion(occasion, outeq, blq_rule)?;
-    Ok(profile.auc_last(method))
-}
-
-fn auc_interval_occasion(
-    occasion: &Occasion,
-    outeq: usize,
-    start: f64,
-    end: f64,
-    method: &AUCMethod,
-    blq_rule: &BLQRule,
-) -> Result<f64, NCAError> {
-    let profile = ObservationProfile::from_occasion(occasion, outeq, blq_rule)?;
-    Ok(profile.auc_interval(start, end, method))
-}
-
-fn cmax_occasion(occasion: &Occasion, outeq: usize, blq_rule: &BLQRule) -> Result<f64, NCAError> {
-    let profile = ObservationProfile::from_occasion(occasion, outeq, blq_rule)?;
-    Ok(profile.cmax())
-}
-
-fn tmax_occasion(occasion: &Occasion, outeq: usize, blq_rule: &BLQRule) -> Result<f64, NCAError> {
-    let profile = ObservationProfile::from_occasion(occasion, outeq, blq_rule)?;
-    Ok(profile.tmax())
-}
-
-fn clast_occasion(occasion: &Occasion, outeq: usize, blq_rule: &BLQRule) -> Result<f64, NCAError> {
-    let profile = ObservationProfile::from_occasion(occasion, outeq, blq_rule)?;
-    Ok(profile.clast())
-}
-
-fn tlast_occasion(occasion: &Occasion, outeq: usize, blq_rule: &BLQRule) -> Result<f64, NCAError> {
-    let profile = ObservationProfile::from_occasion(occasion, outeq, blq_rule)?;
-    Ok(profile.tlast())
-}
-
-fn aumc_occasion(
-    occasion: &Occasion,
-    outeq: usize,
-    method: &AUCMethod,
-    blq_rule: &BLQRule,
-) -> Result<f64, NCAError> {
-    let profile = ObservationProfile::from_occasion(occasion, outeq, blq_rule)?;
-    Ok(profile.aumc_last(method))
 }

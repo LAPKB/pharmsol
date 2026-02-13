@@ -45,8 +45,7 @@
 //!     .build();
 //!
 //! // Perform NCA with default options
-//! let results = subject.nca(&NCAOptions::default(), 0);
-//! let result = results[0].as_ref().expect("NCA failed");
+//! let result = subject.nca(&NCAOptions::default()).expect("NCA failed");
 //!
 //! println!("Cmax: {:.2}", result.exposure.cmax);
 //! println!("AUClast: {:.2}", result.exposure.auc_last);
@@ -59,11 +58,29 @@
 //!
 //! // Configure for steady-state with 12h dosing interval
 //! let options = NCAOptions::default().with_tau(12.0);
-//! let results = subject.nca(&options, 0);
+//! let result = subject.nca(&options).unwrap();
 //!
-//! if let Some(ref ss) = results[0].as_ref().unwrap().steady_state {
+//! if let Some(ref ss) = result.steady_state {
 //!     println!("Cavg: {:.2}", ss.cavg);
 //!     println!("Fluctuation: {:.1}%", ss.fluctuation);
+//! }
+//! ```
+//!
+//! # Population Analysis
+//!
+//! ```rust,ignore
+//! use pharmsol::nca::{NCAOptions, NCA, NCAPopulation};
+//!
+//! // All occasions flat
+//! let all_results = data.nca_all(&options);
+//!
+//! // Grouped by subject (includes error isolation)
+//! let grouped = data.nca_grouped(&options);
+//! for subj in &grouped {
+//!     println!("{}: {} ok, {} errors",
+//!         subj.subject_id,
+//!         subj.successes().len(),
+//!         subj.errors().len());
 //! }
 //! ```
 
@@ -87,18 +104,24 @@ mod tests;
 // (traits.rs accesses analyze::analyze and calc::tlag_from_raw directly)
 
 // Public API
+pub use bioavailability::{
+    bioavailability, bioequivalence, compare, metabolite_parent_ratio, BioavailabilityResult,
+    BioequivalenceResult,
+};
 pub use calc::{lambda_z_candidates, LambdaZCandidate};
 pub use error::NCAError;
+pub use sparse::{sparse_auc, sparse_auc_from_data, SparsePKResult};
 pub use summary::{nca_to_csv, summarize, ParameterSummary, PopulationSummary};
-pub use traits::{ObservationMetrics, NCA};
-pub use types::{
-    C0Method, ClearanceParams, DoseContext, ExposureParams, IVBolusParams, IVInfusionParams,
-    LambdaZMethod, LambdaZOptions, NCAOptions, NCAResult, Quality, RegressionStats, RouteParams,
-    SteadyStateParams, TerminalParams, Warning,
+pub use superposition::{
+    predict as superposition_predict, predict_from_nca, Superposition, SuperpositionResult,
 };
-pub use bioavailability::{bioavailability, BioavailabilityResult};
-pub use sparse::{sparse_auc, SparseObservation, SparsePKResult};
-pub use superposition::{predict as superposition_predict, SuperpositionResult};
+pub use traits::{NCAPopulation, SubjectNCAResult, NCA};
+pub use types::{
+    C0Method, ClearanceParams, ExposureParams, IVBolusParams, IVInfusionParams, LambdaZMethod,
+    LambdaZOptions, MultiDoseParams, NCAOptions, NCAResult, Quality, RegressionStats, RouteParams,
+    Severity, SteadyStateParams, TerminalParams, Warning,
+};
+
 // Re-export shared types (backwards compatible)
 pub use crate::data::event::{AUCMethod, BLQRule, Route};
 pub use crate::data::observation::ObservationProfile;

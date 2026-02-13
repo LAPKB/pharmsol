@@ -5,7 +5,7 @@
 //!
 //! AUC segment calculations are delegated to [`crate::data::auc`].
 
-use crate::observation::Profile;
+use crate::data::observation::ObservationProfile as Profile;
 
 use super::types::*;
 use serde::{Deserialize, Serialize};
@@ -634,16 +634,6 @@ pub fn swing(cmax: f64, cmin: f64) -> f64 {
     (cmax - cmin) / cmin
 }
 
-/// Calculate accumulation ratio
-#[inline]
-#[allow(dead_code)] // Reserved for future steady-state analysis
-pub fn accumulation(auc_tau: f64, auc_inf_single: f64) -> f64 {
-    if auc_inf_single <= 0.0 || !auc_inf_single.is_finite() {
-        return f64::NAN;
-    }
-    auc_tau / auc_inf_single
-}
-
 // ============================================================================
 // Derived Parameters — Phase 2 additions
 // ============================================================================
@@ -729,6 +719,7 @@ mod tests {
     use super::*;
     use crate::data::auc::auc_segment;
     use crate::data::builder::SubjectBuilderExt;
+    use crate::data::event::{AUCMethod, BLQRule};
     use crate::Subject;
 
     fn make_test_profile() -> Profile {
@@ -813,5 +804,201 @@ mod tests {
     fn test_swing() {
         let s = swing(10.0, 2.0);
         assert!((s - 4.0).abs() < 1e-10); // (10-2)/2 = 4
+    }
+
+    // ========================================================================
+    // Additional calc.rs unit tests (Task 3.1)
+    // ========================================================================
+
+    #[test]
+    fn test_time_above_concentration_all_above() {
+        let times = [0.0, 1.0, 2.0, 4.0];
+        let concs = [10.0, 8.0, 6.0, 5.0];
+        let result = time_above_concentration(&times, &concs, 1.0);
+        assert!((result - 4.0).abs() < 1e-10, "All above: full duration");
+    }
+
+    #[test]
+    fn test_time_above_concentration_all_below() {
+        let times = [0.0, 1.0, 2.0];
+        let concs = [0.5, 0.3, 0.1];
+        let result = time_above_concentration(&times, &concs, 1.0);
+        assert!((result - 0.0).abs() < 1e-10, "All below: zero time");
+    }
+
+    #[test]
+    fn test_time_above_concentration_crossing() {
+        // Crosses below at interpolated point
+        let times = [0.0, 1.0, 2.0];
+        let concs = [10.0, 5.0, 0.0]; // crosses threshold=4 at t ≈ 0.0 + 1.0 * (10-4)/(10-5) = 1.2
+        let result = time_above_concentration(&times, &concs, 4.0);
+        // 0→1: both above (10≥4, 5≥4) → 1.0
+        // 1→2: crosses below, t_cross = 1.0 + 1.0 * (5-4)/(5-0) = 1.2
+        let expected = 1.0 + 0.2;
+        assert!((result - expected).abs() < 1e-10, "Crossing: {result} != {expected}");
+    }
+
+    #[test]
+    fn test_time_above_concentration_crosses_above() {
+        let times = [0.0, 1.0, 2.0];
+        let concs = [0.0, 10.0, 10.0];
+        // threshold = 5: crosses above at t = 0.5
+        let result = time_above_concentration(&times, &concs, 5.0);
+        // 0→1: crosses above at t = 0.0 + 1.0*(5-0)/(10-0) = 0.5 → 1.0-0.5=0.5
+        // 1→2: both above → 1.0
+        assert!((result - 1.5).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_time_above_concentration_empty() {
+        assert!((time_above_concentration(&[], &[], 1.0) - 0.0).abs() < 1e-10);
+        assert!((time_above_concentration(&[1.0], &[5.0], 1.0) - 0.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_c0_logslope_normal() {
+        // Two declining points: t=0.5,c=20 and t=1.0,c=10
+        // slope = (ln10-ln20)/(1.0-0.5) = -ln2/0.5 = -1.3863
+        // c0 = exp(ln20 - (-1.3863)*0.5) = exp(ln20 + 0.6931) = exp(3.6889) ≈ 40
+        let subject = Subject::builder("test")
+            .bolus(0.0, 100.0, 1)
+            .observation(0.5, 20.0, 0)
+            .observation(1.0, 10.0, 0)
+            .observation(4.0, 1.0, 0)
+            .build();
+        let occ = &subject.occasions()[0];
+        let profile = Profile::from_occasion(occ, 0, &BLQRule::Exclude).unwrap();
+        let result = c0_logslope(&profile);
+        assert!(result.is_some());
+        assert!((result.unwrap() - 40.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_c0_logslope_first_conc_zero() {
+        // First positive after a zero: t=0,c=0 then t=1,c=10 then t=2,c=5
+        // positive_points = [(1,10),(2,5)], c2 < c1, ok
+        let subject = Subject::builder("test")
+            .bolus(0.0, 100.0, 1)
+            .observation(0.0, 0.0, 0)
+            .observation(1.0, 10.0, 0)
+            .observation(2.0, 5.0, 0)
+            .build();
+        let occ = &subject.occasions()[0];
+        let profile = Profile::from_occasion(occ, 0, &BLQRule::Exclude).unwrap();
+        let result = c0_logslope(&profile);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_c0_logslope_both_equal() {
+        let subject = Subject::builder("test")
+            .bolus(0.0, 100.0, 1)
+            .observation(1.0, 10.0, 0)
+            .observation(2.0, 10.0, 0)
+            .build();
+        let occ = &subject.occasions()[0];
+        let profile = Profile::from_occasion(occ, 0, &BLQRule::Exclude).unwrap();
+        let result = c0_logslope(&profile);
+        // c2 >= c1, so should return None
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_tlag_from_raw_clear_lag() {
+        // BLQ, BLQ, then increase
+        let times = vec![0.0, 0.5, 1.0, 2.0];
+        let concs = vec![0.0, 0.0, 5.0, 10.0];
+        let censoring = vec![
+            crate::Censor::BLOQ,
+            crate::Censor::BLOQ,
+            crate::Censor::None,
+            crate::Censor::None,
+        ];
+        let result = tlag_from_raw(&times, &concs, &censoring);
+        // BLQ→BLQ: 0→0 no increase, BLQ→5: 0→5 increase at index 2, so tlag = times[1] = 0.5
+        assert_eq!(result, Some(0.5));
+    }
+
+    #[test]
+    fn test_tlag_from_raw_no_lag() {
+        // First point already increasing
+        let times = vec![0.0, 1.0, 2.0];
+        let concs = vec![0.0, 10.0, 8.0];
+        let censoring = vec![crate::Censor::None; 3];
+        let result = tlag_from_raw(&times, &concs, &censoring);
+        // 0→10: increase at index 1, tlag = times[0] = 0.0
+        assert_eq!(result, Some(0.0));
+    }
+
+    #[test]
+    fn test_tlag_from_raw_all_declining() {
+        let times = vec![0.0, 1.0, 2.0];
+        let concs = vec![10.0, 5.0, 2.0];
+        let censoring = vec![crate::Censor::None; 3];
+        let result = tlag_from_raw(&times, &concs, &censoring);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_c0_cascade() {
+        // Build an IV bolus profile with observation at t=0
+        let subject = Subject::builder("test")
+            .bolus(0.0, 100.0, 1) // IV bolus
+            .observation(0.0, 50.0, 0) // t=0 with positive conc → Observed method
+            .observation(0.5, 40.0, 0)
+            .observation(1.0, 30.0, 0)
+            .observation(4.0, 10.0, 0)
+            .build();
+        let occ = &subject.occasions()[0];
+        let profile = Profile::from_occasion(occ, 0, &BLQRule::Exclude).unwrap();
+        let methods = vec![C0Method::Observed, C0Method::LogSlope, C0Method::FirstConc];
+        let lambda_z = 0.5;
+        let (c0_val, method) = c0(&profile, &methods, lambda_z);
+        assert!((c0_val - 50.0).abs() < 1e-10);
+        assert_eq!(method, Some(C0Method::Observed));
+
+        // If Observed is removed, LogSlope should be used
+        let methods2 = vec![C0Method::LogSlope, C0Method::FirstConc];
+        let (c0_val2, method2) = c0(&profile, &methods2, lambda_z);
+        assert!(c0_val2 > 0.0);
+        assert_eq!(method2, Some(C0Method::LogSlope));
+    }
+
+    #[test]
+    fn test_effective_half_life_known() {
+        let mrt = 10.0;
+        let t_half_eff = effective_half_life(mrt);
+        assert!((t_half_eff - std::f64::consts::LN_2 * 10.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_effective_half_life_invalid() {
+        assert!(effective_half_life(0.0).is_nan());
+        assert!(effective_half_life(-1.0).is_nan());
+        assert!(effective_half_life(f64::NAN).is_nan());
+    }
+
+    #[test]
+    fn test_kel_known() {
+        let mrt = 5.0;
+        assert!((kel(mrt) - 0.2).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_kel_invalid() {
+        assert!(kel(0.0).is_nan());
+        assert!(kel(-1.0).is_nan());
+    }
+
+    #[test]
+    fn test_peak_trough_ratio() {
+        assert!((peak_trough_ratio(10.0, 2.0) - 5.0).abs() < 1e-10);
+        assert!(peak_trough_ratio(10.0, 0.0).is_nan());
+    }
+
+    #[test]
+    fn test_cavg_known() {
+        assert!((cavg(100.0, 10.0) - 10.0).abs() < 1e-10);
+        assert!(cavg(100.0, 0.0).is_nan());
     }
 }

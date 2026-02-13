@@ -139,10 +139,7 @@ pub trait ObservationMetrics {
             .into_iter()
             .next()
             .unwrap_or(Err(MetricsError::Observation(
-                ObservationError::InsufficientData {
-                    n: 0,
-                    required: 2,
-                },
+                ObservationError::InsufficientData { n: 0, required: 2 },
             )))
     }
 
@@ -152,10 +149,7 @@ pub trait ObservationMetrics {
             .into_iter()
             .next()
             .unwrap_or(Err(MetricsError::Observation(
-                ObservationError::InsufficientData {
-                    n: 0,
-                    required: 2,
-                },
+                ObservationError::InsufficientData { n: 0, required: 2 },
             )))
     }
 
@@ -165,10 +159,7 @@ pub trait ObservationMetrics {
             .into_iter()
             .next()
             .unwrap_or(Err(MetricsError::Observation(
-                ObservationError::InsufficientData {
-                    n: 0,
-                    required: 2,
-                },
+                ObservationError::InsufficientData { n: 0, required: 2 },
             )))
     }
 
@@ -178,10 +169,7 @@ pub trait ObservationMetrics {
             .into_iter()
             .next()
             .unwrap_or(Err(MetricsError::Observation(
-                ObservationError::InsufficientData {
-                    n: 0,
-                    required: 2,
-                },
+                ObservationError::InsufficientData { n: 0, required: 2 },
             )))
     }
 
@@ -191,10 +179,7 @@ pub trait ObservationMetrics {
             .into_iter()
             .next()
             .unwrap_or(Err(MetricsError::Observation(
-                ObservationError::InsufficientData {
-                    n: 0,
-                    required: 2,
-                },
+                ObservationError::InsufficientData { n: 0, required: 2 },
             )))
     }
 
@@ -209,10 +194,7 @@ pub trait ObservationMetrics {
             .into_iter()
             .next()
             .unwrap_or(Err(MetricsError::Observation(
-                ObservationError::InsufficientData {
-                    n: 0,
-                    required: 2,
-                },
+                ObservationError::InsufficientData { n: 0, required: 2 },
             )))
     }
 
@@ -229,10 +211,7 @@ pub trait ObservationMetrics {
             .into_iter()
             .next()
             .unwrap_or(Err(MetricsError::Observation(
-                ObservationError::InsufficientData {
-                    n: 0,
-                    required: 2,
-                },
+                ObservationError::InsufficientData { n: 0, required: 2 },
             )))
     }
 
@@ -325,7 +304,7 @@ impl ObservationMetrics for Subject {
         blq_rule: &BLQRule,
     ) -> Vec<Result<f64, MetricsError>> {
         self.occasions()
-            .iter()
+            .par_iter()
             .map(|o| auc_occasion(o, outeq, method, blq_rule))
             .collect()
     }
@@ -339,35 +318,35 @@ impl ObservationMetrics for Subject {
         blq_rule: &BLQRule,
     ) -> Vec<Result<f64, MetricsError>> {
         self.occasions()
-            .iter()
+            .par_iter()
             .map(|o| auc_interval_occasion(o, outeq, start, end, method, blq_rule))
             .collect()
     }
 
     fn cmax(&self, outeq: usize, blq_rule: &BLQRule) -> Vec<Result<f64, MetricsError>> {
         self.occasions()
-            .iter()
+            .par_iter()
             .map(|o| cmax_occasion(o, outeq, blq_rule))
             .collect()
     }
 
     fn tmax(&self, outeq: usize, blq_rule: &BLQRule) -> Vec<Result<f64, MetricsError>> {
         self.occasions()
-            .iter()
+            .par_iter()
             .map(|o| tmax_occasion(o, outeq, blq_rule))
             .collect()
     }
 
     fn clast(&self, outeq: usize, blq_rule: &BLQRule) -> Vec<Result<f64, MetricsError>> {
         self.occasions()
-            .iter()
+            .par_iter()
             .map(|o| clast_occasion(o, outeq, blq_rule))
             .collect()
     }
 
     fn tlast(&self, outeq: usize, blq_rule: &BLQRule) -> Vec<Result<f64, MetricsError>> {
         self.occasions()
-            .iter()
+            .par_iter()
             .map(|o| tlast_occasion(o, outeq, blq_rule))
             .collect()
     }
@@ -379,7 +358,7 @@ impl ObservationMetrics for Subject {
         blq_rule: &BLQRule,
     ) -> Vec<Result<f64, MetricsError>> {
         self.occasions()
-            .iter()
+            .par_iter()
             .map(|o| aumc_occasion(o, outeq, method, blq_rule))
             .collect()
     }
@@ -390,7 +369,7 @@ impl ObservationMetrics for Subject {
         blq_rule: &BLQRule,
     ) -> Vec<Result<ObservationProfile, ObservationError>> {
         self.occasions()
-            .iter()
+            .par_iter()
             .map(|o| ObservationProfile::from_occasion(o, outeq, blq_rule))
             .collect()
     }
@@ -505,22 +484,38 @@ fn auc_interval_occasion(
     Ok(profile.auc_interval(start, end, method))
 }
 
-fn cmax_occasion(occasion: &Occasion, outeq: usize, blq_rule: &BLQRule) -> Result<f64, MetricsError> {
+fn cmax_occasion(
+    occasion: &Occasion,
+    outeq: usize,
+    blq_rule: &BLQRule,
+) -> Result<f64, MetricsError> {
     let profile = ObservationProfile::from_occasion(occasion, outeq, blq_rule)?;
     Ok(profile.cmax())
 }
 
-fn tmax_occasion(occasion: &Occasion, outeq: usize, blq_rule: &BLQRule) -> Result<f64, MetricsError> {
+fn tmax_occasion(
+    occasion: &Occasion,
+    outeq: usize,
+    blq_rule: &BLQRule,
+) -> Result<f64, MetricsError> {
     let profile = ObservationProfile::from_occasion(occasion, outeq, blq_rule)?;
     Ok(profile.tmax())
 }
 
-fn clast_occasion(occasion: &Occasion, outeq: usize, blq_rule: &BLQRule) -> Result<f64, MetricsError> {
+fn clast_occasion(
+    occasion: &Occasion,
+    outeq: usize,
+    blq_rule: &BLQRule,
+) -> Result<f64, MetricsError> {
     let profile = ObservationProfile::from_occasion(occasion, outeq, blq_rule)?;
     Ok(profile.clast())
 }
 
-fn tlast_occasion(occasion: &Occasion, outeq: usize, blq_rule: &BLQRule) -> Result<f64, MetricsError> {
+fn tlast_occasion(
+    occasion: &Occasion,
+    outeq: usize,
+    blq_rule: &BLQRule,
+) -> Result<f64, MetricsError> {
     let profile = ObservationProfile::from_occasion(occasion, outeq, blq_rule)?;
     Ok(profile.tlast())
 }

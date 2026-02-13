@@ -959,6 +959,42 @@ impl Occasion {
         self.events.iter().any(|e| matches!(e, Event::Infusion(_)))
     }
 
+    /// All distinct administration routes detected from dose events
+    ///
+    /// Used by NCA to detect mixed-route occasions. Returns one entry per
+    /// unique [`Route`] variant present (IVBolus, IVInfusion, Extravascular).
+    pub fn routes(&self) -> Vec<Route> {
+        let mut has_infusion = false;
+        let mut has_extravascular = false;
+        let mut has_iv_bolus = false;
+
+        for event in &self.events {
+            match event {
+                Event::Infusion(_) => has_infusion = true,
+                Event::Bolus(b) => {
+                    if b.input() == 0 {
+                        has_extravascular = true;
+                    } else {
+                        has_iv_bolus = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let mut routes = Vec::new();
+        if has_infusion {
+            routes.push(Route::IVInfusion);
+        }
+        if has_iv_bolus {
+            routes.push(Route::IVBolus);
+        }
+        if has_extravascular {
+            routes.push(Route::Extravascular);
+        }
+        routes
+    }
+
     /// Duration of the (first) infusion, if any
     ///
     /// Returns `None` if there are no infusion events.
