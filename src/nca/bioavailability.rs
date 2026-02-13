@@ -153,9 +153,7 @@ pub fn bioequivalence(
     // Compute individual F values
     let f_values: Vec<f64> = pairs
         .iter()
-        .filter_map(|(test, reference)| {
-            bioavailability(test, reference).map(|r| r.f_auc_last)
-        })
+        .filter_map(|(test, reference)| bioavailability(test, reference).map(|r| r.f_auc_last))
         .filter(|f| f.is_finite() && *f > 0.0)
         .collect();
 
@@ -181,9 +179,7 @@ pub fn bioequivalence(
     // Same for AUCinf if all pairs have it
     let f_inf_values: Vec<f64> = pairs
         .iter()
-        .filter_map(|(test, reference)| {
-            bioavailability(test, reference).and_then(|r| r.f_auc_inf)
-        })
+        .filter_map(|(test, reference)| bioavailability(test, reference).and_then(|r| r.f_auc_inf))
         .filter(|f| f.is_finite() && *f > 0.0)
         .collect();
 
@@ -263,10 +259,9 @@ pub fn metabolite_parent_ratio(
     }
 
     // AUCinf ratio (if both available)
-    if let (Some(m_inf), Some(p_inf)) = (
-        metabolite.exposure.auc_inf_obs,
-        parent.exposure.auc_inf_obs,
-    ) {
+    if let (Some(m_inf), Some(p_inf)) =
+        (metabolite.exposure.auc_inf_obs, parent.exposure.auc_inf_obs)
+    {
         if p_inf > 0.0 {
             ratios.insert("auc_inf_ratio", m_inf / p_inf);
         }
@@ -357,7 +352,10 @@ mod tests {
         let iv_result = iv.nca(&opts).unwrap();
 
         let f = bioavailability(&oral_result, &iv_result).unwrap();
-        assert!(f.f_auc_last > 0.0 && f.f_auc_last < 1.0, "F should be < 1 (lower oral exposure)");
+        assert!(
+            f.f_auc_last > 0.0 && f.f_auc_last < 1.0,
+            "F should be < 1 (lower oral exposure)"
+        );
         // F from AUClast is AUClast_oral / AUClast_iv (same dose)
         let expected = oral_result.exposure.auc_last / iv_result.exposure.auc_last;
         assert!((f.f_auc_last - expected).abs() < 1e-10);

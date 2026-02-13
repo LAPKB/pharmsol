@@ -4,7 +4,7 @@
 //!
 //! Run with: `cargo run --example nca`
 
-use pharmsol::nca::{summarize, BLQRule, NCAOptions, RouteParams, NCA, NCAPopulation};
+use pharmsol::nca::{summarize, BLQRule, NCAOptions, NCAPopulation, RouteParams, NCA};
 use pharmsol::prelude::*;
 use pharmsol::Censor;
 
@@ -294,7 +294,10 @@ fn population_summary_example() {
     for subj_result in &grouped {
         let n_ok = subj_result.successes().len();
         let n_err = subj_result.errors().len();
-        println!("  {}: {} ok, {} errors", subj_result.subject_id, n_ok, n_err);
+        println!(
+            "  {}: {} ok, {} errors",
+            subj_result.subject_id, n_ok, n_err
+        );
     }
 
     // Demonstrate to_row() for CSV-like output

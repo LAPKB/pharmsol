@@ -5,8 +5,8 @@
 
 use crate::data::Subject;
 use crate::nca::*;
-use crate::SubjectBuilderExt;
 use crate::Data;
+use crate::SubjectBuilderExt;
 
 // ============================================================================
 // Test subject builders
@@ -737,10 +737,7 @@ fn test_nca_returns_single_result() {
     let subject = single_dose_oral();
     let options = NCAOptions::default();
     let result = subject.nca(&options);
-    assert!(
-        result.is_ok(),
-        "nca() should succeed for a valid subject"
-    );
+    assert!(result.is_ok(), "nca() should succeed for a valid subject");
     let r = result.unwrap();
     assert!(r.exposure.cmax > 0.0);
     assert_eq!(r.subject_id.as_deref(), Some("test"));
@@ -871,7 +868,8 @@ fn test_nca_with_dose_no_dose() {
     use crate::data::observation::ObservationProfile;
     use crate::data::Route;
 
-    let profile = ObservationProfile::from_raw(&[0.0, 1.0, 4.0, 8.0], &[0.0, 10.0, 5.0, 1.0]).unwrap();
+    let profile =
+        ObservationProfile::from_raw(&[0.0, 1.0, 4.0, 8.0], &[0.0, 10.0, 5.0, 1.0]).unwrap();
     let options = NCAOptions::default();
     let result = profile
         .nca_with_dose(None, Route::Extravascular, None, &options)

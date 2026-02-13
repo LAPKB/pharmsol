@@ -20,6 +20,4 @@ pub enum NCAError {
     /// Invalid parameter value
     #[error("Invalid parameter: {param} = {value}")]
     InvalidParameter { param: String, value: String },
-
-
 }

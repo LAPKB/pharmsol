@@ -97,9 +97,7 @@ pub fn predict(
 
     // Generate evaluation times within [0, tau]
     let eval_times: Vec<f64> = match n_eval_points {
-        Some(n) if n >= 2 => {
-            (0..n).map(|i| i as f64 * tau / (n - 1) as f64).collect()
-        }
+        Some(n) if n >= 2 => (0..n).map(|i| i as f64 * tau / (n - 1) as f64).collect(),
         _ => {
             // Use observed times that fall within [0, tau], plus tau itself
             let mut times: Vec<f64> = profile
@@ -139,7 +137,10 @@ pub fn predict(
         n_doses = dose_k + 1;
 
         // Check convergence: if the maximum contribution from this dose is negligible
-        if dose_k > 0 && max_contribution < tolerance * ss_concentrations.iter().cloned().fold(0.0_f64, f64::max) {
+        if dose_k > 0
+            && max_contribution
+                < tolerance * ss_concentrations.iter().cloned().fold(0.0_f64, f64::max)
+        {
             break;
         }
     }
@@ -167,7 +168,8 @@ pub fn predict(
     let cavg_ss = if tau > 0.0 { auc_tau_ss / tau } else { 0.0 };
 
     // Single-dose AUC over tau for accumulation ratio
-    let single_dose_auc_tau = trapezoidal_auc_from_profile(profile, clast, tlast, lambda_z, tau, &eval_times);
+    let single_dose_auc_tau =
+        trapezoidal_auc_from_profile(profile, clast, tlast, lambda_z, tau, &eval_times);
     let accumulation_ratio = if single_dose_auc_tau > 0.0 {
         auc_tau_ss / single_dose_auc_tau
     } else {
@@ -321,10 +323,13 @@ impl Superposition for Subject {
             })?;
 
         // Get profile from first occasion
-        let occ = self.occasions().first().ok_or_else(|| NCAError::InvalidParameter {
-            param: "occasion".to_string(),
-            value: "no occasions found".to_string(),
-        })?;
+        let occ = self
+            .occasions()
+            .first()
+            .ok_or_else(|| NCAError::InvalidParameter {
+                param: "occasion".to_string(),
+                value: "no occasions found".to_string(),
+            })?;
         let profile = ObservationProfile::from_occasion(occ, outeq, &BLQRule::Exclude)?;
 
         predict(&profile, lambda_z, tau, n_eval_points).ok_or_else(|| NCAError::InvalidParameter {
@@ -338,8 +343,8 @@ impl Superposition for Subject {
 mod tests {
     use super::*;
     use crate::data::builder::SubjectBuilderExt;
-    use crate::Subject;
     use crate::data::event::BLQRule;
+    use crate::Subject;
 
     #[test]
     fn test_superposition_basic() {
@@ -362,10 +367,19 @@ mod tests {
         let tau = 12.0;
         let result = predict(&profile, lambda_z, tau, Some(25)).unwrap();
 
-        assert!(result.cmax_ss > 10.0, "SS Cmax should be > single dose Cmax due to accumulation");
+        assert!(
+            result.cmax_ss > 10.0,
+            "SS Cmax should be > single dose Cmax due to accumulation"
+        );
         assert!(result.cmin_ss > 0.0, "SS Cmin should be positive");
-        assert!(result.accumulation_ratio > 1.0, "Accumulation ratio should be > 1");
-        assert!(result.n_doses > 1, "Should require multiple doses to converge");
+        assert!(
+            result.accumulation_ratio > 1.0,
+            "Accumulation ratio should be > 1"
+        );
+        assert!(
+            result.n_doses > 1,
+            "Should require multiple doses to converge"
+        );
     }
 
     #[test]

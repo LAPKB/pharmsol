@@ -835,7 +835,10 @@ mod tests {
         // 0→1: both above (10≥4, 5≥4) → 1.0
         // 1→2: crosses below, t_cross = 1.0 + 1.0 * (5-4)/(5-0) = 1.2
         let expected = 1.0 + 0.2;
-        assert!((result - expected).abs() < 1e-10, "Crossing: {result} != {expected}");
+        assert!(
+            (result - expected).abs() < 1e-10,
+            "Crossing: {result} != {expected}"
+        );
     }
 
     #[test]

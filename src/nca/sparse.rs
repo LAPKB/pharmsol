@@ -91,7 +91,9 @@ pub fn sparse_auc(
     for &idx in &indices {
         let t = times[idx];
         let c = concentrations[idx];
-        let matched = time_groups.iter_mut().find(|(gt, _)| (t - *gt).abs() <= tol);
+        let matched = time_groups
+            .iter_mut()
+            .find(|(gt, _)| (t - *gt).abs() <= tol);
         if let Some((_, group)) = matched {
             group.push(c);
         } else {
@@ -222,17 +224,9 @@ mod tests {
     #[test]
     fn test_sparse_auc_basic() {
         // 4 time points, 3 subjects each
-        let times = vec![
-            0.0, 0.0, 0.0,
-            1.0, 1.0, 1.0,
-            4.0, 4.0, 4.0,
-            8.0, 8.0, 8.0,
-        ];
+        let times = vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 4.0, 4.0, 4.0, 8.0, 8.0, 8.0];
         let concs = vec![
-            0.0, 0.0, 0.0,
-            10.0, 12.0, 11.0,
-            5.0, 4.0, 6.0,
-            1.0, 1.5, 1.2,
+            0.0, 0.0, 0.0, 10.0, 12.0, 11.0, 5.0, 4.0, 6.0, 1.0, 1.5, 1.2,
         ];
 
         let result = sparse_auc(&times, &concs, None).unwrap();

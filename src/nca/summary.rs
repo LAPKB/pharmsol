@@ -253,12 +253,7 @@ mod tests {
     use crate::data::event::Route;
     use crate::nca::types::*;
 
-    fn make_result(
-        subject_id: &str,
-        cmax: f64,
-        auc_last: f64,
-        lambda_z: f64,
-    ) -> NCAResult {
+    fn make_result(subject_id: &str, cmax: f64, auc_last: f64, lambda_z: f64) -> NCAResult {
         let half_life = std::f64::consts::LN_2 / lambda_z;
         NCAResult {
             subject_id: Some(subject_id.to_string()),
@@ -310,9 +305,7 @@ mod tests {
             route_params: Some(RouteParams::Extravascular),
             steady_state: None,
             multi_dose: None,
-            quality: Quality {
-                warnings: vec![],
-            },
+            quality: Quality { warnings: vec![] },
         }
     }
 
