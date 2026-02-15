@@ -1,0 +1,333 @@
+{
+  "version": "1.0",
+  "description": "Independent test scenarios for NCA cross-validation",
+  "scenarios": [
+    {
+      "id": "basic_oral_01",
+      "name": "Basic single-dose oral absorption",
+      "description": "Standard oral PK profile with clear absorption and elimination phases",
+      "route": "extravascular",
+      "dose": { "amount": 100, "time": 0 },
+      "times": [0, 0.5, 1, 2, 3, 4, 6, 8, 12, 24],
+      "concentrations": [0, 2.5, 8.0, 12.0, 10.0, 7.5, 4.2, 2.3, 0.7, 0.05],
+      "test_params": [
+        "cmax",
+        "tmax",
+        "auc_last",
+        "auc_inf",
+        "lambda_z",
+        "half_life",
+        "cl_f",
+        "vz_f"
+      ]
+    },
+    {
+      "id": "basic_oral_02",
+      "name": "Oral with delayed Tmax",
+      "description": "Slower absorption with Tmax at 4 hours",
+      "route": "extravascular",
+      "dose": { "amount": 250, "time": 0 },
+      "times": [0, 0.5, 1, 2, 4, 6, 8, 12, 24, 48],
+      "concentrations": [0, 0.5, 2.0, 5.5, 10.0, 8.5, 6.2, 3.1, 0.8, 0.05],
+      "test_params": [
+        "cmax",
+        "tmax",
+        "auc_last",
+        "auc_inf",
+        "lambda_z",
+        "half_life",
+        "tlag"
+      ]
+    },
+    {
+      "id": "iv_bolus_01",
+      "name": "IV bolus single compartment",
+      "description": "Monoexponential decline after IV bolus",
+      "route": "iv_bolus",
+      "dose": { "amount": 100, "time": 0 },
+      "times": [0, 0.25, 0.5, 1, 2, 4, 6, 8, 12],
+      "concentrations": [10.0, 8.8, 7.8, 6.1, 3.7, 1.4, 0.5, 0.2, 0.03],
+      "test_params": [
+        "c0",
+        "cmax",
+        "auc_last",
+        "auc_inf",
+        "lambda_z",
+        "half_life",
+        "cl",
+        "vd",
+        "vss"
+      ]
+    },
+    {
+      "id": "iv_bolus_02",
+      "name": "IV bolus two-compartment",
+      "description": "Biexponential decline showing distribution phase",
+      "route": "iv_bolus",
+      "dose": { "amount": 500, "time": 0 },
+      "times": [0, 0.083, 0.25, 0.5, 1, 2, 4, 8, 12, 24],
+      "concentrations": [
+        50.0, 35.0, 22.0, 15.0, 10.0, 6.5, 3.8, 1.3, 0.45, 0.05
+      ],
+      "test_params": [
+        "c0",
+        "cmax",
+        "auc_last",
+        "auc_inf",
+        "lambda_z",
+        "half_life"
+      ]
+    },
+    {
+      "id": "iv_infusion_01",
+      "name": "1-hour IV infusion",
+      "description": "IV infusion over 1 hour",
+      "route": "iv_infusion",
+      "dose": { "amount": 200, "time": 0, "duration": 1.0 },
+      "times": [0, 0.5, 1, 1.5, 2, 4, 6, 8, 12],
+      "concentrations": [0, 8.0, 15.0, 12.5, 10.0, 5.0, 2.5, 1.25, 0.3],
+      "test_params": [
+        "cmax",
+        "tmax",
+        "auc_last",
+        "auc_inf",
+        "lambda_z",
+        "half_life",
+        "cl",
+        "vss"
+      ]
+    },
+    {
+      "id": "auc_method_linear",
+      "name": "AUC comparison - Linear method",
+      "description": "Profile for comparing AUC calculation methods",
+      "route": "extravascular",
+      "dose": { "amount": 100, "time": 0 },
+      "times": [0, 1, 2, 3, 4, 6, 8, 12],
+      "concentrations": [0, 5.0, 10.0, 8.0, 6.0, 3.0, 1.5, 0.4],
+      "auc_method": "linear",
+      "test_params": ["auc_last", "aumc_last"]
+    },
+    {
+      "id": "auc_method_linuplogdown",
+      "name": "AUC comparison - Lin up/log down",
+      "description": "Same profile with lin-up/log-down method",
+      "route": "extravascular",
+      "dose": { "amount": 100, "time": 0 },
+      "times": [0, 1, 2, 3, 4, 6, 8, 12],
+      "concentrations": [0, 5.0, 10.0, 8.0, 6.0, 3.0, 1.5, 0.4],
+      "auc_method": "lin up/log down",
+      "test_params": ["auc_last", "aumc_last"]
+    },
+    {
+      "id": "auc_method_linlog",
+      "name": "AUC comparison - Lin-log method",
+      "description": "Same profile with lin-log method (linear pre-Tmax, log post-Tmax)",
+      "route": "extravascular",
+      "dose": { "amount": 100, "time": 0 },
+      "times": [0, 1, 2, 3, 4, 6, 8, 12],
+      "concentrations": [0, 5.0, 10.0, 8.0, 6.0, 3.0, 1.5, 0.4],
+      "auc_method": "lin-log",
+      "test_params": ["auc_last", "aumc_last"]
+    },
+    {
+      "id": "lambda_z_short",
+      "name": "Lambda-z with minimum points",
+      "description": "Short terminal phase with 3 points",
+      "route": "extravascular",
+      "dose": { "amount": 100, "time": 0 },
+      "times": [0, 1, 2, 4, 6, 8],
+      "concentrations": [0, 10.0, 8.0, 4.0, 2.0, 1.0],
+      "test_params": ["lambda_z", "half_life", "r_squared", "n_points_lambda_z"]
+    },
+    {
+      "id": "lambda_z_long",
+      "name": "Lambda-z with many points",
+      "description": "Extended terminal phase with 8 points",
+      "route": "extravascular",
+      "dose": { "amount": 100, "time": 0 },
+      "times": [0, 1, 2, 4, 6, 8, 12, 16, 24, 36, 48],
+      "concentrations": [
+        0, 10.0, 12.0, 8.0, 5.5, 3.8, 1.8, 0.85, 0.19, 0.02, 0.002
+      ],
+      "test_params": [
+        "lambda_z",
+        "half_life",
+        "r_squared",
+        "adj_r_squared",
+        "n_points_lambda_z"
+      ]
+    },
+    {
+      "id": "blq_middle",
+      "name": "BLQ in middle of profile",
+      "description": "Profile with BLQ values between positive concentrations",
+      "route": "extravascular",
+      "dose": { "amount": 100, "time": 0 },
+      "times": [0, 1, 2, 3, 4, 6, 8, 12],
+      "concentrations": [0, 5.0, 10.0, 0, 6.0, 3.0, 1.5, 0.4],
+      "blq_indices": [0, 3],
+      "loq": 0.1,
+      "blq_rule": "exclude",
+      "test_params": ["cmax", "tmax", "auc_last", "tlast"]
+    },
+    {
+      "id": "blq_positional",
+      "name": "BLQ with positional handling",
+      "description": "BLQ at start, middle, and end with positional rule",
+      "route": "extravascular",
+      "dose": { "amount": 100, "time": 0 },
+      "times": [0, 1, 2, 4, 8, 12],
+      "concentrations": [0, 10.0, 0, 4.0, 2.0, 0],
+      "blq_indices": [0, 2, 5],
+      "loq": 0.1,
+      "blq_rule": "positional",
+      "test_params": ["cmax", "tmax", "auc_last", "tlast", "clast"]
+    },
+    {
+      "id": "sparse_profile",
+      "name": "Sparse sampling profile",
+      "description": "Only 4 concentration time points",
+      "route": "extravascular",
+      "dose": { "amount": 100, "time": 0 },
+      "times": [0, 2, 8, 24],
+      "concentrations": [0, 12.0, 3.0, 0.2],
+      "test_params": ["cmax", "tmax", "auc_last"]
+    },
+    {
+      "id": "flat_cmax",
+      "name": "Multiple Tmax candidates",
+      "description": "Profile where Cmax is reached at multiple time points",
+      "route": "extravascular",
+      "dose": { "amount": 100, "time": 0 },
+      "times": [0, 1, 2, 3, 4, 6, 8],
+      "concentrations": [0, 5.0, 10.0, 10.0, 10.0, 6.0, 3.0],
+      "test_params": ["cmax", "tmax"]
+    },
+    {
+      "id": "high_extrapolation",
+      "name": "High AUC extrapolation percentage",
+      "description": "Profile where extrapolated portion is significant",
+      "route": "extravascular",
+      "dose": { "amount": 100, "time": 0 },
+      "times": [0, 1, 2, 4, 6],
+      "concentrations": [0, 10.0, 8.0, 5.0, 3.0],
+      "test_params": ["auc_last", "auc_inf", "auc_extrap_pct"]
+    },
+    {
+      "id": "clast_pred_comparison",
+      "name": "Clast observed vs predicted",
+      "description": "Compare AUCinf,obs vs AUCinf,pred",
+      "route": "extravascular",
+      "dose": { "amount": 100, "time": 0 },
+      "times": [0, 1, 2, 4, 6, 8, 12],
+      "concentrations": [0, 8.0, 12.0, 7.0, 4.0, 2.3, 0.8],
+      "test_params": ["clast_obs", "clast_pred", "auc_inf_obs", "auc_inf_pred"]
+    },
+    {
+      "id": "partial_auc",
+      "name": "Partial AUC calculation",
+      "description": "AUC over specific time interval",
+      "route": "extravascular",
+      "dose": { "amount": 100, "time": 0 },
+      "times": [0, 1, 2, 4, 6, 8, 12, 24],
+      "concentrations": [0, 5.0, 10.0, 8.0, 5.5, 3.5, 1.5, 0.3],
+      "partial_auc_interval": [2, 8],
+      "test_params": ["auc_last", "partial_auc"]
+    },
+    {
+      "id": "mrt_calculation",
+      "name": "MRT and related parameters",
+      "description": "Mean residence time calculation",
+      "route": "extravascular",
+      "dose": { "amount": 100, "time": 0 },
+      "times": [0, 0.5, 1, 2, 4, 6, 8, 12, 24],
+      "concentrations": [0, 3.0, 8.0, 10.0, 6.5, 4.0, 2.5, 1.0, 0.15],
+      "test_params": ["auc_inf", "aumc_inf", "mrt"]
+    },
+    {
+      "id": "tlag_detection",
+      "name": "Lag time detection",
+      "description": "Profile with absorption lag",
+      "route": "extravascular",
+      "dose": { "amount": 100, "time": 0 },
+      "times": [0, 0.25, 0.5, 1, 2, 4, 6, 8],
+      "concentrations": [0, 0, 0, 5.0, 10.0, 6.0, 3.0, 1.5],
+      "test_params": ["tlag", "cmax", "tmax"]
+    },
+    {
+      "id": "numerical_precision",
+      "name": "Numerical precision test",
+      "description": "Values requiring high precision",
+      "route": "extravascular",
+      "dose": { "amount": 1000, "time": 0 },
+      "times": [0, 0.5, 1, 2, 4, 8, 12, 24, 48, 72, 96],
+      "concentrations": [
+        0, 15.234, 45.678, 67.891, 52.345, 28.123, 15.067, 4.321, 0.354, 0.029,
+        0.002
+      ],
+      "test_params": ["auc_last", "auc_inf", "lambda_z", "half_life"]
+    },
+    {
+      "id": "steady_state_oral",
+      "name": "Steady-state oral dosing",
+      "description": "Profile at steady state with tau=12h for cmin, cavg, fluctuation, swing",
+      "route": "extravascular",
+      "dose": { "amount": 100, "time": 0 },
+      "tau": 12,
+      "times": [0, 0.5, 1, 2, 4, 6, 8, 10, 12],
+      "concentrations": [1.5, 5.0, 10.0, 12.0, 8.0, 5.5, 3.5, 2.2, 1.5],
+      "test_params": ["cmax", "cmin", "cavg", "auc_tau", "fluctuation", "swing"]
+    },
+    {
+      "id": "steady_state_iv",
+      "name": "Steady-state IV infusion",
+      "description": "IV infusion at steady state with tau=24h",
+      "route": "iv_infusion",
+      "dose": { "amount": 500, "time": 0, "duration": 2.0 },
+      "tau": 24,
+      "times": [0, 1, 2, 4, 6, 8, 12, 18, 24],
+      "concentrations": [2.0, 12.0, 18.0, 14.0, 10.5, 7.5, 4.0, 1.5, 0.5],
+      "test_params": ["cmax", "cmin", "cavg", "auc_tau", "mrt_iv"]
+    },
+    {
+      "id": "c0_logslope",
+      "name": "C0 back-extrapolation test",
+      "description": "IV bolus with C0 estimated via log-linear back-extrapolation",
+      "route": "iv_bolus",
+      "dose": { "amount": 100, "time": 0 },
+      "times": [0, 0.5, 1, 2, 4, 6, 8],
+      "concentrations": [0, 8.0, 6.5, 4.3, 1.9, 0.8, 0.35],
+      "test_params": ["c0", "auc_last", "auc_inf", "vd", "vss"]
+    },
+    {
+      "id": "span_ratio_test",
+      "name": "Span ratio quality metric",
+      "description": "Test span ratio calculation for lambda-z regression",
+      "route": "extravascular",
+      "dose": { "amount": 100, "time": 0 },
+      "times": [0, 1, 2, 4, 8, 12, 24, 48],
+      "concentrations": [0, 8.0, 12.0, 9.0, 5.0, 2.8, 0.9, 0.1],
+      "test_params": [
+        "lambda_z",
+        "half_life",
+        "span_ratio",
+        "r_squared",
+        "n_points_lambda_z"
+      ]
+    },
+    {
+      "id": "auc_all_terminal_blq",
+      "name": "AUCall with terminal BLQ",
+      "description": "Profile with BLQ values at end to test AUCall vs AUClast",
+      "route": "extravascular",
+      "dose": { "amount": 100, "time": 0 },
+      "times": [0, 1, 2, 4, 6, 8, 10, 12],
+      "concentrations": [0, 5.0, 10.0, 6.0, 3.0, 1.5, 0, 0],
+      "blq_indices": [0, 6, 7],
+      "loq": 0.5,
+      "blq_rule": "exclude",
+      "test_params": ["auc_last", "auc_all", "tlast", "clast"]
+    }
+  ]
+}

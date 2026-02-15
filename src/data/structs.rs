@@ -285,6 +285,21 @@ impl Data {
         outeq_values.dedup();
         outeq_values
     }
+
+    /// Total dose per subject
+    pub fn total_dose(&self) -> Vec<f64> {
+        self.subjects.iter().map(|s| s.total_dose()).collect()
+    }
+
+    /// Route per subject (detected from first dosed occasion)
+    pub fn route(&self) -> Vec<Route> {
+        self.subjects.iter().map(|s| s.route()).collect()
+    }
+
+    /// Dose events per subject
+    pub fn doses(&self) -> Vec<Vec<(f64, f64, usize)>> {
+        self.subjects.iter().map(|s| s.doses()).collect()
+    }
 }
 
 impl IntoIterator for Data {
@@ -469,6 +484,73 @@ impl Subject {
         self.id.hash(&mut hasher);
         hasher.finish()
     }
+
+    /// Extract time-concentration data for a specific output equation
+    ///
+    /// Returns vectors of (times, concentrations, censoring) for the specified outeq
+    /// across all occasions.
+    ///
+    /// # Arguments
+    ///
+    /// * `outeq` - Output equation index to extract
+    ///
+    /// # Returns
+    ///
+    /// Tuple of (times, concentrations, censoring) vectors
+    pub fn get_observations(&self, outeq: usize) -> (Vec<f64>, Vec<f64>, Vec<Censor>) {
+        let mut times = Vec::new();
+        let mut concs = Vec::new();
+        let mut censoring = Vec::new();
+
+        for occasion in &self.occasions {
+            let (t, c, cens) = occasion.get_observations(outeq);
+            times.extend(t);
+            concs.extend(c);
+            censoring.extend(cens);
+        }
+
+        (times, concs, censoring)
+    }
+
+    // ========================================================================
+    // Dose Introspection (delegates to occasions)
+    // ========================================================================
+
+    /// Total dose administered across all occasions
+    pub fn total_dose(&self) -> f64 {
+        self.occasions.iter().map(|o| o.total_dose()).sum()
+    }
+
+    /// Route detected from the first occasion that has doses
+    ///
+    /// In multi-occasion subjects, returns the route from the first
+    /// occasion containing dose events.
+    pub fn route(&self) -> Route {
+        self.occasions
+            .iter()
+            .find(|o| o.total_dose() > 0.0)
+            .map(|o| o.route())
+            .unwrap_or_default()
+    }
+
+    /// All dose events across all occasions as (time, amount, input) tuples
+    pub fn doses(&self) -> Vec<(f64, f64, usize)> {
+        self.occasions.iter().flat_map(|o| o.doses()).collect()
+    }
+
+    /// Whether any occasion contains an infusion event
+    pub fn has_infusion(&self) -> bool {
+        self.occasions.iter().any(|o| o.has_infusion())
+    }
+
+    /// Duration of the first infusion across all occasions, if any
+    pub fn infusion_duration(&self) -> Option<f64> {
+        self.occasions.iter().find_map(|o| o.infusion_duration())
+    }
+
+    // ========================================================================
+    // Filtered Observations
+    // ========================================================================
 }
 
 impl IntoIterator for Subject {
@@ -792,6 +874,184 @@ impl Occasion {
     /// `true` if there are no events, `false` otherwise
     pub fn is_empty(&self) -> bool {
         self.events.is_empty()
+    }
+
+    // ========================================================================
+    // Dose Introspection
+    // ========================================================================
+
+    /// Total dose administered in this occasion
+    ///
+    /// Sums the amounts of all [`Event::Bolus`] and [`Event::Infusion`] events.
+    /// Returns 0.0 if there are no dose events.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use pharmsol::*;
+    ///
+    /// let subject = Subject::builder("pt1")
+    ///     .bolus(0.0, 50.0, 0)
+    ///     .bolus(0.0, 50.0, 0)
+    ///     .observation(1.0, 10.0, 0)
+    ///     .build();
+    ///
+    /// let occasion = &subject.occasions()[0];
+    /// assert_eq!(occasion.total_dose(), 100.0);
+    /// ```
+    pub fn total_dose(&self) -> f64 {
+        self.events.iter().fold(0.0, |acc, e| match e {
+            Event::Bolus(b) => acc + b.amount(),
+            Event::Infusion(inf) => acc + inf.amount(),
+            _ => acc,
+        })
+    }
+
+    /// Administration route detected from dose events
+    ///
+    /// Route is determined by the following rules:
+    /// - If any infusion is present → [`Route::IVInfusion`]
+    /// - If all boluses target depot compartment (`input == 0`) → [`Route::Extravascular`]
+    /// - If any bolus targets central compartment (`input >= 1`) → [`Route::IVBolus`]
+    /// - If no doses → [`Route::Extravascular`] (default)
+    ///
+    /// # Input convention
+    ///
+    /// The `input` field on [`Bolus`] and [`Infusion`] events encodes the target compartment:
+    /// - `input == 0`: Depot compartment (extravascular absorption — oral, SC, IM, etc.)
+    /// - `input >= 1`: Central compartment (intravenous)
+    pub fn route(&self) -> Route {
+        let mut has_infusion = false;
+        let mut has_extravascular = false;
+        let mut has_dose = false;
+
+        for event in &self.events {
+            match event {
+                Event::Infusion(_) => {
+                    has_infusion = true;
+                    has_dose = true;
+                }
+                Event::Bolus(b) => {
+                    has_dose = true;
+                    if b.input() == 0 {
+                        has_extravascular = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if !has_dose {
+            return Route::Extravascular; // default
+        }
+
+        if has_infusion {
+            Route::IVInfusion
+        } else if has_extravascular {
+            Route::Extravascular
+        } else {
+            Route::IVBolus
+        }
+    }
+
+    /// Whether this occasion contains any infusion events
+    pub fn has_infusion(&self) -> bool {
+        self.events.iter().any(|e| matches!(e, Event::Infusion(_)))
+    }
+
+    /// All distinct administration routes detected from dose events
+    ///
+    /// Used by NCA to detect mixed-route occasions. Returns one entry per
+    /// unique [`Route`] variant present (IVBolus, IVInfusion, Extravascular).
+    pub fn routes(&self) -> Vec<Route> {
+        let mut has_infusion = false;
+        let mut has_extravascular = false;
+        let mut has_iv_bolus = false;
+
+        for event in &self.events {
+            match event {
+                Event::Infusion(_) => has_infusion = true,
+                Event::Bolus(b) => {
+                    if b.input() == 0 {
+                        has_extravascular = true;
+                    } else {
+                        has_iv_bolus = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let mut routes = Vec::new();
+        if has_infusion {
+            routes.push(Route::IVInfusion);
+        }
+        if has_iv_bolus {
+            routes.push(Route::IVBolus);
+        }
+        if has_extravascular {
+            routes.push(Route::Extravascular);
+        }
+        routes
+    }
+
+    /// Duration of the (first) infusion, if any
+    ///
+    /// Returns `None` if there are no infusion events.
+    /// If multiple infusions exist, returns the duration of the first.
+    pub fn infusion_duration(&self) -> Option<f64> {
+        self.events.iter().find_map(|e| match e {
+            Event::Infusion(inf) => Some(inf.duration()),
+            _ => None,
+        })
+    }
+
+    /// All dose events as (time, amount, input) tuples
+    ///
+    /// Returns a vector of all bolus and infusion doses with their timing,
+    /// amount, and target compartment. Useful for multi-dose analysis.
+    pub fn doses(&self) -> Vec<(f64, f64, usize)> {
+        self.events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Bolus(b) => Some((b.time(), b.amount(), b.input())),
+                Event::Infusion(inf) => Some((inf.time(), inf.amount(), inf.input())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    // ========================================================================
+    // Observation Extraction
+    // ========================================================================
+
+    /// Extract time-concentration data for a specific output equation
+    ///
+    /// # Arguments
+    ///
+    /// * `outeq` - Output equation index to extract
+    ///
+    /// # Returns
+    ///
+    /// Tuple of (times, concentrations, censoring) vectors
+    pub fn get_observations(&self, outeq: usize) -> (Vec<f64>, Vec<f64>, Vec<Censor>) {
+        let mut times = Vec::new();
+        let mut concs = Vec::new();
+        let mut censoring = Vec::new();
+
+        for event in &self.events {
+            if let Event::Observation(obs) = event {
+                if obs.outeq() == outeq {
+                    if let Some(value) = obs.value() {
+                        times.push(obs.time());
+                        concs.push(value);
+                        censoring.push(obs.censoring());
+                    }
+                }
+            }
+        }
+
+        (times, concs, censoring)
     }
 }
 

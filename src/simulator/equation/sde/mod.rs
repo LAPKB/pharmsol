@@ -290,8 +290,10 @@ impl EquationPriv for SDE {
         output: &mut Self::P,
     ) -> Result<(), PharmsolError> {
         let mut pred = vec![Prediction::default(); self.nparticles];
+        // Use nouteqs + 1 to support both 0-indexed and 1-indexed data
+        let output_buffer_size = self.get_nouteqs() + 1;
         pred.par_iter_mut().enumerate().for_each(|(i, p)| {
-            let mut y = V::zeros(self.get_nouteqs(), NalgebraContext);
+            let mut y = V::zeros(output_buffer_size, NalgebraContext);
             (self.out)(
                 &x[i].clone().into(),
                 &V::from_vec(support_point.clone(), NalgebraContext),
