@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-01-11T19:51:40",
-  "r_version": "R version 4.5.1 (2025-06-13)",
+  "generated_at": "2026-02-15T16:07:09",
+  "r_version": "R version 4.5.1 (2025-06-13 ucrt)",
   "pknca_version": "0.12.1",
   "scenario_count": 25,
   "results": {
