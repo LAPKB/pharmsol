@@ -333,7 +333,7 @@ mod tests {
     /// Load test scenarios and expected values, run validation
     #[test]
     fn validate_against_pknca() {
-        let base_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/pknca_validation");
+        let base_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/nca/pknca/");
 
         // Load scenarios
         let scenarios_path = base_path.join("test_scenarios.json");

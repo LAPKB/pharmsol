@@ -6,5 +6,6 @@
 
 pub mod test_auc;
 pub mod test_params;
+pub mod test_pknca;
 pub mod test_quality;
 pub mod test_terminal;
