@@ -3,6 +3,82 @@ use crate::prelude::simulator::Prediction;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+// ============================================================================
+// Shared Analysis Types
+// ============================================================================
+
+/// Administration route for a dosing event
+///
+/// Determined by the type of dose events and their target compartment:
+/// - [`Event::Infusion`] → [`Route::IVInfusion`]
+/// - [`Event::Bolus`] with `input >= 1` (central compartment) → [`Route::IVBolus`]
+/// - [`Event::Bolus`] with `input == 0` (depot compartment) → [`Route::Extravascular`]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Route {
+    /// Intravenous bolus
+    IVBolus,
+    /// Intravenous infusion
+    IVInfusion,
+    /// Extravascular (oral, SC, IM, etc.)
+    #[default]
+    Extravascular,
+}
+
+/// AUC calculation method
+///
+/// Controls how the area under the concentration-time curve is computed.
+/// This is a general trapezoidal method applicable to any AUC calculation,
+/// not specific to NCA analysis.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AUCMethod {
+    /// Linear trapezoidal rule
+    Linear,
+    /// Linear up / log down (industry standard)
+    #[default]
+    LinUpLogDown,
+    /// Linear before Tmax, log-linear after Tmax (PKNCA "lin-log")
+    ///
+    /// Uses linear trapezoidal before and at Tmax, then log-linear for
+    /// descending portions after Tmax. Falls back to linear if either
+    /// concentration is zero or non-positive.
+    LinLog,
+}
+
+/// BLQ (Below Limit of Quantification) handling rule
+///
+/// Controls how observations marked with [`Censor::BLOQ`] are handled
+/// during analysis. Applicable to NCA, AUC calculations, and any
+/// observation-processing pipeline.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub enum BLQRule {
+    /// Replace BLQ with zero
+    Zero,
+    /// Replace BLQ with LOQ/2
+    LoqOver2,
+    /// Exclude BLQ values from analysis
+    #[default]
+    Exclude,
+    /// Position-aware handling (PKNCA default): first=keep(0), middle=drop, last=keep(0)
+    ///
+    /// This is the FDA-recommended approach that:
+    /// - Keeps first BLQ (before tfirst) as 0 to anchor the profile start
+    /// - Drops middle BLQ (between tfirst and tlast) to avoid deflating AUC
+    /// - Keeps last BLQ (at/after tlast) as 0 to define profile end
+    Positional,
+    /// Tmax-relative handling: different rules before vs after Tmax
+    ///
+    /// Contains (before_tmax_rule, after_tmax_rule) where each rule can be:
+    /// - "keep" = keep as 0
+    /// - "drop" = exclude from analysis
+    /// Default PKNCA: before.tmax=drop, after.tmax=keep
+    TmaxRelative {
+        /// Rule for BLQ before Tmax: true=keep as 0, false=drop
+        before_tmax_keep: bool,
+        /// Rule for BLQ at or after Tmax: true=keep as 0, false=drop
+        after_tmax_keep: bool,
+    },
+}
+
 /// Represents a pharmacokinetic/pharmacodynamic event
 ///
 /// Events represent key occurrences in a PK/PD profile, including:
@@ -256,10 +332,11 @@ impl Infusion {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Censor {
     /// No censoring
+    #[default]
     None,
     /// Below the lower limit of quantification
     BLOQ,
