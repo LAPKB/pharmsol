@@ -2,11 +2,12 @@ mod closure;
 
 use crate::{
     data::{Covariates, Infusion},
-    error_model::ErrorModels,
+    error_model::AssayErrorModels,
     prelude::simulator::SubjectPredictions,
     simulator::{DiffEq, Fa, Init, Lag, Neqs, Out, M, V},
     Event, Observation, PharmsolError, Subject,
 };
+
 use cached::proc_macro::cached;
 use cached::UnboundCache;
 
@@ -14,7 +15,7 @@ use crate::simulator::equation::Predictions;
 use closure::PMProblem;
 use diffsol::{
     error::OdeSolverError, ode_solver::method::OdeSolverMethod, Bdf, NalgebraContext,
-    NewtonNonlinearSolver, OdeBuilder, OdeSolverStopReason, Vector, VectorHost,
+    NewtonNonlinearSolver, NoLineSearch, OdeBuilder, OdeSolverStopReason, Vector, VectorHost,
 };
 use nalgebra::DVector;
 
@@ -73,7 +74,7 @@ fn _estimate_likelihood(
     ode: &ODE,
     subject: &Subject,
     support_point: &Vec<f64>,
-    error_models: &ErrorModels,
+    error_models: &AssayErrorModels,
     cache: bool,
 ) -> Result<f64, PharmsolError> {
     let ypred = if cache {
@@ -81,7 +82,7 @@ fn _estimate_likelihood(
     } else {
         _subject_predictions_no_cache(ode, subject, support_point)
     }?;
-    ypred.likelihood(error_models)
+    Ok(ypred.log_likelihood(error_models)?.exp())
 }
 
 #[inline(always)]
@@ -151,7 +152,7 @@ impl EquationPriv for ODE {
         &self,
         _support_point: &Vec<f64>,
         _observation: &Observation,
-        _error_models: Option<&ErrorModels>,
+        _error_models: Option<&AssayErrorModels>,
         _time: f64,
         _covariates: &Covariates,
         _x: &mut Self::S,
@@ -178,7 +179,7 @@ impl Equation for ODE {
         &self,
         subject: &Subject,
         support_point: &Vec<f64>,
-        error_models: &ErrorModels,
+        error_models: &AssayErrorModels,
         cache: bool,
     ) -> Result<f64, PharmsolError> {
         _estimate_likelihood(self, subject, support_point, error_models, cache)
@@ -188,7 +189,7 @@ impl Equation for ODE {
         &self,
         subject: &Subject,
         support_point: &Vec<f64>,
-        error_models: &ErrorModels,
+        error_models: &AssayErrorModels,
         cache: bool,
     ) -> Result<f64, PharmsolError> {
         let ypred = if cache {
@@ -207,7 +208,7 @@ impl Equation for ODE {
         &self,
         subject: &Subject,
         support_point: &Vec<f64>,
-        error_models: Option<&ErrorModels>,
+        error_models: Option<&AssayErrorModels>,
     ) -> Result<(Self::P, Option<f64>), PharmsolError> {
         let mut output = Self::P::new(self.nparticles());
 
@@ -257,7 +258,7 @@ impl Equation for ODE {
             let mut solver: Bdf<
                 '_,
                 PMProblem<DiffEq>,
-                NewtonNonlinearSolver<M, diffsol::NalgebraLU<f64>>,
+                NewtonNonlinearSolver<M, diffsol::NalgebraLU<f64>, NoLineSearch>,
             > = problem.bdf::<diffsol::NalgebraLU<f64>>()?;
 
             // Iterate over events
@@ -324,7 +325,7 @@ impl Equation for ODE {
                         let pred =
                             observation.to_prediction(pred, solver.state().y.as_slice().to_vec());
                         if let Some(error_models) = error_models {
-                            likelihood.push(pred.likelihood(error_models)?);
+                            likelihood.push(pred.log_likelihood(error_models)?.exp());
                         }
                         output.add_prediction(pred);
                     }

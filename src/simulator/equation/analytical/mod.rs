@@ -7,6 +7,7 @@ pub use one_compartment_models::*;
 pub use three_compartment_models::*;
 pub use two_compartment_models::*;
 
+use crate::data::error_model::AssayErrorModels;
 use crate::PharmsolError;
 use crate::{
     data::Covariates, simulator::*, Equation, EquationPriv, EquationTypes, Observation, Subject,
@@ -172,7 +173,7 @@ impl EquationPriv for Analytical {
         &self,
         support_point: &Vec<f64>,
         observation: &Observation,
-        error_models: Option<&ErrorModels>,
+        error_models: Option<&AssayErrorModels>,
         _time: f64,
         covariates: &Covariates,
         x: &mut Self::S,
@@ -191,7 +192,7 @@ impl EquationPriv for Analytical {
         let pred = y[observation.outeq()];
         let pred = observation.to_prediction(pred, x.as_slice().to_vec());
         if let Some(error_models) = error_models {
-            likelihood.push(pred.likelihood(error_models)?);
+            likelihood.push(pred.log_likelihood(error_models)?.exp());
         }
         output.add_prediction(pred);
         Ok(())
@@ -287,7 +288,7 @@ impl Equation for Analytical {
         &self,
         subject: &Subject,
         support_point: &Vec<f64>,
-        error_models: &ErrorModels,
+        error_models: &AssayErrorModels,
         cache: bool,
     ) -> Result<f64, PharmsolError> {
         _estimate_likelihood(self, subject, support_point, error_models, cache)
@@ -297,7 +298,7 @@ impl Equation for Analytical {
         &self,
         subject: &Subject,
         support_point: &Vec<f64>,
-        error_models: &ErrorModels,
+        error_models: &AssayErrorModels,
         cache: bool,
     ) -> Result<f64, PharmsolError> {
         let ypred = if cache {
@@ -346,7 +347,7 @@ fn _estimate_likelihood(
     ode: &Analytical,
     subject: &Subject,
     support_point: &Vec<f64>,
-    error_models: &ErrorModels,
+    error_models: &AssayErrorModels,
     cache: bool,
 ) -> Result<f64, PharmsolError> {
     let ypred = if cache {
@@ -354,5 +355,5 @@ fn _estimate_likelihood(
     } else {
         _subject_predictions_no_cache(ode, subject, support_point)
     }?;
-    ypred.likelihood(error_models)
+    Ok(ypred.log_likelihood(error_models)?.exp())
 }
