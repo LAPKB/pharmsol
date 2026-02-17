@@ -6,7 +6,7 @@ use std::io::{self};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use rand::Rng;
+use rand::RngExt;
 use rand_distr::Alphanumeric;
 use std::process::{Command, Stdio};
 use std::thread;
