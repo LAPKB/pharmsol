@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.0](https://github.com/LAPKB/pharmsol/compare/v0.22.1...v0.23.0) - 2026-02-17
+
+### Added
+
+- Normalized rows  ([#205](https://github.com/LAPKB/pharmsol/pull/205))
+
+### Other
+
+- Update ndarray requirement from 0.16.1 to 0.17.2 ([#195](https://github.com/LAPKB/pharmsol/pull/195))
+- Update rand requirement from 0.9.0 to 0.10.0 ([#207](https://github.com/LAPKB/pharmsol/pull/207))
+- Update diffsol requirement from =0.8.0 to =0.10.4 ([#206](https://github.com/LAPKB/pharmsol/pull/206))
+- Bump actions/cache from 4 to 5 ([#184](https://github.com/LAPKB/pharmsol/pull/184))
+- Delete .DS_Store ([#191](https://github.com/LAPKB/pharmsol/pull/191))
+- Bump actions/upload-artifact from 4 to 6 ([#193](https://github.com/LAPKB/pharmsol/pull/193))
+- Bump actions/checkout from 4 to 6 ([#192](https://github.com/LAPKB/pharmsol/pull/192))
+- Prepare for submission to JOSS ([#186](https://github.com/LAPKB/pharmsol/pull/186))
+- Update examples ([#183](https://github.com/LAPKB/pharmsol/pull/183))
+
 ## [0.22.1](https://github.com/LAPKB/pharmsol/compare/v0.22.0...v0.22.1) - 2025-12-11
 
 ### Other
