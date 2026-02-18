@@ -1,6 +1,5 @@
 use crate::{data::Covariates, simulator::*};
-use diffsol::VectorCommon;
-use nalgebra::{DVector, Matrix3, Vector3};
+use diffsol::{FaerContext, Vector};
 
 ///
 /// Analytical for three compartments
@@ -74,36 +73,42 @@ pub fn three_compartments(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V
     let c26 = ((k10 + k12 + k13 - l2) * (k21 - l2) - (k12 * k21)) / ((l1 - l2) * (l3 - l2));
     let c27 = ((k10 + k12 + k13 - l3) * (k21 - l3) - (k12 * k21)) / ((l1 - l3) * (l2 - l3));
 
-    let non_zero_matrix = Matrix3::new(
-        c1 * exp_l1_t + c2 * exp_l2_t + c3 * exp_l3_t,
-        c4 * exp_l1_t + c5 * exp_l2_t + c6 * exp_l3_t,
-        c7 * exp_l1_t + c8 * exp_l2_t + c9 * exp_l3_t,
-        c10 * exp_l1_t + c11 * exp_l2_t + c12 * exp_l3_t,
-        c13 * exp_l1_t + c14 * exp_l2_t + c15 * exp_l3_t,
-        c16 * exp_l1_t + c17 * exp_l2_t + c18 * exp_l3_t,
-        c19 * exp_l1_t + c20 * exp_l2_t + c21 * exp_l3_t,
-        c22 * exp_l1_t + c23 * exp_l2_t + c24 * exp_l3_t,
-        c25 * exp_l1_t + c26 * exp_l2_t + c27 * exp_l3_t,
-    );
+    // 3x3 matrix-vector multiply inline
+    let x0 = x[0];
+    let x1 = x[1];
+    let x2 = x[2];
 
-    let non_zero = non_zero_matrix * x.inner();
+    let m00 = c1 * exp_l1_t + c2 * exp_l2_t + c3 * exp_l3_t;
+    let m01 = c4 * exp_l1_t + c5 * exp_l2_t + c6 * exp_l3_t;
+    let m02 = c7 * exp_l1_t + c8 * exp_l2_t + c9 * exp_l3_t;
+    let m10 = c10 * exp_l1_t + c11 * exp_l2_t + c12 * exp_l3_t;
+    let m11 = c13 * exp_l1_t + c14 * exp_l2_t + c15 * exp_l3_t;
+    let m12 = c16 * exp_l1_t + c17 * exp_l2_t + c18 * exp_l3_t;
+    let m20 = c19 * exp_l1_t + c20 * exp_l2_t + c21 * exp_l3_t;
+    let m21 = c22 * exp_l1_t + c23 * exp_l2_t + c24 * exp_l3_t;
+    let m22 = c25 * exp_l1_t + c26 * exp_l2_t + c27 * exp_l3_t;
 
-    let infusion_vector = Vector3::new(
-        ((1.0 - exp_l1_t) * c1 / l1) + ((1.0 - exp_l2_t) * c2 / l2) + ((1.0 - exp_l3_t) * c3 / l3),
-        ((1.0 - exp_l1_t) * c10 / l1)
-            + ((1.0 - exp_l2_t) * c11 / l2)
-            + ((1.0 - exp_l3_t) * c12 / l3),
-        ((1.0 - exp_l1_t) * c19 / l1)
-            + ((1.0 - exp_l2_t) * c20 / l2)
-            + ((1.0 - exp_l3_t) * c21 / l3),
-    );
+    let nz0 = m00 * x0 + m01 * x1 + m02 * x2;
+    let nz1 = m10 * x0 + m11 * x1 + m12 * x2;
+    let nz2 = m20 * x0 + m21 * x1 + m22 * x2;
 
-    let infusion = infusion_vector * rateiv[0];
+    let inf0 = (((1.0 - exp_l1_t) * c1 / l1)
+        + ((1.0 - exp_l2_t) * c2 / l2)
+        + ((1.0 - exp_l3_t) * c3 / l3))
+        * rateiv[0];
+    let inf1 = (((1.0 - exp_l1_t) * c10 / l1)
+        + ((1.0 - exp_l2_t) * c11 / l2)
+        + ((1.0 - exp_l3_t) * c12 / l3))
+        * rateiv[0];
+    let inf2 = (((1.0 - exp_l1_t) * c19 / l1)
+        + ((1.0 - exp_l2_t) * c20 / l2)
+        + ((1.0 - exp_l3_t) * c21 / l3))
+        * rateiv[0];
 
-    let result_vector = non_zero + infusion;
-
-    // Convert Vector2 to DVector
-    DVector::from_vec(vec![result_vector[0], result_vector[1], result_vector[2]]).into()
+    V::from_vec(
+        vec![nz0 + inf0, nz1 + inf1, nz2 + inf2],
+        FaerContext::default(),
+    )
 }
 
 ///
@@ -181,54 +186,54 @@ pub fn three_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &
     let c26 = ((k10 + k12 + k13 - l2) * (k21 - l2) - (k12 * k21)) / ((l1 - l2) * (l3 - l2));
     let c27 = ((k10 + k12 + k13 - l3) * (k21 - l3) - (k12 * k21)) / ((l1 - l3) * (l2 - l3));
 
-    let non_zero_matrix = Matrix3::new(
-        c1 * exp_l1_t + c2 * exp_l2_t + c3 * exp_l3_t,
-        c4 * exp_l1_t + c5 * exp_l2_t + c6 * exp_l3_t,
-        c7 * exp_l1_t + c8 * exp_l2_t + c9 * exp_l3_t,
-        c10 * exp_l1_t + c11 * exp_l2_t + c12 * exp_l3_t,
-        c13 * exp_l1_t + c14 * exp_l2_t + c15 * exp_l3_t,
-        c16 * exp_l1_t + c17 * exp_l2_t + c18 * exp_l3_t,
-        c19 * exp_l1_t + c20 * exp_l2_t + c21 * exp_l3_t,
-        c22 * exp_l1_t + c23 * exp_l2_t + c24 * exp_l3_t,
-        c25 * exp_l1_t + c26 * exp_l2_t + c27 * exp_l3_t,
-    );
+    // 3x3 matrix-vector multiply inline: non_zero_matrix * [x[1], x[2], x[3]]
+    let m00 = c1 * exp_l1_t + c2 * exp_l2_t + c3 * exp_l3_t;
+    let m01 = c4 * exp_l1_t + c5 * exp_l2_t + c6 * exp_l3_t;
+    let m02 = c7 * exp_l1_t + c8 * exp_l2_t + c9 * exp_l3_t;
+    let m10 = c10 * exp_l1_t + c11 * exp_l2_t + c12 * exp_l3_t;
+    let m11 = c13 * exp_l1_t + c14 * exp_l2_t + c15 * exp_l3_t;
+    let m12 = c16 * exp_l1_t + c17 * exp_l2_t + c18 * exp_l3_t;
+    let m20 = c19 * exp_l1_t + c20 * exp_l2_t + c21 * exp_l3_t;
+    let m21 = c22 * exp_l1_t + c23 * exp_l2_t + c24 * exp_l3_t;
+    let m22 = c25 * exp_l1_t + c26 * exp_l2_t + c27 * exp_l3_t;
 
-    let non_zero = non_zero_matrix * Vector3::new(x[1], x[2], x[3]);
+    let x1 = x[1];
+    let x2 = x[2];
+    let x3 = x[3];
+    let nz0 = m00 * x1 + m01 * x2 + m02 * x3;
+    let nz1 = m10 * x1 + m11 * x2 + m12 * x3;
+    let nz2 = m20 * x1 + m21 * x2 + m22 * x3;
 
-    let infusion_vector = Vector3::new(
-        ((1.0 - exp_l1_t) * c1 / l1) + ((1.0 - exp_l2_t) * c2 / l2) + ((1.0 - exp_l3_t) * c3 / l3),
-        ((1.0 - exp_l1_t) * c10 / l1)
-            + ((1.0 - exp_l2_t) * c11 / l2)
-            + ((1.0 - exp_l3_t) * c12 / l3),
-        ((1.0 - exp_l1_t) * c19 / l1)
-            + ((1.0 - exp_l2_t) * c20 / l2)
-            + ((1.0 - exp_l3_t) * c21 / l3),
-    );
-
-    let infusion = infusion_vector * rateiv[0];
+    let inf0 = (((1.0 - exp_l1_t) * c1 / l1)
+        + ((1.0 - exp_l2_t) * c2 / l2)
+        + ((1.0 - exp_l3_t) * c3 / l3))
+        * rateiv[0];
+    let inf1 = (((1.0 - exp_l1_t) * c10 / l1)
+        + ((1.0 - exp_l2_t) * c11 / l2)
+        + ((1.0 - exp_l3_t) * c12 / l3))
+        * rateiv[0];
+    let inf2 = (((1.0 - exp_l1_t) * c19 / l1)
+        + ((1.0 - exp_l2_t) * c20 / l2)
+        + ((1.0 - exp_l3_t) * c21 / l3))
+        * rateiv[0];
 
     let exp_ka_t = (-ka * t).exp();
 
-    let absorption_vector = Vector3::new(
-        (exp_l1_t - exp_ka_t) * c1 / (ka - l1)
-            + (exp_l2_t - exp_ka_t) * c2 / (ka - l2)
-            + (exp_l3_t - exp_ka_t) * c3 / (ka - l3),
-        (exp_l1_t - exp_ka_t) * c10 / (ka - l1)
-            + (exp_l2_t - exp_ka_t) * c11 / (ka - l2)
-            + (exp_l3_t - exp_ka_t) * c12 / (ka - l3),
-        (exp_l1_t - exp_ka_t) * c19 / (ka - l1)
-            + (exp_l2_t - exp_ka_t) * c20 / (ka - l2)
-            + (exp_l3_t - exp_ka_t) * c21 / (ka - l3),
-    );
-
-    let absorption = absorption_vector * ka * x[0];
-
-    let aux = non_zero + infusion + absorption;
+    let abs0 = (exp_l1_t - exp_ka_t) * c1 / (ka - l1)
+        + (exp_l2_t - exp_ka_t) * c2 / (ka - l2)
+        + (exp_l3_t - exp_ka_t) * c3 / (ka - l3);
+    let abs1 = (exp_l1_t - exp_ka_t) * c10 / (ka - l1)
+        + (exp_l2_t - exp_ka_t) * c11 / (ka - l2)
+        + (exp_l3_t - exp_ka_t) * c12 / (ka - l3);
+    let abs2 = (exp_l1_t - exp_ka_t) * c19 / (ka - l1)
+        + (exp_l2_t - exp_ka_t) * c20 / (ka - l2)
+        + (exp_l3_t - exp_ka_t) * c21 / (ka - l3);
+    let abs_factor = ka * x[0];
 
     xout[0] = x[0] * exp_ka_t;
-    xout[1] = aux[0];
-    xout[2] = aux[1];
-    xout[3] = aux[2];
+    xout[1] = nz0 + inf0 + abs0 * abs_factor;
+    xout[2] = nz1 + inf1 + abs1 * abs_factor;
+    xout[3] = nz2 + inf2 + abs2 * abs_factor;
 
     xout
 }

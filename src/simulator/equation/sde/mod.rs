@@ -1,7 +1,7 @@
 mod em;
 
-use diffsol::{NalgebraContext, Vector};
-use nalgebra::DVector;
+use diffsol::{FaerContext, Vector};
+use faer::Col;
 use ndarray::{concatenate, Array2, Axis};
 use rand::{rng, RngExt};
 use rayon::prelude::*;
@@ -60,7 +60,7 @@ pub(crate) fn simulate_sde_event(
     let mut sde = em::EM::new(
         *drift,
         *difussion,
-        DVector::from_column_slice(support_point),
+        Col::from_fn(support_point.len(), |i| support_point[i]),
         x.inner().clone(),
         cov.clone(),
         infusions.to_vec(),
@@ -134,7 +134,7 @@ impl SDE {
 /// State trait implementation for particle-based SDE simulation.
 ///
 /// This implementation allows adding bolus doses to all particles in the system.
-impl State for Vec<DVector<f64>> {
+impl State for Vec<Col<f64>> {
     /// Adds a bolus dose to a specific input compartment across all particles.
     ///
     /// # Arguments
@@ -200,7 +200,7 @@ impl Predictions for Array2<Prediction> {
 }
 
 impl EquationTypes for SDE {
-    type S = Vec<DVector<f64>>; // Vec -> particles, DVector -> state
+    type S = Vec<Col<f64>>; // Vec -> particles, Col -> state
     type P = Array2<Prediction>; // Rows -> particles, Columns -> time
 }
 
@@ -255,18 +255,18 @@ impl EquationPriv for SDE {
         tf: f64,
     ) -> Result<(), PharmsolError> {
         state.par_iter_mut().for_each(|particle| {
-            *particle = simulate_sde_event(
+            let particle_v: V = particle.clone().into();
+            let result = simulate_sde_event(
                 &self.drift,
                 &self.diffusion,
-                particle.clone().into(),
+                particle_v,
                 support_point,
                 covariates,
                 infusions,
                 ti,
                 tf,
-            )
-            .inner()
-            .clone();
+            );
+            *particle = result.inner().clone();
         });
         Ok(())
     }
@@ -291,15 +291,17 @@ impl EquationPriv for SDE {
     ) -> Result<(), PharmsolError> {
         let mut pred = vec![Prediction::default(); self.nparticles];
         pred.par_iter_mut().enumerate().for_each(|(i, p)| {
-            let mut y = V::zeros(self.get_nouteqs(), NalgebraContext);
+            let mut y = V::zeros(self.get_nouteqs(), FaerContext::default());
+            let xi: V = x[i].clone().into();
             (self.out)(
-                &x[i].clone().into(),
-                &V::from_vec(support_point.clone(), NalgebraContext),
+                &xi,
+                &V::from_vec(support_point.clone(), FaerContext::default()),
                 observation.time(),
                 covariates,
                 &mut y,
             );
-            *p = observation.to_prediction(y[observation.outeq()], x[i].as_slice().to_vec());
+            let state_vec: Vec<f64> = (0..x[i].nrows()).map(|j| x[i][j]).collect();
+            *p = observation.to_prediction(y[observation.outeq()], state_vec);
         });
         let out = Array2::from_shape_vec((self.nparticles, 1), pred.clone())?;
         *output = concatenate(Axis(1), &[output.view(), out.view()]).unwrap();
@@ -318,7 +320,7 @@ impl EquationPriv for SDE {
             let sum_q: f64 = q.iter().sum();
             let w: Vec<f64> = q.iter().map(|qi| qi / sum_q).collect();
             let i = sysresample(&w);
-            let a: Vec<DVector<f64>> = i.iter().map(|&i| x[i].clone()).collect();
+            let a: Vec<Col<f64>> = i.iter().map(|&i| x[i].clone()).collect();
             *x = a;
             likelihood.push(sum_q / self.nparticles as f64);
             // let qq: Vec<f64> = i.iter().map(|&i| q[i]).collect();
@@ -335,10 +337,10 @@ impl EquationPriv for SDE {
     ) -> Self::S {
         let mut x = Vec::with_capacity(self.nparticles);
         for _ in 0..self.nparticles {
-            let mut state: V = DVector::zeros(self.get_nstates()).into();
+            let mut state = V::zeros(self.get_nstates(), FaerContext::default());
             if occasion_index == 0 {
                 (self.init)(
-                    &V::from_vec(support_point.to_vec(), NalgebraContext),
+                    &V::from_vec(support_point.to_vec(), FaerContext::default()),
                     0.0,
                     covariates,
                     &mut state,

@@ -1,11 +1,11 @@
 use crate::{Covariates, Infusion};
 use diffsol::{
-    ConstantOp, LinearOp, MatrixCommon, NalgebraContext, NalgebraMat, NonLinearOp,
-    NonLinearOpJacobian, OdeEquations, OdeEquationsRef, Op, Vector, VectorCommon,
+    ConstantOp, FaerContext, FaerMat, LinearOp, MatrixCommon, NonLinearOp, NonLinearOpJacobian,
+    OdeEquations, OdeEquationsRef, Op, Vector,
 };
-use nalgebra::DVector;
 use std::{cell::RefCell, cmp::Ordering};
-type M = NalgebraMat<f64>;
+
+type M = FaerMat<f64>;
 type V = <M as MatrixCommon>::V;
 type C = <M as MatrixCommon>::C;
 type T = <M as MatrixCommon>::T;
@@ -128,6 +128,7 @@ where
     func: &'a F,
     rateiv_buffer: &'a RefCell<V>,
     zero_bolus: &'a V,
+    ctx: FaerContext,
 }
 
 impl<F> Op for PmRhs<'_, F>
@@ -148,7 +149,7 @@ where
         self.nparams
     }
     fn context(&self) -> &Self::C {
-        &NalgebraContext
+        &self.ctx
     }
 }
 
@@ -156,6 +157,7 @@ pub struct PmMass {
     nstates: usize,
     nout: usize,
     nparams: usize,
+    ctx: FaerContext,
 }
 
 impl Op for PmMass {
@@ -173,7 +175,7 @@ impl Op for PmMass {
         self.nparams
     }
     fn context(&self) -> &Self::C {
-        &NalgebraContext
+        &self.ctx
     }
 }
 
@@ -182,6 +184,7 @@ pub struct PmInit<'a> {
     nout: usize,
     nparams: usize,
     init: &'a V,
+    ctx: FaerContext,
 }
 
 impl Op for PmInit<'_> {
@@ -199,7 +202,7 @@ impl Op for PmInit<'_> {
         self.nparams
     }
     fn context(&self) -> &Self::C {
-        &NalgebraContext
+        &self.ctx
     }
 }
 
@@ -213,6 +216,7 @@ pub struct PmRoot {
     nstates: usize,
     nout: usize,
     nparams: usize,
+    ctx: FaerContext,
 }
 
 impl Op for PmRoot {
@@ -230,7 +234,7 @@ impl Op for PmRoot {
         self.nparams
     }
     fn context(&self) -> &Self::C {
-        &NalgebraContext
+        &self.ctx
     }
 }
 
@@ -238,6 +242,7 @@ pub struct PmOut {
     nstates: usize,
     nout: usize,
     nparams: usize,
+    ctx: FaerContext,
 }
 
 impl Op for PmOut {
@@ -255,7 +260,7 @@ impl Op for PmOut {
         self.nparams
     }
     fn context(&self) -> &Self::C {
-        &NalgebraContext
+        &self.ctx
     }
 }
 
@@ -323,6 +328,7 @@ where
     covariates: &'a Covariates,
     infusion_schedule: InfusionSchedule,
     rateiv_buffer: RefCell<V>,
+    ctx: FaerContext,
 }
 
 impl<'a, F> PMProblem<'a, F>
@@ -341,10 +347,11 @@ where
         init: V,
     ) -> Self {
         let nparams = p.len();
-        let rateiv_buffer = RefCell::new(V::zeros(nstates, NalgebraContext));
+        let ctx = FaerContext::default();
+        let rateiv_buffer = RefCell::new(V::zeros(nstates, ctx));
         let infusion_schedule = InfusionSchedule::new(nstates, infusions);
         // Pre-allocate zero bolus vector
-        let zero_bolus = V::zeros(nstates, NalgebraContext);
+        let zero_bolus = V::zeros(nstates, ctx);
 
         Self {
             func,
@@ -357,6 +364,7 @@ where
             covariates,
             infusion_schedule,
             rateiv_buffer,
+            ctx,
         }
     }
 }
@@ -379,7 +387,7 @@ where
         self.nparams
     }
     fn context(&self) -> &Self::C {
-        &NalgebraContext
+        &self.ctx
     }
 }
 
@@ -410,6 +418,7 @@ where
             func: &self.func,
             rateiv_buffer: &self.rateiv_buffer,
             zero_bolus: &self.zero_bolus,
+            ctx: self.ctx,
         }
     }
 
@@ -423,6 +432,7 @@ where
             nout: self.nstates,
             nparams: self.nparams,
             init: &self.init,
+            ctx: self.ctx,
         }
     }
 
@@ -433,7 +443,7 @@ where
                 p[i] = self.p[i];
             }
         } else {
-            p.copy_from(&DVector::from_vec(self.p.clone()).into());
+            p.copy_from(&V::from_vec(self.p.clone(), self.ctx));
         }
     }
 
@@ -452,7 +462,7 @@ where
                 self.p_as_v[i] = p[i];
             }
         } else {
-            self.p = p.inner().iter().cloned().collect();
+            self.p = (0..p.len()).map(|i| p[i]).collect();
             self.p_as_v = p.clone();
         }
     }

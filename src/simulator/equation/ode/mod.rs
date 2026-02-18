@@ -14,10 +14,9 @@ use cached::UnboundCache;
 use crate::simulator::equation::Predictions;
 use closure::PMProblem;
 use diffsol::{
-    error::OdeSolverError, ode_solver::method::OdeSolverMethod, Bdf, NalgebraContext,
+    error::OdeSolverError, ode_solver::method::OdeSolverMethod, Bdf, FaerContext,
     NewtonNonlinearSolver, NoLineSearch, OdeBuilder, OdeSolverStopReason, Vector, VectorHost,
 };
-use nalgebra::DVector;
 
 use super::{Equation, EquationPriv, EquationTypes, State};
 
@@ -165,10 +164,10 @@ impl EquationPriv for ODE {
     #[inline(always)]
     fn initial_state(&self, spp: &Vec<f64>, covariates: &Covariates, occasion_index: usize) -> V {
         let init = &self.init;
-        let mut x = V::zeros(self.get_nstates(), NalgebraContext);
+        let mut x = V::zeros(self.get_nstates(), FaerContext::default());
         if occasion_index == 0 {
-            let spp = DVector::from_vec(spp.clone());
-            (init)(&spp.into(), 0.0, covariates, &mut x);
+            let spp = V::from_vec(spp.clone(), FaerContext::default());
+            (init)(&spp, 0.0, covariates, &mut x);
         }
         x
     }
@@ -220,14 +219,14 @@ impl Equation for ODE {
         let nstates = self.get_nstates();
 
         // Preallocate reusable vectors for bolus computation
-        let mut state_with_bolus = V::zeros(nstates, NalgebraContext);
-        let mut state_without_bolus = V::zeros(nstates, NalgebraContext);
-        let zero_vector = V::zeros(nstates, NalgebraContext);
-        let mut bolus_v = V::zeros(nstates, NalgebraContext);
-        let spp_v: V = DVector::from_vec(support_point.clone()).into();
+        let mut state_with_bolus = V::zeros(nstates, FaerContext::default());
+        let mut state_without_bolus = V::zeros(nstates, FaerContext::default());
+        let zero_vector = V::zeros(nstates, FaerContext::default());
+        let mut bolus_v = V::zeros(nstates, FaerContext::default());
+        let spp_v: V = V::from_vec(support_point.clone(), FaerContext::default());
 
         // Pre-allocate output vector for observations
-        let mut y_out = V::zeros(self.get_nouteqs(), NalgebraContext);
+        let mut y_out = V::zeros(self.get_nouteqs(), FaerContext::default());
 
         // Iterate over occasions
         for occasion in subject.occasions() {
@@ -258,8 +257,8 @@ impl Equation for ODE {
             let mut solver: Bdf<
                 '_,
                 PMProblem<DiffEq>,
-                NewtonNonlinearSolver<M, diffsol::NalgebraLU<f64>, NoLineSearch>,
-            > = problem.bdf::<diffsol::NalgebraLU<f64>>()?;
+                NewtonNonlinearSolver<M, diffsol::FaerLU<f64>, NoLineSearch>,
+            > = problem.bdf::<diffsol::FaerLU<f64>>()?;
 
             // Iterate over events
             for (index, event) in events.iter().enumerate() {

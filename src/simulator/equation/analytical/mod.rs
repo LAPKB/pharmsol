@@ -2,7 +2,7 @@ pub mod one_compartment_models;
 pub mod three_compartment_models;
 pub mod two_compartment_models;
 
-use diffsol::{NalgebraContext, Vector, VectorHost};
+use diffsol::{FaerContext, Vector, VectorHost};
 pub use one_compartment_models::*;
 pub use three_compartment_models::*;
 pub use two_compartment_models::*;
@@ -141,8 +141,8 @@ impl EquationPriv for Analytical {
 
         // 2) March over each sub-interval
         let mut current_t = ts[0];
-        let mut sp = V::from_vec(support_point.to_owned(), NalgebraContext);
-        let mut rateiv = V::zeros(self.get_nstates(), NalgebraContext);
+        let mut sp = V::from_vec(support_point.to_owned(), FaerContext::default());
+        let mut rateiv = V::zeros(self.get_nstates(), FaerContext::default());
 
         for &next_t in &ts[1..] {
             // prepare support and infusion rate for [current_t .. next_t]
@@ -180,11 +180,11 @@ impl EquationPriv for Analytical {
         likelihood: &mut Vec<f64>,
         output: &mut Self::P,
     ) -> Result<(), PharmsolError> {
-        let mut y = V::zeros(self.get_nouteqs(), NalgebraContext);
+        let mut y = V::zeros(self.get_nouteqs(), FaerContext::default());
         let out = &self.out;
         (out)(
             x,
-            &V::from_vec(support_point.clone(), NalgebraContext),
+            &V::from_vec(support_point.clone(), FaerContext::default()),
             observation.time(),
             covariates,
             &mut y,
@@ -200,10 +200,10 @@ impl EquationPriv for Analytical {
     #[inline(always)]
     fn initial_state(&self, spp: &Vec<f64>, covariates: &Covariates, occasion_index: usize) -> V {
         let init = &self.init;
-        let mut x = V::zeros(self.get_nstates(), NalgebraContext);
+        let mut x = V::zeros(self.get_nstates(), FaerContext::default());
         if occasion_index == 0 {
             (init)(
-                &V::from_vec(spp.to_vec(), NalgebraContext),
+                &V::from_vec(spp.to_vec(), FaerContext::default()),
                 0.0,
                 covariates,
                 &mut x,
