@@ -1,11 +1,13 @@
 use crate::{Covariates, Infusion};
 use diffsol::{
-    ConstantOp, LinearOp, MatrixCommon, NalgebraContext, NalgebraMat, NonLinearOp,
-    NonLinearOpJacobian, OdeEquations, OdeEquationsRef, Op, Vector, VectorCommon,
+    ConstantOp, FaerContext, FaerMat, LinearOp, MatrixCommon, NonLinearOp, NonLinearOpJacobian,
+    OdeEquations, OdeEquationsRef, Op, Vector,
 };
-use nalgebra::DVector;
-use std::{cell::RefCell, cmp::Ordering};
-type M = NalgebraMat<f64>;
+use std::{cell::RefCell, cmp::Ordering, sync::LazyLock};
+
+static FAER_CTX: LazyLock<FaerContext> = LazyLock::new(FaerContext::default);
+
+type M = FaerMat<f64>;
 type V = <M as MatrixCommon>::V;
 type C = <M as MatrixCommon>::C;
 type T = <M as MatrixCommon>::T;
@@ -148,7 +150,7 @@ where
         self.nparams
     }
     fn context(&self) -> &Self::C {
-        &NalgebraContext
+        &FAER_CTX
     }
 }
 
@@ -173,7 +175,7 @@ impl Op for PmMass {
         self.nparams
     }
     fn context(&self) -> &Self::C {
-        &NalgebraContext
+        &FAER_CTX
     }
 }
 
@@ -199,7 +201,7 @@ impl Op for PmInit<'_> {
         self.nparams
     }
     fn context(&self) -> &Self::C {
-        &NalgebraContext
+        &FAER_CTX
     }
 }
 
@@ -230,7 +232,7 @@ impl Op for PmRoot {
         self.nparams
     }
     fn context(&self) -> &Self::C {
-        &NalgebraContext
+        &FAER_CTX
     }
 }
 
@@ -255,7 +257,7 @@ impl Op for PmOut {
         self.nparams
     }
     fn context(&self) -> &Self::C {
-        &NalgebraContext
+        &FAER_CTX
     }
 }
 
@@ -341,10 +343,10 @@ where
         init: V,
     ) -> Self {
         let nparams = p.len();
-        let rateiv_buffer = RefCell::new(V::zeros(nstates, NalgebraContext));
+        let rateiv_buffer = RefCell::new(V::zeros(nstates, FaerContext::default()));
         let infusion_schedule = InfusionSchedule::new(nstates, infusions);
         // Pre-allocate zero bolus vector
-        let zero_bolus = V::zeros(nstates, NalgebraContext);
+        let zero_bolus = V::zeros(nstates, FaerContext::default());
 
         Self {
             func,
@@ -379,7 +381,7 @@ where
         self.nparams
     }
     fn context(&self) -> &Self::C {
-        &NalgebraContext
+        &FAER_CTX
     }
 }
 
@@ -433,7 +435,7 @@ where
                 p[i] = self.p[i];
             }
         } else {
-            p.copy_from(&DVector::from_vec(self.p.clone()).into());
+            p.copy_from(&V::from_vec(self.p.clone(), FaerContext::default()));
         }
     }
 
@@ -452,7 +454,7 @@ where
                 self.p_as_v[i] = p[i];
             }
         } else {
-            self.p = p.inner().iter().cloned().collect();
+            self.p = (0..p.len()).map(|i| p[i]).collect();
             self.p_as_v = p.clone();
         }
     }

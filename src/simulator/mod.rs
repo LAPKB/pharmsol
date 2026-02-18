@@ -1,6 +1,6 @@
 pub mod equation;
 pub(crate) mod likelihood;
-use diffsol::{NalgebraMat, NalgebraVec};
+use diffsol::{FaerMat, FaerVec};
 
 use crate::{
     data::{Covariates, Infusion},
@@ -12,9 +12,9 @@ use std::collections::HashMap;
 /// Type alias for floating point values used in simulations
 pub type T = f64;
 /// Type alias for state vector type used in simulations
-pub type V = NalgebraVec<T>;
+pub type V = FaerVec<T>;
 /// Type alias for matrix type used in simulations
-pub type M = NalgebraMat<T>;
+pub type M = FaerMat<T>;
 
 /// This closure represents the differential equation of the model.
 ///

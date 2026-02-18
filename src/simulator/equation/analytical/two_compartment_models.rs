@@ -1,6 +1,5 @@
 use crate::{data::Covariates, simulator::*};
-use diffsol::VectorCommon;
-use nalgebra::{DVector, Matrix2, Vector2};
+use diffsol::{FaerContext, Vector};
 
 /// Analytical solution for two compartment model.
 ///
@@ -23,26 +22,24 @@ pub fn two_compartments(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {
     let l2 = (ke + kcp + kpc - sqrt) / 2.0;
     let exp_l1_t = (-l1 * t).exp();
     let exp_l2_t = (-l2 * t).exp();
-    let non_zero_matrix = Matrix2::new(
-        (l1 - kpc) * exp_l1_t + (kpc - l2) * exp_l2_t,
-        -kpc * exp_l1_t + kpc * exp_l2_t,
-        -kcp * exp_l1_t + kcp * exp_l2_t,
-        (l1 - ke - kcp) * exp_l1_t + (ke + kcp - l2) * exp_l2_t,
-    );
+    let denom = l1 - l2;
 
-    let non_zero = (non_zero_matrix * x.inner()) / (l1 - l2);
+    // Matrix-vector multiply: non_zero_matrix * [x[0], x[1]] / denom
+    let x0 = x[0];
+    let x1 = x[1];
+    let nz0 = ((l1 - kpc) * exp_l1_t + (kpc - l2) * exp_l2_t) * x0
+        + (-kpc * exp_l1_t + kpc * exp_l2_t) * x1;
+    let nz1 = (-kcp * exp_l1_t + kcp * exp_l2_t) * x0
+        + ((l1 - ke - kcp) * exp_l1_t + (ke + kcp - l2) * exp_l2_t) * x1;
+    let nz0 = nz0 / denom;
+    let nz1 = nz1 / denom;
 
-    let infusion_vector = Vector2::new(
-        ((l1 - kpc) / l1) * (1.0 - exp_l1_t) + ((kpc - l2) / l2) * (1.0 - exp_l2_t),
-        (-kcp / l1) * (1.0 - exp_l1_t) + (kcp / l2) * (1.0 - exp_l2_t),
-    );
+    // Infusion contribution
+    let rate = rateiv[0] / denom;
+    let inf0 = (((l1 - kpc) / l1) * (1.0 - exp_l1_t) + ((kpc - l2) / l2) * (1.0 - exp_l2_t)) * rate;
+    let inf1 = ((-kcp / l1) * (1.0 - exp_l1_t) + (kcp / l2) * (1.0 - exp_l2_t)) * rate;
 
-    let infusion = infusion_vector * (rateiv[0] / (l1 - l2));
-
-    let result_vector = non_zero + infusion;
-
-    // Convert Vector2 to DVector
-    DVector::from_vec(vec![result_vector[0], result_vector[1]]).into()
+    V::from_vec(vec![nz0 + inf0, nz1 + inf1], FaerContext::default())
 }
 
 /// Analytical solution for two compartment model with first-order absorption.
@@ -69,38 +66,37 @@ pub fn two_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &Co
 
     let exp_l1_t = (-l1 * t).exp();
     let exp_l2_t = (-l2 * t).exp();
+    let denom = l1 - l2;
 
-    let non_zero_matrix = Matrix2::new(
-        (l1 - kpc) * exp_l1_t + (kpc - l2) * exp_l2_t,
-        -kpc * exp_l1_t + kpc * exp_l2_t,
-        -kcp * exp_l1_t + kcp * exp_l2_t,
-        (l1 - ke - kcp) * exp_l1_t + (ke + kcp - l2) * exp_l2_t,
-    );
+    // Matrix-vector multiply: non_zero_matrix * [x[1], x[2]] / denom
+    let x1 = x[1];
+    let x2 = x[2];
+    let nz0 = ((l1 - kpc) * exp_l1_t + (kpc - l2) * exp_l2_t) * x1
+        + (-kpc * exp_l1_t + kpc * exp_l2_t) * x2;
+    let nz1 = (-kcp * exp_l1_t + kcp * exp_l2_t) * x1
+        + ((l1 - ke - kcp) * exp_l1_t + (ke + kcp - l2) * exp_l2_t) * x2;
+    let nz0 = nz0 / denom;
+    let nz1 = nz1 / denom;
 
-    let non_zero = (non_zero_matrix * Vector2::new(x[1], x[2])) / (l1 - l2);
-
-    let infusion_vector = Vector2::new(
-        ((l1 - kpc) / l1) * (1.0 - exp_l1_t) + ((kpc - l2) / l2) * (1.0 - exp_l2_t),
-        (-kcp / l1) * (1.0 - exp_l1_t) + (kcp / l2) * (1.0 - exp_l2_t),
-    );
-
-    let infusion = infusion_vector * (rateiv[0] / (l1 - l2));
+    // Infusion contribution
+    let rate = rateiv[0] / denom;
+    let inf0 = (((l1 - kpc) / l1) * (1.0 - exp_l1_t) + ((kpc - l2) / l2) * (1.0 - exp_l2_t)) * rate;
+    let inf1 = ((-kcp / l1) * (1.0 - exp_l1_t) + (kcp / l2) * (1.0 - exp_l2_t)) * rate;
 
     let exp_ka_t = (-ka * t).exp();
 
-    let absorption_vector = Vector2::new(
-        ((l1 - kpc) / (ka - l1)) * (exp_l1_t - exp_ka_t)
-            + ((kpc - l2) / (ka - l2)) * (exp_l2_t - exp_ka_t),
-        (-kcp / (ka - l1)) * (exp_l1_t - exp_ka_t) + (kcp / (ka - l2)) * (exp_l2_t - exp_ka_t),
-    );
-
-    let absorption = absorption_vector * (ka * x[0] / (l1 - l2));
-
-    let aux = non_zero + infusion + absorption;
+    // Absorption contribution
+    let abs0 = ((l1 - kpc) / (ka - l1)) * (exp_l1_t - exp_ka_t)
+        + ((kpc - l2) / (ka - l2)) * (exp_l2_t - exp_ka_t);
+    let abs1 =
+        (-kcp / (ka - l1)) * (exp_l1_t - exp_ka_t) + (kcp / (ka - l2)) * (exp_l2_t - exp_ka_t);
+    let abs_factor = ka * x[0] / denom;
+    let abs0 = abs0 * abs_factor;
+    let abs1 = abs1 * abs_factor;
 
     xout[0] = x[0] * exp_ka_t;
-    xout[1] = aux[0];
-    xout[2] = aux[1];
+    xout[1] = nz0 + inf0 + abs0;
+    xout[2] = nz1 + inf1 + abs1;
 
     xout
 }
