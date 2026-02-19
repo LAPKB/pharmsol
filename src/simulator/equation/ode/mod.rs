@@ -9,7 +9,7 @@ use crate::{
 };
 
 use cached::proc_macro::cached;
-use cached::UnboundCache;
+use cached::SizedCache;
 
 use crate::simulator::equation::Predictions;
 use closure::PMProblem;
@@ -87,8 +87,8 @@ fn _estimate_likelihood(
 
 #[inline(always)]
 #[cached(
-    ty = "UnboundCache<(u64, u64), SubjectPredictions>",
-    create = "{ UnboundCache::with_capacity(100_000) }",
+    ty = "SizedCache<(u64, u64), SubjectPredictions>",
+    create = "{ SizedCache::with_size(100_000) }",
     convert = r#"{ ((subject.hash()), spphash(support_point)) }"#,
     result = "true"
 )]

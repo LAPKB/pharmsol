@@ -374,6 +374,33 @@ impl Covariates {
             .collect()
     }
 
+    /// Produce a content-based hash of all covariates.
+    ///
+    /// The internal `BTreeMap` guarantees deterministic iteration order.
+    pub fn hash(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::hash::DefaultHasher::new();
+        for (name, cov) in &self.covariates {
+            name.hash(&mut hasher);
+            for seg in &cov.segments {
+                seg.from.to_bits().hash(&mut hasher);
+                seg.to.map(|t| t.to_bits()).hash(&mut hasher);
+                match &seg.method {
+                    crate::data::covariate::Interpolation::Linear { slope, intercept } => {
+                        0u8.hash(&mut hasher);
+                        slope.to_bits().hash(&mut hasher);
+                        intercept.to_bits().hash(&mut hasher);
+                    }
+                    crate::data::covariate::Interpolation::CarryForward { value } => {
+                        1u8.hash(&mut hasher);
+                        value.to_bits().hash(&mut hasher);
+                    }
+                }
+            }
+        }
+        hasher.finish()
+    }
+
     /// Add a covariate to the collection
     ///
     /// This method allows you to add a new covariate with a specific name and its associated data.

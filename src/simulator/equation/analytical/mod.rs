@@ -13,7 +13,7 @@ use crate::{
     data::Covariates, simulator::*, Equation, EquationPriv, EquationTypes, Observation, Subject,
 };
 use cached::proc_macro::cached;
-use cached::UnboundCache;
+use cached::SizedCache;
 
 /// Model equation using analytical solutions.
 ///
@@ -330,8 +330,8 @@ fn spphash(spp: &[f64]) -> u64 {
 
 #[inline(always)]
 #[cached(
-    ty = "UnboundCache<(u64, u64), SubjectPredictions>",
-    create = "{ UnboundCache::with_capacity(100_000) }",
+    ty = "SizedCache<(u64, u64), SubjectPredictions>",
+    create = "{ SizedCache::with_size(100_000) }",
     convert = r#"{ (subject.hash(), spphash(support_point)) }"#,
     result = "true"
 )]

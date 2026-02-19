@@ -7,7 +7,7 @@ use rand::{rng, RngExt};
 use rayon::prelude::*;
 
 use cached::proc_macro::cached;
-use cached::UnboundCache;
+use cached::SizedCache;
 
 use crate::{
     data::{Covariates, Infusion},
@@ -426,8 +426,8 @@ fn spphash(spp: &[f64]) -> u64 {
 
 #[inline(always)]
 #[cached(
-    ty = "UnboundCache<(u64, u64, u64), f64>",
-    create = "{ UnboundCache::with_capacity(100_000) }",
+    ty = "SizedCache<(u64, u64, u64), f64>",
+    create = "{ SizedCache::with_size(100_000) }",
     convert = r#"{ ((subject.hash()), spphash(support_point), error_models.hash()) }"#,
     result = "true"
 )]

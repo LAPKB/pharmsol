@@ -460,13 +460,43 @@ impl Subject {
         self.occasions.is_empty()
     }
 
-    /// Hash the subject ID
+    /// Calculate the hash for a subject
     ///
-    /// Note that this does not provide any methods to invalidate the cache if the subject is modified!
+    /// The hash takes into account all events, so that if a subject is modified, it will not produce the same likelihood when simulated with the same support point.
     pub fn hash(&self) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut hasher = std::hash::DefaultHasher::new();
         self.id.hash(&mut hasher);
+        for occasion in &self.occasions {
+            occasion.index.hash(&mut hasher);
+            for event in &occasion.events {
+                match event {
+                    crate::data::event::Event::Bolus(b) => {
+                        0u8.hash(&mut hasher);
+                        b.time().to_bits().hash(&mut hasher);
+                        b.amount().to_bits().hash(&mut hasher);
+                        b.input().hash(&mut hasher);
+                    }
+                    crate::data::event::Event::Infusion(inf) => {
+                        1u8.hash(&mut hasher);
+                        inf.time().to_bits().hash(&mut hasher);
+                        inf.amount().to_bits().hash(&mut hasher);
+                        inf.input().hash(&mut hasher);
+                        inf.duration().to_bits().hash(&mut hasher);
+                    }
+                    crate::data::event::Event::Observation(obs) => {
+                        2u8.hash(&mut hasher);
+                        obs.time().to_bits().hash(&mut hasher);
+                        if let Some(v) = obs.value() {
+                            v.to_bits().hash(&mut hasher);
+                        }
+                        obs.outeq().hash(&mut hasher);
+                    }
+                }
+            }
+            // Hash covariates (uses BTreeMap internally for deterministic order)
+            occasion.covariates.hash().hash(&mut hasher);
+        }
         hasher.finish()
     }
 }
