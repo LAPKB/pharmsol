@@ -771,4 +771,44 @@ mod tests {
             "Subject 2 weight at time 48 should be 69.0"
         );
     }
+
+    #[test]
+    fn covariates_hash_deterministic() {
+        let mut covs = Covariates::new();
+        let mut cov = Covariate::new("wt".into(), false);
+        cov.add_observation(0.0, 70.0);
+        cov.add_observation(24.0, 72.0);
+        covs.add_covariate("wt".into(), cov);
+        assert_eq!(covs.hash(), covs.hash());
+    }
+
+    #[test]
+    fn covariates_hash_differs_on_value_change() {
+        let mut covs_a = Covariates::new();
+        let mut cov_a = Covariate::new("wt".into(), false);
+        cov_a.add_observation(0.0, 70.0);
+        covs_a.add_covariate("wt".into(), cov_a);
+
+        let mut covs_b = Covariates::new();
+        let mut cov_b = Covariate::new("wt".into(), false);
+        cov_b.add_observation(0.0, 80.0);
+        covs_b.add_covariate("wt".into(), cov_b);
+
+        assert_ne!(covs_a.hash(), covs_b.hash());
+    }
+
+    #[test]
+    fn covariates_hash_differs_on_name() {
+        let mut covs_a = Covariates::new();
+        let mut cov_a = Covariate::new("wt".into(), false);
+        cov_a.add_observation(0.0, 70.0);
+        covs_a.add_covariate("wt".into(), cov_a);
+
+        let mut covs_b = Covariates::new();
+        let mut cov_b = Covariate::new("ht".into(), false);
+        cov_b.add_observation(0.0, 70.0);
+        covs_b.add_covariate("ht".into(), cov_b);
+
+        assert_ne!(covs_a.hash(), covs_b.hash());
+    }
 }

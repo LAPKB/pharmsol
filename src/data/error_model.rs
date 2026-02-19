@@ -1609,4 +1609,49 @@ mod tests {
         assert_eq!(model0.factor().unwrap(), 10.0);
         assert_eq!(model1.factor().unwrap(), 4.0);
     }
+
+    #[test]
+    fn error_model_hash_deterministic() {
+        let models = AssayErrorModels::new()
+            .add(
+                0,
+                AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0),
+            )
+            .unwrap();
+        assert_eq!(models.hash(), models.hash());
+    }
+
+    #[test]
+    fn error_model_hash_differs_on_value() {
+        let a = AssayErrorModels::new()
+            .add(
+                0,
+                AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0),
+            )
+            .unwrap();
+        let b = AssayErrorModels::new()
+            .add(
+                0,
+                AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 10.0),
+            )
+            .unwrap();
+        assert_ne!(a.hash(), b.hash());
+    }
+
+    #[test]
+    fn error_model_hash_differs_on_type() {
+        let a = AssayErrorModels::new()
+            .add(
+                0,
+                AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0),
+            )
+            .unwrap();
+        let b = AssayErrorModels::new()
+            .add(
+                0,
+                AssayErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0),
+            )
+            .unwrap();
+        assert_ne!(a.hash(), b.hash());
+    }
 }

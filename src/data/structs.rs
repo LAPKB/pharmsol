@@ -1295,4 +1295,71 @@ mod tests {
             .count();
         assert_eq!(none_obs_count, 4); // Should now be 4 observations with None values
     }
+
+    #[test]
+    fn hash_is_deterministic() {
+        let s = Subject::builder("s1")
+            .bolus(0.0, 100.0, 0)
+            .observation(1.0, 5.0, 0)
+            .build();
+        assert_eq!(s.hash(), s.hash());
+    }
+
+    #[test]
+    fn hash_differs_by_id() {
+        let a = Subject::builder("a")
+            .bolus(0.0, 100.0, 0)
+            .observation(1.0, 5.0, 0)
+            .build();
+        let b = Subject::builder("b")
+            .bolus(0.0, 100.0, 0)
+            .observation(1.0, 5.0, 0)
+            .build();
+        assert_ne!(a.hash(), b.hash());
+    }
+
+    #[test]
+    fn hash_differs_by_event_data() {
+        let a = Subject::builder("s1")
+            .bolus(0.0, 100.0, 0)
+            .observation(1.0, 5.0, 0)
+            .build();
+        let b = Subject::builder("s1")
+            .bolus(0.0, 200.0, 0) // different amount
+            .observation(1.0, 5.0, 0)
+            .build();
+        assert_ne!(a.hash(), b.hash());
+    }
+
+    #[test]
+    fn hash_differs_by_covariates() {
+        let a = Subject::builder("s1")
+            .bolus(0.0, 100.0, 0)
+            .covariate("wt", 0.0, 70.0)
+            .observation(1.0, 5.0, 0)
+            .build();
+        let b = Subject::builder("s1")
+            .bolus(0.0, 100.0, 0)
+            .covariate("wt", 0.0, 80.0) // different weight
+            .observation(1.0, 5.0, 0)
+            .build();
+        assert_ne!(a.hash(), b.hash());
+    }
+
+    #[test]
+    fn hash_identical_subjects_match() {
+        let a = Subject::builder("s1")
+            .bolus(0.0, 100.0, 0)
+            .infusion(1.0, 50.0, 0, 0.5)
+            .covariate("wt", 0.0, 70.0)
+            .observation(2.0, 5.0, 0)
+            .build();
+        let b = Subject::builder("s1")
+            .bolus(0.0, 100.0, 0)
+            .infusion(1.0, 50.0, 0, 0.5)
+            .covariate("wt", 0.0, 70.0)
+            .observation(2.0, 5.0, 0)
+            .build();
+        assert_eq!(a.hash(), b.hash());
+    }
 }
