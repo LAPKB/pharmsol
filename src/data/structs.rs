@@ -465,7 +465,7 @@ impl Subject {
     /// The hash takes into account all events, so that if a subject is modified, it will not produce the same likelihood when simulated with the same support point.
     pub fn hash(&self) -> u64 {
         use std::hash::{Hash, Hasher};
-        let mut hasher = std::hash::DefaultHasher::new();
+        let mut hasher = ahash::AHasher::default();
         self.id.hash(&mut hasher);
         for occasion in &self.occasions {
             occasion.index.hash(&mut hasher);

@@ -379,7 +379,7 @@ impl Covariates {
     /// The internal `BTreeMap` guarantees deterministic iteration order.
     pub fn hash(&self) -> u64 {
         use std::hash::{Hash, Hasher};
-        let mut hasher = std::hash::DefaultHasher::new();
+        let mut hasher = ahash::AHasher::default();
         for (name, cov) in &self.covariates {
             name.hash(&mut hasher);
             for seg in &cov.segments {

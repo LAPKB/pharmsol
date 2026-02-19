@@ -1,4 +1,4 @@
-use std::hash::{DefaultHasher, Hash, Hasher};
+use std::hash::{Hash, Hasher};
 
 use crate::simulator::likelihood::Prediction;
 use serde::{Deserialize, Serialize};
@@ -227,7 +227,7 @@ impl AssayErrorModels {
     /// # Returns
     /// A `u64` hash value representing the error models collection.
     pub fn hash(&self) -> u64 {
-        let mut hasher = DefaultHasher::new();
+        let mut hasher = ahash::AHasher::default();
 
         for outeq in 0..self.models.len() {
             // Find the model with the matching outeq ID
