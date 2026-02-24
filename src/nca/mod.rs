@@ -108,13 +108,11 @@ pub use bioavailability::{
     bioavailability, bioequivalence, compare, metabolite_parent_ratio, BioavailabilityResult,
     BioequivalenceResult,
 };
-pub use calc::{lambda_z_candidates, LambdaZCandidate};
+
 pub use error::NCAError;
 pub use sparse::{sparse_auc, sparse_auc_from_data, SparsePKResult};
 pub use summary::{nca_to_csv, summarize, ParameterSummary, PopulationSummary};
-pub use superposition::{
-    predict as superposition_predict, predict_from_nca, Superposition, SuperpositionResult,
-};
+pub use superposition::{Superposition, SuperpositionResult};
 pub use traits::{NCAPopulation, SubjectNCAResult, NCA};
 pub use types::{
     C0Method, ClearanceParams, ExposureParams, IVBolusParams, IVInfusionParams, LambdaZMethod,
@@ -124,4 +122,3 @@ pub use types::{
 
 // Re-export shared types (backwards compatible)
 pub use crate::data::event::{AUCMethod, BLQRule, Route};
-pub use crate::data::observation::ObservationProfile;

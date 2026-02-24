@@ -54,7 +54,6 @@ pub mod prelude {
         builder::SubjectBuilderExt,
         error_model::{AssayErrorModel, AssayErrorModels, ErrorPoly},
         event::{AUCMethod, BLQRule, Route},
-        observation::ObservationProfile,
         Covariates, Data, Event, Interpolation, Occasion, Subject,
     };
 

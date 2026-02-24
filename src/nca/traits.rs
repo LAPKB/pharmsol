@@ -118,32 +118,17 @@ pub trait NCAPopulation {
 
 use crate::data::Route;
 
-impl ObservationProfile {
-    /// Run NCA directly on an observation profile with explicit dose information.
+impl Occasion {
+    /// Run NCA with explicit dose information, overriding what is embedded in the occasion.
     ///
-    /// This is the entry point for simulated or predicted data where there is
-    /// no `Subject` or `Occasion` to attach to.
+    /// This is useful when you want to supply or override dose amount, route, or infusion
+    /// duration without modifying the underlying data.
     ///
     /// # Arguments
     /// * `dose_amount` - Total dose amount (None = no dose-normalized params)
     /// * `route` - Administration route
     /// * `infusion_duration` - Duration of infusion (for IV infusion route)
-    /// * `options` - NCA options (outeq is ignored; the profile is already filtered)
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// use pharmsol::data::observation::ObservationProfile;
-    /// use pharmsol::nca::NCAOptions;
-    /// use pharmsol::data::Route;
-    ///
-    /// let profile = ObservationProfile::from_raw(
-    ///     &[0.0, 1.0, 2.0, 4.0, 8.0],
-    ///     &[0.0, 10.0, 8.0, 4.0, 1.0],
-    /// );
-    /// let result = profile.nca_with_dose(Some(100.0), Route::Extravascular, None, &NCAOptions::default())?;
-    /// println!("Cmax: {:.2}", result.exposure.cmax);
-    /// ```
+    /// * `options` - NCA options
     pub fn nca_with_dose(
         &self,
         dose_amount: Option<f64>,
@@ -151,15 +136,18 @@ impl ObservationProfile {
         infusion_duration: Option<f64>,
         options: &NCAOptions,
     ) -> Result<NCAResult, NCAError> {
+        let profile = ObservationProfile::from_occasion(self, options.outeq, &options.blq_rule)?;
+        let (times, concs, censoring) = self.get_observations(options.outeq);
+        let raw_tlag = tlag_from_raw(&times, &concs, &censoring);
         analyze(
-            self,
+            &profile,
             dose_amount,
             route,
             infusion_duration,
             options,
+            raw_tlag,
             None,
-            None,
-            None,
+            Some(self.index()),
         )
     }
 }
@@ -171,6 +159,37 @@ impl NCA for Occasion {
 
     fn nca_all(&self, options: &NCAOptions) -> Vec<Result<NCAResult, NCAError>> {
         vec![self.nca(options)]
+    }
+}
+
+impl Subject {
+    /// Run NCA with explicit dose information on the first occasion, overriding what is
+    /// embedded in the subject's events.
+    ///
+    /// This is useful when you want to supply or override dose amount, route, or infusion
+    /// duration without modifying the underlying data.
+    ///
+    /// # Arguments
+    /// * `dose_amount` - Total dose amount (None = no dose-normalized params)
+    /// * `route` - Administration route
+    /// * `infusion_duration` - Duration of infusion (for IV infusion route)
+    /// * `options` - NCA options
+    pub fn nca_with_dose(
+        &self,
+        dose_amount: Option<f64>,
+        route: Route,
+        infusion_duration: Option<f64>,
+        options: &NCAOptions,
+    ) -> Result<NCAResult, NCAError> {
+        let occasion = self
+            .occasions()
+            .into_iter()
+            .next()
+            .ok_or(NCAError::InvalidParameter {
+                param: "occasion".to_string(),
+                value: "none found".to_string(),
+            })?;
+        occasion.nca_with_dose(dose_amount, route, infusion_duration, options)
     }
 }
 

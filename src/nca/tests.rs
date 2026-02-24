@@ -3,7 +3,9 @@
 //! Tests cover all major NCA parameters and edge cases.
 //! All tests use Subject::builder() as the single entry point.
 
+use crate::data::observation::ObservationProfile;
 use crate::data::Subject;
+use crate::nca::calc::lambda_z_candidates;
 use crate::nca::*;
 use crate::Data;
 use crate::SubjectBuilderExt;
@@ -830,17 +832,23 @@ fn test_to_row_terminal_params_present_when_lambda_z_succeeds() {
 
 #[test]
 fn test_nca_with_dose_matches_subject() {
-    use crate::data::observation::ObservationProfile;
     use crate::data::Route;
 
     let subject = single_dose_oral();
     let options = NCAOptions::default();
     let subject_result = subject.nca(&options).unwrap();
 
-    // Build a profile from the same raw data as single_dose_oral()
-    let times = vec![0.0, 0.5, 1.0, 2.0, 4.0, 8.0, 12.0, 24.0];
-    let concs = vec![0.0, 5.0, 10.0, 8.0, 4.0, 2.0, 1.0, 0.25];
-    let profile = ObservationProfile::from_raw(&times, &concs).unwrap();
+    // Build a profile using the same data as single_dose_oral() but without embedded dose
+    let profile = Subject::builder("profile")
+        .observation(0.0, 0.0, 0)
+        .observation(0.5, 5.0, 0)
+        .observation(1.0, 10.0, 0)
+        .observation(2.0, 8.0, 0)
+        .observation(4.0, 4.0, 0)
+        .observation(8.0, 2.0, 0)
+        .observation(12.0, 1.0, 0)
+        .observation(24.0, 0.25, 0)
+        .build();
     let profile_result = profile
         .nca_with_dose(Some(100.0), Route::Extravascular, None, &options)
         .unwrap();
@@ -865,11 +873,16 @@ fn test_nca_with_dose_matches_subject() {
 
 #[test]
 fn test_nca_with_dose_no_dose() {
-    use crate::data::observation::ObservationProfile;
     use crate::data::Route;
 
-    let profile =
-        ObservationProfile::from_raw(&[0.0, 1.0, 4.0, 8.0], &[0.0, 10.0, 5.0, 1.0]).unwrap();
+    // let profile =
+    //     ObservationProfile::from_raw(&[0.0, 1.0, 4.0, 8.0], &[0.0, 10.0, 5.0, 1.0]).unwrap();
+    let profile = Subject::builder("profile")
+        .observation(0.0, 0.0, 0)
+        .observation(1.0, 10.0, 0)
+        .observation(4.0, 5.0, 0)
+        .observation(8.0, 1.0, 0)
+        .build();
     let options = NCAOptions::default();
     let result = profile
         .nca_with_dose(None, Route::Extravascular, None, &options)

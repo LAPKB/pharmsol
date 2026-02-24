@@ -1,28 +1,16 @@
 //! Observation profile: filtered, validated concentration-time data
 //!
-//! [`ObservationProfile`] is the single source of truth for working with
-//! concentration-time profiles. It owns:
+//! [`ObservationProfile`] is a **crate-internal** value object. It is the single source
+//! of truth for working with concentration-time profiles inside the NCA pipeline.
+//!
+//! External callers should use the `nca_with_dose` methods on [`crate::Subject`],
+//! [`crate::Occasion`], and [`crate::Data`] instead of constructing profiles directly.
+//!
+//! Internally it owns:
 //!
 //! - **Struct + construction**: BLQ filtering, validation, index caching
 //! - **Basic accessors**: Cmax, Tmax, Cmin, Clast, Tlast
 //! - **AUC methods**: delegate to [`crate::data::auc`] primitives
-//!
-//! # Construction
-//!
-//! ```rust
-//! use pharmsol::data::observation::ObservationProfile;
-//! use pharmsol::prelude::*;
-//!
-//! // From raw arrays (no censoring)
-//! let profile = ObservationProfile::from_raw(
-//!     &[0.0, 1.0, 2.0, 4.0, 8.0],
-//!     &[0.0, 10.0, 8.0, 4.0, 2.0],
-//! ).unwrap();
-//!
-//! assert_eq!(profile.cmax(), 10.0);
-//! assert_eq!(profile.tmax(), 1.0);
-//! assert_eq!(profile.cmin(), 0.0);
-//! ```
 
 use crate::data::auc;
 use crate::data::event::{AUCMethod, BLQRule, Censor};
@@ -39,28 +27,26 @@ pub(crate) enum BlqAction {
     Drop,
 }
 
-/// A filtered, validated view of observations ready for analysis.
+/// A filtered, validated view of observations ready for NCA analysis.
+///
+/// This is a **crate-internal** type. External callers should use
+/// `Subject::nca_with_dose`, `Occasion::nca_with_dose`, or the [`crate::nca::NCA`]
+/// trait rather than constructing profiles directly.
 ///
 /// Contains time-concentration data after BLQ filtering, with cached
 /// indices for Cmax, Cmin, and Tlast for efficient access.
-///
-/// # Construction
-///
-/// - [`ObservationProfile::from_occasion`] — from an [`Occasion`] (applies BLQ rules)
-/// - [`ObservationProfile::from_arrays`] — from raw arrays with censoring flags
-/// - [`ObservationProfile::from_raw`] — from raw arrays without censoring (simulated data)
 #[derive(Debug, Clone)]
-pub struct ObservationProfile {
+pub(crate) struct ObservationProfile {
     /// Time points (sorted, ascending)
-    pub times: Vec<f64>,
+    pub(crate) times: Vec<f64>,
     /// Concentration values (parallel to times)
-    pub concentrations: Vec<f64>,
+    pub(crate) concentrations: Vec<f64>,
     /// Index of Cmax in the arrays
-    pub cmax_idx: usize,
+    pub(crate) cmax_idx: usize,
     /// Index of Cmin in the arrays
-    pub cmin_idx: usize,
+    pub(crate) cmin_idx: usize,
     /// Index of Clast (last positive concentration)
-    pub tlast_idx: usize,
+    pub(crate) tlast_idx: usize,
 }
 
 // ============================================================================
@@ -150,7 +136,7 @@ impl ObservationProfile {
     ///
     /// # Errors
     /// Returns error if data is insufficient or invalid
-    pub fn from_occasion(
+    pub(crate) fn from_occasion(
         occasion: &Occasion,
         outeq: usize,
         blq_rule: &BLQRule,
@@ -172,7 +158,7 @@ impl ObservationProfile {
     ///
     /// # Errors
     /// Returns error if arrays mismatch, data is insufficient, or all values are BLQ
-    pub fn from_arrays(
+    fn from_arrays(
         times: &[f64],
         concentrations: &[f64],
         censoring: &[Censor],
@@ -272,87 +258,6 @@ impl ObservationProfile {
         }
 
         finalize(proc_times, proc_concs)
-    }
-
-    /// Create a profile from raw time-concentration arrays without censoring
-    ///
-    /// Convenience constructor for simulated data or pre-cleaned data where
-    /// no BLQ handling is needed. All values are treated as uncensored.
-    ///
-    /// # Arguments
-    /// * `times` - Sorted time points
-    /// * `values` - Concentration values (parallel to `times`)
-    ///
-    /// # Errors
-    /// Returns error if fewer than 2 points or all values ≤ 0
-    ///
-    /// # Example
-    /// ```rust
-    /// use pharmsol::data::observation::ObservationProfile;
-    ///
-    /// let profile = ObservationProfile::from_raw(
-    ///     &[0.0, 1.0, 2.0, 4.0],
-    ///     &[0.0, 10.0, 8.0, 4.0],
-    /// ).unwrap();
-    /// assert_eq!(profile.cmax(), 10.0);
-    /// ```
-    pub fn from_raw(times: &[f64], values: &[f64]) -> Result<Self, ObservationError> {
-        if times.len() != values.len() {
-            return Err(ObservationError::ArrayLengthMismatch {
-                description: format!("times={}, values={}", times.len(), values.len()),
-            });
-        }
-
-        for i in 1..times.len() {
-            if times[i] < times[i - 1] {
-                return Err(ObservationError::InvalidTimeSequence);
-            }
-        }
-
-        finalize(times.to_vec(), values.to_vec())
-    }
-
-    /// Create a profile from [`SubjectPredictions`](crate::simulator::likelihood::SubjectPredictions)
-    ///
-    /// Bridges pharmsol's simulation engine to NCA/observation analysis.
-    /// Extracts predicted concentrations (not observed values) at each time point
-    /// for the specified output equation, producing a profile that can be used
-    /// with NCA or any observation-level metrics.
-    ///
-    /// # Arguments
-    /// * `predictions` - Simulation predictions for a single subject
-    /// * `outeq` - Output equation index to extract
-    ///
-    /// # Errors
-    /// Returns error if fewer than 2 predictions match the requested outeq
-    ///
-    /// # Example
-    /// ```rust,ignore
-    /// use pharmsol::prelude::*;
-    ///
-    /// let predictions = simulate(equation, &subject, &params);
-    /// let profile = ObservationProfile::from_predictions(&predictions, 0)?;
-    /// let auc = profile.auc_last(&AUCMethod::Linear);
-    /// ```
-    pub fn from_predictions(
-        predictions: &crate::simulator::likelihood::SubjectPredictions,
-        outeq: usize,
-    ) -> Result<Self, ObservationError> {
-        let mut times = Vec::new();
-        let mut values = Vec::new();
-
-        for pred in predictions.predictions() {
-            if pred.outeq() == outeq {
-                times.push(pred.time());
-                values.push(pred.prediction());
-            }
-        }
-
-        if times.is_empty() {
-            return Err(ObservationError::NoObservations { outeq });
-        }
-
-        finalize(times, values)
     }
 }
 
@@ -540,9 +445,15 @@ mod tests {
 
     #[test]
     fn test_from_raw() {
-        let profile =
-            ObservationProfile::from_raw(&[0.0, 1.0, 2.0, 4.0, 8.0], &[0.0, 10.0, 8.0, 4.0, 2.0])
-                .unwrap();
+        let subject = Subject::builder("pt1")
+            .observation(0.0, 0.0, 0)
+            .observation(1.0, 10.0, 0)
+            .observation(2.0, 8.0, 0)
+            .observation(4.0, 4.0, 0)
+            .observation(8.0, 2.0, 0)
+            .build();
+        let occ = &subject.occasions()[0];
+        let profile = ObservationProfile::from_occasion(occ, 0, &BLQRule::Exclude).unwrap();
 
         assert_eq!(profile.cmax(), 10.0);
         assert_eq!(profile.tmax(), 1.0);
@@ -553,28 +464,46 @@ mod tests {
 
     #[test]
     fn test_from_raw_insufficient() {
-        let result = ObservationProfile::from_raw(&[0.0], &[10.0]);
+        // One non-BLQ point → InsufficientData after finalize
+        let result =
+            ObservationProfile::from_arrays(&[0.0], &[10.0], &[Censor::None], BLQRule::Exclude);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_from_raw_all_zero() {
-        let result = ObservationProfile::from_raw(&[0.0, 1.0], &[0.0, 0.0]);
+        // All non-BLQ concentrations are 0 → AllBelowLOQ
+        let result = ObservationProfile::from_arrays(
+            &[0.0, 1.0],
+            &[0.0, 0.0],
+            &[Censor::None, Censor::None],
+            BLQRule::Exclude,
+        );
         assert!(matches!(result, Err(ObservationError::AllBelowLOQ)));
     }
 
     #[test]
     fn test_from_raw_bad_time_sequence() {
-        let result = ObservationProfile::from_raw(&[2.0, 1.0], &[10.0, 5.0]);
+        let result = ObservationProfile::from_arrays(
+            &[2.0, 1.0],
+            &[10.0, 5.0],
+            &[Censor::None, Censor::None],
+            BLQRule::Exclude,
+        );
         assert!(matches!(result, Err(ObservationError::InvalidTimeSequence)));
     }
 
     #[test]
     fn test_cmin() {
-        let profile =
-            ObservationProfile::from_raw(&[0.0, 1.0, 2.0, 4.0, 8.0], &[2.0, 10.0, 8.0, 4.0, 1.0])
-                .unwrap();
-
+        let subject = Subject::builder("pt1")
+            .observation(0.0, 2.0, 0)
+            .observation(1.0, 10.0, 0)
+            .observation(2.0, 8.0, 0)
+            .observation(4.0, 4.0, 0)
+            .observation(8.0, 1.0, 0)
+            .build();
+        let occ = &subject.occasions()[0];
+        let profile = ObservationProfile::from_occasion(occ, 0, &BLQRule::Exclude).unwrap();
         assert_eq!(profile.cmin(), 1.0);
     }
 
@@ -678,22 +607,33 @@ mod tests {
 
     #[test]
     fn test_auc_last_delegates_to_data_auc() {
-        // Same data, verify ObservationProfile.auc_last matches data::auc::auc directly
-        let times = vec![0.0, 1.0, 2.0, 4.0, 8.0];
-        let concs = vec![0.0, 10.0, 8.0, 4.0, 2.0];
-
-        let profile = ObservationProfile::from_raw(&times, &concs).unwrap();
+        // Verify ObservationProfile.auc_last matches data::auc::auc directly
+        let subject = Subject::builder("pt1")
+            .observation(0.0, 0.0, 0)
+            .observation(1.0, 10.0, 0)
+            .observation(2.0, 8.0, 0)
+            .observation(4.0, 4.0, 0)
+            .observation(8.0, 2.0, 0)
+            .build();
+        let occ = &subject.occasions()[0];
+        let profile = ObservationProfile::from_occasion(occ, 0, &BLQRule::Exclude).unwrap();
         let method = AUCMethod::Linear;
 
         let profile_auc = profile.auc_last(&method);
-        let direct_auc = auc::auc(&times, &concs, &method);
+        let direct_auc = auc::auc(&profile.times, &profile.concentrations, &method);
 
         assert!((profile_auc - direct_auc).abs() < 1e-10);
     }
 
     #[test]
     fn test_interpolate_delegates() {
-        let profile = ObservationProfile::from_raw(&[0.0, 2.0, 4.0], &[0.0, 10.0, 6.0]).unwrap();
+        let subject = Subject::builder("pt1")
+            .observation(0.0, 0.0, 0)
+            .observation(2.0, 10.0, 0)
+            .observation(4.0, 6.0, 0)
+            .build();
+        let occ = &subject.occasions()[0];
+        let profile = ObservationProfile::from_occasion(occ, 0, &BLQRule::Exclude).unwrap();
 
         assert!((profile.interpolate(1.0) - 5.0).abs() < 1e-10);
         assert!((profile.interpolate(3.0) - 8.0).abs() < 1e-10);
@@ -701,9 +641,15 @@ mod tests {
 
     #[test]
     fn test_display() {
-        let profile =
-            ObservationProfile::from_raw(&[0.0, 1.0, 2.0, 4.0, 8.0], &[0.0, 10.0, 8.0, 4.0, 2.0])
-                .unwrap();
+        let subject = Subject::builder("pt1")
+            .observation(0.0, 0.0, 0)
+            .observation(1.0, 10.0, 0)
+            .observation(2.0, 8.0, 0)
+            .observation(4.0, 4.0, 0)
+            .observation(8.0, 2.0, 0)
+            .build();
+        let occ = &subject.occasions()[0];
+        let profile = ObservationProfile::from_occasion(occ, 0, &BLQRule::Exclude).unwrap();
 
         let display = format!("{}", profile);
         assert!(display.contains("ObservationProfile (5 points)"));

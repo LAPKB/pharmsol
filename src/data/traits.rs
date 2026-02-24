@@ -115,13 +115,6 @@ pub trait ObservationMetrics {
         blq_rule: &BLQRule,
     ) -> Vec<Result<f64, MetricsError>>;
 
-    /// Get filtered observation profiles
-    fn filtered_observations(
-        &self,
-        outeq: usize,
-        blq_rule: &BLQRule,
-    ) -> Vec<Result<ObservationProfile, ObservationError>>;
-
     // ========================================================================
     // Convenience methods for the single-occasion common case
     // ========================================================================
@@ -214,21 +207,6 @@ pub trait ObservationMetrics {
                 ObservationError::InsufficientData { n: 0, required: 2 },
             )))
     }
-
-    /// Get filtered observation profile for the first occasion
-    fn filtered_observations_first(
-        &self,
-        outeq: usize,
-        blq_rule: &BLQRule,
-    ) -> Result<ObservationProfile, ObservationError> {
-        self.filtered_observations(outeq, blq_rule)
-            .into_iter()
-            .next()
-            .unwrap_or(Err(ObservationError::InsufficientData {
-                n: 0,
-                required: 2,
-            }))
-    }
 }
 
 // ============================================================================
@@ -281,14 +259,6 @@ impl ObservationMetrics for Occasion {
         blq_rule: &BLQRule,
     ) -> Vec<Result<f64, MetricsError>> {
         vec![aumc_occasion(self, outeq, method, blq_rule)]
-    }
-
-    fn filtered_observations(
-        &self,
-        outeq: usize,
-        blq_rule: &BLQRule,
-    ) -> Vec<Result<ObservationProfile, ObservationError>> {
-        vec![ObservationProfile::from_occasion(self, outeq, blq_rule)]
     }
 }
 
@@ -362,17 +332,6 @@ impl ObservationMetrics for Subject {
             .map(|o| aumc_occasion(o, outeq, method, blq_rule))
             .collect()
     }
-
-    fn filtered_observations(
-        &self,
-        outeq: usize,
-        blq_rule: &BLQRule,
-    ) -> Vec<Result<ObservationProfile, ObservationError>> {
-        self.occasions()
-            .par_iter()
-            .map(|o| ObservationProfile::from_occasion(o, outeq, blq_rule))
-            .collect()
-    }
 }
 
 // ============================================================================
@@ -443,17 +402,6 @@ impl ObservationMetrics for Data {
         self.subjects()
             .par_iter()
             .flat_map(|s| s.aumc(outeq, method, blq_rule))
-            .collect()
-    }
-
-    fn filtered_observations(
-        &self,
-        outeq: usize,
-        blq_rule: &BLQRule,
-    ) -> Vec<Result<ObservationProfile, ObservationError>> {
-        self.subjects()
-            .par_iter()
-            .flat_map(|s| s.filtered_observations(outeq, blq_rule))
             .collect()
     }
 }

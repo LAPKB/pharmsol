@@ -44,7 +44,6 @@ pub mod traits;
 pub use covariate::*;
 pub use error_model::*;
 pub use event::*;
-pub use observation::ObservationProfile;
 pub use observation_error::ObservationError;
 pub use residual_error::*;
 pub use structs::{Data, Occasion, Subject};

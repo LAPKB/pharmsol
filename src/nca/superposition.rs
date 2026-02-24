@@ -9,14 +9,19 @@
 //!
 //! # Usage
 //!
-//! The simplest way is via the [`Superposition`] trait on [`Subject`]:
+//! The simplest way is via the [`Superposition`] trait on [`Subject`] or [`Occasion`]:
 //!
 //! ```rust,ignore
 //! use pharmsol::prelude::*;
 //! use pharmsol::nca::{NCAOptions, Superposition};
 //!
+//! // Full chain: NCA → λz → superposition
 //! let result = subject.superposition(12.0, &NCAOptions::default(), None)?;
 //! println!("Predicted Cmax_ss: {:.2}", result.cmax_ss);
+//!
+//! // If you already have an NCA result, skip the recomputation:
+//! let nca = subject.nca(&NCAOptions::default())?;
+//! let result = subject.superposition_from_nca(&nca, 12.0, None)?;
 //! ```
 
 use crate::data::auc::auc as compute_auc;
@@ -25,7 +30,7 @@ use crate::data::observation::ObservationProfile;
 use crate::nca::error::NCAError;
 use crate::nca::traits::NCA;
 use crate::nca::types::{NCAOptions, NCAResult};
-use crate::Subject;
+use crate::{Occasion, Subject};
 use serde::{Deserialize, Serialize};
 
 /// Result of a superposition prediction
@@ -53,11 +58,8 @@ pub struct SuperpositionResult {
 
 /// Predict steady-state concentrations by superposition of a single-dose profile
 ///
-/// The algorithm:
-/// 1. For each evaluation time t in [0, τ], sum contributions from N previous doses
-/// 2. Each dose contribution at time t from dose k is: C(t + k·τ)
-/// 3. For times beyond the observed profile, extrapolate using: C_pred = Clast × exp(-λz × (t - Tlast))
-/// 4. Continue summing until the contribution from the next dose is negligible (< tolerance)
+/// This is the core algorithm. It is **crate-internal** — callers should use
+/// the [`Superposition`] trait on [`Subject`] or [`Occasion`] instead.
 ///
 /// # Arguments
 /// * `profile` - Single-dose observation profile
@@ -67,22 +69,7 @@ pub struct SuperpositionResult {
 ///
 /// # Returns
 /// `None` if `lambda_z` is not positive or profile is empty
-///
-/// # Example
-///
-/// ```rust,ignore
-/// use pharmsol::nca::{superposition, NCAOptions, NCA, ObservationProfile};
-///
-/// let result = subject.nca(&NCAOptions::default())?;
-/// if let Some(lz) = result.terminal.as_ref().map(|t| t.lambda_z) {
-///     let profile = subject.filtered_observations(0, &BLQRule::Exclude)[0].as_ref().unwrap();
-///     let ss = superposition::predict(profile, lz, 12.0, None).unwrap();
-///     println!("Predicted Cmax_ss: {:.2}", ss.cmax_ss);
-///     println!("Predicted Cmin_ss: {:.2}", ss.cmin_ss);
-///     println!("Accumulation ratio: {:.2}", ss.accumulation_ratio);
-/// }
-/// ```
-pub fn predict(
+pub(crate) fn predict(
     profile: &ObservationProfile,
     lambda_z: f64,
     tau: f64,
@@ -234,16 +221,12 @@ fn trapezoidal_auc_from_profile(
 /// Convenience wrapper: run superposition using an existing [`NCAResult`].
 ///
 /// Extracts `lambda_z` from the terminal phase and delegates to [`predict()`].
-///
-/// # Arguments
-/// * `profile` - Observation profile (single-dose)
-/// * `nca_result` - NCA result containing terminal phase parameters
-/// * `tau` - Dosing interval
-/// * `n_eval_points` - Number of evaluation points (None = use observed times)
+/// This is **crate-internal** — callers should use
+/// [`Superposition::superposition_from_nca`] on [`Subject`] or [`Occasion`] instead.
 ///
 /// # Errors
 /// Returns [`NCAError::LambdaZFailed`] if the NCA result has no terminal phase.
-pub fn predict_from_nca(
+pub(crate) fn predict_from_nca(
     profile: &ObservationProfile,
     nca_result: &NCAResult,
     tau: f64,
@@ -263,9 +246,10 @@ pub fn predict_from_nca(
     })
 }
 
-/// Extension trait for running superposition directly from a [`Subject`]
+/// Extension trait for running superposition directly from a [`Subject`] or [`Occasion`]
 ///
-/// Chains NCA → λz extraction → superposition in a single call.
+/// Chains NCA → λz extraction → superposition in a single call,
+/// or accepts a pre-computed [`NCAResult`] to avoid redundant NCA runs.
 ///
 /// # Example
 ///
@@ -276,14 +260,18 @@ pub fn predict_from_nca(
 /// let subject = Subject::builder("pt1")
 ///     .bolus(0.0, 100.0, 0)
 ///     .observation(0.0, 10.0, 0)
-///     .observation(1.0, 9.0, 0)
 ///     .observation(4.0, 6.0, 0)
 ///     .observation(12.0, 3.0, 0)
 ///     .observation(24.0, 0.9, 0)
 ///     .build();
 ///
+/// // Full chain (NCA computed internally)
 /// let ss = subject.superposition(12.0, &NCAOptions::default(), None)?;
 /// println!("Cmax_ss: {:.2}, Cmin_ss: {:.2}", ss.cmax_ss, ss.cmin_ss);
+///
+/// // Reuse an existing NCA result
+/// let nca = subject.nca(&NCAOptions::default())?;
+/// let ss = subject.superposition_from_nca(&nca, 12.0, None)?;
 /// ```
 pub trait Superposition {
     /// Predict steady-state profile via superposition
@@ -293,12 +281,28 @@ pub trait Superposition {
     ///
     /// # Arguments
     /// * `tau` - Dosing interval
-    /// * `options` - NCA options (used for λz estimation; `outeq` is read from here)
+    /// * `options` - NCA options (used for λz estimation)
     /// * `n_eval_points` - Number of evaluation points (None = use observed times)
     fn superposition(
         &self,
         tau: f64,
         options: &NCAOptions,
+        n_eval_points: Option<usize>,
+    ) -> Result<SuperpositionResult, NCAError>;
+
+    /// Predict steady-state profile using a pre-computed [`NCAResult`]
+    ///
+    /// Skips the NCA step, useful when you already have an NCA result and
+    /// want to avoid redundant computation.
+    ///
+    /// # Arguments
+    /// * `nca_result` - Pre-computed NCA result containing terminal phase parameters
+    /// * `tau` - Dosing interval
+    /// * `n_eval_points` - Number of evaluation points (None = use observed times)
+    fn superposition_from_nca(
+        &self,
+        nca_result: &NCAResult,
+        tau: f64,
         n_eval_points: Option<usize>,
     ) -> Result<SuperpositionResult, NCAError>;
 }
@@ -310,19 +314,16 @@ impl Superposition for Subject {
         options: &NCAOptions,
         n_eval_points: Option<usize>,
     ) -> Result<SuperpositionResult, NCAError> {
-        let outeq = options.outeq;
-        // Run NCA to get lambda_z
         let nca_result = self.nca(options)?;
+        self.superposition_from_nca(&nca_result, tau, n_eval_points)
+    }
 
-        let lambda_z = nca_result
-            .terminal
-            .as_ref()
-            .map(|t| t.lambda_z)
-            .ok_or_else(|| NCAError::LambdaZFailed {
-                reason: "λz not estimable; cannot perform superposition".to_string(),
-            })?;
-
-        // Get profile from first occasion
+    fn superposition_from_nca(
+        &self,
+        nca_result: &NCAResult,
+        tau: f64,
+        n_eval_points: Option<usize>,
+    ) -> Result<SuperpositionResult, NCAError> {
         let occ = self
             .occasions()
             .first()
@@ -330,12 +331,30 @@ impl Superposition for Subject {
                 param: "occasion".to_string(),
                 value: "no occasions found".to_string(),
             })?;
-        let profile = ObservationProfile::from_occasion(occ, outeq, &BLQRule::Exclude)?;
+        occ.superposition_from_nca(nca_result, tau, n_eval_points)
+    }
+}
 
-        predict(&profile, lambda_z, tau, n_eval_points).ok_or_else(|| NCAError::InvalidParameter {
-            param: "superposition".to_string(),
-            value: "prediction returned None (check lambda_z and tau)".to_string(),
-        })
+impl Superposition for Occasion {
+    fn superposition(
+        &self,
+        tau: f64,
+        options: &NCAOptions,
+        n_eval_points: Option<usize>,
+    ) -> Result<SuperpositionResult, NCAError> {
+        use crate::nca::traits::NCA;
+        let nca_result = self.nca(options)?;
+        self.superposition_from_nca(&nca_result, tau, n_eval_points)
+    }
+
+    fn superposition_from_nca(
+        &self,
+        nca_result: &NCAResult,
+        tau: f64,
+        n_eval_points: Option<usize>,
+    ) -> Result<SuperpositionResult, NCAError> {
+        let profile = ObservationProfile::from_occasion(self, 0, &BLQRule::Exclude)?;
+        predict_from_nca(&profile, nca_result, tau, n_eval_points)
     }
 }
 

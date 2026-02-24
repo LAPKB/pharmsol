@@ -1,5 +1,5 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use pharmsol::nca::{lambda_z_candidates, NCAOptions, NCA};
+use pharmsol::nca::{NCAOptions, NCA};
 use pharmsol::prelude::*;
 use std::hint::black_box;
 
@@ -77,32 +77,6 @@ fn bench_population_nca(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_lambda_z_candidates(c: &mut Criterion) {
-    use pharmsol::data::event::{AUCMethod, BLQRule};
-    use pharmsol::data::observation::ObservationProfile;
-    use pharmsol::nca::LambdaZOptions;
-
-    let subject = typical_oral_subject("bench_subj");
-    let occ = &subject.occasions()[0];
-    let profile = ObservationProfile::from_occasion(occ, 0, &BLQRule::Exclude).unwrap();
-    let lz_opts = LambdaZOptions::default();
-
-    // Get AUClast for the candidate scoring
-    let auc_results = subject.auc(0, &AUCMethod::Linear, &BLQRule::Exclude);
-    let auc_last = auc_results[0].as_ref().copied().unwrap_or(50.0);
-
-    c.bench_function("nca_lambda_z_candidates", |b| {
-        b.iter(|| {
-            let candidates = lambda_z_candidates(
-                black_box(&profile),
-                black_box(&lz_opts),
-                black_box(auc_last),
-            );
-            black_box(candidates);
-        });
-    });
-}
-
 fn bench_observation_metrics(c: &mut Criterion) {
     use pharmsol::data::event::{AUCMethod, BLQRule};
 
@@ -121,7 +95,6 @@ criterion_group!(
     benches,
     bench_single_subject_nca,
     bench_population_nca,
-    bench_lambda_z_candidates,
     bench_observation_metrics,
 );
 criterion_main!(benches);

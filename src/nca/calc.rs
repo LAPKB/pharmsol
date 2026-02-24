@@ -58,17 +58,24 @@ impl From<LambdaZResult> for RegressionStats {
 /// # Example
 ///
 /// ```rust,ignore
-/// use pharmsol::nca::{lambda_z_candidates, LambdaZOptions, ObservationProfile};
+/// use pharmsol::prelude::*;
+/// use pharmsol::nca::{NCAOptions, NCA};
 ///
-/// let candidates = lambda_z_candidates(&profile, &LambdaZOptions::default(), auc_last);
-/// for c in &candidates {
-///     println!("{} pts: λz={:.4} t½={:.2} R²={:.4} {}",
-///         c.n_points, c.lambda_z, c.half_life, c.r_squared,
-///         if c.is_selected { "← selected" } else { "" });
+/// let subject = Subject::builder("pt")
+///     .bolus(0.0, 100.0, 0)
+///     .observation(1.0, 10.0, 0)
+///     .observation(4.0, 5.0, 0)
+///     .observation(8.0, 2.0, 0)
+///     .build();
+///
+/// // Inspect λz candidates via NCA result
+/// let result = subject.nca(&NCAOptions::default())?;
+/// if let Some(ref term) = result.terminal {
+///     println!("λz={:.4} t½={:.2} R²={:.4}", term.lambda_z, term.half_life, term.r_squared);
 /// }
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LambdaZCandidate {
+pub(crate) struct LambdaZCandidate {
     /// Number of points used in regression
     pub n_points: usize,
     /// Index of first point in the profile
@@ -112,7 +119,7 @@ pub struct LambdaZCandidate {
 /// * `profile` - Validated observation profile
 /// * `options` - Lambda-z estimation options (controls point range, R² thresholds)
 /// * `auc_last` - AUC from time 0 to Tlast (needed to compute AUC∞ for each candidate)
-pub fn lambda_z_candidates(
+pub(crate) fn lambda_z_candidates(
     profile: &Profile,
     options: &LambdaZOptions,
     auc_last: f64,
