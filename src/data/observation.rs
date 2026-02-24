@@ -269,7 +269,7 @@ impl ObservationProfile {
     /// Calculate AUC from time 0 to Tlast
     ///
     /// Delegates to [`crate::data::auc::auc`] over `times[..=tlast_idx]`.
-    pub fn auc_last(&self, method: &AUCMethod) -> f64 {
+    pub fn auc_last(&self, method: &AUCMethod) -> Result<f64, ObservationError> {
         let end = self.tlast_idx + 1;
         auc::auc(&self.times[..end], &self.concentrations[..end], method)
     }
@@ -277,14 +277,19 @@ impl ObservationProfile {
     /// Calculate AUC over a specific time interval
     ///
     /// Delegates to [`crate::data::auc::auc_interval`].
-    pub fn auc_interval(&self, start: f64, end: f64, method: &AUCMethod) -> f64 {
+    pub fn auc_interval(
+        &self,
+        start: f64,
+        end: f64,
+        method: &AUCMethod,
+    ) -> Result<f64, ObservationError> {
         auc::auc_interval(&self.times, &self.concentrations, start, end, method)
     }
 
     /// Calculate AUMC from time 0 to Tlast
     ///
     /// Delegates to [`crate::data::auc::aumc`] over `times[..=tlast_idx]`.
-    pub fn aumc_last(&self, method: &AUCMethod) -> f64 {
+    pub fn aumc_last(&self, method: &AUCMethod) -> Result<f64, ObservationError> {
         let end = self.tlast_idx + 1;
         auc::aumc(&self.times[..end], &self.concentrations[..end], method)
     }
@@ -601,7 +606,7 @@ mod tests {
         let occasion = &subject.occasions()[0];
         let profile = ObservationProfile::from_occasion(occasion, 0, &BLQRule::Exclude).unwrap();
 
-        let auc_val = profile.auc_last(&AUCMethod::Linear);
+        let auc_val = profile.auc_last(&AUCMethod::Linear).unwrap();
         assert!((auc_val - 44.0).abs() < 1e-10);
     }
 
@@ -619,8 +624,8 @@ mod tests {
         let profile = ObservationProfile::from_occasion(occ, 0, &BLQRule::Exclude).unwrap();
         let method = AUCMethod::Linear;
 
-        let profile_auc = profile.auc_last(&method);
-        let direct_auc = auc::auc(&profile.times, &profile.concentrations, &method);
+        let profile_auc = profile.auc_last(&method).unwrap();
+        let direct_auc = auc::auc(&profile.times, &profile.concentrations, &method).unwrap();
 
         assert!((profile_auc - direct_auc).abs() < 1e-10);
     }

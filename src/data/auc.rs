@@ -20,13 +20,14 @@
 //! let times = [0.0, 1.0, 2.0, 4.0, 8.0];
 //! let concs = [0.0, 10.0, 8.0, 4.0, 2.0];
 //!
-//! let total = auc(&times, &concs, &AUCMethod::Linear);
-//! let partial = auc_interval(&times, &concs, 1.0, 4.0, &AUCMethod::Linear);
-//! let moment = aumc(&times, &concs, &AUCMethod::Linear);
+//! let total = auc(&times, &concs, &AUCMethod::Linear).unwrap();
+//! let partial = auc_interval(&times, &concs, 1.0, 4.0, &AUCMethod::Linear).unwrap();
+//! let moment = aumc(&times, &concs, &AUCMethod::Linear).unwrap();
 //! let c_at_3 = interpolate_linear(&times, &concs, 3.0);
 //! ```
 
 use crate::data::event::AUCMethod;
+use crate::data::observation_error::ObservationError;
 
 // ============================================================================
 // Segment-level helpers (private)
@@ -73,13 +74,19 @@ fn aumc_log(t1: f64, c1: f64, t2: f64, c2: f64, dt: f64) -> f64 {
 /// calculation cannot know Tmax context. Use [`auc`] or
 /// [`auc_segment_with_tmax`] for proper LinLog handling.
 #[inline]
-pub fn auc_segment(t1: f64, c1: f64, t2: f64, c2: f64, method: &AUCMethod) -> f64 {
+pub fn auc_segment(
+    t1: f64,
+    c1: f64,
+    t2: f64,
+    c2: f64,
+    method: &AUCMethod,
+) -> Result<f64, ObservationError> {
     let dt = t2 - t1;
     if dt <= 0.0 {
-        return 0.0;
+        return Err(ObservationError::InvalidTimeSequence);
     }
 
-    match method {
+    Ok(match method {
         AUCMethod::Linear | AUCMethod::LinLog => auc_linear(c1, c2, dt),
         AUCMethod::LinUpLogDown => {
             if use_log_linear(c1, c2) {
@@ -88,7 +95,7 @@ pub fn auc_segment(t1: f64, c1: f64, t2: f64, c2: f64, method: &AUCMethod) -> f6
                 auc_linear(c1, c2, dt)
             }
         }
-    }
+    })
 }
 
 /// Calculate AUC for a segment with Tmax context (for LinLog method)
@@ -103,13 +110,13 @@ pub fn auc_segment_with_tmax(
     c2: f64,
     tmax: f64,
     method: &AUCMethod,
-) -> f64 {
+) -> Result<f64, ObservationError> {
     let dt = t2 - t1;
     if dt <= 0.0 {
-        return 0.0;
+        return Err(ObservationError::InvalidTimeSequence);
     }
 
-    match method {
+    Ok(match method {
         AUCMethod::Linear => auc_linear(c1, c2, dt),
         AUCMethod::LinUpLogDown => {
             if use_log_linear(c1, c2) {
@@ -125,7 +132,7 @@ pub fn auc_segment_with_tmax(
                 auc_log(c1, c2, dt)
             }
         }
-    }
+    })
 }
 
 /// Calculate AUMC for a segment with Tmax context (for LinLog method)
@@ -137,13 +144,13 @@ pub fn aumc_segment_with_tmax(
     c2: f64,
     tmax: f64,
     method: &AUCMethod,
-) -> f64 {
+) -> Result<f64, ObservationError> {
     let dt = t2 - t1;
     if dt <= 0.0 {
-        return 0.0;
+        return Err(ObservationError::InvalidTimeSequence);
     }
 
-    match method {
+    Ok(match method {
         AUCMethod::Linear => aumc_linear(t1, c1, t2, c2, dt),
         AUCMethod::LinUpLogDown => {
             if use_log_linear(c1, c2) {
@@ -159,7 +166,7 @@ pub fn aumc_segment_with_tmax(
                 aumc_log(t1, c1, t2, c2, dt)
             }
         }
-    }
+    })
 }
 
 // ============================================================================
@@ -186,11 +193,11 @@ pub fn aumc_segment_with_tmax(
 ///
 /// let times = [0.0, 1.0, 2.0, 4.0];
 /// let concs = [0.0, 10.0, 8.0, 4.0];
-/// let result = auc(&times, &concs, &AUCMethod::Linear);
+/// let result = auc(&times, &concs, &AUCMethod::Linear).unwrap();
 /// // (0+10)/2*1 + (10+8)/2*1 + (8+4)/2*2 = 5 + 9 + 12 = 26
 /// assert!((result - 26.0).abs() < 1e-10);
 /// ```
-pub fn auc(times: &[f64], values: &[f64], method: &AUCMethod) -> f64 {
+pub fn auc(times: &[f64], values: &[f64], method: &AUCMethod) -> Result<f64, ObservationError> {
     assert_eq!(
         times.len(),
         values.len(),
@@ -198,7 +205,7 @@ pub fn auc(times: &[f64], values: &[f64], method: &AUCMethod) -> f64 {
     );
 
     if times.len() < 2 {
-        return 0.0;
+        return Ok(0.0);
     }
 
     // Auto-detect tmax for LinLog
@@ -213,9 +220,9 @@ pub fn auc(times: &[f64], values: &[f64], method: &AUCMethod) -> f64 {
             values[i],
             tmax,
             method,
-        );
+        )?;
     }
-    total
+    Ok(total)
 }
 
 /// Calculate partial AUC over a specific time interval
@@ -237,7 +244,7 @@ pub fn auc(times: &[f64], values: &[f64], method: &AUCMethod) -> f64 {
 ///
 /// let times = [0.0, 1.0, 2.0, 4.0, 8.0];
 /// let concs = [0.0, 10.0, 8.0, 4.0, 2.0];
-/// let partial = auc_interval(&times, &concs, 1.0, 4.0, &AUCMethod::Linear);
+/// let partial = auc_interval(&times, &concs, 1.0, 4.0, &AUCMethod::Linear).unwrap();
 /// // (10+8)/2*1 + (8+4)/2*2 = 9 + 12 = 21
 /// assert!((partial - 21.0).abs() < 1e-10);
 /// ```
@@ -247,7 +254,7 @@ pub fn auc_interval(
     start: f64,
     end: f64,
     method: &AUCMethod,
-) -> f64 {
+) -> Result<f64, ObservationError> {
     assert_eq!(
         times.len(),
         values.len(),
@@ -255,7 +262,7 @@ pub fn auc_interval(
     );
 
     if end <= start || times.len() < 2 {
-        return 0.0;
+        return Ok(0.0);
     }
 
     // Auto-detect tmax for LinLog (same as auc())
@@ -287,10 +294,10 @@ pub fn auc_interval(
             values[i]
         };
 
-        total += auc_segment_with_tmax(seg_start, c1, seg_end, c2, tmax, method);
+        total += auc_segment_with_tmax(seg_start, c1, seg_end, c2, tmax, method)?;
     }
 
-    total
+    Ok(total)
 }
 
 /// Calculate AUMC (Area Under the first Moment Curve) over an entire profile
@@ -302,7 +309,7 @@ pub fn auc_interval(
 /// * `times` - Sorted time points
 /// * `values` - Concentration values (parallel to `times`)
 /// * `method` - Trapezoidal rule variant
-pub fn aumc(times: &[f64], values: &[f64], method: &AUCMethod) -> f64 {
+pub fn aumc(times: &[f64], values: &[f64], method: &AUCMethod) -> Result<f64, ObservationError> {
     assert_eq!(
         times.len(),
         values.len(),
@@ -310,7 +317,7 @@ pub fn aumc(times: &[f64], values: &[f64], method: &AUCMethod) -> f64 {
     );
 
     if times.len() < 2 {
-        return 0.0;
+        return Ok(0.0);
     }
 
     let tmax = tmax_from_arrays(times, values);
@@ -324,9 +331,9 @@ pub fn aumc(times: &[f64], values: &[f64], method: &AUCMethod) -> f64 {
             values[i],
             tmax,
             method,
-        );
+        )?;
     }
-    total
+    Ok(total)
 }
 
 /// Linear interpolation of a value at a given time
@@ -419,16 +426,17 @@ impl<T> Pipe for T {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::data::observation_error::ObservationError;
 
     #[test]
     fn test_auc_segment_linear() {
-        let result = auc_segment(0.0, 10.0, 1.0, 8.0, &AUCMethod::Linear);
+        let result = auc_segment(0.0, 10.0, 1.0, 8.0, &AUCMethod::Linear).unwrap();
         assert!((result - 9.0).abs() < 1e-10); // (10 + 8) / 2 * 1
     }
 
     #[test]
     fn test_auc_segment_log_down() {
-        let result = auc_segment(0.0, 10.0, 1.0, 5.0, &AUCMethod::LinUpLogDown);
+        let result = auc_segment(0.0, 10.0, 1.0, 5.0, &AUCMethod::LinUpLogDown).unwrap();
         let expected = 5.0 / (10.0_f64 / 5.0).ln();
         assert!((result - expected).abs() < 1e-10);
     }
@@ -436,7 +444,7 @@ mod tests {
     #[test]
     fn test_auc_segment_ascending_linuplogdown() {
         // Ascending — should use linear even with LinUpLogDown
-        let result = auc_segment(0.0, 5.0, 1.0, 10.0, &AUCMethod::LinUpLogDown);
+        let result = auc_segment(0.0, 5.0, 1.0, 10.0, &AUCMethod::LinUpLogDown).unwrap();
         let expected = (5.0 + 10.0) / 2.0 * 1.0;
         assert!((result - expected).abs() < 1e-10);
     }
@@ -444,7 +452,7 @@ mod tests {
     #[test]
     fn test_auc_segment_zero_dt() {
         let result = auc_segment(1.0, 10.0, 1.0, 8.0, &AUCMethod::Linear);
-        assert_eq!(result, 0.0);
+        assert!(matches!(result, Err(ObservationError::InvalidTimeSequence)));
     }
 
     #[test]
@@ -452,7 +460,7 @@ mod tests {
         let times = [0.0, 1.0, 2.0, 4.0, 8.0, 12.0];
         let concs = [0.0, 10.0, 8.0, 4.0, 2.0, 1.0];
 
-        let result = auc(&times, &concs, &AUCMethod::Linear);
+        let result = auc(&times, &concs, &AUCMethod::Linear).unwrap();
         // Manual calculation:
         // 0-1: (0 + 10) / 2 * 1 = 5
         // 1-2: (10 + 8) / 2 * 1 = 9
@@ -467,14 +475,14 @@ mod tests {
     fn test_auc_single_point() {
         let times = [1.0];
         let concs = [10.0];
-        assert_eq!(auc(&times, &concs, &AUCMethod::Linear), 0.0);
+        assert_eq!(auc(&times, &concs, &AUCMethod::Linear).unwrap(), 0.0);
     }
 
     #[test]
     fn test_auc_empty() {
         let times: [f64; 0] = [];
         let concs: [f64; 0] = [];
-        assert_eq!(auc(&times, &concs, &AUCMethod::Linear), 0.0);
+        assert_eq!(auc(&times, &concs, &AUCMethod::Linear).unwrap(), 0.0);
     }
 
     #[test]
@@ -482,7 +490,7 @@ mod tests {
         let times = [0.0, 1.0, 2.0, 4.0, 8.0];
         let concs = [0.0, 10.0, 8.0, 4.0, 2.0];
 
-        let result = auc_interval(&times, &concs, 1.0, 4.0, &AUCMethod::Linear);
+        let result = auc_interval(&times, &concs, 1.0, 4.0, &AUCMethod::Linear).unwrap();
         // 1-2: (10+8)/2*1 = 9
         // 2-4: (8+4)/2*2 = 12
         // Total = 21
@@ -495,7 +503,7 @@ mod tests {
         let concs = [0.0, 10.0, 6.0];
 
         // Interval [1, 3] requires interpolation at both boundaries
-        let result = auc_interval(&times, &concs, 1.0, 3.0, &AUCMethod::Linear);
+        let result = auc_interval(&times, &concs, 1.0, 3.0, &AUCMethod::Linear).unwrap();
         // C(1) = interpolate(0,0, 2,10, t=1) = 5.0
         // C(3) = interpolate(2,10, 4,6, t=3) = 8.0
         // AUC from 1-2: (5+10)/2*1 = 7.5
@@ -511,12 +519,12 @@ mod tests {
 
         // Entirely before data
         assert_eq!(
-            auc_interval(&times, &concs, 0.0, 0.5, &AUCMethod::Linear),
+            auc_interval(&times, &concs, 0.0, 0.5, &AUCMethod::Linear).unwrap(),
             0.0
         );
         // Entirely after data
         assert_eq!(
-            auc_interval(&times, &concs, 5.0, 10.0, &AUCMethod::Linear),
+            auc_interval(&times, &concs, 5.0, 10.0, &AUCMethod::Linear).unwrap(),
             0.0
         );
     }
@@ -527,7 +535,7 @@ mod tests {
         let concs = [0.0, 10.0, 8.0];
         // end <= start should return 0
         assert_eq!(
-            auc_interval(&times, &concs, 2.0, 1.0, &AUCMethod::Linear),
+            auc_interval(&times, &concs, 2.0, 1.0, &AUCMethod::Linear).unwrap(),
             0.0
         );
     }
@@ -537,7 +545,7 @@ mod tests {
         let times = [0.0, 1.0, 2.0];
         let concs = [0.0, 10.0, 8.0];
 
-        let result = aumc(&times, &concs, &AUCMethod::Linear);
+        let result = aumc(&times, &concs, &AUCMethod::Linear).unwrap();
         // Segment 0-1: (0*0 + 1*10)/2 * 1 = 5
         // Segment 1-2: (1*10 + 2*8)/2 * 1 = 13
         // Total = 18
@@ -578,12 +586,14 @@ mod tests {
         // tmax at t=1, concs: [0, 10, 8, 4]
 
         // Before tmax: linear
-        let seg_before = auc_segment_with_tmax(0.0, 0.0, 1.0, 10.0, 1.0, &AUCMethod::LinLog);
+        let seg_before =
+            auc_segment_with_tmax(0.0, 0.0, 1.0, 10.0, 1.0, &AUCMethod::LinLog).unwrap();
         let expected_linear = (0.0 + 10.0) / 2.0 * 1.0;
         assert!((seg_before - expected_linear).abs() < 1e-10);
 
         // After tmax with descending: log-linear
-        let seg_after = auc_segment_with_tmax(1.0, 10.0, 2.0, 8.0, 1.0, &AUCMethod::LinLog);
+        let seg_after =
+            auc_segment_with_tmax(1.0, 10.0, 2.0, 8.0, 1.0, &AUCMethod::LinLog).unwrap();
         // Should NOT be simple linear
         let linear_val = (10.0 + 8.0) / 2.0 * 1.0;
         // LinLog after tmax with descending should differ
@@ -599,10 +609,10 @@ mod tests {
         let times = [0.0, 1.0, 2.0, 4.0, 8.0, 12.0];
         let concs = [0.0, 10.0, 8.0, 4.0, 2.0, 1.0];
 
-        let linear = auc(&times, &concs, &AUCMethod::Linear);
+        let linear = auc(&times, &concs, &AUCMethod::Linear).unwrap();
         assert!((linear - 44.0).abs() < 1e-10);
 
-        let linuplogdown = auc(&times, &concs, &AUCMethod::LinUpLogDown);
+        let linuplogdown = auc(&times, &concs, &AUCMethod::LinUpLogDown).unwrap();
         // LinUpLogDown should give a different (smaller) result for the descending part
         assert!(linuplogdown < linear);
         assert!(linuplogdown > 0.0);

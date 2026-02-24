@@ -30,15 +30,15 @@ struct Precomputed {
 }
 
 impl Precomputed {
-    fn from_profile(profile: &Profile, method: AUCMethod) -> Self {
-        Self {
-            auc_last: profile.auc_last(&method),
-            aumc_last: profile.aumc_last(&method),
+    fn from_profile(profile: &Profile, method: AUCMethod) -> Result<Self, NCAError> {
+        Ok(Self {
+            auc_last: profile.auc_last(&method)?,
+            aumc_last: profile.aumc_last(&method)?,
             cmax: profile.cmax(),
             tmax: profile.tmax(),
             clast: profile.clast(),
             tlast: profile.tlast(),
-        }
+        })
     }
 
     fn auc_inf(&self, clast: f64, lambda_z: f64) -> f64 {
@@ -82,7 +82,7 @@ pub(crate) fn analyze(
     }
 
     // Compute AUC/AUMC once, use everywhere
-    let pre = Precomputed::from_profile(profile, options.auc_method);
+    let pre = Precomputed::from_profile(profile, options.auc_method)?;
 
     // Core exposure parameters (always calculated)
     let mut exposure = compute_exposure(&pre, profile, options, raw_tlag)?;
@@ -129,7 +129,8 @@ pub(crate) fn analyze(
     // Steady-state parameters (if tau specified)
     let steady_state = options
         .tau
-        .map(|tau| compute_steady_state(&pre, profile, tau, options));
+        .map(|tau| compute_steady_state(&pre, profile, tau, options))
+        .transpose()?;
 
     // Dose-normalized parameters
     if let Some(d) = dose_amount {
@@ -143,44 +144,7 @@ pub(crate) fn analyze(
     }
 
     // Multi-dose interval parameters (if dose_times specified)
-    let multi_dose = options.dose_times.as_ref().and_then(|times| {
-        if times.is_empty() {
-            return None;
-        }
-        let mut sorted_times = times.clone();
-        sorted_times.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-
-        let last_obs_time = *profile.times.last()?;
-        let n = sorted_times.len();
-
-        let mut auc_intervals = Vec::with_capacity(n);
-        let mut cmax_intervals = Vec::with_capacity(n);
-        let mut tmax_intervals = Vec::with_capacity(n);
-
-        for i in 0..n {
-            let start = sorted_times[i];
-            let end = if i + 1 < n {
-                sorted_times[i + 1]
-            } else {
-                last_obs_time
-            };
-
-            // AUC over interval
-            auc_intervals.push(profile.auc_interval(start, end, &options.auc_method));
-
-            // Cmax/Tmax within [start, end]
-            let (cmax, tmax) = cmax_tmax_in_window(profile, start, end);
-            cmax_intervals.push(cmax);
-            tmax_intervals.push(tmax);
-        }
-
-        Some(MultiDoseParams {
-            dose_times: sorted_times,
-            auc_intervals,
-            cmax_intervals,
-            tmax_intervals,
-        })
-    });
+    let multi_dose = compute_multi_dose(profile, options)?;
 
     // Build quality summary
     let quality = build_quality(
@@ -216,7 +180,8 @@ fn compute_exposure(
     // Calculate partial AUC if interval specified
     let auc_partial = options
         .auc_interval
-        .map(|(start, end)| profile.auc_interval(start, end, &options.auc_method));
+        .map(|(start, end)| profile.auc_interval(start, end, &options.auc_method))
+        .transpose()?;
 
     // Find first measurable (positive) concentration time
     let tfirst = profile
@@ -379,15 +344,15 @@ fn compute_steady_state(
     profile: &Profile,
     tau: f64,
     options: &NCAOptions,
-) -> SteadyStateParams {
+) -> Result<SteadyStateParams, NCAError> {
     let cmin = calc::cmin(profile);
-    let auc_tau = profile.auc_interval(0.0, tau, &options.auc_method);
+    let auc_tau = profile.auc_interval(0.0, tau, &options.auc_method)?;
     let cavg = calc::cavg(auc_tau, tau);
     let fluctuation = calc::fluctuation(pre.cmax, cmin, cavg);
     let swing = calc::swing(pre.cmax, cmin);
     let ptr = calc::peak_trough_ratio(pre.cmax, cmin);
 
-    SteadyStateParams {
+    Ok(SteadyStateParams {
         tau,
         auc_tau,
         cmin,
@@ -397,7 +362,56 @@ fn compute_steady_state(
         swing,
         peak_trough_ratio: ptr,
         accumulation: None, // Would need single-dose reference
+    })
+}
+
+/// Compute multi-dose interval parameters
+fn compute_multi_dose(
+    profile: &Profile,
+    options: &NCAOptions,
+) -> Result<Option<MultiDoseParams>, NCAError> {
+    let times = match &options.dose_times {
+        None => return Ok(None),
+        Some(t) if t.is_empty() => return Ok(None),
+        Some(t) => t,
+    };
+
+    let mut sorted_times = times.clone();
+    sorted_times.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+    let last_obs_time = match profile.times.last() {
+        Some(t) => *t,
+        None => return Ok(None),
+    };
+    let n = sorted_times.len();
+
+    let mut auc_intervals = Vec::with_capacity(n);
+    let mut cmax_intervals = Vec::with_capacity(n);
+    let mut tmax_intervals = Vec::with_capacity(n);
+
+    for i in 0..n {
+        let start = sorted_times[i];
+        let end = if i + 1 < n {
+            sorted_times[i + 1]
+        } else {
+            last_obs_time
+        };
+
+        // AUC over interval
+        auc_intervals.push(profile.auc_interval(start, end, &options.auc_method)?);
+
+        // Cmax/Tmax within [start, end]
+        let (cmax, tmax) = cmax_tmax_in_window(profile, start, end);
+        cmax_intervals.push(cmax);
+        tmax_intervals.push(tmax);
     }
+
+    Ok(Some(MultiDoseParams {
+        dose_times: sorted_times,
+        auc_intervals,
+        cmax_intervals,
+        tmax_intervals,
+    }))
 }
 
 /// Build quality assessment

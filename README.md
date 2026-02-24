@@ -104,8 +104,7 @@ let subject = Subject::builder("patient_001")
     .observation(8.0, 2.0, 0)
     .build();
 
-let results = subject.nca(&NCAOptions::default(), 0);
-let result = results[0].as_ref().expect("NCA failed");
+let result = subject.nca(&NCAOptions::default()).expect("NCA failed");
 
 println!("Cmax: {:.2}", result.exposure.cmax);
 println!("Tmax: {:.2} h", result.exposure.tmax);

@@ -417,7 +417,7 @@ fn auc_occasion(
     blq_rule: &BLQRule,
 ) -> Result<f64, MetricsError> {
     let profile = ObservationProfile::from_occasion(occasion, outeq, blq_rule)?;
-    Ok(profile.auc_last(method))
+    Ok(profile.auc_last(method)?)
 }
 
 fn auc_interval_occasion(
@@ -429,7 +429,7 @@ fn auc_interval_occasion(
     blq_rule: &BLQRule,
 ) -> Result<f64, MetricsError> {
     let profile = ObservationProfile::from_occasion(occasion, outeq, blq_rule)?;
-    Ok(profile.auc_interval(start, end, method))
+    Ok(profile.auc_interval(start, end, method)?)
 }
 
 fn cmax_occasion(
@@ -475,5 +475,5 @@ fn aumc_occasion(
     blq_rule: &BLQRule,
 ) -> Result<f64, MetricsError> {
     let profile = ObservationProfile::from_occasion(occasion, outeq, blq_rule)?;
-    Ok(profile.aumc_last(method))
+    Ok(profile.aumc_last(method)?)
 }

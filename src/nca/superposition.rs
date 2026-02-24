@@ -24,8 +24,7 @@
 //! let result = subject.superposition_from_nca(&nca, 12.0, None)?;
 //! ```
 
-use crate::data::auc::auc as compute_auc;
-use crate::data::event::{AUCMethod, BLQRule};
+use crate::data::event::BLQRule;
 use crate::data::observation::ObservationProfile;
 use crate::nca::error::NCAError;
 use crate::nca::traits::NCA;
@@ -197,9 +196,13 @@ fn concentration_at_time(
     }
 }
 
-/// Simple trapezoidal AUC — delegates to data::auc::auc
+/// Simple trapezoidal AUC (linear method), computed directly for internally-sorted eval_times.
 fn trapezoidal_auc(times: &[f64], concentrations: &[f64]) -> f64 {
-    compute_auc(times, concentrations, &AUCMethod::Linear)
+    times
+        .windows(2)
+        .zip(concentrations.windows(2))
+        .map(|(t, c)| (c[0] + c[1]) / 2.0 * (t[1] - t[0]))
+        .sum()
 }
 
 /// Single-dose AUC over [0, tau] from profile with extrapolation

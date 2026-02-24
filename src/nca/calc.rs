@@ -745,14 +745,14 @@ mod tests {
 
     #[test]
     fn test_auc_segment_linear() {
-        let auc = auc_segment(0.0, 10.0, 1.0, 8.0, &AUCMethod::Linear);
+        let auc = auc_segment(0.0, 10.0, 1.0, 8.0, &AUCMethod::Linear).unwrap();
         assert!((auc - 9.0).abs() < 1e-10); // (10 + 8) / 2 * 1
     }
 
     #[test]
     fn test_auc_segment_log_down() {
         // Descending - should use log-linear
-        let auc = auc_segment(0.0, 10.0, 1.0, 5.0, &AUCMethod::LinUpLogDown);
+        let auc = auc_segment(0.0, 10.0, 1.0, 5.0, &AUCMethod::LinUpLogDown).unwrap();
         let expected = 5.0 / (10.0_f64 / 5.0).ln(); // (C1-C2) * dt / ln(C1/C2)
         assert!((auc - expected).abs() < 1e-10);
     }
@@ -760,7 +760,7 @@ mod tests {
     #[test]
     fn test_auc_last() {
         let profile = make_test_profile();
-        let auc = profile.auc_last(&AUCMethod::Linear);
+        let auc = profile.auc_last(&AUCMethod::Linear).unwrap();
 
         // Manual calculation:
         // 0-1: (0 + 10) / 2 * 1 = 5
