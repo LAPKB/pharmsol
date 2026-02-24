@@ -5,12 +5,6 @@
 //! [`ObservationProfile`](crate::data::observation::ObservationProfile), NCA analysis,
 //! and any downstream code (e.g., PMcore best-dose) that needs trapezoidal integration.
 //!
-//! # Design
-//!
-//! All functions in this module are **pure math** — no dependency on data structures,
-//! no BLQ filtering, no error types beyond what the caller can check. They accept
-//! raw slices and an [`AUCMethod`], and return `f64`.
-//!
 //! # Example
 //!
 //! ```rust
