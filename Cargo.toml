@@ -1,3 +1,6 @@
+[workspace]
+members = ["pharmsol-macros"]
+
 [package]
 name = "pharmsol"
 version = "0.22.1"
@@ -28,6 +31,7 @@ thiserror = "2.0.11"
 argmin = "0.11.0"
 argmin-math = "0.5.1"
 tracing = "0.1.41"
+pharmsol-macros = { path = "pharmsol-macros" }
 
 [dev-dependencies]
 criterion = { version = "0.8.0", features = ["html_reports"] }

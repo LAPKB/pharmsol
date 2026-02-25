@@ -219,11 +219,6 @@ impl Equation for ODE {
         // Cache nstates to avoid repeated method calls
         let nstates = self.get_nstates();
 
-        // Preallocate reusable vectors for bolus computation
-        let mut state_with_bolus = V::zeros(nstates, NalgebraContext);
-        let mut state_without_bolus = V::zeros(nstates, NalgebraContext);
-        let zero_vector = V::zeros(nstates, NalgebraContext);
-        let mut bolus_v = V::zeros(nstates, NalgebraContext);
         let spp_v: V = DVector::from_vec(support_point.clone()).into();
 
         // Pre-allocate output vector for observations
@@ -269,43 +264,10 @@ impl Equation for ODE {
                 // Handle events accordingly
                 match event {
                     Event::Bolus(bolus) => {
-                        // Reset and reuse the pre-allocated bolus vector
-                        bolus_v.fill(0.0);
-                        bolus_v[bolus.input()] = bolus.amount();
-
-                        // Reset and reuse the bolus changes vectors
-                        state_with_bolus.fill(0.0);
-                        state_without_bolus.fill(0.0);
-
-                        // Call the differential equation closure without bolus
-                        (self.diffeq)(
-                            solver.state().y,
-                            &spp_v,
-                            event.time(),
-                            &mut state_without_bolus,
-                            &zero_vector,
-                            &zero_vector,
-                            covariates,
-                        );
-
-                        // Call the differential equation closure with bolus
-                        (self.diffeq)(
-                            solver.state().y,
-                            &spp_v,
-                            event.time(),
-                            &mut state_with_bolus,
-                            &bolus_v,
-                            &zero_vector,
-                            covariates,
-                        );
-
-                        // The difference between the two states is the actual bolus effect
-                        // Apply the computed changes to the state using vectorized operations
-                        // state_with_bolus now contains (with_bolus - without_bolus) after axpy
-                        state_with_bolus.axpy(-1.0, &state_without_bolus, 1.0);
-
-                        // Add the difference to the solver state
-                        solver.state_mut().y.axpy(1.0, &state_with_bolus, 1.0);
+                        // Directly add bolus amount to the corresponding compartment
+                        // This is the standard pharmacometric convention: bolus doses
+                        // instantaneously add to the state at the specified compartment.
+                        solver.state_mut().y[bolus.input()] += bolus.amount();
                     }
                     Event::Infusion(_infusion) => {
                         // Infusions are handled within the ODE function itself
