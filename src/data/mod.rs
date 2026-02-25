@@ -29,16 +29,23 @@
 //!     .build();
 //! ```
 
+pub mod auc;
 pub mod builder;
 pub mod covariate;
 pub mod error_model;
 pub mod event;
+pub mod observation;
+pub mod observation_error;
 pub mod parser;
 pub mod residual_error;
 pub mod row;
 pub mod structs;
+pub mod traits;
 pub use covariate::*;
 pub use error_model::*;
 pub use event::*;
+pub use observation::ObservationProfile;
+pub use observation_error::ObservationError;
 pub use residual_error::*;
 pub use structs::{Data, Occasion, Subject};
+pub use traits::{MetricsError, ObservationMetrics};

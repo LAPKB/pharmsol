@@ -1,0 +1,792 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pharmsol.rs/schemas/model-v1.json",
+  "title": "pharmsol Model Definition",
+  "description": "JSON Schema for pharmacometric model definitions in pharmsol. Supports analytical, ODE, and SDE model types.",
+  "type": "object",
+
+  "$defs": {
+    "parameterName": {
+      "type": "string",
+      "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$",
+      "description": "Valid parameter name (starts with letter or underscore)"
+    },
+
+    "compartmentName": {
+      "type": "string",
+      "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$",
+      "description": "Valid compartment name (starts with letter or underscore)"
+    },
+
+    "expression": {
+      "type": "string",
+      "minLength": 1,
+      "description": "A Rust expression (e.g., 'x[0] / V', '-ka * x[0]')"
+    },
+
+    "analyticalFunction": {
+      "type": "string",
+      "enum": [
+        "one_compartment",
+        "one_compartment_with_absorption",
+        "two_compartments",
+        "two_compartments_with_absorption",
+        "three_compartments",
+        "three_compartments_with_absorption"
+      ],
+      "description": "Built-in analytical solution function name"
+    },
+
+    "parameterScale": {
+      "type": "string",
+      "enum": ["linear", "log", "logit"],
+      "default": "log",
+      "description": "Parameter transformation scale for estimation"
+    },
+
+    "parameterDefinition": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/parameterName",
+          "description": "Parameter symbol/name"
+        },
+        "bounds": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 2,
+          "maxItems": 2,
+          "description": "Lower and upper bounds [min, max]"
+        },
+        "scale": {
+          "$ref": "#/$defs/parameterScale"
+        },
+        "units": {
+          "type": "string",
+          "description": "Parameter units (e.g., 'L/h', '1/h', 'L')"
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable description"
+        },
+        "typical": {
+          "type": "number",
+          "description": "Typical/initial value"
+        }
+      },
+      "required": ["name"],
+      "additionalProperties": false
+    },
+
+    "derivedParameter": {
+      "type": "object",
+      "properties": {
+        "symbol": {
+          "$ref": "#/$defs/parameterName",
+          "description": "Symbol for the derived parameter"
+        },
+        "expression": {
+          "$ref": "#/$defs/expression",
+          "description": "Expression to compute the derived parameter"
+        }
+      },
+      "required": ["symbol", "expression"],
+      "additionalProperties": false
+    },
+
+    "parameterization": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "Unique identifier for this parameterization"
+        },
+        "name": {
+          "type": "string",
+          "description": "Human-readable name"
+        },
+        "default": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether this is the default parameterization"
+        },
+        "parameters": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/parameterDefinition" },
+          "minItems": 1,
+          "description": "Parameter definitions for this parameterization"
+        },
+        "derived": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/derivedParameter" },
+          "description": "Parameters derived from the primary parameters"
+        },
+        "nonmem": {
+          "type": "string",
+          "description": "NONMEM TRANS equivalent (e.g., 'TRANS1', 'TRANS2')"
+        }
+      },
+      "required": ["id", "parameters"],
+      "additionalProperties": false
+    },
+
+    "covariateType": {
+      "type": "string",
+      "enum": ["continuous", "categorical"],
+      "default": "continuous"
+    },
+
+    "interpolationMethod": {
+      "type": "string",
+      "enum": ["linear", "constant", "locf"],
+      "default": "linear",
+      "description": "How to interpolate covariate values between time points"
+    },
+
+    "covariateDefinition": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$",
+          "description": "Covariate identifier (used in code)"
+        },
+        "name": {
+          "type": "string",
+          "description": "Human-readable name"
+        },
+        "type": {
+          "$ref": "#/$defs/covariateType"
+        },
+        "units": {
+          "type": "string",
+          "description": "Units for continuous covariates"
+        },
+        "reference": {
+          "type": "number",
+          "description": "Reference value for centering (e.g., 70 for weight)"
+        },
+        "interpolation": {
+          "$ref": "#/$defs/interpolationMethod"
+        },
+        "levels": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Possible values for categorical covariates"
+        }
+      },
+      "required": ["id"],
+      "additionalProperties": false
+    },
+
+    "covariateEffectType": {
+      "type": "string",
+      "enum": [
+        "allometric",
+        "linear",
+        "exponential",
+        "proportional",
+        "categorical",
+        "custom"
+      ],
+      "description": "Type of covariate effect relationship"
+    },
+
+    "covariateEffect": {
+      "type": "object",
+      "properties": {
+        "on": {
+          "$ref": "#/$defs/parameterName",
+          "description": "Parameter affected by this covariate"
+        },
+        "covariate": {
+          "type": "string",
+          "description": "Covariate ID"
+        },
+        "type": {
+          "$ref": "#/$defs/covariateEffectType"
+        },
+        "exponent": {
+          "type": "number",
+          "description": "Exponent for allometric scaling (e.g., 0.75 for CL)"
+        },
+        "slope": {
+          "type": "number",
+          "description": "Slope for linear/exponential effects"
+        },
+        "reference": {
+          "type": "number",
+          "description": "Reference value for centering"
+        },
+        "expression": {
+          "$ref": "#/$defs/expression",
+          "description": "Custom expression for type='custom'"
+        },
+        "levels": {
+          "type": "object",
+          "additionalProperties": { "type": "number" },
+          "description": "Multipliers for each categorical level"
+        }
+      },
+      "required": ["on", "type"],
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "allometric" } } },
+          "then": { "required": ["covariate", "exponent"] }
+        },
+        {
+          "if": { "properties": { "type": { "const": "linear" } } },
+          "then": { "required": ["covariate", "slope"] }
+        },
+        {
+          "if": { "properties": { "type": { "const": "custom" } } },
+          "then": { "required": ["expression"] }
+        },
+        {
+          "if": { "properties": { "type": { "const": "categorical" } } },
+          "then": { "required": ["covariate", "levels"] }
+        }
+      ],
+      "additionalProperties": false
+    },
+
+    "errorModelType": {
+      "type": "string",
+      "enum": ["additive", "proportional", "combined", "polynomial"],
+      "description": "Type of residual error model"
+    },
+
+    "errorModel": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "$ref": "#/$defs/errorModelType"
+        },
+        "additive": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Additive error standard deviation"
+        },
+        "proportional": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Proportional error coefficient (CV)"
+        },
+        "cv": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Coefficient of variation (alias for proportional)"
+        },
+        "sd": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Standard deviation (alias for additive)"
+        },
+        "coefficients": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 4,
+          "maxItems": 4,
+          "description": "Polynomial coefficients [c0, c1, c2, c3]"
+        },
+        "lambda": {
+          "type": "number",
+          "default": 0,
+          "description": "Lambda parameter for polynomial error"
+        }
+      },
+      "required": ["type"],
+      "additionalProperties": false
+    },
+
+    "outputDefinition": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Output identifier"
+        },
+        "equation": {
+          "$ref": "#/$defs/expression",
+          "description": "Output equation expression"
+        },
+        "name": {
+          "type": "string",
+          "description": "Human-readable name"
+        },
+        "units": {
+          "type": "string",
+          "description": "Output units"
+        }
+      },
+      "required": ["equation"],
+      "additionalProperties": false
+    },
+
+    "diffeqObject": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/expression"
+      },
+      "description": "Map of compartment name to differential equation expression"
+    },
+
+    "lagObject": {
+      "type": "object",
+      "additionalProperties": {
+        "oneOf": [{ "$ref": "#/$defs/expression" }, { "type": "number" }]
+      },
+      "description": "Map of compartment index (as string) to lag time expression or value"
+    },
+
+    "faObject": {
+      "type": "object",
+      "additionalProperties": {
+        "oneOf": [
+          { "$ref": "#/$defs/expression" },
+          { "type": "number", "minimum": 0, "maximum": 1 }
+        ]
+      },
+      "description": "Map of compartment index (as string) to bioavailability expression or value"
+    },
+
+    "initObject": {
+      "type": "object",
+      "additionalProperties": {
+        "oneOf": [{ "$ref": "#/$defs/expression" }, { "type": "number" }]
+      },
+      "description": "Map of compartment name or index to initial condition"
+    },
+
+    "diffusionObject": {
+      "type": "object",
+      "additionalProperties": {
+        "oneOf": [
+          { "$ref": "#/$defs/expression" },
+          { "type": "number", "minimum": 0 }
+        ]
+      },
+      "description": "Map of state name to diffusion coefficient"
+    },
+
+    "position": {
+      "type": "object",
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" }
+      },
+      "required": ["x", "y"],
+      "additionalProperties": false
+    },
+
+    "layoutObject": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/position"
+      },
+      "description": "Map of compartment/element name to position"
+    },
+
+    "complexity": {
+      "type": "string",
+      "enum": ["basic", "intermediate", "advanced"],
+      "description": "Model complexity level"
+    },
+
+    "category": {
+      "type": "string",
+      "enum": ["pk", "pd", "pkpd", "disease", "other"],
+      "description": "Model category"
+    },
+
+    "displayInfo": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Human-readable model name"
+        },
+        "shortName": {
+          "type": "string",
+          "description": "Abbreviated name"
+        },
+        "category": {
+          "$ref": "#/$defs/category"
+        },
+        "subcategory": {
+          "type": "string",
+          "description": "Model subcategory"
+        },
+        "complexity": {
+          "$ref": "#/$defs/complexity"
+        },
+        "icon": {
+          "type": "string",
+          "description": "Icon identifier"
+        },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Searchable tags"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "reference": {
+      "type": "object",
+      "properties": {
+        "authors": { "type": "string" },
+        "title": { "type": "string" },
+        "journal": { "type": "string" },
+        "year": { "type": "integer" },
+        "doi": { "type": "string" },
+        "pmid": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+
+    "documentation": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string",
+          "description": "One-line summary"
+        },
+        "description": {
+          "type": "string",
+          "description": "Detailed description"
+        },
+        "equations": {
+          "type": "object",
+          "properties": {
+            "differential": { "type": "string" },
+            "solution": { "type": "string" }
+          },
+          "description": "LaTeX equations for display"
+        },
+        "assumptions": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Model assumptions"
+        },
+        "whenToUse": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "When to use this model"
+        },
+        "whenNotToUse": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "When NOT to use this model"
+        },
+        "references": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/reference" },
+          "description": "Literature references"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+
+  "properties": {
+    "schema": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+$",
+      "description": "Schema version (e.g., '1.0')"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "description": "Unique model identifier (snake_case)"
+    },
+    "type": {
+      "type": "string",
+      "enum": ["analytical", "ode", "sde"],
+      "description": "Model equation type"
+    },
+    "extends": {
+      "type": "string",
+      "description": "Library model ID to inherit from"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+",
+      "description": "Model version (semver)"
+    },
+    "aliases": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Alternative names (e.g., NONMEM ADVAN codes)"
+    },
+
+    "parameters": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/parameterName" },
+      "minItems": 1,
+      "uniqueItems": true,
+      "description": "Parameter names in fetch order"
+    },
+    "compartments": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/compartmentName" },
+      "uniqueItems": true,
+      "description": "Compartment names (indexed in order)"
+    },
+    "states": {
+      "type": "array",
+      "items": { "type": "string" },
+      "uniqueItems": true,
+      "description": "State variable names (for SDE)"
+    },
+
+    "analytical": {
+      "$ref": "#/$defs/analyticalFunction",
+      "description": "Built-in analytical solution function"
+    },
+    "diffeq": {
+      "oneOf": [
+        { "$ref": "#/$defs/expression" },
+        { "$ref": "#/$defs/diffeqObject" }
+      ],
+      "description": "Differential equations (string or object)"
+    },
+    "drift": {
+      "oneOf": [
+        { "$ref": "#/$defs/expression" },
+        { "$ref": "#/$defs/diffeqObject" }
+      ],
+      "description": "SDE drift term (deterministic part)"
+    },
+    "diffusion": {
+      "$ref": "#/$defs/diffusionObject",
+      "description": "SDE diffusion coefficients"
+    },
+    "secondary": {
+      "$ref": "#/$defs/expression",
+      "description": "Secondary equations (for analytical)"
+    },
+
+    "output": {
+      "$ref": "#/$defs/expression",
+      "description": "Single output equation"
+    },
+    "outputs": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/outputDefinition" },
+      "minItems": 1,
+      "description": "Multiple output definitions"
+    },
+
+    "init": {
+      "oneOf": [
+        { "$ref": "#/$defs/expression" },
+        { "$ref": "#/$defs/initObject" }
+      ],
+      "description": "Initial conditions"
+    },
+    "lag": {
+      "$ref": "#/$defs/lagObject",
+      "description": "Lag times per input compartment"
+    },
+    "fa": {
+      "$ref": "#/$defs/faObject",
+      "description": "Bioavailability per input compartment"
+    },
+    "neqs": {
+      "type": "array",
+      "items": { "type": "integer", "minimum": 1 },
+      "minItems": 2,
+      "maxItems": 2,
+      "description": "[num_states, num_outputs]"
+    },
+    "particles": {
+      "type": "integer",
+      "minimum": 100,
+      "default": 1000,
+      "description": "Number of particles for SDE simulation"
+    },
+
+    "parameterization": {
+      "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/parameterization" }],
+      "description": "Active parameterization (ID or inline definition)"
+    },
+    "parameterizations": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/parameterization" },
+      "description": "Available parameterization variants"
+    },
+
+    "features": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["lag_time", "bioavailability", "initial_conditions"]
+      },
+      "description": "Enabled optional features"
+    },
+    "covariates": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/covariateDefinition" },
+      "description": "Covariate definitions"
+    },
+    "covariateEffects": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/covariateEffect" },
+      "description": "Covariate effect specifications"
+    },
+    "errorModel": {
+      "$ref": "#/$defs/errorModel",
+      "description": "Residual error model"
+    },
+    "errorModels": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/errorModel" },
+      "description": "Error models per output (keyed by output ID)"
+    },
+
+    "display": {
+      "$ref": "#/$defs/displayInfo",
+      "description": "UI display information"
+    },
+    "layout": {
+      "$ref": "#/$defs/layoutObject",
+      "description": "Visual diagram layout"
+    },
+    "documentation": {
+      "$ref": "#/$defs/documentation",
+      "description": "Rich documentation"
+    }
+  },
+
+  "required": ["schema", "id", "type"],
+
+  "allOf": [
+    {
+      "if": {
+        "properties": { "type": { "const": "analytical" } },
+        "required": ["type"]
+      },
+      "then": {
+        "required": ["analytical"],
+        "properties": {
+          "diffeq": false,
+          "drift": false,
+          "diffusion": false,
+          "particles": false
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "type": { "const": "ode" } },
+        "required": ["type"]
+      },
+      "then": {
+        "required": ["diffeq"],
+        "properties": {
+          "analytical": false,
+          "drift": false,
+          "diffusion": false,
+          "particles": false
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "type": { "const": "sde" } },
+        "required": ["type"]
+      },
+      "then": {
+        "required": ["drift", "diffusion"],
+        "properties": {
+          "analytical": false,
+          "diffeq": false
+        }
+      }
+    },
+    {
+      "if": {
+        "not": { "required": ["extends"] }
+      },
+      "then": {
+        "anyOf": [{ "required": ["output"] }, { "required": ["outputs"] }]
+      }
+    },
+    {
+      "if": {
+        "not": { "required": ["extends"] }
+      },
+      "then": {
+        "required": ["parameters"]
+      }
+    }
+  ],
+
+  "additionalProperties": false,
+
+  "examples": [
+    {
+      "schema": "1.0",
+      "id": "pk_1cmt_iv",
+      "type": "analytical",
+      "analytical": "one_compartment",
+      "parameters": ["ke", "V"],
+      "output": "x[0] / V"
+    },
+    {
+      "schema": "1.0",
+      "id": "pk_1cmt_oral",
+      "type": "analytical",
+      "analytical": "one_compartment_with_absorption",
+      "parameters": ["ka", "ke", "V"],
+      "output": "x[1] / V"
+    },
+    {
+      "schema": "1.0",
+      "id": "pk_1cmt_oral_lag",
+      "type": "analytical",
+      "analytical": "one_compartment_with_absorption",
+      "parameters": ["ka", "ke", "V", "tlag"],
+      "lag": { "0": "tlag" },
+      "output": "x[1] / V",
+      "neqs": [2, 1]
+    },
+    {
+      "schema": "1.0",
+      "id": "pk_2cmt_ode",
+      "type": "ode",
+      "compartments": ["depot", "central", "peripheral"],
+      "parameters": ["ka", "ke", "k12", "k21", "V"],
+      "diffeq": {
+        "depot": "-ka * x[0]",
+        "central": "ka * x[0] - ke * x[1] - k12 * x[1] + k21 * x[2] + rateiv[1]",
+        "peripheral": "k12 * x[1] - k21 * x[2]"
+      },
+      "output": "x[1] / V",
+      "neqs": [3, 1]
+    },
+    {
+      "schema": "1.0",
+      "id": "pk_1cmt_sde",
+      "type": "sde",
+      "parameters": ["ke0", "sigma_ke", "V"],
+      "states": ["amount", "ke"],
+      "drift": {
+        "amount": "-ke * x[0]",
+        "ke": "-0.5 * (ke - ke0)"
+      },
+      "diffusion": {
+        "ke": "sigma_ke"
+      },
+      "init": {
+        "ke": "ke0"
+      },
+      "output": "x[0] / V",
+      "neqs": [2, 1],
+      "particles": 1000
+    }
+  ]
+}
