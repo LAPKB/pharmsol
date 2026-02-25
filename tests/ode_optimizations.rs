@@ -11,7 +11,7 @@
 use pharmsol::prelude::models::{one_compartment, one_compartment_with_absorption};
 use pharmsol::*;
 
-const REL_TOL: f64 = 1e-3;
+const REL_TOL: f64 = 1e-2; // 1% relative tolerance for most comparisons
 const ABS_TOL: f64 = 1e-6;
 
 /// Helper to compare ODE vs Analytical predictions

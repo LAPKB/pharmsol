@@ -3,7 +3,7 @@ mod em;
 use diffsol::{NalgebraContext, Vector};
 use nalgebra::DVector;
 use ndarray::{concatenate, Array2, Axis};
-use rand::{rng, Rng};
+use rand::{rng, RngExt};
 use rayon::prelude::*;
 
 use cached::proc_macro::cached;

@@ -15,7 +15,7 @@ use crate::simulator::equation::Predictions;
 use closure::PMProblem;
 use diffsol::{
     error::OdeSolverError, ode_solver::method::OdeSolverMethod, Bdf, NalgebraContext,
-    NewtonNonlinearSolver, OdeBuilder, OdeSolverStopReason, Vector, VectorHost,
+    NewtonNonlinearSolver, NoLineSearch, OdeBuilder, OdeSolverStopReason, Vector, VectorHost,
 };
 use nalgebra::DVector;
 
@@ -261,7 +261,7 @@ impl Equation for ODE {
             let mut solver: Bdf<
                 '_,
                 PMProblem<DiffEq>,
-                NewtonNonlinearSolver<M, diffsol::NalgebraLU<f64>>,
+                NewtonNonlinearSolver<M, diffsol::NalgebraLU<f64>, NoLineSearch>,
             > = problem.bdf::<diffsol::NalgebraLU<f64>>()?;
 
             // Iterate over events
