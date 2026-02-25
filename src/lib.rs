@@ -2,6 +2,7 @@ pub mod data;
 pub mod error;
 #[cfg(feature = "exa")]
 pub mod exa;
+pub mod nca;
 pub mod optimize;
 pub mod simulator;
 
@@ -51,8 +52,17 @@ pub mod prelude {
     pub use crate::data::{
         builder::SubjectBuilderExt,
         error_model::{AssayErrorModel, AssayErrorModels, ErrorPoly},
+        event::{AUCMethod, BLQRule, Route},
         Covariates, Data, Event, Interpolation, Occasion, Subject,
     };
+
+    // NCA extension traits (provides .nca(), .nca_all(), etc. on data types)
+    pub use crate::data::traits::{MetricsError, ObservationMetrics};
+    pub use crate::nca::NCA;
+    pub use crate::nca::{NCAOptions, NCAPopulation, SubjectNCAResult};
+
+    // AUC primitives for direct use on raw arrays
+    pub use crate::data::auc::{auc, auc_interval, aumc, interpolate_linear};
 
     // Simulator submodule for internal use and advanced users
     pub mod simulator {

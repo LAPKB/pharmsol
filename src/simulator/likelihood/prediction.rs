@@ -208,7 +208,7 @@ impl std::fmt::Display for Prediction {
         };
         write!(
             f,
-            "Time: {:.2}\tObs: {:.4}\tPred: {:.4}\tOuteq: {:.2}",
+            "Time: {:.2}\tObs: {:.4}\tPred: {:.4}\tOuteq: {}",
             self.time, obs_str, self.prediction, self.outeq
         )
     }
