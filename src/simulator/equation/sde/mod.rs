@@ -7,7 +7,7 @@ use rand::{rng, RngExt};
 use rayon::prelude::*;
 
 use cached::proc_macro::cached;
-use cached::SizedCache;
+use cached::{Cached, SizedCache};
 
 use crate::{
     data::{Covariates, Infusion},
@@ -424,6 +424,7 @@ fn spphash(spp: &[f64]) -> u64 {
 
 #[inline(always)]
 #[cached(
+    name = "SDE_PREDICTIONS_CACHE",
     ty = "SizedCache<(u64, u64, u64), f64>",
     create = "{ SizedCache::with_size(100_000) }",
     convert = r#"{ ((subject.hash()), spphash(support_point), error_models.hash()) }"#,
@@ -437,6 +438,11 @@ fn _estimate_likelihood(
 ) -> Result<f64, PharmsolError> {
     let ypred = sde.simulate_subject(subject, support_point, Some(error_models))?;
     Ok(ypred.1.unwrap())
+}
+
+/// Clear the SDE predictions cache.
+pub(crate) fn clear_cache() {
+    SDE_PREDICTIONS_CACHE.lock().unwrap().cache_clear();
 }
 
 /// Performs systematic resampling of particles based on weights.

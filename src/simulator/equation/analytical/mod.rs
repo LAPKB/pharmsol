@@ -13,7 +13,7 @@ use crate::{
     data::Covariates, simulator::*, Equation, EquationPriv, EquationTypes, Observation, Subject,
 };
 use cached::proc_macro::cached;
-use cached::SizedCache;
+use cached::{Cached, SizedCache};
 
 /// Model equation using analytical solutions.
 ///
@@ -329,6 +329,7 @@ fn spphash(spp: &[f64]) -> u64 {
 
 #[inline(always)]
 #[cached(
+    name = "ANA_PREDICTIONS_CACHE",
     ty = "SizedCache<(u64, u64), SubjectPredictions>",
     create = "{ SizedCache::with_size(100_000) }",
     convert = r#"{ (subject.hash(), spphash(support_point)) }"#,
@@ -340,6 +341,11 @@ fn _subject_predictions(
     support_point: &Vec<f64>,
 ) -> Result<SubjectPredictions, PharmsolError> {
     Ok(ode.simulate_subject(subject, support_point, None)?.0)
+}
+
+/// Clear the analytical predictions cache.
+pub(crate) fn clear_cache() {
+    ANA_PREDICTIONS_CACHE.lock().unwrap().cache_clear();
 }
 
 fn _estimate_likelihood(

@@ -9,7 +9,7 @@ use crate::{
 };
 
 use cached::proc_macro::cached;
-use cached::SizedCache;
+use cached::{Cached, SizedCache};
 
 use crate::simulator::equation::Predictions;
 use closure::PMProblem;
@@ -86,6 +86,7 @@ fn _estimate_likelihood(
 
 #[inline(always)]
 #[cached(
+    name = "ODE_PREDICTIONS_CACHE",
     ty = "SizedCache<(u64, u64), SubjectPredictions>",
     create = "{ SizedCache::with_size(100_000) }",
     convert = r#"{ ((subject.hash()), spphash(support_point)) }"#,
@@ -97,6 +98,11 @@ fn _subject_predictions(
     support_point: &Vec<f64>,
 ) -> Result<SubjectPredictions, PharmsolError> {
     Ok(ode.simulate_subject(subject, support_point, None)?.0)
+}
+
+/// Clear the ODE predictions cache.
+pub(crate) fn clear_cache() {
+    ODE_PREDICTIONS_CACHE.lock().unwrap().cache_clear();
 }
 
 impl EquationTypes for ODE {

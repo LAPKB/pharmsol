@@ -210,3 +210,14 @@ pub type Fa = fn(&V, T, &Covariates) -> HashMap<usize, T>;
 /// This means that the system of equations has 2 states and there is only 1 output equation.
 ///
 pub type Neqs = (usize, usize);
+
+/// Reset all prediction caches (analytical, ODE, and SDE).
+///
+/// This function is useful for clearing the caches when you want to free up memory or ensure that
+/// predictions are recalculated with updated subject data or covariates. It clears the caches for all
+/// equation types to maintain consistency across the simulator.
+pub fn reset_caches() {
+    equation::analytical::clear_cache();
+    equation::ode::clear_cache();
+    equation::sde::clear_cache();
+}
