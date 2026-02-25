@@ -462,7 +462,7 @@ impl Subject {
 
     /// Calculate the hash for a subject
     ///
-    /// The hash takes into account all events, so that if a subject is modified, it will not produce the same likelihood when simulated with the same support point.
+    /// The hash takes into account all events, so that if a subject is modified, it will not produce the same likelihood when simulated with the same support point. Note that covariates are not included in the hash, but a method exists to hash covariates if needed.
     pub fn hash(&self) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut hasher = ahash::AHasher::default();
@@ -494,8 +494,6 @@ impl Subject {
                     }
                 }
             }
-            // Hash covariates (uses BTreeMap internally for deterministic order)
-            occasion.covariates.hash().hash(&mut hasher);
         }
         hasher.finish()
     }
@@ -1326,21 +1324,6 @@ mod tests {
             .build();
         let b = Subject::builder("s1")
             .bolus(0.0, 200.0, 0) // different amount
-            .observation(1.0, 5.0, 0)
-            .build();
-        assert_ne!(a.hash(), b.hash());
-    }
-
-    #[test]
-    fn hash_differs_by_covariates() {
-        let a = Subject::builder("s1")
-            .bolus(0.0, 100.0, 0)
-            .covariate("wt", 0.0, 70.0)
-            .observation(1.0, 5.0, 0)
-            .build();
-        let b = Subject::builder("s1")
-            .bolus(0.0, 100.0, 0)
-            .covariate("wt", 0.0, 80.0) // different weight
             .observation(1.0, 5.0, 0)
             .build();
         assert_ne!(a.hash(), b.hash());
