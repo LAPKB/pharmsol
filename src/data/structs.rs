@@ -460,13 +460,41 @@ impl Subject {
         self.occasions.is_empty()
     }
 
-    /// Hash the subject ID
+    /// Calculate the hash for a subject
     ///
-    /// Note that this does not provide any methods to invalidate the cache if the subject is modified!
+    /// The hash takes into account all events, so that if a subject is modified, it will not produce the same likelihood when simulated with the same support point. Note that covariates are not included in the hash, but a method exists to hash covariates if needed.
     pub fn hash(&self) -> u64 {
         use std::hash::{Hash, Hasher};
-        let mut hasher = std::hash::DefaultHasher::new();
+        let mut hasher = ahash::AHasher::default();
         self.id.hash(&mut hasher);
+        for occasion in &self.occasions {
+            occasion.index.hash(&mut hasher);
+            for event in &occasion.events {
+                match event {
+                    crate::data::event::Event::Bolus(b) => {
+                        0u8.hash(&mut hasher);
+                        b.time().to_bits().hash(&mut hasher);
+                        b.amount().to_bits().hash(&mut hasher);
+                        b.input().hash(&mut hasher);
+                    }
+                    crate::data::event::Event::Infusion(inf) => {
+                        1u8.hash(&mut hasher);
+                        inf.time().to_bits().hash(&mut hasher);
+                        inf.amount().to_bits().hash(&mut hasher);
+                        inf.input().hash(&mut hasher);
+                        inf.duration().to_bits().hash(&mut hasher);
+                    }
+                    crate::data::event::Event::Observation(obs) => {
+                        2u8.hash(&mut hasher);
+                        obs.time().to_bits().hash(&mut hasher);
+                        if let Some(v) = obs.value() {
+                            v.to_bits().hash(&mut hasher);
+                        }
+                        obs.outeq().hash(&mut hasher);
+                    }
+                }
+            }
+        }
         hasher.finish()
     }
 }
@@ -1264,5 +1292,57 @@ mod tests {
             .filter(|e| matches!(e, Event::Observation(obs) if obs.value().is_none()))
             .count();
         assert_eq!(none_obs_count, 4); // Should now be 4 observations with None values
+    }
+
+    #[test]
+    fn hash_is_deterministic() {
+        let s = Subject::builder("s1")
+            .bolus(0.0, 100.0, 0)
+            .observation(1.0, 5.0, 0)
+            .build();
+        assert_eq!(s.hash(), s.hash());
+    }
+
+    #[test]
+    fn hash_differs_by_id() {
+        let a = Subject::builder("a")
+            .bolus(0.0, 100.0, 0)
+            .observation(1.0, 5.0, 0)
+            .build();
+        let b = Subject::builder("b")
+            .bolus(0.0, 100.0, 0)
+            .observation(1.0, 5.0, 0)
+            .build();
+        assert_ne!(a.hash(), b.hash());
+    }
+
+    #[test]
+    fn hash_differs_by_event_data() {
+        let a = Subject::builder("s1")
+            .bolus(0.0, 100.0, 0)
+            .observation(1.0, 5.0, 0)
+            .build();
+        let b = Subject::builder("s1")
+            .bolus(0.0, 200.0, 0) // different amount
+            .observation(1.0, 5.0, 0)
+            .build();
+        assert_ne!(a.hash(), b.hash());
+    }
+
+    #[test]
+    fn hash_identical_subjects_match() {
+        let a = Subject::builder("s1")
+            .bolus(0.0, 100.0, 0)
+            .infusion(1.0, 50.0, 0, 0.5)
+            .covariate("wt", 0.0, 70.0)
+            .observation(2.0, 5.0, 0)
+            .build();
+        let b = Subject::builder("s1")
+            .bolus(0.0, 100.0, 0)
+            .infusion(1.0, 50.0, 0, 0.5)
+            .covariate("wt", 0.0, 70.0)
+            .observation(2.0, 5.0, 0)
+            .build();
+        assert_eq!(a.hash(), b.hash());
     }
 }

@@ -9,8 +9,10 @@ use crate::{
 };
 
 use cached::proc_macro::cached;
-use cached::UnboundCache;
+use cached::{Cached, SizedCache};
 
+use super::id_hash;
+use super::spphash;
 use crate::simulator::equation::Predictions;
 use closure::PMProblem;
 use diffsol::{
@@ -54,22 +56,6 @@ impl State for V {
     }
 }
 
-/// Hash support points to a u64 for cache key generation.
-/// Uses DefaultHasher for good distribution and collision resistance.
-#[inline(always)]
-fn spphash(spp: &[f64]) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::hash::DefaultHasher::new();
-    for &value in spp {
-        // Normalize -0.0 to 0.0 for consistent hashing
-        let bits = if value == 0.0 { 0u64 } else { value.to_bits() };
-        bits.hash(&mut hasher);
-    }
-    hasher.finish()
-}
-
-/// Hash a subject ID string to u64 for cache key generation.
-
 fn _estimate_likelihood(
     ode: &ODE,
     subject: &Subject,
@@ -87,9 +73,10 @@ fn _estimate_likelihood(
 
 #[inline(always)]
 #[cached(
-    ty = "UnboundCache<(u64, u64), SubjectPredictions>",
-    create = "{ UnboundCache::with_capacity(100_000) }",
-    convert = r#"{ ((subject.hash()), spphash(support_point)) }"#,
+    name = "ODE_PREDICTIONS_CACHE",
+    ty = "SizedCache<(u64, u64), SubjectPredictions>",
+    create = "{ SizedCache::with_size(100_000) }",
+    convert = r#"{ (id_hash(subject.id()), spphash(support_point)) }"#,
     result = "true"
 )]
 fn _subject_predictions(
@@ -98,6 +85,11 @@ fn _subject_predictions(
     support_point: &Vec<f64>,
 ) -> Result<SubjectPredictions, PharmsolError> {
     Ok(ode.simulate_subject(subject, support_point, None)?.0)
+}
+
+/// Clear the ODE predictions cache.
+pub(crate) fn clear_cache() {
+    ODE_PREDICTIONS_CACHE.lock().unwrap().cache_clear();
 }
 
 impl EquationTypes for ODE {

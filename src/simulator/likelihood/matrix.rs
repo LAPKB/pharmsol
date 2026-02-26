@@ -13,8 +13,11 @@ use super::progress::ProgressTracker;
 
 /// Options for log-likelihood matrix computation.
 ///
-/// This struct replaces the boolean flags in the old `psi` function signature
-/// for better API clarity.
+/// Contains flags for wether or not to show a progress bar, printed to STDOUT, and whether or not to
+/// use a cache for simulations.
+///
+/// Note that the cache uses the subject ID for the key, so
+/// modifications to the subject will not take effect unless the cache is cleared using [super::super::reset_caches]
 #[derive(Debug, Clone)]
 pub struct LikelihoodMatrixOptions {
     /// Show a progress bar during computation

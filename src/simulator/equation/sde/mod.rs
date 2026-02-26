@@ -7,7 +7,7 @@ use rand::{rng, RngExt};
 use rayon::prelude::*;
 
 use cached::proc_macro::cached;
-use cached::UnboundCache;
+use cached::{Cached, SizedCache};
 
 use crate::{
     data::{Covariates, Infusion},
@@ -16,6 +16,9 @@ use crate::{
     simulator::{Diffusion, Drift, Fa, Init, Lag, Neqs, Out, V},
     Subject,
 };
+
+use super::id_hash;
+use super::spphash;
 
 use diffsol::VectorCommon;
 
@@ -408,27 +411,12 @@ impl Equation for SDE {
     }
 }
 
-//TODO: Add hash impl on dedicated structure!
-/// Hash support points to a u64 for cache key generation.
-/// Uses DefaultHasher for good distribution and collision resistance.
-#[inline(always)]
-
-fn spphash(spp: &[f64]) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::hash::DefaultHasher::new();
-    for &value in spp {
-        // Normalize -0.0 to 0.0 for consistent hashing
-        let bits = if value == 0.0 { 0u64 } else { value.to_bits() };
-        bits.hash(&mut hasher);
-    }
-    hasher.finish()
-}
-
 #[inline(always)]
 #[cached(
-    ty = "UnboundCache<(u64, u64, u64), f64>",
-    create = "{ UnboundCache::with_capacity(100_000) }",
-    convert = r#"{ ((subject.hash()), spphash(support_point), error_models.hash()) }"#,
+    name = "SDE_PREDICTIONS_CACHE",
+    ty = "SizedCache<(u64, u64, u64), f64>",
+    create = "{ SizedCache::with_size(100_000) }",
+    convert = r#"{ (id_hash(subject.id()), spphash(support_point), error_models.hash()) }"#,
     result = "true"
 )]
 fn _estimate_likelihood(
@@ -439,6 +427,11 @@ fn _estimate_likelihood(
 ) -> Result<f64, PharmsolError> {
     let ypred = sde.simulate_subject(subject, support_point, Some(error_models))?;
     Ok(ypred.1.unwrap())
+}
+
+/// Clear the SDE predictions cache.
+pub(crate) fn clear_cache() {
+    SDE_PREDICTIONS_CACHE.lock().unwrap().cache_clear();
 }
 
 /// Performs systematic resampling of particles based on weights.
