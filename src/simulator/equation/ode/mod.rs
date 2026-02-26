@@ -11,6 +11,8 @@ use crate::{
 use cached::proc_macro::cached;
 use cached::{Cached, SizedCache};
 
+use super::id_hash;
+use super::spphash;
 use crate::simulator::equation::Predictions;
 use closure::PMProblem;
 use diffsol::{
@@ -54,21 +56,6 @@ impl State for V {
     }
 }
 
-/// Hash support points to a u64 for cache key generation.
-#[inline(always)]
-fn spphash(spp: &[f64]) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = ahash::AHasher::default();
-    for &value in spp {
-        // Normalize -0.0 to 0.0 for consistent hashing
-        let bits = if value == 0.0 { 0u64 } else { value.to_bits() };
-        bits.hash(&mut hasher);
-    }
-    hasher.finish()
-}
-
-/// Hash a subject ID string to u64 for cache key generation.
-
 fn _estimate_likelihood(
     ode: &ODE,
     subject: &Subject,
@@ -89,7 +76,7 @@ fn _estimate_likelihood(
     name = "ODE_PREDICTIONS_CACHE",
     ty = "SizedCache<(u64, u64), SubjectPredictions>",
     create = "{ SizedCache::with_size(100_000) }",
-    convert = r#"{ ((subject.hash()), spphash(support_point)) }"#,
+    convert = r#"{ (id_hash(subject.id()), spphash(support_point)) }"#,
     result = "true"
 )]
 fn _subject_predictions(
