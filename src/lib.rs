@@ -57,6 +57,7 @@ pub mod prelude {
     // Simulator submodule for internal use and advanced users
     pub mod simulator {
         pub use crate::simulator::{
+            cache::{self, CacheSettings},
             equation,
             equation::Equation,
             likelihood::{
@@ -64,14 +65,11 @@ pub mod prelude {
                 LikelihoodMatrixOptions, PopulationPredictions, Prediction, SubjectPredictions,
             },
         };
-
-        // Deprecated re-exports for backward compatibility
-        #[allow(deprecated)]
-        pub use crate::simulator::likelihood::{log_psi, psi};
     }
 
     // Direct simulator re-exports for convenience
     pub use crate::simulator::{
+        cache::{configure_cache, disable_cache, enable_cache, reset_caches, CacheSettings},
         equation::{self, Equation},
         likelihood::{Prediction, SubjectPredictions},
     };

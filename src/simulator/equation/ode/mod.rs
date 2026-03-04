@@ -8,11 +8,9 @@ use crate::{
     Event, Observation, PharmsolError, Subject,
 };
 
-use cached::proc_macro::cached;
-use cached::{Cached, SizedCache};
-
 use super::id_hash;
 use super::spphash;
+use crate::simulator::cache::{cache_enabled, ode_cache_lock_read};
 use crate::simulator::equation::Predictions;
 use closure::PMProblem;
 use diffsol::{
@@ -61,35 +59,32 @@ fn _estimate_likelihood(
     subject: &Subject,
     support_point: &Vec<f64>,
     error_models: &AssayErrorModels,
-    cache: bool,
 ) -> Result<f64, PharmsolError> {
-    let ypred = if cache {
-        _subject_predictions(ode, subject, support_point)
-    } else {
-        _subject_predictions_no_cache(ode, subject, support_point)
-    }?;
+    let ypred = _subject_predictions(ode, subject, support_point)?;
     Ok(ypred.log_likelihood(error_models)?.exp())
 }
 
 #[inline(always)]
-#[cached(
-    name = "ODE_PREDICTIONS_CACHE",
-    ty = "SizedCache<(u64, u64), SubjectPredictions>",
-    create = "{ SizedCache::with_size(100_000) }",
-    convert = r#"{ (id_hash(subject.id()), spphash(support_point)) }"#,
-    result = "true"
-)]
 fn _subject_predictions(
     ode: &ODE,
     subject: &Subject,
     support_point: &Vec<f64>,
 ) -> Result<SubjectPredictions, PharmsolError> {
-    Ok(ode.simulate_subject(subject, support_point, None)?.0)
-}
+    if cache_enabled() {
+        let key = (id_hash(subject.id()), spphash(support_point));
+        let cache_guard = ode_cache_lock_read()?;
+        if let Some(cached) = cache_guard.get(&key) {
+            return Ok(cached);
+        }
+        drop(cache_guard);
 
-/// Clear the ODE predictions cache.
-pub(crate) fn clear_cache() {
-    ODE_PREDICTIONS_CACHE.lock().unwrap().cache_clear();
+        let result = ode.simulate_subject(subject, support_point, None)?.0;
+        let cache_guard = ode_cache_lock_read()?;
+        cache_guard.insert(key, result.clone());
+        Ok(result)
+    } else {
+        Ok(ode.simulate_subject(subject, support_point, None)?.0)
+    }
 }
 
 impl EquationTypes for ODE {
@@ -172,9 +167,8 @@ impl Equation for ODE {
         subject: &Subject,
         support_point: &Vec<f64>,
         error_models: &AssayErrorModels,
-        cache: bool,
     ) -> Result<f64, PharmsolError> {
-        _estimate_likelihood(self, subject, support_point, error_models, cache)
+        _estimate_likelihood(self, subject, support_point, error_models)
     }
 
     fn estimate_log_likelihood(
@@ -182,13 +176,8 @@ impl Equation for ODE {
         subject: &Subject,
         support_point: &Vec<f64>,
         error_models: &AssayErrorModels,
-        cache: bool,
     ) -> Result<f64, PharmsolError> {
-        let ypred = if cache {
-            _subject_predictions(self, subject, support_point)
-        } else {
-            _subject_predictions_no_cache(self, subject, support_point)
-        }?;
+        let ypred = _subject_predictions(self, subject, support_point)?;
         ypred.log_likelihood(error_models)
     }
 

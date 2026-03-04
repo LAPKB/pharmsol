@@ -189,7 +189,6 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
     /// - `subject`: The subject data
     /// - `support_point`: The parameter values
     /// - `error_model`: The error model
-    /// - `cache`: Whether to use caching
     ///
     /// # Returns
     /// The likelihood value (product of individual observation likelihoods)
@@ -202,7 +201,6 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
         subject: &Subject,
         support_point: &Vec<f64>,
         error_models: &AssayErrorModels,
-        cache: bool,
     ) -> Result<f64, PharmsolError>;
 
     /// Estimate the log-likelihood of the subject given the support point and error model.
@@ -218,7 +216,6 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
     /// - `subject`: The subject data
     /// - `support_point`: The parameter values
     /// - `error_models`: The error model
-    /// - `cache`: Whether to use caching
     ///
     /// # Returns
     /// The log-likelihood value (sum of individual observation log-likelihoods)
@@ -227,7 +224,6 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
         subject: &Subject,
         support_point: &Vec<f64>,
         error_models: &AssayErrorModels,
-        cache: bool,
     ) -> Result<f64, PharmsolError>;
 
     fn kind() -> EqnKind;

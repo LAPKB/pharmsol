@@ -68,11 +68,11 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
     let v = 194.0; // Volume of distribution
 
     // Compute likelihoods and predictions for both models
-    let analytical_likelihoods = an.estimate_log_likelihood(&subject, &vec![ke, v], &ems, false)?;
+    let analytical_likelihoods = an.estimate_log_likelihood(&subject, &vec![ke, v], &ems)?;
 
     let analytical_predictions = an.estimate_predictions(&subject, &vec![ke, v])?;
 
-    let ode_likelihoods = ode.estimate_log_likelihood(&subject, &vec![ke, v], &ems, false)?;
+    let ode_likelihoods = ode.estimate_log_likelihood(&subject, &vec![ke, v], &ems)?;
 
     let ode_predictions = ode.estimate_predictions(&subject, &vec![ke, v])?;
 

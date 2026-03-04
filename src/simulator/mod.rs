@@ -1,3 +1,4 @@
+pub mod cache;
 pub mod equation;
 pub(crate) mod likelihood;
 use diffsol::{NalgebraMat, NalgebraVec};
@@ -211,13 +212,8 @@ pub type Fa = fn(&V, T, &Covariates) -> HashMap<usize, T>;
 ///
 pub type Neqs = (usize, usize);
 
-/// Reset all prediction caches (analytical, ODE, and SDE).
-///
-/// This function is useful for clearing the caches when you want to free up memory or ensure that
-/// predictions are recalculated with updated subject data or covariates. It clears the caches for all
-/// equation types to maintain consistency across the simulator.
-pub fn reset_caches() {
-    equation::analytical::clear_cache();
-    equation::ode::clear_cache();
-    equation::sde::clear_cache();
-}
+// Re-export cache API at the simulator level for convenience.
+pub use cache::{
+    cache_enabled, cache_settings, configure_cache, disable_cache, enable_cache, reset_caches,
+    CacheSettings,
+};

@@ -6,9 +6,6 @@ use ndarray::{concatenate, Array2, Axis};
 use rand::{rng, RngExt};
 use rayon::prelude::*;
 
-use cached::proc_macro::cached;
-use cached::{Cached, SizedCache};
-
 use crate::{
     data::{Covariates, Infusion},
     error_model::AssayErrorModels,
@@ -19,6 +16,7 @@ use crate::{
 
 use super::id_hash;
 use super::spphash;
+use crate::simulator::cache::{cache_enabled, sde_cache_lock_read};
 
 use diffsol::VectorCommon;
 
@@ -361,7 +359,6 @@ impl Equation for SDE {
     /// * `subject` - Subject data containing observations
     /// * `support_point` - Parameter vector for the model
     /// * `error_model` - Error model to use for likelihood calculations
-    /// * `cache` - Whether to cache likelihood results for reuse
     ///
     /// # Returns
     ///
@@ -371,15 +368,8 @@ impl Equation for SDE {
         subject: &Subject,
         support_point: &Vec<f64>,
         error_models: &AssayErrorModels,
-        cache: bool,
     ) -> Result<f64, PharmsolError> {
-        if cache {
-            _estimate_likelihood(self, subject, support_point, error_models)
-        } else {
-            // No cache version: directly simulate
-            let ypred = self.simulate_subject(subject, support_point, Some(error_models))?;
-            Ok(ypred.1.unwrap())
-        }
+        _estimate_likelihood(self, subject, support_point, error_models)
     }
 
     fn estimate_log_likelihood(
@@ -387,17 +377,10 @@ impl Equation for SDE {
         subject: &Subject,
         support_point: &Vec<f64>,
         error_models: &AssayErrorModels,
-        cache: bool,
     ) -> Result<f64, PharmsolError> {
         // For SDE, the particle filter computes likelihood in regular space.
         // We compute it directly and then take the log.
-        let lik = if cache {
-            _estimate_likelihood(self, subject, support_point, error_models)?
-        } else {
-            // No cache version: directly simulate
-            let ypred = self.simulate_subject(subject, support_point, Some(error_models))?;
-            ypred.1.unwrap()
-        };
+        let lik = _estimate_likelihood(self, subject, support_point, error_models)?;
 
         if lik > 0.0 {
             Ok(lik.ln())
@@ -412,26 +395,33 @@ impl Equation for SDE {
 }
 
 #[inline(always)]
-#[cached(
-    name = "SDE_PREDICTIONS_CACHE",
-    ty = "SizedCache<(u64, u64, u64), f64>",
-    create = "{ SizedCache::with_size(100_000) }",
-    convert = r#"{ (id_hash(subject.id()), spphash(support_point), error_models.hash()) }"#,
-    result = "true"
-)]
 fn _estimate_likelihood(
     sde: &SDE,
     subject: &Subject,
     support_point: &Vec<f64>,
     error_models: &AssayErrorModels,
 ) -> Result<f64, PharmsolError> {
-    let ypred = sde.simulate_subject(subject, support_point, Some(error_models))?;
-    Ok(ypred.1.unwrap())
-}
+    if cache_enabled() {
+        let key = (
+            id_hash(subject.id()),
+            spphash(support_point),
+            error_models.hash(),
+        );
+        let cache_guard = sde_cache_lock_read()?;
+        if let Some(cached) = cache_guard.get(&key) {
+            return Ok(cached);
+        }
+        drop(cache_guard);
 
-/// Clear the SDE predictions cache.
-pub(crate) fn clear_cache() {
-    SDE_PREDICTIONS_CACHE.lock().unwrap().cache_clear();
+        let ypred = sde.simulate_subject(subject, support_point, Some(error_models))?;
+        let result = ypred.1.unwrap();
+        let cache_guard = sde_cache_lock_read()?;
+        cache_guard.insert(key, result);
+        Ok(result)
+    } else {
+        let ypred = sde.simulate_subject(subject, support_point, Some(error_models))?;
+        Ok(ypred.1.unwrap())
+    }
 }
 
 /// Performs systematic resampling of particles based on weights.

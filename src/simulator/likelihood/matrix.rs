@@ -13,24 +13,19 @@ use super::progress::ProgressTracker;
 
 /// Options for log-likelihood matrix computation.
 ///
-/// Contains flags for wether or not to show a progress bar, printed to STDOUT, and whether or not to
-/// use a cache for simulations.
+/// Contains flags for wether or not to show a progress bar, printed to STDOUT.
 ///
-/// Note that the cache uses the subject ID for the key, so
-/// modifications to the subject will not take effect unless the cache is cleared using [super::super::reset_caches]
+/// Cache behavior is controlled globally via [`crate::simulator::cache`].
 #[derive(Debug, Clone)]
 pub struct LikelihoodMatrixOptions {
     /// Show a progress bar during computation
     pub show_progress: bool,
-    /// Use caching for repeated simulations
-    pub use_cache: bool,
 }
 
 impl Default for LikelihoodMatrixOptions {
     fn default() -> Self {
         Self {
             show_progress: false,
-            use_cache: true,
         }
     }
 }
@@ -50,18 +45,6 @@ impl LikelihoodMatrixOptions {
     /// Disable progress bar display
     pub fn without_progress(mut self) -> Self {
         self.show_progress = false;
-        self
-    }
-
-    /// Enable simulation caching
-    pub fn with_cache(mut self) -> Self {
-        self.use_cache = true;
-        self
-    }
-
-    /// Disable simulation caching
-    pub fn without_cache(mut self) -> Self {
-        self.use_cache = false;
         self
     }
 }
@@ -132,7 +115,6 @@ pub fn log_likelihood_matrix(
                         subject,
                         &support_points.row(j).to_vec(),
                         error_models,
-                        options.use_cache,
                     ) {
                         Ok(log_likelihood) => {
                             element.fill(log_likelihood);
@@ -154,83 +136,24 @@ pub fn log_likelihood_matrix(
     Ok(log_psi)
 }
 
-/// Calculate the log-likelihood matrix (deprecated signature with boolean flags).
-///
-/// **Deprecated**: Use [`log_likelihood_matrix`] with [`LikelihoodMatrixOptions`] instead.
-///
-/// This function is provided for backward compatibility with the old `log_psi` API.
-#[deprecated(
-    since = "0.23.0",
-    note = "Use log_likelihood_matrix() with LikelihoodMatrixOptions instead"
-)]
-pub fn log_psi(
-    equation: &impl Equation,
-    subjects: &Data,
-    support_points: &Array2<f64>,
-    error_models: &AssayErrorModels,
-    progress: bool,
-    cache: bool,
-) -> Result<Array2<f64>, PharmsolError> {
-    let options = LikelihoodMatrixOptions {
-        show_progress: progress,
-        use_cache: cache,
-    };
-    log_likelihood_matrix(equation, subjects, support_points, error_models, options)
-}
-
-/// Calculate the likelihood matrix (deprecated).
-///
-/// **Deprecated**: Use [`log_likelihood_matrix`] instead. This function exponentiates
-/// the log-likelihood matrix, which can cause numerical underflow for many observations
-/// or extreme parameter values.
-///
-/// This function is provided for backward compatibility with the old `psi` API.
-#[deprecated(
-    since = "0.23.0",
-    note = "Use log_likelihood_matrix() instead and exponentiate if needed"
-)]
-pub fn psi(
-    equation: &impl Equation,
-    subjects: &Data,
-    support_points: &Array2<f64>,
-    error_models: &AssayErrorModels,
-    progress: bool,
-    cache: bool,
-) -> Result<Array2<f64>, PharmsolError> {
-    let options = LikelihoodMatrixOptions {
-        show_progress: progress,
-        use_cache: cache,
-    };
-    let log_psi_matrix =
-        log_likelihood_matrix(equation, subjects, support_points, error_models, options)?;
-
-    // Exponentiate to get likelihoods (may underflow to 0 for extreme values)
-    Ok(log_psi_matrix.mapv(f64::exp))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_likelihood_matrix_options_builder() {
-        let opts = LikelihoodMatrixOptions::new().with_progress().with_cache();
+        let opts = LikelihoodMatrixOptions::new().with_progress();
 
         assert!(opts.show_progress);
-        assert!(opts.use_cache);
 
-        let opts2 = LikelihoodMatrixOptions::new()
-            .without_progress()
-            .without_cache();
+        let opts2 = LikelihoodMatrixOptions::new().without_progress();
 
         assert!(!opts2.show_progress);
-        assert!(!opts2.use_cache);
     }
 
     #[test]
     fn test_default_options() {
         let opts = LikelihoodMatrixOptions::default();
         assert!(!opts.show_progress);
-        assert!(opts.use_cache);
     }
 }
