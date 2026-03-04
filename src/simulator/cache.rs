@@ -131,10 +131,10 @@ pub fn cache_settings() -> Result<CacheSettings, PharmsolError> {
 // Per-equation-type caches
 // ---------------------------------------------------------------------------
 
-/// Cache key: (subject_id_hash, support_point_hash)
+/// Cache key: (subject_hash, support_point_hash)
 pub(crate) type PredictionKey = (u64, u64);
 
-/// Cache key for SDE: (subject_id_hash, support_point_hash, error_model_hash)
+/// Cache key for SDE: (subject_hash, support_point_hash, error_model_hash)
 pub(crate) type SdeKey = (u64, u64, u64);
 
 // The caches use RwLock so that the hot path (read lock) allows full moka

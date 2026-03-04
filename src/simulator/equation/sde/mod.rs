@@ -14,7 +14,6 @@ use crate::{
     Subject,
 };
 
-use super::id_hash;
 use super::spphash;
 use crate::simulator::cache::{cache_enabled, sde_cache_lock_read};
 
@@ -402,11 +401,7 @@ fn _estimate_likelihood(
     error_models: &AssayErrorModels,
 ) -> Result<f64, PharmsolError> {
     if cache_enabled() {
-        let key = (
-            id_hash(subject.id()),
-            spphash(support_point),
-            error_models.hash(),
-        );
+        let key = (subject.hash(), spphash(support_point), error_models.hash());
         let cache_guard = sde_cache_lock_read()?;
         if let Some(cached) = cache_guard.get(&key) {
             return Ok(cached);

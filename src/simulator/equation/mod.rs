@@ -317,15 +317,6 @@ impl EqnKind {
     }
 }
 
-/// Hash a subject for cache key generation.
-#[inline(always)]
-fn id_hash(id: &str) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = ahash::AHasher::default();
-    id.hash(&mut hasher);
-    hasher.finish()
-}
-
 /// Hash support points to a u64 for cache key generation.
 #[inline(always)]
 fn spphash(spp: &[f64]) -> u64 {

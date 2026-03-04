@@ -7,7 +7,6 @@ pub use one_compartment_models::*;
 pub use three_compartment_models::*;
 pub use two_compartment_models::*;
 
-use super::id_hash;
 use super::spphash;
 
 use crate::data::error_model::AssayErrorModels;
@@ -317,7 +316,7 @@ fn _subject_predictions(
     support_point: &Vec<f64>,
 ) -> Result<SubjectPredictions, PharmsolError> {
     if cache_enabled() {
-        let key = (id_hash(subject.id()), spphash(support_point));
+        let key = (subject.hash(), spphash(support_point));
         let cache_guard = ana_cache_lock_read()?;
         if let Some(cached) = cache_guard.get(&key) {
             return Ok(cached);

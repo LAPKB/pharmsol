@@ -8,7 +8,6 @@ use crate::{
     Event, Observation, PharmsolError, Subject,
 };
 
-use super::id_hash;
 use super::spphash;
 use crate::simulator::cache::{cache_enabled, ode_cache_lock_read};
 use crate::simulator::equation::Predictions;
@@ -71,7 +70,7 @@ fn _subject_predictions(
     support_point: &Vec<f64>,
 ) -> Result<SubjectPredictions, PharmsolError> {
     if cache_enabled() {
-        let key = (id_hash(subject.id()), spphash(support_point));
+        let key = (subject.hash(), spphash(support_point));
         let cache_guard = ode_cache_lock_read()?;
         if let Some(cached) = cache_guard.get(&key) {
             return Ok(cached);
