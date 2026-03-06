@@ -73,6 +73,10 @@ pub enum JsonModelError {
     #[error("Invalid neqs: expected [num_states, num_outputs], got {0:?}")]
     InvalidNeqs(Vec<usize>),
 
+    /// Raw index access when named compartments/states are defined
+    #[error("Raw index access '{access}' found in {context}. When compartment/state names are declared, use names instead of x[i] notation")]
+    RawIndexWithNames { access: String, context: String },
+
     // ─────────────────────────────────────────────────────────────────────────
     // Expression Errors
     // ─────────────────────────────────────────────────────────────────────────

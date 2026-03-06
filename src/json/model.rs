@@ -334,11 +334,11 @@ mod tests {
             "compartments": ["depot", "central", "peripheral"],
             "parameters": ["ka", "ke", "k12", "k21", "V"],
             "diffeq": {
-                "depot": "-ka * x[0]",
-                "central": "ka * x[0] - ke * x[1] - k12 * x[1] + k21 * x[2] + rateiv[1]",
-                "peripheral": "k12 * x[1] - k21 * x[2]"
+                "depot": "-ka * depot",
+                "central": "ka * depot - ke * central - k12 * central + k21 * peripheral + rateiv[1]",
+                "peripheral": "k12 * central - k21 * peripheral"
             },
-            "output": "x[1] / V",
+            "output": "central / V",
             "neqs": [3, 1]
         }"#;
 
@@ -358,7 +358,7 @@ mod tests {
             "parameters": ["ke0", "sigma_ke", "V"],
             "states": ["amount", "ke"],
             "drift": {
-                "amount": "-ke * x[0]",
+                "amount": "-ke * amount",
                 "ke": "-0.5 * (ke - ke0)"
             },
             "diffusion": {
@@ -367,7 +367,7 @@ mod tests {
             "init": {
                 "ke": "ke0"
             },
-            "output": "x[0] / V",
+            "output": "amount / V",
             "neqs": [2, 1],
             "particles": 1000
         }"#;

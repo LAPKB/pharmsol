@@ -73,6 +73,9 @@ impl Validator {
             self.validate_analytical_params(model, func)?;
         }
 
+        // 8. Validate expression naming consistency (no x[i] when names exist)
+        self.validate_expression_naming(model)?;
+
         Ok(ValidatedModel(model.clone()))
     }
 
@@ -352,6 +355,95 @@ impl Validator {
 
         Ok(())
     }
+
+    /// Validate that expressions don't use raw x[i] when compartment/state names are declared.
+    ///
+    /// Rule: if compartments (ODE) or states (SDE) are declared, all expressions must use
+    /// named variables instead of x[0], x[1], etc. Analytical models always use x[i] since
+    /// the state vector comes from a black-box function.
+    fn validate_expression_naming(&self, model: &JsonModel) -> Result<(), JsonModelError> {
+        let has_names = match model.model_type {
+            ModelType::Analytical => false, // Analytical models always use x[i]
+            ModelType::Ode => model.compartments.as_ref().is_some_and(|c| !c.is_empty()),
+            ModelType::Sde => model.states.as_ref().is_some_and(|s| !s.is_empty()),
+        };
+
+        if !has_names {
+            return Ok(());
+        }
+
+        let x_pattern = |s: &str| -> Option<String> {
+            // Find x[digits] pattern without regex
+            let bytes = s.as_bytes();
+            for i in 0..bytes.len().saturating_sub(3) {
+                if bytes[i] == b'x' && bytes[i + 1] == b'[' {
+                    if let Some(end) = s[i + 2..].find(']') {
+                        let inner = &s[i + 2..i + 2 + end];
+                        if !inner.is_empty() && inner.chars().all(|c| c.is_ascii_digit()) {
+                            return Some(format!("x[{}]", inner));
+                        }
+                    }
+                }
+            }
+            None
+        };
+
+        // Helper to check an expression
+        let check_expr = |expr: &str, context: &str| -> Result<(), JsonModelError> {
+            if let Some(access) = x_pattern(expr) {
+                return Err(JsonModelError::RawIndexWithNames {
+                    access,
+                    context: context.to_string(),
+                });
+            }
+            Ok(())
+        };
+
+        // Check output
+        if let Some(output) = &model.output {
+            check_expr(output, "output")?;
+        }
+        if let Some(outputs) = &model.outputs {
+            for (i, out) in outputs.iter().enumerate() {
+                check_expr(&out.equation, &format!("outputs[{}]", i))?;
+            }
+        }
+
+        // Check diffeq (ODE)
+        if let Some(diffeq) = &model.diffeq {
+            match diffeq {
+                DiffEqSpec::String(s) => check_expr(s, "diffeq")?,
+                DiffEqSpec::Object(map) => {
+                    for (name, expr) in map {
+                        check_expr(expr, &format!("diffeq.{}", name))?;
+                    }
+                }
+            }
+        }
+
+        // Check drift (SDE)
+        if let Some(drift) = &model.drift {
+            match drift {
+                DiffEqSpec::String(s) => check_expr(s, "drift")?,
+                DiffEqSpec::Object(map) => {
+                    for (name, expr) in map {
+                        check_expr(expr, &format!("drift.{}", name))?;
+                    }
+                }
+            }
+        }
+
+        // Check diffusion (SDE)
+        if let Some(diffusion) = &model.diffusion {
+            for (name, expr) in diffusion {
+                if let ExpressionOrNumber::Expression(s) = expr {
+                    check_expr(s, &format!("diffusion.{}", name))?;
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -447,5 +539,132 @@ mod tests {
         let model = JsonModel::from_str(json).unwrap();
         let result = Validator::new().validate(&model);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_analytical_allows_x_index() {
+        // Analytical models should always allow x[i] notation
+        let json = r#"{
+            "schema": "1.0",
+            "id": "test",
+            "type": "analytical",
+            "analytical": "one_compartment",
+            "parameters": ["ke", "V"],
+            "output": "x[0] / V"
+        }"#;
+
+        let model = JsonModel::from_str(json).unwrap();
+        let result = Validator::new().validate(&model);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_ode_rejects_x_index_with_compartments() {
+        // ODE models with named compartments should reject x[i] notation
+        let json = r#"{
+            "schema": "1.0",
+            "id": "test",
+            "type": "ode",
+            "compartments": ["central"],
+            "parameters": ["ke", "V"],
+            "diffeq": {
+                "central": "-ke * x[0]"
+            },
+            "output": "central / V"
+        }"#;
+
+        let model = JsonModel::from_str(json).unwrap();
+        let result = Validator::new().validate(&model);
+        assert!(matches!(
+            result,
+            Err(JsonModelError::RawIndexWithNames { .. })
+        ));
+    }
+
+    #[test]
+    fn test_validate_ode_rejects_x_index_in_output() {
+        let json = r#"{
+            "schema": "1.0",
+            "id": "test",
+            "type": "ode",
+            "compartments": ["central"],
+            "parameters": ["ke", "V"],
+            "diffeq": {
+                "central": "-ke * central"
+            },
+            "output": "x[0] / V"
+        }"#;
+
+        let model = JsonModel::from_str(json).unwrap();
+        let result = Validator::new().validate(&model);
+        assert!(matches!(
+            result,
+            Err(JsonModelError::RawIndexWithNames { .. })
+        ));
+    }
+
+    #[test]
+    fn test_validate_ode_allows_x_index_without_compartments() {
+        // ODE models without compartments should allow x[i] notation
+        let json = r#"{
+            "schema": "1.0",
+            "id": "test",
+            "type": "ode",
+            "parameters": ["ke", "V"],
+            "diffeq": "dx[0] = -ke * x[0];",
+            "output": "x[0] / V"
+        }"#;
+
+        let model = JsonModel::from_str(json).unwrap();
+        let result = Validator::new().validate(&model);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_ode_named_compartments_valid() {
+        // ODE models using proper named compartments should pass
+        let json = r#"{
+            "schema": "1.0",
+            "id": "test",
+            "type": "ode",
+            "compartments": ["depot", "central"],
+            "parameters": ["ka", "ke", "V"],
+            "diffeq": {
+                "depot": "-ka * depot",
+                "central": "ka * depot - ke * central"
+            },
+            "output": "central / V"
+        }"#;
+
+        let model = JsonModel::from_str(json).unwrap();
+        let result = Validator::new().validate(&model);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_sde_rejects_x_index_with_states() {
+        let json = r#"{
+            "schema": "1.0",
+            "id": "test",
+            "type": "sde",
+            "parameters": ["ke0", "sigma_ke", "V"],
+            "states": ["amount", "ke"],
+            "drift": {
+                "amount": "-ke * x[0]",
+                "ke": "-0.5 * (ke - ke0)"
+            },
+            "diffusion": { "ke": "sigma_ke" },
+            "init": { "ke": "ke0" },
+            "output": "amount / V",
+            "neqs": [2, 1],
+            "particles": 1000
+        }"#;
+
+        let model = JsonModel::from_str(json).unwrap();
+        let result = Validator::new().validate(&model);
+        assert!(matches!(
+            result,
+            Err(JsonModelError::RawIndexWithNames { .. })
+        ));
     }
 }

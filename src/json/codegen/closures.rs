@@ -65,31 +65,32 @@ impl<'a> ClosureGenerator<'a> {
         bindings.join("\n        ")
     }
 
-    /// Generate fetch_cov! macro call for covariates used in covariate effects
+    /// Generate covariate fetch code for covariates used in covariate effects
     fn fetch_covariates(&self) -> String {
         // Collect all covariate names used in effects
         let Some(effects) = &self.model.covariate_effects else {
             return String::new();
         };
 
-        let cov_names: Vec<_> = effects
+        let mut cov_names: Vec<_> = effects
             .iter()
             .filter_map(|e| e.covariate.as_ref())
             .map(|c| c.as_str())
             .collect::<std::collections::HashSet<_>>()
             .into_iter()
             .collect();
+        cov_names.sort(); // Deterministic ordering
 
         if cov_names.is_empty() {
             return String::new();
         }
 
-        // Generate code to fetch each covariate
+        // Generate code to fetch each covariate using the correct Covariates API
         let fetch_lines: Vec<_> = cov_names
             .iter()
             .map(|name| {
                 format!(
-                    "let {} = cov.get_covariate(\"{}\", t).unwrap_or(0.0);",
+                    "let {} = cov.get_covariate(\"{}\").map(|c| c.interpolate(t).unwrap_or(0.0)).unwrap_or(0.0);",
                     name, name
                 )
             })
@@ -219,6 +220,7 @@ impl<'a> ClosureGenerator<'a> {
         let fetch_params = self.fetch_params();
         let derived = self.generate_derived_params();
         let cov_effects = self.generate_covariate_effects();
+        let has_covariates = !cov_effects.is_empty();
 
         // Determine if we have a single expression or multiple statements
         let body = if output_expr.contains("y[") {
@@ -231,8 +233,15 @@ impl<'a> ClosureGenerator<'a> {
 
         let compartments = self.generate_compartment_bindings();
 
+        // Use named params when covariates need t/cov access
+        let (t_param, cov_param) = if has_covariates {
+            ("t", "cov")
+        } else {
+            ("_t", "_cov")
+        };
+
         Ok(format!(
-            r#"|x, p, _t, _cov, y| {{
+            r#"|x, p, {t_param}, {cov_param}, y| {{
         {fetch_params}
         {compartments}
         {derived}
@@ -255,15 +264,23 @@ impl<'a> ClosureGenerator<'a> {
             DiffEqSpec::String(s) => s.clone(),
             DiffEqSpec::Object(map) => {
                 // Convert named compartments to dx[n] format
-                let mut lines = Vec::new();
-                for (name, expr) in map {
-                    let idx = self.compartment_map.get(name).copied().unwrap_or_else(|| {
-                        // Try parsing as number
-                        name.parse::<usize>().unwrap_or(0)
-                    });
-                    lines.push(format!("dx[{}] = {};", idx, expr));
-                }
-                lines.join("\n        ")
+                // Sort by compartment index for deterministic output
+                let mut indexed_lines: Vec<(usize, String)> = map
+                    .iter()
+                    .map(|(name, expr)| {
+                        let idx = self.compartment_map.get(name).copied().unwrap_or_else(|| {
+                            // Try parsing as number
+                            name.parse::<usize>().unwrap_or(0)
+                        });
+                        (idx, format!("dx[{}] = {};", idx, expr))
+                    })
+                    .collect();
+                indexed_lines.sort_by_key(|(idx, _)| *idx);
+                indexed_lines
+                    .into_iter()
+                    .map(|(_, line)| line)
+                    .collect::<Vec<_>>()
+                    .join("\n        ")
             }
         };
 
@@ -271,9 +288,17 @@ impl<'a> ClosureGenerator<'a> {
         let compartments = self.generate_compartment_bindings();
         let derived = self.generate_derived_params();
         let cov_effects = self.generate_covariate_effects();
+        let has_covariates = !cov_effects.is_empty();
+
+        // Use named params when covariates need t/cov access
+        let (t_param, cov_param) = if has_covariates {
+            ("t", "cov")
+        } else {
+            ("_t", "_cov")
+        };
 
         Ok(format!(
-            r#"|x, p, _t, dx, _b, rateiv, _cov| {{
+            r#"|x, p, {t_param}, dx, _b, rateiv, {cov_param}| {{
         {fetch_params}
         {compartments}
         {derived}
@@ -295,17 +320,25 @@ impl<'a> ClosureGenerator<'a> {
         let body = match drift {
             DiffEqSpec::String(s) => s.clone(),
             DiffEqSpec::Object(map) => {
-                let mut lines = Vec::new();
-                for (name, expr) in map {
-                    let idx = self.state_map.get(name).copied().unwrap_or_else(|| {
-                        self.compartment_map
-                            .get(name)
-                            .copied()
-                            .unwrap_or_else(|| name.parse::<usize>().unwrap_or(0))
-                    });
-                    lines.push(format!("dx[{}] = {};", idx, expr));
-                }
-                lines.join("\n        ")
+                // Sort by state index for deterministic output
+                let mut indexed_lines: Vec<(usize, String)> = map
+                    .iter()
+                    .map(|(name, expr)| {
+                        let idx = self.state_map.get(name).copied().unwrap_or_else(|| {
+                            self.compartment_map
+                                .get(name)
+                                .copied()
+                                .unwrap_or_else(|| name.parse::<usize>().unwrap_or(0))
+                        });
+                        (idx, format!("dx[{}] = {};", idx, expr))
+                    })
+                    .collect();
+                indexed_lines.sort_by_key(|(idx, _)| *idx);
+                indexed_lines
+                    .into_iter()
+                    .map(|(_, line)| line)
+                    .collect::<Vec<_>>()
+                    .join("\n        ")
             }
         };
 
@@ -313,9 +346,16 @@ impl<'a> ClosureGenerator<'a> {
         let states = self.generate_state_bindings();
         let derived = self.generate_derived_params();
         let cov_effects = self.generate_covariate_effects();
+        let has_covariates = !cov_effects.is_empty();
+
+        let (t_param, cov_param) = if has_covariates {
+            ("t", "cov")
+        } else {
+            ("_t", "_cov")
+        };
 
         Ok(format!(
-            r#"|x, p, _t, dx, rateiv, _cov| {{
+            r#"|x, p, {t_param}, dx, rateiv, {cov_param}| {{
         {fetch_params}
         {states}
         {derived}
@@ -326,7 +366,7 @@ impl<'a> ClosureGenerator<'a> {
     }
 
     /// Generate the diffusion closure for SDE
-    /// Signature: fn(&V, &mut V)
+    /// Signature: fn(&V, &mut V) — takes (params, diffusion_vec)
     pub fn generate_diffusion(&self) -> Result<String, JsonModelError> {
         let diffusion = self
             .model
@@ -335,24 +375,30 @@ impl<'a> ClosureGenerator<'a> {
             .ok_or_else(|| JsonModelError::missing_field("diffusion", "sde"))?;
 
         let fetch_params = self.fetch_params();
-        let states = self.generate_state_bindings();
 
-        let mut lines = Vec::new();
-        for (name, expr) in diffusion {
-            let idx = self.state_map.get(name).copied().unwrap_or_else(|| {
-                self.compartment_map
-                    .get(name)
-                    .copied()
-                    .unwrap_or_else(|| name.parse::<usize>().unwrap_or(0))
-            });
-            lines.push(format!("d[{}] = {};", idx, expr.to_rust_expr()));
-        }
-        let body = lines.join("\n        ");
+        // Sort by state index for deterministic output
+        let mut indexed_lines: Vec<(usize, String)> = diffusion
+            .iter()
+            .map(|(name, expr)| {
+                let idx = self.state_map.get(name).copied().unwrap_or_else(|| {
+                    self.compartment_map
+                        .get(name)
+                        .copied()
+                        .unwrap_or_else(|| name.parse::<usize>().unwrap_or(0))
+                });
+                (idx, format!("d[{}] = {};", idx, expr.to_rust_expr()))
+            })
+            .collect();
+        indexed_lines.sort_by_key(|(idx, _)| *idx);
+        let body = indexed_lines
+            .into_iter()
+            .map(|(_, line)| line)
+            .collect::<Vec<_>>()
+            .join("\n        ");
 
         Ok(format!(
-            r#"|x, p, d| {{
+            r#"|p, d| {{
         {fetch_params}
-        {states}
         {body}
     }}"#
         ))
@@ -371,7 +417,7 @@ impl<'a> ClosureGenerator<'a> {
 
         let fetch_params = self.fetch_params();
 
-        let entries: Vec<_> = lag
+        let mut entries: Vec<_> = lag
             .iter()
             .map(|(name, expr)| {
                 // Convert compartment name to index
@@ -380,16 +426,18 @@ impl<'a> ClosureGenerator<'a> {
                     .get(name)
                     .copied()
                     .unwrap_or_else(|| name.parse::<usize>().unwrap_or(0));
-                format!("{} => {}", idx, expr.to_rust_expr())
+                (idx, format!("{} => {}", idx, expr.to_rust_expr()))
             })
             .collect();
+        entries.sort_by_key(|(idx, _)| *idx);
+        let entries_str: Vec<_> = entries.into_iter().map(|(_, s)| s).collect();
 
         Ok(format!(
             r#"|p, _t, _cov| {{
         {fetch_params}
         lag! {{ {} }}
     }}"#,
-            entries.join(", ")
+            entries_str.join(", ")
         ))
     }
 
@@ -406,7 +454,7 @@ impl<'a> ClosureGenerator<'a> {
 
         let fetch_params = self.fetch_params();
 
-        let entries: Vec<_> = fa
+        let mut entries: Vec<_> = fa
             .iter()
             .map(|(name, expr)| {
                 // Convert compartment name to index
@@ -415,16 +463,18 @@ impl<'a> ClosureGenerator<'a> {
                     .get(name)
                     .copied()
                     .unwrap_or_else(|| name.parse::<usize>().unwrap_or(0));
-                format!("{} => {}", idx, expr.to_rust_expr())
+                (idx, format!("{} => {}", idx, expr.to_rust_expr()))
             })
             .collect();
+        entries.sort_by_key(|(idx, _)| *idx);
+        let entries_str: Vec<_> = entries.into_iter().map(|(_, s)| s).collect();
 
         Ok(format!(
             r#"|p, _t, _cov| {{
         {fetch_params}
         fa! {{ {} }}
     }}"#,
-            entries.join(", ")
+            entries_str.join(", ")
         ))
     }
 
@@ -438,17 +488,24 @@ impl<'a> ClosureGenerator<'a> {
         let body = match init {
             InitSpec::String(s) => s.clone(),
             InitSpec::Object(map) => {
-                let mut lines = Vec::new();
-                for (name, expr) in map {
-                    let idx = self.state_map.get(name).copied().unwrap_or_else(|| {
-                        self.compartment_map
-                            .get(name)
-                            .copied()
-                            .unwrap_or_else(|| name.parse::<usize>().unwrap_or(0))
-                    });
-                    lines.push(format!("x[{}] = {};", idx, expr.to_rust_expr()));
-                }
-                lines.join("\n        ")
+                let mut indexed_lines: Vec<(usize, String)> = map
+                    .iter()
+                    .map(|(name, expr)| {
+                        let idx = self.state_map.get(name).copied().unwrap_or_else(|| {
+                            self.compartment_map
+                                .get(name)
+                                .copied()
+                                .unwrap_or_else(|| name.parse::<usize>().unwrap_or(0))
+                        });
+                        (idx, format!("x[{}] = {};", idx, expr.to_rust_expr()))
+                    })
+                    .collect();
+                indexed_lines.sort_by_key(|(idx, _)| *idx);
+                indexed_lines
+                    .into_iter()
+                    .map(|(_, line)| line)
+                    .collect::<Vec<_>>()
+                    .join("\n        ")
             }
         };
 
@@ -471,9 +528,16 @@ impl<'a> ClosureGenerator<'a> {
 
         let fetch_params = self.fetch_params();
         let cov_effects = self.generate_covariate_effects();
+        let has_covariates = !cov_effects.is_empty();
+
+        let (t_param, cov_param) = if has_covariates {
+            ("t", "cov")
+        } else {
+            ("_t", "_cov")
+        };
 
         Ok(format!(
-            r#"|p, _t, _cov| {{
+            r#"|p, {t_param}, {cov_param}| {{
         {fetch_params}
         {cov_effects}
         {secondary}
@@ -534,18 +598,18 @@ mod tests {
             "compartments": ["depot", "central"],
             "parameters": ["ka", "ke", "V"],
             "diffeq": {
-                "depot": "-ka * x[0]",
-                "central": "ka * x[0] - ke * x[1] + rateiv[1]"
+                "depot": "-ka * depot",
+                "central": "ka * depot - ke * central + rateiv[1]"
             },
-            "output": "x[1] / V"
+            "output": "central / V"
         }"#;
 
         let model = JsonModel::from_str(json).unwrap();
         let gen = ClosureGenerator::new(&model);
         let diffeq = gen.generate_diffeq().unwrap();
 
-        assert!(diffeq.contains("dx[0] = -ka * x[0]"));
-        assert!(diffeq.contains("dx[1] = ka * x[0] - ke * x[1] + rateiv[1]"));
+        assert!(diffeq.contains("dx[0] = -ka * depot"));
+        assert!(diffeq.contains("dx[1] = ka * depot - ke * central + rateiv[1]"));
     }
 
     #[test]
