@@ -1017,9 +1017,18 @@ mod tests {
         occasion.sort();
         let events = occasion.process_events(None, false);
         assert_eq!(events.len(), 3);
-        assert!(matches!(&events[0], Event::Observation(_)), "Observation should be first");
-        assert!(matches!(&events[1], Event::Bolus(_)), "Bolus should be second");
-        assert!(matches!(&events[2], Event::Infusion(_)), "Infusion should be third");
+        assert!(
+            matches!(&events[0], Event::Observation(_)),
+            "Observation should be first"
+        );
+        assert!(
+            matches!(&events[1], Event::Bolus(_)),
+            "Bolus should be second"
+        );
+        assert!(
+            matches!(&events[2], Event::Infusion(_)),
+            "Infusion should be third"
+        );
     }
 
     #[test]
