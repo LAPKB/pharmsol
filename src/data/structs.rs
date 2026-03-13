@@ -666,7 +666,7 @@ impl Occasion {
 
     /// Add an event to the [Occasion]
     ///
-    /// Note that this will sort the events automatically, ensuring events are sorted by time, then by [Event] type so that [Bolus] and [Infusion] come before [Observation]
+    /// Note that this will trigger a call to [Occasion::sort] after each addition to ensure correct ordering of events.
     pub(crate) fn add_event(&mut self, event: Event) {
         self.events.push(event);
         self.sort();
