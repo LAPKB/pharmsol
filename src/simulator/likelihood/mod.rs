@@ -64,10 +64,6 @@ pub use matrix::{log_likelihood_matrix, LikelihoodMatrixOptions};
 pub use prediction::Prediction;
 pub use subject::{PopulationPredictions, SubjectPredictions};
 
-// Deprecated re-exports for backward compatibility
-#[allow(deprecated)]
-pub use matrix::{log_psi, psi};
-
 use ndarray::Array2;
 use rayon::prelude::*;
 

@@ -881,12 +881,12 @@ fn likelihood_calculation_matches_analytical() {
     let params = vec![0.1, 50.0];
 
     let ll_analytical = analytical
-        .estimate_log_likelihood(&subject, &params, &error_models, false)
+        .estimate_log_likelihood(&subject, &params, &error_models)
         .expect("analytical likelihood")
         .exp();
 
     let ll_ode = ode
-        .estimate_log_likelihood(&subject, &params, &error_models, false)
+        .estimate_log_likelihood(&subject, &params, &error_models)
         .expect("ode likelihood")
         .exp();
 
