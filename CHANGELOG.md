@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.0](https://github.com/LAPKB/pharmsol/compare/v0.22.1...v0.23.0) - 2026-03-16
+
+### Added
+
+- Use a sized cache with new subject hashing ([#214](https://github.com/LAPKB/pharmsol/pull/214))
+- Normalized rows  ([#205](https://github.com/LAPKB/pharmsol/pull/205))
+
+### Fixed
+
+- Fix test and capture error to drop ([#220](https://github.com/LAPKB/pharmsol/pull/220))
+- Prevents creating a terminal on windows ([#179](https://github.com/LAPKB/pharmsol/pull/179))
+- *(exa)* invalidate compilation cache when pharmsol version changes ([#217](https://github.com/LAPKB/pharmsol/pull/217))
+- Update sort order of events ([#219](https://github.com/LAPKB/pharmsol/pull/219))
+
+### Other
+
+- Bump actions/upload-artifact from 6 to 7 ([#215](https://github.com/LAPKB/pharmsol/pull/215))
+- Update ndarray requirement from 0.16.1 to 0.17.2 ([#195](https://github.com/LAPKB/pharmsol/pull/195))
+- Update rand requirement from 0.9.0 to 0.10.0 ([#207](https://github.com/LAPKB/pharmsol/pull/207))
+- Update diffsol requirement from =0.8.0 to =0.10.4 ([#206](https://github.com/LAPKB/pharmsol/pull/206))
+- Bump actions/cache from 4 to 5 ([#184](https://github.com/LAPKB/pharmsol/pull/184))
+- Delete .DS_Store ([#191](https://github.com/LAPKB/pharmsol/pull/191))
+- Bump actions/upload-artifact from 4 to 6 ([#193](https://github.com/LAPKB/pharmsol/pull/193))
+- Bump actions/checkout from 4 to 6 ([#192](https://github.com/LAPKB/pharmsol/pull/192))
+- Prepare for submission to JOSS ([#186](https://github.com/LAPKB/pharmsol/pull/186))
+- Update examples ([#183](https://github.com/LAPKB/pharmsol/pull/183))
+
 ## [0.22.1](https://github.com/LAPKB/pharmsol/compare/v0.22.0...v0.22.1) - 2025-12-11
 
 ### Other
