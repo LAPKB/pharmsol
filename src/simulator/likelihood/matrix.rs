@@ -11,44 +11,6 @@ use crate::{Data, Equation, PharmsolError};
 
 use super::progress::ProgressTracker;
 
-/// Options for log-likelihood matrix computation.
-///
-/// Contains flags for wether or not to show a progress bar, printed to STDOUT.
-///
-/// Cache behavior is controlled globally via [`crate::simulator::cache`].
-#[derive(Debug, Clone)]
-pub struct LikelihoodMatrixOptions {
-    /// Show a progress bar during computation
-    pub show_progress: bool,
-}
-
-impl Default for LikelihoodMatrixOptions {
-    fn default() -> Self {
-        Self {
-            show_progress: false,
-        }
-    }
-}
-
-impl LikelihoodMatrixOptions {
-    /// Create new options with default values
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Enable progress bar display
-    pub fn with_progress(mut self) -> Self {
-        self.show_progress = true;
-        self
-    }
-
-    /// Disable progress bar display
-    pub fn without_progress(mut self) -> Self {
-        self.show_progress = false;
-        self
-    }
-}
-
 /// Calculate the log-likelihood matrix for all subjects and support points.
 ///
 /// This function computes log-likelihoods directly in log-space, which is numerically
@@ -61,21 +23,21 @@ impl LikelihoodMatrixOptions {
 /// - `subjects`: The subject data
 /// - `support_points`: The support points to evaluate (rows = support points, cols = parameters)
 /// - `error_models`: The error models to use (observation-based sigma)
-/// - `options`: Computation options (progress bar, caching)
+/// - `progress`: Whether to display a progress bar during computation`
 ///
 /// # Returns
 /// A 2D array of log-likelihoods with shape (n_subjects, n_support_points)
 ///
 /// # Example
 /// ```ignore
-/// use pharmsol::prelude::simulator::{log_likelihood_matrix, LikelihoodMatrixOptions};
+/// use pharmsol::prelude::simulator::log_likelihood_matrix;
 ///
 /// let log_liks = log_likelihood_matrix(
 ///     &equation,
 ///     &data,
 ///     &support_points,
 ///     &error_models,
-///     LikelihoodMatrixOptions::new().with_progress(),
+///     false
 /// )?;
 /// ```
 pub fn log_likelihood_matrix(
@@ -83,13 +45,13 @@ pub fn log_likelihood_matrix(
     subjects: &Data,
     support_points: &Array2<f64>,
     error_models: &AssayErrorModels,
-    options: LikelihoodMatrixOptions,
+    progress: bool,
 ) -> Result<Array2<f64>, PharmsolError> {
     let mut log_psi: Array2<f64> = Array2::default((subjects.len(), support_points.nrows()).f());
 
     let subjects_vec = subjects.subjects();
 
-    let progress_tracker = if options.show_progress {
+    let progress_tracker = if progress {
         let total = subjects_vec.len() * support_points.nrows();
         println!(
             "Computing log-likelihood matrix: {} subjects × {} support points...",
@@ -136,24 +98,47 @@ pub fn log_likelihood_matrix(
     Ok(log_psi)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+/// Calculate the log-likelihood matrix (deprecated signature with boolean flags).
+///
+/// Deprecated: Use [log_likelihood_matrix] with [LikelihoodMatrixOptions] instead.
+///
+/// This function is provided for backward compatibility with the old log_psi API.
+#[deprecated(
+    since = "0.23.0",
+    note = "Use log_likelihood_matrix() with LikelihoodMatrixOptions instead"
+)]
+pub fn log_psi(
+    equation: &impl Equation,
+    subjects: &Data,
+    support_points: &Array2<f64>,
+    error_models: &AssayErrorModels,
+    progress: bool,
+) -> Result<Array2<f64>, PharmsolError> {
+    log_likelihood_matrix(equation, subjects, support_points, error_models, progress)
+}
 
-    #[test]
-    fn test_likelihood_matrix_options_builder() {
-        let opts = LikelihoodMatrixOptions::new().with_progress();
+/// Calculate the likelihood matrix (deprecated).
+///
+/// Deprecated: Use [log_likelihood_matrix] instead. This function exponentiates
+/// the log-likelihood matrix, which can cause numerical underflow for many observations
+/// or extreme parameter values.
+///
+/// This function is provided for backward compatibility with the old psi API.
+#[deprecated(
+    since = "0.23.0",
+    note = "Use log_likelihood_matrix() instead and exponentiate if needed"
+)]
 
-        assert!(opts.show_progress);
+pub fn psi(
+    equation: &impl Equation,
+    subjects: &Data,
+    support_points: &Array2<f64>,
+    error_models: &AssayErrorModels,
+    progress: bool,
+) -> Result<Array2<f64>, PharmsolError> {
+    let log_psi_matrix =
+        log_likelihood_matrix(equation, subjects, support_points, error_models, progress)?;
 
-        let opts2 = LikelihoodMatrixOptions::new().without_progress();
-
-        assert!(!opts2.show_progress);
-    }
-
-    #[test]
-    fn test_default_options() {
-        let opts = LikelihoodMatrixOptions::default();
-        assert!(!opts.show_progress);
-    }
+    // Exponentiate to get likelihoods (may underflow to 0 for extreme values)
+    Ok(log_psi_matrix.mapv(f64::exp))
 }
