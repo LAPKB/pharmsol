@@ -1,3 +1,4 @@
+pub mod cache;
 pub mod equation;
 pub(crate) mod likelihood;
 use diffsol::{NalgebraMat, NalgebraVec};
@@ -210,3 +211,9 @@ pub type Fa = fn(&V, T, &Covariates) -> HashMap<usize, T>;
 /// This means that the system of equations has 2 states and there is only 1 output equation.
 ///
 pub type Neqs = (usize, usize);
+
+// Re-export cache API at the simulator level for convenience.
+pub use cache::{
+    cache_enabled, cache_settings, configure_cache, disable_cache, enable_cache, reset_caches,
+    CacheSettings,
+};
