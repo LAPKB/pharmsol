@@ -298,7 +298,7 @@ fn create_template(temp_dir: PathBuf) -> Result<PathBuf, io::Error> {
         // If so, rewrite Cargo.toml and remove build artifacts to force recompilation.
         // Without this, a stale dylib compiled against an older pharmsol version would be
         // loaded at runtime, causing ABI mismatches and crashes.
-        let existing_content = fs::read_to_string(&cargo_toml_path).unwrap_or_default();
+        let existing_content = fs::read_to_string(&cargo_toml_path)?;
         if existing_content.trim() != cargo_toml_content.trim() {
             tracing::info!("pharmsol dependency changed, invalidating exa compilation cache");
             fs::write(&cargo_toml_path, &cargo_toml_content)?;
