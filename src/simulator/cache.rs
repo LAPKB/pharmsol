@@ -29,7 +29,7 @@ use crate::{simulator::likelihood::SubjectPredictions, PharmsolError};
 /// Default maximum number of entries per cache.
 pub const DEFAULT_CACHE_SIZE: u64 = 100_000;
 
-static CACHE_ENABLED: AtomicBool = AtomicBool::new(false);
+static CACHE_ENABLED: AtomicBool = AtomicBool::new(true);
 
 /// Settings for the prediction cache.
 #[derive(Debug, Clone)]
