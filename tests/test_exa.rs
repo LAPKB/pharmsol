@@ -94,6 +94,89 @@ mod exa_tests {
         // Clean up
         std::fs::remove_file(model_path).ok();
     }
+
+    #[test]
+    fn test_cache_invalidation_on_version_change() {
+        // Use an isolated temp directory for this test
+        let test_dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let template_path = test_dir.path().to_path_buf();
+
+        // Step 1: Initial compilation creates the template
+        pharmsol::build::dummy_compile(template_path.clone(), |_, _| {}).unwrap();
+
+        let cargo_toml_path = template_path.join("template").join("Cargo.toml");
+        let target_dir = template_path.join("template").join("target");
+
+        assert!(cargo_toml_path.exists(), "Cargo.toml should be created");
+        assert!(
+            target_dir.exists(),
+            "target/ should exist after compilation"
+        );
+
+        // Save the original Cargo.toml content for later comparison
+        let original_content = std::fs::read_to_string(&cargo_toml_path).unwrap();
+
+        // Step 2: Simulate a pharmsol version change by modifying the Cargo.toml
+        let fake_old_content =
+            original_content.replace(env!("CARGO_PKG_VERSION"), "0.0.0-fake-old-version");
+        std::fs::write(&cargo_toml_path, &fake_old_content).unwrap();
+
+        // Also create a marker file inside target/ to verify it gets removed
+        let marker = target_dir.join("release").join("cache_marker.txt");
+        std::fs::create_dir_all(marker.parent().unwrap()).ok();
+        std::fs::write(&marker, "should be deleted").unwrap();
+        assert!(marker.exists());
+
+        // Step 3: Call dummy_compile again — should detect the version mismatch,
+        // rewrite Cargo.toml, and remove target/
+        pharmsol::build::dummy_compile(template_path.clone(), |_, _| {}).unwrap();
+
+        // Verify Cargo.toml was restored to the current version
+        let updated_content = std::fs::read_to_string(&cargo_toml_path).unwrap();
+        assert!(
+            updated_content.contains(env!("CARGO_PKG_VERSION")),
+            "Cargo.toml should contain the current pharmsol version after cache invalidation"
+        );
+        assert!(
+            !updated_content.contains("0.0.0-fake-old-version"),
+            "Old version should no longer be in Cargo.toml"
+        );
+
+        // Verify the old target/ was removed (the marker file should be gone)
+        // Note: dummy_compile rebuilds, so target/ exists again, but our marker should be gone
+        assert!(
+            !marker.exists(),
+            "Cache marker should be gone after invalidation — target/ was cleaned"
+        );
+    }
+
+    #[test]
+    fn test_incomplete_template_dir_is_recreated() {
+        // If the template directory exists but is not a valid cargo project
+        // (e.g. missing src/), create_template should re-scaffold it.
+        let test_dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let template_path = test_dir.path().to_path_buf();
+
+        // Create a malformed template directory (no src/, no Cargo.toml)
+        let template_dir = template_path.join("template");
+        std::fs::create_dir_all(&template_dir).unwrap();
+        assert!(template_dir.exists());
+        assert!(!template_dir.join("src").exists());
+
+        // dummy_compile should recover from this and succeed
+        pharmsol::build::dummy_compile(template_path.clone(), |_, _| {}).unwrap();
+
+        // Verify the template was properly created
+        assert!(
+            template_dir.join("Cargo.toml").exists(),
+            "Cargo.toml should exist"
+        );
+        assert!(template_dir.join("src").exists(), "src/ should exist");
+        assert!(
+            template_dir.join("target").exists(),
+            "target/ should exist after successful build"
+        );
+    }
 }
 
 // When exa feature is not enabled, provide an empty test module
