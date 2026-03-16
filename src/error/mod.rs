@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 use crate::data::error_model::ErrorModelError;
-use crate::data::parser::pmetrics::PmetricsError;
+use crate::data::row::DataError;
 
 use crate::CovariateError;
 
@@ -15,8 +15,8 @@ pub enum PharmsolError {
     CovariateError(#[from] CovariateError),
     #[error("Shape error: {0}")]
     NdarrayShapeError(#[from] ShapeError),
-    #[error("Error parsing Pmetrics datafile: {0}")]
-    PmetricsError(#[from] PmetricsError),
+    #[error("Error parsing data: {0}")]
+    DataError(#[from] DataError),
     #[error("Diffsol error: {0}")]
     DiffsolError(String),
     #[error("Other error: {0}")]

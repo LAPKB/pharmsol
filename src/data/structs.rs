@@ -41,7 +41,7 @@ pub struct Data {
 impl Data {
     /// Constructs a new [Data] object from a vector of [Subject]s
     ///
-    /// It is recommended to construct subjects using the [SubjectBuilder] to ensure proper data formatting.
+    /// It is recommended to construct subjects using the [`crate::data::builder::SubjectBuilder`] to ensure proper data formatting.
     ///
     /// # Arguments
     ///
@@ -460,13 +460,41 @@ impl Subject {
         self.occasions.is_empty()
     }
 
-    /// Hash the subject ID
+    /// Calculate the hash for a subject
     ///
-    /// Note that this does not provide any methods to invalidate the cache if the subject is modified!
+    /// The hash takes into account all events, so that if a subject is modified, it will not produce the same likelihood when simulated with the same support point. Note that covariates are not included in the hash, but a method exists to hash covariates if needed.
     pub fn hash(&self) -> u64 {
         use std::hash::{Hash, Hasher};
-        let mut hasher = std::hash::DefaultHasher::new();
+        let mut hasher = ahash::AHasher::default();
         self.id.hash(&mut hasher);
+        for occasion in &self.occasions {
+            occasion.index.hash(&mut hasher);
+            for event in &occasion.events {
+                match event {
+                    crate::data::event::Event::Bolus(b) => {
+                        0u8.hash(&mut hasher);
+                        b.time().to_bits().hash(&mut hasher);
+                        b.amount().to_bits().hash(&mut hasher);
+                        b.input().hash(&mut hasher);
+                    }
+                    crate::data::event::Event::Infusion(inf) => {
+                        1u8.hash(&mut hasher);
+                        inf.time().to_bits().hash(&mut hasher);
+                        inf.amount().to_bits().hash(&mut hasher);
+                        inf.input().hash(&mut hasher);
+                        inf.duration().to_bits().hash(&mut hasher);
+                    }
+                    crate::data::event::Event::Observation(obs) => {
+                        2u8.hash(&mut hasher);
+                        obs.time().to_bits().hash(&mut hasher);
+                        if let Some(v) = obs.value() {
+                            v.to_bits().hash(&mut hasher);
+                        }
+                        obs.outeq().hash(&mut hasher);
+                    }
+                }
+            }
+        }
         hasher.finish()
     }
 }
@@ -589,16 +617,18 @@ impl Occasion {
         }
     }
 
-    /// Sort events by time, then by [Event] type so that [Bolus] and [Infusion] come before [Observation]
+    /// Sort events by time, then by [Event] type so that [Observation] comes before [Bolus] and [Infusion]
     pub(crate) fn sort(&mut self) {
         self.events.sort_by(|a, b| {
             // Helper function to get event type order
+            // Observations come first so that at the same time point,
+            // the pre-dose state is observed before the dose is applied.
             #[inline]
             fn event_type_order(event: &Event) -> u8 {
                 match event {
-                    Event::Bolus(_) => 1,
-                    Event::Infusion(_) => 2,
-                    Event::Observation(_) => 3,
+                    Event::Observation(_) => 1,
+                    Event::Bolus(_) => 2,
+                    Event::Infusion(_) => 3,
                 }
             }
 
@@ -664,7 +694,7 @@ impl Occasion {
 
     /// Add an event to the [Occasion]
     ///
-    /// Note that this will sort the events automatically, ensuring events are sorted by time, then by [Event] type so that [Bolus] and [Infusion] come before [Observation]
+    /// Note that this will trigger a call to [Occasion::sort] after each addition to ensure correct ordering of events.
     pub(crate) fn add_event(&mut self, event: Event) {
         self.events.push(event);
         self.sort();
@@ -953,7 +983,7 @@ mod tests {
     }
 
     #[test]
-    fn test_occasion_sort() {
+    fn test_occasion_sort_by_time() {
         let mut occasion = Occasion::new(0);
         occasion.add_observation(2.0, 1.0, 1, None, Censor::None);
         occasion.add_bolus(1.0, 100.0, 1);
@@ -961,12 +991,96 @@ mod tests {
         let events = occasion.process_events(None, false);
         match &events[0] {
             Event::Bolus(b) => assert_eq!(b.time(), 1.0),
-            _ => panic!("First event should be a Bolus"),
+            _ => panic!("First event should be a Bolus (earlier time)"),
         }
         match &events[1] {
             Event::Observation(o) => assert_eq!(o.time(), 2.0),
-            _ => panic!("Second event should be an Observation"),
+            _ => panic!("Second event should be an Observation (later time)"),
         }
+    }
+
+    #[test]
+    fn test_observation_before_bolus_at_same_time() {
+        let mut occasion = Occasion::new(0);
+        occasion.add_bolus(1.0, 100.0, 1);
+        occasion.add_observation(1.0, 5.0, 1, None, Censor::None);
+        occasion.sort();
+        let events = occasion.process_events(None, false);
+        assert_eq!(events.len(), 2);
+        match &events[0] {
+            Event::Observation(o) => assert_eq!(o.time(), 1.0),
+            _ => panic!("Observation should come before Bolus at the same time"),
+        }
+        match &events[1] {
+            Event::Bolus(b) => assert_eq!(b.time(), 1.0),
+            _ => panic!("Bolus should come after Observation at the same time"),
+        }
+    }
+
+    #[test]
+    fn test_observation_before_infusion_at_same_time() {
+        let mut occasion = Occasion::new(0);
+        occasion.add_infusion(1.0, 100.0, 1, 0.5);
+        occasion.add_observation(1.0, 5.0, 1, None, Censor::None);
+        occasion.sort();
+        let events = occasion.process_events(None, false);
+        assert_eq!(events.len(), 2);
+        match &events[0] {
+            Event::Observation(o) => assert_eq!(o.time(), 1.0),
+            _ => panic!("Observation should come before Infusion at the same time"),
+        }
+        match &events[1] {
+            Event::Infusion(i) => assert_eq!(i.time(), 1.0),
+            _ => panic!("Infusion should come after Observation at the same time"),
+        }
+    }
+
+    #[test]
+    fn test_sort_mixed_events_same_time() {
+        // All three event types at the same time
+        let mut occasion = Occasion::new(0);
+        occasion.add_infusion(0.0, 500.0, 1, 1.0);
+        occasion.add_bolus(0.0, 100.0, 1);
+        occasion.add_observation(0.0, 0.0, 1, None, Censor::None);
+        occasion.sort();
+        let events = occasion.process_events(None, false);
+        assert_eq!(events.len(), 3);
+        assert!(
+            matches!(&events[0], Event::Observation(_)),
+            "Observation should be first"
+        );
+        assert!(
+            matches!(&events[1], Event::Bolus(_)),
+            "Bolus should be second"
+        );
+        assert!(
+            matches!(&events[2], Event::Infusion(_)),
+            "Infusion should be third"
+        );
+    }
+
+    #[test]
+    fn test_sort_multiple_timepoints_with_ties() {
+        let mut occasion = Occasion::new(0);
+        // t=0: dose and observation
+        occasion.add_bolus(0.0, 100.0, 1);
+        occasion.add_observation(0.0, 0.0, 1, None, Censor::None);
+        // t=1: observation only
+        occasion.add_observation(1.0, 5.0, 1, None, Censor::None);
+        // t=2: dose and observation
+        occasion.add_observation(2.0, 3.0, 1, None, Censor::None);
+        occasion.add_bolus(2.0, 100.0, 1);
+        occasion.sort();
+        let events = occasion.process_events(None, false);
+        assert_eq!(events.len(), 5);
+        // t=0: observation before bolus
+        assert!(matches!(&events[0], Event::Observation(o) if o.time() == 0.0));
+        assert!(matches!(&events[1], Event::Bolus(b) if b.time() == 0.0));
+        // t=1: observation
+        assert!(matches!(&events[2], Event::Observation(o) if o.time() == 1.0));
+        // t=2: observation before bolus
+        assert!(matches!(&events[3], Event::Observation(o) if o.time() == 2.0));
+        assert!(matches!(&events[4], Event::Bolus(b) if b.time() == 2.0));
     }
 
     #[test]
@@ -1264,5 +1378,57 @@ mod tests {
             .filter(|e| matches!(e, Event::Observation(obs) if obs.value().is_none()))
             .count();
         assert_eq!(none_obs_count, 4); // Should now be 4 observations with None values
+    }
+
+    #[test]
+    fn hash_is_deterministic() {
+        let s = Subject::builder("s1")
+            .bolus(0.0, 100.0, 0)
+            .observation(1.0, 5.0, 0)
+            .build();
+        assert_eq!(s.hash(), s.hash());
+    }
+
+    #[test]
+    fn hash_differs_by_id() {
+        let a = Subject::builder("a")
+            .bolus(0.0, 100.0, 0)
+            .observation(1.0, 5.0, 0)
+            .build();
+        let b = Subject::builder("b")
+            .bolus(0.0, 100.0, 0)
+            .observation(1.0, 5.0, 0)
+            .build();
+        assert_ne!(a.hash(), b.hash());
+    }
+
+    #[test]
+    fn hash_differs_by_event_data() {
+        let a = Subject::builder("s1")
+            .bolus(0.0, 100.0, 0)
+            .observation(1.0, 5.0, 0)
+            .build();
+        let b = Subject::builder("s1")
+            .bolus(0.0, 200.0, 0) // different amount
+            .observation(1.0, 5.0, 0)
+            .build();
+        assert_ne!(a.hash(), b.hash());
+    }
+
+    #[test]
+    fn hash_identical_subjects_match() {
+        let a = Subject::builder("s1")
+            .bolus(0.0, 100.0, 0)
+            .infusion(1.0, 50.0, 0, 0.5)
+            .covariate("wt", 0.0, 70.0)
+            .observation(2.0, 5.0, 0)
+            .build();
+        let b = Subject::builder("s1")
+            .bolus(0.0, 100.0, 0)
+            .infusion(1.0, 50.0, 0, 0.5)
+            .covariate("wt", 0.0, 70.0)
+            .observation(2.0, 5.0, 0)
+            .build();
+        assert_eq!(a.hash(), b.hash());
     }
 }

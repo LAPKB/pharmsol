@@ -7,12 +7,15 @@ pub use one_compartment_models::*;
 pub use three_compartment_models::*;
 pub use two_compartment_models::*;
 
+use super::id_hash;
+use super::spphash;
+
+use crate::data::error_model::AssayErrorModels;
+use crate::simulator::cache::{ana_cache_lock_read, cache_enabled};
 use crate::PharmsolError;
 use crate::{
     data::Covariates, simulator::*, Equation, EquationPriv, EquationTypes, Observation, Subject,
 };
-use cached::proc_macro::cached;
-use cached::UnboundCache;
 
 /// Model equation using analytical solutions.
 ///
@@ -172,7 +175,7 @@ impl EquationPriv for Analytical {
         &self,
         support_point: &Vec<f64>,
         observation: &Observation,
-        error_models: Option<&ErrorModels>,
+        error_models: Option<&AssayErrorModels>,
         _time: f64,
         covariates: &Covariates,
         x: &mut Self::S,
@@ -191,7 +194,7 @@ impl EquationPriv for Analytical {
         let pred = y[observation.outeq()];
         let pred = observation.to_prediction(pred, x.as_slice().to_vec());
         if let Some(error_models) = error_models {
-            likelihood.push(pred.likelihood(error_models)?);
+            likelihood.push(pred.log_likelihood(error_models)?.exp());
         }
         output.add_prediction(pred);
         Ok(())
@@ -287,24 +290,18 @@ impl Equation for Analytical {
         &self,
         subject: &Subject,
         support_point: &Vec<f64>,
-        error_models: &ErrorModels,
-        cache: bool,
+        error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
-        _estimate_likelihood(self, subject, support_point, error_models, cache)
+        _estimate_likelihood(self, subject, support_point, error_models)
     }
 
     fn estimate_log_likelihood(
         &self,
         subject: &Subject,
         support_point: &Vec<f64>,
-        error_models: &ErrorModels,
-        cache: bool,
+        error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
-        let ypred = if cache {
-            _subject_predictions(self, subject, support_point)
-        } else {
-            _subject_predictions_no_cache(self, subject, support_point)
-        }?;
+        let ypred = _subject_predictions(self, subject, support_point)?;
         ypred.log_likelihood(error_models)
     }
 
@@ -313,46 +310,35 @@ impl Equation for Analytical {
     }
 }
 
-/// Hash support points to a u64 for cache key generation.
-/// Uses DefaultHasher for good distribution and collision resistance.
 #[inline(always)]
-fn spphash(spp: &[f64]) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::hash::DefaultHasher::new();
-    for &value in spp {
-        // Normalize -0.0 to 0.0 for consistent hashing
-        let bits = if value == 0.0 { 0u64 } else { value.to_bits() };
-        bits.hash(&mut hasher);
-    }
-    hasher.finish()
-}
-
-#[inline(always)]
-#[cached(
-    ty = "UnboundCache<(u64, u64), SubjectPredictions>",
-    create = "{ UnboundCache::with_capacity(100_000) }",
-    convert = r#"{ (subject.hash(), spphash(support_point)) }"#,
-    result = "true"
-)]
 fn _subject_predictions(
     ode: &Analytical,
     subject: &Subject,
     support_point: &Vec<f64>,
 ) -> Result<SubjectPredictions, PharmsolError> {
-    Ok(ode.simulate_subject(subject, support_point, None)?.0)
+    if cache_enabled() {
+        let key = (id_hash(subject.id()), spphash(support_point));
+        let cache_guard = ana_cache_lock_read()?;
+        if let Some(cached) = cache_guard.get(&key) {
+            return Ok(cached);
+        }
+        drop(cache_guard);
+
+        let result = ode.simulate_subject(subject, support_point, None)?.0;
+        let cache_guard = ana_cache_lock_read()?;
+        cache_guard.insert(key, result.clone());
+        Ok(result)
+    } else {
+        Ok(ode.simulate_subject(subject, support_point, None)?.0)
+    }
 }
 
 fn _estimate_likelihood(
     ode: &Analytical,
     subject: &Subject,
     support_point: &Vec<f64>,
-    error_models: &ErrorModels,
-    cache: bool,
+    error_models: &AssayErrorModels,
 ) -> Result<f64, PharmsolError> {
-    let ypred = if cache {
-        _subject_predictions(ode, subject, support_point)
-    } else {
-        _subject_predictions_no_cache(ode, subject, support_point)
-    }?;
-    ypred.likelihood(error_models)
+    let ypred = _subject_predictions(ode, subject, support_point)?;
+    Ok(ypred.log_likelihood(error_models)?.exp())
 }
