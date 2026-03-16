@@ -11,8 +11,23 @@ use rand_distr::Alphanumeric;
 use std::process::{Command, Stdio};
 use std::thread;
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 use crate::Equation;
 
+/// Windows flag to prevent console window from appearing
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+/// Creates a new Command with platform-specific settings to hide console windows on Windows
+#[allow(unused_mut)]
+fn new_command(program: &str) -> Command {
+    let mut cmd = Command::new(program);
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    cmd
+}
 /// Finds the cargo executable, checking common installation locations.
 ///
 /// This is necessary because bundled GUI applications (like macOS .app bundles,
@@ -279,7 +294,7 @@ fn create_template(temp_dir: PathBuf) -> Result<PathBuf, io::Error> {
             fs::remove_dir_all(&template_dir)?;
         }
 
-        let output = Command::new(find_cargo())
+        let output = new_command("cargo")
             .arg("new")
             .arg("template")
             .arg("--lib")
@@ -373,8 +388,8 @@ fn inject_model<E: Equation>(
             .join(", ")
     );
     fs::write(lib_rs_path, lib_rs_content)?;
-    // cargo fmt is optional - don't fail if it's not available
-    let _ = Command::new(find_cargo())
+
+    new_command("cargo")
         .arg("fmt")
         .current_dir(&template_dir)
         .output();
@@ -396,7 +411,9 @@ fn build_template(
     event_callback: Arc<dyn Fn(String, String) + Send + Sync + 'static>,
 ) -> Result<PathBuf, io::Error> {
     let cargo_path = find_cargo();
-    let mut command = Command::new(&cargo_path);
+
+    let mut command = new_command(&cargo_path);
+
     command
         .arg("build")
         .arg("--release")
