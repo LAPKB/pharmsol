@@ -27,6 +27,7 @@ fn new_command(program: &str) -> Command {
     #[cfg(windows)]
     cmd.creation_flags(CREATE_NO_WINDOW);
     cmd
+}
 /// Finds the cargo executable, checking common installation locations.
 ///
 /// This is necessary because bundled GUI applications (like macOS .app bundles,
@@ -284,7 +285,6 @@ fn create_template(temp_dir: PathBuf) -> Result<PathBuf, io::Error> {
         "#,
     );
 
-
     let src_dir = template_dir.join("src");
     let needs_scaffold = !template_dir.exists() || !src_dir.exists();
 
@@ -294,7 +294,7 @@ fn create_template(temp_dir: PathBuf) -> Result<PathBuf, io::Error> {
             fs::remove_dir_all(&template_dir)?;
         }
 
-    let output = new_command("cargo")
+        let output = new_command("cargo")
             .arg("new")
             .arg("template")
             .arg("--lib")
@@ -388,6 +388,7 @@ fn inject_model<E: Equation>(
             .join(", ")
     );
     fs::write(lib_rs_path, lib_rs_content)?;
+
     new_command("cargo")
         .arg("fmt")
         .current_dir(&template_dir)
@@ -409,11 +410,10 @@ fn build_template(
     template_path: PathBuf,
     event_callback: Arc<dyn Fn(String, String) + Send + Sync + 'static>,
 ) -> Result<PathBuf, io::Error> {
+    let cargo_path = find_cargo();
 
-  let cargo_path = find_cargo();
+    let mut command = new_command(&cargo_path);
 
-  let mut command = new_command(&cargo_path);
-  
     command
         .arg("build")
         .arg("--release")
