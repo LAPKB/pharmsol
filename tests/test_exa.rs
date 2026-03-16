@@ -116,9 +116,10 @@ mod exa_tests {
         // Save the original Cargo.toml content for later comparison
         let original_content = std::fs::read_to_string(&cargo_toml_path).unwrap();
 
-        // Step 2: Simulate a pharmsol version change by modifying the Cargo.toml
-        let fake_old_content =
-            original_content.replace(env!("CARGO_PKG_VERSION"), "0.0.0-fake-old-version");
+        // Step 2: Simulate a dependency change by writing different Cargo.toml content.
+        // We append a comment so the content differs regardless of whether a version
+        // or path dependency is used (PHARMSOL_LOCAL_EXA).
+        let fake_old_content = format!("{}\n# stale", original_content);
         std::fs::write(&cargo_toml_path, &fake_old_content).unwrap();
 
         // Also create a marker file inside target/ to verify it gets removed
@@ -127,19 +128,20 @@ mod exa_tests {
         std::fs::write(&marker, "should be deleted").unwrap();
         assert!(marker.exists());
 
-        // Step 3: Call dummy_compile again — should detect the version mismatch,
+        // Step 3: Call dummy_compile again — should detect the content mismatch,
         // rewrite Cargo.toml, and remove target/
         pharmsol::build::dummy_compile(template_path.clone(), |_, _| {}).unwrap();
 
-        // Verify Cargo.toml was restored to the current version
+        // Verify Cargo.toml was restored to the expected content
         let updated_content = std::fs::read_to_string(&cargo_toml_path).unwrap();
-        assert!(
-            updated_content.contains(env!("CARGO_PKG_VERSION")),
-            "Cargo.toml should contain the current pharmsol version after cache invalidation"
+        assert_eq!(
+            updated_content.trim(),
+            original_content.trim(),
+            "Cargo.toml should be restored to the expected template content after cache invalidation"
         );
         assert!(
-            !updated_content.contains("0.0.0-fake-old-version"),
-            "Old version should no longer be in Cargo.toml"
+            !updated_content.contains("# stale"),
+            "Stale marker should no longer be in Cargo.toml"
         );
 
         // Verify the old target/ was removed (the marker file should be gone)
