@@ -6,7 +6,7 @@
 use ndarray::{Array2, Axis, ShapeBuilder};
 use rayon::prelude::*;
 
-use crate::data::error_model::AssayErrorModels;
+use crate::data::errormodel::AssayErrorModels;
 use crate::{Data, Equation, PharmsolError};
 
 use super::progress::ProgressTracker;

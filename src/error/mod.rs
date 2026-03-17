@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::data::error_model::ErrorModelError;
+use crate::data::errormodel::ErrorModelError;
 use crate::data::row::DataError;
 
 use crate::CovariateError;

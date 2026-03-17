@@ -1,4 +1,4 @@
-use crate::data::error_model::ErrorPoly;
+use crate::data::errormodel::ErrorPoly;
 use crate::prelude::simulator::Prediction;
 use serde::{Deserialize, Serialize};
 use std::fmt;

@@ -10,7 +10,7 @@ pub use two_compartment_models::*;
 use super::id_hash;
 use super::spphash;
 
-use crate::data::error_model::AssayErrorModels;
+use crate::data::errormodel::AssayErrorModels;
 use crate::simulator::cache::{ana_cache_lock_read, cache_enabled};
 use crate::PharmsolError;
 use crate::{

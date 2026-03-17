@@ -31,14 +31,12 @@
 
 pub mod builder;
 pub mod covariate;
-pub mod error_model;
+pub mod errormodel;
 pub mod event;
 pub mod parser;
-pub mod residual_error;
 pub mod row;
 pub mod structs;
 pub use covariate::*;
-pub use error_model::*;
+pub use errormodel::*;
 pub use event::*;
-pub use residual_error::*;
 pub use structs::{Data, Occasion, Subject};

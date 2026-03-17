@@ -4,7 +4,7 @@
 //! observation-prediction pair along with metadata needed for likelihood
 //! calculation.
 
-use crate::data::error_model::AssayErrorModels;
+use crate::data::errormodel::{AssayErrorModels, AssayErrorModelsExt};
 use crate::data::event::Observation;
 use crate::{Censor, ErrorPoly, PharmsolError};
 
@@ -108,7 +108,7 @@ impl Prediction {
             return Err(PharmsolError::MissingObservation);
         }
 
-        let sigma = error_models.sigma(self)?;
+        let sigma = error_models.sigma_from_prediction(self)?;
         let obs = self.observation.unwrap();
 
         let log_lik = match self.censoring {
@@ -217,7 +217,7 @@ impl std::fmt::Display for Prediction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::error_model::{AssayErrorModel, ErrorPoly};
+    use crate::data::errormodel::{AssayErrorModel, ErrorPoly};
 
     fn create_test_prediction(obs: f64, pred: f64) -> Prediction {
         Prediction {

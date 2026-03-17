@@ -2,7 +2,7 @@ mod closure;
 
 use crate::{
     data::{Covariates, Infusion},
-    error_model::AssayErrorModels,
+    errormodel::AssayErrorModels,
     prelude::simulator::SubjectPredictions,
     simulator::{DiffEq, Fa, Init, Lag, Neqs, Out, M, V},
     Event, Observation, PharmsolError, Subject,
