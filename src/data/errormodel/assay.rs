@@ -66,12 +66,12 @@ impl Factor {
     }
 }
 
-/// Error polynomial coefficients for the error model
+/// Error polynomial coefficients for the assay error model
 ///
-/// This struct holds the coefficients for a polynomial used to model
-/// the error in pharmacometric analyses. It represents the error associated with quantification
+/// This struct holds the coefficients for a polynomial used to model the
+/// error in observations. It represents the error associated with quantification
 /// of e.g. the drug concentration in a biological sample, such as blood or plasma.
-/// More simply, it is the error associated with the observed value.
+///
 /// The polynomial is defined as:
 ///
 /// ```text
@@ -148,13 +148,6 @@ pub enum AssayErrorModel {
         poly: ErrorPoly,
     },
 }
-
-/// Deprecated alias for [`AssayErrorModel`].
-#[deprecated(
-    since = "0.23.0",
-    note = "Use AssayErrorModel instead. ErrorModel has been renamed to better reflect its purpose (assay/measurement error)."
-)]
-pub type OldErrorModel = AssayErrorModel;
 
 impl ErrorModel for AssayErrorModel {
     /// Compute sigma from a raw value (typically the observation).
