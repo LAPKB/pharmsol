@@ -389,7 +389,7 @@ fn inject_model<E: Equation>(
     );
     fs::write(lib_rs_path, lib_rs_content)?;
 
-    new_command("cargo")
+    let _ = new_command("cargo")
         .arg("fmt")
         .current_dir(&template_dir)
         .output();

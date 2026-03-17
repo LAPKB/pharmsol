@@ -5,10 +5,7 @@ use argmin::{
 
 use ndarray::{Array1, Axis};
 
-use crate::{
-    prelude::simulator::{log_likelihood_matrix, LikelihoodMatrixOptions},
-    AssayErrorModels, Data, Equation,
-};
+use crate::{prelude::simulator::log_likelihood_matrix, AssayErrorModels, Data, Equation};
 
 pub struct SppOptimizer<'a, E: Equation> {
     equation: &'a E,
@@ -23,13 +20,7 @@ impl<E: Equation> CostFunction for SppOptimizer<'_, E> {
     fn cost(&self, spp: &Self::Param) -> Result<Self::Output, Error> {
         let theta = Array1::from(spp.clone()).insert_axis(Axis(0));
 
-        let log_psi = log_likelihood_matrix(
-            self.equation,
-            self.data,
-            &theta,
-            self.sig,
-            LikelihoodMatrixOptions::default(),
-        )?;
+        let log_psi = log_likelihood_matrix(self.equation, self.data, &theta, self.sig, false)?;
         let psi = log_psi.mapv(f64::exp);
 
         if psi.ncols() > 1 {

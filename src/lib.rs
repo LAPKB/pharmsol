@@ -71,8 +71,8 @@ pub mod prelude {
             equation,
             equation::Equation,
             likelihood::{
-                log_likelihood_batch, log_likelihood_matrix, log_likelihood_subject,
-                LikelihoodMatrixOptions, PopulationPredictions, Prediction, SubjectPredictions,
+                log_likelihood_batch, log_likelihood_matrix, log_likelihood_subject, log_psi, psi,
+                PopulationPredictions, Prediction, SubjectPredictions,
             },
         };
     }
