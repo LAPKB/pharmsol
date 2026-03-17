@@ -60,7 +60,11 @@ mod progress;
 mod subject;
 
 // Re-export main types
-pub use matrix::{log_likelihood_matrix, LikelihoodMatrixOptions};
+pub use matrix::log_likelihood_matrix;
+#[allow(deprecated)]
+pub use matrix::log_psi;
+#[allow(deprecated)]
+pub use matrix::psi;
 pub use prediction::Prediction;
 pub use subject::{PopulationPredictions, SubjectPredictions};
 

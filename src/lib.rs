@@ -64,6 +64,7 @@ pub mod prelude {
     // AUC primitives for direct use on raw arrays
     pub use crate::data::auc::{auc, auc_interval, aumc, interpolate_linear};
 
+    #[allow(deprecated)]
     // Simulator submodule for internal use and advanced users
     pub mod simulator {
         pub use crate::simulator::{
@@ -71,8 +72,8 @@ pub mod prelude {
             equation,
             equation::Equation,
             likelihood::{
-                log_likelihood_batch, log_likelihood_matrix, log_likelihood_subject,
-                LikelihoodMatrixOptions, PopulationPredictions, Prediction, SubjectPredictions,
+                log_likelihood_batch, log_likelihood_matrix, log_likelihood_subject, log_psi, psi,
+                PopulationPredictions, Prediction, SubjectPredictions,
             },
         };
     }
