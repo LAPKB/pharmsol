@@ -74,9 +74,14 @@ pub fn two_compartments_cl_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: 
     let kcp = q / vc;
     let kpc = q / vp;
 
-    let sqrt = (ke + kcp + kpc).powi(2) - 4.0 * ke * kpc;
+    let mut sqrt = (ke + kcp + kpc).powi(2) - 4.0 * ke * kpc;
+    // Allow for small negative values due to floating-point rounding.
     if sqrt < 0.0 {
-        panic!("Imaginary solutions, program stopped!");
+        if sqrt > -1e-12 {
+            sqrt = 0.0;
+        } else {
+            panic!("Imaginary solutions, program stopped!");
+        }
     }
     let sqrt = sqrt.sqrt();
     let l1 = (ke + kcp + kpc + sqrt) / 2.0;
