@@ -1,5 +1,12 @@
 use crate::{data::Covariates, simulator::*};
 
+/// Shared helper for IV one-compartment model parameterized by elimination rate `ke`.
+/// This matches the standard analytical solution:
+/// C(t) = C(0) * exp(-ke * t) + rate / ke * (1 - exp(-ke * t))
+fn one_compartment_iv_ke(x0: T, ke: T, t: T, rate: T) -> T {
+    x0 * (-ke * t).exp() + rate / ke * (1.0 - (-ke * t).exp())
+}
+
 /// Analytical solution for one compartment model parameterized by clearance.
 ///
 /// # Assumptions
@@ -13,7 +20,7 @@ pub fn one_compartment_cl(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V
     let v = p[1];
     let ke = cl / v;
 
-    xout[0] = x[0] * (-ke * t).exp() + rateiv[0] / ke * (1.0 - (-ke * t).exp());
+    xout[0] = one_compartment_iv_ke(x[0], ke, t, rateiv[0]);
     xout
 }
 
@@ -34,8 +41,7 @@ pub fn one_compartment_cl_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &
 
     xout[0] = x[0] * (-ka * t).exp();
 
-    xout[1] = x[1] * (-ke * t).exp()
-        + rateiv[0] / ke * (1.0 - (-ke * t).exp())
+    xout[1] = one_compartment_iv_ke(x[1], ke, t, rateiv[0])
         + ((ka * x[0]) / (ka - ke)) * ((-ke * t).exp() - (-ka * t).exp());
 
     xout
