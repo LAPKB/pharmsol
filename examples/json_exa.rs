@@ -1,11 +1,7 @@
-// Run with: cargo run --example json_exa --features exa
+// cargo run --example json_exa --features exa
 //
-// This example demonstrates JSON model compilation using the `exa` feature.
-// It compares predictions from:
-// 1. A statically defined ODE model (Rust code)
-// 2. A dynamically compiled ODE model (via exa, raw Rust string)
-// 3. A JSON-defined ODE model (via compile_json)
-// 4. A JSON-defined Analytical model (via compile_json)
+// Compiles a 1-compartment IV model four different ways and checks that they
+// all agree: static Rust, exa (raw Rust string), JSON ODE, JSON analytical.
 
 #[cfg(feature = "exa")]
 fn main() {
@@ -13,7 +9,6 @@ fn main() {
     use pharmsol::{exa, json, Analytical, ODE};
     use std::path::PathBuf;
 
-    // Create test subject with infusion and observations
     let subject = Subject::builder("1")
         .infusion(0.0, 500.0, 0, 0.5)
         .observation(0.5, 1.645776, 0)
@@ -25,18 +20,13 @@ fn main() {
         .observation(8.0, 0.001017932, 0)
         .build();
 
-    // Parameters: ke (elimination rate constant), V (volume of distribution)
-    let params = vec![1.2, 50.0];
+    let params = vec![1.2, 50.0]; // ke, V
 
-    let test_dir = std::env::current_dir().expect("Failed to get current directory");
-
-    // Shared template path for all compilations (they run sequentially)
+    let cwd = std::env::current_dir().unwrap();
     let template_path = std::env::temp_dir().join("exa_json_example");
 
-    // =========================================================================
-    // 1. Create ODE model directly (static Rust code)
-    // =========================================================================
-    println!("1. Creating static ODE model...");
+    // -- Static ODE (plain Rust) ----------------------------------------------
+
     let static_ode = equation::ODE::new(
         |x, p, _t, dx, _bolus, rateiv, _cov| {
             fetch_params!(p, ke, _v);
@@ -51,14 +41,10 @@ fn main() {
         },
         (1, 1),
     );
-    println!("   ✓ Static ODE model created\n");
 
-    // =========================================================================
-    // 2. Compile ODE model dynamically using exa (raw Rust string)
-    // =========================================================================
-    println!("2. Compiling ODE model via exa (raw Rust)...");
-    let exa_ode_path = test_dir.join("exa_ode_model.pkm");
+    // -- Exa ODE (raw Rust string, compiled at runtime) -----------------------
 
+    let exa_ode_path = cwd.join("exa_ode_model.pkm");
     let exa_ode_compiled = exa::build::compile::<ODE>(
         r#"
             equation::ODE::new(
@@ -82,231 +68,115 @@ fn main() {
         template_path.clone(),
         |_, _| {},
     )
-    .expect("Failed to compile ODE model via exa");
+    .unwrap();
 
     let exa_ode_path = PathBuf::from(&exa_ode_compiled);
-    let (_lib_exa_ode, (dynamic_exa_ode, _)) =
-        unsafe { exa::load::load::<ODE>(exa_ode_path.clone()) };
-    println!("   ✓ Compiled to: {}\n", exa_ode_compiled);
+    let (_lib_exa, (dyn_exa_ode, _)) = unsafe { exa::load::load::<ODE>(exa_ode_path.clone()) };
 
-    // =========================================================================
-    // 3. Compile ODE model from JSON using compile_json
-    // =========================================================================
-    println!("3. Compiling ODE model from JSON...");
+    // -- JSON ODE -------------------------------------------------------------
 
-    let json_ode = r#"{
+    let json_ode_str = r#"{
         "schema": "1.0",
         "id": "pk_1cmt_iv_ode",
         "type": "ode",
         "parameters": ["ke", "V"],
         "compartments": ["central"],
-        "diffeq": {
-            "central": "-ke * central + rateiv[0]"
-        },
-        "output": "central / V",
-        "display": {
-            "name": "One-Compartment IV ODE",
-            "category": "pk"
-        }
+        "diffeq": { "central": "-ke * central + rateiv[0]" },
+        "output": "central / V"
     }"#;
 
-    // First, show the generated code
-    let generated = json::generate_code(json_ode).expect("Failed to generate code from JSON");
-    println!("   Generated Rust code:");
-    println!("   ─────────────────────────────────────");
-    for line in generated.equation_code.lines().take(15) {
-        println!("   {}", line);
-    }
-    println!("   ...\n");
+    // Show the generated Rust before compiling
+    let generated = json::generate_code(json_ode_str).unwrap();
+    println!("Generated code from JSON ODE:\n{}\n", generated.equation_code);
 
-    let json_ode_path = test_dir.join("json_ode_model.pkm");
-
+    let json_ode_path = cwd.join("json_ode_model.pkm");
     let json_ode_compiled = json::compile_json::<ODE>(
-        json_ode,
+        json_ode_str,
         Some(json_ode_path.clone()),
         template_path.clone(),
         |_, _| {},
     )
-    .expect("Failed to compile JSON ODE model");
+    .unwrap();
 
     let json_ode_path = PathBuf::from(&json_ode_compiled);
-    let (_lib_json_ode, (dynamic_json_ode, meta_ode)) =
+    let (_lib_json_ode, (dyn_json_ode, _)) =
         unsafe { exa::load::load::<ODE>(json_ode_path.clone()) };
-    println!(
-        "   ✓ Compiled to: {} (params: {:?})\n",
-        json_ode_compiled,
-        meta_ode.get_params()
-    );
 
-    // =========================================================================
-    // 4. Compile Analytical model from JSON using compile_json
-    // =========================================================================
-    println!("4. Compiling Analytical model from JSON...");
+    // -- JSON Analytical ------------------------------------------------------
 
-    let json_analytical = r#"{
+    let json_analytical_str = r#"{
         "schema": "1.0",
         "id": "pk_1cmt_iv_analytical",
         "type": "analytical",
         "analytical": "one_compartment",
         "parameters": ["ke", "V"],
-        "output": "x[0] / V",
-        "display": {
-            "name": "One-Compartment IV Analytical",
-            "category": "pk"
-        }
+        "output": "x[0] / V"
     }"#;
 
-    let json_analytical_path = test_dir.join("json_analytical_model.pkm");
-
-    let json_analytical_compiled = json::compile_json::<Analytical>(
-        json_analytical,
-        Some(json_analytical_path.clone()),
+    let json_an_path = cwd.join("json_analytical_model.pkm");
+    let json_an_compiled = json::compile_json::<Analytical>(
+        json_analytical_str,
+        Some(json_an_path.clone()),
         template_path.clone(),
         |_, _| {},
     )
-    .expect("Failed to compile JSON Analytical model");
+    .unwrap();
 
-    let json_analytical_path = PathBuf::from(&json_analytical_compiled);
-    let (_lib_json_analytical, (dynamic_json_analytical, meta_analytical)) =
-        unsafe { exa::load::load::<Analytical>(json_analytical_path.clone()) };
-    println!(
-        "   ✓ Compiled to: {} (params: {:?})\n",
-        json_analytical_compiled,
-        meta_analytical.get_params()
-    );
+    let json_an_path = PathBuf::from(&json_an_compiled);
+    let (_lib_json_an, (dyn_json_an, _)) =
+        unsafe { exa::load::load::<Analytical>(json_an_path.clone()) };
 
-    // =========================================================================
-    // 5. Compare predictions from all four models
-    // =========================================================================
-    println!("{}", "═".repeat(80));
-    println!("Comparing predictions (ke={}, V={})", params[0], params[1]);
-    println!("{}", "═".repeat(80));
+    // -- Compare predictions --------------------------------------------------
 
-    let static_preds = static_ode
-        .estimate_predictions(&subject, &params)
-        .expect("Static ODE prediction failed");
-    let exa_ode_preds = dynamic_exa_ode
-        .estimate_predictions(&subject, &params)
-        .expect("Exa ODE prediction failed");
-    let json_ode_preds = dynamic_json_ode
-        .estimate_predictions(&subject, &params)
-        .expect("JSON ODE prediction failed");
-    let json_analytical_preds = dynamic_json_analytical
-        .estimate_predictions(&subject, &params)
-        .expect("JSON Analytical prediction failed");
+    let flat = |preds: pharmsol::prelude::SubjectPredictions| preds.flat_predictions();
 
-    let static_flat = static_preds.flat_predictions();
-    let exa_ode_flat = exa_ode_preds.flat_predictions();
-    let json_ode_flat = json_ode_preds.flat_predictions();
-    let json_analytical_flat = json_analytical_preds.flat_predictions();
-
-    println!(
-        "\n{:<8} {:>14} {:>14} {:>14} {:>14}",
-        "Time", "Static ODE", "Exa ODE", "JSON ODE", "JSON Analyt."
-    );
-    println!("{}", "─".repeat(80));
+    let preds_static = flat(static_ode.estimate_predictions(&subject, &params).unwrap());
+    let preds_exa = flat(dyn_exa_ode.estimate_predictions(&subject, &params).unwrap());
+    let preds_json_ode = flat(dyn_json_ode.estimate_predictions(&subject, &params).unwrap());
+    let preds_json_an = flat(dyn_json_an.estimate_predictions(&subject, &params).unwrap());
 
     let times = [0.5, 1.0, 2.0, 3.0, 4.0, 6.0, 8.0];
-    for (i, &time) in times.iter().enumerate() {
+    println!(
+        "{:<6} {:>12} {:>12} {:>12} {:>12}",
+        "t", "Static", "Exa", "JSON ODE", "JSON An."
+    );
+    for (i, t) in times.iter().enumerate() {
         println!(
-            "{:<8.1} {:>14.6} {:>14.6} {:>14.6} {:>14.6}",
-            time, static_flat[i], exa_ode_flat[i], json_ode_flat[i], json_analytical_flat[i]
+            "{:<6.1} {:>12.6} {:>12.6} {:>12.6} {:>12.6}",
+            t, preds_static[i], preds_exa[i], preds_json_ode[i], preds_json_an[i]
         );
     }
 
-    // =========================================================================
-    // 6. Verification
-    // =========================================================================
-    println!("\n{}", "═".repeat(80));
-    println!("Verification:");
-    println!("{}", "─".repeat(80));
+    let close = |a: &[f64], b: &[f64], tol: f64| -> bool {
+        a.iter().zip(b).all(|(x, y)| (x - y).abs() < tol)
+    };
 
-    // Static ODE vs Exa ODE
-    let static_vs_exa = static_flat
-        .iter()
-        .zip(exa_ode_flat.iter())
-        .all(|(a, b)| (a - b).abs() < 1e-10);
-    println!(
-        "  Static ODE vs Exa ODE:        {} (tolerance: 1e-10)",
-        if static_vs_exa {
-            "✓ MATCH"
-        } else {
-            "✗ MISMATCH"
-        }
-    );
+    println!();
+    assert!(close(&preds_static, &preds_exa, 1e-10), "static != exa");
+    println!("static vs exa:          OK  (< 1e-10)");
+    assert!(close(&preds_static, &preds_json_ode, 1e-10), "static != json ode");
+    println!("static vs json ODE:     OK  (< 1e-10)");
+    assert!(close(&preds_static, &preds_json_an, 1e-3), "static != json analytical");
+    println!("static vs json analyt.: OK  (< 1e-3)");
 
-    // Static ODE vs JSON ODE
-    let static_vs_json_ode = static_flat
-        .iter()
-        .zip(json_ode_flat.iter())
-        .all(|(a, b)| (a - b).abs() < 1e-10);
-    println!(
-        "  Static ODE vs JSON ODE:       {} (tolerance: 1e-10)",
-        if static_vs_json_ode {
-            "✓ MATCH"
-        } else {
-            "✗ MISMATCH"
-        }
-    );
-
-    // Static ODE vs JSON Analytical
-    let static_vs_json_analytical = static_flat
-        .iter()
-        .zip(json_analytical_flat.iter())
-        .all(|(a, b)| (a - b).abs() < 1e-3);
-    println!(
-        "  Static ODE vs JSON Analytical: {} (tolerance: 1e-3)",
-        if static_vs_json_analytical {
-            "✓ CLOSE"
-        } else {
-            "✗ DIFFERS"
-        }
-    );
-
-    // =========================================================================
-    // 7. Demonstrate JSON Model Library
-    // =========================================================================
-    println!("\n{}", "═".repeat(80));
-    println!("JSON Model Library:");
-    println!("{}", "─".repeat(80));
+    // -- Builtin library models -----------------------------------------------
 
     let library = json::ModelLibrary::builtin();
-    println!("  Available builtin models ({}):", library.list().len());
+    println!("\nBuiltin models:");
     for id in library.list() {
-        let model = library.get(id).unwrap();
-        let model_type = match &model.model_type {
-            json::ModelType::Analytical => "Analytical",
-            json::ModelType::Ode => "ODE",
-            json::ModelType::Sde => "SDE",
-        };
-        let name = model
-            .display
-            .as_ref()
-            .and_then(|d| d.name.as_ref())
-            .map(|s| s.as_str())
-            .unwrap_or("(unnamed)");
-        println!("    • {} [{}]: {}", id, model_type, name);
+        println!("  {}", id);
     }
 
-    // =========================================================================
-    // 8. Clean up
-    // =========================================================================
-    println!("\n{}", "═".repeat(80));
-    println!("Cleaning up...");
+    // -- Cleanup --------------------------------------------------------------
 
     std::fs::remove_file(&exa_ode_path).ok();
     std::fs::remove_file(&json_ode_path).ok();
-    std::fs::remove_file(&json_analytical_path).ok();
+    std::fs::remove_file(&json_an_path).ok();
     std::fs::remove_dir_all(&template_path).ok();
-
-    println!("  ✓ Removed compiled model files");
-    println!("  ✓ Removed temporary build directory");
-    println!("\nDone!");
 }
 
 #[cfg(not(feature = "exa"))]
 fn main() {
-    eprintln!("This example requires the 'exa' feature.");
     eprintln!("Run with: cargo run --example json_exa --features exa");
     std::process::exit(1);
 }

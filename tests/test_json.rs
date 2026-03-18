@@ -70,24 +70,18 @@ mod parsing {
             "analytical": "one_compartment",
             "parameters": ["ke", "V"],
             "output": "x[0] / V",
-            "covariates": [
-                { "id": "WT", "reference": 70.0, "units": "kg" }
-            ],
-            "covariateEffects": [
-                {
-                    "covariate": "WT",
-                    "on": "V",
-                    "type": "allometric",
-                    "exponent": 0.75,
-                    "reference": 70.0
-                }
-            ]
+            "covariates": ["WT"],
+            "secondary": {
+                "V": "V * (WT / 70)^0.75"
+            }
         }"#;
 
         let model = parse_json(json).expect("Should parse successfully");
         assert!(model.covariates.is_some());
-        assert!(model.covariate_effects.is_some());
-        assert_eq!(model.covariate_effects.as_ref().unwrap().len(), 1);
+        assert_eq!(model.covariates.as_ref().unwrap(), &["WT"]);
+        assert!(model.secondary.is_some());
+        assert_eq!(model.secondary.as_ref().unwrap().len(), 1);
+        assert_eq!(model.secondary.as_ref().unwrap()[0].0, "V");
     }
 
     #[test]
@@ -336,25 +330,17 @@ mod codegen {
             "analytical": "one_compartment",
             "parameters": ["ke", "V"],
             "output": "x[0] / V",
-            "covariates": [
-                { "id": "WT", "reference": 70.0 }
-            ],
-            "covariateEffects": [
-                {
-                    "covariate": "WT",
-                    "on": "V",
-                    "type": "allometric",
-                    "exponent": 0.75,
-                    "reference": 70.0
-                }
-            ]
+            "covariates": ["WT"],
+            "secondary": {
+                "V": "V * (WT / 70)^0.75"
+            }
         }"#;
 
         let code = generate_code(json).expect("Should generate code");
 
-        // Should include covariate access and effect
+        // Should include covariate access
         assert!(code.equation_code.contains("cov.get_covariate"));
-        // Allometric: V * (WT / ref)^exp
+        // Allometric: V * (WT / 70)^0.75 transpiled with powf
         assert!(code.equation_code.contains("powf"));
     }
 }
@@ -436,7 +422,7 @@ mod library {
         .unwrap();
         library.add(base);
 
-        // Create derived model with weight covariate
+        // Create derived model with weight covariate + secondary equation
         let derived = JsonModel::from_str(
             r#"{
             "schema": "1.0",
@@ -445,18 +431,10 @@ mod library {
             "type": "analytical",
             "analytical": "one_compartment",
             "parameters": ["ke", "V"],
-            "covariates": [
-                { "id": "WT", "reference": 70.0 }
-            ],
-            "covariateEffects": [
-                {
-                    "covariate": "WT",
-                    "on": "V",
-                    "type": "allometric",
-                    "exponent": 0.75,
-                    "reference": 70.0
-                }
-            ]
+            "covariates": ["WT"],
+            "secondary": {
+                "V": "V * (WT / 70)^0.75"
+            }
         }"#,
         )
         .unwrap();
@@ -469,7 +447,11 @@ mod library {
 
         // Should have covariates from derived
         assert!(resolved.covariates.is_some());
-        assert!(resolved.covariate_effects.is_some());
+        assert_eq!(resolved.covariates.as_ref().unwrap(), &["WT"]);
+
+        // Should have secondary equations from derived
+        assert!(resolved.secondary.is_some());
+        assert_eq!(resolved.secondary.as_ref().unwrap().len(), 1);
     }
 
     #[test]
@@ -562,6 +544,199 @@ mod end_to_end {
 
             assert!(result.is_ok(), "Failed to generate code for model: {}", id);
         }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Secondary Equations and Covariates Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+mod secondary_and_covariates {
+    use super::*;
+
+    #[test]
+    fn test_secondary_equations_ordered() {
+        let json = r#"{
+            "schema": "1.0",
+            "id": "pk_secondary",
+            "type": "analytical",
+            "analytical": "one_compartment",
+            "parameters": ["CL", "V"],
+            "secondary": {
+                "ke": "CL / V"
+            },
+            "output": "x[0] / V"
+        }"#;
+
+        let model = parse_json(json).expect("Should parse");
+        let secondary = model.secondary.as_ref().unwrap();
+        assert_eq!(secondary.len(), 1);
+        assert_eq!(secondary[0].0, "ke");
+        assert_eq!(secondary[0].1, "CL / V");
+    }
+
+    #[test]
+    fn test_secondary_multiple_ordered() {
+        let json = r#"{
+            "schema": "1.0",
+            "id": "pk_multi_secondary",
+            "type": "analytical",
+            "analytical": "one_compartment",
+            "parameters": ["CLs", "Vs"],
+            "covariates": ["wt"],
+            "secondary": {
+                "CL": "CLs * (wt / 70)^0.75",
+                "V": "Vs * (wt / 70)",
+                "ke": "CL / V"
+            },
+            "output": "x[0] / V"
+        }"#;
+
+        let model = parse_json(json).expect("Should parse");
+        let secondary = model.secondary.as_ref().unwrap();
+        // Must preserve order (CL before V before ke)
+        assert_eq!(secondary.len(), 3);
+        assert_eq!(secondary[0].0, "CL");
+        assert_eq!(secondary[1].0, "V");
+        assert_eq!(secondary[2].0, "ke");
+    }
+
+    #[test]
+    fn test_covariates_simple_list() {
+        let json = r#"{
+            "schema": "1.0",
+            "id": "pk_covs",
+            "type": "analytical",
+            "analytical": "one_compartment",
+            "parameters": ["ke", "V"],
+            "covariates": ["wt", "age", "sex"],
+            "output": "x[0] / V"
+        }"#;
+
+        let model = parse_json(json).expect("Should parse");
+        let covs = model.covariates.as_ref().unwrap();
+        assert_eq!(covs, &["wt", "age", "sex"]);
+    }
+
+    #[test]
+    fn test_codegen_with_secondary_and_covariates() {
+        let json = r#"{
+            "schema": "1.0",
+            "id": "pk_cov_sec",
+            "type": "analytical",
+            "analytical": "one_compartment",
+            "parameters": ["CLs", "Vs"],
+            "covariates": ["wt"],
+            "secondary": {
+                "CL": "CLs * (wt / 70)^0.75",
+                "V": "Vs * (wt / 70)",
+                "ke": "CL / V"
+            },
+            "output": "x[0] / V"
+        }"#;
+
+        let code = generate_code(json).expect("Should generate code");
+
+        // Should fetch covariates
+        assert!(code.equation_code.contains("cov.get_covariate"));
+        // Should transpile allometric expression with powf
+        assert!(code.equation_code.contains("powf"));
+        // Should have secondary variables
+        assert!(code.equation_code.contains("let CL ="));
+        assert!(code.equation_code.contains("let V ="));
+        assert!(code.equation_code.contains("let ke ="));
+    }
+
+    #[test]
+    fn test_codegen_ode_with_covariates() {
+        let json = r#"{
+            "schema": "1.0",
+            "id": "pk_ode_cov",
+            "type": "ode",
+            "parameters": ["CLs", "Vs"],
+            "compartments": ["central"],
+            "covariates": ["wt"],
+            "secondary": {
+                "CL": "CLs * (wt / 70)^0.75",
+                "V": "Vs * wt / 70",
+                "ke": "CL / V"
+            },
+            "diffeq": {
+                "central": "-ke * central + rateiv[central]"
+            },
+            "output": "central / V"
+        }"#;
+
+        let code = generate_code(json).expect("Should generate code");
+
+        assert!(code.equation_code.contains("ODE::new"));
+        // Should use t and cov (not _t, _cov) when covariates present
+        assert!(code.equation_code.contains(", cov,"));
+    }
+
+    #[test]
+    fn test_expression_with_if_function() {
+        let json = r#"{
+            "schema": "1.0",
+            "id": "pk_if_test",
+            "type": "analytical",
+            "analytical": "one_compartment",
+            "parameters": ["ke", "V"],
+            "covariates": ["sex"],
+            "secondary": {
+                "V": "if(sex == 1, V * 0.8, V)"
+            },
+            "output": "x[0] / V"
+        }"#;
+
+        let code = generate_code(json).expect("Should generate code");
+        // Should emit Rust if-else
+        assert!(code.equation_code.contains("if sex == 1.0"));
+        assert!(code.equation_code.contains("else"));
+    }
+
+    #[test]
+    fn test_validate_rejects_invalid_expression() {
+        let json = r#"{
+            "schema": "1.0",
+            "id": "bad_expr",
+            "type": "ode",
+            "parameters": ["ke", "V"],
+            "compartments": ["central"],
+            "diffeq": {
+                "central": "ke * central +"
+            },
+            "output": "central / V"
+        }"#;
+
+        let result = validate_json(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_full_pipeline_with_secondary() {
+        let json = r#"{
+            "schema": "1.0",
+            "id": "e2e_secondary",
+            "type": "analytical",
+            "analytical": "one_compartment_with_absorption",
+            "parameters": ["ka", "CL", "V"],
+            "secondary": {
+                "ke": "CL / V"
+            },
+            "output": "x[1] / V"
+        }"#;
+
+        // Full pipeline
+        let model = parse_json(json).unwrap();
+        let validator = Validator::new();
+        let validated = validator.validate(&model).unwrap();
+        let generator = CodeGenerator::new(validated.inner());
+        let code = generator.generate().unwrap();
+
+        assert!(code.equation_code.contains("let ke = CL / V;"));
+        assert!(code.equation_code.contains("Analytical::new"));
+        assert_eq!(code.parameters, vec!["ka", "CL", "V"]);
     }
 }
 

@@ -65,8 +65,8 @@ impl Validator {
         // 5. Validate covariates
         self.validate_covariates(model)?;
 
-        // 6. Validate covariate effects
-        self.validate_covariate_effects(model)?;
+        // 6. Validate expressions parse correctly
+        self.validate_expressions(model)?;
 
         // 7. Validate analytical function parameters
         if let Some(func) = &model.analytical {
@@ -213,14 +213,14 @@ impl Validator {
         Ok(())
     }
 
-    /// Validate covariate definitions
+    /// Validate covariate definitions (just a list of names now)
     fn validate_covariates(&self, model: &JsonModel) -> Result<(), JsonModelError> {
         if let Some(covariates) = &model.covariates {
             let mut seen = HashSet::new();
             for cov in covariates {
-                if !seen.insert(cov.id.clone()) {
+                if !seen.insert(cov.clone()) {
                     return Err(JsonModelError::UndefinedCovariate {
-                        name: format!("duplicate covariate: {}", cov.id),
+                        name: format!("duplicate covariate: {}", cov),
                     });
                 }
             }
@@ -228,101 +228,72 @@ impl Validator {
         Ok(())
     }
 
-    /// Validate covariate effects
-    fn validate_covariate_effects(&self, model: &JsonModel) -> Result<(), JsonModelError> {
-        if let Some(effects) = &model.covariate_effects {
-            let params: HashSet<_> = model
-                .parameters
-                .as_ref()
-                .map(|p| p.iter().cloned().collect())
-                .unwrap_or_default();
+    /// Validate that all expressions in the model parse correctly
+    fn validate_expressions(&self, model: &JsonModel) -> Result<(), JsonModelError> {
+        use crate::json::expression;
 
-            let covariates: HashSet<_> = model
-                .covariates
-                .as_ref()
-                .map(|c| c.iter().map(|cov| cov.id.clone()).collect())
-                .unwrap_or_default();
+        // Validate output expression
+        if let Some(output) = &model.output {
+            expression::parse(output).map_err(|e| JsonModelError::ExpressionParseError {
+                context: "output".to_string(),
+                message: e.to_string(),
+            })?;
+        }
 
-            for effect in effects {
-                // Check that target parameter exists
-                if !params.is_empty() && !params.contains(&effect.on) {
-                    return Err(JsonModelError::InvalidCovariateEffectTarget {
-                        parameter: effect.on.clone(),
-                    });
-                }
-
-                // Check type-specific requirements
-                match effect.effect_type {
-                    CovariateEffectType::Allometric => {
-                        if effect.covariate.is_none() {
-                            return Err(JsonModelError::MissingCovariateEffectField {
-                                effect_type: "allometric".to_string(),
-                                field: "covariate".to_string(),
-                            });
-                        }
-                        if effect.exponent.is_none() {
-                            return Err(JsonModelError::MissingCovariateEffectField {
-                                effect_type: "allometric".to_string(),
-                                field: "exponent".to_string(),
-                            });
-                        }
+        // Validate multiple outputs
+        if let Some(outputs) = &model.outputs {
+            for (i, out) in outputs.iter().enumerate() {
+                expression::parse(&out.equation).map_err(|e| {
+                    JsonModelError::ExpressionParseError {
+                        context: format!("outputs[{}]", i),
+                        message: e.to_string(),
                     }
-                    CovariateEffectType::Linear | CovariateEffectType::Exponential => {
-                        if effect.covariate.is_none() {
-                            return Err(JsonModelError::MissingCovariateEffectField {
-                                effect_type: format!("{:?}", effect.effect_type).to_lowercase(),
-                                field: "covariate".to_string(),
-                            });
-                        }
-                        if effect.slope.is_none() {
-                            return Err(JsonModelError::MissingCovariateEffectField {
-                                effect_type: format!("{:?}", effect.effect_type).to_lowercase(),
-                                field: "slope".to_string(),
-                            });
-                        }
-                    }
-                    CovariateEffectType::Custom => {
-                        if effect.expression.is_none() {
-                            return Err(JsonModelError::MissingCovariateEffectField {
-                                effect_type: "custom".to_string(),
-                                field: "expression".to_string(),
-                            });
-                        }
-                    }
-                    CovariateEffectType::Categorical => {
-                        if effect.covariate.is_none() {
-                            return Err(JsonModelError::MissingCovariateEffectField {
-                                effect_type: "categorical".to_string(),
-                                field: "covariate".to_string(),
-                            });
-                        }
-                        if effect.levels.is_none() {
-                            return Err(JsonModelError::MissingCovariateEffectField {
-                                effect_type: "categorical".to_string(),
-                                field: "levels".to_string(),
-                            });
-                        }
-                    }
-                    CovariateEffectType::Proportional => {
-                        if effect.covariate.is_none() {
-                            return Err(JsonModelError::MissingCovariateEffectField {
-                                effect_type: "proportional".to_string(),
-                                field: "covariate".to_string(),
-                            });
-                        }
-                    }
-                }
-
-                // Check that referenced covariate exists
-                if let Some(cov_name) = &effect.covariate {
-                    if !covariates.is_empty() && !covariates.contains(cov_name) {
-                        return Err(JsonModelError::UndefinedCovariate {
-                            name: cov_name.clone(),
-                        });
-                    }
-                }
+                })?;
             }
         }
+
+        // Validate diffeq expressions
+        if let Some(DiffEqSpec::Object(map)) = &model.diffeq {
+            for (name, expr) in map {
+                expression::parse(expr).map_err(|e| JsonModelError::ExpressionParseError {
+                    context: format!("diffeq.{}", name),
+                    message: e.to_string(),
+                })?;
+            }
+        }
+
+        // Validate drift expressions (SDE)
+        if let Some(DiffEqSpec::Object(map)) = &model.drift {
+            for (name, expr) in map {
+                expression::parse(expr).map_err(|e| JsonModelError::ExpressionParseError {
+                    context: format!("drift.{}", name),
+                    message: e.to_string(),
+                })?;
+            }
+        }
+
+        // Validate secondary equations
+        if let Some(secondary) = &model.secondary {
+            for (name, expr) in secondary {
+                expression::parse(expr).map_err(|e| JsonModelError::ExpressionParseError {
+                    context: format!("secondary.{}", name),
+                    message: e.to_string(),
+                })?;
+            }
+        }
+
+        // Validate derived parameter expressions
+        if let Some(derived) = &model.derived {
+            for d in derived {
+                expression::parse(&d.expression).map_err(|e| {
+                    JsonModelError::ExpressionParseError {
+                        context: format!("derived.{}", d.symbol),
+                        message: e.to_string(),
+                    }
+                })?;
+            }
+        }
+
         Ok(())
     }
 

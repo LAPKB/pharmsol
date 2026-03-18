@@ -160,6 +160,7 @@
 
 mod codegen;
 mod errors;
+pub mod expression;
 pub mod library;
 mod model;
 mod types;

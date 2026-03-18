@@ -312,7 +312,7 @@ fn merge_models(base: &JsonModel, derived: &JsonModel) -> JsonModel {
         diffeq: derived.diffeq.clone().or_else(|| base.diffeq.clone()),
         drift: derived.drift.clone().or_else(|| base.drift.clone()),
         diffusion: derived.diffusion.clone().or_else(|| base.diffusion.clone()),
-        secondary: derived.secondary.clone().or_else(|| base.secondary.clone()),
+        secondary: merge_option_vec(&base.secondary, &derived.secondary),
 
         // ─────────────────────────────────────────────────────────────────────
         // Output
@@ -335,7 +335,6 @@ fn merge_models(base: &JsonModel, derived: &JsonModel) -> JsonModel {
         derived: merge_option_vec(&base.derived, &derived.derived),
         features: merge_option_vec(&base.features, &derived.features),
         covariates: merge_option_vec(&base.covariates, &derived.covariates),
-        covariate_effects: merge_option_vec(&base.covariate_effects, &derived.covariate_effects),
 
         // ─────────────────────────────────────────────────────────────────────
         // Layer 4: UI Metadata

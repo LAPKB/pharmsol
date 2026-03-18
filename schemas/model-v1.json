@@ -21,7 +21,7 @@
     "expression": {
       "type": "string",
       "minLength": 1,
-      "description": "A Rust expression (e.g., 'x[0] / V', '-ka * x[0]')"
+      "description": "A math expression using arithmetic (+, -, *, /, ^), comparisons (==, !=, <, >, <=, >=), logic (and, or, not), if(cond, then, else), and built-in functions (exp, ln, log, sqrt, abs, min, max, floor, ceil, sin, cos)"
     },
 
     "analyticalFunction": {
@@ -35,269 +35,6 @@
         "three_compartments_with_absorption"
       ],
       "description": "Built-in analytical solution function name"
-    },
-
-    "parameterScale": {
-      "type": "string",
-      "enum": ["linear", "log", "logit"],
-      "default": "log",
-      "description": "Parameter transformation scale for estimation"
-    },
-
-    "parameterDefinition": {
-      "type": "object",
-      "properties": {
-        "name": {
-          "$ref": "#/$defs/parameterName",
-          "description": "Parameter symbol/name"
-        },
-        "bounds": {
-          "type": "array",
-          "items": { "type": "number" },
-          "minItems": 2,
-          "maxItems": 2,
-          "description": "Lower and upper bounds [min, max]"
-        },
-        "scale": {
-          "$ref": "#/$defs/parameterScale"
-        },
-        "units": {
-          "type": "string",
-          "description": "Parameter units (e.g., 'L/h', '1/h', 'L')"
-        },
-        "description": {
-          "type": "string",
-          "description": "Human-readable description"
-        },
-        "typical": {
-          "type": "number",
-          "description": "Typical/initial value"
-        }
-      },
-      "required": ["name"],
-      "additionalProperties": false
-    },
-
-    "derivedParameter": {
-      "type": "object",
-      "properties": {
-        "symbol": {
-          "$ref": "#/$defs/parameterName",
-          "description": "Symbol for the derived parameter"
-        },
-        "expression": {
-          "$ref": "#/$defs/expression",
-          "description": "Expression to compute the derived parameter"
-        }
-      },
-      "required": ["symbol", "expression"],
-      "additionalProperties": false
-    },
-
-    "parameterization": {
-      "type": "object",
-      "properties": {
-        "id": {
-          "type": "string",
-          "pattern": "^[a-z][a-z0-9_]*$",
-          "description": "Unique identifier for this parameterization"
-        },
-        "name": {
-          "type": "string",
-          "description": "Human-readable name"
-        },
-        "default": {
-          "type": "boolean",
-          "default": false,
-          "description": "Whether this is the default parameterization"
-        },
-        "parameters": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/parameterDefinition" },
-          "minItems": 1,
-          "description": "Parameter definitions for this parameterization"
-        },
-        "derived": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/derivedParameter" },
-          "description": "Parameters derived from the primary parameters"
-        },
-        "nonmem": {
-          "type": "string",
-          "description": "NONMEM TRANS equivalent (e.g., 'TRANS1', 'TRANS2')"
-        }
-      },
-      "required": ["id", "parameters"],
-      "additionalProperties": false
-    },
-
-    "covariateType": {
-      "type": "string",
-      "enum": ["continuous", "categorical"],
-      "default": "continuous"
-    },
-
-    "interpolationMethod": {
-      "type": "string",
-      "enum": ["linear", "constant", "locf"],
-      "default": "linear",
-      "description": "How to interpolate covariate values between time points"
-    },
-
-    "covariateDefinition": {
-      "type": "object",
-      "properties": {
-        "id": {
-          "type": "string",
-          "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$",
-          "description": "Covariate identifier (used in code)"
-        },
-        "name": {
-          "type": "string",
-          "description": "Human-readable name"
-        },
-        "type": {
-          "$ref": "#/$defs/covariateType"
-        },
-        "units": {
-          "type": "string",
-          "description": "Units for continuous covariates"
-        },
-        "reference": {
-          "type": "number",
-          "description": "Reference value for centering (e.g., 70 for weight)"
-        },
-        "interpolation": {
-          "$ref": "#/$defs/interpolationMethod"
-        },
-        "levels": {
-          "type": "array",
-          "items": { "type": "string" },
-          "description": "Possible values for categorical covariates"
-        }
-      },
-      "required": ["id"],
-      "additionalProperties": false
-    },
-
-    "covariateEffectType": {
-      "type": "string",
-      "enum": [
-        "allometric",
-        "linear",
-        "exponential",
-        "proportional",
-        "categorical",
-        "custom"
-      ],
-      "description": "Type of covariate effect relationship"
-    },
-
-    "covariateEffect": {
-      "type": "object",
-      "properties": {
-        "on": {
-          "$ref": "#/$defs/parameterName",
-          "description": "Parameter affected by this covariate"
-        },
-        "covariate": {
-          "type": "string",
-          "description": "Covariate ID"
-        },
-        "type": {
-          "$ref": "#/$defs/covariateEffectType"
-        },
-        "exponent": {
-          "type": "number",
-          "description": "Exponent for allometric scaling (e.g., 0.75 for CL)"
-        },
-        "slope": {
-          "type": "number",
-          "description": "Slope for linear/exponential effects"
-        },
-        "reference": {
-          "type": "number",
-          "description": "Reference value for centering"
-        },
-        "expression": {
-          "$ref": "#/$defs/expression",
-          "description": "Custom expression for type='custom'"
-        },
-        "levels": {
-          "type": "object",
-          "additionalProperties": { "type": "number" },
-          "description": "Multipliers for each categorical level"
-        }
-      },
-      "required": ["on", "type"],
-      "allOf": [
-        {
-          "if": { "properties": { "type": { "const": "allometric" } } },
-          "then": { "required": ["covariate", "exponent"] }
-        },
-        {
-          "if": { "properties": { "type": { "const": "linear" } } },
-          "then": { "required": ["covariate", "slope"] }
-        },
-        {
-          "if": { "properties": { "type": { "const": "custom" } } },
-          "then": { "required": ["expression"] }
-        },
-        {
-          "if": { "properties": { "type": { "const": "categorical" } } },
-          "then": { "required": ["covariate", "levels"] }
-        }
-      ],
-      "additionalProperties": false
-    },
-
-    "errorModelType": {
-      "type": "string",
-      "enum": ["additive", "proportional", "combined", "polynomial"],
-      "description": "Type of residual error model"
-    },
-
-    "errorModel": {
-      "type": "object",
-      "properties": {
-        "type": {
-          "$ref": "#/$defs/errorModelType"
-        },
-        "additive": {
-          "type": "number",
-          "minimum": 0,
-          "description": "Additive error standard deviation"
-        },
-        "proportional": {
-          "type": "number",
-          "minimum": 0,
-          "description": "Proportional error coefficient (CV)"
-        },
-        "cv": {
-          "type": "number",
-          "minimum": 0,
-          "description": "Coefficient of variation (alias for proportional)"
-        },
-        "sd": {
-          "type": "number",
-          "minimum": 0,
-          "description": "Standard deviation (alias for additive)"
-        },
-        "coefficients": {
-          "type": "array",
-          "items": { "type": "number" },
-          "minItems": 4,
-          "maxItems": 4,
-          "description": "Polynomial coefficients [c0, c1, c2, c3]"
-        },
-        "lambda": {
-          "type": "number",
-          "default": 0,
-          "description": "Lambda parameter for polynomial error"
-        }
-      },
-      "required": ["type"],
-      "additionalProperties": false
     },
 
     "outputDefinition": {
@@ -321,6 +58,22 @@
         }
       },
       "required": ["equation"],
+      "additionalProperties": false
+    },
+
+    "derivedParameter": {
+      "type": "object",
+      "properties": {
+        "symbol": {
+          "$ref": "#/$defs/parameterName",
+          "description": "Symbol for the derived parameter"
+        },
+        "expression": {
+          "$ref": "#/$defs/expression",
+          "description": "Expression to compute the derived parameter"
+        }
+      },
+      "required": ["symbol", "expression"],
       "additionalProperties": false
     },
 
@@ -565,8 +318,11 @@
       "description": "SDE diffusion coefficients"
     },
     "secondary": {
-      "$ref": "#/$defs/expression",
-      "description": "Secondary equations (for analytical)"
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/expression"
+      },
+      "description": "Ordered secondary equations mapping variable names to math expressions (e.g., {\"CL\": \"CLs * (wt / 70)^0.75\", \"ke\": \"CL / V\"}). Evaluated in order."
     },
 
     "output": {
@@ -609,16 +365,20 @@
       "description": "Number of particles for SDE simulation"
     },
 
-    "parameterization": {
-      "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/parameterization" }],
-      "description": "Active parameterization (ID or inline definition)"
-    },
-    "parameterizations": {
+    "covariates": {
       "type": "array",
-      "items": { "$ref": "#/$defs/parameterization" },
-      "description": "Available parameterization variants"
+      "items": {
+        "type": "string",
+        "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$"
+      },
+      "uniqueItems": true,
+      "description": "Covariate names that the model reads from data (e.g., [\"wt\", \"age\", \"sex\"])"
     },
-
+    "derived": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/derivedParameter" },
+      "description": "Derived parameters computed from primary parameters"
+    },
     "features": {
       "type": "array",
       "items": {
@@ -626,25 +386,6 @@
         "enum": ["lag_time", "bioavailability", "initial_conditions"]
       },
       "description": "Enabled optional features"
-    },
-    "covariates": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/covariateDefinition" },
-      "description": "Covariate definitions"
-    },
-    "covariateEffects": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/covariateEffect" },
-      "description": "Covariate effect specifications"
-    },
-    "errorModel": {
-      "$ref": "#/$defs/errorModel",
-      "description": "Residual error model"
-    },
-    "errorModels": {
-      "type": "object",
-      "additionalProperties": { "$ref": "#/$defs/errorModel" },
-      "description": "Error models per output (keyed by output ID)"
     },
 
     "display": {
@@ -787,6 +528,31 @@
       "output": "x[0] / V",
       "neqs": [2, 1],
       "particles": 1000
+    },
+    {
+      "schema": "1.0",
+      "id": "pk_1cmt_wt",
+      "type": "analytical",
+      "analytical": "one_compartment",
+      "parameters": ["CLs", "Vs"],
+      "covariates": ["wt"],
+      "secondary": {
+        "CL": "CLs * (wt / 70)^0.75",
+        "V": "Vs * (wt / 70)",
+        "ke": "CL / V"
+      },
+      "output": "x[0] / V"
+    },
+    {
+      "schema": "1.0",
+      "id": "pk_mm_1cmt",
+      "type": "ode",
+      "parameters": ["Vmax", "Km", "V"],
+      "compartments": ["central"],
+      "diffeq": {
+        "central": "-Vmax * (central / V) / (Km + central / V)"
+      },
+      "output": "central / V"
     }
   ]
 }

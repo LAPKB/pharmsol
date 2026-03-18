@@ -6,6 +6,55 @@ use std::collections::HashMap;
 use crate::json::errors::JsonModelError;
 use crate::json::types::*;
 
+/// Serde helpers for secondary equations (ordered key-value pairs from JSON objects)
+mod secondary_serde {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize_option<S>(
+        eqs: &Option<Vec<(String, String)>>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match eqs {
+            Some(pairs) => {
+                use serde::ser::SerializeMap;
+                let mut map = serializer.serialize_map(Some(pairs.len()))?;
+                for (k, v) in pairs {
+                    map.serialize_entry(k, v)?;
+                }
+                map.end()
+            }
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize_option<'de, D>(
+        deserializer: D,
+    ) -> Result<Option<Vec<(String, String)>>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let opt: Option<serde_json::Map<String, serde_json::Value>> =
+            Option::deserialize(deserializer)?;
+        match opt {
+            None => Ok(None),
+            Some(map) => {
+                let mut result = Vec::new();
+                for (k, v) in map {
+                    let val = match v {
+                        serde_json::Value::String(s) => s,
+                        other => other.to_string(),
+                    };
+                    result.push((k, val));
+                }
+                Ok(Some(result))
+            }
+        }
+    }
+}
+
 /// Supported schema versions
 pub const SUPPORTED_SCHEMA_VERSIONS: &[&str] = &["1.0"];
 
@@ -94,9 +143,17 @@ pub struct JsonModel {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diffusion: Option<HashMap<String, ExpressionOrNumber>>,
 
-    /// Secondary equations (for analytical)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub secondary: Option<String>,
+    /// Secondary equations (ordered name→expression pairs)
+    ///
+    /// In JSON: `{ "CL": "CLs * (wt / 70)^0.75", "ke": "CL / V" }`
+    /// Order matters — later equations can reference earlier ones.
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "secondary_serde::serialize_option",
+        deserialize_with = "secondary_serde::deserialize_option",
+        default
+    )]
+    pub secondary: Option<Vec<(String, String)>>,
 
     // ─────────────────────────────────────────────────────────────────────────
     // Output
@@ -143,13 +200,14 @@ pub struct JsonModel {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub features: Option<Vec<Feature>>,
 
-    /// Covariate definitions
+    /// Covariate names used in this model
+    ///
+    /// These are just the names of data columns the model reads.
+    /// In JSON: `["wt", "age", "sex"]`
+    ///
+    /// How covariates affect parameters is expressed in `secondary` equations.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub covariates: Option<Vec<CovariateDefinition>>,
-
-    /// Covariate effect specifications
-    #[serde(rename = "covariateEffects", skip_serializing_if = "Option::is_none")]
-    pub covariate_effects: Option<Vec<CovariateEffect>>,
+    pub covariates: Option<Vec<String>>,
 
     // ─────────────────────────────────────────────────────────────────────────
     // Layer 4: UI Metadata (ignored by compiler)
@@ -278,7 +336,12 @@ impl JsonModel {
 
     /// Check if the model uses covariates
     pub fn has_covariates(&self) -> bool {
-        self.covariates.is_some() && !self.covariates.as_ref().unwrap().is_empty()
+        self.covariates.as_ref().is_some_and(|c| !c.is_empty())
+    }
+
+    /// Check if the model has secondary equations
+    pub fn has_secondary(&self) -> bool {
+        self.secondary.as_ref().is_some_and(|s| !s.is_empty())
     }
 
     /// Check if the model uses lag times

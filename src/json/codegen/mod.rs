@@ -75,7 +75,7 @@ impl<'a> CodeGenerator<'a> {
             .as_ref()
             .ok_or_else(|| JsonModelError::missing_field("analytical", "analytical"))?;
 
-        let seq_eq = self.closure_gen.generate_secondary()?;
+        let seq_eq = self.closure_gen.generate_secondary_closure()?;
         let lag = self.closure_gen.generate_lag()?;
         let fa = self.closure_gen.generate_fa()?;
         let init = self.closure_gen.generate_init()?;

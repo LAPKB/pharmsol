@@ -164,7 +164,7 @@ impl EquationPriv for Analytical {
         // 2) March over each sub-interval
         let mut current_t = ts[0];
         let mut sp = V::from_vec(support_point.to_owned(), NalgebraContext);
-        let mut rateiv = V::zeros(self.get_nstates(), NalgebraContext);
+        let mut rateiv = V::zeros(self.get_ndrugs(), NalgebraContext);
 
         for &next_t in &ts[1..] {
             // prepare support and infusion rate for [current_t .. next_t]

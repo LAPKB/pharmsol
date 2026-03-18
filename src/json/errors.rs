@@ -84,6 +84,10 @@ pub enum JsonModelError {
     #[error("Empty expression in {context}")]
     EmptyExpression { context: String },
 
+    /// Expression parse error
+    #[error("Failed to parse expression in {context}: {message}")]
+    ExpressionParseError { context: String, message: String },
+
     // ─────────────────────────────────────────────────────────────────────────
     // Library Errors
     // ─────────────────────────────────────────────────────────────────────────
@@ -109,17 +113,6 @@ pub enum JsonModelError {
     /// Compilation failed
     #[error("Compilation failed: {0}")]
     CompilationError(String),
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Covariate Effect Errors
-    // ─────────────────────────────────────────────────────────────────────────
-    /// Missing required field for covariate effect type
-    #[error("Covariate effect type '{effect_type}' requires field '{field}'")]
-    MissingCovariateEffectField { effect_type: String, field: String },
-
-    /// Invalid covariate effect target
-    #[error("Covariate effect targets unknown parameter '{parameter}'")]
-    InvalidCovariateEffectTarget { parameter: String },
 }
 
 impl JsonModelError {

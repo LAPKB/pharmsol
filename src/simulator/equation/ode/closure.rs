@@ -74,16 +74,15 @@ impl InfusionSchedule {
             });
         }
 
-        let buffer_size = nstates;
-        let mut per_input: Vec<Vec<(f64, f64)>> = vec![Vec::new(); buffer_size];
+        let mut per_input: Vec<Vec<(f64, f64)>> = vec![Vec::new(); ndrugs];
         for infusion in infusions {
             if infusion.duration() <= 0.0 {
                 continue;
             }
 
             let input = infusion.input();
-            if input >= buffer_size {
-                continue;
+            if input >= ndrugs {
+                return Err(PharmsolError::InputOutOfRange { input, ndrugs });
             }
 
             let rate = infusion.amount() / infusion.duration();
@@ -343,11 +342,10 @@ where
         init: V,
     ) -> Result<Self, PharmsolError> {
         let nparams = p.len();
-        let buffer_size = nstates;
-        let rateiv_buffer = RefCell::new(V::zeros(buffer_size, NalgebraContext));
-        let infusion_schedule = InfusionSchedule::new(nstates, infusions)?;
+        let rateiv_buffer = RefCell::new(V::zeros(ndrugs, NalgebraContext));
+        let infusion_schedule = InfusionSchedule::new(ndrugs, infusions)?;
         // Pre-allocate zero bolus vector
-        let zero_bolus = V::zeros(buffer_size, NalgebraContext);
+        let zero_bolus = V::zeros(ndrugs, NalgebraContext);
 
         Ok(Self {
             func,
