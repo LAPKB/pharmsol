@@ -19,11 +19,16 @@ pub fn two_compartments_cl(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> 
     let kcp = q / vc;
     let kpc = q / vp;
 
-    let sqrt = (ke + kcp + kpc).powi(2) - 4.0 * ke * kpc;
-    if sqrt < 0.0 {
-        panic!("Imaginary solutions, program stopped!");
+    let mut discriminant = (ke + kcp + kpc).powi(2) - 4.0 * ke * kpc;
+    if discriminant < 0.0 {
+        // Allow small negative values due to floating point rounding
+        if discriminant.abs() <= 1e-12 {
+            discriminant = 0.0;
+        } else {
+            panic!("Imaginary solutions, program stopped!");
+        }
     }
-    let sqrt = sqrt.sqrt();
+    let sqrt = discriminant.sqrt();
     let l1 = (ke + kcp + kpc + sqrt) / 2.0;
     let l2 = (ke + kcp + kpc - sqrt) / 2.0;
     let exp_l1_t = (-l1 * t).exp();
