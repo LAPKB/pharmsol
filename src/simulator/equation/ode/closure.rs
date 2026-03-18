@@ -1,4 +1,4 @@
-use crate::{Covariates, Infusion};
+use crate::{Covariates, Infusion, PharmsolError};
 use diffsol::{
     ConstantOp, LinearOp, MatrixCommon, NalgebraContext, NalgebraMat, NonLinearOp,
     NonLinearOpJacobian, OdeEquations, OdeEquationsRef, Op, Vector, VectorCommon,
@@ -67,11 +67,11 @@ struct InfusionSchedule {
 }
 
 impl InfusionSchedule {
-    fn new(ndrugs: usize, infusions: &[&Infusion]) -> Self {
+    fn new(ndrugs: usize, infusions: &[&Infusion]) -> Result<Self, PharmsolError> {
         if ndrugs == 0 || infusions.is_empty() {
-            return Self {
+            return Ok(Self {
                 channels: Vec::new(),
-            };
+            });
         }
 
         let mut per_input: Vec<Vec<(f64, f64)>> = vec![Vec::new(); ndrugs];
@@ -82,7 +82,7 @@ impl InfusionSchedule {
 
             let input = infusion.input();
             if input >= ndrugs {
-                continue;
+                return Err(PharmsolError::InputOutOfRange { input, ndrugs });
             }
 
             let rate = infusion.amount() / infusion.duration();
@@ -102,7 +102,7 @@ impl InfusionSchedule {
             })
             .collect();
 
-        Self { channels }
+        Ok(Self { channels })
     }
 
     fn fill_rate_vector(&self, time: f64, rateiv: &mut V) {
@@ -340,14 +340,14 @@ where
         covariates: &'a Covariates,
         infusions: &[&'a Infusion],
         init: V,
-    ) -> Self {
+    ) -> Result<Self, PharmsolError> {
         let nparams = p.len();
         let rateiv_buffer = RefCell::new(V::zeros(ndrugs, NalgebraContext));
-        let infusion_schedule = InfusionSchedule::new(ndrugs, infusions);
+        let infusion_schedule = InfusionSchedule::new(ndrugs, infusions)?;
         // Pre-allocate zero bolus vector
         let zero_bolus = V::zeros(ndrugs, NalgebraContext);
 
-        Self {
+        Ok(Self {
             func,
             nstates,
             nparams,
@@ -358,7 +358,7 @@ where
             covariates,
             infusion_schedule,
             rateiv_buffer,
-        }
+        })
     }
 }
 

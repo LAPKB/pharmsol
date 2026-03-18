@@ -132,6 +132,12 @@ pub(crate) trait EquationPriv: EquationTypes {
     ) -> Result<(), PharmsolError> {
         match event {
             Event::Bolus(bolus) => {
+                if bolus.input() >= self.get_ndrugs() {
+                    return Err(PharmsolError::InputOutOfRange {
+                        input: bolus.input(),
+                        ndrugs: self.get_ndrugs(),
+                    });
+                }
                 x.add_bolus(bolus.input(), bolus.amount());
             }
             Event::Infusion(infusion) => {

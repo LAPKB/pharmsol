@@ -23,24 +23,48 @@ use super::{Equation, EquationPriv, EquationTypes, State};
 
 const RTOL: f64 = 1e-4;
 const ATOL: f64 = 1e-4;
-/// ODE solver selection for the model.
+
+/// ODE solver selection.
 ///
-/// Choose the most appropriate solver based on your model's stiffness characteristics:
-/// - `Bdf`: Best for stiff problems (default). Implicit multistep method.
-/// - `Tsit45`: Best for non-stiff problems. Explicit Runge-Kutta, no Jacobian needed — fastest when applicable.
-/// - `TrBdf2`: Implicit Runge-Kutta, good for moderately stiff problems.
-/// - `Esdirk34`: Higher-order implicit Runge-Kutta for stiff problems needing accuracy.
+/// Each variant corresponds to a solver family from diffsol.
+/// `Sdirk` and `ExplicitRk` take a tableau that determines the specific method.
+///
+/// ```ignore
+/// // Implicit multistep (stiff, default):
+/// OdeSolver::Bdf
+///
+/// // Implicit single-step with a chosen tableau:
+/// OdeSolver::Sdirk(SdirkTableau::TrBdf2)
+/// OdeSolver::Sdirk(SdirkTableau::Esdirk34)
+///
+/// // Explicit Runge-Kutta — fastest for non-stiff problems:
+/// OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45)
+/// ```
 #[derive(Clone, Debug, Default)]
 pub enum OdeSolver {
-    /// Backward Differentiation Formulae — best for stiff problems (default)
+    /// Backward Differentiation Formulae — implicit multistep, best for stiff problems
     #[default]
     Bdf,
-    /// Tsitouras 5(4) — explicit Runge-Kutta, fastest for non-stiff problems
-    Tsit45,
-    /// TR-BDF2 — implicit Runge-Kutta, good for moderately stiff problems
+    /// Singly Diagonally Implicit Runge-Kutta
+    Sdirk(SdirkTableau),
+    /// Explicit Runge-Kutta — no Jacobian needed
+    ExplicitRk(ExplicitRkTableau),
+}
+
+/// Tableau for [`OdeSolver::Sdirk`].
+#[derive(Clone, Debug)]
+pub enum SdirkTableau {
+    /// TR-BDF2 — good all-rounder for moderately stiff problems
     TrBdf2,
-    /// ESDIRK3(4) — implicit Runge-Kutta, higher accuracy for stiff problems
+    /// ESDIRK3(4) — higher accuracy for stiff problems
     Esdirk34,
+}
+
+/// Tableau for [`OdeSolver::ExplicitRk`].
+#[derive(Clone, Debug)]
+pub enum ExplicitRkTableau {
+    /// Tsitouras 5(4) — fastest for non-stiff problems
+    Tsit45,
 }
 
 #[repr(C)]
@@ -247,6 +271,12 @@ impl ODE {
 
             match event {
                 Event::Bolus(bolus) => {
+                    if bolus.input() >= bolus_v.len() {
+                        return Err(PharmsolError::InputOutOfRange {
+                            input: bolus.input(),
+                            ndrugs: bolus_v.len(),
+                        });
+                    }
                     bolus_v.fill(0.0);
                     bolus_v[bolus.input()] = bolus.amount();
 
@@ -307,9 +337,13 @@ impl ODE {
                                 Ok(OdeSolverStopReason::InternalTimestep) => continue,
                                 Ok(OdeSolverStopReason::TstopReached) => break,
                                 Err(diffsol::error::DiffsolError::OdeSolverError(
-                                    OdeSolverError::StepSizeTooSmall { time: _ },
+                                    OdeSolverError::StepSizeTooSmall { time },
                                 )) => {
-                                    return Err(PharmsolError::OtherError("The step size of the ODE solver went to zero, this means one of your parameters is getting really close to 0.0 or INFINITE. Check your model".to_string()));
+                                    return Err(PharmsolError::OtherError(format!(
+                                        "ODE solver step size went to zero at t = {time:.4} (target t = {:.4}). \
+                                         A parameter is likely near 0 or infinite.",
+                                        next_event.time()
+                                    )));
                                 }
                                 Err(_) | Ok(_) => {
                                     return Err(PharmsolError::OtherError(
@@ -412,7 +446,7 @@ impl Equation for ODE {
                     infusions.as_slice(),
                     self.initial_state(support_point, covariates, occasion.index())
                         .into(),
-                ))?;
+                )?)?;
 
             match &self.solver {
                 OdeSolver::Bdf => {
@@ -434,7 +468,7 @@ impl Equation for ODE {
                         &mut output,
                     )?;
                 }
-                OdeSolver::Tsit45 => {
+                OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45) => {
                     let mut solver = problem.tsit45()?;
                     Self::run_events(
                         self,
@@ -453,7 +487,7 @@ impl Equation for ODE {
                         &mut output,
                     )?;
                 }
-                OdeSolver::TrBdf2 => {
+                OdeSolver::Sdirk(SdirkTableau::TrBdf2) => {
                     let mut solver = problem.tr_bdf2::<diffsol::NalgebraLU<f64>>()?;
                     Self::run_events(
                         self,
@@ -472,7 +506,7 @@ impl Equation for ODE {
                         &mut output,
                     )?;
                 }
-                OdeSolver::Esdirk34 => {
+                OdeSolver::Sdirk(SdirkTableau::Esdirk34) => {
                     let mut solver = problem.esdirk34::<diffsol::NalgebraLU<f64>>()?;
                     Self::run_events(
                         self,

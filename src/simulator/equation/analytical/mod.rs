@@ -167,6 +167,12 @@ impl EquationPriv for Analytical {
                 let s = inf.time();
                 let e = s + inf.duration();
                 if current_t >= s && next_t <= e {
+                    if inf.input() >= self.get_ndrugs() {
+                        return Err(PharmsolError::InputOutOfRange {
+                            input: inf.input(),
+                            ndrugs: self.get_ndrugs(),
+                        });
+                    }
                     rateiv[inf.input()] += inf.amount() / inf.duration();
                 }
             }

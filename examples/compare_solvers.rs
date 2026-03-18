@@ -1,11 +1,11 @@
 //! Shows how to select different ODE solvers for the same model.
 //!
-//! pharmsol ships four solvers — pick the one that fits your problem:
+//! pharmsol wraps diffsol's solver families:
 //!
-//! - `Bdf`      — implicit multistep, best for stiff systems (default)
-//! - `Tsit45`   — explicit Runge-Kutta, fastest for non-stiff systems
-//! - `TrBdf2`   — implicit single-step, good all-rounder
-//! - `Esdirk34` — implicit Runge-Kutta, higher accuracy for stiff systems
+//! - `Bdf`               — implicit multistep, best for stiff systems (default)
+//! - `Sdirk(TrBdf2)`     — implicit single-step, good all-rounder
+//! - `Sdirk(Esdirk34)`   — implicit single-step, higher accuracy
+//! - `ExplicitRk(Tsit45)` — explicit Runge-Kutta, fastest for non-stiff systems
 //!
 //!     cargo run --release --example compare_solvers
 
@@ -61,15 +61,15 @@ fn main() {
 
     // Run each solver and collect predictions
     let bdf = two_cpt(OdeSolver::Bdf);
-    let tsit45 = two_cpt(OdeSolver::Tsit45);
-    let trbdf2 = two_cpt(OdeSolver::TrBdf2);
-    let esdirk34 = two_cpt(OdeSolver::Esdirk34);
+    let tsit45 = two_cpt(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45));
+    let trbdf2 = two_cpt(OdeSolver::Sdirk(SdirkTableau::TrBdf2));
+    let esdirk34 = two_cpt(OdeSolver::Sdirk(SdirkTableau::Esdirk34));
 
     let results: Vec<(&str, equation::ODE)> = vec![
         ("Bdf", bdf),
-        ("Tsit45", tsit45),
-        ("TrBdf2", trbdf2),
-        ("Esdirk34", esdirk34),
+        ("Sdirk(TrBdf2)", trbdf2),
+        ("Sdirk(Esdirk34)", esdirk34),
+        ("ExplicitRk(Tsit45)", tsit45),
     ];
 
     // ── Print comparison table ─────────────────────────────────────

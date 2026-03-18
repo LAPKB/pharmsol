@@ -393,7 +393,7 @@ mod tests {
             },
         )
         .with_nstates(4)
-        .with_ndrugs(1)
+        .with_ndrugs(2)
         .with_nout(1);
 
         let op_ode = ode
