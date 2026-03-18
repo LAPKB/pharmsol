@@ -78,6 +78,7 @@ pub(crate) trait EquationPriv: EquationTypes {
     fn lag(&self) -> &Lag;
     fn fa(&self) -> &Fa;
     fn get_nstates(&self) -> usize;
+    fn get_ndrugs(&self) -> usize;
     fn get_nouteqs(&self) -> usize;
     fn solve(
         &self,

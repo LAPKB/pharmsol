@@ -31,8 +31,9 @@ mod exa_tests {
                 fetch_params!(p, _ke, v);
                 y[0] = x[0] / v;
             },
-            (1, 1),
-        );
+        )
+        .with_nstates(1)
+        .with_nout(1);
 
         // Compile the same model using exa
         // Use absolute path in the current test directory to avoid path issues
@@ -54,8 +55,9 @@ mod exa_tests {
                 fetch_params!(p, _ke, v);
                 y[0] = x[0] / v;
             }},
-            (1, 1),
         )
+        .with_nstates(1)
+        .with_nout(1)
         "#
             ),
             Some(model_output_path),

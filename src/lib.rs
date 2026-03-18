@@ -12,7 +12,7 @@ pub use crate::data::*;
 pub use crate::equation::*;
 pub use crate::optimize::effect::get_e2;
 pub use crate::optimize::spp::SppOptimizer;
-pub use crate::simulator::equation::{self, ODE};
+pub use crate::simulator::equation::{self, ode::OdeSolver, ODE};
 pub use error::PharmsolError;
 #[cfg(feature = "exa")]
 pub use exa::*;
@@ -71,7 +71,7 @@ pub mod prelude {
     // Direct simulator re-exports for convenience
     pub use crate::simulator::{
         cache::{configure_cache, disable_cache, enable_cache, reset_caches, CacheSettings},
-        equation::{self, Equation},
+        equation::{self, ode::OdeSolver, Equation},
         likelihood::{Prediction, SubjectPredictions},
     };
 

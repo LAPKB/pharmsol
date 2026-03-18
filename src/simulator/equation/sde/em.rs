@@ -24,6 +24,7 @@ pub struct EM {
     atol: f64,
     max_step: f64,
     min_step: f64,
+    ndrugs: usize,
 }
 
 impl EM {
@@ -52,6 +53,7 @@ impl EM {
         infusions: Vec<Infusion>,
         rtol: f64,
         atol: f64,
+        ndrugs: usize,
     ) -> Self {
         Self {
             drift,
@@ -62,8 +64,9 @@ impl EM {
             infusions,
             rtol,
             atol,
-            max_step: 0.1,  // Can be made configurable
-            min_step: 1e-6, // Can be made configurable
+            max_step: 0.1,
+            min_step: 1e-6,
+            ndrugs,
         }
     }
 
@@ -115,25 +118,27 @@ impl EM {
     /// * `state` - Current state of the system (modified in-place)
     fn euler_maruyama_step(&self, time: f64, dt: f64, state: &mut DVector<f64>) {
         let n = state.len();
-        let mut rateiv = DVector::from_vec(vec![0.0, 0.0, 0.0]);
-        //TODO: This should be pre-calculated
+        let mut rateiv: DVector<f64> = DVector::zeros(self.ndrugs);
         for infusion in &self.infusions {
             if time >= infusion.time() && time <= infusion.duration() + infusion.time() {
                 rateiv[infusion.input()] += infusion.amount() / infusion.duration();
             }
         }
         let mut drift_term = DVector::zeros(n).into();
+        let params_v = self.params.clone().into();
+        let state_v = state.clone().into();
+        let rateiv_v: crate::simulator::V = rateiv.into();
         (self.drift)(
-            &state.clone().into(),
-            &self.params.clone().into(),
+            &state_v,
+            &params_v,
             time,
             &mut drift_term,
-            rateiv.into(),
+            &rateiv_v,
             &self.cov,
         );
 
         let mut diffusion_term = DVector::zeros(n).into();
-        (self.diffusion)(&self.params.clone().into(), &mut diffusion_term);
+        (self.diffusion)(&params_v, &mut diffusion_term);
 
         let mut rng = rng();
         let normal_dist = Normal::new(0.0, 1.0).unwrap();

@@ -67,21 +67,21 @@ struct InfusionSchedule {
 }
 
 impl InfusionSchedule {
-    fn new(nstates: usize, infusions: &[&Infusion]) -> Self {
-        if nstates == 0 || infusions.is_empty() {
+    fn new(ndrugs: usize, infusions: &[&Infusion]) -> Self {
+        if ndrugs == 0 || infusions.is_empty() {
             return Self {
                 channels: Vec::new(),
             };
         }
 
-        let mut per_input: Vec<Vec<(f64, f64)>> = vec![Vec::new(); nstates];
+        let mut per_input: Vec<Vec<(f64, f64)>> = vec![Vec::new(); ndrugs];
         for infusion in infusions {
             if infusion.duration() <= 0.0 {
                 continue;
             }
 
             let input = infusion.input();
-            if input >= nstates {
+            if input >= ndrugs {
                 continue;
             }
 
@@ -334,6 +334,7 @@ where
     pub fn with_params_v(
         func: F,
         nstates: usize,
+        ndrugs: usize,
         p: Vec<f64>,
         p_as_v: V,
         covariates: &'a Covariates,
@@ -341,10 +342,10 @@ where
         init: V,
     ) -> Self {
         let nparams = p.len();
-        let rateiv_buffer = RefCell::new(V::zeros(nstates, NalgebraContext));
-        let infusion_schedule = InfusionSchedule::new(nstates, infusions);
+        let rateiv_buffer = RefCell::new(V::zeros(ndrugs, NalgebraContext));
+        let infusion_schedule = InfusionSchedule::new(ndrugs, infusions);
         // Pre-allocate zero bolus vector
-        let zero_bolus = V::zeros(nstates, NalgebraContext);
+        let zero_bolus = V::zeros(ndrugs, NalgebraContext);
 
         Self {
             func,

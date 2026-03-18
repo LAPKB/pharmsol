@@ -99,8 +99,9 @@ fn infusion_models() -> (equation::Analytical, equation::ODE) {
             fetch_params!(p, _ke, v);
             y[0] = x[0] / v;
         },
-        (1, 1),
-    );
+    )
+    .with_nstates(1)
+    .with_nout(1);
 
     let ode = equation::ODE::new(
         |x, p, _t, dx, b, rateiv, _cov| {
@@ -114,8 +115,9 @@ fn infusion_models() -> (equation::Analytical, equation::ODE) {
             fetch_params!(p, _ke, v);
             y[0] = x[0] / v;
         },
-        (1, 1),
-    );
+    )
+    .with_nstates(1)
+    .with_nout(1);
 
     (analytical, ode)
 }
@@ -147,8 +149,9 @@ fn absorption_models() -> (equation::Analytical, equation::ODE) {
             fetch_params!(p, _ka, _ke, v);
             y[0] = x[1] / v;
         },
-        (2, 1),
-    );
+    )
+    .with_nstates(2)
+    .with_nout(1);
 
     let ode = equation::ODE::new(
         |x, p, _t, dx, b, rateiv, _cov| {
@@ -163,8 +166,9 @@ fn absorption_models() -> (equation::Analytical, equation::ODE) {
             fetch_params!(p, _ka, _ke, v);
             y[0] = x[1] / v;
         },
-        (2, 1),
-    );
+    )
+    .with_nstates(2)
+    .with_nout(1);
 
     (analytical, ode)
 }
@@ -194,8 +198,9 @@ fn two_compartment_models() -> (equation::Analytical, equation::ODE) {
             fetch_params!(p, _ke, _kcp, _kpc, v);
             y[0] = x[0] / v;
         },
-        (2, 1),
-    );
+    )
+    .with_nstates(2)
+    .with_nout(1);
 
     let ode = equation::ODE::new(
         |x, p, _t, dx, b, rateiv, _cov| {
@@ -210,8 +215,9 @@ fn two_compartment_models() -> (equation::Analytical, equation::ODE) {
             fetch_params!(p, _ke, _kcp, _kpc, v);
             y[0] = x[0] / v;
         },
-        (2, 1),
-    );
+    )
+    .with_nstates(2)
+    .with_nout(1);
 
     (analytical, ode)
 }

@@ -89,8 +89,9 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
             y[0] = x[0] / v_scaled;
         },
         // Model dimensions: (number of compartments, number of outputs)
-        (2, 1),
-    );
+    )
+    .with_nstates(2)
+    .with_nout(1);
 
     // Define parameter values
     // Note: order must match the fetch_params! macro order
