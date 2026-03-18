@@ -18,23 +18,17 @@ use pharmsol::prelude::*;
 // between runs — the ODE, output equation and dimensions stay the same.
 
 fn two_cpt(solver: OdeSolver) -> equation::ODE {
-    equation::ODE::new(
-        |x, p, _t, dx, b, rateiv, _cov| {
+    ode! {
+        diffeq: |x, p, _t, dx, b, rateiv, _cov| {
             fetch_params!(p, ke, kcp, kpc, _v);
             dx[0] = rateiv[0] + b[0] - ke * x[0] - kcp * x[0] + kpc * x[1];
             dx[1] = kcp * x[0] - kpc * x[1];
         },
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
-        |x, p, _t, _cov, y| {
+        out: |x, p, _t, _cov, y| {
             fetch_params!(p, _ke, _kcp, _kpc, v);
             y[0] = x[0] / v;
         },
-    )
-    .with_nstates(2)
-    .with_ndrugs(1)
-    .with_nout(1)
+    }
     .with_solver(solver)
 }
 
@@ -44,17 +38,17 @@ fn main() {
     let subject = Subject::builder("id1")
         .bolus(0.0, 100.0, 0)
         .infusion(12.0, 200.0, 0, 2.0)
-        .observation(0.5, 0.0, 0)
-        .observation(1.0, 0.0, 0)
-        .observation(2.0, 0.0, 0)
-        .observation(4.0, 0.0, 0)
-        .observation(8.0, 0.0, 0)
-        .observation(12.0, 0.0, 0)
-        .observation(12.5, 0.0, 0)
-        .observation(13.0, 0.0, 0)
-        .observation(14.0, 0.0, 0)
-        .observation(16.0, 0.0, 0)
-        .observation(24.0, 0.0, 0)
+        .missing_observation(0.5, 0)
+        .missing_observation(1.0, 0)
+        .missing_observation(2.0, 0)
+        .missing_observation(4.0, 0)
+        .missing_observation(8.0, 0)
+        .missing_observation(12.0, 0)
+        .missing_observation(12.5, 0)
+        .missing_observation(13.0, 0)
+        .missing_observation(14.0, 0)
+        .missing_observation(16.0, 0)
+        .missing_observation(24.0, 0)
         .build();
 
     let spp = vec![0.1, 0.05, 0.03, 50.0]; // ke, kcp, kpc, V

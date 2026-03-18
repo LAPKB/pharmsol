@@ -21,6 +21,7 @@ pub use error::PharmsolError;
 #[cfg(feature = "exa")]
 pub use exa::*;
 pub use nalgebra::dmatrix;
+pub use pharmsol_macros::ode;
 pub use std::collections::HashMap;
 
 /// Prelude module that re-exports all commonly used types and traits.
@@ -106,6 +107,8 @@ pub mod prelude {
     pub use crate::fetch_params;
     #[doc(inline)]
     pub use crate::lag;
+    #[doc(inline)]
+    pub use crate::ode;
 }
 
 #[macro_export]
