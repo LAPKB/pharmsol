@@ -1,4 +1,6 @@
 mod closure;
+pub mod runtime;
+pub use runtime::{RuntimeODE, RuntimeOdeModel};
 
 use crate::{
     data::{Covariates, Infusion},

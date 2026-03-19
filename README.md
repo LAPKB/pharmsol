@@ -74,6 +74,40 @@ let ode = equation::ODE::new(
 );
 ```
 
+## Runtime-Interpreted ODE Models (No Compilation)
+
+You can also define ODE models from JSON at runtime, avoiding Rust compilation for user models:
+
+```rust
+use pharmsol::{RuntimeODE, SubjectBuilderExt, Equation};
+
+let json = r#"
+{
+  "states": ["A"],
+  "parameters": ["ke", "v"],
+  "outputs": ["cp"],
+  "derivatives": ["-ke * A + rateiv[0]"],
+  "output_equations": ["A / v"]
+}
+"#;
+
+let model = RuntimeODE::from_json(json).unwrap();
+let subject = pharmsol::Subject::builder("patient_001")
+    .infusion(0.0, 500.0, 0, 0.5)
+    .observation(0.5, 1.0, 0)
+    .observation(1.0, 1.0, 0)
+    .build();
+
+let predictions = model
+    .estimate_predictions(&subject, &vec![0.8, 200.0])
+    .unwrap();
+```
+
+Supported expression features:
+- Arithmetic: `+`, `-`, `*`, `/`, `^`
+- Variables: state/parameter/covariate names, `t`, indexed `x[i]`, `p[i]`, `rateiv[i]`, `bolus[i]`
+- Functions: `exp`, `ln`, `log10`, `sqrt`, `abs`, `min`, `max`, `pow`
+
 ## Supported Analytical Models
 
 - [x] One-compartment with IV infusion
