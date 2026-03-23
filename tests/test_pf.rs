@@ -1,4 +1,4 @@
-use pharmsol::data::error_model::AssayErrorModel;
+use pharmsol::data::errormodel::AssayErrorModel;
 use pharmsol::*;
 
 /// Test the particle filter (SDE) likelihood estimation

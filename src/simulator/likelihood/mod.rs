@@ -72,6 +72,7 @@ pub use matrix::psi;
 use ndarray::Array2;
 use rayon::prelude::*;
 
+use crate::data::errormodel::ResidualErrorModelsExt;
 use crate::{Data, Equation, PharmsolError, Predictions, Subject};
 
 /// Compute log-likelihoods for all subjects in parallel, where each subject
@@ -205,7 +206,7 @@ pub fn log_likelihood_subject(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::error_model::{AssayErrorModel, ErrorPoly};
+    use crate::data::errormodel::{AssayErrorModel, ErrorPoly};
     use crate::data::event::Observation;
     use crate::Censor;
 

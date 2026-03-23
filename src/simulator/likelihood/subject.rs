@@ -6,7 +6,7 @@
 
 use ndarray::{Array2, ShapeBuilder};
 
-use crate::data::error_model::AssayErrorModels;
+use crate::data::errormodel::AssayErrorModels;
 use crate::{PharmsolError, Predictions};
 
 use super::prediction::Prediction;
@@ -164,7 +164,7 @@ impl From<Array2<SubjectPredictions>> for PopulationPredictions {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::error_model::{AssayErrorModel, ErrorPoly};
+    use crate::data::errormodel::{AssayErrorModel, ErrorPoly};
     use crate::data::event::Observation;
     use crate::Censor;
 

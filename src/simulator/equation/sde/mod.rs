@@ -8,7 +8,7 @@ use rayon::prelude::*;
 
 use crate::{
     data::{Covariates, Infusion},
-    error_model::AssayErrorModels,
+    errormodel::{AssayErrorModels, AssayErrorModelsExt},
     prelude::simulator::Prediction,
     simulator::{Diffusion, Drift, Fa, Init, Lag, Neqs, Out, V},
     Subject,

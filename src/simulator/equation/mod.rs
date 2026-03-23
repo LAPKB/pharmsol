@@ -9,7 +9,7 @@ pub use ode::*;
 pub use sde::*;
 
 use crate::{
-    error_model::AssayErrorModels,
+    errormodel::AssayErrorModels,
     simulator::{Fa, Lag},
     Covariates, Event, Infusion, Observation, PharmsolError, Subject,
 };
