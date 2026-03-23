@@ -1,50 +1,42 @@
 use crate::{data::Covariates, simulator::*};
+use diffsol::{NalgebraContext, Vector};
 
-/// Shared helper for IV one-compartment model parameterized by elimination rate `ke`.
-/// This matches the standard analytical solution:
-/// C(t) = C(0) * exp(-ke * t) + rate / ke * (1 - exp(-ke * t))
-fn one_compartment_iv_ke(x0: T, ke: T, t: T, rate: T) -> T {
-    x0 * (-ke * t).exp() + rate / ke * (1.0 - (-ke * t).exp())
-}
+use super::one_compartment_models::{one_compartment, one_compartment_with_absorption};
 
 /// Analytical solution for one compartment model parameterized by clearance.
+///
+/// Converts CL/V to ke and delegates to [`one_compartment`].
 ///
 /// # Assumptions
 /// - `p` is a vector of length 2 with CL and V in that order
 /// - `rateiv` is a vector of length 1 with the value of the infusion rate (only one drug)
 /// - `x` is a vector of length 1
 /// - covariates are not used
-pub fn one_compartment_cl(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {
-    let mut xout = x.clone();
+pub fn one_compartment_cl(x: &V, p: &V, t: T, rateiv: V, cov: &Covariates) -> V {
     let cl = p[0];
     let v = p[1];
     let ke = cl / v;
-
-    xout[0] = one_compartment_iv_ke(x[0], ke, t, rateiv[0]);
-    xout
+    let p_ke = V::from_vec(vec![ke], NalgebraContext);
+    one_compartment(x, &p_ke, t, rateiv, cov)
 }
 
 /// Analytical solution for one compartment model with first-order absorption,
 /// parameterized by clearance.
+///
+/// Converts CL/V to ke and delegates to [`one_compartment_with_absorption`].
 ///
 /// # Assumptions
 /// - `p` is a vector of length 3 with ka, CL and V in that order
 /// - `rateiv` is a vector of length 1 with the value of the infusion rate (only one drug)
 /// - `x` is a vector of length 2
 /// - covariates are not used
-pub fn one_compartment_cl_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {
-    let mut xout = x.clone();
+pub fn one_compartment_cl_with_absorption(x: &V, p: &V, t: T, rateiv: V, cov: &Covariates) -> V {
     let ka = p[0];
     let cl = p[1];
     let v = p[2];
     let ke = cl / v;
-
-    xout[0] = x[0] * (-ka * t).exp();
-
-    xout[1] = one_compartment_iv_ke(x[1], ke, t, rateiv[0])
-        + ((ka * x[0]) / (ka - ke)) * ((-ke * t).exp() - (-ka * t).exp());
-
-    xout
+    let p_ke = V::from_vec(vec![ka, ke], NalgebraContext);
+    one_compartment_with_absorption(x, &p_ke, t, rateiv, cov)
 }
 
 #[cfg(test)]

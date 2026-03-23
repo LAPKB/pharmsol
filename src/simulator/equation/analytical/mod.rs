@@ -1,5 +1,6 @@
 pub mod one_compartment_cl_models;
 pub mod one_compartment_models;
+pub mod three_compartment_cl_models;
 pub mod three_compartment_models;
 pub mod two_compartment_cl_models;
 pub mod two_compartment_models;
@@ -7,6 +8,7 @@ pub mod two_compartment_models;
 use diffsol::{NalgebraContext, Vector, VectorHost};
 pub use one_compartment_cl_models::*;
 pub use one_compartment_models::*;
+pub use three_compartment_cl_models::*;
 pub use three_compartment_models::*;
 pub use two_compartment_cl_models::*;
 pub use two_compartment_models::*;
