@@ -12,7 +12,7 @@ use super::one_compartment_models::{one_compartment, one_compartment_with_absorp
 /// - `rateiv` is a vector of length 1 with the value of the infusion rate (only one drug)
 /// - `x` is a vector of length 1
 /// - covariates are not used
-pub fn one_compartment_cl(x: &V, p: &V, t: T, rateiv: V, cov: &Covariates) -> V {
+pub fn one_compartment_cl(x: &V, p: &V, t: T, rateiv: &V, cov: &Covariates) -> V {
     let cl = p[0];
     let v = p[1];
     let ke = cl / v;
@@ -30,7 +30,7 @@ pub fn one_compartment_cl(x: &V, p: &V, t: T, rateiv: V, cov: &Covariates) -> V 
 /// - `rateiv` is a vector of length 1 with the value of the infusion rate (only one drug)
 /// - `x` is a vector of length 2
 /// - covariates are not used
-pub fn one_compartment_cl_with_absorption(x: &V, p: &V, t: T, rateiv: V, cov: &Covariates) -> V {
+pub fn one_compartment_cl_with_absorption(x: &V, p: &V, t: T, rateiv: &V, cov: &Covariates) -> V {
     let ka = p[0];
     let cl = p[1];
     let v = p[2];
@@ -65,8 +65,9 @@ mod tests {
                 fetch_params!(p, _cl, v);
                 y[0] = x[0] / v;
             },
-            (1, 1),
-        );
+        )
+        .with_nstates(1)
+        .with_nout(1);
 
         let analytical = equation::Analytical::new(
             one_compartment_cl,
@@ -78,8 +79,9 @@ mod tests {
                 fetch_params!(p, _cl, v);
                 y[0] = x[0] / v;
             },
-            (1, 1),
-        );
+        )
+        .with_nstates(1)
+        .with_nout(1);
 
         let op_ode = ode.estimate_predictions(&subject, &vec![0.1, 1.0]).unwrap();
         let op_analytical = analytical
@@ -114,8 +116,9 @@ mod tests {
                 fetch_params!(p, _ka, _cl, v);
                 y[0] = x[1] / v;
             },
-            (2, 1),
-        );
+        )
+        .with_nstates(2)
+        .with_nout(1);
 
         let analytical = equation::Analytical::new(
             one_compartment_cl_with_absorption,
@@ -127,8 +130,9 @@ mod tests {
                 fetch_params!(p, _ka, _cl, v);
                 y[0] = x[1] / v;
             },
-            (2, 1),
-        );
+        )
+        .with_nstates(2)
+        .with_nout(1);
 
         let op_ode = ode
             .estimate_predictions(&subject, &vec![1.0, 0.1, 1.0])
