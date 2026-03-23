@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.0](https://github.com/LAPKB/pharmsol/compare/v0.23.0...v0.24.0) - 2026-03-23
+
+### Added
+
+- Improved functionality for defining equations ([#226](https://github.com/LAPKB/pharmsol/pull/226))
+- Add CL-based one and two compartment models ([#227](https://github.com/LAPKB/pharmsol/pull/227))
+
 ## [0.23.0](https://github.com/LAPKB/pharmsol/compare/v0.22.1...v0.23.0) - 2026-03-16
 
 ### Added
