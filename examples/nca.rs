@@ -59,7 +59,7 @@ fn basic_oral_example() {
     println!("  Tlast:    {:.1} h", result.exposure.tlast);
     println!("  AUClast:  {:.2}", result.exposure.auc_last);
 
-    if let Some(ref term) = result.terminal {
+    if let Some(term) = &result.terminal {
         println!("\nTerminal Phase:");
         println!("  Lambda-z: {:.4} h⁻¹", term.lambda_z);
         println!("  Half-life: {:.2} h", term.half_life);
@@ -68,7 +68,7 @@ fn basic_oral_example() {
         }
     }
 
-    if let Some(ref cl) = result.clearance {
+    if let Some(cl) = &result.clearance {
         println!("\nClearance Parameters:");
         println!("  CL/F:    {:.2} L/h", cl.cl_f);
         println!("  Vz/F:    {:.2} L", cl.vz_f);
@@ -100,7 +100,7 @@ fn iv_bolus_example() {
     println!("  Cmax:     {:.1}", result.exposure.cmax);
     println!("  AUClast:  {:.1}", result.exposure.auc_last);
 
-    if let Some(RouteParams::IVBolus(ref bolus)) = result.route_params {
+    if let Some(RouteParams::IVBolus(bolus)) = &result.route_params {
         println!("\nIV Bolus Parameters:");
         println!("  C0 (back-extrap): {:.1}", bolus.c0);
         println!("  Vd:               {:.1} L", bolus.vd);
@@ -136,7 +136,7 @@ fn iv_infusion_example() {
     println!("  Tmax:     {:.2} h", result.exposure.tmax);
     println!("  AUClast:  {:.1}", result.exposure.auc_last);
 
-    if let Some(RouteParams::IVInfusion(ref infusion)) = result.route_params {
+    if let Some(RouteParams::IVInfusion(infusion)) = &result.route_params {
         println!("\nIV Infusion Parameters:");
         println!("  Infusion duration: {:.2} h", infusion.infusion_duration);
         if let Some(mrt_iv) = infusion.mrt_iv {
@@ -170,7 +170,7 @@ fn steady_state_example() {
     println!("  Cmax:     {:.1}", result.exposure.cmax);
     println!("  AUClast:  {:.1}", result.exposure.auc_last);
 
-    if let Some(ref ss) = result.steady_state {
+    if let Some(ss) = &result.steady_state {
         println!("\nSteady-State Parameters (tau = {} h):", ss.tau);
         println!("  AUCtau:       {:.1}", ss.auc_tau);
         println!("  Cmin:         {:.1}", ss.cmin);
