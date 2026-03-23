@@ -96,7 +96,10 @@ mod tests {
                 fetch_params!(p, _cl, _q2, _q3, vc, _v2, _v3);
                 y[0] = x[0] / vc;
             },
-        );
+        )
+        .with_nstates(3)
+        .with_nout(1)
+        .with_ndrugs(3);
 
         let analytical = equation::Analytical::new(
             three_compartments_cl,
@@ -108,7 +111,10 @@ mod tests {
                 fetch_params!(p, _cl, _q2, _q3, vc, _v2, _v3);
                 y[0] = x[0] / vc;
             },
-        );
+        )
+        .with_nstates(3)
+        .with_nout(1)
+        .with_ndrugs(3);
 
         let op_ode = ode
             .estimate_predictions(&subject, &vec![0.1, 3.0, 2.0, 1.0, 3.0, 4.0])
