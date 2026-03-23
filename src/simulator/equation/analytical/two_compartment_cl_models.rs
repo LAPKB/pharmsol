@@ -12,7 +12,7 @@ use super::two_compartment_models::{two_compartments, two_compartments_with_abso
 /// - `rateiv` is a vector of length 1 with the value of the infusion rate (only one drug)
 /// - `x` is a vector of length 2
 /// - covariates are not used
-pub fn two_compartments_cl(x: &V, p: &V, t: T, rateiv: V, cov: &Covariates) -> V {
+pub fn two_compartments_cl(x: &V, p: &V, t: T, rateiv: &V, cov: &Covariates) -> V {
     let cl = p[0];
     let q = p[1];
     let vc = p[2];
@@ -34,7 +34,7 @@ pub fn two_compartments_cl(x: &V, p: &V, t: T, rateiv: V, cov: &Covariates) -> V
 /// - `rateiv` is a vector of length 1 with the value of the infusion rate (only one drug)
 /// - `x` is a vector of length 3
 /// - covariates are not used
-pub fn two_compartments_cl_with_absorption(x: &V, p: &V, t: T, rateiv: V, cov: &Covariates) -> V {
+pub fn two_compartments_cl_with_absorption(x: &V, p: &V, t: T, rateiv: &V, cov: &Covariates) -> V {
     let ka = p[0];
     let cl = p[1];
     let q = p[2];
@@ -77,8 +77,10 @@ mod tests {
                 fetch_params!(p, _cl, _q, vc, _vp);
                 y[0] = x[0] / vc;
             },
-            (2, 1),
-        );
+        )
+        .with_nstates(2)
+        .with_nout(1)
+        .with_ndrugs(2);
 
         let analytical = equation::Analytical::new(
             two_compartments_cl,
@@ -90,8 +92,10 @@ mod tests {
                 fetch_params!(p, _cl, _q, vc, _vp);
                 y[0] = x[0] / vc;
             },
-            (2, 1),
-        );
+        )
+        .with_nstates(2)
+        .with_nout(1)
+        .with_ndrugs(2);
 
         let op_ode = ode
             .estimate_predictions(&subject, &vec![0.1, 3.0, 1.0, 3.0])
@@ -132,8 +136,10 @@ mod tests {
                 fetch_params!(p, _ka, _cl, _q, vc, _vp);
                 y[0] = x[1] / vc;
             },
-            (3, 1),
-        );
+        )
+        .with_nstates(3)
+        .with_nout(1)
+        .with_ndrugs(3);
 
         let analytical = equation::Analytical::new(
             two_compartments_cl_with_absorption,
@@ -145,8 +151,10 @@ mod tests {
                 fetch_params!(p, _ka, _cl, _q, vc, _vp);
                 y[0] = x[1] / vc;
             },
-            (3, 1),
-        );
+        )
+        .with_nstates(3)
+        .with_nout(1)
+        .with_ndrugs(3);
 
         let op_ode = ode
             .estimate_predictions(&subject, &vec![1.0, 0.1, 3.0, 1.0, 3.0])

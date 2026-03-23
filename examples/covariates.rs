@@ -49,8 +49,9 @@ fn main() {
             // Define the predicted concentration as the amount in the central compartment divided by volume
             y[0] = x[1] / v;
         },
-        (2, 1),
-    );
+    )
+    .with_nstates(2)
+    .with_nout(1);
 
     // Define parameter values
     // Note that the order matters and should correspond to the order in which parameters are fetched in the model

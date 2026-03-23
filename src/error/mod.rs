@@ -29,6 +29,8 @@ pub enum PharmsolError {
     ZeroLikelihood,
     #[error("Missing observation in prediction")]
     MissingObservation,
+    #[error("Input channel {input} is out of range (ndrugs = {ndrugs})")]
+    InputOutOfRange { input: usize, ndrugs: usize },
 }
 
 impl From<diffsol::error::DiffsolError> for PharmsolError {

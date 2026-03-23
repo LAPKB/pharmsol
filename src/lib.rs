@@ -12,11 +12,16 @@ pub use crate::data::*;
 pub use crate::equation::*;
 pub use crate::optimize::effect::get_e2;
 pub use crate::optimize::spp::SppOptimizer;
-pub use crate::simulator::equation::{self, ODE};
+pub use crate::simulator::equation::{
+    self,
+    ode::{ExplicitRkTableau, OdeSolver, SdirkTableau},
+    ODE,
+};
 pub use error::PharmsolError;
 #[cfg(feature = "exa")]
 pub use exa::*;
 pub use nalgebra::dmatrix;
+pub use pharmsol_macros::ode;
 pub use std::collections::HashMap;
 
 /// Prelude module that re-exports all commonly used types and traits.
@@ -71,7 +76,11 @@ pub mod prelude {
     // Direct simulator re-exports for convenience
     pub use crate::simulator::{
         cache::{configure_cache, disable_cache, enable_cache, reset_caches, CacheSettings},
-        equation::{self, Equation},
+        equation::{
+            self,
+            ode::{ExplicitRkTableau, OdeSolver, SdirkTableau},
+            Equation,
+        },
         likelihood::{Prediction, SubjectPredictions},
     };
 
@@ -102,6 +111,8 @@ pub mod prelude {
     pub use crate::fetch_params;
     #[doc(inline)]
     pub use crate::lag;
+    #[doc(inline)]
+    pub use crate::ode;
 }
 
 #[macro_export]

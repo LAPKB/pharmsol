@@ -47,11 +47,11 @@ pub type DiffEq = fn(&V, &V, T, &mut V, &V, &V, &Covariates);
 /// - `x`: The state vector at time t
 /// - `p`: The parameters of the model; Use the `fetch_params!` macro to extract the parameters
 /// - `t`: The time at which the output equation is evaluated
-/// - `rateiv`: A vector of infusion rates at time t
+/// - `rateiv`: A reference to a vector of infusion rates at time t
 /// - `cov`: A reference to the covariates at time t; Use the `fetch_cov!` macro to extract the covariates
 ///
 /// TODO: Remove covariates. They are not used in the analytical solution
-pub type AnalyticalEq = fn(&V, &V, T, V, &Covariates) -> V;
+pub type AnalyticalEq = fn(&V, &V, T, &V, &Covariates) -> V;
 
 /// This closure represents the drift term of a stochastic differential equation model.
 ///
@@ -78,7 +78,7 @@ pub type AnalyticalEq = fn(&V, &V, T, V, &Covariates) -> V;
 /// };
 /// ```
 // pub type Drift = DiffEq;
-pub type Drift = fn(&V, &V, T, &mut V, V, &Covariates);
+pub type Drift = fn(&V, &V, T, &mut V, &V, &Covariates);
 
 /// This closure represents the diffusion term of a stochastic differential equation model.
 ///
@@ -196,21 +196,43 @@ pub type Lag = fn(&V, T, &Covariates) -> HashMap<usize, T>;
 /// absorbed into the second compartment by 0.3
 pub type Fa = fn(&V, T, &Covariates) -> HashMap<usize, T>;
 
-/// The number of states and output equations of the model.
+/// The dimensions of the model: number of states, drug inputs, and output equations.
 ///
-/// # Components
-/// - The first element is the number of states
-/// - The second element is the number of output equations
+/// # Fields
+/// - `nstates`: Number of state variables (ODE compartments)
+/// - `ndrugs`: Number of drug input channels (size of bolus[] and rateiv[])
+/// - `nout`: Number of output equations
 ///
-/// This is used to initialize the state vector and the output vector.
+/// # Defaults
+/// All dimensions default to 5 if not explicitly set via builder methods.
 ///
 /// # Example
 /// ```ignore
-/// let neqs = (2, 1);
+/// // Using the builder pattern on ODE/Analytical/SDE
+/// let ode = equation::ODE::new(diffeq, lag, fa, init, out)
+///     .with_nstates(2)
+///     .with_ndrugs(1)
+///     .with_nout(1);
 /// ```
-/// This means that the system of equations has 2 states and there is only 1 output equation.
-///
-pub type Neqs = (usize, usize);
+#[derive(Clone, Copy, Debug)]
+pub struct Neqs {
+    /// Number of state variables
+    pub nstates: usize,
+    /// Number of drug input channels (bolus/rateiv size)
+    pub ndrugs: usize,
+    /// Number of output equations
+    pub nout: usize,
+}
+
+impl Default for Neqs {
+    fn default() -> Self {
+        Self {
+            nstates: 5,
+            ndrugs: 5,
+            nout: 5,
+        }
+    }
+}
 
 // Re-export cache API at the simulator level for convenience.
 pub use cache::{

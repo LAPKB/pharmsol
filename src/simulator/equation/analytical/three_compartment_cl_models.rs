@@ -12,7 +12,7 @@ use super::three_compartment_models::{three_compartments, three_compartments_wit
 /// - `rateiv` is a vector of length 1 with the value of the infusion rate (only one drug)
 /// - `x` is a vector of length 3
 /// - covariates are not used
-pub fn three_compartments_cl(x: &V, p: &V, t: T, rateiv: V, cov: &Covariates) -> V {
+pub fn three_compartments_cl(x: &V, p: &V, t: T, rateiv: &V, cov: &Covariates) -> V {
     let cl = p[0];
     let q2 = p[1];
     let q3 = p[2];
@@ -38,7 +38,13 @@ pub fn three_compartments_cl(x: &V, p: &V, t: T, rateiv: V, cov: &Covariates) ->
 /// - `rateiv` is a vector of length 1 with the value of the infusion rate (only one drug)
 /// - `x` is a vector of length 4
 /// - covariates are not used
-pub fn three_compartments_cl_with_absorption(x: &V, p: &V, t: T, rateiv: V, cov: &Covariates) -> V {
+pub fn three_compartments_cl_with_absorption(
+    x: &V,
+    p: &V,
+    t: T,
+    rateiv: &V,
+    cov: &Covariates,
+) -> V {
     let ka = p[0];
     let cl = p[1];
     let q2 = p[2];
@@ -90,8 +96,10 @@ mod tests {
                 fetch_params!(p, _cl, _q2, _q3, vc, _v2, _v3);
                 y[0] = x[0] / vc;
             },
-            (3, 1),
-        );
+        )
+        .with_nstates(3)
+        .with_nout(1)
+        .with_ndrugs(3);
 
         let analytical = equation::Analytical::new(
             three_compartments_cl,
@@ -103,8 +111,10 @@ mod tests {
                 fetch_params!(p, _cl, _q2, _q3, vc, _v2, _v3);
                 y[0] = x[0] / vc;
             },
-            (3, 1),
-        );
+        )
+        .with_nstates(3)
+        .with_nout(1)
+        .with_ndrugs(3);
 
         let op_ode = ode
             .estimate_predictions(&subject, &vec![0.1, 3.0, 2.0, 1.0, 3.0, 4.0])
@@ -154,7 +164,6 @@ mod tests {
                 fetch_params!(p, _ka, _cl, _q2, _q3, vc, _v2, _v3);
                 y[0] = x[1] / vc;
             },
-            (4, 1),
         );
 
         let analytical = equation::Analytical::new(
@@ -167,7 +176,6 @@ mod tests {
                 fetch_params!(p, _ka, _cl, _q2, _q3, vc, _v2, _v3);
                 y[0] = x[1] / vc;
             },
-            (4, 1),
         );
 
         let op_ode = ode

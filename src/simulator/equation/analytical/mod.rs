@@ -40,25 +40,16 @@ pub struct Analytical {
 }
 
 impl Analytical {
-    /// Create a new Analytical equation model.
+    /// Create a new Analytical equation model with default Neqs (all sizes = 5).
     ///
-    /// # Parameters
-    /// - `eq`: The analytical equation function
-    /// - `seq_eq`: The secondary equation function
-    /// - `lag`: The lag time function
-    /// - `fa`: The fraction absorbed function
-    /// - `init`: The initial state function
-    /// - `out`: The output equation function
-    /// - `neqs`: The number of states and output equations
-    pub fn new(
-        eq: AnalyticalEq,
-        seq_eq: SecEq,
-        lag: Lag,
-        fa: Fa,
-        init: Init,
-        out: Out,
-        neqs: Neqs,
-    ) -> Self {
+    /// Use builder methods to configure dimensions:
+    /// ```ignore
+    /// Analytical::new(eq, seq_eq, lag, fa, init, out)
+    ///     .with_nstates(2)
+    ///     .with_ndrugs(1)
+    ///     .with_nout(1)
+    /// ```
+    pub fn new(eq: AnalyticalEq, seq_eq: SecEq, lag: Lag, fa: Fa, init: Init, out: Out) -> Self {
         Self {
             eq,
             seq_eq,
@@ -66,8 +57,26 @@ impl Analytical {
             fa,
             init,
             out,
-            neqs,
+            neqs: Neqs::default(),
         }
+    }
+
+    /// Set the number of state variables.
+    pub fn with_nstates(mut self, nstates: usize) -> Self {
+        self.neqs.nstates = nstates;
+        self
+    }
+
+    /// Set the number of drug input channels (size of bolus[] and rateiv[]).
+    pub fn with_ndrugs(mut self, ndrugs: usize) -> Self {
+        self.neqs.ndrugs = ndrugs;
+        self
+    }
+
+    /// Set the number of output equations.
+    pub fn with_nout(mut self, nout: usize) -> Self {
+        self.neqs.nout = nout;
+        self
     }
 }
 
@@ -109,12 +118,17 @@ impl EquationPriv for Analytical {
 
     #[inline(always)]
     fn get_nstates(&self) -> usize {
-        self.neqs.0
+        self.neqs.nstates
+    }
+
+    #[inline(always)]
+    fn get_ndrugs(&self) -> usize {
+        self.neqs.ndrugs
     }
 
     #[inline(always)]
     fn get_nouteqs(&self) -> usize {
-        self.neqs.1
+        self.neqs.nout
     }
     #[inline(always)]
     fn solve(
@@ -150,7 +164,7 @@ impl EquationPriv for Analytical {
         // 2) March over each sub-interval
         let mut current_t = ts[0];
         let mut sp = V::from_vec(support_point.to_owned(), NalgebraContext);
-        let mut rateiv = V::zeros(self.get_nstates(), NalgebraContext);
+        let mut rateiv = V::zeros(self.get_ndrugs(), NalgebraContext);
 
         for &next_t in &ts[1..] {
             // prepare support and infusion rate for [current_t .. next_t]
@@ -159,6 +173,12 @@ impl EquationPriv for Analytical {
                 let s = inf.time();
                 let e = s + inf.duration();
                 if current_t >= s && next_t <= e {
+                    if inf.input() >= self.get_ndrugs() {
+                        return Err(PharmsolError::InputOutOfRange {
+                            input: inf.input(),
+                            ndrugs: self.get_ndrugs(),
+                        });
+                    }
                     rateiv[inf.input()] += inf.amount() / inf.duration();
                 }
             }
@@ -168,7 +188,7 @@ impl EquationPriv for Analytical {
 
             // advance state by dt
             let dt = next_t - current_t;
-            *x = (self.eq)(x, &sp, dt, rateiv.clone(), covariates);
+            *x = (self.eq)(x, &sp, dt, &rateiv, covariates);
 
             current_t = next_t;
         }
@@ -282,7 +302,7 @@ pub(crate) mod tests {
 
     #[test]
     fn secondary_equations_accumulate_within_single_solve() {
-        let eq = |x: &V, p: &V, dt: f64, _rateiv: V, _cov: &Covariates| {
+        let eq = |x: &V, p: &V, dt: f64, _rateiv: &V, _cov: &Covariates| {
             let mut next = x.clone();
             next[0] += p[0] * dt;
             next
@@ -299,7 +319,10 @@ pub(crate) mod tests {
             y[0] = x[0];
         };
 
-        let analytical = Analytical::new(eq, seq_eq, lag, fa, init, out, (1, 1));
+        let analytical = Analytical::new(eq, seq_eq, lag, fa, init, out)
+            .with_nstates(1)
+            .with_ndrugs(1)
+            .with_nout(1);
         let subject = Subject::builder("seq")
             .bolus(0.0, 0.0, 0)
             .infusion(0.25, 1.0, 0, 0.25)
@@ -316,7 +339,7 @@ pub(crate) mod tests {
 
     #[test]
     fn infusion_inputs_match_state_dimension() {
-        let eq = |x: &V, _p: &V, dt: f64, rateiv: V, _cov: &Covariates| {
+        let eq = |x: &V, _p: &V, dt: f64, rateiv: &V, _cov: &Covariates| {
             let mut next = x.clone();
             next[0] += rateiv[3] * dt;
             next
@@ -331,7 +354,10 @@ pub(crate) mod tests {
             y[0] = x[0];
         };
 
-        let analytical = Analytical::new(eq, seq_eq, lag, fa, init, out, (4, 1));
+        let analytical = Analytical::new(eq, seq_eq, lag, fa, init, out)
+            .with_nstates(4)
+            .with_ndrugs(4)
+            .with_nout(1);
         let subject = Subject::builder("inf")
             .infusion(0.0, 4.0, 3, 1.0)
             .observation(1.0, 0.0, 0)

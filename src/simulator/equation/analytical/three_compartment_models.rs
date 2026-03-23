@@ -12,7 +12,7 @@ use nalgebra::{DVector, Matrix3, Vector3};
 ///   - x is a vector of length 3
 ///   - covariates are not used
 ///
-pub fn three_compartments(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {
+pub fn three_compartments(x: &V, p: &V, t: T, rateiv: &V, _cov: &Covariates) -> V {
     let k10 = p[0];
     let k12 = p[1];
     let k13 = p[2];
@@ -117,7 +117,7 @@ pub fn three_compartments(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V
 ///   - x is a vector of length 4
 ///   - covariates are not used
 ///
-pub fn three_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {
+pub fn three_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: &V, _cov: &Covariates) -> V {
     let ka = p[0];
     let k10 = p[1];
     let k12 = p[2];
@@ -250,8 +250,8 @@ mod tests {
                 fetch_params!(p, k10, k12, k13, k21, k31, _v);
 
                 dx[0] = rateiv[0] - (k10 + k12 + k13) * x[0] + k21 * x[1] + k31 * x[2] + b[0];
-                dx[1] = k12 * x[0] - k21 * x[1] + b[1];
-                dx[2] = k13 * x[0] - k31 * x[2] + b[2];
+                dx[1] = k12 * x[0] - k21 * x[1];
+                dx[2] = k13 * x[0] - k31 * x[2];
             },
             |_p, _t, _cov| lag! {},
             |_p, _t, _cov| fa! {},
@@ -260,8 +260,10 @@ mod tests {
                 fetch_params!(p, _k10, _k12, _k13, _k21, _k31, v);
                 y[0] = x[0] / v;
             },
-            (3, 1),
-        );
+        )
+        .with_nstates(3)
+        .with_ndrugs(1)
+        .with_nout(1);
 
         let analytical = equation::Analytical::new(
             three_compartments,
@@ -273,8 +275,10 @@ mod tests {
                 fetch_params!(p, _k10, _k12, _k13, _k21, _k31, v);
                 y[0] = x[0] / v;
             },
-            (3, 1),
-        );
+        )
+        .with_nstates(3)
+        .with_ndrugs(1)
+        .with_nout(1);
 
         let op_ode = ode
             .estimate_predictions(&subject, &vec![0.1, 3.0, 2.0, 1.0, 0.5, 1.0])
@@ -309,8 +313,8 @@ mod tests {
                     + k21 * x[2]
                     + k31 * x[3]
                     + b[1];
-                dx[2] = k12 * x[1] - k21 * x[2] + b[2];
-                dx[3] = k13 * x[1] - k31 * x[3] + b[3];
+                dx[2] = k12 * x[1] - k21 * x[2];
+                dx[3] = k13 * x[1] - k31 * x[3];
             },
             |_p, _t, _cov| lag! {},
             |_p, _t, _cov| fa! {},
@@ -319,8 +323,10 @@ mod tests {
                 fetch_params!(p, _ka, _k10, _k12, _k13, _k21, _k31, v);
                 y[0] = x[1] / v;
             },
-            (4, 1),
-        );
+        )
+        .with_nstates(4)
+        .with_ndrugs(2)
+        .with_nout(1);
 
         let analytical = equation::Analytical::new(
             three_compartments_with_absorption,
@@ -332,8 +338,10 @@ mod tests {
                 fetch_params!(p, _ka, _k10, _k12, _k13, _k21, _k31, v);
                 y[0] = x[1] / v;
             },
-            (4, 1),
-        );
+        )
+        .with_nstates(4)
+        .with_ndrugs(2)
+        .with_nout(1);
 
         let op_ode = ode
             .estimate_predictions(&subject, &vec![1.0, 0.1, 3.0, 2.0, 1.0, 0.5, 1.0])
