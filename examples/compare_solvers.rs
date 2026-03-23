@@ -66,28 +66,57 @@ fn main() {
         ("ExplicitRk(Tsit45)", tsit45),
     ];
 
-    // ── Print comparison table ─────────────────────────────────────
-    println!("{:<12} {:>8}   predictions", "solver", "µs");
-    println!("{}", "-".repeat(80));
-
-    let mut ref_preds: Option<Vec<f64>> = None;
-
+    // ── Run all solvers and collect results ───────────────────────
+    let mut rows: Vec<(&str, u128, Vec<f64>)> = Vec::new();
     for (name, ode) in &results {
         let (preds, us) = timed(|| ode.estimate_predictions(&subject, &spp).unwrap());
         let preds: Vec<f64> = preds.flat_predictions().to_vec();
-
-        let fmt: Vec<String> = preds.iter().map(|v| format!("{v:.4}")).collect();
-        println!("{:<12} {:>8}   [{}]", name, us, fmt.join(", "));
-
-        if let Some(ref rpreds) = ref_preds {
-            let max_diff = max_abs_diff(&preds, rpreds);
-            if max_diff > 1e-3 {
-                println!("             max diff from Bdf: {max_diff:.6}");
-            }
-        } else {
-            ref_preds = Some(preds);
-        }
+        rows.push((name, us, preds));
     }
+
+    let obs_times = [0.5, 1.0, 2.0, 4.0, 8.0, 12.0, 12.5, 13.0, 14.0, 16.0, 24.0];
+    let ref_preds = &rows[0].2;
+
+    // ── Summary ────────────────────────────────────────────────────
+    println!();
+    println!("  Solver Performance");
+    println!("  {}", "─".repeat(48));
+    for (i, (name, us, preds)) in rows.iter().enumerate() {
+        let diff = if i == 0 {
+            "(reference)".to_string()
+        } else {
+            let d = max_abs_diff(preds, ref_preds);
+            format!("max \u{0394} {d:.2e}")
+        };
+        println!("  {:<22} {:>6} \u{00B5}s   {}", name, us, diff);
+    }
+    println!();
+
+    // ── Predictions (long format) ──────────────────────────────────
+    // Short labels for the column headers
+    let labels: Vec<&str> = rows.iter().map(|(n, _, _)| *n).collect();
+    let col_w = labels.iter().map(|l| l.len().max(8)).collect::<Vec<_>>();
+
+    print!("  {:>6}", "t");
+    for (j, label) in labels.iter().enumerate() {
+        print!("  {:>w$}", label, w = col_w[j]);
+    }
+    println!();
+
+    print!("  {:>6}", "──────");
+    for j in 0..labels.len() {
+        print!("  {:─>w$}", "", w = col_w[j]);
+    }
+    println!();
+
+    for (k, t) in obs_times.iter().enumerate() {
+        print!("  {:>6.1}", t);
+        for (j, (_, _, preds)) in rows.iter().enumerate() {
+            print!("  {:>w$.4}", preds[k], w = col_w[j]);
+        }
+        println!();
+    }
+    println!();
 }
 
 fn timed<T>(f: impl FnOnce() -> T) -> (T, u128) {
