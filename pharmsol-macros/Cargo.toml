@@ -2,7 +2,7 @@
 name = "pharmsol-macros"
 version = "0.1.0"
 edition = "2021"
-description = "Proc macros for pharmsol — ODE dimension inference."
+description = "Useful macros for pharmsol."
 license = "GPL-3.0"
 
 [lib]
