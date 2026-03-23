@@ -73,43 +73,6 @@ impl SubjectBuilder {
         self.event(event)
     }
 
-    /// Add an extravascular bolus dose (oral, SC, IM, etc.)
-    ///
-    /// Convenience alias for `.bolus(time, amount, 0)` — targets the depot compartment.
-    ///
-    /// # Arguments
-    ///
-    /// * `time` - Time of the bolus dose
-    /// * `amount` - Amount of drug administered
-    pub fn bolus_ev(self, time: f64, amount: f64) -> Self {
-        self.bolus(time, amount, 0)
-    }
-
-    /// Add an intravenous bolus dose
-    ///
-    /// Convenience alias for `.bolus(time, amount, 1)` — targets the central compartment.
-    ///
-    /// # Arguments
-    ///
-    /// * `time` - Time of the bolus dose
-    /// * `amount` - Amount of drug administered
-    pub fn bolus_iv(self, time: f64, amount: f64) -> Self {
-        self.bolus(time, amount, 1)
-    }
-
-    /// Add an intravenous infusion
-    ///
-    /// Convenience alias for `.infusion(time, amount, 1, duration)` — targets the central compartment.
-    ///
-    /// # Arguments
-    ///
-    /// * `time` - Start time of the infusion
-    /// * `amount` - Total amount of drug to be administered
-    /// * `duration` - Duration of the infusion in time units
-    pub fn infusion_iv(self, time: f64, amount: f64, duration: f64) -> Self {
-        self.infusion(time, amount, 1, duration)
-    }
-
     /// Add an infusion event
     ///
     /// # Arguments

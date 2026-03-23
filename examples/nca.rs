@@ -36,7 +36,7 @@ fn basic_oral_example() {
 
     // Build subject with oral dose using the bolus_ev() alias
     let subject = Subject::builder("patient_001")
-        .bolus_ev(0.0, 100.0) // 100 mg oral dose (depot compartment)
+        .bolus(0.0, 100.0, 0) // 100 mg oral dose (depot compartment)
         .observation(0.0, 0.0, 0)
         .observation(0.5, 5.0, 0)
         .observation(1.0, 10.0, 0)
@@ -83,7 +83,7 @@ fn iv_bolus_example() {
 
     // Build subject with IV bolus using bolus_iv() alias
     let subject = Subject::builder("iv_patient")
-        .bolus_iv(0.0, 500.0) // 500 mg IV bolus (central compartment)
+        .bolus(0.0, 500.0, 1) // 500 mg IV bolus (central compartment)
         .observation(0.25, 95.0, 0)
         .observation(0.5, 82.0, 0)
         .observation(1.0, 61.0, 0)
@@ -118,7 +118,7 @@ fn iv_infusion_example() {
 
     // Build subject with IV infusion using infusion_iv() alias
     let subject = Subject::builder("infusion_patient")
-        .infusion_iv(0.0, 100.0, 0.5) // 100 mg over 0.5h to central
+        .infusion(0.0, 100.0, 1, 0.5) // 100 mg over 0.5h to central
         .observation(0.0, 0.0, 0)
         .observation(0.5, 15.0, 0)
         .observation(1.0, 12.0, 0)
@@ -153,7 +153,7 @@ fn steady_state_example() {
 
     // Build subject at steady-state (Q12H dosing)
     let subject = Subject::builder("ss_patient")
-        .bolus_ev(0.0, 100.0) // 100 mg oral
+        .bolus(0.0, 100.0, 0) // 100 mg oral
         .observation(0.0, 5.0, 0)
         .observation(1.0, 15.0, 0)
         .observation(2.0, 12.0, 0)
@@ -189,7 +189,7 @@ fn blq_handling_example() {
 
     // Build subject with BLQ observations marked using Censor::BLOQ
     let subject = Subject::builder("blq_patient")
-        .bolus_ev(0.0, 100.0)
+        .bolus(0.0, 100.0, 0)
         .observation(0.0, 0.0, 0)
         .observation(1.0, 10.0, 0)
         .observation(2.0, 8.0, 0)
@@ -240,7 +240,7 @@ fn population_summary_example() {
     // Build a small population dataset
     let subjects = vec![
         Subject::builder("subj_01")
-            .bolus_ev(0.0, 100.0)
+            .bolus(0.0, 100.0, 0)
             .observation(0.5, 4.0, 0)
             .observation(1.0, 9.0, 0)
             .observation(2.0, 7.0, 0)
@@ -249,7 +249,7 @@ fn population_summary_example() {
             .observation(24.0, 0.2, 0)
             .build(),
         Subject::builder("subj_02")
-            .bolus_ev(0.0, 100.0)
+            .bolus(0.0, 100.0, 0)
             .observation(0.5, 5.5, 0)
             .observation(1.0, 12.0, 0)
             .observation(2.0, 9.0, 0)
@@ -258,7 +258,7 @@ fn population_summary_example() {
             .observation(24.0, 0.3, 0)
             .build(),
         Subject::builder("subj_03")
-            .bolus_ev(0.0, 100.0)
+            .bolus(0.0, 100.0, 0)
             .observation(0.5, 3.0, 0)
             .observation(1.0, 8.0, 0)
             .observation(2.0, 6.5, 0)
