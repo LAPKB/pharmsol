@@ -77,7 +77,10 @@ mod tests {
                 fetch_params!(p, _cl, _q, vc, _vp);
                 y[0] = x[0] / vc;
             },
-        );
+        )
+        .with_nstates(2)
+        .with_nout(1)
+        .with_ndrugs(2);
 
         let analytical = equation::Analytical::new(
             two_compartments_cl,
@@ -89,7 +92,10 @@ mod tests {
                 fetch_params!(p, _cl, _q, vc, _vp);
                 y[0] = x[0] / vc;
             },
-        );
+        )
+        .with_nstates(2)
+        .with_nout(1)
+        .with_ndrugs(2);
 
         let op_ode = ode
             .estimate_predictions(&subject, &vec![0.1, 3.0, 1.0, 3.0])
@@ -130,7 +136,10 @@ mod tests {
                 fetch_params!(p, _ka, _cl, _q, vc, _vp);
                 y[0] = x[1] / vc;
             },
-        );
+        )
+        .with_nstates(3)
+        .with_nout(1)
+        .with_ndrugs(3);
 
         let analytical = equation::Analytical::new(
             two_compartments_cl_with_absorption,
@@ -142,7 +151,10 @@ mod tests {
                 fetch_params!(p, _ka, _cl, _q, vc, _vp);
                 y[0] = x[1] / vc;
             },
-        );
+        )
+        .with_nstates(3)
+        .with_nout(1)
+        .with_ndrugs(3);
 
         let op_ode = ode
             .estimate_predictions(&subject, &vec![1.0, 0.1, 3.0, 1.0, 3.0])
