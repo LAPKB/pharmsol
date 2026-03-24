@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "Useful macros for pharmsol."
 license = "GPL-3.0"
+repository = "https://github.com/LAPKB/pharmsol"
 
 [lib]
 proc-macro = true
