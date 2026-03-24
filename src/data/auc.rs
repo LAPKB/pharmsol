@@ -1,11 +1,7 @@
-//! Pure AUC (Area Under the Curve) calculation primitives
+//! Trapezoidal AUC/AUMC calculation on `&[f64]` slices.
 //!
-//! This module provides standalone functions for computing AUC, AUMC, and related
-//! quantities on raw `&[f64]` slices. These are the building blocks used by
-//! [`ObservationProfile`](crate::data::observation::ObservationProfile), NCA analysis,
-//! and any downstream code (e.g., PMcore best-dose) that needs trapezoidal integration.
-//!
-//! # Example
+//! Building blocks for [`ObservationProfile`](crate::data::observation::ObservationProfile)
+//! and NCA analysis. Supports linear, lin-up/log-down, and lin-log methods.
 //!
 //! ```rust
 //! use pharmsol::data::auc::{auc, auc_interval, aumc, interpolate_linear};
@@ -167,18 +163,7 @@ pub fn aumc_segment_with_tmax(
 // Full-profile functions (public API)
 // ============================================================================
 
-/// Calculate AUC (Area Under the Curve) over an entire profile
-///
-/// Computes ∫ C(t) dt from the first to the last time point using the
-/// specified trapezoidal method. Tmax is auto-detected for `LinLog`.
-///
-/// # Arguments
-/// * `times` - Sorted time points
-/// * `values` - Concentration values (parallel to `times`)
-/// * `method` - Trapezoidal rule variant
-///
-/// # Panics
-/// Panics if `times.len() != values.len()`.
+/// ∫ C(t) dt from first to last time point. Tmax is auto-detected for `LinLog`.
 ///
 /// # Example
 /// ```rust
@@ -188,18 +173,20 @@ pub fn aumc_segment_with_tmax(
 /// let times = [0.0, 1.0, 2.0, 4.0];
 /// let concs = [0.0, 10.0, 8.0, 4.0];
 /// let result = auc(&times, &concs, &AUCMethod::Linear).unwrap();
-/// // (0+10)/2*1 + (10+8)/2*1 + (8+4)/2*2 = 5 + 9 + 12 = 26
 /// assert!((result - 26.0).abs() < 1e-10);
 /// ```
 pub fn auc(times: &[f64], values: &[f64], method: &AUCMethod) -> Result<f64, ObservationError> {
-    assert_eq!(
-        times.len(),
-        values.len(),
-        "times and values must have equal length"
-    );
+    if times.len() != values.len() {
+        return Err(ObservationError::ArrayLengthMismatch {
+            description: format!("times ({}) and values ({})", times.len(), values.len()),
+        });
+    }
 
     if times.len() < 2 {
-        return Ok(0.0);
+        return Err(ObservationError::InsufficientData {
+            n: times.len(),
+            required: 2,
+        });
     }
 
     // Auto-detect tmax for LinLog
@@ -219,17 +206,7 @@ pub fn auc(times: &[f64], values: &[f64], method: &AUCMethod) -> Result<f64, Obs
     Ok(total)
 }
 
-/// Calculate partial AUC over a specific time interval
-///
-/// Computes ∫ C(t) dt from `start` to `end`, using linear interpolation
-/// at interval boundaries if they don't coincide with data points.
-///
-/// # Arguments
-/// * `times` - Sorted time points
-/// * `values` - Concentration values (parallel to `times`)
-/// * `start` - Start time of interval
-/// * `end` - End time of interval
-/// * `method` - Trapezoidal rule variant
+/// Partial AUC over `[start, end]`, interpolating at boundaries.
 ///
 /// # Example
 /// ```rust
@@ -239,7 +216,6 @@ pub fn auc(times: &[f64], values: &[f64], method: &AUCMethod) -> Result<f64, Obs
 /// let times = [0.0, 1.0, 2.0, 4.0, 8.0];
 /// let concs = [0.0, 10.0, 8.0, 4.0, 2.0];
 /// let partial = auc_interval(&times, &concs, 1.0, 4.0, &AUCMethod::Linear).unwrap();
-/// // (10+8)/2*1 + (8+4)/2*2 = 9 + 12 = 21
 /// assert!((partial - 21.0).abs() < 1e-10);
 /// ```
 pub fn auc_interval(
@@ -249,13 +225,20 @@ pub fn auc_interval(
     end: f64,
     method: &AUCMethod,
 ) -> Result<f64, ObservationError> {
-    assert_eq!(
-        times.len(),
-        values.len(),
-        "times and values must have equal length"
-    );
+    if times.len() != values.len() {
+        return Err(ObservationError::ArrayLengthMismatch {
+            description: format!("times ({}) and values ({})", times.len(), values.len()),
+        });
+    }
 
-    if end <= start || times.len() < 2 {
+    if times.len() < 2 {
+        return Err(ObservationError::InsufficientData {
+            n: times.len(),
+            required: 2,
+        });
+    }
+
+    if end <= start {
         return Ok(0.0);
     }
 
@@ -294,24 +277,19 @@ pub fn auc_interval(
     Ok(total)
 }
 
-/// Calculate AUMC (Area Under the first Moment Curve) over an entire profile
-///
-/// Computes ∫ t·C(t) dt from the first to the last time point.
-/// Used for Mean Residence Time calculation: MRT = AUMC / AUC.
-///
-/// # Arguments
-/// * `times` - Sorted time points
-/// * `values` - Concentration values (parallel to `times`)
-/// * `method` - Trapezoidal rule variant
+/// ∫ t·C(t) dt from first to last time point (for MRT = AUMC / AUC).
 pub fn aumc(times: &[f64], values: &[f64], method: &AUCMethod) -> Result<f64, ObservationError> {
-    assert_eq!(
-        times.len(),
-        values.len(),
-        "times and values must have equal length"
-    );
+    if times.len() != values.len() {
+        return Err(ObservationError::ArrayLengthMismatch {
+            description: format!("times ({}) and values ({})", times.len(), values.len()),
+        });
+    }
 
     if times.len() < 2 {
-        return Ok(0.0);
+        return Err(ObservationError::InsufficientData {
+            n: times.len(),
+            required: 2,
+        });
     }
 
     let tmax = tmax_from_arrays(times, values);
@@ -330,17 +308,8 @@ pub fn aumc(times: &[f64], values: &[f64], method: &AUCMethod) -> Result<f64, Ob
     Ok(total)
 }
 
-/// Linear interpolation of a value at a given time
+/// Linearly interpolate a value at `time`. Clamps to boundary values.
 ///
-/// Returns the linearly interpolated concentration at `time`.
-/// Clamps to the first or last value if `time` is outside the data range.
-///
-/// # Arguments
-/// * `times` - Sorted time points
-/// * `values` - Values (parallel to `times`)
-/// * `time` - Time at which to interpolate
-///
-/// # Example
 /// ```rust
 /// use pharmsol::data::auc::interpolate_linear;
 ///
@@ -350,7 +319,7 @@ pub fn aumc(times: &[f64], values: &[f64], method: &AUCMethod) -> Result<f64, Ob
 /// assert!((interpolate_linear(&times, &values, 3.0) - 8.0).abs() < 1e-10);
 /// ```
 pub fn interpolate_linear(times: &[f64], values: &[f64], time: f64) -> f64 {
-    assert_eq!(
+    debug_assert_eq!(
         times.len(),
         values.len(),
         "times and values must have equal length"
@@ -469,14 +438,14 @@ mod tests {
     fn test_auc_single_point() {
         let times = [1.0];
         let concs = [10.0];
-        assert_eq!(auc(&times, &concs, &AUCMethod::Linear).unwrap(), 0.0);
+        assert!(auc(&times, &concs, &AUCMethod::Linear).is_err());
     }
 
     #[test]
     fn test_auc_empty() {
         let times: [f64; 0] = [];
         let concs: [f64; 0] = [];
-        assert_eq!(auc(&times, &concs, &AUCMethod::Linear).unwrap(), 0.0);
+        assert!(auc(&times, &concs, &AUCMethod::Linear).is_err());
     }
 
     #[test]

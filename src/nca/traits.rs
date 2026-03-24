@@ -119,19 +119,13 @@ pub trait NCAPopulation {
 use crate::data::Route;
 
 impl Occasion {
-    /// Run NCA with explicit dose information, overriding what is embedded in the occasion.
+    /// Run NCA with an explicit dose, overriding what is embedded in the occasion.
     ///
-    /// This is useful when you want to supply or override dose amount, route, or infusion
+    /// Use this when you want to supply or override dose amount, route, or infusion
     /// duration without modifying the underlying data.
-    ///
-    /// # Arguments
-    /// * `dose_amount` - Total dose amount (None = no dose-normalized params)
-    /// * `route` - Administration route
-    /// * `infusion_duration` - Duration of infusion (for IV infusion route)
-    /// * `options` - NCA options
     pub fn nca_with_dose(
         &self,
-        dose_amount: Option<f64>,
+        dose_amount: f64,
         route: Route,
         infusion_duration: Option<f64>,
         options: &NCAOptions,
@@ -141,7 +135,7 @@ impl Occasion {
         let raw_tlag = tlag_from_raw(&times, &concs, &censoring);
         analyze(
             &profile,
-            dose_amount,
+            Some(dose_amount),
             route,
             infusion_duration,
             options,
@@ -163,20 +157,14 @@ impl NCA for Occasion {
 }
 
 impl Subject {
-    /// Run NCA with explicit dose information on the first occasion, overriding what is
+    /// Run NCA with an explicit dose on the first occasion, overriding what is
     /// embedded in the subject's events.
     ///
-    /// This is useful when you want to supply or override dose amount, route, or infusion
+    /// Use this when you want to supply or override dose amount, route, or infusion
     /// duration without modifying the underlying data.
-    ///
-    /// # Arguments
-    /// * `dose_amount` - Total dose amount (None = no dose-normalized params)
-    /// * `route` - Administration route
-    /// * `infusion_duration` - Duration of infusion (for IV infusion route)
-    /// * `options` - NCA options
     pub fn nca_with_dose(
         &self,
-        dose_amount: Option<f64>,
+        dose_amount: f64,
         route: Route,
         infusion_duration: Option<f64>,
         options: &NCAOptions,

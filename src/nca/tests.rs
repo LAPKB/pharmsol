@@ -850,7 +850,7 @@ fn test_nca_with_dose_matches_subject() {
         .observation(24.0, 0.25, 0)
         .build();
     let profile_result = profile
-        .nca_with_dose(Some(100.0), Route::Extravascular, None, &options)
+        .nca_with_dose(100.0, Route::Extravascular, None, &options)
         .unwrap();
 
     // Cmax and tmax should match exactly (same data, same filtering)
@@ -875,18 +875,14 @@ fn test_nca_with_dose_matches_subject() {
 fn test_nca_with_dose_no_dose() {
     use crate::data::Route;
 
-    // let profile =
-    //     ObservationProfile::from_raw(&[0.0, 1.0, 4.0, 8.0], &[0.0, 10.0, 5.0, 1.0]).unwrap();
     let profile = Subject::builder("profile")
         .observation(0.0, 0.0, 0)
         .observation(1.0, 10.0, 0)
         .observation(4.0, 5.0, 0)
         .observation(8.0, 1.0, 0)
         .build();
-    let options = NCAOptions::default();
-    let result = profile
-        .nca_with_dose(None, Route::Extravascular, None, &options)
-        .unwrap();
+    let options = NCAOptions::default().with_route(Route::Extravascular);
+    let result = profile.nca(&options).unwrap();
 
     // Should work but dose-normalized params should be None
     assert!(result.exposure.cmax > 0.0);
