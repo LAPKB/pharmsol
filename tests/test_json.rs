@@ -1,3 +1,4 @@
+#![cfg(feature = "json")]
 //! Integration tests for the JSON model system
 //!
 //! These tests validate the complete pipeline from JSON parsing to code generation.

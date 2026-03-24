@@ -31,6 +31,10 @@ pub enum JsonModelError {
     #[error("Model must have either 'output' or 'outputs' field")]
     MissingOutput,
 
+    /// Both output and outputs specified
+    #[error("Model has both 'output' and 'outputs'; use one or the other")]
+    AmbiguousOutput,
+
     /// Missing parameters
     #[error("Model must have 'parameters' field (unless using 'extends')")]
     MissingParameters,

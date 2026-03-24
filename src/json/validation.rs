@@ -171,6 +171,11 @@ impl Validator {
             return Err(JsonModelError::MissingOutput);
         }
 
+        // Mutually exclusive
+        if model.output.is_some() && model.outputs.is_some() {
+            return Err(JsonModelError::AmbiguousOutput);
+        }
+
         // Check for empty output
         if let Some(output) = &model.output {
             if output.trim().is_empty() {

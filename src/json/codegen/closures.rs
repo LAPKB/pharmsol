@@ -529,8 +529,8 @@ mod tests {
         }"#;
 
         let model = JsonModel::from_str(json).unwrap();
-        let gen = ClosureGenerator::new(&model);
-        let output = gen.generate_output().unwrap();
+        let cg = ClosureGenerator::new(&model);
+        let output = cg.generate_output().unwrap();
 
         assert!(output.contains("fetch_params!(p, ke, V)"));
         assert!(output.contains("y[0] = x[0] / V"));
@@ -549,8 +549,8 @@ mod tests {
         }"#;
 
         let model = JsonModel::from_str(json).unwrap();
-        let gen = ClosureGenerator::new(&model);
-        let output = gen.generate_output().unwrap();
+        let cg = ClosureGenerator::new(&model);
+        let output = cg.generate_output().unwrap();
 
         assert!(output.contains("let ke = CL / V;"));
         assert!(output.contains("y[0] = x[0] / V"));
@@ -569,8 +569,8 @@ mod tests {
         }"#;
 
         let model = JsonModel::from_str(json).unwrap();
-        let gen = ClosureGenerator::new(&model);
-        let lag = gen.generate_lag().unwrap();
+        let cg = ClosureGenerator::new(&model);
+        let lag = cg.generate_lag().unwrap();
 
         assert!(lag.contains("lag!"));
         assert!(lag.contains("0 => tlag"));
@@ -592,8 +592,8 @@ mod tests {
         }"#;
 
         let model = JsonModel::from_str(json).unwrap();
-        let gen = ClosureGenerator::new(&model);
-        let diffeq = gen.generate_diffeq().unwrap();
+        let cg = ClosureGenerator::new(&model);
+        let diffeq = cg.generate_diffeq().unwrap();
 
         assert!(diffeq.contains("dx[0]"));
         assert!(diffeq.contains("dx[1]"));
@@ -616,8 +616,8 @@ mod tests {
         }"#;
 
         let model = JsonModel::from_str(json).unwrap();
-        let gen = ClosureGenerator::new(&model);
-        let output = gen.generate_output().unwrap();
+        let cg = ClosureGenerator::new(&model);
+        let output = cg.generate_output().unwrap();
 
         // Should fetch covariates
         assert!(output.contains("cov.get_covariate(\"wt\", t)"));
@@ -637,10 +637,10 @@ mod tests {
         }"#;
 
         let model = JsonModel::from_str(json).unwrap();
-        let gen = ClosureGenerator::new(&model);
+        let cg = ClosureGenerator::new(&model);
 
-        let lag = gen.generate_lag().unwrap();
-        let fa = gen.generate_fa().unwrap();
+        let lag = cg.generate_lag().unwrap();
+        let fa = cg.generate_fa().unwrap();
 
         assert!(lag.contains("lag! {}"));
         assert!(fa.contains("fa! {}"));
@@ -663,8 +663,8 @@ mod tests {
         }"#;
 
         let model = JsonModel::from_str(json).unwrap();
-        let gen = ClosureGenerator::new(&model);
-        let result = gen.generate_lag();
+        let cg = ClosureGenerator::new(&model);
+        let result = cg.generate_lag();
 
         assert!(result.is_err(), "Should propagate transpile error for lag");
     }
@@ -686,8 +686,8 @@ mod tests {
         }"#;
 
         let model = JsonModel::from_str(json).unwrap();
-        let gen = ClosureGenerator::new(&model);
-        let result = gen.generate_fa();
+        let cg = ClosureGenerator::new(&model);
+        let result = cg.generate_fa();
 
         assert!(result.is_err(), "Should propagate transpile error for fa");
     }
@@ -707,8 +707,8 @@ mod tests {
         }"#;
 
         let model = JsonModel::from_str(json).unwrap();
-        let gen = ClosureGenerator::new(&model);
-        let result = gen.generate_diffeq();
+        let cg = ClosureGenerator::new(&model);
+        let result = cg.generate_diffeq();
 
         assert!(result.is_err(), "Should error on unknown compartment name");
     }
@@ -727,8 +727,8 @@ mod tests {
         }"#;
 
         let model = JsonModel::from_str(json).unwrap();
-        let gen = ClosureGenerator::new(&model);
-        let result = gen.generate_lag();
+        let cg = ClosureGenerator::new(&model);
+        let result = cg.generate_lag();
 
         assert!(
             result.is_err(),
@@ -752,8 +752,8 @@ mod tests {
         }"#;
 
         let model = JsonModel::from_str(json).unwrap();
-        let gen = ClosureGenerator::new(&model);
-        let diffeq = gen.generate_diffeq().unwrap();
+        let cg = ClosureGenerator::new(&model);
+        let diffeq = cg.generate_diffeq().unwrap();
 
         // dx[0] (depot) should appear before dx[1] (central)
         let pos0 = diffeq.find("dx[0]").expect("Should contain dx[0]");
