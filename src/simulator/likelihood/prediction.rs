@@ -94,9 +94,8 @@ impl Prediction {
     /// - `error_models`: The error models to use for sigma calculation
     ///
     /// # Returns
-    /// The log-likelihood value, or an error if:
-    /// - The log-likelihood is non-finite
-    /// Returns 0.0 for missing observations (log(1) = 0), as they don't contribute to the likelihood.
+    /// The log-likelihood value, zero in the case of a missing observation
+    /// or an error if the likelihood is non-finite.
     ///
     /// # Example
     /// ```ignore
