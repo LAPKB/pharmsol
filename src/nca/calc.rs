@@ -461,7 +461,11 @@ use super::types::C0Method;
 /// Methods are tried in order. Default cascade: `[Observed, LogSlope, FirstConc]`
 ///
 /// Returns `(c0_value, method_used)` or `(NaN, None)` if all methods fail.
-pub fn c0(profile: &Profile, methods: &[C0Method], lambda_z: f64) -> (f64, Option<C0Method>) {
+pub(crate) fn c0(
+    profile: &Profile,
+    methods: &[C0Method],
+    lambda_z: f64,
+) -> (f64, Option<C0Method>) {
     for m in methods {
         if let Some(val) = try_c0_method(profile, *m, lambda_z) {
             return (val, Some(*m));
