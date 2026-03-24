@@ -1,0 +1,16 @@
+{
+  "schema": "1.0",
+  "id": "pk/1cmt-iv",
+  "type": "analytical",
+  "analytical": "one_compartment",
+  "parameters": ["ke", "V"],
+  "output": "x[0] / V",
+  "display": {
+    "name": "One-Compartment IV Bolus",
+    "category": "pk",
+    "tags": ["1-compartment", "iv", "linear"]
+  },
+  "documentation": {
+    "summary": "Single compartment model with intravenous bolus administration and first-order elimination"
+  }
+}
