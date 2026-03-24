@@ -142,7 +142,11 @@ impl<'a> ClosureGenerator<'a> {
     }
 
     /// Generate the common preamble (params + compartment bindings + covariates + derived + secondary)
-    fn generate_preamble(&self, include_compartments: bool, include_states: bool) -> Result<String, JsonModelError> {
+    fn generate_preamble(
+        &self,
+        include_compartments: bool,
+        include_states: bool,
+    ) -> Result<String, JsonModelError> {
         let mut parts = Vec::new();
 
         let fetch_params = self.fetch_params();
@@ -211,8 +215,16 @@ impl<'a> ClosureGenerator<'a> {
         };
 
         // Use _t or t depending on whether covariates need time
-        let t_param = if self.model.has_covariates() { "t" } else { "_t" };
-        let cov_param = if self.model.has_covariates() { "cov" } else { "_cov" };
+        let t_param = if self.model.has_covariates() {
+            "t"
+        } else {
+            "_t"
+        };
+        let cov_param = if self.model.has_covariates() {
+            "cov"
+        } else {
+            "_cov"
+        };
 
         Ok(format!(
             r#"|x, p, {t_param}, {cov_param}, y| {{
@@ -241,9 +253,11 @@ impl<'a> ClosureGenerator<'a> {
             DiffEqSpec::Object(map) => {
                 let mut lines = Vec::new();
                 for (name, expr) in map {
-                    let idx = self.compartment_map.get(name).copied().unwrap_or_else(|| {
-                        name.parse::<usize>().unwrap_or(0)
-                    });
+                    let idx = self
+                        .compartment_map
+                        .get(name)
+                        .copied()
+                        .unwrap_or_else(|| name.parse::<usize>().unwrap_or(0));
                     let rust_expr = self.transpile(expr)?;
                     lines.push(format!("dx[{}] = {};", idx, rust_expr));
                 }
@@ -251,8 +265,16 @@ impl<'a> ClosureGenerator<'a> {
             }
         };
 
-        let t_param = if self.model.has_covariates() { "t" } else { "_t" };
-        let cov_param = if self.model.has_covariates() { "cov" } else { "_cov" };
+        let t_param = if self.model.has_covariates() {
+            "t"
+        } else {
+            "_t"
+        };
+        let cov_param = if self.model.has_covariates() {
+            "cov"
+        } else {
+            "_cov"
+        };
 
         Ok(format!(
             r#"|x, p, {t_param}, dx, _b, rateiv, {cov_param}| {{
@@ -291,8 +313,16 @@ impl<'a> ClosureGenerator<'a> {
             }
         };
 
-        let t_param = if self.model.has_covariates() { "t" } else { "_t" };
-        let cov_param = if self.model.has_covariates() { "cov" } else { "_cov" };
+        let t_param = if self.model.has_covariates() {
+            "t"
+        } else {
+            "_t"
+        };
+        let cov_param = if self.model.has_covariates() {
+            "cov"
+        } else {
+            "_cov"
+        };
 
         Ok(format!(
             r#"|x, p, {t_param}, dx, rateiv, {cov_param}| {{
@@ -466,8 +496,16 @@ impl<'a> ClosureGenerator<'a> {
 
         let preamble = self.generate_preamble(false, false)?;
 
-        let t_param = if self.model.has_covariates() { "t" } else { "_t" };
-        let cov_param = if self.model.has_covariates() { "cov" } else { "_cov" };
+        let t_param = if self.model.has_covariates() {
+            "t"
+        } else {
+            "_t"
+        };
+        let cov_param = if self.model.has_covariates() {
+            "cov"
+        } else {
+            "_cov"
+        };
 
         Ok(format!(
             r#"|p, {t_param}, {cov_param}| {{

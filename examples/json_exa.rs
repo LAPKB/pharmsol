@@ -87,7 +87,10 @@ fn main() {
 
     // Show the generated Rust before compiling
     let generated = json::generate_code(json_ode_str).unwrap();
-    println!("Generated code from JSON ODE:\n{}\n", generated.equation_code);
+    println!(
+        "Generated code from JSON ODE:\n{}\n",
+        generated.equation_code
+    );
 
     let json_ode_path = cwd.join("json_ode_model.pkm");
     let json_ode_compiled = json::compile_json::<ODE>(
@@ -132,7 +135,11 @@ fn main() {
 
     let preds_static = flat(static_ode.estimate_predictions(&subject, &params).unwrap());
     let preds_exa = flat(dyn_exa_ode.estimate_predictions(&subject, &params).unwrap());
-    let preds_json_ode = flat(dyn_json_ode.estimate_predictions(&subject, &params).unwrap());
+    let preds_json_ode = flat(
+        dyn_json_ode
+            .estimate_predictions(&subject, &params)
+            .unwrap(),
+    );
     let preds_json_an = flat(dyn_json_an.estimate_predictions(&subject, &params).unwrap());
 
     let times = [0.5, 1.0, 2.0, 3.0, 4.0, 6.0, 8.0];
@@ -154,9 +161,15 @@ fn main() {
     println!();
     assert!(close(&preds_static, &preds_exa, 1e-10), "static != exa");
     println!("static vs exa:          OK  (< 1e-10)");
-    assert!(close(&preds_static, &preds_json_ode, 1e-10), "static != json ode");
+    assert!(
+        close(&preds_static, &preds_json_ode, 1e-10),
+        "static != json ode"
+    );
     println!("static vs json ODE:     OK  (< 1e-10)");
-    assert!(close(&preds_static, &preds_json_an, 1e-3), "static != json analytical");
+    assert!(
+        close(&preds_static, &preds_json_an, 1e-3),
+        "static != json analytical"
+    );
     println!("static vs json analyt.: OK  (< 1e-3)");
 
     // -- Builtin library models -----------------------------------------------
