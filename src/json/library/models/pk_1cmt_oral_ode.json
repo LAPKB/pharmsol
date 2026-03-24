@@ -9,7 +9,6 @@
     "central": "ka * depot - CL/V * central"
   },
   "output": "central / V",
-  "neqs": [2, 1],
   "display": {
     "name": "One-Compartment Oral (ODE)",
     "category": "pk",

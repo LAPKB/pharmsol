@@ -5,10 +5,9 @@
   "parameters": ["CL", "V"],
   "compartments": ["central"],
   "diffeq": {
-    "central": "-CL/V * central"
+    "central": "-CL/V * central + rateiv[0]"
   },
   "output": "central / V",
-  "neqs": [1, 1],
   "display": {
     "name": "One-Compartment IV Bolus (ODE)",
     "category": "pk",

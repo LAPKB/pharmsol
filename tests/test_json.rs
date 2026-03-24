@@ -963,3 +963,301 @@ mod exa_integration {
         std::fs::remove_dir_all(template_path).ok();
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Library Model Correctness Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+mod library_models {
+    use super::*;
+
+    /// All 10 built-in library models should parse and validate without errors
+    #[test]
+    fn test_all_library_models_validate() {
+        let library = ModelLibrary::builtin();
+        let validator = Validator::new();
+
+        let ids = [
+            "pk/1cmt-iv",
+            "pk/1cmt-oral",
+            "pk/2cmt-iv",
+            "pk/2cmt-oral",
+            "pk/3cmt-iv",
+            "pk/3cmt-oral",
+            "pk/1cmt-iv-ode",
+            "pk/1cmt-oral-ode",
+            "pk/2cmt-iv-ode",
+            "pk/2cmt-oral-ode",
+        ];
+
+        for id in &ids {
+            let model = library.get(id).unwrap_or_else(|| panic!("Missing model: {}", id));
+            validator
+                .validate(model)
+                .unwrap_or_else(|e| panic!("Validation failed for {}: {:?}", id, e));
+        }
+    }
+
+    /// All library models should generate code successfully
+    #[test]
+    fn test_all_library_models_generate_code() {
+        let library = ModelLibrary::builtin();
+
+        let ids = [
+            "pk/1cmt-iv",
+            "pk/1cmt-oral",
+            "pk/2cmt-iv",
+            "pk/2cmt-oral",
+            "pk/3cmt-iv",
+            "pk/3cmt-oral",
+            "pk/1cmt-iv-ode",
+            "pk/1cmt-oral-ode",
+            "pk/2cmt-iv-ode",
+            "pk/2cmt-oral-ode",
+        ];
+
+        for id in &ids {
+            let model = library.get(id).unwrap();
+            let gen = CodeGenerator::new(model);
+            gen.generate()
+                .unwrap_or_else(|e| panic!("Code generation failed for {}: {:?}", id, e));
+        }
+    }
+
+    // ── Analytical parameter order tests ─────────────────────────────────
+
+    #[test]
+    fn test_1cmt_iv_parameter_order() {
+        let library = ModelLibrary::builtin();
+        let model = library.get("pk/1cmt-iv").unwrap();
+
+        // one_compartment expects: p[0]=ke
+        let params = model.get_parameters();
+        assert_eq!(params[0], "ke", "p[0] must be ke for one_compartment");
+    }
+
+    #[test]
+    fn test_1cmt_oral_parameter_order() {
+        let library = ModelLibrary::builtin();
+        let model = library.get("pk/1cmt-oral").unwrap();
+
+        // one_compartment_with_absorption expects: p[0]=ka, p[1]=ke
+        let params = model.get_parameters();
+        assert_eq!(params[0], "ka", "p[0] must be ka");
+        assert_eq!(params[1], "ke", "p[1] must be ke");
+    }
+
+    #[test]
+    fn test_2cmt_iv_parameter_order() {
+        let library = ModelLibrary::builtin();
+        let model = library.get("pk/2cmt-iv").unwrap();
+
+        // two_compartments expects: p[0]=ke, p[1]=kcp, p[2]=kpc
+        let params = model.get_parameters();
+        assert_eq!(params[0], "ke");
+        assert_eq!(params[1], "kcp");
+        assert_eq!(params[2], "kpc");
+    }
+
+    #[test]
+    fn test_2cmt_oral_parameter_order() {
+        let library = ModelLibrary::builtin();
+        let model = library.get("pk/2cmt-oral").unwrap();
+
+        // two_compartments_with_absorption expects: p[0]=ke, p[1]=ka, p[2]=kcp, p[3]=kpc
+        let params = model.get_parameters();
+        assert_eq!(params[0], "ke", "p[0] must be ke (not ka!)");
+        assert_eq!(params[1], "ka", "p[1] must be ka");
+        assert_eq!(params[2], "kcp");
+        assert_eq!(params[3], "kpc");
+    }
+
+    #[test]
+    fn test_3cmt_iv_parameter_order() {
+        let library = ModelLibrary::builtin();
+        let model = library.get("pk/3cmt-iv").unwrap();
+
+        // three_compartments expects: p[0]=k10, p[1]=k12, p[2]=k13, p[3]=k21, p[4]=k31
+        let params = model.get_parameters();
+        assert_eq!(params[0], "k10");
+        assert_eq!(params[1], "k12");
+        assert_eq!(params[2], "k13");
+        assert_eq!(params[3], "k21");
+        assert_eq!(params[4], "k31");
+    }
+
+    #[test]
+    fn test_3cmt_oral_parameter_order() {
+        let library = ModelLibrary::builtin();
+        let model = library.get("pk/3cmt-oral").unwrap();
+
+        // three_compartments_with_absorption expects: p[0]=ka, p[1]=k10, ... p[5]=k31
+        let params = model.get_parameters();
+        assert_eq!(params[0], "ka");
+        assert_eq!(params[1], "k10");
+        assert_eq!(params[2], "k12");
+        assert_eq!(params[3], "k13");
+        assert_eq!(params[4], "k21");
+        assert_eq!(params[5], "k31");
+    }
+
+    // ── neqs validity tests ──────────────────────────────────────────────
+
+    #[test]
+    fn test_analytical_neqs_match_function_states() {
+        let library = ModelLibrary::builtin();
+
+        let cases = [
+            ("pk/1cmt-iv", 1, 1),
+            ("pk/1cmt-oral", 2, 1),
+            ("pk/2cmt-iv", 2, 1),
+            ("pk/2cmt-oral", 3, 1),
+            ("pk/3cmt-iv", 3, 1),
+            ("pk/3cmt-oral", 4, 1),
+        ];
+
+        for (id, expected_nstates, expected_nout) in &cases {
+            let model = library.get(id).unwrap();
+            let neqs = model.get_neqs();
+            assert_eq!(
+                neqs.0, *expected_nstates,
+                "{}: nstates should be {}",
+                id, expected_nstates
+            );
+            assert_eq!(
+                neqs.1, *expected_nout,
+                "{}: nout should be {}",
+                id, expected_nout
+            );
+        }
+    }
+
+    #[test]
+    fn test_ode_neqs_match_compartments() {
+        let library = ModelLibrary::builtin();
+
+        let cases = [
+            ("pk/1cmt-iv-ode", 1, 1),
+            ("pk/1cmt-oral-ode", 2, 1),
+            ("pk/2cmt-iv-ode", 2, 1),
+            ("pk/2cmt-oral-ode", 3, 1),
+        ];
+
+        for (id, expected_nstates, expected_nout) in &cases {
+            let model = library.get(id).unwrap();
+            let neqs = model.get_neqs();
+            assert_eq!(neqs.0, *expected_nstates, "{}: nstates mismatch", id);
+            assert_eq!(neqs.1, *expected_nout, "{}: nout mismatch", id);
+        }
+    }
+
+    // ── Output expression correctness ────────────────────────────────────
+
+    #[test]
+    fn test_iv_models_output_from_central_state() {
+        let library = ModelLibrary::builtin();
+
+        // IV models: central is x[0] (no absorption compartment)
+        for id in &["pk/1cmt-iv", "pk/2cmt-iv", "pk/3cmt-iv"] {
+            let model = library.get(id).unwrap();
+            let output = model.output.as_ref().unwrap();
+            assert!(
+                output.contains("x[0]"),
+                "{}: IV model output should reference x[0] (central)",
+                id
+            );
+        }
+    }
+
+    #[test]
+    fn test_oral_models_output_from_central_state() {
+        let library = ModelLibrary::builtin();
+
+        // Oral models: central is x[1] (x[0] is depot/absorption)
+        for id in &["pk/1cmt-oral", "pk/2cmt-oral", "pk/3cmt-oral"] {
+            let model = library.get(id).unwrap();
+            let output = model.output.as_ref().unwrap();
+            assert!(
+                output.contains("x[1]"),
+                "{}: Oral model output should reference x[1] (central, after depot at x[0])",
+                id
+            );
+        }
+    }
+
+    // ── ODE diffeq completeness ──────────────────────────────────────────
+
+    #[test]
+    fn test_ode_iv_models_include_rateiv() {
+        let library = ModelLibrary::builtin();
+
+        // IV ODE models must include rateiv[0] in the central compartment
+        // equation to support infusion dosing
+        for id in &["pk/1cmt-iv-ode", "pk/2cmt-iv-ode"] {
+            let model = library.get(id).unwrap();
+            let gen = CodeGenerator::new(model);
+            let code = gen.generate().unwrap();
+
+            assert!(
+                code.equation_code.contains("rateiv[0]"),
+                "{}: central diffeq should include rateiv[0] for infusion support",
+                id
+            );
+        }
+    }
+
+    #[test]
+    fn test_ode_compartment_counts_match_diffeq_entries() {
+        let library = ModelLibrary::builtin();
+
+        for id in &[
+            "pk/1cmt-iv-ode",
+            "pk/1cmt-oral-ode",
+            "pk/2cmt-iv-ode",
+            "pk/2cmt-oral-ode",
+        ] {
+            let model = library.get(id).unwrap();
+            let ncompartments = model.compartments.as_ref().unwrap().len();
+            let gen = CodeGenerator::new(model);
+            let code = gen.generate().unwrap();
+
+            // Count dx[N] assignments in generated code
+            let dx_count = (0..ncompartments)
+                .filter(|i| code.equation_code.contains(&format!("dx[{}]", i)))
+                .count();
+
+            assert_eq!(
+                dx_count, ncompartments,
+                "{}: should have dx[i] for each of the {} compartments",
+                id, ncompartments
+            );
+        }
+    }
+
+    // ── ODE oral models have correct transfer terms ──────────────────────
+
+    #[test]
+    fn test_oral_ode_depot_drains_to_central() {
+        let library = ModelLibrary::builtin();
+
+        for id in &["pk/1cmt-oral-ode", "pk/2cmt-oral-ode"] {
+            let model = library.get(id).unwrap();
+            let gen = CodeGenerator::new(model);
+            let code = gen.generate().unwrap();
+
+            // Depot should have negative ka term (drug leaving)
+            assert!(
+                code.equation_code.contains("ka") && code.equation_code.contains("dx[0]"),
+                "{}: depot (dx[0]) should involve ka",
+                id
+            );
+
+            // Central should have positive ka term (drug arriving)
+            assert!(
+                code.equation_code.contains("dx[1]"),
+                "{}: central equation (dx[1]) should exist",
+                id
+            );
+        }
+    }
+}

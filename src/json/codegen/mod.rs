@@ -3,7 +3,6 @@
 //! This module transforms validated JSON models into Rust code strings
 //! that can be compiled by the `exa` module.
 
-mod analytical;
 mod closures;
 mod ode;
 mod sde;

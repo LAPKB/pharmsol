@@ -5,11 +5,10 @@
   "parameters": ["CL", "V1", "Q", "V2"],
   "compartments": ["central", "peripheral"],
   "diffeq": {
-    "central": "-CL/V1 * central - Q/V1 * central + Q/V2 * peripheral",
+    "central": "-CL/V1 * central - Q/V1 * central + Q/V2 * peripheral + rateiv[0]",
     "peripheral": "Q/V1 * central - Q/V2 * peripheral"
   },
   "output": "central / V1",
-  "neqs": [2, 1],
   "display": {
     "name": "Two-Compartment IV Bolus (ODE)",
     "category": "pk",

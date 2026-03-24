@@ -5,7 +5,6 @@
   "analytical": "one_compartment_with_absorption",
   "parameters": ["ka", "ke", "V"],
   "output": "x[1] / V",
-  "neqs": [2, 1],
   "display": {
     "name": "One-Compartment First-Order Absorption",
     "category": "pk",

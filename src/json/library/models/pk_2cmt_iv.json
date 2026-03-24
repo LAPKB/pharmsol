@@ -5,7 +5,6 @@
   "analytical": "two_compartments",
   "parameters": ["ke", "kcp", "kpc", "V"],
   "output": "x[0] / V",
-  "neqs": [2, 1],
   "display": {
     "name": "Two-Compartment IV Bolus",
     "category": "pk",

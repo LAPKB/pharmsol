@@ -10,7 +10,6 @@
     "peripheral": "Q/V1 * central - Q/V2 * peripheral"
   },
   "output": "central / V1",
-  "neqs": [3, 1],
   "display": {
     "name": "Two-Compartment Oral (ODE)",
     "category": "pk",
