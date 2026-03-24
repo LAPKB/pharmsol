@@ -1,5 +1,6 @@
 [workspace]
 members = [".", "pharmsol-macros"]
+resolver = "2"
 
 [package]
 name = "pharmsol"
