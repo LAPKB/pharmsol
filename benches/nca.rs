@@ -78,14 +78,14 @@ fn bench_population_nca(c: &mut Criterion) {
 }
 
 fn bench_observation_metrics(c: &mut Criterion) {
-    use pharmsol::data::event::{AUCMethod, BLQRule};
+    use pharmsol::data::event::AUCMethod;
 
     let subject = typical_oral_subject("bench_subj");
 
     c.bench_function("nca_auc_cmax_metrics", |b| {
         b.iter(|| {
-            let auc = black_box(&subject).auc(0, &AUCMethod::Linear, &BLQRule::Exclude);
-            let cmax = black_box(&subject).cmax(0, &BLQRule::Exclude);
+            let auc = black_box(&subject).auc(0, &AUCMethod::Linear);
+            let cmax = black_box(&subject).cmax(0);
             black_box((auc, cmax));
         });
     });
