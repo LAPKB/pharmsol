@@ -13,7 +13,8 @@ documentation = "https://lapkb.github.io/pharmsol/"
 
 [features]
 default = []
-exa = ["libloading"]
+json = []
+exa = ["json", "libloading"]
 
 [dependencies]
 ahash = "0.8"

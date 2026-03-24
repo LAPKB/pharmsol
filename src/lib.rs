@@ -2,6 +2,8 @@ pub mod data;
 pub mod error;
 #[cfg(feature = "exa")]
 pub mod exa;
+#[cfg(feature = "json")]
+pub mod json;
 pub mod nca;
 pub mod optimize;
 pub mod simulator;
