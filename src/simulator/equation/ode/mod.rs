@@ -419,7 +419,7 @@ impl Equation for ODE {
         let spp_v: V = DVector::from_vec(support_point.clone()).into();
 
         // Pre-allocate output vector for observations
-        let mut y_out = V::zeros(output_buffer_size, NalgebraContext);
+        let mut y_out = V::zeros(self.get_nouteqs(), NalgebraContext);
 
         // Iterate over occasions
         for occasion in subject.occasions() {
