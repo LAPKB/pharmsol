@@ -1,4 +1,4 @@
-use crate::{Covariates, Infusion};
+use crate::{Covariates, Infusion, PharmsolError};
 use diffsol::{
     ConstantOp, LinearOp, MatrixCommon, NalgebraContext, NalgebraMat, NonLinearOp,
     NonLinearOpJacobian, OdeEquations, OdeEquationsRef, Op, Vector, VectorCommon,
@@ -67,23 +67,22 @@ struct InfusionSchedule {
 }
 
 impl InfusionSchedule {
-    fn new(nstates: usize, infusions: &[&Infusion]) -> Self {
-        if nstates == 0 || infusions.is_empty() {
-            return Self {
+    fn new(ndrugs: usize, infusions: &[&Infusion]) -> Result<Self, PharmsolError> {
+        if ndrugs == 0 || infusions.is_empty() {
+            return Ok(Self {
                 channels: Vec::new(),
-            };
+            });
         }
 
-        let buffer_size = nstates;
-        let mut per_input: Vec<Vec<(f64, f64)>> = vec![Vec::new(); buffer_size];
+        let mut per_input: Vec<Vec<(f64, f64)>> = vec![Vec::new(); ndrugs];
         for infusion in infusions {
             if infusion.duration() <= 0.0 {
                 continue;
             }
 
             let input = infusion.input();
-            if input >= buffer_size {
-                continue;
+            if input >= ndrugs {
+                return Err(PharmsolError::InputOutOfRange { input, ndrugs });
             }
 
             let rate = infusion.amount() / infusion.duration();
@@ -103,7 +102,7 @@ impl InfusionSchedule {
             })
             .collect();
 
-        Self { channels }
+        Ok(Self { channels })
     }
 
     fn fill_rate_vector(&self, time: f64, rateiv: &mut V) {
@@ -335,20 +334,20 @@ where
     pub fn with_params_v(
         func: F,
         nstates: usize,
+        ndrugs: usize,
         p: Vec<f64>,
         p_as_v: V,
         covariates: &'a Covariates,
         infusions: &[&'a Infusion],
         init: V,
-    ) -> Self {
+    ) -> Result<Self, PharmsolError> {
         let nparams = p.len();
-        let buffer_size = nstates;
-        let rateiv_buffer = RefCell::new(V::zeros(buffer_size, NalgebraContext));
-        let infusion_schedule = InfusionSchedule::new(nstates, infusions);
+        let rateiv_buffer = RefCell::new(V::zeros(ndrugs, NalgebraContext));
+        let infusion_schedule = InfusionSchedule::new(ndrugs, infusions)?;
         // Pre-allocate zero bolus vector
-        let zero_bolus = V::zeros(buffer_size, NalgebraContext);
+        let zero_bolus = V::zeros(ndrugs, NalgebraContext);
 
-        Self {
+        Ok(Self {
             func,
             nstates,
             nparams,
@@ -359,7 +358,7 @@ where
             covariates,
             infusion_schedule,
             rateiv_buffer,
-        }
+        })
     }
 }
 

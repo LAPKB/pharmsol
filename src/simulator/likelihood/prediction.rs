@@ -94,9 +94,8 @@ impl Prediction {
     /// - `error_models`: The error models to use for sigma calculation
     ///
     /// # Returns
-    /// The log-likelihood value, or an error if:
-    /// - The observation is missing
-    /// - The log-likelihood is non-finite
+    /// The log-likelihood value, zero in the case of a missing observation
+    /// or an error if the likelihood is non-finite.
     ///
     /// # Example
     /// ```ignore
@@ -104,12 +103,13 @@ impl Prediction {
     /// ```
     #[inline]
     pub fn log_likelihood(&self, error_models: &AssayErrorModels) -> Result<f64, PharmsolError> {
-        if self.observation.is_none() {
-            return Err(PharmsolError::MissingObservation);
-        }
+        // Missing observations don't contribute to log-likelihood (log(1) = 0)
+        let obs = match self.observation {
+            Some(obs) => obs,
+            None => return Ok(0.0),
+        };
 
         let sigma = error_models.sigma(self)?;
-        let obs = self.observation.unwrap();
 
         let log_lik = match self.censoring {
             Censor::None => lognormpdf(obs, self.prediction, sigma),
@@ -278,7 +278,7 @@ mod tests {
     }
 
     #[test]
-    fn test_missing_observation() {
+    fn test_missing_observation_returns_zero() {
         let prediction = Prediction {
             time: 1.0,
             observation: None,
@@ -287,8 +287,11 @@ mod tests {
         };
         let error_models = create_error_models();
 
-        let result = prediction.log_likelihood(&error_models);
-        assert!(matches!(result, Err(PharmsolError::MissingObservation)));
+        let result = prediction.log_likelihood(&error_models).unwrap();
+        assert_eq!(
+            result, 0.0,
+            "Missing observation should contribute 0 to log-likelihood"
+        );
     }
 
     #[test]
