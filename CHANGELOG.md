@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.1](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.24.0...pharmsol-v0.24.1) - 2026-03-24
+
+### Added
+
+- Json ([#199](https://github.com/LAPKB/pharmsol/pull/199))
+- Non-compartmental analysis ([#208](https://github.com/LAPKB/pharmsol/pull/208))
+
+### Fixed
+
+- Handle missing observations in log-likelihood ([#230](https://github.com/LAPKB/pharmsol/pull/230))
+
 ## [0.24.0](https://github.com/LAPKB/pharmsol/compare/v0.23.0...v0.24.0) - 2026-03-23
 
 ### Added
