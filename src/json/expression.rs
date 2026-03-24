@@ -772,9 +772,9 @@ impl RustEmitter {
             // Two-arg functions
             "min" => {
                 if args.len() == 2 {
-                    let a = self.emit(&args[0]);
+                    let a = self.emit_wrapped(&args[0]);
                     let b = self.emit(&args[1]);
-                    format!("{}_f64.min({})", a, b)
+                    format!("{}.min({})", a, b)
                 } else {
                     let arg_strs: Vec<_> = args.iter().map(|a| self.emit(a)).collect();
                     format!("min({})", arg_strs.join(", "))
@@ -782,9 +782,9 @@ impl RustEmitter {
             }
             "max" => {
                 if args.len() == 2 {
-                    let a = self.emit(&args[0]);
+                    let a = self.emit_wrapped(&args[0]);
                     let b = self.emit(&args[1]);
-                    format!("{}_f64.max({})", a, b)
+                    format!("{}.max({})", a, b)
                 } else {
                     let arg_strs: Vec<_> = args.iter().map(|a| self.emit(a)).collect();
                     format!("max({})", arg_strs.join(", "))
@@ -973,8 +973,22 @@ mod tests {
 
     #[test]
     fn test_min_max() {
-        assert_eq!(to_rust("min(a, b)").unwrap(), "a_f64.min(b)");
-        assert_eq!(to_rust("max(a, b)").unwrap(), "a_f64.max(b)");
+        assert_eq!(to_rust("min(a, b)").unwrap(), "a.min(b)");
+        assert_eq!(to_rust("max(a, b)").unwrap(), "a.max(b)");
+    }
+
+    #[test]
+    fn test_min_max_complex_expressions() {
+        // Complex expressions should be wrapped, not have _f64 appended
+        let result = to_rust("min(x + y, z)").unwrap();
+        assert_eq!(result, "(x + y).min(z)");
+
+        let result = to_rust("max(a * b, c / d)").unwrap();
+        assert_eq!(result, "(a * b).max(c / d)");
+
+        // Simple identifiers don't need wrapping
+        let result = to_rust("min(a, b)").unwrap();
+        assert_eq!(result, "a.min(b)");
     }
 
     #[test]

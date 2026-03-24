@@ -69,6 +69,10 @@ pub enum JsonModelError {
     #[error("Duplicate compartment name: '{name}'")]
     DuplicateCompartment { name: String },
 
+    /// Duplicate covariate name
+    #[error("Duplicate covariate name: '{name}'")]
+    DuplicateCovariate { name: String },
+
     /// Invalid neqs specification
     #[error("Invalid neqs: expected [num_states, num_outputs], got {0:?}")]
     InvalidNeqs(Vec<usize>),

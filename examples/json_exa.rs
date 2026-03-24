@@ -39,8 +39,10 @@ fn main() {
             fetch_params!(p, _ke, v);
             y[0] = x[0] / v;
         },
-        (1, 1),
-    );
+    )
+    .with_nstates(1)
+    .with_ndrugs(1)
+    .with_nout(1);
 
     // -- Exa ODE (raw Rust string, compiled at runtime) -----------------------
 
@@ -59,8 +61,10 @@ fn main() {
                     fetch_params!(p, _ke, V);
                     y[0] = x[0] / V;
                 },
-                (1, 1),
             )
+            .with_nstates(1)
+            .with_ndrugs(1)
+            .with_nout(1)
         "#
         .to_string(),
         Some(exa_ode_path.clone()),

@@ -37,6 +37,24 @@ impl<'a> ClosureGenerator<'a> {
         map
     }
 
+    /// Resolve a compartment/state name to its index.
+    /// Accepts either a declared name or a numeric string. Returns an error for unknown names.
+    fn resolve_index(&self, name: &str, context: &str) -> Result<usize, JsonModelError> {
+        if let Some(&idx) = self.compartment_map.get(name) {
+            return Ok(idx);
+        }
+        if let Some(&idx) = self.state_map.get(name) {
+            return Ok(idx);
+        }
+        if let Ok(idx) = name.parse::<usize>() {
+            return Ok(idx);
+        }
+        Err(JsonModelError::CodeGenError(format!(
+            "Unknown compartment or state '{}' in {}",
+            name, context
+        )))
+    }
+
     /// Transpile a math expression to Rust code, resolving named compartment indices
     fn transpile(&self, expr: &str) -> Result<String, JsonModelError> {
         let name_map = self.name_map();
@@ -251,17 +269,18 @@ impl<'a> ClosureGenerator<'a> {
                 s.clone()
             }
             DiffEqSpec::Object(map) => {
-                let mut lines = Vec::new();
+                let mut indexed_lines = Vec::new();
                 for (name, expr) in map {
-                    let idx = self
-                        .compartment_map
-                        .get(name)
-                        .copied()
-                        .unwrap_or_else(|| name.parse::<usize>().unwrap_or(0));
+                    let idx = self.resolve_index(name, "diffeq")?;
                     let rust_expr = self.transpile(expr)?;
-                    lines.push(format!("dx[{}] = {};", idx, rust_expr));
+                    indexed_lines.push((idx, format!("dx[{}] = {};", idx, rust_expr)));
                 }
-                lines.join("\n        ")
+                indexed_lines.sort_by_key(|(idx, _)| *idx);
+                indexed_lines
+                    .into_iter()
+                    .map(|(_, line)| line)
+                    .collect::<Vec<_>>()
+                    .join("\n        ")
             }
         };
 
@@ -298,18 +317,18 @@ impl<'a> ClosureGenerator<'a> {
         let body = match drift {
             DiffEqSpec::String(s) => s.clone(),
             DiffEqSpec::Object(map) => {
-                let mut lines = Vec::new();
+                let mut indexed_lines = Vec::new();
                 for (name, expr) in map {
-                    let idx = self.state_map.get(name).copied().unwrap_or_else(|| {
-                        self.compartment_map
-                            .get(name)
-                            .copied()
-                            .unwrap_or_else(|| name.parse::<usize>().unwrap_or(0))
-                    });
+                    let idx = self.resolve_index(name, "drift")?;
                     let rust_expr = self.transpile(expr)?;
-                    lines.push(format!("dx[{}] = {};", idx, rust_expr));
+                    indexed_lines.push((idx, format!("dx[{}] = {};", idx, rust_expr)));
                 }
-                lines.join("\n        ")
+                indexed_lines.sort_by_key(|(idx, _)| *idx);
+                indexed_lines
+                    .into_iter()
+                    .map(|(_, line)| line)
+                    .collect::<Vec<_>>()
+                    .join("\n        ")
             }
         };
 
@@ -344,21 +363,21 @@ impl<'a> ClosureGenerator<'a> {
         let fetch_params = self.fetch_params();
         let states = self.generate_state_bindings();
 
-        let mut lines = Vec::new();
+        let mut indexed_lines = Vec::new();
         for (name, expr) in diffusion {
-            let idx = self.state_map.get(name).copied().unwrap_or_else(|| {
-                self.compartment_map
-                    .get(name)
-                    .copied()
-                    .unwrap_or_else(|| name.parse::<usize>().unwrap_or(0))
-            });
+            let idx = self.resolve_index(name, "diffusion")?;
             let rust_expr = match expr {
                 ExpressionOrNumber::Number(n) => format!("{:.6}", n),
                 ExpressionOrNumber::Expression(s) => self.transpile(s)?,
             };
-            lines.push(format!("d[{}] = {};", idx, rust_expr));
+            indexed_lines.push((idx, format!("d[{}] = {};", idx, rust_expr)));
         }
-        let body = lines.join("\n        ");
+        indexed_lines.sort_by_key(|(idx, _)| *idx);
+        let body = indexed_lines
+            .into_iter()
+            .map(|(_, line)| line)
+            .collect::<Vec<_>>()
+            .join("\n        ");
 
         Ok(format!(
             r#"|x, p, d| {{
@@ -382,23 +401,15 @@ impl<'a> ClosureGenerator<'a> {
 
         let fetch_params = self.fetch_params();
 
-        let entries: Vec<_> = lag
-            .iter()
-            .map(|(name, expr)| {
-                let idx = self
-                    .compartment_map
-                    .get(name)
-                    .copied()
-                    .unwrap_or_else(|| name.parse::<usize>().unwrap_or(0));
-                let rust_expr = match expr {
-                    ExpressionOrNumber::Number(n) => format!("{:.6}", n),
-                    ExpressionOrNumber::Expression(s) => {
-                        self.transpile(s).unwrap_or_else(|_| s.clone())
-                    }
-                };
-                format!("{} => {}", idx, rust_expr)
-            })
-            .collect();
+        let mut entries = Vec::new();
+        for (name, expr) in lag {
+            let idx = self.resolve_index(name, "lag")?;
+            let rust_expr = match expr {
+                ExpressionOrNumber::Number(n) => format!("{:.6}", n),
+                ExpressionOrNumber::Expression(s) => self.transpile(s)?,
+            };
+            entries.push(format!("{} => {}", idx, rust_expr));
+        }
 
         Ok(format!(
             r#"|p, _t, _cov| {{
@@ -422,23 +433,15 @@ impl<'a> ClosureGenerator<'a> {
 
         let fetch_params = self.fetch_params();
 
-        let entries: Vec<_> = fa
-            .iter()
-            .map(|(name, expr)| {
-                let idx = self
-                    .compartment_map
-                    .get(name)
-                    .copied()
-                    .unwrap_or_else(|| name.parse::<usize>().unwrap_or(0));
-                let rust_expr = match expr {
-                    ExpressionOrNumber::Number(n) => format!("{:.6}", n),
-                    ExpressionOrNumber::Expression(s) => {
-                        self.transpile(s).unwrap_or_else(|_| s.clone())
-                    }
-                };
-                format!("{} => {}", idx, rust_expr)
-            })
-            .collect();
+        let mut entries = Vec::new();
+        for (name, expr) in fa {
+            let idx = self.resolve_index(name, "fa")?;
+            let rust_expr = match expr {
+                ExpressionOrNumber::Number(n) => format!("{:.6}", n),
+                ExpressionOrNumber::Expression(s) => self.transpile(s)?,
+            };
+            entries.push(format!("{} => {}", idx, rust_expr));
+        }
 
         Ok(format!(
             r#"|p, _t, _cov| {{
@@ -461,12 +464,7 @@ impl<'a> ClosureGenerator<'a> {
             InitSpec::Object(map) => {
                 let mut lines = Vec::new();
                 for (name, expr) in map {
-                    let idx = self.state_map.get(name).copied().unwrap_or_else(|| {
-                        self.compartment_map
-                            .get(name)
-                            .copied()
-                            .unwrap_or_else(|| name.parse::<usize>().unwrap_or(0))
-                    });
+                    let idx = self.resolve_index(name, "init")?;
                     let rust_expr = match expr {
                         ExpressionOrNumber::Number(n) => format!("{:.6}", n),
                         ExpressionOrNumber::Expression(s) => self.transpile(s)?,
@@ -646,5 +644,120 @@ mod tests {
 
         assert!(lag.contains("lag! {}"));
         assert!(fa.contains("fa! {}"));
+    }
+
+    #[test]
+    fn test_lag_propagates_transpile_error() {
+        let json = r#"{
+            "schema": "1.0",
+            "id": "test",
+            "type": "ode",
+            "compartments": ["depot", "central"],
+            "parameters": ["ka", "ke", "V"],
+            "diffeq": {
+                "depot": "-ka * depot",
+                "central": "ka * depot - ke * central"
+            },
+            "lag": { "depot": "++ invalid" },
+            "output": "central / V"
+        }"#;
+
+        let model = JsonModel::from_str(json).unwrap();
+        let gen = ClosureGenerator::new(&model);
+        let result = gen.generate_lag();
+
+        assert!(result.is_err(), "Should propagate transpile error for lag");
+    }
+
+    #[test]
+    fn test_fa_propagates_transpile_error() {
+        let json = r#"{
+            "schema": "1.0",
+            "id": "test",
+            "type": "ode",
+            "compartments": ["depot", "central"],
+            "parameters": ["ka", "ke", "V"],
+            "diffeq": {
+                "depot": "-ka * depot",
+                "central": "ka * depot - ke * central"
+            },
+            "fa": { "depot": "++ invalid" },
+            "output": "central / V"
+        }"#;
+
+        let model = JsonModel::from_str(json).unwrap();
+        let gen = ClosureGenerator::new(&model);
+        let result = gen.generate_fa();
+
+        assert!(result.is_err(), "Should propagate transpile error for fa");
+    }
+
+    #[test]
+    fn test_unknown_compartment_in_diffeq_errors() {
+        let json = r#"{
+            "schema": "1.0",
+            "id": "test",
+            "type": "ode",
+            "compartments": ["central"],
+            "parameters": ["ke", "V"],
+            "diffeq": {
+                "nonexistent": "-ke * x[0]"
+            },
+            "output": "x[0] / V"
+        }"#;
+
+        let model = JsonModel::from_str(json).unwrap();
+        let gen = ClosureGenerator::new(&model);
+        let result = gen.generate_diffeq();
+
+        assert!(result.is_err(), "Should error on unknown compartment name");
+    }
+
+    #[test]
+    fn test_unknown_compartment_in_lag_errors() {
+        let json = r#"{
+            "schema": "1.0",
+            "id": "test",
+            "type": "ode",
+            "compartments": ["central"],
+            "parameters": ["ke", "V", "tlag"],
+            "diffeq": { "central": "-ke * central" },
+            "lag": { "nonexistent": "tlag" },
+            "output": "central / V"
+        }"#;
+
+        let model = JsonModel::from_str(json).unwrap();
+        let gen = ClosureGenerator::new(&model);
+        let result = gen.generate_lag();
+
+        assert!(
+            result.is_err(),
+            "Should error on unknown compartment in lag"
+        );
+    }
+
+    #[test]
+    fn test_diffeq_output_is_sorted_by_index() {
+        let json = r#"{
+            "schema": "1.0",
+            "id": "test",
+            "type": "ode",
+            "compartments": ["depot", "central"],
+            "parameters": ["ka", "ke", "V"],
+            "diffeq": {
+                "central": "ka * depot - ke * central",
+                "depot": "-ka * depot"
+            },
+            "output": "central / V"
+        }"#;
+
+        let model = JsonModel::from_str(json).unwrap();
+        let gen = ClosureGenerator::new(&model);
+        let diffeq = gen.generate_diffeq().unwrap();
+
+        // dx[0] (depot) should appear before dx[1] (central)
+        let pos0 = diffeq.find("dx[0]").expect("Should contain dx[0]");
+        let pos1 = diffeq.find("dx[1]").expect("Should contain dx[1]");
+        assert!(pos0 < pos1, "dx[0] should come before dx[1]");
     }
 }

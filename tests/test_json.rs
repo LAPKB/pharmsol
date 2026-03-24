@@ -880,8 +880,10 @@ mod exa_integration {
                 fetch_params!(p, _ke, V);
                 y[0] = x[0] / V;
             },
-            (1, 1),
-        );
+        )
+        .with_nstates(1)
+        .with_ndrugs(1)
+        .with_nout(1);
 
         // Test subject
         let subject = Subject::builder("1")

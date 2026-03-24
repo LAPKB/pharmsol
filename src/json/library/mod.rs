@@ -290,7 +290,7 @@ fn merge_models(base: &JsonModel, derived: &JsonModel) -> JsonModel {
         model_type: derived.model_type,
         extends: None, // Clear extends after resolution
         version: derived.version.clone().or_else(|| base.version.clone()),
-        aliases: merge_option_vec(&base.aliases, &derived.aliases),
+        aliases: merge_option_vec_dedup(&base.aliases, &derived.aliases),
 
         // ─────────────────────────────────────────────────────────────────────
         // Layer 2: Structural Model
@@ -312,7 +312,7 @@ fn merge_models(base: &JsonModel, derived: &JsonModel) -> JsonModel {
         diffeq: derived.diffeq.clone().or_else(|| base.diffeq.clone()),
         drift: derived.drift.clone().or_else(|| base.drift.clone()),
         diffusion: derived.diffusion.clone().or_else(|| base.diffusion.clone()),
-        secondary: merge_option_vec(&base.secondary, &derived.secondary),
+        secondary: merge_secondary(&base.secondary, &derived.secondary),
 
         // ─────────────────────────────────────────────────────────────────────
         // Output
@@ -334,7 +334,7 @@ fn merge_models(base: &JsonModel, derived: &JsonModel) -> JsonModel {
         // ─────────────────────────────────────────────────────────────────────
         derived: merge_option_vec(&base.derived, &derived.derived),
         features: merge_option_vec(&base.features, &derived.features),
-        covariates: merge_option_vec(&base.covariates, &derived.covariates),
+        covariates: merge_option_vec_dedup(&base.covariates, &derived.covariates),
 
         // ─────────────────────────────────────────────────────────────────────
         // Layer 4: UI Metadata
@@ -354,6 +354,51 @@ fn merge_option_vec<T: Clone>(base: &Option<Vec<T>>, derived: &Option<Vec<T>>) -
         (Some(b), Some(d)) => {
             let mut merged = b.clone();
             merged.extend(d.iter().cloned());
+            Some(merged)
+        }
+    }
+}
+
+/// Merge optional string vectors, deduplicating entries
+fn merge_option_vec_dedup(
+    base: &Option<Vec<String>>,
+    derived: &Option<Vec<String>>,
+) -> Option<Vec<String>> {
+    match (base, derived) {
+        (None, None) => None,
+        (Some(b), None) => Some(b.clone()),
+        (None, Some(d)) => Some(d.clone()),
+        (Some(b), Some(d)) => {
+            let mut merged = b.clone();
+            for item in d {
+                if !merged.contains(item) {
+                    merged.push(item.clone());
+                }
+            }
+            Some(merged)
+        }
+    }
+}
+
+/// Merge secondary equations: derived keys override base keys, preserving order
+fn merge_secondary(
+    base: &Option<Vec<(String, String)>>,
+    derived: &Option<Vec<(String, String)>>,
+) -> Option<Vec<(String, String)>> {
+    match (base, derived) {
+        (None, None) => None,
+        (Some(b), None) => Some(b.clone()),
+        (None, Some(d)) => Some(d.clone()),
+        (Some(b), Some(d)) => {
+            // Start with base, then override or append from derived
+            let mut merged = b.clone();
+            for (dk, dv) in d {
+                if let Some(existing) = merged.iter_mut().find(|(k, _)| k == dk) {
+                    existing.1 = dv.clone();
+                } else {
+                    merged.push((dk.clone(), dv.clone()));
+                }
+            }
             Some(merged)
         }
     }
@@ -512,5 +557,134 @@ mod tests {
             result,
             Err(JsonModelError::CircularInheritance(_))
         ));
+    }
+
+    #[test]
+    fn test_merge_secondary_overrides_by_key() {
+        let mut library = ModelLibrary::new();
+
+        let base = JsonModel::from_str(
+            r#"{
+            "schema": "1.0",
+            "id": "base",
+            "type": "analytical",
+            "analytical": "one_compartment",
+            "parameters": ["CL", "V"],
+            "secondary": { "ke": "CL / V" },
+            "output": "x[0] / V"
+        }"#,
+        )
+        .unwrap();
+        library.add(base);
+
+        let derived = JsonModel::from_str(
+            r#"{
+            "schema": "1.0",
+            "id": "derived",
+            "extends": "base",
+            "type": "analytical",
+            "analytical": "one_compartment",
+            "parameters": ["CL", "V"],
+            "secondary": { "ke": "CL / V * 0.9" }
+        }"#,
+        )
+        .unwrap();
+
+        let resolved = library.resolve(&derived).unwrap();
+        let secondary = resolved.secondary.as_ref().unwrap();
+
+        // Should have exactly one "ke", not two
+        assert_eq!(
+            secondary.len(),
+            1,
+            "Derived 'ke' should override base 'ke', not duplicate"
+        );
+        assert_eq!(secondary[0].0, "ke");
+        assert_eq!(secondary[0].1, "CL / V * 0.9");
+    }
+
+    #[test]
+    fn test_merge_secondary_appends_new_keys() {
+        let mut library = ModelLibrary::new();
+
+        let base = JsonModel::from_str(
+            r#"{
+            "schema": "1.0",
+            "id": "base",
+            "type": "analytical",
+            "analytical": "one_compartment",
+            "parameters": ["CL", "V"],
+            "secondary": { "ke": "CL / V" },
+            "output": "x[0] / V"
+        }"#,
+        )
+        .unwrap();
+        library.add(base);
+
+        let derived = JsonModel::from_str(
+            r#"{
+            "schema": "1.0",
+            "id": "derived",
+            "extends": "base",
+            "type": "analytical",
+            "analytical": "one_compartment",
+            "parameters": ["CL", "V"],
+            "secondary": { "halflife": "0.693 / ke" }
+        }"#,
+        )
+        .unwrap();
+
+        let resolved = library.resolve(&derived).unwrap();
+        let secondary = resolved.secondary.as_ref().unwrap();
+
+        // Should have both base "ke" and derived "halflife"
+        assert_eq!(secondary.len(), 2);
+        assert_eq!(secondary[0].0, "ke");
+        assert_eq!(secondary[1].0, "halflife");
+    }
+
+    #[test]
+    fn test_merge_covariates_deduplicates() {
+        let mut library = ModelLibrary::new();
+
+        let base = JsonModel::from_str(
+            r#"{
+            "schema": "1.0",
+            "id": "base",
+            "type": "analytical",
+            "analytical": "one_compartment",
+            "parameters": ["ke", "V"],
+            "covariates": ["wt", "age"],
+            "output": "x[0] / V"
+        }"#,
+        )
+        .unwrap();
+        library.add(base);
+
+        let derived = JsonModel::from_str(
+            r#"{
+            "schema": "1.0",
+            "id": "derived",
+            "extends": "base",
+            "type": "analytical",
+            "analytical": "one_compartment",
+            "parameters": ["ke", "V"],
+            "covariates": ["wt", "sex"]
+        }"#,
+        )
+        .unwrap();
+
+        let resolved = library.resolve(&derived).unwrap();
+        let covariates = resolved.covariates.as_ref().unwrap();
+
+        // "wt" should appear only once
+        assert_eq!(
+            covariates.len(),
+            3,
+            "Should have wt, age, sex (wt deduplicated)"
+        );
+        assert!(covariates.contains(&"wt".to_string()));
+        assert!(covariates.contains(&"age".to_string()));
+        assert!(covariates.contains(&"sex".to_string()));
     }
 }

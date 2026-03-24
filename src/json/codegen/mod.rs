@@ -82,6 +82,9 @@ impl<'a> CodeGenerator<'a> {
         let out = self.closure_gen.generate_output()?;
         let neqs = self.model.get_neqs();
 
+        let nstates = neqs.0;
+        let nouts = neqs.1;
+
         Ok(format!(
             r#"equation::Analytical::new(
     {func_name},
@@ -90,16 +93,19 @@ impl<'a> CodeGenerator<'a> {
     {fa},
     {init},
     {out},
-    ({nstates}, {nouts}),
-)"#,
+)
+.with_nstates({nstates})
+.with_ndrugs({ndrugs})
+.with_nout({nouts})"#,
             func_name = func.rust_name(),
             seq_eq = seq_eq,
             lag = lag,
             fa = fa,
             init = init,
             out = out,
-            nstates = neqs.0,
-            nouts = neqs.1,
+            nstates = nstates,
+            ndrugs = nstates,
+            nouts = nouts,
         ))
     }
 
@@ -112,6 +118,9 @@ impl<'a> CodeGenerator<'a> {
         let out = self.closure_gen.generate_output()?;
         let neqs = self.model.get_neqs();
 
+        let nstates = neqs.0;
+        let nouts = neqs.1;
+
         Ok(format!(
             r#"equation::ODE::new(
     {diffeq},
@@ -119,15 +128,18 @@ impl<'a> CodeGenerator<'a> {
     {fa},
     {init},
     {out},
-    ({nstates}, {nouts}),
-)"#,
+)
+.with_nstates({nstates})
+.with_ndrugs({ndrugs})
+.with_nout({nouts})"#,
             diffeq = diffeq,
             lag = lag,
             fa = fa,
             init = init,
             out = out,
-            nstates = neqs.0,
-            nouts = neqs.1,
+            nstates = nstates,
+            ndrugs = nstates,
+            nouts = nouts,
         ))
     }
 
@@ -142,6 +154,9 @@ impl<'a> CodeGenerator<'a> {
         let neqs = self.model.get_neqs();
         let particles = self.model.particles.unwrap_or(1000);
 
+        let nstates = neqs.0;
+        let nouts = neqs.1;
+
         Ok(format!(
             r#"equation::SDE::new(
     {drift},
@@ -150,17 +165,20 @@ impl<'a> CodeGenerator<'a> {
     {fa},
     {init},
     {out},
-    ({nstates}, {nouts}),
     {particles},
-)"#,
+)
+.with_nstates({nstates})
+.with_ndrugs({ndrugs})
+.with_nout({nouts})"#,
             drift = drift,
             diffusion = diffusion,
             lag = lag,
             fa = fa,
             init = init,
             out = out,
-            nstates = neqs.0,
-            nouts = neqs.1,
+            nstates = nstates,
+            ndrugs = nstates,
+            nouts = nouts,
             particles = particles,
         ))
     }
