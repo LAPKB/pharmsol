@@ -206,7 +206,7 @@ pub(crate) fn lambda_z_candidates(
 }
 
 /// Estimate lambda-z using log-linear regression
-pub fn lambda_z(profile: &Profile, options: &LambdaZOptions) -> Option<LambdaZResult> {
+pub(crate) fn lambda_z(profile: &Profile, options: &LambdaZOptions) -> Option<LambdaZResult> {
     // Determine start index (exclude or include Tmax)
     let start_idx = if options.include_tmax {
         0
