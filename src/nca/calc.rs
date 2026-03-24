@@ -688,10 +688,18 @@ pub fn peak_trough_ratio(cmax: f64, cmin: f64) -> f64 {
 /// This is PD-relevant for concentration-dependent drugs (e.g., antibiotics)
 /// where efficacy correlates with the time the drug concentration exceeds
 /// a minimum inhibitory concentration (MIC).
-pub fn time_above_concentration(times: &[f64], concentrations: &[f64], threshold: f64) -> Result<f64, ObservationError> {
+pub fn time_above_concentration(
+    times: &[f64],
+    concentrations: &[f64],
+    threshold: f64,
+) -> Result<f64, ObservationError> {
     if times.len() != concentrations.len() {
         return Err(ObservationError::ArrayLengthMismatch {
-            description: format!("times ({}) and concentrations ({})", times.len(), concentrations.len()),
+            description: format!(
+                "times ({}) and concentrations ({})",
+                times.len(),
+                concentrations.len()
+            ),
         });
     }
 

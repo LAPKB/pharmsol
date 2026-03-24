@@ -62,8 +62,8 @@ pub mod prelude {
     };
 
     // NCA extension traits (provides .nca(), .nca_all(), etc. on data types)
-    pub use crate::nca::{MetricsError, ObservationMetrics};
     pub use crate::nca::NCA;
+    pub use crate::nca::{MetricsError, ObservationMetrics};
     pub use crate::nca::{NCAOptions, NCAPopulation, SubjectNCAResult};
 
     // AUC primitives for direct use on raw arrays
