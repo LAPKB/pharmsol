@@ -393,13 +393,13 @@ fn kahan_sum(iter: impl Iterator<Item = f64>) -> f64 {
 
 /// Calculate terminal half-life
 #[inline]
-pub fn half_life(lambda_z: f64) -> f64 {
+pub(crate) fn half_life(lambda_z: f64) -> f64 {
     std::f64::consts::LN_2 / lambda_z
 }
 
 /// Calculate AUC extrapolated to infinity
 #[inline]
-pub fn auc_inf(auc_last: f64, clast: f64, lambda_z: f64) -> f64 {
+pub(crate) fn auc_inf(auc_last: f64, clast: f64, lambda_z: f64) -> f64 {
     if lambda_z <= 0.0 {
         return f64::NAN;
     }
@@ -408,7 +408,7 @@ pub fn auc_inf(auc_last: f64, clast: f64, lambda_z: f64) -> f64 {
 
 /// Calculate percentage of AUC extrapolated
 #[inline]
-pub fn auc_extrap_pct(auc_last: f64, auc_inf: f64) -> f64 {
+pub(crate) fn auc_extrap_pct(auc_last: f64, auc_inf: f64) -> f64 {
     if auc_inf <= 0.0 || !auc_inf.is_finite() {
         return f64::NAN;
     }
@@ -416,7 +416,7 @@ pub fn auc_extrap_pct(auc_last: f64, auc_inf: f64) -> f64 {
 }
 
 /// Calculate AUMC extrapolated to infinity
-pub fn aumc_inf(aumc_last: f64, clast: f64, tlast: f64, lambda_z: f64) -> f64 {
+pub(crate) fn aumc_inf(aumc_last: f64, clast: f64, tlast: f64, lambda_z: f64) -> f64 {
     if lambda_z <= 0.0 {
         return f64::NAN;
     }
@@ -425,7 +425,7 @@ pub fn aumc_inf(aumc_last: f64, clast: f64, tlast: f64, lambda_z: f64) -> f64 {
 
 /// Calculate mean residence time
 #[inline]
-pub fn mrt(aumc_inf: f64, auc_inf: f64) -> f64 {
+pub(crate) fn mrt(aumc_inf: f64, auc_inf: f64) -> f64 {
     if auc_inf <= 0.0 || !auc_inf.is_finite() {
         return f64::NAN;
     }
@@ -434,7 +434,7 @@ pub fn mrt(aumc_inf: f64, auc_inf: f64) -> f64 {
 
 /// Calculate clearance
 #[inline]
-pub fn clearance(dose: f64, auc_inf: f64) -> f64 {
+pub(crate) fn clearance(dose: f64, auc_inf: f64) -> f64 {
     if auc_inf <= 0.0 || !auc_inf.is_finite() {
         return f64::NAN;
     }
@@ -443,7 +443,7 @@ pub fn clearance(dose: f64, auc_inf: f64) -> f64 {
 
 /// Calculate volume of distribution
 #[inline]
-pub fn vz(dose: f64, lambda_z: f64, auc_inf: f64) -> f64 {
+pub(crate) fn vz(dose: f64, lambda_z: f64, auc_inf: f64) -> f64 {
     if lambda_z <= 0.0 || auc_inf <= 0.0 || !auc_inf.is_finite() {
         return f64::NAN;
     }
@@ -540,7 +540,7 @@ fn c0_logslope(profile: &Profile) -> Option<f64> {
 
 /// Calculate Vd for IV bolus
 #[inline]
-pub fn vd_bolus(dose: f64, c0: f64) -> f64 {
+pub(crate) fn vd_bolus(dose: f64, c0: f64) -> f64 {
     if c0 <= 0.0 || !c0.is_finite() {
         return f64::NAN;
     }
@@ -548,7 +548,7 @@ pub fn vd_bolus(dose: f64, c0: f64) -> f64 {
 }
 
 /// Calculate Vss for IV administration
-pub fn vss(dose: f64, aumc_inf: f64, auc_inf: f64) -> f64 {
+pub(crate) fn vss(dose: f64, aumc_inf: f64, auc_inf: f64) -> f64 {
     if auc_inf <= 0.0 || !auc_inf.is_finite() {
         return f64::NAN;
     }
@@ -557,7 +557,7 @@ pub fn vss(dose: f64, aumc_inf: f64, auc_inf: f64) -> f64 {
 
 /// Calculate MRT corrected for infusion duration
 #[inline]
-pub fn mrt_infusion(mrt: f64, duration: f64) -> f64 {
+pub(crate) fn mrt_infusion(mrt: f64, duration: f64) -> f64 {
     mrt - duration / 2.0
 }
 
@@ -569,7 +569,7 @@ pub fn mrt_infusion(mrt: f64, duration: f64) -> f64 {
 /// Returns the time at which concentration first increases (PKNCA method).
 /// For profiles starting at t=0 with C=0 (or BLQ), this returns 0 if there's
 /// an increase to the next point.
-pub fn tlag_from_raw(
+pub(crate) fn tlag_from_raw(
     times: &[f64],
     concentrations: &[f64],
     censoring: &[crate::Censor],
@@ -611,7 +611,7 @@ pub fn tlag_from_raw(
 // ============================================================================
 
 /// Calculate Cmin from profile
-pub fn cmin(profile: &Profile) -> f64 {
+pub(crate) fn cmin(profile: &Profile) -> f64 {
     profile
         .concentrations
         .iter()
@@ -623,7 +623,7 @@ pub fn cmin(profile: &Profile) -> f64 {
 
 /// Calculate average concentration
 #[inline]
-pub fn cavg(auc_tau: f64, tau: f64) -> f64 {
+pub(crate) fn cavg(auc_tau: f64, tau: f64) -> f64 {
     if tau <= 0.0 {
         return f64::NAN;
     }
@@ -631,7 +631,7 @@ pub fn cavg(auc_tau: f64, tau: f64) -> f64 {
 }
 
 /// Calculate fluctuation percentage
-pub fn fluctuation(cmax: f64, cmin: f64, cavg: f64) -> f64 {
+pub(crate) fn fluctuation(cmax: f64, cmin: f64, cavg: f64) -> f64 {
     if cavg <= 0.0 {
         return f64::NAN;
     }
@@ -639,7 +639,7 @@ pub fn fluctuation(cmax: f64, cmin: f64, cavg: f64) -> f64 {
 }
 
 /// Calculate swing
-pub fn swing(cmax: f64, cmin: f64) -> f64 {
+pub(crate) fn swing(cmax: f64, cmin: f64) -> f64 {
     if cmin <= 0.0 {
         return f64::NAN;
     }
@@ -655,7 +655,7 @@ pub fn swing(cmax: f64, cmin: f64) -> f64 {
 /// Useful for drugs with nonlinear pharmacokinetics where terminal half-life
 /// may not reflect the effective duration of drug persistence.
 #[inline]
-pub fn effective_half_life(mrt: f64) -> f64 {
+pub(crate) fn effective_half_life(mrt: f64) -> f64 {
     if !mrt.is_finite() || mrt <= 0.0 {
         return f64::NAN;
     }
@@ -666,7 +666,7 @@ pub fn effective_half_life(mrt: f64) -> f64 {
 ///
 /// Alternative representation of overall elimination.
 #[inline]
-pub fn kel(mrt: f64) -> f64 {
+pub(crate) fn kel(mrt: f64) -> f64 {
     if !mrt.is_finite() || mrt <= 0.0 {
         return f64::NAN;
     }
@@ -677,7 +677,7 @@ pub fn kel(mrt: f64) -> f64 {
 ///
 /// Used in steady-state analysis to assess PK variability within a dosing interval.
 #[inline]
-pub fn peak_trough_ratio(cmax: f64, cmin: f64) -> f64 {
+pub(crate) fn peak_trough_ratio(cmax: f64, cmin: f64) -> f64 {
     if cmin <= 0.0 || !cmin.is_finite() {
         return f64::NAN;
     }
@@ -692,7 +692,7 @@ pub fn peak_trough_ratio(cmax: f64, cmin: f64) -> f64 {
 /// This is PD-relevant for concentration-dependent drugs (e.g., antibiotics)
 /// where efficacy correlates with the time the drug concentration exceeds
 /// a minimum inhibitory concentration (MIC).
-pub fn time_above_concentration(
+pub(crate) fn time_above_concentration(
     times: &[f64],
     concentrations: &[f64],
     threshold: f64,
