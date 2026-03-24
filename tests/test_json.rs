@@ -991,7 +991,9 @@ mod library_models {
         ];
 
         for id in &ids {
-            let model = library.get(id).unwrap_or_else(|| panic!("Missing model: {}", id));
+            let model = library
+                .get(id)
+                .unwrap_or_else(|| panic!("Missing model: {}", id));
             validator
                 .validate(model)
                 .unwrap_or_else(|e| panic!("Validation failed for {}: {:?}", id, e));

@@ -27,6 +27,52 @@ pub struct GeneratedCode {
     pub kind: EqnKind,
 }
 
+/// Inferred equation dimensions from generated code, mirroring the
+/// `ode!` proc-macro approach: scan for max literal bracket-indices of
+/// state (`x`, `dx`), drug-input (`rateiv`, `_b`, `b`, `bolus`), and
+/// output (`y`) vectors.
+struct InferredNeqs {
+    nstates: usize,
+    ndrugs: usize,
+    nout: usize,
+}
+
+/// Scan `code` for `name[literal_int]` patterns and return the maximum
+/// literal integer found, or `None` if the name never appears with an index.
+fn max_index_of(code: &str, names: &[&str]) -> Option<usize> {
+    let mut max: Option<usize> = None;
+    for name in names {
+        let needle = format!("{name}[");
+        let mut start = 0;
+        while let Some(pos) = code[start..].find(&needle) {
+            let idx_start = start + pos + needle.len();
+            if let Some(end) = code[idx_start..].find(']') {
+                if let Ok(n) = code[idx_start..idx_start + end].parse::<usize>() {
+                    max = Some(max.map_or(n, |m: usize| m.max(n)));
+                }
+            }
+            start = idx_start;
+        }
+    }
+    max
+}
+
+/// Infer nstates, ndrugs, nout from the generated closure code.
+/// Falls back to 1 for each dimension when no indices are found.
+fn infer_neqs(closures: &[&str]) -> InferredNeqs {
+    let all: String = closures.join("\n");
+
+    let nstates = max_index_of(&all, &["x", "dx"]).map_or(1, |n| n + 1);
+    let ndrugs = max_index_of(&all, &["rateiv", "_b", "bolus"]).map_or(1, |n| n + 1);
+    let nout = max_index_of(&all, &["y"]).map_or(1, |n| n + 1);
+
+    InferredNeqs {
+        nstates,
+        ndrugs,
+        nout,
+    }
+}
+
 /// Code generator for JSON models
 pub struct CodeGenerator<'a> {
     model: &'a JsonModel,
@@ -79,10 +125,8 @@ impl<'a> CodeGenerator<'a> {
         let fa = self.closure_gen.generate_fa()?;
         let init = self.closure_gen.generate_init()?;
         let out = self.closure_gen.generate_output()?;
-        let neqs = self.model.get_neqs();
 
-        let nstates = neqs.0;
-        let nouts = neqs.1;
+        let neqs = infer_neqs(&[&lag, &fa, &init, &out]);
 
         Ok(format!(
             r#"equation::Analytical::new(
@@ -95,16 +139,16 @@ impl<'a> CodeGenerator<'a> {
 )
 .with_nstates({nstates})
 .with_ndrugs({ndrugs})
-.with_nout({nouts})"#,
+.with_nout({nout})"#,
             func_name = func.rust_name(),
             seq_eq = seq_eq,
             lag = lag,
             fa = fa,
             init = init,
             out = out,
-            nstates = nstates,
-            ndrugs = nstates,
-            nouts = nouts,
+            nstates = neqs.nstates,
+            ndrugs = neqs.ndrugs,
+            nout = neqs.nout,
         ))
     }
 
@@ -115,10 +159,8 @@ impl<'a> CodeGenerator<'a> {
         let fa = self.closure_gen.generate_fa()?;
         let init = self.closure_gen.generate_init()?;
         let out = self.closure_gen.generate_output()?;
-        let neqs = self.model.get_neqs();
 
-        let nstates = neqs.0;
-        let nouts = neqs.1;
+        let neqs = infer_neqs(&[&diffeq, &lag, &fa, &init, &out]);
 
         Ok(format!(
             r#"equation::ODE::new(
@@ -130,15 +172,15 @@ impl<'a> CodeGenerator<'a> {
 )
 .with_nstates({nstates})
 .with_ndrugs({ndrugs})
-.with_nout({nouts})"#,
+.with_nout({nout})"#,
             diffeq = diffeq,
             lag = lag,
             fa = fa,
             init = init,
             out = out,
-            nstates = nstates,
-            ndrugs = nstates,
-            nouts = nouts,
+            nstates = neqs.nstates,
+            ndrugs = neqs.ndrugs,
+            nout = neqs.nout,
         ))
     }
 
@@ -150,11 +192,9 @@ impl<'a> CodeGenerator<'a> {
         let fa = self.closure_gen.generate_fa()?;
         let init = self.closure_gen.generate_init()?;
         let out = self.closure_gen.generate_output()?;
-        let neqs = self.model.get_neqs();
         let particles = self.model.particles.unwrap_or(1000);
 
-        let nstates = neqs.0;
-        let nouts = neqs.1;
+        let neqs = infer_neqs(&[&drift, &diffusion, &lag, &fa, &init, &out]);
 
         Ok(format!(
             r#"equation::SDE::new(
@@ -168,16 +208,16 @@ impl<'a> CodeGenerator<'a> {
 )
 .with_nstates({nstates})
 .with_ndrugs({ndrugs})
-.with_nout({nouts})"#,
+.with_nout({nout})"#,
             drift = drift,
             diffusion = diffusion,
             lag = lag,
             fa = fa,
             init = init,
             out = out,
-            nstates = nstates,
-            ndrugs = nstates,
-            nouts = nouts,
+            nstates = neqs.nstates,
+            ndrugs = neqs.ndrugs,
+            nout = neqs.nout,
             particles = particles,
         ))
     }

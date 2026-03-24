@@ -119,7 +119,7 @@ impl<'a> ClosureGenerator<'a> {
             .iter()
             .map(|name| {
                 format!(
-                    "let {} = cov.get_covariate(\"{}\", t).unwrap_or(0.0);",
+                    "let {} = cov.get_covariate(\"{}\", t).unwrap();",
                     name, name
                 )
             })
