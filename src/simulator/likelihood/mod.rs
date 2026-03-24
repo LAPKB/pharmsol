@@ -61,13 +61,12 @@ mod subject;
 
 // Re-export main types
 pub use matrix::log_likelihood_matrix;
-pub use prediction::Prediction;
-pub use subject::{PopulationPredictions, SubjectPredictions};
-
 #[allow(deprecated)]
 pub use matrix::log_psi;
 #[allow(deprecated)]
 pub use matrix::psi;
+pub use prediction::Prediction;
+pub use subject::{PopulationPredictions, SubjectPredictions};
 
 use ndarray::Array2;
 use rayon::prelude::*;

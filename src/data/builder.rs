@@ -113,7 +113,7 @@ impl SubjectBuilder {
     /// * `time` - Time of the observation
     /// * `value` - Observed value (e.g., drug concentration)
     /// * `outeq` - Output equation number (zero-indexed) corresponding to this
-    /// observation
+    ///   observation
     pub fn censored_observation(
         self,
         time: f64,
@@ -229,21 +229,19 @@ impl SubjectBuilder {
                                 observation.errorpoly().unwrap(),
                                 observation.censoring(),
                             )
+                        } else if observation.censored() {
+                            self.censored_observation(
+                                observation.time() + delta * i as f64,
+                                observation.value().unwrap(),
+                                observation.outeq(),
+                                observation.censoring(),
+                            )
                         } else {
-                            if observation.censored() {
-                                self.censored_observation(
-                                    observation.time() + delta * i as f64,
-                                    observation.value().unwrap(),
-                                    observation.outeq(),
-                                    observation.censoring(),
-                                )
-                            } else {
-                                self.observation(
-                                    observation.time() + delta * i as f64,
-                                    observation.value().unwrap(),
-                                    observation.outeq(),
-                                )
-                            }
+                            self.observation(
+                                observation.time() + delta * i as f64,
+                                observation.value().unwrap(),
+                                observation.outeq(),
+                            )
                         }
                     } else {
                         self.missing_observation(

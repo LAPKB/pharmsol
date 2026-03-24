@@ -309,6 +309,7 @@ impl EquationPriv for SDE {
         output: &mut Self::P,
     ) -> Result<(), PharmsolError> {
         let mut pred = vec![Prediction::default(); self.nparticles];
+
         pred.par_iter_mut().enumerate().for_each(|(i, p)| {
             let mut y = V::zeros(self.get_nouteqs(), NalgebraContext);
             (self.out)(
