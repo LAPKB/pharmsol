@@ -1,3 +1,8 @@
+//! Procedural macros for [`pharmsol`](https://crates.io/crates/pharmsol).
+//!
+//! This crate is not intended to be used directly. Use the re-exports from the
+//! `pharmsol` crate instead.
+
 use proc_macro::TokenStream;
 use proc_macro2::TokenTree;
 use quote::{quote, ToTokens};
