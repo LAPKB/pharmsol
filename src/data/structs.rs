@@ -285,21 +285,6 @@ impl Data {
         outeq_values.dedup();
         outeq_values
     }
-
-    /// Total dose per subject
-    pub fn total_dose(&self) -> Vec<f64> {
-        self.subjects.iter().map(|s| s.total_dose()).collect()
-    }
-
-    /// Route per subject (detected from first dosed occasion)
-    pub fn route(&self) -> Vec<Route> {
-        self.subjects.iter().map(|s| s.route()).collect()
-    }
-
-    /// Dose events per subject
-    pub fn doses(&self) -> Vec<Vec<(f64, f64, usize)>> {
-        self.subjects.iter().map(|s| s.doses()).collect()
-    }
 }
 
 impl IntoIterator for Data {
@@ -511,69 +496,6 @@ impl Subject {
             }
         }
         hasher.finish()
-    }
-
-    /// Extract time-concentration data for a specific output equation
-    ///
-    /// Returns vectors of (times, concentrations, censoring) for the specified outeq
-    /// across all occasions.
-    ///
-    /// # Arguments
-    ///
-    /// * `outeq` - Output equation index to extract
-    ///
-    /// # Returns
-    ///
-    /// Tuple of (times, concentrations, censoring) vectors
-    pub fn get_observations(&self, outeq: usize) -> (Vec<f64>, Vec<f64>, Vec<Censor>) {
-        let mut times = Vec::new();
-        let mut concs = Vec::new();
-        let mut censoring = Vec::new();
-
-        for occasion in &self.occasions {
-            let (t, c, cens) = occasion.get_observations(outeq);
-            times.extend(t);
-            concs.extend(c);
-            censoring.extend(cens);
-        }
-
-        (times, concs, censoring)
-    }
-
-    // ========================================================================
-    // Dose Introspection (delegates to occasions)
-    // ========================================================================
-
-    /// Total dose administered across all occasions
-    pub fn total_dose(&self) -> f64 {
-        self.occasions.iter().map(|o| o.total_dose()).sum()
-    }
-
-    /// Route detected from the first occasion that has doses
-    ///
-    /// In multi-occasion subjects, returns the route from the first
-    /// occasion containing dose events.
-    pub fn route(&self) -> Route {
-        self.occasions
-            .iter()
-            .find(|o| o.total_dose() > 0.0)
-            .map(|o| o.route())
-            .unwrap_or_default()
-    }
-
-    /// All dose events across all occasions as (time, amount, input) tuples
-    pub fn doses(&self) -> Vec<(f64, f64, usize)> {
-        self.occasions.iter().flat_map(|o| o.doses()).collect()
-    }
-
-    /// Whether any occasion contains an infusion event
-    pub fn has_infusion(&self) -> bool {
-        self.occasions.iter().any(|o| o.has_infusion())
-    }
-
-    /// Duration of the first infusion across all occasions, if any
-    pub fn infusion_duration(&self) -> Option<f64> {
-        self.occasions.iter().find_map(|o| o.infusion_duration())
     }
 
     // ========================================================================
@@ -984,11 +906,6 @@ impl Occasion {
         }
     }
 
-    /// Whether this occasion contains any infusion events
-    pub(crate) fn has_infusion(&self) -> bool {
-        self.events.iter().any(|e| matches!(e, Event::Infusion(_)))
-    }
-
     /// All distinct administration routes detected from dose events
     ///
     /// Used by NCA to detect mixed-route occasions. Returns one entry per
@@ -1034,21 +951,6 @@ impl Occasion {
             Event::Infusion(inf) => Some(inf.duration()),
             _ => None,
         })
-    }
-
-    /// All dose events as (time, amount, input) tuples
-    ///
-    /// Returns a vector of all bolus and infusion doses with their timing,
-    /// amount, and target compartment. Useful for multi-dose analysis.
-    pub(crate) fn doses(&self) -> Vec<(f64, f64, usize)> {
-        self.events
-            .iter()
-            .filter_map(|e| match e {
-                Event::Bolus(b) => Some((b.time(), b.amount(), b.input())),
-                Event::Infusion(inf) => Some((inf.time(), inf.amount(), inf.input())),
-                _ => None,
-            })
-            .collect()
     }
 
     // ========================================================================
