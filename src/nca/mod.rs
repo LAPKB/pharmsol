@@ -1,31 +1,8 @@
 //! Non-Compartmental Analysis (NCA) for pharmacokinetic data
 //!
-//! This module provides a clean, powerful API for calculating standard NCA parameters
-//! from concentration-time data. It integrates seamlessly with pharmsol's data structures
-//! ([`crate::Subject`], [`crate::Occasion`]).
-//!
-//! # Design Philosophy
-//!
-//! - **Simple**: Single entry point via `.nca()` method on data structures
-//! - **Powerful**: Full support for all standard NCA parameters
-//! - **Data-aware**: Doses and routes are auto-detected from the data
-//! - **Configurable**: Analysis options via [`NCAOptions`]
-//!
-//! # Key Parameters
-//!
-//! | Parameter | Description |
-//! |-----------|-------------|
-//! | Cmax | Maximum observed concentration |
-//! | Tmax | Time of maximum concentration |
-//! | Clast | Last measurable concentration (> 0) |
-//! | Tlast | Time of last measurable concentration |
-//! | AUClast | Area under curve from 0 to Tlast |
-//! | AUCinf | AUC extrapolated to infinity |
-//! | λz | Terminal elimination rate constant |
-//! | t½ | Terminal half-life (ln(2)/λz) |
-//! | CL/F | Apparent clearance |
-//! | Vz/F | Apparent volume of distribution |
-//! | MRT | Mean residence time |
+//! This module provides an API for calculating standard NCA parameters
+//! from the basic Pharmsol's data structures
+//! ([`crate::Subject`], [`crate::Occasion`] and [`crate::Data`]).
 //!
 //! # Usage
 //!
