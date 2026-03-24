@@ -1,6 +1,6 @@
 //! Main NCA analysis orchestrator
 //!
-//! TODO: Ka estimation (flip-flop detection, Wagner-Nelson)
+//! Future: Ka estimation (flip-flop detection, Wagner-Nelson)
 
 use super::calc;
 use super::error::NCAError;
@@ -38,20 +38,23 @@ impl Precomputed {
     }
 }
 
-pub(crate) fn analyze(
-    profile: &Profile,
-    dose_amount: Option<f64>,
-    route: Route,
-    infusion_duration: Option<f64>,
-    options: &NCAOptions,
-    raw_tlag: Option<f64>,
-    subject_id: Option<&str>,
-    occasion: Option<usize>,
-) -> Result<NCAResult, NCAError> {
-    let pre = Precomputed::from_profile(profile, options.auc_method)?;
+/// Context for a single NCA analysis run
+pub(crate) struct AnalysisContext<'a> {
+    pub profile: &'a Profile,
+    pub dose_amount: Option<f64>,
+    pub route: Route,
+    pub infusion_duration: Option<f64>,
+    pub options: &'a NCAOptions,
+    pub raw_tlag: Option<f64>,
+    pub subject_id: Option<&'a str>,
+    pub occasion: Option<usize>,
+}
 
-    let mut exposure = compute_exposure(&pre, profile, options, raw_tlag)?;
-    let (terminal, lambda_z_result) = compute_terminal(&pre, profile, options);
+pub(crate) fn analyze(ctx: &AnalysisContext) -> Result<NCAResult, NCAError> {
+    let pre = Precomputed::from_profile(ctx.profile, ctx.options.auc_method)?;
+
+    let mut exposure = compute_exposure(&pre, ctx.profile, ctx.options, ctx.raw_tlag)?;
+    let (terminal, lambda_z_result) = compute_terminal(&pre, ctx.profile, ctx.options);
 
     if let Some(ref lz) = lambda_z_result {
         let auc_inf_obs = pre.auc_inf(pre.clast, lz.lambda_z);
@@ -67,30 +70,32 @@ pub(crate) fn analyze(
         }
     }
 
-    let clearance = dose_amount
+    let clearance = ctx
+        .dose_amount
         .and_then(|d| lambda_z_result.as_ref().map(|lz| (d, lz)))
         .and_then(|(d, lz)| {
             exposure
                 .auc_inf_obs
-                .map(|auc_inf| compute_clearance(d, auc_inf, lz.lambda_z, route, &pre))
+                .map(|auc_inf| compute_clearance(d, auc_inf, lz.lambda_z, ctx.route, &pre))
         });
 
     let route_params = compute_route_specific(
         &pre,
-        profile,
-        dose_amount,
-        route,
-        infusion_duration,
+        ctx.profile,
+        ctx.dose_amount,
+        ctx.route,
+        ctx.infusion_duration,
         lambda_z_result.as_ref(),
-        options,
+        ctx.options,
     );
 
-    let steady_state = options
+    let steady_state = ctx
+        .options
         .tau
-        .map(|tau| compute_steady_state(&pre, profile, tau, options))
+        .map(|tau| compute_steady_state(&pre, ctx.profile, tau, ctx.options))
         .transpose()?;
 
-    if let Some(d) = dose_amount {
+    if let Some(d) = ctx.dose_amount {
         if d > 0.0 {
             exposure.cmax_dn = Some(exposure.cmax / d);
             exposure.auc_last_dn = Some(exposure.auc_last / d);
@@ -100,21 +105,21 @@ pub(crate) fn analyze(
         }
     }
 
-    let multi_dose = compute_multi_dose(profile, options)?;
+    let multi_dose = compute_multi_dose(ctx.profile, ctx.options)?;
 
     let quality = build_quality(
         &exposure,
         terminal.as_ref(),
         lambda_z_result.as_ref(),
-        options,
+        ctx.options,
     );
 
     Ok(NCAResult {
-        subject_id: subject_id.map(|s| s.to_string()),
-        occasion,
-        dose_amount,
-        route: Some(route),
-        infusion_duration,
+        subject_id: ctx.subject_id.map(|s| s.to_string()),
+        occasion: ctx.occasion,
+        dose_amount: ctx.dose_amount,
+        route: Some(ctx.route),
+        infusion_duration: ctx.infusion_duration,
         exposure,
         terminal,
         clearance,
@@ -441,22 +446,31 @@ mod tests {
         Profile::from_occasion(occ, 0, &BLQRule::Exclude).unwrap()
     }
 
+    fn run_analyze(
+        profile: &Profile,
+        dose_amount: Option<f64>,
+        route: Route,
+        infusion_duration: Option<f64>,
+        options: &NCAOptions,
+    ) -> Result<NCAResult, NCAError> {
+        analyze(&AnalysisContext {
+            profile,
+            dose_amount,
+            route,
+            infusion_duration,
+            options,
+            raw_tlag: None,
+            subject_id: None,
+            occasion: None,
+        })
+    }
+
     #[test]
     fn test_analyze_basic() {
         let profile = test_profile();
         let options = NCAOptions::default();
 
-        let result = analyze(
-            &profile,
-            None,
-            Route::Extravascular,
-            None,
-            &options,
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        let result = run_analyze(&profile, None, Route::Extravascular, None, &options).unwrap();
 
         assert_eq!(result.exposure.cmax, 10.0);
         assert_eq!(result.exposure.tmax, 1.0);
@@ -470,17 +484,8 @@ mod tests {
         let profile = test_profile();
         let options = NCAOptions::default();
 
-        let result = analyze(
-            &profile,
-            Some(100.0),
-            Route::Extravascular,
-            None,
-            &options,
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        let result =
+            run_analyze(&profile, Some(100.0), Route::Extravascular, None, &options).unwrap();
 
         // Should have clearance if terminal phase estimated
         if result.terminal.is_some() {
@@ -495,17 +500,7 @@ mod tests {
         let profile = test_profile();
         let options = NCAOptions::default();
 
-        let result = analyze(
-            &profile,
-            Some(100.0),
-            Route::IVBolus,
-            None,
-            &options,
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        let result = run_analyze(&profile, Some(100.0), Route::IVBolus, None, &options).unwrap();
 
         assert!(matches!(result.route_params, Some(RouteParams::IVBolus(_))));
     }
@@ -515,15 +510,12 @@ mod tests {
         let profile = test_profile();
         let options = NCAOptions::default();
 
-        let result = analyze(
+        let result = run_analyze(
             &profile,
             Some(100.0),
             Route::IVInfusion,
             Some(1.0),
             &options,
-            None,
-            None,
-            None,
         )
         .unwrap();
 
@@ -541,17 +533,8 @@ mod tests {
         let profile = test_profile();
         let options = NCAOptions::default().with_tau(12.0);
 
-        let result = analyze(
-            &profile,
-            Some(100.0),
-            Route::Extravascular,
-            None,
-            &options,
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        let result =
+            run_analyze(&profile, Some(100.0), Route::Extravascular, None, &options).unwrap();
 
         assert!(result.steady_state.is_some());
         let ss = result.steady_state.unwrap();
@@ -564,17 +547,8 @@ mod tests {
         let profile = test_profile(); // times: 0,1,2,4,8,12,24 concs: 0,10,8,6,3,1.5,0.5
         let options = NCAOptions::default().with_dose_times(vec![0.0, 8.0]);
 
-        let result = analyze(
-            &profile,
-            Some(100.0),
-            Route::Extravascular,
-            None,
-            &options,
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        let result =
+            run_analyze(&profile, Some(100.0), Route::Extravascular, None, &options).unwrap();
 
         assert!(result.multi_dose.is_some());
         let md = result.multi_dose.unwrap();
@@ -603,17 +577,8 @@ mod tests {
         let profile = test_profile();
         let options = NCAOptions::default();
 
-        let result = analyze(
-            &profile,
-            Some(100.0),
-            Route::Extravascular,
-            None,
-            &options,
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        let result =
+            run_analyze(&profile, Some(100.0), Route::Extravascular, None, &options).unwrap();
 
         assert!(result.multi_dose.is_none());
     }

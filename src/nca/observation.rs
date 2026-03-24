@@ -350,15 +350,8 @@ fn get_positional_action(
     tlast_idx: Option<usize>,
 ) -> BlqAction {
     match (tfirst_idx, tlast_idx) {
-        (Some(tfirst), Some(tlast)) => {
-            if idx <= tfirst {
-                BlqAction::Keep
-            } else if idx >= tlast {
-                BlqAction::Keep
-            } else {
-                BlqAction::Drop
-            }
-        }
+        // Drop interior BLQ (between tfirst and tlast), keep leading/trailing
+        (Some(tfirst), Some(tlast)) if idx > tfirst && idx < tlast => BlqAction::Drop,
         _ => BlqAction::Keep,
     }
 }

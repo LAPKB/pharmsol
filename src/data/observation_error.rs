@@ -12,7 +12,7 @@ use thiserror::Error;
 /// Errors arising from observation data processing
 ///
 /// These represent problems with the input data itself, not with NCA analysis.
-/// Used by [`ObservationProfile`](crate::data::observation::ObservationProfile)
+/// Used by [`ObservationProfile`](crate::nca::observation::ObservationProfile)
 /// construction methods.
 #[derive(Error, Debug, Clone)]
 pub enum ObservationError {

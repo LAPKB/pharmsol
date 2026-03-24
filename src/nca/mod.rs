@@ -114,7 +114,7 @@ pub use error::NCAError;
 pub use sparse::{sparse_auc, sparse_auc_from_data, SparsePKResult};
 pub use summary::{nca_to_csv, summarize, ParameterSummary, PopulationSummary};
 pub use superposition::{Superposition, SuperpositionResult};
-pub use traits::{NCAPopulation, SubjectNCAResult, NCA};
+pub use traits::{MetricsError, NCAPopulation, ObservationMetrics, SubjectNCAResult, NCA};
 pub use types::{
     C0Method, ClearanceParams, ExposureParams, IVBolusParams, IVInfusionParams, LambdaZMethod,
     LambdaZOptions, MultiDoseParams, NCAOptions, NCAResult, Quality, RegressionStats, RouteParams,

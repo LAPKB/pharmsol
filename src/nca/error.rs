@@ -9,10 +9,6 @@ pub enum NCAError {
     #[error(transparent)]
     Observation(#[from] crate::data::observation_error::ObservationError),
 
-    /// An error from observation metrics computation
-    #[error(transparent)]
-    Metrics(#[from] crate::data::traits::MetricsError),
-
     /// Lambda-z estimation failed
     #[error("Lambda-z estimation failed: {reason}")]
     LambdaZFailed { reason: String },
