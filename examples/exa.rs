@@ -48,8 +48,9 @@ fn main() {
             fetch_params!(p, _ke, v);
             y[0] = x[0] / v;
         },
-        (1, 1),
-    );
+    )
+    .with_nstates(1)
+    .with_nout(1);
 
     // =========================================================================
     // 2. Compile and load ODE model dynamically using exa
@@ -72,8 +73,9 @@ fn main() {
                     fetch_params!(p, _ke, v);
                     y[0] = x[0] / v;
                 },
-                (1, 1),
             )
+            .with_nstates(1)
+            .with_nout(1)
         "#
         .to_string(),
         Some(ode_output_path),
@@ -106,8 +108,9 @@ fn main() {
                     fetch_params!(p, _ke, v);
                     y[0] = x[0] / v;
                 },
-                (1, 1),
             )
+            .with_nstates(1)
+            .with_nout(1)
         "#
         .to_string(),
         Some(analytical_output_path),
