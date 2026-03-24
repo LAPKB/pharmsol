@@ -2,8 +2,10 @@
 name = "pharmsol-macros"
 version = "0.1.0"
 edition = "2021"
-description = "Useful macros for pharmsol."
+description = "Procedural macros for pharmsol. Not intended for direct use."
 license = "GPL-3.0"
+repository = "https://github.com/LAPKB/pharmsol"
+readme = "README.md"
 
 [lib]
 proc-macro = true
