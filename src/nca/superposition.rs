@@ -24,8 +24,8 @@
 //! let result = subject.superposition_from_nca(&nca, 12.0, None)?;
 //! ```
 
+use super::observation::ObservationProfile;
 use crate::data::event::BLQRule;
-use crate::data::observation::ObservationProfile;
 use crate::nca::error::NCAError;
 use crate::nca::traits::NCA;
 use crate::nca::types::{NCAOptions, NCAResult};
@@ -189,7 +189,7 @@ fn concentration_at_time(
 
     if time <= tlast {
         // Within observation range: interpolate
-        profile.interpolate(time)
+        profile.interpolate(time).unwrap_or(0.0)
     } else {
         // Beyond observed data: extrapolate using terminal phase
         clast * (-lambda_z * (time - tlast)).exp()

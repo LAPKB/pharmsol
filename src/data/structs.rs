@@ -917,7 +917,7 @@ impl Occasion {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```rust,ignore
     /// use pharmsol::*;
     ///
     /// let subject = Subject::builder("pt1")
@@ -929,7 +929,7 @@ impl Occasion {
     /// let occasion = &subject.occasions()[0];
     /// assert_eq!(occasion.total_dose(), 100.0);
     /// ```
-    pub fn total_dose(&self) -> f64 {
+    pub(crate) fn total_dose(&self) -> f64 {
         self.events.iter().fold(0.0, |acc, e| match e {
             Event::Bolus(b) => acc + b.amount(),
             Event::Infusion(inf) => acc + inf.amount(),
@@ -950,7 +950,7 @@ impl Occasion {
     /// The `input` field on [`Bolus`] and [`Infusion`] events encodes the target compartment:
     /// - `input == 0`: Depot compartment (extravascular absorption — oral, SC, IM, etc.)
     /// - `input >= 1`: Central compartment (intravenous)
-    pub fn route(&self) -> Route {
+    pub(crate) fn route(&self) -> Route {
         let mut has_infusion = false;
         let mut has_extravascular = false;
         let mut has_dose = false;
@@ -985,7 +985,7 @@ impl Occasion {
     }
 
     /// Whether this occasion contains any infusion events
-    pub fn has_infusion(&self) -> bool {
+    pub(crate) fn has_infusion(&self) -> bool {
         self.events.iter().any(|e| matches!(e, Event::Infusion(_)))
     }
 
@@ -993,7 +993,7 @@ impl Occasion {
     ///
     /// Used by NCA to detect mixed-route occasions. Returns one entry per
     /// unique [`Route`] variant present (IVBolus, IVInfusion, Extravascular).
-    pub fn routes(&self) -> Vec<Route> {
+    pub(crate) fn routes(&self) -> Vec<Route> {
         let mut has_infusion = false;
         let mut has_extravascular = false;
         let mut has_iv_bolus = false;
@@ -1029,7 +1029,7 @@ impl Occasion {
     ///
     /// Returns `None` if there are no infusion events.
     /// If multiple infusions exist, returns the duration of the first.
-    pub fn infusion_duration(&self) -> Option<f64> {
+    pub(crate) fn infusion_duration(&self) -> Option<f64> {
         self.events.iter().find_map(|e| match e {
             Event::Infusion(inf) => Some(inf.duration()),
             _ => None,
@@ -1040,7 +1040,7 @@ impl Occasion {
     ///
     /// Returns a vector of all bolus and infusion doses with their timing,
     /// amount, and target compartment. Useful for multi-dose analysis.
-    pub fn doses(&self) -> Vec<(f64, f64, usize)> {
+    pub(crate) fn doses(&self) -> Vec<(f64, f64, usize)> {
         self.events
             .iter()
             .filter_map(|e| match e {
@@ -1064,7 +1064,7 @@ impl Occasion {
     /// # Returns
     ///
     /// Tuple of (times, concentrations, censoring) vectors
-    pub fn get_observations(&self, outeq: usize) -> (Vec<f64>, Vec<f64>, Vec<Censor>) {
+    pub(crate) fn get_observations(&self, outeq: usize) -> (Vec<f64>, Vec<f64>, Vec<Censor>) {
         let mut times = Vec::new();
         let mut concs = Vec::new();
         let mut censoring = Vec::new();

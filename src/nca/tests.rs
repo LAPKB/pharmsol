@@ -3,7 +3,7 @@
 //! Tests cover all major NCA parameters and edge cases.
 //! All tests use Subject::builder() as the single entry point.
 
-use crate::data::observation::ObservationProfile;
+use super::observation::ObservationProfile;
 use crate::data::Subject;
 use crate::nca::calc::lambda_z_candidates;
 use crate::nca::*;

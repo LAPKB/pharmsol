@@ -13,7 +13,7 @@
 //! let total = auc(&times, &concs, &AUCMethod::Linear).unwrap();
 //! let partial = auc_interval(&times, &concs, 1.0, 4.0, &AUCMethod::Linear).unwrap();
 //! let moment = aumc(&times, &concs, &AUCMethod::Linear).unwrap();
-//! let c_at_3 = interpolate_linear(&times, &concs, 3.0);
+//! let c_at_3 = interpolate_linear(&times, &concs, 3.0).unwrap();
 //! ```
 
 use crate::data::event::AUCMethod;
@@ -238,7 +238,11 @@ pub fn auc_interval(
         });
     }
 
-    if end <= start {
+    if end < start {
+        return Err(ObservationError::InvalidTimeSequence);
+    }
+
+    if end == start {
         return Ok(0.0);
     }
 
@@ -260,13 +264,13 @@ pub fn auc_interval(
         let seg_end = t2.min(end);
 
         let c1 = if t1 < start {
-            interpolate_linear(times, values, start)
+            interpolate_linear(times, values, start)?
         } else {
             values[i - 1]
         };
 
         let c2 = if t2 > end {
-            interpolate_linear(times, values, end)
+            interpolate_linear(times, values, end)?
         } else {
             values[i]
         };
@@ -315,27 +319,31 @@ pub fn aumc(times: &[f64], values: &[f64], method: &AUCMethod) -> Result<f64, Ob
 ///
 /// let times = [0.0, 2.0, 4.0];
 /// let values = [0.0, 10.0, 6.0];
-/// assert!((interpolate_linear(&times, &values, 1.0) - 5.0).abs() < 1e-10);
-/// assert!((interpolate_linear(&times, &values, 3.0) - 8.0).abs() < 1e-10);
+/// assert!((interpolate_linear(&times, &values, 1.0).unwrap() - 5.0).abs() < 1e-10);
+/// assert!((interpolate_linear(&times, &values, 3.0).unwrap() - 8.0).abs() < 1e-10);
 /// ```
-pub fn interpolate_linear(times: &[f64], values: &[f64], time: f64) -> f64 {
-    debug_assert_eq!(
-        times.len(),
-        values.len(),
-        "times and values must have equal length"
-    );
+pub fn interpolate_linear(
+    times: &[f64],
+    values: &[f64],
+    time: f64,
+) -> Result<f64, ObservationError> {
+    if times.len() != values.len() {
+        return Err(ObservationError::ArrayLengthMismatch {
+            description: format!("times ({}) and values ({})", times.len(), values.len()),
+        });
+    }
 
     if times.is_empty() {
-        return 0.0;
+        return Err(ObservationError::InsufficientData { n: 0, required: 1 });
     }
 
     if time <= times[0] {
-        return values[0];
+        return Ok(values[0]);
     }
 
     let last = times.len() - 1;
     if time >= times[last] {
-        return values[last];
+        return Ok(values[last]);
     }
 
     let upper_idx = times.iter().position(|&t| t >= time).unwrap_or(last);
@@ -347,9 +355,9 @@ pub fn interpolate_linear(times: &[f64], values: &[f64], time: f64) -> f64 {
     let v2 = values[upper_idx];
 
     if (t2 - t1).abs() < 1e-10 {
-        v1
+        Ok(v1)
     } else {
-        v1 + (v2 - v1) * (time - t1) / (t2 - t1)
+        Ok(v1 + (v2 - v1) * (time - t1) / (t2 - t1))
     }
 }
 
@@ -496,9 +504,20 @@ mod tests {
     fn test_auc_interval_reversed() {
         let times = [0.0, 1.0, 2.0];
         let concs = [0.0, 10.0, 8.0];
-        // end <= start should return 0
+        // end < start is a caller error
+        assert!(matches!(
+            auc_interval(&times, &concs, 2.0, 1.0, &AUCMethod::Linear),
+            Err(ObservationError::InvalidTimeSequence)
+        ));
+    }
+
+    #[test]
+    fn test_auc_interval_zero_width() {
+        let times = [0.0, 1.0, 2.0];
+        let concs = [0.0, 10.0, 8.0];
+        // end == start is a zero-width integral
         assert_eq!(
-            auc_interval(&times, &concs, 2.0, 1.0, &AUCMethod::Linear).unwrap(),
+            auc_interval(&times, &concs, 1.0, 1.0, &AUCMethod::Linear).unwrap(),
             0.0
         );
     }
@@ -520,8 +539,8 @@ mod tests {
         let times = [0.0, 2.0, 4.0];
         let values = [0.0, 10.0, 6.0];
 
-        assert!((interpolate_linear(&times, &values, 1.0) - 5.0).abs() < 1e-10);
-        assert!((interpolate_linear(&times, &values, 3.0) - 8.0).abs() < 1e-10);
+        assert!((interpolate_linear(&times, &values, 1.0).unwrap() - 5.0).abs() < 1e-10);
+        assert!((interpolate_linear(&times, &values, 3.0).unwrap() - 8.0).abs() < 1e-10);
     }
 
     #[test]
@@ -529,8 +548,8 @@ mod tests {
         let times = [0.0, 2.0, 4.0];
         let values = [0.0, 10.0, 6.0];
 
-        assert!((interpolate_linear(&times, &values, 0.0) - 0.0).abs() < 1e-10);
-        assert!((interpolate_linear(&times, &values, 4.0) - 6.0).abs() < 1e-10);
+        assert!((interpolate_linear(&times, &values, 0.0).unwrap() - 0.0).abs() < 1e-10);
+        assert!((interpolate_linear(&times, &values, 4.0).unwrap() - 6.0).abs() < 1e-10);
     }
 
     #[test]
@@ -539,9 +558,19 @@ mod tests {
         let values = [5.0, 15.0];
 
         // Before first point — clamp to first value
-        assert_eq!(interpolate_linear(&times, &values, 0.0), 5.0);
+        assert_eq!(interpolate_linear(&times, &values, 0.0).unwrap(), 5.0);
         // After last point — clamp to last value
-        assert_eq!(interpolate_linear(&times, &values, 5.0), 15.0);
+        assert_eq!(interpolate_linear(&times, &values, 5.0).unwrap(), 15.0);
+    }
+
+    #[test]
+    fn test_interpolate_linear_empty() {
+        assert!(interpolate_linear(&[], &[], 1.0).is_err());
+    }
+
+    #[test]
+    fn test_interpolate_linear_mismatched_lengths() {
+        assert!(interpolate_linear(&[1.0, 2.0], &[5.0], 1.5).is_err());
     }
 
     #[test]

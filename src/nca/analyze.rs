@@ -1,25 +1,13 @@
 //! Main NCA analysis orchestrator
 //!
-//! This module contains the core analysis function that computes all NCA parameters
-//! from a validated profile and options.
-//!
-//! # Planned features
-//!
-//! - **Ka estimation**: Absorption rate constant estimation for extravascular routes
-//!   is not yet implemented. <!-- TODO: implement Ka estimation (flip-flop detection, Wagner-Nelson) -->
+//! TODO: Ka estimation (flip-flop detection, Wagner-Nelson)
 
 use super::calc;
 use super::error::NCAError;
+use super::observation::ObservationProfile as Profile;
 use super::types::*;
 use crate::data::event::{AUCMethod, Route};
-use crate::data::observation::ObservationProfile as Profile;
-use crate::data::observation_error::ObservationError;
 
-// ============================================================================
-// Precomputed values (computed once, threaded through)
-// ============================================================================
-
-/// Values computed once at the start of analysis to avoid redundant calculation
 struct Precomputed {
     auc_last: f64,
     aumc_last: f64,
@@ -50,23 +38,6 @@ impl Precomputed {
     }
 }
 
-// ============================================================================
-// Main Analysis Function
-// ============================================================================
-
-/// Perform complete NCA analysis on a profile
-///
-/// This is the primary entry point for NCA analysis.
-///
-/// # Arguments
-/// * `profile` - Validated concentration-time profile
-/// * `dose_amount` - Total dose amount (None if no dosing data)
-/// * `route` - Administration route
-/// * `infusion_duration` - Infusion duration (None for bolus/extravascular)
-/// * `options` - Analysis configuration
-/// * `raw_tlag` - Tlag computed from raw (unfiltered) data, or None
-/// * `subject_id` - Subject identifier (None for ad-hoc profiles)
-/// * `occasion` - Occasion index (None for ad-hoc profiles)
 pub(crate) fn analyze(
     profile: &Profile,
     dose_amount: Option<f64>,
@@ -77,44 +48,33 @@ pub(crate) fn analyze(
     subject_id: Option<&str>,
     occasion: Option<usize>,
 ) -> Result<NCAResult, NCAError> {
-    if profile.times.is_empty() {
-        return Err(ObservationError::InsufficientData { n: 0, required: 2 }.into());
-    }
-
-    // Compute AUC/AUMC once, use everywhere
     let pre = Precomputed::from_profile(profile, options.auc_method)?;
 
-    // Core exposure parameters (always calculated)
     let mut exposure = compute_exposure(&pre, profile, options, raw_tlag)?;
-
-    // Terminal phase parameters (if lambda-z can be estimated)
     let (terminal, lambda_z_result) = compute_terminal(&pre, profile, options);
 
-    // Update exposure with both AUCinf variants if we have terminal phase
     if let Some(ref lz) = lambda_z_result {
-        // AUCinf using observed Clast
         let auc_inf_obs = pre.auc_inf(pre.clast, lz.lambda_z);
         exposure.auc_inf_obs = Some(auc_inf_obs);
         exposure.auc_pct_extrap_obs = Some(calc::auc_extrap_pct(pre.auc_last, auc_inf_obs));
 
-        // AUCinf using predicted Clast (from λz regression)
         let auc_inf_pred = pre.auc_inf(lz.clast_pred, lz.lambda_z);
         exposure.auc_inf_pred = Some(auc_inf_pred);
         exposure.auc_pct_extrap_pred = Some(calc::auc_extrap_pct(pre.auc_last, auc_inf_pred));
 
         if exposure.aumc_last.is_some() {
-            // AUMC∞ uses observed Clast by convention
             exposure.aumc_inf = Some(pre.aumc_inf(pre.clast, lz.lambda_z));
         }
     }
 
-    // Clearance parameters (if we have dose and terminal phase)
-    // Uses auc_inf_obs by convention (standard practice)
     let clearance = dose_amount
         .and_then(|d| lambda_z_result.as_ref().map(|lz| (d, lz)))
-        .map(|(d, lz)| compute_clearance(d, exposure.auc_inf_obs, lz.lambda_z, route, &pre));
+        .and_then(|(d, lz)| {
+            exposure
+                .auc_inf_obs
+                .map(|auc_inf| compute_clearance(d, auc_inf, lz.lambda_z, route, &pre))
+        });
 
-    // Route-specific parameters (uses observed Clast for extrapolation)
     let route_params = compute_route_specific(
         &pre,
         profile,
@@ -122,17 +82,14 @@ pub(crate) fn analyze(
         route,
         infusion_duration,
         lambda_z_result.as_ref(),
-        pre.clast,
         options,
     );
 
-    // Steady-state parameters (if tau specified)
     let steady_state = options
         .tau
         .map(|tau| compute_steady_state(&pre, profile, tau, options))
         .transpose()?;
 
-    // Dose-normalized parameters
     if let Some(d) = dose_amount {
         if d > 0.0 {
             exposure.cmax_dn = Some(exposure.cmax / d);
@@ -143,10 +100,8 @@ pub(crate) fn analyze(
         }
     }
 
-    // Multi-dose interval parameters (if dose_times specified)
     let multi_dose = compute_multi_dose(profile, options)?;
 
-    // Build quality summary
     let quality = build_quality(
         &exposure,
         terminal.as_ref(),
@@ -170,20 +125,17 @@ pub(crate) fn analyze(
     })
 }
 
-/// Compute core exposure parameters
 fn compute_exposure(
     pre: &Precomputed,
     profile: &Profile,
     options: &NCAOptions,
     raw_tlag: Option<f64>,
 ) -> Result<ExposureParams, NCAError> {
-    // Calculate partial AUC if interval specified
     let auc_partial = options
         .auc_interval
         .map(|(start, end)| profile.auc_interval(start, end, &options.auc_method))
         .transpose()?;
 
-    // Find first measurable (positive) concentration time
     let tfirst = profile
         .times
         .iter()
@@ -191,10 +143,12 @@ fn compute_exposure(
         .find(|(_, &c)| c > 0.0)
         .map(|(&t, _)| t);
 
-    // Time above concentration threshold (if specified)
-    let time_above_mic = options.concentration_threshold.map(|threshold| {
-        calc::time_above_concentration(&profile.times, &profile.concentrations, threshold)
-    });
+    let time_above_mic = options
+        .concentration_threshold
+        .map(|threshold| {
+            calc::time_above_concentration(&profile.times, &profile.concentrations, threshold)
+        })
+        .transpose()?;
 
     Ok(ExposureParams {
         cmax: pre.cmax,
@@ -203,7 +157,7 @@ fn compute_exposure(
         tlast: pre.tlast,
         tfirst,
         auc_last: pre.auc_last,
-        auc_inf_obs: None, // filled in by caller if terminal phase estimated
+        auc_inf_obs: None,
         auc_inf_pred: None,
         auc_pct_extrap_obs: None,
         auc_pct_extrap_pred: None,
@@ -211,14 +165,13 @@ fn compute_exposure(
         aumc_last: Some(pre.aumc_last),
         aumc_inf: None,
         tlag: raw_tlag,
-        cmax_dn: None, // filled in by caller if dose available
+        cmax_dn: None,
         auc_last_dn: None,
         auc_inf_dn: None,
         time_above_mic,
     })
 }
 
-/// Compute terminal phase parameters
 fn compute_terminal(
     pre: &Precomputed,
     profile: &Profile,
@@ -229,12 +182,10 @@ fn compute_terminal(
     let terminal = lz_result.as_ref().map(|lz| {
         let half_life = calc::half_life(lz.lambda_z);
 
-        // MRT uses observed Clast by convention
         let auc_inf = pre.auc_inf(pre.clast, lz.lambda_z);
         let aumc_inf = pre.aumc_inf(pre.clast, lz.lambda_z);
         let mrt = calc::mrt(aumc_inf, auc_inf);
 
-        // Derived terminal parameters
         let effective_half_life = if mrt.is_finite() && mrt > 0.0 {
             Some(calc::effective_half_life(mrt))
         } else {
@@ -259,19 +210,16 @@ fn compute_terminal(
     (terminal, lz_result)
 }
 
-/// Compute clearance parameters
 fn compute_clearance(
     dose: f64,
-    auc_inf: Option<f64>,
+    auc_inf: f64,
     lambda_z: f64,
     route: Route,
     pre: &Precomputed,
 ) -> ClearanceParams {
-    let auc = auc_inf.unwrap_or(f64::NAN);
-    let cl = calc::clearance(dose, auc);
-    let vz = calc::vz(dose, lambda_z, auc);
+    let cl = calc::clearance(dose, auc_inf);
+    let vz = calc::vz(dose, lambda_z, auc_inf);
 
-    // Vss is computed for IV routes: Vss = Dose * AUMC_inf / AUC_inf^2
     let vss = match route {
         Route::IVBolus | Route::IVInfusion => {
             let auc_inf_val = pre.auc_inf(pre.clast, lambda_z);
@@ -288,7 +236,6 @@ fn compute_clearance(
     }
 }
 
-/// Compute route-specific parameters (IV only — extravascular tlag is in exposure)
 fn compute_route_specific(
     pre: &Precomputed,
     profile: &Profile,
@@ -296,7 +243,6 @@ fn compute_route_specific(
     route: Route,
     infusion_duration: Option<f64>,
     lz_result: Option<&calc::LambdaZResult>,
-    eff_clast: f64,
     options: &NCAOptions,
 ) -> Option<RouteParams> {
     match route {
@@ -313,17 +259,15 @@ fn compute_route_specific(
         Route::IVInfusion => {
             let duration = infusion_duration.unwrap_or(0.0);
 
-            // MRT adjusted for infusion
             let mrt_iv = lz_result.map(|lz| {
-                let auc_inf = pre.auc_inf(eff_clast, lz.lambda_z);
-                let aumc_inf = pre.aumc_inf(eff_clast, lz.lambda_z);
+                let auc_inf = pre.auc_inf(pre.clast, lz.lambda_z);
+                let aumc_inf = pre.aumc_inf(pre.clast, lz.lambda_z);
                 let mrt_uncorrected = calc::mrt(aumc_inf, auc_inf);
                 calc::mrt_infusion(mrt_uncorrected, duration)
             });
 
-            // Concentration at end of infusion (interpolate at dose end time)
             let ceoi = if duration > 0.0 {
-                Some(profile.interpolate(duration))
+                profile.interpolate(duration).ok()
             } else {
                 None
             };
@@ -338,7 +282,6 @@ fn compute_route_specific(
     }
 }
 
-/// Compute steady-state parameters
 fn compute_steady_state(
     pre: &Precomputed,
     profile: &Profile,
@@ -365,7 +308,6 @@ fn compute_steady_state(
     })
 }
 
-/// Compute multi-dose interval parameters
 fn compute_multi_dose(
     profile: &Profile,
     options: &NCAOptions,
@@ -414,7 +356,6 @@ fn compute_multi_dose(
     }))
 }
 
-/// Build quality assessment
 fn build_quality(
     exposure: &ExposureParams,
     terminal: Option<&TerminalParams>,
@@ -423,12 +364,10 @@ fn build_quality(
 ) -> Quality {
     let mut warnings = Vec::new();
 
-    // Check for issues
     if exposure.cmax <= 0.0 {
         warnings.push(Warning::LowCmax);
     }
 
-    // Check extrapolation percentage (uses observed variant)
     if let (Some(auc_inf_obs), Some(lz)) = (exposure.auc_inf_obs, lz_result) {
         let pct_extrap = calc::auc_extrap_pct(exposure.auc_last, auc_inf_obs);
         if pct_extrap > options.max_auc_extrap_pct {
@@ -438,7 +377,6 @@ fn build_quality(
             });
         }
 
-        // Check span ratio
         if let Some(stats) = terminal.and_then(|t| t.regression.as_ref()) {
             if stats.span_ratio < options.lambda_z.min_span_ratio {
                 warnings.push(Warning::ShortTerminalPhase {
@@ -448,7 +386,6 @@ fn build_quality(
             }
         }
 
-        // Check R²
         if lz.r_squared < options.lambda_z.min_r_squared {
             warnings.push(Warning::PoorFit {
                 r_squared: lz.r_squared,
@@ -462,7 +399,6 @@ fn build_quality(
     Quality { warnings }
 }
 
-/// Cmax and Tmax within a time window [start, end] (inclusive)
 fn cmax_tmax_in_window(profile: &Profile, start: f64, end: f64) -> (f64, f64) {
     let mut cmax = f64::NEG_INFINITY;
     let mut tmax = start;
@@ -476,7 +412,6 @@ fn cmax_tmax_in_window(profile: &Profile, start: f64, end: f64) -> (f64, f64) {
         }
     }
     if cmax == f64::NEG_INFINITY {
-        // No observations in window
         (0.0, start)
     } else {
         (cmax, tmax)

@@ -297,7 +297,7 @@ impl ObservationProfile {
     /// Linear interpolation of concentration at a given time
     ///
     /// Delegates to [`crate::data::auc::interpolate_linear`].
-    pub fn interpolate(&self, time: f64) -> f64 {
+    pub fn interpolate(&self, time: f64) -> Result<f64, ObservationError> {
         auc::interpolate_linear(&self.times, &self.concentrations, time)
     }
 }
@@ -640,8 +640,8 @@ mod tests {
         let occ = &subject.occasions()[0];
         let profile = ObservationProfile::from_occasion(occ, 0, &BLQRule::Exclude).unwrap();
 
-        assert!((profile.interpolate(1.0) - 5.0).abs() < 1e-10);
-        assert!((profile.interpolate(3.0) - 8.0).abs() < 1e-10);
+        assert!((profile.interpolate(1.0).unwrap() - 5.0).abs() < 1e-10);
+        assert!((profile.interpolate(3.0).unwrap() - 8.0).abs() < 1e-10);
     }
 
     #[test]

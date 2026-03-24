@@ -34,7 +34,6 @@ pub mod builder;
 pub mod covariate;
 pub mod error_model;
 pub mod event;
-pub mod observation;
 pub mod observation_error;
 pub mod parser;
 pub mod residual_error;

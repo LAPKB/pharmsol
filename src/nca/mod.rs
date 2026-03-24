@@ -88,6 +88,7 @@
 mod analyze;
 mod calc;
 mod error;
+pub(crate) mod observation;
 pub mod summary;
 mod traits;
 mod types;

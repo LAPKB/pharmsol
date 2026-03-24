@@ -5,7 +5,8 @@
 //!
 //! AUC segment calculations are delegated to [`crate::data::auc`].
 
-use crate::data::observation::ObservationProfile as Profile;
+use super::observation::ObservationProfile as Profile;
+use crate::data::observation_error::ObservationError;
 
 use super::types::*;
 use serde::{Deserialize, Serialize};
@@ -687,9 +688,18 @@ pub fn peak_trough_ratio(cmax: f64, cmin: f64) -> f64 {
 /// This is PD-relevant for concentration-dependent drugs (e.g., antibiotics)
 /// where efficacy correlates with the time the drug concentration exceeds
 /// a minimum inhibitory concentration (MIC).
-pub fn time_above_concentration(times: &[f64], concentrations: &[f64], threshold: f64) -> f64 {
-    if times.len() < 2 || concentrations.len() < 2 {
-        return 0.0;
+pub fn time_above_concentration(times: &[f64], concentrations: &[f64], threshold: f64) -> Result<f64, ObservationError> {
+    if times.len() != concentrations.len() {
+        return Err(ObservationError::ArrayLengthMismatch {
+            description: format!("times ({}) and concentrations ({})", times.len(), concentrations.len()),
+        });
+    }
+
+    if times.len() < 2 {
+        return Err(ObservationError::InsufficientData {
+            n: times.len(),
+            required: 2,
+        });
     }
 
     let mut total_time = 0.0;
@@ -714,7 +724,7 @@ pub fn time_above_concentration(times: &[f64], concentrations: &[f64], threshold
         // Both below: nothing added
     }
 
-    total_time
+    Ok(total_time)
 }
 
 // ============================================================================
@@ -821,7 +831,7 @@ mod tests {
     fn test_time_above_concentration_all_above() {
         let times = [0.0, 1.0, 2.0, 4.0];
         let concs = [10.0, 8.0, 6.0, 5.0];
-        let result = time_above_concentration(&times, &concs, 1.0);
+        let result = time_above_concentration(&times, &concs, 1.0).unwrap();
         assert!((result - 4.0).abs() < 1e-10, "All above: full duration");
     }
 
@@ -829,7 +839,7 @@ mod tests {
     fn test_time_above_concentration_all_below() {
         let times = [0.0, 1.0, 2.0];
         let concs = [0.5, 0.3, 0.1];
-        let result = time_above_concentration(&times, &concs, 1.0);
+        let result = time_above_concentration(&times, &concs, 1.0).unwrap();
         assert!((result - 0.0).abs() < 1e-10, "All below: zero time");
     }
 
@@ -838,7 +848,7 @@ mod tests {
         // Crosses below at interpolated point
         let times = [0.0, 1.0, 2.0];
         let concs = [10.0, 5.0, 0.0]; // crosses threshold=4 at t ≈ 0.0 + 1.0 * (10-4)/(10-5) = 1.2
-        let result = time_above_concentration(&times, &concs, 4.0);
+        let result = time_above_concentration(&times, &concs, 4.0).unwrap();
         // 0→1: both above (10≥4, 5≥4) → 1.0
         // 1→2: crosses below, t_cross = 1.0 + 1.0 * (5-4)/(5-0) = 1.2
         let expected = 1.0 + 0.2;
@@ -853,7 +863,7 @@ mod tests {
         let times = [0.0, 1.0, 2.0];
         let concs = [0.0, 10.0, 10.0];
         // threshold = 5: crosses above at t = 0.5
-        let result = time_above_concentration(&times, &concs, 5.0);
+        let result = time_above_concentration(&times, &concs, 5.0).unwrap();
         // 0→1: crosses above at t = 0.0 + 1.0*(5-0)/(10-0) = 0.5 → 1.0-0.5=0.5
         // 1→2: both above → 1.0
         assert!((result - 1.5).abs() < 1e-10);
@@ -861,8 +871,8 @@ mod tests {
 
     #[test]
     fn test_time_above_concentration_empty() {
-        assert!((time_above_concentration(&[], &[], 1.0) - 0.0).abs() < 1e-10);
-        assert!((time_above_concentration(&[1.0], &[5.0], 1.0) - 0.0).abs() < 1e-10);
+        assert!(time_above_concentration(&[], &[], 1.0).is_err());
+        assert!(time_above_concentration(&[1.0], &[5.0], 1.0).is_err());
     }
 
     #[test]

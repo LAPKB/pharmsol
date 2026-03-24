@@ -10,7 +10,7 @@
 //! let result = subject.nca(&NCAOptions::default())?;
 //! ```
 
-use crate::data::observation::ObservationProfile;
+use super::observation::ObservationProfile;
 use crate::nca::analyze::analyze;
 use crate::nca::calc::tlag_from_raw;
 use crate::nca::error::NCAError;
