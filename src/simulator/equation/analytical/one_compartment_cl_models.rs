@@ -1,5 +1,5 @@
 use crate::{data::Covariates, simulator::*};
-use diffsol::{NalgebraContext, Vector};
+use diffsol::NalgebraContext;
 
 use super::one_compartment_models::{one_compartment, one_compartment_with_absorption};
 
