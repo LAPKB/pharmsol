@@ -4,7 +4,7 @@ use nalgebra::{DVector, Matrix2, Vector2};
 
 /// Analytical solution for two compartment model parameterized by clearances.
 ///
-/// Converts CL/Q/Vc/Vp to ke/kcp/kpc and delegates to [`two_compartments`].
+/// Converts CL/Q/V1/V2 to ke/k12/k21 and delegates to [`two_compartments`].
 ///
 /// # Assumptions
 /// - `p` is a vector of length 4 with CL, Q, V1 and V2 in that order
@@ -57,7 +57,7 @@ pub fn two_compartments_cl(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> 
 /// Converts CL/Q/Vc/Vp to ke/kcp/kpc and delegates to [`two_compartments_with_absorption`].
 ///
 /// # Assumptions
-/// - `p` is a vector of length 5 with ka, CL, Q, V1 and V2 in that order
+/// - `p` is a vector of length 5 with ka, CL, Q, V2 and V3 in that order
 /// - `rateiv` is a vector of length 1 with the value of the infusion rate (only one drug)
 /// - `x` is a vector of length 3
 /// - covariates are not used
