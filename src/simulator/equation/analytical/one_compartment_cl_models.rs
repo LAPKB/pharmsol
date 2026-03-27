@@ -1,42 +1,48 @@
 use crate::{data::Covariates, simulator::*};
-use diffsol::{NalgebraContext, Vector};
-
-use super::one_compartment_models::{one_compartment, one_compartment_with_absorption};
 
 /// Analytical solution for one compartment model parameterized by clearance.
-///
-/// Converts CL/V to ke and delegates to [`one_compartment`].
 ///
 /// # Assumptions
 /// - `p` is a vector of length 2 with CL and V in that order
 /// - `rateiv` is a vector of length 1 with the value of the infusion rate (only one drug)
 /// - `x` is a vector of length 1
 /// - covariates are not used
-pub fn one_compartment_cl(x: &V, p: &V, t: T, rateiv: &V, cov: &Covariates) -> V {
+pub fn one_compartment_cl(x: &V, p: &V, t: T, rateiv: &V, _cov: &Covariates) -> V {
+    let mut xout = x.clone();
     let cl = p[0];
     let v = p[1];
     let ke = cl / v;
-    let p_ke = V::from_vec(vec![ke], NalgebraContext);
-    one_compartment(x, &p_ke, t, rateiv, cov)
+
+    xout[0] = x[0] * (-ke * t).exp() + rateiv[0] / ke * (1.0 - (-ke * t).exp());
+    xout
 }
 
 /// Analytical solution for one compartment model with first-order absorption,
 /// parameterized by clearance.
-///
-/// Converts CL/V to ke and delegates to [`one_compartment_with_absorption`].
 ///
 /// # Assumptions
 /// - `p` is a vector of length 3 with ka, CL and V in that order
 /// - `rateiv` is a vector of length 1 with the value of the infusion rate (only one drug)
 /// - `x` is a vector of length 2
 /// - covariates are not used
-pub fn one_compartment_cl_with_absorption(x: &V, p: &V, t: T, rateiv: &V, cov: &Covariates) -> V {
+pub fn one_compartment_cl_with_absorption(
+    x: &V,
+    p: &V,
+    t: T,
+    rateiv: &V,
+    _cov: &Covariates,
+) -> V {
+    let mut xout = x.clone();
     let ka = p[0];
     let cl = p[1];
     let v = p[2];
     let ke = cl / v;
-    let p_ke = V::from_vec(vec![ka, ke], NalgebraContext);
-    one_compartment_with_absorption(x, &p_ke, t, rateiv, cov)
+
+    xout[0] = x[0] * (-ka * t).exp();
+    xout[1] = x[1] * (-ke * t).exp()
+        + rateiv[0] / ke * (1.0 - (-ke * t).exp())
+        + ((ka * x[0]) / (ka - ke)) * ((-ke * t).exp() - (-ka * t).exp());
+    xout
 }
 
 #[cfg(test)]
@@ -67,6 +73,7 @@ mod tests {
             },
         )
         .with_nstates(1)
+        .with_ndrugs(1)
         .with_nout(1);
 
         let analytical = equation::Analytical::new(
@@ -81,6 +88,7 @@ mod tests {
             },
         )
         .with_nstates(1)
+        .with_ndrugs(1)
         .with_nout(1);
 
         let op_ode = ode.estimate_predictions(&subject, &vec![0.1, 1.0]).unwrap();
@@ -118,6 +126,7 @@ mod tests {
             },
         )
         .with_nstates(2)
+        .with_ndrugs(2)
         .with_nout(1);
 
         let analytical = equation::Analytical::new(
@@ -132,6 +141,7 @@ mod tests {
             },
         )
         .with_nstates(2)
+        .with_ndrugs(2)
         .with_nout(1);
 
         let op_ode = ode
