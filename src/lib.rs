@@ -78,7 +78,8 @@ pub mod prelude {
     // Analytical model functions
     pub use crate::simulator::equation::analytical::{
         one_compartment, one_compartment_cl, one_compartment_cl_with_absorption,
-        one_compartment_with_absorption, three_compartments, three_compartments_with_absorption,
+        one_compartment_with_absorption, three_compartments, three_compartments_cl,
+        three_compartments_cl_with_absorption, three_compartments_with_absorption,
         two_compartments, two_compartments_cl, two_compartments_cl_with_absorption,
         two_compartments_with_absorption,
     };
@@ -87,9 +88,10 @@ pub mod prelude {
     pub mod models {
         pub use crate::simulator::equation::analytical::{
             one_compartment, one_compartment_cl, one_compartment_cl_with_absorption,
-            one_compartment_with_absorption, three_compartments,
-            three_compartments_with_absorption, two_compartments, two_compartments_cl,
-            two_compartments_cl_with_absorption, two_compartments_with_absorption,
+            one_compartment_with_absorption, three_compartments, three_compartments_cl,
+            three_compartments_cl_with_absorption, three_compartments_with_absorption,
+            two_compartments, two_compartments_cl, two_compartments_cl_with_absorption,
+            two_compartments_with_absorption,
         };
     }
 

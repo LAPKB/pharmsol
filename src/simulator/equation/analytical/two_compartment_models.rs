@@ -5,36 +5,36 @@ use nalgebra::{DVector, Matrix2, Vector2};
 /// Analytical solution for two compartment model.
 ///
 /// # Assumptions
-/// - `p` is a vector of length 3 with ke, kcp and kpc in that order
+/// - `p` is a vector of length 3 with ke, k12 and k21 in that order
 /// - `rateiv` is a vector of length 1 with the value of the infusion rate (only one drug)
 /// - `x` is a vector of length 2
 /// - covariates are not used
 pub fn two_compartments(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {
     let ke = p[0];
-    let kcp = p[1];
-    let kpc = p[2];
+    let k12 = p[1];
+    let k21 = p[2];
 
-    let sqrt = (ke + kcp + kpc).powi(2) - 4.0 * ke * kpc;
+    let sqrt = (ke + k12 + k21).powi(2) - 4.0 * ke * k21;
     if sqrt < 0.0 {
         panic!("Imaginary solutions, program stopped!");
     }
     let sqrt = sqrt.sqrt();
-    let l1 = (ke + kcp + kpc + sqrt) / 2.0;
-    let l2 = (ke + kcp + kpc - sqrt) / 2.0;
+    let l1 = (ke + k12 + k21 + sqrt) / 2.0;
+    let l2 = (ke + k12 + k21 - sqrt) / 2.0;
     let exp_l1_t = (-l1 * t).exp();
     let exp_l2_t = (-l2 * t).exp();
     let non_zero_matrix = Matrix2::new(
-        (l1 - kpc) * exp_l1_t + (kpc - l2) * exp_l2_t,
-        -kpc * exp_l1_t + kpc * exp_l2_t,
-        -kcp * exp_l1_t + kcp * exp_l2_t,
-        (l1 - ke - kcp) * exp_l1_t + (ke + kcp - l2) * exp_l2_t,
+        (l1 - k21) * exp_l1_t + (k21 - l2) * exp_l2_t,
+        -k21 * exp_l1_t + k21 * exp_l2_t,
+        -k12 * exp_l1_t + k12 * exp_l2_t,
+        (l1 - ke - k12) * exp_l1_t + (ke + k12 - l2) * exp_l2_t,
     );
 
     let non_zero = (non_zero_matrix * x.inner()) / (l1 - l2);
 
     let infusion_vector = Vector2::new(
-        ((l1 - kpc) / l1) * (1.0 - exp_l1_t) + ((kpc - l2) / l2) * (1.0 - exp_l2_t),
-        (-kcp / l1) * (1.0 - exp_l1_t) + (kcp / l2) * (1.0 - exp_l2_t),
+        ((l1 - k21) / l1) * (1.0 - exp_l1_t) + ((k21 - l2) / l2) * (1.0 - exp_l2_t),
+        (-k12 / l1) * (1.0 - exp_l1_t) + (k12 / l2) * (1.0 - exp_l2_t),
     );
 
     let infusion = infusion_vector * (rateiv[0] / (l1 - l2));
@@ -48,40 +48,40 @@ pub fn two_compartments(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {
 /// Analytical solution for two compartment model with first-order absorption.
 ///
 /// # Assumptions
-/// - `p` is a vector of length 4 with ke, ka, kcp and kpc in that order
+/// - `p` is a vector of length 4 with ke, ka, k12 and k21 in that order
 /// - `rateiv` is a vector of length 1 with the value of the infusion rate (only one drug)
 /// - `x` is a vector of length 3
 /// - covariates are not used
 pub fn two_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {
     let ke = p[0];
     let ka = p[1];
-    let kcp = p[2];
-    let kpc = p[3];
+    let k12 = p[2];
+    let k21 = p[3];
     let mut xout = x.clone();
 
-    let sqrt = (ke + kcp + kpc).powi(2) - 4.0 * ke * kpc;
+    let sqrt = (ke + k12 + k21).powi(2) - 4.0 * ke * k21;
     if sqrt < 0.0 {
         panic!("Imaginary solutions, program stopped!");
     }
     let sqrt = sqrt.sqrt();
-    let l1 = (ke + kcp + kpc + sqrt) / 2.0;
-    let l2 = (ke + kcp + kpc - sqrt) / 2.0;
+    let l1 = (ke + k12 + k21 + sqrt) / 2.0;
+    let l2 = (ke + k12 + k21 - sqrt) / 2.0;
 
     let exp_l1_t = (-l1 * t).exp();
     let exp_l2_t = (-l2 * t).exp();
 
     let non_zero_matrix = Matrix2::new(
-        (l1 - kpc) * exp_l1_t + (kpc - l2) * exp_l2_t,
-        -kpc * exp_l1_t + kpc * exp_l2_t,
-        -kcp * exp_l1_t + kcp * exp_l2_t,
-        (l1 - ke - kcp) * exp_l1_t + (ke + kcp - l2) * exp_l2_t,
+        (l1 - k21) * exp_l1_t + (k21 - l2) * exp_l2_t,
+        -k21 * exp_l1_t + k21 * exp_l2_t,
+        -k12 * exp_l1_t + k12 * exp_l2_t,
+        (l1 - ke - k12) * exp_l1_t + (ke + k12 - l2) * exp_l2_t,
     );
 
     let non_zero = (non_zero_matrix * Vector2::new(x[1], x[2])) / (l1 - l2);
 
     let infusion_vector = Vector2::new(
-        ((l1 - kpc) / l1) * (1.0 - exp_l1_t) + ((kpc - l2) / l2) * (1.0 - exp_l2_t),
-        (-kcp / l1) * (1.0 - exp_l1_t) + (kcp / l2) * (1.0 - exp_l2_t),
+        ((l1 - k21) / l1) * (1.0 - exp_l1_t) + ((k21 - l2) / l2) * (1.0 - exp_l2_t),
+        (-k12 / l1) * (1.0 - exp_l1_t) + (k12 / l2) * (1.0 - exp_l2_t),
     );
 
     let infusion = infusion_vector * (rateiv[0] / (l1 - l2));
@@ -89,9 +89,9 @@ pub fn two_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &Co
     let exp_ka_t = (-ka * t).exp();
 
     let absorption_vector = Vector2::new(
-        ((l1 - kpc) / (ka - l1)) * (exp_l1_t - exp_ka_t)
-            + ((kpc - l2) / (ka - l2)) * (exp_l2_t - exp_ka_t),
-        (-kcp / (ka - l1)) * (exp_l1_t - exp_ka_t) + (kcp / (ka - l2)) * (exp_l2_t - exp_ka_t),
+        ((l1 - k21) / (ka - l1)) * (exp_l1_t - exp_ka_t)
+            + ((k21 - l2) / (ka - l2)) * (exp_l2_t - exp_ka_t),
+        (-k12 / (ka - l1)) * (exp_l1_t - exp_ka_t) + (k12 / (ka - l2)) * (exp_l2_t - exp_ka_t),
     );
 
     let absorption = absorption_vector * (ka * x[0] / (l1 - l2));
@@ -119,16 +119,16 @@ mod tests {
 
         let ode = equation::ODE::new(
             |x, p, _t, dx, b, rateiv, _cov| {
-                fetch_params!(p, ke, kcp, kpc, _v);
+                fetch_params!(p, ke, k12, k21, _v);
 
-                dx[0] = rateiv[0] - ke * x[0] - kcp * x[0] + kpc * x[1] + b[0];
-                dx[1] = kcp * x[0] - kpc * x[1] + b[1];
+                dx[0] = rateiv[0] - ke * x[0] - k12 * x[0] + k21 * x[1] + b[0];
+                dx[1] = k12 * x[0] - k21 * x[1] + b[1];
             },
             |_p, _t, _cov| lag! {},
             |_p, _t, _cov| fa! {},
             |_p, _t, _cov, _x| {},
             |x, p, _t, _cov, y| {
-                fetch_params!(p, _ke, _kcp, _kpc, v);
+                fetch_params!(p, _ke, _k12, _k21, v);
                 y[0] = x[0] / v;
             },
             (2, 1),
@@ -141,7 +141,7 @@ mod tests {
             |_p, _t, _cov| fa! {},
             |_p, _t, _cov, _x| {},
             |x, p, _t, _cov, y| {
-                fetch_params!(p, _ke, _kcp, _kpc, v);
+                fetch_params!(p, _ke, _k12, _k21, v);
                 y[0] = x[0] / v;
             },
             (2, 1),
@@ -172,17 +172,17 @@ mod tests {
 
         let ode = equation::ODE::new(
             |x, p, _t, dx, b, rateiv, _cov| {
-                fetch_params!(p, ke, ka, kcp, kpc, _v);
+                fetch_params!(p, ke, ka, k12, k21, _v);
 
                 dx[0] = -ka * x[0] + b[0];
-                dx[1] = rateiv[0] - ke * x[1] + ka * x[0] - kcp * x[1] + kpc * x[2] + b[1];
-                dx[2] = kcp * x[1] - kpc * x[2] + b[2];
+                dx[1] = rateiv[0] - ke * x[1] + ka * x[0] - k12 * x[1] + k21 * x[2] + b[1];
+                dx[2] = k12 * x[1] - k21 * x[2] + b[2];
             },
             |_p, _t, _cov| lag! {},
             |_p, _t, _cov| fa! {},
             |_p, _t, _cov, _x| {},
             |x, p, _t, _cov, y| {
-                fetch_params!(p, _ke, _ka, _kcp, _kpc, v);
+                fetch_params!(p, _ke, _ka, _k12, _k21, v);
                 y[0] = x[1] / v;
             },
             (3, 1),
@@ -195,7 +195,7 @@ mod tests {
             |_p, _t, _cov| fa! {},
             |_p, _t, _cov, _x| {},
             |x, p, _t, _cov, y| {
-                fetch_params!(p, _ke, _ka, _kcp, _kpc, v);
+                fetch_params!(p, _ke, _ka, _k12, _k21, v);
                 y[0] = x[1] / v;
             },
             (3, 1),
