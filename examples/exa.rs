@@ -13,14 +13,20 @@ fn main() {
     use std::path::PathBuf;
 
     // Create test subject with infusion and observations
+    // Including missing observations to verify predictions work without observed values
     let subject = Subject::builder("1")
         .infusion(0.0, 500.0, 0, 0.5)
         .observation(0.5, 1.645776, 0)
+        .missing_observation(0.75, 0) // Missing observation
         .observation(1.0, 1.216442, 0)
+        .missing_observation(1.5, 0) // Missing observation
         .observation(2.0, 0.4622729, 0)
+        .missing_observation(2.5, 0) // Missing observation
         .observation(3.0, 0.1697458, 0)
         .observation(4.0, 0.06382178, 0)
+        .missing_observation(5.0, 0) // Missing observation
         .observation(6.0, 0.009099384, 0)
+        .missing_observation(7.0, 0) // Missing observation
         .observation(8.0, 0.001017932, 0)
         .build();
 
@@ -42,8 +48,9 @@ fn main() {
             fetch_params!(p, _ke, v);
             y[0] = x[0] / v;
         },
-        (1, 1),
-    );
+    )
+    .with_nstates(1)
+    .with_nout(1);
 
     // =========================================================================
     // 2. Compile and load ODE model dynamically using exa
@@ -66,8 +73,9 @@ fn main() {
                     fetch_params!(p, _ke, v);
                     y[0] = x[0] / v;
                 },
-                (1, 1),
             )
+            .with_nstates(1)
+            .with_nout(1)
         "#
         .to_string(),
         Some(ode_output_path),
@@ -100,8 +108,9 @@ fn main() {
                     fetch_params!(p, _ke, v);
                     y[0] = x[0] / v;
                 },
-                (1, 1),
             )
+            .with_nstates(1)
+            .with_nout(1)
         "#
         .to_string(),
         Some(analytical_output_path),
@@ -138,22 +147,32 @@ fn main() {
     let dynamic_ode_flat = dynamic_ode_preds.flat_predictions();
     let dynamic_analytical_flat = dynamic_analytical_preds.flat_predictions();
 
-    println!(
-        "\n{:<12} {:>15} {:>15} {:>15}",
-        "Time", "Static ODE", "Dynamic ODE", "Analytical"
-    );
-    println!("{}", "-".repeat(60));
+    let static_times = static_ode_preds.flat_times();
+    let static_obs = static_ode_preds.flat_observations();
 
-    let times = [0.5, 1.0, 2.0, 3.0, 4.0, 6.0, 8.0];
-    for (i, &time) in times.iter().enumerate() {
+    println!(
+        "\n{:<12} {:>12} {:>15} {:>15} {:>15}",
+        "Time", "Obs", "Static ODE", "Dynamic ODE", "Analytical"
+    );
+    println!("{}", "-".repeat(75));
+
+    for i in 0..static_times.len() {
+        let obs_str = match static_obs[i] {
+            Some(v) => format!("{:.4}", v),
+            None => "MISSING".to_string(),
+        };
         println!(
-            "{:<12.1} {:>15.6} {:>15.6} {:>15.6}",
-            time, static_flat[i], dynamic_ode_flat[i], dynamic_analytical_flat[i]
+            "{:<12.2} {:>12} {:>15.6} {:>15.6} {:>15.6}",
+            static_times[i],
+            obs_str,
+            static_flat[i],
+            dynamic_ode_flat[i],
+            dynamic_analytical_flat[i]
         );
     }
 
     // Verify predictions match
-    println!("\n{}", "=".repeat(60));
+    println!("\n{}", "=".repeat(75));
     println!("Verification:");
 
     let ode_match = static_flat
@@ -181,6 +200,10 @@ fn main() {
             "✗ DIFFERS"
         }
     );
+
+    // Count zero predictions for missing observations
+    let zero_count = static_flat.iter().filter(|&&v| v == 0.0).count();
+    println!("  Zero predictions count: {} (should be 0)", zero_count);
 
     // =========================================================================
     // 5. Clean up compiled model files

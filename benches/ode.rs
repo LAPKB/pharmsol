@@ -45,8 +45,9 @@ fn one_compartment() {
             fetch_params!(p, _ka, _ke, _tlag, v);
             y[0] = x[1] / v;
         },
-        (2, 1),
-    );
+    )
+    .with_nstates(2)
+    .with_nout(1);
     black_box(
         ode.estimate_predictions(&subject, &vec![0.3, 0.5, 0.1, 70.0])
             .unwrap(),
@@ -74,8 +75,9 @@ fn one_compartment_covariates() {
             fetch_params!(p, _ka, _ke, _tlag, v);
             y[0] = x[1] / v;
         },
-        (2, 1),
-    );
+    )
+    .with_nstates(2)
+    .with_nout(1);
     black_box(
         ode.estimate_predictions(&subject, &vec![0.3, 0.5, 0.1, 70.0])
             .unwrap(),
@@ -100,8 +102,9 @@ fn two_compartment() {
             fetch_params!(p, _ka, _ke, _k12, _k21, _tlag, v);
             y[0] = x[1] / v;
         },
-        (2, 1),
-    );
+    )
+    .with_nstates(2)
+    .with_nout(1);
     black_box(
         ode.estimate_predictions(&subject, &vec![0.3, 0.5, 0.1, 0.04, 0.08, 70.0])
             .unwrap(),

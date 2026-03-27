@@ -2,6 +2,9 @@ pub mod data;
 pub mod error;
 #[cfg(feature = "exa")]
 pub mod exa;
+#[cfg(feature = "json")]
+pub mod json;
+pub mod nca;
 pub mod optimize;
 pub mod simulator;
 
@@ -12,11 +15,16 @@ pub use crate::data::*;
 pub use crate::equation::*;
 pub use crate::optimize::effect::get_e2;
 pub use crate::optimize::spp::SppOptimizer;
-pub use crate::simulator::equation::{self, ODE};
+pub use crate::simulator::equation::{
+    self,
+    ode::{ExplicitRkTableau, OdeSolver, SdirkTableau},
+    ODE,
+};
 pub use error::PharmsolError;
 #[cfg(feature = "exa")]
 pub use exa::*;
 pub use nalgebra::dmatrix;
+pub use pharmsol_macros::ode;
 pub use std::collections::HashMap;
 
 /// Prelude module that re-exports all commonly used types and traits.
@@ -51,8 +59,17 @@ pub mod prelude {
     pub use crate::data::{
         builder::SubjectBuilderExt,
         error_model::{AssayErrorModel, AssayErrorModels, ErrorPoly},
+        event::{AUCMethod, BLQRule, Route},
         Covariates, Data, Event, Interpolation, Occasion, Subject,
     };
+
+    // NCA extension traits (provides .nca(), .nca_all(), etc. on data types)
+    pub use crate::nca::NCA;
+    pub use crate::nca::{MetricsError, ObservationMetrics};
+    pub use crate::nca::{NCAOptions, NCAPopulation, SubjectNCAResult};
+
+    // AUC primitives for direct use on raw arrays
+    pub use crate::data::auc::{auc, auc_interval, aumc, interpolate_linear};
 
     #[allow(deprecated)]
     // Simulator submodule for internal use and advanced users
@@ -71,15 +88,18 @@ pub mod prelude {
     // Direct simulator re-exports for convenience
     pub use crate::simulator::{
         cache::{configure_cache, disable_cache, enable_cache, reset_caches, CacheSettings},
-        equation::{self, Equation},
+        equation::{
+            self,
+            ode::{ExplicitRkTableau, OdeSolver, SdirkTableau},
+            Equation,
+        },
         likelihood::{Prediction, SubjectPredictions},
     };
 
     // Analytical model functions
     pub use crate::simulator::equation::analytical::{
         one_compartment, one_compartment_cl, one_compartment_cl_with_absorption,
-        one_compartment_with_absorption, three_compartments, three_compartments_cl,
-        three_compartments_cl_with_absorption, three_compartments_with_absorption,
+        one_compartment_with_absorption, three_compartments, three_compartments_with_absorption,
         two_compartments, two_compartments_cl, two_compartments_cl_with_absorption,
         two_compartments_with_absorption,
     };
@@ -104,6 +124,8 @@ pub mod prelude {
     pub use crate::fetch_params;
     #[doc(inline)]
     pub use crate::lag;
+    #[doc(inline)]
+    pub use crate::ode;
 }
 
 #[macro_export]

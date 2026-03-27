@@ -47,8 +47,9 @@ fn one_compartment_iv_ode(subject: &Subject, params: &Vec<f64>) {
             fetch_params!(p, _ke, v);
             y[0] = x[0] / v;
         },
-        (1, 1),
-    );
+    )
+    .with_nstates(1)
+    .with_nout(1);
     black_box(ode.estimate_predictions(subject, params).unwrap());
 }
 
@@ -63,8 +64,9 @@ fn one_compartment_iv_analytical(subject: &Subject, params: &Vec<f64>) {
             fetch_params!(p, _ke, v);
             y[0] = x[0] / v;
         },
-        (1, 1),
-    );
+    )
+    .with_nstates(1)
+    .with_nout(1);
     black_box(analytical.estimate_predictions(subject, params).unwrap());
 }
 
@@ -86,8 +88,9 @@ fn one_compartment_oral_ode(subject: &Subject, params: &Vec<f64>) {
             fetch_params!(p, _ka, _ke, v);
             y[0] = x[1] / v;
         },
-        (2, 1),
-    );
+    )
+    .with_nstates(2)
+    .with_nout(1);
     black_box(ode.estimate_predictions(subject, params).unwrap());
 }
 
@@ -102,8 +105,9 @@ fn one_compartment_oral_analytical(subject: &Subject, params: &Vec<f64>) {
             fetch_params!(p, _ka, _ke, v);
             y[0] = x[1] / v;
         },
-        (2, 1),
-    );
+    )
+    .with_nstates(2)
+    .with_nout(1);
     black_box(analytical.estimate_predictions(subject, params).unwrap());
 }
 
@@ -125,8 +129,9 @@ fn two_compartment_iv_ode(subject: &Subject, params: &Vec<f64>) {
             fetch_params!(p, _ke, _k12, _k21, v);
             y[0] = x[0] / v;
         },
-        (2, 1),
-    );
+    )
+    .with_nstates(2)
+    .with_nout(1);
     black_box(ode.estimate_predictions(subject, params).unwrap());
 }
 
@@ -141,8 +146,9 @@ fn two_compartment_iv_analytical(subject: &Subject, params: &Vec<f64>) {
             fetch_params!(p, _ke, _k12, _k21, v);
             y[0] = x[0] / v;
         },
-        (2, 1),
-    );
+    )
+    .with_nstates(2)
+    .with_nout(1);
     black_box(analytical.estimate_predictions(subject, params).unwrap());
 }
 
@@ -165,8 +171,9 @@ fn two_compartment_oral_ode(subject: &Subject, params: &Vec<f64>) {
             fetch_params!(p, _ka, _ke, _k12, _k21, v);
             y[0] = x[1] / v;
         },
-        (3, 1),
-    );
+    )
+    .with_nstates(3)
+    .with_nout(1);
     black_box(ode.estimate_predictions(subject, params).unwrap());
 }
 
@@ -181,8 +188,9 @@ fn two_compartment_oral_analytical(subject: &Subject, params: &Vec<f64>) {
             fetch_params!(p, _ka, _ke, _k12, _k21, v);
             y[0] = x[1] / v;
         },
-        (3, 1),
-    );
+    )
+    .with_nstates(3)
+    .with_nout(1);
     black_box(analytical.estimate_predictions(subject, params).unwrap());
 }
 

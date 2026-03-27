@@ -117,7 +117,7 @@ pub fn three_compartments(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V
 ///   - x is a vector of length 4
 ///   - covariates are not used
 ///
-pub fn three_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {
+pub fn three_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: &V, _cov: &Covariates) -> V {
     let ka = p[0];
     let ke = p[1];
     let k23 = p[2];
@@ -260,8 +260,10 @@ mod tests {
                 fetch_params!(p, _ke, _k23, _k24, _k32, _k42, v);
                 y[0] = x[0] / v;
             },
-            (3, 1),
-        );
+        )
+        .with_nstates(3)
+        .with_ndrugs(1)
+        .with_nout(1);
 
         let analytical = equation::Analytical::new(
             three_compartments,
@@ -273,8 +275,10 @@ mod tests {
                 fetch_params!(p, _ke, _k23, _k24, _k32, _k42, v);
                 y[0] = x[0] / v;
             },
-            (3, 1),
-        );
+        )
+        .with_nstates(3)
+        .with_ndrugs(1)
+        .with_nout(1);
 
         let op_ode = ode
             .estimate_predictions(&subject, &vec![0.1, 3.0, 2.0, 1.0, 0.5, 1.0])
@@ -319,8 +323,10 @@ mod tests {
                 fetch_params!(p, _ka, _ke, _k23, _k24, _k32, _k42, v);
                 y[0] = x[1] / v;
             },
-            (4, 1),
-        );
+        )
+        .with_nstates(4)
+        .with_ndrugs(2)
+        .with_nout(1);
 
         let analytical = equation::Analytical::new(
             three_compartments_with_absorption,
@@ -332,8 +338,10 @@ mod tests {
                 fetch_params!(p, _ka, _ke, _k23, _k24, _k32, _k42, v);
                 y[0] = x[1] / v;
             },
-            (4, 1),
-        );
+        )
+        .with_nstates(4)
+        .with_ndrugs(2)
+        .with_nout(1);
 
         let op_ode = ode
             .estimate_predictions(&subject, &vec![1.0, 0.1, 3.0, 2.0, 1.0, 0.5, 1.0])

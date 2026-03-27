@@ -29,9 +29,10 @@ fn test_particle_filter_likelihood() {
         |x, _p, _t, _cov, y| {
             y[0] = x[0];
         },
-        (2, 1),
         10000,
-    );
+    )
+    .with_nstates(2)
+    .with_nout(1);
 
     let ems = AssayErrorModels::new()
         .add(

@@ -9,7 +9,7 @@ use nalgebra::{DVector, Matrix2, Vector2};
 /// - `rateiv` is a vector of length 1 with the value of the infusion rate (only one drug)
 /// - `x` is a vector of length 2
 /// - covariates are not used
-pub fn two_compartments(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {
+pub fn two_compartments(x: &V, p: &V, t: T, rateiv: &V, _cov: &Covariates) -> V {
     let ke = p[0];
     let k12 = p[1];
     let k21 = p[2];
@@ -52,7 +52,7 @@ pub fn two_compartments(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {
 /// - `rateiv` is a vector of length 1 with the value of the infusion rate (only one drug)
 /// - `x` is a vector of length 3
 /// - covariates are not used
-pub fn two_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {
+pub fn two_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: &V, _cov: &Covariates) -> V {
     let ke = p[0];
     let ka = p[1];
     let k12 = p[2];
@@ -131,8 +131,10 @@ mod tests {
                 fetch_params!(p, _ke, _k12, _k21, v);
                 y[0] = x[0] / v;
             },
-            (2, 1),
-        );
+        )
+        .with_nstates(2)
+        .with_ndrugs(1)
+        .with_nout(1);
 
         let analytical = equation::Analytical::new(
             two_compartments,
@@ -144,8 +146,10 @@ mod tests {
                 fetch_params!(p, _ke, _k12, _k21, v);
                 y[0] = x[0] / v;
             },
-            (2, 1),
-        );
+        )
+        .with_nstates(2)
+        .with_ndrugs(1)
+        .with_nout(1);
 
         let op_ode = ode
             .estimate_predictions(&subject, &vec![0.1, 3.0, 1.0, 1.0])
@@ -185,8 +189,10 @@ mod tests {
                 fetch_params!(p, _ke, _ka, _k12, _k21, v);
                 y[0] = x[1] / v;
             },
-            (3, 1),
-        );
+        )
+        .with_nstates(3)
+        .with_ndrugs(2)
+        .with_nout(1);
 
         let analytical = equation::Analytical::new(
             two_compartments_with_absorption,
@@ -198,8 +204,10 @@ mod tests {
                 fetch_params!(p, _ke, _ka, _k12, _k21, v);
                 y[0] = x[1] / v;
             },
-            (3, 1),
-        );
+        )
+        .with_nstates(3)
+        .with_ndrugs(2)
+        .with_nout(1);
 
         let op_ode = ode
             .estimate_predictions(&subject, &vec![0.1, 1.0, 3.0, 1.0, 1.0])

@@ -51,6 +51,7 @@ pub(crate) fn simulate_sde_event(
     support_point: &[f64],
     cov: &Covariates,
     infusions: &[Infusion],
+    ndrugs: usize,
     ti: f64,
     tf: f64,
 ) -> V {
@@ -67,6 +68,7 @@ pub(crate) fn simulate_sde_event(
         infusions.to_vec(),
         1e-2,
         1e-2,
+        ndrugs,
     );
     let (_time, solution) = sde.solve(ti, tf);
     solution.last().unwrap().clone().into()
@@ -92,23 +94,15 @@ pub struct SDE {
 }
 
 impl SDE {
-    /// Creates a new stochastic differential equation solver.
+    /// Creates a new stochastic differential equation solver with default Neqs.
     ///
-    /// # Arguments
-    ///
-    /// * `drift` - Function defining the deterministic component of the SDE
-    /// * `diffusion` - Function defining the stochastic component of the SDE
-    /// * `lag` - Function to compute absorption lag times
-    /// * `fa` - Function to compute bioavailability fractions
-    /// * `init` - Function to initialize the system state
-    /// * `out` - Function to compute output equations
-    /// * `neqs` - Tuple containing the number of state and output equations
-    /// * `nparticles` - Number of particles to use in the simulation
-    ///
-    /// # Returns
-    ///
-    /// A new SDE solver instance configured with the given components.
-    #[allow(clippy::too_many_arguments)]
+    /// Use builder methods to configure dimensions:
+    /// ```ignore
+    /// SDE::new(drift, diffusion, lag, fa, init, out, nparticles)
+    ///     .with_nstates(2)
+    ///     .with_ndrugs(1)
+    ///     .with_nout(1)
+    /// ```
     pub fn new(
         drift: Drift,
         diffusion: Diffusion,
@@ -116,7 +110,6 @@ impl SDE {
         fa: Fa,
         init: Init,
         out: Out,
-        neqs: Neqs,
         nparticles: usize,
     ) -> Self {
         Self {
@@ -126,9 +119,27 @@ impl SDE {
             fa,
             init,
             out,
-            neqs,
+            neqs: Neqs::default(),
             nparticles,
         }
+    }
+
+    /// Set the number of state variables.
+    pub fn with_nstates(mut self, nstates: usize) -> Self {
+        self.neqs.nstates = nstates;
+        self
+    }
+
+    /// Set the number of drug input channels (size of bolus[] and rateiv[]).
+    pub fn with_ndrugs(mut self, ndrugs: usize) -> Self {
+        self.neqs.ndrugs = ndrugs;
+        self
+    }
+
+    /// Set the number of output equations.
+    pub fn with_nout(mut self, nout: usize) -> Self {
+        self.neqs.nout = nout;
+        self
     }
 }
 
@@ -238,12 +249,17 @@ impl EquationPriv for SDE {
 
     #[inline(always)]
     fn get_nstates(&self) -> usize {
-        self.neqs.0
+        self.neqs.nstates
+    }
+
+    #[inline(always)]
+    fn get_ndrugs(&self) -> usize {
+        self.neqs.ndrugs
     }
 
     #[inline(always)]
     fn get_nouteqs(&self) -> usize {
-        self.neqs.1
+        self.neqs.nout
     }
     #[inline(always)]
     fn solve(
@@ -255,6 +271,7 @@ impl EquationPriv for SDE {
         ti: f64,
         tf: f64,
     ) -> Result<(), PharmsolError> {
+        let ndrugs = self.get_ndrugs();
         state.par_iter_mut().for_each(|particle| {
             *particle = simulate_sde_event(
                 &self.drift,
@@ -263,6 +280,7 @@ impl EquationPriv for SDE {
                 support_point,
                 covariates,
                 infusions,
+                ndrugs,
                 ti,
                 tf,
             )
@@ -291,6 +309,7 @@ impl EquationPriv for SDE {
         output: &mut Self::P,
     ) -> Result<(), PharmsolError> {
         let mut pred = vec![Prediction::default(); self.nparticles];
+
         pred.par_iter_mut().enumerate().for_each(|(i, p)| {
             let mut y = V::zeros(self.get_nouteqs(), NalgebraContext);
             (self.out)(

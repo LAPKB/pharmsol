@@ -36,9 +36,10 @@ fn main() {
             fetch_params!(p, _ke0);
             y[0] = x[0] / 50.0;
         },
-        (2, 1),
         1,
-    );
+    )
+    .with_nstates(2)
+    .with_nout(1);
 
     let ke_dist = rand_distr::Normal::new(1.2, 0.12).unwrap();
     // let v_dist = rand_distr::Normal::new(50.0, 10.0).unwrap();

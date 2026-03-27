@@ -31,8 +31,9 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
             // Calculate the output concentration, here defined as amount over volume
             y[0] = x[0] / v;
         },
-        (1, 1),
-    );
+    )
+    .with_nstates(1)
+    .with_nout(1);
 
     let ode = equation::ODE::new(
         |x, p, _t, dx, _b, rateiv, _cov| {
@@ -52,8 +53,9 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
             // Calculate the output concentration, here defined as amount over volume
             y[0] = x[0] / v;
         },
-        (1, 1),
-    );
+    )
+    .with_nstates(1)
+    .with_nout(1);
 
     // Define the error models for the observations
     let ems = AssayErrorModels::new().
