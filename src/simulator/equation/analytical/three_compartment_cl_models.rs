@@ -9,7 +9,7 @@ use nalgebra::{DVector, Matrix3, Vector3};
 /// - `rateiv` is a vector of length 1 with the value of the infusion rate (only one drug)
 /// - `x` is a vector of length 3
 /// - covariates are not used
-pub fn three_compartments_cl(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {
+pub fn three_compartments_cl(x: &V, p: &V, t: T, rateiv: &V, _cov: &Covariates) -> V {
     let cl = p[0];
     let q2 = p[1];
     let q3 = p[2];
@@ -121,7 +121,7 @@ pub fn three_compartments_cl_with_absorption(
     x: &V,
     p: &V,
     t: T,
-    rateiv: V,
+    rateiv: &V,
     _cov: &Covariates,
 ) -> V {
     let ka = p[0];
@@ -280,8 +280,10 @@ mod tests {
                 fetch_params!(p, _cl, _q2, _q3, v1, _v2, _v3);
                 y[0] = x[0] / v1;
             },
-            (3, 1),
-        );
+        )
+        .with_nstates(3)
+        .with_ndrugs(3)
+        .with_nout(1);
 
         let analytical = equation::Analytical::new(
             three_compartments_cl,
@@ -293,8 +295,10 @@ mod tests {
                 fetch_params!(p, _cl, _q2, _q3, v1, _v2, _v3);
                 y[0] = x[0] / v1;
             },
-            (3, 1),
-        );
+        )
+        .with_nstates(3)
+        .with_ndrugs(3)
+        .with_nout(1);
 
         let op_ode = ode
             .estimate_predictions(&subject, &vec![0.1, 3.0, 2.0, 1.0, 0.5, 1.0])
@@ -342,8 +346,10 @@ mod tests {
                 fetch_params!(p, _ka, _cl, _q2, _q3, v1, _v2, _v3);
                 y[0] = x[1] / v1;
             },
-            (4, 1),
-        );
+        )
+        .with_nstates(4)
+        .with_ndrugs(4)
+        .with_nout(1);
 
         let analytical = equation::Analytical::new(
             three_compartments_cl_with_absorption,
@@ -355,8 +361,10 @@ mod tests {
                 fetch_params!(p, _ka, _cl, _q2, _q3, v1, _v2, _v3);
                 y[0] = x[1] / v1;
             },
-            (4, 1),
-        );
+        )
+        .with_nstates(4)
+        .with_ndrugs(4)
+        .with_nout(1);
 
         let op_ode = ode
             .estimate_predictions(&subject, &vec![1.0, 0.1, 3.0, 2.0, 1.0, 0.5, 1.0])

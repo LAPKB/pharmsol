@@ -12,7 +12,7 @@ use nalgebra::{DVector, Matrix3, Vector3};
 ///   - x is a vector of length 3
 ///   - covariates are not used
 ///
-pub fn three_compartments(x: &V, p: &V, t: T, rateiv: V, _cov: &Covariates) -> V {
+pub fn three_compartments(x: &V, p: &V, t: T, rateiv: &V, _cov: &Covariates) -> V {
     let ke = p[0];
     let k12 = p[1];
     let k13 = p[2];
@@ -262,7 +262,7 @@ mod tests {
             },
         )
         .with_nstates(3)
-        .with_ndrugs(1)
+        .with_ndrugs(3)
         .with_nout(1);
 
         let analytical = equation::Analytical::new(
@@ -277,7 +277,7 @@ mod tests {
             },
         )
         .with_nstates(3)
-        .with_ndrugs(1)
+        .with_ndrugs(3)
         .with_nout(1);
 
         let op_ode = ode
@@ -325,7 +325,7 @@ mod tests {
             },
         )
         .with_nstates(4)
-        .with_ndrugs(2)
+        .with_ndrugs(4)
         .with_nout(1);
 
         let analytical = equation::Analytical::new(
@@ -340,7 +340,7 @@ mod tests {
             },
         )
         .with_nstates(4)
-        .with_ndrugs(2)
+        .with_ndrugs(4)
         .with_nout(1);
 
         let op_ode = ode

@@ -133,7 +133,7 @@ mod tests {
             },
         )
         .with_nstates(2)
-        .with_ndrugs(1)
+        .with_ndrugs(2)
         .with_nout(1);
 
         let analytical = equation::Analytical::new(
@@ -148,7 +148,7 @@ mod tests {
             },
         )
         .with_nstates(2)
-        .with_ndrugs(1)
+        .with_ndrugs(2)
         .with_nout(1);
 
         let op_ode = ode
@@ -191,7 +191,7 @@ mod tests {
             },
         )
         .with_nstates(3)
-        .with_ndrugs(2)
+        .with_ndrugs(3)
         .with_nout(1);
 
         let analytical = equation::Analytical::new(
@@ -206,7 +206,7 @@ mod tests {
             },
         )
         .with_nstates(3)
-        .with_ndrugs(2)
+        .with_ndrugs(3)
         .with_nout(1);
 
         let op_ode = ode
