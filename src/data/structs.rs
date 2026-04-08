@@ -462,7 +462,7 @@ impl Subject {
 
     /// Calculate the hash for a subject
     ///
-    /// The hash takes into account all events, so that if a subject is modified, it will not produce the same likelihood when simulated with the same support point. Note that covariates are not included in the hash, but a method exists to hash covariates if needed.
+    /// The hash is produced over all events and all covariates of the subject, providing a unique identifier for the subject data.
     pub fn hash(&self) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut hasher = ahash::AHasher::default();
