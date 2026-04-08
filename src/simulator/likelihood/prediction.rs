@@ -153,7 +153,7 @@ impl Prediction {
     }
 
     /// Get the state vector at this prediction point
-    pub fn state(&self) -> &Vec<f64> {
+    pub fn state(&self) -> &[f64] {
         &self.state
     }
 

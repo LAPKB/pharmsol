@@ -184,7 +184,7 @@ pub fn log_likelihood_subject(
     residual_error_models: &crate::ResidualErrorModels,
 ) -> f64 {
     // Simulate to get predictions
-    let predictions = match equation.estimate_predictions(subject, &params.to_vec()) {
+    let predictions = match equation.estimate_predictions(subject, params) {
         Ok(preds) => preds,
         Err(_) => return f64::NEG_INFINITY,
     };

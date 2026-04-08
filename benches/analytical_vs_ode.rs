@@ -34,7 +34,7 @@ fn example_subject_oral() -> Subject {
 // One-compartment IV models
 // =============================================================================
 
-fn one_compartment_iv_ode(subject: &Subject, params: &Vec<f64>) {
+fn one_compartment_iv_ode(subject: &Subject, params: &[f64]) {
     let ode = equation::ODE::new(
         |x, p, _t, dx, _b, rateiv, _cov| {
             fetch_params!(p, ke, _v);
@@ -53,7 +53,7 @@ fn one_compartment_iv_ode(subject: &Subject, params: &Vec<f64>) {
     black_box(ode.estimate_predictions(subject, params).unwrap());
 }
 
-fn one_compartment_iv_analytical(subject: &Subject, params: &Vec<f64>) {
+fn one_compartment_iv_analytical(subject: &Subject, params: &[f64]) {
     let analytical = equation::Analytical::new(
         one_compartment,
         |_p, _t, _cov| {},
@@ -74,7 +74,7 @@ fn one_compartment_iv_analytical(subject: &Subject, params: &Vec<f64>) {
 // One-compartment with oral absorption models
 // =============================================================================
 
-fn one_compartment_oral_ode(subject: &Subject, params: &Vec<f64>) {
+fn one_compartment_oral_ode(subject: &Subject, params: &[f64]) {
     let ode = equation::ODE::new(
         |x, p, _t, dx, _b, _rateiv, _cov| {
             fetch_params!(p, ka, ke, _v);
@@ -94,7 +94,7 @@ fn one_compartment_oral_ode(subject: &Subject, params: &Vec<f64>) {
     black_box(ode.estimate_predictions(subject, params).unwrap());
 }
 
-fn one_compartment_oral_analytical(subject: &Subject, params: &Vec<f64>) {
+fn one_compartment_oral_analytical(subject: &Subject, params: &[f64]) {
     let analytical = equation::Analytical::new(
         one_compartment_with_absorption,
         |_p, _t, _cov| {},
@@ -115,7 +115,7 @@ fn one_compartment_oral_analytical(subject: &Subject, params: &Vec<f64>) {
 // Two-compartment IV models
 // =============================================================================
 
-fn two_compartment_iv_ode(subject: &Subject, params: &Vec<f64>) {
+fn two_compartment_iv_ode(subject: &Subject, params: &[f64]) {
     let ode = equation::ODE::new(
         |x, p, _t, dx, _b, rateiv, _cov| {
             fetch_params!(p, ke, k12, k21, _v);
@@ -135,7 +135,7 @@ fn two_compartment_iv_ode(subject: &Subject, params: &Vec<f64>) {
     black_box(ode.estimate_predictions(subject, params).unwrap());
 }
 
-fn two_compartment_iv_analytical(subject: &Subject, params: &Vec<f64>) {
+fn two_compartment_iv_analytical(subject: &Subject, params: &[f64]) {
     let analytical = equation::Analytical::new(
         two_compartments,
         |_p, _t, _cov| {},
@@ -156,7 +156,7 @@ fn two_compartment_iv_analytical(subject: &Subject, params: &Vec<f64>) {
 // Two-compartment with oral absorption models
 // =============================================================================
 
-fn two_compartment_oral_ode(subject: &Subject, params: &Vec<f64>) {
+fn two_compartment_oral_ode(subject: &Subject, params: &[f64]) {
     let ode = equation::ODE::new(
         |x, p, _t, dx, _b, _rateiv, _cov| {
             fetch_params!(p, ka, ke, k12, k21, _v);
@@ -177,7 +177,7 @@ fn two_compartment_oral_ode(subject: &Subject, params: &Vec<f64>) {
     black_box(ode.estimate_predictions(subject, params).unwrap());
 }
 
-fn two_compartment_oral_analytical(subject: &Subject, params: &Vec<f64>) {
+fn two_compartment_oral_analytical(subject: &Subject, params: &[f64]) {
     let analytical = equation::Analytical::new(
         two_compartments_with_absorption,
         |_p, _t, _cov| {},
