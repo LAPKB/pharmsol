@@ -494,6 +494,8 @@ impl Subject {
                     }
                 }
             }
+            // Also hash covariates to ensure that changes are propagated
+            occasion.covariates.hash().hash(&mut hasher);
         }
         hasher.finish()
     }
