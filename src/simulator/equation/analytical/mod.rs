@@ -13,11 +13,10 @@ pub use three_compartment_models::*;
 pub use two_compartment_cl_models::*;
 pub use two_compartment_models::*;
 
-use super::id_hash;
 use super::spphash;
 
 use crate::data::error_model::AssayErrorModels;
-use crate::simulator::cache::{ana_cache_lock_read, cache_enabled};
+use crate::simulator::cache::{PredictionCache, DEFAULT_CACHE_SIZE};
 use crate::PharmsolError;
 use crate::{
     data::Covariates, simulator::*, Equation, EquationPriv, EquationTypes, Observation, Subject,
@@ -27,7 +26,6 @@ use crate::{
 ///
 /// This implementation uses closed-form analytical solutions for the model
 /// equations rather than numerical integration.
-#[repr(C)]
 #[derive(Clone, Debug)]
 pub struct Analytical {
     eq: AnalyticalEq,
@@ -37,6 +35,7 @@ pub struct Analytical {
     init: Init,
     out: Out,
     neqs: Neqs,
+    cache: Option<PredictionCache>,
 }
 
 impl Analytical {
@@ -58,6 +57,7 @@ impl Analytical {
             init,
             out,
             neqs: Neqs::default(),
+            cache: None,
         }
     }
 
@@ -77,6 +77,28 @@ impl Analytical {
     pub fn with_nout(mut self, nout: usize) -> Self {
         self.neqs.nout = nout;
         self
+    }
+
+    /// Enable prediction caching with the given maximum number of entries.
+    ///
+    /// When caching is enabled, predictions for the same (subject, parameters)
+    /// pair are stored and reused. Cloned equations share the same cache.
+    pub fn with_cache(mut self, size: u64) -> Self {
+        self.cache = Some(PredictionCache::new(size));
+        self
+    }
+
+    /// Enable prediction caching with the default size (100,000 entries).
+    pub fn with_default_cache(mut self) -> Self {
+        self.cache = Some(PredictionCache::new(DEFAULT_CACHE_SIZE));
+        self
+    }
+
+    /// Clear all entries from this equation's cache, if caching is enabled.
+    pub fn clear_cache(&self) {
+        if let Some(cache) = &self.cache {
+            cache.invalidate_all();
+        }
     }
 }
 
@@ -397,24 +419,21 @@ impl Equation for Analytical {
 
 #[inline(always)]
 fn _subject_predictions(
-    ode: &Analytical,
+    analytical: &Analytical,
     subject: &Subject,
     support_point: &[f64],
 ) -> Result<SubjectPredictions, PharmsolError> {
-    if cache_enabled() {
-        let key = (id_hash(subject.id()), spphash(support_point));
-        let cache_guard = ana_cache_lock_read()?;
-        if let Some(cached) = cache_guard.get(&key) {
+    if let Some(cache) = &analytical.cache {
+        let key = (subject.hash(), spphash(support_point));
+        if let Some(cached) = cache.get(&key) {
             return Ok(cached);
         }
-        drop(cache_guard);
 
-        let result = ode.simulate_subject(subject, support_point, None)?.0;
-        let cache_guard = ana_cache_lock_read()?;
-        cache_guard.insert(key, result.clone());
+        let result = analytical.simulate_subject(subject, support_point, None)?.0;
+        cache.insert(key, result.clone());
         Ok(result)
     } else {
-        Ok(ode.simulate_subject(subject, support_point, None)?.0)
+        Ok(analytical.simulate_subject(subject, support_point, None)?.0)
     }
 }
 
