@@ -8,9 +8,8 @@ use crate::{
     Event, Observation, PharmsolError, Subject,
 };
 
-use super::id_hash;
 use super::spphash;
-use crate::simulator::cache::{cache_enabled, ode_cache_lock_read};
+use crate::simulator::cache::{PredictionCache, DEFAULT_CACHE_SIZE};
 use crate::simulator::equation::Predictions;
 use closure::PMProblem;
 use diffsol::{
@@ -67,7 +66,6 @@ pub enum ExplicitRkTableau {
     Tsit45,
 }
 
-#[repr(C)]
 #[derive(Clone, Debug)]
 pub struct ODE {
     diffeq: DiffEq,
@@ -79,6 +77,7 @@ pub struct ODE {
     solver: OdeSolver,
     rtol: f64,
     atol: f64,
+    cache: Option<PredictionCache>,
 }
 
 impl ODE {
@@ -93,6 +92,7 @@ impl ODE {
             solver: OdeSolver::default(),
             rtol: RTOL,
             atol: ATOL,
+            cache: None,
         }
     }
 
@@ -126,6 +126,28 @@ impl ODE {
         self.atol = atol;
         self
     }
+
+    /// Enable prediction caching with the given maximum number of entries.
+    ///
+    /// When caching is enabled, predictions for the same (subject, parameters)
+    /// pair are stored and reused. Cloned equations share the same cache.
+    pub fn with_cache(mut self, size: u64) -> Self {
+        self.cache = Some(PredictionCache::new(size));
+        self
+    }
+
+    /// Enable prediction caching with the default size (100,000 entries).
+    pub fn with_default_cache(mut self) -> Self {
+        self.cache = Some(PredictionCache::new(DEFAULT_CACHE_SIZE));
+        self
+    }
+
+    /// Clear all entries from this equation's cache, if caching is enabled.
+    pub fn clear_cache(&self) {
+        if let Some(cache) = &self.cache {
+            cache.invalidate_all();
+        }
+    }
 }
 
 impl State for V {
@@ -151,17 +173,14 @@ fn _subject_predictions(
     subject: &Subject,
     support_point: &Vec<f64>,
 ) -> Result<SubjectPredictions, PharmsolError> {
-    if cache_enabled() {
-        let key = (id_hash(subject.id()), spphash(support_point));
-        let cache_guard = ode_cache_lock_read()?;
-        if let Some(cached) = cache_guard.get(&key) {
+    if let Some(cache) = &ode.cache {
+        let key = (subject.hash(), spphash(support_point));
+        if let Some(cached) = cache.get(&key) {
             return Ok(cached);
         }
-        drop(cache_guard);
 
         let result = ode.simulate_subject(subject, support_point, None)?.0;
-        let cache_guard = ode_cache_lock_read()?;
-        cache_guard.insert(key, result.clone());
+        cache.insert(key, result.clone());
         Ok(result)
     } else {
         Ok(ode.simulate_subject(subject, support_point, None)?.0)

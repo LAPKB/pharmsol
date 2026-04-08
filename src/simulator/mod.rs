@@ -234,8 +234,5 @@ impl Default for Neqs {
     }
 }
 
-// Re-export cache API at the simulator level for convenience.
-pub use cache::{
-    cache_enabled, cache_settings, configure_cache, disable_cache, enable_cache, reset_caches,
-    CacheSettings,
-};
+// Re-export cache types at the simulator level for convenience.
+pub use cache::{PredictionCache, SdeLikelihoodCache, DEFAULT_CACHE_SIZE};

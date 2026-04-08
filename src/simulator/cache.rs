@@ -1,199 +1,130 @@
-//! Global cache for predictions
+//! Cache mechanisms for [Equation]s
 //!
-//! This module provides a configurable, concurrent LRU cache for prediction results.
-//! The supports enabling/disabling caching at runtime and adjusting cache size.
-//!
-//! The cache can be cleared between runs, which is useful to avoid stale data and bad hits.
-
+//! This module provides lightweight cache wrappers that can be embedded
+//! directly in equation structs ([`ODE`], [`Analytical`], [`SDE`]).
+//! Each equation instance can optionally own a cache; cloning the equation
+//! produces a shallow clone that shares the same cache data.
 //!
 //! # Example
 //! ```ignore
-//! use pharmsol::simulator::cache::{configure_cache, CacheSettings};
+//! use pharmsol::*;
 //!
-//! // Use a smaller cache
-//! configure_cache(CacheSettings::with_size(10_000));
+//! // No caching (default):
+//! let ode = ODE::new(diffeq, lag, fa, init, out);
 //!
-//! // Disable caching entirely
-//! configure_cache(CacheSettings::disabled());
+//! // Enable caching with default size:
+//! let ode = ODE::new(diffeq, lag, fa, init, out).with_default_cache();
+//!
+//! // Enable caching with custom size:
+//! let ode = ODE::new(diffeq, lag, fa, init, out).with_cache(50_000);
 //! ```
 
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    LazyLock, RwLock,
-};
+use std::fmt;
 
 use moka::sync::Cache;
 
-use crate::{simulator::likelihood::SubjectPredictions, PharmsolError};
+use crate::simulator::likelihood::SubjectPredictions;
 
 /// Default maximum number of entries per cache.
 pub const DEFAULT_CACHE_SIZE: u64 = 100_000;
 
-static CACHE_ENABLED: AtomicBool = AtomicBool::new(true);
-
-/// Settings for the prediction cache.
-#[derive(Debug, Clone)]
-pub struct CacheSettings {
-    /// Whether caching is enabled.
-    pub enabled: bool,
-    /// Maximum number of entries per equation type.
-    pub size: u64,
-}
-
-impl Default for CacheSettings {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            size: DEFAULT_CACHE_SIZE,
-        }
-    }
-}
-
-impl CacheSettings {
-    /// Create settings with caching disabled.
-    pub fn disabled() -> Self {
-        Self {
-            enabled: false,
-            ..Default::default()
-        }
-    }
-
-    /// Create settings with a custom cache size.
-    pub fn with_size(size: u64) -> Self {
-        Self {
-            enabled: true,
-            size,
-        }
-    }
-}
-
-/// Apply new cache settings globally.
-///
-/// This replaces all caches with new instances of the given size
-/// and updates the enabled flag. Any cached entries are discarded.
-pub fn configure_cache(settings: CacheSettings) -> Result<(), PharmsolError> {
-    CACHE_ENABLED.store(settings.enabled, Ordering::Relaxed);
-
-    let size = settings.size;
-
-    // Replace each cache with a fresh instance of the requested size.
-    {
-        let mut c = ana_cache_lock_write()?;
-        *c = Cache::new(size);
-    }
-    {
-        let mut c = ode_cache_lock_write()?;
-        *c = Cache::new(size);
-    }
-    {
-        let mut c = sde_cache_lock_write()?;
-        *c = Cache::new(size);
-    }
-
-    Ok(())
-}
-
-/// Clear all prediction caches without changing settings.
-pub fn reset_caches() -> Result<(), PharmsolError> {
-    ana_cache_lock_read()?.invalidate_all();
-    ode_cache_lock_read()?.invalidate_all();
-    sde_cache_lock_read()?.invalidate_all();
-    Ok(())
-}
-
-/// Disable caching entirely and clear all caches.
-pub fn disable_cache() -> Result<(), PharmsolError> {
-    CACHE_ENABLED.store(false, Ordering::Relaxed);
-    reset_caches()
-}
-
-/// Enable caching (uses existing size settings).
-pub fn enable_cache() {
-    CACHE_ENABLED.store(true, Ordering::Relaxed);
-}
-
-/// Returns `true` if caching is currently enabled.
-#[inline(always)]
-pub fn cache_enabled() -> bool {
-    CACHE_ENABLED.load(Ordering::Relaxed)
-}
-
-/// Get the current cache settings.
-pub fn cache_settings() -> Result<CacheSettings, PharmsolError> {
-    let size = ana_cache_lock_read()?.policy().max_capacity().unwrap_or(0);
-    Ok(CacheSettings {
-        enabled: cache_enabled(),
-        size,
-    })
-}
-
-// ---------------------------------------------------------------------------
-// Per-equation-type caches
-// ---------------------------------------------------------------------------
-
-/// Cache key: (subject_id_hash, support_point_hash)
+/// Cache key: (subject_hash, support_point_hash)
 pub(crate) type PredictionKey = (u64, u64);
 
-/// Cache key for SDE: (subject_id_hash, support_point_hash, error_model_hash)
+/// Cache key for SDE: (subject_hash, support_point_hash, error_model_hash)
 pub(crate) type SdeKey = (u64, u64, u64);
 
-// The caches use RwLock so that the hot path (read lock) allows full moka
-// concurrency, while resize (write lock) is exclusive but rare.
+/// Thread-safe LRU cache for subject predictions.
+///
+/// Used by [`ODE`](crate::ODE) and [`Analytical`](crate::simulator::equation::Analytical)
+/// to avoid recomputing predictions for the same (subject, parameters) pair.
+///
+/// `Clone` produces a shallow clone that shares the same underlying cache data,
+/// so cloned equations share cache hits.
+#[derive(Clone)]
+pub struct PredictionCache(Cache<PredictionKey, SubjectPredictions>);
 
-static ANA_CACHE: LazyLock<RwLock<Cache<PredictionKey, SubjectPredictions>>> =
-    LazyLock::new(|| RwLock::new(Cache::new(DEFAULT_CACHE_SIZE)));
+impl PredictionCache {
+    /// Create a new prediction cache with a given maximum number of entries.
+    pub fn new(size: u64) -> Self {
+        Self(Cache::new(size))
+    }
 
-static ODE_CACHE: LazyLock<RwLock<Cache<PredictionKey, SubjectPredictions>>> =
-    LazyLock::new(|| RwLock::new(Cache::new(DEFAULT_CACHE_SIZE)));
+    /// Look up a cached prediction.
+    #[inline]
+    pub fn get(&self, key: &PredictionKey) -> Option<SubjectPredictions> {
+        self.0.get(key)
+    }
 
-static SDE_CACHE: LazyLock<RwLock<Cache<SdeKey, f64>>> =
-    LazyLock::new(|| RwLock::new(Cache::new(DEFAULT_CACHE_SIZE)));
+    /// Insert a prediction into the cache.
+    #[inline]
+    pub fn insert(&self, key: PredictionKey, value: SubjectPredictions) {
+        self.0.insert(key, value);
+    }
 
-/// Wrapper for lock errors
-fn lock_err(context: &str) -> PharmsolError {
-    PharmsolError::OtherError(format!("Failed to lock {context} cache"))
+    /// Remove all entries from the cache.
+    pub fn invalidate_all(&self) {
+        self.0.invalidate_all();
+    }
+
+    /// Return the number of entries currently in the cache.
+    pub fn entry_count(&self) -> u64 {
+        self.0.entry_count()
+    }
 }
 
-// -- Analytical --
-
-pub(crate) fn ana_cache_lock_read() -> Result<
-    std::sync::RwLockReadGuard<'static, Cache<PredictionKey, SubjectPredictions>>,
-    PharmsolError,
-> {
-    ANA_CACHE.read().map_err(|_| lock_err("analytical"))
+impl fmt::Debug for PredictionCache {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PredictionCache")
+            .field("entry_count", &self.0.entry_count())
+            .finish()
+    }
 }
 
-fn ana_cache_lock_write() -> Result<
-    std::sync::RwLockWriteGuard<'static, Cache<PredictionKey, SubjectPredictions>>,
-    PharmsolError,
-> {
-    ANA_CACHE.write().map_err(|_| lock_err("analytical"))
+/// Cache for SDE likelihood values.
+///
+/// SDEs do not produce subject predictions that can be cached, but
+/// the likelihood values for a given subject and parameters can still be cached.
+///
+/// Note that the use of a cache for SDEs
+///
+/// `Clone` produces a shallow clone that shares the same underlying cache data.
+#[derive(Clone)]
+pub struct SdeLikelihoodCache(Cache<SdeKey, f64>);
+
+impl SdeLikelihoodCache {
+    /// Create a new SDE likelihood cache with the given maximum number of entries.
+    pub fn new(size: u64) -> Self {
+        Self(Cache::new(size))
+    }
+
+    /// Look up a cached likelihood value.
+    #[inline]
+    pub fn get(&self, key: &SdeKey) -> Option<f64> {
+        self.0.get(key)
+    }
+
+    /// Insert a likelihood value into the cache.
+    #[inline]
+    pub fn insert(&self, key: SdeKey, value: f64) {
+        self.0.insert(key, value);
+    }
+
+    /// Remove all entries from the cache.
+    pub fn invalidate_all(&self) {
+        self.0.invalidate_all();
+    }
+
+    /// Return the number of entries currently in the cache.
+    pub fn entry_count(&self) -> u64 {
+        self.0.entry_count()
+    }
 }
 
-// -- ODE --
-
-pub(crate) fn ode_cache_lock_read() -> Result<
-    std::sync::RwLockReadGuard<'static, Cache<PredictionKey, SubjectPredictions>>,
-    PharmsolError,
-> {
-    ODE_CACHE.read().map_err(|_| lock_err("ODE"))
-}
-
-fn ode_cache_lock_write() -> Result<
-    std::sync::RwLockWriteGuard<'static, Cache<PredictionKey, SubjectPredictions>>,
-    PharmsolError,
-> {
-    ODE_CACHE.write().map_err(|_| lock_err("ODE"))
-}
-
-// -- SDE --
-
-pub(crate) fn sde_cache_lock_read(
-) -> Result<std::sync::RwLockReadGuard<'static, Cache<SdeKey, f64>>, PharmsolError> {
-    SDE_CACHE.read().map_err(|_| lock_err("SDE"))
-}
-
-fn sde_cache_lock_write(
-) -> Result<std::sync::RwLockWriteGuard<'static, Cache<SdeKey, f64>>, PharmsolError> {
-    SDE_CACHE.write().map_err(|_| lock_err("SDE"))
+impl fmt::Debug for SdeLikelihoodCache {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SdeLikelihoodCache")
+            .field("entry_count", &self.0.entry_count())
+            .finish()
+    }
 }
