@@ -83,9 +83,9 @@ pub(crate) trait EquationPriv: EquationTypes {
     fn solve(
         &self,
         state: &mut Self::S,
-        support_point: &Vec<f64>,
+        support_point: &[f64],
         covariates: &Covariates,
-        infusions: &Vec<Infusion>,
+        infusions: &[Infusion],
         start_time: f64,
         end_time: f64,
     ) -> Result<(), PharmsolError>;
@@ -100,7 +100,7 @@ pub(crate) trait EquationPriv: EquationTypes {
     #[allow(clippy::too_many_arguments)]
     fn process_observation(
         &self,
-        support_point: &Vec<f64>,
+        support_point: &[f64],
         observation: &Observation,
         error_models: Option<&AssayErrorModels>,
         time: f64,
@@ -112,7 +112,7 @@ pub(crate) trait EquationPriv: EquationTypes {
 
     fn initial_state(
         &self,
-        support_point: &Vec<f64>,
+        support_point: &[f64],
         covariates: &Covariates,
         occasion_index: usize,
     ) -> Self::S;
@@ -120,7 +120,7 @@ pub(crate) trait EquationPriv: EquationTypes {
     #[allow(clippy::too_many_arguments)]
     fn simulate_event(
         &self,
-        support_point: &Vec<f64>,
+        support_point: &[f64],
         event: &Event,
         next_event: Option<&Event>,
         error_models: Option<&AssayErrorModels>,
@@ -206,7 +206,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
     fn estimate_likelihood(
         &self,
         subject: &Subject,
-        support_point: &Vec<f64>,
+        support_point: &[f64],
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError>;
 
@@ -229,7 +229,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
     fn estimate_log_likelihood(
         &self,
         subject: &Subject,
-        support_point: &Vec<f64>,
+        support_point: &[f64],
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError>;
 
@@ -246,7 +246,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
     fn estimate_predictions(
         &self,
         subject: &Subject,
-        support_point: &Vec<f64>,
+        support_point: &[f64],
     ) -> Result<Self::P, PharmsolError> {
         Ok(self.simulate_subject(subject, support_point, None)?.0)
     }
@@ -273,7 +273,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
     fn simulate_subject(
         &self,
         subject: &Subject,
-        support_point: &Vec<f64>,
+        support_point: &[f64],
         error_models: Option<&AssayErrorModels>,
     ) -> Result<(Self::P, Option<f64>), PharmsolError> {
         let mut output = Self::P::new(self.nparticles());
@@ -322,15 +322,6 @@ impl EqnKind {
             Self::SDE => "EqnKind::SDE",
         }
     }
-}
-
-/// Hash a subject for cache key generation.
-#[inline(always)]
-fn id_hash(id: &str) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = ahash::AHasher::default();
-    id.hash(&mut hasher);
-    hasher.finish()
 }
 
 /// Hash support points to a u64 for cache key generation.

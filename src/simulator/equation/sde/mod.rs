@@ -14,9 +14,8 @@ use crate::{
     Subject,
 };
 
-use super::id_hash;
 use super::spphash;
-use crate::simulator::cache::{cache_enabled, sde_cache_lock_read};
+use crate::simulator::cache::{SdeLikelihoodCache, DEFAULT_CACHE_SIZE};
 
 use diffsol::VectorCommon;
 
@@ -91,6 +90,7 @@ pub struct SDE {
     out: Out,
     neqs: Neqs,
     nparticles: usize,
+    cache: Option<SdeLikelihoodCache>,
 }
 
 impl SDE {
@@ -121,6 +121,7 @@ impl SDE {
             out,
             neqs: Neqs::default(),
             nparticles,
+            cache: None,
         }
     }
 
@@ -140,6 +141,29 @@ impl SDE {
     pub fn with_nout(mut self, nout: usize) -> Self {
         self.neqs.nout = nout;
         self
+    }
+
+    /// Enable likelihood caching with the given maximum number of entries.
+    ///
+    /// When caching is enabled, likelihood results for the same
+    /// (subject, parameters, error model) triple are stored and reused.
+    /// Cloned equations share the same cache.
+    pub fn with_cache(mut self, size: u64) -> Self {
+        self.cache = Some(SdeLikelihoodCache::new(size));
+        self
+    }
+
+    /// Enable likelihood caching with the default size (100,000 entries).
+    pub fn with_default_cache(mut self) -> Self {
+        self.cache = Some(SdeLikelihoodCache::new(DEFAULT_CACHE_SIZE));
+        self
+    }
+
+    /// Clear all entries from this equation's cache, if caching is enabled.
+    pub fn clear_cache(&self) {
+        if let Some(cache) = &self.cache {
+            cache.invalidate_all();
+        }
     }
 }
 
@@ -265,9 +289,9 @@ impl EquationPriv for SDE {
     fn solve(
         &self,
         state: &mut Self::S,
-        support_point: &Vec<f64>,
+        support_point: &[f64],
         covariates: &Covariates,
-        infusions: &Vec<Infusion>,
+        infusions: &[Infusion],
         ti: f64,
         tf: f64,
     ) -> Result<(), PharmsolError> {
@@ -299,7 +323,7 @@ impl EquationPriv for SDE {
     #[inline(always)]
     fn process_observation(
         &self,
-        support_point: &Vec<f64>,
+        support_point: &[f64],
         observation: &crate::Observation,
         error_models: Option<&AssayErrorModels>,
         _time: f64,
@@ -314,7 +338,7 @@ impl EquationPriv for SDE {
             let mut y = V::zeros(self.get_nouteqs(), NalgebraContext);
             (self.out)(
                 &x[i].clone().into(),
-                &V::from_vec(support_point.clone(), NalgebraContext),
+                &V::from_vec(support_point.to_vec(), NalgebraContext),
                 observation.time(),
                 covariates,
                 &mut y,
@@ -349,7 +373,7 @@ impl EquationPriv for SDE {
     #[inline(always)]
     fn initial_state(
         &self,
-        support_point: &Vec<f64>,
+        support_point: &[f64],
         covariates: &Covariates,
         occasion_index: usize,
     ) -> Self::S {
@@ -385,7 +409,7 @@ impl Equation for SDE {
     fn estimate_likelihood(
         &self,
         subject: &Subject,
-        support_point: &Vec<f64>,
+        support_point: &[f64],
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
         _estimate_likelihood(self, subject, support_point, error_models)
@@ -394,7 +418,7 @@ impl Equation for SDE {
     fn estimate_log_likelihood(
         &self,
         subject: &Subject,
-        support_point: &Vec<f64>,
+        support_point: &[f64],
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
         // For SDE, the particle filter computes likelihood in regular space.
@@ -417,25 +441,18 @@ impl Equation for SDE {
 fn _estimate_likelihood(
     sde: &SDE,
     subject: &Subject,
-    support_point: &Vec<f64>,
+    support_point: &[f64],
     error_models: &AssayErrorModels,
 ) -> Result<f64, PharmsolError> {
-    if cache_enabled() {
-        let key = (
-            id_hash(subject.id()),
-            spphash(support_point),
-            error_models.hash(),
-        );
-        let cache_guard = sde_cache_lock_read()?;
-        if let Some(cached) = cache_guard.get(&key) {
+    if let Some(cache) = &sde.cache {
+        let key = (subject.hash(), spphash(support_point), error_models.hash());
+        if let Some(cached) = cache.get(&key) {
             return Ok(cached);
         }
-        drop(cache_guard);
 
         let ypred = sde.simulate_subject(subject, support_point, Some(error_models))?;
         let result = ypred.1.unwrap();
-        let cache_guard = sde_cache_lock_read()?;
-        cache_guard.insert(key, result);
+        cache.insert(key, result);
         Ok(result)
     } else {
         let ypred = sde.simulate_subject(subject, support_point, Some(error_models))?;

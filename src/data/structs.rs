@@ -462,7 +462,7 @@ impl Subject {
 
     /// Calculate the hash for a subject
     ///
-    /// The hash takes into account all events, so that if a subject is modified, it will not produce the same likelihood when simulated with the same support point. Note that covariates are not included in the hash, but a method exists to hash covariates if needed.
+    /// The hash is produced over all events and all covariates of the subject, providing a unique identifier for the subject data.
     pub fn hash(&self) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut hasher = ahash::AHasher::default();
@@ -494,6 +494,8 @@ impl Subject {
                     }
                 }
             }
+            // Also hash covariates to ensure that changes are propagated
+            occasion.covariates.hash().hash(&mut hasher);
         }
         hasher.finish()
     }
@@ -589,7 +591,7 @@ impl Occasion {
         self.covariates = covariates;
     }
 
-    fn add_lagtime(&mut self, reorder: Option<(&Fa, &Lag, &Vec<f64>, &Covariates)>) {
+    fn add_lagtime(&mut self, reorder: Option<(&Fa, &Lag, &[f64], &Covariates)>) {
         if let Some((_, fn_lag, spp, covariates)) = reorder {
             let spp = nalgebra::DVector::from_vec(spp.to_vec());
             for event in self.events.iter_mut() {
@@ -605,7 +607,7 @@ impl Occasion {
         self.sort();
     }
 
-    fn add_bioavailability(&mut self, reorder: Option<(&Fa, &Lag, &Vec<f64>, &Covariates)>) {
+    fn add_bioavailability(&mut self, reorder: Option<(&Fa, &Lag, &[f64], &Covariates)>) {
         // If lagtime is empty, return early
         if let Some((fn_fa, _, spp, covariates)) = reorder {
             let spp = nalgebra::DVector::from_vec(spp.to_vec());
@@ -663,7 +665,7 @@ impl Occasion {
     /// Vector of events, potentially filtered and with times adjusted for lag and bioavailability
     pub(crate) fn process_events(
         &self,
-        reorder: Option<(&Fa, &Lag, &Vec<f64>, &Covariates)>,
+        reorder: Option<(&Fa, &Lag, &[f64], &Covariates)>,
         ignore: bool,
     ) -> Vec<Event> {
         let mut occ = self.clone();

@@ -8,9 +8,8 @@ use crate::{
     Event, Observation, PharmsolError, Subject,
 };
 
-use super::id_hash;
 use super::spphash;
-use crate::simulator::cache::{cache_enabled, ode_cache_lock_read};
+use crate::simulator::cache::{PredictionCache, DEFAULT_CACHE_SIZE};
 use crate::simulator::equation::Predictions;
 use closure::PMProblem;
 use diffsol::{
@@ -67,7 +66,6 @@ pub enum ExplicitRkTableau {
     Tsit45,
 }
 
-#[repr(C)]
 #[derive(Clone, Debug)]
 pub struct ODE {
     diffeq: DiffEq,
@@ -79,6 +77,7 @@ pub struct ODE {
     solver: OdeSolver,
     rtol: f64,
     atol: f64,
+    cache: Option<PredictionCache>,
 }
 
 impl ODE {
@@ -93,6 +92,7 @@ impl ODE {
             solver: OdeSolver::default(),
             rtol: RTOL,
             atol: ATOL,
+            cache: None,
         }
     }
 
@@ -126,6 +126,28 @@ impl ODE {
         self.atol = atol;
         self
     }
+
+    /// Enable prediction caching with the given maximum number of entries.
+    ///
+    /// When caching is enabled, predictions for the same (subject, parameters)
+    /// pair are stored and reused. Cloned equations share the same cache.
+    pub fn with_cache(mut self, size: u64) -> Self {
+        self.cache = Some(PredictionCache::new(size));
+        self
+    }
+
+    /// Enable prediction caching with the default size (100,000 entries).
+    pub fn with_default_cache(mut self) -> Self {
+        self.cache = Some(PredictionCache::new(DEFAULT_CACHE_SIZE));
+        self
+    }
+
+    /// Clear all entries from this equation's cache, if caching is enabled.
+    pub fn clear_cache(&self) {
+        if let Some(cache) = &self.cache {
+            cache.invalidate_all();
+        }
+    }
 }
 
 impl State for V {
@@ -138,7 +160,7 @@ impl State for V {
 fn _estimate_likelihood(
     ode: &ODE,
     subject: &Subject,
-    support_point: &Vec<f64>,
+    support_point: &[f64],
     error_models: &AssayErrorModels,
 ) -> Result<f64, PharmsolError> {
     let ypred = _subject_predictions(ode, subject, support_point)?;
@@ -149,19 +171,16 @@ fn _estimate_likelihood(
 fn _subject_predictions(
     ode: &ODE,
     subject: &Subject,
-    support_point: &Vec<f64>,
+    support_point: &[f64],
 ) -> Result<SubjectPredictions, PharmsolError> {
-    if cache_enabled() {
-        let key = (id_hash(subject.id()), spphash(support_point));
-        let cache_guard = ode_cache_lock_read()?;
-        if let Some(cached) = cache_guard.get(&key) {
+    if let Some(cache) = &ode.cache {
+        let key = (subject.hash(), spphash(support_point));
+        if let Some(cached) = cache.get(&key) {
             return Ok(cached);
         }
-        drop(cache_guard);
 
         let result = ode.simulate_subject(subject, support_point, None)?.0;
-        let cache_guard = ode_cache_lock_read()?;
-        cache_guard.insert(key, result.clone());
+        cache.insert(key, result.clone());
         Ok(result)
     } else {
         Ok(ode.simulate_subject(subject, support_point, None)?.0)
@@ -212,9 +231,9 @@ impl EquationPriv for ODE {
     fn solve(
         &self,
         _state: &mut Self::S,
-        _support_point: &Vec<f64>,
+        _support_point: &[f64],
         _covariates: &Covariates,
-        _infusions: &Vec<Infusion>,
+        _infusions: &[Infusion],
         _start_time: f64,
         _end_time: f64,
     ) -> Result<(), PharmsolError> {
@@ -223,7 +242,7 @@ impl EquationPriv for ODE {
     #[inline(always)]
     fn process_observation(
         &self,
-        _support_point: &Vec<f64>,
+        _support_point: &[f64],
         _observation: &Observation,
         _error_models: Option<&AssayErrorModels>,
         _time: f64,
@@ -236,11 +255,11 @@ impl EquationPriv for ODE {
     }
 
     #[inline(always)]
-    fn initial_state(&self, spp: &Vec<f64>, covariates: &Covariates, occasion_index: usize) -> V {
+    fn initial_state(&self, spp: &[f64], covariates: &Covariates, occasion_index: usize) -> V {
         let init = &self.init;
         let mut x = V::zeros(self.get_nstates(), NalgebraContext);
         if occasion_index == 0 {
-            let spp = DVector::from_vec(spp.clone());
+            let spp = DVector::from_vec(spp.to_vec());
             (init)(&spp.into(), 0.0, covariates, &mut x);
         }
         x
@@ -374,7 +393,7 @@ impl Equation for ODE {
     fn estimate_likelihood(
         &self,
         subject: &Subject,
-        support_point: &Vec<f64>,
+        support_point: &[f64],
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
         _estimate_likelihood(self, subject, support_point, error_models)
@@ -383,7 +402,7 @@ impl Equation for ODE {
     fn estimate_log_likelihood(
         &self,
         subject: &Subject,
-        support_point: &Vec<f64>,
+        support_point: &[f64],
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
         let ypred = _subject_predictions(self, subject, support_point)?;
@@ -397,7 +416,7 @@ impl Equation for ODE {
     fn simulate_subject(
         &self,
         subject: &Subject,
-        support_point: &Vec<f64>,
+        support_point: &[f64],
         error_models: Option<&AssayErrorModels>,
     ) -> Result<(Self::P, Option<f64>), PharmsolError> {
         let mut output = Self::P::new(self.nparticles());
@@ -416,7 +435,7 @@ impl Equation for ODE {
         let zero_bolus = V::zeros(ndrugs, NalgebraContext);
         let zero_rateiv = V::zeros(ndrugs, NalgebraContext);
         let mut bolus_v = V::zeros(ndrugs, NalgebraContext);
-        let spp_v: V = DVector::from_vec(support_point.clone()).into();
+        let spp_v: V = DVector::from_vec(support_point.to_vec()).into();
 
         // Pre-allocate output vector for observations
         let mut y_out = V::zeros(self.get_nouteqs(), NalgebraContext);
@@ -435,12 +454,12 @@ impl Equation for ODE {
                 .rtol(self.rtol)
                 .t0(occasion.initial_time())
                 .h0(1e-3)
-                .p(support_point.clone())
+                .p(support_point.to_vec())
                 .build_from_eqn(PMProblem::with_params_v(
                     self.diffeq,
                     nstates,
                     ndrugs,
-                    support_point.clone(),
+                    support_point.to_vec(),
                     spp_v.clone(),
                     covariates,
                     infusions.as_slice(),

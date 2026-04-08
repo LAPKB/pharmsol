@@ -75,7 +75,7 @@ pub mod prelude {
     // Simulator submodule for internal use and advanced users
     pub mod simulator {
         pub use crate::simulator::{
-            cache::{self, CacheSettings},
+            cache::{self, PredictionCache, SdeLikelihoodCache, DEFAULT_CACHE_SIZE},
             equation,
             equation::Equation,
             likelihood::{
@@ -87,7 +87,7 @@ pub mod prelude {
 
     // Direct simulator re-exports for convenience
     pub use crate::simulator::{
-        cache::{configure_cache, disable_cache, enable_cache, reset_caches, CacheSettings},
+        cache::{PredictionCache, SdeLikelihoodCache, DEFAULT_CACHE_SIZE},
         equation::{
             self,
             ode::{ExplicitRkTableau, OdeSolver, SdirkTableau},
