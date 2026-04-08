@@ -289,9 +289,9 @@ impl EquationPriv for SDE {
     fn solve(
         &self,
         state: &mut Self::S,
-        support_point: &Vec<f64>,
+        support_point: &[f64],
         covariates: &Covariates,
-        infusions: &Vec<Infusion>,
+        infusions: &[Infusion],
         ti: f64,
         tf: f64,
     ) -> Result<(), PharmsolError> {
@@ -323,7 +323,7 @@ impl EquationPriv for SDE {
     #[inline(always)]
     fn process_observation(
         &self,
-        support_point: &Vec<f64>,
+        support_point: &[f64],
         observation: &crate::Observation,
         error_models: Option<&AssayErrorModels>,
         _time: f64,
@@ -338,7 +338,7 @@ impl EquationPriv for SDE {
             let mut y = V::zeros(self.get_nouteqs(), NalgebraContext);
             (self.out)(
                 &x[i].clone().into(),
-                &V::from_vec(support_point.clone(), NalgebraContext),
+                &V::from_vec(support_point.to_vec(), NalgebraContext),
                 observation.time(),
                 covariates,
                 &mut y,
@@ -373,7 +373,7 @@ impl EquationPriv for SDE {
     #[inline(always)]
     fn initial_state(
         &self,
-        support_point: &Vec<f64>,
+        support_point: &[f64],
         covariates: &Covariates,
         occasion_index: usize,
     ) -> Self::S {
@@ -409,7 +409,7 @@ impl Equation for SDE {
     fn estimate_likelihood(
         &self,
         subject: &Subject,
-        support_point: &Vec<f64>,
+        support_point: &[f64],
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
         _estimate_likelihood(self, subject, support_point, error_models)
@@ -418,7 +418,7 @@ impl Equation for SDE {
     fn estimate_log_likelihood(
         &self,
         subject: &Subject,
-        support_point: &Vec<f64>,
+        support_point: &[f64],
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
         // For SDE, the particle filter computes likelihood in regular space.
@@ -441,7 +441,7 @@ impl Equation for SDE {
 fn _estimate_likelihood(
     sde: &SDE,
     subject: &Subject,
-    support_point: &Vec<f64>,
+    support_point: &[f64],
     error_models: &AssayErrorModels,
 ) -> Result<f64, PharmsolError> {
     if let Some(cache) = &sde.cache {

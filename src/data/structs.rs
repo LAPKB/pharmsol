@@ -591,7 +591,7 @@ impl Occasion {
         self.covariates = covariates;
     }
 
-    fn add_lagtime(&mut self, reorder: Option<(&Fa, &Lag, &Vec<f64>, &Covariates)>) {
+    fn add_lagtime(&mut self, reorder: Option<(&Fa, &Lag, &[f64], &Covariates)>) {
         if let Some((_, fn_lag, spp, covariates)) = reorder {
             let spp = nalgebra::DVector::from_vec(spp.to_vec());
             for event in self.events.iter_mut() {
@@ -607,7 +607,7 @@ impl Occasion {
         self.sort();
     }
 
-    fn add_bioavailability(&mut self, reorder: Option<(&Fa, &Lag, &Vec<f64>, &Covariates)>) {
+    fn add_bioavailability(&mut self, reorder: Option<(&Fa, &Lag, &[f64], &Covariates)>) {
         // If lagtime is empty, return early
         if let Some((fn_fa, _, spp, covariates)) = reorder {
             let spp = nalgebra::DVector::from_vec(spp.to_vec());
@@ -665,7 +665,7 @@ impl Occasion {
     /// Vector of events, potentially filtered and with times adjusted for lag and bioavailability
     pub(crate) fn process_events(
         &self,
-        reorder: Option<(&Fa, &Lag, &Vec<f64>, &Covariates)>,
+        reorder: Option<(&Fa, &Lag, &[f64], &Covariates)>,
         ignore: bool,
     ) -> Vec<Event> {
         let mut occ = self.clone();

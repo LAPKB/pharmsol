@@ -156,9 +156,9 @@ impl EquationPriv for Analytical {
     fn solve(
         &self,
         x: &mut Self::S,
-        support_point: &Vec<f64>,
+        support_point: &[f64],
         covariates: &Covariates,
-        infusions: &Vec<Infusion>,
+        infusions: &[Infusion],
         ti: f64,
         tf: f64,
     ) -> Result<(), PharmsolError> {
@@ -185,7 +185,7 @@ impl EquationPriv for Analytical {
 
         // 2) March over each sub-interval
         let mut current_t = ts[0];
-        let mut sp = V::from_vec(support_point.to_owned(), NalgebraContext);
+        let mut sp = V::from_vec(support_point.to_vec(), NalgebraContext);
         let mut rateiv = V::zeros(self.get_ndrugs(), NalgebraContext);
 
         for &next_t in &ts[1..] {
@@ -221,7 +221,7 @@ impl EquationPriv for Analytical {
     #[inline(always)]
     fn process_observation(
         &self,
-        support_point: &Vec<f64>,
+        support_point: &[f64],
         observation: &Observation,
         error_models: Option<&AssayErrorModels>,
         _time: f64,
@@ -234,7 +234,7 @@ impl EquationPriv for Analytical {
         let out = &self.out;
         (out)(
             x,
-            &V::from_vec(support_point.clone(), NalgebraContext),
+            &V::from_vec(support_point.to_vec(), NalgebraContext),
             observation.time(),
             covariates,
             &mut y,
@@ -248,7 +248,7 @@ impl EquationPriv for Analytical {
         Ok(())
     }
     #[inline(always)]
-    fn initial_state(&self, spp: &Vec<f64>, covariates: &Covariates, occasion_index: usize) -> V {
+    fn initial_state(&self, spp: &[f64], covariates: &Covariates, occasion_index: usize) -> V {
         let init = &self.init;
         let mut x = V::zeros(self.get_nstates(), NalgebraContext);
         if occasion_index == 0 {
@@ -396,7 +396,7 @@ impl Equation for Analytical {
     fn estimate_likelihood(
         &self,
         subject: &Subject,
-        support_point: &Vec<f64>,
+        support_point: &[f64],
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
         _estimate_likelihood(self, subject, support_point, error_models)
@@ -405,7 +405,7 @@ impl Equation for Analytical {
     fn estimate_log_likelihood(
         &self,
         subject: &Subject,
-        support_point: &Vec<f64>,
+        support_point: &[f64],
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
         let ypred = _subject_predictions(self, subject, support_point)?;
@@ -421,7 +421,7 @@ impl Equation for Analytical {
 fn _subject_predictions(
     analytical: &Analytical,
     subject: &Subject,
-    support_point: &Vec<f64>,
+    support_point: &[f64],
 ) -> Result<SubjectPredictions, PharmsolError> {
     if let Some(cache) = &analytical.cache {
         let key = (subject.hash(), spphash(support_point));
@@ -440,7 +440,7 @@ fn _subject_predictions(
 fn _estimate_likelihood(
     ode: &Analytical,
     subject: &Subject,
-    support_point: &Vec<f64>,
+    support_point: &[f64],
     error_models: &AssayErrorModels,
 ) -> Result<f64, PharmsolError> {
     let ypred = _subject_predictions(ode, subject, support_point)?;
