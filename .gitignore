@@ -6,3 +6,4 @@ Cargo.lock
 *.pkm
 /paper_files
 paper.html
+/joss/paper_files
