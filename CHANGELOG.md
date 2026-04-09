@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.25.0](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.24.1...pharmsol-v0.25.0) - 2026-04-09
+
+### Added
+
+- JSON model representation schema v2 ([#241](https://github.com/LAPKB/pharmsol/pull/241))
+- Use slices instead of vectors when possible ([#239](https://github.com/LAPKB/pharmsol/pull/239))
+- Improved cache performance and API ([#240](https://github.com/LAPKB/pharmsol/pull/240))
+
+### Other
+
+- Update diffsol requirement from =0.10.4 to =0.11.0 ([#237](https://github.com/LAPKB/pharmsol/pull/237))
+- Bump actions/configure-pages from 5 to 6 ([#236](https://github.com/LAPKB/pharmsol/pull/236))
+- Bump actions/deploy-pages from 4 to 5 ([#235](https://github.com/LAPKB/pharmsol/pull/235))
+
 ## [0.24.1](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.24.0...pharmsol-v0.24.1) - 2026-03-24
 
 ### Added
