@@ -1,7 +1,7 @@
 use crate::{Covariates, Infusion, PharmsolError};
 use diffsol::{
     ConstantOp, LinearOp, MatrixCommon, NalgebraContext, NalgebraMat, NonLinearOp,
-    NonLinearOpJacobian, OdeEquations, OdeEquationsRef, Op, Vector, VectorCommon,
+    NonLinearOpJacobian, OdeEquations, OdeEquationsRef, Op, UnitCallable, Vector, VectorCommon,
 };
 use nalgebra::DVector;
 use std::{cell::RefCell, cmp::Ordering};
@@ -394,6 +394,7 @@ where
     type Init = PmInit<'b>;
     type Root = PmRoot;
     type Out = PmOut;
+    type Reset = UnitCallable<M>;
 }
 
 // Implement OdeEquations with correct lifetime handling
@@ -443,6 +444,10 @@ where
     }
 
     fn out(&self) -> Option<PmOut> {
+        None
+    }
+
+    fn reset(&self) -> Option<UnitCallable<M>> {
         None
     }
 
