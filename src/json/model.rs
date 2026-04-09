@@ -6,63 +6,15 @@ use std::collections::HashMap;
 use crate::json::errors::JsonModelError;
 use crate::json::types::*;
 
-/// Serde helpers for secondary equations (ordered key-value pairs from JSON objects)
-mod secondary_serde {
-    use serde::{Deserialize, Deserializer, Serializer};
-
-    pub fn serialize_option<S>(
-        eqs: &Option<Vec<(String, String)>>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match eqs {
-            Some(pairs) => {
-                use serde::ser::SerializeMap;
-                let mut map = serializer.serialize_map(Some(pairs.len()))?;
-                for (k, v) in pairs {
-                    map.serialize_entry(k, v)?;
-                }
-                map.end()
-            }
-            None => serializer.serialize_none(),
-        }
-    }
-
-    pub fn deserialize_option<'de, D>(
-        deserializer: D,
-    ) -> Result<Option<Vec<(String, String)>>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let opt: Option<serde_json::Map<String, serde_json::Value>> =
-            Option::deserialize(deserializer)?;
-        match opt {
-            None => Ok(None),
-            Some(map) => {
-                let mut result = Vec::new();
-                for (k, v) in map {
-                    let val = match v {
-                        serde_json::Value::String(s) => s,
-                        other => other.to_string(),
-                    };
-                    result.push((k, val));
-                }
-                Ok(Some(result))
-            }
-        }
-    }
-}
-
 /// Supported schema versions
-pub const SUPPORTED_SCHEMA_VERSIONS: &[&str] = &["1.0"];
+pub const SUPPORTED_SCHEMA_VERSIONS: &[&str] = &["2.0"];
 
-/// A pharmacometric model defined in JSON
+/// A pharmacometric model defined in JSON.
 ///
 /// This is the main struct that represents a parsed JSON model file.
 /// It supports all three equation types (analytical, ODE, SDE) and
-/// includes optional fields for covariates, error models, and UI metadata.
+/// includes optional fields for covariates, secondary calculations, and
+/// authoring metadata.
 ///
 /// # Example
 ///
@@ -70,27 +22,28 @@ pub const SUPPORTED_SCHEMA_VERSIONS: &[&str] = &["1.0"];
 /// use pharmsol::json::JsonModel;
 ///
 /// let json = r#"{
-///     "schema": "1.0",
-///     "id": "pk_1cmt_oral",
+///     "schema": "2.0",
+///     "id": "pk/1cmt-oral",
 ///     "type": "analytical",
+///     "compartments": ["depot", "central"],
 ///     "analytical": "one_compartment_with_absorption",
 ///     "parameters": ["ka", "ke", "V"],
-///     "output": "x[1] / V"
+///     "outputs": [
+///         { "id": "cp", "equation": "central / V" }
+///     ]
 /// }"#;
 ///
 /// let model = JsonModel::from_str(json)?;
-/// assert_eq!(model.id, "pk_1cmt_oral");
+/// assert_eq!(model.id, "pk/1cmt-oral");
 /// ```
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct JsonModel {
-    // ─────────────────────────────────────────────────────────────────────────
-    // Layer 1: Identity (always required)
-    // ─────────────────────────────────────────────────────────────────────────
-    /// Schema version (e.g., "1.0")
+    // Layer 1: Identity
+    /// Schema version (`2.0`)
     pub schema: String,
 
-    /// Unique model identifier (snake_case)
+    /// Unique model identifier
     pub id: String,
 
     /// Model equation type
@@ -109,9 +62,7 @@ pub struct JsonModel {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub aliases: Option<Vec<String>>,
 
-    // ─────────────────────────────────────────────────────────────────────────
     // Layer 2: Structural Model
-    // ─────────────────────────────────────────────────────────────────────────
     /// Parameter names in fetch order
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parameters: Option<Vec<String>>,
@@ -124,9 +75,7 @@ pub struct JsonModel {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub states: Option<Vec<String>>,
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Equation Fields (type-dependent)
-    // ─────────────────────────────────────────────────────────────────────────
+    // Equation Fields
     /// Built-in analytical solution function (for analytical type)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub analytical: Option<AnalyticalFunction>,
@@ -144,31 +93,15 @@ pub struct JsonModel {
     pub diffusion: Option<HashMap<String, ExpressionOrNumber>>,
 
     /// Secondary equations (ordered name→expression pairs)
-    ///
-    /// In JSON: `{ "CL": "CLs * (wt / 70)^0.75", "ke": "CL / V" }`
-    /// Order matters — later equations can reference earlier ones.
-    #[serde(
-        skip_serializing_if = "Option::is_none",
-        serialize_with = "secondary_serde::serialize_option",
-        deserialize_with = "secondary_serde::deserialize_option",
-        default
-    )]
-    pub secondary: Option<Vec<(String, String)>>,
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Output
-    // ─────────────────────────────────────────────────────────────────────────
-    /// Single output equation
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub output: Option<String>,
+    pub secondary: Option<Vec<NamedEquation>>,
 
-    /// Multiple output definitions
+    // Output
+    /// Output definitions
     #[serde(skip_serializing_if = "Option::is_none")]
     pub outputs: Option<Vec<OutputDefinition>>,
 
-    // ─────────────────────────────────────────────────────────────────────────
     // Optional Features
-    // ─────────────────────────────────────────────────────────────────────────
     /// Initial conditions
     #[serde(skip_serializing_if = "Option::is_none")]
     pub init: Option<InitSpec>,
@@ -189,40 +122,18 @@ pub struct JsonModel {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub particles: Option<usize>,
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Layer 3: Model Extensions
-    // ─────────────────────────────────────────────────────────────────────────
-    /// Derived parameters (computed from primary parameters)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub derived: Option<Vec<DerivedParameter>>,
-
+    // Layer 3: Extensions and Metadata
     /// Enabled optional features
     #[serde(skip_serializing_if = "Option::is_none")]
     pub features: Option<Vec<Feature>>,
 
-    /// Covariate names used in this model
-    ///
-    /// These are just the names of data columns the model reads.
-    /// In JSON: `["wt", "age", "sex"]`
-    ///
-    /// How covariates affect parameters is expressed in `secondary` equations.
+    /// Covariates used in this model.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub covariates: Option<Vec<String>>,
+    pub covariates: Option<Vec<CovariateDefinition>>,
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Layer 4: UI Metadata (ignored by compiler)
-    // ─────────────────────────────────────────────────────────────────────────
-    /// UI display information
+    /// Metadata container for authoring documents
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub display: Option<DisplayInfo>,
-
-    /// Visual diagram layout
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub layout: Option<HashMap<String, Position>>,
-
-    /// Rich documentation
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub documentation: Option<Documentation>,
+    pub editor: Option<EditorInfo>,
 }
 
 impl JsonModel {
@@ -263,32 +174,27 @@ impl JsonModel {
         }
 
         match self.model_type {
-            ModelType::Analytical => {
-                if let Some(func) = &self.analytical {
-                    func.num_states()
-                } else {
-                    1
-                }
-            }
-            ModelType::Ode => {
-                if let Some(compartments) = &self.compartments {
-                    compartments.len()
-                } else if let Some(DiffEqSpec::Object(map)) = &self.diffeq {
-                    map.len()
-                } else {
-                    // Try to count from dx[n] in the string
-                    1
-                }
-            }
-            ModelType::Sde => {
-                if let Some(states) = &self.states {
-                    states.len()
-                } else if let Some(DiffEqSpec::Object(map)) = &self.drift {
-                    map.len()
-                } else {
-                    1
-                }
-            }
+            ModelType::Analytical => self.analytical.map_or(1, |func| func.num_states()),
+            ModelType::Ode => self
+                .compartments
+                .as_ref()
+                .map(|compartments| compartments.len())
+                .or_else(|| {
+                    self.diffeq.as_ref().map(|spec| match spec {
+                        DiffEqSpec::Object(map) => map.len(),
+                    })
+                })
+                .unwrap_or(1),
+            ModelType::Sde => self
+                .states
+                .as_ref()
+                .map(|states| states.len())
+                .or_else(|| {
+                    self.drift.as_ref().map(|spec| match spec {
+                        DiffEqSpec::Object(map) => map.len(),
+                    })
+                })
+                .unwrap_or(1),
         }
     }
 
@@ -298,13 +204,7 @@ impl JsonModel {
             return nout;
         }
 
-        if let Some(outputs) = &self.outputs {
-            outputs.len()
-        } else if self.output.is_some() {
-            1
-        } else {
-            1
-        }
+        self.outputs.as_ref().map_or(1, |outputs| outputs.len())
     }
 
     /// Get the neqs tuple
@@ -316,8 +216,8 @@ impl JsonModel {
     pub fn compartment_map(&self) -> HashMap<String, usize> {
         let mut map = HashMap::new();
         if let Some(compartments) = &self.compartments {
-            for (i, name) in compartments.iter().enumerate() {
-                map.insert(name.clone(), i);
+            for (index, name) in compartments.iter().enumerate() {
+                map.insert(name.clone(), index);
             }
         }
         map
@@ -327,8 +227,8 @@ impl JsonModel {
     pub fn state_map(&self) -> HashMap<String, usize> {
         let mut map = HashMap::new();
         if let Some(states) = &self.states {
-            for (i, name) in states.iter().enumerate() {
-                map.insert(name.clone(), i);
+            for (index, name) in states.iter().enumerate() {
+                map.insert(name.clone(), index);
             }
         }
         map
@@ -336,22 +236,51 @@ impl JsonModel {
 
     /// Check if the model uses covariates
     pub fn has_covariates(&self) -> bool {
-        self.covariates.as_ref().is_some_and(|c| !c.is_empty())
+        self.covariates
+            .as_ref()
+            .is_some_and(|covariates| !covariates.is_empty())
     }
 
     /// Check if the model has secondary equations
     pub fn has_secondary(&self) -> bool {
-        self.secondary.as_ref().is_some_and(|s| !s.is_empty())
+        self.secondary
+            .as_ref()
+            .is_some_and(|secondary| !secondary.is_empty())
+    }
+
+    /// Get covariate symbols in declaration order.
+    pub fn covariate_names(&self) -> Vec<String> {
+        self.covariates
+            .as_ref()
+            .map(|covariates| covariates.iter().map(|cov| cov.id.clone()).collect())
+            .unwrap_or_default()
+    }
+
+    /// Get display information from editor metadata.
+    pub fn display_info(&self) -> Option<&DisplayInfo> {
+        self.editor.as_ref().and_then(|editor| editor.display.as_ref())
+    }
+
+    /// Get layout information from editor metadata.
+    pub fn layout_info(&self) -> Option<&HashMap<String, Position>> {
+        self.editor.as_ref().and_then(|editor| editor.layout.as_ref())
+    }
+
+    /// Get documentation from editor metadata.
+    pub fn documentation_info(&self) -> Option<&Documentation> {
+        self.editor
+            .as_ref()
+            .and_then(|editor| editor.documentation.as_ref())
     }
 
     /// Check if the model uses lag times
     pub fn has_lag(&self) -> bool {
-        self.lag.is_some() && !self.lag.as_ref().unwrap().is_empty()
+        self.lag.as_ref().is_some_and(|lag| !lag.is_empty())
     }
 
     /// Check if the model uses bioavailability
     pub fn has_fa(&self) -> bool {
-        self.fa.is_some() && !self.fa.as_ref().unwrap().is_empty()
+        self.fa.as_ref().is_some_and(|fa| !fa.is_empty())
     }
 
     /// Check if the model has initial conditions
@@ -363,6 +292,39 @@ impl JsonModel {
     pub fn get_parameters(&self) -> Vec<String> {
         self.parameters.clone().unwrap_or_default()
     }
+
+    /// Get outputs in canonical executable form.
+    pub fn normalized_outputs(&self) -> Result<Vec<OutputDefinition>, JsonModelError> {
+        self.outputs.clone().ok_or(JsonModelError::MissingOutput)
+    }
+
+    /// Get executable calculations in evaluation order.
+    pub fn executable_calculations(&self) -> Vec<NamedEquation> {
+        self.secondary.clone().unwrap_or_default()
+    }
+
+    /// Build the normalized executable representation for compile-time consumers.
+    pub fn to_executable_model(&self) -> Result<ExecutableModel, JsonModelError> {
+        Ok(ExecutableModel {
+            id: self.id.clone(),
+            model_type: self.model_type,
+            parameters: self.parameters.clone().unwrap_or_default(),
+            compartments: self.compartments.clone().unwrap_or_default(),
+            states: self.states.clone().unwrap_or_default(),
+            analytical: self.analytical,
+            diffeq: self.diffeq.clone(),
+            drift: self.drift.clone(),
+            diffusion: self.diffusion.clone(),
+            calculations: self.executable_calculations(),
+            outputs: self.normalized_outputs()?,
+            init: self.init.clone(),
+            lag: self.lag.clone(),
+            fa: self.fa.clone(),
+            neqs: self.neqs,
+            particles: self.particles,
+            covariates: self.covariates.clone().unwrap_or_default(),
+        })
+    }
 }
 
 #[cfg(test)]
@@ -372,16 +334,19 @@ mod tests {
     #[test]
     fn test_parse_minimal_analytical() {
         let json = r#"{
-            "schema": "1.0",
-            "id": "pk_1cmt_iv",
+            "schema": "2.0",
+            "id": "pk/1cmt-iv",
             "type": "analytical",
             "analytical": "one_compartment",
             "parameters": ["ke", "V"],
-            "output": "x[0] / V"
+            "compartments": ["central"],
+            "outputs": [
+                { "id": "cp", "equation": "central / V" }
+            ]
         }"#;
 
         let model = JsonModel::from_str(json).unwrap();
-        assert_eq!(model.id, "pk_1cmt_iv");
+        assert_eq!(model.id, "pk/1cmt-iv");
         assert_eq!(model.model_type, ModelType::Analytical);
         assert_eq!(model.analytical, Some(AnalyticalFunction::OneCompartment));
         assert_eq!(model.num_states(), 1);
@@ -391,22 +356,24 @@ mod tests {
     #[test]
     fn test_parse_minimal_ode() {
         let json = r#"{
-            "schema": "1.0",
-            "id": "pk_2cmt_ode",
+            "schema": "2.0",
+            "id": "pk/2cmt-ode",
             "type": "ode",
             "compartments": ["depot", "central", "peripheral"],
             "parameters": ["ka", "ke", "k12", "k21", "V"],
             "diffeq": {
-                "depot": "-ka * x[0]",
-                "central": "ka * x[0] - ke * x[1] - k12 * x[1] + k21 * x[2] + rateiv[1]",
-                "peripheral": "k12 * x[1] - k21 * x[2]"
+                "depot": "-ka * depot",
+                "central": "ka * depot - ke * central - k12 * central + k21 * peripheral + rateiv[1]",
+                "peripheral": "k12 * central - k21 * peripheral"
             },
-            "output": "x[1] / V",
+            "outputs": [
+                { "id": "cp", "equation": "central / V" }
+            ],
             "neqs": [3, 1]
         }"#;
 
         let model = JsonModel::from_str(json).unwrap();
-        assert_eq!(model.id, "pk_2cmt_ode");
+        assert_eq!(model.id, "pk/2cmt-ode");
         assert_eq!(model.model_type, ModelType::Ode);
         assert_eq!(model.num_states(), 3);
         assert_eq!(model.compartment_map().get("central"), Some(&1));
@@ -415,13 +382,13 @@ mod tests {
     #[test]
     fn test_parse_sde() {
         let json = r#"{
-            "schema": "1.0",
-            "id": "pk_1cmt_sde",
+            "schema": "2.0",
+            "id": "pk/1cmt-sde",
             "type": "sde",
             "parameters": ["ke0", "sigma_ke", "V"],
             "states": ["amount", "ke"],
             "drift": {
-                "amount": "-ke * x[0]",
+                "amount": "-ke * amount",
                 "ke": "-0.5 * (ke - ke0)"
             },
             "diffusion": {
@@ -430,7 +397,9 @@ mod tests {
             "init": {
                 "ke": "ke0"
             },
-            "output": "x[0] / V",
+            "outputs": [
+                { "id": "cp", "equation": "amount / V" }
+            ],
             "neqs": [2, 1],
             "particles": 1000
         }"#;
@@ -448,8 +417,9 @@ mod tests {
             "id": "test",
             "type": "ode",
             "parameters": ["ke"],
-            "diffeq": "dx[0] = -ke * x[0];",
-            "output": "x[0]"
+            "compartments": ["central"],
+            "diffeq": { "central": "-ke * central" },
+            "outputs": [{ "id": "cp", "equation": "central" }]
         }"#;
 
         let result = JsonModel::from_str(json);
@@ -462,16 +432,90 @@ mod tests {
     #[test]
     fn test_unknown_field_rejected() {
         let json = r#"{
-            "schema": "1.0",
+            "schema": "2.0",
             "id": "test",
             "type": "ode",
             "parameters": ["ke"],
-            "diffeq": "dx[0] = -ke * x[0];",
-            "output": "x[0]",
+            "compartments": ["central"],
+            "diffeq": { "central": "-ke * central" },
+            "outputs": [{ "id": "cp", "equation": "central" }],
             "unknown_field": "should fail"
         }"#;
 
         let result = JsonModel::from_str(json);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_with_covariates_and_editor() {
+        let json = r#"{
+            "schema": "2.0",
+            "id": "pk/1cmt-oral",
+            "type": "analytical",
+            "analytical": "one_compartment_with_absorption",
+            "parameters": ["ka", "ke", "V"],
+            "compartments": ["depot", "central"],
+            "outputs": [
+                { "id": "cp", "equation": "central / V" }
+            ],
+            "secondary": [
+                { "id": "ke_scaled", "equation": "ke * 1.0" }
+            ],
+            "covariates": [
+                { "id": "wt", "column": "WT", "reference": 70.0 }
+            ],
+            "editor": {
+                "display": { "name": "One Compartment Oral" }
+            }
+        }"#;
+
+        let model = JsonModel::from_str(json).unwrap();
+        assert_eq!(model.schema, "2.0");
+        assert_eq!(model.id, "pk/1cmt-oral");
+        assert_eq!(model.outputs.as_ref().unwrap()[0].id, "cp");
+        assert_eq!(model.covariate_names(), vec!["wt".to_string()]);
+        assert_eq!(model.executable_calculations()[0].id, "ke_scaled");
+        assert_eq!(
+            model
+                .display_info()
+                .and_then(|display| display.name.as_deref()),
+            Some("One Compartment Oral")
+        );
+    }
+
+    #[test]
+    fn test_to_executable_model_preserves_outputs_and_calculations() {
+        let json = r#"{
+            "schema": "2.0",
+            "id": "pk/1cmt-exec",
+            "type": "ode",
+            "parameters": ["CL", "V"],
+            "compartments": ["central"],
+            "diffeq": { "central": "-ke * central" },
+            "outputs": [
+                { "id": "cp", "equation": "central / V" }
+            ],
+            "secondary": [
+                { "id": "ke", "equation": "CL / V" },
+                { "id": "half_life", "equation": "0.693 / ke" }
+            ],
+            "covariates": [
+                { "id": "wt", "column": "WT" }
+            ]
+        }"#;
+
+        let model = JsonModel::from_str(json).unwrap();
+        let executable = model.to_executable_model().unwrap();
+
+        assert_eq!(executable.outputs[0].id, "cp");
+        assert_eq!(
+            executable
+                .calculations
+                .iter()
+                .map(|entry| entry.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["ke", "half_life"]
+        );
+        assert_eq!(executable.covariates[0].column_name(), "WT");
     }
 }

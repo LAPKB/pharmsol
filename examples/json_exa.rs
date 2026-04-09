@@ -80,13 +80,15 @@ fn main() {
     // -- JSON ODE -------------------------------------------------------------
 
     let json_ode_str = r#"{
-        "schema": "1.0",
-        "id": "pk_1cmt_iv_ode",
+        "schema": "2.0",
+        "id": "pk/1cmt-iv-ode",
         "type": "ode",
         "parameters": ["ke", "V"],
         "compartments": ["central"],
         "diffeq": { "central": "-ke * central + rateiv[0]" },
-        "output": "central / V"
+        "outputs": [
+            { "id": "cp", "equation": "central / V" }
+        ]
     }"#;
 
     // Show the generated Rust before compiling
@@ -112,12 +114,15 @@ fn main() {
     // -- JSON Analytical ------------------------------------------------------
 
     let json_analytical_str = r#"{
-        "schema": "1.0",
-        "id": "pk_1cmt_iv_analytical",
+        "schema": "2.0",
+        "id": "pk/1cmt-iv-analytical",
         "type": "analytical",
         "analytical": "one_compartment",
         "parameters": ["ke", "V"],
-        "output": "x[0] / V"
+        "compartments": ["central"],
+        "outputs": [
+            { "id": "cp", "equation": "central / V" }
+        ]
     }"#;
 
     let json_an_path = cwd.join("json_analytical_model.pkm");

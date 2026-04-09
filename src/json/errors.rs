@@ -27,13 +27,9 @@ pub enum JsonModelError {
     #[error("Field '{field}' is not valid for {model_type} models")]
     InvalidFieldForType { field: String, model_type: String },
 
-    /// Missing output equation
-    #[error("Model must have either 'output' or 'outputs' field")]
+    /// Missing output definitions
+    #[error("Model must have an 'outputs' field")]
     MissingOutput,
-
-    /// Both output and outputs specified
-    #[error("Model has both 'output' and 'outputs'; use one or the other")]
-    AmbiguousOutput,
 
     /// Missing parameters
     #[error("Model must have 'parameters' field (unless using 'extends')")]
@@ -77,9 +73,21 @@ pub enum JsonModelError {
     #[error("Duplicate covariate name: '{name}'")]
     DuplicateCovariate { name: String },
 
+    /// Duplicate output identifier
+    #[error("Duplicate output identifier: '{id}'")]
+    DuplicateOutput { id: String },
+
     /// Invalid neqs specification
     #[error("Invalid neqs: expected [num_states, num_outputs], got {0:?}")]
     InvalidNeqs(Vec<usize>),
+
+    /// Schema-specific rule violation
+    #[error("Field '{field}' violates schema {schema}: {message}")]
+    SchemaRuleViolation {
+        field: String,
+        schema: String,
+        message: String,
+    },
 
     // ─────────────────────────────────────────────────────────────────────────
     // Expression Errors
@@ -152,6 +160,19 @@ impl JsonModelError {
     pub fn invalid_expr(context: impl Into<String>, message: impl Into<String>) -> Self {
         Self::InvalidExpression {
             context: context.into(),
+            message: message.into(),
+        }
+    }
+
+    /// Create a schema rule violation error.
+    pub fn schema_rule(
+        field: impl Into<String>,
+        schema: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self::SchemaRuleViolation {
+            field: field.into(),
+            schema: schema.into(),
             message: message.into(),
         }
     }

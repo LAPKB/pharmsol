@@ -6,7 +6,7 @@
 //! All math expressions in the JSON model are written in a language-agnostic
 //! format and transpiled to Rust via the expression parser.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::json::errors::JsonModelError;
 use crate::json::expression;
@@ -18,6 +18,12 @@ pub struct ClosureGenerator<'a> {
     model: &'a JsonModel,
     compartment_map: HashMap<String, usize>,
     state_map: HashMap<String, usize>,
+}
+
+fn parse_bound_output_index(id: &str) -> Option<usize> {
+    let raw_index = id.strip_prefix("out_")?;
+    let parsed_index = raw_index.parse::<usize>().ok()?;
+    parsed_index.checked_sub(1)
 }
 
 impl<'a> ClosureGenerator<'a> {
@@ -37,16 +43,13 @@ impl<'a> ClosureGenerator<'a> {
         map
     }
 
-    /// Resolve a compartment/state name to its index.
-    /// Accepts either a declared name or a numeric string. Returns an error for unknown names.
+    /// Resolve a declared compartment/state name to its index.
+    /// Returns an error for unknown names.
     fn resolve_index(&self, name: &str, context: &str) -> Result<usize, JsonModelError> {
         if let Some(&idx) = self.compartment_map.get(name) {
             return Ok(idx);
         }
         if let Some(&idx) = self.state_map.get(name) {
-            return Ok(idx);
-        }
-        if let Ok(idx) = name.parse::<usize>() {
             return Ok(idx);
         }
         Err(JsonModelError::CodeGenError(format!(
@@ -117,10 +120,11 @@ impl<'a> ClosureGenerator<'a> {
 
         let fetch_lines: Vec<_> = covariates
             .iter()
-            .map(|name| {
+            .map(|covariate| {
                 format!(
                     "let {} = cov.get_covariate(\"{}\", t).unwrap();",
-                    name, name
+                    covariate.symbol(),
+                    covariate.column_name()
                 )
             })
             .collect();
@@ -128,38 +132,23 @@ impl<'a> ClosureGenerator<'a> {
         fetch_lines.join("\n        ")
     }
 
-    /// Generate secondary equation bindings (ordered let statements)
-    fn generate_secondary_equations(&self) -> Result<String, JsonModelError> {
-        let Some(secondary) = &self.model.secondary else {
-            return Ok(String::new());
-        };
+    /// Generate normalized executable calculations (ordered let statements).
+    fn generate_calculations(&self) -> Result<String, JsonModelError> {
+        let calculations = self.model.executable_calculations();
 
-        if secondary.is_empty() {
+        if calculations.is_empty() {
             return Ok(String::new());
         }
 
         let mut lines = Vec::new();
-        for (name, expr) in secondary {
-            let rust_expr = self.transpile(expr)?;
-            lines.push(format!("let {} = {};", name, rust_expr));
+        for entry in calculations {
+            let rust_expr = self.transpile(&entry.equation)?;
+            lines.push(format!("let {} = {};", entry.id, rust_expr));
         }
         Ok(lines.join("\n        "))
     }
 
-    /// Generate derived parameters code
-    fn generate_derived_params(&self) -> Result<String, JsonModelError> {
-        if let Some(derived) = &self.model.derived {
-            let mut lines = Vec::new();
-            for d in derived {
-                let rust_expr = self.transpile(&d.expression)?;
-                lines.push(format!("let {} = {};", d.symbol, rust_expr));
-            }
-            return Ok(lines.join("\n        "));
-        }
-        Ok(String::new())
-    }
-
-    /// Generate the common preamble (params + compartment bindings + covariates + derived + secondary)
+    /// Generate the common preamble (params + bindings + covariates + calculations).
     fn generate_preamble(
         &self,
         include_compartments: bool,
@@ -193,14 +182,9 @@ impl<'a> ClosureGenerator<'a> {
             }
         }
 
-        let derived = self.generate_derived_params()?;
-        if !derived.is_empty() {
-            parts.push(derived);
-        }
-
-        let secondary = self.generate_secondary_equations()?;
-        if !secondary.is_empty() {
-            parts.push(secondary);
+        let calculations = self.generate_calculations()?;
+        if !calculations.is_empty() {
+            parts.push(calculations);
         }
 
         Ok(parts.join("\n        "))
@@ -214,23 +198,32 @@ impl<'a> ClosureGenerator<'a> {
     /// Signature: fn(&V, &V, T, &Covariates, &mut V)
     pub fn generate_output(&self) -> Result<String, JsonModelError> {
         let preamble = self.generate_preamble(true, false)?;
+        let outputs = self.model.normalized_outputs()?;
+        let mut seen_indices = HashSet::new();
+        let mut indexed_outputs = Vec::with_capacity(outputs.len());
 
-        let body = if let Some(output) = &self.model.output {
-            let rust_expr = self.transpile(output)?;
-            format!("y[0] = {};", rust_expr)
-        } else if let Some(outputs) = &self.model.outputs {
-            outputs
-                .iter()
-                .enumerate()
-                .map(|(i, o)| {
-                    let rust_expr = self.transpile(&o.equation)?;
-                    Ok(format!("y[{}] = {};", i, rust_expr))
-                })
-                .collect::<Result<Vec<_>, JsonModelError>>()?
-                .join("\n        ")
-        } else {
-            return Err(JsonModelError::MissingOutput);
-        };
+        for (fallback_index, output) in outputs.iter().enumerate() {
+            let output_index = parse_bound_output_index(&output.id).unwrap_or(fallback_index);
+            if !seen_indices.insert(output_index) {
+                return Err(JsonModelError::CodeGenError(format!(
+                    "Duplicate output index {} resolved from output '{}'",
+                    output_index, output.id
+                )));
+            }
+
+            let rust_expr = self.transpile(&output.equation)?;
+            indexed_outputs.push((
+                output_index,
+                format!("y[{}] = {};", output_index, rust_expr),
+            ));
+        }
+
+        indexed_outputs.sort_by_key(|(index, _)| *index);
+        let body = indexed_outputs
+            .into_iter()
+            .map(|(_, line)| line)
+            .collect::<Vec<_>>()
+            .join("\n        ");
 
         // Use _t or t depending on whether covariates need time
         let t_param = if self.model.has_covariates() {
@@ -263,26 +256,19 @@ impl<'a> ClosureGenerator<'a> {
 
         let preamble = self.generate_preamble(true, false)?;
 
-        let body = match diffeq {
-            DiffEqSpec::String(s) => {
-                // Raw string format — pass through as-is (for backwards compatibility)
-                s.clone()
-            }
-            DiffEqSpec::Object(map) => {
-                let mut indexed_lines = Vec::new();
-                for (name, expr) in map {
-                    let idx = self.resolve_index(name, "diffeq")?;
-                    let rust_expr = self.transpile(expr)?;
-                    indexed_lines.push((idx, format!("dx[{}] = {};", idx, rust_expr)));
-                }
-                indexed_lines.sort_by_key(|(idx, _)| *idx);
-                indexed_lines
-                    .into_iter()
-                    .map(|(_, line)| line)
-                    .collect::<Vec<_>>()
-                    .join("\n        ")
-            }
-        };
+        let DiffEqSpec::Object(map) = diffeq;
+        let mut indexed_lines = Vec::new();
+        for (name, expr) in map {
+            let idx = self.resolve_index(name, "diffeq")?;
+            let rust_expr = self.transpile(expr)?;
+            indexed_lines.push((idx, format!("dx[{}] = {};", idx, rust_expr)));
+        }
+        indexed_lines.sort_by_key(|(idx, _)| *idx);
+        let body = indexed_lines
+            .into_iter()
+            .map(|(_, line)| line)
+            .collect::<Vec<_>>()
+            .join("\n        ");
 
         let t_param = if self.model.has_covariates() {
             "t"
@@ -296,7 +282,7 @@ impl<'a> ClosureGenerator<'a> {
         };
 
         Ok(format!(
-            r#"|x, p, {t_param}, dx, _b, rateiv, {cov_param}| {{
+            r#"|x, p, {t_param}, dx, b, rateiv, {cov_param}| {{
         {preamble}
         {body}
     }}"#
@@ -314,23 +300,19 @@ impl<'a> ClosureGenerator<'a> {
 
         let preamble = self.generate_preamble(false, true)?;
 
-        let body = match drift {
-            DiffEqSpec::String(s) => s.clone(),
-            DiffEqSpec::Object(map) => {
-                let mut indexed_lines = Vec::new();
-                for (name, expr) in map {
-                    let idx = self.resolve_index(name, "drift")?;
-                    let rust_expr = self.transpile(expr)?;
-                    indexed_lines.push((idx, format!("dx[{}] = {};", idx, rust_expr)));
-                }
-                indexed_lines.sort_by_key(|(idx, _)| *idx);
-                indexed_lines
-                    .into_iter()
-                    .map(|(_, line)| line)
-                    .collect::<Vec<_>>()
-                    .join("\n        ")
-            }
-        };
+        let DiffEqSpec::Object(map) = drift;
+        let mut indexed_lines = Vec::new();
+        for (name, expr) in map {
+            let idx = self.resolve_index(name, "drift")?;
+            let rust_expr = self.transpile(expr)?;
+            indexed_lines.push((idx, format!("dx[{}] = {};", idx, rust_expr)));
+        }
+        indexed_lines.sort_by_key(|(idx, _)| *idx);
+        let body = indexed_lines
+            .into_iter()
+            .map(|(_, line)| line)
+            .collect::<Vec<_>>()
+            .join("\n        ");
 
         let t_param = if self.model.has_covariates() {
             "t"
@@ -459,21 +441,17 @@ impl<'a> ClosureGenerator<'a> {
             return Ok("|_p, _t, _cov, _x| {}".to_string());
         };
 
-        let body = match init {
-            InitSpec::String(s) => s.clone(),
-            InitSpec::Object(map) => {
-                let mut lines = Vec::new();
-                for (name, expr) in map {
-                    let idx = self.resolve_index(name, "init")?;
-                    let rust_expr = match expr {
-                        ExpressionOrNumber::Number(n) => format!("{:.6}", n),
-                        ExpressionOrNumber::Expression(s) => self.transpile(s)?,
-                    };
-                    lines.push(format!("x[{}] = {};", idx, rust_expr));
-                }
-                lines.join("\n        ")
-            }
-        };
+        let InitSpec::Object(map) = init;
+        let mut lines = Vec::new();
+        for (name, expr) in map {
+            let idx = self.resolve_index(name, "init")?;
+            let rust_expr = match expr {
+                ExpressionOrNumber::Number(n) => format!("{:.6}", n),
+                ExpressionOrNumber::Expression(s) => self.transpile(s)?,
+            };
+            lines.push(format!("x[{}] = {};", idx, rust_expr));
+        }
+        let body = lines.join("\n        ");
 
         let fetch_params = self.fetch_params();
 
@@ -488,7 +466,7 @@ impl<'a> ClosureGenerator<'a> {
     /// Generate the secondary equation closure (for analytical)
     /// Signature: fn(&mut V, T, &Covariates)
     pub fn generate_secondary_closure(&self) -> Result<String, JsonModelError> {
-        if !self.model.has_secondary() && !self.model.has_covariates() {
+        if self.model.executable_calculations().is_empty() && !self.model.has_covariates() {
             return Ok("|_p, _t, _cov| {}".to_string());
         }
 
@@ -520,12 +498,13 @@ mod tests {
     #[test]
     fn test_generate_output() {
         let json = r#"{
-            "schema": "1.0",
-            "id": "test",
+            "schema": "2.0",
+            "id": "pk/1cmt-iv",
             "type": "analytical",
             "analytical": "one_compartment",
             "parameters": ["ke", "V"],
-            "output": "x[0] / V"
+            "compartments": ["central"],
+            "outputs": [{ "id": "cp", "equation": "central / V" }]
         }"#;
 
         let model = JsonModel::from_str(json).unwrap();
@@ -533,19 +512,21 @@ mod tests {
         let output = cg.generate_output().unwrap();
 
         assert!(output.contains("fetch_params!(p, ke, V)"));
-        assert!(output.contains("y[0] = x[0] / V"));
+        assert!(output.contains("let central = x[0];"));
+        assert!(output.contains("y[0] = central / V"));
     }
 
     #[test]
     fn test_generate_output_with_secondary() {
         let json = r#"{
-            "schema": "1.0",
-            "id": "test",
+            "schema": "2.0",
+            "id": "pk/1cmt-sec",
             "type": "analytical",
             "analytical": "one_compartment",
             "parameters": ["CL", "V"],
-            "secondary": { "ke": "CL / V" },
-            "output": "x[0] / V"
+            "compartments": ["central"],
+            "secondary": [{ "id": "ke", "equation": "CL / V" }],
+            "outputs": [{ "id": "cp", "equation": "central / V" }]
         }"#;
 
         let model = JsonModel::from_str(json).unwrap();
@@ -553,19 +534,21 @@ mod tests {
         let output = cg.generate_output().unwrap();
 
         assert!(output.contains("let ke = CL / V;"));
-        assert!(output.contains("y[0] = x[0] / V"));
+        assert!(output.contains("let central = x[0];"));
+        assert!(output.contains("y[0] = central / V"));
     }
 
     #[test]
     fn test_generate_lag() {
         let json = r#"{
-            "schema": "1.0",
-            "id": "test",
+            "schema": "2.0",
+            "id": "pk/1cmt-lag",
             "type": "analytical",
             "analytical": "one_compartment_with_absorption",
             "parameters": ["ka", "ke", "V", "tlag"],
-            "lag": { "0": "tlag" },
-            "output": "x[1] / V"
+            "compartments": ["depot", "central"],
+            "lag": { "depot": "tlag" },
+            "outputs": [{ "id": "cp", "equation": "central / V" }]
         }"#;
 
         let model = JsonModel::from_str(json).unwrap();
@@ -579,8 +562,8 @@ mod tests {
     #[test]
     fn test_generate_diffeq_object() {
         let json = r#"{
-            "schema": "1.0",
-            "id": "test",
+            "schema": "2.0",
+            "id": "pk/2cmt-ode",
             "type": "ode",
             "compartments": ["depot", "central"],
             "parameters": ["ka", "ke", "V"],
@@ -588,7 +571,7 @@ mod tests {
                 "depot": "-ka * depot",
                 "central": "ka * depot - ke * central + rateiv[1]"
             },
-            "output": "central / V"
+            "outputs": [{ "id": "cp", "equation": "central / V" }]
         }"#;
 
         let model = JsonModel::from_str(json).unwrap();
@@ -605,14 +588,15 @@ mod tests {
     #[test]
     fn test_generate_with_covariates() {
         let json = r#"{
-            "schema": "1.0",
-            "id": "test",
+            "schema": "2.0",
+            "id": "pk/1cmt-cov",
             "type": "analytical",
             "analytical": "one_compartment",
             "parameters": ["ke", "V"],
-            "covariates": ["wt"],
-            "secondary": { "V": "V * (wt / 70)^0.75" },
-            "output": "x[0] / V"
+            "compartments": ["central"],
+            "covariates": [{ "id": "wt" }],
+            "secondary": [{ "id": "V", "equation": "V * (wt / 70)^0.75" }],
+            "outputs": [{ "id": "cp", "equation": "central / V" }]
         }"#;
 
         let model = JsonModel::from_str(json).unwrap();
@@ -628,12 +612,13 @@ mod tests {
     #[test]
     fn test_generate_empty_lag_fa() {
         let json = r#"{
-            "schema": "1.0",
-            "id": "test",
+            "schema": "2.0",
+            "id": "pk/1cmt-empty",
             "type": "analytical",
             "analytical": "one_compartment",
             "parameters": ["ke", "V"],
-            "output": "x[0] / V"
+            "compartments": ["central"],
+            "outputs": [{ "id": "cp", "equation": "central / V" }]
         }"#;
 
         let model = JsonModel::from_str(json).unwrap();
@@ -649,8 +634,8 @@ mod tests {
     #[test]
     fn test_lag_propagates_transpile_error() {
         let json = r#"{
-            "schema": "1.0",
-            "id": "test",
+            "schema": "2.0",
+            "id": "pk/2cmt-bad-lag",
             "type": "ode",
             "compartments": ["depot", "central"],
             "parameters": ["ka", "ke", "V"],
@@ -659,7 +644,7 @@ mod tests {
                 "central": "ka * depot - ke * central"
             },
             "lag": { "depot": "++ invalid" },
-            "output": "central / V"
+            "outputs": [{ "id": "cp", "equation": "central / V" }]
         }"#;
 
         let model = JsonModel::from_str(json).unwrap();
@@ -672,8 +657,8 @@ mod tests {
     #[test]
     fn test_fa_propagates_transpile_error() {
         let json = r#"{
-            "schema": "1.0",
-            "id": "test",
+            "schema": "2.0",
+            "id": "pk/2cmt-bad-fa",
             "type": "ode",
             "compartments": ["depot", "central"],
             "parameters": ["ka", "ke", "V"],
@@ -682,7 +667,7 @@ mod tests {
                 "central": "ka * depot - ke * central"
             },
             "fa": { "depot": "++ invalid" },
-            "output": "central / V"
+            "outputs": [{ "id": "cp", "equation": "central / V" }]
         }"#;
 
         let model = JsonModel::from_str(json).unwrap();
@@ -695,15 +680,15 @@ mod tests {
     #[test]
     fn test_unknown_compartment_in_diffeq_errors() {
         let json = r#"{
-            "schema": "1.0",
-            "id": "test",
+            "schema": "2.0",
+            "id": "pk/unknown-diffeq",
             "type": "ode",
             "compartments": ["central"],
             "parameters": ["ke", "V"],
             "diffeq": {
                 "nonexistent": "-ke * x[0]"
             },
-            "output": "x[0] / V"
+            "outputs": [{ "id": "cp", "equation": "central / V" }]
         }"#;
 
         let model = JsonModel::from_str(json).unwrap();
@@ -716,14 +701,14 @@ mod tests {
     #[test]
     fn test_unknown_compartment_in_lag_errors() {
         let json = r#"{
-            "schema": "1.0",
-            "id": "test",
+            "schema": "2.0",
+            "id": "pk/unknown-lag",
             "type": "ode",
             "compartments": ["central"],
             "parameters": ["ke", "V", "tlag"],
             "diffeq": { "central": "-ke * central" },
             "lag": { "nonexistent": "tlag" },
-            "output": "central / V"
+            "outputs": [{ "id": "cp", "equation": "central / V" }]
         }"#;
 
         let model = JsonModel::from_str(json).unwrap();
@@ -739,8 +724,8 @@ mod tests {
     #[test]
     fn test_diffeq_output_is_sorted_by_index() {
         let json = r#"{
-            "schema": "1.0",
-            "id": "test",
+            "schema": "2.0",
+            "id": "pk/sorted-diffeq",
             "type": "ode",
             "compartments": ["depot", "central"],
             "parameters": ["ka", "ke", "V"],
@@ -748,7 +733,7 @@ mod tests {
                 "central": "ka * depot - ke * central",
                 "depot": "-ka * depot"
             },
-            "output": "central / V"
+            "outputs": [{ "id": "cp", "equation": "central / V" }]
         }"#;
 
         let model = JsonModel::from_str(json).unwrap();

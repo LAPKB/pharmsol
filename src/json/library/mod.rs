@@ -24,7 +24,11 @@
 
 use crate::json::errors::JsonModelError;
 use crate::json::model::JsonModel;
-use crate::json::types::{DisplayInfo, Documentation, ModelType};
+use crate::json::types::{
+    CovariateDefinition, DisplayInfo, Documentation, EditorInfo, ExecutableModel, ModelType,
+    NamedEquation,
+};
+use crate::json::Validator;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -194,7 +198,7 @@ impl ModelLibrary {
                     return true;
                 }
                 // Match by name in display info
-                if let Some(ref display) = model.display {
+                if let Some(display) = model.display_info() {
                     if let Some(ref name) = display.name {
                         if name.to_lowercase().contains(&query_lower) {
                             return true;
@@ -220,7 +224,7 @@ impl ModelLibrary {
         self.models
             .values()
             .filter(|model| {
-                if let Some(ref display) = model.display {
+                if let Some(display) = model.display_info() {
                     if let Some(ref tags) = display.tags {
                         return tags.iter().any(|t| t.to_lowercase() == tag_lower);
                     }
@@ -236,6 +240,13 @@ impl ModelLibrary {
     /// with the derived model's overrides.
     pub fn resolve(&self, model: &JsonModel) -> Result<JsonModel, JsonModelError> {
         self.resolve_with_chain(model, &mut Vec::new())
+    }
+
+    /// Resolve a model's inheritance chain and normalize it into executable form.
+    pub fn resolve_executable(&self, model: &JsonModel) -> Result<ExecutableModel, JsonModelError> {
+        let resolved = self.resolve(model)?;
+        let validated = Validator::new().validate(&resolved)?;
+        validated.executable()
     }
 
     fn resolve_with_chain(
@@ -317,7 +328,6 @@ fn merge_models(base: &JsonModel, derived: &JsonModel) -> JsonModel {
         // ─────────────────────────────────────────────────────────────────────
         // Output
         // ─────────────────────────────────────────────────────────────────────
-        output: derived.output.clone().or_else(|| base.output.clone()),
         outputs: derived.outputs.clone().or_else(|| base.outputs.clone()),
 
         // ─────────────────────────────────────────────────────────────────────
@@ -332,16 +342,13 @@ fn merge_models(base: &JsonModel, derived: &JsonModel) -> JsonModel {
         // ─────────────────────────────────────────────────────────────────────
         // Layer 3: Model Extensions
         // ─────────────────────────────────────────────────────────────────────
-        derived: merge_option_vec(&base.derived, &derived.derived),
         features: merge_option_vec(&base.features, &derived.features),
-        covariates: merge_option_vec_dedup(&base.covariates, &derived.covariates),
+        covariates: merge_covariates(&base.covariates, &derived.covariates),
 
         // ─────────────────────────────────────────────────────────────────────
         // Layer 4: UI Metadata
         // ─────────────────────────────────────────────────────────────────────
-        display: merge_display(&base.display, &derived.display),
-        layout: merge_option_hashmap(&base.layout, &derived.layout),
-        documentation: merge_documentation(&base.documentation, &derived.documentation),
+        editor: merge_editor(&base.editor, &derived.editor),
     }
 }
 
@@ -380,11 +387,34 @@ fn merge_option_vec_dedup(
     }
 }
 
+/// Merge covariates by symbol, preserving order and allowing derived overrides.
+fn merge_covariates(
+    base: &Option<Vec<CovariateDefinition>>,
+    derived: &Option<Vec<CovariateDefinition>>,
+) -> Option<Vec<CovariateDefinition>> {
+    match (base, derived) {
+        (None, None) => None,
+        (Some(b), None) => Some(b.clone()),
+        (None, Some(d)) => Some(d.clone()),
+        (Some(b), Some(d)) => {
+            let mut merged = b.clone();
+            for item in d {
+                if let Some(existing) = merged.iter_mut().find(|existing| existing.id == item.id) {
+                    *existing = item.clone();
+                } else {
+                    merged.push(item.clone());
+                }
+            }
+            Some(merged)
+        }
+    }
+}
+
 /// Merge secondary equations: derived keys override base keys, preserving order
 fn merge_secondary(
-    base: &Option<Vec<(String, String)>>,
-    derived: &Option<Vec<(String, String)>>,
-) -> Option<Vec<(String, String)>> {
+    base: &Option<Vec<NamedEquation>>,
+    derived: &Option<Vec<NamedEquation>>,
+) -> Option<Vec<NamedEquation>> {
     match (base, derived) {
         (None, None) => None,
         (Some(b), None) => Some(b.clone()),
@@ -392,11 +422,11 @@ fn merge_secondary(
         (Some(b), Some(d)) => {
             // Start with base, then override or append from derived
             let mut merged = b.clone();
-            for (dk, dv) in d {
-                if let Some(existing) = merged.iter_mut().find(|(k, _)| k == dk) {
-                    existing.1 = dv.clone();
+            for entry in d {
+                if let Some(existing) = merged.iter_mut().find(|existing| existing.id == entry.id) {
+                    existing.equation = entry.equation.clone();
                 } else {
-                    merged.push((dk.clone(), dv.clone()));
+                    merged.push(entry.clone());
                 }
             }
             Some(merged)
@@ -460,6 +490,19 @@ fn merge_documentation(
     }
 }
 
+fn merge_editor(base: &Option<EditorInfo>, derived: &Option<EditorInfo>) -> Option<EditorInfo> {
+    match (base, derived) {
+        (None, None) => None,
+        (Some(b), None) => Some(b.clone()),
+        (None, Some(d)) => Some(d.clone()),
+        (Some(b), Some(d)) => Some(EditorInfo {
+            display: merge_display(&b.display, &d.display),
+            layout: merge_option_hashmap(&b.layout, &d.layout),
+            documentation: merge_documentation(&b.documentation, &d.documentation),
+        }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -468,10 +511,8 @@ mod tests {
     fn test_builtin_library() {
         let library = ModelLibrary::builtin();
         assert!(!library.is_empty());
-
-        // Should have analytical models
-        let analytical = library.filter_by_type(ModelType::Analytical);
-        assert!(!analytical.is_empty());
+        assert!(library.contains("pk/1cmt-iv"));
+        assert!(library.contains("pk/1cmt-iv-ode"));
     }
 
     #[test]
@@ -487,37 +528,94 @@ mod tests {
     fn test_resolve_simple() {
         let mut library = ModelLibrary::new();
 
-        // Add a base model
         let base = JsonModel::from_str(
             r#"{
-            "schema": "1.0",
+            "schema": "2.0",
             "id": "base-model",
             "type": "analytical",
             "analytical": "one_compartment",
             "parameters": ["ke", "V"],
-            "output": "x[0] / V"
+            "compartments": ["central"],
+            "outputs": [
+                { "id": "cp", "equation": "central / V" }
+            ],
+            "editor": {
+                "display": { "name": "Base" }
+            }
         }"#,
         )
         .unwrap();
         library.add(base);
 
-        // Add a derived model
         let derived = JsonModel::from_str(
             r#"{
-            "schema": "1.0",
+            "schema": "2.0",
             "id": "derived-model",
             "extends": "base-model",
             "type": "analytical",
             "analytical": "one_compartment",
-            "parameters": ["ke", "V", "extra"]
+            "parameters": ["ke", "V", "extra"],
+            "compartments": ["central"]
         }"#,
         )
         .unwrap();
 
-        // Resolve should merge
         let resolved = library.resolve(&derived).unwrap();
         assert_eq!(resolved.parameters.as_ref().unwrap().len(), 3);
-        assert!(resolved.output.is_some()); // Inherited from base
+        assert_eq!(resolved.outputs.as_ref().unwrap()[0].id, "cp");
+        assert_eq!(
+            resolved
+                .display_info()
+                .and_then(|display| display.name.as_deref()),
+            Some("Base")
+        );
+    }
+
+    #[test]
+    fn test_resolve_executable_uses_inherited_outputs() {
+        let mut library = ModelLibrary::new();
+
+        let base = JsonModel::from_str(
+            r#"{
+            "schema": "2.0",
+            "id": "base-model",
+            "type": "ode",
+            "parameters": ["ke", "V"],
+            "compartments": ["central"],
+            "diffeq": { "central": "-ke * central" },
+            "outputs": [
+                { "id": "cp", "equation": "central / V" }
+            ]
+        }"#,
+        )
+        .unwrap();
+        library.add(base);
+
+        let derived = JsonModel::from_str(
+            r#"{
+            "schema": "2.0",
+            "id": "derived-model",
+            "extends": "base-model",
+            "type": "ode",
+            "parameters": ["ke", "V", "scale"],
+            "compartments": ["central"],
+            "secondary": [
+                { "id": "cp_scaled", "equation": "central / V * scale" }
+            ]
+        }"#,
+        )
+        .unwrap();
+
+        let executable = library.resolve_executable(&derived).unwrap();
+        assert_eq!(executable.outputs[0].id, "cp");
+        assert_eq!(
+            executable
+                .calculations
+                .iter()
+                .map(|entry| entry.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["cp_scaled"]
+        );
     }
 
     #[test]
@@ -526,24 +624,28 @@ mod tests {
 
         let model_a = JsonModel::from_str(
             r#"{
-            "schema": "1.0",
+            "schema": "2.0",
             "id": "model-a",
             "extends": "model-b",
             "type": "analytical",
             "analytical": "one_compartment",
-            "parameters": ["ke", "V"]
+            "parameters": ["ke", "V"],
+            "compartments": ["central"],
+            "outputs": [{ "id": "cp", "equation": "central / V" }]
         }"#,
         )
         .unwrap();
 
         let model_b = JsonModel::from_str(
             r#"{
-            "schema": "1.0",
+            "schema": "2.0",
             "id": "model-b",
             "extends": "model-a",
             "type": "analytical",
             "analytical": "one_compartment",
-            "parameters": ["ke", "V"]
+            "parameters": ["ke", "V"],
+            "compartments": ["central"],
+            "outputs": [{ "id": "cp", "equation": "central / V" }]
         }"#,
         )
         .unwrap();
@@ -565,13 +667,14 @@ mod tests {
 
         let base = JsonModel::from_str(
             r#"{
-            "schema": "1.0",
+            "schema": "2.0",
             "id": "base",
             "type": "analytical",
             "analytical": "one_compartment",
             "parameters": ["CL", "V"],
-            "secondary": { "ke": "CL / V" },
-            "output": "x[0] / V"
+            "compartments": ["central"],
+            "secondary": [{ "id": "ke", "equation": "CL / V" }],
+            "outputs": [{ "id": "cp", "equation": "central / V" }]
         }"#,
         )
         .unwrap();
@@ -579,13 +682,14 @@ mod tests {
 
         let derived = JsonModel::from_str(
             r#"{
-            "schema": "1.0",
+            "schema": "2.0",
             "id": "derived",
             "extends": "base",
             "type": "analytical",
             "analytical": "one_compartment",
             "parameters": ["CL", "V"],
-            "secondary": { "ke": "CL / V * 0.9" }
+            "compartments": ["central"],
+            "secondary": [{ "id": "ke", "equation": "CL / V * 0.9" }]
         }"#,
         )
         .unwrap();
@@ -599,8 +703,8 @@ mod tests {
             1,
             "Derived 'ke' should override base 'ke', not duplicate"
         );
-        assert_eq!(secondary[0].0, "ke");
-        assert_eq!(secondary[0].1, "CL / V * 0.9");
+        assert_eq!(secondary[0].id, "ke");
+        assert_eq!(secondary[0].equation, "CL / V * 0.9");
     }
 
     #[test]
@@ -609,13 +713,14 @@ mod tests {
 
         let base = JsonModel::from_str(
             r#"{
-            "schema": "1.0",
+            "schema": "2.0",
             "id": "base",
             "type": "analytical",
             "analytical": "one_compartment",
             "parameters": ["CL", "V"],
-            "secondary": { "ke": "CL / V" },
-            "output": "x[0] / V"
+            "compartments": ["central"],
+            "secondary": [{ "id": "ke", "equation": "CL / V" }],
+            "outputs": [{ "id": "cp", "equation": "central / V" }]
         }"#,
         )
         .unwrap();
@@ -623,13 +728,14 @@ mod tests {
 
         let derived = JsonModel::from_str(
             r#"{
-            "schema": "1.0",
+            "schema": "2.0",
             "id": "derived",
             "extends": "base",
             "type": "analytical",
             "analytical": "one_compartment",
             "parameters": ["CL", "V"],
-            "secondary": { "halflife": "0.693 / ke" }
+            "compartments": ["central"],
+            "secondary": [{ "id": "halflife", "equation": "0.693 / ke" }]
         }"#,
         )
         .unwrap();
@@ -639,8 +745,8 @@ mod tests {
 
         // Should have both base "ke" and derived "halflife"
         assert_eq!(secondary.len(), 2);
-        assert_eq!(secondary[0].0, "ke");
-        assert_eq!(secondary[1].0, "halflife");
+        assert_eq!(secondary[0].id, "ke");
+        assert_eq!(secondary[1].id, "halflife");
     }
 
     #[test]
@@ -649,13 +755,14 @@ mod tests {
 
         let base = JsonModel::from_str(
             r#"{
-            "schema": "1.0",
+            "schema": "2.0",
             "id": "base",
             "type": "analytical",
             "analytical": "one_compartment",
             "parameters": ["ke", "V"],
-            "covariates": ["wt", "age"],
-            "output": "x[0] / V"
+            "compartments": ["central"],
+            "covariates": [{ "id": "wt" }, { "id": "age" }],
+            "outputs": [{ "id": "cp", "equation": "central / V" }]
         }"#,
         )
         .unwrap();
@@ -663,13 +770,14 @@ mod tests {
 
         let derived = JsonModel::from_str(
             r#"{
-            "schema": "1.0",
+            "schema": "2.0",
             "id": "derived",
             "extends": "base",
             "type": "analytical",
             "analytical": "one_compartment",
             "parameters": ["ke", "V"],
-            "covariates": ["wt", "sex"]
+            "compartments": ["central"],
+            "covariates": [{ "id": "wt", "column": "WT" }, { "id": "sex" }]
         }"#,
         )
         .unwrap();
@@ -683,8 +791,8 @@ mod tests {
             3,
             "Should have wt, age, sex (wt deduplicated)"
         );
-        assert!(covariates.contains(&"wt".to_string()));
-        assert!(covariates.contains(&"age".to_string()));
-        assert!(covariates.contains(&"sex".to_string()));
+        assert!(covariates.iter().any(|cov| cov.id == "wt"));
+        assert!(covariates.iter().any(|cov| cov.id == "age"));
+        assert!(covariates.iter().any(|cov| cov.id == "sex"));
     }
 }

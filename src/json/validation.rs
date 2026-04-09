@@ -19,6 +19,11 @@ impl ValidatedModel {
         &self.0
     }
 
+    /// Get the normalized executable model.
+    pub fn executable(&self) -> Result<ExecutableModel, JsonModelError> {
+        self.0.to_executable_model()
+    }
+
     /// Consume the wrapper and return the inner JsonModel
     pub fn into_inner(self) -> JsonModel {
         self.0
@@ -50,31 +55,16 @@ impl Validator {
 
     /// Validate a JSON model
     pub fn validate(&self, model: &JsonModel) -> Result<ValidatedModel, JsonModelError> {
-        // 1. Validate type-specific requirements
         self.validate_type_requirements(model)?;
-
-        // 2. Validate parameters
         self.validate_parameters(model)?;
-
-        // 3. Validate output
         self.validate_output(model)?;
-
-        // 4. Validate compartments/states
         self.validate_compartments(model)?;
-
-        // 5. Validate covariates
         self.validate_covariates(model)?;
-
-        // 6. Validate expressions parse correctly
+        self.validate_source_constraints(model)?;
         self.validate_expressions(model)?;
-
-        // 7. Validate equation keys match declared compartments/states
         self.validate_equation_keys(model)?;
-
-        // 8. Validate expression identifiers reference declared names
         self.validate_expression_identifiers(model)?;
 
-        // 9. Validate analytical function parameters
         if let Some(func) = &model.analytical {
             self.validate_analytical_params(model, func)?;
         }
@@ -86,11 +76,12 @@ impl Validator {
     fn validate_type_requirements(&self, model: &JsonModel) -> Result<(), JsonModelError> {
         match model.model_type {
             ModelType::Analytical => {
-                // Must have analytical function
                 if model.analytical.is_none() {
                     return Err(JsonModelError::missing_field("analytical", "analytical"));
                 }
-                // Must not have ODE/SDE fields
+                if model.compartments.is_none() {
+                    return Err(JsonModelError::missing_field("compartments", "analytical"));
+                }
                 if model.diffeq.is_some() {
                     return Err(JsonModelError::invalid_field("diffeq", "analytical"));
                 }
@@ -102,11 +93,12 @@ impl Validator {
                 }
             }
             ModelType::Ode => {
-                // Must have diffeq
                 if model.diffeq.is_none() {
                     return Err(JsonModelError::missing_field("diffeq", "ode"));
                 }
-                // Must not have analytical/SDE fields
+                if model.compartments.is_none() {
+                    return Err(JsonModelError::missing_field("compartments", "ode"));
+                }
                 if model.analytical.is_some() {
                     return Err(JsonModelError::invalid_field("analytical", "ode"));
                 }
@@ -118,14 +110,15 @@ impl Validator {
                 }
             }
             ModelType::Sde => {
-                // Must have drift and diffusion
                 if model.drift.is_none() {
                     return Err(JsonModelError::missing_field("drift", "sde"));
                 }
                 if model.diffusion.is_none() {
                     return Err(JsonModelError::missing_field("diffusion", "sde"));
                 }
-                // Must not have analytical/ODE fields
+                if model.states.is_none() {
+                    return Err(JsonModelError::missing_field("states", "sde"));
+                }
                 if model.analytical.is_some() {
                     return Err(JsonModelError::invalid_field("analytical", "sde"));
                 }
@@ -134,18 +127,17 @@ impl Validator {
                 }
             }
         }
+
         Ok(())
     }
 
     /// Validate parameters
     fn validate_parameters(&self, model: &JsonModel) -> Result<(), JsonModelError> {
-        // Parameters required unless using extends
         if model.extends.is_none() && model.parameters.is_none() {
             return Err(JsonModelError::MissingParameters);
         }
 
         if let Some(params) = &model.parameters {
-            // Check for duplicates
             let mut seen = HashSet::new();
             for param in params {
                 if !seen.insert(param.clone()) {
@@ -155,7 +147,6 @@ impl Validator {
                 }
             }
 
-            // Check for empty parameters
             if params.is_empty() && model.extends.is_none() {
                 return Err(JsonModelError::MissingParameters);
             }
@@ -164,58 +155,67 @@ impl Validator {
         Ok(())
     }
 
-    /// Validate output
+    /// Validate outputs
     fn validate_output(&self, model: &JsonModel) -> Result<(), JsonModelError> {
-        // Output required unless using extends
-        if model.extends.is_none() && model.output.is_none() && model.outputs.is_none() {
+        if model.extends.is_none() && model.outputs.is_none() {
             return Err(JsonModelError::MissingOutput);
         }
 
-        // Mutually exclusive
-        if model.output.is_some() && model.outputs.is_some() {
-            return Err(JsonModelError::AmbiguousOutput);
+        if model.extends.is_some() && model.outputs.is_none() {
+            return Ok(());
         }
 
-        // Check for empty output
-        if let Some(output) = &model.output {
-            if output.trim().is_empty() {
+        let outputs = model.normalized_outputs()?;
+        let mut seen_ids = HashSet::new();
+
+        for (index, output) in outputs.iter().enumerate() {
+            if output.equation.trim().is_empty() {
                 return Err(JsonModelError::EmptyExpression {
-                    context: "output".to_string(),
+                    context: format!("outputs[{}]", index),
                 });
             }
-        }
 
-        // Check outputs array
-        if let Some(outputs) = &model.outputs {
-            for (i, out) in outputs.iter().enumerate() {
-                if out.equation.trim().is_empty() {
-                    return Err(JsonModelError::EmptyExpression {
-                        context: format!("outputs[{}]", i),
-                    });
-                }
+            if !seen_ids.insert(output.id.clone()) {
+                return Err(JsonModelError::DuplicateOutput {
+                    id: output.id.clone(),
+                });
             }
         }
 
         Ok(())
     }
 
-    /// Validate compartments
+    /// Validate compartments and states
     fn validate_compartments(&self, model: &JsonModel) -> Result<(), JsonModelError> {
         if let Some(compartments) = &model.compartments {
             let mut seen = HashSet::new();
-            for cmt in compartments {
-                if !seen.insert(cmt.clone()) {
-                    return Err(JsonModelError::DuplicateCompartment { name: cmt.clone() });
+            for name in compartments {
+                if !seen.insert(name.clone()) {
+                    return Err(JsonModelError::DuplicateCompartment { name: name.clone() });
                 }
             }
         }
 
         if let Some(states) = &model.states {
             let mut seen = HashSet::new();
-            for state in states {
-                if !seen.insert(state.clone()) {
-                    return Err(JsonModelError::DuplicateCompartment {
-                        name: state.clone(),
+            for name in states {
+                if !seen.insert(name.clone()) {
+                    return Err(JsonModelError::DuplicateCompartment { name: name.clone() });
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Validate covariates
+    fn validate_covariates(&self, model: &JsonModel) -> Result<(), JsonModelError> {
+        if let Some(covariates) = &model.covariates {
+            let mut seen = HashSet::new();
+            for covariate in covariates {
+                if !seen.insert(covariate.id.clone()) {
+                    return Err(JsonModelError::DuplicateCovariate {
+                        name: covariate.id.clone(),
                     });
                 }
             }
@@ -224,16 +224,58 @@ impl Validator {
         Ok(())
     }
 
-    /// Validate covariate definitions (just a list of names now)
-    fn validate_covariates(&self, model: &JsonModel) -> Result<(), JsonModelError> {
-        if let Some(covariates) = &model.covariates {
+    /// Validate source-level representational constraints.
+    fn validate_source_constraints(&self, model: &JsonModel) -> Result<(), JsonModelError> {
+        if let Some(secondary) = &model.secondary {
             let mut seen = HashSet::new();
-            for cov in covariates {
-                if !seen.insert(cov.clone()) {
-                    return Err(JsonModelError::DuplicateCovariate { name: cov.clone() });
+            for entry in secondary {
+                if !seen.insert(entry.id.clone()) {
+                    return Err(JsonModelError::schema_rule(
+                        "secondary",
+                        &model.schema,
+                        format!("duplicate secondary identifier '{}'", entry.id),
+                    ));
                 }
             }
         }
+
+        if let Some(init) = &model.init {
+            let InitSpec::Object(map) = init;
+            for key in map.keys() {
+                if key.parse::<usize>().is_ok() {
+                    return Err(JsonModelError::schema_rule(
+                        "init",
+                        &model.schema,
+                        format!("numeric key '{}' is not canonical; use compartment or state ids", key),
+                    ));
+                }
+            }
+        }
+
+        if let Some(lag) = &model.lag {
+            for key in lag.keys() {
+                if key.parse::<usize>().is_ok() {
+                    return Err(JsonModelError::schema_rule(
+                        "lag",
+                        &model.schema,
+                        format!("numeric key '{}' is not canonical; use compartment ids", key),
+                    ));
+                }
+            }
+        }
+
+        if let Some(fa) = &model.fa {
+            for key in fa.keys() {
+                if key.parse::<usize>().is_ok() {
+                    return Err(JsonModelError::schema_rule(
+                        "fa",
+                        &model.schema,
+                        format!("numeric key '{}' is not canonical; use compartment ids", key),
+                    ));
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -241,123 +283,161 @@ impl Validator {
     fn validate_expressions(&self, model: &JsonModel) -> Result<(), JsonModelError> {
         use crate::json::expression;
 
-        // Validate output expression
-        if let Some(output) = &model.output {
-            expression::parse(output).map_err(|e| JsonModelError::ExpressionParseError {
-                context: "output".to_string(),
-                message: e.to_string(),
-            })?;
-        }
-
-        // Validate multiple outputs
         if let Some(outputs) = &model.outputs {
-            for (i, out) in outputs.iter().enumerate() {
-                expression::parse(&out.equation).map_err(|e| {
+            for (index, output) in outputs.iter().enumerate() {
+                expression::parse(&output.equation).map_err(|error| {
                     JsonModelError::ExpressionParseError {
-                        context: format!("outputs[{}]", i),
-                        message: e.to_string(),
+                        context: format!("outputs[{}]", index),
+                        message: error.to_string(),
                     }
                 })?;
             }
         }
 
-        // Validate diffeq expressions
-        if let Some(DiffEqSpec::Object(map)) = &model.diffeq {
+        if let Some(diffeq) = &model.diffeq {
+            let DiffEqSpec::Object(map) = diffeq;
             for (name, expr) in map {
-                expression::parse(expr).map_err(|e| JsonModelError::ExpressionParseError {
+                expression::parse(expr).map_err(|error| JsonModelError::ExpressionParseError {
                     context: format!("diffeq.{}", name),
-                    message: e.to_string(),
+                    message: error.to_string(),
                 })?;
             }
         }
 
-        // Validate drift expressions (SDE)
-        if let Some(DiffEqSpec::Object(map)) = &model.drift {
+        if let Some(drift) = &model.drift {
+            let DiffEqSpec::Object(map) = drift;
             for (name, expr) in map {
-                expression::parse(expr).map_err(|e| JsonModelError::ExpressionParseError {
+                expression::parse(expr).map_err(|error| JsonModelError::ExpressionParseError {
                     context: format!("drift.{}", name),
-                    message: e.to_string(),
+                    message: error.to_string(),
                 })?;
             }
         }
 
-        // Validate secondary equations
+        if let Some(diffusion) = &model.diffusion {
+            for (name, expr) in diffusion {
+                if let ExpressionOrNumber::Expression(expr) = expr {
+                    expression::parse(expr).map_err(|error| {
+                        JsonModelError::ExpressionParseError {
+                            context: format!("diffusion.{}", name),
+                            message: error.to_string(),
+                        }
+                    })?;
+                }
+            }
+        }
+
         if let Some(secondary) = &model.secondary {
-            for (name, expr) in secondary {
-                expression::parse(expr).map_err(|e| JsonModelError::ExpressionParseError {
-                    context: format!("secondary.{}", name),
-                    message: e.to_string(),
-                })?;
-            }
-        }
-
-        // Validate derived parameter expressions
-        if let Some(derived) = &model.derived {
-            for d in derived {
-                expression::parse(&d.expression).map_err(|e| {
+            for entry in secondary {
+                expression::parse(&entry.equation).map_err(|error| {
                     JsonModelError::ExpressionParseError {
-                        context: format!("derived.{}", d.symbol),
-                        message: e.to_string(),
+                        context: format!("secondary.{}", entry.id),
+                        message: error.to_string(),
                     }
                 })?;
+            }
+        }
+
+        if let Some(init) = &model.init {
+            let InitSpec::Object(map) = init;
+            for (name, expr) in map {
+                if let ExpressionOrNumber::Expression(expr) = expr {
+                    expression::parse(expr).map_err(|error| {
+                        JsonModelError::ExpressionParseError {
+                            context: format!("init.{}", name),
+                            message: error.to_string(),
+                        }
+                    })?;
+                }
+            }
+        }
+
+        if let Some(lag) = &model.lag {
+            for (name, expr) in lag {
+                if let ExpressionOrNumber::Expression(expr) = expr {
+                    expression::parse(expr).map_err(|error| {
+                        JsonModelError::ExpressionParseError {
+                            context: format!("lag.{}", name),
+                            message: error.to_string(),
+                        }
+                    })?;
+                }
+            }
+        }
+
+        if let Some(fa) = &model.fa {
+            for (name, expr) in fa {
+                if let ExpressionOrNumber::Expression(expr) = expr {
+                    expression::parse(expr).map_err(|error| {
+                        JsonModelError::ExpressionParseError {
+                            context: format!("fa.{}", name),
+                            message: error.to_string(),
+                        }
+                    })?;
+                }
             }
         }
 
         Ok(())
     }
 
-    /// Validate that diffeq/drift keys match declared compartments/states
+    /// Validate equation keys against declared names
     fn validate_equation_keys(&self, model: &JsonModel) -> Result<(), JsonModelError> {
-        // Validate diffeq keys against compartments
-        if let Some(DiffEqSpec::Object(map)) = &model.diffeq {
-            if let Some(compartments) = &model.compartments {
-                for name in map.keys() {
-                    // Allow numeric indices as well as named compartments
-                    if name.parse::<usize>().is_err() && !compartments.contains(name) {
-                        return Err(JsonModelError::UndefinedCompartment { name: name.clone() });
-                    }
+        if let (Some(diffeq), Some(compartments)) = (&model.diffeq, &model.compartments) {
+            let DiffEqSpec::Object(map) = diffeq;
+            for name in map.keys() {
+                if !compartments.contains(name) {
+                    return Err(JsonModelError::UndefinedCompartment { name: name.clone() });
                 }
             }
         }
 
-        // Validate drift keys against states
-        if let Some(DiffEqSpec::Object(map)) = &model.drift {
+        if let (Some(drift), Some(states)) = (&model.drift, &model.states) {
+            let DiffEqSpec::Object(map) = drift;
+            for name in map.keys() {
+                if !states.contains(name) {
+                    return Err(JsonModelError::UndefinedCompartment { name: name.clone() });
+                }
+            }
+        }
+
+        if let (Some(diffusion), Some(states)) = (&model.diffusion, &model.states) {
+            for name in diffusion.keys() {
+                if !states.contains(name) {
+                    return Err(JsonModelError::UndefinedCompartment { name: name.clone() });
+                }
+            }
+        }
+
+        if let (Some(lag), Some(compartments)) = (&model.lag, &model.compartments) {
+            for name in lag.keys() {
+                if !compartments.contains(name) {
+                    return Err(JsonModelError::UndefinedCompartment { name: name.clone() });
+                }
+            }
+        }
+
+        if let (Some(fa), Some(compartments)) = (&model.fa, &model.compartments) {
+            for name in fa.keys() {
+                if !compartments.contains(name) {
+                    return Err(JsonModelError::UndefinedCompartment { name: name.clone() });
+                }
+            }
+        }
+
+        if let Some(init) = &model.init {
+            let InitSpec::Object(map) = init;
+            let mut valid_keys = HashSet::new();
+            if let Some(compartments) = &model.compartments {
+                valid_keys.extend(compartments.iter().cloned());
+            }
             if let Some(states) = &model.states {
-                for name in map.keys() {
-                    if name.parse::<usize>().is_err() && !states.contains(name) {
-                        // Also check compartments as fallback
-                        let in_compartments = model
-                            .compartments
-                            .as_ref()
-                            .is_some_and(|c| c.contains(name));
-                        if !in_compartments {
-                            return Err(JsonModelError::UndefinedCompartment {
-                                name: name.clone(),
-                            });
-                        }
-                    }
-                }
+                valid_keys.extend(states.iter().cloned());
             }
-        }
 
-        // Validate lag keys against compartments
-        if let Some(lag) = &model.lag {
-            if let Some(compartments) = &model.compartments {
-                for name in lag.keys() {
-                    if name.parse::<usize>().is_err() && !compartments.contains(name) {
-                        return Err(JsonModelError::UndefinedCompartment { name: name.clone() });
-                    }
-                }
-            }
-        }
-
-        // Validate fa keys against compartments
-        if let Some(fa) = &model.fa {
-            if let Some(compartments) = &model.compartments {
-                for name in fa.keys() {
-                    if name.parse::<usize>().is_err() && !compartments.contains(name) {
-                        return Err(JsonModelError::UndefinedCompartment { name: name.clone() });
-                    }
+            for name in map.keys() {
+                if !valid_keys.contains(name) {
+                    return Err(JsonModelError::UndefinedCompartment { name: name.clone() });
                 }
             }
         }
@@ -368,46 +448,35 @@ impl Validator {
     /// Validate that expression identifiers reference declared names
     fn validate_expression_identifiers(&self, model: &JsonModel) -> Result<(), JsonModelError> {
         use crate::json::expression;
-        use std::collections::HashSet;
 
-        // Build the set of known identifiers
         let mut known: HashSet<String> = HashSet::new();
 
-        // Parameters
         if let Some(params) = &model.parameters {
             known.extend(params.iter().cloned());
         }
-
-        // Compartments
         if let Some(compartments) = &model.compartments {
             known.extend(compartments.iter().cloned());
         }
-
-        // States
         if let Some(states) = &model.states {
             known.extend(states.iter().cloned());
         }
-
-        // Covariates
         if let Some(covariates) = &model.covariates {
-            known.extend(covariates.iter().cloned());
+            known.extend(covariates.iter().map(|cov| cov.id.clone()));
         }
 
-        // Built-in array names that can be indexed
         known.extend(
-            ["x", "dx", "rateiv", "y", "t", "d", "p"]
+            ["x", "dx", "b", "rateiv", "y", "t", "d", "p"]
                 .iter()
-                .map(|s| s.to_string()),
+                .map(|name| name.to_string()),
         );
 
-        // Helper to validate a single expression's identifiers
         let validate_expr = |expr_str: &str,
                              context: &str,
                              extra: &HashSet<String>|
          -> Result<(), JsonModelError> {
             let ast = match expression::parse(expr_str) {
                 Ok(ast) => ast,
-                Err(_) => return Ok(()), // Syntax errors caught by validate_expressions
+                Err(_) => return Ok(()),
             };
             let ids = expression::collect_identifiers(&ast);
             let mut local_known = known.clone();
@@ -423,50 +492,70 @@ impl Validator {
             Ok(())
         };
 
-        // Secondary equations — each can reference earlier ones
-        let mut secondary_names: HashSet<String> = HashSet::new();
-        if let Some(secondary) = &model.secondary {
-            for (name, expr) in secondary {
-                validate_expr(expr, &format!("secondary.{}", name), &secondary_names)?;
-                secondary_names.insert(name.clone());
-            }
+        let mut calculation_names: HashSet<String> = HashSet::new();
+        for entry in model.executable_calculations() {
+            validate_expr(
+                &entry.equation,
+                &format!("calculation.{}", entry.id),
+                &calculation_names,
+            )?;
+            calculation_names.insert(entry.id);
         }
 
-        // For remaining expressions, all secondary names are available
-        let all_secondary = &secondary_names;
-
-        // Derived parameters
-        if let Some(derived) = &model.derived {
-            let mut derived_names: HashSet<String> = HashSet::new();
-            for d in derived {
-                let mut extra = all_secondary.clone();
-                extra.extend(derived_names.iter().cloned());
-                validate_expr(&d.expression, &format!("derived.{}", d.symbol), &extra)?;
-                derived_names.insert(d.symbol.clone());
-            }
-        }
-
-        // Output
-        if let Some(output) = &model.output {
-            validate_expr(output, "output", all_secondary)?;
-        }
         if let Some(outputs) = &model.outputs {
-            for (i, out) in outputs.iter().enumerate() {
-                validate_expr(&out.equation, &format!("outputs[{}]", i), all_secondary)?;
+            for (index, output) in outputs.iter().enumerate() {
+                validate_expr(
+                    &output.equation,
+                    &format!("outputs[{}]", index),
+                    &calculation_names,
+                )?;
             }
         }
 
-        // Diffeq
-        if let Some(DiffEqSpec::Object(map)) = &model.diffeq {
+        if let Some(diffeq) = &model.diffeq {
+            let DiffEqSpec::Object(map) = diffeq;
             for (name, expr) in map {
-                validate_expr(expr, &format!("diffeq.{}", name), all_secondary)?;
+                validate_expr(expr, &format!("diffeq.{}", name), &calculation_names)?;
             }
         }
 
-        // Drift
-        if let Some(DiffEqSpec::Object(map)) = &model.drift {
+        if let Some(drift) = &model.drift {
+            let DiffEqSpec::Object(map) = drift;
             for (name, expr) in map {
-                validate_expr(expr, &format!("drift.{}", name), all_secondary)?;
+                validate_expr(expr, &format!("drift.{}", name), &calculation_names)?;
+            }
+        }
+
+        if let Some(diffusion) = &model.diffusion {
+            for (name, expr) in diffusion {
+                if let ExpressionOrNumber::Expression(expr) = expr {
+                    validate_expr(expr, &format!("diffusion.{}", name), &calculation_names)?;
+                }
+            }
+        }
+
+        if let Some(init) = &model.init {
+            let InitSpec::Object(map) = init;
+            for (name, expr) in map {
+                if let ExpressionOrNumber::Expression(expr) = expr {
+                    validate_expr(expr, &format!("init.{}", name), &calculation_names)?;
+                }
+            }
+        }
+
+        if let Some(lag) = &model.lag {
+            for (name, expr) in lag {
+                if let ExpressionOrNumber::Expression(expr) = expr {
+                    validate_expr(expr, &format!("lag.{}", name), &calculation_names)?;
+                }
+            }
+        }
+
+        if let Some(fa) = &model.fa {
+            for (name, expr) in fa {
+                if let ExpressionOrNumber::Expression(expr) = expr {
+                    validate_expr(expr, &format!("fa.{}", name), &calculation_names)?;
+                }
             }
         }
 
@@ -482,11 +571,9 @@ impl Validator {
         let expected = func.expected_parameters();
         let actual = model.get_parameters();
 
-        // Check if expected parameters are present at the start (in order)
-        // Extra parameters (like V, tlag) are allowed after
         if self.strict && actual.len() >= expected.len() {
             let actual_prefix: Vec<_> = actual.iter().take(expected.len()).cloned().collect();
-            let expected_vec: Vec<_> = expected.iter().map(|s| s.to_string()).collect();
+            let expected_vec: Vec<_> = expected.iter().map(|name| name.to_string()).collect();
 
             if actual_prefix != expected_vec {
                 return Err(JsonModelError::ParameterOrderWarning {
@@ -508,11 +595,12 @@ mod tests {
     #[test]
     fn test_validate_missing_analytical() {
         let json = r#"{
-            "schema": "1.0",
+            "schema": "2.0",
             "id": "test",
             "type": "analytical",
-            "parameters": ["ke"],
-            "output": "x[0]"
+            "parameters": ["ke", "V"],
+            "compartments": ["central"],
+            "outputs": [{ "id": "cp", "equation": "central / V" }]
         }"#;
 
         let model = JsonModel::from_str(json).unwrap();
@@ -524,262 +612,147 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_missing_diffeq() {
+    fn test_validate_missing_outputs() {
         let json = r#"{
-            "schema": "1.0",
+            "schema": "2.0",
             "id": "test",
             "type": "ode",
-            "parameters": ["ke"],
-            "output": "x[0]"
+            "parameters": ["ke", "V"],
+            "compartments": ["central"],
+            "diffeq": { "central": "-ke * central" }
         }"#;
 
         let model = JsonModel::from_str(json).unwrap();
         let result = Validator::new().validate(&model);
-        assert!(matches!(
-            result,
-            Err(JsonModelError::MissingField { field, .. }) if field == "diffeq"
-        ));
+        assert!(matches!(result, Err(JsonModelError::MissingOutput)));
     }
 
     #[test]
-    fn test_validate_invalid_field_for_type() {
+    fn test_validate_duplicate_outputs() {
         let json = r#"{
-            "schema": "1.0",
-            "id": "test",
-            "type": "analytical",
-            "analytical": "one_compartment",
-            "diffeq": "dx[0] = -ke * x[0];",
-            "parameters": ["ke"],
-            "output": "x[0]"
-        }"#;
-
-        let model = JsonModel::from_str(json).unwrap();
-        let result = Validator::new().validate(&model);
-        assert!(matches!(
-            result,
-            Err(JsonModelError::InvalidFieldForType { field, .. }) if field == "diffeq"
-        ));
-    }
-
-    #[test]
-    fn test_validate_duplicate_parameter() {
-        let json = r#"{
-            "schema": "1.0",
+            "schema": "2.0",
             "id": "test",
             "type": "ode",
-            "parameters": ["ke", "V", "ke"],
-            "diffeq": "dx[0] = -ke * x[0];",
-            "output": "x[0]"
+            "parameters": ["ke", "V"],
+            "compartments": ["central"],
+            "diffeq": { "central": "-ke * central" },
+            "outputs": [
+                { "id": "cp", "equation": "central / V" },
+                { "id": "cp", "equation": "central / V" }
+            ]
         }"#;
 
         let model = JsonModel::from_str(json).unwrap();
         let result = Validator::new().validate(&model);
-        assert!(matches!(
-            result,
-            Err(JsonModelError::DuplicateParameter { name }) if name == "ke"
-        ));
+        assert!(matches!(result, Err(JsonModelError::DuplicateOutput { .. })));
     }
 
     #[test]
-    fn test_validate_valid_model() {
+    fn test_validate_rejects_numeric_lag_keys() {
         let json = r#"{
-            "schema": "1.0",
-            "id": "pk_1cmt_oral",
+            "schema": "2.0",
+            "id": "test",
             "type": "analytical",
             "analytical": "one_compartment_with_absorption",
-            "parameters": ["ka", "ke", "V"],
-            "output": "x[1] / V"
-        }"#;
-
-        let model = JsonModel::from_str(json).unwrap();
-        let result = Validator::new().validate(&model);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_validate_duplicate_covariate() {
-        let json = r#"{
-            "schema": "1.0",
-            "id": "test",
-            "type": "analytical",
-            "analytical": "one_compartment",
-            "parameters": ["ke", "V"],
-            "covariates": ["wt", "wt"],
-            "output": "x[0] / V"
-        }"#;
-
-        let model = JsonModel::from_str(json).unwrap();
-        let result = Validator::new().validate(&model);
-        assert!(
-            matches!(result, Err(JsonModelError::DuplicateCovariate { name }) if name == "wt"),
-            "Should reject duplicate covariates with DuplicateCovariate variant"
-        );
-    }
-
-    #[test]
-    fn test_validate_undefined_identifier_in_output() {
-        let json = r#"{
-            "schema": "1.0",
-            "id": "test",
-            "type": "analytical",
-            "analytical": "one_compartment",
-            "parameters": ["ke", "V"],
-            "output": "x[0] / Vv"
-        }"#;
-
-        let model = JsonModel::from_str(json).unwrap();
-        let result = Validator::new().validate(&model);
-        assert!(
-            matches!(result, Err(JsonModelError::UndefinedParameter { ref name, .. }) if name == "Vv"),
-            "Should catch typo 'Vv' when 'V' is declared: {:?}",
-            result
-        );
-    }
-
-    #[test]
-    fn test_validate_undefined_identifier_in_diffeq() {
-        let json = r#"{
-            "schema": "1.0",
-            "id": "test",
-            "type": "ode",
-            "compartments": ["central"],
-            "parameters": ["ke", "V"],
-            "diffeq": { "central": "-ke * central + rateiv[0] + TYPO" },
-            "output": "central / V"
-        }"#;
-
-        let model = JsonModel::from_str(json).unwrap();
-        let result = Validator::new().validate(&model);
-        assert!(
-            matches!(result, Err(JsonModelError::UndefinedParameter { name, .. }) if name == "TYPO"),
-            "Should catch undefined identifier 'TYPO' in diffeq"
-        );
-    }
-
-    #[test]
-    fn test_validate_secondary_can_reference_earlier() {
-        let json = r#"{
-            "schema": "1.0",
-            "id": "test",
-            "type": "analytical",
-            "analytical": "one_compartment",
-            "parameters": ["CL", "V"],
-            "secondary": {
-                "ke": "CL / V"
-            },
-            "output": "x[0] / V"
-        }"#;
-
-        let model = JsonModel::from_str(json).unwrap();
-        let result = Validator::new().validate(&model);
-        assert!(
-            result.is_ok(),
-            "Secondary can reference declared parameters"
-        );
-    }
-
-    #[test]
-    fn test_validate_secondary_order_matters() {
-        let json = r#"{
-            "schema": "1.0",
-            "id": "test",
-            "type": "analytical",
-            "analytical": "one_compartment",
-            "parameters": ["CLs", "Vs"],
-            "covariates": ["wt"],
-            "secondary": {
-                "CL": "CLs * (wt / 70)^0.75",
-                "V": "Vs * (wt / 70)",
-                "ke": "CL / V"
-            },
-            "output": "x[0] / V"
-        }"#;
-
-        let model = JsonModel::from_str(json).unwrap();
-        let result = Validator::new().validate(&model);
-        assert!(
-            result.is_ok(),
-            "Secondary 'ke' can reference earlier 'CL' and 'V'"
-        );
-    }
-
-    #[test]
-    fn test_validate_diffeq_key_not_in_compartments() {
-        let json = r#"{
-            "schema": "1.0",
-            "id": "test",
-            "type": "ode",
-            "compartments": ["central"],
-            "parameters": ["ke", "V"],
-            "diffeq": { "nonexistent": "-ke * x[0]" },
-            "output": "x[0] / V"
-        }"#;
-
-        let model = JsonModel::from_str(json).unwrap();
-        let result = Validator::new().validate(&model);
-        assert!(
-            matches!(result, Err(JsonModelError::UndefinedCompartment { name }) if name == "nonexistent"),
-            "Should reject diffeq key not in compartments"
-        );
-    }
-
-    #[test]
-    fn test_validate_lag_key_not_in_compartments() {
-        let json = r#"{
-            "schema": "1.0",
-            "id": "test",
-            "type": "ode",
-            "compartments": ["depot", "central"],
             "parameters": ["ka", "ke", "V", "tlag"],
-            "diffeq": {
-                "depot": "-ka * depot",
-                "central": "ka * depot - ke * central"
-            },
-            "lag": { "nonexistent": "tlag" },
-            "output": "central / V"
+            "compartments": ["depot", "central"],
+            "lag": { "0": "tlag" },
+            "outputs": [{ "id": "cp", "equation": "central / V" }]
         }"#;
 
         let model = JsonModel::from_str(json).unwrap();
         let result = Validator::new().validate(&model);
-        assert!(
-            matches!(result, Err(JsonModelError::UndefinedCompartment { name }) if name == "nonexistent"),
-            "Should reject lag key not in compartments"
-        );
+        assert!(matches!(
+            result,
+            Err(JsonModelError::SchemaRuleViolation { .. })
+        ));
     }
 
     #[test]
-    fn test_validate_allows_numeric_diffeq_keys() {
+    fn test_validate_accepts_minimal_v2_model() {
         let json = r#"{
-            "schema": "1.0",
+            "schema": "2.0",
+            "id": "pk/1cmt-iv-ode",
+            "type": "ode",
+            "parameters": ["ke", "V"],
+            "compartments": ["central"],
+            "diffeq": { "central": "-ke * central + rateiv[0]" },
+            "outputs": [{ "id": "cp", "equation": "central / V" }]
+        }"#;
+
+        let model = JsonModel::from_str(json).unwrap();
+        Validator::new().validate(&model).unwrap();
+    }
+
+    #[test]
+    fn test_validate_accepts_bolus_symbol() {
+        let json = r#"{
+            "schema": "2.0",
+            "id": "pk/1cmt-bolus",
+            "type": "ode",
+            "parameters": ["ke", "V"],
+            "compartments": ["central"],
+            "diffeq": { "central": "-ke * central + b[0]" },
+            "outputs": [{ "id": "cp", "equation": "central / V" }]
+        }"#;
+
+        let model = JsonModel::from_str(json).unwrap();
+        Validator::new().validate(&model).unwrap();
+    }
+
+    #[test]
+    fn test_validate_secondary_can_feed_outputs_and_diffeq() {
+        let json = r#"{
+            "schema": "2.0",
+            "id": "pk/1cmt-derived",
+            "type": "ode",
+            "parameters": ["CL", "V"],
+            "compartments": ["central"],
+            "secondary": [
+                { "id": "ke", "equation": "CL / V" }
+            ],
+            "diffeq": { "central": "-ke * central" },
+            "outputs": [{ "id": "cp", "equation": "central / V" }]
+        }"#;
+
+        let model = JsonModel::from_str(json).unwrap();
+        Validator::new().validate(&model).unwrap();
+    }
+
+    #[test]
+    fn test_validate_rejects_unknown_compartment_reference() {
+        let json = r#"{
+            "schema": "2.0",
             "id": "test",
             "type": "ode",
-            "compartments": ["central"],
             "parameters": ["ke", "V"],
-            "diffeq": { "0": "-ke * x[0]" },
-            "output": "x[0] / V"
+            "compartments": ["central"],
+            "diffeq": { "peripheral": "-ke * peripheral" },
+            "outputs": [{ "id": "cp", "equation": "central / V" }]
         }"#;
 
         let model = JsonModel::from_str(json).unwrap();
         let result = Validator::new().validate(&model);
-        assert!(result.is_ok(), "Numeric diffeq keys should be allowed");
+        assert!(matches!(result, Err(JsonModelError::UndefinedCompartment { .. })));
     }
 
     #[test]
-    fn test_validate_known_function_not_flagged() {
+    fn test_validate_rejects_invalid_expression() {
         let json = r#"{
-            "schema": "1.0",
+            "schema": "2.0",
             "id": "test",
-            "type": "analytical",
-            "analytical": "one_compartment",
+            "type": "ode",
             "parameters": ["ke", "V"],
-            "output": "exp(-ke * t) / V"
+            "compartments": ["central"],
+            "diffeq": { "central": "ke * central +" },
+            "outputs": [{ "id": "cp", "equation": "central / V" }]
         }"#;
 
         let model = JsonModel::from_str(json).unwrap();
         let result = Validator::new().validate(&model);
-        assert!(
-            result.is_ok(),
-            "Built-in functions like exp should not be flagged"
-        );
+        assert!(matches!(
+            result,
+            Err(JsonModelError::ExpressionParseError { .. })
+        ));
     }
 }

@@ -3,6 +3,14 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+fn default_required() -> bool {
+    true
+}
+
+fn is_default_required(value: &bool) -> bool {
+    *value
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Model Type
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -159,12 +167,10 @@ impl ExpressionOrNumber {
 // Differential Equation Specification
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Differential equation specification (string or object format)
+/// Differential equation specification keyed by compartment or state id.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum DiffEqSpec {
-    /// Single string with all equations
-    String(String),
     /// Map of compartment name to equation
     Object(HashMap<String, String>),
 }
@@ -173,7 +179,6 @@ impl DiffEqSpec {
     /// Check if empty
     pub fn is_empty(&self) -> bool {
         match self {
-            Self::String(s) => s.trim().is_empty(),
             Self::Object(m) => m.is_empty(),
         }
     }
@@ -187,8 +192,6 @@ impl DiffEqSpec {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum InitSpec {
-    /// Single string with all init code
-    String(String),
     /// Map of compartment/state name to initial value
     Object(HashMap<String, ExpressionOrNumber>),
 }
@@ -201,8 +204,7 @@ pub enum InitSpec {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OutputDefinition {
     /// Output identifier
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub id: Option<String>,
+    pub id: String,
 
     /// Output equation expression
     pub equation: String,
@@ -216,22 +218,119 @@ pub struct OutputDefinition {
     pub units: Option<String>,
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// Derived Parameters
-// ═══════════════════════════════════════════════════════════════════════════════
+/// Ordered named equation used for canonical secondary expressions.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NamedEquation {
+    /// Symbol introduced by this equation.
+    pub id: String,
 
-/// Derived parameter definition
-///
-/// Derived parameters are computed from primary parameters using expressions.
-/// For example, ke = CL / V computes elimination rate constant from
-/// clearance and volume.
+    /// Expression assigned to the symbol.
+    pub equation: String,
+}
+
+/// Covariate definition used by model expressions and UI consumers.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct DerivedParameter {
-    /// Symbol for the derived parameter
-    pub symbol: String,
+pub struct CovariateDefinition {
+    /// Symbol used inside expressions.
+    pub id: String,
 
-    /// Expression to compute the derived parameter
-    pub expression: String,
+    /// Dataset column backing the symbol. Defaults to `id` when omitted.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub column: Option<String>,
+
+    /// Whether the covariate must be present in incoming data.
+    #[serde(
+        default = "default_required",
+        skip_serializing_if = "is_default_required"
+    )]
+    pub required: bool,
+
+    /// Optional reference value used by UI consumers or scaling conventions.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reference: Option<f64>,
+}
+
+impl CovariateDefinition {
+    pub fn symbol(&self) -> &str {
+        &self.id
+    }
+
+    pub fn column_name(&self) -> &str {
+        self.column.as_deref().unwrap_or(&self.id)
+    }
+}
+
+/// Normalized executable representation consumed by validation and code generation.
+///
+/// This provides the compile-time shape after validation and normalization.
+/// Compiler-ignored editor metadata is excluded.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ExecutableModel {
+    /// Unique model identifier.
+    pub id: String,
+
+    /// Model equation type.
+    #[serde(rename = "type")]
+    pub model_type: ModelType,
+
+    /// Parameter names in fetch order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parameters: Vec<String>,
+
+    /// Compartment names in declaration order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub compartments: Vec<String>,
+
+    /// State names in declaration order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub states: Vec<String>,
+
+    /// Built-in analytical function, when applicable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub analytical: Option<AnalyticalFunction>,
+
+    /// Differential equations for ODE models.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diffeq: Option<DiffEqSpec>,
+
+    /// Drift equations for SDE models.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub drift: Option<DiffEqSpec>,
+
+    /// Diffusion definitions for SDE models.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diffusion: Option<HashMap<String, ExpressionOrNumber>>,
+
+    /// Ordered executable calculations evaluated before outputs and equations.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub calculations: Vec<NamedEquation>,
+
+    /// Canonicalized outputs with stable identifiers.
+    pub outputs: Vec<OutputDefinition>,
+
+    /// Initial conditions.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub init: Option<InitSpec>,
+
+    /// Lag times keyed by compartment/state id.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lag: Option<HashMap<String, ExpressionOrNumber>>,
+
+    /// Bioavailability keyed by compartment/state id.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fa: Option<HashMap<String, ExpressionOrNumber>>,
+
+    /// Optional explicit equation dimensions.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub neqs: Option<(usize, usize)>,
+
+    /// Number of particles for SDE simulation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub particles: Option<usize>,
+
+    /// Covariates used by executable expressions.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub covariates: Vec<CovariateDefinition>,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -273,7 +372,11 @@ pub struct DisplayInfo {
     pub name: Option<String>,
 
     /// Abbreviated name
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        alias = "shortName",
+        rename = "shortName",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub short_name: Option<String>,
 
     /// Model category
@@ -343,16 +446,37 @@ pub struct Documentation {
     pub assumptions: Option<Vec<String>>,
 
     /// When to use this model
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        alias = "whenToUse",
+        rename = "whenToUse",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub when_to_use: Option<Vec<String>>,
 
     /// When NOT to use this model
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        alias = "whenNotToUse",
+        rename = "whenNotToUse",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub when_not_to_use: Option<Vec<String>>,
 
     /// Literature references
     #[serde(skip_serializing_if = "Option::is_none")]
     pub references: Option<Vec<Reference>>,
+}
+
+/// Compiler-ignored editor metadata used by richer consumers like papir.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct EditorInfo {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display: Option<DisplayInfo>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub layout: Option<HashMap<String, Position>>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub documentation: Option<Documentation>,
 }
 
 /// Optional features that can be enabled

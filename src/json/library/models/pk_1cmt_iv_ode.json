@@ -1,5 +1,5 @@
 {
-  "schema": "1.0",
+  "schema": "2.0",
   "id": "pk/1cmt-iv-ode",
   "type": "ode",
   "parameters": ["CL", "V"],
@@ -7,13 +7,15 @@
   "diffeq": {
     "central": "-CL/V * central + rateiv[0]"
   },
-  "output": "central / V",
-  "display": {
-    "name": "One-Compartment IV Bolus (ODE)",
-    "category": "pk",
-    "tags": ["1-compartment", "iv", "ode", "clearance"]
-  },
-  "documentation": {
-    "summary": "One-compartment ODE model using clearance (CL) and volume (V) parameterization"
+  "outputs": [{ "id": "cp", "equation": "central / V" }],
+  "editor": {
+    "display": {
+      "name": "One-Compartment IV Bolus (ODE)",
+      "category": "pk",
+      "tags": ["1-compartment", "iv", "ode", "clearance"]
+    },
+    "documentation": {
+      "summary": "One-compartment ODE model using clearance (CL) and volume (V) parameterization"
+    }
   }
 }
