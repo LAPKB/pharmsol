@@ -1,4 +1,4 @@
-use pharmsol::data::error_model::ErrorModel;
+use pharmsol::data::error_model::AssayErrorModel;
 use pharmsol::*;
 
 /// Test the particle filter (SDE) likelihood estimation
@@ -29,14 +29,15 @@ fn test_particle_filter_likelihood() {
         |x, _p, _t, _cov, y| {
             y[0] = x[0];
         },
-        (2, 1),
         10000,
-    );
+    )
+    .with_nstates(2)
+    .with_nout(1);
 
-    let ems = ErrorModels::new()
+    let ems = AssayErrorModels::new()
         .add(
             0,
-            ErrorModel::additive(ErrorPoly::new(0.5, 0.0, 0.0, 0.0), 0.0),
+            AssayErrorModel::additive(ErrorPoly::new(0.5, 0.0, 0.0, 0.0), 0.0),
         )
         .unwrap();
 
@@ -46,8 +47,9 @@ fn test_particle_filter_likelihood() {
 
     for i in 0..NUM_RUNS {
         let ll = sde
-            .estimate_likelihood(&subject, &vec![1.0], &ems, false)
-            .unwrap();
+            .estimate_log_likelihood(&subject, &vec![1.0], &ems)
+            .unwrap()
+            .exp();
         println!("Run {}: likelihood = {}", i + 1, ll);
         likelihoods.push(ll);
     }

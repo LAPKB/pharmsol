@@ -3,6 +3,82 @@ use crate::prelude::simulator::Prediction;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+// ============================================================================
+// Shared Analysis Types
+// ============================================================================
+
+/// Administration route for a dosing event
+///
+/// Determined by the type of dose events and their target compartment:
+/// - [`Event::Infusion`] → [`Route::IVInfusion`]
+/// - [`Event::Bolus`] with `input >= 1` (central compartment) → [`Route::IVBolus`]
+/// - [`Event::Bolus`] with `input == 0` (depot compartment) → [`Route::Extravascular`]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Route {
+    /// Intravenous bolus
+    IVBolus,
+    /// Intravenous infusion
+    IVInfusion,
+    /// Extravascular (oral, SC, IM, etc.)
+    #[default]
+    Extravascular,
+}
+
+/// AUC calculation method
+///
+/// Controls how the area under the concentration-time curve is computed.
+/// This is a general trapezoidal method applicable to any AUC calculation,
+/// not specific to NCA analysis.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AUCMethod {
+    /// Linear trapezoidal rule
+    Linear,
+    /// Linear up / log down (industry standard)
+    #[default]
+    LinUpLogDown,
+    /// Linear before Tmax, log-linear after Tmax (PKNCA "lin-log")
+    ///
+    /// Uses linear trapezoidal before and at Tmax, then log-linear for
+    /// descending portions after Tmax. Falls back to linear if either
+    /// concentration is zero or non-positive.
+    LinLog,
+}
+
+/// BLQ (Below Limit of Quantification) handling rule
+///
+/// Controls how observations marked with [`Censor::BLOQ`] are handled
+/// during analysis. Applicable to NCA, AUC calculations, and any
+/// observation-processing pipeline.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub enum BLQRule {
+    /// Replace BLQ with zero
+    Zero,
+    /// Replace BLQ with LOQ/2
+    LoqOver2,
+    /// Exclude BLQ values from analysis
+    #[default]
+    Exclude,
+    /// Position-aware handling (PKNCA default): first=keep(0), middle=drop, last=keep(0)
+    ///
+    /// This is the FDA-recommended approach that:
+    /// - Keeps first BLQ (before tfirst) as 0 to anchor the profile start
+    /// - Drops middle BLQ (between tfirst and tlast) to avoid deflating AUC
+    /// - Keeps last BLQ (at/after tlast) as 0 to define profile end
+    Positional,
+    /// Tmax-relative handling: different rules before vs after Tmax
+    ///
+    /// Contains (before_tmax_rule, after_tmax_rule) where each rule can be:
+    /// - "keep" = keep as 0
+    /// - "drop" = exclude from analysis
+    /// Default PKNCA: before.tmax=drop, after.tmax=keep
+    TmaxRelative {
+        /// Rule for BLQ before Tmax: true=keep as 0, false=drop
+        before_tmax_keep: bool,
+        /// Rule for BLQ at or after Tmax: true=keep as 0, false=drop
+        after_tmax_keep: bool,
+    },
+}
+
 /// Represents a pharmacokinetic/pharmacodynamic event
 ///
 /// Events represent key occurrences in a PK/PD profile, including:
@@ -87,7 +163,7 @@ impl Bolus {
     ///
     /// * `time` - Time of the bolus dose
     /// * `amount` - Amount of drug administered
-    /// * `input` - The compartment number (zero-indexed) receiving the dose
+    /// * `input` - The compartment number receiving the dose
     pub fn new(time: f64, amount: f64, input: usize, occasion: usize) -> Self {
         Bolus {
             time,
@@ -102,7 +178,7 @@ impl Bolus {
         self.amount
     }
 
-    /// Get the compartment number (zero-indexed) that receives the bolus
+    /// Get the compartment number that receives the bolus
     pub fn input(&self) -> usize {
         self.input
     }
@@ -117,7 +193,7 @@ impl Bolus {
         self.amount = amount;
     }
 
-    /// Set the compartment number (zero-indexed) that receives the bolus
+    /// Set the compartment number that receives the bolus
     pub fn set_input(&mut self, input: usize) {
         self.input = input;
     }
@@ -132,7 +208,7 @@ impl Bolus {
         &mut self.amount
     }
 
-    /// Get a mutable reference to the compartment number that receives the bolus
+    /// Get a mutable reference to the compartment number (1-indexed) that receives the bolus
     pub fn mut_input(&mut self) -> &mut usize {
         &mut self.input
     }
@@ -171,7 +247,7 @@ impl Infusion {
     ///
     /// * `time` - Start time of the infusion
     /// * `amount` - Total amount of drug to be administered
-    /// * `input` - The compartment number (zero-indexed) receiving the dose
+    /// * `input` - The compartment number receiving the dose
     /// * `duration` - Duration of the infusion in time units
     pub fn new(time: f64, amount: f64, input: usize, duration: f64, occasion: usize) -> Self {
         Infusion {
@@ -188,7 +264,7 @@ impl Infusion {
         self.amount
     }
 
-    /// Get the compartment number (zero-indexed) that receives the infusion
+    /// Get the compartment number that receives the infusion
     pub fn input(&self) -> usize {
         self.input
     }
@@ -210,7 +286,7 @@ impl Infusion {
         self.amount = amount;
     }
 
-    /// Set the compartment number (zero-indexed) that receives the infusion
+    /// Set the compartment number that receives the infusion
     pub fn set_input(&mut self, input: usize) {
         self.input = input;
     }
@@ -230,7 +306,7 @@ impl Infusion {
         &mut self.amount
     }
 
-    /// Set the compartment number (zero-indexed) that receives the infusion
+    /// Get a mutable reference to the compartment number (1-indexed) that receives the infusion
     pub fn mut_input(&mut self) -> &mut usize {
         &mut self.input
     }
@@ -256,10 +332,11 @@ impl Infusion {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Censor {
     /// No censoring
+    #[default]
     None,
     /// Below the lower limit of quantification
     BLOQ,
@@ -284,9 +361,10 @@ impl Observation {
     ///
     /// * `time` - Time of the observation
     /// * `value` - Observed value (e.g., drug concentration)
-    /// * `outeq` - Output equation number (zero-indexed) corresponding to this observation
+    /// * `outeq` - Output equation number corresponding to this observation
     /// * `errorpoly` - Optional error polynomial coefficients (c0, c1, c2, c3)
-    /// * `ignore` - Whether to ignore this observation in calculations
+    /// * `occasion` - Occasion index
+    /// * `censoring` - Censoring type for this observation
     pub(crate) fn new(
         time: f64,
         value: Option<f64>,
@@ -315,7 +393,7 @@ impl Observation {
         self.value
     }
 
-    /// Get the output equation number (zero-indexed) corresponding to this observation
+    /// Get the output equation number corresponding to this observation
     pub fn outeq(&self) -> usize {
         self.outeq
     }
@@ -337,7 +415,7 @@ impl Observation {
         self.value = value;
     }
 
-    /// Set the output equation number (zero-indexed) corresponding to this observation
+    /// Set the output equation number corresponding to this observation
     pub fn set_outeq(&mut self, outeq: usize) {
         self.outeq = outeq;
     }

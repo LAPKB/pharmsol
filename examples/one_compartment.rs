@@ -31,8 +31,9 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
             // Calculate the output concentration, here defined as amount over volume
             y[0] = x[0] / v;
         },
-        (1, 1),
-    );
+    )
+    .with_nstates(1)
+    .with_nout(1);
 
     let ode = equation::ODE::new(
         |x, p, _t, dx, _b, rateiv, _cov| {
@@ -52,15 +53,16 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
             // Calculate the output concentration, here defined as amount over volume
             y[0] = x[0] / v;
         },
-        (1, 1),
-    );
+    )
+    .with_nstates(1)
+    .with_nout(1);
 
     // Define the error models for the observations
-    let ems = ErrorModels::new().
+    let ems = AssayErrorModels::new().
     // For this example, we use a simple additive error model with 5% error
     add(
         0,
-        ErrorModel::additive(ErrorPoly::new(0.0, 0.05, 0.0, 0.0), 0.0),
+        AssayErrorModel::additive(ErrorPoly::new(0.0, 0.05, 0.0, 0.0), 0.0),
     )?;
 
     // Define the parameter values for the simulations
@@ -68,11 +70,11 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
     let v = 194.0; // Volume of distribution
 
     // Compute likelihoods and predictions for both models
-    let analytical_likelihoods = an.estimate_likelihood(&subject, &vec![ke, v], &ems, false)?;
+    let analytical_likelihoods = an.estimate_log_likelihood(&subject, &vec![ke, v], &ems)?;
 
     let analytical_predictions = an.estimate_predictions(&subject, &vec![ke, v])?;
 
-    let ode_likelihoods = ode.estimate_likelihood(&subject, &vec![ke, v], &ems, false)?;
+    let ode_likelihoods = ode.estimate_log_likelihood(&subject, &vec![ke, v], &ems)?;
 
     let ode_predictions = ode.estimate_predictions(&subject, &vec![ke, v])?;
 
@@ -81,7 +83,7 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
     println!("│           │   Analytical    │       ODE       │     Difference      │");
     println!("├───────────┼─────────────────┼─────────────────┼─────────────────────┤");
     println!(
-        "│ Likelihood│ {:>15.6} │ {:>15.6} │ {:>19.2e} │",
+        "│ Log-Likeli│ {:>15.6} │ {:>15.6} │ {:>19.2e} │",
         analytical_likelihoods,
         ode_likelihoods,
         analytical_likelihoods - ode_likelihoods

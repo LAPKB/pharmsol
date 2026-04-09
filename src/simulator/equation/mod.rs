@@ -9,7 +9,7 @@ pub use ode::*;
 pub use sde::*;
 
 use crate::{
-    error_model::ErrorModels,
+    error_model::AssayErrorModels,
     simulator::{Fa, Lag},
     Covariates, Event, Infusion, Observation, PharmsolError, Subject,
 };
@@ -61,7 +61,7 @@ pub trait Predictions: Default {
     ///
     /// # Returns
     /// The sum of log-likelihoods for all predictions
-    fn log_likelihood(&self, error_models: &ErrorModels) -> Result<f64, PharmsolError>;
+    fn log_likelihood(&self, error_models: &AssayErrorModels) -> Result<f64, PharmsolError>;
 }
 
 /// Trait defining the associated types for equations.
@@ -78,13 +78,14 @@ pub(crate) trait EquationPriv: EquationTypes {
     fn lag(&self) -> &Lag;
     fn fa(&self) -> &Fa;
     fn get_nstates(&self) -> usize;
+    fn get_ndrugs(&self) -> usize;
     fn get_nouteqs(&self) -> usize;
     fn solve(
         &self,
         state: &mut Self::S,
-        support_point: &Vec<f64>,
+        support_point: &[f64],
         covariates: &Covariates,
-        infusions: &Vec<Infusion>,
+        infusions: &[Infusion],
         start_time: f64,
         end_time: f64,
     ) -> Result<(), PharmsolError>;
@@ -99,9 +100,9 @@ pub(crate) trait EquationPriv: EquationTypes {
     #[allow(clippy::too_many_arguments)]
     fn process_observation(
         &self,
-        support_point: &Vec<f64>,
+        support_point: &[f64],
         observation: &Observation,
-        error_models: Option<&ErrorModels>,
+        error_models: Option<&AssayErrorModels>,
         time: f64,
         covariates: &Covariates,
         x: &mut Self::S,
@@ -111,7 +112,7 @@ pub(crate) trait EquationPriv: EquationTypes {
 
     fn initial_state(
         &self,
-        support_point: &Vec<f64>,
+        support_point: &[f64],
         covariates: &Covariates,
         occasion_index: usize,
     ) -> Self::S;
@@ -119,10 +120,10 @@ pub(crate) trait EquationPriv: EquationTypes {
     #[allow(clippy::too_many_arguments)]
     fn simulate_event(
         &self,
-        support_point: &Vec<f64>,
+        support_point: &[f64],
         event: &Event,
         next_event: Option<&Event>,
-        error_models: Option<&ErrorModels>,
+        error_models: Option<&AssayErrorModels>,
         covariates: &Covariates,
         x: &mut Self::S,
         infusions: &mut Vec<Infusion>,
@@ -131,6 +132,12 @@ pub(crate) trait EquationPriv: EquationTypes {
     ) -> Result<(), PharmsolError> {
         match event {
             Event::Bolus(bolus) => {
+                if bolus.input() >= self.get_ndrugs() {
+                    return Err(PharmsolError::InputOutOfRange {
+                        input: bolus.input(),
+                        ndrugs: self.get_ndrugs(),
+                    });
+                }
                 x.add_bolus(bolus.input(), bolus.amount());
             }
             Event::Infusion(infusion) => {
@@ -169,9 +176,18 @@ pub(crate) trait EquationPriv: EquationTypes {
 /// This trait defines the interface for different types of model equations
 /// (ODE, SDE, analytical) that can be simulated to generate predictions
 /// and estimate parameters.
+///
+/// # Likelihood Calculation
+///
+/// Use [`estimate_log_likelihood`](Self::estimate_log_likelihood) for numerically stable
+/// likelihood computation. The deprecated [`estimate_likelihood`](Self::estimate_likelihood)
+/// is provided for backward compatibility.
 #[allow(private_bounds)]
 pub trait Equation: EquationPriv + 'static + Clone + Sync {
     /// Estimate the likelihood of the subject given the support point and error model.
+    ///
+    /// **Deprecated**: Use [`estimate_log_likelihood`](Self::estimate_log_likelihood) instead
+    /// for better numerical stability, especially with many observations or extreme parameter values.
     ///
     /// This function calculates how likely the observed data is given the model
     /// parameters and error model. It may use caching for performance.
@@ -180,16 +196,18 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
     /// - `subject`: The subject data
     /// - `support_point`: The parameter values
     /// - `error_model`: The error model
-    /// - `cache`: Whether to use caching
     ///
     /// # Returns
     /// The likelihood value (product of individual observation likelihoods)
+    #[deprecated(
+        since = "0.23.0",
+        note = "Use estimate_log_likelihood() instead for better numerical stability"
+    )]
     fn estimate_likelihood(
         &self,
         subject: &Subject,
-        support_point: &Vec<f64>,
-        error_models: &ErrorModels,
-        cache: bool,
+        support_point: &[f64],
+        error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError>;
 
     /// Estimate the log-likelihood of the subject given the support point and error model.
@@ -198,20 +216,21 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
     /// parameters and error model. It is numerically more stable than `estimate_likelihood`
     /// for extreme values or many observations.
     ///
+    /// Uses observation-based sigma, appropriate for non-parametric algorithms.
+    /// For parametric algorithms (SAEM, FOCE), use [`crate::ResidualErrorModels`] directly.
+    ///
     /// # Parameters
     /// - `subject`: The subject data
     /// - `support_point`: The parameter values
-    /// - `error_model`: The error model
-    /// - `cache`: Whether to use caching
+    /// - `error_models`: The error model
     ///
     /// # Returns
     /// The log-likelihood value (sum of individual observation log-likelihoods)
     fn estimate_log_likelihood(
         &self,
         subject: &Subject,
-        support_point: &Vec<f64>,
-        error_models: &ErrorModels,
-        cache: bool,
+        support_point: &[f64],
+        error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError>;
 
     fn kind() -> EqnKind;
@@ -227,7 +246,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
     fn estimate_predictions(
         &self,
         subject: &Subject,
-        support_point: &Vec<f64>,
+        support_point: &[f64],
     ) -> Result<Self::P, PharmsolError> {
         Ok(self.simulate_subject(subject, support_point, None)?.0)
     }
@@ -254,8 +273,8 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
     fn simulate_subject(
         &self,
         subject: &Subject,
-        support_point: &Vec<f64>,
-        error_models: Option<&ErrorModels>,
+        support_point: &[f64],
+        error_models: Option<&AssayErrorModels>,
     ) -> Result<(Self::P, Option<f64>), PharmsolError> {
         let mut output = Self::P::new(self.nparticles());
         let mut likelihood = Vec::new();
@@ -303,4 +322,17 @@ impl EqnKind {
             Self::SDE => "EqnKind::SDE",
         }
     }
+}
+
+/// Hash support points to a u64 for cache key generation.
+#[inline(always)]
+fn spphash(spp: &[f64]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = ahash::AHasher::default();
+    for &value in spp {
+        // Normalize -0.0 to 0.0 for consistent hashing
+        let bits = if value == 0.0 { 0u64 } else { value.to_bits() };
+        bits.hash(&mut hasher);
+    }
+    hasher.finish()
 }

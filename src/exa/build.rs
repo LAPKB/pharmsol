@@ -6,13 +6,28 @@ use std::io::{self};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use rand::Rng;
+use rand::RngExt;
 use rand_distr::Alphanumeric;
 use std::process::{Command, Stdio};
 use std::thread;
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 use crate::Equation;
 
+/// Windows flag to prevent console window from appearing
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+/// Creates a new Command with platform-specific settings to hide console windows on Windows
+#[allow(unused_mut)]
+fn new_command(program: &str) -> Command {
+    let mut cmd = Command::new(program);
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    cmd
+}
 /// Finds the cargo executable, checking common installation locations.
 ///
 /// This is necessary because bundled GUI applications (like macOS .app bundles,
@@ -270,8 +285,16 @@ fn create_template(temp_dir: PathBuf) -> Result<PathBuf, io::Error> {
         "#,
     );
 
-    if !template_dir.exists() {
-        let output = Command::new(find_cargo())
+    let src_dir = template_dir.join("src");
+    let needs_scaffold = !template_dir.exists() || !src_dir.exists();
+
+    if needs_scaffold {
+        // Remove incomplete template directory if it exists but is malformed
+        if template_dir.exists() {
+            fs::remove_dir_all(&template_dir)?;
+        }
+
+        let output = new_command("cargo")
             .arg("new")
             .arg("template")
             .arg("--lib")
@@ -282,9 +305,23 @@ fn create_template(temp_dir: PathBuf) -> Result<PathBuf, io::Error> {
         io::stderr().write_all(&output.stderr)?;
         io::stdout().write_all(&output.stdout)?;
 
-        fs::write(cargo_toml_path, cargo_toml_content)?;
+        fs::write(&cargo_toml_path, &cargo_toml_content)?;
     } else if !cargo_toml_path.exists() {
-        fs::write(cargo_toml_path, cargo_toml_content)?;
+        fs::write(&cargo_toml_path, &cargo_toml_content)?;
+    } else {
+        // Check if the pharmsol dependency has changed (e.g. after a version upgrade).
+        // If so, rewrite Cargo.toml and remove build artifacts to force recompilation.
+        // Without this, a stale dylib compiled against an older pharmsol version would be
+        // loaded at runtime, causing ABI mismatches and crashes.
+        let existing_content = fs::read_to_string(&cargo_toml_path)?;
+        if existing_content.trim() != cargo_toml_content.trim() {
+            tracing::info!("pharmsol dependency changed, invalidating exa compilation cache");
+            fs::write(&cargo_toml_path, &cargo_toml_content)?;
+            let target_dir = template_dir.join("target");
+            if target_dir.exists() {
+                fs::remove_dir_all(&target_dir)?;
+            }
+        }
     };
     Ok(template_dir)
 }
@@ -351,8 +388,8 @@ fn inject_model<E: Equation>(
             .join(", ")
     );
     fs::write(lib_rs_path, lib_rs_content)?;
-    // cargo fmt is optional - don't fail if it's not available
-    let _ = Command::new(find_cargo())
+
+    let _ = new_command("cargo")
         .arg("fmt")
         .current_dir(&template_dir)
         .output();
@@ -374,7 +411,9 @@ fn build_template(
     event_callback: Arc<dyn Fn(String, String) + Send + Sync + 'static>,
 ) -> Result<PathBuf, io::Error> {
     let cargo_path = find_cargo();
-    let mut command = Command::new(&cargo_path);
+
+    let mut command = new_command(&cargo_path);
+
     command
         .arg("build")
         .arg("--release")

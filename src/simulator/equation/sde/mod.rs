@@ -3,19 +3,19 @@ mod em;
 use diffsol::{NalgebraContext, Vector};
 use nalgebra::DVector;
 use ndarray::{concatenate, Array2, Axis};
-use rand::{rng, Rng};
+use rand::{rng, RngExt};
 use rayon::prelude::*;
-
-use cached::proc_macro::cached;
-use cached::UnboundCache;
 
 use crate::{
     data::{Covariates, Infusion},
-    error_model::ErrorModels,
+    error_model::AssayErrorModels,
     prelude::simulator::Prediction,
     simulator::{Diffusion, Drift, Fa, Init, Lag, Neqs, Out, V},
     Subject,
 };
+
+use super::spphash;
+use crate::simulator::cache::{SdeLikelihoodCache, DEFAULT_CACHE_SIZE};
 
 use diffsol::VectorCommon;
 
@@ -50,6 +50,7 @@ pub(crate) fn simulate_sde_event(
     support_point: &[f64],
     cov: &Covariates,
     infusions: &[Infusion],
+    ndrugs: usize,
     ti: f64,
     tf: f64,
 ) -> V {
@@ -66,6 +67,7 @@ pub(crate) fn simulate_sde_event(
         infusions.to_vec(),
         1e-2,
         1e-2,
+        ndrugs,
     );
     let (_time, solution) = sde.solve(ti, tf);
     solution.last().unwrap().clone().into()
@@ -88,26 +90,19 @@ pub struct SDE {
     out: Out,
     neqs: Neqs,
     nparticles: usize,
+    cache: Option<SdeLikelihoodCache>,
 }
 
 impl SDE {
-    /// Creates a new stochastic differential equation solver.
+    /// Creates a new stochastic differential equation solver with default Neqs.
     ///
-    /// # Arguments
-    ///
-    /// * `drift` - Function defining the deterministic component of the SDE
-    /// * `diffusion` - Function defining the stochastic component of the SDE
-    /// * `lag` - Function to compute absorption lag times
-    /// * `fa` - Function to compute bioavailability fractions
-    /// * `init` - Function to initialize the system state
-    /// * `out` - Function to compute output equations
-    /// * `neqs` - Tuple containing the number of state and output equations
-    /// * `nparticles` - Number of particles to use in the simulation
-    ///
-    /// # Returns
-    ///
-    /// A new SDE solver instance configured with the given components.
-    #[allow(clippy::too_many_arguments)]
+    /// Use builder methods to configure dimensions:
+    /// ```ignore
+    /// SDE::new(drift, diffusion, lag, fa, init, out, nparticles)
+    ///     .with_nstates(2)
+    ///     .with_ndrugs(1)
+    ///     .with_nout(1)
+    /// ```
     pub fn new(
         drift: Drift,
         diffusion: Diffusion,
@@ -115,7 +110,6 @@ impl SDE {
         fa: Fa,
         init: Init,
         out: Out,
-        neqs: Neqs,
         nparticles: usize,
     ) -> Self {
         Self {
@@ -125,8 +119,50 @@ impl SDE {
             fa,
             init,
             out,
-            neqs,
+            neqs: Neqs::default(),
             nparticles,
+            cache: None,
+        }
+    }
+
+    /// Set the number of state variables.
+    pub fn with_nstates(mut self, nstates: usize) -> Self {
+        self.neqs.nstates = nstates;
+        self
+    }
+
+    /// Set the number of drug input channels (size of bolus[] and rateiv[]).
+    pub fn with_ndrugs(mut self, ndrugs: usize) -> Self {
+        self.neqs.ndrugs = ndrugs;
+        self
+    }
+
+    /// Set the number of output equations.
+    pub fn with_nout(mut self, nout: usize) -> Self {
+        self.neqs.nout = nout;
+        self
+    }
+
+    /// Enable likelihood caching with the given maximum number of entries.
+    ///
+    /// When caching is enabled, likelihood results for the same
+    /// (subject, parameters, error model) triple are stored and reused.
+    /// Cloned equations share the same cache.
+    pub fn with_cache(mut self, size: u64) -> Self {
+        self.cache = Some(SdeLikelihoodCache::new(size));
+        self
+    }
+
+    /// Enable likelihood caching with the default size (100,000 entries).
+    pub fn with_default_cache(mut self) -> Self {
+        self.cache = Some(SdeLikelihoodCache::new(DEFAULT_CACHE_SIZE));
+        self
+    }
+
+    /// Clear all entries from this equation's cache, if caching is enabled.
+    pub fn clear_cache(&self) {
+        if let Some(cache) = &self.cache {
+            cache.invalidate_all();
         }
     }
 }
@@ -182,7 +218,7 @@ impl Predictions for Array2<Prediction> {
 
         result
     }
-    fn log_likelihood(&self, error_models: &ErrorModels) -> Result<f64, crate::PharmsolError> {
+    fn log_likelihood(&self, error_models: &AssayErrorModels) -> Result<f64, crate::PharmsolError> {
         // For SDE, compute log-likelihood using mean predictions across particles
         let predictions = self.get_predictions();
         if predictions.is_empty() {
@@ -237,23 +273,29 @@ impl EquationPriv for SDE {
 
     #[inline(always)]
     fn get_nstates(&self) -> usize {
-        self.neqs.0
+        self.neqs.nstates
+    }
+
+    #[inline(always)]
+    fn get_ndrugs(&self) -> usize {
+        self.neqs.ndrugs
     }
 
     #[inline(always)]
     fn get_nouteqs(&self) -> usize {
-        self.neqs.1
+        self.neqs.nout
     }
     #[inline(always)]
     fn solve(
         &self,
         state: &mut Self::S,
-        support_point: &Vec<f64>,
+        support_point: &[f64],
         covariates: &Covariates,
-        infusions: &Vec<Infusion>,
+        infusions: &[Infusion],
         ti: f64,
         tf: f64,
     ) -> Result<(), PharmsolError> {
+        let ndrugs = self.get_ndrugs();
         state.par_iter_mut().for_each(|particle| {
             *particle = simulate_sde_event(
                 &self.drift,
@@ -262,6 +304,7 @@ impl EquationPriv for SDE {
                 support_point,
                 covariates,
                 infusions,
+                ndrugs,
                 ti,
                 tf,
             )
@@ -280,9 +323,9 @@ impl EquationPriv for SDE {
     #[inline(always)]
     fn process_observation(
         &self,
-        support_point: &Vec<f64>,
+        support_point: &[f64],
         observation: &crate::Observation,
-        error_models: Option<&ErrorModels>,
+        error_models: Option<&AssayErrorModels>,
         _time: f64,
         covariates: &Covariates,
         x: &mut Self::S,
@@ -290,11 +333,12 @@ impl EquationPriv for SDE {
         output: &mut Self::P,
     ) -> Result<(), PharmsolError> {
         let mut pred = vec![Prediction::default(); self.nparticles];
+
         pred.par_iter_mut().enumerate().for_each(|(i, p)| {
             let mut y = V::zeros(self.get_nouteqs(), NalgebraContext);
             (self.out)(
                 &x[i].clone().into(),
-                &V::from_vec(support_point.clone(), NalgebraContext),
+                &V::from_vec(support_point.to_vec(), NalgebraContext),
                 observation.time(),
                 covariates,
                 &mut y,
@@ -309,7 +353,7 @@ impl EquationPriv for SDE {
             let mut q: Vec<f64> = Vec::with_capacity(self.nparticles);
 
             pred.iter().for_each(|p| {
-                let lik = p.likelihood(em);
+                let lik = p.log_likelihood(em).map(f64::exp);
                 match lik {
                     Ok(l) => q.push(l),
                     Err(e) => panic!("Error in likelihood calculation: {:?}", e),
@@ -329,7 +373,7 @@ impl EquationPriv for SDE {
     #[inline(always)]
     fn initial_state(
         &self,
-        support_point: &Vec<f64>,
+        support_point: &[f64],
         covariates: &Covariates,
         occasion_index: usize,
     ) -> Self::S {
@@ -358,7 +402,6 @@ impl Equation for SDE {
     /// * `subject` - Subject data containing observations
     /// * `support_point` - Parameter vector for the model
     /// * `error_model` - Error model to use for likelihood calculations
-    /// * `cache` - Whether to cache likelihood results for reuse
     ///
     /// # Returns
     ///
@@ -366,28 +409,22 @@ impl Equation for SDE {
     fn estimate_likelihood(
         &self,
         subject: &Subject,
-        support_point: &Vec<f64>,
-        error_models: &ErrorModels,
-        cache: bool,
+        support_point: &[f64],
+        error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
-        if cache {
-            _estimate_likelihood(self, subject, support_point, error_models)
-        } else {
-            _estimate_likelihood_no_cache(self, subject, support_point, error_models)
-        }
+        _estimate_likelihood(self, subject, support_point, error_models)
     }
 
     fn estimate_log_likelihood(
         &self,
         subject: &Subject,
-        support_point: &Vec<f64>,
-        error_models: &ErrorModels,
-        cache: bool,
+        support_point: &[f64],
+        error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
         // For SDE, the particle filter computes likelihood in regular space.
-        // We take the log of the cached/computed likelihood.
-        // Note: For extreme underflow cases, this may return -inf.
-        let lik = self.estimate_likelihood(subject, support_point, error_models, cache)?;
+        // We compute it directly and then take the log.
+        let lik = _estimate_likelihood(self, subject, support_point, error_models)?;
+
         if lik > 0.0 {
             Ok(lik.ln())
         } else {
@@ -400,37 +437,27 @@ impl Equation for SDE {
     }
 }
 
-//TODO: Add hash impl on dedicated structure!
-/// Hash support points to a u64 for cache key generation.
-/// Uses DefaultHasher for good distribution and collision resistance.
 #[inline(always)]
-
-fn spphash(spp: &[f64]) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::hash::DefaultHasher::new();
-    for &value in spp {
-        // Normalize -0.0 to 0.0 for consistent hashing
-        let bits = if value == 0.0 { 0u64 } else { value.to_bits() };
-        bits.hash(&mut hasher);
-    }
-    hasher.finish()
-}
-
-#[inline(always)]
-#[cached(
-    ty = "UnboundCache<(u64, u64, u64), f64>",
-    create = "{ UnboundCache::with_capacity(100_000) }",
-    convert = r#"{ ((subject.hash()), spphash(support_point), error_models.hash()) }"#,
-    result = "true"
-)]
 fn _estimate_likelihood(
     sde: &SDE,
     subject: &Subject,
-    support_point: &Vec<f64>,
-    error_models: &ErrorModels,
+    support_point: &[f64],
+    error_models: &AssayErrorModels,
 ) -> Result<f64, PharmsolError> {
-    let ypred = sde.simulate_subject(subject, support_point, Some(error_models))?;
-    Ok(ypred.1.unwrap())
+    if let Some(cache) = &sde.cache {
+        let key = (subject.hash(), spphash(support_point), error_models.hash());
+        if let Some(cached) = cache.get(&key) {
+            return Ok(cached);
+        }
+
+        let ypred = sde.simulate_subject(subject, support_point, Some(error_models))?;
+        let result = ypred.1.unwrap();
+        cache.insert(key, result);
+        Ok(result)
+    } else {
+        let ypred = sde.simulate_subject(subject, support_point, Some(error_models))?;
+        Ok(ypred.1.unwrap())
+    }
 }
 
 /// Performs systematic resampling of particles based on weights.
