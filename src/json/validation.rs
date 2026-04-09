@@ -60,7 +60,7 @@ impl Validator {
         self.validate_output(model)?;
         self.validate_compartments(model)?;
         self.validate_covariates(model)?;
-        self.validate_source_constraints(model)?;
+        self.validate_extra_schema_conventions(model)?;
         self.validate_expressions(model)?;
         self.validate_equation_keys(model)?;
         self.validate_expression_identifiers(model)?;
@@ -224,8 +224,8 @@ impl Validator {
         Ok(())
     }
 
-    /// Validate source-level representational constraints.
-    fn validate_source_constraints(&self, model: &JsonModel) -> Result<(), JsonModelError> {
+    /// Reject duplicate secondary ids and numeric init/lag/fa keys.
+    fn validate_extra_schema_conventions(&self, model: &JsonModel) -> Result<(), JsonModelError> {
         if let Some(secondary) = &model.secondary {
             let mut seen = HashSet::new();
             for entry in secondary {
