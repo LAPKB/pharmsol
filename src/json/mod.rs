@@ -9,6 +9,10 @@
 //! without writing Rust code directly. Models are defined in JSON following a
 //! structured schema, then validated and compiled to native code.
 //!
+//! The parser accepts canonical `2.0` source documents only. Validation
+//! produces a normalized [`ExecutableModel`] that callers can compile, hash,
+//! or inspect without depending on authoring-only metadata.
+//!
 //! The system supports three equation types:
 //! - **Analytical**: Built-in closed-form solutions (fastest execution)
 //! - **ODE**: Custom ordinary differential equations
@@ -17,20 +21,25 @@
 //! # Quick Start
 //!
 //! ```ignore
-//! use pharmsol::json::{parse_json, validate_json, generate_code};
+//! use pharmsol::json::{generate_code, normalize_json, validate_json};
 //!
 //! // Define a model in JSON
 //! let json = r#"{
-//!     "schema": "1.0",
-//!     "id": "pk_1cmt_oral",
+//!     "schema": "2.0",
+//!     "id": "pk/1cmt-oral",
 //!     "type": "analytical",
+//!     "compartments": ["depot", "central"],
 //!     "analytical": "one_compartment_with_absorption",
 //!     "parameters": ["ka", "ke", "V"],
-//!     "output": "x[1] / V"
+//!     "outputs": [
+//!         { "id": "cp", "equation": "central / V" }
+//!     ]
 //! }"#;
 //!
 //! // Parse and validate
 //! let validated = validate_json(json)?;
+//! let executable = normalize_json(json)?;
+//! assert_eq!(executable.outputs[0].id, "cp");
 //!
 //! // Generate Rust code
 //! let code = generate_code(json)?;
@@ -72,33 +81,33 @@
 //!
 //! // Define a model that extends a library model
 //! let derived = JsonModel::from_str(r#"{
-//!     "schema": "1.0",
-//!     "id": "pk_1cmt_wt",
+//!     "schema": "2.0",
+//!     "id": "pk/1cmt-wt",
 //!     "extends": "pk/1cmt-oral",
 //!     "type": "analytical",
 //!     "analytical": "one_compartment_with_absorption",
 //!     "parameters": ["ka", "ke", "V"],
 //!     "covariates": [{ "id": "WT", "reference": 70.0 }],
-//!     "covariateEffects": [{
-//!         "on": "V",
-//!         "covariate": "WT",
-//!         "type": "allometric",
-//!         "exponent": 1.0,
-//!         "reference": 70.0
-//!     }]
+//!     "secondary": [
+//!         { "id": "WT_ratio", "equation": "WT / 70.0" }
+//!     ]
 //! }"#)?;
 //!
-//! // Resolve inherits base model's output expression
+//! // Resolve inherits the base model's executable structure
 //! let resolved = library.resolve(&derived)?;
 //! ```
 //!
-//! # JSON Schema
+//! # Source Contract
+//!
+//! [`JsonModel`] accepts canonical `schema: "2.0"` documents. Use
+//! [`normalize_json`] or [`ValidatedModel::executable`] when callers need the
+//! canonical compile-time shape.
 //!
 //! ## Required Fields
 //!
 //! | Field | Description |
 //! |-------|-------------|
-//! | `schema` | Schema version (currently `"1.0"`) |
+//! | `schema` | Supported schema version (`"2.0"`) |
 //! | `id` | Unique model identifier |
 //! | `type` | Equation type: `"analytical"`, `"ode"`, or `"sde"` |
 //!
@@ -106,18 +115,19 @@
 //!
 //! ### Analytical Models
 //! - `analytical`: One of the built-in functions (e.g., `"one_compartment_with_absorption"`)
+//! - `compartments`: List of named states used by outputs and editor projections
 //! - `parameters`: Parameter names in order expected by the analytical function
-//! - `output`: Output equation expression
+//! - `outputs`: output expressions
 //!
 //! ### ODE Models
 //! - `compartments`: List of compartment names
-//! - `diffeq`: Differential equations (object or string)
+//! - `diffeq`: Differential equations keyed by compartment name
 //! - `parameters`: Parameter names
-//! - `output`: Output equation expression
+//! - `outputs`: output expressions
 //!
 //! ### SDE Models
 //! - `states`: List of state variable names
-//! - `drift`: Drift equations (deterministic part)
+//! - `drift`: Drift equations keyed by state name
 //! - `diffusion`: Diffusion coefficients
 //! - `particles`: Number of particles for simulation
 //!
@@ -126,9 +136,11 @@
 //! - `lag`: Lag times per compartment
 //! - `fa`: Bioavailability factors
 //! - `init`: Initial conditions
+//! - `secondary`: Ordered named calculations used by equations and outputs
 //! - `covariates`: Covariate definitions
-//! - `covariateEffects`: Covariate effect specifications
-//! - `errorModel`: Residual error model
+//! - `editor`: Container for display, layout, and documentation metadata
+//!
+//! Residual error configuration is not currently part of [`JsonModel`].
 //!
 //! # Available Analytical Functions
 //!
@@ -183,6 +195,12 @@ pub fn validate_json(json: &str) -> Result<ValidatedModel, JsonModelError> {
     let model = JsonModel::from_str(json)?;
     let validator = Validator::new();
     validator.validate(&model)
+}
+
+/// Parse, validate, and normalize a JSON model into executable form.
+pub fn normalize_json(json: &str) -> Result<ExecutableModel, JsonModelError> {
+    let validated = validate_json(json)?;
+    validated.executable()
 }
 
 /// Parse, validate, and generate code from a JSON model

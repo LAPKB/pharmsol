@@ -1,5 +1,5 @@
 {
-  "schema": "1.0",
+  "schema": "2.0",
   "id": "pk/1cmt-oral-ode",
   "type": "ode",
   "parameters": ["ka", "CL", "V"],
@@ -8,19 +8,21 @@
     "depot": "-ka * depot",
     "central": "ka * depot - CL/V * central"
   },
-  "output": "central / V",
-  "display": {
-    "name": "One-Compartment Oral (ODE)",
-    "category": "pk",
-    "tags": [
-      "1-compartment",
-      "oral",
-      "ode",
-      "clearance",
-      "first-order-absorption"
-    ]
-  },
-  "documentation": {
-    "summary": "One-compartment ODE model for oral dosing with clearance (CL) and volume (V) parameterization"
+  "outputs": [{ "id": "cp", "equation": "central / V" }],
+  "editor": {
+    "display": {
+      "name": "One-Compartment Oral (ODE)",
+      "category": "pk",
+      "tags": [
+        "1-compartment",
+        "oral",
+        "ode",
+        "clearance",
+        "first-order-absorption"
+      ]
+    },
+    "documentation": {
+      "summary": "One-compartment ODE model for oral dosing with clearance (CL) and volume (V) parameterization"
+    }
   }
 }

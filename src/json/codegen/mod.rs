@@ -63,7 +63,7 @@ fn infer_neqs(closures: &[&str]) -> InferredNeqs {
     let all: String = closures.join("\n");
 
     let nstates = max_index_of(&all, &["x", "dx"]).map_or(1, |n| n + 1);
-    let ndrugs = max_index_of(&all, &["rateiv", "_b", "bolus"]).map_or(1, |n| n + 1);
+    let ndrugs = max_index_of(&all, &["rateiv", "_b", "b", "bolus"]).map_or(1, |n| n + 1);
     let nout = max_index_of(&all, &["y"]).map_or(1, |n| n + 1);
 
     InferredNeqs {
@@ -230,12 +230,13 @@ mod tests {
     #[test]
     fn test_generate_analytical() {
         let json = r#"{
-            "schema": "1.0",
-            "id": "pk_1cmt_oral",
+            "schema": "2.0",
+            "id": "pk/1cmt-oral",
             "type": "analytical",
             "analytical": "one_compartment_with_absorption",
             "parameters": ["ka", "ke", "V"],
-            "output": "x[1] / V"
+            "compartments": ["depot", "central"],
+            "outputs": [{ "id": "cp", "equation": "central / V" }]
         }"#;
 
         let model = JsonModel::from_str(json).unwrap();
@@ -252,12 +253,13 @@ mod tests {
     #[test]
     fn test_generate_ode() {
         let json = r#"{
-            "schema": "1.0",
-            "id": "pk_1cmt_ode",
+            "schema": "2.0",
+            "id": "pk/1cmt-ode",
             "type": "ode",
             "parameters": ["ke", "V"],
-            "diffeq": "dx[0] = -ke * x[0] + rateiv[0];",
-            "output": "x[0] / V",
+            "compartments": ["central"],
+            "diffeq": { "central": "-ke * central + rateiv[0]" },
+            "outputs": [{ "id": "cp", "equation": "central / V" }],
             "neqs": [1, 1]
         }"#;
 
@@ -266,19 +268,44 @@ mod tests {
         let result = generator.generate().unwrap();
 
         assert!(result.equation_code.contains("equation::ODE::new"));
-        assert!(result.equation_code.contains("-ke * x[0]"));
+        assert!(result.equation_code.contains("let central = x[0];"));
+        assert!(result.equation_code.contains("-ke * central"));
+    }
+
+    #[test]
+    fn test_generate_ode_with_bolus() {
+        let json = r#"{
+            "schema": "2.0",
+            "id": "pk/1cmt-bolus",
+            "type": "ode",
+            "parameters": ["ke", "V"],
+            "compartments": ["central"],
+            "diffeq": { "central": "-ke * central + b[0]" },
+            "outputs": [{ "id": "cp", "equation": "central / V" }],
+            "neqs": [1, 1]
+        }"#;
+
+        let model = JsonModel::from_str(json).unwrap();
+        let generator = CodeGenerator::new(&model);
+        let result = generator.generate().unwrap();
+
+        assert!(result.equation_code.contains("equation::ODE::new"));
+        assert!(result
+            .equation_code
+            .contains("dx[0] = -ke * central + b[0];"));
     }
 
     #[test]
     fn test_generate_with_lag() {
         let json = r#"{
-            "schema": "1.0",
-            "id": "pk_1cmt_oral_lag",
+            "schema": "2.0",
+            "id": "pk/1cmt-oral-lag",
             "type": "analytical",
             "analytical": "one_compartment_with_absorption",
             "parameters": ["ka", "ke", "V", "tlag"],
-            "lag": { "0": "tlag" },
-            "output": "x[1] / V",
+            "compartments": ["depot", "central"],
+            "lag": { "depot": "tlag" },
+            "outputs": [{ "id": "cp", "equation": "central / V" }],
             "neqs": [2, 1]
         }"#;
 
@@ -288,5 +315,27 @@ mod tests {
 
         assert!(result.equation_code.contains("lag!"));
         assert!(result.equation_code.contains("0 => tlag"));
+    }
+
+    #[test]
+    fn test_generate_ode_with_sparse_output_binding() {
+        let json = r#"{
+            "schema": "2.0",
+            "id": "pk/1cmt-sparse-output",
+            "type": "ode",
+            "parameters": ["ke", "V"],
+            "compartments": ["central"],
+            "diffeq": { "central": "-ke * central + rateiv[0]" },
+            "outputs": [{ "id": "out_2", "equation": "central / V" }],
+            "neqs": [1, 2]
+        }"#;
+
+        let model = JsonModel::from_str(json).unwrap();
+        let generator = CodeGenerator::new(&model);
+        let result = generator.generate().unwrap();
+
+        assert!(result.equation_code.contains("y[1] = central / V;"));
+        assert!(result.equation_code.contains("with_nout(2)"));
+        assert!(!result.equation_code.contains("y[0] = central / V;"));
     }
 }
