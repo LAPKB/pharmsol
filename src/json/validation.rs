@@ -246,7 +246,10 @@ impl Validator {
                     return Err(JsonModelError::schema_rule(
                         "init",
                         &model.schema,
-                        format!("numeric key '{}' is not canonical; use compartment or state ids", key),
+                        format!(
+                            "numeric key '{}' is not canonical; use compartment or state ids",
+                            key
+                        ),
                     ));
                 }
             }
@@ -258,7 +261,10 @@ impl Validator {
                     return Err(JsonModelError::schema_rule(
                         "lag",
                         &model.schema,
-                        format!("numeric key '{}' is not canonical; use compartment ids", key),
+                        format!(
+                            "numeric key '{}' is not canonical; use compartment ids",
+                            key
+                        ),
                     ));
                 }
             }
@@ -270,7 +276,10 @@ impl Validator {
                     return Err(JsonModelError::schema_rule(
                         "fa",
                         &model.schema,
-                        format!("numeric key '{}' is not canonical; use compartment ids", key),
+                        format!(
+                            "numeric key '{}' is not canonical; use compartment ids",
+                            key
+                        ),
                     ));
                 }
             }
@@ -644,7 +653,10 @@ mod tests {
 
         let model = JsonModel::from_str(json).unwrap();
         let result = Validator::new().validate(&model);
-        assert!(matches!(result, Err(JsonModelError::DuplicateOutput { .. })));
+        assert!(matches!(
+            result,
+            Err(JsonModelError::DuplicateOutput { .. })
+        ));
     }
 
     #[test]
@@ -733,7 +745,10 @@ mod tests {
 
         let model = JsonModel::from_str(json).unwrap();
         let result = Validator::new().validate(&model);
-        assert!(matches!(result, Err(JsonModelError::UndefinedCompartment { .. })));
+        assert!(matches!(
+            result,
+            Err(JsonModelError::UndefinedCompartment { .. })
+        ));
     }
 
     #[test]

@@ -177,7 +177,9 @@ mod codegen {
 
         let code = generate_code(json).expect("Should generate code");
         assert!(code.equation_code.contains("Analytical::new"));
-        assert!(code.equation_code.contains("one_compartment_with_absorption"));
+        assert!(code
+            .equation_code
+            .contains("one_compartment_with_absorption"));
         assert!(code.equation_code.contains("fetch_params!"));
         assert_eq!(code.parameters, vec!["ka", "ke", "V"]);
     }
@@ -205,7 +207,9 @@ mod codegen {
 
         let code = generate_code(json).expect("Should generate code");
         assert!(code.equation_code.contains("ODE::new"));
-        assert!(code.equation_code.contains("x[1] = A0") || code.equation_code.contains("x[0] = A0"));
+        assert!(
+            code.equation_code.contains("x[1] = A0") || code.equation_code.contains("x[0] = A0")
+        );
         assert!(code.equation_code.contains("lag!"));
     }
 
@@ -313,7 +317,9 @@ mod library {
         let generator = CodeGenerator::new(model);
         let code = generator.generate().expect("Should generate code");
 
-        assert!(code.equation_code.contains("one_compartment_with_absorption"));
+        assert!(code
+            .equation_code
+            .contains("one_compartment_with_absorption"));
         assert_eq!(code.parameters, vec!["ka", "ke", "V"]);
     }
 }

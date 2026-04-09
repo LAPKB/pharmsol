@@ -258,12 +258,16 @@ impl JsonModel {
 
     /// Get display information from editor metadata.
     pub fn display_info(&self) -> Option<&DisplayInfo> {
-        self.editor.as_ref().and_then(|editor| editor.display.as_ref())
+        self.editor
+            .as_ref()
+            .and_then(|editor| editor.display.as_ref())
     }
 
     /// Get layout information from editor metadata.
     pub fn layout_info(&self) -> Option<&HashMap<String, Position>> {
-        self.editor.as_ref().and_then(|editor| editor.layout.as_ref())
+        self.editor
+            .as_ref()
+            .and_then(|editor| editor.layout.as_ref())
     }
 
     /// Get documentation from editor metadata.
