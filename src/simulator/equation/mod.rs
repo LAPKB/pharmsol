@@ -64,6 +64,47 @@ pub trait Predictions: Default {
     fn log_likelihood(&self, error_models: &AssayErrorModels) -> Result<f64, PharmsolError>;
 }
 
+/// Trait for enabling prediction caching on equation types.
+///
+/// Provides builder methods for configuring cache size and a method
+/// to clear the cache at runtime.
+///
+/// # Example
+/// ```ignore
+/// use pharmsol::*;
+///
+/// let ode = ODE::new(diffeq, lag, fa, init, out)
+///     .enable_cache();            // Cache trait method
+/// ode.clear_cache();             // Cache trait method
+/// ```
+pub trait Cache: Sized {
+    /// Enable caching with the given maximum number of entries.
+    ///
+    /// When caching is enabled, results for the same inputs are stored and reused.
+    /// Cloned equations share the same cache.
+    ///
+    /// If caching is already enabled, this **replaces** the cache with a new, empty
+    /// one of the given size — all previously cached entries are discarded.
+    fn enable_cache_with_capacity(self, size: u64) -> Self;
+
+    /// Enable caching with the default size (100,000 entries).
+    ///
+    /// If caching is already enabled, this **replaces** the cache with a new,
+    /// empty one — all previously cached entries are discarded.
+    fn enable_cache(self) -> Self;
+
+    /// Clear all entries from this equation's cache, if caching is enabled.
+    ///
+    /// The cache itself remains active (with the same capacity).
+    /// Does nothing if caching is not enabled.
+    fn clear_cache(&self);
+
+    /// Disable caching.
+    ///
+    /// Disables caching and discards all cached entries.
+    fn disable_cache(self) -> Self;
+}
+
 /// Trait defining the associated types for equations.
 pub trait EquationTypes {
     /// The state vector type

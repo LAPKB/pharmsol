@@ -13,10 +13,10 @@
 //! let ode = ODE::new(diffeq, lag, fa, init, out);
 //!
 //! // Enable caching with default size:
-//! let ode = ODE::new(diffeq, lag, fa, init, out).with_default_cache();
+//! let ode = ODE::new(diffeq, lag, fa, init, out).enable_cache();
 //!
 //! // Enable caching with custom size:
-//! let ode = ODE::new(diffeq, lag, fa, init, out).with_cache(50_000);
+//! let ode = ODE::new(diffeq, lag, fa, init, out).enable_cache_with_capacity(50_000);
 //! ```
 
 use std::fmt;

@@ -142,28 +142,28 @@ impl SDE {
         self.neqs.nout = nout;
         self
     }
+}
 
-    /// Enable likelihood caching with the given maximum number of entries.
-    ///
-    /// When caching is enabled, likelihood results for the same
-    /// (subject, parameters, error model) triple are stored and reused.
-    /// Cloned equations share the same cache.
-    pub fn with_cache(mut self, size: u64) -> Self {
+impl super::Cache for SDE {
+    fn enable_cache_with_capacity(mut self, size: u64) -> Self {
         self.cache = Some(SdeLikelihoodCache::new(size));
         self
     }
 
-    /// Enable likelihood caching with the default size (100,000 entries).
-    pub fn with_default_cache(mut self) -> Self {
+    fn enable_cache(mut self) -> Self {
         self.cache = Some(SdeLikelihoodCache::new(DEFAULT_CACHE_SIZE));
         self
     }
 
-    /// Clear all entries from this equation's cache, if caching is enabled.
-    pub fn clear_cache(&self) {
+    fn clear_cache(&self) {
         if let Some(cache) = &self.cache {
             cache.invalidate_all();
         }
+    }
+
+    fn disable_cache(mut self) -> Self {
+        self.cache = None;
+        self
     }
 }
 
