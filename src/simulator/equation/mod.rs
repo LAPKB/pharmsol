@@ -66,16 +66,23 @@ pub trait Predictions: Default {
 
 /// Trait for enabling prediction caching on equation types.
 ///
-/// Provides builder methods for configuring cache size and a method
-/// to clear the cache at runtime.
+/// Caching is **enabled by default** with a capacity of 100,000 entries.
+/// Use these methods to adjust capacity, clear entries, or disable caching.
 ///
 /// # Example
 /// ```ignore
 /// use pharmsol::*;
 ///
+/// // Caching is on by default:
+/// let ode = ODE::new(diffeq, lag, fa, init, out);
+///
+/// // Adjust capacity:
 /// let ode = ODE::new(diffeq, lag, fa, init, out)
-///     .enable_cache();            // Cache trait method
-/// ode.clear_cache();             // Cache trait method
+///     .enable_cache_with_capacity(50_000);
+///
+/// // Disable caching:
+/// let ode = ODE::new(diffeq, lag, fa, init, out)
+///     .disable_cache();
 /// ```
 pub trait Cache: Sized {
     /// Enable caching with the given maximum number of entries.

@@ -57,7 +57,7 @@ impl Analytical {
             init,
             out,
             neqs: Neqs::default(),
-            cache: None,
+            cache: Some(PredictionCache::new(DEFAULT_CACHE_SIZE)),
         }
     }
 

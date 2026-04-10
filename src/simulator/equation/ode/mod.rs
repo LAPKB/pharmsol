@@ -92,7 +92,7 @@ impl ODE {
             solver: OdeSolver::default(),
             rtol: RTOL,
             atol: ATOL,
-            cache: None,
+            cache: Some(PredictionCache::new(DEFAULT_CACHE_SIZE)),
         }
     }
 

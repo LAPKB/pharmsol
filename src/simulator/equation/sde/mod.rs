@@ -121,7 +121,7 @@ impl SDE {
             out,
             neqs: Neqs::default(),
             nparticles,
-            cache: None,
+            cache: Some(SdeLikelihoodCache::new(DEFAULT_CACHE_SIZE)),
         }
     }
 
