@@ -81,7 +81,7 @@ impl Analytical {
 }
 
 impl super::Cache for Analytical {
-    fn enable_cache_with_capacity(mut self, size: u64) -> Self {
+    fn with_cache_capacity(mut self, size: u64) -> Self {
         self.cache = Some(PredictionCache::new(size));
         self
     }

@@ -78,7 +78,7 @@ pub trait Predictions: Default {
 ///
 /// // Adjust capacity:
 /// let ode = ODE::new(diffeq, lag, fa, init, out)
-///     .enable_cache_with_capacity(50_000);
+///     .with_cache_capacity(50_000);
 ///
 /// // Disable caching:
 /// let ode = ODE::new(diffeq, lag, fa, init, out)
@@ -92,7 +92,7 @@ pub trait Cache: Sized {
     ///
     /// If caching is already enabled, this **replaces** the cache with a new, empty
     /// one of the given size — all previously cached entries are discarded.
-    fn enable_cache_with_capacity(self, size: u64) -> Self;
+    fn with_cache_capacity(self, size: u64) -> Self;
 
     /// Enable caching with the default size (100,000 entries).
     ///

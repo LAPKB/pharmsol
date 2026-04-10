@@ -13,7 +13,7 @@
 //! let ode = ODE::new(diffeq, lag, fa, init, out);
 //!
 //! // Custom cache capacity:
-//! let ode = ODE::new(diffeq, lag, fa, init, out).enable_cache_with_capacity(50_000);
+//! let ode = ODE::new(diffeq, lag, fa, init, out).with_cache_capacity(50_000);
 //!
 //! // Disable caching:
 //! let ode = ODE::new(diffeq, lag, fa, init, out).disable_cache();

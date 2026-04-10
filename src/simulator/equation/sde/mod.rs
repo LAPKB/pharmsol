@@ -145,7 +145,7 @@ impl SDE {
 }
 
 impl super::Cache for SDE {
-    fn enable_cache_with_capacity(mut self, size: u64) -> Self {
+    fn with_cache_capacity(mut self, size: u64) -> Self {
         self.cache = Some(SdeLikelihoodCache::new(size));
         self
     }
