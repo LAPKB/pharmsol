@@ -2,6 +2,7 @@ use crate::{data::Covariates, simulator::*};
 use diffsol::{NalgebraContext, Vector};
 
 use super::two_compartment_models::{two_compartments, two_compartments_with_absorption};
+use super::wrap_pmetrics_analytical;
 
 /// Analytical solution for two compartment model parameterized by clearances.
 ///
@@ -22,6 +23,10 @@ pub fn two_compartments_cl(x: &V, p: &V, t: T, rateiv: &V, cov: &Covariates) -> 
     let kpc = q / vp;
     let p_ke = V::from_vec(vec![ke, kcp, kpc], NalgebraContext);
     two_compartments(x, &p_ke, t, rateiv, cov)
+}
+
+pub fn pm_two_compartments_cl(x: &V, p: &V, t: T, rateiv: &V, cov: &Covariates) -> V {
+    wrap_pmetrics_analytical(x, p, t, rateiv, cov, two_compartments_cl)
 }
 
 /// Analytical solution for two compartment model with first-order absorption,
@@ -45,6 +50,16 @@ pub fn two_compartments_cl_with_absorption(x: &V, p: &V, t: T, rateiv: &V, cov: 
     let kpc = q / vp;
     let p_ke = V::from_vec(vec![ke, ka, kcp, kpc], NalgebraContext);
     two_compartments_with_absorption(x, &p_ke, t, rateiv, cov)
+}
+
+pub fn pm_two_compartments_cl_with_absorption(
+    x: &V,
+    p: &V,
+    t: T,
+    rateiv: &V,
+    cov: &Covariates,
+) -> V {
+    wrap_pmetrics_analytical(x, p, t, rateiv, cov, two_compartments_cl_with_absorption)
 }
 
 #[cfg(test)]
