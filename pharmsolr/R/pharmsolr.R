@@ -18,9 +18,9 @@ compile_model <- function(text) {
 #' @param events A data.frame with one row per event and columns:
 #'   \describe{
 #'     \item{time}{numeric — event time}
-#'     \item{evid}{integer — 1 = bolus, 2 = infusion, 0 = observation}
-#'     \item{amt}{numeric — bolus or infusion amount (ignored for obs)}
-#'     \item{dur}{numeric — infusion duration (ignored for bolus/obs)}
+#'     \item{evid}{integer — 0 = observation, 1 = dose (bolus when `dur` is 0, infusion when `dur` > 0)}
+#'     \item{amt}{numeric — dose amount (ignored for observations)}
+#'     \item{dur}{numeric — infusion duration; use 0 for a bolus}
 #'     \item{cmt}{integer — input compartment for bolus/infusion (0-based)}
 #'     \item{outeq}{integer — output equation index for observation (0-based)}
 #'   }

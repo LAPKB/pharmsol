@@ -45,9 +45,9 @@ mod <- compile_model("
 
 events <- data.frame(
   time  = c(0,   1,   2,   4,   8,   12),
-  evid  = c(2L,  0L,  0L,  0L,  0L,  0L),    # 1=bolus, 2=infusion, 0=obs
+  evid  = c(1L,  0L,  0L,  0L,  0L,  0L),    # 1=dose, 0=observation
   amt   = c(100, 0,   0,   0,   0,   0),
-  dur   = c(0.5, 0,   0,   0,   0,   0),
+  dur   = c(0.5, 0,   0,   0,   0,   0),    # dur > 0 -> infusion; dur = 0 -> bolus
   cmt   = c(0L,  0L,  0L,  0L,  0L,  0L),    # input compartment (0-based)
   outeq = c(0L,  0L,  0L,  0L,  0L,  0L)     # output index (0-based)
 )

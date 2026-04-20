@@ -24,7 +24,7 @@ mod <- compile_model(model_text)
 # 100 mg infused over 0.5 h, observe at five time points.
 events <- data.frame(
   time  = c(0.0, 1.0, 2.0, 4.0, 8.0, 12.0),
-  evid  = c(2L,  0L,  0L,  0L,  0L,  0L),
+  evid  = c(1L,  0L,  0L,  0L,  0L,  0L),
   amt   = c(100, 0,   0,   0,   0,   0),
   dur   = c(0.5, 0,   0,   0,   0,   0),
   cmt   = c(0L,  0L,  0L,  0L,  0L,  0L),

@@ -25,7 +25,7 @@ cat(sprintf("compile: %.3f ms\n", compile_s * 1000))
 
 events <- data.frame(
   time  = c(0,   1,   2,   4,   8,   12),
-  evid  = c(2L,  0L,  0L,  0L,  0L,  0L),
+  evid  = c(1L,  0L,  0L,  0L,  0L,  0L),
   amt   = c(100, 0,   0,   0,   0,   0),
   dur   = c(0.5, 0,   0,   0,   0,   0),
   cmt   = c(0L,  0L,  0L,  0L,  0L,  0L),

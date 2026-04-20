@@ -113,12 +113,19 @@ fn simulate_subject(
         let cmt = i32_to_usize(cmts[i].inner(), "cmt", i)?;
         let outeq = i32_to_usize(outeqs[i].inner(), "outeq", i)?;
         builder = match evid {
-            1 => builder.bolus(t, amt, cmt),
-            2 => builder.infusion(t, amt, cmt, dur),
+            // EVID=1 is a dose; pharmsol distinguishes bolus from infusion
+            // by whether `dur` is zero (matches NONMEM semantics).
+            1 => {
+                if dur > 0.0 {
+                    builder.infusion(t, amt, cmt, dur)
+                } else {
+                    builder.bolus(t, amt, cmt)
+                }
+            }
             0 => builder.observation(t, 0.0, outeq),
             other => {
                 return Err(Error::Other(format!(
-                    "row {}: invalid evid {} (expected 0, 1, or 2)",
+                    "row {}: invalid evid {} (expected 0 or 1)",
                     i + 1,
                     other
                 )));
