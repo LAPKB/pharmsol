@@ -2,21 +2,21 @@
 //!
 //! This module provides lightweight cache wrappers that can be embedded
 //! directly in equation structs ([`ODE`], [`Analytical`], [`SDE`]).
-//! Each equation instance can optionally own a cache; cloning the equation
+//! Each equation instance owns a cache by default; cloning the equation
 //! produces a shallow clone that shares the same cache data.
 //!
 //! # Example
 //! ```ignore
 //! use pharmsol::*;
 //!
-//! // No caching (default):
+//! // Caching is enabled by default (100,000 entries):
 //! let ode = ODE::new(diffeq, lag, fa, init, out);
 //!
-//! // Enable caching with default size:
-//! let ode = ODE::new(diffeq, lag, fa, init, out).with_default_cache();
+//! // Custom cache capacity:
+//! let ode = ODE::new(diffeq, lag, fa, init, out).with_cache_capacity(50_000);
 //!
-//! // Enable caching with custom size:
-//! let ode = ODE::new(diffeq, lag, fa, init, out).with_cache(50_000);
+//! // Disable caching:
+//! let ode = ODE::new(diffeq, lag, fa, init, out).disable_cache();
 //! ```
 
 use std::fmt;

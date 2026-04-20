@@ -2,6 +2,8 @@ use crate::{data::Covariates, simulator::*};
 use diffsol::VectorCommon;
 use nalgebra::{DVector, Matrix3, Vector3};
 
+use super::wrap_pmetrics_analytical;
+
 ///
 /// Analytical for three compartments
 /// Assumptions:
@@ -104,6 +106,10 @@ pub fn three_compartments(x: &V, p: &V, t: T, rateiv: &V, _cov: &Covariates) -> 
 
     // Convert Vector2 to DVector
     DVector::from_vec(vec![result_vector[0], result_vector[1], result_vector[2]]).into()
+}
+
+pub fn pm_three_compartments(x: &V, p: &V, t: T, rateiv: &V, cov: &Covariates) -> V {
+    wrap_pmetrics_analytical(x, p, t, rateiv, cov, three_compartments)
 }
 
 ///
@@ -231,6 +237,16 @@ pub fn three_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: &V, _cov: 
     xout[3] = aux[2];
 
     xout
+}
+
+pub fn pm_three_compartments_with_absorption(
+    x: &V,
+    p: &V,
+    t: T,
+    rateiv: &V,
+    cov: &Covariates,
+) -> V {
+    wrap_pmetrics_analytical(x, p, t, rateiv, cov, three_compartments_with_absorption)
 }
 
 #[cfg(test)]
