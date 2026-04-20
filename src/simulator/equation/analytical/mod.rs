@@ -38,6 +38,37 @@ pub struct Analytical {
     cache: Option<PredictionCache>,
 }
 
+#[inline(always)]
+pub(crate) fn compact_public_vector(vector: &V) -> V {
+    V::from_vec(
+        vector.as_slice().get(1..).unwrap_or(&[]).to_vec(),
+        NalgebraContext,
+    )
+}
+
+#[inline(always)]
+pub(crate) fn pad_public_vector(vector: &V) -> V {
+    let mut padded = Vec::with_capacity(vector.len() + 1);
+    padded.push(0.0);
+    padded.extend(vector.as_slice().iter().copied());
+    V::from_vec(padded, NalgebraContext)
+}
+
+#[inline(always)]
+pub(crate) fn wrap_pmetrics_analytical(
+    x: &V,
+    p: &V,
+    t: T,
+    rateiv: &V,
+    cov: &Covariates,
+    native: AnalyticalEq,
+) -> V {
+    let compact_x = compact_public_vector(x);
+    let compact_rateiv = compact_public_vector(rateiv);
+    let compact_output = native(&compact_x, p, t, &compact_rateiv, cov);
+    pad_public_vector(&compact_output)
+}
+
 impl Analytical {
     /// Create a new Analytical equation model with default Neqs (all sizes = 5).
     ///
@@ -268,6 +299,8 @@ impl EquationPriv for Analytical {
 pub(crate) mod tests {
     use super::*;
     use crate::SubjectBuilderExt;
+    use approx::assert_relative_eq;
+    use diffsol::Vector;
     use std::collections::HashMap;
 
     pub(crate) enum SubjectInfo {
@@ -391,6 +424,130 @@ pub(crate) mod tests {
             .unwrap();
 
         assert_eq!(predictions.predictions()[0].prediction(), 4.0);
+    }
+
+    fn assert_pm_wrapper_matches_native(
+        native: AnalyticalEq,
+        wrapper: AnalyticalEq,
+        compact_x: Vec<f64>,
+        params: Vec<f64>,
+        compact_rateiv: Vec<f64>,
+    ) {
+        let covariates = Covariates::new();
+        let compact_x = V::from_vec(compact_x, NalgebraContext);
+        let params = V::from_vec(params, NalgebraContext);
+        let compact_rateiv = V::from_vec(compact_rateiv, NalgebraContext);
+
+        let mut padded_x = vec![1234.0];
+        padded_x.extend(compact_x.as_slice().iter().copied());
+        let padded_x = V::from_vec(padded_x, NalgebraContext);
+
+        let mut padded_rateiv = vec![5678.0];
+        padded_rateiv.extend(compact_rateiv.as_slice().iter().copied());
+        let padded_rateiv = V::from_vec(padded_rateiv, NalgebraContext);
+
+        let native_output = native(&compact_x, &params, 1.5, &compact_rateiv, &covariates);
+        let wrapped_output = wrapper(&padded_x, &params, 1.5, &padded_rateiv, &covariates);
+
+        assert_eq!(wrapped_output[0], 0.0);
+        assert_eq!(wrapped_output.len(), native_output.len() + 1);
+
+        for (wrapped, native) in wrapped_output
+            .as_slice()
+            .iter()
+            .skip(1)
+            .zip(native_output.as_slice().iter())
+        {
+            assert_relative_eq!(*wrapped, *native, max_relative = 1e-10, epsilon = 1e-10);
+        }
+    }
+
+    #[test]
+    fn pmetrics_wrappers_match_native_helpers() {
+        assert_pm_wrapper_matches_native(
+            one_compartment,
+            pm_one_compartment,
+            vec![100.0],
+            vec![0.2],
+            vec![5.0],
+        );
+        assert_pm_wrapper_matches_native(
+            one_compartment_cl,
+            pm_one_compartment_cl,
+            vec![100.0],
+            vec![0.2, 2.0],
+            vec![5.0],
+        );
+        assert_pm_wrapper_matches_native(
+            one_compartment_with_absorption,
+            pm_one_compartment_with_absorption,
+            vec![10.0, 20.0],
+            vec![1.1, 0.2],
+            vec![5.0],
+        );
+        assert_pm_wrapper_matches_native(
+            one_compartment_cl_with_absorption,
+            pm_one_compartment_cl_with_absorption,
+            vec![10.0, 20.0],
+            vec![1.1, 0.2, 2.0],
+            vec![5.0],
+        );
+        assert_pm_wrapper_matches_native(
+            two_compartments,
+            pm_two_compartments,
+            vec![100.0, 40.0],
+            vec![0.1, 0.3, 0.2],
+            vec![3.0],
+        );
+        assert_pm_wrapper_matches_native(
+            two_compartments_cl,
+            pm_two_compartments_cl,
+            vec![100.0, 40.0],
+            vec![0.1, 0.3, 1.0, 2.0],
+            vec![3.0],
+        );
+        assert_pm_wrapper_matches_native(
+            two_compartments_with_absorption,
+            pm_two_compartments_with_absorption,
+            vec![10.0, 100.0, 40.0],
+            vec![0.1, 1.0, 0.3, 0.2],
+            vec![3.0],
+        );
+        assert_pm_wrapper_matches_native(
+            two_compartments_cl_with_absorption,
+            pm_two_compartments_cl_with_absorption,
+            vec![10.0, 100.0, 40.0],
+            vec![1.0, 0.1, 0.3, 1.0, 2.0],
+            vec![3.0],
+        );
+        assert_pm_wrapper_matches_native(
+            three_compartments,
+            pm_three_compartments,
+            vec![100.0, 40.0, 20.0],
+            vec![0.1, 3.0, 2.0, 1.0, 0.5],
+            vec![2.0],
+        );
+        assert_pm_wrapper_matches_native(
+            three_compartments_cl,
+            pm_three_compartments_cl,
+            vec![100.0, 40.0, 20.0],
+            vec![0.1, 3.0, 2.0, 1.0, 3.0, 4.0],
+            vec![2.0],
+        );
+        assert_pm_wrapper_matches_native(
+            three_compartments_with_absorption,
+            pm_three_compartments_with_absorption,
+            vec![10.0, 100.0, 40.0, 20.0],
+            vec![1.0, 0.1, 3.0, 2.0, 1.0, 0.5],
+            vec![2.0],
+        );
+        assert_pm_wrapper_matches_native(
+            three_compartments_cl_with_absorption,
+            pm_three_compartments_cl_with_absorption,
+            vec![10.0, 100.0, 40.0, 20.0],
+            vec![1.0, 0.1, 3.0, 2.0, 1.0, 3.0, 4.0],
+            vec![2.0],
+        );
     }
 }
 impl Equation for Analytical {
