@@ -44,16 +44,17 @@ mod <- compile_model("
 ")
 
 events <- data.frame(
-  time  = c(0,   1,   2,   4,   8,   12),
-  evid  = c(1L,  0L,  0L,  0L,  0L,  0L),    # 1=dose, 0=observation
-  amt   = c(100, 0,   0,   0,   0,   0),
-  dur   = c(0.5, 0,   0,   0,   0,   0),    # dur > 0 -> infusion; dur = 0 -> bolus
-  cmt   = c(0L,  0L,  0L,  0L,  0L,  0L),    # input compartment (0-based)
-  outeq = c(0L,  0L,  0L,  0L,  0L,  0L)     # output index (0-based)
+  time  = c(0,         1,    2,    4,    8,    12),
+  evid  = c(1L,        0L,   0L,   0L,   0L,   0L),    # 1=dose, 0=observation
+  amt   = c(100,       0,    0,    0,    0,    0),
+  dur   = c(0.5,       0,    0,    0,    0,    0),    # dur > 0 -> infusion; dur = 0 -> bolus
+  cmt   = c("central", NA,   NA,   NA,   NA,   NA),   # name or 0-based integer
+  outeq = c(NA,        "cp", "cp", "cp", "cp", "cp"), # name or 0-based integer
+  stringsAsFactors = FALSE
 )
 
 simulate_subject(mod,
-  params     = c(5, 50),
+  params     = c(CL = 5, V = 50),    # named -> reordered to model's params()
   events     = events,
   covariates = list(WT = data.frame(time = 0, value = 80))
 )
@@ -64,6 +65,12 @@ simulate_subject(mod,
 #> 4  8.0   0.8502
 #> 5 12.0   0.5464
 ```
+
+The model owns the canonical name-to-index map. Use `compartments(mod)`,
+`outputs(mod)`, `params(mod)`, and `covariates(mod)` to inspect it, or
+`cmt(mod, "central")` / `outeq(mod, "cp")` for ad-hoc lookups. Events may
+reference compartments and outputs by name (recommended) or by zero-based
+integer (matches the order declared in the model).
 
 ## Model text format
 

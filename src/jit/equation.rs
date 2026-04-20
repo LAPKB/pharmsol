@@ -53,10 +53,15 @@ pub struct JitOde {
     nstates: usize,
     ndrugs: usize,
     nout: usize,
+    /// Compartment names in declaration order. The index of a name is also its
+    /// `input` index in the data layer (`bolus`/`infusion`).
+    compartments: Arc<Vec<String>>,
+    /// Output names in declaration order. The index of a name is also its
+    /// `outeq` index in the data layer (`observation`).
+    outputs: Arc<Vec<String>>,
     /// Covariate names in the order expected by the JIT'd function.
     covariates: Arc<Vec<String>>,
     /// Parameter names — kept for diagnostics and `Meta` consumers.
-    #[allow(dead_code)]
     params: Arc<Vec<String>>,
     solver: OdeSolver,
     rtol: f64,
@@ -72,6 +77,8 @@ impl JitOde {
         nstates: usize,
         ndrugs: usize,
         nout: usize,
+        compartments: Vec<String>,
+        outputs: Vec<String>,
         covariates: Vec<String>,
         params: Vec<String>,
     ) -> Self {
@@ -80,6 +87,8 @@ impl JitOde {
             nstates,
             ndrugs,
             nout,
+            compartments: Arc::new(compartments),
+            outputs: Arc::new(outputs),
             covariates: Arc::new(covariates),
             params: Arc::new(params),
             solver: OdeSolver::default(),
@@ -89,6 +98,73 @@ impl JitOde {
             lag_fn: no_lag as Lag,
             fa_fn: no_fa as Fa,
         }
+    }
+
+    /// Compartment names in declaration order. Index `i` is the value to pass
+    /// as `input` when constructing a [`crate::Subject`] bolus or infusion at
+    /// this compartment.
+    pub fn compartments(&self) -> &[String] {
+        &self.compartments
+    }
+
+    /// Output names in declaration order. Index `i` is the value to pass as
+    /// `outeq` for an observation of this output.
+    pub fn outputs(&self) -> &[String] {
+        &self.outputs
+    }
+
+    /// Parameter names in the order expected by the support point.
+    pub fn params(&self) -> &[String] {
+        &self.params
+    }
+
+    /// Covariate names referenced by the model.
+    pub fn covariates(&self) -> &[String] {
+        &self.covariates
+    }
+
+    /// Look up the input/state index of a compartment by name.
+    ///
+    /// Returns `None` if no compartment with that name is declared. Use this
+    /// to avoid hard-coding integers when constructing data:
+    ///
+    /// ```ignore
+    /// let central = ode.compartment_index("central").unwrap();
+    /// Subject::builder("p").bolus(0.0, 100.0, central).build();
+    /// ```
+    pub fn compartment_index(&self, name: &str) -> Option<usize> {
+        self.compartments.iter().position(|c| c == name)
+    }
+
+    /// Look up the `outeq` index of an output by name.
+    pub fn output_index(&self, name: &str) -> Option<usize> {
+        self.outputs.iter().position(|o| o == name)
+    }
+
+    /// Look up a compartment index by name, panicking with a helpful message
+    /// (listing the available names) if the name is not found. Intended for
+    /// inline use in test/example data construction.
+    #[track_caller]
+    pub fn cmt(&self, name: &str) -> usize {
+        self.compartment_index(name).unwrap_or_else(|| {
+            panic!(
+                "unknown compartment {name:?}; declared: [{}]",
+                self.compartments.join(", ")
+            )
+        })
+    }
+
+    /// Look up an output index by name, panicking with a helpful message
+    /// (listing the available names) if the name is not found. Intended for
+    /// inline use in test/example data construction.
+    #[track_caller]
+    pub fn outeq(&self, name: &str) -> usize {
+        self.output_index(name).unwrap_or_else(|| {
+            panic!(
+                "unknown output {name:?}; declared: [{}]",
+                self.outputs.join(", ")
+            )
+        })
     }
 
     /// Set the ODE solver algorithm.
@@ -345,6 +421,16 @@ impl Equation for JitOde {
         for occasion in subject.occasions() {
             let covariates = occasion.covariates();
             let infusions = occasion.infusions_ref();
+            // Validate infusion input channels up-front so the user gets a
+            // dedicated error rather than an opaque solver-side panic.
+            for inf in infusions.iter() {
+                if inf.input() >= ndrugs {
+                    return Err(PharmsolError::InputOutOfRange {
+                        input: inf.input(),
+                        ndrugs,
+                    });
+                }
+            }
             let mut events = occasion.process_events(
                 Some((self.fa(), self.lag(), support_point, covariates)),
                 true,
@@ -539,7 +625,14 @@ impl JitOde {
                         );
                     }
                     drop(buf);
-                    let pred = y_out[observation.outeq()];
+                    let outeq = observation.outeq();
+                    if outeq >= y_out.len() {
+                        return Err(PharmsolError::OuteqOutOfRange {
+                            outeq,
+                            nout: y_out.len(),
+                        });
+                    }
+                    let pred = y_out[outeq];
                     let pred =
                         observation.to_prediction(pred, solver.state().y.as_slice().to_vec());
                     if let Some(error_models) = error_models {

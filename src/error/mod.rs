@@ -31,6 +31,8 @@ pub enum PharmsolError {
     MissingObservation,
     #[error("Input channel {input} is out of range (ndrugs = {ndrugs})")]
     InputOutOfRange { input: usize, ndrugs: usize },
+    #[error("Output equation {outeq} is out of range (nout = {nout})")]
+    OuteqOutOfRange { outeq: usize, nout: usize },
 }
 
 impl From<diffsol::error::DiffsolError> for PharmsolError {

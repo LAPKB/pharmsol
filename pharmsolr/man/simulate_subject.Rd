@@ -7,6 +7,8 @@
 simulate_subject(model, params, events, covariates = list())
 
 simulate_subject(model, params, events, covariates = list())
+
+simulate_subject(model, params, events, covariates = list())
 }
 \arguments{
 \item{model}{A model handle returned by [compile_model()].}
@@ -29,6 +31,8 @@ columns `time` and `value`, naming the covariate (must match the model's
 `covariates = ...` line).}
 }
 \value{
+A data.frame with columns `time` and `pred`.
+
 A data.frame with columns `time` and `pred`.
 }
 \description{

@@ -471,3 +471,130 @@ fn parse_error_includes_source_snippet() {
     assert!(msg.contains("dxdt(c)"), "should name the context; got: {msg}");
     assert!(msg.contains("-k * @ c"), "should include the source; got: {msg}");
 }
+
+#[test]
+fn name_lookups_resolve_compartments_and_outputs() {
+    let ode = Model::new("two-out")
+        .compartments(["central", "periph"])
+        .params(["CL", "V", "Q", "Vp"])
+        .dxdt(
+            "central",
+            "rateiv[0] - (CL / V) * central - (Q / V) * central + (Q / Vp) * periph",
+        )
+        .dxdt("periph", "(Q / V) * central - (Q / Vp) * periph")
+        .output("cp", "central / V")
+        .output("cp_periph", "periph / Vp")
+        .compile()
+        .expect("compile");
+
+    assert_eq!(ode.compartments(), &["central".to_string(), "periph".to_string()]);
+    assert_eq!(ode.outputs(), &["cp".to_string(), "cp_periph".to_string()]);
+    assert_eq!(ode.compartment_index("central"), Some(0));
+    assert_eq!(ode.compartment_index("periph"), Some(1));
+    assert_eq!(ode.compartment_index("nope"), None);
+    assert_eq!(ode.output_index("cp"), Some(0));
+    assert_eq!(ode.output_index("cp_periph"), Some(1));
+    assert_eq!(ode.output_index("nope"), None);
+    assert_eq!(ode.cmt("periph"), 1);
+    assert_eq!(ode.outeq("cp_periph"), 1);
+}
+
+#[test]
+fn duplicate_compartment_name_rejected() {
+    let err = Model::new("dup")
+        .compartments(["a", "a"])
+        .params(["k"])
+        .dxdt("a", "-k * a")
+        .output("y", "a")
+        .compile()
+        .expect_err("should fail");
+    let msg = err.to_string();
+    assert!(msg.contains("declared more than once"), "got: {msg}");
+}
+
+#[test]
+fn duplicate_output_name_rejected() {
+    let err = Model::new("dupout")
+        .compartments(["a"])
+        .params(["k"])
+        .dxdt("a", "-k * a")
+        .output("y", "a")
+        .output("y", "a * 2.0")
+        .compile()
+        .expect_err("should fail");
+    let msg = err.to_string();
+    assert!(msg.contains("declared more than once"), "got: {msg}");
+}
+
+#[test]
+fn compartment_name_collides_with_param() {
+    let err = Model::new("collide")
+        .compartments(["k"])
+        .params(["k"])
+        .dxdt("k", "-k * k")
+        .output("y", "k")
+        .compile()
+        .expect_err("should fail");
+    let msg = err.to_string();
+    assert!(msg.contains("also declared"), "got: {msg}");
+}
+
+#[test]
+fn reserved_name_rejected() {
+    let err = Model::new("reserved")
+        .compartments(["t"])
+        .params(["k"])
+        .dxdt("t", "-k * t")
+        .output("y", "t")
+        .compile()
+        .expect_err("should fail");
+    let msg = err.to_string();
+    assert!(msg.contains("reserved"), "got: {msg}");
+}
+
+#[test]
+fn outeq_out_of_range_returns_error() {
+    let ode = Model::new("oor")
+        .compartments(["c"])
+        .params(["k"])
+        .dxdt("c", "-k * c")
+        .output("y", "c")
+        .compile()
+        .expect("compile");
+
+    // Single output declared (outeq=0). Asking for outeq=1 is invalid.
+    let subject = Subject::builder("p")
+        .bolus(0.0, 1.0, 0)
+        .observation(1.0, 0.0, 1)
+        .build();
+
+    let err = ode
+        .simulate_subject(&subject, &[0.5], None)
+        .expect_err("should fail");
+    let msg = err.to_string();
+    assert!(msg.contains("Output equation 1"), "got: {msg}");
+    assert!(msg.contains("nout = 1"), "got: {msg}");
+}
+
+#[test]
+fn input_out_of_range_returns_error_for_infusion() {
+    let ode = Model::new("infoor")
+        .compartments(["c"])
+        .params(["k"])
+        .dxdt("c", "rateiv[0] - k * c")
+        .output("y", "c")
+        .compile()
+        .expect("compile");
+
+    // Infusion targets channel 5, but ndrugs is 1.
+    let subject = Subject::builder("p")
+        .infusion(0.0, 100.0, 5, 0.5)
+        .observation(1.0, 0.0, 0)
+        .build();
+
+    let err = ode
+        .simulate_subject(&subject, &[0.5], None)
+        .expect_err("should fail");
+    let msg = err.to_string();
+    assert!(msg.contains("Input channel 5"), "got: {msg}");
+}

@@ -7,12 +7,17 @@
 compile_model(text)
 
 compile_model(text)
+
+compile_model(text)
 }
 \arguments{
 \item{text}{Character scalar containing a pharmsol JIT model definition
 (see the package README for the format).}
 }
 \value{
+An external pointer wrapping the compiled model. Pass to
+  [simulate_subject()].
+
 An external pointer wrapping the compiled model. Pass to
   [simulate_subject()].
 }

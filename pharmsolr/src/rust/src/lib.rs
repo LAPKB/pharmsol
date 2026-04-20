@@ -43,6 +43,44 @@ fn compile_model_inner(text: &str) -> Result<Robj> {
     Ok(ExternalPtr::new(boxed).into())
 }
 
+/// Return the compartment names of a compiled model in declaration order.
+/// Index `i` (zero-based) is the value used as `cmt` in the events table for
+/// a bolus or infusion targeting this compartment.
+#[extendr]
+fn model_compartments(model: Robj) -> Robj {
+    or_throw(model_names(model, |c| c.compartments().to_vec()))
+}
+
+/// Return the output names of a compiled model in declaration order. Index
+/// `i` (zero-based) is the value used as `outeq` in the events table for
+/// observations of this output.
+#[extendr]
+fn model_outputs(model: Robj) -> Robj {
+    or_throw(model_names(model, |c| c.outputs().to_vec()))
+}
+
+/// Return the parameter names of a compiled model in the order expected by
+/// the `params` argument of [`simulate_subject`].
+#[extendr]
+fn model_params(model: Robj) -> Robj {
+    or_throw(model_names(model, |c| c.params().to_vec()))
+}
+
+/// Return the covariate names referenced by a compiled model.
+#[extendr]
+fn model_covariates(model: Robj) -> Robj {
+    or_throw(model_names(model, |c| c.covariates().to_vec()))
+}
+
+fn model_names(model: Robj, pick: impl Fn(&JitOde) -> Vec<String>) -> Result<Robj> {
+    let ptr: ExternalPtr<Arc<CompiledModel>> = model
+        .try_into()
+        .map_err(|_| Error::Other("`model` is not a pharmsolr model handle".into()))?;
+    let compiled: &Arc<CompiledModel> = &*ptr;
+    let names = pick(&compiled.ode);
+    Ok(Strings::from_values(names).into())
+}
+
 /// Run a single subject through a compiled model.
 ///
 /// All event-shape arguments are parallel vectors of equal length; covariates
@@ -201,4 +239,8 @@ extendr_module! {
     mod pharmsolr;
     fn compile_model;
     fn simulate_subject;
+    fn model_compartments;
+    fn model_outputs;
+    fn model_params;
+    fn model_covariates;
 }

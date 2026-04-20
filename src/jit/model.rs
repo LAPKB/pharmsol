@@ -138,6 +138,13 @@ pub enum ModelError {
     },
     /// Backend (Cranelift) error while emitting code.
     Codegen(String),
+    /// A user-declared name collides with another user name (across kinds) or
+    /// shadows a reserved/builtin identifier.
+    NameCollision {
+        name: String,
+        kind: &'static str,
+        reason: String,
+    },
 }
 
 impl std::fmt::Display for ModelError {
@@ -223,6 +230,9 @@ impl std::fmt::Display for ModelError {
                 Ok(())
             }
             ModelError::Codegen(s) => write!(f, "codegen error: {s}"),
+            ModelError::NameCollision { name, kind, reason } => {
+                write!(f, "{kind} name {name:?} is invalid: {reason}")
+            }
         }
     }
 }
@@ -515,6 +525,16 @@ impl Model {
             }
         }
 
+        // 1b. Validate naming: no duplicates within a kind, no collisions
+        //     between kinds, and no shadowing of reserved identifiers.
+        validate_names(
+            &self.compartments,
+            &self.params,
+            &self.covariates,
+            &self.outputs,
+            &self.lets,
+        )?;
+
         // 2. Validate every compartment has a dxdt and reorder dxdt to match.
         let mut ordered_dxdt: Vec<Option<Equation>> = vec![None; self.compartments.len()];
         for eq in self.dxdt.iter().cloned() {
@@ -624,6 +644,8 @@ impl Model {
             nstates,
             ndrugs,
             nout,
+            self.compartments,
+            outputs.iter().map(|e| e.target.clone()).collect(),
             self.covariates,
             self.params,
         ))
@@ -638,6 +660,137 @@ fn parse_or_sentinel(src: &str) -> (Expr, Option<ParseError>) {
         Ok(e) => (e, None),
         Err(e) => (Expr::Const(f64::NAN), Some(e)),
     }
+}
+
+/// Reserved identifiers that may not be used as a compartment, param,
+/// covariate, output, or `let` name. These are recognised by the expression
+/// language and shadowing them in the user namespace would produce confusing
+/// or incorrect code.
+const RESERVED_NAMES: &[&str] = &["t", "rateiv", "bolus"];
+
+fn is_reserved(name: &str) -> bool {
+    RESERVED_NAMES.contains(&name) || KNOWN_FUNCTIONS.contains(&name)
+}
+
+/// Validate the user-declared names: no duplicates within a kind, no
+/// shadowing of reserved/builtin identifiers, and no collisions across kinds
+/// that share a namespace inside expressions (compartments, params,
+/// covariates, lets all resolve from the same identifier scope).
+///
+/// Output names live in their own namespace (they are not referenced by the
+/// expression language) so they only need to be unique among themselves.
+fn validate_names(
+    compartments: &[String],
+    params: &[String],
+    covariates: &[String],
+    outputs: &[Equation],
+    lets: &[LetBinding],
+) -> Result<(), ModelError> {
+    // 1. No name in any kind may shadow a reserved identifier.
+    for (kind, list) in [
+        ("compartment", compartments),
+        ("param", params),
+        ("covariate", covariates),
+    ] {
+        for n in list {
+            if is_reserved(n) {
+                return Err(ModelError::NameCollision {
+                    name: n.clone(),
+                    kind,
+                    reason: format!(
+                        "shadows reserved identifier (reserved: {}; builtins: {})",
+                        RESERVED_NAMES.join(", "),
+                        KNOWN_FUNCTIONS.join(", "),
+                    ),
+                });
+            }
+        }
+    }
+    for lb in lets {
+        if is_reserved(&lb.name) {
+            return Err(ModelError::NameCollision {
+                name: lb.name.clone(),
+                kind: "let",
+                reason: format!(
+                    "shadows reserved identifier (reserved: {}; builtins: {})",
+                    RESERVED_NAMES.join(", "),
+                    KNOWN_FUNCTIONS.join(", "),
+                ),
+            });
+        }
+    }
+    for eq in outputs {
+        if is_reserved(&eq.target) {
+            return Err(ModelError::NameCollision {
+                name: eq.target.clone(),
+                kind: "output",
+                reason: format!(
+                    "shadows reserved identifier (reserved: {}; builtins: {})",
+                    RESERVED_NAMES.join(", "),
+                    KNOWN_FUNCTIONS.join(", "),
+                ),
+            });
+        }
+    }
+
+    // 2. Duplicates within a kind.
+    fn dup_check(kind: &'static str, names: &[String]) -> Result<(), ModelError> {
+        let mut seen = std::collections::HashSet::new();
+        for n in names {
+            if !seen.insert(n.as_str()) {
+                return Err(ModelError::NameCollision {
+                    name: n.clone(),
+                    kind,
+                    reason: format!("declared more than once in {kind}s"),
+                });
+            }
+        }
+        Ok(())
+    }
+    dup_check("compartment", compartments)?;
+    dup_check("param", params)?;
+    dup_check("covariate", covariates)?;
+    let output_names: Vec<String> = outputs.iter().map(|e| e.target.clone()).collect();
+    dup_check("output", &output_names)?;
+    let let_names: Vec<String> = lets.iter().map(|lb| lb.name.clone()).collect();
+    dup_check("let", &let_names)?;
+
+    // 3. Cross-kind collisions inside the expression namespace.
+    //    Compartments, params, covariates, and lets all resolve from the same
+    //    identifier scope (see `codegen::validate`). A name appearing in two
+    //    of these would silently bind to one and produce a wrong model.
+    let mut origin: std::collections::HashMap<&str, &'static str> =
+        std::collections::HashMap::new();
+    for (kind, list) in [
+        ("compartment", compartments),
+        ("param", params),
+        ("covariate", covariates),
+    ] {
+        for n in list {
+            if let Some(prev) = origin.insert(n.as_str(), kind) {
+                if prev != kind {
+                    return Err(ModelError::NameCollision {
+                        name: n.clone(),
+                        kind,
+                        reason: format!("also declared as a {prev}"),
+                    });
+                }
+            }
+        }
+    }
+    for lb in lets {
+        if let Some(prev) = origin.insert(lb.name.as_str(), "let") {
+            if prev != "let" {
+                return Err(ModelError::NameCollision {
+                    name: lb.name.clone(),
+                    kind: "let",
+                    reason: format!("also declared as a {prev}"),
+                });
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Walk every expression in the model and find the maximum drug-channel index
