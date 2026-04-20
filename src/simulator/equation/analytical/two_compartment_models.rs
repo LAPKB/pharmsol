@@ -111,13 +111,7 @@ pub fn two_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: &V, _cov: &C
     xout
 }
 
-pub fn pm_two_compartments_with_absorption(
-    x: &V,
-    p: &V,
-    t: T,
-    rateiv: &V,
-    cov: &Covariates,
-) -> V {
+pub fn pm_two_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: &V, cov: &Covariates) -> V {
     wrap_pmetrics_analytical(x, p, t, rateiv, cov, two_compartments_with_absorption)
 }
 
