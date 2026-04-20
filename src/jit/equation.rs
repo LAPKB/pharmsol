@@ -172,8 +172,22 @@ impl EquationPriv for JitOde {
             "JitOde::process_observation is not used; observations are handled in simulate_subject"
         )
     }
-    fn initial_state(&self, _spp: &[f64], _covariates: &Covariates, _occasion: usize) -> V {
-        V::zeros(self.nstates, NalgebraContext)
+    fn initial_state(&self, support_point: &[f64], covariates: &Covariates, _occasion: usize) -> V {
+        let mut x = V::zeros(self.nstates, NalgebraContext);
+        if let Some(init_fn) = self.artifact.init {
+            // Fill a temporary covariate buffer for t=0.
+            let mut cov_buf = vec![0.0_f64; self.covariates.len()];
+            fill_cov_buffer(&self.covariates, covariates, 0.0, &mut cov_buf);
+            unsafe {
+                init_fn(
+                    0.0,
+                    support_point.as_ptr(),
+                    cov_buf.as_ptr(),
+                    x.as_mut_slice().as_mut_ptr(),
+                );
+            }
+        }
+        x
     }
 }
 
@@ -189,6 +203,72 @@ fn fill_cov_buffer(names: &[String], cov: &Covariates, t: f64, buf: &mut [f64]) 
             None => f64::NAN,
         };
     }
+}
+
+/// Apply JIT-compiled `lag()` and `fa()` to all bolus events in place, then
+/// re-sort to maintain pharmsol's event ordering invariant
+/// (Observation < Bolus < Infusion at the same time).
+fn apply_lag_and_fa(
+    events: &mut Vec<Event>,
+    artifact: &JitArtifact,
+    cov_names: &[String],
+    covariates: &Covariates,
+    support_point: &[f64],
+    ndrugs: usize,
+) {
+    let mut cov_buf = vec![0.0_f64; cov_names.len()];
+    let mut lag_buf = vec![0.0_f64; ndrugs];
+    let mut fa_buf = vec![1.0_f64; ndrugs];
+    let p_ptr = support_point.as_ptr();
+
+    for ev in events.iter_mut() {
+        if let Event::Bolus(bolus) = ev {
+            let input = bolus.input();
+            if input >= ndrugs {
+                continue;
+            }
+            let t = bolus.time();
+            fill_cov_buffer(cov_names, covariates, t, &mut cov_buf);
+
+            if let Some(lag_fn) = artifact.lag {
+                unsafe {
+                    lag_fn(t, p_ptr, cov_buf.as_ptr(), lag_buf.as_mut_ptr());
+                }
+                let l = lag_buf[input];
+                if l != 0.0 {
+                    *bolus.mut_time() += l;
+                    // Re-fetch covariates at the shifted time before applying fa.
+                    fill_cov_buffer(cov_names, covariates, bolus.time(), &mut cov_buf);
+                }
+            }
+            if let Some(fa_fn) = artifact.fa {
+                unsafe {
+                    fa_fn(bolus.time(), p_ptr, cov_buf.as_ptr(), fa_buf.as_mut_ptr());
+                }
+                let f = fa_buf[input];
+                if f != 1.0 {
+                    bolus.set_amount(bolus.amount() * f);
+                }
+            }
+        }
+    }
+
+    events.sort_by(|a, b| {
+        #[inline]
+        fn order(e: &Event) -> u8 {
+            match e {
+                Event::Observation(_) => 1,
+                Event::Bolus(_) => 2,
+                Event::Infusion(_) => 3,
+            }
+        }
+        let t_cmp = a.time().partial_cmp(&b.time());
+        match t_cmp {
+            Some(std::cmp::Ordering::Equal) => order(a).cmp(&order(b)),
+            Some(o) => o,
+            None => std::cmp::Ordering::Equal,
+        }
+    });
 }
 
 fn _subject_predictions(
@@ -265,10 +345,25 @@ impl Equation for JitOde {
         for occasion in subject.occasions() {
             let covariates = occasion.covariates();
             let infusions = occasion.infusions_ref();
-            let events = occasion.process_events(
+            let mut events = occasion.process_events(
                 Some((self.fa(), self.lag(), support_point, covariates)),
                 true,
             );
+
+            // Apply JIT-compiled lag and fa to bolus events. Pharmsol's own
+            // `process_events` only knows about the `Lag`/`Fa` `fn` pointers
+            // we stored (no-ops), so we adjust here using the artifact's
+            // closure-capable lag/fa functions.
+            if self.artifact.lag.is_some() || self.artifact.fa.is_some() {
+                apply_lag_and_fa(
+                    &mut events,
+                    &self.artifact,
+                    &self.covariates,
+                    covariates,
+                    support_point,
+                    self.ndrugs,
+                );
+            }
 
             // Closure that satisfies `Fn(&V, &V, T, &mut V, &V, &V, &Covariates)`.
             let artifact = Arc::clone(&self.artifact);

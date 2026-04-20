@@ -51,7 +51,7 @@ use super::model::Model;
 pub enum TextError {
     #[error("line {line}: expected `key = value` or `dxdt(name) = expr` or `out(name) = expr`")]
     BadLine { line: usize },
-    #[error("line {line}: unknown key {key:?} (expected name, compartments, params, covariates, ndrugs, dxdt(...), out(...))")]
+    #[error("line {line}: unknown key {key:?} (expected name, compartments, params, covariates, ndrugs, dxdt(...), out(...), init(...), lag(N), fa(N), let NAME)")]
     UnknownKey { line: usize, key: String },
     #[error("line {line}: malformed `{kind}(...)` header: {raw:?}")]
     BadHeader {
@@ -61,6 +61,14 @@ pub enum TextError {
     },
     #[error("line {line}: invalid integer for ndrugs: {value:?}")]
     BadNdrugs { line: usize, value: String },
+    #[error("line {line}: invalid integer for {kind} channel: {value:?}")]
+    BadChannel {
+        line: usize,
+        kind: &'static str,
+        value: String,
+    },
+    #[error("line {line}: malformed `let` declaration: {raw:?}")]
+    BadLet { line: usize, raw: String },
     #[error("model has no `compartments` declaration")]
     NoCompartments,
 }
@@ -74,6 +82,10 @@ pub(crate) fn parse_text(src: &str) -> Result<Model, TextError> {
     let mut ndrugs: Option<usize> = None;
     let mut dxdt: Vec<(String, String)> = Vec::new();
     let mut outs: Vec<(String, String)> = Vec::new();
+    let mut inits: Vec<(String, String)> = Vec::new();
+    let mut lags: Vec<(usize, String)> = Vec::new();
+    let mut fas: Vec<(usize, String)> = Vec::new();
+    let mut lets: Vec<(String, String)> = Vec::new();
 
     for (lineno, raw_line) in src.lines().enumerate() {
         let line_num = lineno + 1;
@@ -86,6 +98,28 @@ pub(crate) fn parse_text(src: &str) -> Result<Model, TextError> {
         };
         let lhs = line[..eq_idx].trim();
         let rhs = line[eq_idx + 1..].trim();
+
+        // `let NAME = expr`
+        if let Some(rest) = lhs.strip_prefix("let ") {
+            let name_tok = rest.trim();
+            if name_tok.is_empty()
+                || !name_tok
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_')
+                || name_tok
+                    .chars()
+                    .next()
+                    .map(|c| c.is_ascii_digit())
+                    .unwrap_or(true)
+            {
+                return Err(TextError::BadLet {
+                    line: line_num,
+                    raw: lhs.to_string(),
+                });
+            }
+            lets.push((name_tok.to_string(), rhs.to_string()));
+            continue;
+        }
 
         if let Some(target) = paren_target(lhs, "dxdt") {
             dxdt.push((
@@ -107,6 +141,45 @@ pub(crate) fn parse_text(src: &str) -> Result<Model, TextError> {
                 })?,
                 rhs.to_string(),
             ));
+            continue;
+        }
+        if let Some(target) = paren_target(lhs, "init") {
+            inits.push((
+                target.ok_or_else(|| TextError::BadHeader {
+                    line: line_num,
+                    kind: "init",
+                    raw: lhs.to_string(),
+                })?,
+                rhs.to_string(),
+            ));
+            continue;
+        }
+        if let Some(target) = paren_target(lhs, "lag") {
+            let s = target.ok_or_else(|| TextError::BadHeader {
+                line: line_num,
+                kind: "lag",
+                raw: lhs.to_string(),
+            })?;
+            let ch: usize = s.parse().map_err(|_| TextError::BadChannel {
+                line: line_num,
+                kind: "lag",
+                value: s.clone(),
+            })?;
+            lags.push((ch, rhs.to_string()));
+            continue;
+        }
+        if let Some(target) = paren_target(lhs, "fa") {
+            let s = target.ok_or_else(|| TextError::BadHeader {
+                line: line_num,
+                kind: "fa",
+                raw: lhs.to_string(),
+            })?;
+            let ch: usize = s.parse().map_err(|_| TextError::BadChannel {
+                line: line_num,
+                kind: "fa",
+                value: s.clone(),
+            })?;
+            fas.push((ch, rhs.to_string()));
             continue;
         }
 
@@ -137,11 +210,23 @@ pub(crate) fn parse_text(src: &str) -> Result<Model, TextError> {
         .params(params)
         .covariates(covariates)
         .ndrugs(ndrugs.unwrap_or(1));
+    for (name, expr) in lets {
+        m = m.let_binding(name, expr);
+    }
     for (target, expr) in dxdt {
         m = m.dxdt(target, expr);
     }
     for (target, expr) in outs {
         m = m.output(target, expr);
+    }
+    for (target, expr) in inits {
+        m = m.init(target, expr);
+    }
+    for (ch, expr) in lags {
+        m = m.lag(ch, expr);
+    }
+    for (ch, expr) in fas {
+        m = m.fa(ch, expr);
     }
     Ok(m)
 }

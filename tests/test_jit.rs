@@ -125,3 +125,210 @@ fn from_text_simulates_one_compartment_iv_bolus() {
         assert_relative_eq!(p.prediction(), analytical, max_relative = 1e-3);
     }
 }
+
+#[test]
+fn let_bindings_share_subexpressions() {
+    // Same model written two ways: with and without `let`. They must agree.
+    let plain = Model::from_text(
+        "
+        name = m
+        compartments = central
+        params = CL, V
+        covariates = WT
+        dxdt(central) = rateiv[0] - (CL * pow(WT / 70.0, 0.75) / (V * (WT / 70.0))) * central
+        out(cp) = central / (V * (WT / 70.0))
+        ",
+    )
+    .unwrap()
+    .compile()
+    .unwrap();
+
+    let withlet = Model::from_text(
+        "
+        name = m
+        compartments = central
+        params = CL, V
+        covariates = WT
+        let wt_ratio = WT / 70.0
+        let v_scaled = V * wt_ratio
+        let cl_scaled = CL * pow(wt_ratio, 0.75)
+        dxdt(central) = rateiv[0] - (cl_scaled / v_scaled) * central
+        out(cp) = central / v_scaled
+        ",
+    )
+    .unwrap()
+    .compile()
+    .unwrap();
+
+    let subject = Subject::builder("p1")
+        .infusion(0.0, 100.0, 0, 0.5)
+        .covariate("WT", 0.0, 80.0)
+        .observation(1.0, 0.0, 0)
+        .observation(4.0, 0.0, 0)
+        .observation(12.0, 0.0, 0)
+        .build();
+
+    let (a, _) = plain.simulate_subject(&subject, &[5.0, 50.0], None).unwrap();
+    let (b, _) = withlet
+        .simulate_subject(&subject, &[5.0, 50.0], None)
+        .unwrap();
+    let av = a.get_predictions();
+    let bv = b.get_predictions();
+    assert_eq!(av.len(), bv.len());
+    for (x, y) in av.iter().zip(bv.iter()) {
+        assert_relative_eq!(x.prediction(), y.prediction(), max_relative = 1e-12);
+    }
+}
+
+#[test]
+fn init_sets_initial_state() {
+    // No dose, just a non-zero initial state that decays.
+    let ode = Model::from_text(
+        "
+        name = decay
+        compartments = central
+        params = CL, V
+        init(central) = 200.0
+        dxdt(central) = -(CL / V) * central
+        out(cp) = central / V
+        ",
+    )
+    .unwrap()
+    .compile()
+    .unwrap();
+
+    let subject = Subject::builder("p1")
+        .observation(0.0, 0.0, 0)
+        .observation(2.0, 0.0, 0)
+        .observation(8.0, 0.0, 0)
+        .build();
+
+    let cl = 5.0;
+    let v = 50.0;
+    let (preds, _) = ode.simulate_subject(&subject, &[cl, v], None).unwrap();
+    let vp = preds.get_predictions();
+    let ke = cl / v;
+    for p in &vp {
+        let analytical = (200.0 / v) * (-ke * p.time()).exp();
+        assert_relative_eq!(p.prediction(), analytical, max_relative = 1e-3);
+    }
+}
+
+#[test]
+fn lag_shifts_bolus_in_time() {
+    // Bolus at t=0 with lag = 2.0 should behave like a bolus at t=2.
+    let ode = Model::from_text(
+        "
+        name = lag1
+        compartments = central
+        params = CL, V, TLAG
+        lag(0) = TLAG
+        dxdt(central) = -(CL / V) * central
+        out(cp) = central / V
+        ",
+    )
+    .unwrap()
+    .compile()
+    .unwrap();
+
+    let cl = 5.0;
+    let v = 50.0;
+    let tlag = 2.0;
+
+    let subject = Subject::builder("p1")
+        .bolus(0.0, 100.0, 0)
+        .observation(1.0, 0.0, 0) // before lag-shifted dose -> 0
+        .observation(3.0, 0.0, 0) // 1h after dose
+        .observation(8.0, 0.0, 0) // 6h after dose
+        .build();
+
+    let (preds, _) = ode
+        .simulate_subject(&subject, &[cl, v, tlag], None)
+        .unwrap();
+    let vp = preds.get_predictions();
+    let ke = cl / v;
+
+    // t=1 is before the lag-shifted dose at t=2
+    assert!(vp[0].prediction().abs() < 1e-6, "got {}", vp[0].prediction());
+    // t=3, t=8 -> dose has been at t=2
+    let exp1 = (100.0 / v) * (-ke * (3.0 - tlag)).exp();
+    let exp2 = (100.0 / v) * (-ke * (8.0 - tlag)).exp();
+    assert_relative_eq!(vp[1].prediction(), exp1, max_relative = 1e-3);
+    assert_relative_eq!(vp[2].prediction(), exp2, max_relative = 1e-3);
+}
+
+#[test]
+fn fa_scales_bolus_amount() {
+    // fa = 0.5 -> bolus of 100 acts like 50.
+    let ode = Model::from_text(
+        "
+        name = fa1
+        compartments = central
+        params = CL, V, F
+        fa(0) = F
+        dxdt(central) = -(CL / V) * central
+        out(cp) = central / V
+        ",
+    )
+    .unwrap()
+    .compile()
+    .unwrap();
+
+    let cl = 5.0;
+    let v = 50.0;
+    let f = 0.5;
+
+    let subject = Subject::builder("p1")
+        .bolus(0.0, 100.0, 0)
+        .observation(2.0, 0.0, 0)
+        .observation(6.0, 0.0, 0)
+        .build();
+
+    let (preds, _) = ode.simulate_subject(&subject, &[cl, v, f], None).unwrap();
+    let ke = cl / v;
+    for p in preds.get_predictions() {
+        let analytical = (f * 100.0 / v) * (-ke * p.time()).exp();
+        assert_relative_eq!(p.prediction(), analytical, max_relative = 1e-3);
+    }
+}
+
+#[test]
+fn rejects_let_cycle() {
+    let err = Model::from_text(
+        "
+        name = bad
+        compartments = c
+        params = k
+        let a = b
+        let b = a
+        dxdt(c) = -k * c + a
+        out(y) = c
+        ",
+    )
+    .unwrap()
+    .compile()
+    .expect_err("cycle should be rejected");
+    assert!(err.to_string().contains("cycle"), "got: {err}");
+}
+
+#[test]
+fn rejects_let_referencing_state_in_aux_context() {
+    // `let` referencing a compartment is fine in dxdt/out, but using it from
+    // init/lag/fa must fail because state isn't available there.
+    let err = Model::from_text(
+        "
+        name = bad
+        compartments = c
+        params = k
+        let illegal = c
+        lag(0) = illegal
+        dxdt(c) = -k * c
+        out(y) = c
+        ",
+    )
+    .unwrap()
+    .compile()
+    .expect_err("should fail");
+    let msg = err.to_string();
+    assert!(msg.contains("unresolved") || msg.contains("illegal"), "got: {msg}");
+}

@@ -69,6 +69,22 @@ pub enum ModelError {
         expected: usize,
         got: usize,
     },
+    #[error("duplicate let binding {0:?}")]
+    DuplicateLet(String),
+    #[error("let binding {0:?} forms a cycle")]
+    LetCycle(String),
+    #[error("duplicate init for compartment {0:?}")]
+    DuplicateInit(String),
+    #[error("unknown compartment {0:?} in init")]
+    UnknownInitCompartment(String),
+    #[error("duplicate lag for input channel {0}")]
+    DuplicateLag(usize),
+    #[error("duplicate fa for input channel {0}")]
+    DuplicateFa(usize),
+    #[error("lag channel {0} out of range (ndrugs = {1})")]
+    LagOutOfRange(usize, usize),
+    #[error("fa channel {0} out of range (ndrugs = {1})")]
+    FaOutOfRange(usize, usize),
     #[error("codegen error: {0}")]
     Codegen(String),
 }
@@ -77,6 +93,29 @@ pub enum ModelError {
 #[derive(Debug, Clone)]
 pub(crate) struct Equation {
     pub(crate) target: String,
+    pub(crate) expr: Expr,
+}
+
+/// A `let name = expr` binding declared in the model. Lets are scoped to the
+/// whole model and may be referenced from any subsequent expression
+/// (including other lets, dxdt, output, init, lag, fa).
+#[derive(Debug, Clone)]
+pub(crate) struct LetBinding {
+    pub(crate) name: String,
+    pub(crate) expr: Expr,
+}
+
+/// An `init(compartment) = expr` declaration.
+#[derive(Debug, Clone)]
+pub(crate) struct InitDecl {
+    pub(crate) compartment: String,
+    pub(crate) expr: Expr,
+}
+
+/// A `lag(channel) = expr` or `fa(channel) = expr` declaration.
+#[derive(Debug, Clone)]
+pub(crate) struct ChannelDecl {
+    pub(crate) channel: usize,
     pub(crate) expr: Expr,
 }
 
@@ -90,6 +129,10 @@ pub struct Model {
     pub(crate) ndrugs: usize,
     pub(crate) dxdt: Vec<Equation>,
     pub(crate) outputs: Vec<Equation>,
+    pub(crate) lets: Vec<LetBinding>,
+    pub(crate) inits: Vec<InitDecl>,
+    pub(crate) lags: Vec<ChannelDecl>,
+    pub(crate) fas: Vec<ChannelDecl>,
 }
 
 impl Model {
@@ -103,6 +146,10 @@ impl Model {
             ndrugs: 1,
             dxdt: Vec::new(),
             outputs: Vec::new(),
+            lets: Vec::new(),
+            inits: Vec::new(),
+            lags: Vec::new(),
+            fas: Vec::new(),
         }
     }
 
@@ -187,6 +234,53 @@ impl Model {
         self
     }
 
+    /// Add a `let` binding: a named scalar expression that may be referenced
+    /// (by name) in any subsequent equation. Useful for sharing
+    /// sub-expressions between dxdt/out/init/lag/fa.
+    pub fn let_binding(mut self, name: impl Into<String>, expr: impl AsRef<str>) -> Self {
+        let parsed = parser::parse(expr.as_ref()).unwrap_or(Expr::Const(f64::NAN));
+        self.lets.push(LetBinding {
+            name: name.into(),
+            expr: parsed,
+        });
+        self
+    }
+
+    /// Add an initial-state expression for a compartment. Compartments
+    /// without an `init` default to 0.
+    pub fn init(mut self, compartment: impl Into<String>, expr: impl AsRef<str>) -> Self {
+        let parsed = parser::parse(expr.as_ref()).unwrap_or(Expr::Const(f64::NAN));
+        self.inits.push(InitDecl {
+            compartment: compartment.into(),
+            expr: parsed,
+        });
+        self
+    }
+
+    /// Add a lag-time expression for an input channel. Channels without a
+    /// `lag` default to 0. Lag time is added to bolus event times only
+    /// (matching pharmsol's existing semantics).
+    pub fn lag(mut self, channel: usize, expr: impl AsRef<str>) -> Self {
+        let parsed = parser::parse(expr.as_ref()).unwrap_or(Expr::Const(f64::NAN));
+        self.lags.push(ChannelDecl {
+            channel,
+            expr: parsed,
+        });
+        self
+    }
+
+    /// Add a bioavailability expression for an input channel. Channels
+    /// without an `fa` default to 1. Bioavailability scales bolus amounts
+    /// only (matching pharmsol's existing semantics).
+    pub fn fa(mut self, channel: usize, expr: impl AsRef<str>) -> Self {
+        let parsed = parser::parse(expr.as_ref()).unwrap_or(Expr::Const(f64::NAN));
+        self.fas.push(ChannelDecl {
+            channel,
+            expr: parsed,
+        });
+        self
+    }
+
     /// Validate, compile to native code via Cranelift, and return a [`JitOde`]
     /// ready to use with `Equation::simulate_subject`.
     pub fn compile(self) -> Result<JitOde, ModelError> {
@@ -228,6 +322,50 @@ impl Model {
         let nout = outputs.len();
         let ndrugs = self.ndrugs;
 
+        // Validate let bindings: no duplicates.
+        let mut seen_let = std::collections::HashSet::new();
+        for lb in &self.lets {
+            if !seen_let.insert(lb.name.clone()) {
+                return Err(ModelError::DuplicateLet(lb.name.clone()));
+            }
+        }
+
+        // Validate inits: target must be a compartment, no duplicates.
+        let mut init_by_idx: Vec<Option<Expr>> = vec![None; nstates];
+        for init in &self.inits {
+            let idx = self
+                .compartments
+                .iter()
+                .position(|c| c == &init.compartment)
+                .ok_or_else(|| ModelError::UnknownInitCompartment(init.compartment.clone()))?;
+            if init_by_idx[idx].is_some() {
+                return Err(ModelError::DuplicateInit(init.compartment.clone()));
+            }
+            init_by_idx[idx] = Some(init.expr.clone());
+        }
+
+        // Validate lag/fa: channel in range, no duplicates.
+        let mut lag_by_idx: Vec<Option<Expr>> = vec![None; ndrugs];
+        for lag in &self.lags {
+            if lag.channel >= ndrugs {
+                return Err(ModelError::LagOutOfRange(lag.channel, ndrugs));
+            }
+            if lag_by_idx[lag.channel].is_some() {
+                return Err(ModelError::DuplicateLag(lag.channel));
+            }
+            lag_by_idx[lag.channel] = Some(lag.expr.clone());
+        }
+        let mut fa_by_idx: Vec<Option<Expr>> = vec![None; ndrugs];
+        for fa in &self.fas {
+            if fa.channel >= ndrugs {
+                return Err(ModelError::FaOutOfRange(fa.channel, ndrugs));
+            }
+            if fa_by_idx[fa.channel].is_some() {
+                return Err(ModelError::DuplicateFa(fa.channel));
+            }
+            fa_by_idx[fa.channel] = Some(fa.expr.clone());
+        }
+
         let artifact = compile_artifact(
             &self.name,
             &self.compartments,
@@ -236,6 +374,10 @@ impl Model {
             ndrugs,
             &dxdt_in_order,
             &outputs,
+            &self.lets,
+            &init_by_idx,
+            &lag_by_idx,
+            &fa_by_idx,
         )?;
 
         Ok(JitOde::new(
