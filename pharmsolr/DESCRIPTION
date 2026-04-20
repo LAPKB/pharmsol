@@ -11,4 +11,4 @@ License: GPL-3
 Encoding: UTF-8
 SystemRequirements: Cargo (Rust's package manager), rustc
 Config/rextendr/version: 0.4.2
-RoxygenNote: 7.3.1
+RoxygenNote: 7.3.3

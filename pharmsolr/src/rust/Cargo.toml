@@ -12,7 +12,7 @@ crate-type = ["staticlib"]
 name = "pharmsolr"
 
 [dependencies]
-extendr-api = "0.7"
+extendr-api = "0.9"
 # The path dependency points up two levels to the pharmsol crate at the repo
 # root. In a published version of this R package, replace with a git or
 # crates.io reference, e.g.

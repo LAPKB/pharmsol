@@ -13,6 +13,7 @@
 //! API on top of these.
 
 use extendr_api::prelude::*;
+use extendr_api::Result;
 use std::sync::Arc;
 
 use pharmsol::jit::{JitOde, Model};
@@ -29,7 +30,11 @@ struct CompiledModel {
 /// Returns an external-pointer SEXP. The pointer is reference-counted via
 /// `Arc<CompiledModel>` so cloning the R object is cheap.
 #[extendr]
-fn compile_model(text: &str) -> Result<Robj> {
+fn compile_model(text: &str) -> Robj {
+    or_throw(compile_model_inner(text))
+}
+
+fn compile_model_inner(text: &str) -> Result<Robj> {
     let model = Model::from_text(text).map_err(|e| Error::Other(format!("parse error: {e}")))?;
     let ode = model
         .compile()
@@ -46,6 +51,25 @@ fn compile_model(text: &str) -> Result<Robj> {
 #[extendr]
 #[allow(clippy::too_many_arguments)]
 fn simulate_subject(
+    model: Robj,
+    params: Doubles,
+    times: Doubles,
+    evids: Integers,
+    amts: Doubles,
+    durs: Doubles,
+    cmts: Integers,
+    outeqs: Integers,
+    cov_names: Strings,
+    cov_times: List,
+    cov_values: List,
+) -> Robj {
+    or_throw(simulate_subject_inner(
+        model, params, times, evids, amts, durs, cmts, outeqs, cov_names, cov_times, cov_values,
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn simulate_subject_inner(
     model: Robj,
     params: Doubles,
     times: Doubles,
@@ -84,7 +108,7 @@ fn simulate_subject(
 
     // Covariates first so they're available for the whole occasion.
     for i in 0..cov_names.len() {
-        let name_owned = cov_names.elt(i).as_str().to_string();
+        let name_owned = cov_names.elt(i).as_ref().to_string();
         let ts = cov_times.elt(i)?;
         let vs = cov_values.elt(i)?;
         let ts: Doubles = ts
@@ -100,18 +124,18 @@ fn simulate_subject(
             )));
         }
         for (t, v) in ts.iter().zip(vs.iter()) {
-            builder = builder.covariate(&name_owned, t.inner(), v.inner());
+            builder = builder.covariate(&name_owned, t.0, v.0);
         }
     }
 
     // Events.
     for i in 0..n_events {
-        let t = times[i].inner();
-        let amt = amts[i].inner();
-        let dur = durs[i].inner();
-        let evid = evids[i].inner();
-        let cmt = i32_to_usize(cmts[i].inner(), "cmt", i)?;
-        let outeq = i32_to_usize(outeqs[i].inner(), "outeq", i)?;
+        let t = times[i].0;
+        let amt = amts[i].0;
+        let dur = durs[i].0;
+        let evid = evids[i].0;
+        let cmt = i32_to_usize(cmts[i].0, "cmt", i)?;
+        let outeq = i32_to_usize(outeqs[i].0, "outeq", i)?;
         builder = match evid {
             // EVID=1 is a dose; pharmsol distinguishes bolus from infusion
             // by whether `dur` is zero (matches NONMEM semantics).
@@ -134,7 +158,7 @@ fn simulate_subject(
     }
 
     let subject = builder.build();
-    let p: Vec<f64> = params.iter().map(|x| x.inner()).collect();
+    let p: Vec<f64> = params.iter().map(|x| x.0).collect();
 
     let (preds, _) = compiled
         .ode
@@ -145,6 +169,18 @@ fn simulate_subject(
     let out_times: Doubles = v.iter().map(|p| Rfloat::from(p.time())).collect();
     let out_preds: Doubles = v.iter().map(|p| Rfloat::from(p.prediction())).collect();
     Ok(list!(time = out_times, pred = out_preds).into())
+}
+
+/// Convert an `extendr_api::Result` into either its `Ok` value or a clean
+/// R-side error via `throw_r_error`. Without this, returning `Err(...)` from
+/// an `#[extendr]` function panics in Rust (see extendr-api's default
+/// `From<Result<_,_>> for Robj` impl), which surfaces in R as a noisy
+/// `explicit panic` rather than a normal condition.
+fn or_throw<T: Into<Robj>>(res: Result<T>) -> Robj {
+    match res {
+        Ok(v) => v.into(),
+        Err(e) => throw_r_error(e.to_string()),
+    }
 }
 
 #[inline]
