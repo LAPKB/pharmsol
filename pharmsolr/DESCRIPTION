@@ -1,0 +1,14 @@
+Package: pharmsolr
+Title: R Bindings for pharmsol JIT-Compiled PK Models
+Version: 0.1.0
+Authors@R: person("pharmsol", "contributors", role = c("aut", "cre"),
+    email = "noreply@example.com")
+Description: Defines a pharmacometric model in plain text, JIT-compiles it via
+    Cranelift through the 'pharmsol' Rust crate, and runs simulations from R
+    without invoking 'cargo' or 'rustc' on every call. Built once, the package
+    runs any model definition at runtime.
+License: GPL-3
+Encoding: UTF-8
+SystemRequirements: Cargo (Rust's package manager), rustc
+Config/rextendr/version: 0.4.2
+RoxygenNote: 7.3.1

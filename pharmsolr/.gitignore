@@ -1,0 +1,17 @@
+# Rust build artifacts
+src/rust/target/
+src/*.o
+src/*.so
+src/*.dll
+src/*.dylib
+src/symbols.rds
+
+# Cargo lock for the embedded staticlib (regenerated on build)
+src/rust/Cargo.lock
+
+# R / package build artifacts
+.Rhistory
+.RData
+.Rproj.user/
+*.Rcheck/
+src/.cargo/

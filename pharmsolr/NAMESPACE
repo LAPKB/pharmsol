@@ -1,0 +1,4 @@
+useDynLib(pharmsolr, .registration = TRUE)
+
+export(compile_model)
+export(simulate_subject)

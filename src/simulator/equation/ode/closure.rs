@@ -309,7 +309,7 @@ impl NonLinearOp for PmOut {
 }
 
 // Completely revised PMProblem to fix lifetime issues and improve performance
-pub struct PMProblem<'a, F>
+pub(crate) struct PMProblem<'a, F>
 where
     F: Fn(&V, &V, T, &mut V, &V, &V, &Covariates) + 'a,
 {

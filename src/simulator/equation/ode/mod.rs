@@ -1,5 +1,12 @@
 mod closure;
 
+/// Re-export of the diffsol `OdeEquations` adapter so the JIT module can build
+/// `OdeBuilder` problems with closures (rather than plain `fn` pointers).
+#[cfg(feature = "jit")]
+pub(crate) mod closure_helpers {
+    pub(crate) use super::closure::PMProblem;
+}
+
 use crate::{
     data::{Covariates, Infusion},
     error_model::AssayErrorModels,
