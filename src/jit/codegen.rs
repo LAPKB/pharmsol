@@ -27,7 +27,7 @@ use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{Linkage, Module};
 
 use super::ast::{BinOp, Expr};
-use super::model::{Equation, LetBinding, ModelError};
+use super::model::{did_you_mean, Equation, LetBinding, ModelError, KNOWN_FUNCTIONS};
 
 /// Native libm-backed extern functions used by JIT'd code.
 mod externs {
@@ -39,6 +39,9 @@ mod externs {
     }
     pub extern "C" fn log10_(x: f64) -> f64 {
         x.log10()
+    }
+    pub extern "C" fn log2_(x: f64) -> f64 {
+        x.log2()
     }
     pub extern "C" fn sqrt_(x: f64) -> f64 {
         x.sqrt()
@@ -137,6 +140,7 @@ struct ExternIds {
     exp: cranelift_module::FuncId,
     ln: cranelift_module::FuncId,
     log10: cranelift_module::FuncId,
+    log2: cranelift_module::FuncId,
     sqrt: cranelift_module::FuncId,
     abs: cranelift_module::FuncId,
     pow: cranelift_module::FuncId,
@@ -147,6 +151,7 @@ struct ExternRefs {
     exp: codegen::ir::FuncRef,
     ln: codegen::ir::FuncRef,
     log10: codegen::ir::FuncRef,
+    log2: codegen::ir::FuncRef,
     sqrt: codegen::ir::FuncRef,
     abs: codegen::ir::FuncRef,
     pow: codegen::ir::FuncRef,
@@ -234,6 +239,7 @@ pub(crate) fn compile_artifact(
     builder.symbol("pm_exp", externs::exp_ as *const u8);
     builder.symbol("pm_ln", externs::ln_ as *const u8);
     builder.symbol("pm_log10", externs::log10_ as *const u8);
+    builder.symbol("pm_log2", externs::log2_ as *const u8);
     builder.symbol("pm_sqrt", externs::sqrt_ as *const u8);
     builder.symbol("pm_abs", externs::abs_ as *const u8);
     builder.symbol("pm_pow", externs::pow_ as *const u8);
@@ -262,6 +268,7 @@ pub(crate) fn compile_artifact(
         exp: extern_unary(&mut module, "pm_exp")?,
         ln: extern_unary(&mut module, "pm_ln")?,
         log10: extern_unary(&mut module, "pm_log10")?,
+        log2: extern_unary(&mut module, "pm_log2")?,
         sqrt: extern_unary(&mut module, "pm_sqrt")?,
         abs: extern_unary(&mut module, "pm_abs")?,
         pow: extern_binary(&mut module, "pm_pow")?,
@@ -552,6 +559,7 @@ fn declare_refs(module: &mut JITModule, fb: &mut FunctionBuilder<'_>, e: &Extern
         exp: module.declare_func_in_func(e.exp, fb.func),
         ln: module.declare_func_in_func(e.ln, fb.func),
         log10: module.declare_func_in_func(e.log10, fb.func),
+        log2: module.declare_func_in_func(e.log2, fb.func),
         sqrt: module.declare_func_in_func(e.sqrt, fb.func),
         abs: module.declare_func_in_func(e.abs, fb.func),
         pow: module.declare_func_in_func(e.pow, fb.func),
@@ -676,18 +684,26 @@ fn validate(expr: &Expr, env: &Env<'_>, ctx: Ctx, where_: &str) -> Result<(), Mo
             {
                 Ok(())
             } else {
+                let available = available_names(env, ctx);
                 Err(ModelError::UnresolvedIdent {
                     ident: name.clone(),
                     context: where_.to_string(),
+                    suggestion: did_you_mean(name, available.iter().map(String::as_str)),
+                    available,
                 })
             }
         }
         Expr::Index(name, idx) => match name.as_str() {
             "rateiv" => {
                 if !ctx.has_rateiv {
+                    let available = available_names(env, ctx);
                     return Err(ModelError::UnresolvedIdent {
                         ident: format!("rateiv[{idx}]"),
-                        context: where_.to_string(),
+                        context: format!(
+                            "{where_} (rateiv[] is only valid in dxdt expressions)"
+                        ),
+                        suggestion: None,
+                        available,
                     });
                 }
                 if *idx >= env.ndrugs {
@@ -712,9 +728,14 @@ fn validate(expr: &Expr, env: &Env<'_>, ctx: Ctx, where_: &str) -> Result<(), Mo
         }
         Expr::Call(name, args) => {
             let expected = match name.as_str() {
-                "exp" | "ln" | "log" | "log10" | "sqrt" | "abs" => 1,
+                "exp" | "ln" | "log" | "log10" | "log2" | "sqrt" | "abs" => 1,
                 "pow" => 2,
-                _ => return Err(ModelError::UnknownFunction { name: name.clone() }),
+                _ => {
+                    return Err(ModelError::UnknownFunction {
+                        name: name.clone(),
+                        suggestion: did_you_mean(name, KNOWN_FUNCTIONS),
+                    });
+                }
             };
             if args.len() != expected {
                 return Err(ModelError::BadArity {
@@ -801,6 +822,7 @@ fn lower(
                 "exp" => fr.exp,
                 "ln" | "log" => fr.ln,
                 "log10" => fr.log10,
+                "log2" => fr.log2,
                 "sqrt" => fr.sqrt,
                 "abs" => fr.abs,
                 "pow" => fr.pow,
@@ -816,4 +838,19 @@ fn lower(
 fn load_f64(fb: &mut FunctionBuilder<'_>, base: Value, idx: usize) -> Value {
     let offset = (idx * mem::size_of::<f64>()) as i32;
     fb.ins().load(types::F64, MemFlags::trusted(), base, offset)
+}
+
+/// All identifiers in scope for the given context. Used for "did you mean?"
+/// suggestions when the user writes an unknown name.
+fn available_names(env: &Env<'_>, ctx: Ctx) -> Vec<String> {
+    let mut v: Vec<String> = Vec::new();
+    v.push("t".into());
+    v.extend(env.params.iter().cloned());
+    v.extend(env.covariates.iter().cloned());
+    v.extend(env.let_idx.keys().cloned());
+    if ctx.has_state {
+        v.extend(env.compartments.iter().cloned());
+    }
+    v.sort();
+    v
 }

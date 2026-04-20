@@ -208,8 +208,10 @@ pub(crate) fn parse_text(src: &str) -> Result<Model, TextError> {
     let mut m = Model::new(name)
         .compartments(compartments)
         .params(params)
-        .covariates(covariates)
-        .ndrugs(ndrugs.unwrap_or(1));
+        .covariates(covariates);
+    if let Some(n) = ndrugs {
+        m = m.ndrugs(n);
+    }
     for (name, expr) in lets {
         m = m.let_binding(name, expr);
     }

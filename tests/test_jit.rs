@@ -332,3 +332,142 @@ fn rejects_let_referencing_state_in_aux_context() {
     let msg = err.to_string();
     assert!(msg.contains("unresolved") || msg.contains("illegal"), "got: {msg}");
 }
+
+#[test]
+fn log2_function() {
+    let ode = Model::from_text(
+        "
+        name = log2test
+        compartments = central
+        params = CL, V
+        dxdt(central) = -(CL / V) * central
+        out(y) = log2(central)
+        init(central) = 8.0
+        ",
+    )
+    .unwrap()
+    .compile()
+    .unwrap();
+
+    // CL very small so central ≈ 8 over short t; log2(8) = 3.
+    let subject = Subject::builder("p1").observation(0.0, 0.0, 0).build();
+    let (preds, _) = ode.simulate_subject(&subject, &[1e-9, 1.0], None).unwrap();
+    let v = preds.get_predictions();
+    assert_relative_eq!(v[0].prediction(), 3.0, max_relative = 1e-6);
+}
+
+#[test]
+fn ndrugs_inferred_from_rateiv_index() {
+    // Two-input model, no `ndrugs` declared. Should auto-pick 2.
+    let ode = Model::from_text(
+        "
+        name = twoinput
+        compartments = a, b
+        params = ka, kb
+        dxdt(a) = rateiv[0] - ka * a
+        dxdt(b) = rateiv[1] - kb * b
+        out(ya) = a
+        out(yb) = b
+        ",
+    )
+    .unwrap()
+    .compile()
+    .unwrap();
+
+    let subject = Subject::builder("p1")
+        .infusion(0.0, 100.0, 0, 0.5)
+        .infusion(0.0, 50.0, 1, 0.25)
+        .observation(2.0, 0.0, 0)
+        .observation(2.0, 0.0, 1)
+        .build();
+
+    let (preds, _) = ode.simulate_subject(&subject, &[0.5, 0.5], None).unwrap();
+    let v = preds.get_predictions();
+    assert_eq!(v.len(), 2);
+    assert!(v[0].prediction() > 0.0);
+    assert!(v[1].prediction() > 0.0);
+}
+
+#[test]
+fn ndrugs_inferred_from_lag_channel() {
+    // No rateiv usage but lag(1) -> need ndrugs >= 2.
+    let ode = Model::from_text(
+        "
+        name = lagonly
+        compartments = a, b
+        params = ka, kb
+        lag(1) = 0.5
+        dxdt(a) = -ka * a
+        dxdt(b) = -kb * b
+        out(y) = b
+        ",
+    )
+    .unwrap()
+    .compile();
+    assert!(ode.is_ok(), "compile failed: {:?}", ode.err());
+}
+
+#[test]
+fn explicit_ndrugs_too_small_errors() {
+    let err = Model::from_text(
+        "
+        name = bad
+        compartments = a, b
+        params = ka, kb
+        ndrugs = 1
+        dxdt(a) = rateiv[0] - ka * a
+        dxdt(b) = rateiv[1] - kb * b
+        out(y) = a
+        ",
+    )
+    .unwrap()
+    .compile()
+    .expect_err("ndrugs=1 should be rejected when rateiv[1] is used");
+    let msg = err.to_string();
+    assert!(msg.contains("ndrugs"), "got: {msg}");
+    assert!(msg.contains("rateiv[1]") || msg.contains("channel 1"), "got: {msg}");
+}
+
+#[test]
+fn unknown_identifier_includes_did_you_mean_and_scope() {
+    let err = Model::new("typo")
+        .compartments(["central"])
+        .params(["CL", "V"])
+        .dxdt("central", "-(CL / Volume) * central") // typo: Volume vs V
+        .output("cp", "central / V")
+        .compile()
+        .expect_err("typo should be rejected");
+    let msg = err.to_string();
+    assert!(msg.contains("Volume"), "should mention the bad ident; got: {msg}");
+    assert!(msg.contains("in scope"), "should list scope; got: {msg}");
+}
+
+#[test]
+fn unknown_function_includes_suggestion() {
+    let err = Model::new("typo2")
+        .compartments(["c"])
+        .params(["k"])
+        .dxdt("c", "-k * exq(c)") // typo: exq vs exp
+        .output("y", "c")
+        .compile()
+        .expect_err("unknown function should be rejected");
+    let msg = err.to_string();
+    assert!(msg.contains("exq"), "should mention the bad name; got: {msg}");
+    assert!(msg.contains("exp"), "should suggest exp; got: {msg}");
+    assert!(msg.contains("supported"), "should list supported fns; got: {msg}");
+}
+
+#[test]
+fn parse_error_includes_source_snippet() {
+    let err = Model::new("badparse")
+        .compartments(["c"])
+        .params(["k"])
+        .dxdt("c", "-k * @ c")
+        .output("y", "c")
+        .compile()
+        .expect_err("should fail");
+    let msg = err.to_string();
+    assert!(msg.contains("parse error"), "got: {msg}");
+    assert!(msg.contains("dxdt(c)"), "should name the context; got: {msg}");
+    assert!(msg.contains("-k * @ c"), "should include the source; got: {msg}");
+}
