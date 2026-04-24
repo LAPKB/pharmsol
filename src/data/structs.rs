@@ -592,12 +592,12 @@ impl Occasion {
     }
 
     fn add_lagtime(&mut self, reorder: Option<(&Fa, &Lag, &[f64], &Covariates)>) {
-        if let Some((_, fn_lag, spp, covariates)) = reorder {
-            let spp = nalgebra::DVector::from_vec(spp.to_vec());
+        if let Some((_, fn_lag, parameters, covariates)) = reorder {
+            let parameters = nalgebra::DVector::from_vec(parameters.to_vec());
             for event in self.events.iter_mut() {
                 let time = event.time();
                 if let Event::Bolus(bolus) = event {
-                    let lagtime = fn_lag(&spp.clone().into(), time, covariates);
+                    let lagtime = fn_lag(&parameters.clone().into(), time, covariates);
                     if let Some(l) = lagtime.get(&bolus.input()) {
                         *bolus.mut_time() += l;
                     }
@@ -609,12 +609,12 @@ impl Occasion {
 
     fn add_bioavailability(&mut self, reorder: Option<(&Fa, &Lag, &[f64], &Covariates)>) {
         // If lagtime is empty, return early
-        if let Some((fn_fa, _, spp, covariates)) = reorder {
-            let spp = nalgebra::DVector::from_vec(spp.to_vec());
+        if let Some((fn_fa, _, parameters, covariates)) = reorder {
+            let parameters = nalgebra::DVector::from_vec(parameters.to_vec());
             for event in self.events.iter_mut() {
                 let time = event.time();
                 if let Event::Bolus(bolus) = event {
-                    let fa = fn_fa(&spp.clone().into(), time, covariates);
+                    let fa = fn_fa(&parameters.clone().into(), time, covariates);
                     if let Some(f) = fa.get(&bolus.input()) {
                         bolus.set_amount(bolus.amount() * f);
                     }
@@ -656,7 +656,7 @@ impl Occasion {
     ///
     /// # Arguments
     ///
-    /// * `reorder` - Optional tuple containing references to (Fa, Lag, support point, covariates) for adjustments
+    /// * `reorder` - Optional tuple containing references to (Fa, Lag, parameter, covariates) for adjustments
     /// * `ignore` - If true, filter out events marked as ignore
     /// * `mappings` - Optional reference to an [equation::Mapper] for input remapping
     ///

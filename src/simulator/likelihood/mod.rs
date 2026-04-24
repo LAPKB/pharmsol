@@ -18,7 +18,7 @@
 //! ## For Non-Parametric Algorithms
 //!
 //! Use [`log_likelihood_matrix`] to compute a matrix of log-likelihoods across
-//! all subjects and support points:
+//! all subjects and parameters:
 //!
 //! ```ignore
 //! use pharmsol::prelude::simulator::{log_likelihood_matrix, LikelihoodMatrixOptions};
@@ -26,7 +26,7 @@
 //! let log_liks = log_likelihood_matrix(
 //!     &equation,
 //!     &data,
-//!     &support_points,
+//!     &parameters,
 //!     &error_models,
 //!     LikelihoodMatrixOptions::new().with_progress(),
 //! )?;

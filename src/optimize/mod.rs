@@ -1,2 +1,2 @@
 pub mod effect;
-pub mod spp;
+pub mod parameters;

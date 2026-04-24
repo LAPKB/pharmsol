@@ -13,7 +13,7 @@ pub use three_compartment_models::*;
 pub use two_compartment_cl_models::*;
 pub use two_compartment_models::*;
 
-use super::spphash;
+use super::parametershash;
 
 use crate::data::error_model::AssayErrorModels;
 use crate::simulator::cache::{PredictionCache, DEFAULT_CACHE_SIZE};
@@ -151,13 +151,13 @@ impl EquationPriv for Analytical {
     // }
 
     // #[inline(always)]
-    // fn get_lag(&self, spp: &[f64]) -> Option<HashMap<usize, f64>> {
-    //     Some((self.lag)(&V::from_vec(spp.to_owned())))
+    // fn get_lag(&self, parameters: &[f64]) -> Option<HashMap<usize, f64>> {
+    //     Some((self.lag)(&V::from_vec(parameters.to_owned())))
     // }
 
     // #[inline(always)]
-    // fn get_fa(&self, spp: &[f64]) -> Option<HashMap<usize, f64>> {
-    //     Some((self.fa)(&V::from_vec(spp.to_owned())))
+    // fn get_fa(&self, parameters: &[f64]) -> Option<HashMap<usize, f64>> {
+    //     Some((self.fa)(&V::from_vec(parameters.to_owned())))
     // }
 
     #[inline(always)]
@@ -188,7 +188,7 @@ impl EquationPriv for Analytical {
     fn solve(
         &self,
         x: &mut Self::S,
-        support_point: &[f64],
+        parameters: &[f64],
         covariates: &Covariates,
         infusions: &[Infusion],
         ti: f64,
@@ -217,7 +217,7 @@ impl EquationPriv for Analytical {
 
         // 2) March over each sub-interval
         let mut current_t = ts[0];
-        let mut sp = V::from_vec(support_point.to_vec(), NalgebraContext);
+        let mut sp = V::from_vec(parameters.to_vec(), NalgebraContext);
         let mut rateiv = V::zeros(self.get_ndrugs(), NalgebraContext);
 
         for &next_t in &ts[1..] {
@@ -253,7 +253,7 @@ impl EquationPriv for Analytical {
     #[inline(always)]
     fn process_observation(
         &self,
-        support_point: &[f64],
+        parameters: &[f64],
         observation: &Observation,
         error_models: Option<&AssayErrorModels>,
         _time: f64,
@@ -266,7 +266,7 @@ impl EquationPriv for Analytical {
         let out = &self.out;
         (out)(
             x,
-            &V::from_vec(support_point.to_vec(), NalgebraContext),
+            &V::from_vec(parameters.to_vec(), NalgebraContext),
             observation.time(),
             covariates,
             &mut y,
@@ -280,12 +280,17 @@ impl EquationPriv for Analytical {
         Ok(())
     }
     #[inline(always)]
-    fn initial_state(&self, spp: &[f64], covariates: &Covariates, occasion_index: usize) -> V {
+    fn initial_state(
+        &self,
+        parameters: &[f64],
+        covariates: &Covariates,
+        occasion_index: usize,
+    ) -> V {
         let init = &self.init;
         let mut x = V::zeros(self.get_nstates(), NalgebraContext);
         if occasion_index == 0 {
             (init)(
-                &V::from_vec(spp.to_vec(), NalgebraContext),
+                &V::from_vec(parameters.to_vec(), NalgebraContext),
                 0.0,
                 covariates,
                 &mut x,
@@ -554,19 +559,19 @@ impl Equation for Analytical {
     fn estimate_likelihood(
         &self,
         subject: &Subject,
-        support_point: &[f64],
+        parameters: &[f64],
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
-        _estimate_likelihood(self, subject, support_point, error_models)
+        _estimate_likelihood(self, subject, parameters, error_models)
     }
 
     fn estimate_log_likelihood(
         &self,
         subject: &Subject,
-        support_point: &[f64],
+        parameters: &[f64],
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
-        let ypred = _subject_predictions(self, subject, support_point)?;
+        let ypred = _subject_predictions(self, subject, parameters)?;
         ypred.log_likelihood(error_models)
     }
 
@@ -579,28 +584,28 @@ impl Equation for Analytical {
 fn _subject_predictions(
     analytical: &Analytical,
     subject: &Subject,
-    support_point: &[f64],
+    parameters: &[f64],
 ) -> Result<SubjectPredictions, PharmsolError> {
     if let Some(cache) = &analytical.cache {
-        let key = (subject.hash(), spphash(support_point));
+        let key = (subject.hash(), parametershash(parameters));
         if let Some(cached) = cache.get(&key) {
             return Ok(cached);
         }
 
-        let result = analytical.simulate_subject(subject, support_point, None)?.0;
+        let result = analytical.simulate_subject(subject, parameters, None)?.0;
         cache.insert(key, result.clone());
         Ok(result)
     } else {
-        Ok(analytical.simulate_subject(subject, support_point, None)?.0)
+        Ok(analytical.simulate_subject(subject, parameters, None)?.0)
     }
 }
 
 fn _estimate_likelihood(
     ode: &Analytical,
     subject: &Subject,
-    support_point: &[f64],
+    parameters: &[f64],
     error_models: &AssayErrorModels,
 ) -> Result<f64, PharmsolError> {
-    let ypred = _subject_predictions(ode, subject, support_point)?;
+    let ypred = _subject_predictions(ode, subject, parameters)?;
     Ok(ypred.log_likelihood(error_models)?.exp())
 }

@@ -14,7 +14,7 @@ use crate::{
     Subject,
 };
 
-use super::spphash;
+use super::parametershash;
 use crate::simulator::cache::{SdeLikelihoodCache, DEFAULT_CACHE_SIZE};
 
 use diffsol::VectorCommon;
@@ -33,7 +33,7 @@ use super::{Equation, EquationPriv, EquationTypes, Predictions, State};
 /// * `drift` - Function defining the deterministic component of the SDE
 /// * `difussion` - Function defining the stochastic component of the SDE
 /// * `x` - Current state vector
-/// * `support_point` - Parameter vector for the model
+/// * `parameters` - Parameter vector for the model
 /// * `cov` - Covariates that may influence the system dynamics
 /// * `infusions` - Infusion events to be applied during simulation
 /// * `ti` - Starting time
@@ -47,7 +47,7 @@ pub(crate) fn simulate_sde_event(
     drift: &Drift,
     difussion: &Diffusion,
     x: V,
-    support_point: &[f64],
+    parameters: &[f64],
     cov: &Covariates,
     infusions: &[Infusion],
     ndrugs: usize,
@@ -61,7 +61,7 @@ pub(crate) fn simulate_sde_event(
     let mut sde = em::EM::new(
         *drift,
         *difussion,
-        DVector::from_column_slice(support_point),
+        DVector::from_column_slice(parameters),
         x.inner().clone(),
         cov.clone(),
         infusions.to_vec(),
@@ -252,13 +252,13 @@ impl EquationPriv for SDE {
     // }
 
     // #[inline(always)]
-    // fn get_lag(&self, spp: &[f64]) -> Option<HashMap<usize, f64>> {
-    //     Some((self.lag)(&V::from_vec(spp.to_owned())))
+    // fn get_lag(&self, parameters: &[f64]) -> Option<HashMap<usize, f64>> {
+    //     Some((self.lag)(&V::from_vec(parameters.to_owned())))
     // }
 
     // #[inline(always)]
-    // fn get_fa(&self, spp: &[f64]) -> Option<HashMap<usize, f64>> {
-    //     Some((self.fa)(&V::from_vec(spp.to_owned())))
+    // fn get_fa(&self, parameters: &[f64]) -> Option<HashMap<usize, f64>> {
+    //     Some((self.fa)(&V::from_vec(parameters.to_owned())))
     // }
 
     #[inline(always)]
@@ -289,7 +289,7 @@ impl EquationPriv for SDE {
     fn solve(
         &self,
         state: &mut Self::S,
-        support_point: &[f64],
+        parameters: &[f64],
         covariates: &Covariates,
         infusions: &[Infusion],
         ti: f64,
@@ -301,7 +301,7 @@ impl EquationPriv for SDE {
                 &self.drift,
                 &self.diffusion,
                 particle.clone().into(),
-                support_point,
+                parameters,
                 covariates,
                 infusions,
                 ndrugs,
@@ -323,7 +323,7 @@ impl EquationPriv for SDE {
     #[inline(always)]
     fn process_observation(
         &self,
-        support_point: &[f64],
+        parameters: &[f64],
         observation: &crate::Observation,
         error_models: Option<&AssayErrorModels>,
         _time: f64,
@@ -338,7 +338,7 @@ impl EquationPriv for SDE {
             let mut y = V::zeros(self.get_nouteqs(), NalgebraContext);
             (self.out)(
                 &x[i].clone().into(),
-                &V::from_vec(support_point.to_vec(), NalgebraContext),
+                &V::from_vec(parameters.to_vec(), NalgebraContext),
                 observation.time(),
                 covariates,
                 &mut y,
@@ -373,7 +373,7 @@ impl EquationPriv for SDE {
     #[inline(always)]
     fn initial_state(
         &self,
-        support_point: &[f64],
+        parameters: &[f64],
         covariates: &Covariates,
         occasion_index: usize,
     ) -> Self::S {
@@ -382,7 +382,7 @@ impl EquationPriv for SDE {
             let mut state: V = DVector::zeros(self.get_nstates()).into();
             if occasion_index == 0 {
                 (self.init)(
-                    &V::from_vec(support_point.to_vec(), NalgebraContext),
+                    &V::from_vec(parameters.to_vec(), NalgebraContext),
                     0.0,
                     covariates,
                     &mut state,
@@ -400,7 +400,7 @@ impl Equation for SDE {
     /// # Arguments
     ///
     /// * `subject` - Subject data containing observations
-    /// * `support_point` - Parameter vector for the model
+    /// * `parameters` - Parameter vector for the model
     /// * `error_model` - Error model to use for likelihood calculations
     ///
     /// # Returns
@@ -409,21 +409,21 @@ impl Equation for SDE {
     fn estimate_likelihood(
         &self,
         subject: &Subject,
-        support_point: &[f64],
+        parameters: &[f64],
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
-        _estimate_likelihood(self, subject, support_point, error_models)
+        _estimate_likelihood(self, subject, parameters, error_models)
     }
 
     fn estimate_log_likelihood(
         &self,
         subject: &Subject,
-        support_point: &[f64],
+        parameters: &[f64],
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
         // For SDE, the particle filter computes likelihood in regular space.
         // We compute it directly and then take the log.
-        let lik = _estimate_likelihood(self, subject, support_point, error_models)?;
+        let lik = _estimate_likelihood(self, subject, parameters, error_models)?;
 
         if lik > 0.0 {
             Ok(lik.ln())
@@ -441,21 +441,25 @@ impl Equation for SDE {
 fn _estimate_likelihood(
     sde: &SDE,
     subject: &Subject,
-    support_point: &[f64],
+    parameters: &[f64],
     error_models: &AssayErrorModels,
 ) -> Result<f64, PharmsolError> {
     if let Some(cache) = &sde.cache {
-        let key = (subject.hash(), spphash(support_point), error_models.hash());
+        let key = (
+            subject.hash(),
+            parametershash(parameters),
+            error_models.hash(),
+        );
         if let Some(cached) = cache.get(&key) {
             return Ok(cached);
         }
 
-        let ypred = sde.simulate_subject(subject, support_point, Some(error_models))?;
+        let ypred = sde.simulate_subject(subject, parameters, Some(error_models))?;
         let result = ypred.1.unwrap();
         cache.insert(key, result);
         Ok(result)
     } else {
-        let ypred = sde.simulate_subject(subject, support_point, Some(error_models))?;
+        let ypred = sde.simulate_subject(subject, parameters, Some(error_models))?;
         Ok(ypred.1.unwrap())
     }
 }

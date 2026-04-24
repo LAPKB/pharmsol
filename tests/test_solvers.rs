@@ -40,9 +40,9 @@ fn one_cpt(solver: OdeSolver) -> equation::ODE {
 
 fn preds(solver: OdeSolver) -> Vec<f64> {
     let sub = subject();
-    let spp = vec![0.1, 50.0];
+    let parameters = vec![0.1, 50.0];
     one_cpt(solver)
-        .estimate_predictions(&sub, &spp)
+        .estimate_predictions(&sub, &parameters)
         .unwrap()
         .flat_predictions()
         .to_vec()

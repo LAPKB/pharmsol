@@ -14,7 +14,7 @@ pub use crate::data::Interpolation::*;
 pub use crate::data::*;
 pub use crate::equation::*;
 pub use crate::optimize::effect::get_e2;
-pub use crate::optimize::spp::SppOptimizer;
+pub use crate::optimize::parameters::parametersOptimizer;
 pub use crate::simulator::equation::{
     self,
     ode::{ExplicitRkTableau, OdeSolver, SdirkTableau},

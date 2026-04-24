@@ -1,7 +1,7 @@
 //! Population-level log-likelihood matrix computation.
 //!
 //! This module provides functions for computing log-likelihood matrices
-//! across populations of subjects and parameter support points.
+//! across populations of subjects and parameter parameters.
 
 use ndarray::{Array2, Axis, ShapeBuilder};
 use rayon::prelude::*;
@@ -11,7 +11,7 @@ use crate::{Data, Equation, PharmsolError};
 
 use super::progress::ProgressTracker;
 
-/// Calculate the log-likelihood matrix for all subjects and support points.
+/// Calculate the log-likelihood matrix for all subjects and parameters.
 ///
 /// This function computes log-likelihoods directly in log-space, which is numerically
 /// more stable than computing likelihoods and then taking logarithms. This is especially
@@ -21,12 +21,12 @@ use super::progress::ProgressTracker;
 /// # Parameters
 /// - `equation`: The equation to use for simulation
 /// - `subjects`: The subject data
-/// - `support_points`: The support points to evaluate (rows = support points, cols = parameters)
+/// - `parameters`: The parameters to evaluate (rows = parameters, cols = parameters)
 /// - `error_models`: The error models to use (observation-based sigma)
 /// - `progress`: Whether to display a progress bar during computation`
 ///
 /// # Returns
-/// A 2D array of log-likelihoods with shape (n_subjects, n_support_points)
+/// A 2D array of log-likelihoods with shape (n_subjects, n_parameters)
 ///
 /// # Example
 /// ```ignore
@@ -35,7 +35,7 @@ use super::progress::ProgressTracker;
 /// let log_liks = log_likelihood_matrix(
 ///     &equation,
 ///     &data,
-///     &support_points,
+///     &parameters,
 ///     &error_models,
 ///     false
 /// )?;
@@ -43,20 +43,20 @@ use super::progress::ProgressTracker;
 pub fn log_likelihood_matrix(
     equation: &impl Equation,
     subjects: &Data,
-    support_points: &Array2<f64>,
+    parameters: &Array2<f64>,
     error_models: &AssayErrorModels,
     progress: bool,
 ) -> Result<Array2<f64>, PharmsolError> {
-    let mut log_psi: Array2<f64> = Array2::default((subjects.len(), support_points.nrows()).f());
+    let mut log_psi: Array2<f64> = Array2::default((subjects.len(), parameters.nrows()).f());
 
     let subjects_vec = subjects.subjects();
 
     let progress_tracker = if progress {
-        let total = subjects_vec.len() * support_points.nrows();
+        let total = subjects_vec.len() * parameters.nrows();
         println!(
-            "Computing log-likelihood matrix: {} subjects × {} support points...",
+            "Computing log-likelihood matrix: {} subjects × {} parameters...",
             subjects_vec.len(),
-            support_points.nrows()
+            parameters.nrows()
         );
         Some(ProgressTracker::new(total))
     } else {
@@ -75,7 +75,7 @@ pub fn log_likelihood_matrix(
                     let subject = subjects_vec.get(i).unwrap();
                     match equation.estimate_log_likelihood(
                         subject,
-                        &support_points.row(j).to_vec(),
+                        &parameters.row(j).to_vec(),
                         error_models,
                     ) {
                         Ok(log_likelihood) => {
@@ -110,11 +110,11 @@ pub fn log_likelihood_matrix(
 pub fn log_psi(
     equation: &impl Equation,
     subjects: &Data,
-    support_points: &Array2<f64>,
+    parameters: &Array2<f64>,
     error_models: &AssayErrorModels,
     progress: bool,
 ) -> Result<Array2<f64>, PharmsolError> {
-    log_likelihood_matrix(equation, subjects, support_points, error_models, progress)
+    log_likelihood_matrix(equation, subjects, parameters, error_models, progress)
 }
 
 /// Calculate the likelihood matrix (deprecated).
@@ -132,12 +132,12 @@ pub fn log_psi(
 pub fn psi(
     equation: &impl Equation,
     subjects: &Data,
-    support_points: &Array2<f64>,
+    parameters: &Array2<f64>,
     error_models: &AssayErrorModels,
     progress: bool,
 ) -> Result<Array2<f64>, PharmsolError> {
     let log_psi_matrix =
-        log_likelihood_matrix(equation, subjects, support_points, error_models, progress)?;
+        log_likelihood_matrix(equation, subjects, parameters, error_models, progress)?;
 
     // Exponentiate to get likelihoods (may underflow to 0 for extreme values)
     Ok(log_psi_matrix.mapv(f64::exp))
