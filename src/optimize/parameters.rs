@@ -7,28 +7,28 @@ use ndarray::{Array1, Axis};
 
 use crate::{prelude::simulator::log_likelihood_matrix, AssayErrorModels, Data, Equation};
 
-pub struct SppOptimizer<'a, E: Equation> {
+pub struct parametersOptimizer<'a, E: Equation> {
     equation: &'a E,
     data: &'a Data,
     sig: &'a AssayErrorModels,
     pyl: &'a Array1<f64>,
 }
 
-impl<E: Equation> CostFunction for SppOptimizer<'_, E> {
+impl<E: Equation> CostFunction for parametersOptimizer<'_, E> {
     type Param = Vec<f64>;
     type Output = f64;
-    fn cost(&self, spp: &Self::Param) -> Result<Self::Output, Error> {
-        let theta = Array1::from(spp.clone()).insert_axis(Axis(0));
+    fn cost(&self, parameters: &Self::Param) -> Result<Self::Output, Error> {
+        let theta = Array1::from(parameters.clone()).insert_axis(Axis(0));
 
         let log_psi = log_likelihood_matrix(self.equation, self.data, &theta, self.sig, false)?;
         let psi = log_psi.mapv(f64::exp);
 
         if psi.ncols() > 1 {
-            tracing::error!("Psi in SppOptimizer has more than one column");
+            tracing::error!("Psi in parametersOptimizer has more than one column");
         }
         if psi.nrows() != self.pyl.len() {
             tracing::error!(
-                "Psi in SppOptimizer has {} rows, but spp has {}",
+                "Psi in parametersOptimizer has {} rows, but parameters has {}",
                 psi.nrows(),
                 self.pyl.len()
             );
@@ -42,7 +42,7 @@ impl<E: Equation> CostFunction for SppOptimizer<'_, E> {
     }
 }
 
-impl<'a, E: Equation> SppOptimizer<'a, E> {
+impl<'a, E: Equation> parametersOptimizer<'a, E> {
     pub fn new(
         equation: &'a E,
         data: &'a Data,
@@ -56,8 +56,8 @@ impl<'a, E: Equation> SppOptimizer<'a, E> {
             pyl,
         }
     }
-    pub fn optimize_point(self, spp: Array1<f64>) -> Result<Array1<f64>, Error> {
-        let simplex = create_initial_simplex(&spp.to_vec());
+    pub fn optimize_point(self, parameters: Array1<f64>) -> Result<Array1<f64>, Error> {
+        let simplex = create_initial_simplex(&parameters.to_vec());
         let solver: NelderMead<Vec<f64>, f64> = NelderMead::new(simplex).with_sd_tolerance(1e-2)?;
         let res = Executor::new(self, solver)
             .configure(|state| state.max_iters(5))

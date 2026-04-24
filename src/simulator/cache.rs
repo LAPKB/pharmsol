@@ -28,10 +28,10 @@ use crate::simulator::likelihood::SubjectPredictions;
 /// Default maximum number of entries per cache.
 pub const DEFAULT_CACHE_SIZE: u64 = 100_000;
 
-/// Cache key: (subject_hash, support_point_hash)
+/// Cache key: (subject_hash, parameters_hash)
 pub(crate) type PredictionKey = (u64, u64);
 
-/// Cache key for SDE: (subject_hash, support_point_hash, error_model_hash)
+/// Cache key for SDE: (subject_hash, parameters_hash, error_model_hash)
 pub(crate) type SdeKey = (u64, u64, u64);
 
 /// Thread-safe LRU cache for subject predictions.

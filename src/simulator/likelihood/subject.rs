@@ -138,7 +138,7 @@ impl From<Vec<Prediction>> for SubjectPredictions {
 /// Container for predictions across a population of subjects.
 ///
 /// This struct holds predictions for multiple subjects organized in a 2D array
-/// where rows represent subjects and columns represent support points (or
+/// where rows represent subjects and columns represent parameters (or
 /// other groupings).
 pub struct PopulationPredictions {
     /// 2D array of subject predictions

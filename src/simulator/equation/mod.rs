@@ -131,7 +131,7 @@ pub(crate) trait EquationPriv: EquationTypes {
     fn solve(
         &self,
         state: &mut Self::S,
-        support_point: &[f64],
+        parameters: &[f64],
         covariates: &Covariates,
         infusions: &[Infusion],
         start_time: f64,
@@ -148,7 +148,7 @@ pub(crate) trait EquationPriv: EquationTypes {
     #[allow(clippy::too_many_arguments)]
     fn process_observation(
         &self,
-        support_point: &[f64],
+        parameters: &[f64],
         observation: &Observation,
         error_models: Option<&AssayErrorModels>,
         time: f64,
@@ -160,7 +160,7 @@ pub(crate) trait EquationPriv: EquationTypes {
 
     fn initial_state(
         &self,
-        support_point: &[f64],
+        parameters: &[f64],
         covariates: &Covariates,
         occasion_index: usize,
     ) -> Self::S;
@@ -168,7 +168,7 @@ pub(crate) trait EquationPriv: EquationTypes {
     #[allow(clippy::too_many_arguments)]
     fn simulate_event(
         &self,
-        support_point: &[f64],
+        parameters: &[f64],
         event: &Event,
         next_event: Option<&Event>,
         error_models: Option<&AssayErrorModels>,
@@ -193,7 +193,7 @@ pub(crate) trait EquationPriv: EquationTypes {
             }
             Event::Observation(observation) => {
                 self.process_observation(
-                    support_point,
+                    parameters,
                     observation,
                     error_models,
                     event.time(),
@@ -208,7 +208,7 @@ pub(crate) trait EquationPriv: EquationTypes {
         if let Some(next_event) = next_event {
             self.solve(
                 x,
-                support_point,
+                parameters,
                 covariates,
                 infusions,
                 event.time(),
@@ -232,7 +232,7 @@ pub(crate) trait EquationPriv: EquationTypes {
 /// is provided for backward compatibility.
 #[allow(private_bounds)]
 pub trait Equation: EquationPriv + 'static + Clone + Sync {
-    /// Estimate the likelihood of the subject given the support point and error model.
+    /// Estimate the likelihood of the subject given the parameter and error model.
     ///
     /// **Deprecated**: Use [`estimate_log_likelihood`](Self::estimate_log_likelihood) instead
     /// for better numerical stability, especially with many observations or extreme parameter values.
@@ -242,7 +242,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
     ///
     /// # Parameters
     /// - `subject`: The subject data
-    /// - `support_point`: The parameter values
+    /// - `parameters`: The parameter values
     /// - `error_model`: The error model
     ///
     /// # Returns
@@ -254,11 +254,11 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
     fn estimate_likelihood(
         &self,
         subject: &Subject,
-        support_point: &[f64],
+        parameters: &[f64],
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError>;
 
-    /// Estimate the log-likelihood of the subject given the support point and error model.
+    /// Estimate the log-likelihood of the subject given the parameter and error model.
     ///
     /// This function calculates the log of how likely the observed data is given the model
     /// parameters and error model. It is numerically more stable than `estimate_likelihood`
@@ -269,7 +269,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
     ///
     /// # Parameters
     /// - `subject`: The subject data
-    /// - `support_point`: The parameter values
+    /// - `parameters`: The parameter values
     /// - `error_models`: The error model
     ///
     /// # Returns
@@ -277,7 +277,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
     fn estimate_log_likelihood(
         &self,
         subject: &Subject,
-        support_point: &[f64],
+        parameters: &[f64],
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError>;
 
@@ -287,16 +287,16 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
     ///
     /// # Parameters
     /// - `subject`: The subject data
-    /// - `support_point`: The parameter values
+    /// - `parameters`: The parameter values
     ///
     /// # Returns
     /// Predicted concentrations
     fn estimate_predictions(
         &self,
         subject: &Subject,
-        support_point: &[f64],
+        parameters: &[f64],
     ) -> Result<Self::P, PharmsolError> {
-        Ok(self.simulate_subject(subject, support_point, None)?.0)
+        Ok(self.simulate_subject(subject, parameters, None)?.0)
     }
 
     /// Get the number of output equations in the model.
@@ -313,7 +313,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
     ///
     /// # Parameters
     /// - `subject`: The subject data
-    /// - `support_point`: The parameter values
+    /// - `parameters`: The parameter values
     /// - `error_model`: The error model (optional)
     ///
     /// # Returns
@@ -321,7 +321,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
     fn simulate_subject(
         &self,
         subject: &Subject,
-        support_point: &[f64],
+        parameters: &[f64],
         error_models: Option<&AssayErrorModels>,
     ) -> Result<(Self::P, Option<f64>), PharmsolError> {
         let mut output = Self::P::new(self.nparticles());
@@ -329,15 +329,13 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
         for occasion in subject.occasions() {
             let covariates = occasion.covariates();
 
-            let mut x = self.initial_state(support_point, covariates, occasion.index());
+            let mut x = self.initial_state(parameters, covariates, occasion.index());
             let mut infusions = Vec::new();
-            let events = occasion.process_events(
-                Some((self.fa(), self.lag(), support_point, covariates)),
-                true,
-            );
+            let events = occasion
+                .process_events(Some((self.fa(), self.lag(), parameters, covariates)), true);
             for (index, event) in events.iter().enumerate() {
                 self.simulate_event(
-                    support_point,
+                    parameters,
                     event,
                     events.get(index + 1),
                     error_models,
@@ -372,12 +370,12 @@ impl EqnKind {
     }
 }
 
-/// Hash support points to a u64 for cache key generation.
+/// Hash parameters to a u64 for cache key generation.
 #[inline(always)]
-fn spphash(spp: &[f64]) -> u64 {
+fn parametershash(parameters: &[f64]) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = ahash::AHasher::default();
-    for &value in spp {
+    for &value in parameters {
         // Normalize -0.0 to 0.0 for consistent hashing
         let bits = if value == 0.0 { 0u64 } else { value.to_bits() };
         bits.hash(&mut hasher);

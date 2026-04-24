@@ -45,8 +45,8 @@ fn main() {
     // let v_dist = rand_distr::Normal::new(50.0, 10.0).unwrap();
     // let ske_dist = rand_distr::Normal::new(0.1, 0.01).unwrap();
 
-    let mut support_points = vec![];
-    let mut file = File::create("spp.csv").unwrap();
+    let mut parameters = vec![];
+    let mut file = File::create("parameters.csv").unwrap();
     for _ in 0..100 {
         let ke = ke_dist.sample(&mut rand::rng());
         // let ke = 1.2;
@@ -55,14 +55,14 @@ fn main() {
         // let ske = ske_dist.sample(&mut rand::thread_rng());
         // let v = v_dist.sample(&mut rand::thread_rng());
         let v = 50.0;
-        support_points.push(vec![ke]);
+        parameters.push(vec![ke]);
         println!("{ke}, {ske}, {v}");
         writeln!(file, "{}, {}, {}", ke, ske, v).unwrap();
     }
 
     let mut data = vec![];
-    for (i, spp) in support_points.iter().enumerate() {
-        let trajectories = sde.estimate_predictions(&subject, spp).unwrap();
+    for (i, parameter) in parameters.iter().enumerate() {
+        let trajectories = sde.estimate_predictions(&subject, parameter).unwrap();
         let trajectory = trajectories.row(0);
         // dbg!(&trajectory);
         let mut sb = Subject::builder(format!("id{}", i)).bolus(0.0, 20.0, 0);
