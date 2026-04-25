@@ -1,9 +1,9 @@
-//! extendr bindings for pharmsol's JIT-compiled model API.
+//! extendr bindings for pharmsol's DSL runtime model API.
 //!
 //! Two functions are exposed to R:
 //!
-//! - `compile_model(text)` — JIT-compile a textual model definition, returning
-//!   an opaque external pointer to the compiled `JitOde`.
+//! - `compile_model(text)` — compile a DSL model definition to the runtime JIT,
+//!   returning an opaque external pointer to the compiled runtime model.
 //! - `simulate_subject(model, params, times, evids, amts, durs, cmts, outeqs,
 //!    cov_names, cov_times, cov_values)` — build a single subject from event
 //!   columns and a list of covariates and run the model, returning a list with
@@ -16,16 +16,15 @@ use extendr_api::prelude::*;
 use extendr_api::Result;
 use std::sync::Arc;
 
-use pharmsol::jit::{JitOde, Model};
+use pharmsol::dsl::{CompiledRuntimeModel, RuntimeCompilationTarget};
 use pharmsol::prelude::*;
-use pharmsol::Predictions;
 
 /// Wrapper that lives behind an extendr ExternalPtr.
 struct CompiledModel {
-    ode: JitOde,
+    model: CompiledRuntimeModel,
 }
 
-/// Compile a text model definition into a JIT'd ODE model handle.
+/// Compile a DSL model definition into a JIT runtime model handle.
 ///
 /// Returns an external-pointer SEXP. The pointer is reference-counted via
 /// `Arc<CompiledModel>` so cloning the R object is cheap.
@@ -35,20 +34,36 @@ fn compile_model(text: &str) -> Robj {
 }
 
 fn compile_model_inner(text: &str) -> Result<Robj> {
-    let model = Model::from_text(text).map_err(|e| Error::Other(format!("parse error: {e}")))?;
-    let ode = model
-        .compile()
-        .map_err(|e| Error::Other(format!("compile error: {e}")))?;
-    let boxed = Arc::new(CompiledModel { ode });
+    let model = pharmsol::dsl::compile_module_source_to_runtime(
+        text,
+        None,
+        RuntimeCompilationTarget::Jit,
+        |_, _| {},
+    )
+    .map_err(|e| Error::Other(format!("compile error: {e}")))?;
+    if matches!(model.kind(), pharmsol::dsl::ModelKind::Sde) {
+        return Err(Error::Other(
+            "pharmsolr currently supports ODE and analytical DSL models only".into(),
+        ));
+    }
+    let boxed = Arc::new(CompiledModel { model });
     Ok(ExternalPtr::new(boxed).into())
 }
 
-/// Return the compartment names of a compiled model in declaration order.
+/// Return the route names of a compiled model in declaration order.
 /// Index `i` (zero-based) is the value used as `cmt` in the events table for
-/// a bolus or infusion targeting this compartment.
+/// a bolus or infusion targeting that route. The exported symbol keeps its
+/// historical name because the R layer still calls it through `wrap__model_compartments`.
 #[extendr]
 fn model_compartments(model: Robj) -> Robj {
-    or_throw(model_names(model, |c| c.compartments().to_vec()))
+    or_throw(model_names(model, |compiled| {
+        compiled
+            .info()
+            .routes
+            .iter()
+            .map(|route| route.name.clone())
+            .collect()
+    }))
 }
 
 /// Return the output names of a compiled model in declaration order. Index
@@ -56,28 +71,44 @@ fn model_compartments(model: Robj) -> Robj {
 /// observations of this output.
 #[extendr]
 fn model_outputs(model: Robj) -> Robj {
-    or_throw(model_names(model, |c| c.outputs().to_vec()))
+    or_throw(model_names(model, |compiled| {
+        compiled
+            .info()
+            .outputs
+            .iter()
+            .map(|output| output.name.clone())
+            .collect()
+    }))
 }
 
 /// Return the parameter names of a compiled model in the order expected by
 /// the `params` argument of [`simulate_subject`].
 #[extendr]
 fn model_params(model: Robj) -> Robj {
-    or_throw(model_names(model, |c| c.params().to_vec()))
+    or_throw(model_names(model, |compiled| {
+        compiled.info().parameters.clone()
+    }))
 }
 
 /// Return the covariate names referenced by a compiled model.
 #[extendr]
 fn model_covariates(model: Robj) -> Robj {
-    or_throw(model_names(model, |c| c.covariates().to_vec()))
+    or_throw(model_names(model, |compiled| {
+        compiled
+            .info()
+            .covariates
+            .iter()
+            .map(|covariate| covariate.name.clone())
+            .collect()
+    }))
 }
 
-fn model_names(model: Robj, pick: impl Fn(&JitOde) -> Vec<String>) -> Result<Robj> {
+fn model_names(model: Robj, pick: impl Fn(&CompiledRuntimeModel) -> Vec<String>) -> Result<Robj> {
     let ptr: ExternalPtr<Arc<CompiledModel>> = model
         .try_into()
         .map_err(|_| Error::Other("`model` is not a pharmsolr model handle".into()))?;
     let compiled: &Arc<CompiledModel> = &*ptr;
-    let names = pick(&compiled.ode);
+    let names = pick(&compiled.model);
     Ok(Strings::from_values(names).into())
 }
 
@@ -198,12 +229,15 @@ fn simulate_subject_inner(
     let subject = builder.build();
     let p: Vec<f64> = params.iter().map(|x| x.0).collect();
 
-    let (preds, _) = compiled
-        .ode
-        .simulate_subject(&subject, &p, None)
+    let predictions = compiled
+        .model
+        .estimate_predictions(&subject, &p)
         .map_err(|e| Error::Other(format!("simulation error: {e}")))?;
+    let subject_predictions = predictions.into_subject().ok_or_else(|| {
+        Error::Other("pharmsolr currently supports deterministic models only".into())
+    })?;
 
-    let v = preds.get_predictions();
+    let v = subject_predictions.predictions();
     let out_times: Doubles = v.iter().map(|p| Rfloat::from(p.time())).collect();
     let out_preds: Doubles = v.iter().map(|p| Rfloat::from(p.prediction())).collect();
     Ok(list!(time = out_times, pred = out_preds).into())

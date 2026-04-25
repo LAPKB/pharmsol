@@ -1,16 +1,16 @@
 # pharmsolr
 
-A tiny example R package wrapping `pharmsol`'s JIT-compiled model API via
-[extendr](https://extendr.github.io/). Define a pharmacometric model in plain
-text, JIT-compile it through Cranelift, and run simulations from R — no
-recompilation per model.
+A tiny example R package wrapping `pharmsol`'s DSL runtime API via
+[extendr](https://extendr.github.io/). Define a pharmacometric model in the
+recommended sugared DSL, compile it through the runtime JIT, and run
+simulations from R.
 
 ## Requirements
 
 - R ≥ 4.1
 - A working Rust toolchain (`rustup`, `cargo`) at install time only. Once the
   package is installed, end users do **not** need Rust to use it: they just
-  load the package and call `compile_model()` on any text definition.
+  load the package and call `compile_model()` on any DSL definition.
 
 ## Install
 
@@ -35,12 +35,18 @@ R CMD INSTALL pharmsolr
 library(pharmsolr)
 
 mod <- compile_model("
-  name         = onecmt-allo
-  compartments = central
-  params       = CL, V
-  covariates   = WT
-  dxdt(central) = rateiv[0] - (CL * pow(WT / 70.0, 0.75) / V) * central
-  out(cp)       = central / V
+  model = onecmt_allo
+  kind = ode
+
+  params = CL, V
+  covariates = WT@locf
+  states = central
+  outputs = cp
+
+  infusion(iv_central) -> central
+
+  dx(central) = -(CL * pow(WT / 70.0, 0.75) / V) * central
+  out(cp) = central / V ~ continuous()
 ")
 
 events <- data.frame(
@@ -48,7 +54,7 @@ events <- data.frame(
   evid  = c(1L,        0L,   0L,   0L,   0L,   0L),    # 1=dose, 0=observation
   amt   = c(100,       0,    0,    0,    0,    0),
   dur   = c(0.5,       0,    0,    0,    0,    0),    # dur > 0 -> infusion; dur = 0 -> bolus
-  cmt   = c("central", NA,   NA,   NA,   NA,   NA),   # name or 0-based integer
+  cmt   = c("iv_central", NA,   NA,   NA,   NA,   NA),   # route name or 0-based integer
   outeq = c(NA,        "cp", "cp", "cp", "cp", "cp"), # name or 0-based integer
   stringsAsFactors = FALSE
 )
@@ -66,48 +72,51 @@ simulate_subject(mod,
 #> 5 12.0   0.5464
 ```
 
-The model owns the canonical name-to-index map. Use `compartments(mod)`,
+The model owns the canonical name-to-index map. Use `routes(mod)`,
 `outputs(mod)`, `params(mod)`, and `covariates(mod)` to inspect it, or
-`cmt(mod, "central")` / `outeq(mod, "cp")` for ad-hoc lookups. Events may
-reference compartments and outputs by name (recommended) or by zero-based
-integer (matches the order declared in the model).
+`route(mod, "central")` / `outeq(mod, "cp")` for ad-hoc lookups. Events may
+reference routes and outputs by name (recommended) or by zero-based integer.
 
-## Model text format
+## Model source format
 
-See `?pharmsolr::compile_model` and the `pharmsol::jit::text` Rust module for
-the full grammar. Briefly:
+See `?pharmsolr::compile_model` for the full grammar. Briefly:
 
 ```text
-name         = my_model
-compartments = depot, central
-params       = ka, CL, V
-covariates   = WT          # optional
-ndrugs       = 1            # optional, default 1
+model = my_model
+kind = ode
 
-dxdt(depot)   = -ka * depot
-dxdt(central) =  ka * depot - (CL * pow(WT/70.0, 0.75) / V) * central
-out(cp)       =  central / V
+params = ka, CL, V
+covariates = WT@locf
+states = depot, central
+outputs = cp
+
+bolus(oral) -> depot
+infusion(iv_central) -> central
+
+dx(depot) = -ka * depot
+dx(central) = ka * depot - (CL * pow(WT/70.0, 0.75) / V) * central
+out(cp) = central / V ~ continuous()
 ```
 
 Expression syntax: `+ - * / ^`, plus `exp`, `ln`, `log`, `log10`, `sqrt`,
-`abs`, `pow(a, b)`. Identifiers may be parameter names, compartment names,
-covariate names, or `t`. `rateiv[i]` is the current infusion rate on
-input channel `i`.
+`abs`, `pow(a, b)`. Identifiers may be parameter names, state names,
+covariate names, or `t`. Doses enter through named routes declared with
+`bolus(...) -> state` or `infusion(...) -> state`.
 
 ## What this demonstrates
 
 End-to-end runtime model authoring:
 
 ```
-   text in R           extendr             pharmsol::jit          Cranelift
+  DSL in R            extendr           pharmsol::dsl          Cranelift
 +-------------+   →  +---------+   →   +----------------+   →   +--------+
 | model_text  |     | bridge  |       | parse + lower  |       | native |
-| events df   |     |  layer  |       | compile        |       | code   |
+| events df   |     |  layer  |       | runtime JIT    |       | code   |
 +-------------+     +---------+       +----------------+       +--------+
                                                                     │
                                                                     ▼
                                                            predictions in R
 ```
 
-The R user never touches Rust source files, never invokes `cargo build`, and
-never restarts R between models.
+The R user never touches Rust source files, never authors legacy text/JIT
+models, and never needs more than the DSL plus the runtime API.

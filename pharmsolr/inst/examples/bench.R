@@ -2,19 +2,22 @@
 #
 # Run from the pharmsol repo root:
 #   Rscript pharmsolr/inst/examples/bench.R
-#
-# Pair with:
-#   cargo run --release --features jit --example jit_bench
 
 suppressMessages(library(pharmsolr))
 
 text <- "
-  name         = onecmt-allo
-  compartments = central
-  params       = CL, V
-  covariates   = WT
-  dxdt(central) = rateiv[0] - (CL * pow(WT / 70.0, 0.75) / V) * central
-  out(cp)       = central / V
+  model = onecmt_allo
+  kind = ode
+
+  params = CL, V
+  covariates = WT@locf
+  states = central
+  outputs = cp
+
+  infusion(iv_central) -> central
+
+  dx(central) = -(CL * pow(WT / 70.0, 0.75) / V) * central
+  out(cp) = central / V ~ continuous()
 "
 
 # Compile time
@@ -24,12 +27,12 @@ compile_s <- as.numeric(Sys.time() - t0, units = "secs")
 cat(sprintf("compile: %.3f ms\n", compile_s * 1000))
 
 events <- data.frame(
-  time  = c(0,   1,   2,   4,   8,   12),
-  evid  = c(1L,  0L,  0L,  0L,  0L,  0L),
-  amt   = c(100, 0,   0,   0,   0,   0),
-  dur   = c(0.5, 0,   0,   0,   0,   0),
-  cmt   = c(0L,  0L,  0L,  0L,  0L,  0L),
-  outeq = c(0L,  0L,  0L,  0L,  0L,  0L)
+  time  = c(0, 1, 2, 4, 8, 12),
+  evid  = c(1L, 0L, 0L, 0L, 0L, 0L),
+  amt   = c(100, 0, 0, 0, 0, 0),
+  dur   = c(0.5, 0, 0, 0, 0, 0),
+  cmt   = c(0L, 0L, 0L, 0L, 0L, 0L),
+  outeq = c(0L, 0L, 0L, 0L, 0L, 0L)
 )
 covs <- list(WT = data.frame(time = 0, value = 80))
 params <- c(5, 50)

@@ -1,5 +1,5 @@
 TARGET = x86_64-pc-windows-gnu
-TARGET_DIR = ./rust/target
+TARGET_DIR = $(CURDIR)/rust/target
 LIBDIR = $(TARGET_DIR)/$(TARGET)/release
 STATLIB = $(LIBDIR)/libpharmsolr.a
 PKG_LIBS = -L$(LIBDIR) -lpharmsolr -lws2_32 -ladvapi32 -luserenv -lbcrypt -lntdll
@@ -19,7 +19,7 @@ $(STATLIB):
 		cd ./rust && cargo build --target=$(TARGET) --lib --release \
 			--manifest-path=Cargo.toml \
 			--target-dir=$(TARGET_DIR) \
-			--features pharmsol/jit
+			--features pharmsol/dsl-jit
 	if [ "$(NOT_CRAN)" != "true" ]; then \
 		rm -Rf $(CARGOTMP) $(LIBDIR)/build; \
 	fi
@@ -28,4 +28,4 @@ C_clean:
 	rm -Rf $(SHLIB) $(OBJECTS)
 
 clean:
-	rm -Rf $(SHLIB) $(STATLIB) $(OBJECTS) ./rust/target
+	rm -Rf $(SHLIB) $(STATLIB) $(OBJECTS) $(TARGET_DIR)

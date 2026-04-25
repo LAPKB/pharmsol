@@ -1,11 +1,9 @@
+#[cfg(any(feature = "dsl-aot", feature = "dsl-wasm"))]
+mod build_support;
 pub mod data;
+#[cfg(feature = "dsl-core")]
+pub mod dsl;
 pub mod error;
-#[cfg(feature = "exa")]
-pub mod exa;
-#[cfg(feature = "jit")]
-pub mod jit;
-#[cfg(feature = "json")]
-pub mod json;
 pub mod nca;
 pub mod optimize;
 pub mod simulator;
@@ -23,8 +21,6 @@ pub use crate::simulator::equation::{
     ODE,
 };
 pub use error::PharmsolError;
-#[cfg(feature = "exa")]
-pub use exa::*;
 pub use nalgebra::dmatrix;
 pub use pharmsol_macros::ode;
 pub use std::collections::HashMap;

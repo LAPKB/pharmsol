@@ -10,7 +10,7 @@
 #' @useDynLib pharmsolr, .registration = TRUE
 NULL
 
-#' Compile a text model definition into a JIT'd ODE model handle.
+#' Compile a DSL model definition into a runtime JIT model handle.
 #'
 #' Returns an external-pointer SEXP. The pointer is reference-counted via
 #' `Arc<CompiledModel>` so cloning the R object is cheap.

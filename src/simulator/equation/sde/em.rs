@@ -1,8 +1,3 @@
-use crate::{
-    data::Covariates,
-    simulator::{Diffusion, Drift},
-    Infusion,
-};
 use nalgebra::DVector;
 use rand::rng;
 use rand_distr::{Distribution, Normal};
@@ -12,22 +7,25 @@ use rand_distr::{Distribution, Normal};
 /// This structure holds the SDE system parameters and state, providing a numerical method
 /// for approximating solutions to stochastic differential equations with adaptive step size
 /// control for improved accuracy.
-#[derive(Clone)]
-pub struct EM {
-    drift: Drift,
-    diffusion: Diffusion,
-    params: DVector<f64>,
+pub struct EM<D, G>
+where
+    D: Fn(f64, &DVector<f64>, &mut DVector<f64>),
+    G: Fn(f64, &DVector<f64>, &mut DVector<f64>),
+{
+    drift: D,
+    diffusion: G,
     state: DVector<f64>,
-    cov: Covariates,
-    infusions: Vec<Infusion>,
     rtol: f64,
     atol: f64,
     max_step: f64,
     min_step: f64,
-    ndrugs: usize,
 }
 
-impl EM {
+impl<D, G> EM<D, G>
+where
+    D: Fn(f64, &DVector<f64>, &mut DVector<f64>),
+    G: Fn(f64, &DVector<f64>, &mut DVector<f64>),
+{
     /// Creates a new SDE solver using the Euler-Maruyama method.
     ///
     /// # Arguments
@@ -45,28 +43,20 @@ impl EM {
     ///
     /// A new instance of the Euler-Maruyama solver configured with the given parameters.
     pub fn new(
-        drift: Drift,
-        diffusion: Diffusion,
-        params: DVector<f64>,
+        drift: D,
+        diffusion: G,
         initial_state: DVector<f64>,
-        cov: Covariates,
-        infusions: Vec<Infusion>,
         rtol: f64,
         atol: f64,
-        ndrugs: usize,
     ) -> Self {
         Self {
             drift,
             diffusion,
-            params,
             state: initial_state,
-            cov,
-            infusions,
             rtol,
             atol,
             max_step: 0.1,
             min_step: 1e-6,
-            ndrugs,
         }
     }
 
@@ -118,27 +108,11 @@ impl EM {
     /// * `state` - Current state of the system (modified in-place)
     fn euler_maruyama_step(&self, time: f64, dt: f64, state: &mut DVector<f64>) {
         let n = state.len();
-        let mut rateiv: DVector<f64> = DVector::zeros(self.ndrugs);
-        for infusion in &self.infusions {
-            if time >= infusion.time() && time <= infusion.duration() + infusion.time() {
-                rateiv[infusion.input()] += infusion.amount() / infusion.duration();
-            }
-        }
-        let mut drift_term = DVector::zeros(n).into();
-        let params_v = self.params.clone().into();
-        let state_v = state.clone().into();
-        let rateiv_v: crate::simulator::V = rateiv.into();
-        (self.drift)(
-            &state_v,
-            &params_v,
-            time,
-            &mut drift_term,
-            &rateiv_v,
-            &self.cov,
-        );
+        let mut drift_term = DVector::zeros(n);
+        (self.drift)(time, state, &mut drift_term);
 
-        let mut diffusion_term = DVector::zeros(n).into();
-        (self.diffusion)(&params_v, &mut diffusion_term);
+        let mut diffusion_term = DVector::zeros(n);
+        (self.diffusion)(time, state, &mut diffusion_term);
 
         let mut rng = rng();
         let normal_dist = Normal::new(0.0, 1.0).unwrap();

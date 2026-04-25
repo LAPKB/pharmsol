@@ -2,12 +2,15 @@
 % Please edit documentation in R/pharmsolr.R
 \name{model_metadata}
 \alias{model_metadata}
+\alias{routes}
 \alias{compartments}
 \alias{outputs}
 \alias{params}
 \alias{covariates}
-\title{Compartment, output, parameter, and covariate names of a compiled model}
+\title{Route, output, parameter, and covariate names of a compiled model}
 \usage{
+routes(model)
+
 compartments(model)
 
 outputs(model)
@@ -27,8 +30,8 @@ These accessors return the canonical name-to-index map fixed at compile
 time. Use them to avoid hard-coding integers for `cmt` and `outeq`.
 }
 \details{
-`compartments()` index is the value to pass as `cmt` for a dose targeting
-that compartment. `outputs()` index is the value to pass as `outeq` for an
-observation of that output. `params()` is the order of the `params`
-argument to [simulate_subject()].
+`routes()` index is the value to pass as `cmt` for a dose targeting that
+route. `outputs()` index is the value to pass as `outeq` for an observation
+of that output. `params()` is the order of the `params` argument to
+[simulate_subject()].
 }

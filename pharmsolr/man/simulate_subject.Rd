@@ -7,32 +7,32 @@
 simulate_subject(model, params, events, covariates = list())
 
 simulate_subject(model, params, events, covariates = list())
-
-simulate_subject(model, params, events, covariates = list())
 }
 \arguments{
 \item{model}{A model handle returned by [compile_model()].}
 
-\item{params}{Numeric vector of parameter values, in the order declared by
-the `params = ...` line of the model.}
+\item{params}{Numeric vector of parameter values. May be unnamed (uses the
+declared order from the model) or named (will be reordered to match
+[params()]).}
 
 \item{events}{A data.frame with one row per event and columns:
 \describe{
-  \item{time}{numeric — event time}
-  \item{evid}{integer — 0 = observation, 1 = dose (bolus when `dur` is 0, infusion when `dur` > 0)}
-  \item{amt}{numeric — dose amount (ignored for observations)}
-  \item{dur}{numeric — infusion duration; use 0 for a bolus}
-  \item{cmt}{integer — input compartment for bolus/infusion (0-based)}
-  \item{outeq}{integer — output equation index for observation (0-based)}
+  \item{time}{numeric -- event time}
+  \item{evid}{integer -- 0 = observation, 1 = dose (bolus when `dur` is 0, infusion when `dur` > 0)}
+  \item{amt}{numeric -- dose amount (ignored for observations)}
+  \item{dur}{numeric -- infusion duration; use 0 for a bolus}
+  \item{cmt}{integer or character -- input route for bolus/infusion.
+    If character, names are resolved against the compiled model's routes
+    (see [routes()]). Integer values are zero-based.}
+  \item{outeq}{integer or character -- output equation for an observation.
+    If character, names are resolved against the compiled model's outputs
+    (see [outputs()]). Integer values are zero-based.}
 }}
 
 \item{covariates}{Optional named list. Each entry is a data.frame with
-columns `time` and `value`, naming the covariate (must match the model's
-`covariates = ...` line).}
+columns `time` and `value`, naming the covariate declared in the model.}
 }
 \value{
-A data.frame with columns `time` and `pred`.
-
 A data.frame with columns `time` and `pred`.
 }
 \description{

@@ -1,6 +1,6 @@
-# Example: text -> JIT model -> simulation, end-to-end in R.
+# Example: DSL -> runtime JIT model -> simulation, end-to-end in R.
 #
-# Demonstrates the name-based API: events refer to compartments and outputs
+# Demonstrates the name-based API: events refer to routes and outputs
 # by name, parameters are passed by name, and the model owns the canonical
 # name-to-index map.
 #
@@ -12,39 +12,41 @@
 library(pharmsolr)
 
 model_text <- "
-  # Two-compartment IV with allometric scaling on CL.
-  # Two outputs: central concentration and peripheral concentration.
-  name         = twocmt-allo
-  compartments = central, periph
-  params       = CL, V, Q, Vp
-  covariates   = WT
-  ndrugs       = 1
+  model = twocmt_allo
+  kind = ode
 
-  dxdt(central) = rateiv[0] - (CL * pow(WT / 70.0, 0.75) / V) * central
-                            - (Q / V) * central + (Q / Vp) * periph
-  dxdt(periph)  =             (Q / V) * central - (Q / Vp) * periph
+  params = CL, V, Q, Vp
+  covariates = WT@locf
+  states = central, periph
+  outputs = cp, cp_periph
 
-  out(cp)        = central / V
-  out(cp_periph) = periph  / Vp
+  infusion(iv_central) -> central
+  infusion(iv_periph) -> periph
+
+  dx(central) = -(CL * pow(WT / 70.0, 0.75) / V) * central - (Q / V) * central + (Q / Vp) * periph
+  dx(periph) = (Q / V) * central - (Q / Vp) * periph
+
+  out(cp) = central / V ~ continuous()
+  out(cp_periph) = periph / Vp ~ continuous()
 "
 
 mod <- compile_model(model_text)
 
 # Inspect the canonical name-to-index map. These are what the data layer uses.
-cat("compartments:", paste(compartments(mod), collapse = ", "), "\n")
-cat("outputs:     ", paste(outputs(mod),      collapse = ", "), "\n")
-cat("params:      ", paste(params(mod),       collapse = ", "), "\n")
-cat("covariates:  ", paste(covariates(mod),   collapse = ", "), "\n\n")
+cat("routes:      ", paste(routes(mod), collapse = ", "), "\n")
+cat("outputs:     ", paste(outputs(mod), collapse = ", "), "\n")
+cat("params:      ", paste(params(mod), collapse = ", "), "\n")
+cat("covariates:  ", paste(covariates(mod), collapse = ", "), "\n\n")
 
-# Build events using *names*, not magic integers. Reordering compartments or
+# Build events using *names*, not magic integers. Reordering routes or
 # outputs in the model definition above will not break this code.
 events <- data.frame(
-  time  = c(0.0,        1.0,    2.0,    4.0,         8.0,    12.0),
-  evid  = c(1L,         0L,     0L,     0L,          0L,     0L),
-  amt   = c(100,        0,      0,      0,           0,      0),
-  dur   = c(0.5,        0,      0,      0,           0,      0),
-  cmt   = c("central",  NA,     NA,     NA,          NA,     NA),
-  outeq = c(NA,         "cp",   "cp",   "cp_periph", "cp",   "cp"),
+  time = c(0.0, 1.0, 2.0, 4.0, 8.0, 12.0),
+  evid = c(1L, 0L, 0L, 0L, 0L, 0L),
+  amt = c(100, 0, 0, 0, 0, 0),
+  dur = c(0.5, 0, 0, 0, 0, 0),
+  cmt = c("iv_central", NA, NA, NA, NA, NA),
+  outeq = c(NA, "cp", "cp", "cp_periph", "cp", "cp"),
   stringsAsFactors = FALSE
 )
 
@@ -64,7 +66,7 @@ out <- simulate_subject(
 print(out)
 
 # Lookup helpers, equivalent to mrgsolve::cmtn().
-stopifnot(cmt(mod, "central")    == 0L)
-stopifnot(cmt(mod, "periph")     == 1L)
-stopifnot(outeq(mod, "cp")       == 0L)
+stopifnot(route(mod, "iv_central") == 0L)
+stopifnot(route(mod, "iv_periph") == 1L)
+stopifnot(outeq(mod, "cp") == 0L)
 stopifnot(outeq(mod, "cp_periph") == 1L)

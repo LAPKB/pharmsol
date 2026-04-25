@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Add Proposal 2 runtime benchmark matrix across ODE, analytical, and SDE models.
+- Add Proposal 2 release-readiness summary and compatibility/performance baseline notes.
+
+### Fixed
+
+- Zero the reusable WASM guest output buffer before sparse kernel calls so diffusion outputs cannot reuse stale values across invocations.
+
 ## [0.26.0](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.25.0...pharmsol-v0.26.0) - 2026-04-10
 
 ### Added
@@ -51,13 +60,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Remove LikelihoodMatrixOptions ([#222](https://github.com/LAPKB/pharmsol/pull/222))
 - Use a sized cache with new subject hashing ([#214](https://github.com/LAPKB/pharmsol/pull/214))
-- Normalized rows  ([#205](https://github.com/LAPKB/pharmsol/pull/205))
+- Normalized rows ([#205](https://github.com/LAPKB/pharmsol/pull/205))
 
 ### Fixed
 
 - Fix test and capture error to drop ([#220](https://github.com/LAPKB/pharmsol/pull/220))
 - Prevents creating a terminal on windows ([#179](https://github.com/LAPKB/pharmsol/pull/179))
-- *(exa)* invalidate compilation cache when pharmsol version changes ([#217](https://github.com/LAPKB/pharmsol/pull/217))
+- _(exa)_ invalidate compilation cache when pharmsol version changes ([#217](https://github.com/LAPKB/pharmsol/pull/217))
 - Update sort order of events ([#219](https://github.com/LAPKB/pharmsol/pull/219))
 
 ### Other

@@ -1,0 +1,76 @@
+//! Backend-neutral frontend for the Proposal 2 model DSL.
+//!
+//! This module owns source parsing, syntax diagnostics, and the concrete AST
+//! for structured-block models. It is intentionally independent from JIT,
+//! ahead-of-time native export, and WASM emission so later slices can lower the
+//! same parsed model into a shared semantic IR.
+
+#[cfg(any(feature = "dsl-aot", feature = "dsl-aot-load"))]
+mod aot;
+mod ast;
+mod authoring;
+mod diagnostic;
+mod execution;
+mod ir;
+#[cfg(feature = "dsl-jit")]
+mod jit;
+mod lexer;
+#[cfg(any(feature = "dsl-jit", feature = "dsl-aot-load", feature = "dsl-wasm"))]
+mod native;
+mod parser;
+#[cfg(any(
+    feature = "dsl-jit",
+    all(feature = "dsl-aot", feature = "dsl-aot-load"),
+    feature = "dsl-wasm"
+))]
+mod runtime;
+#[cfg(any(feature = "dsl-aot", feature = "dsl-aot-load", feature = "dsl-wasm"))]
+mod rust_backend;
+mod semantic;
+#[cfg(feature = "dsl-wasm")]
+mod wasm;
+
+#[cfg(feature = "dsl-aot")]
+pub use aot::{
+    compile_module_source_to_aot, export_execution_model_to_aot, AotError, AOT_API_VERSION,
+};
+#[cfg(feature = "dsl-aot-load")]
+pub use aot::{load_aot_model, read_aot_model_info};
+#[cfg(all(not(feature = "dsl-aot"), feature = "dsl-aot-load"))]
+pub use aot::{AotError, AOT_API_VERSION};
+pub use ast::*;
+pub use diagnostic::{Diagnostic, ParseError, Span};
+pub use execution::{
+    lower_typed_model, lower_typed_module, ExecutionModel, ExecutionModule, LoweringError,
+};
+pub use ir::*;
+#[cfg(feature = "dsl-jit")]
+pub use jit::{
+    compile_analytical_model_to_jit, compile_execution_artifact, compile_execution_model_to_jit,
+    compile_ode_model_to_jit, compile_sde_model_to_jit, CompiledJitModel, JitAnalyticalModel,
+    JitCompileError, JitExecutionArtifact, JitOdeModel, JitSdeModel,
+};
+#[cfg(any(feature = "dsl-jit", feature = "dsl-aot-load", feature = "dsl-wasm"))]
+pub use native::{
+    CompiledNativeModel, DenseKernelFn, NativeAnalyticalModel, NativeCovariateInfo,
+    NativeExecutionArtifact, NativeModelInfo, NativeOdeModel, NativeOutputInfo, NativeRouteInfo,
+    NativeSdeModel, RuntimeBackend,
+};
+pub use parser::{parse_model, parse_module};
+#[cfg(any(
+    feature = "dsl-jit",
+    all(feature = "dsl-aot", feature = "dsl-aot-load"),
+    feature = "dsl-wasm"
+))]
+pub use runtime::{
+    compile_execution_model_to_runtime, compile_module_source_to_runtime, load_runtime_artifact,
+    CompiledRuntimeModel, RuntimeAnalyticalModel, RuntimeArtifactFormat, RuntimeCompilationTarget,
+    RuntimeCovariateInfo, RuntimeError, RuntimeModelInfo, RuntimeOdeModel, RuntimeOutputInfo,
+    RuntimePredictions, RuntimeRouteInfo, RuntimeSdeModel,
+};
+pub use semantic::{analyze_model, analyze_module, SemanticError};
+#[cfg(feature = "dsl-wasm")]
+pub use wasm::{
+    browser_loader_source, compile_module_source_to_wasm, export_execution_model_to_wasm,
+    read_wasm_model_info, WasmArtifactBundle, WasmError, WASM_API_VERSION,
+};

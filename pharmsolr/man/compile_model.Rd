@@ -2,22 +2,17 @@
 % Please edit documentation in R/extendr-wrappers.R, R/pharmsolr.R
 \name{compile_model}
 \alias{compile_model}
-\title{Compile a text model definition into a JIT'd ODE model handle.}
+\title{Compile a DSL model definition into a runtime JIT model handle.}
 \usage{
-compile_model(text)
-
 compile_model(text)
 
 compile_model(text)
 }
 \arguments{
-\item{text}{Character scalar containing a pharmsol JIT model definition
-(see the package README for the format).}
+\item{text}{Character scalar containing a pharmsol DSL model definition in
+the recommended authoring syntax.}
 }
 \value{
-An external pointer wrapping the compiled model. Pass to
-  [simulate_subject()].
-
 An external pointer wrapping the compiled model. Pass to
   [simulate_subject()].
 }

@@ -13,9 +13,12 @@ documentation = "https://lapkb.github.io/pharmsol/"
 
 [features]
 default = []
-json = []
-exa = ["json", "libloading"]
-jit = ["cranelift", "cranelift-jit", "cranelift-module", "cranelift-native"]
+dsl-core = []
+dsl-jit = ["dsl-core", "dep:cranelift", "dep:cranelift-jit", "dep:cranelift-module", "dep:cranelift-native"]
+dsl-aot = ["dsl-core"]
+dsl-aot-load = ["dsl-core", "dep:libloading"]
+dsl-wasm = ["dsl-core", "dep:wasmtime"]
+wasm = ["dsl-wasm"]
 
 [dependencies]
 ahash = "0.8"
@@ -40,6 +43,7 @@ argmin = "0.11.0"
 argmin-math = "0.5.1"
 tracing = "0.1.41"
 moka = { version = "0.12.14", features = ["sync"] }
+wasmtime = { version = "28.0.1", optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.8.0", features = ["html_reports"] }
@@ -67,4 +71,8 @@ harness = false
 
 [[bench]]
 name = "nca"
+harness = false
+
+[[bench]]
+name = "proposal_runtime_matrix"
 harness = false

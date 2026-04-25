@@ -16,5 +16,5 @@ extendr-api = "0.9"
 # The path dependency points up two levels to the pharmsol crate at the repo
 # root. In a published version of this R package, replace with a git or
 # crates.io reference, e.g.
-#   pharmsol = { version = "0.26", features = ["jit"] }
-pharmsol = { path = "../../..", features = ["jit"] }
+#   pharmsol = { version = "0.26", features = ["dsl-jit"] }
+pharmsol = { path = "../../..", features = ["dsl-jit"] }

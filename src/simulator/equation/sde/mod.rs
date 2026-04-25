@@ -58,19 +58,54 @@ pub(crate) fn simulate_sde_event(
         return x;
     }
 
-    let mut sde = em::EM::new(
-        *drift,
-        *difussion,
-        DVector::from_column_slice(support_point),
-        x.inner().clone(),
-        cov.clone(),
-        infusions.to_vec(),
-        1e-2,
-        1e-2,
-        ndrugs,
-    );
+    let params_v = V::from_vec(support_point.to_vec(), NalgebraContext);
+    let covariates = cov.clone();
+    let infusion_events = infusions.to_vec();
+    let drift_fn = *drift;
+    let diffusion_fn = *difussion;
+
+    let params_for_drift = params_v.clone();
+    let drift_closure = move |time: f64, state: &DVector<f64>, out: &mut DVector<f64>| {
+        let mut rateiv = V::zeros(ndrugs, NalgebraContext);
+        for infusion in &infusion_events {
+            if time >= infusion.time() && time <= infusion.duration() + infusion.time() {
+                rateiv[infusion.input()] += infusion.amount() / infusion.duration();
+            }
+        }
+
+        let state_v: V = state.clone().into();
+        let mut out_v = V::zeros(state.len(), NalgebraContext);
+        drift_fn(&state_v, &params_for_drift, time, &mut out_v, &rateiv, &covariates);
+        out.copy_from(out_v.inner());
+    };
+
+    let diffusion_closure = move |_time: f64, _state: &DVector<f64>, out: &mut DVector<f64>| {
+        let mut out_v = V::zeros(out.len(), NalgebraContext);
+        diffusion_fn(&params_v, &mut out_v);
+        out.copy_from(out_v.inner());
+    };
+
+    simulate_sde_event_with(drift_closure, diffusion_closure, x.inner().clone(), ti, tf).into()
+}
+
+pub(crate) fn simulate_sde_event_with<D, G>(
+    drift: D,
+    diffusion: G,
+    initial_state: DVector<f64>,
+    ti: f64,
+    tf: f64,
+) -> DVector<f64>
+where
+    D: Fn(f64, &DVector<f64>, &mut DVector<f64>),
+    G: Fn(f64, &DVector<f64>, &mut DVector<f64>),
+{
+    if ti == tf {
+        return initial_state;
+    }
+
+    let mut sde = em::EM::new(drift, diffusion, initial_state, 1e-2, 1e-2);
     let (_time, solution) = sde.solve(ti, tf);
-    solution.last().unwrap().clone().into()
+    solution.last().unwrap().clone()
 }
 
 /// Stochastic Differential Equation solver for pharmacometric models.
