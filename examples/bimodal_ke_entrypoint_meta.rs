@@ -80,10 +80,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let runtime_native_aot_model = pharmsol::dsl::compile_module_source_to_runtime(
         MODEL_SOURCE,
         Some("bimodal_ke"),
-        pharmsol::dsl::RuntimeCompilationTarget::NativeAot {
-            output: Some(workspace.join("bimodal-ke-meta-runtime-native-aot.pkm")),
-            template_root: workspace.join("bimodal-ke-meta-runtime-native-aot-build"),
-        },
+        pharmsol::dsl::RuntimeCompilationTarget::NativeAot(
+            pharmsol::dsl::NativeAotCompileOptions::new(
+                workspace.join("bimodal-ke-meta-runtime-native-aot-build"),
+            )
+            .with_output(workspace.join("bimodal-ke-meta-runtime-native-aot.pkm")),
+        ),
         on_compile_event,
     )?;
     let runtime_native_aot_iv = runtime_native_aot_model
@@ -144,8 +146,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let direct_aot_artifact = pharmsol::dsl::compile_module_source_to_aot(
         MODEL_SOURCE,
         Some("bimodal_ke"),
-        Some(workspace.join("bimodal-ke-meta-direct-aot.pkm")),
-        workspace.join("bimodal-ke-meta-direct-aot-build"),
+        pharmsol::dsl::NativeAotCompileOptions::new(workspace.join("bimodal-ke-meta-direct-aot-build"))
+            .with_output(workspace.join("bimodal-ke-meta-direct-aot.pkm")),
         on_compile_event,
     )?;
     let direct_aot_model = pharmsol::dsl::load_runtime_artifact(

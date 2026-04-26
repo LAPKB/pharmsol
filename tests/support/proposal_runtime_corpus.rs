@@ -259,10 +259,12 @@ pub fn compile_runtime_native_aot_model(
         dsl::compile_module_source_to_runtime(
             case.source(),
             Some(case.model_name()),
-            RuntimeCompilationTarget::NativeAot {
-                output: Some(workspace.aot_output(&format!("{}-runtime-aot", case.label()))),
-                template_root: workspace.build_root(&format!("{}-runtime-aot-build", case.label())),
-            },
+            RuntimeCompilationTarget::NativeAot(
+                dsl::NativeAotCompileOptions::new(
+                    workspace.build_root(&format!("{}-runtime-aot-build", case.label())),
+                )
+                .with_output(workspace.aot_output(&format!("{}-runtime-aot", case.label()))),
+            ),
             |_, _| {},
         )?,
     ))

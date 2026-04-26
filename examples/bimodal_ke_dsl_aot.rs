@@ -44,8 +44,8 @@ out(cp) = central / v ~ continuous()
     let artifact = pharmsol::dsl::compile_module_source_to_aot(
         model_source,
         Some("bimodal_ke"),
-        Some(workspace.join("bimodal-ke-direct-aot.pkm")),
-        workspace.join("direct-aot-build"),
+        pharmsol::dsl::NativeAotCompileOptions::new(workspace.join("direct-aot-build"))
+            .with_output(workspace.join("bimodal-ke-direct-aot.pkm")),
         on_compile_event,
     )?;
     let model = pharmsol::dsl::load_runtime_artifact(

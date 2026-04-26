@@ -95,10 +95,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ode_model = dsl::compile_module_source_to_runtime(
         ODE_SOURCE,
         Some("example_ode"),
-        RuntimeCompilationTarget::NativeAot {
-            output: Some(workspace.join("example-ode-runtime-native-aot.pkm")),
-            template_root: workspace.join("example-ode-runtime-native-aot-build"),
-        },
+        RuntimeCompilationTarget::NativeAot(
+            dsl::NativeAotCompileOptions::new(workspace.join("example-ode-runtime-native-aot-build"))
+                .with_output(workspace.join("example-ode-runtime-native-aot.pkm")),
+        ),
         on_compile_event,
     )?;
     let ode_oral = ode_model
@@ -129,10 +129,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let analytical_model = dsl::compile_module_source_to_runtime(
         ANALYTICAL_SOURCE,
         Some("example_analytical"),
-        RuntimeCompilationTarget::NativeAot {
-            output: Some(workspace.join("example-analytical-runtime-native-aot.pkm")),
-            template_root: workspace.join("example-analytical-runtime-native-aot-build"),
-        },
+        RuntimeCompilationTarget::NativeAot(
+            dsl::NativeAotCompileOptions::new(
+                workspace.join("example-analytical-runtime-native-aot-build"),
+            )
+            .with_output(workspace.join("example-analytical-runtime-native-aot.pkm")),
+        ),
         on_compile_event,
     )?;
     let analytical_oral = analytical_model
@@ -160,10 +162,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let sde_model = dsl::compile_module_source_to_runtime(
         SDE_SOURCE,
         Some("example_sde"),
-        RuntimeCompilationTarget::NativeAot {
-            output: Some(workspace.join("example-sde-runtime-native-aot.pkm")),
-            template_root: workspace.join("example-sde-runtime-native-aot-build"),
-        },
+        RuntimeCompilationTarget::NativeAot(
+            dsl::NativeAotCompileOptions::new(workspace.join("example-sde-runtime-native-aot-build"))
+                .with_output(workspace.join("example-sde-runtime-native-aot.pkm")),
+        ),
         on_compile_event,
     )?;
     let sde_oral = sde_model

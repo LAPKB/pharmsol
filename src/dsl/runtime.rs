@@ -10,7 +10,9 @@ use ndarray::Array2;
 use thiserror::Error;
 
 #[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]
-use super::aot::{export_execution_model_to_aot, load_aot_model, AotError};
+use super::aot::{
+    export_execution_model_to_aot, load_aot_model, AotError, NativeAotCompileOptions,
+};
 #[cfg(feature = "dsl-jit")]
 use super::jit::{compile_execution_model_to_jit, JitCompileError};
 #[cfg(feature = "dsl-wasm")]
@@ -40,10 +42,7 @@ pub enum RuntimeCompilationTarget {
     #[cfg(feature = "dsl-jit")]
     Jit,
     #[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]
-    NativeAot {
-        output: Option<PathBuf>,
-        template_root: PathBuf,
-    },
+    NativeAot(NativeAotCompileOptions),
     #[cfg(feature = "dsl-wasm")]
     Wasm {
         output: Option<PathBuf>,
@@ -242,12 +241,8 @@ pub fn compile_execution_model_to_runtime(
             Ok(compiled.into())
         }
         #[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]
-        RuntimeCompilationTarget::NativeAot {
-            output,
-            template_root,
-        } => {
-            let artifact =
-                export_execution_model_to_aot(model, output, template_root, event_callback)?;
+        RuntimeCompilationTarget::NativeAot(options) => {
+            let artifact = export_execution_model_to_aot(model, options, event_callback)?;
             load_runtime_artifact(&artifact, RuntimeArtifactFormat::NativeAot)
         }
         #[cfg(feature = "dsl-wasm")]
@@ -352,10 +347,10 @@ mod tests {
         let aot = compile_module_source_to_runtime(
             proposal_source(),
             Some("one_cmt_oral_iv"),
-            RuntimeCompilationTarget::NativeAot {
-                output: Some(work_dir.path().join("one_cmt_oral_iv.pkm")),
-                template_root: work_dir.path().join("aot-build"),
-            },
+            RuntimeCompilationTarget::NativeAot(
+                NativeAotCompileOptions::new(work_dir.path().join("aot-build"))
+                    .with_output(work_dir.path().join("one_cmt_oral_iv.pkm")),
+            ),
             |_, _| {},
         )
         .expect("compile aot runtime model");

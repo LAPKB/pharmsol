@@ -92,10 +92,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let native_aot_model = dsl::compile_module_source_to_runtime(
         ODE_SOURCE,
         Some("example_ode"),
-        RuntimeCompilationTarget::NativeAot {
-            output: Some(workspace.join("example-ode-runtime-meta-native-aot.pkm")),
-            template_root: workspace.join("example-ode-runtime-meta-native-aot-build"),
-        },
+        RuntimeCompilationTarget::NativeAot(
+            dsl::NativeAotCompileOptions::new(workspace.join("example-ode-runtime-meta-native-aot-build"))
+                .with_output(workspace.join("example-ode-runtime-meta-native-aot.pkm")),
+        ),
         on_compile_event,
     )?;
     let native_aot_oral = native_aot_model

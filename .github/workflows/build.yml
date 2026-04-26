@@ -18,14 +18,20 @@ env:
 jobs:
   test:
     runs-on: "${{ matrix.os }}"
-    name: "${{ matrix.os }} / stable"
+    name: "${{ matrix.name }}"
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
-          - windows-latest
+        include:
+          - name: ubuntu-latest / stable
+            os: ubuntu-latest
+            native_aot_smoke_target: ""
+          - name: macos-14 / stable
+            os: macos-14
+            native_aot_smoke_target: x86_64-apple-darwin
+          - name: windows-latest / stable
+            os: windows-latest
+            native_aot_smoke_target: ""
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -34,6 +40,10 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+
+      - name: Install Native AoT smoke target
+        if: ${{ matrix.native_aot_smoke_target != '' }}
+        run: rustup target add ${{ matrix.native_aot_smoke_target }}
 
       - name: Setup cache
         uses: actions/cache@v5
@@ -63,6 +73,8 @@ jobs:
         run: cargo test --verbose
 
       - name: Run tests (all features)
+        env:
+          PHARMSOL_NATIVE_AOT_SMOKE_TARGET: ${{ matrix.native_aot_smoke_target }}
         run: cargo test --verbose --all-features
 
       - name: Run doc tests

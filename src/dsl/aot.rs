@@ -32,10 +32,62 @@ use super::ModelKind;
 use super::{analyze_module, lower_typed_model, parse_module};
 #[cfg(feature = "dsl-aot")]
 use crate::build_support::{
-    build_cargo_template, create_cargo_template, native_cdylib_filename, write_template_source,
+    build_cargo_template, create_cargo_template, native_cdylib_filename_for_target,
+    rustc_host_target, rustup_installed_targets, write_template_source,
 };
 
 pub const AOT_API_VERSION: u32 = 1;
+
+#[cfg(feature = "dsl-aot")]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum NativeAotTarget {
+    #[default]
+    Host,
+    Triple(String),
+}
+
+#[cfg(feature = "dsl-aot")]
+impl NativeAotTarget {
+    pub fn triple(target: impl Into<String>) -> Self {
+        Self::Triple(target.into())
+    }
+
+    fn cargo_target(&self) -> Option<&str> {
+        match self {
+            Self::Host => None,
+            Self::Triple(target) => Some(target.as_str()),
+        }
+    }
+}
+
+#[cfg(feature = "dsl-aot")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NativeAotCompileOptions {
+    pub target: NativeAotTarget,
+    pub output: Option<PathBuf>,
+    pub template_root: PathBuf,
+}
+
+#[cfg(feature = "dsl-aot")]
+impl NativeAotCompileOptions {
+    pub fn new(template_root: PathBuf) -> Self {
+        Self {
+            target: NativeAotTarget::Host,
+            output: None,
+            template_root,
+        }
+    }
+
+    pub fn with_output(mut self, output: PathBuf) -> Self {
+        self.output = Some(output);
+        self
+    }
+
+    pub fn with_target(mut self, target: NativeAotTarget) -> Self {
+        self.target = target;
+        self
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum AotError {
@@ -65,8 +117,7 @@ pub enum AotError {
 pub fn compile_module_source_to_aot(
     source: &str,
     model_name: Option<&str>,
-    output: Option<PathBuf>,
-    template_root: PathBuf,
+    options: NativeAotCompileOptions,
     event_callback: impl Fn(String, String) + Send + Sync + 'static,
 ) -> Result<PathBuf, AotError> {
     let parsed = parse_module(source).map_err(|error| AotError::Parse(error.render(source)))?;
@@ -91,17 +142,22 @@ pub fn compile_module_source_to_aot(
 
     let execution =
         lower_typed_model(model).map_err(|error| AotError::Lowering(error.render(source)))?;
-    export_execution_model_to_aot(&execution, output, template_root, event_callback)
+    export_execution_model_to_aot(&execution, options, event_callback)
 }
 
 #[cfg(feature = "dsl-aot")]
 pub fn export_execution_model_to_aot(
     model: &ExecutionModel,
-    output: Option<PathBuf>,
-    template_root: PathBuf,
+    options: NativeAotCompileOptions,
     event_callback: impl Fn(String, String) + Send + Sync + 'static,
 ) -> Result<PathBuf, AotError> {
     let event_callback = Arc::new(event_callback);
+    let NativeAotCompileOptions {
+        target,
+        output,
+        template_root,
+    } = options;
+    let cargo_target = target.cargo_target();
     let template_dir = create_cargo_template(template_root.clone(), &aot_template_manifest())?;
     let source = emit_rust_backend_source(
         model,
@@ -112,17 +168,27 @@ pub fn export_execution_model_to_aot(
     .map_err(AotError::Emit)?;
     write_template_source(&template_dir, &source)?;
 
-    let dylib_name = native_cdylib_filename("model_lib");
-    let dylib_path = build_cargo_template(
-        template_dir,
-        event_callback.clone(),
-        "native-aot",
-        model.name.clone(),
-        None,
-        &["release", dylib_name.as_str()],
-    )?;
+    let dylib_name = native_cdylib_filename_for_target("model_lib", cargo_target);
+    let dylib_path = match cargo_target {
+        Some(target) => build_cargo_template(
+            template_dir,
+            event_callback.clone(),
+            "native-aot",
+            model.name.clone(),
+            Some(target),
+            &[target, "release", dylib_name.as_str()],
+        )?,
+        None => build_cargo_template(
+            template_dir,
+            event_callback.clone(),
+            "native-aot",
+            model.name.clone(),
+            None,
+            &["release", dylib_name.as_str()],
+        )?,
+    };
 
-    let output_path = output.unwrap_or_else(|| default_output_path(&template_root));
+    let output_path = output.unwrap_or_else(|| default_output_path(&template_root, &target));
     fs::copy(&dylib_path, &output_path)?;
     event_callback(
         "finished".into(),
@@ -177,18 +243,34 @@ pub fn load_aot_model(path: impl AsRef<Path>) -> Result<CompiledNativeModel, Aot
 }
 
 #[cfg(feature = "dsl-aot")]
-fn default_output_path(template_root: &Path) -> PathBuf {
+fn default_output_path(template_root: &Path, target: &NativeAotTarget) -> PathBuf {
     let random_suffix: String = rand::rng()
         .sample_iter(&Alphanumeric)
         .take(5)
         .map(char::from)
         .collect();
-    template_root.join(format!(
-        "model_{}_{}_{}.pkm",
-        std::env::consts::OS,
+    let target_label = match target {
+        NativeAotTarget::Host => default_target_label(),
+        NativeAotTarget::Triple(target) => sanitize_target_label(target),
+    };
+    template_root.join(format!("model_{}_{}.pkm", target_label, random_suffix))
+}
+
+#[cfg(feature = "dsl-aot")]
+fn default_target_label() -> String {
+    sanitize_target_label(&format!(
+        "{}-{}",
         std::env::consts::ARCH,
-        random_suffix
+        std::env::consts::OS
     ))
+}
+
+#[cfg(feature = "dsl-aot")]
+fn sanitize_target_label(target: &str) -> String {
+    target
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
+        .collect()
 }
 
 #[cfg(feature = "dsl-aot")]
@@ -268,7 +350,15 @@ mod tests {
     use crate::dsl::{compile_ode_model_to_jit, lower_typed_model, parse_module};
     use crate::SubjectBuilderExt;
     use approx::assert_relative_eq;
+    use std::sync::{Arc, Mutex};
     use tempfile::tempdir;
+
+    const CROSS_TARGET_SMOKE_ENV: &str = "PHARMSOL_NATIVE_AOT_SMOKE_TARGET";
+
+    enum CrossTargetSmokeDecision {
+        Run(String),
+        Skip(String),
+    }
 
     fn load_proposal_model(name: &str) -> ExecutionModel {
         let source = std::fs::read_to_string("dsl-proposals/02-structured-block-imperative.dsl")
@@ -283,6 +373,100 @@ mod tests {
         lower_typed_model(model).expect("lower proposal model")
     }
 
+    fn resolve_cross_target_smoke_target() -> Result<CrossTargetSmokeDecision, String> {
+        let requested_target = std::env::var(CROSS_TARGET_SMOKE_ENV)
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        let host_target = rustc_host_target()
+            .map_err(|error| format!("failed to detect the Rust host target: {error}"))?;
+
+        let installed_targets = match rustup_installed_targets() {
+            Ok(targets) => targets,
+            Err(error) if requested_target.is_none() => {
+                return Ok(CrossTargetSmokeDecision::Skip(format!(
+                    "rustup target discovery is unavailable: {error}"
+                )))
+            }
+            Err(error) => {
+                return Err(format!(
+                    "{CROSS_TARGET_SMOKE_ENV} is set, but installed targets could not be queried: {error}"
+                ))
+            }
+        };
+
+        if let Some(target) = requested_target {
+            if target == host_target {
+                return Err(format!(
+                    "{CROSS_TARGET_SMOKE_ENV} must name a non-host native target, but `{target}` matches the host"
+                ));
+            }
+            if !is_native_target_triple(&target) {
+                return Err(format!(
+                    "{CROSS_TARGET_SMOKE_ENV} must name a native target triple, but `{target}` is not supported for native AoT"
+                ));
+            }
+            if !installed_targets
+                .iter()
+                .any(|installed| installed == &target)
+            {
+                return Err(format!(
+                    "{CROSS_TARGET_SMOKE_ENV} requested `{target}`, but it is not installed. Run `rustup target add {target}` first."
+                ));
+            }
+            return Ok(CrossTargetSmokeDecision::Run(target));
+        }
+
+        if let Some(target) =
+            auto_detect_cross_target_smoke_target(&host_target, &installed_targets)
+        {
+            return Ok(CrossTargetSmokeDecision::Run(target));
+        }
+
+        Ok(CrossTargetSmokeDecision::Skip(format!(
+            "no supported non-host native target is installed; set {CROSS_TARGET_SMOKE_ENV} after installing a target and linker"
+        )))
+    }
+
+    fn auto_detect_cross_target_smoke_target(
+        host_target: &str,
+        installed_targets: &[String],
+    ) -> Option<String> {
+        let preferred = match host_target {
+            "aarch64-apple-darwin" => &["x86_64-apple-darwin"][..],
+            "x86_64-apple-darwin" => &["aarch64-apple-darwin"][..],
+            _ => &[][..],
+        };
+
+        preferred
+            .iter()
+            .find(|candidate| {
+                installed_targets
+                    .iter()
+                    .any(|installed| installed == *candidate)
+            })
+            .map(|candidate| (*candidate).to_string())
+    }
+
+    fn is_native_target_triple(target: &str) -> bool {
+        !target.starts_with("wasm32-") && !target.starts_with("wasm64-")
+    }
+
+    fn render_captured_events(events: &Arc<Mutex<Vec<(String, String)>>>) -> String {
+        let events = events
+            .lock()
+            .expect("cross-target smoke event log mutex poisoned");
+        if events.is_empty() {
+            return "<no compile events captured>".to_string();
+        }
+
+        events
+            .iter()
+            .map(|(kind, message)| format!("[{kind}] {}", message.trim_end()))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     #[test]
     fn aot_ode_artifact_matches_jit_predictions() {
         let model = load_proposal_model("one_cmt_oral_iv");
@@ -292,8 +476,8 @@ mod tests {
         let jit = compile_ode_model_to_jit(&model).expect("compile jit model");
         export_execution_model_to_aot(
             &model,
-            Some(output_path.clone()),
-            work_dir.path().join("build"),
+            NativeAotCompileOptions::new(work_dir.path().join("build"))
+                .with_output(output_path.clone()),
             |_, _| {},
         )
         .expect("export aot model");
@@ -347,5 +531,89 @@ mod tests {
         assert_eq!(info.name, "one_cmt_oral_iv");
         assert_eq!(info.kind, ModelKind::Ode);
         assert_eq!(info.parameters, vec!["ka", "cl", "v", "tlag", "f_oral"]);
+    }
+
+    #[test]
+    fn native_cdylib_filename_tracks_requested_target() {
+        assert_eq!(
+            native_cdylib_filename_for_target("model_lib", Some("x86_64-pc-windows-msvc")),
+            "model_lib.dll"
+        );
+        assert_eq!(
+            native_cdylib_filename_for_target("model_lib", Some("aarch64-apple-darwin")),
+            "libmodel_lib.dylib"
+        );
+        assert_eq!(
+            native_cdylib_filename_for_target("model_lib", Some("x86_64-unknown-linux-gnu")),
+            "libmodel_lib.so"
+        );
+    }
+
+    #[test]
+    fn default_output_path_uses_requested_target_label() {
+        let work_dir = tempdir().expect("tempdir");
+        let output = default_output_path(
+            work_dir.path(),
+            &NativeAotTarget::triple("x86_64-pc-windows-msvc"),
+        );
+        let file_name = output
+            .file_name()
+            .expect("output file name")
+            .to_string_lossy();
+        assert!(file_name.starts_with("model_x86_64_pc_windows_msvc_"));
+        assert!(file_name.ends_with(".pkm"));
+    }
+
+    #[test]
+    fn native_aot_compile_options_default_to_host_target() {
+        let work_dir = tempdir().expect("tempdir");
+        let options = NativeAotCompileOptions::new(work_dir.path().join("build"));
+        assert_eq!(options.target, NativeAotTarget::Host);
+        assert_eq!(options.output, None);
+    }
+
+    #[test]
+    fn native_aot_cross_target_smoke_builds_when_supported() {
+        let target = match resolve_cross_target_smoke_target() {
+            Ok(CrossTargetSmokeDecision::Run(target)) => target,
+            Ok(CrossTargetSmokeDecision::Skip(reason)) => {
+                eprintln!("skipping Native AoT cross-target smoke test: {reason}");
+                return;
+            }
+            Err(error) => panic!("invalid cross-target smoke configuration: {error}"),
+        };
+
+        let model = load_proposal_model("one_cmt_oral_iv");
+        let work_dir = tempdir().expect("tempdir");
+        let output_path = work_dir.path().join(format!(
+            "one_cmt_oral_iv_{}.pkm",
+            sanitize_target_label(&target)
+        ));
+        let events = Arc::new(Mutex::new(Vec::<(String, String)>::new()));
+        let captured_events = Arc::clone(&events);
+
+        let result = export_execution_model_to_aot(
+            &model,
+            NativeAotCompileOptions::new(work_dir.path().join("cross-target-build"))
+                .with_target(NativeAotTarget::triple(target.clone()))
+                .with_output(output_path.clone()),
+            move |kind, message| {
+                captured_events
+                    .lock()
+                    .expect("cross-target smoke event log mutex poisoned")
+                    .push((kind, message));
+            },
+        );
+
+        match result {
+            Ok(path) => {
+                assert_eq!(path, output_path);
+                assert!(path.exists());
+            }
+            Err(error) => panic!(
+                "Native AoT cross-target smoke build failed for `{target}`: {error}\n{}",
+                render_captured_events(&events)
+            ),
+        }
     }
 }

@@ -184,10 +184,12 @@ pub fn compile_runtime_native_aot_model(
     Ok(pharmsol::dsl::compile_module_source_to_runtime(
         AUTHORING_DSL,
         Some(MODEL_NAME),
-        pharmsol::dsl::RuntimeCompilationTarget::NativeAot {
-            output: Some(workspace.aot_output("bimodal-ke-runtime-native-aot")),
-            template_root: workspace.build_root("runtime-native-aot-build"),
-        },
+        pharmsol::dsl::RuntimeCompilationTarget::NativeAot(
+            pharmsol::dsl::NativeAotCompileOptions::new(
+                workspace.build_root("runtime-native-aot-build"),
+            )
+            .with_output(workspace.aot_output("bimodal-ke-runtime-native-aot")),
+        ),
         |_, _| {},
     )?)
 }
@@ -214,8 +216,8 @@ pub fn compile_direct_aot_model(
     let artifact = pharmsol::dsl::compile_module_source_to_aot(
         AUTHORING_DSL,
         Some(MODEL_NAME),
-        Some(workspace.aot_output("bimodal-ke-direct-aot")),
-        workspace.build_root("direct-aot-build"),
+        pharmsol::dsl::NativeAotCompileOptions::new(workspace.build_root("direct-aot-build"))
+            .with_output(workspace.aot_output("bimodal-ke-direct-aot")),
         |_, _| {},
     )?;
 

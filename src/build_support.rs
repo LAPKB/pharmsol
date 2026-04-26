@@ -87,14 +87,89 @@ pub(crate) fn find_cargo() -> String {
     "cargo".to_string()
 }
 
+pub(crate) fn find_rustup() -> Option<String> {
+    if let Ok(output) = Command::new("rustup").arg("--version").output() {
+        if output.status.success() {
+            return Some("rustup".to_string());
+        }
+    }
+
+    if let Ok(cargo_home) = env::var("CARGO_HOME") {
+        let rustup_path = PathBuf::from(&cargo_home)
+            .join("bin")
+            .join(rust_tool_exe_name("rustup"));
+        if rustup_path.exists() {
+            return Some(rustup_path.to_string_lossy().to_string());
+        }
+    }
+
+    let home = env::var("HOME")
+        .or_else(|_| env::var("USERPROFILE"))
+        .unwrap_or_default();
+
+    if !home.is_empty() {
+        let standard_path = PathBuf::from(&home)
+            .join(".cargo")
+            .join("bin")
+            .join(rust_tool_exe_name("rustup"));
+        if standard_path.exists() {
+            return Some(standard_path.to_string_lossy().to_string());
+        }
+    }
+
+    None
+}
+
+pub(crate) fn rustc_host_target() -> Result<String, io::Error> {
+    let rustc = env::var("RUSTC").unwrap_or_else(|_| "rustc".to_string());
+    let output = new_command(&rustc).arg("-vV").output()?;
+    if !output.status.success() {
+        return Err(io::Error::other("failed to run `rustc -vV`"));
+    }
+
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .find_map(|line| line.strip_prefix("host: "))
+        .map(|line| line.trim().to_string())
+        .ok_or_else(|| io::Error::other("`rustc -vV` did not report a host target"))
+}
+
+pub(crate) fn rustup_installed_targets() -> Result<Vec<String>, io::Error> {
+    let rustup = find_rustup()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "rustup was not found"))?;
+    let output = new_command(&rustup)
+        .args(["target", "list", "--installed"])
+        .output()?;
+    if !output.status.success() {
+        return Err(io::Error::other(
+            "failed to run `rustup target list --installed`",
+        ));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(ToOwned::to_owned)
+        .collect())
+}
+
 fn cargo_exe_name() -> &'static str {
+    rust_tool_exe_name("cargo")
+}
+
+fn rust_tool_exe_name(tool: &'static str) -> &'static str {
     #[cfg(target_os = "windows")]
     {
-        "cargo.exe"
+        match tool {
+            "cargo" => "cargo.exe",
+            "rustup" => "rustup.exe",
+            _ => tool,
+        }
     }
     #[cfg(not(target_os = "windows"))]
     {
-        "cargo"
+        tool
     }
 }
 
@@ -212,14 +287,31 @@ pub(crate) fn build_cargo_template(
 }
 
 #[cfg(feature = "dsl-aot")]
-pub(crate) fn native_cdylib_filename(crate_name: &str) -> String {
-    if cfg!(target_os = "windows") {
+pub(crate) fn native_cdylib_filename_for_target(
+    crate_name: &str,
+    cargo_target: Option<&str>,
+) -> String {
+    if target_uses_windows_dll(cargo_target) {
         format!("{crate_name}.dll")
-    } else if cfg!(target_os = "macos") {
+    } else if target_uses_apple_dylib(cargo_target) {
         format!("lib{crate_name}.dylib")
     } else {
         format!("lib{crate_name}.so")
     }
+}
+
+#[cfg(feature = "dsl-aot")]
+fn target_uses_windows_dll(cargo_target: Option<&str>) -> bool {
+    cargo_target.map_or(cfg!(target_os = "windows"), |target| {
+        target.contains("windows")
+    })
+}
+
+#[cfg(feature = "dsl-aot")]
+fn target_uses_apple_dylib(cargo_target: Option<&str>) -> bool {
+    cargo_target.map_or(cfg!(target_os = "macos"), |target| {
+        target.contains("apple") || target.contains("darwin") || target.contains("ios")
+    })
 }
 
 fn stream_output<R: Read + Send + 'static>(

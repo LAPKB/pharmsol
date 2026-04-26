@@ -1,7 +1,8 @@
 use std::fs;
 use std::io;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use rand::RngExt;
 use rand_distr::Alphanumeric;
@@ -50,6 +51,15 @@ pub enum WasmError {
     ApiVersionMismatch { expected: u32, found: u32 },
     #[error("missing required WASM export `{0}`")]
     MissingExport(&'static str),
+    #[error(
+        "WASM memory access out of bounds for {region}: ptr={ptr}, len={len}, memory_len={memory_len}"
+    )]
+    MemoryOutOfBounds {
+        region: &'static str,
+        ptr: i64,
+        len: i64,
+        memory_len: usize,
+    },
     #[error("failed to load WASM artifact: {0}")]
     Load(String),
 }
@@ -82,12 +92,12 @@ impl WasmKernelAvailability {
     }
 }
 
-#[derive(Clone)]
 pub(crate) struct WasmExecutionArtifact {
     info: NativeModelInfo,
     engine: Engine,
     module: Module,
     kernels: WasmKernelAvailability,
+    session_pool: Mutex<Vec<WasmKernelSession>>,
 }
 
 impl std::fmt::Debug for WasmExecutionArtifact {
@@ -125,6 +135,11 @@ struct WasmKernelSession {
     routes: WasmBuffer,
     derived: WasmBuffer,
     out: WasmBuffer,
+}
+
+struct PooledWasmKernelSession<'a> {
+    session: Option<WasmKernelSession>,
+    pool: &'a Mutex<Vec<WasmKernelSession>>,
 }
 
 impl WasmKernelSession {
@@ -273,36 +288,47 @@ impl KernelSession for WasmKernelSession {
         derived: *const f64,
         out: *mut f64,
     ) -> Result<(), PharmsolError> {
+        let map_memory_error = |error: WasmError| {
+            PharmsolError::OtherError(format!(
+                "WASM memory access failed for model `{}`: {error}",
+                self.info.name
+            ))
+        };
         write_f64s(
             &self.memory,
             &mut self.store,
             self.states.ptr,
             raw_slice(states, self.info.state_len),
-        );
+        )
+        .map_err(map_memory_error)?;
         write_f64s(
             &self.memory,
             &mut self.store,
             self.params.ptr,
             raw_slice(params, self.info.parameters.len()),
-        );
+        )
+        .map_err(map_memory_error)?;
         write_f64s(
             &self.memory,
             &mut self.store,
             self.covariates.ptr,
             raw_slice(covariates, self.info.covariates.len()),
-        );
+        )
+        .map_err(map_memory_error)?;
         write_f64s(
             &self.memory,
             &mut self.store,
             self.routes.ptr,
             raw_slice(routes, self.info.route_len),
-        );
+        )
+        .map_err(map_memory_error)?;
         write_f64s(
             &self.memory,
             &mut self.store,
             self.derived.ptr,
             raw_slice(derived, self.info.derived_len),
-        );
+        )
+        .map_err(map_memory_error)?;
 
         let out_ptr = if std::ptr::eq(out as *const f64, states) {
             self.states.ptr
@@ -311,13 +337,9 @@ impl KernelSession for WasmKernelSession {
         } else {
             self.out.ptr
         };
+        let out_len = kernel_output_len(&self.info, role);
         if out_ptr == self.out.ptr {
-            write_f64s(
-                &self.memory,
-                &mut self.store,
-                out_ptr,
-                &vec![0.0; kernel_output_len(&self.info, role)],
-            );
+            zero_f64s(&self.memory, &mut self.store, out_ptr, out_len).map_err(map_memory_error)?;
         }
 
         self.kernel(role)?
@@ -340,13 +362,44 @@ impl KernelSession for WasmKernelSession {
                 ))
             })?;
 
-        raw_slice_mut(out, kernel_output_len(&self.info, role)).copy_from_slice(&read_f64s(
+        read_f64s_into(
             &self.memory,
             &mut self.store,
             out_ptr,
-            kernel_output_len(&self.info, role),
-        ));
+            raw_slice_mut(out, out_len),
+        )
+        .map_err(map_memory_error)?;
         Ok(())
+    }
+}
+
+impl KernelSession for PooledWasmKernelSession<'_> {
+    unsafe fn invoke_raw(
+        &mut self,
+        role: KernelRole,
+        time: f64,
+        states: *const f64,
+        params: *const f64,
+        covariates: *const f64,
+        routes: *const f64,
+        derived: *const f64,
+        out: *mut f64,
+    ) -> Result<(), PharmsolError> {
+        self.session
+            .as_mut()
+            .expect("pooled wasm session should be present")
+            .invoke_raw(role, time, states, params, covariates, routes, derived, out)
+    }
+}
+
+impl Drop for PooledWasmKernelSession<'_> {
+    fn drop(&mut self) {
+        if let Some(session) = self.session.take() {
+            self.pool
+                .lock()
+                .expect("pooled wasm session mutex poisoned")
+                .push(session);
+        }
     }
 }
 
@@ -360,14 +413,27 @@ impl RuntimeArtifact for WasmExecutionArtifact {
     }
 
     fn start_session(&self) -> Result<Box<dyn KernelSession + '_>, PharmsolError> {
-        WasmKernelSession::new(&self.info, &self.engine, &self.module, self.kernels)
-            .map(|session| Box::new(session) as Box<dyn KernelSession>)
-            .map_err(|error| {
-                PharmsolError::OtherError(format!(
-                    "failed to instantiate WASM runtime for model `{}`: {error}",
-                    self.info.name
-                ))
-            })
+        let session = self
+            .session_pool
+            .lock()
+            .expect("pooled wasm session mutex poisoned")
+            .pop();
+
+        let session = match session {
+            Some(session) => session,
+            None => WasmKernelSession::new(&self.info, &self.engine, &self.module, self.kernels)
+                .map_err(|error| {
+                    PharmsolError::OtherError(format!(
+                        "failed to instantiate WASM runtime for model `{}`: {error}",
+                        self.info.name
+                    ))
+                })?,
+        };
+
+        Ok(Box::new(PooledWasmKernelSession {
+            session: Some(session),
+            pool: &self.session_pool,
+        }) as Box<dyn KernelSession>)
     }
 }
 
@@ -421,6 +487,7 @@ pub(crate) fn load_wasm_artifact(
             engine,
             module,
             kernels,
+            session_pool: Mutex::new(Vec::new()),
         },
     ))
 }
@@ -509,37 +576,119 @@ fn read_model_info(
         .call(&mut *store, ())
         .map_err(|error| WasmError::Load(error.to_string()))?;
     let data = memory.data(&mut *store);
-    let start = ptr as usize;
-    let end = start + len as usize;
-    Ok(serde_json::from_slice(&data[start..end])?)
+    let len = usize::try_from(len).map_err(|_| WasmError::MemoryOutOfBounds {
+        region: "model info",
+        ptr: ptr as i64,
+        len: len as i64,
+        memory_len: data.len(),
+    })?;
+    let range = byte_range(ptr, len, data.len(), "model info")?;
+    Ok(serde_json::from_slice(&data[range])?)
 }
 
-fn write_f64s(memory: &Memory, store: &mut Store<()>, ptr: i32, values: &[f64]) {
+fn write_f64s(
+    memory: &Memory,
+    store: &mut Store<()>,
+    ptr: i32,
+    values: &[f64],
+) -> Result<(), WasmError> {
     if values.is_empty() || ptr == 0 {
-        return;
+        return Ok(());
     }
     let data = memory.data_mut(store);
-    let start = ptr as usize;
-    for (index, value) in values.iter().enumerate() {
-        let offset = start + index * std::mem::size_of::<f64>();
-        data[offset..offset + std::mem::size_of::<f64>()].copy_from_slice(&value.to_le_bytes());
+    let range = f64_buffer_range(ptr, values.len(), data.len(), "host write")?;
+    for (chunk, value) in data[range]
+        .chunks_exact_mut(std::mem::size_of::<f64>())
+        .zip(values.iter())
+    {
+        chunk.copy_from_slice(&value.to_le_bytes());
     }
+    Ok(())
 }
 
-fn read_f64s(memory: &Memory, store: &mut Store<()>, ptr: i32, len: usize) -> Vec<f64> {
+fn zero_f64s(
+    memory: &Memory,
+    store: &mut Store<()>,
+    ptr: i32,
+    len: usize,
+) -> Result<(), WasmError> {
     if len == 0 || ptr == 0 {
-        return Vec::new();
+        return Ok(());
+    }
+    let data = memory.data_mut(store);
+    let range = f64_buffer_range(ptr, len, data.len(), "host zero")?;
+    data[range].fill(0);
+    Ok(())
+}
+
+fn read_f64s_into(
+    memory: &Memory,
+    store: &mut Store<()>,
+    ptr: i32,
+    out: &mut [f64],
+) -> Result<(), WasmError> {
+    if out.is_empty() || ptr == 0 {
+        return Ok(());
     }
     let data = memory.data(store);
-    let start = ptr as usize;
-    (0..len)
-        .map(|index| {
-            let offset = start + index * std::mem::size_of::<f64>();
-            let mut bytes = [0u8; std::mem::size_of::<f64>()];
-            bytes.copy_from_slice(&data[offset..offset + std::mem::size_of::<f64>()]);
-            f64::from_le_bytes(bytes)
-        })
-        .collect()
+    let range = f64_buffer_range(ptr, out.len(), data.len(), "host read")?;
+    for (slot, chunk) in out
+        .iter_mut()
+        .zip(data[range].chunks_exact(std::mem::size_of::<f64>()))
+    {
+        let mut bytes = [0u8; std::mem::size_of::<f64>()];
+        bytes.copy_from_slice(chunk);
+        *slot = f64::from_le_bytes(bytes);
+    }
+    Ok(())
+}
+
+fn f64_buffer_range(
+    ptr: i32,
+    len: usize,
+    memory_len: usize,
+    region: &'static str,
+) -> Result<Range<usize>, WasmError> {
+    let byte_len =
+        len.checked_mul(std::mem::size_of::<f64>())
+            .ok_or(WasmError::MemoryOutOfBounds {
+                region,
+                ptr: ptr as i64,
+                len: len as i64,
+                memory_len,
+            })?;
+    byte_range(ptr, byte_len, memory_len, region)
+}
+
+fn byte_range(
+    ptr: i32,
+    byte_len: usize,
+    memory_len: usize,
+    region: &'static str,
+) -> Result<Range<usize>, WasmError> {
+    let start = usize::try_from(ptr).map_err(|_| WasmError::MemoryOutOfBounds {
+        region,
+        ptr: ptr as i64,
+        len: byte_len as i64,
+        memory_len,
+    })?;
+    let end = start
+        .checked_add(byte_len)
+        .ok_or(WasmError::MemoryOutOfBounds {
+            region,
+            ptr: ptr as i64,
+            len: byte_len as i64,
+            memory_len,
+        })?;
+    if end > memory_len {
+        return Err(WasmError::MemoryOutOfBounds {
+            region,
+            ptr: ptr as i64,
+            len: byte_len as i64,
+            memory_len,
+        });
+    }
+    Ok(start..end)
 }
 
 pub fn compile_module_source_to_wasm(
@@ -635,6 +784,11 @@ const KERNEL_SYMBOLS = Object.freeze({{
   derive: "{derive_symbol}",
   dynamics: "{dynamics_symbol}",
   outputs: "{outputs_symbol}",
+    init: "{init_symbol}",
+    drift: "{drift_symbol}",
+    diffusion: "{diffusion_symbol}",
+    route_lag: "{route_lag_symbol}",
+    route_bioavailability: "{route_bioavailability_symbol}",
 }});
 
 function readUtf8(memory, ptr, len) {{
@@ -700,6 +854,11 @@ export function createPharmsolDslWasmModel(instance) {{
         derive_symbol = DERIVE_SYMBOL,
         dynamics_symbol = DYNAMICS_SYMBOL,
         outputs_symbol = OUTPUTS_SYMBOL,
+        init_symbol = INIT_SYMBOL,
+        drift_symbol = DRIFT_SYMBOL,
+        diffusion_symbol = DIFFUSION_SYMBOL,
+        route_lag_symbol = ROUTE_LAG_SYMBOL,
+        route_bioavailability_symbol = ROUTE_BIOAVAILABILITY_SYMBOL,
     )
 }
 
@@ -776,6 +935,11 @@ mod tests {
         assert!(loader.contains("loadPharmsolDslWasmModel"));
         assert!(loader.contains(API_VERSION_SYMBOL));
         assert!(loader.contains(ALLOC_F64_BUFFER_SYMBOL));
+        assert!(loader.contains(INIT_SYMBOL));
+        assert!(loader.contains(DRIFT_SYMBOL));
+        assert!(loader.contains(DIFFUSION_SYMBOL));
+        assert!(loader.contains(ROUTE_LAG_SYMBOL));
+        assert!(loader.contains(ROUTE_BIOAVAILABILITY_SYMBOL));
 
         let jit = compile_execution_artifact(&model).expect("compile jit kernels");
         let (mut store, instance, memory) = instantiate_module(&bundle.wasm_path);
@@ -942,6 +1106,47 @@ mod tests {
             free.call(&mut store, (ptr, len as i32))
                 .expect("free buffer");
         }
+    }
+
+    #[test]
+    fn reuses_wasm_kernel_sessions_across_start_session_calls() {
+        let model = load_proposal_model("one_cmt_oral_iv");
+        let work_dir = tempdir().expect("tempdir");
+        let output_path = work_dir.path().join("one_cmt_oral_iv_reuse.wasm");
+        let bundle = export_execution_model_to_wasm(
+            &model,
+            Some(output_path),
+            work_dir.path().join("build-reuse"),
+            |_, _| {},
+        )
+        .expect("export wasm model");
+
+        let (_, artifact) = load_wasm_artifact(&bundle.wasm_path).expect("load wasm artifact");
+        assert_eq!(artifact.session_pool.lock().expect("session pool").len(), 0);
+
+        {
+            let _session = artifact.start_session().expect("first pooled session");
+        }
+        assert_eq!(artifact.session_pool.lock().expect("session pool").len(), 1);
+
+        {
+            let _session = artifact.start_session().expect("second pooled session");
+        }
+        assert_eq!(artifact.session_pool.lock().expect("session pool").len(), 1);
+    }
+
+    #[test]
+    fn rejects_out_of_bounds_wasm_memory_ranges() {
+        let error = byte_range(8, 16, 16, "test range").expect_err("range should fail");
+        assert!(matches!(
+            error,
+            WasmError::MemoryOutOfBounds {
+                region: "test range",
+                ptr: 8,
+                len: 16,
+                memory_len: 16,
+            }
+        ));
     }
 
     fn instantiate_module(path: &Path) -> (Store<()>, Instance, Memory) {

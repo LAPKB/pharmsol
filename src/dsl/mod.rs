@@ -32,7 +32,8 @@ mod wasm;
 
 #[cfg(feature = "dsl-aot")]
 pub use aot::{
-    compile_module_source_to_aot, export_execution_model_to_aot, AotError, AOT_API_VERSION,
+    compile_module_source_to_aot, export_execution_model_to_aot, AotError,
+    NativeAotCompileOptions, NativeAotTarget, AOT_API_VERSION,
 };
 #[cfg(feature = "dsl-aot-load")]
 pub use aot::{load_aot_model, read_aot_model_info};

@@ -45,10 +45,10 @@ out(cp) = central / v ~ continuous()
     let model = pharmsol::dsl::compile_module_source_to_runtime(
         model_source,
         Some("bimodal_ke"),
-        pharmsol::dsl::RuntimeCompilationTarget::NativeAot {
-            output: Some(workspace.join("bimodal-ke-runtime-native-aot.pkm")),
-            template_root: workspace.join("runtime-native-aot-build"),
-        },
+        pharmsol::dsl::RuntimeCompilationTarget::NativeAot(
+            pharmsol::dsl::NativeAotCompileOptions::new(workspace.join("runtime-native-aot-build"))
+                .with_output(workspace.join("bimodal-ke-runtime-native-aot.pkm")),
+        ),
         on_compile_event,
     )?;
 
