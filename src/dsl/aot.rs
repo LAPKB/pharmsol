@@ -1,3 +1,4 @@
+use std::fmt;
 #[cfg(feature = "dsl-aot")]
 use std::fs;
 use std::io;
@@ -30,11 +31,14 @@ use super::rust_backend::{
 use super::ModelKind;
 #[cfg(feature = "dsl-aot")]
 use super::{analyze_module, lower_typed_model, parse_module};
+use super::{Diagnostic, DiagnosticReport, LoweringError, ParseError, SemanticError};
 #[cfg(feature = "dsl-aot")]
 use crate::build_support::{
     build_cargo_template, create_cargo_template, native_cdylib_filename_for_target,
-    rustc_host_target, rustup_installed_targets, write_template_source,
+    write_template_source,
 };
+#[cfg(all(test, feature = "dsl-aot"))]
+use crate::build_support::{rustc_host_target, rustup_installed_targets};
 
 pub const AOT_API_VERSION: u32 = 1;
 
@@ -89,18 +93,18 @@ impl NativeAotCompileOptions {
     }
 }
 
-#[derive(Debug, Error)]
+#[derive(Error)]
 pub enum AotError {
     #[error(transparent)]
     Io(#[from] io::Error),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
     #[error("failed to parse DSL source: {0}")]
-    Parse(String),
+    Parse(#[source] ParseError),
     #[error("failed to analyze DSL source: {0}")]
-    Semantic(String),
+    Semantic(#[source] SemanticError),
     #[error("failed to lower DSL model: {0}")]
-    Lowering(String),
+    Lowering(#[source] LoweringError),
     #[error("{0}")]
     ModelSelection(String),
     #[error("AoT artifact API version mismatch: expected {expected}, found {found}")]
@@ -113,6 +117,42 @@ pub enum AotError {
     Load(String),
 }
 
+impl AotError {
+    pub fn diagnostic(&self) -> Option<&Diagnostic> {
+        match self {
+            Self::Parse(error) => Some(error.diagnostic()),
+            Self::Semantic(error) => Some(error.diagnostic()),
+            Self::Lowering(error) => Some(error.diagnostic()),
+            _ => None,
+        }
+    }
+
+    pub fn render_diagnostic(&self, src: &str) -> Option<String> {
+        self.diagnostic().map(|diagnostic| diagnostic.render(src))
+    }
+
+    pub fn diagnostic_report(&self, source_name: impl Into<String>) -> Option<DiagnosticReport> {
+        let source_name = source_name.into();
+        match self {
+            Self::Parse(error) => Some(error.diagnostic_report(source_name)),
+            Self::Semantic(error) => Some(error.diagnostic_report(source_name)),
+            Self::Lowering(error) => Some(error.diagnostic_report(source_name)),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Debug for AotError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Parse(error) => fmt::Display::fmt(error, f),
+            Self::Semantic(error) => fmt::Display::fmt(error, f),
+            Self::Lowering(error) => fmt::Display::fmt(error, f),
+            _ => fmt::Display::fmt(self, f),
+        }
+    }
+}
+
 #[cfg(feature = "dsl-aot")]
 pub fn compile_module_source_to_aot(
     source: &str,
@@ -120,9 +160,10 @@ pub fn compile_module_source_to_aot(
     options: NativeAotCompileOptions,
     event_callback: impl Fn(String, String) + Send + Sync + 'static,
 ) -> Result<PathBuf, AotError> {
-    let parsed = parse_module(source).map_err(|error| AotError::Parse(error.render(source)))?;
+    let parsed =
+        parse_module(source).map_err(|error| AotError::Parse(error.with_source(source)))?;
     let typed =
-        analyze_module(&parsed).map_err(|error| AotError::Semantic(error.render(source)))?;
+        analyze_module(&parsed).map_err(|error| AotError::Semantic(error.with_source(source)))?;
 
     let model = match model_name {
         Some(name) => typed
@@ -141,7 +182,7 @@ pub fn compile_module_source_to_aot(
     };
 
     let execution =
-        lower_typed_model(model).map_err(|error| AotError::Lowering(error.render(source)))?;
+        lower_typed_model(model).map_err(|error| AotError::Lowering(error.with_source(source)))?;
     export_execution_model_to_aot(&execution, options, event_callback)
 }
 
@@ -348,6 +389,7 @@ unsafe fn load_optional_kernel(library: &Library, name: &'static str) -> Option<
 mod tests {
     use super::*;
     use crate::dsl::{compile_ode_model_to_jit, lower_typed_model, parse_module};
+    use crate::dsl::{DiagnosticPhase, DSL_SEMANTIC_GENERIC};
     use crate::SubjectBuilderExt;
     use approx::assert_relative_eq;
     use std::sync::{Arc, Mutex};
@@ -615,5 +657,88 @@ mod tests {
                 render_captured_events(&events)
             ),
         }
+    }
+
+    #[test]
+    fn aot_compile_preserves_semantic_diagnostic_structure() {
+        let source = r#"
+model broken {
+  kind ode
+  states { central }
+  dynamics {
+    ddt(central) = rate(oral)
+  }
+  outputs {
+    cp = central
+  }
+}
+"#;
+        let work_dir = tempdir().expect("tempdir");
+        let error = compile_module_source_to_aot(
+            source,
+            None,
+            NativeAotCompileOptions::new(work_dir.path().join("build")),
+            |_, _| {},
+        )
+        .expect_err("invalid DSL should fail before AoT compilation");
+
+        let diagnostic = error.diagnostic().expect("AoT should expose diagnostic");
+        assert_eq!(diagnostic.phase, DiagnosticPhase::Semantic);
+        assert_eq!(diagnostic.code, DSL_SEMANTIC_GENERIC);
+        assert!(diagnostic.message.contains("unknown route `oral`"));
+        let rendered = error
+            .render_diagnostic(source)
+            .expect("rendered diagnostic");
+        assert!(rendered.contains("error[DSL2000]"), "{}", rendered);
+        assert!(rendered.contains("unknown route `oral`"), "{}", rendered);
+        let debugged = format!("{error:?}");
+        assert!(debugged.contains("error[DSL2000]"), "{}", debugged);
+        assert!(debugged.contains("unknown route `oral`"), "{}", debugged);
+        let report = error
+            .diagnostic_report("inline.dsl")
+            .expect("diagnostic report");
+        assert_eq!(report.source.name, "inline.dsl");
+        assert_eq!(report.diagnostics[0].code, "DSL2000");
+        assert!(report.diagnostics[0].labels.len() >= 1);
+    }
+
+    #[test]
+    fn aot_compile_preserves_semantic_suggestions() {
+        let source = r#"
+model broken {
+    kind ode
+    states { central }
+    routes { oral -> central }
+    dynamics {
+        ddt(central) = rate(orla)
+    }
+    outputs {
+        cp = central
+    }
+}
+"#;
+        let work_dir = tempdir().expect("tempdir");
+        let error = compile_module_source_to_aot(
+            source,
+            None,
+            NativeAotCompileOptions::new(work_dir.path().join("build-suggestions")),
+            |_, _| {},
+        )
+        .expect_err("invalid DSL should fail before AoT compilation");
+
+        let diagnostic = error.diagnostic().expect("AoT should expose diagnostic");
+        assert!(diagnostic
+            .suggestions
+            .iter()
+            .any(|suggestion| suggestion.message.contains("did you mean `oral`?")));
+
+        let rendered = error
+            .render_diagnostic(source)
+            .expect("rendered diagnostic");
+        assert!(
+            rendered.contains("suggestion: did you mean `oral`?"),
+            "{}",
+            rendered
+        );
     }
 }

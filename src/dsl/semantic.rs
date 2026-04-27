@@ -1,8 +1,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::sync::Arc;
 
 use super::ast as syntax;
-use super::diagnostic::{Diagnostic, Span};
+use super::diagnostic::{
+    Applicability, Diagnostic, DiagnosticPhase, DiagnosticReport, DiagnosticSuggestion, Span,
+    TextEdit,
+    DSL_SEMANTIC_GENERIC,
+};
 use super::ir::*;
 use super::ModelKind;
 
@@ -33,6 +38,76 @@ const RESERVED_NAMES: &[&str] = &[
     "sqrt",
 ];
 
+const RATE_FUNCTION_NAME: &str = "rate";
+
+#[derive(Default)]
+struct SemanticAssist {
+    context_labels: Vec<(Span, String)>,
+    secondary_labels: Vec<(Span, String)>,
+    helps: Vec<String>,
+    suggestions: Vec<DiagnosticSuggestion>,
+}
+
+impl SemanticAssist {
+    fn context_label(mut self, span: Span, message: impl Into<String>) -> Self {
+        self.context_labels.push((span, message.into()));
+        self
+    }
+
+    fn help(mut self, help: impl Into<String>) -> Self {
+        self.helps.push(help.into());
+        self
+    }
+
+    fn replacement_suggestion(
+        mut self,
+        span: Span,
+        replacement: impl Into<String>,
+        message: impl Into<String>,
+        applicability: Applicability,
+    ) -> Self {
+        self.suggestions.push(DiagnosticSuggestion {
+            message: message.into(),
+            edits: vec![TextEdit {
+                span,
+                replacement: replacement.into(),
+            }],
+            applicability,
+        });
+        self
+    }
+
+    fn apply(self, mut error: SemanticError) -> SemanticError {
+        for (span, message) in self.context_labels {
+            error = error.with_context_label(span, message);
+        }
+        for (span, message) in self.secondary_labels {
+            error = error.with_secondary_label(span, message);
+        }
+        for help in self.helps {
+            error = error.with_help(help);
+        }
+        for suggestion in self.suggestions {
+            error = error.with_suggestion(suggestion);
+        }
+        error
+    }
+}
+
+struct SimilarNameCandidate {
+    lookup_name: String,
+    assist: SemanticAssist,
+}
+
+impl SimilarNameCandidate {
+    fn new(lookup_name: impl Into<String>, assist: SemanticAssist) -> Self {
+        Self {
+            lookup_name: lookup_name.into(),
+            assist,
+        }
+    }
+}
+
 pub fn analyze_module(module: &syntax::Module) -> Result<TypedModule, SemanticError> {
     let mut models = Vec::with_capacity(module.models.len());
     for model in &module.models {
@@ -48,15 +123,22 @@ pub fn analyze_model(model: &syntax::Model) -> Result<TypedModel, SemanticError>
     Analyzer::new(model).analyze()
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct SemanticError {
     diagnostic: Diagnostic,
+    source: Option<Arc<str>>,
 }
 
 impl SemanticError {
     pub fn new(message: impl Into<String>, span: Span) -> Self {
         Self {
-            diagnostic: Diagnostic::new(message, span),
+            diagnostic: Diagnostic::error(
+                DSL_SEMANTIC_GENERIC,
+                DiagnosticPhase::Semantic,
+                message,
+                span,
+            ),
+            source: None,
         }
     }
 
@@ -65,21 +147,68 @@ impl SemanticError {
         self
     }
 
+    pub fn with_help(mut self, help: impl Into<String>) -> Self {
+        self.diagnostic.helps.push(help.into());
+        self
+    }
+
+    pub fn with_secondary_label(mut self, span: Span, message: impl Into<String>) -> Self {
+        self.diagnostic = self.diagnostic.with_secondary_label(span, message);
+        self
+    }
+
+    pub fn with_context_label(mut self, span: Span, message: impl Into<String>) -> Self {
+        self.diagnostic = self.diagnostic.with_context_label(span, message);
+        self
+    }
+
+    pub fn with_suggestion(mut self, suggestion: DiagnosticSuggestion) -> Self {
+        self.diagnostic = self.diagnostic.with_suggestion(suggestion);
+        self
+    }
+
     pub fn diagnostic(&self) -> &Diagnostic {
         &self.diagnostic
+    }
+
+    pub fn into_diagnostic(self) -> Diagnostic {
+        self.diagnostic
     }
 
     pub fn render(&self, src: &str) -> String {
         self.diagnostic.render(src)
     }
+
+    pub fn diagnostic_report(&self, source_name: impl Into<String>) -> DiagnosticReport {
+        DiagnosticReport::from_diagnostics(source_name, self.source(), std::slice::from_ref(&self.diagnostic))
+    }
+
+    pub fn with_source(mut self, source: impl Into<Arc<str>>) -> Self {
+        self.source = Some(source.into());
+        self
+    }
+
+    pub fn source(&self) -> Option<&str> {
+        self.source.as_deref()
+    }
+}
+
+impl fmt::Debug for SemanticError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
+    }
 }
 
 impl fmt::Display for SemanticError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(source) = self.source() {
+            return f.write_str(&self.render(source));
+        }
+        let span = self.diagnostic.primary_span();
         write!(
             f,
             "{} at bytes {}..{}",
-            self.diagnostic.message, self.diagnostic.span.start, self.diagnostic.span.end
+            self.diagnostic.message, span.start, span.end
         )
     }
 }
@@ -297,14 +426,28 @@ impl<'a> Analyzer<'a> {
 
         let mut bindings = BTreeMap::new();
         for binding in &block.items {
-            if bindings
-                .insert(binding.name.text.clone(), binding)
-                .is_some()
-            {
-                return Err(SemanticError::new(
-                    format!("duplicate constant `{}`", binding.name.text),
-                    binding.name.span,
-                ));
+            if let Some(existing) = bindings.insert(binding.name.text.clone(), binding) {
+                return Err(
+                    SemanticAssist::default()
+                        .context_label(
+                            existing.name.span,
+                            format!("constant `{}` first declared here", binding.name.text),
+                        )
+                        .help(format!(
+                            "rename this constant to a unique name such as `{}_2`",
+                            binding.name.text
+                        ))
+                        .replacement_suggestion(
+                            binding.name.span,
+                            format!("{}_2", binding.name.text),
+                            format!("rename this constant to `{}_2`", binding.name.text),
+                            Applicability::MaybeIncorrect,
+                        )
+                        .apply(SemanticError::new(
+                            format!("duplicate constant `{}`", binding.name.text),
+                            binding.name.span,
+                        )),
+                );
             }
         }
 
@@ -433,7 +576,7 @@ impl<'a> Analyzer<'a> {
                 )?;
                 self.globals.routes.insert(route.input.text.clone(), id);
                 let destination = self.analyze_state_place_const(&route.destination)?;
-                let mut seen_props = BTreeSet::new();
+                let mut seen_props = BTreeMap::new();
                 let mut properties = Vec::new();
                 for property in &route.properties {
                     let kind = match property.name.text.as_str() {
@@ -449,11 +592,25 @@ impl<'a> Analyzer<'a> {
                             ));
                         }
                     };
-                    if !seen_props.insert(kind) {
-                        return Err(SemanticError::new(
-                            format!("duplicate route property `{}`", property.name.text),
-                            property.name.span,
-                        ));
+                    if let Some(existing_span) = seen_props.insert(kind, property.name.span) {
+                        return Err(
+                            SemanticAssist::default()
+                                .context_label(
+                                    existing_span,
+                                    format!(
+                                        "route property `{}` first declared here",
+                                        property.name.text
+                                    ),
+                                )
+                                .help(format!(
+                                    "each route can declare `{}` at most once",
+                                    property.name.text
+                                ))
+                                .apply(SemanticError::new(
+                                    format!("duplicate route property `{}`", property.name.text),
+                                    property.name.span,
+                                )),
+                        );
                     }
                     let env = BlockEnv::new(BTreeSet::new());
                     let value = self.analyze_expr(&property.value, &env)?;
@@ -1113,26 +1270,34 @@ impl<'a> Analyzer<'a> {
         }
 
         if self.globals.routes.contains_key(&name.text) {
-            return Err(SemanticError::new(
-                format!(
-                    "route `{}` cannot be used as a scalar value; use `rate({})`",
-                    name.text, name.text
-                ),
-                span,
-            ));
+            let route = self.globals.routes[&name.text];
+            return Err(
+                self.assist_for_route_scalar(route, span)
+                    .apply(SemanticError::new(
+                        format!(
+                            "route `{}` cannot be used as a scalar value; use `rate({})`",
+                            name.text, name.text
+                        ),
+                        span,
+                    )),
+            );
         }
 
         if self.globals.outputs.contains_key(&name.text) {
-            return Err(SemanticError::new(
-                format!("output `{}` is not in expression scope", name.text),
-                span,
-            ));
+            let output = self.globals.outputs[&name.text];
+            return Err(
+                self.assist_for_output_scope(output).apply(SemanticError::new(
+                    format!("output `{}` is not in expression scope", name.text),
+                    span,
+                )),
+            );
         }
 
-        Err(SemanticError::new(
-            format!("unknown identifier `{}`", name.text),
-            span,
-        ))
+        let error = SemanticError::new(format!("unknown identifier `{}`", name.text), span);
+        Err(match self.assist_for_unknown_identifier(name, span, env) {
+            Some(assist) => assist.apply(error),
+            None => error,
+        })
     }
 
     fn analyze_call(
@@ -1164,10 +1329,14 @@ impl<'a> Analyzer<'a> {
                 .get(&route_name.text)
                 .copied()
                 .ok_or_else(|| {
-                    SemanticError::new(
+                    let error = SemanticError::new(
                         format!("unknown route `{}` in `rate(...)`", route_name.text),
                         route_name.span,
-                    )
+                    );
+                    match self.assist_for_unknown_route(route_name) {
+                        Some(assist) => assist.apply(error),
+                        None => error,
+                    }
                 })?;
             return Ok(TypedExpr {
                 kind: TypedExprKind::Call {
@@ -1181,7 +1350,11 @@ impl<'a> Analyzer<'a> {
         }
 
         let intrinsic = MathIntrinsic::from_name(&callee.text).ok_or_else(|| {
-            SemanticError::new(format!("unknown function `{}`", callee.text), callee.span)
+            let error = SemanticError::new(format!("unknown function `{}`", callee.text), callee.span);
+            match self.assist_for_unknown_function(callee) {
+                Some(assist) => assist.apply(error),
+                None => error,
+            }
         })?;
         let expected_arity = intrinsic.arity();
         match expected_arity {
@@ -1426,19 +1599,46 @@ impl<'a> Analyzer<'a> {
         span: Span,
     ) -> Result<SymbolId, SemanticError> {
         if RESERVED_NAMES.contains(&name) {
-            return Err(SemanticError::new(
-                format!("`{name}` is reserved by the DSL and cannot be used as a symbol name"),
-                span,
-            ));
+            return Err(
+                SemanticAssist::default()
+                    .help(format!(
+                        "rename `{name}` to a non-reserved identifier such as `{}_value`",
+                        name
+                    ))
+                    .replacement_suggestion(
+                        span,
+                        format!("{}_value", name),
+                        format!("rename `{name}` to `{}_value`", name),
+                        Applicability::MaybeIncorrect,
+                    )
+                    .apply(SemanticError::new(
+                        format!("`{name}` is reserved by the DSL and cannot be used as a symbol name"),
+                        span,
+                    )),
+            );
         }
         if let Some(existing) = self.globals.all_names.get(name) {
-            return Err(SemanticError::new(
-                format!(
-                    "symbol name `{name}` collides with existing `{}`",
-                    self.symbol_name(*existing)
-                ),
-                span,
-            ));
+            return Err(
+                SemanticAssist::default()
+                    .context_label(self.symbol_span(*existing), self.symbol_declared_here(*existing))
+                    .help(format!(
+                        "rename this declaration to a unique name such as `{}_2`",
+                        name
+                    ))
+                    .replacement_suggestion(
+                        span,
+                        format!("{}_2", name),
+                        format!("rename this declaration to `{}_2`", name),
+                        Applicability::MaybeIncorrect,
+                    )
+                    .apply(SemanticError::new(
+                        format!(
+                            "symbol name `{name}` collides with existing `{}`",
+                            self.symbol_name(*existing)
+                        ),
+                        span,
+                    )),
+            );
         }
         let id = self.symbols.len();
         self.symbols.push(PendingSymbol {
@@ -1459,16 +1659,31 @@ impl<'a> Analyzer<'a> {
         ty: ValueType,
         kind: SymbolKind,
     ) -> Result<SymbolId, SemanticError> {
-        if env.lookup_local(&ident.text).is_some()
-            || self.globals.all_names.contains_key(&ident.text)
+        if let Some(existing) = env
+            .lookup_local(&ident.text)
+            .or_else(|| self.globals.all_names.get(&ident.text).copied())
         {
-            return Err(SemanticError::new(
-                format!(
-                    "local symbol `{}` would shadow an existing symbol",
-                    ident.text
-                ),
-                ident.span,
-            ));
+            return Err(
+                SemanticAssist::default()
+                    .context_label(self.symbol_span(existing), self.symbol_declared_here(existing))
+                    .help(format!(
+                        "rename this local binding to a unique name such as `{}_local`",
+                        ident.text
+                    ))
+                    .replacement_suggestion(
+                        ident.span,
+                        format!("{}_local", ident.text),
+                        format!("rename this local binding to `{}_local`", ident.text),
+                        Applicability::MaybeIncorrect,
+                    )
+                    .apply(SemanticError::new(
+                        format!(
+                            "local symbol `{}` would shadow an existing symbol",
+                            ident.text
+                        ),
+                        ident.span,
+                    )),
+            );
         }
         let id = self.symbols.len();
         self.symbols.push(PendingSymbol {
@@ -1529,6 +1744,184 @@ impl<'a> Analyzer<'a> {
 
     fn symbol_name(&self, symbol: SymbolId) -> &str {
         &self.symbols[symbol].name
+    }
+
+    fn symbol_span(&self, symbol: SymbolId) -> Span {
+        self.symbols[symbol].span
+    }
+
+    fn symbol_kind_label(&self, symbol: SymbolId) -> &'static str {
+        match self.symbols[symbol].kind {
+            SymbolKind::Parameter => "parameter",
+            SymbolKind::Constant => "constant",
+            SymbolKind::Covariate => "covariate",
+            SymbolKind::State => "state",
+            SymbolKind::Route => "route",
+            SymbolKind::Derived => "derived value",
+            SymbolKind::Output => "output",
+            SymbolKind::Local => "local",
+            SymbolKind::LoopBinding => "loop binding",
+        }
+    }
+
+    fn symbol_declared_here(&self, symbol: SymbolId) -> String {
+        format!(
+            "{} `{}` declared here",
+            self.symbol_kind_label(symbol),
+            self.symbol_name(symbol)
+        )
+    }
+
+    fn assist_for_symbol_replacement(&self, symbol: SymbolId, span: Span) -> SemanticAssist {
+        let name = self.symbol_name(symbol).to_string();
+        SemanticAssist::default()
+            .context_label(self.symbol_span(symbol), self.symbol_declared_here(symbol))
+            .replacement_suggestion(
+                span,
+                name.clone(),
+                format!("did you mean `{name}`?"),
+                Applicability::MaybeIncorrect,
+            )
+    }
+
+    fn assist_for_route_scalar(&self, route: SymbolId, span: Span) -> SemanticAssist {
+        let name = self.symbol_name(route).to_string();
+        SemanticAssist::default()
+            .context_label(self.symbol_span(route), self.symbol_declared_here(route))
+            .help(format!("route inputs are read through `rate({name})`"))
+            .replacement_suggestion(
+                span,
+                format!("rate({name})"),
+                format!("did you mean `rate({name})`?"),
+                Applicability::MaybeIncorrect,
+            )
+    }
+
+    fn assist_for_output_scope(&self, output: SymbolId) -> SemanticAssist {
+        SemanticAssist::default()
+            .context_label(self.symbol_span(output), self.symbol_declared_here(output))
+            .help(
+                "outputs are assignment targets inside the `outputs` block and are not available as expression values",
+            )
+    }
+
+    fn assist_for_unknown_identifier(
+        &self,
+        name: &syntax::Ident,
+        span: Span,
+        env: &BlockEnv,
+    ) -> Option<SemanticAssist> {
+        let mut seen = BTreeSet::new();
+        let mut candidates = Vec::new();
+
+        for scope in env.locals.iter().rev() {
+            for (candidate_name, symbol) in scope {
+                if seen.insert(candidate_name.clone()) {
+                    candidates.push(SimilarNameCandidate::new(
+                        candidate_name.clone(),
+                        self.assist_for_symbol_replacement(*symbol, span),
+                    ));
+                }
+            }
+        }
+
+        for symbol in self
+            .globals
+            .parameters
+            .values()
+            .chain(self.globals.constants.values())
+            .chain(self.globals.covariates.values())
+            .chain(
+                self.globals
+                    .states
+                    .values()
+                    .filter(|entry| entry.size.is_none())
+                    .map(|entry| &entry.symbol),
+            )
+        {
+            let candidate_name = self.symbol_name(*symbol).to_string();
+            if seen.insert(candidate_name.clone()) {
+                candidates.push(SimilarNameCandidate::new(
+                    candidate_name,
+                    self.assist_for_symbol_replacement(*symbol, span),
+                ));
+            }
+        }
+
+        for symbol in &env.available_derived {
+            let candidate_name = self.symbol_name(*symbol).to_string();
+            if seen.insert(candidate_name.clone()) {
+                candidates.push(SimilarNameCandidate::new(
+                    candidate_name,
+                    self.assist_for_symbol_replacement(*symbol, span),
+                ));
+            }
+        }
+
+        for symbol in self.globals.routes.values() {
+            let candidate_name = self.symbol_name(*symbol).to_string();
+            if seen.insert(candidate_name.clone()) {
+                candidates.push(SimilarNameCandidate::new(
+                    candidate_name,
+                    self.assist_for_route_scalar(*symbol, span),
+                ));
+            }
+        }
+
+        best_similar_name_assist(&name.text, candidates)
+    }
+
+    fn assist_for_unknown_route(&self, route_name: &syntax::Ident) -> Option<SemanticAssist> {
+        let candidates = self
+            .globals
+            .routes
+            .values()
+            .map(|symbol| {
+                let name = self.symbol_name(*symbol).to_string();
+                SimilarNameCandidate::new(
+                    name.clone(),
+                    SemanticAssist::default()
+                        .context_label(self.symbol_span(*symbol), self.symbol_declared_here(*symbol))
+                        .replacement_suggestion(
+                            route_name.span,
+                            name.clone(),
+                            format!("did you mean `{name}`?"),
+                            Applicability::MaybeIncorrect,
+                        ),
+                )
+            })
+            .collect::<Vec<_>>();
+        best_similar_name_assist(&route_name.text, candidates)
+    }
+
+    fn assist_for_unknown_function(&self, callee: &syntax::Ident) -> Option<SemanticAssist> {
+        let mut candidates = MathIntrinsic::ALL
+            .iter()
+            .map(|intrinsic| {
+                let name = intrinsic.name().to_string();
+                SimilarNameCandidate::new(
+                    name.clone(),
+                    SemanticAssist::default().replacement_suggestion(
+                        callee.span,
+                        name.clone(),
+                        format!("did you mean `{name}`?"),
+                        Applicability::MaybeIncorrect,
+                    ),
+                )
+            })
+            .collect::<Vec<_>>();
+        candidates.push(SimilarNameCandidate::new(
+            RATE_FUNCTION_NAME,
+            SemanticAssist::default()
+                .help("`rate` reads route inputs as `rate(route)`")
+                .replacement_suggestion(
+                    callee.span,
+                    RATE_FUNCTION_NAME,
+                    "did you mean `rate`?",
+                    Applicability::MaybeIncorrect,
+                ),
+        ));
+        best_similar_name_assist(&callee.text, candidates)
     }
 
     fn finalize_symbols(self) -> Result<Vec<Symbol>, SemanticError> {
@@ -1867,14 +2260,129 @@ fn set_once<'a, T>(slot: &mut Option<&'a T>, value: &'a T, name: &str) -> Result
 where
     T: HasSpan,
 {
-    if slot.is_some() {
-        return Err(SemanticError::new(
-            format!("duplicate `{name}` section in model body"),
-            value.span(),
-        ));
+    if let Some(existing) = *slot {
+        return Err(
+            SemanticAssist::default()
+                .context_label(existing.span(), format!("`{name}` section first declared here"))
+                .help(format!("each model can declare `{name}` at most once"))
+                .apply(SemanticError::new(
+                    format!("duplicate `{name}` section in model body"),
+                    value.span(),
+                )),
+        );
     }
     *slot = Some(value);
     Ok(())
+}
+
+fn best_similar_name_assist(
+    needle: &str,
+    candidates: Vec<SimilarNameCandidate>,
+) -> Option<SemanticAssist> {
+    let needle = needle.to_ascii_lowercase();
+    let mut best: Option<((usize, usize, usize), SemanticAssist)> = None;
+    let mut tied = false;
+
+    for candidate in candidates {
+        let lookup = candidate.lookup_name.to_ascii_lowercase();
+        if lookup == needle {
+            continue;
+        }
+        let distance = if is_single_adjacent_transposition(&needle, &lookup) {
+            1
+        } else {
+            edit_distance(&needle, &lookup)
+        };
+        let prefix = common_prefix_len(&needle, &lookup);
+        if !is_high_confidence_match(&needle, &lookup, distance, prefix) {
+            continue;
+        }
+        let score = (distance, usize::MAX - prefix, needle.len().abs_diff(lookup.len()));
+        match &best {
+            None => {
+                best = Some((score, candidate.assist));
+                tied = false;
+            }
+            Some((best_score, _)) if score < *best_score => {
+                best = Some((score, candidate.assist));
+                tied = false;
+            }
+            Some((best_score, _)) if score == *best_score => tied = true,
+            _ => {}
+        }
+    }
+
+    if tied {
+        None
+    } else {
+        best.map(|(_, assist)| assist)
+    }
+}
+
+fn is_high_confidence_match(needle: &str, candidate: &str, distance: usize, prefix: usize) -> bool {
+    let max_len = needle.len().max(candidate.len());
+    let max_distance = match max_len {
+        0..=4 => 1,
+        5..=8 => 2,
+        _ => 3,
+    };
+    distance <= max_distance && (prefix > 0 || distance <= 1)
+}
+
+fn common_prefix_len(lhs: &str, rhs: &str) -> usize {
+    lhs.chars()
+        .zip(rhs.chars())
+        .take_while(|(lhs, rhs)| lhs == rhs)
+        .count()
+}
+
+fn is_single_adjacent_transposition(lhs: &str, rhs: &str) -> bool {
+    let lhs: Vec<char> = lhs.chars().collect();
+    let rhs: Vec<char> = rhs.chars().collect();
+    if lhs.len() != rhs.len() {
+        return false;
+    }
+
+    let differing = lhs
+        .iter()
+        .zip(rhs.iter())
+        .enumerate()
+        .filter_map(|(index, (lhs, rhs))| (lhs != rhs).then_some(index))
+        .collect::<Vec<_>>();
+
+    if differing.len() != 2 || differing[1] != differing[0] + 1 {
+        return false;
+    }
+
+    let first = differing[0];
+    lhs[first] == rhs[first + 1] && lhs[first + 1] == rhs[first]
+}
+
+fn edit_distance(lhs: &str, rhs: &str) -> usize {
+    let lhs: Vec<char> = lhs.chars().collect();
+    let rhs: Vec<char> = rhs.chars().collect();
+    if lhs.is_empty() {
+        return rhs.len();
+    }
+    if rhs.is_empty() {
+        return lhs.len();
+    }
+
+    let mut previous: Vec<usize> = (0..=rhs.len()).collect();
+    let mut current = vec![0; rhs.len() + 1];
+
+    for (lhs_index, lhs_char) in lhs.iter().enumerate() {
+        current[0] = lhs_index + 1;
+        for (rhs_index, rhs_char) in rhs.iter().enumerate() {
+            let substitution_cost = usize::from(lhs_char != rhs_char);
+            current[rhs_index + 1] = (current[rhs_index] + 1)
+                .min(previous[rhs_index + 1] + 1)
+                .min(previous[rhs_index] + substitution_cost);
+        }
+        previous.clone_from_slice(&current);
+    }
+
+    previous[rhs.len()]
 }
 
 trait HasSpan {
@@ -2185,6 +2693,159 @@ model broken {
         let err = analyze_model(&model).expect_err("unknown route must fail");
         assert!(err.render(src).contains("unknown route `oral`"));
     }
+
+        #[test]
+        fn suggests_similar_state_name_for_unknown_identifier() {
+                let src = r#"
+model broken {
+    kind ode
+    states { central }
+    dynamics {
+        ddt(central) = 0
+    }
+    outputs {
+        cp = cental
+    }
+}
+"#;
+                let model = parse_model(src).expect("model parses");
+                let err = analyze_model(&model).expect_err("unknown identifier must fail");
+
+                assert!(err
+                        .diagnostic()
+                        .suggestions
+                        .iter()
+                        .any(|suggestion| suggestion.message.contains("did you mean `central`?")));
+                assert!(err.render(src).contains("suggestion: did you mean `central`?"));
+        }
+
+        #[test]
+        fn suggests_similar_intrinsic_for_unknown_function() {
+                let src = r#"
+model broken {
+    kind ode
+    states { central }
+    dynamics {
+        ddt(central) = 0
+    }
+    outputs {
+        cp = sqt(central)
+    }
+}
+"#;
+                let model = parse_model(src).expect("model parses");
+                let err = analyze_model(&model).expect_err("unknown function must fail");
+
+                assert!(err
+                        .diagnostic()
+                        .suggestions
+                        .iter()
+                        .any(|suggestion| suggestion.message.contains("did you mean `sqrt`?")));
+                assert!(err.render(src).contains("suggestion: did you mean `sqrt`?"));
+        }
+
+        #[test]
+        fn route_scalar_usage_reports_help_and_context() {
+                let src = r#"
+model broken {
+    kind ode
+    states { central }
+    routes { oral -> central }
+    dynamics {
+        ddt(central) = oral
+    }
+    outputs {
+        cp = central
+    }
+}
+"#;
+                let model = parse_model(src).expect("model parses");
+                let err = analyze_model(&model).expect_err("route scalar usage must fail");
+
+                assert!(err
+                        .diagnostic()
+                        .helps
+                        .iter()
+                        .any(|help| help.contains("route inputs are read through `rate(oral)`")));
+                assert!(err.render(src).contains("route `oral` declared here"));
+                assert!(err.render(src).contains("suggestion: did you mean `rate(oral)`?"));
+        }
+
+        #[test]
+        fn output_scope_violation_reports_help_and_context() {
+                let src = r#"
+model broken {
+    kind ode
+    states { central }
+    dynamics {
+        ddt(central) = cp
+    }
+    outputs {
+        cp = central
+    }
+}
+"#;
+                let model = parse_model(src).expect("model parses");
+                let err = analyze_model(&model).expect_err("output scope violation must fail");
+
+                assert!(err
+                        .diagnostic()
+                        .helps
+                        .iter()
+                        .any(|help| help.contains("outputs are assignment targets inside the `outputs` block")));
+                assert!(err.render(src).contains("output `cp` declared here"));
+        }
+
+        #[test]
+        fn reserved_name_reports_rename_suggestion() {
+                let src = r#"
+model broken {
+    kind ode
+    parameters { log }
+    states { central }
+    dynamics {
+        ddt(central) = 0
+    }
+    outputs {
+        cp = central
+    }
+}
+"#;
+                let model = parse_model(src).expect("model parses");
+                let err = analyze_model(&model).expect_err("reserved name must fail");
+
+                assert!(err.render(src).contains("rename `log` to `log_value`"));
+                assert!(err
+                        .diagnostic()
+                        .suggestions
+                        .iter()
+                        .any(|suggestion| suggestion.edits.iter().any(|edit| edit.replacement == "log_value")));
+        }
+
+        #[test]
+        fn duplicate_constant_points_to_first_declaration() {
+                let src = r#"
+model broken {
+    kind ode
+    constants {
+        ka = 1
+        ka = 2
+    }
+    states { central }
+    dynamics {
+        ddt(central) = 0
+    }
+    outputs {
+        cp = central
+    }
+}
+"#;
+                let model = parse_model(src).expect("model parses");
+                let err = analyze_model(&model).expect_err("duplicate constant must fail");
+
+                assert!(err.render(src).contains("constant `ka` first declared here"));
+                assert!(err.render(src).contains("rename this constant to `ka_2`"));
+        }
 
     #[test]
     fn rejects_missing_output_assignment_on_all_paths() {

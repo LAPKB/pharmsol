@@ -4,6 +4,7 @@ use super::diagnostic::{ParseError, Span};
 pub(crate) struct Token {
     pub(crate) kind: TokenKind,
     pub(crate) span: Span,
+    pub(crate) starts_line: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -137,7 +138,7 @@ impl<'a> Lexer<'a> {
 
     fn lex(mut self) -> Result<Vec<Token>, ParseError> {
         let mut tokens = Vec::new();
-        while self.skip_ws_and_comments() {
+        while let Some(saw_newline) = self.skip_ws_and_comments() {
             let start = self.pos;
             let Some(ch) = self.peek_char() else {
                 break;
@@ -290,14 +291,20 @@ impl<'a> Lexer<'a> {
             tokens.push(Token {
                 kind,
                 span: Span::new(start, self.pos),
+                starts_line: saw_newline || tokens.is_empty(),
             });
         }
         Ok(tokens)
     }
 
-    fn skip_ws_and_comments(&mut self) -> bool {
+    fn skip_ws_and_comments(&mut self) -> Option<bool> {
+        let mut saw_newline = false;
         loop {
-            while self.peek_char().is_some_and(char::is_whitespace) {
+            while let Some(ch) = self.peek_char() {
+                if !ch.is_whitespace() {
+                    break;
+                }
+                saw_newline |= ch == '\n';
                 self.bump_char();
             }
 
@@ -306,6 +313,7 @@ impl<'a> Lexer<'a> {
                     while let Some(ch) = self.peek_char() {
                         self.bump_char();
                         if ch == '\n' {
+                            saw_newline = true;
                             break;
                         }
                     }
@@ -314,7 +322,7 @@ impl<'a> Lexer<'a> {
             }
         }
 
-        self.peek_char().is_some()
+        self.peek_char().map(|_| saw_newline)
     }
 
     fn scan_ident_or_keyword(&mut self, start: usize) -> TokenKind {

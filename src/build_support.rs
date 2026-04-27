@@ -87,6 +87,7 @@ pub(crate) fn find_cargo() -> String {
     "cargo".to_string()
 }
 
+#[cfg(test)]
 pub(crate) fn find_rustup() -> Option<String> {
     if let Ok(output) = Command::new("rustup").arg("--version").output() {
         if output.status.success() {
@@ -120,6 +121,7 @@ pub(crate) fn find_rustup() -> Option<String> {
     None
 }
 
+#[cfg(test)]
 pub(crate) fn rustc_host_target() -> Result<String, io::Error> {
     let rustc = env::var("RUSTC").unwrap_or_else(|_| "rustc".to_string());
     let output = new_command(&rustc).arg("-vV").output()?;
@@ -134,6 +136,7 @@ pub(crate) fn rustc_host_target() -> Result<String, io::Error> {
         .ok_or_else(|| io::Error::other("`rustc -vV` did not report a host target"))
 }
 
+#[cfg(test)]
 pub(crate) fn rustup_installed_targets() -> Result<Vec<String>, io::Error> {
     let rustup = find_rustup()
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "rustup was not found"))?;

@@ -1,3 +1,4 @@
+use std::fmt;
 use std::fs;
 use std::io;
 use std::ops::Range;
@@ -19,7 +20,10 @@ use super::rust_backend::{
     INIT_SYMBOL, MODEL_INFO_JSON_LEN_SYMBOL, MODEL_INFO_JSON_PTR_SYMBOL, OUTPUTS_SYMBOL,
     ROUTE_BIOAVAILABILITY_SYMBOL, ROUTE_LAG_SYMBOL,
 };
-use super::{analyze_module, lower_typed_model, parse_module};
+use super::{
+    analyze_module, lower_typed_model, parse_module, Diagnostic, DiagnosticReport, LoweringError,
+    ParseError, SemanticError,
+};
 use crate::build_support::{build_cargo_template, create_cargo_template, write_template_source};
 use crate::PharmsolError;
 
@@ -31,18 +35,18 @@ pub struct WasmArtifactBundle {
     pub browser_loader_path: PathBuf,
 }
 
-#[derive(Debug, Error)]
+#[derive(Error)]
 pub enum WasmError {
     #[error(transparent)]
     Io(#[from] io::Error),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
     #[error("failed to parse DSL source: {0}")]
-    Parse(String),
+    Parse(#[source] ParseError),
     #[error("failed to analyze DSL source: {0}")]
-    Semantic(String),
+    Semantic(#[source] SemanticError),
     #[error("failed to lower DSL model: {0}")]
-    Lowering(String),
+    Lowering(#[source] LoweringError),
     #[error("{0}")]
     ModelSelection(String),
     #[error("failed to emit WASM module source: {0}")]
@@ -62,6 +66,42 @@ pub enum WasmError {
     },
     #[error("failed to load WASM artifact: {0}")]
     Load(String),
+}
+
+impl WasmError {
+    pub fn diagnostic(&self) -> Option<&Diagnostic> {
+        match self {
+            Self::Parse(error) => Some(error.diagnostic()),
+            Self::Semantic(error) => Some(error.diagnostic()),
+            Self::Lowering(error) => Some(error.diagnostic()),
+            _ => None,
+        }
+    }
+
+    pub fn render_diagnostic(&self, src: &str) -> Option<String> {
+        self.diagnostic().map(|diagnostic| diagnostic.render(src))
+    }
+
+    pub fn diagnostic_report(&self, source_name: impl Into<String>) -> Option<DiagnosticReport> {
+        let source_name = source_name.into();
+        match self {
+            Self::Parse(error) => Some(error.diagnostic_report(source_name)),
+            Self::Semantic(error) => Some(error.diagnostic_report(source_name)),
+            Self::Lowering(error) => Some(error.diagnostic_report(source_name)),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Debug for WasmError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Parse(error) => fmt::Display::fmt(error, f),
+            Self::Semantic(error) => fmt::Display::fmt(error, f),
+            Self::Lowering(error) => fmt::Display::fmt(error, f),
+            _ => fmt::Display::fmt(self, f),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -698,9 +738,10 @@ pub fn compile_module_source_to_wasm(
     template_root: PathBuf,
     event_callback: impl Fn(String, String) + Send + Sync + 'static,
 ) -> Result<WasmArtifactBundle, WasmError> {
-    let parsed = parse_module(source).map_err(|error| WasmError::Parse(error.render(source)))?;
+    let parsed =
+        parse_module(source).map_err(|error| WasmError::Parse(error.with_source(source)))?;
     let typed =
-        analyze_module(&parsed).map_err(|error| WasmError::Semantic(error.render(source)))?;
+        analyze_module(&parsed).map_err(|error| WasmError::Semantic(error.with_source(source)))?;
 
     let model = match model_name {
         Some(name) => typed
@@ -719,7 +760,7 @@ pub fn compile_module_source_to_wasm(
     };
 
     let execution =
-        lower_typed_model(model).map_err(|error| WasmError::Lowering(error.render(source)))?;
+        lower_typed_model(model).map_err(|error| WasmError::Lowering(error.with_source(source)))?;
     export_execution_model_to_wasm(&execution, output, template_root, event_callback)
 }
 
@@ -895,7 +936,8 @@ fn wasm_template_manifest() -> String {
 mod tests {
     use super::*;
     use crate::dsl::{
-        compile_execution_artifact, lower_typed_model, parse_module, NativeModelInfo,
+        compile_execution_artifact, lower_typed_model, parse_module, DiagnosticPhase,
+        NativeModelInfo, DSL_PARSE_GENERIC,
     };
     use approx::assert_relative_eq;
     use tempfile::tempdir;
@@ -1147,6 +1189,39 @@ mod tests {
                 memory_len: 16,
             }
         ));
+    }
+
+    #[test]
+    fn wasm_compile_preserves_parse_diagnostic_structure() {
+        let source = "model broken { kind ode outputs { cp = 1 + } }";
+        let work_dir = tempdir().expect("tempdir");
+        let error = compile_module_source_to_wasm(
+            source,
+            None,
+            None,
+            work_dir.path().join("build"),
+            |_, _| {},
+        )
+        .expect_err("invalid DSL should fail before wasm compilation");
+
+        let diagnostic = error.diagnostic().expect("wasm should expose diagnostic");
+        assert_eq!(diagnostic.phase, DiagnosticPhase::Parse);
+        assert_eq!(diagnostic.code, DSL_PARSE_GENERIC);
+        assert!(diagnostic.message.contains("expected expression"));
+        let rendered = error
+            .render_diagnostic(source)
+            .expect("rendered diagnostic");
+        assert!(rendered.contains("error[DSL1000]"), "{}", rendered);
+        assert!(rendered.contains("expected expression"), "{}", rendered);
+        let debugged = format!("{error:?}");
+        assert!(debugged.contains("error[DSL1000]"), "{}", debugged);
+        assert!(debugged.contains("expected expression"), "{}", debugged);
+        let report = error
+            .diagnostic_report("inline.dsl")
+            .expect("diagnostic report");
+        assert_eq!(report.source.name, "inline.dsl");
+        assert_eq!(report.diagnostics[0].code, "DSL1000");
+        assert_eq!(report.diagnostics[0].labels[0].span.start_line, Some(1));
     }
 
     fn instantiate_module(path: &Path) -> (Store<()>, Instance, Memory) {

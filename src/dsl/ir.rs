@@ -380,6 +380,46 @@ pub enum MathIntrinsic {
 }
 
 impl MathIntrinsic {
+    pub const ALL: [Self; 16] = [
+        Self::Abs,
+        Self::Ceil,
+        Self::Exp,
+        Self::Floor,
+        Self::Ln,
+        Self::Log,
+        Self::Log10,
+        Self::Log2,
+        Self::Max,
+        Self::Min,
+        Self::Pow,
+        Self::Round,
+        Self::Sin,
+        Self::Cos,
+        Self::Tan,
+        Self::Sqrt,
+    ];
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Abs => "abs",
+            Self::Ceil => "ceil",
+            Self::Exp => "exp",
+            Self::Floor => "floor",
+            Self::Ln => "ln",
+            Self::Log => "log",
+            Self::Log10 => "log10",
+            Self::Log2 => "log2",
+            Self::Max => "max",
+            Self::Min => "min",
+            Self::Pow => "pow",
+            Self::Round => "round",
+            Self::Sin => "sin",
+            Self::Cos => "cos",
+            Self::Tan => "tan",
+            Self::Sqrt => "sqrt",
+        }
+    }
+
     pub fn from_name(name: &str) -> Option<Self> {
         match name {
             "abs" => Some(Self::Abs),

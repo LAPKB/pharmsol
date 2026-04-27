@@ -40,7 +40,14 @@ pub use aot::{load_aot_model, read_aot_model_info};
 #[cfg(all(not(feature = "dsl-aot"), feature = "dsl-aot-load"))]
 pub use aot::{AotError, AOT_API_VERSION};
 pub use ast::*;
-pub use diagnostic::{Diagnostic, ParseError, Span};
+pub use diagnostic::{
+    Applicability, Diagnostic, DiagnosticCode, DiagnosticLabel, DiagnosticLabelKind,
+    DiagnosticPhase, DiagnosticReport, DiagnosticReportEdit, DiagnosticReportEntry,
+    DiagnosticReportLabel, DiagnosticReportSource, DiagnosticReportSpan,
+    DiagnosticReportSuggestion, DiagnosticSeverity, DiagnosticSuggestion, ParseError, Span,
+    TextEdit, DSL_BACKEND_GENERIC, DSL_LOWERING_GENERIC, DSL_PARSE_GENERIC,
+    DSL_SEMANTIC_GENERIC,
+};
 pub use execution::{
     lower_typed_model, lower_typed_module, ExecutionModel, ExecutionModule, LoweringError,
 };

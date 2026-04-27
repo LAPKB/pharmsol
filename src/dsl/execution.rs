@@ -1,11 +1,14 @@
 use std::collections::BTreeMap;
 use std::fmt;
+use std::sync::Arc;
 
 use super::{
-    AnalyticalKernel, ConstValue, CovariateInterpolation, Diagnostic, ModelKind, RoutePropertyKind,
-    Span, Symbol, SymbolId, SymbolKind, TypedBinaryOp, TypedCall, TypedExpr, TypedExprKind,
-    TypedModel, TypedModule, TypedRangeExpr, TypedStatePlace, TypedStatementBlock, TypedStmt,
-    TypedStmtKind, TypedUnaryOp, ValueType,
+    AnalyticalKernel, ConstValue, CovariateInterpolation, Diagnostic, DiagnosticPhase,
+    DiagnosticReport,
+    ModelKind, RoutePropertyKind, Span, Symbol, SymbolId, SymbolKind, TypedBinaryOp, TypedCall,
+    TypedExpr, TypedExprKind, TypedModel, TypedModule, TypedRangeExpr, TypedStatePlace,
+    TypedStatementBlock, TypedStmt, TypedStmtKind, TypedUnaryOp, ValueType,
+    DSL_LOWERING_GENERIC,
 };
 use super::TypedAssignTargetKind;
 
@@ -356,15 +359,22 @@ pub enum ExecutionCall {
     Math(super::MathIntrinsic),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct LoweringError {
     diagnostic: Diagnostic,
+    source: Option<Arc<str>>,
 }
 
 impl LoweringError {
     fn new(message: impl Into<String>, span: Span) -> Self {
         Self {
-            diagnostic: Diagnostic::new(message, span),
+            diagnostic: Diagnostic::error(
+                DSL_LOWERING_GENERIC,
+                DiagnosticPhase::Lowering,
+                message,
+                span,
+            ),
+            source: None,
         }
     }
 
@@ -377,17 +387,44 @@ impl LoweringError {
         &self.diagnostic
     }
 
+    pub fn into_diagnostic(self) -> Diagnostic {
+        self.diagnostic
+    }
+
     pub fn render(&self, src: &str) -> String {
         self.diagnostic.render(src)
+    }
+
+    pub fn diagnostic_report(&self, source_name: impl Into<String>) -> DiagnosticReport {
+        DiagnosticReport::from_diagnostics(source_name, self.source(), std::slice::from_ref(&self.diagnostic))
+    }
+
+    pub fn with_source(mut self, source: impl Into<Arc<str>>) -> Self {
+        self.source = Some(source.into());
+        self
+    }
+
+    pub fn source(&self) -> Option<&str> {
+        self.source.as_deref()
+    }
+}
+
+impl fmt::Debug for LoweringError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
     }
 }
 
 impl fmt::Display for LoweringError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(source) = self.source() {
+            return f.write_str(&self.render(source));
+        }
+        let span = self.diagnostic.primary_span();
         write!(
             f,
             "{} at bytes {}..{}",
-            self.diagnostic.message, self.diagnostic.span.start, self.diagnostic.span.end
+            self.diagnostic.message, span.start, span.end
         )
     }
 }

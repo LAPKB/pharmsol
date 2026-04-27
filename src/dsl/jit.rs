@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::mem;
+use std::sync::Arc;
 
 use cranelift::codegen::settings;
 use cranelift::prelude::*;
@@ -18,7 +19,8 @@ use super::native::{
     NativeOdeModel, NativeSdeModel,
 };
 use super::{
-    ConstValue, MathIntrinsic, ModelKind, Span, TypedBinaryOp, TypedUnaryOp, ValueType,
+    ConstValue, Diagnostic, DiagnosticPhase, DiagnosticReport, MathIntrinsic, ModelKind, Span,
+    TypedBinaryOp, TypedUnaryOp, ValueType, DSL_BACKEND_GENERIC,
 };
 
 mod externs {
@@ -81,28 +83,60 @@ pub type JitAnalyticalModel = NativeAnalyticalModel;
 pub type JitSdeModel = NativeSdeModel;
 pub type CompiledJitModel = CompiledNativeModel;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct JitCompileError {
-    message: String,
-    span: Option<Span>,
+    diagnostic: Diagnostic,
+    source: Option<Arc<str>>,
 }
 
 impl JitCompileError {
     fn new(message: impl Into<String>, span: Option<Span>) -> Self {
         Self {
-            message: message.into(),
-            span,
+            diagnostic: Diagnostic::error(
+                DSL_BACKEND_GENERIC,
+                DiagnosticPhase::Backend,
+                message,
+                span.unwrap_or_default(),
+            ),
+            source: None,
         }
+    }
+
+    pub fn diagnostic(&self) -> &Diagnostic {
+        &self.diagnostic
+    }
+
+    pub fn render(&self, src: &str) -> String {
+        self.diagnostic.render(src)
+    }
+
+    pub fn diagnostic_report(&self, source_name: impl Into<String>) -> DiagnosticReport {
+        DiagnosticReport::from_diagnostics(source_name, self.source(), std::slice::from_ref(&self.diagnostic))
+    }
+
+    pub fn with_source(mut self, source: impl Into<Arc<str>>) -> Self {
+        self.source = Some(source.into());
+        self
+    }
+
+    pub fn source(&self) -> Option<&str> {
+        self.source.as_deref()
     }
 }
 
 impl std::fmt::Display for JitCompileError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if let Some(span) = self.span {
-            write!(f, "{} at bytes {}..{}", self.message, span.start, span.end)
-        } else {
-            f.write_str(&self.message)
+        if let Some(source) = self.source() {
+            return f.write_str(&self.render(source));
         }
+        let span = self.diagnostic.primary_span();
+        write!(f, "{} at bytes {}..{}", self.diagnostic.message, span.start, span.end)
+    }
+}
+
+impl std::fmt::Debug for JitCompileError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self, f)
     }
 }
 
@@ -1193,7 +1227,9 @@ pub fn compile_sde_model_to_jit(model: &ExecutionModel) -> Result<JitSdeModel, J
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dsl::{analyze_module, lower_typed_model, parse_module};
+    use crate::dsl::{
+        analyze_module, lower_typed_model, parse_module, DiagnosticPhase, DSL_BACKEND_GENERIC,
+    };
     use crate::dsl::execution::DenseBufferLayout;
     use crate::equation::ode::{ExplicitRkTableau, OdeSolver};
     use crate::simulator::equation::analytical::one_compartment_with_absorption;
@@ -1212,6 +1248,33 @@ mod tests {
             .find(|model| model.name == name)
             .expect("model present in proposal module");
         lower_typed_model(model).expect("lower proposal model")
+    }
+
+    #[test]
+    fn jit_compile_error_exposes_backend_diagnostic_report() {
+        let source = include_str!("../../dsl-proposals/02-structured-block-imperative.dsl");
+        let model = load_proposal_model("one_cmt_oral_iv");
+        let error = compile_sde_model_to_jit(&model)
+            .expect_err("ODE model should not compile through the SDE JIT entrypoint")
+            .with_source(source);
+
+        let diagnostic = error.diagnostic();
+        assert_eq!(diagnostic.phase, DiagnosticPhase::Backend);
+        assert_eq!(diagnostic.code, DSL_BACKEND_GENERIC);
+        assert!(diagnostic.message.contains("not an SDE model"));
+
+        let rendered = error.render(source);
+        assert!(rendered.contains("error[DSL4000]"), "{}", rendered);
+        assert!(rendered.contains("not an SDE model"), "{}", rendered);
+
+        let report = error.diagnostic_report("proposal.dsl");
+        assert_eq!(report.source.name, "proposal.dsl");
+        assert_eq!(report.diagnostics[0].code, "DSL4000");
+        assert_eq!(report.diagnostics[0].phase, "backend");
+        assert!(report.diagnostics[0].labels[0].span.start_line.is_some());
+
+        let debugged = format!("{error:?}");
+        assert!(debugged.contains("error[DSL4000]"), "{}", debugged);
     }
 
     fn slot_index(layout: &DenseBufferLayout, name: &str) -> usize {

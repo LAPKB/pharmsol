@@ -1,3 +1,4 @@
+use std::fmt;
 use std::path::Path;
 
 #[cfg(any(
@@ -23,7 +24,10 @@ use super::native::{
 };
 #[cfg(feature = "dsl-wasm")]
 use super::wasm::{export_execution_model_to_wasm, load_wasm_artifact, WasmError};
-use super::{analyze_module, lower_typed_model, parse_module, ExecutionModel, ModelKind};
+use super::{
+    analyze_module, lower_typed_model, parse_module, Diagnostic, DiagnosticReport,
+    ExecutionModel, LoweringError, ModelKind, ParseError, SemanticError,
+};
 use crate::{
     simulator::likelihood::{Prediction, SubjectPredictions},
     PharmsolError, Subject,
@@ -167,14 +171,14 @@ impl CompiledRuntimeModel {
     }
 }
 
-#[derive(Debug, Error)]
+#[derive(Error)]
 pub enum RuntimeError {
     #[error("failed to parse DSL source: {0}")]
-    Parse(String),
+    Parse(#[source] ParseError),
     #[error("failed to analyze DSL source: {0}")]
-    Semantic(String),
+    Semantic(#[source] SemanticError),
     #[error("failed to lower DSL model: {0}")]
-    Lowering(String),
+    Lowering(#[source] LoweringError),
     #[error("{0}")]
     ModelSelection(String),
     #[cfg(feature = "dsl-jit")]
@@ -190,15 +194,57 @@ pub enum RuntimeError {
     Runtime(#[from] PharmsolError),
 }
 
+impl RuntimeError {
+    pub fn diagnostic(&self) -> Option<&Diagnostic> {
+        match self {
+            Self::Parse(error) => Some(error.diagnostic()),
+            Self::Semantic(error) => Some(error.diagnostic()),
+            Self::Lowering(error) => Some(error.diagnostic()),
+            #[cfg(feature = "dsl-jit")]
+            Self::Jit(error) => Some(error.diagnostic()),
+            _ => None,
+        }
+    }
+
+    pub fn render_diagnostic(&self, src: &str) -> Option<String> {
+        self.diagnostic().map(|diagnostic| diagnostic.render(src))
+    }
+
+    pub fn diagnostic_report(&self, source_name: impl Into<String>) -> Option<DiagnosticReport> {
+        let source_name = source_name.into();
+        match self {
+            Self::Parse(error) => Some(error.diagnostic_report(source_name)),
+            Self::Semantic(error) => Some(error.diagnostic_report(source_name)),
+            Self::Lowering(error) => Some(error.diagnostic_report(source_name)),
+            #[cfg(feature = "dsl-jit")]
+            Self::Jit(error) => Some(error.diagnostic_report(source_name)),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Debug for RuntimeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Parse(error) => fmt::Display::fmt(error, f),
+            Self::Semantic(error) => fmt::Display::fmt(error, f),
+            Self::Lowering(error) => fmt::Display::fmt(error, f),
+            #[cfg(feature = "dsl-jit")]
+            Self::Jit(error) => fmt::Display::fmt(error, f),
+            _ => fmt::Display::fmt(self, f),
+        }
+    }
+}
+
 pub fn compile_module_source_to_runtime(
     source: &str,
     model_name: Option<&str>,
     target: RuntimeCompilationTarget,
     event_callback: impl Fn(String, String) + Send + Sync + 'static,
 ) -> Result<CompiledRuntimeModel, RuntimeError> {
-    let parsed = parse_module(source).map_err(|error| RuntimeError::Parse(error.render(source)))?;
-    let typed =
-        analyze_module(&parsed).map_err(|error| RuntimeError::Semantic(error.render(source)))?;
+    let parsed = parse_module(source).map_err(|error| RuntimeError::Parse(error.with_source(source)))?;
+    let typed = analyze_module(&parsed)
+        .map_err(|error| RuntimeError::Semantic(error.with_source(source)))?;
 
     let model = match model_name {
         Some(name) => typed
@@ -216,9 +262,15 @@ pub fn compile_module_source_to_runtime(
         }
     };
 
-    let execution =
-        lower_typed_model(model).map_err(|error| RuntimeError::Lowering(error.render(source)))?;
-    compile_execution_model_to_runtime(&execution, target, event_callback)
+    let execution = lower_typed_model(model)
+        .map_err(|error| RuntimeError::Lowering(error.with_source(source)))?;
+    compile_execution_model_to_runtime(&execution, target, event_callback).map_err(|error| {
+        #[cfg(feature = "dsl-jit")]
+        if let RuntimeError::Jit(error) = error {
+            return RuntimeError::Jit(error.with_source(source));
+        }
+        error
+    })
 }
 
 pub fn compile_execution_model_to_runtime(
@@ -300,12 +352,27 @@ fn runtime_model_from_parts(
 ))]
 mod tests {
     use super::*;
+    use crate::dsl::{
+        analyze_module, compile_sde_model_to_jit, lower_typed_model, parse_module,
+        DiagnosticPhase, DSL_BACKEND_GENERIC, DSL_PARSE_GENERIC,
+    };
     use crate::SubjectBuilderExt;
     use approx::assert_relative_eq;
     use tempfile::tempdir;
 
     fn proposal_source() -> &'static str {
         include_str!("../../dsl-proposals/02-structured-block-imperative.dsl")
+    }
+
+    fn proposal_model(name: &str) -> ExecutionModel {
+        let parsed = parse_module(proposal_source()).expect("parse proposal module");
+        let typed = analyze_module(&parsed).expect("analyze proposal module");
+        let model = typed
+            .models
+            .iter()
+            .find(|model| model.name == name)
+            .expect("model present in proposal module");
+        lower_typed_model(model).expect("lower proposal model")
     }
 
     fn ode_subject(output: usize, oral: usize, iv: usize) -> Subject {
@@ -401,5 +468,73 @@ mod tests {
             assert_relative_eq!(jit_value, aot_value, max_relative = 1e-4);
             assert_relative_eq!(jit_value, wasm_value, max_relative = 1e-4);
         }
+    }
+
+    #[test]
+    fn runtime_compile_preserves_parse_diagnostic_structure() {
+        let source = "model broken { kind ode outputs { cp = 1 + } }";
+        let error = compile_module_source_to_runtime(
+            source,
+            None,
+            RuntimeCompilationTarget::Jit,
+            |_, _| {},
+        )
+        .expect_err("invalid DSL should fail before runtime compilation");
+
+        let diagnostic = error.diagnostic().expect("runtime should expose diagnostic");
+        assert_eq!(diagnostic.phase, DiagnosticPhase::Parse);
+        assert_eq!(diagnostic.code, DSL_PARSE_GENERIC);
+        assert!(diagnostic.message.contains("expected expression"));
+        let rendered = error.render_diagnostic(source).expect("rendered diagnostic");
+        assert!(rendered.contains("error[DSL1000]"), "{}", rendered);
+        assert!(rendered.contains("expected expression"), "{}", rendered);
+        let debugged = format!("{error:?}");
+        assert!(debugged.contains("error[DSL1000]"), "{}", debugged);
+        assert!(debugged.contains("expected expression"), "{}", debugged);
+        let report = error
+            .diagnostic_report("inline.dsl")
+            .expect("diagnostic report");
+        assert_eq!(report.source.name, "inline.dsl");
+        assert_eq!(report.diagnostics[0].code, "DSL1000");
+        assert_eq!(report.diagnostics[0].labels[0].span.start_line, Some(1));
+        assert!(
+            report
+                .to_json()
+                .expect("serialize report")
+                .contains("\"name\":\"inline.dsl\""),
+        );
+    }
+
+    #[test]
+    fn runtime_exposes_jit_backend_diagnostic_structure() {
+        let source = proposal_source();
+        let model = proposal_model("one_cmt_oral_iv");
+        let error = RuntimeError::from(
+            compile_sde_model_to_jit(&model)
+                .expect_err("ODE model should not compile through the SDE JIT entrypoint")
+                .with_source(source),
+        );
+
+        let diagnostic = error.diagnostic().expect("runtime should expose jit diagnostic");
+        assert_eq!(diagnostic.phase, DiagnosticPhase::Backend);
+        assert_eq!(diagnostic.code, DSL_BACKEND_GENERIC);
+        assert!(diagnostic.message.contains("not an SDE model"));
+
+        let rendered = error
+            .render_diagnostic(source)
+            .expect("rendered backend diagnostic");
+        assert!(rendered.contains("error[DSL4000]"), "{}", rendered);
+        assert!(rendered.contains("not an SDE model"), "{}", rendered);
+
+        let report = error
+            .diagnostic_report("proposal.dsl")
+            .expect("diagnostic report");
+        assert_eq!(report.source.name, "proposal.dsl");
+        assert_eq!(report.diagnostics[0].code, "DSL4000");
+        assert_eq!(report.diagnostics[0].phase, "backend");
+        assert!(report.diagnostics[0].labels[0].span.start_line.is_some());
+
+        let debugged = format!("{error:?}");
+        assert!(debugged.contains("error[DSL4000]"), "{}", debugged);
     }
 }
