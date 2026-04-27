@@ -1,56 +1,27 @@
 use std::fmt::Write;
 
+use super::compiled_backend_abi::{
+    compiled_kernel_symbol, encode_compiled_model_info, API_VERSION_SYMBOL,
+    MODEL_INFO_JSON_LEN_SYMBOL, MODEL_INFO_JSON_PTR_SYMBOL,
+};
 use super::execution::{
     ExecutionBlock, ExecutionCall, ExecutionExpr, ExecutionExprKind, ExecutionLoad, ExecutionModel,
     ExecutionProgram, ExecutionStateRef, ExecutionStmt, ExecutionStmtKind, ExecutionTargetKind,
-    KernelImplementation, KernelRole,
+    KernelImplementation,
 };
-use super::native::NativeModelInfo;
 use super::{MathIntrinsic, TypedBinaryOp, TypedUnaryOp, ValueType};
-
-pub const API_VERSION_SYMBOL: &str = "pharmsol_dsl_api_version";
-pub const MODEL_INFO_JSON_PTR_SYMBOL: &str = "pharmsol_dsl_model_info_json_ptr";
-pub const MODEL_INFO_JSON_LEN_SYMBOL: &str = "pharmsol_dsl_model_info_json_len";
-pub const DERIVE_SYMBOL: &str = "pharmsol_dsl_kernel_derive";
-pub const DYNAMICS_SYMBOL: &str = "pharmsol_dsl_kernel_dynamics";
-pub const OUTPUTS_SYMBOL: &str = "pharmsol_dsl_kernel_outputs";
-pub const INIT_SYMBOL: &str = "pharmsol_dsl_kernel_init";
-pub const DRIFT_SYMBOL: &str = "pharmsol_dsl_kernel_drift";
-pub const DIFFUSION_SYMBOL: &str = "pharmsol_dsl_kernel_diffusion";
-pub const ROUTE_LAG_SYMBOL: &str = "pharmsol_dsl_kernel_route_lag";
-pub const ROUTE_BIOAVAILABILITY_SYMBOL: &str = "pharmsol_dsl_kernel_route_bioavailability";
-pub const ALLOC_F64_BUFFER_SYMBOL: &str = "pharmsol_dsl_alloc_f64_buffer";
-pub const FREE_F64_BUFFER_SYMBOL: &str = "pharmsol_dsl_free_f64_buffer";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RustBackendFlavor {
     #[cfg(feature = "dsl-aot")]
     NativeAot { api_version: u32 },
-    #[cfg(feature = "dsl-wasm")]
-    Wasm { api_version: u32 },
 }
 
 impl RustBackendFlavor {
     fn api_version(self) -> u32 {
         match self {
-            #[cfg(all(feature = "dsl-aot", feature = "dsl-wasm"))]
-            Self::NativeAot { api_version } | Self::Wasm { api_version } => api_version,
-            #[cfg(all(feature = "dsl-aot", not(feature = "dsl-wasm")))]
+            #[cfg(feature = "dsl-aot")]
             Self::NativeAot { api_version } => api_version,
-            #[cfg(all(not(feature = "dsl-aot"), feature = "dsl-wasm"))]
-            Self::Wasm { api_version } => api_version,
-        }
-    }
-
-    fn emits_wasm_allocators(self) -> bool {
-        #[cfg(feature = "dsl-wasm")]
-        {
-            matches!(self, Self::Wasm { .. })
-        }
-        #[cfg(not(feature = "dsl-wasm"))]
-        {
-            let _ = self;
-            false
         }
     }
 }
@@ -59,8 +30,8 @@ pub fn emit_rust_backend_source(
     model: &ExecutionModel,
     flavor: RustBackendFlavor,
 ) -> Result<String, String> {
-    let model_info = NativeModelInfo::from_execution_model(model);
-    let model_info_json = serde_json::to_string(&model_info).map_err(|error| error.to_string())?;
+    let model_info_json = encode_compiled_model_info(model, flavor.api_version())
+        .map_err(|error| error.to_string())?;
 
     let mut source = String::new();
     writeln!(source, "#![allow(dead_code)]").unwrap();
@@ -105,46 +76,8 @@ pub fn emit_rust_backend_source(
     .unwrap();
     writeln!(source).unwrap();
 
-    if flavor.emits_wasm_allocators() {
-        writeln!(source, "#[no_mangle]").unwrap();
-        writeln!(
-            source,
-            "pub extern \"C\" fn {ALLOC_F64_BUFFER_SYMBOL}(len: usize) -> *mut f64 {{"
-        )
-        .unwrap();
-        writeln!(source, "    if len == 0 {{").unwrap();
-        writeln!(source, "        return core::ptr::null_mut();").unwrap();
-        writeln!(source, "    }}").unwrap();
-        writeln!(
-            source,
-            "    let mut buffer = Vec::<f64>::with_capacity(len);"
-        )
-        .unwrap();
-        writeln!(source, "    let ptr = buffer.as_mut_ptr();").unwrap();
-        writeln!(source, "    core::mem::forget(buffer);").unwrap();
-        writeln!(source, "    ptr").unwrap();
-        writeln!(source, "}}").unwrap();
-        writeln!(source).unwrap();
-        writeln!(source, "#[no_mangle]").unwrap();
-        writeln!(
-            source,
-            "pub unsafe extern \"C\" fn {FREE_F64_BUFFER_SYMBOL}(ptr: *mut f64, len: usize) {{"
-        )
-        .unwrap();
-        writeln!(source, "    if ptr.is_null() || len == 0 {{").unwrap();
-        writeln!(source, "        return;").unwrap();
-        writeln!(source, "    }}").unwrap();
-        writeln!(
-            source,
-            "    drop(Vec::<f64>::from_raw_parts(ptr, len, len));"
-        )
-        .unwrap();
-        writeln!(source, "}}").unwrap();
-        writeln!(source).unwrap();
-    }
-
     for kernel in &model.kernels {
-        if let Some(symbol) = kernel_symbol_name(kernel.role) {
+        if let Some(symbol) = compiled_kernel_symbol(kernel.role) {
             if let KernelImplementation::Statements(program) = &kernel.implementation {
                 emit_statement_kernel(&mut source, program, symbol)?;
                 writeln!(source).unwrap();
@@ -154,21 +87,6 @@ pub fn emit_rust_backend_source(
 
     Ok(source)
 }
-
-fn kernel_symbol_name(role: KernelRole) -> Option<&'static str> {
-    match role {
-        KernelRole::Derive => Some(DERIVE_SYMBOL),
-        KernelRole::Dynamics => Some(DYNAMICS_SYMBOL),
-        KernelRole::Outputs => Some(OUTPUTS_SYMBOL),
-        KernelRole::Init => Some(INIT_SYMBOL),
-        KernelRole::Drift => Some(DRIFT_SYMBOL),
-        KernelRole::Diffusion => Some(DIFFUSION_SYMBOL),
-        KernelRole::RouteLag => Some(ROUTE_LAG_SYMBOL),
-        KernelRole::RouteBioavailability => Some(ROUTE_BIOAVAILABILITY_SYMBOL),
-        KernelRole::Analytical => None,
-    }
-}
-
 fn emit_statement_kernel(
     source: &mut String,
     program: &ExecutionProgram,

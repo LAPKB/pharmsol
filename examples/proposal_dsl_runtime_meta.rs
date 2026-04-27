@@ -93,8 +93,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ODE_SOURCE,
         Some("example_ode"),
         RuntimeCompilationTarget::NativeAot(
-            dsl::NativeAotCompileOptions::new(workspace.join("example-ode-runtime-meta-native-aot-build"))
-                .with_output(workspace.join("example-ode-runtime-meta-native-aot.pkm")),
+            dsl::NativeAotCompileOptions::new(
+                workspace.join("example-ode-runtime-meta-native-aot-build"),
+            )
+            .with_output(workspace.join("example-ode-runtime-meta-native-aot.pkm")),
         ),
         on_compile_event,
     )?;
@@ -122,16 +124,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         native_aot_model.estimate_predictions(&native_aot_subject, &support_point)?;
     print_predictions("ODE model via runtime Native AoT", native_aot_predictions);
 
-    // 3. Compile the same model with the WASM backend.
-    let wasm_model = dsl::compile_module_source_to_runtime(
-        ODE_SOURCE,
-        Some("example_ode"),
-        RuntimeCompilationTarget::Wasm {
-            output: Some(workspace.join("example-ode-runtime-meta-wasm.wasm")),
-            template_root: workspace.join("example-ode-runtime-meta-wasm-build"),
-        },
-        on_compile_event,
-    )?;
+    // 3. Compile the same model with the in-memory runtime WASM helper.
+    let wasm_model = dsl::compile_module_source_to_runtime_wasm(ODE_SOURCE, Some("example_ode"))?;
     let wasm_oral = wasm_model
         .route_index("oral")
         .ok_or_else(|| io::Error::other("runtime WASM: missing oral route"))?;

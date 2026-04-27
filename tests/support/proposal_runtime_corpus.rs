@@ -47,11 +47,15 @@ const ANALYTICAL_SOURCE: &str = r#"
 model = one_cmt_abs
 kind = analytical
 
-params = ka, ke, v
+params = ka, ke, v, tlag, f_oral
 states = depot, central
 outputs = cp
 
 bolus(oral) -> depot
+
+lag(oral) = tlag
+fa(oral) = f_oral
+
 kernel = one_compartment_with_absorption
 
 out(cp) = central / v ~ continuous()
@@ -126,7 +130,7 @@ impl CorpusCase {
     pub fn support_point(self) -> &'static [f64] {
         match self {
             Self::Ode => &[1.2, 5.0, 40.0, 0.5, 0.8],
-            Self::Analytical => &[1.0, 0.15, 25.0],
+            Self::Analytical => &[1.0, 0.15, 25.0, 0.5, 0.8],
             Self::Sde => &[1.1, 0.2, 0.12, 0.08, 15.0, 0.0],
         }
     }
@@ -273,21 +277,48 @@ pub fn compile_runtime_native_aot_model(
 #[cfg(feature = "dsl-wasm")]
 pub fn compile_runtime_wasm_model(
     case: CorpusCase,
-    workspace: &ArtifactWorkspace,
 ) -> Result<CompiledRuntimeModel, Box<dyn Error>> {
     Ok(adjust_runtime_model(
         case,
-        dsl::compile_module_source_to_runtime(
-            case.source(),
-            Some(case.model_name()),
-            RuntimeCompilationTarget::Wasm {
-                output: Some(workspace.wasm_output(&format!("{}-runtime-wasm", case.label()))),
-                template_root: workspace
-                    .build_root(&format!("{}-runtime-wasm-build", case.label())),
-            },
-            |_, _| {},
-        )?,
+        dsl::compile_module_source_to_runtime_wasm(case.source(), Some(case.model_name()))?,
     ))
+}
+
+#[cfg(feature = "dsl-wasm")]
+pub fn compile_wasm_module(
+    case: CorpusCase,
+) -> Result<dsl::CompiledWasmModule, Box<dyn Error>> {
+    Ok(dsl::compile_module_source_to_wasm_module(
+        case.source(),
+        Some(case.model_name()),
+    )?)
+}
+
+#[cfg(feature = "dsl-wasm")]
+pub fn compile_wasm_runtime_from_bytes(
+    case: CorpusCase,
+) -> Result<CompiledRuntimeModel, Box<dyn Error>> {
+    let parsed = dsl::parse_module(case.source())?;
+    let typed = dsl::analyze_module(&parsed)?;
+    let model = typed
+        .models
+        .iter()
+        .find(|model| model.name == case.model_name())
+        .ok_or_else(|| io::Error::other(format!("{}: missing model in source", case.label())))?;
+    let execution = dsl::lower_typed_model(model)?;
+    let bytes = dsl::compile_execution_model_to_wasm_bytes(&execution)?;
+    Ok(adjust_runtime_model(
+        case,
+        dsl::load_runtime_wasm_bytes(&bytes)?,
+    ))
+}
+
+#[cfg(feature = "dsl-wasm")]
+pub fn compile_wasm_module_with_cache(
+    case: CorpusCase,
+    cache: &dsl::WasmCompileCache,
+) -> Result<dsl::CompiledWasmModule, Box<dyn Error>> {
+    Ok(cache.compile_module_source_to_wasm_module(case.source(), Some(case.model_name()))?)
 }
 
 pub fn assert_runtime_model_matches_reference(
@@ -311,6 +342,36 @@ pub fn assert_runtime_model_matches_reference(
                 "{} [{}]: runtime prediction kind did not match reference kind",
                 case.label(),
                 backend_label
+            ))
+            .into())
+        }
+    }
+}
+
+pub fn assert_runtime_models_match_each_other(
+    case: CorpusCase,
+    left_label: &str,
+    left: &CompiledRuntimeModel,
+    right_label: &str,
+    right: &CompiledRuntimeModel,
+) -> Result<(), Box<dyn Error>> {
+    let left_predictions = estimate_runtime_predictions(case, left)?;
+    let right_predictions = estimate_runtime_predictions(case, right)?;
+
+    match (&left_predictions, &right_predictions) {
+        (RuntimePredictions::Subject(left), RuntimePredictions::Subject(right)) => {
+            compare_subject_predictions_pairwise(case, left_label, left, right_label, right)
+        }
+        (RuntimePredictions::Particles(left), RuntimePredictions::Particles(right)) => {
+            compare_particle_predictions_pairwise(case, left_label, left, right_label, right)
+        }
+        (RuntimePredictions::Subject(_), RuntimePredictions::Particles(_))
+        | (RuntimePredictions::Particles(_), RuntimePredictions::Subject(_)) => {
+            Err(io::Error::other(format!(
+                "{} [{} vs {}]: runtime prediction kind mismatch",
+                case.label(),
+                left_label,
+                right_label
             ))
             .into())
         }
@@ -366,6 +427,51 @@ fn compare_subject_predictions(
     Ok(())
 }
 
+fn compare_subject_predictions_pairwise(
+    case: CorpusCase,
+    left_label: &str,
+    left: &SubjectPredictions,
+    right_label: &str,
+    right: &SubjectPredictions,
+) -> Result<(), Box<dyn Error>> {
+    let left_values = left.flat_predictions();
+    let right_values = right.flat_predictions();
+
+    if left_values.len() != right_values.len() {
+        return Err(io::Error::other(format!(
+            "{} [{} vs {}]: prediction length mismatch ({} vs {})",
+            case.label(),
+            left_label,
+            right_label,
+            left_values.len(),
+            right_values.len()
+        ))
+        .into());
+    }
+
+    for (index, (left_value, right_value)) in
+        left_values.iter().zip(right_values.iter()).enumerate()
+    {
+        let abs_diff = (left_value - right_value).abs();
+        if abs_diff > case.tolerance() {
+            return Err(io::Error::other(format!(
+                "{} [{} vs {}]: prediction {} differed by {:.6} (left {:.6}, right {:.6}, tolerance {:.6})",
+                case.label(),
+                left_label,
+                right_label,
+                index,
+                abs_diff,
+                left_value,
+                right_value,
+                case.tolerance()
+            ))
+            .into());
+        }
+    }
+
+    Ok(())
+}
+
 fn compare_particle_predictions(
     case: CorpusCase,
     backend_label: &str,
@@ -397,6 +503,49 @@ fn compare_particle_predictions(
                     abs_diff,
                     expected_prediction.prediction(),
                     actual_prediction.prediction(),
+                    case.tolerance()
+                ))
+                .into());
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn compare_particle_predictions_pairwise(
+    case: CorpusCase,
+    left_label: &str,
+    left: &Array2<Prediction>,
+    right_label: &str,
+    right: &Array2<Prediction>,
+) -> Result<(), Box<dyn Error>> {
+    if left.dim() != right.dim() {
+        return Err(io::Error::other(format!(
+            "{} [{} vs {}]: particle matrix mismatch {:?} vs {:?}",
+            case.label(),
+            left_label,
+            right_label,
+            left.dim(),
+            right.dim()
+        ))
+        .into());
+    }
+
+    for row in 0..left.nrows() {
+        for col in 0..left.ncols() {
+            let left_prediction = &left[(row, col)];
+            let right_prediction = &right[(row, col)];
+            let abs_diff = (left_prediction.prediction() - right_prediction.prediction()).abs();
+            if abs_diff > case.tolerance() {
+                return Err(io::Error::other(format!(
+                    "{} [{} vs {}]: particle ({row}, {col}) differed by {:.6} (left {:.6}, right {:.6}, tolerance {:.6})",
+                    case.label(),
+                    left_label,
+                    right_label,
+                    abs_diff,
+                    left_prediction.prediction(),
+                    right_prediction.prediction(),
                     case.tolerance()
                 ))
                 .into());
@@ -462,11 +611,17 @@ fn reference_analytical_predictions() -> Result<SubjectPredictions, Box<dyn Erro
     Ok(equation::Analytical::new(
         one_compartment_with_absorption,
         |_p, _t, _cov| {},
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
+        |p, _t, _cov| {
+            fetch_params!(p, _ka, _ke, _v, tlag, _f_oral);
+            lag! {0 => tlag}
+        },
+        |p, _t, _cov| {
+            fetch_params!(p, _ka, _ke, _v, _tlag, f_oral);
+            fa! {0 => f_oral}
+        },
         |_p, _t, _cov, _x| {},
         |x, p, _t, _cov, y| {
-            fetch_params!(p, _ka, _ke, v);
+            fetch_params!(p, _ka, _ke, v, _tlag, _f_oral);
             y[0] = x[1] / v;
         },
     )

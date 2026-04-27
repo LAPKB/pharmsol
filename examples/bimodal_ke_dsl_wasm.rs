@@ -3,7 +3,7 @@
 
 #[cfg(feature = "dsl-wasm")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    use std::{fs, io, path::PathBuf};
+    use std::io;
 
     use pharmsol::prelude::*;
 
@@ -22,36 +22,13 @@ dx(central) = -ke * central
 out(cp) = central / v ~ continuous()
 "#;
     let support_point = [1.2, 50.0];
-    let show_compile_logs = false;
-    let on_compile_event = move |kind: String, message: String| {
-        if !show_compile_logs || message.is_empty() {
-            return;
-        }
 
-        if kind == "log" {
-            eprint!("{message}");
-        } else {
-            eprintln!("[compile:{kind}] {message}");
-        }
-    };
-
-    // 1. Compile the model to a WASM artifact, then load it back.
-    let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("target")
-        .join("example-artifacts")
-        .join("bimodal_ke_dsl_wasm");
-    fs::create_dir_all(&workspace)?;
-    let artifact = pharmsol::dsl::compile_module_source_to_wasm(
+    // 1. Compile the model to in-memory WASM bytes, then load them directly.
+    let wasm_bytes = pharmsol::dsl::compile_module_source_to_wasm_bytes(
         model_source,
         Some("bimodal_ke"),
-        Some(workspace.join("bimodal-ke-direct.wasm")),
-        workspace.join("direct-wasm-build"),
-        on_compile_event,
     )?;
-    let model = pharmsol::dsl::load_runtime_artifact(
-        &artifact.wasm_path,
-        pharmsol::dsl::RuntimeArtifactFormat::Wasm,
-    )?;
+    let model = pharmsol::dsl::load_runtime_wasm_bytes(&wasm_bytes)?;
 
     // 2. Resolve the route and output indices declared by the model.
     let iv = model
@@ -80,7 +57,7 @@ out(cp) = central / v ~ continuous()
         .ok_or_else(|| io::Error::other("expected subject predictions"))?;
 
     // 5. Report the predictions.
-    println!("bimodal_ke compiled with compile_module_source_to_wasm");
+    println!("bimodal_ke compiled with compile_module_source_to_wasm_bytes");
     println!("{:<6} {:>14}", "t", "prediction");
     for prediction in predictions.predictions() {
         println!(

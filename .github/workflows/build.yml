@@ -45,6 +45,18 @@ jobs:
         if: ${{ matrix.native_aot_smoke_target != '' }}
         run: rustup target add ${{ matrix.native_aot_smoke_target }}
 
+      - name: Install wasm32 target for browser E2E
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Setup Node.js
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        uses: actions/setup-node@v5
+        with:
+          node-version: 25
+          cache: npm
+          cache-dependency-path: tests/browser-e2e/package-lock.json
+
       - name: Setup cache
         uses: actions/cache@v5
         with:
@@ -76,3 +88,8 @@ jobs:
 
       - name: Run doc tests
         run: cargo test --doc --all-features
+
+      - name: Run browser E2E
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        working-directory: tests/browser-e2e
+        run: npm ci && npm test

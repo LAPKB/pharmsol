@@ -1,10 +1,7 @@
 #[path = "../tests/support/proposal_runtime_corpus.rs"]
 mod proposal_runtime_corpus;
 
-use std::hint::black_box;
-use std::time::Duration;
-
-use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, SamplingMode};
+use criterion::{criterion_group, criterion_main, Criterion};
 
 #[cfg(all(
     feature = "dsl-jit",
@@ -13,6 +10,11 @@ use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criteri
     feature = "dsl-wasm"
 ))]
 fn proposal_runtime_matrix_benchmark(c: &mut Criterion) {
+    use std::hint::black_box;
+    use std::time::Duration;
+
+    use criterion::{BatchSize, BenchmarkId, SamplingMode};
+    use pharmsol::dsl::WasmCompileCache;
     use proposal_runtime_corpus as corpus;
     use proposal_runtime_corpus::{ArtifactWorkspace, CorpusCase};
 
@@ -44,13 +46,20 @@ fn proposal_runtime_matrix_benchmark(c: &mut Criterion) {
             },
         );
         compile_group.bench_with_input(BenchmarkId::new("wasm", case.label()), &case, |b, case| {
-            b.iter_batched(
-                || ArtifactWorkspace::new().unwrap(),
-                |workspace| {
-                    black_box(corpus::compile_runtime_wasm_model(*case, &workspace).unwrap())
-                },
-                BatchSize::PerIteration,
-            )
+            b.iter(|| black_box(corpus::compile_runtime_wasm_model(*case).unwrap()))
+        });
+        compile_group.bench_with_input(
+            BenchmarkId::new("wasm-module", case.label()),
+            &case,
+            |b, case| {
+                b.iter(|| black_box(corpus::compile_wasm_module(*case).unwrap()))
+            },
+        );
+
+        let cache = WasmCompileCache::default();
+        corpus::compile_wasm_module_with_cache(case, &cache).unwrap();
+        compile_group.bench_function(BenchmarkId::new("wasm-module-cached", case.label()), |b| {
+            b.iter(|| black_box(corpus::compile_wasm_module_with_cache(case, &cache).unwrap()))
         });
     }
     compile_group.finish();
@@ -73,8 +82,7 @@ fn proposal_runtime_matrix_benchmark(c: &mut Criterion) {
             b.iter(|| black_box(corpus::estimate_runtime_predictions(case, &aot).unwrap()))
         });
 
-        let wasm_workspace = ArtifactWorkspace::new().unwrap();
-        let wasm = corpus::compile_runtime_wasm_model(case, &wasm_workspace).unwrap();
+        let wasm = corpus::compile_runtime_wasm_model(case).unwrap();
         runtime_group.bench_function(BenchmarkId::new("wasm", case.label()), |b| {
             b.iter(|| black_box(corpus::estimate_runtime_predictions(case, &wasm).unwrap()))
         });

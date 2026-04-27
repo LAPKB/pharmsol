@@ -30,11 +30,15 @@ const ANALYTICAL_SOURCE: &str = r#"
 model = example_analytical
 kind = analytical
 
-params = ka, ke, v
+params = ka, ke, v, tlag, f_oral
 states = depot, central
 outputs = cp
 
 bolus(oral) -> depot
+
+lag(oral) = tlag
+fa(oral) = f_oral
+
 kernel = one_compartment_with_absorption
 
 out(cp) = central / v ~ continuous()
@@ -96,8 +100,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ODE_SOURCE,
         Some("example_ode"),
         RuntimeCompilationTarget::NativeAot(
-            dsl::NativeAotCompileOptions::new(workspace.join("example-ode-runtime-native-aot-build"))
-                .with_output(workspace.join("example-ode-runtime-native-aot.pkm")),
+            dsl::NativeAotCompileOptions::new(
+                workspace.join("example-ode-runtime-native-aot-build"),
+            )
+            .with_output(workspace.join("example-ode-runtime-native-aot.pkm")),
         ),
         on_compile_event,
     )?;
@@ -125,7 +131,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     print_predictions("ODE model via runtime Native AoT", ode_predictions);
 
     // 2. Define an analytical model, compile it, simulate one subject, and print predictions.
-    let analytical_support_point = [1.0, 0.15, 25.0];
+    let analytical_support_point = [1.0, 0.15, 25.0, 0.5, 0.8];
     let analytical_model = dsl::compile_module_source_to_runtime(
         ANALYTICAL_SOURCE,
         Some("example_analytical"),
@@ -163,8 +169,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         SDE_SOURCE,
         Some("example_sde"),
         RuntimeCompilationTarget::NativeAot(
-            dsl::NativeAotCompileOptions::new(workspace.join("example-sde-runtime-native-aot-build"))
-                .with_output(workspace.join("example-sde-runtime-native-aot.pkm")),
+            dsl::NativeAotCompileOptions::new(
+                workspace.join("example-sde-runtime-native-aot-build"),
+            )
+            .with_output(workspace.join("example-sde-runtime-native-aot.pkm")),
         ),
         on_compile_event,
     )?;

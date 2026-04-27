@@ -3,7 +3,7 @@
 
 #[cfg(feature = "dsl-wasm")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    use std::{fs, io, path::PathBuf};
+    use std::io;
 
     use pharmsol::prelude::*;
 
@@ -22,33 +22,11 @@ dx(central) = -ke * central
 out(cp) = central / v ~ continuous()
 "#;
     let support_point = [1.2, 50.0];
-    let show_compile_logs = false;
-    let on_compile_event = move |kind: String, message: String| {
-        if !show_compile_logs || message.is_empty() {
-            return;
-        }
 
-        if kind == "log" {
-            eprint!("{message}");
-        } else {
-            eprintln!("[compile:{kind}] {message}");
-        }
-    };
-
-    // 1. Compile the model to the runtime WASM backend.
-    let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("target")
-        .join("example-artifacts")
-        .join("bimodal_ke_dsl_runtime_wasm");
-    fs::create_dir_all(&workspace)?;
-    let model = pharmsol::dsl::compile_module_source_to_runtime(
+    // 1. Compile the model to a runtime WASM model without creating any files.
+    let model = pharmsol::dsl::compile_module_source_to_runtime_wasm(
         model_source,
         Some("bimodal_ke"),
-        pharmsol::dsl::RuntimeCompilationTarget::Wasm {
-            output: Some(workspace.join("bimodal-ke-runtime.wasm")),
-            template_root: workspace.join("runtime-wasm-build"),
-        },
-        on_compile_event,
     )?;
 
     // 2. Resolve the route and output indices declared by the model.
@@ -78,7 +56,7 @@ out(cp) = central / v ~ continuous()
         .ok_or_else(|| io::Error::other("expected subject predictions"))?;
 
     // 5. Report the predictions.
-    println!("bimodal_ke compiled with runtime WASM");
+    println!("bimodal_ke compiled with compile_module_source_to_runtime_wasm");
     println!("{:<6} {:>14}", "t", "prediction");
     for prediction in predictions.predictions() {
         println!(

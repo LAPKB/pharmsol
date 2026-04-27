@@ -1,28 +1,41 @@
-#[cfg(any(feature = "dsl-aot", feature = "dsl-wasm"))]
+#[cfg(feature = "dsl-aot")]
 mod build_support;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub mod data;
 #[cfg(feature = "dsl-core")]
 pub mod dsl;
 pub mod error;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub mod nca;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub mod optimize;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub mod simulator;
 
 //extension traits
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use crate::data::builder::SubjectBuilderExt;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use crate::data::Interpolation::*;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use crate::data::*;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use crate::equation::*;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use crate::optimize::effect::get_e2;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use crate::optimize::spp::SppOptimizer;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use crate::simulator::equation::{
     self,
     ode::{ExplicitRkTableau, OdeSolver, SdirkTableau},
     ODE,
 };
 pub use error::PharmsolError;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use nalgebra::dmatrix;
 pub use pharmsol_macros::ode;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use std::collections::HashMap;
 
 /// Prelude module that re-exports all commonly used types and traits.
@@ -39,6 +52,7 @@ pub use std::collections::HashMap;
 ///     .observation(1.0, 10.5, 0)
 ///     .build();
 /// ```
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub mod prelude {
     // Re-export error type
     pub use crate::error::PharmsolError;

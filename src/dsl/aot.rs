@@ -15,18 +15,17 @@ use rand_distr::Alphanumeric;
 use serde_json;
 use thiserror::Error;
 
+use super::compiled_backend_abi::{
+    decode_compiled_model_info, API_VERSION_SYMBOL, DERIVE_SYMBOL, DIFFUSION_SYMBOL, DRIFT_SYMBOL,
+    DYNAMICS_SYMBOL, INIT_SYMBOL, MODEL_INFO_JSON_LEN_SYMBOL, MODEL_INFO_JSON_PTR_SYMBOL,
+    OUTPUTS_SYMBOL, ROUTE_BIOAVAILABILITY_SYMBOL, ROUTE_LAG_SYMBOL,
+};
 #[cfg(feature = "dsl-aot")]
 use super::execution::ExecutionModel;
 #[cfg(feature = "dsl-aot-load")]
 use super::native::{CompiledNativeModel, DenseKernelFn, NativeExecutionArtifact, NativeModelInfo};
 #[cfg(feature = "dsl-aot")]
 use super::rust_backend::{emit_rust_backend_source, RustBackendFlavor};
-#[cfg(any(feature = "dsl-aot", feature = "dsl-aot-load"))]
-use super::rust_backend::{
-    API_VERSION_SYMBOL, DERIVE_SYMBOL, DIFFUSION_SYMBOL, DRIFT_SYMBOL, DYNAMICS_SYMBOL,
-    INIT_SYMBOL, MODEL_INFO_JSON_LEN_SYMBOL, MODEL_INFO_JSON_PTR_SYMBOL, OUTPUTS_SYMBOL,
-    ROUTE_BIOAVAILABILITY_SYMBOL, ROUTE_LAG_SYMBOL,
-};
 #[cfg(feature = "dsl-aot-load")]
 use super::ModelKind;
 #[cfg(feature = "dsl-aot")]
@@ -358,7 +357,14 @@ unsafe fn read_model_info_from_library(library: &Library) -> Result<NativeModelI
     let ptr = ptr_symbol();
     let len = len_symbol();
     let bytes = std::slice::from_raw_parts(ptr, len);
-    Ok(serde_json::from_slice(bytes)?)
+    let envelope = decode_compiled_model_info(bytes)?;
+    if envelope.abi_version != AOT_API_VERSION {
+        return Err(AotError::ApiVersionMismatch {
+            expected: AOT_API_VERSION,
+            found: envelope.abi_version,
+        });
+    }
+    Ok(envelope.model)
 }
 
 #[cfg(feature = "dsl-aot-load")]

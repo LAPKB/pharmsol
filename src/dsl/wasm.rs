@@ -1,108 +1,23 @@
-use std::fmt;
-use std::fs;
-use std::io;
 use std::ops::Range;
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::path::Path;
+use std::sync::Mutex;
 
-use rand::RngExt;
-use rand_distr::Alphanumeric;
 use serde_json;
-use thiserror::Error;
 use wasmtime::{Engine, Instance, Linker, Memory, Module, Store, TypedFunc};
 
-use super::execution::ExecutionModel;
+use super::compiled_backend_abi::{
+    decode_compiled_model_info, CompiledKernelAvailability, ALLOC_F64_BUFFER_SYMBOL,
+    API_VERSION_SYMBOL, DERIVE_SYMBOL, DIFFUSION_SYMBOL, DRIFT_SYMBOL, DYNAMICS_SYMBOL,
+    FREE_F64_BUFFER_SYMBOL, INIT_SYMBOL, MODEL_INFO_JSON_LEN_SYMBOL, MODEL_INFO_JSON_PTR_SYMBOL,
+    OUTPUTS_SYMBOL, ROUTE_BIOAVAILABILITY_SYMBOL, ROUTE_LAG_SYMBOL,
+};
 use super::execution::KernelRole;
 use super::native::{KernelSession, NativeModelInfo, RuntimeArtifact, RuntimeBackend};
-use super::rust_backend::{
-    emit_rust_backend_source, RustBackendFlavor, ALLOC_F64_BUFFER_SYMBOL, API_VERSION_SYMBOL,
-    DERIVE_SYMBOL, DIFFUSION_SYMBOL, DRIFT_SYMBOL, DYNAMICS_SYMBOL, FREE_F64_BUFFER_SYMBOL,
-    INIT_SYMBOL, MODEL_INFO_JSON_LEN_SYMBOL, MODEL_INFO_JSON_PTR_SYMBOL, OUTPUTS_SYMBOL,
-    ROUTE_BIOAVAILABILITY_SYMBOL, ROUTE_LAG_SYMBOL,
+use super::wasm_compile::{WasmError, WASM_API_VERSION};
+use super::wasm_direct_emitter::{
+    DIRECT_WASM_BINARY_MATH_IMPORTS, DIRECT_WASM_IMPORT_MODULE, DIRECT_WASM_UNARY_MATH_IMPORTS,
 };
-use super::{
-    analyze_module, lower_typed_model, parse_module, Diagnostic, DiagnosticReport, LoweringError,
-    ParseError, SemanticError,
-};
-use crate::build_support::{build_cargo_template, create_cargo_template, write_template_source};
 use crate::PharmsolError;
-
-pub const WASM_API_VERSION: u32 = 1;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WasmArtifactBundle {
-    pub wasm_path: PathBuf,
-    pub browser_loader_path: PathBuf,
-}
-
-#[derive(Error)]
-pub enum WasmError {
-    #[error(transparent)]
-    Io(#[from] io::Error),
-    #[error(transparent)]
-    Json(#[from] serde_json::Error),
-    #[error("failed to parse DSL source: {0}")]
-    Parse(#[source] ParseError),
-    #[error("failed to analyze DSL source: {0}")]
-    Semantic(#[source] SemanticError),
-    #[error("failed to lower DSL model: {0}")]
-    Lowering(#[source] LoweringError),
-    #[error("{0}")]
-    ModelSelection(String),
-    #[error("failed to emit WASM module source: {0}")]
-    Emit(String),
-    #[error("WASM artifact API version mismatch: expected {expected}, found {found}")]
-    ApiVersionMismatch { expected: u32, found: u32 },
-    #[error("missing required WASM export `{0}`")]
-    MissingExport(&'static str),
-    #[error(
-        "WASM memory access out of bounds for {region}: ptr={ptr}, len={len}, memory_len={memory_len}"
-    )]
-    MemoryOutOfBounds {
-        region: &'static str,
-        ptr: i64,
-        len: i64,
-        memory_len: usize,
-    },
-    #[error("failed to load WASM artifact: {0}")]
-    Load(String),
-}
-
-impl WasmError {
-    pub fn diagnostic(&self) -> Option<&Diagnostic> {
-        match self {
-            Self::Parse(error) => Some(error.diagnostic()),
-            Self::Semantic(error) => Some(error.diagnostic()),
-            Self::Lowering(error) => Some(error.diagnostic()),
-            _ => None,
-        }
-    }
-
-    pub fn render_diagnostic(&self, src: &str) -> Option<String> {
-        self.diagnostic().map(|diagnostic| diagnostic.render(src))
-    }
-
-    pub fn diagnostic_report(&self, source_name: impl Into<String>) -> Option<DiagnosticReport> {
-        let source_name = source_name.into();
-        match self {
-            Self::Parse(error) => Some(error.diagnostic_report(source_name)),
-            Self::Semantic(error) => Some(error.diagnostic_report(source_name)),
-            Self::Lowering(error) => Some(error.diagnostic_report(source_name)),
-            _ => None,
-        }
-    }
-}
-
-impl fmt::Debug for WasmError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Parse(error) => fmt::Display::fmt(error, f),
-            Self::Semantic(error) => fmt::Display::fmt(error, f),
-            Self::Lowering(error) => fmt::Display::fmt(error, f),
-            _ => fmt::Display::fmt(self, f),
-        }
-    }
-}
 
 #[derive(Clone, Copy, Debug, Default)]
 struct WasmKernelAvailability {
@@ -128,6 +43,19 @@ impl WasmKernelAvailability {
             KernelRole::RouteLag => self.route_lag,
             KernelRole::RouteBioavailability => self.route_bioavailability,
             KernelRole::Analytical => false,
+        }
+    }
+
+    fn compiled(self) -> CompiledKernelAvailability {
+        CompiledKernelAvailability {
+            derive: self.derive,
+            dynamics: self.dynamics,
+            outputs: self.outputs,
+            init: self.init,
+            drift: self.drift,
+            diffusion: self.diffusion,
+            route_lag: self.route_lag,
+            route_bioavailability: self.route_bioavailability,
         }
     }
 }
@@ -190,7 +118,7 @@ impl WasmKernelSession {
         kernels: WasmKernelAvailability,
     ) -> Result<Self, WasmError> {
         let mut store = Store::new(engine, ());
-        let linker = Linker::new(engine);
+        let linker = configured_wasm_linker(engine)?;
         let instance = linker
             .instantiate(&mut store, module)
             .map_err(|error| WasmError::Load(error.to_string()))?;
@@ -482,14 +410,34 @@ pub fn read_wasm_model_info(path: impl AsRef<Path>) -> Result<NativeModelInfo, W
     Ok(info)
 }
 
+pub fn read_wasm_model_info_bytes(bytes: &[u8]) -> Result<NativeModelInfo, WasmError> {
+    let (info, _) = load_wasm_artifact_bytes(bytes)?;
+    Ok(info)
+}
+
 pub(crate) fn load_wasm_artifact(
     path: impl AsRef<Path>,
 ) -> Result<(NativeModelInfo, WasmExecutionArtifact), WasmError> {
     let engine = Engine::default();
     let module =
         Module::from_file(&engine, path).map_err(|error| WasmError::Load(error.to_string()))?;
+    load_wasm_artifact_from_module(engine, module)
+}
+
+pub(crate) fn load_wasm_artifact_bytes(
+    bytes: &[u8],
+) -> Result<(NativeModelInfo, WasmExecutionArtifact), WasmError> {
+    let engine = Engine::default();
+    let module = Module::new(&engine, bytes).map_err(|error| WasmError::Load(error.to_string()))?;
+    load_wasm_artifact_from_module(engine, module)
+}
+
+fn load_wasm_artifact_from_module(
+    engine: Engine,
+    module: Module,
+) -> Result<(NativeModelInfo, WasmExecutionArtifact), WasmError> {
     let mut store = Store::new(&engine, ());
-    let linker = Linker::new(&engine);
+    let linker = configured_wasm_linker(&engine)?;
     let instance = linker
         .instantiate(&mut store, &module)
         .map_err(|error| WasmError::Load(error.to_string()))?;
@@ -506,7 +454,7 @@ pub(crate) fn load_wasm_artifact(
     let memory = instance
         .get_memory(&mut store, "memory")
         .ok_or(WasmError::MissingExport("memory"))?;
-    let info = read_model_info(&instance, &mut store, &memory)?;
+    let (info, expected_kernels) = read_model_info_envelope(&instance, &mut store, &memory)?;
     let kernels = WasmKernelAvailability {
         derive: instance.get_func(&mut store, DERIVE_SYMBOL).is_some(),
         dynamics: instance.get_func(&mut store, DYNAMICS_SYMBOL).is_some(),
@@ -519,6 +467,16 @@ pub(crate) fn load_wasm_artifact(
             .get_func(&mut store, ROUTE_BIOAVAILABILITY_SYMBOL)
             .is_some(),
     };
+    if let Some(expected_kernels) = expected_kernels {
+        let found_kernels = kernels.compiled();
+        if found_kernels != expected_kernels {
+            return Err(WasmError::KernelMetadataMismatch {
+                model: info.name.clone(),
+                expected: expected_kernels,
+                found: found_kernels,
+            });
+        }
+    }
 
     Ok((
         info.clone(),
@@ -530,6 +488,44 @@ pub(crate) fn load_wasm_artifact(
             session_pool: Mutex::new(Vec::new()),
         },
     ))
+}
+
+pub(crate) fn configured_wasm_linker(engine: &Engine) -> Result<Linker<()>, WasmError> {
+    let mut linker = Linker::new(engine);
+    for import in DIRECT_WASM_UNARY_MATH_IMPORTS {
+        let name = import.name;
+        linker
+            .func_wrap(
+                DIRECT_WASM_IMPORT_MODULE,
+                name,
+                move |value: f64| match name {
+                    "exp" => value.exp(),
+                    "ln" => value.ln(),
+                    "log10" => value.log10(),
+                    "log2" => value.log2(),
+                    "round" => value.round(),
+                    "sin" => value.sin(),
+                    "cos" => value.cos(),
+                    "tan" => value.tan(),
+                    _ => unreachable!("unsupported direct unary math import {name}"),
+                },
+            )
+            .map_err(|error| WasmError::Load(error.to_string()))?;
+    }
+    for import in DIRECT_WASM_BINARY_MATH_IMPORTS {
+        let name = import.name;
+        linker
+            .func_wrap(
+                DIRECT_WASM_IMPORT_MODULE,
+                name,
+                move |lhs: f64, rhs: f64| match name {
+                    "pow" => lhs.powf(rhs),
+                    _ => unreachable!("unsupported direct binary math import {name}"),
+                },
+            )
+            .map_err(|error| WasmError::Load(error.to_string()))?;
+    }
+    Ok(linker)
 }
 
 fn alloc_buffer(
@@ -604,11 +600,11 @@ unsafe fn raw_slice_mut<'a>(ptr: *mut f64, len: usize) -> &'a mut [f64] {
     }
 }
 
-fn read_model_info(
+fn read_model_info_envelope(
     instance: &Instance,
     store: &mut Store<()>,
     memory: &Memory,
-) -> Result<NativeModelInfo, WasmError> {
+) -> Result<(NativeModelInfo, Option<CompiledKernelAvailability>), WasmError> {
     let ptr = typed_func::<(), i32>(instance, store, MODEL_INFO_JSON_PTR_SYMBOL)?
         .call(&mut *store, ())
         .map_err(|error| WasmError::Load(error.to_string()))?;
@@ -623,7 +619,17 @@ fn read_model_info(
         memory_len: data.len(),
     })?;
     let range = byte_range(ptr, len, data.len(), "model info")?;
-    Ok(serde_json::from_slice(&data[range])?)
+    let bytes = &data[range];
+    if let Ok(envelope) = decode_compiled_model_info(bytes) {
+        if envelope.abi_version != WASM_API_VERSION {
+            return Err(WasmError::ApiVersionMismatch {
+                expected: WASM_API_VERSION,
+                found: envelope.abi_version,
+            });
+        }
+        return Ok((envelope.model, Some(envelope.kernels)));
+    }
+    Ok((serde_json::from_slice(bytes)?, None))
 }
 
 fn write_f64s(
@@ -731,217 +737,22 @@ fn byte_range(
     Ok(start..end)
 }
 
-pub fn compile_module_source_to_wasm(
-    source: &str,
-    model_name: Option<&str>,
-    output: Option<PathBuf>,
-    template_root: PathBuf,
-    event_callback: impl Fn(String, String) + Send + Sync + 'static,
-) -> Result<WasmArtifactBundle, WasmError> {
-    let parsed =
-        parse_module(source).map_err(|error| WasmError::Parse(error.with_source(source)))?;
-    let typed =
-        analyze_module(&parsed).map_err(|error| WasmError::Semantic(error.with_source(source)))?;
-
-    let model = match model_name {
-        Some(name) => typed
-            .models
-            .iter()
-            .find(|model| model.name == name)
-            .ok_or_else(|| {
-                WasmError::ModelSelection(format!("model `{name}` not found in module"))
-            })?,
-        None if typed.models.len() == 1 => &typed.models[0],
-        None => {
-            return Err(WasmError::ModelSelection(
-                "module contains multiple models; pass an explicit model name".to_string(),
-            ))
-        }
-    };
-
-    let execution =
-        lower_typed_model(model).map_err(|error| WasmError::Lowering(error.with_source(source)))?;
-    export_execution_model_to_wasm(&execution, output, template_root, event_callback)
-}
-
-pub fn export_execution_model_to_wasm(
-    model: &ExecutionModel,
-    output: Option<PathBuf>,
-    template_root: PathBuf,
-    event_callback: impl Fn(String, String) + Send + Sync + 'static,
-) -> Result<WasmArtifactBundle, WasmError> {
-    let event_callback = Arc::new(event_callback);
-    let template_dir = create_cargo_template(template_root.clone(), &wasm_template_manifest())?;
-    let source = emit_rust_backend_source(
-        model,
-        RustBackendFlavor::Wasm {
-            api_version: WASM_API_VERSION,
-        },
-    )
-    .map_err(WasmError::Emit)?;
-    write_template_source(&template_dir, &source)?;
-
-    let built_wasm_path = build_cargo_template(
-        template_dir,
-        event_callback.clone(),
-        "wasm",
-        model.name.clone(),
-        Some("wasm32-unknown-unknown"),
-        &["wasm32-unknown-unknown", "release", "model_lib.wasm"],
-    )?;
-
-    let wasm_path = output.unwrap_or_else(|| default_wasm_output_path(&template_root));
-    fs::copy(&built_wasm_path, &wasm_path)?;
-
-    let browser_loader_path = wasm_path.with_extension("mjs");
-    fs::write(&browser_loader_path, browser_loader_source())?;
-
-    event_callback(
-        "finished".into(),
-        format!(
-            "Compiled wasm model `{}` -> {} (loader -> {})",
-            model.name,
-            wasm_path.display(),
-            browser_loader_path.display()
-        ),
-    );
-
-    Ok(WasmArtifactBundle {
-        wasm_path,
-        browser_loader_path,
-    })
-}
-
-pub fn browser_loader_source() -> String {
-    format!(
-        r#"const API_VERSION = {api_version};
-const API_VERSION_SYMBOL = "{api_version_symbol}";
-const MODEL_INFO_JSON_PTR_SYMBOL = "{model_info_ptr_symbol}";
-const MODEL_INFO_JSON_LEN_SYMBOL = "{model_info_len_symbol}";
-const ALLOC_F64_BUFFER_SYMBOL = "{alloc_f64_buffer_symbol}";
-const FREE_F64_BUFFER_SYMBOL = "{free_f64_buffer_symbol}";
-
-const KERNEL_SYMBOLS = Object.freeze({{
-  derive: "{derive_symbol}",
-  dynamics: "{dynamics_symbol}",
-  outputs: "{outputs_symbol}",
-    init: "{init_symbol}",
-    drift: "{drift_symbol}",
-    diffusion: "{diffusion_symbol}",
-    route_lag: "{route_lag_symbol}",
-    route_bioavailability: "{route_bioavailability_symbol}",
-}});
-
-function readUtf8(memory, ptr, len) {{
-  const bytes = new Uint8Array(memory.buffer, ptr, len);
-  return new TextDecoder().decode(bytes);
-}}
-
-function createBufferHandle(exports, memory, length) {{
-  const ptr = Number(exports[ALLOC_F64_BUFFER_SYMBOL](length));
-  return {{
-    ptr,
-    length,
-    view() {{
-      return length === 0 ? new Float64Array() : new Float64Array(memory.buffer, ptr, length);
-    }},
-    free() {{
-      exports[FREE_F64_BUFFER_SYMBOL](ptr, length);
-    }},
-  }};
-}}
-
-export async function loadPharmsolDslWasmModel(source) {{
-  const response = source instanceof Response ? source : await fetch(source);
-  const {{ instance }} = await WebAssembly.instantiateStreaming(response, {{}});
-  return createPharmsolDslWasmModel(instance);
-}}
-
-export function createPharmsolDslWasmModel(instance) {{
-  const exports = instance.exports;
-  const version = Number(exports[API_VERSION_SYMBOL]());
-  if (version !== API_VERSION) {{
-    throw new Error(`Expected pharmsol DSL WASM API version ${{API_VERSION}}, got ${{version}}`);
-  }}
-
-  const memory = exports.memory;
-  const infoPtr = Number(exports[MODEL_INFO_JSON_PTR_SYMBOL]());
-  const infoLen = Number(exports[MODEL_INFO_JSON_LEN_SYMBOL]());
-  const info = JSON.parse(readUtf8(memory, infoPtr, infoLen));
-
-  const kernels = Object.fromEntries(
-    Object.entries(KERNEL_SYMBOLS)
-      .filter(([, symbol]) => typeof exports[symbol] === "function")
-      .map(([name, symbol]) => [name, exports[symbol].bind(exports)])
-  );
-
-  return {{
-    info,
-    instance,
-    memory,
-    kernels,
-    createF64Buffer(length) {{
-      return createBufferHandle(exports, memory, length);
-    }},
-  }};
-}}
-"#,
-        api_version = WASM_API_VERSION,
-        api_version_symbol = API_VERSION_SYMBOL,
-        model_info_ptr_symbol = MODEL_INFO_JSON_PTR_SYMBOL,
-        model_info_len_symbol = MODEL_INFO_JSON_LEN_SYMBOL,
-        alloc_f64_buffer_symbol = ALLOC_F64_BUFFER_SYMBOL,
-        free_f64_buffer_symbol = FREE_F64_BUFFER_SYMBOL,
-        derive_symbol = DERIVE_SYMBOL,
-        dynamics_symbol = DYNAMICS_SYMBOL,
-        outputs_symbol = OUTPUTS_SYMBOL,
-        init_symbol = INIT_SYMBOL,
-        drift_symbol = DRIFT_SYMBOL,
-        diffusion_symbol = DIFFUSION_SYMBOL,
-        route_lag_symbol = ROUTE_LAG_SYMBOL,
-        route_bioavailability_symbol = ROUTE_BIOAVAILABILITY_SYMBOL,
-    )
-}
-
-fn default_wasm_output_path(template_root: &Path) -> PathBuf {
-    let random_suffix: String = rand::rng()
-        .sample_iter(&Alphanumeric)
-        .take(5)
-        .map(char::from)
-        .collect();
-    template_root.join(format!(
-        "model_{}_{}_{}.wasm",
-        std::env::consts::OS,
-        std::env::consts::ARCH,
-        random_suffix
-    ))
-}
-
-fn wasm_template_manifest() -> String {
-    r#"
-        [package]
-        name = "model_lib"
-        version = "0.1.0"
-        edition = "2021"
-
-        [lib]
-        crate-type = ["cdylib"]
-
-        [workspace]
-        "#
-    .to_string()
-}
-
 #[cfg(all(test, feature = "dsl-jit"))]
 mod tests {
     use super::*;
     use crate::dsl::{
-        compile_execution_artifact, lower_typed_model, parse_module, DiagnosticPhase,
-        NativeModelInfo, DSL_PARSE_GENERIC,
+        analyze_module, compile_execution_artifact, lower_typed_model, parse_module,
+        CompiledKernelAvailability, CompiledModelInfoEnvelope, ExecutionModel, ModelKind,
+        NativeModelInfo, NativeOutputInfo, NativeRouteInfo,
     };
     use approx::assert_relative_eq;
+    use std::path::{Path, PathBuf};
     use tempfile::tempdir;
-    use wasmtime::{Engine, Instance, Linker, Memory, Module, Store, TypedFunc};
+    use wasm_encoder::{
+        CodeSection, ConstExpr, ExportKind, ExportSection, Function, FunctionSection,
+        MemorySection, MemoryType, Module as EncoderModule, TypeSection, ValType,
+    };
+    use wasmtime::{Engine, Instance, Memory, Module, Store, TypedFunc};
 
     fn load_proposal_model(name: &str) -> ExecutionModel {
         let source = std::fs::read_to_string("dsl-proposals/02-structured-block-imperative.dsl")
@@ -956,24 +767,259 @@ mod tests {
         lower_typed_model(model).expect("lower proposal model")
     }
 
+    fn loader_test_model_info(name: &str) -> NativeModelInfo {
+        NativeModelInfo {
+            name: name.to_string(),
+            kind: ModelKind::Ode,
+            parameters: vec!["ka".to_string()],
+            covariates: Vec::new(),
+            routes: vec![NativeRouteInfo {
+                name: "oral".to_string(),
+                index: 0,
+                destination_offset: 0,
+            }],
+            outputs: vec![NativeOutputInfo {
+                name: "cp".to_string(),
+                index: 0,
+            }],
+            state_len: 1,
+            derived_len: 0,
+            output_len: 1,
+            route_len: 1,
+            analytical: None,
+            particles: None,
+        }
+    }
+
+    fn loader_test_module_bytes(
+        api_version_export: u32,
+        model_info_bytes: &[u8],
+        export_outputs: bool,
+    ) -> Vec<u8> {
+        let mut module = EncoderModule::new();
+
+        let mut types = TypeSection::new();
+        types.ty().function([], [ValType::I32]);
+        types.ty().function([], []);
+        module.section(&types);
+
+        let mut functions = FunctionSection::new();
+        functions.function(0);
+        functions.function(0);
+        functions.function(0);
+        if export_outputs {
+            functions.function(1);
+        }
+        module.section(&functions);
+
+        let mut memories = MemorySection::new();
+        memories.memory(MemoryType {
+            minimum: 1,
+            maximum: None,
+            memory64: false,
+            shared: false,
+            page_size_log2: None,
+        });
+        module.section(&memories);
+
+        let mut exports = ExportSection::new();
+        exports.export("memory", ExportKind::Memory, 0);
+        exports.export(API_VERSION_SYMBOL, ExportKind::Func, 0);
+        exports.export(MODEL_INFO_JSON_PTR_SYMBOL, ExportKind::Func, 1);
+        exports.export(MODEL_INFO_JSON_LEN_SYMBOL, ExportKind::Func, 2);
+        if export_outputs {
+            exports.export(OUTPUTS_SYMBOL, ExportKind::Func, 3);
+        }
+        module.section(&exports);
+
+        let mut codes = CodeSection::new();
+
+        let mut api_version = Function::new([]);
+        api_version.instruction(&wasm_encoder::Instruction::I32Const(
+            api_version_export as i32,
+        ));
+        api_version.instruction(&wasm_encoder::Instruction::End);
+        codes.function(&api_version);
+
+        let mut model_info_ptr = Function::new([]);
+        model_info_ptr.instruction(&wasm_encoder::Instruction::I32Const(0));
+        model_info_ptr.instruction(&wasm_encoder::Instruction::End);
+        codes.function(&model_info_ptr);
+
+        let mut model_info_len = Function::new([]);
+        model_info_len.instruction(&wasm_encoder::Instruction::I32Const(
+            model_info_bytes.len() as i32
+        ));
+        model_info_len.instruction(&wasm_encoder::Instruction::End);
+        codes.function(&model_info_len);
+
+        if export_outputs {
+            let mut outputs = Function::new([]);
+            outputs.instruction(&wasm_encoder::Instruction::End);
+            codes.function(&outputs);
+        }
+        module.section(&codes);
+
+        let mut data = wasm_encoder::DataSection::new();
+        data.active(
+            0,
+            &ConstExpr::i32_const(0),
+            model_info_bytes.iter().copied(),
+        );
+        module.section(&data);
+
+        module.finish()
+    }
+
+    fn write_wasm_bundle_files(model: &ExecutionModel, output_path: &Path) -> PathBuf {
+        let bytes = super::super::wasm_compile::compile_execution_model_to_wasm_bytes(model)
+            .expect("emit direct wasm bytes");
+        let loader_path = output_path.with_extension("mjs");
+        std::fs::write(output_path, &bytes).expect("write direct wasm artifact");
+        std::fs::write(
+            &loader_path,
+            super::super::wasm_compile::browser_loader_source(),
+        )
+        .expect("write browser loader");
+        loader_path
+    }
+
+    #[test]
+    fn rejects_wasm_export_api_version_mismatch() {
+        let model_info = loader_test_model_info("api_version_export_mismatch");
+        let metadata = serde_json::to_vec(&CompiledModelInfoEnvelope {
+            abi_version: WASM_API_VERSION,
+            model: model_info,
+            kernels: CompiledKernelAvailability {
+                outputs: true,
+                ..CompiledKernelAvailability::default()
+            },
+        })
+        .expect("metadata json");
+
+        let error = load_wasm_artifact_bytes(&loader_test_module_bytes(
+            WASM_API_VERSION + 1,
+            &metadata,
+            true,
+        ))
+        .expect_err("mismatched export api version should fail");
+
+        assert!(matches!(
+            error,
+            WasmError::ApiVersionMismatch {
+                expected,
+                found,
+            } if expected == WASM_API_VERSION && found == WASM_API_VERSION + 1
+        ));
+    }
+
+    #[test]
+    fn rejects_compiled_metadata_abi_version_mismatch() {
+        let model_info = loader_test_model_info("metadata_api_version_mismatch");
+        let metadata = serde_json::to_vec(&CompiledModelInfoEnvelope {
+            abi_version: WASM_API_VERSION + 1,
+            model: model_info,
+            kernels: CompiledKernelAvailability {
+                outputs: true,
+                ..CompiledKernelAvailability::default()
+            },
+        })
+        .expect("metadata json");
+
+        let error =
+            load_wasm_artifact_bytes(&loader_test_module_bytes(WASM_API_VERSION, &metadata, true))
+                .expect_err("mismatched compiled metadata abi version should fail");
+
+        assert!(matches!(
+            error,
+            WasmError::ApiVersionMismatch {
+                expected,
+                found,
+            } if expected == WASM_API_VERSION && found == WASM_API_VERSION + 1
+        ));
+    }
+
+    #[test]
+    fn rejects_kernel_metadata_mismatch_from_compiled_envelope() {
+        let model_info = loader_test_model_info("kernel_metadata_mismatch");
+        let metadata = serde_json::to_vec(&CompiledModelInfoEnvelope {
+            abi_version: WASM_API_VERSION,
+            model: model_info,
+            kernels: CompiledKernelAvailability {
+                outputs: true,
+                ..CompiledKernelAvailability::default()
+            },
+        })
+        .expect("metadata json");
+
+        let error = load_wasm_artifact_bytes(&loader_test_module_bytes(
+            WASM_API_VERSION,
+            &metadata,
+            false,
+        ))
+        .expect_err("missing outputs export should fail against compiled metadata");
+
+        assert!(matches!(
+            error,
+            WasmError::KernelMetadataMismatch {
+                ref model,
+                expected,
+                found,
+            } if model == "kernel_metadata_mismatch"
+                && expected.outputs
+                && !found.outputs
+        ));
+    }
+
+    #[test]
+    fn accepts_legacy_plain_model_info_metadata() {
+        let model_info = loader_test_model_info("legacy_plain_metadata");
+        let metadata = serde_json::to_vec(&model_info).expect("legacy metadata json");
+
+        let (loaded, artifact) =
+            load_wasm_artifact_bytes(&loader_test_module_bytes(WASM_API_VERSION, &metadata, true))
+                .expect("legacy metadata should still load");
+
+        assert_eq!(loaded, model_info);
+        assert!(artifact.has_kernel(KernelRole::Outputs));
+    }
+
+    #[test]
+    fn direct_browser_smoke_bundle_is_emitted_when_requested() {
+        let output_dir = std::env::var_os("PHARMSOL_DSL_BROWSER_SMOKE_DIR")
+            .or_else(|| std::env::var_os("PHARMSOL_DSL_W03_BROWSER_SMOKE_DIR"));
+        let Some(output_dir) = output_dir else {
+            return;
+        };
+
+        let output_dir = PathBuf::from(output_dir);
+        std::fs::create_dir_all(&output_dir).expect("create browser smoke directory");
+
+        let model = super::super::wasm_direct_emitter::w03_minimal_outputs_execution_model();
+        let bytes = super::super::wasm_compile::compile_execution_model_to_wasm_bytes(&model)
+            .expect("emit direct browser smoke wasm bytes");
+        let info = read_wasm_model_info_bytes(&bytes).expect("read direct wasm model info");
+        assert_eq!(info.name, "direct_w03_minimal");
+
+        let loader = super::super::wasm_compile::browser_loader_source();
+        assert!(loader.contains("createPharmsolDslWasmSession"));
+        assert!(loader.contains("evaluateOutput(name, inputs = {}, options = {})"));
+
+        std::fs::write(output_dir.join("direct.wasm"), &bytes).expect("write direct wasm");
+        std::fs::write(output_dir.join("direct.mjs"), loader).expect("write direct loader");
+    }
+
     #[test]
     fn wasm_ode_artifact_exports_browser_bundle_and_matches_jit_kernels() {
         let model = load_proposal_model("one_cmt_oral_iv");
         let work_dir = tempdir().expect("tempdir");
         let output_path = work_dir.path().join("one_cmt_oral_iv.wasm");
-        let bundle = export_execution_model_to_wasm(
-            &model,
-            Some(output_path.clone()),
-            work_dir.path().join("build"),
-            |_, _| {},
-        )
-        .expect("export wasm model");
+        let loader_path = write_wasm_bundle_files(&model, &output_path);
 
-        assert_eq!(bundle.wasm_path, output_path);
-        assert!(bundle.wasm_path.exists());
-        assert!(bundle.browser_loader_path.exists());
+        assert!(output_path.exists());
+        assert!(loader_path.exists());
 
-        let loader = std::fs::read_to_string(&bundle.browser_loader_path).expect("loader source");
+        let loader = std::fs::read_to_string(&loader_path).expect("loader source");
         assert!(loader.contains("loadPharmsolDslWasmModel"));
         assert!(loader.contains(API_VERSION_SYMBOL));
         assert!(loader.contains(ALLOC_F64_BUFFER_SYMBOL));
@@ -984,7 +1030,7 @@ mod tests {
         assert!(loader.contains(ROUTE_BIOAVAILABILITY_SYMBOL));
 
         let jit = compile_execution_artifact(&model).expect("compile jit kernels");
-        let (mut store, instance, memory) = instantiate_module(&bundle.wasm_path);
+        let (mut store, instance, memory) = instantiate_module(&output_path);
 
         let api_version = typed_func::<(), u32>(&instance, &mut store, API_VERSION_SYMBOL);
         assert_eq!(
@@ -1155,15 +1201,9 @@ mod tests {
         let model = load_proposal_model("one_cmt_oral_iv");
         let work_dir = tempdir().expect("tempdir");
         let output_path = work_dir.path().join("one_cmt_oral_iv_reuse.wasm");
-        let bundle = export_execution_model_to_wasm(
-            &model,
-            Some(output_path),
-            work_dir.path().join("build-reuse"),
-            |_, _| {},
-        )
-        .expect("export wasm model");
+        write_wasm_bundle_files(&model, &output_path);
 
-        let (_, artifact) = load_wasm_artifact(&bundle.wasm_path).expect("load wasm artifact");
+        let (_, artifact) = load_wasm_artifact(&output_path).expect("load wasm artifact");
         assert_eq!(artifact.session_pool.lock().expect("session pool").len(), 0);
 
         {
@@ -1175,6 +1215,183 @@ mod tests {
             let _session = artifact.start_session().expect("second pooled session");
         }
         assert_eq!(artifact.session_pool.lock().expect("session pool").len(), 1);
+    }
+
+    #[test]
+    fn wasm_runtime_preserves_state_aliasing_for_dynamics_kernel() {
+        let model = load_proposal_model("one_cmt_oral_iv");
+        let jit = compile_execution_artifact(&model).expect("compile jit kernels");
+        let bytes = super::super::wasm_compile::compile_execution_model_to_wasm_bytes(&model)
+            .expect("emit direct wasm bytes");
+        let (info, artifact) = load_wasm_artifact_bytes(&bytes).expect("load direct wasm");
+        let mut session = artifact.start_session().expect("start wasm session");
+
+        let mut actual = vec![100.0, 0.0];
+        let mut expected = actual.clone();
+        let params = vec![1.2, 5.0, 40.0, 0.5, 0.8];
+        let covariates = vec![70.0];
+        let routes = vec![0.0, 0.0];
+        let mut derived = vec![0.0; info.derived_len];
+
+        unsafe {
+            jit.derive.expect("jit derive")(
+                0.0,
+                expected.as_ptr(),
+                params.as_ptr(),
+                covariates.as_ptr(),
+                routes.as_ptr(),
+                derived.as_ptr(),
+                derived.as_mut_ptr(),
+            );
+            jit.dynamics.expect("jit dynamics")(
+                0.0,
+                expected.as_ptr(),
+                params.as_ptr(),
+                covariates.as_ptr(),
+                routes.as_ptr(),
+                derived.as_ptr(),
+                expected.as_mut_ptr(),
+            );
+            session
+                .invoke_raw(
+                    KernelRole::Dynamics,
+                    0.0,
+                    actual.as_ptr(),
+                    params.as_ptr(),
+                    covariates.as_ptr(),
+                    routes.as_ptr(),
+                    derived.as_ptr(),
+                    actual.as_mut_ptr(),
+                )
+                .expect("invoke aliased dynamics kernel");
+        }
+
+        for (actual, expected) in actual.iter().zip(expected.iter()) {
+            assert_relative_eq!(actual, expected, max_relative = 1e-10);
+        }
+    }
+
+    #[test]
+    fn wasm_runtime_zeroes_non_aliased_diffusion_outputs() {
+        let model = load_proposal_model("vanco_sde");
+        let jit = compile_execution_artifact(&model).expect("compile jit kernels");
+        let bytes = super::super::wasm_compile::compile_execution_model_to_wasm_bytes(&model)
+            .expect("emit direct wasm bytes");
+        let (info, artifact) = load_wasm_artifact_bytes(&bytes).expect("load direct wasm");
+        let mut session = artifact.start_session().expect("start wasm session");
+
+        let states = vec![0.0, 0.0, 0.0, 0.2];
+        let params = vec![1.1, 0.2, 0.12, 0.08, 15.0, 0.7];
+        let covariates = vec![70.0];
+        let routes = vec![0.0];
+        let derived = vec![0.0; info.derived_len];
+        let mut expected = vec![0.0; info.state_len];
+        let mut actual = vec![42.0; info.state_len];
+
+        unsafe {
+            jit.diffusion.expect("jit diffusion")(
+                0.0,
+                states.as_ptr(),
+                params.as_ptr(),
+                covariates.as_ptr(),
+                routes.as_ptr(),
+                derived.as_ptr(),
+                expected.as_mut_ptr(),
+            );
+            session
+                .invoke_raw(
+                    KernelRole::Diffusion,
+                    0.0,
+                    states.as_ptr(),
+                    params.as_ptr(),
+                    covariates.as_ptr(),
+                    routes.as_ptr(),
+                    derived.as_ptr(),
+                    actual.as_mut_ptr(),
+                )
+                .expect("invoke diffusion kernel");
+        }
+
+        for (actual, expected) in actual.iter().zip(expected.iter()) {
+            assert_relative_eq!(actual, expected, max_relative = 1e-10);
+        }
+        assert!(actual.iter().take(3).all(|value| value.abs() <= 1e-12));
+    }
+
+    #[test]
+    fn wasm_runtime_matches_jit_route_property_kernels() {
+        let model = load_proposal_model("one_cmt_oral_iv");
+        let jit = compile_execution_artifact(&model).expect("compile jit kernels");
+        let bytes = super::super::wasm_compile::compile_execution_model_to_wasm_bytes(&model)
+            .expect("emit direct wasm bytes");
+        let (info, artifact) = load_wasm_artifact_bytes(&bytes).expect("load direct wasm");
+        let mut session = artifact.start_session().expect("start wasm session");
+
+        let states = vec![100.0, 0.0];
+        let params = vec![1.2, 5.0, 40.0, 0.5, 0.8];
+        let covariates = vec![70.0];
+        let routes = vec![0.0, 0.0];
+        let derived = vec![0.0; info.derived_len];
+        let mut expected_lag = vec![0.0; info.route_len];
+        let mut expected_bioavailability = vec![0.0; info.route_len];
+        let mut actual_lag = vec![f64::NAN; info.route_len];
+        let mut actual_bioavailability = vec![f64::NAN; info.route_len];
+
+        unsafe {
+            jit.route_lag.expect("jit route lag")(
+                0.0,
+                states.as_ptr(),
+                params.as_ptr(),
+                covariates.as_ptr(),
+                routes.as_ptr(),
+                derived.as_ptr(),
+                expected_lag.as_mut_ptr(),
+            );
+            jit.route_bioavailability
+                .expect("jit route bioavailability")(
+                0.0,
+                states.as_ptr(),
+                params.as_ptr(),
+                covariates.as_ptr(),
+                routes.as_ptr(),
+                derived.as_ptr(),
+                expected_bioavailability.as_mut_ptr(),
+            );
+            session
+                .invoke_raw(
+                    KernelRole::RouteLag,
+                    0.0,
+                    states.as_ptr(),
+                    params.as_ptr(),
+                    covariates.as_ptr(),
+                    routes.as_ptr(),
+                    derived.as_ptr(),
+                    actual_lag.as_mut_ptr(),
+                )
+                .expect("invoke route lag kernel");
+            session
+                .invoke_raw(
+                    KernelRole::RouteBioavailability,
+                    0.0,
+                    states.as_ptr(),
+                    params.as_ptr(),
+                    covariates.as_ptr(),
+                    routes.as_ptr(),
+                    derived.as_ptr(),
+                    actual_bioavailability.as_mut_ptr(),
+                )
+                .expect("invoke route bioavailability kernel");
+        }
+
+        for (actual, expected) in actual_lag.iter().zip(expected_lag.iter()) {
+            assert_relative_eq!(actual, expected, max_relative = 1e-10);
+        }
+        for (actual, expected) in actual_bioavailability
+            .iter()
+            .zip(expected_bioavailability.iter())
+        {
+            assert_relative_eq!(actual, expected, max_relative = 1e-10);
+        }
     }
 
     #[test]
@@ -1191,44 +1408,11 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn wasm_compile_preserves_parse_diagnostic_structure() {
-        let source = "model broken { kind ode outputs { cp = 1 + } }";
-        let work_dir = tempdir().expect("tempdir");
-        let error = compile_module_source_to_wasm(
-            source,
-            None,
-            None,
-            work_dir.path().join("build"),
-            |_, _| {},
-        )
-        .expect_err("invalid DSL should fail before wasm compilation");
-
-        let diagnostic = error.diagnostic().expect("wasm should expose diagnostic");
-        assert_eq!(diagnostic.phase, DiagnosticPhase::Parse);
-        assert_eq!(diagnostic.code, DSL_PARSE_GENERIC);
-        assert!(diagnostic.message.contains("expected expression"));
-        let rendered = error
-            .render_diagnostic(source)
-            .expect("rendered diagnostic");
-        assert!(rendered.contains("error[DSL1000]"), "{}", rendered);
-        assert!(rendered.contains("expected expression"), "{}", rendered);
-        let debugged = format!("{error:?}");
-        assert!(debugged.contains("error[DSL1000]"), "{}", debugged);
-        assert!(debugged.contains("expected expression"), "{}", debugged);
-        let report = error
-            .diagnostic_report("inline.dsl")
-            .expect("diagnostic report");
-        assert_eq!(report.source.name, "inline.dsl");
-        assert_eq!(report.diagnostics[0].code, "DSL1000");
-        assert_eq!(report.diagnostics[0].labels[0].span.start_line, Some(1));
-    }
-
     fn instantiate_module(path: &Path) -> (Store<()>, Instance, Memory) {
         let engine = Engine::default();
         let module = Module::from_file(&engine, path).expect("compile wasm module");
         let mut store = Store::new(&engine, ());
-        let linker = Linker::new(&engine);
+        let linker = configured_wasm_linker(&engine).expect("configured wasm linker");
         let instance = linker
             .instantiate(&mut store, &module)
             .expect("instantiate wasm module");
@@ -1257,16 +1441,9 @@ mod tests {
         store: &mut Store<()>,
         memory: &Memory,
     ) -> NativeModelInfo {
-        let ptr = typed_func::<(), i32>(instance, store, MODEL_INFO_JSON_PTR_SYMBOL)
-            .call(&mut *store, ())
-            .expect("model info ptr");
-        let len = typed_func::<(), i32>(instance, store, MODEL_INFO_JSON_LEN_SYMBOL)
-            .call(&mut *store, ())
-            .expect("model info len");
-        let data = memory.data(&mut *store);
-        let start = ptr as usize;
-        let end = start + len as usize;
-        serde_json::from_slice(&data[start..end]).expect("parse model info")
+        read_model_info_envelope(instance, store, memory)
+            .expect("read model info envelope")
+            .0
     }
 
     fn write_f64s(memory: &Memory, store: &mut Store<()>, ptr: i32, values: &[f64]) {

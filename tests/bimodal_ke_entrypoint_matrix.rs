@@ -26,8 +26,7 @@ mod tests {
             1e-10,
         )?;
 
-        let runtime_wasm_workspace = bimodal_ke::ArtifactWorkspace::new()?;
-        let runtime_wasm = bimodal_ke::compile_runtime_wasm_model(&runtime_wasm_workspace)?;
+        let runtime_wasm = bimodal_ke::compile_runtime_wasm_model()?;
         assert_eq!(runtime_wasm.backend(), RuntimeBackend::Wasm);
         bimodal_ke::report_runtime_model(
             "dsl::compile_module_source_to_runtime(Wasm)",
@@ -44,12 +43,11 @@ mod tests {
             1e-10,
         )?;
 
-        let direct_wasm_workspace = bimodal_ke::ArtifactWorkspace::new()?;
-        let direct_wasm = bimodal_ke::compile_direct_wasm_model(&direct_wasm_workspace)?;
-        assert_eq!(direct_wasm.backend(), RuntimeBackend::Wasm);
+        let bytes_wasm = bimodal_ke::compile_bytes_wasm_model()?;
+        assert_eq!(bytes_wasm.backend(), RuntimeBackend::Wasm);
         bimodal_ke::report_runtime_model(
-            "dsl::compile_module_source_to_wasm + load_runtime_artifact",
-            &direct_wasm,
+            "dsl::compile_module_source_to_wasm_bytes + load_runtime_wasm_bytes",
+            &bytes_wasm,
             1e-4,
         )?;
 

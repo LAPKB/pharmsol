@@ -242,22 +242,13 @@ impl Diagnostic {
             }
         }
         for note in &self.notes {
-            rendered.push_str(&format!(
-                "  = note: {}\n",
-                note,
-            ));
+            rendered.push_str(&format!("  = note: {}\n", note,));
         }
         for help in &self.helps {
-            rendered.push_str(&format!(
-                "  = help: {}\n",
-                help,
-            ));
+            rendered.push_str(&format!("  = help: {}\n", help,));
         }
         for suggestion in &self.suggestions {
-            rendered.push_str(&format!(
-                "  = suggestion: {}\n",
-                suggestion.message,
-            ));
+            rendered.push_str(&format!("  = suggestion: {}\n", suggestion.message,));
         }
         rendered
     }
@@ -335,7 +326,9 @@ impl DiagnosticReportEntry {
             suggestions: diagnostic
                 .suggestions
                 .iter()
-                .map(|suggestion| DiagnosticReportSuggestion::from_suggestion(suggestion, source_text))
+                .map(|suggestion| {
+                    DiagnosticReportSuggestion::from_suggestion(suggestion, source_text)
+                })
                 .collect(),
         }
     }
@@ -367,10 +360,7 @@ pub struct DiagnosticReportSuggestion {
 }
 
 impl DiagnosticReportSuggestion {
-    fn from_suggestion(
-        suggestion: &DiagnosticSuggestion,
-        source_text: Option<&str>,
-    ) -> Self {
+    fn from_suggestion(suggestion: &DiagnosticSuggestion, source_text: Option<&str>) -> Self {
         Self {
             message: suggestion.message.clone(),
             edits: suggestion
@@ -500,7 +490,10 @@ impl ParseError {
     }
 
     pub fn from_diagnostics(diagnostics: Vec<Diagnostic>) -> Self {
-        debug_assert!(!diagnostics.is_empty(), "parse errors must contain at least one diagnostic");
+        debug_assert!(
+            !diagnostics.is_empty(),
+            "parse errors must contain at least one diagnostic"
+        );
         Self {
             diagnostics,
             source: None,
@@ -540,7 +533,10 @@ impl ParseError {
     }
 
     pub fn into_diagnostic(self) -> Diagnostic {
-        self.diagnostics.into_iter().next().expect("parse error diagnostic")
+        self.diagnostics
+            .into_iter()
+            .next()
+            .expect("parse error diagnostic")
     }
 
     pub fn render(&self, src: &str) -> String {
@@ -583,7 +579,9 @@ impl fmt::Display for ParseError {
         write!(
             f,
             "{} at bytes {}..{}",
-            self.diagnostic().message, span.start, span.end
+            self.diagnostic().message,
+            span.start,
+            span.end
         )
     }
 }
@@ -598,7 +596,12 @@ fn render_diagnostics(diagnostics: &[Diagnostic], src: &str) -> String {
         .join("\n")
 }
 
-fn render_label(src: &str, label: &DiagnosticLabel, fallback_message: &str, gutter: usize) -> String {
+fn render_label(
+    src: &str,
+    label: &DiagnosticLabel,
+    fallback_message: &str,
+    gutter: usize,
+) -> String {
     let offset = label.span.start.min(src.len());
     let (line, _, line_start, line_end) = line_info(src, offset);
     let line_text = &src[line_start..line_end];
@@ -672,9 +675,17 @@ mod tests {
         );
 
         let rendered = diagnostic.render(src);
-        assert!(rendered.contains("error[DSL1000]: expected expression after `+`"), "{}", rendered);
+        assert!(
+            rendered.contains("error[DSL1000]: expected expression after `+`"),
+            "{}",
+            rendered
+        );
         assert!(rendered.contains("--> line 1, column 13"), "{}", rendered);
-        assert!(rendered.contains("^ expected expression after `+`"), "{}", rendered);
+        assert!(
+            rendered.contains("^ expected expression after `+`"),
+            "{}",
+            rendered
+        );
     }
 
     #[test]
@@ -691,9 +702,21 @@ mod tests {
         .with_help("add a value after `+`");
 
         let rendered = diagnostic.render(src);
-        assert!(rendered.contains("~ outputs block starts here"), "{}", rendered);
-        assert!(rendered.contains("-- operator missing a right-hand side"), "{}", rendered);
-        assert!(rendered.contains("= help: add a value after `+`"), "{}", rendered);
+        assert!(
+            rendered.contains("~ outputs block starts here"),
+            "{}",
+            rendered
+        );
+        assert!(
+            rendered.contains("-- operator missing a right-hand side"),
+            "{}",
+            rendered
+        );
+        assert!(
+            rendered.contains("= help: add a value after `+`"),
+            "{}",
+            rendered
+        );
     }
 
     #[test]
@@ -717,8 +740,14 @@ mod tests {
         assert_eq!(value["diagnostics"][0]["severity"], "error");
         assert_eq!(value["diagnostics"][0]["phase"], "parse");
         assert_eq!(value["diagnostics"][0]["labels"][0]["span"]["start"], 12);
-        assert_eq!(value["diagnostics"][0]["labels"][0]["span"]["start_line"], 1);
-        assert_eq!(value["diagnostics"][0]["labels"][0]["span"]["start_column"], 13);
+        assert_eq!(
+            value["diagnostics"][0]["labels"][0]["span"]["start_line"],
+            1
+        );
+        assert_eq!(
+            value["diagnostics"][0]["labels"][0]["span"]["start_column"],
+            13
+        );
         assert!(value["rendered"]
             .as_str()
             .expect("rendered output")

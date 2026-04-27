@@ -111,7 +111,11 @@ impl JitCompileError {
     }
 
     pub fn diagnostic_report(&self, source_name: impl Into<String>) -> DiagnosticReport {
-        DiagnosticReport::from_diagnostics(source_name, self.source(), std::slice::from_ref(&self.diagnostic))
+        DiagnosticReport::from_diagnostics(
+            source_name,
+            self.source(),
+            std::slice::from_ref(&self.diagnostic),
+        )
     }
 
     pub fn with_source(mut self, source: impl Into<Arc<str>>) -> Self {
@@ -130,7 +134,11 @@ impl std::fmt::Display for JitCompileError {
             return f.write_str(&self.render(source));
         }
         let span = self.diagnostic.primary_span();
-        write!(f, "{} at bytes {}..{}", self.diagnostic.message, span.start, span.end)
+        write!(
+            f,
+            "{} at bytes {}..{}",
+            self.diagnostic.message, span.start, span.end
+        )
     }
 }
 
@@ -206,7 +214,9 @@ struct LoweredValue {
     ty: ValueType,
 }
 
-pub fn compile_execution_artifact(model: &ExecutionModel) -> Result<NativeExecutionArtifact, JitCompileError> {
+pub fn compile_execution_artifact(
+    model: &ExecutionModel,
+) -> Result<NativeExecutionArtifact, JitCompileError> {
     let mut flag_builder = settings::builder();
     flag_builder
         .set("is_pic", "false")
@@ -491,7 +501,10 @@ fn dense_kernel_signature(module: &mut JITModule) -> cranelift::codegen::ir::Sig
     signature
 }
 
-fn function_pointer(module: &mut JITModule, function_id: cranelift_module::FuncId) -> DenseKernelFn {
+fn function_pointer(
+    module: &mut JITModule,
+    function_id: cranelift_module::FuncId,
+) -> DenseKernelFn {
     unsafe { mem::transmute(module.get_finalized_function(function_id)) }
 }
 
@@ -559,7 +572,9 @@ fn emit_if(
     let else_block = builder.create_block();
     let merge_block = builder.create_block();
 
-    builder.ins().brif(cond_value, then_block, &[], else_block, &[]);
+    builder
+        .ins()
+        .brif(cond_value, then_block, &[], else_block, &[]);
 
     builder.switch_to_block(then_block);
     emit_stmt_list(builder, env, &if_stmt.then_branch)?;
@@ -605,8 +620,12 @@ fn emit_for(
     builder.switch_to_block(loop_header);
 
     let current = builder.use_var(binding.variable);
-    let keep_going = builder.ins().icmp(IntCC::SignedLessThan, current, end.value);
-    builder.ins().brif(keep_going, loop_body, &[], loop_exit, &[]);
+    let keep_going = builder
+        .ins()
+        .icmp(IntCC::SignedLessThan, current, end.value);
+    builder
+        .ins()
+        .brif(keep_going, loop_body, &[], loop_exit, &[]);
 
     builder.switch_to_block(loop_body);
     emit_stmt_list(builder, env, &for_stmt.body)?;
@@ -719,7 +738,9 @@ fn lower_load(
             })?;
             builder.use_var(binding.variable)
         }
-        ExecutionLoad::State(state_ref) => load_state_ref(builder, env, env.args.states, state_ref, ty)?,
+        ExecutionLoad::State(state_ref) => {
+            load_state_ref(builder, env, env.args.states, state_ref, ty)?
+        }
     };
 
     Ok(LoweredValue { value, ty })
@@ -918,7 +939,9 @@ fn lower_math_call(
         }
         MathIntrinsic::Abs if target_ty == ValueType::Int => {
             let value = cast_value(builder, args[0], ValueType::Int, span)?;
-            let is_negative = builder.ins().icmp_imm(IntCC::SignedLessThan, value.value, 0);
+            let is_negative = builder
+                .ins()
+                .icmp_imm(IntCC::SignedLessThan, value.value, 0);
             let negated = builder.ins().ineg(value.value);
             Ok(LoweredValue {
                 value: builder.ins().select(is_negative, negated, value.value),
@@ -982,7 +1005,11 @@ fn lower_equality(
             let lhs = cast_value(builder, lhs, ValueType::Real, span)?;
             let rhs = cast_value(builder, rhs, ValueType::Real, span)?;
             builder.ins().fcmp(
-                if predicate { FloatCC::Equal } else { FloatCC::NotEqual },
+                if predicate {
+                    FloatCC::Equal
+                } else {
+                    FloatCC::NotEqual
+                },
                 lhs.value,
                 rhs.value,
             )
@@ -991,7 +1018,11 @@ fn lower_equality(
             let lhs = cast_value(builder, lhs, target_ty, span)?;
             let rhs = cast_value(builder, rhs, target_ty, span)?;
             builder.ins().icmp(
-                if predicate { IntCC::Equal } else { IntCC::NotEqual },
+                if predicate {
+                    IntCC::Equal
+                } else {
+                    IntCC::NotEqual
+                },
                 lhs.value,
                 rhs.value,
             )
@@ -1084,7 +1115,9 @@ fn as_bool(
     _span: Span,
 ) -> Result<Value, JitCompileError> {
     match value.ty {
-        ValueType::Bool | ValueType::Int => Ok(builder.ins().icmp_imm(IntCC::NotEqual, value.value, 0)),
+        ValueType::Bool | ValueType::Int => {
+            Ok(builder.ins().icmp_imm(IntCC::NotEqual, value.value, 0))
+        }
         ValueType::Real => {
             let zero = builder.ins().f64const(0.0);
             Ok(builder.ins().fcmp(FloatCC::NotEqual, value.value, zero))
@@ -1121,7 +1154,12 @@ fn zero_value(builder: &mut FunctionBuilder<'_>, ty: ValueType) -> Value {
     }
 }
 
-fn load_fixed(builder: &mut FunctionBuilder<'_>, base: Value, index: usize, ty: ValueType) -> Value {
+fn load_fixed(
+    builder: &mut FunctionBuilder<'_>,
+    base: Value,
+    index: usize,
+    ty: ValueType,
+) -> Value {
     builder
         .ins()
         .load(clif_type(ty), MemFlags::new(), base, (index * 8) as i32)
@@ -1141,7 +1179,9 @@ fn load_state_ref(
     ty: ValueType,
 ) -> Result<Value, JitCompileError> {
     let address = state_address(builder, env, base, state_ref)?;
-    Ok(builder.ins().load(clif_type(ty), MemFlags::new(), address, 0))
+    Ok(builder
+        .ins()
+        .load(clif_type(ty), MemFlags::new(), address, 0))
 }
 
 fn store_state_ref(
@@ -1165,9 +1205,13 @@ fn state_address(
     let element_index = if let Some(index_expr) = &state_ref.index {
         let index_expr = lower_expr(builder, env, index_expr)?;
         let index = cast_value(builder, index_expr, ValueType::Int, state_ref.span)?;
-        builder.ins().iadd_imm(index.value, state_ref.base_offset as i64)
+        builder
+            .ins()
+            .iadd_imm(index.value, state_ref.base_offset as i64)
     } else {
-        builder.ins().iconst(types::I64, state_ref.base_offset as i64)
+        builder
+            .ins()
+            .iconst(types::I64, state_ref.base_offset as i64)
     };
     let byte_offset = builder.ins().imul_imm(element_index, 8);
     Ok(builder.ins().iadd(base, byte_offset))
@@ -1178,7 +1222,9 @@ pub fn compile_execution_model_to_jit(
 ) -> Result<CompiledJitModel, JitCompileError> {
     match model.kind {
         ModelKind::Ode => Ok(CompiledJitModel::Ode(compile_ode_model_to_jit(model)?)),
-        ModelKind::Analytical => Ok(CompiledJitModel::Analytical(compile_analytical_model_to_jit(model)?)),
+        ModelKind::Analytical => Ok(CompiledJitModel::Analytical(
+            compile_analytical_model_to_jit(model)?,
+        )),
         ModelKind::Sde => Ok(CompiledJitModel::Sde(compile_sde_model_to_jit(model)?)),
     }
 }
@@ -1186,7 +1232,10 @@ pub fn compile_execution_model_to_jit(
 pub fn compile_ode_model_to_jit(model: &ExecutionModel) -> Result<JitOdeModel, JitCompileError> {
     if model.kind != ModelKind::Ode {
         return Err(JitCompileError::new(
-            format!("model `{}` is {:?}, not an ODE model", model.name, model.kind),
+            format!(
+                "model `{}` is {:?}, not an ODE model",
+                model.name, model.kind
+            ),
             Some(model.span),
         ));
     }
@@ -1201,7 +1250,10 @@ pub fn compile_analytical_model_to_jit(
 ) -> Result<JitAnalyticalModel, JitCompileError> {
     if model.kind != ModelKind::Analytical {
         return Err(JitCompileError::new(
-            format!("model `{}` is {:?}, not an analytical model", model.name, model.kind),
+            format!(
+                "model `{}` is {:?}, not an analytical model",
+                model.name, model.kind
+            ),
             Some(model.span),
         ));
     }
@@ -1214,7 +1266,10 @@ pub fn compile_analytical_model_to_jit(
 pub fn compile_sde_model_to_jit(model: &ExecutionModel) -> Result<JitSdeModel, JitCompileError> {
     if model.kind != ModelKind::Sde {
         return Err(JitCompileError::new(
-            format!("model `{}` is {:?}, not an SDE model", model.name, model.kind),
+            format!(
+                "model `{}` is {:?}, not an SDE model",
+                model.name, model.kind
+            ),
             Some(model.span),
         ));
     }
@@ -1227,14 +1282,14 @@ pub fn compile_sde_model_to_jit(model: &ExecutionModel) -> Result<JitSdeModel, J
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dsl::execution::DenseBufferLayout;
     use crate::dsl::{
         analyze_module, lower_typed_model, parse_module, DiagnosticPhase, DSL_BACKEND_GENERIC,
     };
-    use crate::dsl::execution::DenseBufferLayout;
     use crate::equation::ode::{ExplicitRkTableau, OdeSolver};
     use crate::simulator::equation::analytical::one_compartment_with_absorption;
     use crate::simulator::equation::{Equation, Predictions as PredictionTrait};
-    use crate::{equation, ODE, SDE, Subject, SubjectBuilderExt};
+    use crate::{equation, Subject, SubjectBuilderExt, ODE, SDE};
     use approx::assert_relative_eq;
     use diffsol::Vector;
 
@@ -1310,9 +1365,7 @@ mod tests {
                 derived.as_ptr(),
                 derived.as_mut_ptr(),
             );
-            artifact
-                .dynamics
-                .expect("dynamics kernel present")(
+            artifact.dynamics.expect("dynamics kernel present")(
                 0.0,
                 states.as_ptr(),
                 params.as_ptr(),
@@ -1425,7 +1478,11 @@ mod tests {
             .iter()
             .zip(reference_predictions.predictions())
         {
-            assert_relative_eq!(jit_pred.prediction(), reference_pred.prediction(), max_relative = 1e-4);
+            assert_relative_eq!(
+                jit_pred.prediction(),
+                reference_pred.prediction(),
+                max_relative = 1e-4
+            );
         }
     }
 
@@ -1473,7 +1530,11 @@ mod tests {
             .iter()
             .zip(reference_predictions.predictions())
         {
-            assert_relative_eq!(jit_pred.prediction(), reference_pred.prediction(), max_relative = 1e-4);
+            assert_relative_eq!(
+                jit_pred.prediction(),
+                reference_pred.prediction(),
+                max_relative = 1e-4
+            );
         }
     }
 
@@ -1543,7 +1604,11 @@ mod tests {
             .iter()
             .zip(reference_predictions.get_predictions())
         {
-            assert_relative_eq!(jit_pred.prediction(), reference_pred.prediction(), max_relative = 1e-4);
+            assert_relative_eq!(
+                jit_pred.prediction(),
+                reference_pred.prediction(),
+                max_relative = 1e-4
+            );
         }
     }
 }

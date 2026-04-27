@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pharmsol DSL Browser Playground</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="page-shell">
+      <section class="hero panel">
+        <div class="hero-copy">
+          <p class="eyebrow">DSL / PLAYGROUND</p>
+          <h1>Model First.</h1>
+          <p class="lede">Paste DSL. Compile. Simulate.</p>
+        </div>
+        <div class="hero-actions">
+          <button id="compile-button" class="button button-primary">
+            Compile
+          </button>
+          <button id="simulate-button" class="button button-secondary">
+            Simulate
+          </button>
+          <p id="status-line" class="status-line">Loading…</p>
+        </div>
+      </section>
+
+      <div class="layout-grid">
+        <section class="panel editor-panel">
+          <div class="section-heading">
+            <p class="eyebrow">MODEL</p>
+            <h2>Source</h2>
+          </div>
+          <label class="field">
+            <span>Model name</span>
+            <input id="model-name" type="text" placeholder="optional" />
+          </label>
+          <label class="field">
+            <span>DSL</span>
+            <textarea id="model-source" spellcheck="false"></textarea>
+          </label>
+          <section class="diagnostic-box" id="diagnostic-box" hidden>
+            <div class="section-heading compact">
+              <p class="eyebrow">COMPILER</p>
+              <h3>Diagnostic</h3>
+            </div>
+            <pre id="diagnostic-output"></pre>
+          </section>
+        </section>
+
+        <section class="panel controls-panel">
+          <div class="section-heading">
+            <p class="eyebrow">RUNTIME</p>
+            <h2>Surface</h2>
+          </div>
+          <div id="model-badges" class="badge-row"></div>
+          <p id="model-summary" class="summary-copy">Paste a model.</p>
+
+          <div class="control-group">
+            <div class="section-heading compact">
+              <p class="eyebrow">PARAMETERS</p>
+              <h3>Primary</h3>
+            </div>
+            <div id="parameter-controls" class="stacked-controls"></div>
+          </div>
+
+          <div class="control-group">
+            <div class="section-heading compact">
+              <p class="eyebrow">COVARIATES</p>
+              <h3>Subject</h3>
+            </div>
+            <div id="covariate-controls" class="compact-grid"></div>
+          </div>
+        </section>
+
+        <section class="panel results-panel">
+          <div class="section-heading">
+            <p class="eyebrow">OUTPUT</p>
+            <h2>Predictions</h2>
+          </div>
+          <p id="prediction-summary" class="summary-copy">
+            Awaiting simulation.
+          </p>
+          <ul id="scientific-notes" class="notes-list" hidden></ul>
+          <div id="prediction-legend" class="legend-row"></div>
+          <svg
+            id="prediction-chart"
+            viewBox="0 0 760 280"
+            role="img"
+            aria-label="Prediction chart"
+          ></svg>
+          <div class="table-shell">
+            <table>
+              <thead>
+                <tr>
+                  <th>t</th>
+                  <th>out</th>
+                  <th>pred</th>
+                </tr>
+              </thead>
+              <tbody id="prediction-rows"></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+
+      <section class="panel subject-panel">
+        <div class="section-heading">
+          <p class="eyebrow">SUBJECT</p>
+          <h2>Events</h2>
+        </div>
+
+        <div class="subject-shell">
+          <div class="subject-toolbar">
+            <label class="field field-inline subject-id-field">
+              <span>ID</span>
+              <input id="subject-id" type="text" />
+            </label>
+          </div>
+
+          <div class="subject-lanes">
+            <div class="subpanel subject-lane">
+              <div class="subpanel-header">
+                <h4>Bolus</h4>
+                <button id="add-bolus" class="button button-ghost" type="button">
+                  Add
+                </button>
+              </div>
+              <div id="bolus-list" class="event-list"></div>
+            </div>
+
+            <div class="subpanel subject-lane">
+              <div class="subpanel-header">
+                <h4>Infusions</h4>
+                <button id="add-infusion" class="button button-ghost" type="button">
+                  Add
+                </button>
+              </div>
+              <div id="infusion-list" class="event-list"></div>
+            </div>
+
+            <div class="subpanel subject-lane">
+              <div class="subpanel-header">
+                <h4>Observations</h4>
+                <button
+                  id="add-observation"
+                  class="button button-ghost"
+                  type="button"
+                >
+                  Add
+                </button>
+              </div>
+              <div id="observation-list" class="event-list"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

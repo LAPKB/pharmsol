@@ -30,11 +30,15 @@ const ANALYTICAL_SOURCE: &str = r#"
 model = example_analytical
 kind = analytical
 
-params = ka, ke, v
+params = ka, ke, v, tlag, f_oral
 states = depot, central
 outputs = cp
 
 bolus(oral) -> depot
+
+lag(oral) = tlag
+fa(oral) = f_oral
+
 kernel = one_compartment_with_absorption
 
 out(cp) = central / v ~ continuous()
@@ -66,41 +70,16 @@ out(cp) = central / (vol * wt) ~ continuous()
 
 #[cfg(feature = "dsl-wasm")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    use std::{fs, io, path::PathBuf};
+    use std::io;
 
-    use pharmsol::dsl::{self, RuntimeCompilationTarget};
+    use pharmsol::dsl::{self};
     use pharmsol::{Subject, SubjectBuilderExt};
 
     println!("Sugared DSL models compiled with runtime WASM");
-    let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("target")
-        .join("example-artifacts")
-        .join("proposal_dsl_runtime_wasm");
-    fs::create_dir_all(&workspace)?;
-    let show_compile_logs = false;
-    let on_compile_event = move |kind: String, message: String| {
-        if !show_compile_logs || message.is_empty() {
-            return;
-        }
-
-        if kind == "log" {
-            eprint!("{message}");
-        } else {
-            eprintln!("[compile:{kind}] {message}");
-        }
-    };
 
     // 1. Define an ODE model, compile it, simulate one subject, and print predictions.
     let ode_support_point = [1.2, 5.0, 40.0, 0.25, 0.8];
-    let ode_model = dsl::compile_module_source_to_runtime(
-        ODE_SOURCE,
-        Some("example_ode"),
-        RuntimeCompilationTarget::Wasm {
-            output: Some(workspace.join("example-ode-runtime-wasm.wasm")),
-            template_root: workspace.join("example-ode-runtime-wasm-build"),
-        },
-        on_compile_event,
-    )?;
+    let ode_model = dsl::compile_module_source_to_runtime_wasm(ODE_SOURCE, Some("example_ode"))?;
     let ode_oral = ode_model
         .route_index("oral")
         .ok_or_else(|| io::Error::other("ODE model: missing oral route"))?;
@@ -125,16 +104,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     print_predictions("ODE model via runtime WASM", ode_predictions);
 
     // 2. Define an analytical model, compile it, simulate one subject, and print predictions.
-    let analytical_support_point = [1.0, 0.15, 25.0];
-    let analytical_model = dsl::compile_module_source_to_runtime(
-        ANALYTICAL_SOURCE,
-        Some("example_analytical"),
-        RuntimeCompilationTarget::Wasm {
-            output: Some(workspace.join("example-analytical-runtime-wasm.wasm")),
-            template_root: workspace.join("example-analytical-runtime-wasm-build"),
-        },
-        on_compile_event,
-    )?;
+    let analytical_support_point = [1.0, 0.15, 25.0, 0.5, 0.8];
+    let analytical_model =
+        dsl::compile_module_source_to_runtime_wasm(ANALYTICAL_SOURCE, Some("example_analytical"))?;
     let analytical_oral = analytical_model
         .route_index("oral")
         .ok_or_else(|| io::Error::other("Analytical model: missing oral route"))?;
@@ -154,15 +126,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 3. Define an SDE model, compile it, simulate one subject, and print predictions.
     let sde_support_point = [1.1, 0.2, 0.12, 0.08, 15.0, 0.05];
-    let sde_model = dsl::compile_module_source_to_runtime(
-        SDE_SOURCE,
-        Some("example_sde"),
-        RuntimeCompilationTarget::Wasm {
-            output: Some(workspace.join("example-sde-runtime-wasm.wasm")),
-            template_root: workspace.join("example-sde-runtime-wasm-build"),
-        },
-        on_compile_event,
-    )?;
+    let sde_model = dsl::compile_module_source_to_runtime_wasm(SDE_SOURCE, Some("example_sde"))?;
     let sde_oral = sde_model
         .route_index("oral")
         .ok_or_else(|| io::Error::other("SDE model: missing oral route"))?;

@@ -111,15 +111,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     print_subject_predictions("runtime Native AoT", &runtime_native_aot_predictions);
 
     // 3. Compile the same model with the runtime WASM entrypoint.
-    let runtime_wasm_model = pharmsol::dsl::compile_module_source_to_runtime(
-        MODEL_SOURCE,
-        Some("bimodal_ke"),
-        pharmsol::dsl::RuntimeCompilationTarget::Wasm {
-            output: Some(workspace.join("bimodal-ke-meta-runtime-wasm.wasm")),
-            template_root: workspace.join("bimodal-ke-meta-runtime-wasm-build"),
-        },
-        on_compile_event,
-    )?;
+    let runtime_wasm_model =
+        pharmsol::dsl::compile_module_source_to_runtime_wasm(MODEL_SOURCE, Some("bimodal_ke"))?;
     let runtime_wasm_iv = runtime_wasm_model
         .route_index("iv")
         .ok_or_else(|| io::Error::other("runtime WASM: missing iv route"))?;
@@ -146,8 +139,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let direct_aot_artifact = pharmsol::dsl::compile_module_source_to_aot(
         MODEL_SOURCE,
         Some("bimodal_ke"),
-        pharmsol::dsl::NativeAotCompileOptions::new(workspace.join("bimodal-ke-meta-direct-aot-build"))
-            .with_output(workspace.join("bimodal-ke-meta-direct-aot.pkm")),
+        pharmsol::dsl::NativeAotCompileOptions::new(
+            workspace.join("bimodal-ke-meta-direct-aot-build"),
+        )
+        .with_output(workspace.join("bimodal-ke-meta-direct-aot.pkm")),
         on_compile_event,
     )?;
     let direct_aot_model = pharmsol::dsl::load_runtime_artifact(
@@ -181,18 +176,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &direct_aot_predictions,
     );
 
-    // 5. Compile the same model to a WASM artifact, then load it.
-    let direct_wasm_artifact = pharmsol::dsl::compile_module_source_to_wasm(
-        MODEL_SOURCE,
-        Some("bimodal_ke"),
-        Some(workspace.join("bimodal-ke-meta-direct-wasm.wasm")),
-        workspace.join("bimodal-ke-meta-direct-wasm-build"),
-        on_compile_event,
-    )?;
-    let direct_wasm_model = pharmsol::dsl::load_runtime_artifact(
-        &direct_wasm_artifact.wasm_path,
-        pharmsol::dsl::RuntimeArtifactFormat::Wasm,
-    )?;
+    // 5. Compile the same model to in-memory WASM bytes, then load them.
+    let direct_wasm_bytes =
+        pharmsol::dsl::compile_module_source_to_wasm_bytes(MODEL_SOURCE, Some("bimodal_ke"))?;
+    let direct_wasm_model = pharmsol::dsl::load_runtime_wasm_bytes(&direct_wasm_bytes)?;
     let direct_wasm_iv = direct_wasm_model
         .route_index("iv")
         .ok_or_else(|| io::Error::other("compile_module_source_to_wasm: missing iv route"))?;
@@ -216,7 +203,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             io::Error::other("compile_module_source_to_wasm: expected subject predictions")
         })?;
     print_subject_predictions(
-        "compile_module_source_to_wasm + load_runtime_artifact",
+        "compile_module_source_to_wasm_bytes + load_runtime_wasm_bytes",
         &direct_wasm_predictions,
     );
 

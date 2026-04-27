@@ -42,10 +42,6 @@ impl ArtifactWorkspace {
         self.tempdir.path().join(format!("{stem}.pkm"))
     }
 
-    pub fn wasm_output(&self, stem: &str) -> PathBuf {
-        self.tempdir.path().join(format!("{stem}.wasm"))
-    }
-
     pub fn build_root(&self, stem: &str) -> PathBuf {
         self.tempdir.path().join(stem)
     }
@@ -195,16 +191,11 @@ pub fn compile_runtime_native_aot_model(
 }
 
 #[cfg(feature = "dsl-wasm")]
-pub fn compile_runtime_wasm_model(
-    workspace: &ArtifactWorkspace,
-) -> Result<pharmsol::dsl::CompiledRuntimeModel, Box<dyn Error>> {
+pub fn compile_runtime_wasm_model() -> Result<pharmsol::dsl::CompiledRuntimeModel, Box<dyn Error>> {
     Ok(pharmsol::dsl::compile_module_source_to_runtime(
         AUTHORING_DSL,
         Some(MODEL_NAME),
-        pharmsol::dsl::RuntimeCompilationTarget::Wasm {
-            output: Some(workspace.wasm_output("bimodal-ke-runtime")),
-            template_root: workspace.build_root("runtime-wasm-build"),
-        },
+        pharmsol::dsl::RuntimeCompilationTarget::Wasm,
         |_, _| {},
     )?)
 }
@@ -228,19 +219,8 @@ pub fn compile_direct_aot_model(
 }
 
 #[cfg(feature = "dsl-wasm")]
-pub fn compile_direct_wasm_model(
-    workspace: &ArtifactWorkspace,
-) -> Result<pharmsol::dsl::CompiledRuntimeModel, Box<dyn Error>> {
-    let artifact = pharmsol::dsl::compile_module_source_to_wasm(
-        AUTHORING_DSL,
-        Some(MODEL_NAME),
-        Some(workspace.wasm_output("bimodal-ke-direct")),
-        workspace.build_root("direct-wasm-build"),
-        |_, _| {},
-    )?;
-
-    Ok(pharmsol::dsl::load_runtime_artifact(
-        &artifact.wasm_path,
-        pharmsol::dsl::RuntimeArtifactFormat::Wasm,
-    )?)
+pub fn compile_bytes_wasm_model() -> Result<pharmsol::dsl::CompiledRuntimeModel, Box<dyn Error>> {
+    let bytes =
+        pharmsol::dsl::compile_module_source_to_wasm_bytes(AUTHORING_DSL, Some(MODEL_NAME))?;
+    Ok(pharmsol::dsl::load_runtime_wasm_bytes(&bytes)?)
 }

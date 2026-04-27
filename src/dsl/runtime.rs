@@ -1,12 +1,6 @@
 use std::fmt;
 use std::path::Path;
 
-#[cfg(any(
-    all(feature = "dsl-aot", feature = "dsl-aot-load"),
-    feature = "dsl-wasm"
-))]
-use std::path::PathBuf;
-
 use ndarray::Array2;
 use thiserror::Error;
 
@@ -23,10 +17,14 @@ use super::native::{
     NativeOdeModel, NativeOutputInfo, NativeRouteInfo, NativeSdeModel, RuntimeBackend,
 };
 #[cfg(feature = "dsl-wasm")]
-use super::wasm::{export_execution_model_to_wasm, load_wasm_artifact, WasmError};
+use super::wasm::{load_wasm_artifact, load_wasm_artifact_bytes};
+#[cfg(feature = "dsl-wasm")]
+use super::wasm_compile::{
+    compile_execution_model_to_wasm_bytes, compile_module_source_to_wasm_bytes, WasmError,
+};
 use super::{
-    analyze_module, lower_typed_model, parse_module, Diagnostic, DiagnosticReport,
-    ExecutionModel, LoweringError, ModelKind, ParseError, SemanticError,
+    analyze_module, lower_typed_model, parse_module, Diagnostic, DiagnosticReport, ExecutionModel,
+    LoweringError, ModelKind, ParseError, SemanticError,
 };
 use crate::{
     simulator::likelihood::{Prediction, SubjectPredictions},
@@ -48,10 +46,7 @@ pub enum RuntimeCompilationTarget {
     #[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]
     NativeAot(NativeAotCompileOptions),
     #[cfg(feature = "dsl-wasm")]
-    Wasm {
-        output: Option<PathBuf>,
-        template_root: PathBuf,
-    },
+    Wasm,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -242,7 +237,8 @@ pub fn compile_module_source_to_runtime(
     target: RuntimeCompilationTarget,
     event_callback: impl Fn(String, String) + Send + Sync + 'static,
 ) -> Result<CompiledRuntimeModel, RuntimeError> {
-    let parsed = parse_module(source).map_err(|error| RuntimeError::Parse(error.with_source(source)))?;
+    let parsed =
+        parse_module(source).map_err(|error| RuntimeError::Parse(error.with_source(source)))?;
     let typed = analyze_module(&parsed)
         .map_err(|error| RuntimeError::Semantic(error.with_source(source)))?;
 
@@ -298,13 +294,17 @@ pub fn compile_execution_model_to_runtime(
             load_runtime_artifact(&artifact, RuntimeArtifactFormat::NativeAot)
         }
         #[cfg(feature = "dsl-wasm")]
-        RuntimeCompilationTarget::Wasm {
-            output,
-            template_root,
-        } => {
-            let artifact =
-                export_execution_model_to_wasm(model, output, template_root, event_callback)?;
-            load_runtime_artifact(&artifact.wasm_path, RuntimeArtifactFormat::Wasm)
+        RuntimeCompilationTarget::Wasm => {
+            event_callback(
+                "started".into(),
+                format!("Compiling runtime wasm model `{}`", model.name),
+            );
+            let compiled = compile_execution_model_to_runtime_wasm(model)?;
+            event_callback(
+                "finished".into(),
+                format!("Compiled runtime wasm model `{}`", model.name),
+            );
+            Ok(compiled)
         }
     }
 }
@@ -327,6 +327,29 @@ pub fn load_runtime_artifact(
             Ok(runtime_model_from_parts(info, artifact))
         }
     }
+}
+
+#[cfg(feature = "dsl-wasm")]
+pub fn compile_module_source_to_runtime_wasm(
+    source: &str,
+    model_name: Option<&str>,
+) -> Result<CompiledRuntimeModel, RuntimeError> {
+    let bytes = compile_module_source_to_wasm_bytes(source, model_name)?;
+    load_runtime_wasm_bytes(&bytes)
+}
+
+#[cfg(feature = "dsl-wasm")]
+pub fn compile_execution_model_to_runtime_wasm(
+    model: &ExecutionModel,
+) -> Result<CompiledRuntimeModel, RuntimeError> {
+    let bytes = compile_execution_model_to_wasm_bytes(model)?;
+    load_runtime_wasm_bytes(&bytes)
+}
+
+#[cfg(feature = "dsl-wasm")]
+pub fn load_runtime_wasm_bytes(bytes: &[u8]) -> Result<CompiledRuntimeModel, RuntimeError> {
+    let (info, artifact) = load_wasm_artifact_bytes(bytes)?;
+    Ok(runtime_model_from_parts(info, artifact))
 }
 
 #[cfg(feature = "dsl-wasm")]
@@ -353,8 +376,8 @@ fn runtime_model_from_parts(
 mod tests {
     use super::*;
     use crate::dsl::{
-        analyze_module, compile_sde_model_to_jit, lower_typed_model, parse_module,
-        DiagnosticPhase, DSL_BACKEND_GENERIC, DSL_PARSE_GENERIC,
+        analyze_module, compile_sde_model_to_jit, lower_typed_model, parse_module, DiagnosticPhase,
+        DSL_BACKEND_GENERIC, DSL_PARSE_GENERIC,
     };
     use crate::SubjectBuilderExt;
     use approx::assert_relative_eq;
@@ -424,10 +447,7 @@ mod tests {
         let wasm = compile_module_source_to_runtime(
             proposal_source(),
             Some("one_cmt_oral_iv"),
-            RuntimeCompilationTarget::Wasm {
-                output: Some(work_dir.path().join("one_cmt_oral_iv.wasm")),
-                template_root: work_dir.path().join("wasm-build"),
-            },
+            RuntimeCompilationTarget::Wasm,
             |_, _| {},
         )
         .expect("compile wasm runtime model");
@@ -481,11 +501,15 @@ mod tests {
         )
         .expect_err("invalid DSL should fail before runtime compilation");
 
-        let diagnostic = error.diagnostic().expect("runtime should expose diagnostic");
+        let diagnostic = error
+            .diagnostic()
+            .expect("runtime should expose diagnostic");
         assert_eq!(diagnostic.phase, DiagnosticPhase::Parse);
         assert_eq!(diagnostic.code, DSL_PARSE_GENERIC);
         assert!(diagnostic.message.contains("expected expression"));
-        let rendered = error.render_diagnostic(source).expect("rendered diagnostic");
+        let rendered = error
+            .render_diagnostic(source)
+            .expect("rendered diagnostic");
         assert!(rendered.contains("error[DSL1000]"), "{}", rendered);
         assert!(rendered.contains("expected expression"), "{}", rendered);
         let debugged = format!("{error:?}");
@@ -497,12 +521,10 @@ mod tests {
         assert_eq!(report.source.name, "inline.dsl");
         assert_eq!(report.diagnostics[0].code, "DSL1000");
         assert_eq!(report.diagnostics[0].labels[0].span.start_line, Some(1));
-        assert!(
-            report
-                .to_json()
-                .expect("serialize report")
-                .contains("\"name\":\"inline.dsl\""),
-        );
+        assert!(report
+            .to_json()
+            .expect("serialize report")
+            .contains("\"name\":\"inline.dsl\""),);
     }
 
     #[test]
@@ -515,7 +537,9 @@ mod tests {
                 .with_source(source),
         );
 
-        let diagnostic = error.diagnostic().expect("runtime should expose jit diagnostic");
+        let diagnostic = error
+            .diagnostic()
+            .expect("runtime should expose jit diagnostic");
         assert_eq!(diagnostic.phase, DiagnosticPhase::Backend);
         assert_eq!(diagnostic.code, DSL_BACKEND_GENERIC);
         assert!(diagnostic.message.contains("not an SDE model"));
