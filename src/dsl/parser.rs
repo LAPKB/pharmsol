@@ -27,11 +27,10 @@ pub fn parse_model(src: &str) -> Result<Model, ParseError> {
     let module = parse_module(src)?;
     match module.models.len() {
         1 => Ok(module.models.into_iter().next().unwrap()),
-        0 => Err(ParseError::new(
-            "expected a `model` declaration",
-            Span::empty(src.len()),
-        )
-        .with_source(src)),
+        0 => Err(
+            ParseError::new("expected a `model` declaration", Span::empty(src.len()))
+                .with_source(src),
+        ),
         _ => Err(ParseError::new(
             "expected exactly one `model` declaration",
             module.models[1].span,
@@ -159,43 +158,44 @@ impl Parser {
         let name = self.parse_ident()?;
         let open = self.expect_simple(|kind| matches!(kind, TokenKind::LBrace), "`{`")?;
 
-        let (kind, items, mut errors) = self.with_layout_boundary(LayoutBoundary::ModelItem, |parser| {
-            let mut kind = None;
-            let mut items = Vec::new();
-            let mut errors = Vec::new();
-            while !parser.is_eof() && !parser.at(|kind| matches!(kind, TokenKind::RBrace)) {
-                if parser.at(|kind| matches!(kind, TokenKind::Kind)) {
-                    let kind_kw = parser.bump().unwrap();
-                    if kind.is_some() {
-                        errors.push(
-                            ParseError::new(
-                                "duplicate `kind` declaration in model body",
-                                kind_kw.span,
-                            )
-                            .into_diagnostic(),
-                        );
-                        parser.sync_to_model_body_boundary();
-                        continue;
-                    }
-                    match parser.parse_model_kind(kind_kw) {
-                        Ok(model_kind) => kind = Some(model_kind),
-                        Err(error) => {
-                            errors.extend(error.diagnostics().iter().cloned());
+        let (kind, items, mut errors) =
+            self.with_layout_boundary(LayoutBoundary::ModelItem, |parser| {
+                let mut kind = None;
+                let mut items = Vec::new();
+                let mut errors = Vec::new();
+                while !parser.is_eof() && !parser.at(|kind| matches!(kind, TokenKind::RBrace)) {
+                    if parser.at(|kind| matches!(kind, TokenKind::Kind)) {
+                        let kind_kw = parser.bump().unwrap();
+                        if kind.is_some() {
+                            errors.push(
+                                ParseError::new(
+                                    "duplicate `kind` declaration in model body",
+                                    kind_kw.span,
+                                )
+                                .into_diagnostic(),
+                            );
                             parser.sync_to_model_body_boundary();
+                            continue;
                         }
-                    }
-                } else {
-                    match parser.parse_model_item() {
-                        Ok(item) => items.push(item),
-                        Err(error) => {
-                            errors.extend(error.diagnostics().iter().cloned());
-                            parser.sync_to_model_body_boundary();
+                        match parser.parse_model_kind(kind_kw) {
+                            Ok(model_kind) => kind = Some(model_kind),
+                            Err(error) => {
+                                errors.extend(error.diagnostics().iter().cloned());
+                                parser.sync_to_model_body_boundary();
+                            }
+                        }
+                    } else {
+                        match parser.parse_model_item() {
+                            Ok(item) => items.push(item),
+                            Err(error) => {
+                                errors.extend(error.diagnostics().iter().cloned());
+                                parser.sync_to_model_body_boundary();
+                            }
                         }
                     }
                 }
-            }
-            Ok((kind, items, errors))
-        })?;
+                Ok((kind, items, errors))
+            })?;
 
         let close = match self.expect_closing(
             |kind| matches!(kind, TokenKind::RBrace),
@@ -302,24 +302,25 @@ impl Parser {
     fn parse_parameters_block(&mut self) -> Result<ParametersBlock, ParseError> {
         let start = self.bump().unwrap().span;
         let open = self.expect_simple(|kind| matches!(kind, TokenKind::LBrace), "`{`")?;
-        let (items, mut errors) = self.with_layout_boundary(LayoutBoundary::IdentItem, |parser| {
-            let mut items = Vec::new();
-            let mut errors = Vec::new();
-            while !parser.is_eof() && !parser.at(|kind| matches!(kind, TokenKind::RBrace)) {
-                match parser.parse_ident() {
-                    Ok(item) => items.push(item),
-                    Err(error) => {
-                        errors.extend(error.diagnostics().iter().cloned());
-                        parser.sync_to_layout_boundary();
-                        if parser.is_eof() {
-                            break;
+        let (items, mut errors) =
+            self.with_layout_boundary(LayoutBoundary::IdentItem, |parser| {
+                let mut items = Vec::new();
+                let mut errors = Vec::new();
+                while !parser.is_eof() && !parser.at(|kind| matches!(kind, TokenKind::RBrace)) {
+                    match parser.parse_ident() {
+                        Ok(item) => items.push(item),
+                        Err(error) => {
+                            errors.extend(error.diagnostics().iter().cloned());
+                            parser.sync_to_layout_boundary();
+                            if parser.is_eof() {
+                                break;
+                            }
                         }
                     }
+                    parser.consume_separators();
                 }
-                parser.consume_separators();
-            }
-            Ok((items, errors))
-        })?;
+                Ok((items, errors))
+            })?;
         let end = match self.expect_closing(
             |kind| matches!(kind, TokenKind::RBrace),
             "`}`",
@@ -386,41 +387,49 @@ impl Parser {
     fn parse_covariates_block(&mut self) -> Result<CovariatesBlock, ParseError> {
         let start = self.bump().unwrap().span;
         let open = self.expect_simple(|kind| matches!(kind, TokenKind::LBrace), "`{`")?;
-        let (items, mut errors) = self.with_layout_boundary(LayoutBoundary::IdentItem, |parser| {
-            let mut items = Vec::new();
-            let mut errors = Vec::new();
-            while !parser.is_eof() && !parser.at(|kind| matches!(kind, TokenKind::RBrace)) {
-                match (|| -> Result<CovariateDecl, ParseError> {
-                    let name = parser.parse_ident()?;
-                    let interpolation = if let Some(at) = parser.take_if(|kind| matches!(kind, TokenKind::At)) {
-                        Some(parser.parse_continuation_ident_after(&at, "interpolation identifier")?)
-                    } else {
-                        None
-                    };
-                    let span = if let Some(annotation) = &interpolation {
-                        name.span.join(annotation.span)
-                    } else {
-                        name.span
-                    };
-                    Ok(CovariateDecl {
-                        name,
-                        interpolation,
-                        span,
-                    })
-                })() {
-                    Ok(item) => items.push(item),
-                    Err(error) => {
-                        errors.extend(error.diagnostics().iter().cloned());
-                        parser.sync_to_layout_boundary();
-                        if parser.is_eof() {
-                            break;
+        let (items, mut errors) =
+            self.with_layout_boundary(LayoutBoundary::IdentItem, |parser| {
+                let mut items = Vec::new();
+                let mut errors = Vec::new();
+                while !parser.is_eof() && !parser.at(|kind| matches!(kind, TokenKind::RBrace)) {
+                    match (|| -> Result<CovariateDecl, ParseError> {
+                        let name = parser.parse_ident()?;
+                        let interpolation = if let Some(at) =
+                            parser.take_if(|kind| matches!(kind, TokenKind::At))
+                        {
+                            Some(
+                                parser.parse_continuation_ident_after(
+                                    &at,
+                                    "interpolation identifier",
+                                )?,
+                            )
+                        } else {
+                            None
+                        };
+                        let span = if let Some(annotation) = &interpolation {
+                            name.span.join(annotation.span)
+                        } else {
+                            name.span
+                        };
+                        Ok(CovariateDecl {
+                            name,
+                            interpolation,
+                            span,
+                        })
+                    })() {
+                        Ok(item) => items.push(item),
+                        Err(error) => {
+                            errors.extend(error.diagnostics().iter().cloned());
+                            parser.sync_to_layout_boundary();
+                            if parser.is_eof() {
+                                break;
+                            }
                         }
                     }
+                    parser.consume_separators();
                 }
-                parser.consume_separators();
-            }
-            Ok((items, errors))
-        })?;
+                Ok((items, errors))
+            })?;
         let end = match self.expect_closing(
             |kind| matches!(kind, TokenKind::RBrace),
             "`}`",
@@ -445,42 +454,44 @@ impl Parser {
     fn parse_states_block(&mut self) -> Result<StatesBlock, ParseError> {
         let start = self.bump().unwrap().span;
         let open = self.expect_simple(|kind| matches!(kind, TokenKind::LBrace), "`{`")?;
-        let (items, mut errors) = self.with_layout_boundary(LayoutBoundary::IdentItem, |parser| {
-            let mut items = Vec::new();
-            let mut errors = Vec::new();
-            while !parser.is_eof() && !parser.at(|kind| matches!(kind, TokenKind::RBrace)) {
-                match (|| -> Result<StateDecl, ParseError> {
-                    let name = parser.parse_ident()?;
-                    let mut span = name.span;
-                    let size = if let Some(open_bracket) = parser.take_if(|kind| matches!(kind, TokenKind::LBracket))
-                    {
-                        let expr = parser.parse_continuation_expr_after(&open_bracket)?;
-                        let close = parser.expect_closing(
-                            |kind| matches!(kind, TokenKind::RBracket),
-                            "`]`",
-                            open_bracket.span,
-                            format!("state size for `{}`", name.text),
-                        )?;
-                        span = span.join(close.span);
-                        Some(expr)
-                    } else {
-                        None
-                    };
-                    Ok(StateDecl { name, size, span })
-                })() {
-                    Ok(item) => items.push(item),
-                    Err(error) => {
-                        errors.extend(error.diagnostics().iter().cloned());
-                        parser.sync_to_layout_boundary();
-                        if parser.is_eof() {
-                            break;
+        let (items, mut errors) =
+            self.with_layout_boundary(LayoutBoundary::IdentItem, |parser| {
+                let mut items = Vec::new();
+                let mut errors = Vec::new();
+                while !parser.is_eof() && !parser.at(|kind| matches!(kind, TokenKind::RBrace)) {
+                    match (|| -> Result<StateDecl, ParseError> {
+                        let name = parser.parse_ident()?;
+                        let mut span = name.span;
+                        let size = if let Some(open_bracket) =
+                            parser.take_if(|kind| matches!(kind, TokenKind::LBracket))
+                        {
+                            let expr = parser.parse_continuation_expr_after(&open_bracket)?;
+                            let close = parser.expect_closing(
+                                |kind| matches!(kind, TokenKind::RBracket),
+                                "`]`",
+                                open_bracket.span,
+                                format!("state size for `{}`", name.text),
+                            )?;
+                            span = span.join(close.span);
+                            Some(expr)
+                        } else {
+                            None
+                        };
+                        Ok(StateDecl { name, size, span })
+                    })() {
+                        Ok(item) => items.push(item),
+                        Err(error) => {
+                            errors.extend(error.diagnostics().iter().cloned());
+                            parser.sync_to_layout_boundary();
+                            if parser.is_eof() {
+                                break;
+                            }
                         }
                     }
+                    parser.consume_separators();
                 }
-                parser.consume_separators();
-            }
-            Ok((items, errors))
-        })?;
+                Ok((items, errors))
+            })?;
         let end = match self.expect_closing(
             |kind| matches!(kind, TokenKind::RBrace),
             "`}`",
@@ -505,24 +516,25 @@ impl Parser {
     fn parse_routes_block(&mut self) -> Result<RoutesBlock, ParseError> {
         let start = self.bump().unwrap().span;
         let open = self.expect_simple(|kind| matches!(kind, TokenKind::LBrace), "`{`")?;
-        let (routes, mut errors) = self.with_layout_boundary(LayoutBoundary::RouteDecl, |parser| {
-            let mut routes = Vec::new();
-            let mut errors = Vec::new();
-            while !parser.is_eof() && !parser.at(|kind| matches!(kind, TokenKind::RBrace)) {
-                match parser.parse_route_decl() {
-                    Ok(route) => routes.push(route),
-                    Err(error) => {
-                        errors.extend(error.diagnostics().iter().cloned());
-                        parser.sync_to_layout_boundary();
-                        if parser.is_eof() {
-                            break;
+        let (routes, mut errors) =
+            self.with_layout_boundary(LayoutBoundary::RouteDecl, |parser| {
+                let mut routes = Vec::new();
+                let mut errors = Vec::new();
+                while !parser.is_eof() && !parser.at(|kind| matches!(kind, TokenKind::RBrace)) {
+                    match parser.parse_route_decl() {
+                        Ok(route) => routes.push(route),
+                        Err(error) => {
+                            errors.extend(error.diagnostics().iter().cloned());
+                            parser.sync_to_layout_boundary();
+                            if parser.is_eof() {
+                                break;
+                            }
                         }
                     }
+                    parser.consume_separators();
                 }
-                parser.consume_separators();
-            }
-            Ok((routes, errors))
-        })?;
+                Ok((routes, errors))
+            })?;
         let end = match self.expect_closing(
             |kind| matches!(kind, TokenKind::RBrace),
             "`}`",
@@ -555,39 +567,39 @@ impl Parser {
         let destination = self.parse_place()?;
         let mut end_span = destination.span;
         let mut properties = Vec::new();
-        if let Some(open) = self.take_if(|kind| matches!(kind, TokenKind::LBrace))
-        {
-            let (parsed_properties, mut errors) = self.with_layout_boundary(LayoutBoundary::Binding, |parser| {
-                let mut properties = Vec::new();
-                let mut errors = Vec::new();
-                while !parser.is_eof() && !parser.at(|kind| matches!(kind, TokenKind::RBrace)) {
-                    match parser.parse_binding() {
-                        Ok(property) => properties.push(property),
-                        Err(error) => {
-                            errors.extend(error.diagnostics().iter().cloned());
-                            parser.sync_to_layout_boundary();
-                            if parser.is_eof() {
-                                break;
+        if let Some(open) = self.take_if(|kind| matches!(kind, TokenKind::LBrace)) {
+            let (parsed_properties, mut errors) =
+                self.with_layout_boundary(LayoutBoundary::Binding, |parser| {
+                    let mut properties = Vec::new();
+                    let mut errors = Vec::new();
+                    while !parser.is_eof() && !parser.at(|kind| matches!(kind, TokenKind::RBrace)) {
+                        match parser.parse_binding() {
+                            Ok(property) => properties.push(property),
+                            Err(error) => {
+                                errors.extend(error.diagnostics().iter().cloned());
+                                parser.sync_to_layout_boundary();
+                                if parser.is_eof() {
+                                    break;
+                                }
                             }
                         }
+                        parser.consume_separators();
                     }
-                    parser.consume_separators();
-                }
-                Ok((properties, errors))
-            })?;
+                    Ok((properties, errors))
+                })?;
             properties = parsed_properties;
             end_span = match self.expect_closing(
-                    |kind| matches!(kind, TokenKind::RBrace),
-                    "`}`",
-                    open.span,
-                    format!("property block for route `{}`", input.text),
-                ) {
-                    Ok(end) => end.span,
-                    Err(error) => {
-                        errors.extend(error.diagnostics().iter().cloned());
-                        return Err(ParseError::from_diagnostics(errors));
-                    }
-                };
+                |kind| matches!(kind, TokenKind::RBrace),
+                "`}`",
+                open.span,
+                format!("property block for route `{}`", input.text),
+            ) {
+                Ok(end) => end.span,
+                Err(error) => {
+                    errors.extend(error.diagnostics().iter().cloned());
+                    return Err(ParseError::from_diagnostics(errors));
+                }
+            };
             if !errors.is_empty() {
                 return Err(ParseError::from_diagnostics(errors));
             }
@@ -642,24 +654,25 @@ impl Parser {
     fn parse_statement_block(&mut self, name: &str) -> Result<StatementBlock, ParseError> {
         let start = self.bump().unwrap().span;
         let open = self.expect_simple(|kind| matches!(kind, TokenKind::LBrace), "`{`")?;
-        let (statements, mut errors) = self.with_layout_boundary(LayoutBoundary::Statement, |parser| {
-            let mut statements = Vec::new();
-            let mut errors = Vec::new();
-            while !parser.is_eof() && !parser.at(|kind| matches!(kind, TokenKind::RBrace)) {
-                match parser.parse_stmt() {
-                    Ok(statement) => statements.push(statement),
-                    Err(error) => {
-                        errors.extend(error.diagnostics().iter().cloned());
-                        parser.sync_to_statement_boundary();
-                        if parser.is_eof() {
-                            break;
+        let (statements, mut errors) =
+            self.with_layout_boundary(LayoutBoundary::Statement, |parser| {
+                let mut statements = Vec::new();
+                let mut errors = Vec::new();
+                while !parser.is_eof() && !parser.at(|kind| matches!(kind, TokenKind::RBrace)) {
+                    match parser.parse_stmt() {
+                        Ok(statement) => statements.push(statement),
+                        Err(error) => {
+                            errors.extend(error.diagnostics().iter().cloned());
+                            parser.sync_to_statement_boundary();
+                            if parser.is_eof() {
+                                break;
+                            }
                         }
                     }
+                    parser.consume_separators();
                 }
-                parser.consume_separators();
-            }
-            Ok((statements, errors))
-        })?;
+                Ok((statements, errors))
+            })?;
         let end = match self.expect_closing(
             |kind| matches!(kind, TokenKind::RBrace),
             "`}`",
@@ -776,24 +789,25 @@ impl Parser {
 
     fn parse_stmt_body(&mut self) -> Result<Vec<Stmt>, ParseError> {
         let open = self.expect_simple(|kind| matches!(kind, TokenKind::LBrace), "`{`")?;
-        let (statements, mut errors) = self.with_layout_boundary(LayoutBoundary::Statement, |parser| {
-            let mut statements = Vec::new();
-            let mut errors = Vec::new();
-            while !parser.is_eof() && !parser.at(|kind| matches!(kind, TokenKind::RBrace)) {
-                match parser.parse_stmt() {
-                    Ok(statement) => statements.push(statement),
-                    Err(error) => {
-                        errors.extend(error.diagnostics().iter().cloned());
-                        parser.sync_to_statement_boundary();
-                        if parser.is_eof() {
-                            break;
+        let (statements, mut errors) =
+            self.with_layout_boundary(LayoutBoundary::Statement, |parser| {
+                let mut statements = Vec::new();
+                let mut errors = Vec::new();
+                while !parser.is_eof() && !parser.at(|kind| matches!(kind, TokenKind::RBrace)) {
+                    match parser.parse_stmt() {
+                        Ok(statement) => statements.push(statement),
+                        Err(error) => {
+                            errors.extend(error.diagnostics().iter().cloned());
+                            parser.sync_to_statement_boundary();
+                            if parser.is_eof() {
+                                break;
+                            }
                         }
                     }
+                    parser.consume_separators();
                 }
-                parser.consume_separators();
-            }
-            Ok((statements, errors))
-        })?;
+                Ok((statements, errors))
+            })?;
         if let Err(error) = self.expect_closing(
             |kind| matches!(kind, TokenKind::RBrace),
             "`}`",
@@ -822,8 +836,7 @@ impl Parser {
     fn parse_place(&mut self) -> Result<Place, ParseError> {
         let name = self.parse_ident()?;
         let mut span = name.span;
-        let index = if let Some(open) = self.take_if(|kind| matches!(kind, TokenKind::LBracket))
-        {
+        let index = if let Some(open) = self.take_if(|kind| matches!(kind, TokenKind::LBracket)) {
             let expr = self.parse_continuation_expr_after(&open)?;
             let close = self.expect_closing(
                 |kind| matches!(kind, TokenKind::RBracket),
@@ -842,8 +855,7 @@ impl Parser {
     fn parse_assign_target(&mut self) -> Result<AssignTarget, ParseError> {
         let name = self.parse_ident()?;
         let mut span = name.span;
-        let kind = if let Some(open) = self.take_if(|kind| matches!(kind, TokenKind::LParen))
-        {
+        let kind = if let Some(open) = self.take_if(|kind| matches!(kind, TokenKind::LParen)) {
             let args = self.parse_expr_list(&open, TokenKindMatcher::RPAREN)?;
             let close = self.expect_closing(
                 |kind| matches!(kind, TokenKind::RParen),
@@ -853,8 +865,7 @@ impl Parser {
             )?;
             span = span.join(close.span);
             AssignTargetKind::Call { callee: name, args }
-        } else if let Some(open) = self.take_if(|kind| matches!(kind, TokenKind::LBracket))
-        {
+        } else if let Some(open) = self.take_if(|kind| matches!(kind, TokenKind::LBracket)) {
             let index = self.parse_continuation_expr_after(&open)?;
             let close = self.expect_closing(
                 |kind| matches!(kind, TokenKind::RBracket),
@@ -979,8 +990,7 @@ impl Parser {
     fn parse_postfix_expr(&mut self) -> Result<Expr, ParseError> {
         let mut expr = self.parse_primary_expr()?;
         loop {
-            if let Some(open) = self.take_if(|kind| matches!(kind, TokenKind::LBracket))
-            {
+            if let Some(open) = self.take_if(|kind| matches!(kind, TokenKind::LBracket)) {
                 let index = self.parse_continuation_expr_after(&open)?;
                 let close = self.expect_closing(
                     |kind| matches!(kind, TokenKind::RBracket),
@@ -999,8 +1009,7 @@ impl Parser {
                 continue;
             }
 
-            if let Some(open) = self.take_if(|kind| matches!(kind, TokenKind::LParen))
-            {
+            if let Some(open) = self.take_if(|kind| matches!(kind, TokenKind::LParen)) {
                 let callee = match expr.kind {
                     ExprKind::Name(name) => name,
                     _ => {
@@ -1050,9 +1059,12 @@ impl Parser {
             }),
             TokenKind::LParen => {
                 if self.at(|kind| matches!(kind, TokenKind::RParen)) {
-                    return Err(ParseError::new("expected expression inside `(` ... `)`", token.span)
-                        .with_context_label(token.span, "`(` group starts here")
-                        .with_help("add an expression between `(` and `)`"));
+                    return Err(ParseError::new(
+                        "expected expression inside `(` ... `)`",
+                        token.span,
+                    )
+                    .with_context_label(token.span, "`(` group starts here")
+                    .with_help("add an expression between `(` and `)`"));
                 }
                 let expr = self.parse_continuation_expr_after(&token)?;
                 let close = self.expect_closing(
@@ -1086,8 +1098,7 @@ impl Parser {
         let mut leader = open.clone();
         loop {
             args.push(self.parse_continuation_expr_after(&leader)?);
-            if let Some(comma) = self.take_if(|kind| matches!(kind, TokenKind::Comma))
-            {
+            if let Some(comma) = self.take_if(|kind| matches!(kind, TokenKind::Comma)) {
                 leader = comma;
                 continue;
             }
@@ -1247,7 +1258,10 @@ impl Parser {
                 self.current_boundary_subject()
             ))
         } else {
-            error.with_help(format!("add an expression after {}", operator.kind.describe()))
+            error.with_help(format!(
+                "add an expression after {}",
+                operator.kind.describe()
+            ))
         }
     }
 
@@ -1317,21 +1331,28 @@ impl Parser {
     }
 
     fn line_starts_named_assignment(&self, index: usize) -> bool {
-        matches!(self.tokens.get(index).map(|token| &token.kind), Some(TokenKind::Ident(_)))
-            && self
-                .next_same_line_index(index)
-                .is_some_and(|next| matches!(self.tokens[next].kind, TokenKind::Eq))
+        matches!(
+            self.tokens.get(index).map(|token| &token.kind),
+            Some(TokenKind::Ident(_))
+        ) && self
+            .next_same_line_index(index)
+            .is_some_and(|next| matches!(self.tokens[next].kind, TokenKind::Eq))
     }
 
     fn line_starts_route_decl(&self, index: usize) -> bool {
-        matches!(self.tokens.get(index).map(|token| &token.kind), Some(TokenKind::Ident(_)))
-            && self
-                .next_same_line_index(index)
-                .is_some_and(|next| matches!(self.tokens[next].kind, TokenKind::Arrow))
+        matches!(
+            self.tokens.get(index).map(|token| &token.kind),
+            Some(TokenKind::Ident(_))
+        ) && self
+            .next_same_line_index(index)
+            .is_some_and(|next| matches!(self.tokens[next].kind, TokenKind::Arrow))
     }
 
     fn line_starts_assignment_target(&self, index: usize) -> bool {
-        if !matches!(self.tokens.get(index).map(|token| &token.kind), Some(TokenKind::Ident(_))) {
+        if !matches!(
+            self.tokens.get(index).map(|token| &token.kind),
+            Some(TokenKind::Ident(_))
+        ) {
             return false;
         }
 
@@ -1346,7 +1367,11 @@ impl Parser {
                 .and_then(|close| self.next_same_line_index(close))
                 .is_some_and(|after| matches!(self.tokens[after].kind, TokenKind::Eq)),
             TokenKind::LBracket => self
-                .find_matching_same_line(next, TokenKindMatcher::LBRACKET, TokenKindMatcher::RBRACKET)
+                .find_matching_same_line(
+                    next,
+                    TokenKindMatcher::LBRACKET,
+                    TokenKindMatcher::RBRACKET,
+                )
                 .and_then(|close| self.next_same_line_index(close))
                 .is_some_and(|after| matches!(self.tokens[after].kind, TokenKind::Eq)),
             _ => false,
@@ -1549,7 +1574,7 @@ mod tests {
 
     #[test]
     fn parses_proposal_two_corpus() {
-        let src = include_str!("../../dsl-proposals/02-structured-block-imperative.dsl");
+        let src = include_str!("../../tests/fixtures/dsl/02-structured-block-imperative.dsl");
         let module = parse_module(src).expect("proposal 2 fixture parses");
         assert_eq!(module.models.len(), 4);
         assert_eq!(module.models[0].name.text, "one_cmt_oral_iv");
@@ -1574,7 +1599,7 @@ mod tests {
 
     #[test]
     fn round_trips_proposal_two_corpus() {
-        let src = include_str!("../../dsl-proposals/02-structured-block-imperative.dsl");
+        let src = include_str!("../../tests/fixtures/dsl/02-structured-block-imperative.dsl");
         let parsed = parse_module(src).expect("proposal 2 fixture parses");
         let formatted = parsed.to_string();
         let reparsed = parse_module(&formatted).expect("formatted DSL reparses");
@@ -1583,8 +1608,9 @@ mod tests {
 
     #[test]
     fn desugars_authoring_fixture_into_canonical_ast() {
-        let src = include_str!("../../dsl-proposals/04-user-recommended_style.dsi");
-        let expected = include_str!("../../dsl-proposals/04-user-recommended_style.desugared.dsl");
+        let src = include_str!("../../tests/fixtures/dsl/04-user-recommended_style.dsi");
+        let expected =
+            include_str!("../../tests/fixtures/dsl/04-user-recommended_style.desugared.dsl");
 
         let parsed = parse_module(src).expect("proposal 4 fixture parses");
         let expected = parse_module(expected).expect("canonical fixture parses");
@@ -1605,6 +1631,75 @@ out(cp) = gut ~ continuous()
     }
 
     #[test]
+    fn authoring_output_annotation_is_optional() {
+        let annotated = r#"
+model = optional_output_annotation
+kind = ode
+states = central
+ddt(central) = 0
+out(cp) = central ~ continuous()
+"#;
+        let plain = r#"
+model = optional_output_annotation
+kind = ode
+states = central
+ddt(central) = 0
+out(cp) = central
+"#;
+
+        let annotated = parse_module(annotated).expect("annotated authoring model parses");
+        let plain = parse_module(plain).expect("plain authoring model parses");
+
+        assert_eq!(annotated.to_string(), plain.to_string());
+    }
+
+    #[test]
+    fn authoring_dx_and_ddt_lower_equivalently() {
+        let dx_src = r#"
+model = derivative_alias
+kind = ode
+states = central
+dx(central) = -ke * central
+out(cp) = central
+"#;
+        let ddt_src = r#"
+model = derivative_alias
+kind = ode
+states = central
+ddt(central) = -ke * central
+out(cp) = central
+"#;
+
+        let dx_model = parse_module(dx_src).expect("dx authoring model parses");
+        let ddt_model = parse_module(ddt_src).expect("ddt authoring model parses");
+
+        assert_eq!(dx_model.to_string(), ddt_model.to_string());
+    }
+
+    #[test]
+    fn authoring_rejects_out_target_not_in_declared_outputs() {
+        let src = r#"
+model = bimodal_ke
+kind = ode
+params = ke, v
+states = central
+outputs = cpa
+infusion(iv) -> central
+ddt(central) = -ke * central
+out(cp) = central / v ~ continuous()
+"#;
+
+        let err = parse_model(src).expect_err("undeclared output target must fail");
+        let rendered = err.render(src);
+
+        assert!(
+            rendered.contains("output `cp` is not declared in `outputs = ...`"),
+            "{}",
+            rendered
+        );
+    }
+
+    #[test]
     fn reports_route_syntax_error() {
         let src = "model broken { kind ode routes { oral depot } }";
         let err = parse_module(src).expect_err("missing route arrow should fail");
@@ -1621,8 +1716,16 @@ out(cp) = gut ~ continuous()
         let err = parse_module(src).expect_err("missing closing bracket should fail");
         let rendered = err.render(src);
         assert!(rendered.contains("expected `]`"), "{}", rendered);
-        assert!(rendered.contains("state size for `gut` opened here"), "{}", rendered);
-        assert!(rendered.contains("close state size for `gut` with `]`"), "{}", rendered);
+        assert!(
+            rendered.contains("state size for `gut` opened here"),
+            "{}",
+            rendered
+        );
+        assert!(
+            rendered.contains("close state size for `gut` with `]`"),
+            "{}",
+            rendered
+        );
     }
 
     #[test]
@@ -1639,7 +1742,11 @@ out(cp) = gut ~ continuous()
             "{}",
             rendered
         );
-        assert!(!rendered.contains("must contain at least one statement"), "{}", rendered);
+        assert!(
+            !rendered.contains("must contain at least one statement"),
+            "{}",
+            rendered
+        );
     }
 
     #[test]
@@ -1656,7 +1763,8 @@ model broken {
 }
 "#;
 
-        let err = parse_module(src).expect_err("newline-delimited statement errors should be reported");
+        let err =
+            parse_module(src).expect_err("newline-delimited statement errors should be reported");
         let rendered = err.render(src);
         assert_eq!(err.diagnostics().len(), 2, "{}", rendered);
         assert_eq!(
@@ -1667,7 +1775,11 @@ model broken {
             "{}",
             rendered
         );
-        assert!(!rendered.contains("expected identifier, found `=`"), "{}", rendered);
+        assert!(
+            !rendered.contains("expected identifier, found `=`"),
+            "{}",
+            rendered
+        );
     }
 
     #[test]
@@ -1687,7 +1799,8 @@ model broken {
 }
 "#;
 
-        let err = parse_module(src).expect_err("newline-delimited binding errors should be reported");
+        let err =
+            parse_module(src).expect_err("newline-delimited binding errors should be reported");
         let rendered = err.render(src);
         assert_eq!(err.diagnostics().len(), 2, "{}", rendered);
         assert_eq!(
@@ -1698,7 +1811,11 @@ model broken {
             "{}",
             rendered
         );
-        assert!(!rendered.contains("expected identifier, found `=`"), "{}", rendered);
+        assert!(
+            !rendered.contains("expected identifier, found `=`"),
+            "{}",
+            rendered
+        );
     }
 
     #[test]
@@ -1719,7 +1836,11 @@ model broken {
         let err = parse_module(src).expect_err("route destination recovery should fail cleanly");
         let rendered = err.render(src);
         assert_eq!(err.diagnostics().len(), 1, "{}", rendered);
-        assert!(rendered.contains("expected route destination after `->`"), "{}", rendered);
+        assert!(
+            rendered.contains("expected route destination after `->`"),
+            "{}",
+            rendered
+        );
         assert!(rendered.contains("next route starts here"), "{}", rendered);
     }
 
@@ -1729,8 +1850,16 @@ model broken {
         let err = parse_module(src).expect_err("multiple model-body errors should be reported");
         let rendered = err.render(src);
         assert_eq!(err.diagnostics().len(), 2, "{}", rendered);
-        assert!(rendered.contains("unexpected token identifier `nonsense` in model body"), "{}", rendered);
-        assert!(rendered.contains("unexpected token identifier `what` in model body"), "{}", rendered);
+        assert!(
+            rendered.contains("unexpected token identifier `nonsense` in model body"),
+            "{}",
+            rendered
+        );
+        assert!(
+            rendered.contains("unexpected token identifier `what` in model body"),
+            "{}",
+            rendered
+        );
     }
 
     #[test]

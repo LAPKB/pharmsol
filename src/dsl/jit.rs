@@ -85,25 +85,25 @@ pub type CompiledJitModel = CompiledNativeModel;
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct JitCompileError {
-    diagnostic: Diagnostic,
+    diagnostic: Box<Diagnostic>,
     source: Option<Arc<str>>,
 }
 
 impl JitCompileError {
     fn new(message: impl Into<String>, span: Option<Span>) -> Self {
         Self {
-            diagnostic: Diagnostic::error(
+            diagnostic: Box::new(Diagnostic::error(
                 DSL_BACKEND_GENERIC,
                 DiagnosticPhase::Backend,
                 message,
                 span.unwrap_or_default(),
-            ),
+            )),
             source: None,
         }
     }
 
     pub fn diagnostic(&self) -> &Diagnostic {
-        &self.diagnostic
+        self.diagnostic.as_ref()
     }
 
     pub fn render(&self, src: &str) -> String {
@@ -114,7 +114,7 @@ impl JitCompileError {
         DiagnosticReport::from_diagnostics(
             source_name,
             self.source(),
-            std::slice::from_ref(&self.diagnostic),
+            std::slice::from_ref(self.diagnostic.as_ref()),
         )
     }
 
@@ -410,6 +410,7 @@ fn compile_role_kernel(
     Ok(Some(function_id))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_statement_kernel(
     module: &mut JITModule,
     ctx: &mut cranelift::codegen::Context,
@@ -1294,7 +1295,7 @@ mod tests {
     use diffsol::Vector;
 
     fn load_proposal_model(name: &str) -> ExecutionModel {
-        let source = include_str!("../../dsl-proposals/02-structured-block-imperative.dsl");
+        let source = include_str!("../../tests/fixtures/dsl/02-structured-block-imperative.dsl");
         let parsed = parse_module(source).expect("parse proposal module");
         let typed = analyze_module(&parsed).expect("analyze proposal module");
         let model = typed
@@ -1307,7 +1308,7 @@ mod tests {
 
     #[test]
     fn jit_compile_error_exposes_backend_diagnostic_report() {
-        let source = include_str!("../../dsl-proposals/02-structured-block-imperative.dsl");
+        let source = include_str!("../../tests/fixtures/dsl/02-structured-block-imperative.dsl");
         let model = load_proposal_model("one_cmt_oral_iv");
         let error = compile_sde_model_to_jit(&model)
             .expect_err("ODE model should not compile through the SDE JIT entrypoint")
@@ -1349,10 +1350,10 @@ mod tests {
         let mut derived = vec![0.0; model.abi.derived_buffer.len];
         let mut dx = vec![0.0; model.abi.state_buffer.len];
         let mut out = vec![0.0; model.abi.output_buffer.len];
-        let states = vec![100.0, 0.0];
-        let params = vec![1.0, 5.0, 50.0, 1.5, 0.8];
-        let covariates = vec![70.0];
-        let routes = vec![0.0, 0.0];
+        let states = [100.0, 0.0];
+        let params = [1.0, 5.0, 50.0, 1.5, 0.8];
+        let covariates = [70.0];
+        let routes = [0.0, 0.0];
 
         let derive = artifact.derive.expect("derive kernel present");
         unsafe {

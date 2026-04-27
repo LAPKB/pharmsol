@@ -1,6 +1,7 @@
 //! Run with:
 //! cargo run --example proposal_dsl_runtime_jit --features dsl-jit
 
+#[cfg(feature = "dsl-jit")]
 const ODE_SOURCE: &str = r#"
 model = example_ode
 kind = ode
@@ -26,6 +27,7 @@ dx(central) = ka * depot - ke * central
 out(cp) = central / v ~ continuous()
 "#;
 
+#[cfg(feature = "dsl-jit")]
 const ANALYTICAL_SOURCE: &str = r#"
 model = example_analytical
 kind = analytical
@@ -44,6 +46,7 @@ kernel = one_compartment_with_absorption
 out(cp) = central / v ~ continuous()
 "#;
 
+#[cfg(feature = "dsl-jit")]
 const SDE_SOURCE: &str = r#"
 model = example_sde
 kind = sde

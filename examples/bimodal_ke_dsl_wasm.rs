@@ -24,10 +24,8 @@ out(cp) = central / v ~ continuous()
     let support_point = [1.2, 50.0];
 
     // 1. Compile the model to in-memory WASM bytes, then load them directly.
-    let wasm_bytes = pharmsol::dsl::compile_module_source_to_wasm_bytes(
-        model_source,
-        Some("bimodal_ke"),
-    )?;
+    let wasm_bytes =
+        pharmsol::dsl::compile_module_source_to_wasm_bytes(model_source, Some("bimodal_ke"))?;
     let model = pharmsol::dsl::load_runtime_wasm_bytes(&wasm_bytes)?;
 
     // 2. Resolve the route and output indices declared by the model.

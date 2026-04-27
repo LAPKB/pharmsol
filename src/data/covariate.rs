@@ -76,7 +76,7 @@ impl CovariateSegment {
     /// Check if a given time is within this segment's interval
     #[inline]
     fn in_interval(&self, time: f64) -> bool {
-        self.from <= time && self.to.map_or(true, |to| time < to)
+        self.from <= time && self.to.is_none_or(|to| time < to)
     }
 }
 
@@ -699,7 +699,7 @@ mod tests {
 
         // Get the first subject
         let binding = data.subjects();
-        let subject1 = binding.get(0).expect("Should have at least one subject");
+        let subject1 = binding.first().expect("Should have at least one subject");
 
         // Get the covariates for subject 1
         let covariates = subject1.occasions().first().unwrap().covariates();

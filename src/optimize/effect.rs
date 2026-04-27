@@ -138,7 +138,7 @@ fn find_m0(afinal: f64, b: f64, alpha: f64, h1: f64, h2: f64) -> f64 {
         }
 
         let xmp = top / denom;
-        xm = xm + xmp * del_a;
+        xm += xmp * del_a;
 
         if !(xm.is_finite() && xm > 0.0) {
             return -1.0;
@@ -148,6 +148,11 @@ fn find_m0(afinal: f64, b: f64, alpha: f64, h1: f64, h2: f64) -> f64 {
     }
 
     xm
+}
+
+#[inline]
+fn effect_from_xm(xm: f64) -> f64 {
+    xm / (xm + 1.0)
 }
 
 /// Computes the effect metric for a dual-site pharmacodynamic model.
@@ -208,86 +213,79 @@ fn find_m0(afinal: f64, b: f64, alpha: f64, h1: f64, h2: f64) -> f64 {
 pub fn get_e2(a: f64, b: f64, w: f64, h1: f64, h2: f64, alpha_s: f64) -> f64 {
     // trivial cases
     if a.abs() < 1.0e-12 && b.abs() < 1.0e-12 {
-        return 0.0;
-    }
-
-    // precompute
-    let xx = (h1 + h2) / 2.0;
-    let bm0 = BestM0 {
-        a,
-        b,
-        w,
-        h1,
-        h2,
-        xx,
-    };
-
-    // if one coefficient negative/zero, return simple closed-form estimate
-    if b <= 0.0 && a > 0.0 {
-        let xm0best = a.powf(1.0 / h1);
-        return xm0best / (xm0best + 1.0);
-    }
-    if a <= 0.0 && b > 0.0 {
-        let xm0best = b.powf(1.0 / h2);
-        return xm0best / (xm0best + 1.0);
-    }
-
-    // both positive: do optimization in log-space
-    // choose a safe initial guess > 0
-    let xm_guess = if b > 0.0 {
-        b.powf(1.0 / h2)
-    } else if a > 0.0 {
-        a.powf(1.0 / h1)
+        0.0
     } else {
-        1.0
-    };
-    let start_log = xm_guess.max(1e-12).ln();
-    let step_log = 0.1_f64; // ~10% step in xm
+        // precompute
+        let xx = (h1 + h2) / 2.0;
+        let bm0 = BestM0 {
+            a,
+            b,
+            w,
+            h1,
+            h2,
+            xx,
+        };
 
-    // first optimization from small start
-    match bm0.get_best(start_log, step_log) {
-        Ok((xm0best1, valmin1, conv1)) => {
-            if !conv1 {
-                // we still keep the answer if cost is tiny
-                if valmin1 < 1e-10 {
-                    return xm0best1 / (xm0best1 + 1.0);
-                }
-                // fallback to iterative estimator
-                let xm0est = find_m0(a, b, alpha_s, h1, h2);
-                if xm0est < 0.0 {
-                    return xm0best1 / (xm0best1 + 1.0);
-                }
-                // refine from bg estimate:
-                let start_log2 = xm0est.ln();
-                if let Ok((xm0best2, valmin2, conv2)) = bm0.get_best(start_log2, 0.1) {
-                    if conv2 && valmin2 < valmin1 {
-                        return xm0best2 / (xm0best2 + 1.0);
+        // if one coefficient negative/zero, return simple closed-form estimate
+        if b <= 0.0 && a > 0.0 {
+            effect_from_xm(a.powf(1.0 / h1))
+        } else if a <= 0.0 && b > 0.0 {
+            effect_from_xm(b.powf(1.0 / h2))
+        } else {
+            // both positive: do optimization in log-space
+            // choose a safe initial guess > 0
+            let xm_guess = if b > 0.0 {
+                b.powf(1.0 / h2)
+            } else if a > 0.0 {
+                a.powf(1.0 / h1)
+            } else {
+                1.0
+            };
+            let start_log = xm_guess.max(1e-12).ln();
+            let step_log = 0.1_f64; // ~10% step in xm
+
+            // first optimization from small start
+            match bm0.get_best(start_log, step_log) {
+                Ok((xm0best1, valmin1, conv1)) => {
+                    if !conv1 {
+                        // we still keep the answer if cost is tiny
+                        if valmin1 < 1e-10 {
+                            effect_from_xm(xm0best1)
+                        } else {
+                            // fallback to iterative estimator
+                            let xm0est = find_m0(a, b, alpha_s, h1, h2);
+                            if xm0est < 0.0 {
+                                effect_from_xm(xm0best1)
+                            } else {
+                                // refine from bg estimate:
+                                let start_log2 = xm0est.ln();
+                                match bm0.get_best(start_log2, 0.1) {
+                                    Ok((xm0best2, valmin2, conv2))
+                                        if conv2 && valmin2 < valmin1 =>
+                                    {
+                                        effect_from_xm(xm0best2)
+                                    }
+                                    _ => effect_from_xm(xm0best1),
+                                }
+                            }
+                        }
                     } else {
-                        return xm0best1 / (xm0best1 + 1.0);
+                        effect_from_xm(xm0best1)
                     }
-                } else {
-                    return xm0best1 / (xm0best1 + 1.0);
                 }
-            } else {
-                return xm0best1 / (xm0best1 + 1.0);
-            }
-        }
-        Err(_) => {
-            // if optimizer failed, fallback to numerical estimator
-            let xm0est = find_m0(a, b, alpha_s, h1, h2);
-            if xm0est > 0.0 {
-                return xm0est / (xm0est + 1.0);
-            } else {
-                // last resort: simple closed form (if possible)
-                if a > 0.0 {
-                    let xm0best = a.powf(1.0 / h1);
-                    return xm0best / (xm0best + 1.0);
+                Err(_) => {
+                    // if optimizer failed, fallback to numerical estimator
+                    let xm0est = find_m0(a, b, alpha_s, h1, h2);
+                    if xm0est > 0.0 {
+                        effect_from_xm(xm0est)
+                    } else if a > 0.0 {
+                        effect_from_xm(a.powf(1.0 / h1))
+                    } else if b > 0.0 {
+                        effect_from_xm(b.powf(1.0 / h2))
+                    } else {
+                        0.0
+                    }
                 }
-                if b > 0.0 {
-                    let xm0best = b.powf(1.0 / h2);
-                    return xm0best / (xm0best + 1.0);
-                }
-                return 0.0;
             }
         }
     }

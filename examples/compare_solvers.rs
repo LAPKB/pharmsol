@@ -98,21 +98,21 @@ fn main() {
     let col_w = labels.iter().map(|l| l.len().max(8)).collect::<Vec<_>>();
 
     print!("  {:>6}", "t");
-    for (j, label) in labels.iter().enumerate() {
-        print!("  {:>w$}", label, w = col_w[j]);
+    for (label, width) in labels.iter().zip(&col_w) {
+        print!("  {:>w$}", label, w = *width);
     }
     println!();
 
     print!("  {:>6}", "──────");
-    for j in 0..labels.len() {
-        print!("  {:─>w$}", "", w = col_w[j]);
+    for width in &col_w {
+        print!("  {:─>w$}", "", w = *width);
     }
     println!();
 
     for (k, t) in obs_times.iter().enumerate() {
         print!("  {:>6.1}", t);
-        for (j, (_, _, preds)) in rows.iter().enumerate() {
-            print!("  {:>w$.4}", preds[k], w = col_w[j]);
+        for ((_, _, preds), width) in rows.iter().zip(&col_w) {
+            print!("  {:>w$.4}", preds[k], w = *width);
         }
         println!();
     }

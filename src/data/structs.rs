@@ -313,17 +313,17 @@ impl<'a> IntoIterator for &'a mut Data {
     }
 }
 
-impl Into<Data> for Vec<Subject> {
+impl From<Vec<Subject>> for Data {
     /// Convert a vector of subjects into a Data object
-    fn into(self) -> Data {
-        Data::new(self)
+    fn from(subjects: Vec<Subject>) -> Data {
+        Data::new(subjects)
     }
 }
 
-impl Into<Data> for Subject {
+impl From<Subject> for Data {
     /// Convert a subject into a Data object
-    fn into(self) -> Data {
-        Data::new(vec![self])
+    fn from(subject: Subject) -> Data {
+        Data::new(vec![subject])
     }
 }
 
@@ -657,27 +657,19 @@ impl Occasion {
     /// # Arguments
     ///
     /// * `reorder` - Optional tuple containing references to (Fa, Lag, support point, covariates) for adjustments
-    /// * `ignore` - If true, filter out events marked as ignore
-    /// * `mappings` - Optional reference to an [equation::Mapper] for input remapping
-    ///
     /// # Returns
     ///
-    /// Vector of events, potentially filtered and with times adjusted for lag and bioavailability
+    /// Vector of events with times adjusted for lag and bioavailability.
     pub(crate) fn process_events(
         &self,
         reorder: Option<(&Fa, &Lag, &[f64], &Covariates)>,
-        ignore: bool,
+        _ignore: bool,
     ) -> Vec<Event> {
         let mut occ = self.clone();
         occ.add_lagtime(reorder);
         occ.add_bioavailability(reorder);
 
-        // Filter out events that are marked as ignore
-        if ignore {
-            occ.events.iter().cloned().collect()
-        } else {
-            occ.events.clone()
-        }
+        occ.events
     }
 
     /// Get a reference to the  covariates for this occasion
@@ -774,10 +766,10 @@ impl Occasion {
         //TODO this can be pre-computed when the struct is initially created
         self.events
             .iter()
-            .filter_map(|event| match event {
-                Event::Observation(observation) => Some(observation.time()),
-                Event::Bolus(bolus) => Some(bolus.time()),
-                Event::Infusion(infusion) => Some(infusion.time()),
+            .map(|event| match event {
+                Event::Observation(observation) => observation.time(),
+                Event::Bolus(bolus) => bolus.time(),
+                Event::Infusion(infusion) => infusion.time(),
             })
             .min_by(|a, b| a.partial_cmp(b).unwrap())
             .unwrap_or(0.0)
@@ -1304,7 +1296,6 @@ mod tests {
         }
         assert_eq!(count, 3);
 
-        let mut occasion = occasion;
         for event in occasion.iter_mut() {
             event.inc_time(1.0);
         }

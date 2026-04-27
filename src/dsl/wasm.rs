@@ -84,19 +84,23 @@ struct WasmBuffer {
     len: usize,
 }
 
+type WasmKernelParams = (f64, i32, i32, i32, i32, i32, i32);
+type WasmKernelFunc = TypedFunc<WasmKernelParams, ()>;
+type WasmSessionPool = Mutex<Vec<WasmKernelSession>>;
+
 struct WasmKernelSession {
     info: NativeModelInfo,
     store: Store<()>,
     memory: Memory,
     free: TypedFunc<(i32, i32), ()>,
-    derive: Option<TypedFunc<(f64, i32, i32, i32, i32, i32, i32), ()>>,
-    dynamics: Option<TypedFunc<(f64, i32, i32, i32, i32, i32, i32), ()>>,
-    outputs: TypedFunc<(f64, i32, i32, i32, i32, i32, i32), ()>,
-    init: Option<TypedFunc<(f64, i32, i32, i32, i32, i32, i32), ()>>,
-    drift: Option<TypedFunc<(f64, i32, i32, i32, i32, i32, i32), ()>>,
-    diffusion: Option<TypedFunc<(f64, i32, i32, i32, i32, i32, i32), ()>>,
-    route_lag: Option<TypedFunc<(f64, i32, i32, i32, i32, i32, i32), ()>>,
-    route_bioavailability: Option<TypedFunc<(f64, i32, i32, i32, i32, i32, i32), ()>>,
+    derive: Option<WasmKernelFunc>,
+    dynamics: Option<WasmKernelFunc>,
+    outputs: WasmKernelFunc,
+    init: Option<WasmKernelFunc>,
+    drift: Option<WasmKernelFunc>,
+    diffusion: Option<WasmKernelFunc>,
+    route_lag: Option<WasmKernelFunc>,
+    route_bioavailability: Option<WasmKernelFunc>,
     states: WasmBuffer,
     params: WasmBuffer,
     covariates: WasmBuffer,
@@ -107,7 +111,7 @@ struct WasmKernelSession {
 
 struct PooledWasmKernelSession<'a> {
     session: Option<WasmKernelSession>,
-    pool: &'a Mutex<Vec<WasmKernelSession>>,
+    pool: &'a WasmSessionPool,
 }
 
 impl WasmKernelSession {
@@ -201,10 +205,7 @@ impl WasmKernelSession {
         })
     }
 
-    fn kernel(
-        &self,
-        role: KernelRole,
-    ) -> Result<TypedFunc<(f64, i32, i32, i32, i32, i32, i32), ()>, PharmsolError> {
+    fn kernel(&self, role: KernelRole) -> Result<WasmKernelFunc, PharmsolError> {
         match role {
             KernelRole::Derive => self.derive.clone(),
             KernelRole::Dynamics => self.dynamics.clone(),
@@ -755,9 +756,8 @@ mod tests {
     use wasmtime::{Engine, Instance, Memory, Module, Store, TypedFunc};
 
     fn load_proposal_model(name: &str) -> ExecutionModel {
-        let source = std::fs::read_to_string("dsl-proposals/02-structured-block-imperative.dsl")
-            .expect("proposal source");
-        let parsed = parse_module(&source).expect("parse proposal module");
+        let source = include_str!("../../tests/fixtures/dsl/02-structured-block-imperative.dsl");
+        let parsed = parse_module(source).expect("parse proposal module");
         let typed = analyze_module(&parsed).expect("analyze proposal module");
         let model = typed
             .models
@@ -777,6 +777,7 @@ mod tests {
                 name: "oral".to_string(),
                 index: 0,
                 destination_offset: 0,
+                inject_input_to_destination: true,
             }],
             outputs: vec![NativeOutputInfo {
                 name: "cp".to_string(),
@@ -1060,10 +1061,10 @@ mod tests {
             DYNAMICS_SYMBOL,
         );
 
-        let states = vec![100.0, 0.0];
-        let params = vec![1.2, 5.0, 40.0, 0.5, 0.8];
-        let covariates = vec![70.0];
-        let routes = vec![0.0, 0.0];
+        let states = [100.0, 0.0];
+        let params = [1.2, 5.0, 40.0, 0.5, 0.8];
+        let covariates = [70.0];
+        let routes = [0.0, 0.0];
         let mut jit_derived = vec![0.0; info.derived_len];
         let mut jit_outputs = vec![0.0; info.output_len];
         let mut jit_dynamics = vec![0.0; info.state_len];
@@ -1228,9 +1229,9 @@ mod tests {
 
         let mut actual = vec![100.0, 0.0];
         let mut expected = actual.clone();
-        let params = vec![1.2, 5.0, 40.0, 0.5, 0.8];
-        let covariates = vec![70.0];
-        let routes = vec![0.0, 0.0];
+        let params = [1.2, 5.0, 40.0, 0.5, 0.8];
+        let covariates = [70.0];
+        let routes = [0.0, 0.0];
         let mut derived = vec![0.0; info.derived_len];
 
         unsafe {
@@ -1280,10 +1281,10 @@ mod tests {
         let (info, artifact) = load_wasm_artifact_bytes(&bytes).expect("load direct wasm");
         let mut session = artifact.start_session().expect("start wasm session");
 
-        let states = vec![0.0, 0.0, 0.0, 0.2];
-        let params = vec![1.1, 0.2, 0.12, 0.08, 15.0, 0.7];
-        let covariates = vec![70.0];
-        let routes = vec![0.0];
+        let states = [0.0, 0.0, 0.0, 0.2];
+        let params = [1.1, 0.2, 0.12, 0.08, 15.0, 0.7];
+        let covariates = [70.0];
+        let routes = [0.0];
         let derived = vec![0.0; info.derived_len];
         let mut expected = vec![0.0; info.state_len];
         let mut actual = vec![42.0; info.state_len];
@@ -1327,10 +1328,10 @@ mod tests {
         let (info, artifact) = load_wasm_artifact_bytes(&bytes).expect("load direct wasm");
         let mut session = artifact.start_session().expect("start wasm session");
 
-        let states = vec![100.0, 0.0];
-        let params = vec![1.2, 5.0, 40.0, 0.5, 0.8];
-        let covariates = vec![70.0];
-        let routes = vec![0.0, 0.0];
+        let states = [100.0, 0.0];
+        let params = [1.2, 5.0, 40.0, 0.5, 0.8];
+        let covariates = [70.0];
+        let routes = [0.0, 0.0];
         let derived = vec![0.0; info.derived_len];
         let mut expected_lag = vec![0.0; info.route_len];
         let mut expected_bioavailability = vec![0.0; info.route_len];

@@ -384,7 +384,7 @@ mod tests {
     use tempfile::tempdir;
 
     fn proposal_source() -> &'static str {
-        include_str!("../../dsl-proposals/02-structured-block-imperative.dsl")
+        include_str!("../../tests/fixtures/dsl/02-structured-block-imperative.dsl")
     }
 
     fn proposal_model(name: &str) -> ExecutionModel {

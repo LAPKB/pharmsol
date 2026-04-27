@@ -5,8 +5,7 @@ use std::sync::Arc;
 use super::ast as syntax;
 use super::diagnostic::{
     Applicability, Diagnostic, DiagnosticPhase, DiagnosticReport, DiagnosticSuggestion, Span,
-    TextEdit,
-    DSL_SEMANTIC_GENERIC,
+    TextEdit, DSL_SEMANTIC_GENERIC,
 };
 use super::ir::*;
 use super::ModelKind;
@@ -125,19 +124,19 @@ pub fn analyze_model(model: &syntax::Model) -> Result<TypedModel, SemanticError>
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct SemanticError {
-    diagnostic: Diagnostic,
+    diagnostic: Box<Diagnostic>,
     source: Option<Arc<str>>,
 }
 
 impl SemanticError {
     pub fn new(message: impl Into<String>, span: Span) -> Self {
         Self {
-            diagnostic: Diagnostic::error(
+            diagnostic: Box::new(Diagnostic::error(
                 DSL_SEMANTIC_GENERIC,
                 DiagnosticPhase::Semantic,
                 message,
                 span,
-            ),
+            )),
             source: None,
         }
     }
@@ -153,26 +152,26 @@ impl SemanticError {
     }
 
     pub fn with_secondary_label(mut self, span: Span, message: impl Into<String>) -> Self {
-        self.diagnostic = self.diagnostic.with_secondary_label(span, message);
+        self.diagnostic = Box::new(self.diagnostic.with_secondary_label(span, message));
         self
     }
 
     pub fn with_context_label(mut self, span: Span, message: impl Into<String>) -> Self {
-        self.diagnostic = self.diagnostic.with_context_label(span, message);
+        self.diagnostic = Box::new(self.diagnostic.with_context_label(span, message));
         self
     }
 
     pub fn with_suggestion(mut self, suggestion: DiagnosticSuggestion) -> Self {
-        self.diagnostic = self.diagnostic.with_suggestion(suggestion);
+        self.diagnostic = Box::new(self.diagnostic.with_suggestion(suggestion));
         self
     }
 
     pub fn diagnostic(&self) -> &Diagnostic {
-        &self.diagnostic
+        self.diagnostic.as_ref()
     }
 
     pub fn into_diagnostic(self) -> Diagnostic {
-        self.diagnostic
+        *self.diagnostic
     }
 
     pub fn render(&self, src: &str) -> String {
@@ -180,7 +179,11 @@ impl SemanticError {
     }
 
     pub fn diagnostic_report(&self, source_name: impl Into<String>) -> DiagnosticReport {
-        DiagnosticReport::from_diagnostics(source_name, self.source(), std::slice::from_ref(&self.diagnostic))
+        DiagnosticReport::from_diagnostics(
+            source_name,
+            self.source(),
+            std::slice::from_ref(self.diagnostic.as_ref()),
+        )
     }
 
     pub fn with_source(mut self, source: impl Into<Arc<str>>) -> Self {
@@ -317,11 +320,13 @@ impl<'a> Analyzer<'a> {
 
         self.validate_kind_blocks(
             self.model.kind,
-            dynamics.as_ref(),
-            drift.as_ref(),
-            diffusion.as_ref(),
-            sections.analytical,
-            sections.particles,
+            ModelKindBlocks {
+                dynamics: dynamics.as_ref(),
+                drift: drift.as_ref(),
+                diffusion: diffusion.as_ref(),
+                analytical: sections.analytical,
+                particles: sections.particles,
+            },
             &states,
         )?;
 
@@ -427,27 +432,25 @@ impl<'a> Analyzer<'a> {
         let mut bindings = BTreeMap::new();
         for binding in &block.items {
             if let Some(existing) = bindings.insert(binding.name.text.clone(), binding) {
-                return Err(
-                    SemanticAssist::default()
-                        .context_label(
-                            existing.name.span,
-                            format!("constant `{}` first declared here", binding.name.text),
-                        )
-                        .help(format!(
-                            "rename this constant to a unique name such as `{}_2`",
-                            binding.name.text
-                        ))
-                        .replacement_suggestion(
-                            binding.name.span,
-                            format!("{}_2", binding.name.text),
-                            format!("rename this constant to `{}_2`", binding.name.text),
-                            Applicability::MaybeIncorrect,
-                        )
-                        .apply(SemanticError::new(
-                            format!("duplicate constant `{}`", binding.name.text),
-                            binding.name.span,
-                        )),
-                );
+                return Err(SemanticAssist::default()
+                    .context_label(
+                        existing.name.span,
+                        format!("constant `{}` first declared here", binding.name.text),
+                    )
+                    .help(format!(
+                        "rename this constant to a unique name such as `{}_2`",
+                        binding.name.text
+                    ))
+                    .replacement_suggestion(
+                        binding.name.span,
+                        format!("{}_2", binding.name.text),
+                        format!("rename this constant to `{}_2`", binding.name.text),
+                        Applicability::MaybeIncorrect,
+                    )
+                    .apply(SemanticError::new(
+                        format!("duplicate constant `{}`", binding.name.text),
+                        binding.name.span,
+                    )));
             }
         }
 
@@ -593,24 +596,22 @@ impl<'a> Analyzer<'a> {
                         }
                     };
                     if let Some(existing_span) = seen_props.insert(kind, property.name.span) {
-                        return Err(
-                            SemanticAssist::default()
-                                .context_label(
-                                    existing_span,
-                                    format!(
-                                        "route property `{}` first declared here",
-                                        property.name.text
-                                    ),
-                                )
-                                .help(format!(
-                                    "each route can declare `{}` at most once",
+                        return Err(SemanticAssist::default()
+                            .context_label(
+                                existing_span,
+                                format!(
+                                    "route property `{}` first declared here",
                                     property.name.text
-                                ))
-                                .apply(SemanticError::new(
-                                    format!("duplicate route property `{}`", property.name.text),
-                                    property.name.span,
-                                )),
-                        );
+                                ),
+                            )
+                            .help(format!(
+                                "each route can declare `{}` at most once",
+                                property.name.text
+                            ))
+                            .apply(SemanticError::new(
+                                format!("duplicate route property `{}`", property.name.text),
+                                property.name.span,
+                            )));
                     }
                     let env = BlockEnv::new(BTreeSet::new());
                     let value = self.analyze_expr(&property.value, &env)?;
@@ -768,17 +769,8 @@ impl<'a> Analyzer<'a> {
                             };
                         (Some(else_typed), available, targets)
                     } else {
-                        let available = if context == BlockContext::Derive {
-                            env.available_derived.clone()
-                        } else {
-                            env.available_derived.clone()
-                        };
-                        let targets =
-                            if matches!(context, BlockContext::Derive | BlockContext::Outputs) {
-                                env.definite_targets.clone()
-                            } else {
-                                env.definite_targets.clone()
-                            };
+                        let available = env.available_derived.clone();
+                        let targets = env.definite_targets.clone();
                         (None, available, targets)
                     };
 
@@ -972,10 +964,14 @@ impl<'a> Analyzer<'a> {
         env: &BlockEnv,
     ) -> Result<TypedStatePlace, SemanticError> {
         let state = self.globals.states.get(&place.name.text).ok_or_else(|| {
-            SemanticError::new(
+            let error = SemanticError::new(
                 format!("unknown state `{}`", place.name.text),
                 place.name.span,
-            )
+            );
+            match self.assist_for_unknown_state(&place.name) {
+                Some(assist) => assist.apply(error),
+                None => error,
+            }
         })?;
         let index = match (&state.size, &place.index) {
             (Some(_), Some(index)) => {
@@ -1012,10 +1008,14 @@ impl<'a> Analyzer<'a> {
         place: &syntax::Place,
     ) -> Result<TypedStatePlace, SemanticError> {
         let state = self.globals.states.get(&place.name.text).ok_or_else(|| {
-            SemanticError::new(
+            let error = SemanticError::new(
                 format!("unknown state `{}`", place.name.text),
                 place.name.span,
-            )
+            );
+            match self.assist_for_unknown_state(&place.name) {
+                Some(assist) => assist.apply(error),
+                None => error,
+            }
         })?;
         let index = match (&state.size, &place.index) {
             (Some(_), Some(index)) => {
@@ -1271,26 +1271,25 @@ impl<'a> Analyzer<'a> {
 
         if self.globals.routes.contains_key(&name.text) {
             let route = self.globals.routes[&name.text];
-            return Err(
-                self.assist_for_route_scalar(route, span)
-                    .apply(SemanticError::new(
-                        format!(
-                            "route `{}` cannot be used as a scalar value; use `rate({})`",
-                            name.text, name.text
-                        ),
-                        span,
-                    )),
-            );
+            return Err(self
+                .assist_for_route_scalar(route, span)
+                .apply(SemanticError::new(
+                    format!(
+                        "route `{}` cannot be used as a scalar value; use `rate({})`",
+                        name.text, name.text
+                    ),
+                    span,
+                )));
         }
 
         if self.globals.outputs.contains_key(&name.text) {
             let output = self.globals.outputs[&name.text];
-            return Err(
-                self.assist_for_output_scope(output).apply(SemanticError::new(
+            return Err(self
+                .assist_for_output_scope(output)
+                .apply(SemanticError::new(
                     format!("output `{}` is not in expression scope", name.text),
                     span,
-                )),
-            );
+                )));
         }
 
         let error = SemanticError::new(format!("unknown identifier `{}`", name.text), span);
@@ -1350,7 +1349,8 @@ impl<'a> Analyzer<'a> {
         }
 
         let intrinsic = MathIntrinsic::from_name(&callee.text).ok_or_else(|| {
-            let error = SemanticError::new(format!("unknown function `{}`", callee.text), callee.span);
+            let error =
+                SemanticError::new(format!("unknown function `{}`", callee.text), callee.span);
             match self.assist_for_unknown_function(callee) {
                 Some(assist) => assist.apply(error),
                 None => error,
@@ -1599,46 +1599,45 @@ impl<'a> Analyzer<'a> {
         span: Span,
     ) -> Result<SymbolId, SemanticError> {
         if RESERVED_NAMES.contains(&name) {
-            return Err(
-                SemanticAssist::default()
-                    .help(format!(
-                        "rename `{name}` to a non-reserved identifier such as `{}_value`",
-                        name
-                    ))
-                    .replacement_suggestion(
-                        span,
-                        format!("{}_value", name),
-                        format!("rename `{name}` to `{}_value`", name),
-                        Applicability::MaybeIncorrect,
-                    )
-                    .apply(SemanticError::new(
-                        format!("`{name}` is reserved by the DSL and cannot be used as a symbol name"),
-                        span,
-                    )),
-            );
+            return Err(SemanticAssist::default()
+                .help(format!(
+                    "rename `{name}` to a non-reserved identifier such as `{}_value`",
+                    name
+                ))
+                .replacement_suggestion(
+                    span,
+                    format!("{}_value", name),
+                    format!("rename `{name}` to `{}_value`", name),
+                    Applicability::MaybeIncorrect,
+                )
+                .apply(SemanticError::new(
+                    format!("`{name}` is reserved by the DSL and cannot be used as a symbol name"),
+                    span,
+                )));
         }
         if let Some(existing) = self.globals.all_names.get(name) {
-            return Err(
-                SemanticAssist::default()
-                    .context_label(self.symbol_span(*existing), self.symbol_declared_here(*existing))
-                    .help(format!(
-                        "rename this declaration to a unique name such as `{}_2`",
-                        name
-                    ))
-                    .replacement_suggestion(
-                        span,
-                        format!("{}_2", name),
-                        format!("rename this declaration to `{}_2`", name),
-                        Applicability::MaybeIncorrect,
-                    )
-                    .apply(SemanticError::new(
-                        format!(
-                            "symbol name `{name}` collides with existing `{}`",
-                            self.symbol_name(*existing)
-                        ),
-                        span,
-                    )),
-            );
+            return Err(SemanticAssist::default()
+                .context_label(
+                    self.symbol_span(*existing),
+                    self.symbol_declared_here(*existing),
+                )
+                .help(format!(
+                    "rename this declaration to a unique name such as `{}_2`",
+                    name
+                ))
+                .replacement_suggestion(
+                    span,
+                    format!("{}_2", name),
+                    format!("rename this declaration to `{}_2`", name),
+                    Applicability::MaybeIncorrect,
+                )
+                .apply(SemanticError::new(
+                    format!(
+                        "symbol name `{name}` collides with existing `{}`",
+                        self.symbol_name(*existing)
+                    ),
+                    span,
+                )));
         }
         let id = self.symbols.len();
         self.symbols.push(PendingSymbol {
@@ -1663,27 +1662,28 @@ impl<'a> Analyzer<'a> {
             .lookup_local(&ident.text)
             .or_else(|| self.globals.all_names.get(&ident.text).copied())
         {
-            return Err(
-                SemanticAssist::default()
-                    .context_label(self.symbol_span(existing), self.symbol_declared_here(existing))
-                    .help(format!(
-                        "rename this local binding to a unique name such as `{}_local`",
+            return Err(SemanticAssist::default()
+                .context_label(
+                    self.symbol_span(existing),
+                    self.symbol_declared_here(existing),
+                )
+                .help(format!(
+                    "rename this local binding to a unique name such as `{}_local`",
+                    ident.text
+                ))
+                .replacement_suggestion(
+                    ident.span,
+                    format!("{}_local", ident.text),
+                    format!("rename this local binding to `{}_local`", ident.text),
+                    Applicability::MaybeIncorrect,
+                )
+                .apply(SemanticError::new(
+                    format!(
+                        "local symbol `{}` would shadow an existing symbol",
                         ident.text
-                    ))
-                    .replacement_suggestion(
-                        ident.span,
-                        format!("{}_local", ident.text),
-                        format!("rename this local binding to `{}_local`", ident.text),
-                        Applicability::MaybeIncorrect,
-                    )
-                    .apply(SemanticError::new(
-                        format!(
-                            "local symbol `{}` would shadow an existing symbol",
-                            ident.text
-                        ),
-                        ident.span,
-                    )),
-            );
+                    ),
+                    ident.span,
+                )));
         }
         let id = self.symbols.len();
         self.symbols.push(PendingSymbol {
@@ -1871,6 +1871,21 @@ impl<'a> Analyzer<'a> {
         best_similar_name_assist(&name.text, candidates)
     }
 
+    fn assist_for_unknown_state(&self, state_name: &syntax::Ident) -> Option<SemanticAssist> {
+        let candidates = self
+            .globals
+            .states
+            .values()
+            .map(|entry| {
+                SimilarNameCandidate::new(
+                    self.symbol_name(entry.symbol).to_string(),
+                    self.assist_for_symbol_replacement(entry.symbol, state_name.span),
+                )
+            })
+            .collect::<Vec<_>>();
+        best_similar_name_assist(&state_name.text, candidates)
+    }
+
     fn assist_for_unknown_route(&self, route_name: &syntax::Ident) -> Option<SemanticAssist> {
         let candidates = self
             .globals
@@ -1881,7 +1896,10 @@ impl<'a> Analyzer<'a> {
                 SimilarNameCandidate::new(
                     name.clone(),
                     SemanticAssist::default()
-                        .context_label(self.symbol_span(*symbol), self.symbol_declared_here(*symbol))
+                        .context_label(
+                            self.symbol_span(*symbol),
+                            self.symbol_declared_here(*symbol),
+                        )
                         .replacement_suggestion(
                             route_name.span,
                             name.clone(),
@@ -1984,80 +2002,77 @@ impl<'a> Analyzer<'a> {
     fn validate_kind_blocks(
         &self,
         kind: ModelKind,
-        dynamics: Option<&BlockAnalysis>,
-        drift: Option<&BlockAnalysis>,
-        diffusion: Option<&BlockAnalysis>,
-        analytical: Option<&syntax::AnalyticalBlock>,
-        particles: Option<&syntax::ParticlesDecl>,
+        blocks: ModelKindBlocks<'_>,
         states: &[TypedState],
     ) -> Result<(), SemanticError> {
         match kind {
             ModelKind::Ode => {
-                if dynamics.is_none() {
+                if blocks.dynamics.is_none() {
                     return Err(SemanticError::new(
                         "ODE models require a `dynamics` block",
                         self.model.span,
                     ));
                 }
-                if drift.is_some() || diffusion.is_some() {
+                if blocks.drift.is_some() || blocks.diffusion.is_some() {
                     return Err(SemanticError::new(
                         "ODE models cannot declare `drift` or `diffusion` blocks",
                         self.model.span,
                     ));
                 }
-                if analytical.is_some() {
+                if blocks.analytical.is_some() {
                     return Err(SemanticError::new(
                         "ODE models cannot declare an `analytical` block",
                         self.model.span,
                     ));
                 }
-                if particles.is_some() {
+                if let Some(particles_decl) = blocks.particles {
                     return Err(SemanticError::new(
                         "ODE models cannot declare `particles`",
-                        particles.unwrap().span,
+                        particles_decl.span,
                     ));
                 }
             }
             ModelKind::Analytical => {
-                if analytical.is_none() {
+                if blocks.analytical.is_none() {
                     return Err(SemanticError::new(
                         "analytical models require an `analytical` block",
                         self.model.span,
                     ));
                 }
-                if dynamics.is_some() || drift.is_some() || diffusion.is_some() {
+                if blocks.dynamics.is_some() || blocks.drift.is_some() || blocks.diffusion.is_some()
+                {
                     return Err(SemanticError::new(
                         "analytical models cannot declare `dynamics`, `drift`, or `diffusion` blocks",
                         self.model.span,
                     ));
                 }
-                if particles.is_some() {
+                if let Some(particles_decl) = blocks.particles {
                     return Err(SemanticError::new(
                         "analytical models cannot declare `particles`",
-                        particles.unwrap().span,
+                        particles_decl.span,
                     ));
                 }
             }
             ModelKind::Sde => {
-                if drift.is_none() || diffusion.is_none() {
+                if blocks.drift.is_none() || blocks.diffusion.is_none() {
                     return Err(SemanticError::new(
                         "SDE models require both `drift` and `diffusion` blocks",
                         self.model.span,
                     ));
                 }
-                if dynamics.is_some() {
+                if blocks.dynamics.is_some() {
                     return Err(SemanticError::new(
                         "SDE models cannot declare a `dynamics` block",
                         self.model.span,
                     ));
                 }
-                if analytical.is_some() {
+                if blocks.analytical.is_some() {
                     return Err(SemanticError::new(
                         "SDE models cannot declare an `analytical` block",
                         self.model.span,
                     ));
                 }
-                if particles.is_none() {
+                if blocks.particles.is_none() {
                     return Err(SemanticError::new(
                         "SDE models require `particles`",
                         self.model.span,
@@ -2193,6 +2208,14 @@ struct PendingSymbol {
     span: Span,
 }
 
+struct ModelKindBlocks<'a> {
+    dynamics: Option<&'a BlockAnalysis>,
+    drift: Option<&'a BlockAnalysis>,
+    diffusion: Option<&'a BlockAnalysis>,
+    analytical: Option<&'a syntax::AnalyticalBlock>,
+    particles: Option<&'a syntax::ParticlesDecl>,
+}
+
 #[derive(Default)]
 struct ModelSections<'a> {
     parameters: Option<&'a syntax::ParametersBlock>,
@@ -2261,15 +2284,16 @@ where
     T: HasSpan,
 {
     if let Some(existing) = *slot {
-        return Err(
-            SemanticAssist::default()
-                .context_label(existing.span(), format!("`{name}` section first declared here"))
-                .help(format!("each model can declare `{name}` at most once"))
-                .apply(SemanticError::new(
-                    format!("duplicate `{name}` section in model body"),
-                    value.span(),
-                )),
-        );
+        return Err(SemanticAssist::default()
+            .context_label(
+                existing.span(),
+                format!("`{name}` section first declared here"),
+            )
+            .help(format!("each model can declare `{name}` at most once"))
+            .apply(SemanticError::new(
+                format!("duplicate `{name}` section in model body"),
+                value.span(),
+            )));
     }
     *slot = Some(value);
     Ok(())
@@ -2297,7 +2321,11 @@ fn best_similar_name_assist(
         if !is_high_confidence_match(&needle, &lookup, distance, prefix) {
             continue;
         }
-        let score = (distance, usize::MAX - prefix, needle.len().abs_diff(lookup.len()));
+        let score = (
+            distance,
+            usize::MAX - prefix,
+            needle.len().abs_diff(lookup.len()),
+        );
         match &best {
             None => {
                 best = Some((score, candidate.assist));
@@ -2623,7 +2651,7 @@ mod tests {
 
     #[test]
     fn analyzes_proposal_two_corpus() {
-        let src = include_str!("../../dsl-proposals/02-structured-block-imperative.dsl");
+        let src = include_str!("../../tests/fixtures/dsl/02-structured-block-imperative.dsl");
         let module = parse_module(src).expect("proposal parses");
         let typed = analyze_module(&module).expect("proposal analyzes");
 
@@ -2647,7 +2675,7 @@ mod tests {
 
     #[test]
     fn derives_values_across_if_branches() {
-        let src = include_str!("../../dsl-proposals/02-structured-block-imperative.dsl");
+        let src = include_str!("../../tests/fixtures/dsl/02-structured-block-imperative.dsl");
         let model = parse_model(src.split("\n\n\n").next().unwrap()).expect("single model parses");
         let typed = analyze_model(&model).expect("single model analyzes");
         let ke_symbol = typed
@@ -2660,8 +2688,10 @@ mod tests {
 
     #[test]
     fn authoring_fixture_lowers_to_equivalent_typed_ir() {
-        let authoring_surface = include_str!("../../dsl-proposals/04-user-recommended_style.dsi");
-        let canonical = include_str!("../../dsl-proposals/04-user-recommended_style.desugared.dsl");
+        let authoring_surface =
+            include_str!("../../tests/fixtures/dsl/04-user-recommended_style.dsi");
+        let canonical =
+            include_str!("../../tests/fixtures/dsl/04-user-recommended_style.desugared.dsl");
 
         let authoring_model = parse_model(authoring_surface).expect("authoring model parses");
         let canonical_model = parse_model(canonical).expect("canonical model parses");
@@ -2694,9 +2724,9 @@ model broken {
         assert!(err.render(src).contains("unknown route `oral`"));
     }
 
-        #[test]
-        fn suggests_similar_state_name_for_unknown_identifier() {
-                let src = r#"
+    #[test]
+    fn suggests_similar_state_name_for_unknown_identifier() {
+        let src = r#"
 model broken {
     kind ode
     states { central }
@@ -2708,20 +2738,22 @@ model broken {
     }
 }
 "#;
-                let model = parse_model(src).expect("model parses");
-                let err = analyze_model(&model).expect_err("unknown identifier must fail");
+        let model = parse_model(src).expect("model parses");
+        let err = analyze_model(&model).expect_err("unknown identifier must fail");
 
-                assert!(err
-                        .diagnostic()
-                        .suggestions
-                        .iter()
-                        .any(|suggestion| suggestion.message.contains("did you mean `central`?")));
-                assert!(err.render(src).contains("suggestion: did you mean `central`?"));
-        }
+        assert!(err
+            .diagnostic()
+            .suggestions
+            .iter()
+            .any(|suggestion| suggestion.message.contains("did you mean `central`?")));
+        assert!(err
+            .render(src)
+            .contains("suggestion: did you mean `central`?"));
+    }
 
-        #[test]
-        fn suggests_similar_intrinsic_for_unknown_function() {
-                let src = r#"
+    #[test]
+    fn suggests_similar_intrinsic_for_unknown_function() {
+        let src = r#"
 model broken {
     kind ode
     states { central }
@@ -2733,20 +2765,20 @@ model broken {
     }
 }
 "#;
-                let model = parse_model(src).expect("model parses");
-                let err = analyze_model(&model).expect_err("unknown function must fail");
+        let model = parse_model(src).expect("model parses");
+        let err = analyze_model(&model).expect_err("unknown function must fail");
 
-                assert!(err
-                        .diagnostic()
-                        .suggestions
-                        .iter()
-                        .any(|suggestion| suggestion.message.contains("did you mean `sqrt`?")));
-                assert!(err.render(src).contains("suggestion: did you mean `sqrt`?"));
-        }
+        assert!(err
+            .diagnostic()
+            .suggestions
+            .iter()
+            .any(|suggestion| suggestion.message.contains("did you mean `sqrt`?")));
+        assert!(err.render(src).contains("suggestion: did you mean `sqrt`?"));
+    }
 
-        #[test]
-        fn route_scalar_usage_reports_help_and_context() {
-                let src = r#"
+    #[test]
+    fn route_scalar_usage_reports_help_and_context() {
+        let src = r#"
 model broken {
     kind ode
     states { central }
@@ -2759,21 +2791,23 @@ model broken {
     }
 }
 "#;
-                let model = parse_model(src).expect("model parses");
-                let err = analyze_model(&model).expect_err("route scalar usage must fail");
+        let model = parse_model(src).expect("model parses");
+        let err = analyze_model(&model).expect_err("route scalar usage must fail");
 
-                assert!(err
-                        .diagnostic()
-                        .helps
-                        .iter()
-                        .any(|help| help.contains("route inputs are read through `rate(oral)`")));
-                assert!(err.render(src).contains("route `oral` declared here"));
-                assert!(err.render(src).contains("suggestion: did you mean `rate(oral)`?"));
-        }
+        assert!(err
+            .diagnostic()
+            .helps
+            .iter()
+            .any(|help| help.contains("route inputs are read through `rate(oral)`")));
+        assert!(err.render(src).contains("route `oral` declared here"));
+        assert!(err
+            .render(src)
+            .contains("suggestion: did you mean `rate(oral)`?"));
+    }
 
-        #[test]
-        fn output_scope_violation_reports_help_and_context() {
-                let src = r#"
+    #[test]
+    fn output_scope_violation_reports_help_and_context() {
+        let src = r#"
 model broken {
     kind ode
     states { central }
@@ -2785,20 +2819,22 @@ model broken {
     }
 }
 "#;
-                let model = parse_model(src).expect("model parses");
-                let err = analyze_model(&model).expect_err("output scope violation must fail");
+        let model = parse_model(src).expect("model parses");
+        let err = analyze_model(&model).expect_err("output scope violation must fail");
 
-                assert!(err
-                        .diagnostic()
-                        .helps
-                        .iter()
-                        .any(|help| help.contains("outputs are assignment targets inside the `outputs` block")));
-                assert!(err.render(src).contains("output `cp` declared here"));
-        }
+        assert!(
+            err.diagnostic()
+                .helps
+                .iter()
+                .any(|help| help
+                    .contains("outputs are assignment targets inside the `outputs` block"))
+        );
+        assert!(err.render(src).contains("output `cp` declared here"));
+    }
 
-        #[test]
-        fn reserved_name_reports_rename_suggestion() {
-                let src = r#"
+    #[test]
+    fn reserved_name_reports_rename_suggestion() {
+        let src = r#"
 model broken {
     kind ode
     parameters { log }
@@ -2811,20 +2847,23 @@ model broken {
     }
 }
 "#;
-                let model = parse_model(src).expect("model parses");
-                let err = analyze_model(&model).expect_err("reserved name must fail");
+        let model = parse_model(src).expect("model parses");
+        let err = analyze_model(&model).expect_err("reserved name must fail");
 
-                assert!(err.render(src).contains("rename `log` to `log_value`"));
-                assert!(err
-                        .diagnostic()
-                        .suggestions
-                        .iter()
-                        .any(|suggestion| suggestion.edits.iter().any(|edit| edit.replacement == "log_value")));
-        }
+        assert!(err.render(src).contains("rename `log` to `log_value`"));
+        assert!(err
+            .diagnostic()
+            .suggestions
+            .iter()
+            .any(|suggestion| suggestion
+                .edits
+                .iter()
+                .any(|edit| edit.replacement == "log_value")));
+    }
 
-        #[test]
-        fn duplicate_constant_points_to_first_declaration() {
-                let src = r#"
+    #[test]
+    fn duplicate_constant_points_to_first_declaration() {
+        let src = r#"
 model broken {
     kind ode
     constants {
@@ -2840,12 +2879,14 @@ model broken {
     }
 }
 "#;
-                let model = parse_model(src).expect("model parses");
-                let err = analyze_model(&model).expect_err("duplicate constant must fail");
+        let model = parse_model(src).expect("model parses");
+        let err = analyze_model(&model).expect_err("duplicate constant must fail");
 
-                assert!(err.render(src).contains("constant `ka` first declared here"));
-                assert!(err.render(src).contains("rename this constant to `ka_2`"));
-        }
+        assert!(err
+            .render(src)
+            .contains("constant `ka` first declared here"));
+        assert!(err.render(src).contains("rename this constant to `ka_2`"));
+    }
 
     #[test]
     fn rejects_missing_output_assignment_on_all_paths() {

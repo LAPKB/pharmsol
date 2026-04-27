@@ -331,6 +331,7 @@ where
 {
     /// Creates a new PMProblem with a pre-converted parameter vector.
     /// This avoids an allocation when the caller already has a V representation.
+    #[allow(clippy::too_many_arguments)]
     pub fn with_params_v(
         func: F,
         nstates: usize,

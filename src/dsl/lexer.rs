@@ -247,10 +247,7 @@ impl<'a> Lexer<'a> {
                         self.bump_char();
                         TokenKind::AndAnd
                     } else {
-                        return Err(ParseError::new(
-                            "expected `&&`",
-                            Span::new(start, self.pos),
-                        ));
+                        return Err(ParseError::new("expected `&&`", Span::new(start, self.pos)));
                     }
                 }
                 '|' => {
@@ -259,14 +256,14 @@ impl<'a> Lexer<'a> {
                         self.bump_char();
                         TokenKind::OrOr
                     } else {
-                        return Err(ParseError::new(
-                            "expected `||`",
-                            Span::new(start, self.pos),
-                        ));
+                        return Err(ParseError::new("expected `||`", Span::new(start, self.pos)));
                     }
                 }
                 '.' => {
-                    if self.peek_nth_char(1).is_some_and(|next| next.is_ascii_digit()) {
+                    if self
+                        .peek_nth_char(1)
+                        .is_some_and(|next| next.is_ascii_digit())
+                    {
                         self.scan_number(start)?
                     } else if self.peek_nth_char(1) == Some('.') {
                         self.bump_char();

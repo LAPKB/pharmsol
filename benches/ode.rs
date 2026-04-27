@@ -49,7 +49,7 @@ fn one_compartment() {
     .with_nstates(2)
     .with_nout(1);
     black_box(
-        ode.estimate_predictions(&subject, &vec![0.3, 0.5, 0.1, 70.0])
+        ode.estimate_predictions(&subject, &[0.3, 0.5, 0.1, 70.0])
             .unwrap(),
     );
 }
@@ -79,7 +79,7 @@ fn one_compartment_covariates() {
     .with_nstates(2)
     .with_nout(1);
     black_box(
-        ode.estimate_predictions(&subject, &vec![0.3, 0.5, 0.1, 70.0])
+        ode.estimate_predictions(&subject, &[0.3, 0.5, 0.1, 70.0])
             .unwrap(),
     );
 }
@@ -106,7 +106,7 @@ fn two_compartment() {
     .with_nstates(2)
     .with_nout(1);
     black_box(
-        ode.estimate_predictions(&subject, &vec![0.3, 0.5, 0.1, 0.04, 0.08, 70.0])
+        ode.estimate_predictions(&subject, &[0.3, 0.5, 0.1, 0.04, 0.08, 70.0])
             .unwrap(),
     );
 }

@@ -1,7 +1,12 @@
 #[path = "support/bimodal_ke.rs"]
 mod bimodal_ke;
 
-#[cfg(all(feature = "dsl-jit", feature = "dsl-aot", feature = "dsl-aot-load", feature = "dsl-wasm"))]
+#[cfg(all(
+    feature = "dsl-jit",
+    feature = "dsl-aot",
+    feature = "dsl-aot-load",
+    feature = "dsl-wasm"
+))]
 mod tests {
     use super::bimodal_ke;
     use pharmsol::dsl::RuntimeBackend;

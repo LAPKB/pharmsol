@@ -197,7 +197,9 @@ impl AnalyticalKernel {
             "two_compartments_with_absorption" => Some(Self::TwoCompartmentsWithAbsorption),
             "three_compartments" => Some(Self::ThreeCompartments),
             "three_compartments_cl" => Some(Self::ThreeCompartmentsCl),
-            "three_compartments_cl_with_absorption" => Some(Self::ThreeCompartmentsClWithAbsorption),
+            "three_compartments_cl_with_absorption" => {
+                Some(Self::ThreeCompartmentsClWithAbsorption)
+            }
             "three_compartments_with_absorption" => Some(Self::ThreeCompartmentsWithAbsorption),
             _ => None,
         }

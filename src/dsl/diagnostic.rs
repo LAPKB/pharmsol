@@ -524,6 +524,11 @@ impl ParseError {
         self
     }
 
+    pub fn with_suggestion(mut self, suggestion: DiagnosticSuggestion) -> Self {
+        self.diagnostics[0].suggestions.push(suggestion);
+        self
+    }
+
     pub fn diagnostic(&self) -> &Diagnostic {
         &self.diagnostics[0]
     }

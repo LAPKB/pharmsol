@@ -37,7 +37,7 @@ fn main() {
     .with_nout(1);
 
     let op = ode
-        .estimate_predictions(&subject, &vec![0.3, 0.5, 0.1, 70.0])
+        .estimate_predictions(&subject, &[0.3, 0.5, 0.1, 70.0])
         .unwrap();
     println!("{:#?}", op.flat_predictions());
 }

@@ -43,6 +43,7 @@ use super::{Equation, EquationPriv, EquationTypes, Predictions, State};
 ///
 /// The state vector at time `tf` after simulation.
 #[inline(always)]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn simulate_sde_event(
     drift: &Drift,
     difussion: &Diffusion,
@@ -75,7 +76,14 @@ pub(crate) fn simulate_sde_event(
 
         let state_v: V = state.clone().into();
         let mut out_v = V::zeros(state.len(), NalgebraContext);
-        drift_fn(&state_v, &params_for_drift, time, &mut out_v, &rateiv, &covariates);
+        drift_fn(
+            &state_v,
+            &params_for_drift,
+            time,
+            &mut out_v,
+            &rateiv,
+            &covariates,
+        );
         out.copy_from(out_v.inner());
     };
 

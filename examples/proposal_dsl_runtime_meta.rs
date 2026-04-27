@@ -1,6 +1,12 @@
 //! Run with:
 //! cargo run --example proposal_dsl_runtime_meta --features "dsl-jit dsl-aot dsl-aot-load dsl-wasm"
 
+#[cfg(all(
+    feature = "dsl-jit",
+    feature = "dsl-aot",
+    feature = "dsl-aot-load",
+    feature = "dsl-wasm"
+))]
 const ODE_SOURCE: &str = r#"
 model = example_ode
 kind = ode

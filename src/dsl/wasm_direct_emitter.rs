@@ -146,7 +146,9 @@ pub(crate) fn compile_execution_model_to_wasm_bytes(
         [],
     );
     types.ty().function([ValType::F64], [ValType::F64]);
-    types.ty().function([ValType::F64, ValType::F64], [ValType::F64]);
+    types
+        .ty()
+        .function([ValType::F64, ValType::F64], [ValType::F64]);
     module.section(&types);
 
     let mut imports = ImportSection::new();
@@ -206,7 +208,11 @@ pub(crate) fn compile_execution_model_to_wasm_bytes(
     let first_defined_function_index = direct_wasm_import_count() as u32;
     let mut exports = ExportSection::new();
     exports.export("memory", ExportKind::Memory, 0);
-    exports.export(API_VERSION_SYMBOL, ExportKind::Func, first_defined_function_index);
+    exports.export(
+        API_VERSION_SYMBOL,
+        ExportKind::Func,
+        first_defined_function_index,
+    );
     exports.export(
         MODEL_INFO_JSON_PTR_SYMBOL,
         ExportKind::Func,
@@ -245,12 +251,14 @@ pub(crate) fn compile_execution_model_to_wasm_bytes(
     let mut code = CodeSection::new();
     code.function(&const_i32_function(api_version as i32));
     code.function(&const_i32_function(MODEL_INFO_PTR));
-    code.function(&const_i32_function(i32::try_from(metadata_bytes.len()).map_err(|_| {
-        WasmError::Emit(format!(
-            "direct backend metadata for model `{}` is too large to address with wasm32",
-            model.name
-        ))
-    })?));
+    code.function(&const_i32_function(
+        i32::try_from(metadata_bytes.len()).map_err(|_| {
+            WasmError::Emit(format!(
+                "direct backend metadata for model `{}` is too large to address with wasm32",
+                model.name
+            ))
+        })?,
+    ));
     code.function(&alloc_function());
     code.function(&free_function());
     for kernel in &kernels {
@@ -265,8 +273,13 @@ pub(crate) fn compile_execution_model_to_wasm_bytes(
     Ok(module.finish())
 }
 
-fn collect_direct_statement_kernels(model: &ExecutionModel) -> Result<Vec<&ExecutionKernel>, WasmError> {
-    if !matches!(model.kind, ModelKind::Ode | ModelKind::Analytical | ModelKind::Sde) {
+fn collect_direct_statement_kernels(
+    model: &ExecutionModel,
+) -> Result<Vec<&ExecutionKernel>, WasmError> {
+    if !matches!(
+        model.kind,
+        ModelKind::Ode | ModelKind::Analytical | ModelKind::Sde
+    ) {
         return Err(WasmError::DirectBackendUnsupported {
             model: model.name.clone(),
             reason: format!(
@@ -322,10 +335,14 @@ fn collect_direct_statement_kernels(model: &ExecutionModel) -> Result<Vec<&Execu
     }
 
     if let Some(kernel) = model.kernel(KernelRole::Analytical) {
-        if !matches!(kernel.implementation, KernelImplementation::AnalyticalBuiltin(_)) {
+        if !matches!(
+            kernel.implementation,
+            KernelImplementation::AnalyticalBuiltin(_)
+        ) {
             return Err(WasmError::DirectBackendUnsupported {
                 model: model.name.clone(),
-                reason: "direct emitter expects analytical execution to remain metadata-driven".to_string(),
+                reason: "direct emitter expects analytical execution to remain metadata-driven"
+                    .to_string(),
             });
         }
         if model.metadata.analytical.is_none() {
@@ -404,7 +421,10 @@ fn free_function() -> Function {
     function
 }
 
-fn emit_statement_kernel(model: &ExecutionModel, kernel: &ExecutionKernel) -> Result<Function, WasmError> {
+fn emit_statement_kernel(
+    model: &ExecutionModel,
+    kernel: &ExecutionKernel,
+) -> Result<Function, WasmError> {
     let program = match &kernel.implementation {
         KernelImplementation::Statements(program) => program,
         KernelImplementation::AnalyticalBuiltin(_) => {
@@ -499,7 +519,12 @@ fn emit_if(
     function: &mut Function,
 ) -> Result<(), WasmError> {
     emit_expr(state, &if_stmt.condition, function)?;
-    emit_cast_stack(if_stmt.condition.ty, ValueType::Bool, function, state.model_name)?;
+    emit_cast_stack(
+        if_stmt.condition.ty,
+        ValueType::Bool,
+        function,
+        state.model_name,
+    )?;
     function.instruction(&Instruction::If(BlockType::Empty));
     for statement in &if_stmt.then_branch {
         emit_statement(state, statement, function)?;
@@ -652,11 +677,15 @@ fn emit_binary(
             emit_cast_stack(rhs.ty, operand_ty, function, state.model_name)?;
             match (operand_ty, op) {
                 (ValueType::Real, TypedBinaryOp::Eq) => function.instruction(&Instruction::F64Eq),
-                (ValueType::Real, TypedBinaryOp::NotEq) => function.instruction(&Instruction::F64Ne),
+                (ValueType::Real, TypedBinaryOp::NotEq) => {
+                    function.instruction(&Instruction::F64Ne)
+                }
                 (ValueType::Int, TypedBinaryOp::Eq) => function.instruction(&Instruction::I64Eq),
                 (ValueType::Int, TypedBinaryOp::NotEq) => function.instruction(&Instruction::I64Ne),
                 (ValueType::Bool, TypedBinaryOp::Eq) => function.instruction(&Instruction::I32Eq),
-                (ValueType::Bool, TypedBinaryOp::NotEq) => function.instruction(&Instruction::I32Ne),
+                (ValueType::Bool, TypedBinaryOp::NotEq) => {
+                    function.instruction(&Instruction::I32Ne)
+                }
                 _ => unreachable!(),
             };
         }
@@ -712,7 +741,9 @@ fn emit_binary(
             emit_cast_stack(rhs.ty, ValueType::Real, function, state.model_name)?;
             function.instruction(&Instruction::F64Div);
         }
-        TypedBinaryOp::Pow => emit_math_call(state, MathIntrinsic::Pow, &[lhs, rhs], result_ty, function)?,
+        TypedBinaryOp::Pow => {
+            emit_math_call(state, MathIntrinsic::Pow, &[lhs, rhs], result_ty, function)?
+        }
     }
     Ok(())
 }
@@ -793,7 +824,11 @@ fn emit_math_call(
             function.instruction(&Instruction::Select);
         }
         _ => {
-            let expected_arity = if intrinsic == MathIntrinsic::Pow { 2 } else { 1 };
+            let expected_arity = if intrinsic == MathIntrinsic::Pow {
+                2
+            } else {
+                1
+            };
             if args.len() != expected_arity {
                 return Err(WasmError::DirectBackendUnsupported {
                     model: state.model_name.to_string(),
@@ -807,16 +842,34 @@ fn emit_math_call(
             match intrinsic {
                 MathIntrinsic::Abs => function.instruction(&Instruction::F64Abs),
                 MathIntrinsic::Ceil => function.instruction(&Instruction::F64Ceil),
-                MathIntrinsic::Exp => function.instruction(&Instruction::Call(unary_math_import_index(MathIntrinsic::Exp)?)),
+                MathIntrinsic::Exp => function.instruction(&Instruction::Call(
+                    unary_math_import_index(MathIntrinsic::Exp)?,
+                )),
                 MathIntrinsic::Floor => function.instruction(&Instruction::F64Floor),
-                MathIntrinsic::Ln | MathIntrinsic::Log => function.instruction(&Instruction::Call(unary_math_import_index(MathIntrinsic::Ln)?)),
-                MathIntrinsic::Log10 => function.instruction(&Instruction::Call(unary_math_import_index(MathIntrinsic::Log10)?)),
-                MathIntrinsic::Log2 => function.instruction(&Instruction::Call(unary_math_import_index(MathIntrinsic::Log2)?)),
-                MathIntrinsic::Pow => function.instruction(&Instruction::Call(binary_math_import_index(MathIntrinsic::Pow)?)),
-                MathIntrinsic::Round => function.instruction(&Instruction::Call(unary_math_import_index(MathIntrinsic::Round)?)),
-                MathIntrinsic::Sin => function.instruction(&Instruction::Call(unary_math_import_index(MathIntrinsic::Sin)?)),
-                MathIntrinsic::Cos => function.instruction(&Instruction::Call(unary_math_import_index(MathIntrinsic::Cos)?)),
-                MathIntrinsic::Tan => function.instruction(&Instruction::Call(unary_math_import_index(MathIntrinsic::Tan)?)),
+                MathIntrinsic::Ln | MathIntrinsic::Log => function.instruction(&Instruction::Call(
+                    unary_math_import_index(MathIntrinsic::Ln)?,
+                )),
+                MathIntrinsic::Log10 => function.instruction(&Instruction::Call(
+                    unary_math_import_index(MathIntrinsic::Log10)?,
+                )),
+                MathIntrinsic::Log2 => function.instruction(&Instruction::Call(
+                    unary_math_import_index(MathIntrinsic::Log2)?,
+                )),
+                MathIntrinsic::Pow => function.instruction(&Instruction::Call(
+                    binary_math_import_index(MathIntrinsic::Pow)?,
+                )),
+                MathIntrinsic::Round => function.instruction(&Instruction::Call(
+                    unary_math_import_index(MathIntrinsic::Round)?,
+                )),
+                MathIntrinsic::Sin => function.instruction(&Instruction::Call(
+                    unary_math_import_index(MathIntrinsic::Sin)?,
+                )),
+                MathIntrinsic::Cos => function.instruction(&Instruction::Call(
+                    unary_math_import_index(MathIntrinsic::Cos)?,
+                )),
+                MathIntrinsic::Tan => function.instruction(&Instruction::Call(
+                    unary_math_import_index(MathIntrinsic::Tan)?,
+                )),
                 MathIntrinsic::Sqrt => function.instruction(&Instruction::F64Sqrt),
                 MathIntrinsic::Max | MathIntrinsic::Min => unreachable!(),
             };
@@ -842,9 +895,13 @@ fn emit_load(
     function: &mut Function,
 ) -> Result<(), WasmError> {
     match load {
-        ExecutionLoad::Parameter(index) => {
-            emit_dense_load(function, KERNEL_PARAM_PARAMS, *index, target_ty, state.model_name)
-        }
+        ExecutionLoad::Parameter(index) => emit_dense_load(
+            function,
+            KERNEL_PARAM_PARAMS,
+            *index,
+            target_ty,
+            state.model_name,
+        ),
         ExecutionLoad::Covariate(index) => emit_dense_load(
             function,
             KERNEL_PARAM_COVARIATES,
@@ -852,17 +909,25 @@ fn emit_load(
             target_ty,
             state.model_name,
         ),
-        ExecutionLoad::Derived(index) => {
-            emit_dense_load(function, KERNEL_PARAM_DERIVED, *index, target_ty, state.model_name)
-        }
+        ExecutionLoad::Derived(index) => emit_dense_load(
+            function,
+            KERNEL_PARAM_DERIVED,
+            *index,
+            target_ty,
+            state.model_name,
+        ),
         ExecutionLoad::Local(index) => {
             let local = state.local(*index)?;
             function.instruction(&Instruction::LocalGet(local.wasm_local));
             emit_cast_stack(local.ty, target_ty, function, state.model_name)
         }
-        ExecutionLoad::RouteInput(index) => {
-            emit_dense_load(function, KERNEL_PARAM_ROUTES, *index, target_ty, state.model_name)
-        }
+        ExecutionLoad::RouteInput(index) => emit_dense_load(
+            function,
+            KERNEL_PARAM_ROUTES,
+            *index,
+            target_ty,
+            state.model_name,
+        ),
         ExecutionLoad::State(state_ref) => {
             emit_state_load(state, KERNEL_PARAM_STATES, state_ref, target_ty, function)
         }
@@ -985,7 +1050,8 @@ fn byte_offset(index: usize) -> Result<i32, WasmError> {
     let offset = index
         .checked_mul(std::mem::size_of::<f64>())
         .ok_or_else(|| WasmError::Emit("direct backend byte offset overflow".to_string()))?;
-    i32::try_from(offset).map_err(|_| WasmError::Emit("direct backend byte offset overflow".to_string()))
+    i32::try_from(offset)
+        .map_err(|_| WasmError::Emit("direct backend byte offset overflow".to_string()))
 }
 
 fn wasm_val_type(ty: ValueType) -> ValType {
@@ -997,7 +1063,10 @@ fn wasm_val_type(ty: ValueType) -> ValType {
 }
 
 fn count_hidden_i64_locals_in_statements(statements: &[ExecutionStmt]) -> usize {
-    statements.iter().map(count_hidden_i64_locals_in_statement).sum()
+    statements
+        .iter()
+        .map(count_hidden_i64_locals_in_statement)
+        .sum()
 }
 
 fn count_hidden_i64_locals_in_statement(statement: &ExecutionStmt) -> usize {
@@ -1028,16 +1097,22 @@ fn count_hidden_i64_locals_in_expr(expr: &ExecutionExpr) -> usize {
             count_hidden_i64_locals_in_expr(lhs) + count_hidden_i64_locals_in_expr(rhs)
         }
         ExecutionExprKind::Call { callee, args } => {
-            let arg_cost = args.iter().map(count_hidden_i64_locals_in_expr).sum::<usize>();
-            let local_cost = match callee {
-                super::execution::ExecutionCall::Math(MathIntrinsic::Max | MathIntrinsic::Min)
-                    if expr.ty == ValueType::Int =>
-                {
-                    2
-                }
-                super::execution::ExecutionCall::Math(MathIntrinsic::Abs) if expr.ty == ValueType::Int => 1,
-                _ => 0,
-            };
+            let arg_cost = args
+                .iter()
+                .map(count_hidden_i64_locals_in_expr)
+                .sum::<usize>();
+            let local_cost =
+                match callee {
+                    super::execution::ExecutionCall::Math(
+                        MathIntrinsic::Max | MathIntrinsic::Min,
+                    ) if expr.ty == ValueType::Int => 2,
+                    super::execution::ExecutionCall::Math(MathIntrinsic::Abs)
+                        if expr.ty == ValueType::Int =>
+                    {
+                        1
+                    }
+                    _ => 0,
+                };
             arg_cost + local_cost
         }
     }
@@ -1052,7 +1127,11 @@ fn unary_math_import_index(intrinsic: MathIntrinsic) -> Result<u32, WasmError> {
         .iter()
         .position(|import| import.intrinsic == intrinsic)
         .map(|index| index as u32)
-        .ok_or_else(|| WasmError::Emit(format!("missing unary direct wasm import for {intrinsic:?}")))
+        .ok_or_else(|| {
+            WasmError::Emit(format!(
+                "missing unary direct wasm import for {intrinsic:?}"
+            ))
+        })
 }
 
 fn binary_math_import_index(intrinsic: MathIntrinsic) -> Result<u32, WasmError> {
@@ -1060,7 +1139,11 @@ fn binary_math_import_index(intrinsic: MathIntrinsic) -> Result<u32, WasmError> 
         .iter()
         .position(|import| import.intrinsic == intrinsic)
         .map(|index| DIRECT_WASM_UNARY_MATH_IMPORTS.len() as u32 + index as u32)
-        .ok_or_else(|| WasmError::Emit(format!("missing binary direct wasm import for {intrinsic:?}")))
+        .ok_or_else(|| {
+            WasmError::Emit(format!(
+                "missing binary direct wasm import for {intrinsic:?}"
+            ))
+        })
 }
 
 fn align_to_f64_boundary(len: usize) -> Result<i32, WasmError> {
@@ -1069,7 +1152,8 @@ fn align_to_f64_boundary(len: usize) -> Result<i32, WasmError> {
         .and_then(|value| value.checked_div(ABI_PTR_ALIGNMENT))
         .and_then(|value| value.checked_mul(ABI_PTR_ALIGNMENT))
         .ok_or_else(|| WasmError::Emit("direct backend heap alignment overflow".to_string()))?;
-    i32::try_from(aligned).map_err(|_| WasmError::Emit("direct backend heap alignment overflow".to_string()))
+    i32::try_from(aligned)
+        .map_err(|_| WasmError::Emit("direct backend heap alignment overflow".to_string()))
 }
 
 fn pages_for_bytes(bytes: usize) -> usize {
@@ -1086,9 +1170,10 @@ fn f64_memarg() -> MemArg {
 
 impl KernelEmitState<'_> {
     fn local(&self, index: usize) -> Result<WasmLocalBinding, WasmError> {
-        self.locals.get(&index).copied().ok_or_else(|| {
-            WasmError::Emit(format!("unknown direct wasm local slot {index}"))
-        })
+        self.locals
+            .get(&index)
+            .copied()
+            .ok_or_else(|| WasmError::Emit(format!("unknown direct wasm local slot {index}")))
     }
 
     fn take_hidden_i64_local(&mut self) -> u32 {
@@ -1292,7 +1377,9 @@ pub(crate) fn w03_minimal_outputs_execution_model() -> ExecutionModel {
                                                 span,
                                             }),
                                             rhs: Box::new(ExecutionExpr {
-                                                kind: ExecutionExprKind::Literal(ConstValue::Real(2.0)),
+                                                kind: ExecutionExprKind::Literal(ConstValue::Real(
+                                                    2.0,
+                                                )),
                                                 ty: ValueType::Real,
                                                 constant: Some(ConstValue::Real(2.0)),
                                                 span,
@@ -1327,13 +1414,14 @@ mod tests {
     #[test]
     fn direct_emitter_builds_valid_outputs_only_wasm_module() {
         let model = w03_minimal_outputs_execution_model();
-        let bytes = compile_execution_model_to_wasm_bytes(&model, 1).expect("emit direct wasm bytes");
+        let bytes =
+            compile_execution_model_to_wasm_bytes(&model, 1).expect("emit direct wasm bytes");
 
         let engine = Engine::default();
         let module = WasmtimeModule::new(&engine, &bytes).expect("compile wasm bytes");
         let mut store = Store::new(&engine, ());
-        let linker = super::super::wasm::configured_wasm_linker(&engine)
-            .expect("configured wasm linker");
+        let linker =
+            super::super::wasm::configured_wasm_linker(&engine).expect("configured wasm linker");
         linker
             .instantiate(&mut store, &module)
             .expect("instantiate direct wasm module");
@@ -1341,7 +1429,7 @@ mod tests {
 
     #[test]
     fn direct_emitter_compiles_real_ode_corpus_model() {
-        let source = include_str!("../../dsl-proposals/02-structured-block-imperative.dsl");
+        let source = include_str!("../../tests/fixtures/dsl/02-structured-block-imperative.dsl");
         let parsed = crate::dsl::parse_module(source).expect("parse proposal source");
         let typed = crate::dsl::analyze_module(&parsed).expect("analyze proposal source");
         let model = typed
@@ -1356,8 +1444,8 @@ mod tests {
         let engine = Engine::default();
         let module = WasmtimeModule::new(&engine, &bytes).expect("compile direct ode wasm bytes");
         let mut store = Store::new(&engine, ());
-        let linker = super::super::wasm::configured_wasm_linker(&engine)
-            .expect("configured wasm linker");
+        let linker =
+            super::super::wasm::configured_wasm_linker(&engine).expect("configured wasm linker");
         linker
             .instantiate(&mut store, &module)
             .expect("instantiate direct ode wasm module");

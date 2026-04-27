@@ -1,6 +1,7 @@
 //! Run with:
 //! cargo run --example proposal_dsl_runtime_native_aot --features "dsl-aot dsl-aot-load"
 
+#[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]
 const ODE_SOURCE: &str = r#"
 model = example_ode
 kind = ode
@@ -26,6 +27,7 @@ dx(central) = ka * depot - ke * central
 out(cp) = central / v ~ continuous()
 "#;
 
+#[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]
 const ANALYTICAL_SOURCE: &str = r#"
 model = example_analytical
 kind = analytical
@@ -44,6 +46,7 @@ kernel = one_compartment_with_absorption
 out(cp) = central / v ~ continuous()
 "#;
 
+#[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]
 const SDE_SOURCE: &str = r#"
 model = example_sde
 kind = sde

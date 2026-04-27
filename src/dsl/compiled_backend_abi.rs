@@ -3,53 +3,112 @@ use serde::{Deserialize, Serialize};
 use super::execution::{ExecutionModel, KernelRole};
 use super::model_info::NativeModelInfo;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct CompiledBackendAbiSymbols {
-    pub api_version: &'static str,
-    pub model_info_json_ptr: &'static str,
-    pub model_info_json_len: &'static str,
-    pub derive: &'static str,
-    pub dynamics: &'static str,
-    pub outputs: &'static str,
-    pub init: &'static str,
-    pub drift: &'static str,
-    pub diffusion: &'static str,
-    pub route_lag: &'static str,
-    pub route_bioavailability: &'static str,
-    pub alloc_f64_buffer: &'static str,
-    pub free_f64_buffer: &'static str,
-}
+#[cfg(any(
+    test,
+    feature = "dsl-aot",
+    feature = "dsl-aot-load",
+    feature = "dsl-wasm",
+    feature = "dsl-wasm-compile"
+))]
+pub const API_VERSION_SYMBOL: &str = "pharmsol_dsl_api_version";
+#[cfg(any(
+    test,
+    feature = "dsl-aot",
+    feature = "dsl-aot-load",
+    feature = "dsl-wasm",
+    feature = "dsl-wasm-compile"
+))]
+pub const MODEL_INFO_JSON_PTR_SYMBOL: &str = "pharmsol_dsl_model_info_json_ptr";
+#[cfg(any(
+    test,
+    feature = "dsl-aot",
+    feature = "dsl-aot-load",
+    feature = "dsl-wasm",
+    feature = "dsl-wasm-compile"
+))]
+pub const MODEL_INFO_JSON_LEN_SYMBOL: &str = "pharmsol_dsl_model_info_json_len";
+#[cfg(any(
+    test,
+    feature = "dsl-aot",
+    feature = "dsl-aot-load",
+    feature = "dsl-wasm",
+    feature = "dsl-wasm-compile"
+))]
+pub const DERIVE_SYMBOL: &str = "pharmsol_dsl_kernel_derive";
+#[cfg(any(
+    test,
+    feature = "dsl-aot",
+    feature = "dsl-aot-load",
+    feature = "dsl-wasm",
+    feature = "dsl-wasm-compile"
+))]
+pub const DYNAMICS_SYMBOL: &str = "pharmsol_dsl_kernel_dynamics";
+#[cfg(any(
+    test,
+    feature = "dsl-aot",
+    feature = "dsl-aot-load",
+    feature = "dsl-wasm",
+    feature = "dsl-wasm-compile"
+))]
+pub const OUTPUTS_SYMBOL: &str = "pharmsol_dsl_kernel_outputs";
+#[cfg(any(
+    test,
+    feature = "dsl-aot",
+    feature = "dsl-aot-load",
+    feature = "dsl-wasm",
+    feature = "dsl-wasm-compile"
+))]
+pub const INIT_SYMBOL: &str = "pharmsol_dsl_kernel_init";
+#[cfg(any(
+    test,
+    feature = "dsl-aot",
+    feature = "dsl-aot-load",
+    feature = "dsl-wasm",
+    feature = "dsl-wasm-compile"
+))]
+pub const DRIFT_SYMBOL: &str = "pharmsol_dsl_kernel_drift";
+#[cfg(any(
+    test,
+    feature = "dsl-aot",
+    feature = "dsl-aot-load",
+    feature = "dsl-wasm",
+    feature = "dsl-wasm-compile"
+))]
+pub const DIFFUSION_SYMBOL: &str = "pharmsol_dsl_kernel_diffusion";
+#[cfg(any(
+    test,
+    feature = "dsl-aot",
+    feature = "dsl-aot-load",
+    feature = "dsl-wasm",
+    feature = "dsl-wasm-compile"
+))]
+pub const ROUTE_LAG_SYMBOL: &str = "pharmsol_dsl_kernel_route_lag";
+#[cfg(any(
+    test,
+    feature = "dsl-aot",
+    feature = "dsl-aot-load",
+    feature = "dsl-wasm",
+    feature = "dsl-wasm-compile"
+))]
+pub const ROUTE_BIOAVAILABILITY_SYMBOL: &str = "pharmsol_dsl_kernel_route_bioavailability";
+#[cfg(any(
+    test,
+    feature = "dsl-aot",
+    feature = "dsl-aot-load",
+    feature = "dsl-wasm",
+    feature = "dsl-wasm-compile"
+))]
+pub const ALLOC_F64_BUFFER_SYMBOL: &str = "pharmsol_dsl_alloc_f64_buffer";
+#[cfg(any(
+    test,
+    feature = "dsl-aot",
+    feature = "dsl-aot-load",
+    feature = "dsl-wasm",
+    feature = "dsl-wasm-compile"
+))]
+pub const FREE_F64_BUFFER_SYMBOL: &str = "pharmsol_dsl_free_f64_buffer";
 
-pub const COMPILED_BACKEND_ABI_SYMBOLS: CompiledBackendAbiSymbols = CompiledBackendAbiSymbols {
-    api_version: "pharmsol_dsl_api_version",
-    model_info_json_ptr: "pharmsol_dsl_model_info_json_ptr",
-    model_info_json_len: "pharmsol_dsl_model_info_json_len",
-    derive: "pharmsol_dsl_kernel_derive",
-    dynamics: "pharmsol_dsl_kernel_dynamics",
-    outputs: "pharmsol_dsl_kernel_outputs",
-    init: "pharmsol_dsl_kernel_init",
-    drift: "pharmsol_dsl_kernel_drift",
-    diffusion: "pharmsol_dsl_kernel_diffusion",
-    route_lag: "pharmsol_dsl_kernel_route_lag",
-    route_bioavailability: "pharmsol_dsl_kernel_route_bioavailability",
-    alloc_f64_buffer: "pharmsol_dsl_alloc_f64_buffer",
-    free_f64_buffer: "pharmsol_dsl_free_f64_buffer",
-};
-
-pub const API_VERSION_SYMBOL: &str = COMPILED_BACKEND_ABI_SYMBOLS.api_version;
-pub const MODEL_INFO_JSON_PTR_SYMBOL: &str = COMPILED_BACKEND_ABI_SYMBOLS.model_info_json_ptr;
-pub const MODEL_INFO_JSON_LEN_SYMBOL: &str = COMPILED_BACKEND_ABI_SYMBOLS.model_info_json_len;
-pub const DERIVE_SYMBOL: &str = COMPILED_BACKEND_ABI_SYMBOLS.derive;
-pub const DYNAMICS_SYMBOL: &str = COMPILED_BACKEND_ABI_SYMBOLS.dynamics;
-pub const OUTPUTS_SYMBOL: &str = COMPILED_BACKEND_ABI_SYMBOLS.outputs;
-pub const INIT_SYMBOL: &str = COMPILED_BACKEND_ABI_SYMBOLS.init;
-pub const DRIFT_SYMBOL: &str = COMPILED_BACKEND_ABI_SYMBOLS.drift;
-pub const DIFFUSION_SYMBOL: &str = COMPILED_BACKEND_ABI_SYMBOLS.diffusion;
-pub const ROUTE_LAG_SYMBOL: &str = COMPILED_BACKEND_ABI_SYMBOLS.route_lag;
-pub const ROUTE_BIOAVAILABILITY_SYMBOL: &str = COMPILED_BACKEND_ABI_SYMBOLS.route_bioavailability;
-pub const ALLOC_F64_BUFFER_SYMBOL: &str = COMPILED_BACKEND_ABI_SYMBOLS.alloc_f64_buffer;
-pub const FREE_F64_BUFFER_SYMBOL: &str = COMPILED_BACKEND_ABI_SYMBOLS.free_f64_buffer;
-
+#[cfg(any(test, feature = "dsl-wasm-compile"))]
 pub const JS_KERNEL_EXPORTS: [(&str, &str); 8] = [
     ("derive", DERIVE_SYMBOL),
     ("dynamics", DYNAMICS_SYMBOL),
@@ -114,6 +173,7 @@ pub struct CompiledModelInfoEnvelope {
     pub kernels: CompiledKernelAvailability,
 }
 
+#[cfg(any(test, feature = "dsl-aot", feature = "dsl-wasm-compile"))]
 pub fn compiled_model_info_envelope(
     model: &ExecutionModel,
     abi_version: u32,
@@ -125,6 +185,7 @@ pub fn compiled_model_info_envelope(
     }
 }
 
+#[cfg(any(test, feature = "dsl-aot", feature = "dsl-wasm-compile"))]
 pub fn encode_compiled_model_info(
     model: &ExecutionModel,
     abi_version: u32,
@@ -132,13 +193,14 @@ pub fn encode_compiled_model_info(
     serde_json::to_string(&compiled_model_info_envelope(model, abi_version))
 }
 
-#[cfg(any(test, feature = "dsl-wasm"))]
+#[cfg(any(test, feature = "dsl-aot-load", feature = "dsl-wasm"))]
 pub fn decode_compiled_model_info(
     bytes: &[u8],
 ) -> Result<CompiledModelInfoEnvelope, serde_json::Error> {
     serde_json::from_slice(bytes)
 }
 
+#[cfg(any(test, feature = "dsl-aot", feature = "dsl-wasm-compile"))]
 pub fn compiled_kernel_symbol(role: KernelRole) -> Option<&'static str> {
     match role {
         KernelRole::Derive => Some(DERIVE_SYMBOL),
@@ -206,11 +268,9 @@ fn kernel_output_len(info: &NativeModelInfo, role: KernelRole) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use super::super::model_info::{
-        NativeCovariateInfo, NativeOutputInfo, NativeRouteInfo,
-    };
+    use super::super::model_info::{NativeCovariateInfo, NativeOutputInfo, NativeRouteInfo};
     use super::super::ModelKind;
+    use super::*;
 
     #[test]
     fn compiled_backend_symbol_names_are_frozen() {
@@ -259,6 +319,7 @@ mod tests {
                     name: "iv".to_string(),
                     index: 0,
                     destination_offset: 1,
+                    inject_input_to_destination: true,
                 }],
                 outputs: vec![NativeOutputInfo {
                     name: "cp".to_string(),

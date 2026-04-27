@@ -27,7 +27,7 @@ fn build_population(n: usize) -> Data {
     let subjects: Vec<Subject> = (0..n)
         .map(|i| {
             let scale = 1.0 + (i as f64 % 7.0) * 0.05; // slight variation
-            Subject::builder(&format!("subj_{}", i))
+            Subject::builder(format!("subj_{}", i))
                 .bolus(0.0, 100.0, 0)
                 .observation(0.0, 0.0, 0)
                 .observation(0.25, 2.5 * scale, 0)

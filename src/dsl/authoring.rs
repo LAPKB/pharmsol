@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::ast::*;
-use super::diagnostic::{ParseError, Span};
+use super::diagnostic::{Applicability, DiagnosticSuggestion, ParseError, Span, TextEdit};
 use super::parser::{parse_expr_fragment, parse_place_fragment};
 
 const DEFAULT_MODEL_NAME: &str = "main";
@@ -20,6 +20,8 @@ struct AuthoringParser<'a> {
     states: Vec<StateDecl>,
     declared_derived: BTreeSet<String>,
     declared_outputs: BTreeSet<String>,
+    explicit_outputs: BTreeMap<String, Span>,
+    assigned_outputs: BTreeMap<String, Span>,
     declared_outputs_span: Option<Span>,
     routes: BTreeMap<String, SurfaceRoute>,
     route_modifiers: BTreeMap<String, Vec<Binding>>,
@@ -59,6 +61,9 @@ enum SurfaceRhs {
     },
 }
 
+type SimilarOutputScore = (usize, usize, usize);
+type SimilarOutputMatch = (SimilarOutputScore, (String, Span));
+
 impl<'a> AuthoringParser<'a> {
     fn new(src: &'a str) -> Self {
         Self {
@@ -71,6 +76,8 @@ impl<'a> AuthoringParser<'a> {
             states: Vec::new(),
             declared_derived: BTreeSet::new(),
             declared_outputs: BTreeSet::new(),
+            explicit_outputs: BTreeMap::new(),
+            assigned_outputs: BTreeMap::new(),
             declared_outputs_span: None,
             routes: BTreeMap::new(),
             route_modifiers: BTreeMap::new(),
@@ -97,6 +104,8 @@ impl<'a> AuthoringParser<'a> {
         if !self.src.is_empty() && !self.src.ends_with('\n') && offset < self.src.len() {
             self.parse_line(&self.src[offset..], offset)?;
         }
+
+        self.validate_declared_outputs_assigned()?;
 
         let module_span = match (self.first_span, self.last_span) {
             (Some(first), Some(last)) => first.join(last),
@@ -343,7 +352,8 @@ impl<'a> AuthoringParser<'a> {
         if lhs_trimmed == "outputs" {
             self.declared_outputs_span = Some(span);
             for ident in parse_ident_list(rhs, rhs_abs)? {
-                self.declared_outputs.insert(ident.text);
+                self.declared_outputs.insert(ident.text.clone());
+                self.explicit_outputs.insert(ident.text, ident.span);
             }
             return Ok(());
         }
@@ -386,6 +396,7 @@ impl<'a> AuthoringParser<'a> {
             rhs,
         );
         if self.declared_outputs.contains(&target.text) {
+            self.note_output_assignment(&target);
             self.output_statements.push(stmt);
         } else {
             self.derive_statements.push(stmt);
@@ -513,7 +524,9 @@ impl<'a> AuthoringParser<'a> {
             }
             "out" => {
                 let output = parse_ident_segment(call.argument, call.argument_start)?;
+                self.validate_output_target(&output)?;
                 self.declared_outputs.insert(output.text.clone());
+                self.note_output_assignment(&output);
 
                 let (expr_rhs, annotation) = split_output_annotation(rhs);
                 if let Some((annotation_src, annotation_start)) = annotation {
@@ -573,14 +586,138 @@ impl<'a> AuthoringParser<'a> {
             ));
         }
 
-        if matches!(kind, ModelKind::Sde) && self.analytical.is_some() {
-            return Err(ParseError::new(
-                "SDE authoring models cannot declare an analytical kernel",
-                self.analytical.as_ref().unwrap().span,
-            ));
+        if matches!(kind, ModelKind::Sde) {
+            if let Some(analytical) = &self.analytical {
+                return Err(ParseError::new(
+                    "SDE authoring models cannot declare an analytical kernel",
+                    analytical.span,
+                ));
+            }
         }
 
         Ok(kind)
+    }
+
+    fn validate_output_target(&self, output: &Ident) -> Result<(), ParseError> {
+        if self.declared_outputs_span.is_none() || self.explicit_outputs.contains_key(&output.text)
+        {
+            return Ok(());
+        }
+
+        Err(self.undeclared_output_error(&output.text, output.span))
+    }
+
+    fn note_output_assignment(&mut self, output: &Ident) {
+        self.assigned_outputs
+            .entry(output.text.clone())
+            .or_insert(output.span);
+    }
+
+    fn validate_declared_outputs_assigned(&self) -> Result<(), ParseError> {
+        let mut diagnostics = Vec::new();
+        if !self.explicit_outputs.is_empty() {
+            for (name, span) in &self.assigned_outputs {
+                if self.explicit_outputs.contains_key(name) {
+                    continue;
+                }
+
+                diagnostics.push(self.undeclared_output_error(name, *span).into_diagnostic());
+            }
+        }
+
+        for (name, span) in &self.explicit_outputs {
+            if self.assigned_outputs.contains_key(name) {
+                continue;
+            }
+
+            let mut error = ParseError::new(
+                format!("output `{name}` is declared in `outputs = ...` but never assigned"),
+                *span,
+            )
+            .with_help(format!("add `out({name}) = ...` or `{name} = ...`"));
+            if let Some(outputs_span) = self.declared_outputs_span {
+                error = error.with_context_label(outputs_span, "`outputs = ...` declared here");
+            }
+            diagnostics.push(error.into_diagnostic());
+        }
+
+        if diagnostics.is_empty() {
+            Ok(())
+        } else {
+            Err(ParseError::from_diagnostics(diagnostics))
+        }
+    }
+
+    fn undeclared_output_error(&self, name: &str, span: Span) -> ParseError {
+        let mut error = ParseError::new(
+            format!("output `{name}` is not declared in `outputs = ...`"),
+            span,
+        )
+        .with_help("add the output name to `outputs = ...` or rename the output assignment to match a declared output");
+
+        if let Some((candidate, candidate_span)) = self.best_similar_output_name(name) {
+            error = error
+                .with_secondary_label(
+                    candidate_span,
+                    format!("declared output `{candidate}` is here"),
+                )
+                .with_suggestion(DiagnosticSuggestion {
+                    message: format!("did you mean `{candidate}`?"),
+                    edits: vec![TextEdit {
+                        span,
+                        replacement: candidate,
+                    }],
+                    applicability: Applicability::MaybeIncorrect,
+                });
+        } else if let Some(outputs_span) = self.declared_outputs_span {
+            error = error.with_context_label(outputs_span, "`outputs = ...` declared here");
+        }
+
+        error
+    }
+    fn best_similar_output_name(&self, needle: &str) -> Option<(String, Span)> {
+        let needle = needle.to_ascii_lowercase();
+        let mut best: Option<SimilarOutputMatch> = None;
+        let mut tied = false;
+
+        for (candidate, span) in &self.explicit_outputs {
+            let lookup = candidate.to_ascii_lowercase();
+            if lookup == needle {
+                continue;
+            }
+            let distance = if is_single_adjacent_transposition(&needle, &lookup) {
+                1
+            } else {
+                edit_distance(&needle, &lookup)
+            };
+            let prefix = common_prefix_len(&needle, &lookup);
+            if !is_high_confidence_match(&needle, &lookup, distance, prefix) {
+                continue;
+            }
+            let score = (
+                distance,
+                usize::MAX - prefix,
+                needle.len().abs_diff(lookup.len()),
+            );
+            match &best {
+                None => {
+                    best = Some((score, (candidate.clone(), *span)));
+                    tied = false;
+                }
+                Some((best_score, _)) if score < *best_score => {
+                    best = Some((score, (candidate.clone(), *span)));
+                    tied = false;
+                }
+                Some((best_score, _)) if score == *best_score => tied = true,
+                _ => {}
+            }
+        }
+
+        if tied {
+            None
+        } else {
+            best.map(|(_, candidate)| candidate)
+        }
     }
 
     fn note_span(&mut self, span: Span) {
@@ -865,12 +1002,78 @@ fn split_output_annotation(src: &str) -> (&str, Option<(&str, usize)>) {
 fn validate_output_annotation(src: &str, abs_start: usize) -> Result<(), ParseError> {
     let annotation = parse_expr_at(src, abs_start)?;
     match annotation.kind {
-        ExprKind::Call { args, .. } if args.is_empty() => Ok(()),
+        ExprKind::Call { callee, args } if callee.text == "continuous" && args.is_empty() => Ok(()),
         _ => Err(ParseError::new(
-            "expected an output annotation call like `continuous()`",
+            "expected the output annotation `continuous()`",
             annotation.span,
         )),
     }
+}
+
+fn is_high_confidence_match(needle: &str, candidate: &str, distance: usize, prefix: usize) -> bool {
+    let max_len = needle.len().max(candidate.len());
+    let max_distance = match max_len {
+        0..=4 => 1,
+        5..=8 => 2,
+        _ => 3,
+    };
+    distance <= max_distance && (prefix > 0 || distance <= 1)
+}
+
+fn common_prefix_len(lhs: &str, rhs: &str) -> usize {
+    lhs.chars()
+        .zip(rhs.chars())
+        .take_while(|(lhs, rhs)| lhs == rhs)
+        .count()
+}
+
+fn is_single_adjacent_transposition(lhs: &str, rhs: &str) -> bool {
+    let lhs: Vec<char> = lhs.chars().collect();
+    let rhs: Vec<char> = rhs.chars().collect();
+    if lhs.len() != rhs.len() {
+        return false;
+    }
+
+    let differing = lhs
+        .iter()
+        .zip(rhs.iter())
+        .enumerate()
+        .filter_map(|(index, (lhs, rhs))| (lhs != rhs).then_some(index))
+        .collect::<Vec<_>>();
+
+    if differing.len() != 2 || differing[1] != differing[0] + 1 {
+        return false;
+    }
+
+    let first = differing[0];
+    lhs[first] == rhs[first + 1] && lhs[first + 1] == rhs[first]
+}
+
+fn edit_distance(lhs: &str, rhs: &str) -> usize {
+    let lhs: Vec<char> = lhs.chars().collect();
+    let rhs: Vec<char> = rhs.chars().collect();
+    if lhs.is_empty() {
+        return rhs.len();
+    }
+    if rhs.is_empty() {
+        return lhs.len();
+    }
+
+    let mut previous: Vec<usize> = (0..=rhs.len()).collect();
+    let mut current = vec![0; rhs.len() + 1];
+
+    for (lhs_index, lhs_char) in lhs.iter().enumerate() {
+        current[0] = lhs_index + 1;
+        for (rhs_index, rhs_char) in rhs.iter().enumerate() {
+            let substitution_cost = usize::from(lhs_char != rhs_char);
+            current[rhs_index + 1] = (current[rhs_index] + 1)
+                .min(previous[rhs_index + 1] + 1)
+                .min(previous[rhs_index] + substitution_cost);
+        }
+        previous.clone_from_slice(&current);
+    }
+
+    previous[rhs.len()]
 }
 
 fn augment_derivative_statements(
@@ -974,9 +1177,10 @@ fn normalize_interpolation_name(name: &str) -> String {
 
 fn starts_with_keyword(src: &str, keyword: &str) -> bool {
     src.strip_prefix(keyword).is_some_and(|rest| {
-        rest.is_empty()
-            || !rest.chars().next().unwrap().is_ascii_alphanumeric()
-                && rest.chars().next().unwrap() != '_'
+        rest.is_empty() || {
+            let next = rest.chars().next().unwrap();
+            !next.is_ascii_alphanumeric() && !rest.starts_with('_')
+        }
     })
 }
 

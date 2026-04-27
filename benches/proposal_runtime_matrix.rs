@@ -51,9 +51,7 @@ fn proposal_runtime_matrix_benchmark(c: &mut Criterion) {
         compile_group.bench_with_input(
             BenchmarkId::new("wasm-module", case.label()),
             &case,
-            |b, case| {
-                b.iter(|| black_box(corpus::compile_wasm_module(*case).unwrap()))
-            },
+            |b, case| b.iter(|| black_box(corpus::compile_wasm_module(*case).unwrap())),
         );
 
         let cache = WasmCompileCache::default();

@@ -56,6 +56,7 @@ pub enum RuntimeBackend {
 }
 
 pub(crate) trait KernelSession {
+    #[allow(clippy::too_many_arguments)]
     unsafe fn invoke_raw(
         &mut self,
         role: KernelRole,
@@ -78,7 +79,7 @@ pub(crate) trait RuntimeArtifact: Send + Sync + std::fmt::Debug {
 #[allow(dead_code)]
 enum NativeArtifactOwner {
     #[cfg(feature = "dsl-jit")]
-    Jit(JITModule),
+    Jit(Box<JITModule>),
     #[cfg(feature = "dsl-aot-load")]
     Library(Library),
 }
@@ -135,6 +136,7 @@ impl std::fmt::Debug for NativeExecutionArtifact {
 
 impl NativeExecutionArtifact {
     #[cfg(feature = "dsl-jit")]
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn from_jit_module(
         model_name: String,
         derive: Option<DenseKernelFn>,
@@ -157,11 +159,12 @@ impl NativeExecutionArtifact {
             diffusion,
             route_lag,
             route_bioavailability,
-            _owner: Some(NativeArtifactOwner::Jit(module)),
+            _owner: Some(NativeArtifactOwner::Jit(Box::new(module))),
         }
     }
 
     #[cfg(feature = "dsl-aot-load")]
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn from_library(
         model_name: String,
         derive: Option<DenseKernelFn>,
@@ -319,6 +322,15 @@ impl SharedNativeModel {
         }
     }
 
+    fn apply_route_inputs_to_rates(&self, rates: &mut [f64], route_inputs: &[f64]) {
+        for route in &self.info.routes {
+            if route.inject_input_to_destination {
+                rates[route.destination_offset] += route_inputs[route.index];
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn refresh_derived(
         &self,
         session: &mut dyn KernelSession,
@@ -350,6 +362,7 @@ impl SharedNativeModel {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn write_outputs(
         &self,
         session: &mut dyn KernelSession,
@@ -419,7 +432,7 @@ impl SharedNativeModel {
     fn apply_route_properties(
         &self,
         session: &mut dyn KernelSession,
-        events: &mut Vec<Event>,
+        events: &mut [Event],
         covariates: &Covariates,
         support_point: &[f64],
     ) -> Result<(), PharmsolError> {
@@ -649,7 +662,7 @@ impl NativeOdeModel {
             let mut route_session = session.borrow_mut();
             self.shared.apply_route_properties(
                 &mut **route_session,
-                &mut events,
+                events.as_mut_slice(),
                 occasion.covariates(),
                 support_point,
             )?;
@@ -712,6 +725,8 @@ impl NativeOdeModel {
                 } {
                     *diffeq_error.borrow_mut() = Some(error);
                     dx.as_mut_slice().fill(0.0);
+                } else {
+                    shared.apply_route_inputs_to_rates(dx.as_mut_slice(), rateiv.as_slice());
                 }
             };
 
@@ -779,6 +794,7 @@ impl NativeOdeModel {
         Ok(output)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn run_events<'a, F, S>(
         &self,
         solver: &mut S,
@@ -910,7 +926,7 @@ impl NativeAnalyticalModel {
             let mut session = self.shared.artifact.start_session()?;
             self.shared.apply_route_properties(
                 &mut *session,
-                &mut events,
+                events.as_mut_slice(),
                 occasion.covariates(),
                 support_point,
             )?;
@@ -1064,7 +1080,7 @@ impl NativeSdeModel {
             let mut session = self.shared.artifact.start_session()?;
             self.shared.apply_route_properties(
                 &mut *session,
-                &mut events,
+                events.as_mut_slice(),
                 occasion.covariates(),
                 support_point,
             )?;
@@ -1214,6 +1230,8 @@ impl NativeSdeModel {
                         } {
                             *drift_error.borrow_mut() = Some(error);
                             out.fill(0.0);
+                        } else {
+                            shared.apply_route_inputs_to_rates(out.as_mut_slice(), &route_inputs);
                         }
                     },
                     move |time, state, out| {
@@ -1284,7 +1302,7 @@ fn active_route_inputs(infusions: &[Infusion], time: f64, route_len: usize) -> V
     values
 }
 
-fn sort_events(events: &mut Vec<Event>) {
+fn sort_events(events: &mut [Event]) {
     events.sort_by(|lhs, rhs| {
         fn order(event: &Event) -> u8 {
             match event {

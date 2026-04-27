@@ -1,6 +1,12 @@
 //! Run with:
 //! cargo run --example bimodal_ke_entrypoint_meta --features "dsl-jit dsl-aot dsl-aot-load dsl-wasm"
 
+#[cfg(all(
+    feature = "dsl-jit",
+    feature = "dsl-aot",
+    feature = "dsl-aot-load",
+    feature = "dsl-wasm"
+))]
 const MODEL_SOURCE: &str = r#"
 model = bimodal_ke
 kind = ode

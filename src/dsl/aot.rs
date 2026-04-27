@@ -409,9 +409,8 @@ mod tests {
     }
 
     fn load_proposal_model(name: &str) -> ExecutionModel {
-        let source = std::fs::read_to_string("dsl-proposals/02-structured-block-imperative.dsl")
-            .expect("proposal source");
-        let parsed = parse_module(&source).expect("parse proposal module");
+        let source = include_str!("../../tests/fixtures/dsl/02-structured-block-imperative.dsl");
+        let parsed = parse_module(source).expect("parse proposal module");
         let typed = analyze_module(&parsed).expect("analyze proposal module");
         let model = typed
             .models
@@ -705,7 +704,7 @@ model broken {
             .expect("diagnostic report");
         assert_eq!(report.source.name, "inline.dsl");
         assert_eq!(report.diagnostics[0].code, "DSL2000");
-        assert!(report.diagnostics[0].labels.len() >= 1);
+        assert!(!report.diagnostics[0].labels.is_empty());
     }
 
     #[test]

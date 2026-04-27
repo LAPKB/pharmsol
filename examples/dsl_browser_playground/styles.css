@@ -68,11 +68,7 @@ table {
   padding: 22px;
   margin-bottom: 20px;
   background:
-    linear-gradient(
-      135deg,
-      rgba(26, 31, 41, 0.96),
-      rgba(17, 21, 27, 0.82)
-    ),
+    linear-gradient(135deg, rgba(26, 31, 41, 0.96), rgba(17, 21, 27, 0.82)),
     radial-gradient(
       circle at top right,
       rgba(255, 107, 95, 0.08),

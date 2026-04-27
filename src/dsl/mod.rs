@@ -89,9 +89,7 @@ pub use runtime::{
 };
 pub use semantic::{analyze_model, analyze_module, SemanticError};
 #[cfg(feature = "dsl-wasm")]
-pub use wasm::{
-    read_wasm_model_info, read_wasm_model_info_bytes,
-};
+pub use wasm::{read_wasm_model_info, read_wasm_model_info_bytes};
 #[cfg(feature = "dsl-wasm-compile")]
 pub use wasm_compile::{
     browser_loader_source, compile_execution_model_to_wasm_bytes,

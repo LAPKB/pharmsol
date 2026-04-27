@@ -285,9 +285,7 @@ pub fn compile_runtime_wasm_model(
 }
 
 #[cfg(feature = "dsl-wasm")]
-pub fn compile_wasm_module(
-    case: CorpusCase,
-) -> Result<dsl::CompiledWasmModule, Box<dyn Error>> {
+pub fn compile_wasm_module(case: CorpusCase) -> Result<dsl::CompiledWasmModule, Box<dyn Error>> {
     Ok(dsl::compile_module_source_to_wasm_module(
         case.source(),
         Some(case.model_name()),

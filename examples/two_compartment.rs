@@ -15,7 +15,6 @@
 ///   Ke  = CL / V   (elimination rate constant)
 ///   Kcp = Q / V    (central to peripheral rate constant)
 ///   Kpc = Q / Vp   (peripheral to central rate constant)
-
 fn main() -> Result<(), pharmsol::PharmsolError> {
     use pharmsol::prelude::*;
 

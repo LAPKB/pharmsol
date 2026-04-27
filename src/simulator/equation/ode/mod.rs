@@ -5,6 +5,7 @@ mod closure;
 ///
 /// This helper is shared by the legacy JIT path and the Proposal 2 native
 /// runtime wrappers.
+#[cfg(any(feature = "dsl-jit", feature = "dsl-aot-load", feature = "dsl-wasm"))]
 pub(crate) mod closure_helpers {
     pub(crate) use super::closure::PMProblem;
 }
@@ -473,8 +474,7 @@ impl Equation for ODE {
                     spp_v.clone(),
                     covariates,
                     infusions.as_slice(),
-                    self.initial_state(support_point, covariates, occasion.index())
-                        .into(),
+                    self.initial_state(support_point, covariates, occasion.index()),
                 )?)?;
 
             match &self.solver {

@@ -24,10 +24,8 @@ out(cp) = central / v ~ continuous()
     let support_point = [1.2, 50.0];
 
     // 1. Compile the model to a runtime WASM model without creating any files.
-    let model = pharmsol::dsl::compile_module_source_to_runtime_wasm(
-        model_source,
-        Some("bimodal_ke"),
-    )?;
+    let model =
+        pharmsol::dsl::compile_module_source_to_runtime_wasm(model_source, Some("bimodal_ke"))?;
 
     // 2. Resolve the route and output indices declared by the model.
     let iv = model

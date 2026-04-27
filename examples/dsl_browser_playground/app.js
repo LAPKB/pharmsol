@@ -272,22 +272,6 @@ function parameterControl(name) {
   };
 }
 
-function seedDefaultParameters(model, parameters) {
-  if (!isBimodalKeExampleModel(model)) {
-    return parameters;
-  }
-
-  return parameters.map((parameter) => {
-    if (parameter.name === "ke") {
-      return { ...parameter, value: 1.2 };
-    }
-    if (parameter.name === "v") {
-      return { ...parameter, value: 50 };
-    }
-    return parameter;
-  });
-}
-
 function covariateControl(name) {
   const lower = name.toLowerCase();
   let value = 1;
@@ -360,6 +344,67 @@ function defaultSubjectDraft(model) {
       time,
       output,
     })),
+  };
+}
+
+function reconcileNamedSelection(names, current, fallback) {
+  const preserved = current ? preferredName(names, [current]) : null;
+  if (preserved) {
+    return preserved;
+  }
+  if (fallback) {
+    const preferredFallback = preferredName(names, [fallback]);
+    if (preferredFallback) {
+      return preferredFallback;
+    }
+  }
+  return names[0] ?? "";
+}
+
+function reconcileSubjectDraft(model, subject) {
+  const seeded = defaultSubjectDraft(model);
+  if (!subject) {
+    return seeded;
+  }
+
+  const bolusFallback =
+    seeded.boluses[0]?.route ?? seeded.infusions[0]?.route ?? "";
+  const infusionFallback =
+    seeded.infusions[0]?.route ?? seeded.boluses[0]?.route ?? "";
+  const observationFallback = seeded.observations[0]?.output ?? "";
+
+  return {
+    id: subject.id || seeded.id,
+    boluses: subject.boluses
+      .map((bolus) => {
+        const route = reconcileNamedSelection(
+          model.routes,
+          bolus.route,
+          bolusFallback,
+        );
+        return route ? { ...bolus, route } : null;
+      })
+      .filter(Boolean),
+    infusions: subject.infusions
+      .map((infusion) => {
+        const route = reconcileNamedSelection(
+          model.routes,
+          infusion.route,
+          infusionFallback,
+        );
+        return route ? { ...infusion, route } : null;
+      })
+      .filter(Boolean),
+    observations: subject.observations
+      .map((observation) => {
+        const output = reconcileNamedSelection(
+          model.outputs,
+          observation.output,
+          observationFallback,
+        );
+        return output ? { ...observation, output } : null;
+      })
+      .filter(Boolean),
   };
 }
 
@@ -779,8 +824,7 @@ function formatAxisNumber(value) {
 
 function renderPredictionChart(predictions) {
   if (!predictions.length) {
-    nodes.predictionChart.innerHTML =
-      `<text x="24" y="40" fill="${chartTheme.empty}">No run.</text>`;
+    nodes.predictionChart.innerHTML = `<text x="24" y="40" fill="${chartTheme.empty}">No run.</text>`;
     nodes.predictionLegend.innerHTML = "";
     return;
   }
@@ -931,6 +975,7 @@ function collectCovariateValues() {
 
 async function compileCurrentModel() {
   setStatus("Compiling…");
+  const previousSubject = state.subject;
   const result = await compileInWorker(
     nodes.modelSource.value,
     nodes.modelName.value.trim(),
@@ -952,12 +997,9 @@ async function compileCurrentModel() {
   state.compiledWasmBytes = result.wasmBytes;
   state.compileCacheEntries = result.cacheEntries ?? 0;
   state.model = normalizeModelInfo(result.metadata?.model);
-  state.parameters = seedDefaultParameters(
-    state.model,
-    state.model.parameters.map(parameterControl),
-  );
+  state.parameters = state.model.parameters.map(parameterControl);
   state.covariates = state.model.covariates.map(covariateControl);
-  state.subject = defaultSubjectDraft(state.model);
+  state.subject = reconcileSubjectDraft(state.model, previousSubject);
   renderModelSummary();
   renderParameterControls();
   renderCovariates();

@@ -17,7 +17,7 @@ outputs = cp
 
 infusion(iv) -> central
 
-dx(central) = -ken * central
+dx(central) = -ke * central
 
 out(cp) = central / v ~ continuous()
 "#;

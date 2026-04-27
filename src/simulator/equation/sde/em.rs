@@ -42,13 +42,7 @@ where
     /// # Returns
     ///
     /// A new instance of the Euler-Maruyama solver configured with the given parameters.
-    pub fn new(
-        drift: D,
-        diffusion: G,
-        initial_state: DVector<f64>,
-        rtol: f64,
-        atol: f64,
-    ) -> Self {
+    pub fn new(drift: D, diffusion: G, initial_state: DVector<f64>, rtol: f64, atol: f64) -> Self {
         Self {
             drift,
             diffusion,
