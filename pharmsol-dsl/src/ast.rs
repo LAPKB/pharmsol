@@ -2,7 +2,7 @@ use std::fmt::{self, Write};
 
 use serde::{Deserialize, Serialize};
 
-use super::diagnostic::Span;
+use crate::diagnostic::Span;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Module {

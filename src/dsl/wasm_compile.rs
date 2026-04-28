@@ -10,14 +10,13 @@ use super::compiled_backend_abi::{
     ALLOC_F64_BUFFER_SYMBOL, API_VERSION_SYMBOL, FREE_F64_BUFFER_SYMBOL, JS_KERNEL_EXPORTS,
     MODEL_INFO_JSON_LEN_SYMBOL, MODEL_INFO_JSON_PTR_SYMBOL,
 };
-use super::execution::ExecutionModel;
 use super::wasm_direct_emitter::{
     compile_execution_model_to_wasm_bytes as emit_execution_model_to_wasm_bytes,
     DIRECT_WASM_BINARY_MATH_IMPORTS, DIRECT_WASM_IMPORT_MODULE, DIRECT_WASM_UNARY_MATH_IMPORTS,
 };
-use super::{
-    analyze_module, lower_typed_model, parse_module, Diagnostic, DiagnosticReport, LoweringError,
-    ParseError, SemanticError,
+use pharmsol_dsl::{
+    analyze_module, lower_typed_model, parse_module, Diagnostic, DiagnosticReport, ExecutionModel,
+    LoweringError, ParseError, SemanticError,
 };
 
 pub const WASM_API_VERSION: u32 = 1;
@@ -844,7 +843,7 @@ fn direct_wasm_browser_import_object_source() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dsl::{
+    use pharmsol_dsl::{
         DiagnosticPhase, DSL_LOWERING_GENERIC, DSL_PARSE_GENERIC, DSL_SEMANTIC_GENERIC,
     };
 

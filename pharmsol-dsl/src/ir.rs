@@ -1,5 +1,6 @@
-use super::{ModelKind, Span};
 use serde::{Deserialize, Serialize};
+
+use crate::{ModelKind, Span};
 
 pub type SymbolId = usize;
 

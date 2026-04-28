@@ -1,14 +1,14 @@
-use super::diagnostic::{ParseError, Span};
+use crate::diagnostic::{ParseError, Span};
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Token {
-    pub(crate) kind: TokenKind,
-    pub(crate) span: Span,
-    pub(crate) starts_line: bool,
+pub struct Token {
+    pub kind: TokenKind,
+    pub span: Span,
+    pub starts_line: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum TokenKind {
+pub enum TokenKind {
     Model,
     Kind,
     Ode,
@@ -64,7 +64,7 @@ pub(crate) enum TokenKind {
 }
 
 impl TokenKind {
-    pub(crate) fn describe(&self) -> String {
+    pub fn describe(&self) -> String {
         match self {
             TokenKind::Model => "`model`".into(),
             TokenKind::Kind => "`kind`".into(),
@@ -122,7 +122,7 @@ impl TokenKind {
     }
 }
 
-pub(crate) fn lex(src: &str) -> Result<Vec<Token>, ParseError> {
+pub fn lex(src: &str) -> Result<Vec<Token>, ParseError> {
     Lexer::new(src).lex()
 }
 

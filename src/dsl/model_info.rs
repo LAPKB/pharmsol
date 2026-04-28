@@ -1,10 +1,10 @@
 use serde::{Deserialize, Serialize};
 
-use super::execution::{
+use pharmsol_dsl::execution::{
     ExecutionExpr, ExecutionExprKind, ExecutionLoad, ExecutionStmt, ExecutionStmtKind,
-    KernelImplementation, KernelRole,
+    ExecutionModel, KernelImplementation, KernelRole,
 };
-use super::{AnalyticalKernel, ExecutionModel, ModelKind};
+use pharmsol_dsl::{AnalyticalKernel, ModelKind};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NativeModelInfo {

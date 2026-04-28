@@ -20,17 +20,10 @@ use super::compiled_backend_abi::{
     DYNAMICS_SYMBOL, INIT_SYMBOL, MODEL_INFO_JSON_LEN_SYMBOL, MODEL_INFO_JSON_PTR_SYMBOL,
     OUTPUTS_SYMBOL, ROUTE_BIOAVAILABILITY_SYMBOL, ROUTE_LAG_SYMBOL,
 };
-#[cfg(feature = "dsl-aot")]
-use super::execution::ExecutionModel;
 #[cfg(feature = "dsl-aot-load")]
 use super::native::{CompiledNativeModel, DenseKernelFn, NativeExecutionArtifact, NativeModelInfo};
 #[cfg(feature = "dsl-aot")]
 use super::rust_backend::{emit_rust_backend_source, RustBackendFlavor};
-#[cfg(feature = "dsl-aot-load")]
-use super::ModelKind;
-#[cfg(feature = "dsl-aot")]
-use super::{analyze_module, lower_typed_model, parse_module};
-use super::{Diagnostic, DiagnosticReport, LoweringError, ParseError, SemanticError};
 #[cfg(feature = "dsl-aot")]
 use crate::build_support::{
     build_cargo_template, create_cargo_template, native_cdylib_filename_for_target,
@@ -38,6 +31,11 @@ use crate::build_support::{
 };
 #[cfg(all(test, feature = "dsl-aot"))]
 use crate::build_support::{rustc_host_target, rustup_installed_targets};
+#[cfg(feature = "dsl-aot-load")]
+use pharmsol_dsl::ModelKind;
+#[cfg(feature = "dsl-aot")]
+use pharmsol_dsl::{analyze_module, lower_typed_model, parse_module, ExecutionModel};
+use pharmsol_dsl::{Diagnostic, DiagnosticReport, LoweringError, ParseError, SemanticError};
 
 pub const AOT_API_VERSION: u32 = 1;
 
@@ -394,10 +392,10 @@ unsafe fn load_optional_kernel(library: &Library, name: &'static str) -> Option<
 ))]
 mod tests {
     use super::*;
-    use crate::dsl::{compile_ode_model_to_jit, lower_typed_model, parse_module};
-    use crate::dsl::{DiagnosticPhase, DSL_SEMANTIC_GENERIC};
+    use crate::dsl::compile_ode_model_to_jit;
     use crate::SubjectBuilderExt;
     use approx::assert_relative_eq;
+    use pharmsol_dsl::{DiagnosticPhase, DSL_SEMANTIC_GENERIC};
     use std::sync::{Arc, Mutex};
     use tempfile::tempdir;
 
@@ -410,14 +408,14 @@ mod tests {
 
     fn load_proposal_model(name: &str) -> ExecutionModel {
         let source = include_str!("../../tests/fixtures/dsl/02-structured-block-imperative.dsl");
-        let parsed = parse_module(source).expect("parse proposal module");
-        let typed = analyze_module(&parsed).expect("analyze proposal module");
+        let parsed = pharmsol_dsl::parse_module(source).expect("parse proposal module");
+        let typed = pharmsol_dsl::analyze_module(&parsed).expect("analyze proposal module");
         let model = typed
             .models
             .iter()
             .find(|model| model.name == name)
             .expect("model in proposal module");
-        lower_typed_model(model).expect("lower proposal model")
+        pharmsol_dsl::lower_typed_model(model).expect("lower proposal model")
     }
 
     fn resolve_cross_target_smoke_target() -> Result<CrossTargetSmokeDecision, String> {

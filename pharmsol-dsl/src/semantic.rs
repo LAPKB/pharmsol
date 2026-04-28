@@ -2,13 +2,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::Arc;
 
-use super::ast as syntax;
-use super::diagnostic::{
+use crate::ast as syntax;
+use crate::diagnostic::{
     Applicability, Diagnostic, DiagnosticPhase, DiagnosticReport, DiagnosticSuggestion, Span,
     TextEdit, DSL_SEMANTIC_GENERIC,
 };
-use super::ir::*;
-use super::ModelKind;
+use crate::ir::*;
+use crate::ModelKind;
 
 const RESERVED_NAMES: &[&str] = &[
     "abs",
@@ -2647,7 +2647,7 @@ fn fold_call(intrinsic: MathIntrinsic, values: &[ConstValue]) -> Option<ConstVal
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dsl::{parse_model, parse_module};
+    use crate::{parse_model, parse_module};
 
     #[test]
     fn analyzes_proposal_two_corpus() {
@@ -2689,9 +2689,9 @@ mod tests {
     #[test]
     fn authoring_fixture_lowers_to_equivalent_typed_ir() {
         let authoring_surface =
-            include_str!("../../tests/fixtures/dsl/04-user-recommended_style.dsi");
+            include_str!("../tests/fixtures/dsl/04-user-recommended_style.dsi");
         let canonical =
-            include_str!("../../tests/fixtures/dsl/04-user-recommended_style.desugared.dsl");
+            include_str!("../tests/fixtures/dsl/04-user-recommended_style.desugared.dsl");
 
         let authoring_model = parse_model(authoring_surface).expect("authoring model parses");
         let canonical_model = parse_model(canonical).expect("canonical model parses");

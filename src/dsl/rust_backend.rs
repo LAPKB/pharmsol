@@ -4,12 +4,12 @@ use super::compiled_backend_abi::{
     compiled_kernel_symbol, encode_compiled_model_info, API_VERSION_SYMBOL,
     MODEL_INFO_JSON_LEN_SYMBOL, MODEL_INFO_JSON_PTR_SYMBOL,
 };
-use super::execution::{
+use pharmsol_dsl::execution::{
     ExecutionBlock, ExecutionCall, ExecutionExpr, ExecutionExprKind, ExecutionLoad, ExecutionModel,
     ExecutionProgram, ExecutionStateRef, ExecutionStmt, ExecutionStmtKind, ExecutionTargetKind,
     KernelImplementation,
 };
-use super::{MathIntrinsic, TypedBinaryOp, TypedUnaryOp, ValueType};
+use pharmsol_dsl::{MathIntrinsic, TypedBinaryOp, TypedUnaryOp, ValueType};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RustBackendFlavor {

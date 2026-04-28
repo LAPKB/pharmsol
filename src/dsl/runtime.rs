@@ -22,13 +22,13 @@ use super::wasm::{load_wasm_artifact, load_wasm_artifact_bytes};
 use super::wasm_compile::{
     compile_execution_model_to_wasm_bytes, compile_module_source_to_wasm_bytes, WasmError,
 };
-use super::{
-    analyze_module, lower_typed_model, parse_module, Diagnostic, DiagnosticReport, ExecutionModel,
-    LoweringError, ModelKind, ParseError, SemanticError,
-};
 use crate::{
     simulator::likelihood::{Prediction, SubjectPredictions},
     PharmsolError, Subject,
+};
+use pharmsol_dsl::{
+    analyze_module, lower_typed_model, parse_module, Diagnostic, DiagnosticReport, ExecutionModel,
+    LoweringError, ModelKind, ParseError, SemanticError,
 };
 
 pub type RuntimeModelInfo = NativeModelInfo;
@@ -375,12 +375,10 @@ fn runtime_model_from_parts(
 ))]
 mod tests {
     use super::*;
-    use crate::dsl::{
-        analyze_module, compile_sde_model_to_jit, lower_typed_model, parse_module, DiagnosticPhase,
-        DSL_BACKEND_GENERIC, DSL_PARSE_GENERIC,
-    };
+    use crate::dsl::compile_sde_model_to_jit;
     use crate::SubjectBuilderExt;
     use approx::assert_relative_eq;
+    use pharmsol_dsl::{DiagnosticPhase, DSL_BACKEND_GENERIC, DSL_PARSE_GENERIC};
     use tempfile::tempdir;
 
     fn proposal_source() -> &'static str {
@@ -388,14 +386,14 @@ mod tests {
     }
 
     fn proposal_model(name: &str) -> ExecutionModel {
-        let parsed = parse_module(proposal_source()).expect("parse proposal module");
-        let typed = analyze_module(&parsed).expect("analyze proposal module");
+        let parsed = pharmsol_dsl::parse_module(proposal_source()).expect("parse proposal module");
+        let typed = pharmsol_dsl::analyze_module(&parsed).expect("analyze proposal module");
         let model = typed
             .models
             .iter()
             .find(|model| model.name == name)
             .expect("model present in proposal module");
-        lower_typed_model(model).expect("lower proposal model")
+        pharmsol_dsl::lower_typed_model(model).expect("lower proposal model")
     }
 
     fn ode_subject(output: usize, oral: usize, iv: usize) -> Subject {

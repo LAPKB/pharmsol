@@ -11,13 +11,14 @@ use super::compiled_backend_abi::{
     API_VERSION_SYMBOL, FREE_F64_BUFFER_SYMBOL, MODEL_INFO_JSON_LEN_SYMBOL,
     MODEL_INFO_JSON_PTR_SYMBOL,
 };
-use super::execution::{
-    ExecutionExpr, ExecutionExprKind, ExecutionKernel, ExecutionLoad, ExecutionModel,
-    ExecutionProgram, ExecutionStateRef, ExecutionStmt, ExecutionStmtKind, ExecutionTargetKind,
-    KernelImplementation, KernelRole,
-};
-use super::{ConstValue, MathIntrinsic, ModelKind, TypedBinaryOp, TypedUnaryOp, ValueType};
 use crate::dsl::WasmError;
+use pharmsol_dsl::execution::{
+    ExecutionAssignStmt, ExecutionCall, ExecutionExpr, ExecutionExprKind, ExecutionForStmt,
+    ExecutionIfStmt, ExecutionKernel, ExecutionLoad, ExecutionModel, ExecutionProgram,
+    ExecutionStateRef, ExecutionStmt, ExecutionStmtKind, ExecutionTargetKind, KernelImplementation,
+    KernelRole,
+};
+use pharmsol_dsl::{ConstValue, MathIntrinsic, ModelKind, TypedBinaryOp, TypedUnaryOp, ValueType};
 
 const PAGE_SIZE: usize = 65_536;
 const ABI_PTR_ALIGNMENT: usize = std::mem::size_of::<f64>();
@@ -501,7 +502,7 @@ fn emit_statement(
 
 fn emit_assignment(
     state: &mut KernelEmitState<'_>,
-    assign: &super::execution::ExecutionAssignStmt,
+    assign: &ExecutionAssignStmt,
     function: &mut Function,
 ) -> Result<(), WasmError> {
     function.instruction(&Instruction::LocalGet(KERNEL_PARAM_OUT));
@@ -515,7 +516,7 @@ fn emit_assignment(
 
 fn emit_if(
     state: &mut KernelEmitState<'_>,
-    if_stmt: &super::execution::ExecutionIfStmt,
+    if_stmt: &ExecutionIfStmt,
     function: &mut Function,
 ) -> Result<(), WasmError> {
     emit_expr(state, &if_stmt.condition, function)?;
@@ -541,7 +542,7 @@ fn emit_if(
 
 fn emit_for(
     state: &mut KernelEmitState<'_>,
-    for_stmt: &super::execution::ExecutionForStmt,
+    for_stmt: &ExecutionForStmt,
     function: &mut Function,
 ) -> Result<(), WasmError> {
     let loop_local = state.local(for_stmt.local)?;
@@ -632,7 +633,7 @@ fn emit_expr(
         }
         ExecutionExprKind::Call { callee, args } => {
             let intrinsic = match callee {
-                super::execution::ExecutionCall::Math(intrinsic) => *intrinsic,
+                ExecutionCall::Math(intrinsic) => *intrinsic,
             };
             let arg_refs = args.iter().collect::<Vec<_>>();
             emit_math_call(state, intrinsic, &arg_refs, expr.ty, function)
@@ -1101,18 +1102,15 @@ fn count_hidden_i64_locals_in_expr(expr: &ExecutionExpr) -> usize {
                 .iter()
                 .map(count_hidden_i64_locals_in_expr)
                 .sum::<usize>();
-            let local_cost =
-                match callee {
-                    super::execution::ExecutionCall::Math(
-                        MathIntrinsic::Max | MathIntrinsic::Min,
-                    ) if expr.ty == ValueType::Int => 2,
-                    super::execution::ExecutionCall::Math(MathIntrinsic::Abs)
-                        if expr.ty == ValueType::Int =>
-                    {
-                        1
-                    }
-                    _ => 0,
-                };
+            let local_cost = match callee {
+                ExecutionCall::Math(MathIntrinsic::Max | MathIntrinsic::Min)
+                    if expr.ty == ValueType::Int =>
+                {
+                    2
+                }
+                ExecutionCall::Math(MathIntrinsic::Abs) if expr.ty == ValueType::Int => 1,
+                _ => 0,
+            };
             arg_cost + local_cost
         }
     }
@@ -1185,13 +1183,13 @@ impl KernelEmitState<'_> {
 
 #[cfg(test)]
 pub(crate) fn w03_minimal_outputs_execution_model() -> ExecutionModel {
-    use super::execution::{
+    use super::Span;
+    use pharmsol_dsl::execution::{
         BufferKind, BufferSlot, CallingConvention, DenseBufferLayout, ExecutionAbi, ExecutionBlock,
         ExecutionMetadata, ExecutionProgram, ExecutionSlot, ExecutionState, ExecutionStateRef,
         ExecutionTarget, KernelAccess, KernelArgument, KernelArgumentKind, KernelSignature,
         ScalarAbi,
     };
-    use super::Span;
 
     let span = Span::empty(0);
     let parameter_slots = vec![
@@ -1327,7 +1325,7 @@ pub(crate) fn w03_minimal_outputs_execution_model() -> ExecutionModel {
                 locals: vec![],
                 body: ExecutionBlock {
                     statements: vec![ExecutionStmt {
-                        kind: ExecutionStmtKind::Assign(super::execution::ExecutionAssignStmt {
+                        kind: ExecutionStmtKind::Assign(ExecutionAssignStmt {
                             target: ExecutionTarget {
                                 kind: ExecutionTargetKind::Output(0),
                                 span,
@@ -1430,14 +1428,14 @@ mod tests {
     #[test]
     fn direct_emitter_compiles_real_ode_corpus_model() {
         let source = include_str!("../../tests/fixtures/dsl/02-structured-block-imperative.dsl");
-        let parsed = crate::dsl::parse_module(source).expect("parse proposal source");
-        let typed = crate::dsl::analyze_module(&parsed).expect("analyze proposal source");
+        let parsed = pharmsol_dsl::parse_module(source).expect("parse proposal source");
+        let typed = pharmsol_dsl::analyze_module(&parsed).expect("analyze proposal source");
         let model = typed
             .models
             .iter()
             .find(|model| model.name == "one_cmt_oral_iv")
             .expect("ode corpus model");
-        let execution = crate::dsl::lower_typed_model(model).expect("lower proposal model");
+        let execution = pharmsol_dsl::lower_typed_model(model).expect("lower proposal model");
 
         let bytes = compile_execution_model_to_wasm_bytes(&execution, 1)
             .expect("emit direct ode wasm bytes");

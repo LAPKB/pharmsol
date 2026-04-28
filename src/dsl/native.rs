@@ -13,12 +13,12 @@ use rayon::prelude::*;
 use cranelift_jit::JITModule;
 #[cfg(feature = "dsl-aot-load")]
 use libloading::Library;
+use pharmsol_dsl::execution::KernelRole;
+use pharmsol_dsl::AnalyticalKernel;
 
-use super::execution::KernelRole;
 pub use super::model_info::{
     NativeCovariateInfo, NativeModelInfo, NativeOutputInfo, NativeRouteInfo,
 };
-use super::AnalyticalKernel;
 use crate::{
     data::{Covariates, Infusion},
     simulator::{

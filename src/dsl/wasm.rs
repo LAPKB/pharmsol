@@ -11,13 +11,13 @@ use super::compiled_backend_abi::{
     FREE_F64_BUFFER_SYMBOL, INIT_SYMBOL, MODEL_INFO_JSON_LEN_SYMBOL, MODEL_INFO_JSON_PTR_SYMBOL,
     OUTPUTS_SYMBOL, ROUTE_BIOAVAILABILITY_SYMBOL, ROUTE_LAG_SYMBOL,
 };
-use super::execution::KernelRole;
 use super::native::{KernelSession, NativeModelInfo, RuntimeArtifact, RuntimeBackend};
 use super::wasm_compile::{WasmError, WASM_API_VERSION};
 use super::wasm_direct_emitter::{
     DIRECT_WASM_BINARY_MATH_IMPORTS, DIRECT_WASM_IMPORT_MODULE, DIRECT_WASM_UNARY_MATH_IMPORTS,
 };
 use crate::PharmsolError;
+use pharmsol_dsl::execution::KernelRole;
 
 #[derive(Clone, Copy, Debug, Default)]
 struct WasmKernelAvailability {
@@ -742,11 +742,13 @@ fn byte_range(
 mod tests {
     use super::*;
     use crate::dsl::{
-        analyze_module, compile_execution_artifact, lower_typed_model, parse_module,
-        CompiledKernelAvailability, CompiledModelInfoEnvelope, ExecutionModel, ModelKind,
+        compile_execution_artifact, CompiledKernelAvailability, CompiledModelInfoEnvelope,
         NativeModelInfo, NativeOutputInfo, NativeRouteInfo,
     };
     use approx::assert_relative_eq;
+    use pharmsol_dsl::{
+        analyze_module, lower_typed_model, parse_module, ExecutionModel, ModelKind,
+    };
     use std::path::{Path, PathBuf};
     use tempfile::tempdir;
     use wasm_encoder::{
@@ -1041,7 +1043,7 @@ mod tests {
 
         let info = read_model_info(&instance, &mut store, &memory);
         assert_eq!(info.name, "one_cmt_oral_iv");
-        assert_eq!(info.kind, crate::dsl::ModelKind::Ode);
+        assert_eq!(info.kind, ModelKind::Ode);
 
         let alloc = typed_func::<i32, i32>(&instance, &mut store, ALLOC_F64_BUFFER_SYMBOL);
         let free = typed_func::<(i32, i32), ()>(&instance, &mut store, FREE_F64_BUFFER_SYMBOL);

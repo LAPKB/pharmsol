@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-use super::execution::{ExecutionModel, KernelRole};
 use super::model_info::NativeModelInfo;
+use pharmsol_dsl::execution::{ExecutionModel, KernelRole};
 
 #[cfg(any(
     test,
@@ -269,8 +269,8 @@ fn kernel_output_len(info: &NativeModelInfo, role: KernelRole) -> usize {
 #[cfg(test)]
 mod tests {
     use super::super::model_info::{NativeCovariateInfo, NativeOutputInfo, NativeRouteInfo};
-    use super::super::ModelKind;
     use super::*;
+    use pharmsol_dsl::ModelKind;
 
     #[test]
     fn compiled_backend_symbol_names_are_frozen() {

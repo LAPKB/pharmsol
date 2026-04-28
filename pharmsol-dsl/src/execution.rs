@@ -2,12 +2,12 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
 
-use super::TypedAssignTargetKind;
-use super::{
+use crate::{
     AnalyticalKernel, ConstValue, CovariateInterpolation, Diagnostic, DiagnosticPhase,
-    DiagnosticReport, ModelKind, RoutePropertyKind, Span, Symbol, SymbolId, SymbolKind,
-    TypedBinaryOp, TypedCall, TypedExpr, TypedExprKind, TypedModel, TypedModule, TypedRangeExpr,
-    TypedStatePlace, TypedStatementBlock, TypedStmt, TypedStmtKind, TypedUnaryOp, ValueType,
+    DiagnosticReport, MathIntrinsic, ModelKind, RoutePropertyKind, Span, Symbol, SymbolId,
+    SymbolKind, SymbolType, TypedAssignTargetKind, TypedBinaryOp, TypedCall, TypedExpr,
+    TypedExprKind, TypedModel, TypedModule, TypedRangeExpr, TypedStatePlace,
+    TypedStatementBlock, TypedStmt, TypedStmtKind, TypedUnaryOp, ValueType,
     DSL_LOWERING_GENERIC,
 };
 
@@ -355,7 +355,7 @@ pub enum ExecutionLoad {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExecutionCall {
-    Math(super::MathIntrinsic),
+    Math(MathIntrinsic),
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -1209,14 +1209,14 @@ impl LocalLowering {
         }
         let symbol_info = lookup_symbol(&lowerer.symbol_map, symbol, lowerer.model.span)?;
         let ty = match symbol_info.ty {
-            super::SymbolType::Scalar(ty) => ty,
-            super::SymbolType::Array { .. } => {
+            SymbolType::Scalar(ty) => ty,
+            SymbolType::Array { .. } => {
                 return Err(LoweringError::new(
                     format!("local `{}` must be scalar", symbol_info.name),
                     symbol_info.span,
                 ));
             }
-            super::SymbolType::Route => {
+            SymbolType::Route => {
                 return Err(LoweringError::new(
                     format!("local `{}` cannot be a route handle", symbol_info.name),
                     symbol_info.span,
@@ -1412,7 +1412,7 @@ fn literal_int(value: i64, span: Span) -> ExecutionExpr {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dsl::{analyze_module, parse_module};
+    use crate::{analyze_module, parse_module};
 
     #[test]
     fn lowers_proposal_two_corpus_into_execution_models() {

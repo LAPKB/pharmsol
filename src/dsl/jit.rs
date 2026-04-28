@@ -7,18 +7,18 @@ use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{Linkage, Module};
 
-use super::execution::{
-    ExecutionBlock, ExecutionCall, ExecutionExpr, ExecutionExprKind, ExecutionForStmt,
-    ExecutionIfStmt, ExecutionKernel, ExecutionLoad, ExecutionModel, ExecutionProgram,
-    ExecutionStateRef, ExecutionStmt, ExecutionStmtKind, ExecutionTarget, ExecutionTargetKind,
-    KernelImplementation, KernelRole,
-};
 pub use super::native::DenseKernelFn;
 use super::native::{
     CompiledNativeModel, NativeAnalyticalModel, NativeExecutionArtifact, NativeModelInfo,
     NativeOdeModel, NativeSdeModel,
 };
-use super::{
+use pharmsol_dsl::execution::{
+    ExecutionBlock, ExecutionCall, ExecutionExpr, ExecutionExprKind, ExecutionForStmt,
+    ExecutionIfStmt, ExecutionKernel, ExecutionLoad, ExecutionModel, ExecutionProgram,
+    ExecutionStateRef, ExecutionStmt, ExecutionStmtKind, ExecutionTarget, ExecutionTargetKind,
+    KernelImplementation, KernelRole,
+};
+use pharmsol_dsl::{
     ConstValue, Diagnostic, DiagnosticPhase, DiagnosticReport, MathIntrinsic, ModelKind, Span,
     TypedBinaryOp, TypedUnaryOp, ValueType, DSL_BACKEND_GENERIC,
 };
@@ -1283,27 +1283,24 @@ pub fn compile_sde_model_to_jit(model: &ExecutionModel) -> Result<JitSdeModel, J
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dsl::execution::DenseBufferLayout;
-    use crate::dsl::{
-        analyze_module, lower_typed_model, parse_module, DiagnosticPhase, DSL_BACKEND_GENERIC,
-    };
     use crate::equation::ode::{ExplicitRkTableau, OdeSolver};
     use crate::simulator::equation::analytical::one_compartment_with_absorption;
     use crate::simulator::equation::{Equation, Predictions as PredictionTrait};
     use crate::{equation, Subject, SubjectBuilderExt, ODE, SDE};
     use approx::assert_relative_eq;
     use diffsol::Vector;
+    use pharmsol_dsl::execution::DenseBufferLayout;
 
     fn load_proposal_model(name: &str) -> ExecutionModel {
         let source = include_str!("../../tests/fixtures/dsl/02-structured-block-imperative.dsl");
-        let parsed = parse_module(source).expect("parse proposal module");
-        let typed = analyze_module(&parsed).expect("analyze proposal module");
+        let parsed = pharmsol_dsl::parse_module(source).expect("parse proposal module");
+        let typed = pharmsol_dsl::analyze_module(&parsed).expect("analyze proposal module");
         let model = typed
             .models
             .iter()
             .find(|model| model.name == name)
             .expect("model present in proposal module");
-        lower_typed_model(model).expect("lower proposal model")
+        pharmsol_dsl::lower_typed_model(model).expect("lower proposal model")
     }
 
     #[test]
@@ -1315,8 +1312,8 @@ mod tests {
             .with_source(source);
 
         let diagnostic = error.diagnostic();
-        assert_eq!(diagnostic.phase, DiagnosticPhase::Backend);
-        assert_eq!(diagnostic.code, DSL_BACKEND_GENERIC);
+        assert_eq!(diagnostic.phase, pharmsol_dsl::DiagnosticPhase::Backend);
+        assert_eq!(diagnostic.code, pharmsol_dsl::DSL_BACKEND_GENERIC);
         assert!(diagnostic.message.contains("not an SDE model"));
 
         let rendered = error.render(source);

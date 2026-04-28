@@ -1,6 +1,4 @@
-#![cfg(feature = "dsl-core")]
-
-use pharmsol::dsl::{analyze_model, parse_model, parse_module};
+use pharmsol_dsl::{analyze_model, parse_model, parse_module};
 
 #[test]
 fn output_annotation_is_optional() {
@@ -71,27 +69,20 @@ out(cp) = central / v ~ continuous()
         "{}",
         rendered
     );
-    assert!(
-        rendered.contains("declared output `cpa` is here"),
-        "{}",
-        rendered
-    );
+    assert!(rendered.contains("declared output `cpa` is here"), "{}", rendered);
     assert!(
         rendered.contains("suggestion: did you mean `cpa`?"),
         "{}",
         rendered
     );
     assert!(
-        err.diagnostic()
-            .suggestions
-            .iter()
-            .any(
-                |suggestion| suggestion.message.contains("did you mean `cpa`?")
-                    && suggestion
-                        .edits
-                        .iter()
-                        .any(|edit| edit.replacement == "cpa")
-            ),
+        err.diagnostic().suggestions.iter().any(|suggestion| {
+            suggestion.message.contains("did you mean `cpa`?")
+                && suggestion
+                    .edits
+                    .iter()
+                    .any(|edit| edit.replacement == "cpa")
+        }),
         "{}",
         rendered
     );
@@ -187,32 +178,21 @@ out(cp) = central / v ~ continuous()
     let err = analyze_model(&model).expect_err("unknown route destination state must fail");
     let rendered = err.render(src);
 
-    assert!(
-        rendered.contains("unknown state `centrale`"),
-        "{}",
-        rendered
-    );
-    assert!(
-        rendered.contains("state `central` declared here"),
-        "{}",
-        rendered
-    );
+    assert!(rendered.contains("unknown state `centrale`"), "{}", rendered);
+    assert!(rendered.contains("state `central` declared here"), "{}", rendered);
     assert!(
         rendered.contains("suggestion: did you mean `central`?"),
         "{}",
         rendered
     );
     assert!(
-        err.diagnostic()
-            .suggestions
-            .iter()
-            .any(
-                |suggestion| suggestion.message.contains("did you mean `central`?")
-                    && suggestion
-                        .edits
-                        .iter()
-                        .any(|edit| edit.replacement == "central")
-            ),
+        err.diagnostic().suggestions.iter().any(|suggestion| {
+            suggestion.message.contains("did you mean `central`?")
+                && suggestion
+                    .edits
+                    .iter()
+                    .any(|edit| edit.replacement == "central")
+        }),
         "{}",
         rendered
     );

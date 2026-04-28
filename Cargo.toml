@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "pharmsol-macros"]
+members = [".", "pharmsol-dsl", "pharmsol-macros"]
 resolver = "2"
 
 [package]
@@ -22,6 +22,7 @@ dsl-wasm = ["dsl-wasm-compile", "dep:wasmtime"]
 wasm = ["dsl-wasm"]
 
 [dependencies]
+pharmsol-dsl = { path = "pharmsol-dsl", version = "0.1.0" }
 pharmsol-macros = { path = "pharmsol-macros", version = "0.1.0" }
 libloading = { version = "0.9.0", optional = true, features = [] }
 cranelift = { version = "0.115", optional = true }

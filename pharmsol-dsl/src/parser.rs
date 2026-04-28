@@ -1608,9 +1608,9 @@ mod tests {
 
     #[test]
     fn desugars_authoring_fixture_into_canonical_ast() {
-        let src = include_str!("../../tests/fixtures/dsl/04-user-recommended_style.dsi");
+        let src = include_str!("../tests/fixtures/dsl/04-user-recommended_style.dsi");
         let expected =
-            include_str!("../../tests/fixtures/dsl/04-user-recommended_style.desugared.dsl");
+            include_str!("../tests/fixtures/dsl/04-user-recommended_style.desugared.dsl");
 
         let parsed = parse_module(src).expect("proposal 4 fixture parses");
         let expected = parse_module(expected).expect("canonical fixture parses");
