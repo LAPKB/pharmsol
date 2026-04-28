@@ -14,8 +14,8 @@
 //! Execution lowering now also lives here, while `pharmsol::dsl` continues to
 //! re-export the stable runtime-facing surface during the migration.
 
-mod authoring;
 pub mod ast;
+mod authoring;
 pub mod diagnostic;
 pub mod execution;
 pub mod ir;
@@ -25,7 +25,9 @@ mod semantic;
 
 pub use ast::*;
 pub use diagnostic::*;
-pub use execution::{ExecutionModel, ExecutionModule, LoweringError, lower_typed_model, lower_typed_module};
+pub use execution::{
+    lower_typed_model, lower_typed_module, ExecutionModel, ExecutionModule, LoweringError,
+};
 pub use ir::*;
 pub use parser::{parse_model, parse_module};
 pub use semantic::{analyze_model, analyze_module, SemanticError};

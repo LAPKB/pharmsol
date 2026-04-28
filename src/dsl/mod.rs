@@ -37,7 +37,6 @@ pub use aot::{
 pub use aot::{load_aot_model, read_aot_model_info};
 #[cfg(all(not(feature = "dsl-aot"), feature = "dsl-aot-load"))]
 pub use aot::{AotError, AOT_API_VERSION};
-pub use pharmsol_dsl::*;
 pub use compiled_backend_abi::{CompiledKernelAvailability, CompiledModelInfoEnvelope};
 #[cfg(feature = "dsl-jit")]
 pub use jit::{
@@ -51,6 +50,7 @@ pub use native::{
     CompiledNativeModel, DenseKernelFn, NativeAnalyticalModel, NativeExecutionArtifact,
     NativeOdeModel, NativeSdeModel, RuntimeBackend,
 };
+pub use pharmsol_dsl::*;
 #[cfg(any(
     feature = "dsl-jit",
     all(feature = "dsl-aot", feature = "dsl-aot-load"),

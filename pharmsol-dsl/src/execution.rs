@@ -6,9 +6,8 @@ use crate::{
     AnalyticalKernel, ConstValue, CovariateInterpolation, Diagnostic, DiagnosticPhase,
     DiagnosticReport, MathIntrinsic, ModelKind, RoutePropertyKind, Span, Symbol, SymbolId,
     SymbolKind, SymbolType, TypedAssignTargetKind, TypedBinaryOp, TypedCall, TypedExpr,
-    TypedExprKind, TypedModel, TypedModule, TypedRangeExpr, TypedStatePlace,
-    TypedStatementBlock, TypedStmt, TypedStmtKind, TypedUnaryOp, ValueType,
-    DSL_LOWERING_GENERIC,
+    TypedExprKind, TypedModel, TypedModule, TypedRangeExpr, TypedStatePlace, TypedStatementBlock,
+    TypedStmt, TypedStmtKind, TypedUnaryOp, ValueType, DSL_LOWERING_GENERIC,
 };
 
 pub fn lower_typed_module(module: &TypedModule) -> Result<ExecutionModule, LoweringError> {

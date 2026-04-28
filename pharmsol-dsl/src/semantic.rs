@@ -2688,8 +2688,7 @@ mod tests {
 
     #[test]
     fn authoring_fixture_lowers_to_equivalent_typed_ir() {
-        let authoring_surface =
-            include_str!("../tests/fixtures/dsl/04-user-recommended_style.dsi");
+        let authoring_surface = include_str!("../tests/fixtures/dsl/04-user-recommended_style.dsi");
         let canonical =
             include_str!("../tests/fixtures/dsl/04-user-recommended_style.desugared.dsl");
 

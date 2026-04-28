@@ -69,7 +69,11 @@ out(cp) = central / v ~ continuous()
         "{}",
         rendered
     );
-    assert!(rendered.contains("declared output `cpa` is here"), "{}", rendered);
+    assert!(
+        rendered.contains("declared output `cpa` is here"),
+        "{}",
+        rendered
+    );
     assert!(
         rendered.contains("suggestion: did you mean `cpa`?"),
         "{}",
@@ -178,8 +182,16 @@ out(cp) = central / v ~ continuous()
     let err = analyze_model(&model).expect_err("unknown route destination state must fail");
     let rendered = err.render(src);
 
-    assert!(rendered.contains("unknown state `centrale`"), "{}", rendered);
-    assert!(rendered.contains("state `central` declared here"), "{}", rendered);
+    assert!(
+        rendered.contains("unknown state `centrale`"),
+        "{}",
+        rendered
+    );
+    assert!(
+        rendered.contains("state `central` declared here"),
+        "{}",
+        rendered
+    );
     assert!(
         rendered.contains("suggestion: did you mean `central`?"),
         "{}",
