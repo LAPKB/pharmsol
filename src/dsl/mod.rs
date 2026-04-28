@@ -11,17 +11,30 @@ mod compiled_backend_abi;
 #[cfg(feature = "dsl-jit")]
 mod jit;
 mod model_info;
-#[cfg(any(feature = "dsl-jit", feature = "dsl-aot-load", feature = "dsl-wasm"))]
+#[cfg(any(
+    feature = "dsl-jit",
+    feature = "dsl-aot-load",
+    all(
+        feature = "dsl-wasm",
+        not(all(target_arch = "wasm32", target_os = "unknown"))
+    )
+))]
 mod native;
 #[cfg(any(
     feature = "dsl-jit",
     all(feature = "dsl-aot", feature = "dsl-aot-load"),
-    feature = "dsl-wasm"
+    all(
+        feature = "dsl-wasm",
+        not(all(target_arch = "wasm32", target_os = "unknown"))
+    )
 ))]
 mod runtime;
 #[cfg(feature = "dsl-aot")]
 mod rust_backend;
-#[cfg(feature = "dsl-wasm")]
+#[cfg(all(
+    feature = "dsl-wasm",
+    not(all(target_arch = "wasm32", target_os = "unknown"))
+))]
 mod wasm;
 #[cfg(feature = "dsl-wasm-compile")]
 mod wasm_compile;
@@ -45,7 +58,14 @@ pub use jit::{
     JitCompileError, JitExecutionArtifact, JitOdeModel, JitSdeModel,
 };
 pub use model_info::{NativeCovariateInfo, NativeModelInfo, NativeOutputInfo, NativeRouteInfo};
-#[cfg(any(feature = "dsl-jit", feature = "dsl-aot-load", feature = "dsl-wasm"))]
+#[cfg(any(
+    feature = "dsl-jit",
+    feature = "dsl-aot-load",
+    all(
+        feature = "dsl-wasm",
+        not(all(target_arch = "wasm32", target_os = "unknown"))
+    )
+))]
 pub use native::{
     CompiledNativeModel, DenseKernelFn, NativeAnalyticalModel, NativeExecutionArtifact,
     NativeOdeModel, NativeSdeModel, RuntimeBackend,
@@ -54,7 +74,10 @@ pub use pharmsol_dsl::*;
 #[cfg(any(
     feature = "dsl-jit",
     all(feature = "dsl-aot", feature = "dsl-aot-load"),
-    feature = "dsl-wasm"
+    all(
+        feature = "dsl-wasm",
+        not(all(target_arch = "wasm32", target_os = "unknown"))
+    )
 ))]
 pub use runtime::{
     compile_execution_model_to_runtime, compile_module_source_to_runtime, load_runtime_artifact,
@@ -62,12 +85,18 @@ pub use runtime::{
     RuntimeCovariateInfo, RuntimeError, RuntimeModelInfo, RuntimeOdeModel, RuntimeOutputInfo,
     RuntimePredictions, RuntimeRouteInfo, RuntimeSdeModel,
 };
-#[cfg(feature = "dsl-wasm")]
+#[cfg(all(
+    feature = "dsl-wasm",
+    not(all(target_arch = "wasm32", target_os = "unknown"))
+))]
 pub use runtime::{
     compile_execution_model_to_runtime_wasm, compile_module_source_to_runtime_wasm,
     load_runtime_wasm_bytes,
 };
-#[cfg(feature = "dsl-wasm")]
+#[cfg(all(
+    feature = "dsl-wasm",
+    not(all(target_arch = "wasm32", target_os = "unknown"))
+))]
 pub use wasm::{read_wasm_model_info, read_wasm_model_info_bytes};
 #[cfg(feature = "dsl-wasm-compile")]
 pub use wasm_compile::{

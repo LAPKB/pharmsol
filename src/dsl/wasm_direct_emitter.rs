@@ -1404,7 +1404,11 @@ pub(crate) fn w03_minimal_outputs_execution_model() -> ExecutionModel {
     }
 }
 
-#[cfg(all(test, feature = "dsl-wasm"))]
+#[cfg(all(
+    test,
+    feature = "dsl-wasm",
+    not(all(target_arch = "wasm32", target_os = "unknown"))
+))]
 mod tests {
     use super::*;
     use wasmtime::{Engine, Module as WasmtimeModule, Store};

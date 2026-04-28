@@ -193,7 +193,14 @@ pub fn encode_compiled_model_info(
     serde_json::to_string(&compiled_model_info_envelope(model, abi_version))
 }
 
-#[cfg(any(test, feature = "dsl-aot-load", feature = "dsl-wasm"))]
+#[cfg(any(
+    test,
+    feature = "dsl-aot-load",
+    all(
+        feature = "dsl-wasm",
+        not(all(target_arch = "wasm32", target_os = "unknown"))
+    )
+))]
 pub fn decode_compiled_model_info(
     bytes: &[u8],
 ) -> Result<CompiledModelInfoEnvelope, serde_json::Error> {
