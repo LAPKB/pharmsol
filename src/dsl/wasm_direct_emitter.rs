@@ -1181,7 +1181,7 @@ impl KernelEmitState<'_> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "dsl-wasm"))]
 pub(crate) fn w03_minimal_outputs_execution_model() -> ExecutionModel {
     use super::Span;
     use pharmsol_dsl::execution::{
@@ -1411,6 +1411,7 @@ pub(crate) fn w03_minimal_outputs_execution_model() -> ExecutionModel {
 ))]
 mod tests {
     use super::*;
+    use crate::test_fixtures::STRUCTURED_BLOCK_CORPUS;
     use wasmtime::{Engine, Module as WasmtimeModule, Store};
 
     #[test]
@@ -1431,7 +1432,7 @@ mod tests {
 
     #[test]
     fn direct_emitter_compiles_real_ode_corpus_model() {
-        let source = include_str!("../../tests/fixtures/dsl/02-structured-block-imperative.dsl");
+        let source = STRUCTURED_BLOCK_CORPUS;
         let parsed = pharmsol_dsl::parse_module(source).expect("parse corpus source");
         let typed = pharmsol_dsl::analyze_module(&parsed).expect("analyze corpus source");
         let model = typed

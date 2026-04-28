@@ -1571,10 +1571,13 @@ impl TokenKindMatcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_fixtures::{
+        RECOMMENDED_STYLE_AUTHORING, RECOMMENDED_STYLE_CANONICAL, STRUCTURED_BLOCK_CORPUS,
+    };
 
     #[test]
     fn parses_structured_block_corpus() {
-        let src = include_str!("../../tests/fixtures/dsl/02-structured-block-imperative.dsl");
+        let src = STRUCTURED_BLOCK_CORPUS;
         let module = parse_module(src).expect("structured-block fixture parses");
         assert_eq!(module.models.len(), 4);
         assert_eq!(module.models[0].name.text, "one_cmt_oral_iv");
@@ -1599,7 +1602,7 @@ mod tests {
 
     #[test]
     fn round_trips_structured_block_corpus() {
-        let src = include_str!("../../tests/fixtures/dsl/02-structured-block-imperative.dsl");
+        let src = STRUCTURED_BLOCK_CORPUS;
         let parsed = parse_module(src).expect("structured-block fixture parses");
         let formatted = parsed.to_string();
         let reparsed = parse_module(&formatted).expect("formatted DSL reparses");
@@ -1608,9 +1611,8 @@ mod tests {
 
     #[test]
     fn desugars_authoring_fixture_into_canonical_ast() {
-        let src = include_str!("../tests/fixtures/dsl/04-user-recommended_style.dsi");
-        let expected =
-            include_str!("../tests/fixtures/dsl/04-user-recommended_style.desugared.dsl");
+        let src = RECOMMENDED_STYLE_AUTHORING;
+        let expected = RECOMMENDED_STYLE_CANONICAL;
 
         let parsed = parse_module(src).expect("recommended-style fixture parses");
         let expected = parse_module(expected).expect("canonical fixture parses");

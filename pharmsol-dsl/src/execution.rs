@@ -1411,6 +1411,7 @@ fn literal_int(value: i64, span: Span) -> ExecutionExpr {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_fixtures::STRUCTURED_BLOCK_CORPUS;
     use crate::{analyze_module, parse_module};
 
     #[test]
@@ -1562,7 +1563,7 @@ mod tests {
     }
 
     fn structured_block_execution() -> ExecutionModule {
-        let src = include_str!("../../tests/fixtures/dsl/02-structured-block-imperative.dsl");
+        let src = STRUCTURED_BLOCK_CORPUS;
         let module = parse_module(src).expect("structured-block fixture parses");
         let typed = analyze_module(&module).expect("structured-block fixture analyzes");
         lower_typed_module(&typed).expect("execution lowering succeeds")

@@ -3,13 +3,14 @@ mod runtime_corpus;
 
 #[cfg(all(feature = "dsl-jit", feature = "dsl-wasm"))]
 mod tests {
-    use super::runtime_corpus::{self as corpus, ArtifactWorkspace, CorpusCase};
+    use super::runtime_corpus::{self as corpus, CorpusCase};
     use pharmsol::dsl::RuntimeBackend;
 
     #[test]
     fn ode_runtime_backend_matrix_matches_reference_predictions(
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let workspace = ArtifactWorkspace::new()?;
+        #[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]
+        let workspace = super::runtime_corpus::ArtifactWorkspace::new()?;
 
         let jit = corpus::compile_runtime_jit_model(CorpusCase::Ode)?;
         assert_eq!(jit.backend(), RuntimeBackend::Jit);
@@ -43,7 +44,8 @@ mod tests {
     #[test]
     fn analytical_runtime_backend_matrix_matches_reference_predictions(
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let workspace = ArtifactWorkspace::new()?;
+        #[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]
+        let workspace = super::runtime_corpus::ArtifactWorkspace::new()?;
 
         let jit = corpus::compile_runtime_jit_model(CorpusCase::Analytical)?;
         assert_eq!(jit.backend(), RuntimeBackend::Jit);
@@ -85,7 +87,8 @@ mod tests {
     #[test]
     fn sde_runtime_backend_matrix_matches_reference_predictions(
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let workspace = ArtifactWorkspace::new()?;
+        #[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]
+        let workspace = super::runtime_corpus::ArtifactWorkspace::new()?;
 
         let jit = corpus::compile_runtime_jit_model(CorpusCase::Sde)?;
         assert_eq!(jit.backend(), RuntimeBackend::Jit);

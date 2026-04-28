@@ -12,6 +12,8 @@ pub mod ir;
 mod lexer;
 mod parser;
 mod semantic;
+#[cfg(test)]
+mod test_fixtures;
 
 pub use ast::*;
 pub use diagnostic::*;

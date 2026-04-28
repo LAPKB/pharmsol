@@ -1,4 +1,4 @@
-model one_cmt_oral_iv {
+pub(crate) const STRUCTURED_BLOCK_CORPUS: &str = r#"model one_cmt_oral_iv {
   kind ode
   parameters {
     ka,
@@ -130,3 +130,4 @@ model vanco_sde {
     cp = central / (vol * wt)
   }
 }
+"#;

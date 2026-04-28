@@ -173,7 +173,7 @@ pub struct CompiledModelInfoEnvelope {
     pub kernels: CompiledKernelAvailability,
 }
 
-#[cfg(any(test, feature = "dsl-aot", feature = "dsl-wasm-compile"))]
+#[cfg(any(feature = "dsl-aot", feature = "dsl-wasm-compile"))]
 pub fn compiled_model_info_envelope(
     model: &ExecutionModel,
     abi_version: u32,
@@ -185,7 +185,7 @@ pub fn compiled_model_info_envelope(
     }
 }
 
-#[cfg(any(test, feature = "dsl-aot", feature = "dsl-wasm-compile"))]
+#[cfg(any(feature = "dsl-aot", feature = "dsl-wasm-compile"))]
 pub fn encode_compiled_model_info(
     model: &ExecutionModel,
     abi_version: u32,
@@ -207,7 +207,7 @@ pub fn decode_compiled_model_info(
     serde_json::from_slice(bytes)
 }
 
-#[cfg(any(test, feature = "dsl-aot", feature = "dsl-wasm-compile"))]
+#[cfg(any(feature = "dsl-aot", feature = "dsl-wasm-compile"))]
 pub fn compiled_kernel_symbol(role: KernelRole) -> Option<&'static str> {
     match role {
         KernelRole::Derive => Some(DERIVE_SYMBOL),

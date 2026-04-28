@@ -393,6 +393,7 @@ unsafe fn load_optional_kernel(library: &Library, name: &'static str) -> Option<
 mod tests {
     use super::*;
     use crate::dsl::compile_ode_model_to_jit;
+    use crate::test_fixtures::STRUCTURED_BLOCK_CORPUS;
     use crate::SubjectBuilderExt;
     use approx::assert_relative_eq;
     use pharmsol_dsl::{DiagnosticPhase, DSL_SEMANTIC_GENERIC};
@@ -407,7 +408,7 @@ mod tests {
     }
 
     fn load_corpus_model(name: &str) -> ExecutionModel {
-        let source = include_str!("../../tests/fixtures/dsl/02-structured-block-imperative.dsl");
+        let source = STRUCTURED_BLOCK_CORPUS;
         let parsed = pharmsol_dsl::parse_module(source).expect("parse corpus module");
         let typed = pharmsol_dsl::analyze_module(&parsed).expect("analyze corpus module");
         let model = typed

@@ -745,6 +745,7 @@ mod tests {
         compile_execution_artifact, CompiledKernelAvailability, CompiledModelInfoEnvelope,
         NativeModelInfo, NativeOutputInfo, NativeRouteInfo,
     };
+    use crate::test_fixtures::STRUCTURED_BLOCK_CORPUS;
     use approx::assert_relative_eq;
     use pharmsol_dsl::{
         analyze_module, lower_typed_model, parse_module, ExecutionModel, ModelKind,
@@ -758,7 +759,7 @@ mod tests {
     use wasmtime::{Engine, Instance, Memory, Module, Store, TypedFunc};
 
     fn load_corpus_model(name: &str) -> ExecutionModel {
-        let source = include_str!("../../tests/fixtures/dsl/02-structured-block-imperative.dsl");
+        let source = STRUCTURED_BLOCK_CORPUS;
         let parsed = parse_module(source).expect("parse corpus module");
         let typed = analyze_module(&parsed).expect("analyze corpus module");
         let model = typed

@@ -1285,13 +1285,14 @@ mod tests {
     use crate::equation::ode::{ExplicitRkTableau, OdeSolver};
     use crate::simulator::equation::analytical::one_compartment_with_absorption;
     use crate::simulator::equation::{Equation, Predictions as PredictionTrait};
+    use crate::test_fixtures::STRUCTURED_BLOCK_CORPUS;
     use crate::{equation, Subject, SubjectBuilderExt, ODE, SDE};
     use approx::assert_relative_eq;
     use diffsol::Vector;
     use pharmsol_dsl::execution::DenseBufferLayout;
 
     fn load_corpus_model(name: &str) -> ExecutionModel {
-        let source = include_str!("../../tests/fixtures/dsl/02-structured-block-imperative.dsl");
+        let source = STRUCTURED_BLOCK_CORPUS;
         let parsed = pharmsol_dsl::parse_module(source).expect("parse corpus module");
         let typed = pharmsol_dsl::analyze_module(&parsed).expect("analyze corpus module");
         let model = typed
@@ -1304,7 +1305,7 @@ mod tests {
 
     #[test]
     fn jit_compile_error_exposes_backend_diagnostic_report() {
-        let source = include_str!("../../tests/fixtures/dsl/02-structured-block-imperative.dsl");
+        let source = STRUCTURED_BLOCK_CORPUS;
         let model = load_corpus_model("one_cmt_oral_iv");
         let error = compile_sde_model_to_jit(&model)
             .expect_err("ODE model should not compile through the SDE JIT entrypoint")

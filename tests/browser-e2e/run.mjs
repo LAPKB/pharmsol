@@ -40,7 +40,7 @@ function prepareFixtures() {
   run("cargo", [
     "build",
     "--manifest-path",
-    "browser-compile-bridge/Cargo.toml",
+    "pharmsol-dsl/browser-compile-bridge/Cargo.toml",
     "--target",
     "wasm32-unknown-unknown",
     "--release",

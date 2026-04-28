@@ -2648,11 +2648,14 @@ fn fold_call(intrinsic: MathIntrinsic, values: &[ConstValue]) -> Option<ConstVal
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_fixtures::{
+        RECOMMENDED_STYLE_AUTHORING, RECOMMENDED_STYLE_CANONICAL, STRUCTURED_BLOCK_CORPUS,
+    };
     use crate::{parse_model, parse_module};
 
     #[test]
     fn analyzes_structured_block_corpus() {
-        let src = include_str!("../../tests/fixtures/dsl/02-structured-block-imperative.dsl");
+        let src = STRUCTURED_BLOCK_CORPUS;
         let module = parse_module(src).expect("structured-block fixture parses");
         let typed = analyze_module(&module).expect("structured-block fixture analyzes");
 
@@ -2676,7 +2679,7 @@ mod tests {
 
     #[test]
     fn derives_values_across_if_branches() {
-        let src = include_str!("../../tests/fixtures/dsl/02-structured-block-imperative.dsl");
+        let src = STRUCTURED_BLOCK_CORPUS;
         let model = parse_model(src.split("\n\n\n").next().unwrap()).expect("single model parses");
         let typed = analyze_model(&model).expect("single model analyzes");
         let ke_symbol = typed
@@ -2689,9 +2692,8 @@ mod tests {
 
     #[test]
     fn authoring_fixture_lowers_to_equivalent_typed_ir() {
-        let authoring_surface = include_str!("../tests/fixtures/dsl/04-user-recommended_style.dsi");
-        let canonical =
-            include_str!("../tests/fixtures/dsl/04-user-recommended_style.desugared.dsl");
+        let authoring_surface = RECOMMENDED_STYLE_AUTHORING;
+        let canonical = RECOMMENDED_STYLE_CANONICAL;
 
         let authoring_model = parse_model(authoring_surface).expect("authoring model parses");
         let canonical_model = parse_model(canonical).expect("canonical model parses");

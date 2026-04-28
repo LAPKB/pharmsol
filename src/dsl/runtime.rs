@@ -376,13 +376,14 @@ fn runtime_model_from_parts(
 mod tests {
     use super::*;
     use crate::dsl::compile_sde_model_to_jit;
+    use crate::test_fixtures::STRUCTURED_BLOCK_CORPUS;
     use crate::SubjectBuilderExt;
     use approx::assert_relative_eq;
     use pharmsol_dsl::{DiagnosticPhase, DSL_BACKEND_GENERIC, DSL_PARSE_GENERIC};
     use tempfile::tempdir;
 
     fn corpus_source() -> &'static str {
-        include_str!("../../tests/fixtures/dsl/02-structured-block-imperative.dsl")
+        STRUCTURED_BLOCK_CORPUS
     }
 
     fn corpus_model(name: &str) -> ExecutionModel {

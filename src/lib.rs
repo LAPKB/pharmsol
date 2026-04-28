@@ -11,6 +11,14 @@ pub mod nca;
 pub mod optimize;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub mod simulator;
+#[cfg(all(
+    test,
+    any(
+        feature = "dsl-jit",
+        all(feature = "dsl-wasm", feature = "dsl-wasm-compile")
+    )
+))]
+mod test_fixtures;
 
 //extension traits
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
