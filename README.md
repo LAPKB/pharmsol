@@ -123,7 +123,7 @@ if let Some(ref term) = result.terminal {
 - IV-specific: C0 (back-extrapolation), Vd
 - Steady-state: AUCtau, Cmin, Cavg, fluctuation, swing
 
-# Links
+## Links
 
 - [API Documentation](https://lapkb.github.io/pharmsol/pharmsol/)
 - [Examples](examples/)

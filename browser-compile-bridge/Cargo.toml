@@ -10,5 +10,5 @@ crate-type = ["cdylib"]
 
 [dependencies]
 base64 = "0.22.1"
-pharmsol = { path = "../../..", default-features = false, features = ["dsl-wasm-compile"] }
+pharmsol = { path = "..", default-features = false, features = ["dsl-wasm-compile"] }
 serde_json = "1.0.149"

@@ -40,7 +40,7 @@ function prepareFixtures() {
   run("cargo", [
     "build",
     "--manifest-path",
-    "tests/browser-e2e/compiler-bridge/Cargo.toml",
+    "browser-compile-bridge/Cargo.toml",
     "--target",
     "wasm32-unknown-unknown",
     "--release",
