@@ -2303,15 +2303,16 @@ fn best_similar_name_assist(
     needle: &str,
     candidates: Vec<SimilarNameCandidate>,
 ) -> Option<SemanticAssist> {
+    let original_needle = needle;
     let needle = needle.to_ascii_lowercase();
     let mut best: Option<((usize, usize, usize), SemanticAssist)> = None;
     let mut tied = false;
 
     for candidate in candidates {
-        let lookup = candidate.lookup_name.to_ascii_lowercase();
-        if lookup == needle {
+        if candidate.lookup_name == original_needle {
             continue;
         }
+        let lookup = candidate.lookup_name.to_ascii_lowercase();
         let distance = if is_single_adjacent_transposition(&needle, &lookup) {
             1
         } else {
@@ -2748,6 +2749,32 @@ model broken {
         assert!(err
             .render(src)
             .contains("suggestion: did you mean `central`?"));
+    }
+
+    #[test]
+    fn suggests_case_variant_for_unknown_identifier() {
+        let src = r#"
+model broken {
+    kind ode
+    parameters { Ke }
+    states { central }
+    dynamics {
+        ddt(central) = -ke * central
+    }
+    outputs {
+        cp = central
+    }
+}
+"#;
+        let model = parse_model(src).expect("model parses");
+        let err = analyze_model(&model).expect_err("case-mismatched identifier must fail");
+
+        assert!(err
+            .diagnostic()
+            .suggestions
+            .iter()
+            .any(|suggestion| suggestion.message.contains("did you mean `Ke`?")));
+        assert!(err.render(src).contains("suggestion: did you mean `Ke`?"));
     }
 
     #[test]

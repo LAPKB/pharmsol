@@ -676,15 +676,16 @@ impl<'a> AuthoringParser<'a> {
         error
     }
     fn best_similar_output_name(&self, needle: &str) -> Option<(String, Span)> {
+        let original_needle = needle;
         let needle = needle.to_ascii_lowercase();
         let mut best: Option<SimilarOutputMatch> = None;
         let mut tied = false;
 
         for (candidate, span) in &self.explicit_outputs {
-            let lookup = candidate.to_ascii_lowercase();
-            if lookup == needle {
+            if candidate == original_needle {
                 continue;
             }
+            let lookup = candidate.to_ascii_lowercase();
             let distance = if is_single_adjacent_transposition(&needle, &lookup) {
                 1
             } else {
