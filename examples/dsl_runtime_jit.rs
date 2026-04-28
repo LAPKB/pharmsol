@@ -2,83 +2,26 @@
 //! cargo run --example dsl_runtime_jit --features dsl-jit
 
 #[cfg(feature = "dsl-jit")]
-const ODE_SOURCE: &str = r#"
-model = example_ode
-kind = ode
-
-params = ka, cl, v, tlag, f_oral
-covariates = wt@linear
-states = depot, central
-derived = cl_i, ke
-outputs = cp
-
-bolus(oral) -> depot
-infusion(iv) -> central
-
-lag(oral) = tlag
-fa(oral) = f_oral
-
-cl_i = cl * pow(wt / 70.0, 0.75)
-ke = cl_i / v
-
-dx(depot) = -ka * depot
-dx(central) = ka * depot - ke * central
-
-out(cp) = central / v ~ continuous()
-"#;
-
-#[cfg(feature = "dsl-jit")]
-const ANALYTICAL_SOURCE: &str = r#"
-model = example_analytical
-kind = analytical
-
-params = ka, ke, v, tlag, f_oral
-states = depot, central
-outputs = cp
-
-bolus(oral) -> depot
-
-lag(oral) = tlag
-fa(oral) = f_oral
-
-kernel = one_compartment_with_absorption
-
-out(cp) = central / v ~ continuous()
-"#;
-
-#[cfg(feature = "dsl-jit")]
-const SDE_SOURCE: &str = r#"
-model = example_sde
-kind = sde
-
-params = ka, ke0, kcp, kpc, vol, ske
-covariates = wt@locf
-states = depot, central, peripheral, ke_latent
-particles = 16
-outputs = cp
-
-bolus(oral) -> depot
-
-init(ke_latent) = ke0
-
-dx(depot) = -ka * depot
-dx(central) = ka * depot - (ke_latent + kcp) * central + kpc * peripheral
-dx(peripheral) = kcp * central - kpc * peripheral
-dx(ke_latent) = -ke_latent + ke0
-
-noise(ke_latent) = ske
-
-out(cp) = central / (vol * wt) ~ continuous()
-"#;
-
-#[cfg(feature = "dsl-jit")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     use std::io;
 
-    use pharmsol::dsl::{self, RuntimeCompilationTarget};
-    use pharmsol::{Subject, SubjectBuilderExt};
+    use pharmsol::prelude::*;
 
-    println!("Sugared DSL models compiled with runtime JIT");
+    let model_source = r#"
+model = bimodal_ke
+kind = ode
+
+params = ke, v
+states = central
+outputs = cp
+
+infusion(iv) -> central
+
+dx(central) = -ke * central
+
+out(cp) = central / v
+"#;
+    let support_point = [1.2, 50.0];
     let show_compile_logs = false;
     let on_compile_event = move |kind: String, message: String| {
         if !show_compile_logs || message.is_empty() {
@@ -92,129 +35,56 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    // 1. Define an ODE model, compile it, simulate one subject, and print predictions.
-    let ode_support_point = [1.2, 5.0, 40.0, 0.25, 0.8];
-    let ode_model = dsl::compile_module_source_to_runtime(
-        ODE_SOURCE,
-        Some("example_ode"),
-        RuntimeCompilationTarget::Jit,
+    // 1. Compile the model to the runtime JIT backend.
+    let model = pharmsol::dsl::compile_module_source_to_runtime(
+        model_source,
+        Some("bimodal_ke"),
+        pharmsol::dsl::RuntimeCompilationTarget::Jit,
         on_compile_event,
     )?;
-    let ode_oral = ode_model
-        .route_index("oral")
-        .ok_or_else(|| io::Error::other("ODE model: missing oral route"))?;
-    let ode_iv = ode_model
+
+    // 2. Resolve the route and output indices declared by the model.
+    let iv = model
         .route_index("iv")
-        .ok_or_else(|| io::Error::other("ODE model: missing iv route"))?;
-    let ode_cp = ode_model
+        .ok_or_else(|| io::Error::other("missing iv route"))?;
+    let cp = model
         .output_index("cp")
-        .ok_or_else(|| io::Error::other("ODE model: missing cp output"))?;
-    let ode_subject = Subject::builder("example_ode")
-        .covariate("wt", 0.0, 70.0)
-        .bolus(0.0, 120.0, ode_oral)
-        .infusion(6.0, 60.0, ode_iv, 2.0)
-        .missing_observation(0.5, ode_cp)
-        .missing_observation(1.0, ode_cp)
-        .missing_observation(2.0, ode_cp)
-        .missing_observation(6.0, ode_cp)
-        .missing_observation(7.0, ode_cp)
-        .missing_observation(9.0, ode_cp)
-        .build();
-    let ode_predictions = ode_model.estimate_predictions(&ode_subject, &ode_support_point)?;
-    print_predictions("ODE model via runtime JIT", ode_predictions);
+        .ok_or_else(|| io::Error::other("missing cp output"))?;
 
-    // 2. Define an analytical model, compile it, simulate one subject, and print predictions.
-    let analytical_support_point = [1.0, 0.15, 25.0, 0.5, 0.8];
-    let analytical_model = dsl::compile_module_source_to_runtime(
-        ANALYTICAL_SOURCE,
-        Some("example_analytical"),
-        RuntimeCompilationTarget::Jit,
-        on_compile_event,
-    )?;
-    let analytical_oral = analytical_model
-        .route_index("oral")
-        .ok_or_else(|| io::Error::other("Analytical model: missing oral route"))?;
-    let analytical_cp = analytical_model
-        .output_index("cp")
-        .ok_or_else(|| io::Error::other("Analytical model: missing cp output"))?;
-    let analytical_subject = Subject::builder("example_analytical")
-        .bolus(0.0, 100.0, analytical_oral)
-        .missing_observation(0.5, analytical_cp)
-        .missing_observation(1.0, analytical_cp)
-        .missing_observation(2.0, analytical_cp)
-        .missing_observation(4.0, analytical_cp)
+    // 3. Define the subject data.
+    let subject = Subject::builder("bimodal_ke")
+        .infusion(0.0, 500.0, iv, 0.5)
+        .missing_observation(0.5, cp)
+        .missing_observation(1.0, cp)
+        .missing_observation(2.0, cp)
+        .missing_observation(3.0, cp)
+        .missing_observation(4.0, cp)
+        .missing_observation(6.0, cp)
+        .missing_observation(8.0, cp)
         .build();
-    let analytical_predictions =
-        analytical_model.estimate_predictions(&analytical_subject, &analytical_support_point)?;
-    print_predictions("Analytical model via runtime JIT", analytical_predictions);
 
-    // 3. Define an SDE model, compile it, simulate one subject, and print predictions.
-    let sde_support_point = [1.1, 0.2, 0.12, 0.08, 15.0, 0.05];
-    let sde_model = dsl::compile_module_source_to_runtime(
-        SDE_SOURCE,
-        Some("example_sde"),
-        RuntimeCompilationTarget::Jit,
-        on_compile_event,
-    )?;
-    let sde_oral = sde_model
-        .route_index("oral")
-        .ok_or_else(|| io::Error::other("SDE model: missing oral route"))?;
-    let sde_cp = sde_model
-        .output_index("cp")
-        .ok_or_else(|| io::Error::other("SDE model: missing cp output"))?;
-    let sde_subject = Subject::builder("example_sde")
-        .covariate("wt", 0.0, 70.0)
-        .bolus(0.0, 80.0, sde_oral)
-        .missing_observation(0.5, sde_cp)
-        .missing_observation(1.0, sde_cp)
-        .missing_observation(2.0, sde_cp)
-        .missing_observation(4.0, sde_cp)
-        .build();
-    let sde_predictions = sde_model.estimate_predictions(&sde_subject, &sde_support_point)?;
-    print_predictions("SDE model via runtime JIT", sde_predictions);
+    // 4. Estimate predictions for one support point.
+    let predictions = model
+        .estimate_predictions(&subject, &support_point)?
+        .into_subject()
+        .ok_or_else(|| io::Error::other("expected subject predictions"))?;
+
+    // 5. Report the predictions.
+    println!("bimodal_ke compiled with runtime JIT");
+    println!("{:<6} {:>14}", "t", "prediction");
+    for prediction in predictions.predictions() {
+        println!(
+            "{:<6.1} {:>14.6}",
+            prediction.time(),
+            prediction.prediction()
+        );
+    }
 
     Ok(())
 }
 
-#[cfg(feature = "dsl-jit")]
-fn print_predictions(title: &str, predictions: pharmsol::dsl::RuntimePredictions) {
-    println!("\n{title}");
-    match predictions {
-        pharmsol::dsl::RuntimePredictions::Subject(predictions) => {
-            println!("{:<6} {:>14}", "t", "prediction");
-            for prediction in predictions.predictions() {
-                println!(
-                    "{:<6.1} {:>14.6}",
-                    prediction.time(),
-                    prediction.prediction()
-                );
-            }
-        }
-        pharmsol::dsl::RuntimePredictions::Particles(predictions) => {
-            println!(
-                "showing mean prediction across {} particles",
-                predictions.nrows()
-            );
-            print_particle_mean_predictions(&predictions);
-        }
-    }
-}
-
-#[cfg(feature = "dsl-jit")]
-fn print_particle_mean_predictions(predictions: &ndarray::Array2<pharmsol::prelude::Prediction>) {
-    println!("{:<6} {:>14}", "t", "prediction");
-    for col in 0..predictions.ncols() {
-        let time = predictions[(0, col)].time();
-        let mean = (0..predictions.nrows())
-            .map(|row| predictions[(row, col)].prediction())
-            .sum::<f64>()
-            / predictions.nrows() as f64;
-        println!("{:<6.1} {:>14.6}", time, mean);
-    }
-}
-
 #[cfg(not(feature = "dsl-jit"))]
 fn main() {
-    eprintln!("Run with: cargo run --example dsl_runtime_jit --features dsl-jit");
+    eprintln!("Run with: cargo run --example bimodal_ke_dsl_runtime_jit --features dsl-jit");
     std::process::exit(1);
 }
