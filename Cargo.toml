@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name = "pharmsol"
-version = "0.26.1"
+version = "0.27.0"
 edition = "2021"
 authors = ["Julián D. Otálvaro <juliandavid347@gmail.com>", "Markus Hovd"]
 description = "Rust library for solving analytic and ode-defined pharmacometric models."
@@ -23,7 +23,7 @@ wasm = ["dsl-wasm"]
 
 [dependencies]
 pharmsol-dsl = { path = "pharmsol-dsl", version = "0.1.0" }
-pharmsol-macros = { path = "pharmsol-macros", version = "0.1.0" }
+pharmsol-macros = { path = "pharmsol-macros", version = "0.1.1" }
 libloading = { version = "0.9.0", optional = true, features = [] }
 cranelift = { version = "0.131.0", optional = true }
 cranelift-jit = { version = "0.131.0", optional = true }
