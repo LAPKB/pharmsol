@@ -7,14 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.1](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.26.0...pharmsol-v0.26.1) - 2026-04-20
+
 ### Added
 
-- Add Proposal 2 runtime benchmark matrix across ODE, analytical, and SDE models.
-- Add Proposal 2 release-readiness summary and compatibility/performance baseline notes.
+- Add Pmetrics analytical compatibility wrappers ([#245](https://github.com/LAPKB/pharmsol/pull/245))
 
-### Fixed
+### Other
 
-- Zero the reusable WASM guest output buffer before sparse kernel calls so diffusion outputs cannot reuse stale values across invocations.
+- Move ODE/analytical comparisons to examples ([#243](https://github.com/LAPKB/pharmsol/pull/243))
 
 ## [0.26.0](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.25.0...pharmsol-v0.26.0) - 2026-04-10
 

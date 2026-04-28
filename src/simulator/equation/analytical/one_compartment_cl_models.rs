@@ -2,6 +2,7 @@ use crate::{data::Covariates, simulator::*};
 use diffsol::{NalgebraContext, Vector};
 
 use super::one_compartment_models::{one_compartment, one_compartment_with_absorption};
+use super::wrap_pmetrics_analytical;
 
 /// Analytical solution for one compartment model parameterized by clearance.
 ///
@@ -18,6 +19,10 @@ pub fn one_compartment_cl(x: &V, p: &V, t: T, rateiv: &V, cov: &Covariates) -> V
     let ke = cl / v;
     let p_ke = V::from_vec(vec![ke], NalgebraContext);
     one_compartment(x, &p_ke, t, rateiv, cov)
+}
+
+pub fn pm_one_compartment_cl(x: &V, p: &V, t: T, rateiv: &V, cov: &Covariates) -> V {
+    wrap_pmetrics_analytical(x, p, t, rateiv, cov, one_compartment_cl)
 }
 
 /// Analytical solution for one compartment model with first-order absorption,
@@ -37,6 +42,16 @@ pub fn one_compartment_cl_with_absorption(x: &V, p: &V, t: T, rateiv: &V, cov: &
     let ke = cl / v;
     let p_ke = V::from_vec(vec![ka, ke], NalgebraContext);
     one_compartment_with_absorption(x, &p_ke, t, rateiv, cov)
+}
+
+pub fn pm_one_compartment_cl_with_absorption(
+    x: &V,
+    p: &V,
+    t: T,
+    rateiv: &V,
+    cov: &Covariates,
+) -> V {
+    wrap_pmetrics_analytical(x, p, t, rateiv, cov, one_compartment_cl_with_absorption)
 }
 
 #[cfg(test)]
