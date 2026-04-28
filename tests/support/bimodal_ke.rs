@@ -55,7 +55,7 @@ fn subject_for_indices(route_index: usize, output_index: usize) -> Subject {
     builder.build()
 }
 
-pub fn legacy_subject() -> Subject {
+pub fn subject() -> Subject {
     subject_for_indices(0, 0)
 }
 
@@ -90,7 +90,7 @@ pub fn reference_values() -> Result<Vec<f64>, Box<dyn Error>> {
     .with_nstates(1)
     .with_ndrugs(1)
     .with_nout(1)
-    .estimate_predictions(&legacy_subject(), &SUPPORT_POINT)?;
+    .estimate_predictions(&subject(), &SUPPORT_POINT)?;
 
     Ok(predictions.flat_predictions())
 }
