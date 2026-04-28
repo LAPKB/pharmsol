@@ -1573,9 +1573,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_proposal_two_corpus() {
+    fn parses_structured_block_corpus() {
         let src = include_str!("../../tests/fixtures/dsl/02-structured-block-imperative.dsl");
-        let module = parse_module(src).expect("proposal 2 fixture parses");
+        let module = parse_module(src).expect("structured-block fixture parses");
         assert_eq!(module.models.len(), 4);
         assert_eq!(module.models[0].name.text, "one_cmt_oral_iv");
         assert_eq!(module.models[0].kind, ModelKind::Ode);
@@ -1598,9 +1598,9 @@ mod tests {
     }
 
     #[test]
-    fn round_trips_proposal_two_corpus() {
+    fn round_trips_structured_block_corpus() {
         let src = include_str!("../../tests/fixtures/dsl/02-structured-block-imperative.dsl");
-        let parsed = parse_module(src).expect("proposal 2 fixture parses");
+        let parsed = parse_module(src).expect("structured-block fixture parses");
         let formatted = parsed.to_string();
         let reparsed = parse_module(&formatted).expect("formatted DSL reparses");
         assert_eq!(formatted, reparsed.to_string());
@@ -1612,7 +1612,7 @@ mod tests {
         let expected =
             include_str!("../tests/fixtures/dsl/04-user-recommended_style.desugared.dsl");
 
-        let parsed = parse_module(src).expect("proposal 4 fixture parses");
+        let parsed = parse_module(src).expect("recommended-style fixture parses");
         let expected = parse_module(expected).expect("canonical fixture parses");
 
         assert_eq!(parsed.to_string(), expected.to_string());
@@ -1625,7 +1625,7 @@ dx(gut) = 1 +
 out(cp) = gut ~ continuous()
 "#;
 
-        let err = parse_module(src).expect_err("invalid proposal 4 expression should fail");
+        let err = parse_module(src).expect_err("invalid recommended-style expression should fail");
         let rendered = err.render(src);
         assert!(rendered.contains("line 2"), "{}", rendered);
     }

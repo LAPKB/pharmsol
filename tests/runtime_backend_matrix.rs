@@ -1,13 +1,13 @@
-#[path = "support/proposal_runtime_corpus.rs"]
-mod proposal_runtime_corpus;
+#[path = "support/runtime_corpus.rs"]
+mod runtime_corpus;
 
 #[cfg(all(feature = "dsl-jit", feature = "dsl-wasm"))]
 mod tests {
-    use super::proposal_runtime_corpus::{self as corpus, ArtifactWorkspace, CorpusCase};
+    use super::runtime_corpus::{self as corpus, ArtifactWorkspace, CorpusCase};
     use pharmsol::dsl::RuntimeBackend;
 
     #[test]
-    fn proposal_ode_runtime_backend_matrix_matches_reference_predictions(
+    fn ode_runtime_backend_matrix_matches_reference_predictions(
     ) -> Result<(), Box<dyn std::error::Error>> {
         let workspace = ArtifactWorkspace::new()?;
 
@@ -41,7 +41,7 @@ mod tests {
     }
 
     #[test]
-    fn proposal_analytical_runtime_backend_matrix_matches_reference_predictions(
+    fn analytical_runtime_backend_matrix_matches_reference_predictions(
     ) -> Result<(), Box<dyn std::error::Error>> {
         let workspace = ArtifactWorkspace::new()?;
 
@@ -83,7 +83,7 @@ mod tests {
     }
 
     #[test]
-    fn proposal_sde_runtime_backend_matrix_matches_reference_predictions(
+    fn sde_runtime_backend_matrix_matches_reference_predictions(
     ) -> Result<(), Box<dyn std::error::Error>> {
         let workspace = ArtifactWorkspace::new()?;
 

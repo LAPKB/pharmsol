@@ -97,9 +97,9 @@ pub enum CorpusCase {
 impl CorpusCase {
     pub fn label(self) -> &'static str {
         match self {
-            Self::Ode => "proposal-ode-one_cmt_oral_iv",
-            Self::Analytical => "proposal-analytical-one_cmt_abs",
-            Self::Sde => "proposal-sde-vanco_sde",
+            Self::Ode => "dsl-ode-one_cmt_oral_iv",
+            Self::Analytical => "dsl-analytical-one_cmt_abs",
+            Self::Sde => "dsl-sde-vanco_sde",
         }
     }
 

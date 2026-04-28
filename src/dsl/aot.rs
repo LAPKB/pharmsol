@@ -406,16 +406,16 @@ mod tests {
         Skip(String),
     }
 
-    fn load_proposal_model(name: &str) -> ExecutionModel {
+    fn load_corpus_model(name: &str) -> ExecutionModel {
         let source = include_str!("../../tests/fixtures/dsl/02-structured-block-imperative.dsl");
-        let parsed = pharmsol_dsl::parse_module(source).expect("parse proposal module");
-        let typed = pharmsol_dsl::analyze_module(&parsed).expect("analyze proposal module");
+        let parsed = pharmsol_dsl::parse_module(source).expect("parse corpus module");
+        let typed = pharmsol_dsl::analyze_module(&parsed).expect("analyze corpus module");
         let model = typed
             .models
             .iter()
             .find(|model| model.name == name)
-            .expect("model in proposal module");
-        pharmsol_dsl::lower_typed_model(model).expect("lower proposal model")
+            .expect("model in corpus module");
+        pharmsol_dsl::lower_typed_model(model).expect("lower corpus model")
     }
 
     fn resolve_cross_target_smoke_target() -> Result<CrossTargetSmokeDecision, String> {
@@ -514,7 +514,7 @@ mod tests {
 
     #[test]
     fn aot_ode_artifact_matches_jit_predictions() {
-        let model = load_proposal_model("one_cmt_oral_iv");
+        let model = load_corpus_model("one_cmt_oral_iv");
         let work_dir = tempdir().expect("tempdir");
         let output_path = work_dir.path().join("one_cmt_oral_iv.pkm");
 
@@ -628,7 +628,7 @@ mod tests {
             Err(error) => panic!("invalid cross-target smoke configuration: {error}"),
         };
 
-        let model = load_proposal_model("one_cmt_oral_iv");
+        let model = load_corpus_model("one_cmt_oral_iv");
         let work_dir = tempdir().expect("tempdir");
         let output_path = work_dir.path().join(format!(
             "one_cmt_oral_iv_{}.pkm",

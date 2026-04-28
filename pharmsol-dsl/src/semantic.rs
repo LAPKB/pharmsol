@@ -2651,10 +2651,10 @@ mod tests {
     use crate::{parse_model, parse_module};
 
     #[test]
-    fn analyzes_proposal_two_corpus() {
+    fn analyzes_structured_block_corpus() {
         let src = include_str!("../../tests/fixtures/dsl/02-structured-block-imperative.dsl");
-        let module = parse_module(src).expect("proposal parses");
-        let typed = analyze_module(&module).expect("proposal analyzes");
+        let module = parse_module(src).expect("structured-block fixture parses");
+        let typed = analyze_module(&module).expect("structured-block fixture analyzes");
 
         assert_eq!(typed.models.len(), 4);
         let transit = &typed.models[1];

@@ -1,5 +1,5 @@
 //! Run with:
-//! cargo run --example proposal_dsl_runtime_meta --features "dsl-jit dsl-aot dsl-aot-load dsl-wasm"
+//! cargo run --example dsl_runtime_meta --features "dsl-jit dsl-aot dsl-aot-load dsl-wasm"
 
 #[cfg(all(
     feature = "dsl-jit",
@@ -49,7 +49,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("target")
         .join("example-artifacts")
-        .join("proposal_dsl_runtime_meta");
+        .join("dsl_runtime_meta");
     fs::create_dir_all(&workspace)?;
     let show_compile_logs = false;
     let on_compile_event = move |kind: String, message: String| {
@@ -203,7 +203,7 @@ fn print_predictions(title: &str, predictions: pharmsol::dsl::RuntimePredictions
 )))]
 fn main() {
     eprintln!(
-        "Run with: cargo run --example proposal_dsl_runtime_meta --features \"dsl-jit dsl-aot dsl-aot-load dsl-wasm\""
+        "Run with: cargo run --example dsl_runtime_meta --features \"dsl-jit dsl-aot dsl-aot-load dsl-wasm\""
     );
     std::process::exit(1);
 }

@@ -1,5 +1,5 @@
-#[path = "../tests/support/proposal_runtime_corpus.rs"]
-mod proposal_runtime_corpus;
+#[path = "../tests/support/runtime_corpus.rs"]
+mod runtime_corpus;
 
 use criterion::{criterion_group, criterion_main, Criterion};
 
@@ -9,18 +9,18 @@ use criterion::{criterion_group, criterion_main, Criterion};
     feature = "dsl-aot-load",
     feature = "dsl-wasm"
 ))]
-fn proposal_runtime_matrix_benchmark(c: &mut Criterion) {
+fn runtime_matrix_benchmark(c: &mut Criterion) {
     use std::hint::black_box;
     use std::time::Duration;
 
     use criterion::{BatchSize, BenchmarkId, SamplingMode};
     use pharmsol::dsl::WasmCompileCache;
-    use proposal_runtime_corpus as corpus;
-    use proposal_runtime_corpus::{ArtifactWorkspace, CorpusCase};
+    use runtime_corpus as corpus;
+    use runtime_corpus::{ArtifactWorkspace, CorpusCase};
 
     let cases = [CorpusCase::Ode, CorpusCase::Analytical, CorpusCase::Sde];
 
-    let mut compile_group = c.benchmark_group("proposal2/runtime-compile");
+    let mut compile_group = c.benchmark_group("dsl/runtime-compile");
     compile_group.sampling_mode(SamplingMode::Flat);
     compile_group.sample_size(10);
     compile_group.warm_up_time(Duration::from_millis(500));
@@ -62,7 +62,7 @@ fn proposal_runtime_matrix_benchmark(c: &mut Criterion) {
     }
     compile_group.finish();
 
-    let mut runtime_group = c.benchmark_group("proposal2/runtime-predict");
+    let mut runtime_group = c.benchmark_group("dsl/runtime-predict");
     runtime_group.sampling_mode(SamplingMode::Flat);
     runtime_group.sample_size(10);
     runtime_group.warm_up_time(Duration::from_millis(500));
@@ -94,7 +94,7 @@ fn proposal_runtime_matrix_benchmark(c: &mut Criterion) {
     feature = "dsl-aot-load",
     feature = "dsl-wasm"
 )))]
-fn proposal_runtime_matrix_benchmark(_: &mut Criterion) {}
+fn runtime_matrix_benchmark(_: &mut Criterion) {}
 
-criterion_group!(benches, proposal_runtime_matrix_benchmark);
+criterion_group!(benches, runtime_matrix_benchmark);
 criterion_main!(benches);

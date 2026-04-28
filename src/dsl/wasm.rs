@@ -757,16 +757,16 @@ mod tests {
     };
     use wasmtime::{Engine, Instance, Memory, Module, Store, TypedFunc};
 
-    fn load_proposal_model(name: &str) -> ExecutionModel {
+    fn load_corpus_model(name: &str) -> ExecutionModel {
         let source = include_str!("../../tests/fixtures/dsl/02-structured-block-imperative.dsl");
-        let parsed = parse_module(source).expect("parse proposal module");
-        let typed = analyze_module(&parsed).expect("analyze proposal module");
+        let parsed = parse_module(source).expect("parse corpus module");
+        let typed = analyze_module(&parsed).expect("analyze corpus module");
         let model = typed
             .models
             .iter()
             .find(|model| model.name == name)
-            .expect("model in proposal module");
-        lower_typed_model(model).expect("lower proposal model")
+            .expect("model in corpus module");
+        lower_typed_model(model).expect("lower corpus model")
     }
 
     fn loader_test_model_info(name: &str) -> NativeModelInfo {
@@ -1014,7 +1014,7 @@ mod tests {
 
     #[test]
     fn wasm_ode_artifact_exports_browser_bundle_and_matches_jit_kernels() {
-        let model = load_proposal_model("one_cmt_oral_iv");
+        let model = load_corpus_model("one_cmt_oral_iv");
         let work_dir = tempdir().expect("tempdir");
         let output_path = work_dir.path().join("one_cmt_oral_iv.wasm");
         let loader_path = write_wasm_bundle_files(&model, &output_path);
@@ -1201,7 +1201,7 @@ mod tests {
 
     #[test]
     fn reuses_wasm_kernel_sessions_across_start_session_calls() {
-        let model = load_proposal_model("one_cmt_oral_iv");
+        let model = load_corpus_model("one_cmt_oral_iv");
         let work_dir = tempdir().expect("tempdir");
         let output_path = work_dir.path().join("one_cmt_oral_iv_reuse.wasm");
         write_wasm_bundle_files(&model, &output_path);
@@ -1222,7 +1222,7 @@ mod tests {
 
     #[test]
     fn wasm_runtime_preserves_state_aliasing_for_dynamics_kernel() {
-        let model = load_proposal_model("one_cmt_oral_iv");
+        let model = load_corpus_model("one_cmt_oral_iv");
         let jit = compile_execution_artifact(&model).expect("compile jit kernels");
         let bytes = super::super::wasm_compile::compile_execution_model_to_wasm_bytes(&model)
             .expect("emit direct wasm bytes");
@@ -1276,7 +1276,7 @@ mod tests {
 
     #[test]
     fn wasm_runtime_zeroes_non_aliased_diffusion_outputs() {
-        let model = load_proposal_model("vanco_sde");
+        let model = load_corpus_model("vanco_sde");
         let jit = compile_execution_artifact(&model).expect("compile jit kernels");
         let bytes = super::super::wasm_compile::compile_execution_model_to_wasm_bytes(&model)
             .expect("emit direct wasm bytes");
@@ -1323,7 +1323,7 @@ mod tests {
 
     #[test]
     fn wasm_runtime_matches_jit_route_property_kernels() {
-        let model = load_proposal_model("one_cmt_oral_iv");
+        let model = load_corpus_model("one_cmt_oral_iv");
         let jit = compile_execution_artifact(&model).expect("compile jit kernels");
         let bytes = super::super::wasm_compile::compile_execution_model_to_wasm_bytes(&model)
             .expect("emit direct wasm bytes");

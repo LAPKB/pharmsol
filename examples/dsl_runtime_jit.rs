@@ -1,7 +1,7 @@
 //! Run with:
-//! cargo run --example proposal_dsl_runtime_wasm --features dsl-wasm
+//! cargo run --example dsl_runtime_jit --features dsl-jit
 
-#[cfg(feature = "dsl-wasm")]
+#[cfg(feature = "dsl-jit")]
 const ODE_SOURCE: &str = r#"
 model = example_ode
 kind = ode
@@ -27,7 +27,7 @@ dx(central) = ka * depot - ke * central
 out(cp) = central / v ~ continuous()
 "#;
 
-#[cfg(feature = "dsl-wasm")]
+#[cfg(feature = "dsl-jit")]
 const ANALYTICAL_SOURCE: &str = r#"
 model = example_analytical
 kind = analytical
@@ -46,7 +46,7 @@ kernel = one_compartment_with_absorption
 out(cp) = central / v ~ continuous()
 "#;
 
-#[cfg(feature = "dsl-wasm")]
+#[cfg(feature = "dsl-jit")]
 const SDE_SOURCE: &str = r#"
 model = example_sde
 kind = sde
@@ -71,18 +71,35 @@ noise(ke_latent) = ske
 out(cp) = central / (vol * wt) ~ continuous()
 "#;
 
-#[cfg(feature = "dsl-wasm")]
+#[cfg(feature = "dsl-jit")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     use std::io;
 
-    use pharmsol::dsl::{self};
+    use pharmsol::dsl::{self, RuntimeCompilationTarget};
     use pharmsol::{Subject, SubjectBuilderExt};
 
-    println!("Sugared DSL models compiled with runtime WASM");
+    println!("Sugared DSL models compiled with runtime JIT");
+    let show_compile_logs = false;
+    let on_compile_event = move |kind: String, message: String| {
+        if !show_compile_logs || message.is_empty() {
+            return;
+        }
+
+        if kind == "log" {
+            eprint!("{message}");
+        } else {
+            eprintln!("[compile:{kind}] {message}");
+        }
+    };
 
     // 1. Define an ODE model, compile it, simulate one subject, and print predictions.
     let ode_support_point = [1.2, 5.0, 40.0, 0.25, 0.8];
-    let ode_model = dsl::compile_module_source_to_runtime_wasm(ODE_SOURCE, Some("example_ode"))?;
+    let ode_model = dsl::compile_module_source_to_runtime(
+        ODE_SOURCE,
+        Some("example_ode"),
+        RuntimeCompilationTarget::Jit,
+        on_compile_event,
+    )?;
     let ode_oral = ode_model
         .route_index("oral")
         .ok_or_else(|| io::Error::other("ODE model: missing oral route"))?;
@@ -104,12 +121,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .missing_observation(9.0, ode_cp)
         .build();
     let ode_predictions = ode_model.estimate_predictions(&ode_subject, &ode_support_point)?;
-    print_predictions("ODE model via runtime WASM", ode_predictions);
+    print_predictions("ODE model via runtime JIT", ode_predictions);
 
     // 2. Define an analytical model, compile it, simulate one subject, and print predictions.
     let analytical_support_point = [1.0, 0.15, 25.0, 0.5, 0.8];
-    let analytical_model =
-        dsl::compile_module_source_to_runtime_wasm(ANALYTICAL_SOURCE, Some("example_analytical"))?;
+    let analytical_model = dsl::compile_module_source_to_runtime(
+        ANALYTICAL_SOURCE,
+        Some("example_analytical"),
+        RuntimeCompilationTarget::Jit,
+        on_compile_event,
+    )?;
     let analytical_oral = analytical_model
         .route_index("oral")
         .ok_or_else(|| io::Error::other("Analytical model: missing oral route"))?;
@@ -125,11 +146,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build();
     let analytical_predictions =
         analytical_model.estimate_predictions(&analytical_subject, &analytical_support_point)?;
-    print_predictions("Analytical model via runtime WASM", analytical_predictions);
+    print_predictions("Analytical model via runtime JIT", analytical_predictions);
 
     // 3. Define an SDE model, compile it, simulate one subject, and print predictions.
     let sde_support_point = [1.1, 0.2, 0.12, 0.08, 15.0, 0.05];
-    let sde_model = dsl::compile_module_source_to_runtime_wasm(SDE_SOURCE, Some("example_sde"))?;
+    let sde_model = dsl::compile_module_source_to_runtime(
+        SDE_SOURCE,
+        Some("example_sde"),
+        RuntimeCompilationTarget::Jit,
+        on_compile_event,
+    )?;
     let sde_oral = sde_model
         .route_index("oral")
         .ok_or_else(|| io::Error::other("SDE model: missing oral route"))?;
@@ -145,12 +171,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .missing_observation(4.0, sde_cp)
         .build();
     let sde_predictions = sde_model.estimate_predictions(&sde_subject, &sde_support_point)?;
-    print_predictions("SDE model via runtime WASM", sde_predictions);
+    print_predictions("SDE model via runtime JIT", sde_predictions);
 
     Ok(())
 }
 
-#[cfg(feature = "dsl-wasm")]
+#[cfg(feature = "dsl-jit")]
 fn print_predictions(title: &str, predictions: pharmsol::dsl::RuntimePredictions) {
     println!("\n{title}");
     match predictions {
@@ -174,7 +200,7 @@ fn print_predictions(title: &str, predictions: pharmsol::dsl::RuntimePredictions
     }
 }
 
-#[cfg(feature = "dsl-wasm")]
+#[cfg(feature = "dsl-jit")]
 fn print_particle_mean_predictions(predictions: &ndarray::Array2<pharmsol::prelude::Prediction>) {
     println!("{:<6} {:>14}", "t", "prediction");
     for col in 0..predictions.ncols() {
@@ -187,8 +213,8 @@ fn print_particle_mean_predictions(predictions: &ndarray::Array2<pharmsol::prelu
     }
 }
 
-#[cfg(not(feature = "dsl-wasm"))]
+#[cfg(not(feature = "dsl-jit"))]
 fn main() {
-    eprintln!("Run with: cargo run --example proposal_dsl_runtime_wasm --features dsl-wasm");
+    eprintln!("Run with: cargo run --example dsl_runtime_jit --features dsl-jit");
     std::process::exit(1);
 }

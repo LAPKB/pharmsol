@@ -1428,14 +1428,14 @@ mod tests {
     #[test]
     fn direct_emitter_compiles_real_ode_corpus_model() {
         let source = include_str!("../../tests/fixtures/dsl/02-structured-block-imperative.dsl");
-        let parsed = pharmsol_dsl::parse_module(source).expect("parse proposal source");
-        let typed = pharmsol_dsl::analyze_module(&parsed).expect("analyze proposal source");
+        let parsed = pharmsol_dsl::parse_module(source).expect("parse corpus source");
+        let typed = pharmsol_dsl::analyze_module(&parsed).expect("analyze corpus source");
         let model = typed
             .models
             .iter()
             .find(|model| model.name == "one_cmt_oral_iv")
             .expect("ode corpus model");
-        let execution = pharmsol_dsl::lower_typed_model(model).expect("lower proposal model");
+        let execution = pharmsol_dsl::lower_typed_model(model).expect("lower corpus model");
 
         let bytes = compile_execution_model_to_wasm_bytes(&execution, 1)
             .expect("emit direct ode wasm bytes");

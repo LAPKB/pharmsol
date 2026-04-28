@@ -381,19 +381,19 @@ mod tests {
     use pharmsol_dsl::{DiagnosticPhase, DSL_BACKEND_GENERIC, DSL_PARSE_GENERIC};
     use tempfile::tempdir;
 
-    fn proposal_source() -> &'static str {
+    fn corpus_source() -> &'static str {
         include_str!("../../tests/fixtures/dsl/02-structured-block-imperative.dsl")
     }
 
-    fn proposal_model(name: &str) -> ExecutionModel {
-        let parsed = pharmsol_dsl::parse_module(proposal_source()).expect("parse proposal module");
-        let typed = pharmsol_dsl::analyze_module(&parsed).expect("analyze proposal module");
+    fn corpus_model(name: &str) -> ExecutionModel {
+        let parsed = pharmsol_dsl::parse_module(corpus_source()).expect("parse corpus module");
+        let typed = pharmsol_dsl::analyze_module(&parsed).expect("analyze corpus module");
         let model = typed
             .models
             .iter()
             .find(|model| model.name == name)
-            .expect("model present in proposal module");
-        pharmsol_dsl::lower_typed_model(model).expect("lower proposal model")
+            .expect("model present in corpus module");
+        pharmsol_dsl::lower_typed_model(model).expect("lower corpus model")
     }
 
     fn ode_subject(output: usize, oral: usize, iv: usize) -> Subject {
@@ -426,14 +426,14 @@ mod tests {
         let support = vec![1.2, 5.0, 40.0, 0.5, 0.8];
 
         let jit = compile_module_source_to_runtime(
-            proposal_source(),
+            corpus_source(),
             Some("one_cmt_oral_iv"),
             RuntimeCompilationTarget::Jit,
             |_, _| {},
         )
         .expect("compile jit runtime model");
         let aot = compile_module_source_to_runtime(
-            proposal_source(),
+            corpus_source(),
             Some("one_cmt_oral_iv"),
             RuntimeCompilationTarget::NativeAot(
                 NativeAotCompileOptions::new(work_dir.path().join("aot-build"))
@@ -443,7 +443,7 @@ mod tests {
         )
         .expect("compile aot runtime model");
         let wasm = compile_module_source_to_runtime(
-            proposal_source(),
+            corpus_source(),
             Some("one_cmt_oral_iv"),
             RuntimeCompilationTarget::Wasm,
             |_, _| {},
@@ -527,8 +527,8 @@ mod tests {
 
     #[test]
     fn runtime_exposes_jit_backend_diagnostic_structure() {
-        let source = proposal_source();
-        let model = proposal_model("one_cmt_oral_iv");
+        let source = corpus_source();
+        let model = corpus_model("one_cmt_oral_iv");
         let error = RuntimeError::from(
             compile_sde_model_to_jit(&model)
                 .expect_err("ODE model should not compile through the SDE JIT entrypoint")
@@ -549,9 +549,9 @@ mod tests {
         assert!(rendered.contains("not an SDE model"), "{}", rendered);
 
         let report = error
-            .diagnostic_report("proposal.dsl")
+            .diagnostic_report("model.dsl")
             .expect("diagnostic report");
-        assert_eq!(report.source.name, "proposal.dsl");
+        assert_eq!(report.source.name, "model.dsl");
         assert_eq!(report.diagnostics[0].code, "DSL4000");
         assert_eq!(report.diagnostics[0].phase, "backend");
         assert!(report.diagnostics[0].labels[0].span.start_line.is_some());

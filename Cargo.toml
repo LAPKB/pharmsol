@@ -82,5 +82,5 @@ name = "nca"
 harness = false
 
 [[bench]]
-name = "proposal_runtime_matrix"
+name = "runtime_matrix"
 harness = false

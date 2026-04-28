@@ -1290,22 +1290,22 @@ mod tests {
     use diffsol::Vector;
     use pharmsol_dsl::execution::DenseBufferLayout;
 
-    fn load_proposal_model(name: &str) -> ExecutionModel {
+    fn load_corpus_model(name: &str) -> ExecutionModel {
         let source = include_str!("../../tests/fixtures/dsl/02-structured-block-imperative.dsl");
-        let parsed = pharmsol_dsl::parse_module(source).expect("parse proposal module");
-        let typed = pharmsol_dsl::analyze_module(&parsed).expect("analyze proposal module");
+        let parsed = pharmsol_dsl::parse_module(source).expect("parse corpus module");
+        let typed = pharmsol_dsl::analyze_module(&parsed).expect("analyze corpus module");
         let model = typed
             .models
             .iter()
             .find(|model| model.name == name)
-            .expect("model present in proposal module");
-        pharmsol_dsl::lower_typed_model(model).expect("lower proposal model")
+            .expect("model present in corpus module");
+        pharmsol_dsl::lower_typed_model(model).expect("lower corpus model")
     }
 
     #[test]
     fn jit_compile_error_exposes_backend_diagnostic_report() {
         let source = include_str!("../../tests/fixtures/dsl/02-structured-block-imperative.dsl");
-        let model = load_proposal_model("one_cmt_oral_iv");
+        let model = load_corpus_model("one_cmt_oral_iv");
         let error = compile_sde_model_to_jit(&model)
             .expect_err("ODE model should not compile through the SDE JIT entrypoint")
             .with_source(source);
@@ -1319,8 +1319,8 @@ mod tests {
         assert!(rendered.contains("error[DSL4000]"), "{}", rendered);
         assert!(rendered.contains("not an SDE model"), "{}", rendered);
 
-        let report = error.diagnostic_report("proposal.dsl");
-        assert_eq!(report.source.name, "proposal.dsl");
+        let report = error.diagnostic_report("model.dsl");
+        assert_eq!(report.source.name, "model.dsl");
         assert_eq!(report.diagnostics[0].code, "DSL4000");
         assert_eq!(report.diagnostics[0].phase, "backend");
         assert!(report.diagnostics[0].labels[0].span.start_line.is_some());
@@ -1340,7 +1340,7 @@ mod tests {
 
     #[test]
     fn compiles_dense_execution_kernels_for_ode_models() {
-        let model = load_proposal_model("one_cmt_oral_iv");
+        let model = load_corpus_model("one_cmt_oral_iv");
         let artifact = compile_execution_artifact(&model).expect("compile execution artifact");
 
         let mut derived = vec![0.0; model.abi.derived_buffer.len];
@@ -1397,7 +1397,7 @@ mod tests {
 
     #[test]
     fn jit_ode_wrapper_matches_existing_ode_predictions() {
-        let model = load_proposal_model("one_cmt_oral_iv");
+        let model = load_corpus_model("one_cmt_oral_iv");
         let jit = compile_ode_model_to_jit(&model)
             .expect("compile jit ode model")
             .with_solver(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45));
@@ -1485,7 +1485,7 @@ mod tests {
 
     #[test]
     fn jit_analytical_wrapper_matches_existing_analytical_predictions() {
-        let model = load_proposal_model("one_cmt_abs");
+        let model = load_corpus_model("one_cmt_abs");
         let jit = compile_analytical_model_to_jit(&model).expect("compile jit analytical model");
 
         let oral = jit.route_index("oral").expect("oral route");
@@ -1537,7 +1537,7 @@ mod tests {
 
     #[test]
     fn jit_sde_wrapper_matches_zero_diffusion_reference() {
-        let model = load_proposal_model("vanco_sde");
+        let model = load_corpus_model("vanco_sde");
         let jit = compile_sde_model_to_jit(&model)
             .expect("compile jit sde model")
             .with_particles(64);

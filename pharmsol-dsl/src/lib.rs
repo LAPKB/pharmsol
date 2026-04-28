@@ -1,18 +1,8 @@
-//! Backend-neutral frontend crate for the pharmsol Proposal 2 DSL.
+//! Backend-neutral frontend crate for the pharmsol DSL.
 //!
-//! Slice 2 moves the parsing frontend here on top of the shared frontend data
-//! modules already extracted in Slice 1:
-//!
-//! - AST and model syntax types
-//! - diagnostic and report types
-//! - typed semantic IR
-//! - lexical analysis
-//! - canonical parse entrypoints
-//! - authoring desugaring used by the parser
-//! - semantic analysis and diagnostics
-//!
-//! Execution lowering now also lives here, while `pharmsol::dsl` continues to
-//! re-export the stable runtime-facing surface during the migration.
+//! This crate owns parsing, diagnostics, authoring desugaring, semantic
+//! analysis, and execution lowering for DSL modules. `pharmsol::dsl`
+//! re-exports the stable runtime-facing surface in the main crate.
 
 pub mod ast;
 mod authoring;

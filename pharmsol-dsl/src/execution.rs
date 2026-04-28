@@ -1414,8 +1414,8 @@ mod tests {
     use crate::{analyze_module, parse_module};
 
     #[test]
-    fn lowers_proposal_two_corpus_into_execution_models() {
-        let execution = proposal_execution();
+    fn lowers_structured_block_corpus_into_execution_models() {
+        let execution = structured_block_execution();
         assert_eq!(execution.models.len(), 4);
 
         let ode = find_model(&execution, "one_cmt_oral_iv");
@@ -1440,7 +1440,7 @@ mod tests {
 
     #[test]
     fn flattens_array_states_and_preserves_loop_structure() {
-        let execution = proposal_execution();
+        let execution = structured_block_execution();
         let transit = find_model(&execution, "transit_absorption");
         assert_eq!(transit.abi.state_buffer.len, 5);
         assert_eq!(transit.metadata.states[0].name, "transit");
@@ -1466,7 +1466,7 @@ mod tests {
 
     #[test]
     fn analytical_models_lower_to_builtin_execution_kernels() {
-        let execution = proposal_execution();
+        let execution = structured_block_execution();
         let analytical = find_model(&execution, "one_cmt_abs");
         let kernel = analytical
             .kernel(KernelRole::Analytical)
@@ -1491,7 +1491,7 @@ mod tests {
 
     #[test]
     fn sde_models_emit_runtime_kernels_and_zero_filled_init() {
-        let execution = proposal_execution();
+        let execution = structured_block_execution();
         let sde = find_model(&execution, "vanco_sde");
         assert_eq!(sde.metadata.particles, Some(1000));
         assert_eq!(
@@ -1523,7 +1523,7 @@ mod tests {
 
     #[test]
     fn route_property_kernels_fill_defaults_for_unconfigured_routes() {
-        let execution = proposal_execution();
+        let execution = structured_block_execution();
         let ode = find_model(&execution, "one_cmt_oral_iv");
         let lag = ode.kernel(KernelRole::RouteLag).expect("lag kernel");
         let bio = ode
@@ -1561,10 +1561,10 @@ mod tests {
         ));
     }
 
-    fn proposal_execution() -> ExecutionModule {
+    fn structured_block_execution() -> ExecutionModule {
         let src = include_str!("../../tests/fixtures/dsl/02-structured-block-imperative.dsl");
-        let module = parse_module(src).expect("proposal parses");
-        let typed = analyze_module(&module).expect("proposal analyzes");
+        let module = parse_module(src).expect("structured-block fixture parses");
+        let typed = analyze_module(&module).expect("structured-block fixture analyzes");
         lower_typed_module(&typed).expect("execution lowering succeeds")
     }
 
