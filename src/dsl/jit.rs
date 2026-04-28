@@ -462,8 +462,7 @@ fn emit_statement_kernel(
 
     let mut locals = BTreeMap::new();
     for local in &program.locals {
-        let variable = Variable::new(local.index);
-        builder.declare_var(variable, clif_type(local.ty));
+        let variable = builder.declare_var(clif_type(local.ty));
         let initial = zero_value(&mut builder, local.ty);
         builder.def_var(variable, initial);
         locals.insert(
