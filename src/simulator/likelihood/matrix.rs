@@ -128,7 +128,6 @@ pub fn log_psi(
     since = "0.23.0",
     note = "Use log_likelihood_matrix() instead and exponentiate if needed"
 )]
-
 pub fn psi(
     equation: &impl Equation,
     subjects: &Data,

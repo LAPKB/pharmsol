@@ -1,20 +1,28 @@
 use thiserror::Error;
 
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 use crate::data::error_model::ErrorModelError;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 use crate::data::row::DataError;
 
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 use crate::CovariateError;
 
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 use ndarray::ShapeError;
 
 #[derive(Error, Debug, Clone)]
 pub enum PharmsolError {
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     #[error("Error in the error model: {0}")]
     ErrorModelError(#[from] ErrorModelError),
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     #[error("Covariate error: {0}")]
     CovariateError(#[from] CovariateError),
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     #[error("Shape error: {0}")]
     NdarrayShapeError(#[from] ShapeError),
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     #[error("Error parsing data: {0}")]
     DataError(#[from] DataError),
     #[error("Diffsol error: {0}")]
@@ -31,8 +39,11 @@ pub enum PharmsolError {
     MissingObservation,
     #[error("Input channel {input} is out of range (ndrugs = {ndrugs})")]
     InputOutOfRange { input: usize, ndrugs: usize },
+    #[error("Output equation {outeq} is out of range (nout = {nout})")]
+    OuteqOutOfRange { outeq: usize, nout: usize },
 }
 
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 impl From<diffsol::error::DiffsolError> for PharmsolError {
     fn from(error: diffsol::error::DiffsolError) -> Self {
         PharmsolError::DiffsolError(error.to_string())

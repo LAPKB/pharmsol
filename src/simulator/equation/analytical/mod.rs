@@ -295,6 +295,7 @@ impl EquationPriv for Analytical {
     }
 }
 
+#[allow(clippy::items_after_test_module)]
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -385,9 +386,7 @@ pub(crate) mod tests {
             .observation(1.0, 0.0, 0)
             .build();
 
-        let predictions = analytical
-            .estimate_predictions(&subject, &vec![1.0])
-            .unwrap();
+        let predictions = analytical.estimate_predictions(&subject, &[1.0]).unwrap();
 
         let value = predictions.predictions()[0].prediction();
         assert!((value - 2.5).abs() < 1e-12);
@@ -419,9 +418,7 @@ pub(crate) mod tests {
             .observation(1.0, 0.0, 0)
             .build();
 
-        let predictions = analytical
-            .estimate_predictions(&subject, &vec![0.0])
-            .unwrap();
+        let predictions = analytical.estimate_predictions(&subject, &[0.0]).unwrap();
 
         assert_eq!(predictions.predictions()[0].prediction(), 4.0);
     }

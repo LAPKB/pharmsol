@@ -826,7 +826,7 @@ fn time_varying_covariates_work_correctly() {
     .with_nout(1);
 
     // Just verify it runs without error and produces reasonable output
-    let result = ode.estimate_predictions(&subject, &vec![0.1, 50.0]);
+    let result = ode.estimate_predictions(&subject, &[0.1, 50.0]);
     assert!(result.is_ok(), "ODE with covariates should succeed");
 
     let predictions = result.unwrap();
@@ -843,14 +843,14 @@ fn time_varying_covariates_work_correctly() {
     }
 
     // Predictions should decrease over time (elimination)
-    for i in 1..preds.len() {
+    for (i, pred) in preds.iter().copied().enumerate().skip(1) {
         // Allow for some noise due to covariate changes, but general trend should be down
         // or predictions should be reasonable (between 0 and initial dose/volume)
         assert!(
-            preds[i] < 3.0, // Should not exceed ~100/50 * some factor
+            pred < 3.0, // Should not exceed ~100/50 * some factor
             "Prediction {} seems too high: {}",
             i,
-            preds[i]
+            pred
         );
     }
 }

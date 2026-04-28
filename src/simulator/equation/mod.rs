@@ -374,7 +374,7 @@ impl EqnKind {
 
 /// Hash support points to a u64 for cache key generation.
 #[inline(always)]
-fn spphash(spp: &[f64]) -> u64 {
+pub(crate) fn spphash(spp: &[f64]) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = ahash::AHasher::default();
     for &value in spp {

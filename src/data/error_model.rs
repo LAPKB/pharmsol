@@ -208,13 +208,6 @@ impl AssayErrorModels {
         self.models.iter().enumerate()
     }
 
-    /// Returns an iterator that yields mutable references to the error models in the collection.
-    /// # Returns
-    /// An iterator that yields tuples containing the index and a mutable reference to each [AssayErrorModel].
-    pub fn into_iter(self) -> impl Iterator<Item = (usize, AssayErrorModel)> {
-        self.models.into_iter().enumerate()
-    }
-
     /// Returns a mutable iterator that yields mutable references to the error models in the collection.
     /// # Returns
     /// An iterator that yields tuples containing the index and a mutable reference to each [AssayErrorModel].
@@ -236,12 +229,12 @@ impl AssayErrorModels {
             outeq.hash(&mut hasher);
 
             match model {
-                AssayErrorModel::Additive { lambda, poly: _ } => {
+                AssayErrorModel::Additive { lambda, .. } => {
                     0u8.hash(&mut hasher); // Use 0 for additive model
                     lambda.value().to_bits().hash(&mut hasher);
                     lambda.is_fixed().hash(&mut hasher); // Include fixed/variable state in hash
                 }
-                AssayErrorModel::Proportional { gamma, poly: _ } => {
+                AssayErrorModel::Proportional { gamma, .. } => {
                     1u8.hash(&mut hasher); // Use 1 for proportional model
                     gamma.value().to_bits().hash(&mut hasher);
                     gamma.is_fixed().hash(&mut hasher); // Include fixed/variable state in hash
@@ -257,6 +250,11 @@ impl AssayErrorModels {
     /// Returns the number of error models in the collection.
     pub fn len(&self) -> usize {
         self.models.len()
+    }
+
+    /// Returns whether the collection contains no error models.
+    pub fn is_empty(&self) -> bool {
+        self.models.is_empty()
     }
 
     /// Returns the error polynomial associated with the specified output equation.
@@ -294,7 +292,7 @@ impl AssayErrorModels {
         if self.models[outeq] == AssayErrorModel::None {
             return Err(ErrorModelError::NoneErrorModel(outeq));
         }
-        Ok(self.models[outeq].factor()?)
+        self.models[outeq].factor()
     }
 
     /// Sets the error polynomial for the specified output equation.

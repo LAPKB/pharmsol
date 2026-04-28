@@ -41,7 +41,7 @@ fn readme(n: usize) {
     .with_nout(1);
     for _ in 0..n {
         let op = ode
-            .estimate_predictions(&subject, &vec![0.3, 0.5, 0.1, 70.0])
+            .estimate_predictions(&subject, &[0.3, 0.5, 0.1, 70.0])
             .unwrap();
         black_box(op);
     }

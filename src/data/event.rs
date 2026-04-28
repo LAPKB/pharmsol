@@ -60,17 +60,16 @@ pub enum BLQRule {
     Exclude,
     /// Position-aware handling (PKNCA default): first=keep(0), middle=drop, last=keep(0)
     ///
-    /// This is the FDA-recommended approach that:
-    /// - Keeps first BLQ (before tfirst) as 0 to anchor the profile start
-    /// - Drops middle BLQ (between tfirst and tlast) to avoid deflating AUC
-    /// - Keeps last BLQ (at/after tlast) as 0 to define profile end
+    /// This is the FDA-recommended approach.
+    /// It keeps the first BLQ (before tfirst) as 0 to anchor the profile start,
+    /// drops middle BLQ values (between tfirst and tlast) to avoid deflating AUC,
+    /// and keeps the last BLQ (at or after tlast) as 0 to define profile end.
     Positional,
     /// Tmax-relative handling: different rules before vs after Tmax
     ///
-    /// Contains (before_tmax_rule, after_tmax_rule) where each rule can be:
-    /// - "keep" = keep as 0
-    /// - "drop" = exclude from analysis
-    /// Default PKNCA: before.tmax=drop, after.tmax=keep
+    /// Contains `(before_tmax_rule, after_tmax_rule)`.
+    /// Each rule can either keep BLQ as 0 or drop it from analysis.
+    /// Default PKNCA behavior is `before.tmax=drop` and `after.tmax=keep`.
     TmaxRelative {
         /// Rule for BLQ before Tmax: true=keep as 0, false=drop
         before_tmax_keep: bool,
@@ -531,7 +530,6 @@ impl fmt::Display for Event {
 }
 
 #[cfg(test)]
-
 mod tests {
     use super::*;
 

@@ -47,7 +47,7 @@ fn test_particle_filter_likelihood() {
 
     for i in 0..NUM_RUNS {
         let ll = sde
-            .estimate_log_likelihood(&subject, &vec![1.0], &ems)
+            .estimate_log_likelihood(&subject, &[1.0], &ems)
             .unwrap()
             .exp();
         println!("Run {}: likelihood = {}", i + 1, ll);

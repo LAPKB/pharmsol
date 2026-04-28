@@ -67,7 +67,7 @@ fn data_expand_benchmark(c: &mut Criterion) {
     let complex_data = {
         let subjects = (1..=10)
             .map(|i| {
-                Subject::builder(&format!("patient{}", i))
+                Subject::builder(format!("patient{}", i))
                     .bolus(0.0, 100.0 * i as f64, 0)
                     .observation(1.0, 50.0, 0)
                     .observation(2.0, 45.0, 1) // Different output equation
@@ -108,7 +108,7 @@ fn dose_modification_benchmark(c: &mut Criterion) {
     let create_dosing_data = || {
         let subjects = (1..=5)
             .map(|i| {
-                Subject::builder(&format!("patient{}", i))
+                Subject::builder(format!("patient{}", i))
                     .bolus(0.0, 100.0, 0)
                     .bolus(12.0, 100.0, 0)
                     .bolus(24.0, 100.0, 0)
@@ -184,7 +184,7 @@ fn data_operations_benchmark(c: &mut Criterion) {
     let large_data = {
         let subjects = (1..=100)
             .map(|i| {
-                Subject::builder(&format!("patient{:03}", i))
+                Subject::builder(format!("patient{:03}", i))
                     .bolus(0.0, 100.0, 0)
                     .observation(1.0, 50.0, 0)
                     .observation(6.0, 25.0, 0)
@@ -201,7 +201,7 @@ fn data_operations_benchmark(c: &mut Criterion) {
         b.iter(|| {
             let subjects: Vec<Subject> = (1..=100)
                 .map(|i| {
-                    Subject::builder(&format!("patient{:03}", i))
+                    Subject::builder(format!("patient{:03}", i))
                         .bolus(0.0, 100.0, 0)
                         .observation(0.5, 80.0, 0)
                         .observation(1.0, 60.0, 0)

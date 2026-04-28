@@ -1,5 +1,15 @@
 mod closure;
 
+/// Re-export of the diffsol `OdeEquations` adapter so the JIT module can build
+/// `OdeBuilder` problems with closures (rather than plain `fn` pointers).
+///
+/// This helper is shared by the legacy JIT path and the native
+/// runtime wrappers.
+#[cfg(any(feature = "dsl-jit", feature = "dsl-aot-load", feature = "dsl-wasm"))]
+pub(crate) mod closure_helpers {
+    pub(crate) use super::closure::PMProblem;
+}
+
 use crate::{
     data::{Covariates, Infusion},
     error_model::AssayErrorModels,
@@ -464,8 +474,7 @@ impl Equation for ODE {
                     spp_v.clone(),
                     covariates,
                     infusions.as_slice(),
-                    self.initial_state(support_point, covariates, occasion.index())
-                        .into(),
+                    self.initial_state(support_point, covariates, occasion.index()),
                 )?)?;
 
             match &self.solver {

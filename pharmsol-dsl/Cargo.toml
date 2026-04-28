@@ -1,0 +1,16 @@
+[package]
+name = "pharmsol-dsl"
+version = "0.1.0"
+edition = "2021"
+authors = ["Julián D. Otálvaro <juliandavid347@gmail.com>", "Markus Hovd"]
+description = "Backend-neutral frontend crate for the pharmsol model DSL."
+license = "GPL-3.0"
+readme = "README.md"
+publish = false
+
+[lib]
+bench = false
+
+[dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"

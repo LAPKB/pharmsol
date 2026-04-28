@@ -309,7 +309,7 @@ impl NonLinearOp for PmOut {
 }
 
 // Completely revised PMProblem to fix lifetime issues and improve performance
-pub struct PMProblem<'a, F>
+pub(crate) struct PMProblem<'a, F>
 where
     F: Fn(&V, &V, T, &mut V, &V, &V, &Covariates) + 'a,
 {
@@ -331,6 +331,7 @@ where
 {
     /// Creates a new PMProblem with a pre-converted parameter vector.
     /// This avoids an allocation when the caller already has a V representation.
+    #[allow(clippy::too_many_arguments)]
     pub fn with_params_v(
         func: F,
         nstates: usize,

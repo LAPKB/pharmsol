@@ -213,8 +213,8 @@ pub fn ode(input: TokenStream) -> TokenStream {
     state_names.sort();
     state_names.dedup();
 
-    let drug_names = vec![de_params[4].clone(), de_params[5].clone()];
-    let output_names = vec![out_params[4].clone()];
+    let drug_names = [de_params[4].clone(), de_params[5].clone()];
+    let output_names = [out_params[4].clone()];
 
     // filter empties (from wildcard `_` params)
     let state_refs: Vec<&str> = state_names

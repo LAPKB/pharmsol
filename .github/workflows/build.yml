@@ -18,14 +18,20 @@ env:
 jobs:
   test:
     runs-on: "${{ matrix.os }}"
-    name: "${{ matrix.os }} / stable"
+    name: "${{ matrix.name }}"
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
-          - windows-latest
+        include:
+          - name: ubuntu-latest / stable
+            os: ubuntu-latest
+            native_aot_smoke_target: ""
+          - name: macos-14 / stable
+            os: macos-14
+            native_aot_smoke_target: x86_64-apple-darwin
+          - name: windows-latest / stable
+            os: windows-latest
+            native_aot_smoke_target: ""
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -34,6 +40,22 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+
+      - name: Install Native AoT smoke target
+        if: ${{ matrix.native_aot_smoke_target != '' }}
+        run: rustup target add ${{ matrix.native_aot_smoke_target }}
+
+      - name: Install wasm32 target for browser E2E
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Setup Node.js
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        uses: actions/setup-node@v5
+        with:
+          node-version: 25
+          cache: npm
+          cache-dependency-path: tests/browser-e2e/package-lock.json
 
       - name: Setup cache
         uses: actions/cache@v5
@@ -56,14 +78,22 @@ jobs:
       - name: Build (all features)
         run: cargo build --verbose --all-features
 
-      - name: Run tests (no features)
-        run: cargo test --verbose --no-default-features
-
       - name: Run tests (default features)
         run: cargo test --verbose
 
       - name: Run tests (all features)
+        env:
+          PHARMSOL_NATIVE_AOT_SMOKE_TARGET: ${{ matrix.native_aot_smoke_target }}
         run: cargo test --verbose --all-features
 
       - name: Run doc tests
         run: cargo test --doc --all-features
+
+      - name: Run wasm32 dsl-wasm clippy
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        run: cargo clippy --lib --target wasm32-unknown-unknown --features dsl-wasm -- -D warnings
+
+      - name: Run browser E2E
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        working-directory: tests/browser-e2e
+        run: npm ci && npm test
