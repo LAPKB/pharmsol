@@ -580,9 +580,9 @@ fn macro_ode_model() -> equation::ODE {
         covariates: [wt],
         states: [depot, central],
         outputs: [cp],
-        routes: {
+        routes: [
             bolus(oral) -> depot,
-        },
+        ],
         diffeq: |x, _p, _t, dx, _cov| {
             dx[depot] = -ka * x[depot];
             dx[central] = ka * x[depot] - (cl / v) * x[central];
@@ -676,13 +676,13 @@ fn runtime_shared_input_macro_ode() -> equation::ODE {
         params: [ka, ke, v, tlag, f_oral],
         states: [depot, central],
         outputs: [cp],
-        routes: {
+        routes: [
             bolus(oral) -> depot,
             infusion(iv) -> central,
-        },
-        diffeq: |x, _p, _t, dx, bolus, rateiv, _cov| {
-            dx[depot] = bolus[oral] - ka * x[depot];
-            dx[central] = ka * x[depot] + rateiv[iv] - ke * x[central];
+        ],
+        diffeq: |x, _p, _t, dx, _cov| {
+            dx[depot] = -ka * x[depot];
+            dx[central] = ka * x[depot] - ke * x[central];
         },
         lag: |_p, _t, _cov| {
             lag! { oral => tlag }
@@ -731,10 +731,10 @@ fn runtime_shared_input_handwritten_ode() -> equation::ODE {
                     .to_state("depot")
                     .with_lag()
                     .with_bioavailability()
-                    .expect_explicit_input(),
+                    .inject_input_to_destination(),
                 equation::Route::infusion("iv")
                     .to_state("central")
-                    .expect_explicit_input(),
+                    .inject_input_to_destination(),
             ]),
     )
     .expect("handwritten shared-input ODE metadata should validate")
@@ -791,10 +791,10 @@ fn runtime_shared_input_macro_analytical() -> equation::Analytical {
         params: [ka, ke, v, tlag, f_oral],
         states: [gut, central],
         outputs: [cp],
-        routes: {
+        routes: [
             bolus(oral) -> gut,
             infusion(iv) -> central,
-        },
+        ],
         structure: one_compartment_with_absorption,
         lag: |_p, _t, _cov| {
             lag! { oral => tlag }
@@ -856,10 +856,10 @@ fn runtime_shared_input_macro_sde() -> equation::SDE {
         states: [gut, central],
         outputs: [cp],
         particles: 8,
-        routes: {
+        routes: [
             bolus(oral) -> gut,
             infusion(iv) -> central,
-        },
+        ],
         drift: |x, _p, _t, dx, _cov| {
             dx[gut] = -ka * x[gut];
             dx[central] = ka * x[gut] - ke * x[central];
@@ -976,9 +976,9 @@ fn macro_analytical_model() -> equation::Analytical {
         params: [ka, ke, v],
         states: [depot, central],
         outputs: [cp],
-        routes: {
+        routes: [
             bolus(oral) -> depot,
-        },
+        ],
         structure: one_compartment_with_absorption,
         out: |x, _p, _t, _cov, y| {
             y[cp] = x[central] / v;
@@ -1019,9 +1019,9 @@ fn macro_sde_model() -> equation::SDE {
         states: [depot, central],
         outputs: [cp],
         particles: 256,
-        routes: {
+        routes: [
             bolus(oral) -> depot,
-        },
+        ],
         drift: |x, _p, _t, dx, _cov| {
             dx[depot] = -ka * x[depot];
             dx[central] = ka * x[depot] - ke * x[central];

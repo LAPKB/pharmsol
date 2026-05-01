@@ -13,10 +13,10 @@ fn macro_model() -> equation::ODE {
         params: [ke, kcp, kpc, v],
         states: [central, peripheral],
         outputs: [cp],
-        routes: {
+        routes: [
             bolus(load) -> central,
             infusion(iv) -> central,
-        },
+        ],
         diffeq: |x, _p, _t, dx, _cov| {
             dx[central] = -ke * x[central] - kcp * x[central] + kpc * x[peripheral];
             dx[peripheral] = kcp * x[central] - kpc * x[peripheral];

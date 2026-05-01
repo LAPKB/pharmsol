@@ -27,7 +27,6 @@ struct OdeInput {
     states: Vec<Ident>,
     outputs: Vec<SymbolicIndex>,
     routes: Vec<OdeRouteDecl>,
-    diffeq_mode: OdeDiffeqMode,
     diffeq: ExprClosure,
     lag: Option<ExprClosure>,
     fa: Option<ExprClosure>,
@@ -64,12 +63,6 @@ struct SdeInput {
     fa: Option<ExprClosure>,
     init: Option<ExprClosure>,
     out: ExprClosure,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum OdeDiffeqMode {
-    InjectedRouteInputs,
-    ExplicitRouteVectors,
 }
 
 struct OdeRouteDecl {
@@ -275,7 +268,7 @@ impl Parse for OdeInput {
         let routes = routes.ok_or_else(|| missing_required_ode_field("routes"))?;
         let diffeq = diffeq.ok_or_else(|| missing_required_ode_field("diffeq"))?;
         let out = out.ok_or_else(|| missing_required_ode_field("out"))?;
-        let diffeq_mode = classify_diffeq_mode(&diffeq, &routes)?;
+        validate_ode_diffeq_uses_automatic_injection(&diffeq, &routes)?;
 
         validate_unique_idents("parameter", &params, "ode!")?;
         validate_unique_idents("covariate", &covariates, "ode!")?;
@@ -300,7 +293,6 @@ impl Parse for OdeInput {
                     init: init.as_ref(),
                     out: &out,
                 },
-                diffeq_mode,
             },
         )?;
 
@@ -311,7 +303,6 @@ impl Parse for OdeInput {
             states,
             outputs,
             routes,
-            diffeq_mode,
             diffeq,
             lag,
             fa,
@@ -694,8 +685,18 @@ fn parse_symbolic_index_list(input: ParseStream) -> syn::Result<Vec<SymbolicInde
 }
 
 fn parse_route_list(input: ParseStream) -> syn::Result<Vec<OdeRouteDecl>> {
+    if input.peek(token::Brace) {
+        return Err(input.error("declaration-first macro `routes` must use `[...]`, not `{...}`"));
+    }
+
+    if !input.peek(token::Bracket) {
+        return Err(
+            input.error("expected a bracketed route list like `routes: [infusion(iv) -> central]`")
+        );
+    }
+
     let content;
-    syn::braced!(content in input);
+    syn::bracketed!(content in input);
     Ok(
         Punctuated::<OdeRouteDecl, Token![,]>::parse_terminated(&content)?
             .into_iter()
@@ -1063,13 +1064,12 @@ fn generate_covariate_bindings(
     }
 }
 
-fn classify_diffeq_mode(
+fn validate_ode_diffeq_uses_automatic_injection(
     diffeq: &ExprClosure,
     routes: &[OdeRouteDecl],
-) -> syn::Result<OdeDiffeqMode> {
+) -> syn::Result<()> {
     match closure_param_names(diffeq).len() {
-        3 => Ok(OdeDiffeqMode::InjectedRouteInputs),
-        7 => Ok(OdeDiffeqMode::ExplicitRouteVectors),
+        3 => Ok(()),
         5 => {
             let usage = ClosureBodyUsage::analyze(diffeq.body.as_ref());
             let route_inputs = route_input_idents(routes);
@@ -1082,14 +1082,17 @@ fn classify_diffeq_mode(
                 .is_some_and(|ident| usage.indexes(ident) && !usage.assigns_index(ident));
 
             if mentions_route_inputs || indexes_fifth_param || reads_fourth_param_as_input {
-                Ok(OdeDiffeqMode::ExplicitRouteVectors)
+                Err(syn::Error::new_spanned(
+                    diffeq,
+                    "declaration-first `ode!` only supports automatic route injection in `diffeq`; use either 5 parameters: |x, p, t, dx, cov| or 3 parameters: |x, t, dx| and remove manual `bolus[...]` / `rateiv[...]` terms",
+                ))
             } else {
-                Ok(OdeDiffeqMode::InjectedRouteInputs)
+                Ok(())
             }
         }
         _ => Err(syn::Error::new_spanned(
             diffeq,
-            "declaration-first `ode!` requires `diffeq` to have either 3 parameters: |x, t, dx|, 5 parameters: |x, p, t, dx, cov| or |x, t, dx, bolus, rateiv|, or 7 parameters: |x, p, t, dx, bolus, rateiv, cov|",
+            "declaration-first `ode!` only supports automatic route injection in `diffeq`; use either 5 parameters: |x, p, t, dx, cov| or 3 parameters: |x, t, dx|",
         )),
     }
 }
@@ -1214,7 +1217,6 @@ struct AnalyticalBindingClosures<'a> {
 struct OdeBindingClosures<'a> {
     diffeq: &'a ExprClosure,
     common: CommonBindingClosures<'a>,
-    diffeq_mode: OdeDiffeqMode,
 }
 
 #[derive(Clone, Copy)]
@@ -1238,7 +1240,6 @@ fn validate_named_binding_compatibility(
     let OdeBindingClosures {
         diffeq,
         common: CommonBindingClosures { lag, fa, init, out },
-        diffeq_mode,
     } = closures;
     let route_inputs = route_input_idents(routes);
 
@@ -1288,31 +1289,6 @@ fn validate_named_binding_compatibility(
     validate_closure_param_conflicts("diffeq", diffeq, params, "parameter")?;
     validate_closure_param_conflicts("diffeq", diffeq, covariates, "covariate")?;
     validate_closure_param_conflicts("diffeq", diffeq, states, "state")?;
-
-    if diffeq_mode == OdeDiffeqMode::ExplicitRouteVectors {
-        validate_binding_conflicts(
-            "parameter",
-            params,
-            "route",
-            &route_inputs,
-            "`diffeq` named binding generation",
-        )?;
-        validate_binding_conflicts(
-            "state",
-            states,
-            "route",
-            &route_inputs,
-            "`diffeq` named binding generation",
-        )?;
-        validate_binding_conflicts(
-            "covariate",
-            covariates,
-            "route",
-            &route_inputs,
-            "`diffeq` named binding generation",
-        )?;
-        validate_closure_param_conflicts("diffeq", diffeq, &route_inputs, "route")?;
-    }
 
     if let Some(lag) = lag {
         validate_binding_conflicts(
@@ -1881,7 +1857,6 @@ fn expand_ode_init(
 
 fn expand_route_metadata(
     routes: &[OdeRouteDecl],
-    diffeq_mode: OdeDiffeqMode,
     lag_routes: &HashSet<String>,
     fa_routes: &HashSet<String>,
 ) -> Vec<TokenStream2> {
@@ -1899,10 +1874,6 @@ fn expand_route_metadata(
                     quote! { ::pharmsol::equation::Route::infusion(stringify!(#input)) }
                 }
             };
-            let input_policy = match diffeq_mode {
-                OdeDiffeqMode::InjectedRouteInputs => quote! { .inject_input_to_destination() },
-                OdeDiffeqMode::ExplicitRouteVectors => quote! { .expect_explicit_input() },
-            };
             let lag_flag = if lag_routes.contains(&route_name) {
                 quote! { .with_lag() }
             } else {
@@ -1919,7 +1890,7 @@ fn expand_route_metadata(
                     .to_state(stringify!(#destination))
                     #lag_flag
                     #fa_flag
-                    #input_policy
+                    .inject_input_to_destination()
             }
         })
         .collect()
@@ -2151,148 +2122,64 @@ fn expand_diffeq(
     states: &[Ident],
     routes: &[OdeRouteDecl],
     route_bindings: &[(SymbolicIndex, usize)],
-    diffeq_mode: OdeDiffeqMode,
 ) -> syn::Result<TokenStream2> {
     let state_consts = generate_index_consts(states);
+    let x = generated_ident("__pharmsol_x");
+    let p = generated_ident("__pharmsol_p");
+    let t = generated_ident("__pharmsol_t");
+    let dx = generated_ident("__pharmsol_dx");
+    let bolus = generated_ident("__pharmsol_bolus");
+    let rateiv = generated_ident("__pharmsol_rateiv");
+    let cov = generated_ident("__pharmsol_cov");
+    let full_inputs = [x.clone(), p.clone(), t.clone(), dx.clone(), cov.clone()];
+    let reduced_inputs = [x.clone(), t.clone(), dx.clone()];
+    let input_aliases = generate_supported_input_aliases(
+        diffeq,
+        &[&full_inputs, &reduced_inputs],
+        "declaration-first `ode!` injected-route `diffeq` requires either 5 parameters: |x, p, t, dx, cov| or 3 parameters: |x, t, dx|",
+    )?;
+    let parameter_bindings = generate_parameter_bindings(params, diffeq, &p);
+    let covariate_bindings = generate_covariate_bindings(covariates, diffeq, &cov, &t);
+    let body = &diffeq.body;
+    let dx_binding = if diffeq.inputs.len() == full_inputs.len() {
+        closure_param_ident(diffeq, 3).unwrap_or_else(|| dx.clone())
+    } else {
+        closure_param_ident(diffeq, 2).unwrap_or_else(|| dx.clone())
+    };
+    let route_terms = expand_injected_ode_route_terms(
+        routes,
+        states,
+        route_bindings,
+        &dx_binding,
+        &bolus,
+        &rateiv,
+    );
 
-    match diffeq_mode {
-        OdeDiffeqMode::ExplicitRouteVectors => {
-            let route_consts = generate_mapped_index_consts(route_bindings);
-            let x = generated_ident("__pharmsol_x");
-            let p = generated_ident("__pharmsol_p");
-            let t = generated_ident("__pharmsol_t");
-            let dx = generated_ident("__pharmsol_dx");
-            let bolus = generated_ident("__pharmsol_bolus");
-            let rateiv = generated_ident("__pharmsol_rateiv");
-            let cov = generated_ident("__pharmsol_cov");
-            let full_inputs = [
-                x.clone(),
-                p.clone(),
-                t.clone(),
-                dx.clone(),
-                bolus.clone(),
-                rateiv.clone(),
-                cov.clone(),
-            ];
-            let reduced_inputs = [
-                x.clone(),
-                t.clone(),
-                dx.clone(),
-                bolus.clone(),
-                rateiv.clone(),
-            ];
-            let input_aliases = generate_supported_input_aliases(
-                diffeq,
-                &[&full_inputs, &reduced_inputs],
-                "declaration-first `ode!` explicit-route `diffeq` requires either 7 parameters: |x, p, t, dx, bolus, rateiv, cov| or 5 parameters: |x, t, dx, bolus, rateiv|",
-            )?;
-            let parameter_bindings = generate_parameter_bindings(params, diffeq, &p);
-            let covariate_bindings = generate_covariate_bindings(covariates, diffeq, &cov, &t);
-            let bolus_binding = if diffeq.inputs.len() == full_inputs.len() {
-                closure_param_ident(diffeq, 4).unwrap_or_else(|| bolus.clone())
-            } else {
-                closure_param_ident(diffeq, 3).unwrap_or_else(|| bolus.clone())
-            };
-            let rateiv_binding = if diffeq.inputs.len() == full_inputs.len() {
-                closure_param_ident(diffeq, 5).unwrap_or_else(|| rateiv.clone())
-            } else {
-                closure_param_ident(diffeq, 4).unwrap_or_else(|| rateiv.clone())
-            };
-            let route_label_map = symbolic_numeric_binding_map(route_bindings);
-            let body = NumericLabelRewriter::rewrite(
-                diffeq.body.as_ref(),
-                vec![
-                    IndexRewriteTarget::new(bolus_binding, route_label_map.clone()),
-                    IndexRewriteTarget::new(rateiv_binding, route_label_map),
-                ],
-                None,
-            );
-
-            Ok(quote! {{
-                let __pharmsol_diffeq: fn(
-                    &::pharmsol::simulator::V,
-                    &::pharmsol::simulator::V,
-                    f64,
-                    &mut ::pharmsol::simulator::V,
-                    &::pharmsol::simulator::V,
-                    &::pharmsol::simulator::V,
-                    &::pharmsol::data::Covariates,
-                ) = |#x: &::pharmsol::simulator::V,
-                     #p: &::pharmsol::simulator::V,
-                     #t: f64,
-                     #dx: &mut ::pharmsol::simulator::V,
-                     #bolus: &::pharmsol::simulator::V,
-                     #rateiv: &::pharmsol::simulator::V,
-                     #cov: &::pharmsol::data::Covariates| {
-                    #input_aliases
-                    #state_consts
-                    #route_consts
-                    #parameter_bindings
-                    #covariate_bindings
-                    #body
-                };
-                __pharmsol_diffeq
-            }})
-        }
-        OdeDiffeqMode::InjectedRouteInputs => {
-            let x = generated_ident("__pharmsol_x");
-            let p = generated_ident("__pharmsol_p");
-            let t = generated_ident("__pharmsol_t");
-            let dx = generated_ident("__pharmsol_dx");
-            let bolus = generated_ident("__pharmsol_bolus");
-            let rateiv = generated_ident("__pharmsol_rateiv");
-            let cov = generated_ident("__pharmsol_cov");
-            let full_inputs = [x.clone(), p.clone(), t.clone(), dx.clone(), cov.clone()];
-            let reduced_inputs = [x.clone(), t.clone(), dx.clone()];
-            let input_aliases = generate_supported_input_aliases(
-                diffeq,
-                &[&full_inputs, &reduced_inputs],
-                "declaration-first `ode!` injected-route `diffeq` requires either 5 parameters: |x, p, t, dx, cov| or 3 parameters: |x, t, dx|",
-            )?;
-            let parameter_bindings = generate_parameter_bindings(params, diffeq, &p);
-            let covariate_bindings = generate_covariate_bindings(covariates, diffeq, &cov, &t);
-            let body = &diffeq.body;
-            let dx_binding = if diffeq.inputs.len() == full_inputs.len() {
-                closure_param_ident(diffeq, 3).unwrap_or_else(|| dx.clone())
-            } else {
-                closure_param_ident(diffeq, 2).unwrap_or_else(|| dx.clone())
-            };
-            let route_terms = expand_injected_ode_route_terms(
-                routes,
-                states,
-                route_bindings,
-                &dx_binding,
-                &bolus,
-                &rateiv,
-            );
-
-            Ok(quote! {{
-                let __pharmsol_diffeq: fn(
-                    &::pharmsol::simulator::V,
-                    &::pharmsol::simulator::V,
-                    f64,
-                    &mut ::pharmsol::simulator::V,
-                    &::pharmsol::simulator::V,
-                    &::pharmsol::simulator::V,
-                    &::pharmsol::data::Covariates,
-                ) = |#x: &::pharmsol::simulator::V,
-                     #p: &::pharmsol::simulator::V,
-                     #t: f64,
-                     #dx: &mut ::pharmsol::simulator::V,
-                     #bolus: &::pharmsol::simulator::V,
-                     #rateiv: &::pharmsol::simulator::V,
-                     #cov: &::pharmsol::data::Covariates| {
-                    #input_aliases
-                    #state_consts
-                    #parameter_bindings
-                    #covariate_bindings
-                    #body
-                    #route_terms
-                };
-                __pharmsol_diffeq
-            }})
-        }
-    }
+    Ok(quote! {{
+        let __pharmsol_diffeq: fn(
+            &::pharmsol::simulator::V,
+            &::pharmsol::simulator::V,
+            f64,
+            &mut ::pharmsol::simulator::V,
+            &::pharmsol::simulator::V,
+            &::pharmsol::simulator::V,
+            &::pharmsol::data::Covariates,
+        ) = |#x: &::pharmsol::simulator::V,
+             #p: &::pharmsol::simulator::V,
+             #t: f64,
+             #dx: &mut ::pharmsol::simulator::V,
+             #bolus: &::pharmsol::simulator::V,
+             #rateiv: &::pharmsol::simulator::V,
+             #cov: &::pharmsol::data::Covariates| {
+            #input_aliases
+            #state_consts
+            #parameter_bindings
+            #covariate_bindings
+            #body
+            #route_terms
+        };
+        __pharmsol_diffeq
+    }})
 }
 
 fn resolve_analytical_structure(structure: &Ident) -> syn::Result<AnalyticalKernelSpec> {
@@ -2883,7 +2770,6 @@ pub fn ode(input: TokenStream) -> TokenStream {
         &input.states,
         &input.routes,
         &route_bindings,
-        input.diffeq_mode,
     ) {
         Ok(diffeq) => diffeq,
         Err(error) => return error.to_compile_error().into(),
@@ -2909,7 +2795,7 @@ pub fn ode(input: TokenStream) -> TokenStream {
     let covariates = &input.covariates;
     let states = &input.states;
     let outputs = &input.outputs;
-    let routes = expand_route_metadata(&input.routes, input.diffeq_mode, &lag_routes, &fa_routes);
+    let routes = expand_route_metadata(&input.routes, &lag_routes, &fa_routes);
     let covariate_metadata = if covariates.is_empty() {
         quote! {}
     } else {
@@ -3339,7 +3225,7 @@ mod tests {
     #[test]
     fn validates_route_destinations() {
         let error = syn::parse_str::<OdeInput>(
-            "name: \"demo\", params: [ke], states: [central], outputs: [cp], routes: { infusion(iv) -> peripheral }, diffeq: |x, p, t, dx, cov| {}, out: |x, p, t, cov, y| {}",
+            "name: \"demo\", params: [ke], states: [central], outputs: [cp], routes: [infusion(iv) -> peripheral], diffeq: |x, p, t, dx, cov| {}, out: |x, p, t, cov, y| {}",
         )
         .err()
         .expect("unknown route destination must fail");
@@ -3352,7 +3238,7 @@ mod tests {
     #[test]
     fn rejects_named_binding_collisions() {
         let error = syn::parse_str::<OdeInput>(
-            "name: \"demo\", params: [central, v], states: [central], outputs: [cp], routes: { infusion(iv) -> central }, diffeq: |x, p, t, dx, cov| {}, out: |x, p, t, cov, y| {}",
+            "name: \"demo\", params: [central, v], states: [central], outputs: [cp], routes: [infusion(iv) -> central], diffeq: |x, p, t, dx, cov| {}, out: |x, p, t, cov, y| {}",
         )
         .err()
         .expect("parameter/state binding collisions must fail");
@@ -3365,7 +3251,7 @@ mod tests {
     #[test]
     fn ode_route_bindings_share_inputs_by_kind_local_ordinal() {
         let input = syn::parse_str::<OdeInput>(
-            "name: \"demo\", params: [ka, ke, v], states: [depot, central], outputs: [cp], routes: { bolus(oral) -> depot, infusion(iv) -> central, bolus(sc) -> depot }, diffeq: |x, p, t, dx, b, rateiv, cov| {}, out: |x, p, t, cov, y| {}",
+            "name: \"demo\", params: [ka, ke, v], states: [depot, central], outputs: [cp], routes: [bolus(oral) -> depot, infusion(iv) -> central, bolus(sc) -> depot], diffeq: |x, p, t, dx, b, rateiv, cov| {}, out: |x, p, t, cov, y| {}",
         )
         .expect("declaration-first ode input should parse");
 
@@ -3416,7 +3302,7 @@ mod tests {
     #[test]
     fn analytical_accepts_extra_parameters_beyond_kernel_arity() {
         let input = syn::parse_str::<AnalyticalInput>(
-            "name: \"demo\", params: [ka, ke, v, tlag, tvke], covariates: [wt, renal], states: [gut, central], outputs: [cp], routes: { bolus(oral) -> gut }, structure: one_compartment_with_absorption, sec: |_t| { ke = tvke; }, out: |x, p, t, cov, y| {}",
+            "name: \"demo\", params: [ka, ke, v, tlag, tvke], covariates: [wt, renal], states: [gut, central], outputs: [cp], routes: [bolus(oral) -> gut], structure: one_compartment_with_absorption, sec: |_t| { ke = tvke; }, out: |x, p, t, cov, y| {}",
         )
         .expect("extra declared parameters should be allowed");
 
@@ -3429,7 +3315,7 @@ mod tests {
     #[test]
     fn analytical_rejects_unknown_structure() {
         let error = syn::parse_str::<AnalyticalInput>(
-            "name: \"demo\", params: [ke], states: [central], outputs: [cp], routes: { infusion(iv) -> central }, structure: mystery, out: |x, p, t, cov, y| {}",
+            "name: \"demo\", params: [ke], states: [central], outputs: [cp], routes: [infusion(iv) -> central], structure: mystery, out: |x, p, t, cov, y| {}",
         )
         .err()
         .expect("unknown analytical structure must fail");
@@ -3442,7 +3328,7 @@ mod tests {
     #[test]
     fn analytical_rejects_insufficient_kernel_parameters() {
         let error = syn::parse_str::<AnalyticalInput>(
-            "name: \"demo\", params: [ke], states: [gut, central], outputs: [cp], routes: { bolus(oral) -> gut }, structure: one_compartment_with_absorption, out: |x, p, t, cov, y| {}",
+            "name: \"demo\", params: [ke], states: [gut, central], outputs: [cp], routes: [bolus(oral) -> gut], structure: one_compartment_with_absorption, out: |x, p, t, cov, y| {}",
         )
         .err()
         .expect("insufficient kernel parameters must fail");
@@ -3455,7 +3341,7 @@ mod tests {
     #[test]
     fn analytical_rejects_unknown_route_property_binding() {
         let error = syn::parse_str::<AnalyticalInput>(
-            "name: \"demo\", params: [ka, ke, v], states: [gut, central], outputs: [cp], routes: { bolus(oral) -> gut }, structure: one_compartment_with_absorption, lag: |_p, _t, _cov| { lag! { iv => 1.0 } }, out: |x, p, t, cov, y| {}",
+            "name: \"demo\", params: [ka, ke, v], states: [gut, central], outputs: [cp], routes: [bolus(oral) -> gut], structure: one_compartment_with_absorption, lag: |_p, _t, _cov| { lag! { iv => 1.0 } }, out: |x, p, t, cov, y| {}",
         )
         .err()
         .expect("unknown lag route must fail");
@@ -3468,7 +3354,7 @@ mod tests {
     #[test]
     fn analytical_rejects_infusion_lag_binding() {
         let error = syn::parse_str::<AnalyticalInput>(
-            "name: \"demo\", params: [ke, v, tlag], states: [central], outputs: [cp], routes: { infusion(iv) -> central }, structure: one_compartment, lag: |_p, _t, _cov| { lag! { iv => tlag } }, out: |x, p, t, cov, y| {}",
+            "name: \"demo\", params: [ke, v, tlag], states: [central], outputs: [cp], routes: [infusion(iv) -> central], structure: one_compartment, lag: |_p, _t, _cov| { lag! { iv => tlag } }, out: |x, p, t, cov, y| {}",
         )
         .err()
         .expect("infusion lag must fail");
@@ -3481,7 +3367,7 @@ mod tests {
     #[test]
     fn sde_requires_particles() {
         let error = syn::parse_str::<SdeInput>(
-            "name: \"demo\", params: [ke, theta], states: [central], outputs: [cp], routes: { infusion(iv) -> central }, drift: |x, p, t, dx, cov| {}, diffusion: |p, sigma| {}, out: |x, p, t, cov, y| {}",
+            "name: \"demo\", params: [ke, theta], states: [central], outputs: [cp], routes: [infusion(iv) -> central], drift: |x, p, t, dx, cov| {}, diffusion: |p, sigma| {}, out: |x, p, t, cov, y| {}",
         )
         .err()
         .expect("missing particles must fail");
@@ -3494,7 +3380,7 @@ mod tests {
     #[test]
     fn sde_rejects_unknown_route_property_binding() {
         let error = syn::parse_str::<SdeInput>(
-            "name: \"demo\", params: [ke, sigma_ke], states: [central], outputs: [cp], routes: { infusion(iv) -> central }, particles: 16, drift: |x, p, t, dx, cov| {}, diffusion: |p, sigma| {}, lag: |_p, _t, _cov| { lag! { oral => 1.0 } }, out: |x, p, t, cov, y| {}",
+            "name: \"demo\", params: [ke, sigma_ke], states: [central], outputs: [cp], routes: [infusion(iv) -> central], particles: 16, drift: |x, p, t, dx, cov| {}, diffusion: |p, sigma| {}, lag: |_p, _t, _cov| { lag! { oral => 1.0 } }, out: |x, p, t, cov, y| {}",
         )
         .err()
         .expect("unknown lag route must fail");
@@ -3507,7 +3393,7 @@ mod tests {
     #[test]
     fn sde_rejects_infusion_lag_binding() {
         let error = syn::parse_str::<SdeInput>(
-            "name: \"demo\", params: [ke, sigma_ke, tlag], states: [central], outputs: [cp], routes: { infusion(iv) -> central }, particles: 16, drift: |x, p, t, dx, cov| {}, diffusion: |p, sigma| {}, lag: |_p, _t, _cov| { lag! { iv => tlag } }, out: |x, p, t, cov, y| {}",
+            "name: \"demo\", params: [ke, sigma_ke, tlag], states: [central], outputs: [cp], routes: [infusion(iv) -> central], particles: 16, drift: |x, p, t, dx, cov| {}, diffusion: |p, sigma| {}, lag: |_p, _t, _cov| { lag! { iv => tlag } }, out: |x, p, t, cov, y| {}",
         )
         .err()
         .expect("infusion lag must fail");
@@ -3515,5 +3401,18 @@ mod tests {
         assert!(error
             .to_string()
             .contains("declaration-first `sde!` does not allow `lag` on infusion route `iv`"));
+    }
+
+    #[test]
+    fn rejects_braced_route_lists() {
+        let error = syn::parse_str::<OdeInput>(
+            "name: \"demo\", params: [ke], states: [central], outputs: [cp], routes: { infusion(iv) -> central }, diffeq: |x, p, t, dx, cov| {}, out: |x, p, t, cov, y| {}",
+        )
+        .err()
+        .expect("braced route lists must fail");
+
+        assert!(error
+            .to_string()
+            .contains("declaration-first macro `routes` must use `[...]`, not `{...}`"));
     }
 }

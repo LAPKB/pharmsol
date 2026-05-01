@@ -6,9 +6,9 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
         params: [ke, v],
         states: [central],
         outputs: [cp],
-        routes: {
+        routes: [
             infusion(iv) -> central,
-        },
+        ],
         structure: one_compartment,
         out: |x, _p, _t, _cov, y| {
             y[cp] = x[central] / v;

@@ -7,9 +7,9 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
         states: [central],
         outputs: [cp],
         particles: 16,
-        routes: {
+        routes: [
             infusion(iv) -> central,
-        },
+        ],
         drift: |x, _p, _t, dx, _cov| {
             dx[central] = -ke * x[central];
         },

@@ -56,9 +56,9 @@ fn macro_one_compartment() -> equation::Analytical {
         params: [ke, v],
         states: [central],
         outputs: [cp],
-        routes: {
+        routes: [
             infusion(iv) -> central,
-        },
+        ],
         structure: one_compartment,
         out: |x, _t, y| {
             y[cp] = x[central] / v;
@@ -99,9 +99,9 @@ fn macro_one_compartment_with_absorption() -> equation::Analytical {
         params: [ka, ke, v, tlag, f_oral],
         states: [gut, central],
         outputs: [cp],
-        routes: {
+        routes: [
             bolus(oral) -> gut,
-        },
+        ],
         structure: one_compartment_with_absorption,
         lag: |_t| {
             lag! { oral => tlag }
@@ -166,10 +166,10 @@ fn macro_shared_input_analytical() -> equation::Analytical {
         params: [ka, ke, v, tlag, f_oral],
         states: [gut, central],
         outputs: [cp],
-        routes: {
+        routes: [
             bolus(oral) -> gut,
             infusion(iv) -> central,
-        },
+        ],
         structure: one_compartment_with_absorption,
         lag: |_t| {
             lag! { oral => tlag }
@@ -229,10 +229,10 @@ fn macro_covariate_analytical() -> equation::Analytical {
         covariates: [wt, renal],
         states: [gut, central],
         outputs: [cp],
-        routes: {
+        routes: [
             bolus(oral) -> gut,
             infusion(iv) -> central,
-        },
+        ],
         structure: one_compartment_with_absorption,
         sec: |_t| {
             let wt_scale = (wt / 70.0).powf(0.75);

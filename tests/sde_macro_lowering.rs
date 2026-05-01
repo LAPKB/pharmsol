@@ -73,9 +73,9 @@ fn macro_infusion_sde() -> equation::SDE {
         states: [central],
         outputs: [cp],
         particles: 16,
-        routes: {
+        routes: [
             infusion(iv) -> central,
-        },
+        ],
         drift: |x, _t, dx| {
             dx[central] = -ke * x[central];
         },
@@ -133,9 +133,9 @@ fn macro_absorption_sde() -> equation::SDE {
         states: [gut, central],
         outputs: [cp],
         particles: 8,
-        routes: {
+        routes: [
             bolus(oral) -> gut,
-        },
+        ],
         drift: |x, _t, dx| {
             dx[gut] = -ka * x[gut];
             dx[central] = ka * x[gut] - ke * x[central];
@@ -218,10 +218,10 @@ fn macro_shared_input_sde() -> equation::SDE {
         states: [gut, central],
         outputs: [cp],
         particles: 8,
-        routes: {
+        routes: [
             bolus(oral) -> gut,
             infusion(iv) -> central,
-        },
+        ],
         drift: |x, _t, dx| {
             dx[gut] = -ka * x[gut];
             dx[central] = ka * x[gut] - ke * x[central];
@@ -307,10 +307,10 @@ fn macro_covariate_sde() -> equation::SDE {
         states: [gut, central],
         outputs: [cp],
         particles: 8,
-        routes: {
+        routes: [
             bolus(oral) -> gut,
             infusion(iv) -> central,
-        },
+        ],
         drift: |x, _t, dx| {
             let wt_scale = (wt / 70.0).powf(0.75);
             let renal_scale = (renal / 90.0).powf(0.25);

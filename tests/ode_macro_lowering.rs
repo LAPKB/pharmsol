@@ -56,9 +56,9 @@ fn injected_macro_ode() -> equation::ODE {
         params: [ke, v],
         states: [central],
         outputs: [cp],
-        routes: {
+        routes: [
             infusion(iv) -> central,
-        },
+        ],
         diffeq: |x, _t, dx| {
             dx[central] = -ke * x[central];
         },
@@ -99,66 +99,17 @@ fn injected_handwritten_ode() -> equation::ODE {
     .expect("handwritten injected metadata should validate")
 }
 
-fn explicit_macro_ode() -> equation::ODE {
-    ode! {
-        name: "explicit_one_cpt",
-        params: [ke, v],
-        states: [central],
-        outputs: [cp],
-        routes: {
-            infusion(iv) -> central,
-        },
-        diffeq: |x, _t, dx, _bolus, rateiv| {
-            dx[central] = rateiv[iv] - ke * x[central];
-        },
-        out: |x, _t, y| {
-            y[cp] = x[central] / v;
-        },
-    }
-}
-
-fn explicit_handwritten_ode() -> equation::ODE {
-    equation::ODE::new(
-        |x, p, _t, dx, _bolus, rateiv, _cov| {
-            fetch_params!(p, ke, _v);
-            dx[0] = rateiv[0] - ke * x[0];
-        },
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
-        |x, p, _t, _cov, y| {
-            fetch_params!(p, _ke, v);
-            y[0] = x[0] / v;
-        },
-    )
-    .with_nstates(1)
-    .with_ndrugs(1)
-    .with_nout(1)
-    .with_metadata(
-        equation::metadata::new("explicit_one_cpt")
-            .parameters(["ke", "v"])
-            .states(["central"])
-            .outputs(["cp"])
-            .route(
-                equation::Route::infusion("iv")
-                    .to_state("central")
-                    .expect_explicit_input(),
-            ),
-    )
-    .expect("handwritten explicit metadata should validate")
-}
-
 fn numeric_label_macro_ode() -> equation::ODE {
     ode! {
         name: "numeric_label_one_cpt",
         params: [ke, v],
         states: [central],
         outputs: [1],
-        routes: {
+        routes: [
             infusion(1) -> central,
-        },
-        diffeq: |x, _t, dx, _bolus, rateiv| {
-            dx[central] = rateiv[1] - ke * x[central];
+        ],
+        diffeq: |x, _t, dx| {
+            dx[central] = -ke * x[central];
         },
         out: |x, _t, y| {
             y[1] = x[central] / v;
@@ -191,7 +142,7 @@ fn numeric_label_handwritten_ode() -> equation::ODE {
             .route(
                 equation::Route::infusion("1")
                     .to_state("central")
-                    .expect_explicit_input(),
+                    .inject_input_to_destination(),
             ),
     )
     .expect("handwritten numeric-label metadata should validate")
@@ -203,13 +154,13 @@ fn shared_input_macro_ode() -> equation::ODE {
         params: [ka, ke, v, tlag, f_oral],
         states: [depot, central],
         outputs: [cp],
-        routes: {
+        routes: [
             bolus(oral) -> depot,
             infusion(iv) -> central,
-        },
-        diffeq: |x, _t, dx, bolus, rateiv| {
-            dx[depot] = bolus[oral] - ka * x[depot];
-            dx[central] = ka * x[depot] + rateiv[iv] - ke * x[central];
+        ],
+        diffeq: |x, _t, dx| {
+            dx[depot] = -ka * x[depot];
+            dx[central] = ka * x[depot] - ke * x[central];
         },
         lag: |_t| {
             lag! { oral => tlag }
@@ -257,10 +208,10 @@ fn shared_input_handwritten_ode() -> equation::ODE {
                     .to_state("depot")
                     .with_lag()
                     .with_bioavailability()
-                    .expect_explicit_input(),
+                    .inject_input_to_destination(),
                 equation::Route::infusion("iv")
                     .to_state("central")
-                    .expect_explicit_input(),
+                    .inject_input_to_destination(),
             ]),
     )
     .expect("handwritten shared-input metadata should validate")
@@ -272,11 +223,11 @@ fn numeric_route_property_macro_ode() -> equation::ODE {
         params: [ka, ke, v, tlag, f_oral],
         states: [depot, central],
         outputs: [1],
-        routes: {
+        routes: [
             bolus(1) -> depot,
-        },
-        diffeq: |x, _t, dx, bolus, _rateiv| {
-            dx[depot] = bolus[1] - ka * x[depot];
+        ],
+        diffeq: |x, _t, dx| {
+            dx[depot] = -ka * x[depot];
             dx[central] = ka * x[depot] - ke * x[central];
         },
         lag: |_t| {
@@ -325,7 +276,7 @@ fn numeric_route_property_handwritten_ode() -> equation::ODE {
                     .to_state("depot")
                     .with_lag()
                     .with_bioavailability()
-                    .expect_explicit_input(),
+                    .inject_input_to_destination(),
             ),
     )
     .expect("handwritten numeric route-property metadata should validate")
@@ -337,11 +288,11 @@ fn mixed_output_labels_macro_ode() -> equation::ODE {
         params: [ke, v],
         states: [central],
         outputs: [cp, 0, 1],
-        routes: {
+        routes: [
             infusion(iv) -> central,
-        },
-        diffeq: |x, _t, dx, _bolus, rateiv| {
-            dx[central] = rateiv[iv] - ke * x[central];
+        ],
+        diffeq: |x, _t, dx| {
+            dx[central] = -ke * x[central];
         },
         out: |x, _t, y| {
             y[cp] = x[central] / v;
@@ -378,7 +329,7 @@ fn mixed_output_labels_handwritten_ode() -> equation::ODE {
             .route(
                 equation::Route::infusion("iv")
                     .to_state("central")
-                    .expect_explicit_input(),
+                    .inject_input_to_destination(),
             ),
     )
     .expect("handwritten mixed-output metadata should validate")
@@ -391,9 +342,9 @@ fn covariate_macro_ode() -> equation::ODE {
         covariates: [wt],
         states: [gut, central],
         outputs: [cp],
-        routes: {
+        routes: [
             bolus(oral) -> gut,
-        },
+        ],
         diffeq: |x, _t, dx| {
             let scaled_ke = ke * (wt / 70.0);
             dx[gut] = -ka * x[gut];
@@ -467,32 +418,6 @@ fn macro_injected_lowering_matches_handwritten_metadata_and_predictions() {
     let handwritten_predictions = handwritten_ode
         .estimate_predictions(&subject, &support_point)
         .expect("handwritten injected model should simulate")
-        .flat_predictions()
-        .to_vec();
-
-    assert_prediction_match(&macro_predictions, &handwritten_predictions);
-}
-
-#[test]
-fn macro_explicit_lowering_matches_handwritten_metadata_and_predictions() {
-    let macro_ode = explicit_macro_ode();
-    let handwritten_ode = explicit_handwritten_ode();
-    let subject = subject_for_route("iv", "cp");
-    let support_point = [0.2, 10.0];
-
-    assert_eq!(macro_ode.metadata(), handwritten_ode.metadata());
-    assert_eq!(macro_ode.route_index("iv"), Some(0));
-    assert_eq!(macro_ode.output_index("cp"), Some(0));
-    assert_eq!(macro_ode.state_index("central"), Some(0));
-
-    let macro_predictions = macro_ode
-        .estimate_predictions(&subject, &support_point)
-        .expect("macro explicit model should simulate")
-        .flat_predictions()
-        .to_vec();
-    let handwritten_predictions = handwritten_ode
-        .estimate_predictions(&subject, &support_point)
-        .expect("handwritten explicit model should simulate")
         .flat_predictions()
         .to_vec();
 
@@ -622,12 +547,12 @@ fn macro_named_labels_resolve_from_pmetrics_ingestion() {
     let subject = &data.subjects()[0];
     let support_point = [0.2, 10.0];
 
-    let pmetrics_predictions = explicit_macro_ode()
+    let pmetrics_predictions = injected_macro_ode()
         .estimate_predictions(subject, &support_point)
         .expect("macro named-label model should simulate")
         .flat_predictions()
         .to_vec();
-    let manual_predictions = explicit_macro_ode()
+    let manual_predictions = injected_macro_ode()
         .estimate_predictions(&subject_for_route("iv", "cp"), &support_point)
         .expect("macro internal-index model should simulate")
         .flat_predictions()

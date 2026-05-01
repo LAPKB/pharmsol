@@ -14,19 +14,19 @@ fn macro_ode_model() -> equation::ODE {
         covariates: [wt, renal],
         states: [depot, central, peripheral],
         outputs: [cp],
-        routes: {
+        routes: [
             bolus(oral) -> depot,
             bolus(load) -> central,
             infusion(iv) -> central,
-        },
-        diffeq: |x, _t, dx, bolus, rateiv| {
+        ],
+        diffeq: |x, _t, dx| {
             let wt_scale = (wt / 70.0).powf(0.75);
             let renal_scale = (renal / 90.0).powf(0.25);
             let adjusted_ke = ke * wt_scale * renal_scale;
             let adjusted_kcp = kcp * (wt / 70.0).powf(0.25);
 
-            dx[depot] = bolus[oral] - ka * x[depot];
-            dx[central] = bolus[load] + ka * x[depot] + rateiv[iv]
+            dx[depot] = -ka * x[depot];
+            dx[central] = ka * x[depot]
                 - (adjusted_ke + adjusted_kcp) * x[central]
                 + kpc * x[peripheral];
             dx[peripheral] = adjusted_kcp * x[central] - kpc * x[peripheral];
@@ -185,13 +185,13 @@ fn handwritten_ode_model() -> equation::ODE {
                     .to_state("depot")
                     .with_lag()
                     .with_bioavailability()
-                    .expect_explicit_input(),
+                    .inject_input_to_destination(),
                 equation::Route::bolus("load")
                     .to_state("central")
-                    .expect_explicit_input(),
+                    .inject_input_to_destination(),
                 equation::Route::infusion("iv")
                     .to_state("central")
-                    .expect_explicit_input(),
+                    .inject_input_to_destination(),
             ]),
     )
     .expect("handwritten ODE metadata should validate")
@@ -224,11 +224,11 @@ fn macro_analytical_model() -> equation::Analytical {
         covariates: [wt, renal],
         states: [gut, central],
         outputs: [cp],
-        routes: {
+        routes: [
             bolus(oral) -> gut,
             bolus(load) -> central,
             infusion(iv) -> central,
-        },
+        ],
         structure: one_compartment_with_absorption,
         sec: |_t| {
             let wt_scale = (wt / 70.0).powf(0.75);
