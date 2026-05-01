@@ -895,7 +895,7 @@ mod tests {
         let model_info = loader_test_model_info("api_version_export_mismatch");
         let metadata = serde_json::to_vec(&CompiledModelInfoEnvelope {
             abi_version: WASM_API_VERSION,
-            name: "model_info",
+            model: model_info,
             kernels: CompiledKernelAvailability {
                 outputs: true,
                 ..CompiledKernelAvailability::default()
@@ -924,7 +924,7 @@ mod tests {
         let model_info = loader_test_model_info("metadata_api_version_mismatch");
         let metadata = serde_json::to_vec(&CompiledModelInfoEnvelope {
             abi_version: WASM_API_VERSION + 1,
-            name: "model_info",
+            model: model_info,
             kernels: CompiledKernelAvailability {
                 outputs: true,
                 ..CompiledKernelAvailability::default()
@@ -950,7 +950,7 @@ mod tests {
         let model_info = loader_test_model_info("kernel_metadata_mismatch");
         let metadata = serde_json::to_vec(&CompiledModelInfoEnvelope {
             abi_version: WASM_API_VERSION,
-            name: "model_info",
+            model: model_info,
             kernels: CompiledKernelAvailability {
                 outputs: true,
                 ..CompiledKernelAvailability::default()
