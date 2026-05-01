@@ -731,9 +731,7 @@ fn lower_load(
         ExecutionLoad::Parameter(index) => load_fixed(builder, env.args.params, *index, ty),
         ExecutionLoad::Covariate(index) => load_fixed(builder, env.args.covariates, *index, ty),
         ExecutionLoad::Derived(index) => load_fixed(builder, env.args.derived, *index, ty),
-        ExecutionLoad::RouteInput { index, .. } => {
-            load_fixed(builder, env.args.routes, *index, ty)
-        }
+        ExecutionLoad::RouteInput { index, .. } => load_fixed(builder, env.args.routes, *index, ty),
         ExecutionLoad::Local(index) => {
             let binding = env.locals.get(index).ok_or_else(|| {
                 JitCompileError::new(format!("unknown local slot {index}"), Some(span))

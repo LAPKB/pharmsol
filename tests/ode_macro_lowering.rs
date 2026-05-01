@@ -23,15 +23,15 @@ fn subject_for_shared_channel(input: usize) -> Subject {
         .build()
 }
 
-    fn subject_for_covariates(input: usize) -> Subject {
-        Subject::builder("macro-covariates")
+fn subject_for_covariates(input: usize) -> Subject {
+    Subject::builder("macro-covariates")
         .bolus(0.0, 100.0, input)
         .missing_observation(0.5, 0)
         .missing_observation(1.0, 0)
         .missing_observation(2.0, 0)
         .covariate("wt", 0.0, 70.0)
         .build()
-    }
+}
 
 fn injected_macro_ode() -> equation::ODE {
     ode! {

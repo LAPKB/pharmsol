@@ -163,7 +163,10 @@ fn mark_route_inputs_in_expr(
     match &expr.kind {
         ExecutionExprKind::Literal(_) => {}
         ExecutionExprKind::Load(ExecutionLoad::RouteInput { route, .. }) => {
-            if let Some(slot) = declaration_slots.get(route).and_then(|index| usage.get_mut(*index)) {
+            if let Some(slot) = declaration_slots
+                .get(route)
+                .and_then(|index| usage.get_mut(*index))
+            {
                 *slot = true;
             }
         }

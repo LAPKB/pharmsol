@@ -289,14 +289,16 @@ impl RouteInputSemantics {
                 Some(RouteKind::Infusion) => {
                     infusion_inputs[route.index] = true;
                     if route.inject_input_to_destination {
-                        injected_infusion_destinations[route.index] = Some(route.destination_offset);
+                        injected_infusion_destinations[route.index] =
+                            Some(route.destination_offset);
                     }
                 }
                 None => {
                     bolus_destinations[route.index] = Some(route.destination_offset);
                     infusion_inputs[route.index] = true;
                     if route.inject_input_to_destination {
-                        injected_infusion_destinations[route.index] = Some(route.destination_offset);
+                        injected_infusion_destinations[route.index] =
+                            Some(route.destination_offset);
                     }
                 }
             }
@@ -603,12 +605,15 @@ impl SharedNativeModel {
         amount: f64,
     ) -> Result<(), PharmsolError> {
         self.validate_input_for_kind(input, RouteKind::Bolus)?;
-        let destination = self.route_semantics.bolus_destination(input).ok_or_else(|| {
-            PharmsolError::OtherError(format!(
-                "model `{}` does not declare a bolus route for input channel {}",
-                self.info.name, input
-            ))
-        })?;
+        let destination = self
+            .route_semantics
+            .bolus_destination(input)
+            .ok_or_else(|| {
+                PharmsolError::OtherError(format!(
+                    "model `{}` does not declare a bolus route for input channel {}",
+                    self.info.name, input
+                ))
+            })?;
         state[destination] += amount;
         Ok(())
     }

@@ -345,12 +345,13 @@ impl<'a> Analyzer<'a> {
         };
 
         let analytical = if let Some(block) = sections.analytical {
-            let structure = AnalyticalKernel::from_name(&block.structure.text).ok_or_else(|| {
-                SemanticError::new(
-                    format!("unknown analytical structure `{}`", block.structure.text),
-                    block.structure.span,
-                )
-            })?;
+            let structure =
+                AnalyticalKernel::from_name(&block.structure.text).ok_or_else(|| {
+                    SemanticError::new(
+                        format!("unknown analytical structure `{}`", block.structure.text),
+                        block.structure.span,
+                    )
+                })?;
             let state_components = states
                 .iter()
                 .map(|state| state.size.unwrap_or(1))
@@ -2652,8 +2653,8 @@ mod tests {
     use crate::test_fixtures::{
         RECOMMENDED_STYLE_AUTHORING, RECOMMENDED_STYLE_CANONICAL, STRUCTURED_BLOCK_CORPUS,
     };
-    use crate::{parse_model, parse_module};
     use crate::RouteKind;
+    use crate::{parse_model, parse_module};
 
     #[test]
     fn analyzes_structured_block_corpus() {

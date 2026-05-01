@@ -20,8 +20,8 @@ fn oral_subject(input: usize) -> Subject {
         .build()
 }
 
-    fn shared_channel_subject(input: usize) -> Subject {
-        Subject::builder("sde-macro-shared")
+fn shared_channel_subject(input: usize) -> Subject {
+    Subject::builder("sde-macro-shared")
         .bolus(0.0, 100.0, input)
         .infusion(6.0, 60.0, input, 2.0)
         .missing_observation(0.5, 0)
@@ -31,7 +31,7 @@ fn oral_subject(input: usize) -> Subject {
         .missing_observation(7.0, 0)
         .missing_observation(8.0, 0)
         .build()
-    }
+}
 
 fn prediction_means(predictions: &ndarray::Array2<Prediction>) -> Vec<f64> {
     predictions
