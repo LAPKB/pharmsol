@@ -51,29 +51,21 @@ fn main() {
     // Both declarations resolve to the same shared input, so subject
     // authoring still uses one numeric index for the loading bolus and the
     // maintenance infusion.
-    let load = bdf.route_index("load").expect("load route exists");
-    let iv = bdf.route_index("iv").expect("iv route exists");
-    let cp = bdf.output_index("cp").expect("cp output exists");
-
-    assert_eq!(
-        load, iv,
-        "mixed IV declarations should share one numeric input"
-    );
 
     let subject = Subject::builder("id1")
-        .bolus(0.0, 100.0, iv)
-        .infusion(12.0, 200.0, iv, 2.0)
-        .missing_observation(0.5, cp)
-        .missing_observation(1.0, cp)
-        .missing_observation(2.0, cp)
-        .missing_observation(4.0, cp)
-        .missing_observation(8.0, cp)
-        .missing_observation(12.0, cp)
-        .missing_observation(12.5, cp)
-        .missing_observation(13.0, cp)
-        .missing_observation(14.0, cp)
-        .missing_observation(16.0, cp)
-        .missing_observation(24.0, cp)
+        .bolus(0.0, 100.0, "iv")
+        .infusion(12.0, 200.0, "iv", 2.0)
+        .missing_observation(0.5, "cp")
+        .missing_observation(1.0, "cp")
+        .missing_observation(2.0, "cp")
+        .missing_observation(4.0, "cp")
+        .missing_observation(8.0, "cp")
+        .missing_observation(12.0, "cp")
+        .missing_observation(12.5, "cp")
+        .missing_observation(13.0, "cp")
+        .missing_observation(14.0, "cp")
+        .missing_observation(16.0, "cp")
+        .missing_observation(24.0, "cp")
         .build();
 
     let spp = vec![0.1, 0.05, 0.03, 50.0]; // ke, kcp, kpc, V
