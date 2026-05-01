@@ -598,12 +598,10 @@ impl<'a> AuthoringParser<'a> {
             .unwrap_or(module_span);
 
         if matches!(kind, ModelKind::Analytical)
-            && (!self.diffusion_statements.is_empty()
-                || self.particles.is_some()
-                || !self.init_statements.is_empty())
+            && (!self.diffusion_statements.is_empty() || self.particles.is_some())
         {
             return Err(ParseError::new(
-                "analytical authoring models cannot declare particles, init, or noise equations",
+                "analytical authoring models cannot declare particles or noise equations",
                 kind_span,
             ));
         }

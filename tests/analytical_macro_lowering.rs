@@ -32,6 +32,24 @@ fn shared_channel_subject(input: usize) -> Subject {
         .build()
 }
 
+fn covariate_subject(oral: usize, iv: usize, cp: usize) -> Subject {
+    Subject::builder("analytical-macro-covariates")
+        .bolus(1.0, 100.0, oral)
+        .infusion(6.0, 140.0, iv, 2.0)
+        .missing_observation(0.25, cp)
+        .missing_observation(0.75, cp)
+        .missing_observation(1.5, cp)
+        .missing_observation(3.0, cp)
+        .missing_observation(6.5, cp)
+        .missing_observation(7.0, cp)
+        .missing_observation(8.0, cp)
+        .covariate("wt", 0.0, 68.0)
+        .covariate("wt", 8.0, 74.0)
+        .covariate("renal", 0.0, 95.0)
+        .covariate("renal", 8.0, 72.0)
+        .build()
+}
+
 fn macro_one_compartment() -> equation::Analytical {
     analytical! {
         name: "one_cpt_iv",
@@ -42,7 +60,7 @@ fn macro_one_compartment() -> equation::Analytical {
             infusion(iv) -> central,
         },
         structure: one_compartment,
-        out: |x, _p, _t, _cov, y| {
+        out: |x, _t, y| {
             y[cp] = x[central] / v;
         },
     }
@@ -85,17 +103,17 @@ fn macro_one_compartment_with_absorption() -> equation::Analytical {
             bolus(oral) -> gut,
         },
         structure: one_compartment_with_absorption,
-        lag: |_p, _t, _cov| {
+        lag: |_t| {
             lag! { oral => tlag }
         },
-        fa: |_p, _t, _cov| {
+        fa: |_t| {
             fa! { oral => f_oral }
         },
-        init: |_p, _t, _cov, x| {
+        init: |_t, x| {
             x[gut] = 0.0;
             x[central] = 0.0;
         },
-        out: |x, _p, _t, _cov, y| {
+        out: |x, _t, y| {
             y[cp] = x[central] / v;
         },
     }
@@ -153,13 +171,13 @@ fn macro_shared_channel_analytical() -> equation::Analytical {
             infusion(iv) -> central,
         },
         structure: one_compartment_with_absorption,
-        lag: |_p, _t, _cov| {
+        lag: |_t| {
             lag! { oral => tlag }
         },
-        fa: |_p, _t, _cov| {
+        fa: |_t| {
             fa! { oral => f_oral }
         },
-        out: |x, _p, _t, _cov, y| {
+        out: |x, _t, y| {
             y[cp] = x[central] / v;
         },
     }
@@ -202,6 +220,155 @@ fn handwritten_shared_channel_analytical() -> equation::Analytical {
             .analytical_kernel(equation::AnalyticalKernel::OneCompartmentWithAbsorption),
     )
     .expect("handwritten shared-channel analytical metadata should validate")
+}
+
+fn macro_covariate_analytical() -> equation::Analytical {
+    analytical! {
+        name: "one_cmt_abs_covariates",
+        params: [ka, ke, v, tlag, f_oral, base_gut, base_central, tvke],
+        covariates: [wt, renal],
+        states: [gut, central],
+        outputs: [cp],
+        routes: {
+            bolus(oral) -> gut,
+            infusion(iv) -> central,
+        },
+        structure: one_compartment_with_absorption,
+        sec: |_t| {
+            let wt_scale = (wt / 70.0).powf(0.75);
+            let renal_scale = (renal / 90.0).powf(0.25);
+            ke = tvke * wt_scale * renal_scale;
+        },
+        lag: |_t| {
+            let lag_scale = (wt / 70.0).sqrt() * (90.0 / renal).powf(0.1);
+            lag! { oral => tlag * lag_scale }
+        },
+        fa: |_t| {
+            let fa_scale = (renal / 90.0).powf(0.1);
+            fa! { oral => (f_oral * fa_scale).clamp(0.0, 1.0) }
+        },
+        init: |_t, x| {
+            x[gut] = base_gut + 0.03 * wt;
+            x[central] = base_central + 0.08 * renal;
+        },
+        out: |x, _t, y| {
+            let adjusted_v = v * (wt / 70.0) * (1.0 + 0.001 * (renal - 90.0));
+            y[cp] = x[central] / adjusted_v;
+        },
+    }
+}
+
+fn handwritten_covariate_analytical() -> equation::Analytical {
+    equation::Analytical::new(
+        equation::one_compartment_with_absorption,
+        |p, t, cov| {
+            fetch_cov!(cov, t, wt, renal);
+
+            let wt_scale = (wt / 70.0).powf(0.75);
+            let renal_scale = (renal / 90.0).powf(0.25);
+            p[1] = p[7] * wt_scale * renal_scale;
+        },
+        |p, t, cov| {
+            fetch_params!(
+                p,
+                _ka,
+                _ke,
+                _v,
+                tlag,
+                _f_oral,
+                _base_gut,
+                _base_central,
+                _tvke
+            );
+            fetch_cov!(cov, t, wt, renal);
+
+            let lag_scale = (wt / 70.0).sqrt() * (90.0 / renal).powf(0.1);
+            lag! { 0 => tlag * lag_scale }
+        },
+        |p, t, cov| {
+            fetch_params!(
+                p,
+                _ka,
+                _ke,
+                _v,
+                _tlag,
+                f_oral,
+                _base_gut,
+                _base_central,
+                _tvke
+            );
+            fetch_cov!(cov, t, wt, renal);
+
+            let fa_scale = (renal / 90.0).powf(0.1);
+            fa! { 0 => (f_oral * fa_scale).clamp(0.0, 1.0) }
+        },
+        |p, t, cov, x| {
+            fetch_params!(
+                p,
+                _ka,
+                _ke,
+                _v,
+                _tlag,
+                _f_oral,
+                base_gut,
+                base_central,
+                _tvke
+            );
+            fetch_cov!(cov, t, wt, renal);
+
+            x[0] = base_gut + 0.03 * wt;
+            x[1] = base_central + 0.08 * renal;
+        },
+        |x, p, t, cov, y| {
+            fetch_params!(
+                p,
+                _ka,
+                _ke,
+                v,
+                _tlag,
+                _f_oral,
+                _base_gut,
+                _base_central,
+                _tvke
+            );
+            fetch_cov!(cov, t, wt, renal);
+
+            let adjusted_v = v * (wt / 70.0) * (1.0 + 0.001 * (renal - 90.0));
+            y[0] = x[1] / adjusted_v;
+        },
+    )
+    .with_nstates(2)
+    .with_ndrugs(1)
+    .with_nout(1)
+    .with_metadata(
+        equation::metadata::new("one_cmt_abs_covariates")
+            .kind(equation::ModelKind::Analytical)
+            .parameters([
+                "ka",
+                "ke",
+                "v",
+                "tlag",
+                "f_oral",
+                "base_gut",
+                "base_central",
+                "tvke",
+            ])
+            .covariates([
+                equation::Covariate::continuous("wt"),
+                equation::Covariate::continuous("renal"),
+            ])
+            .states(["gut", "central"])
+            .outputs(["cp"])
+            .routes([
+                equation::Route::bolus("oral")
+                    .to_state("gut")
+                    .with_lag()
+                    .with_bioavailability(),
+                equation::Route::infusion("iv").to_state("central"),
+            ])
+            .analytical_kernel(equation::AnalyticalKernel::OneCompartmentWithAbsorption),
+    )
+    .expect("handwritten covariate analytical metadata should validate")
 }
 
 fn assert_prediction_match(left: &[f64], right: &[f64]) {
@@ -292,6 +459,35 @@ fn analytical_macro_shared_channel_lowering_matches_handwritten_metadata_and_pre
     let handwritten_predictions = handwritten_model
         .estimate_predictions(&subject, &support_point)
         .expect("handwritten shared-channel analytical model should simulate")
+        .flat_predictions()
+        .to_vec();
+
+    assert_prediction_match(&macro_predictions, &handwritten_predictions);
+}
+
+#[test]
+fn analytical_macro_covariates_lower_to_handwritten_behavior() {
+    let macro_model = macro_covariate_analytical();
+    let handwritten_model = handwritten_covariate_analytical();
+
+    assert_eq!(macro_model.metadata(), handwritten_model.metadata());
+
+    let oral = macro_model.route_index("oral").expect("oral route exists");
+    let iv = macro_model.route_index("iv").expect("iv route exists");
+    let cp = macro_model.output_index("cp").expect("cp output exists");
+    let subject = covariate_subject(oral, iv, cp);
+    let support_point = [1.0, 0.16, 32.0, 0.5, 0.8, 3.0, 14.0, 0.16];
+
+    assert_eq!(oral, iv);
+
+    let macro_predictions = macro_model
+        .estimate_predictions(&subject, &support_point)
+        .expect("macro covariate analytical model should simulate")
+        .flat_predictions()
+        .to_vec();
+    let handwritten_predictions = handwritten_model
+        .estimate_predictions(&subject, &support_point)
+        .expect("handwritten covariate analytical model should simulate")
         .flat_predictions()
         .to_vec();
 

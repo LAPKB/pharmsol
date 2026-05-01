@@ -10,21 +10,18 @@ fn main() {
         routes: {
             bolus(oral) -> gut,
         },
-        diffeq: |x, _p, t, dx, cov| {
-            // Macro to get the (possibly interpolated) covariate values at time `t`
-            fetch_cov!(cov, t, creatinine, age);
-
+        diffeq: |x, _t, dx| {
             let scaled_ke = ke * (creatinine / 75.0).powf(0.75) * (age / 25.0).powf(0.5);
 
             dx[gut] = -ka * x[gut];
             dx[central] = ka * x[gut] - scaled_ke * x[central];
         },
         // This blocks defines the lag-time of the bolus dose
-        lag: |_p, _t, _cov| {
+        lag: |_t| {
             // Macro used to define the lag-time for the input of the bolus dose
             lag! { oral => tlag }
         },
-        out: |x, _p, _t, _cov, y| {
+        out: |x, _t, y| {
             // Define the predicted concentration as the amount in the central compartment divided by volume
             y[cp] = x[central] / v;
         },

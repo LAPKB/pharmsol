@@ -30,10 +30,7 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
         routes: {
             infusion(iv) -> central,
         },
-        diffeq: |x, _p, t, dx, cov| {
-            // Fetch the (possibly interpolated) weight covariate at time t
-            fetch_cov!(cov, t, wt);
-
+        diffeq: |x, _t, dx| {
             // CL: Clearance (L/hr), V: Central volume (L)
             // Vp: Peripheral volume (L), Q: Inter-compartmental clearance (L/hr)
             // Weight-based allometric scaling
@@ -58,9 +55,7 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
             dx[peripheral] = kcp * x[central] - kpc * x[peripheral];
         },
         // Output equation block - calculates observed concentration
-        out: |x, _p, t, cov, y| {
-            fetch_cov!(cov, t, wt);
-
+        out: |x, _t, y| {
             // Calculate scaled volume for concentration
             let wt_ratio = wt / 85.0;
             let v_scaled = v * wt_ratio;

@@ -43,6 +43,38 @@ dx(central) = ka * depot - ke * central
 out(cp) = central / v ~ continuous()
 "#;
 
+const ODE_FULL_SOURCE: &str = r#"
+name = ode_full_feature_parity
+kind = ode
+
+params = ka, ke, kcp, kpc, v, tlag, f_oral, base_depot, base_central, base_peripheral
+covariates = wt@linear, renal@linear
+derived = adjusted_ke, adjusted_kcp, adjusted_v
+states = depot, central, peripheral
+outputs = cp
+
+bolus(oral) -> depot
+bolus(load) -> central
+infusion(iv) -> central
+
+lag(oral) = tlag * sqrt(wt / 70.0) * pow(90.0 / renal, 0.1)
+fa(oral) = min(max(f_oral * pow(renal / 90.0, 0.1), 0.0), 1.0)
+
+adjusted_ke = ke * pow(wt / 70.0, 0.75) * pow(renal / 90.0, 0.25)
+adjusted_kcp = kcp * pow(wt / 70.0, 0.25)
+adjusted_v = v * (wt / 70.0) * (1.0 + 0.001 * (renal - 90.0))
+
+dx(depot) = -ka * depot
+dx(central) = ka * depot - (adjusted_ke + adjusted_kcp) * central + kpc * peripheral
+dx(peripheral) = adjusted_kcp * central - kpc * peripheral
+
+init(depot) = base_depot + 0.05 * wt
+init(central) = base_central + 0.1 * renal
+init(peripheral) = base_peripheral + 0.02 * wt
+
+out(cp) = central / adjusted_v ~ continuous()
+"#;
+
 const ANALYTICAL_SOURCE: &str = r#"
 name = one_cmt_abs
 kind = analytical
@@ -59,6 +91,34 @@ fa(oral) = f_oral
 structure = one_compartment_with_absorption
 
 out(cp) = central / v ~ continuous()
+"#;
+
+const ANALYTICAL_FULL_SOURCE: &str = r#"
+name = analytical_full_feature_parity
+kind = analytical
+
+params = ka, ke, v, tlag, f_oral, base_gut, base_central, tvke
+covariates = wt@linear, renal@linear
+derived = ka_proj, ke_proj
+states = gut, central
+outputs = cp
+
+bolus(oral) -> gut
+bolus(load) -> central
+infusion(iv) -> central
+
+lag(oral) = tlag * sqrt(wt / 70.0) * pow(90.0 / renal, 0.1)
+fa(oral) = min(max(f_oral * pow(renal / 90.0, 0.1), 0.0), 1.0)
+
+ka_proj = ka
+ke_proj = tvke * pow(wt / 70.0, 0.75) * pow(renal / 90.0, 0.25)
+
+structure = one_compartment_with_absorption
+
+init(gut) = base_gut + 0.03 * wt
+init(central) = base_central + 0.08 * renal
+
+out(cp) = central / (v * (wt / 70.0) * (1.0 + 0.001 * (renal - 90.0))) ~ continuous()
 "#;
 
 const SDE_SOURCE: &str = r#"
@@ -90,7 +150,9 @@ pub const SDE_PARTICLE_COUNT: usize = 16;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CorpusCase {
     Ode,
+    OdeFull,
     Analytical,
+    AnalyticalFull,
     Sde,
 }
 
@@ -98,7 +160,9 @@ impl CorpusCase {
     pub fn label(self) -> &'static str {
         match self {
             Self::Ode => "dsl-ode-one_cmt_oral_iv",
+            Self::OdeFull => "dsl-ode-full-feature-parity",
             Self::Analytical => "dsl-analytical-one_cmt_abs",
+            Self::AnalyticalFull => "dsl-analytical-full-feature-parity",
             Self::Sde => "dsl-sde-vanco_sde",
         }
     }
@@ -106,7 +170,9 @@ impl CorpusCase {
     pub fn model_name(self) -> &'static str {
         match self {
             Self::Ode => "one_cmt_oral_iv",
+            Self::OdeFull => "ode_full_feature_parity",
             Self::Analytical => "one_cmt_abs",
+            Self::AnalyticalFull => "analytical_full_feature_parity",
             Self::Sde => "vanco_sde",
         }
     }
@@ -114,7 +180,9 @@ impl CorpusCase {
     fn source(self) -> &'static str {
         match self {
             Self::Ode => ODE_SOURCE,
+            Self::OdeFull => ODE_FULL_SOURCE,
             Self::Analytical => ANALYTICAL_SOURCE,
+            Self::AnalyticalFull => ANALYTICAL_FULL_SOURCE,
             Self::Sde => SDE_SOURCE,
         }
     }
@@ -122,7 +190,9 @@ impl CorpusCase {
     pub fn tolerance(self) -> f64 {
         match self {
             Self::Ode => 1e-4,
+            Self::OdeFull => 1e-4,
             Self::Analytical => 1e-8,
+            Self::AnalyticalFull => 1e-8,
             Self::Sde => 1e-4,
         }
     }
@@ -130,7 +200,9 @@ impl CorpusCase {
     pub fn support_point(self) -> &'static [f64] {
         match self {
             Self::Ode => &[1.2, 5.0, 40.0, 0.5, 0.8],
+            Self::OdeFull => &[1.1, 0.18, 0.07, 0.04, 35.0, 0.6, 0.85, 4.0, 18.0, 9.0],
             Self::Analytical => &[1.0, 0.15, 25.0, 0.5, 0.8],
+            Self::AnalyticalFull => &[1.0, 0.16, 32.0, 0.5, 0.8, 3.0, 14.0, 0.16],
             Self::Sde => &[1.1, 0.2, 0.12, 0.08, 15.0, 0.0],
         }
     }
@@ -160,6 +232,34 @@ impl CorpusCase {
                     .missing_observation(9.0, cp)
                     .build()
             }
+            Self::OdeFull => {
+                let oral = model.route_index("oral").ok_or_else(|| {
+                    io::Error::other(format!("{}: missing oral route", self.label()))
+                })?;
+                let load = model.route_index("load").ok_or_else(|| {
+                    io::Error::other(format!("{}: missing load route", self.label()))
+                })?;
+                let iv = model.route_index("iv").ok_or_else(|| {
+                    io::Error::other(format!("{}: missing iv route", self.label()))
+                })?;
+                Subject::builder(self.label())
+                    .bolus(0.0, 80.0, load)
+                    .bolus(1.0, 120.0, oral)
+                    .infusion(6.0, 150.0, iv, 2.5)
+                    .missing_observation(0.25, cp)
+                    .missing_observation(0.75, cp)
+                    .missing_observation(1.5, cp)
+                    .missing_observation(3.0, cp)
+                    .missing_observation(6.5, cp)
+                    .missing_observation(7.0, cp)
+                    .missing_observation(8.0, cp)
+                    .missing_observation(12.0, cp)
+                    .covariate("wt", 0.0, 68.0)
+                    .covariate("wt", 8.0, 74.0)
+                    .covariate("renal", 0.0, 95.0)
+                    .covariate("renal", 8.0, 72.0)
+                    .build()
+            }
             Self::Analytical => {
                 let oral = model.route_index("oral").ok_or_else(|| {
                     io::Error::other(format!("{}: missing oral route", self.label()))
@@ -170,6 +270,34 @@ impl CorpusCase {
                     .missing_observation(1.0, cp)
                     .missing_observation(2.0, cp)
                     .missing_observation(4.0, cp)
+                    .build()
+            }
+            Self::AnalyticalFull => {
+                let oral = model.route_index("oral").ok_or_else(|| {
+                    io::Error::other(format!("{}: missing oral route", self.label()))
+                })?;
+                let load = model.route_index("load").ok_or_else(|| {
+                    io::Error::other(format!("{}: missing load route", self.label()))
+                })?;
+                let iv = model.route_index("iv").ok_or_else(|| {
+                    io::Error::other(format!("{}: missing iv route", self.label()))
+                })?;
+                Subject::builder(self.label())
+                    .bolus(0.0, 60.0, load)
+                    .bolus(1.0, 100.0, oral)
+                    .infusion(6.0, 140.0, iv, 2.0)
+                    .missing_observation(0.25, cp)
+                    .missing_observation(0.75, cp)
+                    .missing_observation(1.5, cp)
+                    .missing_observation(3.0, cp)
+                    .missing_observation(6.5, cp)
+                    .missing_observation(7.0, cp)
+                    .missing_observation(8.0, cp)
+                    .missing_observation(12.0, cp)
+                    .covariate("wt", 0.0, 68.0)
+                    .covariate("wt", 8.0, 74.0)
+                    .covariate("renal", 0.0, 95.0)
+                    .covariate("renal", 8.0, 72.0)
                     .build()
             }
             Self::Sde => {
@@ -193,8 +321,12 @@ impl CorpusCase {
     fn reference_predictions(self) -> Result<ExpectedPredictions, Box<dyn Error>> {
         match self {
             Self::Ode => Ok(ExpectedPredictions::Subject(reference_ode_predictions()?)),
+            Self::OdeFull => Ok(ExpectedPredictions::Subject(reference_ode_full_predictions()?)),
             Self::Analytical => Ok(ExpectedPredictions::Subject(
                 reference_analytical_predictions()?,
+            )),
+            Self::AnalyticalFull => Ok(ExpectedPredictions::Subject(
+                reference_analytical_full_predictions()?,
             )),
             Self::Sde => Ok(ExpectedPredictions::Particles(reference_sde_predictions()?)),
         }
@@ -605,6 +737,138 @@ fn reference_ode_predictions() -> Result<SubjectPredictions, Box<dyn Error>> {
     )?)
 }
 
+fn reference_ode_full_predictions() -> Result<SubjectPredictions, Box<dyn Error>> {
+    Ok(equation::ODE::new(
+        |x, p, t, dx, bolus, rateiv, cov| {
+            fetch_params!(
+                p,
+                ka,
+                ke,
+                kcp,
+                kpc,
+                _v,
+                _tlag,
+                _f_oral,
+                _base_depot,
+                _base_central,
+                _base_peripheral
+            );
+            fetch_cov!(cov, t, wt, renal);
+
+            let wt_scale = (wt / 70.0).powf(0.75);
+            let renal_scale = (renal / 90.0).powf(0.25);
+            let adjusted_ke = ke * wt_scale * renal_scale;
+            let adjusted_kcp = kcp * (wt / 70.0).powf(0.25);
+
+            dx[0] = bolus[0] - ka * x[0];
+            dx[1] = bolus[1] + ka * x[0] + rateiv[0]
+                - (adjusted_ke + adjusted_kcp) * x[1]
+                + kpc * x[2];
+            dx[2] = adjusted_kcp * x[1] - kpc * x[2];
+        },
+        |p, t, cov| {
+            fetch_params!(
+                p,
+                _ka,
+                _ke,
+                _kcp,
+                _kpc,
+                _v,
+                tlag,
+                _f_oral,
+                _base_depot,
+                _base_central,
+                _base_peripheral
+            );
+            fetch_cov!(cov, t, wt, renal);
+
+            let lag_scale = (wt / 70.0).sqrt() * (90.0 / renal).powf(0.1);
+            lag! { 0 => tlag * lag_scale }
+        },
+        |p, t, cov| {
+            fetch_params!(
+                p,
+                _ka,
+                _ke,
+                _kcp,
+                _kpc,
+                _v,
+                _tlag,
+                f_oral,
+                _base_depot,
+                _base_central,
+                _base_peripheral
+            );
+            fetch_cov!(cov, t, wt, renal);
+
+            let fa_scale = (renal / 90.0).powf(0.1);
+            fa! { 0 => (f_oral * fa_scale).clamp(0.0, 1.0) }
+        },
+        |p, t, cov, x| {
+            fetch_params!(
+                p,
+                _ka,
+                _ke,
+                _kcp,
+                _kpc,
+                _v,
+                _tlag,
+                _f_oral,
+                base_depot,
+                base_central,
+                base_peripheral
+            );
+            fetch_cov!(cov, t, wt, renal);
+
+            x[0] = base_depot + 0.05 * wt;
+            x[1] = base_central + 0.1 * renal;
+            x[2] = base_peripheral + 0.02 * wt;
+        },
+        |x, p, t, cov, y| {
+            fetch_params!(
+                p,
+                _ka,
+                _ke,
+                _kcp,
+                _kpc,
+                v,
+                _tlag,
+                _f_oral,
+                _base_depot,
+                _base_central,
+                _base_peripheral
+            );
+            fetch_cov!(cov, t, wt, renal);
+
+            let adjusted_v = v * (wt / 70.0) * (1.0 + 0.001 * (renal - 90.0));
+            y[0] = x[1] / adjusted_v;
+        },
+    )
+    .with_nstates(3)
+    .with_ndrugs(2)
+    .with_nout(1)
+    .estimate_predictions(
+        &Subject::builder(CorpusCase::OdeFull.label())
+            .bolus(0.0, 80.0, 1)
+            .bolus(1.0, 120.0, 0)
+            .infusion(6.0, 150.0, 0, 2.5)
+            .missing_observation(0.25, 0)
+            .missing_observation(0.75, 0)
+            .missing_observation(1.5, 0)
+            .missing_observation(3.0, 0)
+            .missing_observation(6.5, 0)
+            .missing_observation(7.0, 0)
+            .missing_observation(8.0, 0)
+            .missing_observation(12.0, 0)
+            .covariate("wt", 0.0, 68.0)
+            .covariate("wt", 8.0, 74.0)
+            .covariate("renal", 0.0, 95.0)
+            .covariate("renal", 8.0, 72.0)
+            .build(),
+        CorpusCase::OdeFull.support_point(),
+    )?)
+}
+
 fn reference_analytical_predictions() -> Result<SubjectPredictions, Box<dyn Error>> {
     Ok(equation::Analytical::new(
         one_compartment_with_absorption,
@@ -635,6 +899,110 @@ fn reference_analytical_predictions() -> Result<SubjectPredictions, Box<dyn Erro
             .missing_observation(4.0, 0)
             .build(),
         CorpusCase::Analytical.support_point(),
+    )?)
+}
+
+fn reference_analytical_full_predictions() -> Result<SubjectPredictions, Box<dyn Error>> {
+    Ok(equation::Analytical::new(
+        equation::one_compartment_with_absorption,
+        |p, t, cov| {
+            fetch_cov!(cov, t, wt, renal);
+
+            let wt_scale = (wt / 70.0).powf(0.75);
+            let renal_scale = (renal / 90.0).powf(0.25);
+            p[1] = p[7] * wt_scale * renal_scale;
+        },
+        |p, t, cov| {
+            fetch_params!(
+                p,
+                _ka,
+                _ke,
+                _v,
+                tlag,
+                _f_oral,
+                _base_gut,
+                _base_central,
+                _tvke
+            );
+            fetch_cov!(cov, t, wt, renal);
+
+            let lag_scale = (wt / 70.0).sqrt() * (90.0 / renal).powf(0.1);
+            lag! { 0 => tlag * lag_scale }
+        },
+        |p, t, cov| {
+            fetch_params!(
+                p,
+                _ka,
+                _ke,
+                _v,
+                _tlag,
+                f_oral,
+                _base_gut,
+                _base_central,
+                _tvke
+            );
+            fetch_cov!(cov, t, wt, renal);
+
+            let fa_scale = (renal / 90.0).powf(0.1);
+            fa! { 0 => (f_oral * fa_scale).clamp(0.0, 1.0) }
+        },
+        |p, t, cov, x| {
+            fetch_params!(
+                p,
+                _ka,
+                _ke,
+                _v,
+                _tlag,
+                _f_oral,
+                base_gut,
+                base_central,
+                _tvke
+            );
+            fetch_cov!(cov, t, wt, renal);
+
+            x[0] = base_gut + 0.03 * wt;
+            x[1] = base_central + 0.08 * renal;
+        },
+        |x, p, t, cov, y| {
+            fetch_params!(
+                p,
+                _ka,
+                _ke,
+                v,
+                _tlag,
+                _f_oral,
+                _base_gut,
+                _base_central,
+                _tvke
+            );
+            fetch_cov!(cov, t, wt, renal);
+
+            let adjusted_v = v * (wt / 70.0) * (1.0 + 0.001 * (renal - 90.0));
+            y[0] = x[1] / adjusted_v;
+        },
+    )
+    .with_nstates(2)
+    .with_ndrugs(2)
+    .with_nout(1)
+    .estimate_predictions(
+        &Subject::builder(CorpusCase::AnalyticalFull.label())
+            .bolus(0.0, 60.0, 1)
+            .bolus(1.0, 100.0, 0)
+            .infusion(6.0, 140.0, 0, 2.0)
+            .missing_observation(0.25, 0)
+            .missing_observation(0.75, 0)
+            .missing_observation(1.5, 0)
+            .missing_observation(3.0, 0)
+            .missing_observation(6.5, 0)
+            .missing_observation(7.0, 0)
+            .missing_observation(8.0, 0)
+            .missing_observation(12.0, 0)
+            .covariate("wt", 0.0, 68.0)
+            .covariate("wt", 8.0, 74.0)
+            .covariate("renal", 0.0, 95.0)
+            .covariate("renal", 8.0, 72.0)
+            .build(),
+        CorpusCase::AnalyticalFull.support_point(),
     )?)
 }
 

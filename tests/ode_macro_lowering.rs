@@ -42,10 +42,10 @@ fn injected_macro_ode() -> equation::ODE {
         routes: {
             infusion(iv) -> central,
         },
-        diffeq: |x, _p, _t, dx, _cov| {
+        diffeq: |x, _t, dx| {
             dx[central] = -ke * x[central];
         },
-        out: |x, _p, _t, _cov, y| {
+        out: |x, _t, y| {
             y[cp] = x[central] / v;
         },
     }
@@ -91,10 +91,10 @@ fn explicit_macro_ode() -> equation::ODE {
         routes: {
             infusion(iv) -> central,
         },
-        diffeq: |x, _p, _t, dx, _bolus, rateiv, _cov| {
+        diffeq: |x, _t, dx, _bolus, rateiv| {
             dx[central] = rateiv[iv] - ke * x[central];
         },
-        out: |x, _p, _t, _cov, y| {
+        out: |x, _t, y| {
             y[cp] = x[central] / v;
         },
     }
@@ -141,17 +141,17 @@ fn shared_channel_macro_ode() -> equation::ODE {
             bolus(oral) -> depot,
             infusion(iv) -> central,
         },
-        diffeq: |x, _p, _t, dx, bolus, rateiv, _cov| {
+        diffeq: |x, _t, dx, bolus, rateiv| {
             dx[depot] = bolus[oral] - ka * x[depot];
             dx[central] = ka * x[depot] + rateiv[iv] - ke * x[central];
         },
-        lag: |_p, _t, _cov| {
+        lag: |_t| {
             lag! { oral => tlag }
         },
-        fa: |_p, _t, _cov| {
+        fa: |_t| {
             fa! { oral => f_oral }
         },
-        out: |x, _p, _t, _cov, y| {
+        out: |x, _t, y| {
             y[cp] = x[central] / v;
         },
     }
@@ -210,13 +210,12 @@ fn covariate_macro_ode() -> equation::ODE {
         routes: {
             bolus(oral) -> gut,
         },
-        diffeq: |x, _p, t, dx, cov| {
-            fetch_cov!(cov, t, wt);
+        diffeq: |x, _t, dx| {
             let scaled_ke = ke * (wt / 70.0);
             dx[gut] = -ka * x[gut];
             dx[central] = ka * x[gut] - scaled_ke * x[central];
         },
-        out: |x, _p, _t, _cov, y| {
+        out: |x, _t, y| {
             y[cp] = x[central] / v;
         },
     }

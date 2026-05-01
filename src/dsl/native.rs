@@ -1048,6 +1048,7 @@ impl NativeAnalyticalModel {
 
                 if let Some(next_event) = events.get(index + 1) {
                     self.solve_interval(
+                        &mut *session,
                         &mut state,
                         support_point,
                         occasion.covariates(),
@@ -1064,6 +1065,7 @@ impl NativeAnalyticalModel {
 
     fn solve_interval(
         &self,
+        session: &mut dyn KernelSession,
         state: &mut [f64],
         support_point: &[f64],
         covariates: &Covariates,
@@ -1090,11 +1092,29 @@ impl NativeAnalyticalModel {
         breakpoints.dedup_by(|lhs, rhs| (*lhs - *rhs).abs() < 1e-12);
 
         let mut current = breakpoints[0];
-        let projected = project_analytical_parameters(&self.shared.info, support_point)?;
+        let mut cov_buf = vec![0.0; self.shared.info.covariates.len()];
+        let mut derived = vec![0.0; self.shared.info.derived_len];
 
         for next in breakpoints.iter().copied().skip(1) {
             let dt = next - current;
-            let route_inputs = active_route_inputs(infusions, current, self.shared.info.route_len);
+            let route_inputs = interval_route_inputs(
+                infusions,
+                current,
+                next,
+                self.shared.info.route_len,
+            );
+            self.shared.refresh_derived(
+                session,
+                next,
+                state,
+                support_point,
+                covariates,
+                &route_inputs,
+                &mut derived,
+                &mut cov_buf,
+            )?;
+            let projected =
+                project_analytical_parameters(&self.shared.info, support_point, &derived)?;
             let next_state = apply_analytical_kernel(
                 self.shared.info.analytical.ok_or_else(|| {
                     PharmsolError::OtherError(format!(
@@ -1392,6 +1412,22 @@ fn active_route_inputs(infusions: &[Infusion], time: f64, route_len: usize) -> V
     values
 }
 
+fn interval_route_inputs(
+    infusions: &[Infusion],
+    start_time: f64,
+    end_time: f64,
+    route_len: usize,
+) -> Vec<f64> {
+    let mut values = vec![0.0; route_len];
+    for infusion in infusions {
+        let finish = infusion.time() + infusion.duration();
+        if infusion.input() < route_len && start_time >= infusion.time() && end_time <= finish {
+            values[infusion.input()] += infusion.amount() / infusion.duration();
+        }
+    }
+    values
+}
+
 fn sort_events(events: &mut [Event]) {
     events.sort_by(|lhs, rhs| {
         fn order(event: &Event) -> u8 {
@@ -1413,6 +1449,7 @@ fn sort_events(events: &mut [Event]) {
 fn project_analytical_parameters(
     info: &NativeModelInfo,
     support_point: &[f64],
+    derived: &[f64],
 ) -> Result<V, PharmsolError> {
     let kernel = info.analytical.ok_or_else(|| {
         PharmsolError::OtherError(format!(
@@ -1429,6 +1466,13 @@ fn project_analytical_parameters(
             support_point.len()
         )));
     }
+
+    // Analytical authoring models can project kernel arguments through a derive
+    // kernel by declaring exactly the built-in kernel arity in `derived`.
+    if derived.len() == arity {
+        return Ok(V::from_vec(derived.to_vec(), NalgebraContext));
+    }
+
     Ok(V::from_vec(
         support_point[..arity].to_vec(),
         NalgebraContext,

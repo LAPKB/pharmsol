@@ -37,10 +37,12 @@ struct OdeInput {
 struct AnalyticalInput {
     name: LitStr,
     params: Vec<Ident>,
+    covariates: Vec<Ident>,
     states: Vec<Ident>,
     outputs: Vec<Ident>,
     routes: Vec<OdeRouteDecl>,
     structure: Ident,
+    sec: Option<ExprClosure>,
     lag: Option<ExprClosure>,
     fa: Option<ExprClosure>,
     init: Option<ExprClosure>,
@@ -50,6 +52,7 @@ struct AnalyticalInput {
 struct SdeInput {
     name: LitStr,
     params: Vec<Ident>,
+    covariates: Vec<Ident>,
     states: Vec<Ident>,
     outputs: Vec<Ident>,
     routes: Vec<OdeRouteDecl>,
@@ -198,7 +201,7 @@ impl Parse for OdeInput {
         let routes = routes.ok_or_else(|| missing_required_ode_field("routes"))?;
         let diffeq = diffeq.ok_or_else(|| missing_required_ode_field("diffeq"))?;
         let out = out.ok_or_else(|| missing_required_ode_field("out"))?;
-        let diffeq_mode = classify_diffeq_mode(&diffeq)?;
+        let diffeq_mode = classify_diffeq_mode(&diffeq, &routes)?;
 
         validate_unique_idents("parameter", &params, "ode!")?;
         validate_unique_idents("covariate", &covariates, "ode!")?;
@@ -206,13 +209,23 @@ impl Parse for OdeInput {
         validate_unique_idents("output", &outputs, "ode!")?;
         validate_routes(&routes, &states, "ode!")?;
         validate_named_binding_compatibility(
-            &params,
-            &states,
-            &outputs,
-            &routes,
-            &diffeq,
-            &out,
-            diffeq_mode,
+            NamedBindingSets {
+                params: &params,
+                covariates: &covariates,
+                states: &states,
+                outputs: &outputs,
+                routes: &routes,
+            },
+            OdeBindingClosures {
+                diffeq: &diffeq,
+                common: CommonBindingClosures {
+                    lag: lag.as_ref(),
+                    fa: fa.as_ref(),
+                    init: init.as_ref(),
+                    out: &out,
+                },
+                diffeq_mode,
+            },
         )?;
 
         Ok(Self {
@@ -245,10 +258,12 @@ impl Parse for AnalyticalInput {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let mut name = None;
         let mut params = None;
+        let mut covariates = None;
         let mut states = None;
         let mut outputs = None;
         let mut routes = None;
         let mut structure = None;
+        let mut sec = None;
         let mut lag = None;
         let mut fa = None;
         let mut init = None;
@@ -263,6 +278,12 @@ impl Parse for AnalyticalInput {
                 "params" => {
                     set_once_analytical(&mut params, parse_ident_list(input)?, &key, "params")?
                 }
+                "covariates" => set_once_analytical(
+                    &mut covariates,
+                    parse_ident_list(input)?,
+                    &key,
+                    "covariates",
+                )?,
                 "states" => {
                     set_once_analytical(&mut states, parse_ident_list(input)?, &key, "states")?
                 }
@@ -275,6 +296,7 @@ impl Parse for AnalyticalInput {
                 "structure" => {
                     set_once_analytical(&mut structure, input.parse()?, &key, "structure")?
                 }
+                "sec" => set_once_analytical(&mut sec, input.parse()?, &key, "sec")?,
                 "lag" => set_once_analytical(&mut lag, input.parse()?, &key, "lag")?,
                 "fa" => set_once_analytical(&mut fa, input.parse()?, &key, "fa")?,
                 "init" => set_once_analytical(&mut init, input.parse()?, &key, "init")?,
@@ -283,7 +305,7 @@ impl Parse for AnalyticalInput {
                     return Err(syn::Error::new_spanned(
                         &key,
                         format!(
-                            "unknown field `{other}`, expected one of: name, params, states, outputs, routes, structure, lag, fa, init, out"
+                            "unknown field `{other}`, expected one of: name, params, covariates, states, outputs, routes, structure, sec, lag, fa, init, out"
                         ),
                     ));
                 }
@@ -296,6 +318,7 @@ impl Parse for AnalyticalInput {
 
         let name = name.ok_or_else(|| missing_required_analytical_field("name"))?;
         let params = params.ok_or_else(|| missing_required_analytical_field("params"))?;
+        let covariates = covariates.unwrap_or_default();
         let states = states.ok_or_else(|| missing_required_analytical_field("states"))?;
         let outputs = outputs.ok_or_else(|| missing_required_analytical_field("outputs"))?;
         let routes = routes.ok_or_else(|| missing_required_analytical_field("routes"))?;
@@ -303,6 +326,7 @@ impl Parse for AnalyticalInput {
         let out = out.ok_or_else(|| missing_required_analytical_field("out"))?;
 
         validate_unique_idents("parameter", &params, "analytical!")?;
+        validate_unique_idents("covariate", &covariates, "analytical!")?;
         validate_unique_idents("state", &states, "analytical!")?;
         validate_unique_idents("output", &outputs, "analytical!")?;
         validate_routes(&routes, &states, "analytical!")?;
@@ -330,14 +354,22 @@ impl Parse for AnalyticalInput {
         }
 
         validate_analytical_named_binding_compatibility(
-            &params,
-            &states,
-            &outputs,
-            &routes,
-            lag.as_ref(),
-            fa.as_ref(),
-            init.as_ref(),
-            &out,
+            NamedBindingSets {
+                params: &params,
+                covariates: &covariates,
+                states: &states,
+                outputs: &outputs,
+                routes: &routes,
+            },
+            AnalyticalBindingClosures {
+                sec: sec.as_ref(),
+                common: CommonBindingClosures {
+                    lag: lag.as_ref(),
+                    fa: fa.as_ref(),
+                    init: init.as_ref(),
+                    out: &out,
+                },
+            },
         )?;
 
         if let Some(lag) = lag.as_ref() {
@@ -355,10 +387,12 @@ impl Parse for AnalyticalInput {
         Ok(Self {
             name,
             params,
+            covariates,
             states,
             outputs,
             routes,
             structure,
+            sec,
             lag,
             fa,
             init,
@@ -371,6 +405,7 @@ impl Parse for SdeInput {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let mut name = None;
         let mut params = None;
+        let mut covariates = None;
         let mut states = None;
         let mut outputs = None;
         let mut routes = None;
@@ -389,6 +424,12 @@ impl Parse for SdeInput {
             match key.to_string().as_str() {
                 "name" => set_once_sde(&mut name, input.parse()?, &key, "name")?,
                 "params" => set_once_sde(&mut params, parse_ident_list(input)?, &key, "params")?,
+                "covariates" => set_once_sde(
+                    &mut covariates,
+                    parse_ident_list(input)?,
+                    &key,
+                    "covariates",
+                )?,
                 "states" => set_once_sde(&mut states, parse_ident_list(input)?, &key, "states")?,
                 "outputs" => set_once_sde(&mut outputs, parse_ident_list(input)?, &key, "outputs")?,
                 "routes" => set_once_sde(&mut routes, parse_route_list(input)?, &key, "routes")?,
@@ -403,7 +444,7 @@ impl Parse for SdeInput {
                     return Err(syn::Error::new_spanned(
                         &key,
                         format!(
-                            "unknown field `{other}`, expected one of: name, params, states, outputs, routes, particles, drift, diffusion, lag, fa, init, out"
+                            "unknown field `{other}`, expected one of: name, params, covariates, states, outputs, routes, particles, drift, diffusion, lag, fa, init, out"
                         ),
                     ));
                 }
@@ -416,6 +457,7 @@ impl Parse for SdeInput {
 
         let name = name.ok_or_else(|| missing_required_sde_field("name"))?;
         let params = params.ok_or_else(|| missing_required_sde_field("params"))?;
+        let covariates = covariates.unwrap_or_default();
         let states = states.ok_or_else(|| missing_required_sde_field("states"))?;
         let outputs = outputs.ok_or_else(|| missing_required_sde_field("outputs"))?;
         let routes = routes.ok_or_else(|| missing_required_sde_field("routes"))?;
@@ -425,20 +467,28 @@ impl Parse for SdeInput {
         let out = out.ok_or_else(|| missing_required_sde_field("out"))?;
 
         validate_unique_idents("parameter", &params, "sde!")?;
+        validate_unique_idents("covariate", &covariates, "sde!")?;
         validate_unique_idents("state", &states, "sde!")?;
         validate_unique_idents("output", &outputs, "sde!")?;
         validate_routes(&routes, &states, "sde!")?;
         validate_sde_named_binding_compatibility(
-            &params,
-            &states,
-            &outputs,
-            &routes,
-            &drift,
-            &diffusion,
-            lag.as_ref(),
-            fa.as_ref(),
-            init.as_ref(),
-            &out,
+            NamedBindingSets {
+                params: &params,
+                covariates: &covariates,
+                states: &states,
+                outputs: &outputs,
+                routes: &routes,
+            },
+            SdeBindingClosures {
+                drift: &drift,
+                diffusion: &diffusion,
+                common: CommonBindingClosures {
+                    lag: lag.as_ref(),
+                    fa: fa.as_ref(),
+                    init: init.as_ref(),
+                    out: &out,
+                },
+            },
         )?;
 
         if let Some(lag) = lag.as_ref() {
@@ -456,6 +506,7 @@ impl Parse for SdeInput {
         Ok(Self {
             name,
             params,
+            covariates,
             states,
             outputs,
             routes,
@@ -579,6 +630,8 @@ fn generated_ident(name: &str) -> Ident {
 #[derive(Default)]
 struct ClosureBodyUsage {
     idents: HashSet<String>,
+    indexed_idents: HashSet<String>,
+    assigned_indexed_idents: HashSet<String>,
     contains_macro: bool,
 }
 
@@ -591,6 +644,18 @@ impl ClosureBodyUsage {
 
     fn uses(&self, ident: &Ident) -> bool {
         self.contains_macro || self.idents.contains(&ident.to_string())
+    }
+
+    fn mentions(&self, ident: &Ident) -> bool {
+        self.idents.contains(&ident.to_string())
+    }
+
+    fn indexes(&self, ident: &Ident) -> bool {
+        self.indexed_idents.contains(&ident.to_string())
+    }
+
+    fn assigns_index(&self, ident: &Ident) -> bool {
+        self.assigned_indexed_idents.contains(&ident.to_string())
     }
 }
 
@@ -615,6 +680,36 @@ impl<'ast> Visit<'ast> for ClosureBodyUsage {
     fn visit_stmt_macro(&mut self, stmt_macro: &'ast syn::StmtMacro) {
         self.contains_macro = true;
         syn::visit::visit_stmt_macro(self, stmt_macro);
+    }
+
+    fn visit_expr_index(&mut self, expr_index: &'ast syn::ExprIndex) {
+        if let Expr::Path(expr_path) = expr_index.expr.as_ref() {
+            if expr_path.qself.is_none()
+                && expr_path.path.leading_colon.is_none()
+                && expr_path.path.segments.len() == 1
+            {
+                self.indexed_idents
+                    .insert(expr_path.path.segments[0].ident.to_string());
+            }
+        }
+
+        syn::visit::visit_expr_index(self, expr_index);
+    }
+
+    fn visit_expr_assign(&mut self, expr_assign: &'ast syn::ExprAssign) {
+        if let Expr::Index(expr_index) = expr_assign.left.as_ref() {
+            if let Expr::Path(expr_path) = expr_index.expr.as_ref() {
+                if expr_path.qself.is_none()
+                    && expr_path.path.leading_colon.is_none()
+                    && expr_path.path.segments.len() == 1
+                {
+                    self.assigned_indexed_idents
+                        .insert(expr_path.path.segments[0].ident.to_string());
+                }
+            }
+        }
+
+        syn::visit::visit_expr_assign(self, expr_assign);
     }
 }
 
@@ -645,6 +740,20 @@ fn generate_closure_input_aliases(
     })
 }
 
+fn generate_supported_input_aliases(
+    closure: &ExprClosure,
+    supported_internal_names: &[&[Ident]],
+    error_message: &str,
+) -> syn::Result<TokenStream2> {
+    for internal_names in supported_internal_names {
+        if closure.inputs.len() == internal_names.len() {
+            return generate_closure_input_aliases(closure, internal_names);
+        }
+    }
+
+    Err(syn::Error::new_spanned(closure, error_message))
+}
+
 fn generate_parameter_bindings(
     params: &[Ident],
     closure: &ExprClosure,
@@ -667,13 +776,81 @@ fn generate_parameter_bindings(
     }
 }
 
-fn classify_diffeq_mode(diffeq: &ExprClosure) -> syn::Result<OdeDiffeqMode> {
+fn generate_mutable_parameter_bindings(
+    params: &[Ident],
+    closure: &ExprClosure,
+    parameter_vector: &Ident,
+) -> (TokenStream2, TokenStream2) {
+    let usage = ClosureBodyUsage::analyze(closure.body.as_ref());
+    let used_params = params
+        .iter()
+        .enumerate()
+        .filter(|(_, ident)| usage.uses(ident))
+        .collect::<Vec<_>>();
+
+    let bindings = used_params.iter().map(|(index, ident)| {
+        quote! {
+            #[allow(unused_mut, unused_variables)]
+            let mut #ident = #parameter_vector[#index];
+        }
+    });
+    let writebacks = used_params.iter().map(|(index, ident)| {
+        quote! {
+            #parameter_vector[#index] = #ident;
+        }
+    });
+
+    (quote! { #(#bindings)* }, quote! { #(#writebacks)* })
+}
+
+fn generate_covariate_bindings(
+    covariates: &[Ident],
+    closure: &ExprClosure,
+    covariate_map: &Ident,
+    time: &Ident,
+) -> TokenStream2 {
+    let usage = ClosureBodyUsage::analyze(closure.body.as_ref());
+    let used_covariates = covariates
+        .iter()
+        .filter(|ident| usage.uses(ident))
+        .collect::<Vec<_>>();
+
+    if used_covariates.is_empty() {
+        quote! {}
+    } else {
+        quote! {
+            ::pharmsol::fetch_cov!(#covariate_map, #time, #(#used_covariates),*);
+        }
+    }
+}
+
+fn classify_diffeq_mode(
+    diffeq: &ExprClosure,
+    routes: &[OdeRouteDecl],
+) -> syn::Result<OdeDiffeqMode> {
     match closure_param_names(diffeq).len() {
-        5 => Ok(OdeDiffeqMode::InjectedRouteInputs),
+        3 => Ok(OdeDiffeqMode::InjectedRouteInputs),
         7 => Ok(OdeDiffeqMode::ExplicitRouteVectors),
+        5 => {
+            let usage = ClosureBodyUsage::analyze(diffeq.body.as_ref());
+            let route_inputs = route_input_idents(routes);
+            let fourth_param = closure_param_ident(diffeq, 3);
+            let fifth_param = closure_param_ident(diffeq, 4);
+            let mentions_route_inputs = route_inputs.iter().any(|route| usage.mentions(route));
+            let indexes_fifth_param = fifth_param.as_ref().is_some_and(|ident| usage.indexes(ident));
+            let reads_fourth_param_as_input = fourth_param
+                .as_ref()
+                .is_some_and(|ident| usage.indexes(ident) && !usage.assigns_index(ident));
+
+            if mentions_route_inputs || indexes_fifth_param || reads_fourth_param_as_input {
+                Ok(OdeDiffeqMode::ExplicitRouteVectors)
+            } else {
+                Ok(OdeDiffeqMode::InjectedRouteInputs)
+            }
+        }
         _ => Err(syn::Error::new_spanned(
             diffeq,
-            "declaration-first `ode!` requires `diffeq` to have either 5 parameters: |x, p, t, dx, cov| or 7 parameters: |x, p, t, dx, bolus, rateiv, cov|",
+            "declaration-first `ode!` requires `diffeq` to have either 3 parameters: |x, t, dx|, 5 parameters: |x, p, t, dx, cov| or |x, t, dx, bolus, rateiv|, or 7 parameters: |x, p, t, dx, bolus, rateiv, cov|",
         )),
     }
 }
@@ -764,17 +941,68 @@ fn validate_closure_param_conflicts(
     Ok(())
 }
 
-fn validate_named_binding_compatibility(
-    params: &[Ident],
-    states: &[Ident],
-    outputs: &[Ident],
-    routes: &[OdeRouteDecl],
-    diffeq: &ExprClosure,
-    out: &ExprClosure,
+#[derive(Clone, Copy)]
+struct NamedBindingSets<'a> {
+    params: &'a [Ident],
+    covariates: &'a [Ident],
+    states: &'a [Ident],
+    outputs: &'a [Ident],
+    routes: &'a [OdeRouteDecl],
+}
+
+#[derive(Clone, Copy)]
+struct CommonBindingClosures<'a> {
+    lag: Option<&'a ExprClosure>,
+    fa: Option<&'a ExprClosure>,
+    init: Option<&'a ExprClosure>,
+    out: &'a ExprClosure,
+}
+
+#[derive(Clone, Copy)]
+struct AnalyticalBindingClosures<'a> {
+    sec: Option<&'a ExprClosure>,
+    common: CommonBindingClosures<'a>,
+}
+
+#[derive(Clone, Copy)]
+struct OdeBindingClosures<'a> {
+    diffeq: &'a ExprClosure,
+    common: CommonBindingClosures<'a>,
     diffeq_mode: OdeDiffeqMode,
+}
+
+#[derive(Clone, Copy)]
+struct SdeBindingClosures<'a> {
+    drift: &'a ExprClosure,
+    diffusion: &'a ExprClosure,
+    common: CommonBindingClosures<'a>,
+}
+
+fn validate_named_binding_compatibility(
+    bindings: NamedBindingSets<'_>,
+    closures: OdeBindingClosures<'_>,
 ) -> syn::Result<()> {
+    let NamedBindingSets {
+        params,
+        covariates,
+        states,
+        outputs,
+        routes,
+    } = bindings;
+    let OdeBindingClosures {
+        diffeq,
+        common: CommonBindingClosures { lag, fa, init, out },
+        diffeq_mode,
+    } = closures;
     let route_inputs = route_input_idents(routes);
 
+    validate_binding_conflicts(
+        "parameter",
+        params,
+        "covariate",
+        covariates,
+        "declaration-first `ode!` named binding generation",
+    )?;
     validate_binding_conflicts(
         "parameter",
         params,
@@ -796,12 +1024,24 @@ fn validate_named_binding_compatibility(
         outputs,
         "`out` named binding generation",
     )?;
+    validate_binding_conflicts(
+        "covariate",
+        covariates,
+        "state",
+        states,
+        "declaration-first `ode!` named binding generation",
+    )?;
+    validate_binding_conflicts(
+        "covariate",
+        covariates,
+        "output",
+        outputs,
+        "declaration-first `ode!` named binding generation",
+    )?;
 
     validate_closure_param_conflicts("diffeq", diffeq, params, "parameter")?;
+    validate_closure_param_conflicts("diffeq", diffeq, covariates, "covariate")?;
     validate_closure_param_conflicts("diffeq", diffeq, states, "state")?;
-    validate_closure_param_conflicts("out", out, params, "parameter")?;
-    validate_closure_param_conflicts("out", out, states, "state")?;
-    validate_closure_param_conflicts("out", out, outputs, "output")?;
 
     if diffeq_mode == OdeDiffeqMode::ExplicitRouteVectors {
         validate_binding_conflicts(
@@ -818,83 +1058,169 @@ fn validate_named_binding_compatibility(
             &route_inputs,
             "`diffeq` named binding generation",
         )?;
+        validate_binding_conflicts(
+            "covariate",
+            covariates,
+            "route",
+            &route_inputs,
+            "`diffeq` named binding generation",
+        )?;
         validate_closure_param_conflicts("diffeq", diffeq, &route_inputs, "route")?;
     }
 
-    Ok(())
-}
-
-fn validate_analytical_named_binding_compatibility(
-    params: &[Ident],
-    states: &[Ident],
-    outputs: &[Ident],
-    routes: &[OdeRouteDecl],
-    lag: Option<&ExprClosure>,
-    fa: Option<&ExprClosure>,
-    init: Option<&ExprClosure>,
-    out: &ExprClosure,
-) -> syn::Result<()> {
-    let route_inputs = route_input_idents(routes);
-
-    validate_binding_conflicts(
-        "parameter",
-        params,
-        "state",
-        states,
-        "`analytical!` named binding generation",
-    )?;
-    validate_binding_conflicts(
-        "parameter",
-        params,
-        "output",
-        outputs,
-        "`analytical!` named binding generation",
-    )?;
-    validate_binding_conflicts(
-        "parameter",
-        params,
-        "route",
-        &route_inputs,
-        "`analytical!` named binding generation",
-    )?;
-    validate_binding_conflicts(
-        "state",
-        states,
-        "output",
-        outputs,
-        "`analytical!` named binding generation",
-    )?;
-    validate_binding_conflicts(
-        "state",
-        states,
-        "route",
-        &route_inputs,
-        "`analytical!` named binding generation",
-    )?;
-    validate_binding_conflicts(
-        "output",
-        outputs,
-        "route",
-        &route_inputs,
-        "`analytical!` named binding generation",
-    )?;
-
     if let Some(lag) = lag {
+        validate_binding_conflicts(
+            "covariate",
+            covariates,
+            "route",
+            &route_inputs,
+            "`lag` named binding generation",
+        )?;
         validate_closure_param_conflicts("lag", lag, params, "parameter")?;
+        validate_closure_param_conflicts("lag", lag, covariates, "covariate")?;
         validate_closure_param_conflicts("lag", lag, &route_inputs, "route")?;
     }
 
     if let Some(fa) = fa {
+        validate_binding_conflicts(
+            "covariate",
+            covariates,
+            "route",
+            &route_inputs,
+            "`fa` named binding generation",
+        )?;
         validate_closure_param_conflicts("fa", fa, params, "parameter")?;
+        validate_closure_param_conflicts("fa", fa, covariates, "covariate")?;
         validate_closure_param_conflicts("fa", fa, &route_inputs, "route")?;
     }
 
     if let Some(init) = init {
         validate_closure_param_conflicts("init", init, params, "parameter")?;
+        validate_closure_param_conflicts("init", init, covariates, "covariate")?;
         validate_closure_param_conflicts("init", init, states, "state")?;
     }
 
     validate_closure_param_conflicts("out", out, params, "parameter")?;
+    validate_closure_param_conflicts("out", out, covariates, "covariate")?;
+    validate_closure_param_conflicts("out", out, states, "state")?;
+    validate_closure_param_conflicts("out", out, outputs, "output")?;
+
+    Ok(())
+}
+
+fn validate_analytical_named_binding_compatibility(
+    bindings: NamedBindingSets<'_>,
+    closures: AnalyticalBindingClosures<'_>,
+) -> syn::Result<()> {
+    let NamedBindingSets {
+        params,
+        covariates,
+        states,
+        outputs,
+        routes,
+    } = bindings;
+    let AnalyticalBindingClosures {
+        sec,
+        common: CommonBindingClosures { lag, fa, init, out },
+    } = closures;
+    let route_inputs = route_input_idents(routes);
+
+    validate_binding_conflicts(
+        "parameter",
+        params,
+        "covariate",
+        covariates,
+        "`analytical!` named binding generation",
+    )?;
+    validate_binding_conflicts(
+        "parameter",
+        params,
+        "state",
+        states,
+        "`analytical!` named binding generation",
+    )?;
+    validate_binding_conflicts(
+        "parameter",
+        params,
+        "output",
+        outputs,
+        "`analytical!` named binding generation",
+    )?;
+    validate_binding_conflicts(
+        "covariate",
+        covariates,
+        "state",
+        states,
+        "`analytical!` named binding generation",
+    )?;
+    validate_binding_conflicts(
+        "covariate",
+        covariates,
+        "output",
+        outputs,
+        "`analytical!` named binding generation",
+    )?;
+    validate_binding_conflicts(
+        "covariate",
+        covariates,
+        "route",
+        &route_inputs,
+        "`analytical!` named binding generation",
+    )?;
+    validate_binding_conflicts(
+        "parameter",
+        params,
+        "route",
+        &route_inputs,
+        "`analytical!` named binding generation",
+    )?;
+    validate_binding_conflicts(
+        "state",
+        states,
+        "output",
+        outputs,
+        "`analytical!` named binding generation",
+    )?;
+    validate_binding_conflicts(
+        "state",
+        states,
+        "route",
+        &route_inputs,
+        "`analytical!` named binding generation",
+    )?;
+    validate_binding_conflicts(
+        "output",
+        outputs,
+        "route",
+        &route_inputs,
+        "`analytical!` named binding generation",
+    )?;
+
+    if let Some(sec) = sec {
+        validate_closure_param_conflicts("sec", sec, params, "parameter")?;
+        validate_closure_param_conflicts("sec", sec, covariates, "covariate")?;
+    }
+
+    if let Some(lag) = lag {
+        validate_closure_param_conflicts("lag", lag, params, "parameter")?;
+        validate_closure_param_conflicts("lag", lag, covariates, "covariate")?;
+        validate_closure_param_conflicts("lag", lag, &route_inputs, "route")?;
+    }
+
+    if let Some(fa) = fa {
+        validate_closure_param_conflicts("fa", fa, params, "parameter")?;
+        validate_closure_param_conflicts("fa", fa, covariates, "covariate")?;
+        validate_closure_param_conflicts("fa", fa, &route_inputs, "route")?;
+    }
+
+    if let Some(init) = init {
+        validate_closure_param_conflicts("init", init, params, "parameter")?;
+        validate_closure_param_conflicts("init", init, covariates, "covariate")?;
+        validate_closure_param_conflicts("init", init, states, "state")?;
+    }
+
+    validate_closure_param_conflicts("out", out, params, "parameter")?;
+    validate_closure_param_conflicts("out", out, covariates, "covariate")?;
     validate_closure_param_conflicts("out", out, states, "state")?;
     validate_closure_param_conflicts("out", out, outputs, "output")?;
 
@@ -902,19 +1228,30 @@ fn validate_analytical_named_binding_compatibility(
 }
 
 fn validate_sde_named_binding_compatibility(
-    params: &[Ident],
-    states: &[Ident],
-    outputs: &[Ident],
-    routes: &[OdeRouteDecl],
-    drift: &ExprClosure,
-    diffusion: &ExprClosure,
-    lag: Option<&ExprClosure>,
-    fa: Option<&ExprClosure>,
-    init: Option<&ExprClosure>,
-    out: &ExprClosure,
+    bindings: NamedBindingSets<'_>,
+    closures: SdeBindingClosures<'_>,
 ) -> syn::Result<()> {
+    let NamedBindingSets {
+        params,
+        covariates,
+        states,
+        outputs,
+        routes,
+    } = bindings;
+    let SdeBindingClosures {
+        drift,
+        diffusion,
+        common: CommonBindingClosures { lag, fa, init, out },
+    } = closures;
     let route_inputs = route_input_idents(routes);
 
+    validate_binding_conflicts(
+        "parameter",
+        params,
+        "covariate",
+        covariates,
+        "`sde!` named binding generation",
+    )?;
     validate_binding_conflicts(
         "parameter",
         params,
@@ -927,6 +1264,27 @@ fn validate_sde_named_binding_compatibility(
         params,
         "output",
         outputs,
+        "`sde!` named binding generation",
+    )?;
+    validate_binding_conflicts(
+        "covariate",
+        covariates,
+        "state",
+        states,
+        "`sde!` named binding generation",
+    )?;
+    validate_binding_conflicts(
+        "covariate",
+        covariates,
+        "output",
+        outputs,
+        "`sde!` named binding generation",
+    )?;
+    validate_binding_conflicts(
+        "covariate",
+        covariates,
+        "route",
+        &route_inputs,
         "`sde!` named binding generation",
     )?;
     validate_binding_conflicts(
@@ -959,26 +1317,31 @@ fn validate_sde_named_binding_compatibility(
     )?;
 
     validate_closure_param_conflicts("drift", drift, params, "parameter")?;
+    validate_closure_param_conflicts("drift", drift, covariates, "covariate")?;
     validate_closure_param_conflicts("drift", drift, states, "state")?;
     validate_closure_param_conflicts("diffusion", diffusion, params, "parameter")?;
     validate_closure_param_conflicts("diffusion", diffusion, states, "state")?;
 
     if let Some(lag) = lag {
         validate_closure_param_conflicts("lag", lag, params, "parameter")?;
+        validate_closure_param_conflicts("lag", lag, covariates, "covariate")?;
         validate_closure_param_conflicts("lag", lag, &route_inputs, "route")?;
     }
 
     if let Some(fa) = fa {
         validate_closure_param_conflicts("fa", fa, params, "parameter")?;
+        validate_closure_param_conflicts("fa", fa, covariates, "covariate")?;
         validate_closure_param_conflicts("fa", fa, &route_inputs, "route")?;
     }
 
     if let Some(init) = init {
         validate_closure_param_conflicts("init", init, params, "parameter")?;
+        validate_closure_param_conflicts("init", init, covariates, "covariate")?;
         validate_closure_param_conflicts("init", init, states, "state")?;
     }
 
     validate_closure_param_conflicts("out", out, params, "parameter")?;
+    validate_closure_param_conflicts("out", out, covariates, "covariate")?;
     validate_closure_param_conflicts("out", out, states, "state")?;
     validate_closure_param_conflicts("out", out, outputs, "output")?;
 
@@ -1014,16 +1377,10 @@ fn generate_mapped_index_consts(bindings: &[(Ident, usize)]) -> TokenStream2 {
 fn expand_out(
     out: &ExprClosure,
     params: &[Ident],
+    covariates: &[Ident],
     states: &[Ident],
     outputs: &[Ident],
 ) -> syn::Result<TokenStream2> {
-    if closure_param_names(out).len() != 5 {
-        return Err(syn::Error::new_spanned(
-            out,
-            "declaration-first `ode!` requires `out` to have 5 parameters: |x, p, t, cov, y|",
-        ));
-    }
-
     let state_consts = generate_index_consts(states);
     let output_consts = generate_index_consts(outputs);
     let x = generated_ident("__pharmsol_x");
@@ -1031,11 +1388,15 @@ fn expand_out(
     let t = generated_ident("__pharmsol_t");
     let cov = generated_ident("__pharmsol_cov");
     let y = generated_ident("__pharmsol_y");
-    let input_aliases = generate_closure_input_aliases(
+    let full_inputs = [x.clone(), p.clone(), t.clone(), cov.clone(), y.clone()];
+    let reduced_inputs = [x.clone(), t.clone(), y.clone()];
+    let input_aliases = generate_supported_input_aliases(
         out,
-        &[x.clone(), p.clone(), t.clone(), cov.clone(), y.clone()],
+        &[&full_inputs, &reduced_inputs],
+        "declaration-first `ode!` requires `out` to have either 5 parameters: |x, p, t, cov, y| or 3 parameters: |x, t, y|",
     )?;
     let parameter_bindings = generate_parameter_bindings(params, out, &p);
+    let covariate_bindings = generate_covariate_bindings(covariates, out, &cov, &t);
     let body = &out.body;
 
     Ok(quote! {{
@@ -1054,6 +1415,7 @@ fn expand_out(
             #state_consts
             #output_consts
             #parameter_bindings
+            #covariate_bindings
             #body
         };
         __pharmsol_out
@@ -1173,24 +1535,24 @@ fn expand_ode_route_map(
     label: &str,
     closure: &ExprClosure,
     params: &[Ident],
+    covariates: &[Ident],
     route_bindings: &[(Ident, usize)],
 ) -> syn::Result<TokenStream2> {
-    if closure_param_names(closure).len() != 3 {
-        return Err(syn::Error::new_spanned(
-            closure,
-            format!(
-                "declaration-first `ode!` requires `{label}` to have 3 parameters: |p, t, cov|"
-            ),
-        ));
-    }
-
     let route_consts = generate_mapped_index_consts(route_bindings);
     let p = generated_ident("__pharmsol_p");
     let t = generated_ident("__pharmsol_t");
     let cov = generated_ident("__pharmsol_cov");
-    let input_aliases =
-        generate_closure_input_aliases(closure, &[p.clone(), t.clone(), cov.clone()])?;
+    let full_inputs = [p.clone(), t.clone(), cov.clone()];
+    let reduced_inputs = [t.clone()];
+    let input_aliases = generate_supported_input_aliases(
+        closure,
+        &[&full_inputs, &reduced_inputs],
+        &format!(
+            "declaration-first `ode!` requires `{label}` to have either 3 parameters: |p, t, cov| or 1 parameter: |t|"
+        ),
+    )?;
     let parameter_bindings = generate_parameter_bindings(params, closure, &p);
+    let covariate_bindings = generate_covariate_bindings(covariates, closure, &cov, &t);
     let body = &closure.body;
 
     Ok(quote! {{
@@ -1204,9 +1566,52 @@ fn expand_ode_route_map(
             #input_aliases
             #route_consts
             #parameter_bindings
+            #covariate_bindings
             #body
         };
         __pharmsol_route_map
+    }})
+}
+
+fn expand_ode_init(
+    init: &ExprClosure,
+    params: &[Ident],
+    covariates: &[Ident],
+    states: &[Ident],
+) -> syn::Result<TokenStream2> {
+    let state_consts = generate_index_consts(states);
+    let p = generated_ident("__pharmsol_p");
+    let t = generated_ident("__pharmsol_t");
+    let cov = generated_ident("__pharmsol_cov");
+    let x = generated_ident("__pharmsol_x");
+    let full_inputs = [p.clone(), t.clone(), cov.clone(), x.clone()];
+    let reduced_inputs = [t.clone(), x.clone()];
+    let input_aliases = generate_supported_input_aliases(
+        init,
+        &[&full_inputs, &reduced_inputs],
+        "declaration-first `ode!` requires `init` to have either 4 parameters: |p, t, cov, x| or 2 parameters: |t, x|",
+    )?;
+    let parameter_bindings = generate_parameter_bindings(params, init, &p);
+    let covariate_bindings = generate_covariate_bindings(covariates, init, &cov, &t);
+    let body = &init.body;
+
+    Ok(quote! {{
+        let __pharmsol_init: fn(
+            &::pharmsol::simulator::V,
+            f64,
+            &::pharmsol::data::Covariates,
+            &mut ::pharmsol::simulator::V,
+        ) = |#p: &::pharmsol::simulator::V,
+             #t: f64,
+             #cov: &::pharmsol::data::Covariates,
+             #x: &mut ::pharmsol::simulator::V| {
+            #input_aliases
+            #state_consts
+            #parameter_bindings
+            #covariate_bindings
+            #body
+        };
+        __pharmsol_init
     }})
 }
 
@@ -1461,6 +1866,7 @@ fn validate_routes(routes: &[OdeRouteDecl], states: &[Ident], macro_name: &str) 
 fn expand_diffeq(
     diffeq: &ExprClosure,
     params: &[Ident],
+    covariates: &[Ident],
     states: &[Ident],
     routes: &[OdeRouteDecl],
     route_bindings: &[(Ident, usize)],
@@ -1478,19 +1884,29 @@ fn expand_diffeq(
             let bolus = generated_ident("__pharmsol_bolus");
             let rateiv = generated_ident("__pharmsol_rateiv");
             let cov = generated_ident("__pharmsol_cov");
-            let input_aliases = generate_closure_input_aliases(
+            let full_inputs = [
+                x.clone(),
+                p.clone(),
+                t.clone(),
+                dx.clone(),
+                bolus.clone(),
+                rateiv.clone(),
+                cov.clone(),
+            ];
+            let reduced_inputs = [
+                x.clone(),
+                t.clone(),
+                dx.clone(),
+                bolus.clone(),
+                rateiv.clone(),
+            ];
+            let input_aliases = generate_supported_input_aliases(
                 diffeq,
-                &[
-                    x.clone(),
-                    p.clone(),
-                    t.clone(),
-                    dx.clone(),
-                    bolus.clone(),
-                    rateiv.clone(),
-                    cov.clone(),
-                ],
+                &[&full_inputs, &reduced_inputs],
+                "declaration-first `ode!` explicit-route `diffeq` requires either 7 parameters: |x, p, t, dx, bolus, rateiv, cov| or 5 parameters: |x, t, dx, bolus, rateiv|",
             )?;
             let parameter_bindings = generate_parameter_bindings(params, diffeq, &p);
+            let covariate_bindings = generate_covariate_bindings(covariates, diffeq, &cov, &t);
             let body = &diffeq.body;
 
             Ok(quote! {{
@@ -1513,6 +1929,7 @@ fn expand_diffeq(
                     #state_consts
                     #route_consts
                     #parameter_bindings
+                    #covariate_bindings
                     #body
                 };
                 __pharmsol_diffeq
@@ -1526,13 +1943,21 @@ fn expand_diffeq(
             let bolus = generated_ident("__pharmsol_bolus");
             let rateiv = generated_ident("__pharmsol_rateiv");
             let cov = generated_ident("__pharmsol_cov");
-            let input_aliases = generate_closure_input_aliases(
+            let full_inputs = [x.clone(), p.clone(), t.clone(), dx.clone(), cov.clone()];
+            let reduced_inputs = [x.clone(), t.clone(), dx.clone()];
+            let input_aliases = generate_supported_input_aliases(
                 diffeq,
-                &[x.clone(), p.clone(), t.clone(), dx.clone(), cov.clone()],
+                &[&full_inputs, &reduced_inputs],
+                "declaration-first `ode!` injected-route `diffeq` requires either 5 parameters: |x, p, t, dx, cov| or 3 parameters: |x, t, dx|",
             )?;
             let parameter_bindings = generate_parameter_bindings(params, diffeq, &p);
+            let covariate_bindings = generate_covariate_bindings(covariates, diffeq, &cov, &t);
             let body = &diffeq.body;
-            let dx_binding = closure_param_ident(diffeq, 3).unwrap_or_else(|| dx.clone());
+            let dx_binding = if diffeq.inputs.len() == full_inputs.len() {
+                closure_param_ident(diffeq, 3).unwrap_or_else(|| dx.clone())
+            } else {
+                closure_param_ident(diffeq, 2).unwrap_or_else(|| dx.clone())
+            };
             let route_terms = expand_injected_ode_route_terms(
                 routes,
                 states,
@@ -1561,6 +1986,7 @@ fn expand_diffeq(
                     #input_aliases
                     #state_consts
                     #parameter_bindings
+                    #covariate_bindings
                     #body
                     #route_terms
                 };
@@ -1667,22 +2093,24 @@ fn expand_analytical_route_map(
     label: &str,
     closure: &ExprClosure,
     params: &[Ident],
+    covariates: &[Ident],
     route_bindings: &[(Ident, usize)],
 ) -> syn::Result<TokenStream2> {
-    if closure_param_names(closure).len() != 3 {
-        return Err(syn::Error::new_spanned(
-            closure,
-            format!("built-in `analytical!` requires `{label}` to have 3 parameters: |p, t, cov|"),
-        ));
-    }
-
     let route_consts = generate_mapped_index_consts(route_bindings);
     let p = generated_ident("__pharmsol_p");
     let t = generated_ident("__pharmsol_t");
     let cov = generated_ident("__pharmsol_cov");
-    let input_aliases =
-        generate_closure_input_aliases(closure, &[p.clone(), t.clone(), cov.clone()])?;
+    let full_inputs = [p.clone(), t.clone(), cov.clone()];
+    let reduced_inputs = [t.clone()];
+    let input_aliases = generate_supported_input_aliases(
+        closure,
+        &[&full_inputs, &reduced_inputs],
+        &format!(
+            "built-in `analytical!` requires `{label}` to have either 3 parameters: |p, t, cov| or 1 parameter: |t|"
+        ),
+    )?;
     let parameter_bindings = generate_parameter_bindings(params, closure, &p);
+    let covariate_bindings = generate_covariate_bindings(covariates, closure, &cov, &t);
     let body = &closure.body;
 
     Ok(quote! {{
@@ -1696,32 +2124,76 @@ fn expand_analytical_route_map(
             #input_aliases
             #route_consts
             #parameter_bindings
+            #covariate_bindings
             #body
         };
         __pharmsol_route_map
     }})
 }
 
+fn expand_analytical_sec(
+    sec: &ExprClosure,
+    params: &[Ident],
+    covariates: &[Ident],
+) -> syn::Result<TokenStream2> {
+    let p = generated_ident("__pharmsol_p");
+    let t = generated_ident("__pharmsol_t");
+    let cov = generated_ident("__pharmsol_cov");
+    let full_inputs = [p.clone(), t.clone(), cov.clone()];
+    let reduced_inputs = [t.clone()];
+    let input_aliases = generate_supported_input_aliases(
+        sec,
+        &[&full_inputs, &reduced_inputs],
+        "built-in `analytical!` requires `sec` to have either 3 parameters: |p, t, cov| or 1 parameter: |t|",
+    )?;
+    let parameter_vector = if sec.inputs.len() == full_inputs.len() {
+        closure_param_ident(sec, 0).unwrap_or_else(|| p.clone())
+    } else {
+        p.clone()
+    };
+    let (parameter_bindings, parameter_writebacks) =
+        generate_mutable_parameter_bindings(params, sec, &parameter_vector);
+    let covariate_bindings = generate_covariate_bindings(covariates, sec, &cov, &t);
+    let body = &sec.body;
+
+    Ok(quote! {{
+        let __pharmsol_sec: fn(
+            &mut ::pharmsol::simulator::V,
+            f64,
+            &::pharmsol::data::Covariates,
+        ) = |#p: &mut ::pharmsol::simulator::V,
+             #t: f64,
+             #cov: &::pharmsol::data::Covariates| {
+            #input_aliases
+            #parameter_bindings
+            #covariate_bindings
+            #body
+            #parameter_writebacks
+        };
+        __pharmsol_sec
+    }})
+}
+
 fn expand_analytical_init(
     init: &ExprClosure,
     params: &[Ident],
+    covariates: &[Ident],
     states: &[Ident],
 ) -> syn::Result<TokenStream2> {
-    if closure_param_names(init).len() != 4 {
-        return Err(syn::Error::new_spanned(
-            init,
-            "built-in `analytical!` requires `init` to have 4 parameters: |p, t, cov, x|",
-        ));
-    }
-
     let state_consts = generate_index_consts(states);
     let p = generated_ident("__pharmsol_p");
     let t = generated_ident("__pharmsol_t");
     let cov = generated_ident("__pharmsol_cov");
     let x = generated_ident("__pharmsol_x");
-    let input_aliases =
-        generate_closure_input_aliases(init, &[p.clone(), t.clone(), cov.clone(), x.clone()])?;
+    let full_inputs = [p.clone(), t.clone(), cov.clone(), x.clone()];
+    let reduced_inputs = [t.clone(), x.clone()];
+    let input_aliases = generate_supported_input_aliases(
+        init,
+        &[&full_inputs, &reduced_inputs],
+        "built-in `analytical!` requires `init` to have either 4 parameters: |p, t, cov, x| or 2 parameters: |t, x|",
+    )?;
     let parameter_bindings = generate_parameter_bindings(params, init, &p);
+    let covariate_bindings = generate_covariate_bindings(covariates, init, &cov, &t);
     let body = &init.body;
 
     Ok(quote! {{
@@ -1737,6 +2209,7 @@ fn expand_analytical_init(
             #input_aliases
             #state_consts
             #parameter_bindings
+            #covariate_bindings
             #body
         };
         __pharmsol_init
@@ -1746,16 +2219,10 @@ fn expand_analytical_init(
 fn expand_analytical_out(
     out: &ExprClosure,
     params: &[Ident],
+    covariates: &[Ident],
     states: &[Ident],
     outputs: &[Ident],
 ) -> syn::Result<TokenStream2> {
-    if closure_param_names(out).len() != 5 {
-        return Err(syn::Error::new_spanned(
-            out,
-            "built-in `analytical!` requires `out` to have 5 parameters: |x, p, t, cov, y|",
-        ));
-    }
-
     let state_consts = generate_index_consts(states);
     let output_consts = generate_index_consts(outputs);
     let x = generated_ident("__pharmsol_x");
@@ -1763,11 +2230,15 @@ fn expand_analytical_out(
     let t = generated_ident("__pharmsol_t");
     let cov = generated_ident("__pharmsol_cov");
     let y = generated_ident("__pharmsol_y");
-    let input_aliases = generate_closure_input_aliases(
+    let full_inputs = [x.clone(), p.clone(), t.clone(), cov.clone(), y.clone()];
+    let reduced_inputs = [x.clone(), t.clone(), y.clone()];
+    let input_aliases = generate_supported_input_aliases(
         out,
-        &[x.clone(), p.clone(), t.clone(), cov.clone(), y.clone()],
+        &[&full_inputs, &reduced_inputs],
+        "built-in `analytical!` requires `out` to have either 5 parameters: |x, p, t, cov, y| or 3 parameters: |x, t, y|",
     )?;
     let parameter_bindings = generate_parameter_bindings(params, out, &p);
+    let covariate_bindings = generate_covariate_bindings(covariates, out, &cov, &t);
     let body = &out.body;
 
     Ok(quote! {{
@@ -1786,6 +2257,7 @@ fn expand_analytical_out(
             #state_consts
             #output_consts
             #parameter_bindings
+            #covariate_bindings
             #body
         };
         __pharmsol_out
@@ -1795,17 +2267,11 @@ fn expand_analytical_out(
 fn expand_sde_drift(
     drift: &ExprClosure,
     params: &[Ident],
+    covariates: &[Ident],
     states: &[Ident],
     routes: &[OdeRouteDecl],
     route_bindings: &[(Ident, usize)],
 ) -> syn::Result<TokenStream2> {
-    if closure_param_names(drift).len() != 5 {
-        return Err(syn::Error::new_spanned(
-            drift,
-            "declaration-first `sde!` requires `drift` to have 5 parameters: |x, p, t, dx, cov|",
-        ));
-    }
-
     let state_consts = generate_index_consts(states);
     let x = generated_ident("__pharmsol_x");
     let p = generated_ident("__pharmsol_p");
@@ -1813,13 +2279,21 @@ fn expand_sde_drift(
     let dx = generated_ident("__pharmsol_dx");
     let rateiv = generated_ident("__pharmsol_rateiv");
     let cov = generated_ident("__pharmsol_cov");
-    let input_aliases = generate_closure_input_aliases(
+    let full_inputs = [x.clone(), p.clone(), t.clone(), dx.clone(), cov.clone()];
+    let reduced_inputs = [x.clone(), t.clone(), dx.clone()];
+    let input_aliases = generate_supported_input_aliases(
         drift,
-        &[x.clone(), p.clone(), t.clone(), dx.clone(), cov.clone()],
+        &[&full_inputs, &reduced_inputs],
+        "declaration-first `sde!` requires `drift` to have either 5 parameters: |x, p, t, dx, cov| or 3 parameters: |x, t, dx|",
     )?;
     let parameter_bindings = generate_parameter_bindings(params, drift, &p);
+    let covariate_bindings = generate_covariate_bindings(covariates, drift, &cov, &t);
     let body = &drift.body;
-    let dx_binding = closure_param_ident(drift, 3).unwrap_or_else(|| dx.clone());
+    let dx_binding = if drift.inputs.len() == full_inputs.len() {
+        closure_param_ident(drift, 3).unwrap_or_else(|| dx.clone())
+    } else {
+        closure_param_ident(drift, 2).unwrap_or_else(|| dx.clone())
+    };
     let rate_terms =
         expand_injected_sde_rate_terms(routes, states, route_bindings, &dx_binding, &rateiv);
 
@@ -1840,6 +2314,7 @@ fn expand_sde_drift(
             #input_aliases
             #state_consts
             #parameter_bindings
+            #covariate_bindings
             #body
             #rate_terms
         };
@@ -1852,17 +2327,16 @@ fn expand_sde_diffusion(
     params: &[Ident],
     states: &[Ident],
 ) -> syn::Result<TokenStream2> {
-    if closure_param_names(diffusion).len() != 2 {
-        return Err(syn::Error::new_spanned(
-            diffusion,
-            "declaration-first `sde!` requires `diffusion` to have 2 parameters: |p, sigma|",
-        ));
-    }
-
     let state_consts = generate_index_consts(states);
     let p = generated_ident("__pharmsol_p");
     let sigma = generated_ident("__pharmsol_sigma");
-    let input_aliases = generate_closure_input_aliases(diffusion, &[p.clone(), sigma.clone()])?;
+    let full_inputs = [p.clone(), sigma.clone()];
+    let reduced_inputs = [sigma.clone()];
+    let input_aliases = generate_supported_input_aliases(
+        diffusion,
+        &[&full_inputs, &reduced_inputs],
+        "declaration-first `sde!` requires `diffusion` to have either 2 parameters: |p, sigma| or 1 parameter: |sigma|",
+    )?;
     let parameter_bindings = generate_parameter_bindings(params, diffusion, &p);
     let body = &diffusion.body;
 
@@ -1885,24 +2359,24 @@ fn expand_sde_route_map(
     label: &str,
     closure: &ExprClosure,
     params: &[Ident],
+    covariates: &[Ident],
     route_bindings: &[(Ident, usize)],
 ) -> syn::Result<TokenStream2> {
-    if closure_param_names(closure).len() != 3 {
-        return Err(syn::Error::new_spanned(
-            closure,
-            format!(
-                "declaration-first `sde!` requires `{label}` to have 3 parameters: |p, t, cov|"
-            ),
-        ));
-    }
-
     let route_consts = generate_mapped_index_consts(route_bindings);
     let p = generated_ident("__pharmsol_p");
     let t = generated_ident("__pharmsol_t");
     let cov = generated_ident("__pharmsol_cov");
-    let input_aliases =
-        generate_closure_input_aliases(closure, &[p.clone(), t.clone(), cov.clone()])?;
+    let full_inputs = [p.clone(), t.clone(), cov.clone()];
+    let reduced_inputs = [t.clone()];
+    let input_aliases = generate_supported_input_aliases(
+        closure,
+        &[&full_inputs, &reduced_inputs],
+        &format!(
+            "declaration-first `sde!` requires `{label}` to have either 3 parameters: |p, t, cov| or 1 parameter: |t|"
+        ),
+    )?;
     let parameter_bindings = generate_parameter_bindings(params, closure, &p);
+    let covariate_bindings = generate_covariate_bindings(covariates, closure, &cov, &t);
     let body = &closure.body;
 
     Ok(quote! {{
@@ -1916,6 +2390,7 @@ fn expand_sde_route_map(
             #input_aliases
             #route_consts
             #parameter_bindings
+            #covariate_bindings
             #body
         };
         __pharmsol_route_map
@@ -1925,23 +2400,23 @@ fn expand_sde_route_map(
 fn expand_sde_init(
     init: &ExprClosure,
     params: &[Ident],
+    covariates: &[Ident],
     states: &[Ident],
 ) -> syn::Result<TokenStream2> {
-    if closure_param_names(init).len() != 4 {
-        return Err(syn::Error::new_spanned(
-            init,
-            "declaration-first `sde!` requires `init` to have 4 parameters: |p, t, cov, x|",
-        ));
-    }
-
     let state_consts = generate_index_consts(states);
     let p = generated_ident("__pharmsol_p");
     let t = generated_ident("__pharmsol_t");
     let cov = generated_ident("__pharmsol_cov");
     let x = generated_ident("__pharmsol_x");
-    let input_aliases =
-        generate_closure_input_aliases(init, &[p.clone(), t.clone(), cov.clone(), x.clone()])?;
+    let full_inputs = [p.clone(), t.clone(), cov.clone(), x.clone()];
+    let reduced_inputs = [t.clone(), x.clone()];
+    let input_aliases = generate_supported_input_aliases(
+        init,
+        &[&full_inputs, &reduced_inputs],
+        "declaration-first `sde!` requires `init` to have either 4 parameters: |p, t, cov, x| or 2 parameters: |t, x|",
+    )?;
     let parameter_bindings = generate_parameter_bindings(params, init, &p);
+    let covariate_bindings = generate_covariate_bindings(covariates, init, &cov, &t);
     let body = &init.body;
 
     Ok(quote! {{
@@ -1957,6 +2432,7 @@ fn expand_sde_init(
             #input_aliases
             #state_consts
             #parameter_bindings
+            #covariate_bindings
             #body
         };
         __pharmsol_init
@@ -1966,16 +2442,10 @@ fn expand_sde_init(
 fn expand_sde_out(
     out: &ExprClosure,
     params: &[Ident],
+    covariates: &[Ident],
     states: &[Ident],
     outputs: &[Ident],
 ) -> syn::Result<TokenStream2> {
-    if closure_param_names(out).len() != 5 {
-        return Err(syn::Error::new_spanned(
-            out,
-            "declaration-first `sde!` requires `out` to have 5 parameters: |x, p, t, cov, y|",
-        ));
-    }
-
     let state_consts = generate_index_consts(states);
     let output_consts = generate_index_consts(outputs);
     let x = generated_ident("__pharmsol_x");
@@ -1983,11 +2453,15 @@ fn expand_sde_out(
     let t = generated_ident("__pharmsol_t");
     let cov = generated_ident("__pharmsol_cov");
     let y = generated_ident("__pharmsol_y");
-    let input_aliases = generate_closure_input_aliases(
+    let full_inputs = [x.clone(), p.clone(), t.clone(), cov.clone(), y.clone()];
+    let reduced_inputs = [x.clone(), t.clone(), y.clone()];
+    let input_aliases = generate_supported_input_aliases(
         out,
-        &[x.clone(), p.clone(), t.clone(), cov.clone(), y.clone()],
+        &[&full_inputs, &reduced_inputs],
+        "declaration-first `sde!` requires `out` to have either 5 parameters: |x, p, t, cov, y| or 3 parameters: |x, t, y|",
     )?;
     let parameter_bindings = generate_parameter_bindings(params, out, &p);
+    let covariate_bindings = generate_covariate_bindings(covariates, out, &cov, &t);
     let body = &out.body;
 
     Ok(quote! {{
@@ -2006,6 +2480,7 @@ fn expand_sde_out(
             #state_consts
             #output_consts
             #parameter_bindings
+            #covariate_bindings
             #body
         };
         __pharmsol_out
@@ -2071,6 +2546,7 @@ pub fn ode(input: TokenStream) -> TokenStream {
     let diffeq = match expand_diffeq(
         &input.diffeq,
         &input.params,
+        &input.covariates,
         &input.states,
         &input.routes,
         &route_bindings,
@@ -2080,7 +2556,13 @@ pub fn ode(input: TokenStream) -> TokenStream {
         Err(error) => return error.to_compile_error().into(),
     };
 
-    let out = match expand_out(&input.out, &input.params, &input.states, &input.outputs) {
+    let out = match expand_out(
+        &input.out,
+        &input.params,
+        &input.covariates,
+        &input.states,
+        &input.outputs,
+    ) {
         Ok(out) => out,
         Err(error) => return error.to_compile_error().into(),
     };
@@ -2104,8 +2586,13 @@ pub fn ode(input: TokenStream) -> TokenStream {
     };
 
     let lag = match input.lag.as_ref() {
-        Some(closure) => match expand_ode_route_map("lag", closure, &input.params, &route_bindings)
-        {
+        Some(closure) => match expand_ode_route_map(
+            "lag",
+            closure,
+            &input.params,
+            &input.covariates,
+            &route_bindings,
+        ) {
             Ok(lag) => lag,
             Err(error) => return error.to_compile_error().into(),
         },
@@ -2114,7 +2601,13 @@ pub fn ode(input: TokenStream) -> TokenStream {
 
     let fa = match input.fa.as_ref() {
         Some(closure) => {
-            match expand_ode_route_map("fa", closure, &input.params, &route_bindings) {
+            match expand_ode_route_map(
+                "fa",
+                closure,
+                &input.params,
+                &input.covariates,
+                &route_bindings,
+            ) {
                 Ok(fa) => fa,
                 Err(error) => return error.to_compile_error().into(),
             }
@@ -2122,10 +2615,15 @@ pub fn ode(input: TokenStream) -> TokenStream {
         None => quote! { |_, _, _| ::std::collections::HashMap::new() },
     };
 
-    let init = input
-        .init
-        .as_ref()
-        .map_or_else(|| quote! { |_, _, _, _| {} }, |closure| quote! { #closure });
+    let init = match input.init.as_ref() {
+        Some(closure) => {
+            match expand_ode_init(closure, &input.params, &input.covariates, &input.states) {
+                Ok(init) => init,
+                Err(error) => return error.to_compile_error().into(),
+            }
+        }
+        None => quote! { |_, _, _, _| {} },
+    };
 
     quote! {{
         let __pharmsol_metadata = ::pharmsol::equation::metadata::new(#name)
@@ -2207,15 +2705,34 @@ pub fn analytical(input: TokenStream) -> TokenStream {
         None => HashSet::new(),
     };
 
-    let out = match expand_analytical_out(&input.out, &input.params, &input.states, &input.outputs)
-    {
+    let sec = match input.sec.as_ref() {
+        Some(closure) => match expand_analytical_sec(closure, &input.params, &input.covariates) {
+            Ok(sec) => sec,
+            Err(error) => return error.to_compile_error().into(),
+        },
+        None => quote! { |_, _, _| {} },
+    };
+
+    let out = match expand_analytical_out(
+        &input.out,
+        &input.params,
+        &input.covariates,
+        &input.states,
+        &input.outputs,
+    ) {
         Ok(out) => out,
         Err(error) => return error.to_compile_error().into(),
     };
 
     let lag = match input.lag.as_ref() {
         Some(closure) => {
-            match expand_analytical_route_map("lag", closure, &input.params, &route_bindings) {
+            match expand_analytical_route_map(
+                "lag",
+                closure,
+                &input.params,
+                &input.covariates,
+                &route_bindings,
+            ) {
                 Ok(lag) => lag,
                 Err(error) => return error.to_compile_error().into(),
             }
@@ -2225,7 +2742,13 @@ pub fn analytical(input: TokenStream) -> TokenStream {
 
     let fa = match input.fa.as_ref() {
         Some(closure) => {
-            match expand_analytical_route_map("fa", closure, &input.params, &route_bindings) {
+            match expand_analytical_route_map(
+                "fa",
+                closure,
+                &input.params,
+                &input.covariates,
+                &route_bindings,
+            ) {
                 Ok(fa) => fa,
                 Err(error) => return error.to_compile_error().into(),
             }
@@ -2234,10 +2757,12 @@ pub fn analytical(input: TokenStream) -> TokenStream {
     };
 
     let init = match input.init.as_ref() {
-        Some(closure) => match expand_analytical_init(closure, &input.params, &input.states) {
-            Ok(init) => init,
-            Err(error) => return error.to_compile_error().into(),
-        },
+        Some(closure) => {
+            match expand_analytical_init(closure, &input.params, &input.covariates, &input.states) {
+                Ok(init) => init,
+                Err(error) => return error.to_compile_error().into(),
+            }
+        }
         None => quote! { |_, _, _, _| {} },
     };
 
@@ -2247,16 +2772,25 @@ pub fn analytical(input: TokenStream) -> TokenStream {
 
     let name = &input.name;
     let params = &input.params;
+    let covariates = &input.covariates;
     let states = &input.states;
     let outputs = &input.outputs;
     let routes = expand_analytical_route_metadata(&input.routes, &lag_routes, &fa_routes);
     let runtime_path = kernel_spec.runtime_path;
     let metadata_kernel = kernel_spec.metadata_kernel;
+    let covariate_metadata = if covariates.is_empty() {
+        quote! {}
+    } else {
+        quote! {
+            .covariates([#(::pharmsol::equation::Covariate::continuous(stringify!(#covariates))),*])
+        }
+    };
 
     quote! {{
         let __pharmsol_metadata = ::pharmsol::equation::metadata::new(#name)
             .kind(::pharmsol::equation::ModelKind::Analytical)
             .parameters([#(stringify!(#params)),*])
+            #covariate_metadata
             .states([#(stringify!(#states)),*])
             .outputs([#(stringify!(#outputs)),*])
             #(.route(#routes))*
@@ -2264,7 +2798,7 @@ pub fn analytical(input: TokenStream) -> TokenStream {
 
         ::pharmsol::equation::Analytical::new(
             #runtime_path,
-            |_, _, _| {},
+            #sec,
             #lag,
             #fa,
             #init,
@@ -2333,6 +2867,7 @@ pub fn sde(input: TokenStream) -> TokenStream {
     let drift = match expand_sde_drift(
         &input.drift,
         &input.params,
+        &input.covariates,
         &input.states,
         &input.routes,
         &route_bindings,
@@ -2347,8 +2882,13 @@ pub fn sde(input: TokenStream) -> TokenStream {
     };
 
     let lag = match input.lag.as_ref() {
-        Some(closure) => match expand_sde_route_map("lag", closure, &input.params, &route_bindings)
-        {
+        Some(closure) => match expand_sde_route_map(
+            "lag",
+            closure,
+            &input.params,
+            &input.covariates,
+            &route_bindings,
+        ) {
             Ok(lag) => lag,
             Err(error) => return error.to_compile_error().into(),
         },
@@ -2357,7 +2897,13 @@ pub fn sde(input: TokenStream) -> TokenStream {
 
     let fa = match input.fa.as_ref() {
         Some(closure) => {
-            match expand_sde_route_map("fa", closure, &input.params, &route_bindings) {
+            match expand_sde_route_map(
+                "fa",
+                closure,
+                &input.params,
+                &input.covariates,
+                &route_bindings,
+            ) {
                 Ok(fa) => fa,
                 Err(error) => return error.to_compile_error().into(),
             }
@@ -2366,14 +2912,22 @@ pub fn sde(input: TokenStream) -> TokenStream {
     };
 
     let init = match input.init.as_ref() {
-        Some(closure) => match expand_sde_init(closure, &input.params, &input.states) {
-            Ok(init) => init,
-            Err(error) => return error.to_compile_error().into(),
-        },
+        Some(closure) => {
+            match expand_sde_init(closure, &input.params, &input.covariates, &input.states) {
+                Ok(init) => init,
+                Err(error) => return error.to_compile_error().into(),
+            }
+        }
         None => quote! { |_, _, _, _| {} },
     };
 
-    let out = match expand_sde_out(&input.out, &input.params, &input.states, &input.outputs) {
+    let out = match expand_sde_out(
+        &input.out,
+        &input.params,
+        &input.covariates,
+        &input.states,
+        &input.outputs,
+    ) {
         Ok(out) => out,
         Err(error) => return error.to_compile_error().into(),
     };
@@ -2384,18 +2938,27 @@ pub fn sde(input: TokenStream) -> TokenStream {
 
     let name = &input.name;
     let params = &input.params;
+    let covariates = &input.covariates;
     let states = &input.states;
     let outputs = &input.outputs;
     let particles = &input.particles;
     let routes = expand_sde_route_metadata(&input.routes, &lag_routes, &fa_routes);
     let bolus_mappings =
         expand_injected_sde_bolus_mappings(&input.routes, &input.states, &route_bindings);
+    let covariate_metadata = if covariates.is_empty() {
+        quote! {}
+    } else {
+        quote! {
+            .covariates([#(::pharmsol::equation::Covariate::continuous(stringify!(#covariates))),*])
+        }
+    };
 
     quote! {{
         let __pharmsol_particles: usize = #particles;
         let __pharmsol_metadata = ::pharmsol::equation::metadata::new(#name)
             .kind(::pharmsol::equation::ModelKind::Sde)
             .parameters([#(stringify!(#params)),*])
+            #covariate_metadata
             .states([#(stringify!(#states)),*])
             .outputs([#(stringify!(#outputs)),*])
             #(.route(#routes))*
@@ -2520,11 +3083,13 @@ mod tests {
     #[test]
     fn analytical_accepts_extra_parameters_beyond_kernel_arity() {
         let input = syn::parse_str::<AnalyticalInput>(
-            "name: \"demo\", params: [ka, ke, v, tlag], states: [gut, central], outputs: [cp], routes: { bolus(oral) -> gut }, structure: one_compartment_with_absorption, out: |x, p, t, cov, y| {}",
+            "name: \"demo\", params: [ka, ke, v, tlag, tvke], covariates: [wt, renal], states: [gut, central], outputs: [cp], routes: { bolus(oral) -> gut }, structure: one_compartment_with_absorption, sec: |_t| { ke = tvke; }, out: |x, p, t, cov, y| {}",
         )
         .expect("extra declared parameters should be allowed");
 
-        assert_eq!(input.params.len(), 4);
+        assert_eq!(input.params.len(), 5);
+        assert_eq!(input.covariates.len(), 2);
+        assert!(input.sec.is_some());
         assert_eq!(input.states.len(), 2);
     }
 
