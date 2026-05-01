@@ -34,9 +34,7 @@ pub enum SdeMetadataError {
     Validation(#[from] ModelMetadataError),
     #[error("SDE declares {declared} state metadata entries but model has {expected} states")]
     StateCountMismatch { expected: usize, declared: usize },
-    #[error(
-        "SDE declares {declared} route metadata entries but model has {expected} input channels"
-    )]
+    #[error("SDE declares {declared} route metadata entries but model has {expected} inputs")]
     RouteCountMismatch { expected: usize, declared: usize },
     #[error("SDE declares {declared} output metadata entries but model has {expected} outputs")]
     OutputCountMismatch { expected: usize, declared: usize },
@@ -236,7 +234,7 @@ impl SDE {
         self
     }
 
-    /// Set the number of drug input channels (size of bolus[] and rateiv[]).
+    /// Set the number of drug inputs (size of bolus[] and rateiv[]).
     pub fn with_ndrugs(mut self, ndrugs: usize) -> Self {
         self.neqs.ndrugs = ndrugs;
         self.invalidate_metadata();
@@ -309,7 +307,7 @@ fn validate_metadata_dimensions(
         });
     }
 
-    let declared_routes = metadata.route_channel_count();
+    let declared_routes = metadata.route_input_count();
     if declared_routes != neqs.ndrugs {
         return Err(SdeMetadataError::RouteCountMismatch {
             expected: neqs.ndrugs,

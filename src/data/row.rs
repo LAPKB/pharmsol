@@ -32,8 +32,8 @@ use thiserror::Error;
 ///
 /// # Fields
 ///
-/// All fields use Pmetrics conventions:
-/// - `input` and `outeq` are **1-indexed** (kept as-is, user must size arrays accordingly)
+/// All fields use the public labeling conventions:
+/// - `input` and `outeq` preserve the route and output labels from the source data
 /// - `evid`: 0=observation, 1=dose, 4=reset/new occasion
 /// - `addl`: positive=forward in time, negative=backward in time
 ///
@@ -78,12 +78,12 @@ pub struct DataRow {
     pub addl: Option<i64>,
     /// Interdose interval for ADDL
     pub ii: Option<f64>,
-    /// Input compartment
-    pub input: Option<ChannelId>,
+    /// Input route label
+    pub input: Option<InputLabel>,
     /// Observed value (for EVID=0)
     pub out: Option<f64>,
-    /// Output equation number
-    pub outeq: Option<ChannelId>,
+    /// Output label
+    pub outeq: Option<OutputLabel>,
     /// Censoring indicator
     pub cens: Option<Censor>,
     /// Error polynomial coefficients
@@ -373,12 +373,12 @@ impl DataRowBuilder {
         self
     }
 
-    /// Set the input compartment (1-indexed)
+    /// Set the input route label
     ///
     /// Required for EVID=1 (dosing events).
-    /// Kept as 1-indexed; user must size state arrays accordingly.
+    /// Preserved as the public route label until model resolution.
     pub fn input(mut self, input: impl ToString) -> Self {
-        self.row.input = Some(ChannelId::new(input));
+        self.row.input = Some(InputLabel::new(input));
         self
     }
 
@@ -390,12 +390,12 @@ impl DataRowBuilder {
         self
     }
 
-    /// Set the output equation (1-indexed)
+    /// Set the output label
     ///
     /// Required for EVID=0 (observation events).
-    /// Will be converted to 0-indexed internally.
+    /// Preserved as the public output label until model resolution.
     pub fn outeq(mut self, outeq: impl ToString) -> Self {
-        self.row.outeq = Some(ChannelId::new(outeq));
+        self.row.outeq = Some(OutputLabel::new(outeq));
         self
     }
 

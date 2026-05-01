@@ -12,7 +12,8 @@ pub use sde::*;
 use crate::{
     error_model::AssayErrorModels,
     simulator::{Fa, Lag},
-    ChannelId, Covariates, Event, Infusion, Observation, Occasion, PharmsolError, Subject,
+    Covariates, Event, Infusion, InputLabel, Observation, Occasion, OutputLabel, PharmsolError,
+    Subject,
 };
 
 use super::likelihood::Prediction;
@@ -145,7 +146,7 @@ pub(crate) trait EquationPriv: EquationTypes {
 
     fn resolve_input_label(
         &self,
-        label: &ChannelId,
+        label: &InputLabel,
         expected_kind: RouteKind,
     ) -> Result<usize, PharmsolError> {
         if let Some(metadata) = self.metadata() {
@@ -165,7 +166,7 @@ pub(crate) trait EquationPriv: EquationTypes {
                 )));
             }
 
-            return Ok(route.channel_index());
+            return Ok(route.input_index());
         }
 
         label
@@ -175,7 +176,7 @@ pub(crate) trait EquationPriv: EquationTypes {
             })
     }
 
-    fn resolve_output_label(&self, label: &ChannelId) -> Result<usize, PharmsolError> {
+    fn resolve_output_label(&self, label: &OutputLabel) -> Result<usize, PharmsolError> {
         if let Some(metadata) = self.metadata() {
             return metadata.output_index(label.as_str()).ok_or_else(|| {
                 PharmsolError::UnknownOutputLabel {

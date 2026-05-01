@@ -180,17 +180,18 @@ impl Data {
                         let old_events = occasion.process_events(None, true);
 
                         // Create a set of existing (time, outeq) pairs for fast lookup
-                        let existing_obs: std::collections::HashSet<(u64, ChannelId)> = old_events
-                            .iter()
-                            .filter_map(|event| match event {
-                                Event::Observation(obs) => {
-                                    // Convert to microseconds for consistent comparison
-                                    let time_key = (obs.time() * 1e6).round() as u64;
-                                    Some((time_key, obs.outeq().clone()))
-                                }
-                                _ => None,
-                            })
-                            .collect();
+                        let existing_obs: std::collections::HashSet<(u64, OutputLabel)> =
+                            old_events
+                                .iter()
+                                .filter_map(|event| match event {
+                                    Event::Observation(obs) => {
+                                        // Convert to microseconds for consistent comparison
+                                        let time_key = (obs.time() * 1e6).round() as u64;
+                                        Some((time_key, obs.outeq().clone()))
+                                    }
+                                    _ => None,
+                                })
+                                .collect();
 
                         // Generate new observation times
                         let mut new_events = Vec::new();
@@ -273,10 +274,10 @@ impl Data {
         self.subjects.is_empty()
     }
 
-    /// Get a vector of all unique output equations (outeq) across all subjects
-    pub fn get_output_equations(&self) -> Vec<ChannelId> {
+    /// Get a vector of all unique output labels (outeq) across all subjects
+    pub fn get_output_equations(&self) -> Vec<OutputLabel> {
         // Collect all unique outeq values in order of occurrence
-        let mut outeq_values: Vec<ChannelId> = self
+        let mut outeq_values: Vec<OutputLabel> = self
             .subjects
             .iter()
             .flat_map(|subject| subject.get_output_equations())
@@ -396,9 +397,9 @@ impl Subject {
         self.occasions.iter_mut()
     }
 
-    pub fn get_output_equations(&self) -> Vec<ChannelId> {
+    pub fn get_output_equations(&self) -> Vec<OutputLabel> {
         // Collect all unique outeq values in order of occurrence
-        let outeq_values: Vec<ChannelId> = self
+        let outeq_values: Vec<OutputLabel> = self
             .occasions
             .iter()
             .flat_map(|occasion| {

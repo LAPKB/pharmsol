@@ -48,7 +48,7 @@ fn main() {
     let trbdf2 = two_cpt(OdeSolver::Sdirk(SdirkTableau::TrBdf2));
     let esdirk34 = two_cpt(OdeSolver::Sdirk(SdirkTableau::Esdirk34));
 
-    // Both declarations resolve to the same shared input channel, so subject
+    // Both declarations resolve to the same shared input, so subject
     // authoring still uses one numeric index for the loading bolus and the
     // maintenance infusion.
     let load = bdf.route_index("load").expect("load route exists");
@@ -57,7 +57,7 @@ fn main() {
 
     assert_eq!(
         load, iv,
-        "mixed IV declarations should share one numeric channel"
+        "mixed IV declarations should share one numeric input"
     );
 
     let subject = Subject::builder("id1")

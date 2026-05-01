@@ -18,8 +18,8 @@ fn subject_for_route(input: impl ToString, outeq: impl ToString) -> Subject {
         .build()
 }
 
-fn subject_for_shared_channel() -> Subject {
-    Subject::builder("macro-shared-channel")
+fn subject_for_shared_input() -> Subject {
+    Subject::builder("macro-shared-input")
         .bolus(0.0, 100.0, "oral")
         .infusion(6.0, 60.0, "iv", 2.0)
         .missing_observation(0.5, "cp")
@@ -197,9 +197,9 @@ fn numeric_label_handwritten_ode() -> equation::ODE {
     .expect("handwritten numeric-label metadata should validate")
 }
 
-fn shared_channel_macro_ode() -> equation::ODE {
+fn shared_input_macro_ode() -> equation::ODE {
     ode! {
-        name: "shared_channel_one_cpt",
+        name: "shared_input_one_cpt",
         params: [ka, ke, v, tlag, f_oral],
         states: [depot, central],
         outputs: [cp],
@@ -223,7 +223,7 @@ fn shared_channel_macro_ode() -> equation::ODE {
     }
 }
 
-fn shared_channel_handwritten_ode() -> equation::ODE {
+fn shared_input_handwritten_ode() -> equation::ODE {
     equation::ODE::new(
         |x, p, _t, dx, bolus, rateiv, _cov| {
             fetch_params!(p, ka, ke, _v, _tlag, _f_oral);
@@ -248,7 +248,7 @@ fn shared_channel_handwritten_ode() -> equation::ODE {
     .with_ndrugs(1)
     .with_nout(1)
     .with_metadata(
-        equation::metadata::new("shared_channel_one_cpt")
+        equation::metadata::new("shared_input_one_cpt")
             .parameters(["ka", "ke", "v", "tlag", "f_oral"])
             .states(["depot", "central"])
             .outputs(["cp"])
@@ -263,7 +263,7 @@ fn shared_channel_handwritten_ode() -> equation::ODE {
                     .expect_explicit_input(),
             ]),
     )
-    .expect("handwritten shared-channel metadata should validate")
+    .expect("handwritten shared-input metadata should validate")
 }
 
 fn numeric_route_property_macro_ode() -> equation::ODE {
@@ -526,10 +526,10 @@ fn macro_numeric_labels_lower_to_dense_slots() {
 }
 
 #[test]
-fn macro_shared_channel_lowering_matches_handwritten_metadata_and_predictions() {
-    let macro_ode = shared_channel_macro_ode();
-    let handwritten_ode = shared_channel_handwritten_ode();
-    let subject = subject_for_shared_channel();
+fn macro_shared_input_lowering_matches_handwritten_metadata_and_predictions() {
+    let macro_ode = shared_input_macro_ode();
+    let handwritten_ode = shared_input_handwritten_ode();
+    let subject = subject_for_shared_input();
     let support_point = [1.0, 0.2, 10.0, 0.25, 0.8];
 
     assert_eq!(macro_ode.metadata(), handwritten_ode.metadata());
@@ -541,12 +541,12 @@ fn macro_shared_channel_lowering_matches_handwritten_metadata_and_predictions() 
 
     let macro_predictions = macro_ode
         .estimate_predictions(&subject, &support_point)
-        .expect("macro shared-channel model should simulate")
+        .expect("macro shared-input model should simulate")
         .flat_predictions()
         .to_vec();
     let handwritten_predictions = handwritten_ode
         .estimate_predictions(&subject, &support_point)
-        .expect("handwritten shared-channel model should simulate")
+        .expect("handwritten shared-input model should simulate")
         .flat_predictions()
         .to_vec();
 

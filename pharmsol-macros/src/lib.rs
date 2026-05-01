@@ -1105,7 +1105,7 @@ fn route_input_names(routes: &[OdeRouteDecl]) -> Vec<String> {
     routes.iter().map(|route| route.input.name()).collect()
 }
 
-fn ode_route_channel_bindings(routes: &[OdeRouteDecl]) -> Vec<(SymbolicIndex, usize)> {
+fn ode_route_input_bindings(routes: &[OdeRouteDecl]) -> Vec<(SymbolicIndex, usize)> {
     let mut next_bolus_index = 0usize;
     let mut next_infusion_index = 0usize;
 
@@ -2024,14 +2024,14 @@ fn expand_injected_ode_route_terms(
     let terms = routes
         .iter()
         .zip(route_bindings.iter())
-        .map(|(route, (_, channel_index))| {
+        .map(|(route, (_, input_index))| {
             let destination = route_destination_index(route, states);
             match route.kind {
                 OdeRouteKind::Bolus => quote! {
-                    #dx[#destination] += #bolus[#channel_index];
+                    #dx[#destination] += #bolus[#input_index];
                 },
                 OdeRouteKind::Infusion => quote! {
-                    #dx[#destination] += #rateiv[#channel_index];
+                    #dx[#destination] += #rateiv[#input_index];
                 },
             }
         });
@@ -2048,19 +2048,18 @@ fn expand_injected_sde_rate_terms(
     dx: &Ident,
     rateiv: &Ident,
 ) -> TokenStream2 {
-    let terms =
-        routes
-            .iter()
-            .zip(route_bindings.iter())
-            .filter_map(|(route, (_, channel_index))| match route.kind {
-                OdeRouteKind::Bolus => None,
-                OdeRouteKind::Infusion => {
-                    let destination = route_destination_index(route, states);
-                    Some(quote! {
-                        #dx[#destination] += #rateiv[#channel_index];
-                    })
-                }
-            });
+    let terms = routes
+        .iter()
+        .zip(route_bindings.iter())
+        .filter_map(|(route, (_, input_index))| match route.kind {
+            OdeRouteKind::Bolus => None,
+            OdeRouteKind::Infusion => {
+                let destination = route_destination_index(route, states);
+                Some(quote! {
+                    #dx[#destination] += #rateiv[#input_index];
+                })
+            }
+        });
 
     quote! {
         #(#terms)*
@@ -2074,10 +2073,10 @@ fn expand_injected_sde_bolus_mappings(
 ) -> TokenStream2 {
     let mut destinations = vec![quote! { None }; dense_index_len(route_bindings)];
 
-    for (route, (_, channel_index)) in routes.iter().zip(route_bindings.iter()) {
+    for (route, (_, input_index)) in routes.iter().zip(route_bindings.iter()) {
         if let OdeRouteKind::Bolus = route.kind {
             let destination = route_destination_index(route, states);
-            destinations[*channel_index] = quote! { Some(#destination) };
+            destinations[*input_index] = quote! { Some(#destination) };
         }
     }
 
@@ -2829,7 +2828,7 @@ fn expand_sde_out(
 pub fn ode(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as OdeInput);
 
-    let route_bindings = ode_route_channel_bindings(&input.routes);
+    let route_bindings = ode_route_input_bindings(&input.routes);
 
     let lag_routes = match input.lag.as_ref() {
         Some(closure) => match extract_route_property_routes(
@@ -2986,7 +2985,7 @@ pub fn ode(input: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn analytical(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as AnalyticalInput);
-    let route_bindings = ode_route_channel_bindings(&input.routes);
+    let route_bindings = ode_route_input_bindings(&input.routes);
 
     let kernel_spec = match resolve_analytical_structure(&input.structure) {
         Ok(spec) => spec,
@@ -3150,7 +3149,7 @@ pub fn analytical(input: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn sde(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as SdeInput);
-    let route_bindings = ode_route_channel_bindings(&input.routes);
+    let route_bindings = ode_route_input_bindings(&input.routes);
 
     let lag_routes = match input.lag.as_ref() {
         Some(closure) => match extract_route_property_routes(
@@ -3364,13 +3363,13 @@ mod tests {
     }
 
     #[test]
-    fn ode_route_bindings_share_channels_by_kind_local_ordinal() {
+    fn ode_route_bindings_share_inputs_by_kind_local_ordinal() {
         let input = syn::parse_str::<OdeInput>(
             "name: \"demo\", params: [ka, ke, v], states: [depot, central], outputs: [cp], routes: { bolus(oral) -> depot, infusion(iv) -> central, bolus(sc) -> depot }, diffeq: |x, p, t, dx, b, rateiv, cov| {}, out: |x, p, t, cov, y| {}",
         )
         .expect("declaration-first ode input should parse");
 
-        let bindings = ode_route_channel_bindings(&input.routes);
+        let bindings = ode_route_input_bindings(&input.routes);
 
         assert_eq!(dense_index_len(&bindings), 2);
         assert_eq!(bindings[0].0.name(), "oral");

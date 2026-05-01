@@ -26,7 +26,7 @@ fn macro_model() -> equation::ODE {
 
 fn handwritten_model() -> equation::ODE {
     equation::ODE::new(
-        // Handwritten closures stay on dense internal channels.
+        // Handwritten closures stay on dense internal slots.
         // Public labels like `iv` and `cp` live in attached metadata, not in
         // the low-level `rateiv[]` / `y[]` buffers.
         |x, p, _t, dx, _bolus, rateiv, _cov| {

@@ -11,13 +11,13 @@ type C = <M as MatrixCommon>::C;
 type T = <M as MatrixCommon>::T;
 
 #[derive(Debug, Clone)]
-struct InfusionChannel {
+struct InfusionTrack {
     input: usize,
     event_times: Vec<f64>,
     cumulative_rates: Vec<f64>,
 }
 
-impl InfusionChannel {
+impl InfusionTrack {
     fn new(input: usize, mut events: Vec<(f64, f64)>) -> Self {
         events.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal));
 
@@ -63,15 +63,13 @@ impl InfusionChannel {
 
 #[derive(Debug, Clone, Default)]
 struct InfusionSchedule {
-    channels: Vec<InfusionChannel>,
+    tracks: Vec<InfusionTrack>,
 }
 
 impl InfusionSchedule {
     fn new(ndrugs: usize, infusions: &[&Infusion]) -> Result<Self, PharmsolError> {
         if ndrugs == 0 || infusions.is_empty() {
-            return Ok(Self {
-                channels: Vec::new(),
-            });
+            return Ok(Self { tracks: Vec::new() });
         }
 
         let mut per_input: Vec<Vec<(f64, f64)>> = vec![Vec::new(); ndrugs];
@@ -94,27 +92,27 @@ impl InfusionSchedule {
             per_input[input].push((infusion.time() + infusion.duration(), -rate));
         }
 
-        let channels = per_input
+        let tracks = per_input
             .into_iter()
             .enumerate()
             .filter_map(|(input, events)| {
                 if events.is_empty() {
                     None
                 } else {
-                    Some(InfusionChannel::new(input, events))
+                    Some(InfusionTrack::new(input, events))
                 }
             })
             .collect();
 
-        Ok(Self { channels })
+        Ok(Self { tracks })
     }
 
     fn fill_rate_vector(&self, time: f64, rateiv: &mut V) {
         rateiv.fill(0.0);
-        for channel in &self.channels {
-            let rate = channel.rate_at(time);
+        for track in &self.tracks {
+            let rate = track.rate_at(time);
             if rate != 0.0 {
-                rateiv[channel.input] = rate;
+                rateiv[track.input] = rate;
             }
         }
     }

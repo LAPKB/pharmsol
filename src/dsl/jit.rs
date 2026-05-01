@@ -1331,7 +1331,7 @@ mod tests {
     }
 
     #[test]
-    fn authoring_runtime_shares_channel_between_bolus_and_infusion_routes() {
+    fn authoring_runtime_shares_input_between_bolus_and_infusion_routes() {
         let source = r#"
 name = shared_authoring
 kind = ode

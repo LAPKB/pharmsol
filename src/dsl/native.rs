@@ -20,7 +20,7 @@ pub use super::model_info::{
     NativeCovariateInfo, NativeModelInfo, NativeOutputInfo, NativeRouteInfo,
 };
 use crate::{
-    data::{ChannelId, Covariates, Infusion},
+    data::{Covariates, Infusion, InputLabel, OutputLabel},
     simulator::{
         equation::{
             ode::{closure_helpers::PMProblem, ExplicitRkTableau, OdeSolver, SdirkTableau},
@@ -392,14 +392,14 @@ impl SharedNativeModel {
         }
 
         Err(PharmsolError::OtherError(format!(
-            "model `{}` does not declare a {:?} route for input channel {}",
+            "model `{}` does not declare a {:?} route for input {}",
             self.info.name, kind, input
         )))
     }
 
     fn resolve_input_label(
         &self,
-        label: &ChannelId,
+        label: &InputLabel,
         kind: RouteKind,
     ) -> Result<usize, PharmsolError> {
         if let Some(input) = self.route_index(label.as_str()) {
@@ -416,7 +416,7 @@ impl SharedNativeModel {
         Ok(input)
     }
 
-    fn resolve_output_label(&self, label: &ChannelId) -> Result<usize, PharmsolError> {
+    fn resolve_output_label(&self, label: &OutputLabel) -> Result<usize, PharmsolError> {
         if let Some(outeq) = self.output_index(label.as_str()) {
             return Ok(outeq);
         }
@@ -682,7 +682,7 @@ impl SharedNativeModel {
             .bolus_destination(input)
             .ok_or_else(|| {
                 PharmsolError::OtherError(format!(
-                    "model `{}` does not declare a bolus route for input channel {}",
+                    "model `{}` does not declare a bolus route for input index {}",
                     self.info.name, input
                 ))
             })?;

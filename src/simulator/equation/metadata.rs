@@ -80,7 +80,7 @@ pub struct ValidatedModelMetadata {
     covariates: Vec<Covariate>,
     states: Vec<State>,
     routes: Vec<ValidatedRoute>,
-    route_channel_count: usize,
+    route_input_count: usize,
     outputs: Vec<Output>,
     particles: Option<usize>,
     analytical: Option<AnalyticalKernel>,
@@ -111,8 +111,8 @@ impl ValidatedModelMetadata {
         &self.routes
     }
 
-    pub fn route_channel_count(&self) -> usize {
-        self.route_channel_count
+    pub fn route_input_count(&self) -> usize {
+        self.route_input_count
     }
 
     pub fn outputs(&self) -> &[Output] {
@@ -144,7 +144,7 @@ impl ValidatedModelMetadata {
     }
 
     pub fn route_index(&self, name: &str) -> Option<usize> {
-        self.route(name).map(ValidatedRoute::channel_index)
+        self.route(name).map(ValidatedRoute::input_index)
     }
 
     pub fn route_declaration_index(&self, name: &str) -> Option<usize> {
@@ -185,7 +185,7 @@ pub struct ValidatedRoute {
     name: String,
     kind: RouteKind,
     declaration_index: usize,
-    channel_index: usize,
+    input_index: usize,
     destination: String,
     destination_index: usize,
     has_lag: bool,
@@ -206,8 +206,8 @@ impl ValidatedRoute {
         self.declaration_index
     }
 
-    pub fn channel_index(&self) -> usize {
-        self.channel_index
+    pub fn input_index(&self) -> usize {
+        self.input_index
     }
 
     pub fn destination(&self) -> &str {
@@ -416,7 +416,7 @@ impl ModelMetadata {
         let particles = resolve_particles(kind, self.particles, fallback_particles)?;
         validate_kind_specific_fields(kind, self.analytical, particles)?;
 
-        let (routes, route_channel_count) = validate_routes(self.routes, &self.states)?;
+        let (routes, route_input_count) = validate_routes(self.routes, &self.states)?;
 
         Ok(ValidatedModelMetadata {
             name: self.name,
@@ -425,7 +425,7 @@ impl ModelMetadata {
             covariates: self.covariates,
             states: self.states,
             routes,
-            route_channel_count,
+            route_input_count,
             outputs: self.outputs,
             particles,
             analytical: self.analytical,
@@ -730,20 +730,20 @@ fn validate_routes(
     routes: Vec<Route>,
     states: &[State],
 ) -> Result<(Vec<ValidatedRoute>, usize), ModelMetadataError> {
-    let mut bolus_channels = 0;
-    let mut infusion_channels = 0;
+    let mut bolus_inputs = 0;
+    let mut infusion_inputs = 0;
     let mut validated_routes = Vec::with_capacity(routes.len());
 
     for (declaration_index, route) in routes.into_iter().enumerate() {
-        let channel_index = match route.kind {
+        let input_index = match route.kind {
             RouteKind::Bolus => {
-                let index = bolus_channels;
-                bolus_channels += 1;
+                let index = bolus_inputs;
+                bolus_inputs += 1;
                 index
             }
             RouteKind::Infusion => {
-                let index = infusion_channels;
-                infusion_channels += 1;
+                let index = infusion_inputs;
+                infusion_inputs += 1;
                 index
             }
         };
@@ -751,18 +751,18 @@ fn validate_routes(
         validated_routes.push(validate_route(
             route,
             declaration_index,
-            channel_index,
+            input_index,
             states,
         )?);
     }
 
-    Ok((validated_routes, bolus_channels.max(infusion_channels)))
+    Ok((validated_routes, bolus_inputs.max(infusion_inputs)))
 }
 
 fn validate_route(
     route: Route,
     declaration_index: usize,
-    channel_index: usize,
+    input_index: usize,
     states: &[State],
 ) -> Result<ValidatedRoute, ModelMetadataError> {
     if route.kind == RouteKind::Infusion && route.has_lag {
@@ -796,7 +796,7 @@ fn validate_route(
         name: route.name,
         kind: route.kind,
         declaration_index,
-        channel_index,
+        input_index,
         destination,
         destination_index,
         has_lag: route.has_lag,
@@ -902,7 +902,7 @@ mod tests {
         assert_eq!(metadata.state_index("central"), Some(0));
         assert_eq!(metadata.route_index("iv"), Some(0));
         assert_eq!(metadata.route_declaration_index("iv"), Some(0));
-        assert_eq!(metadata.route_channel_count(), 1);
+        assert_eq!(metadata.route_input_count(), 1);
         assert_eq!(metadata.output_index("cp"), Some(0));
         assert_eq!(
             metadata.route("iv").expect("route exists").destination(),
@@ -915,10 +915,7 @@ mod tests {
                 .declaration_index(),
             0
         );
-        assert_eq!(
-            metadata.route("iv").expect("route exists").channel_index(),
-            0
-        );
+        assert_eq!(metadata.route("iv").expect("route exists").input_index(), 0);
         assert_eq!(
             metadata
                 .route("iv")
@@ -988,8 +985,8 @@ mod tests {
     }
 
     #[test]
-    fn shared_channel_routes_preserve_declaration_and_channel_identity() {
-        let metadata = new("shared_channel")
+    fn shared_input_routes_preserve_declaration_and_input_identity() {
+        let metadata = new("shared_input")
             .kind(ModelKind::Ode)
             .parameters(["ke"])
             .states(["gut", "central"])
@@ -999,19 +996,16 @@ mod tests {
                 Route::infusion("iv").to_state("central"),
             ])
             .validate()
-            .expect("shared-channel metadata should validate");
+            .expect("shared-input metadata should validate");
 
         assert_eq!(metadata.routes().len(), 2);
-        assert_eq!(metadata.route_channel_count(), 1);
+        assert_eq!(metadata.route_input_count(), 1);
         assert_eq!(metadata.route_index("oral"), Some(0));
         assert_eq!(metadata.route_index("iv"), Some(0));
         assert_eq!(metadata.route_declaration_index("oral"), Some(0));
         assert_eq!(metadata.route_declaration_index("iv"), Some(1));
-        assert_eq!(
-            metadata.route("oral").expect("oral route").channel_index(),
-            0
-        );
-        assert_eq!(metadata.route("iv").expect("iv route").channel_index(), 0);
+        assert_eq!(metadata.route("oral").expect("oral route").input_index(), 0);
+        assert_eq!(metadata.route("iv").expect("iv route").input_index(), 0);
         assert_eq!(
             metadata
                 .route("oral")

@@ -94,76 +94,85 @@ pub enum Event {
     Observation(Observation),
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub struct ChannelId(String);
+macro_rules! impl_label_type {
+    ($name:ident) => {
+        #[derive(
+            Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+        )]
+        pub struct $name(String);
 
-impl ChannelId {
-    pub fn new(label: impl ToString) -> Self {
-        Self(label.to_string())
-    }
+        impl $name {
+            pub fn new(label: impl ToString) -> Self {
+                Self(label.to_string())
+            }
 
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
+            pub fn as_str(&self) -> &str {
+                &self.0
+            }
 
-    pub fn index(&self) -> Option<usize> {
-        self.0.parse::<usize>().ok()
-    }
+            pub fn index(&self) -> Option<usize> {
+                self.0.parse::<usize>().ok()
+            }
+        }
+
+        impl From<String> for $name {
+            fn from(value: String) -> Self {
+                Self(value)
+            }
+        }
+
+        impl From<&str> for $name {
+            fn from(value: &str) -> Self {
+                Self(value.to_string())
+            }
+        }
+
+        impl From<usize> for $name {
+            fn from(value: usize) -> Self {
+                Self(value.to_string())
+            }
+        }
+
+        impl AsRef<str> for $name {
+            fn as_ref(&self) -> &str {
+                self.as_str()
+            }
+        }
+
+        impl fmt::Display for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str(self.as_str())
+            }
+        }
+
+        impl PartialEq<usize> for $name {
+            fn eq(&self, other: &usize) -> bool {
+                self.index() == Some(*other)
+            }
+        }
+
+        impl PartialEq<$name> for usize {
+            fn eq(&self, other: &$name) -> bool {
+                other == self
+            }
+        }
+
+        impl PartialEq<usize> for &$name {
+            fn eq(&self, other: &usize) -> bool {
+                (**self).eq(other)
+            }
+        }
+
+        impl PartialEq<&$name> for usize {
+            fn eq(&self, other: &&$name) -> bool {
+                other.eq(self)
+            }
+        }
+    };
 }
 
-impl From<String> for ChannelId {
-    fn from(value: String) -> Self {
-        Self(value)
-    }
-}
-
-impl From<&str> for ChannelId {
-    fn from(value: &str) -> Self {
-        Self(value.to_string())
-    }
-}
-
-impl From<usize> for ChannelId {
-    fn from(value: usize) -> Self {
-        Self(value.to_string())
-    }
-}
-
-impl AsRef<str> for ChannelId {
-    fn as_ref(&self) -> &str {
-        self.as_str()
-    }
-}
-
-impl fmt::Display for ChannelId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl PartialEq<usize> for ChannelId {
-    fn eq(&self, other: &usize) -> bool {
-        self.index() == Some(*other)
-    }
-}
-
-impl PartialEq<ChannelId> for usize {
-    fn eq(&self, other: &ChannelId) -> bool {
-        other == self
-    }
-}
-
-impl PartialEq<usize> for &ChannelId {
-    fn eq(&self, other: &usize) -> bool {
-        (**self).eq(other)
-    }
-}
-
-impl PartialEq<&ChannelId> for usize {
-    fn eq(&self, other: &&ChannelId) -> bool {
-        other.eq(self)
-    }
-}
+impl_label_type!(InputLabel);
+impl_label_type!(OutputLabel);
 
 impl Event {
     /// Get the time of the event
@@ -224,7 +233,7 @@ impl Event {
 pub struct Bolus {
     time: f64,
     amount: f64,
-    input: ChannelId,
+    input: InputLabel,
     occasion: usize,
 }
 impl Bolus {
@@ -234,12 +243,12 @@ impl Bolus {
     ///
     /// * `time` - Time of the bolus dose
     /// * `amount` - Amount of drug administered
-    /// * `input` - The compartment number receiving the dose
+    /// * `input` - The route label receiving the dose
     pub fn new(time: f64, amount: f64, input: impl ToString, occasion: usize) -> Self {
         Bolus {
             time,
             amount,
-            input: ChannelId::new(input),
+            input: InputLabel::new(input),
             occasion,
         }
     }
@@ -249,8 +258,8 @@ impl Bolus {
         self.amount
     }
 
-    /// Get the compartment number that receives the bolus
-    pub fn input(&self) -> &ChannelId {
+    /// Get the route label that receives the bolus
+    pub fn input(&self) -> &InputLabel {
         &self.input
     }
 
@@ -268,9 +277,9 @@ impl Bolus {
         self.amount = amount;
     }
 
-    /// Set the compartment number that receives the bolus
+    /// Set the route label that receives the bolus
     pub fn set_input(&mut self, input: impl ToString) {
-        self.input = ChannelId::new(input);
+        self.input = InputLabel::new(input);
     }
 
     /// Set the time of the bolus administration
@@ -283,8 +292,8 @@ impl Bolus {
         &mut self.amount
     }
 
-    /// Get a mutable reference to the compartment number (1-indexed) that receives the bolus
-    pub fn mut_input(&mut self) -> &mut ChannelId {
+    /// Get a mutable reference to the route label that receives the bolus
+    pub fn mut_input(&mut self) -> &mut InputLabel {
         &mut self.input
     }
 
@@ -311,7 +320,7 @@ impl Bolus {
 pub struct Infusion {
     time: f64,
     amount: f64,
-    input: ChannelId,
+    input: InputLabel,
     duration: f64,
     occasion: usize,
 }
@@ -322,7 +331,7 @@ impl Infusion {
     ///
     /// * `time` - Start time of the infusion
     /// * `amount` - Total amount of drug to be administered
-    /// * `input` - The compartment number receiving the dose
+    /// * `input` - The route label receiving the dose
     /// * `duration` - Duration of the infusion in time units
     pub fn new(
         time: f64,
@@ -334,7 +343,7 @@ impl Infusion {
         Infusion {
             time,
             amount,
-            input: ChannelId::new(input),
+            input: InputLabel::new(input),
             duration,
             occasion,
         }
@@ -345,8 +354,8 @@ impl Infusion {
         self.amount
     }
 
-    /// Get the compartment number that receives the infusion
-    pub fn input(&self) -> &ChannelId {
+    /// Get the route label that receives the infusion
+    pub fn input(&self) -> &InputLabel {
         &self.input
     }
 
@@ -371,9 +380,9 @@ impl Infusion {
         self.amount = amount;
     }
 
-    /// Set the compartment number that receives the infusion
+    /// Set the route label that receives the infusion
     pub fn set_input(&mut self, input: impl ToString) {
-        self.input = ChannelId::new(input);
+        self.input = InputLabel::new(input);
     }
 
     /// Set the time of the infusion administration
@@ -391,8 +400,8 @@ impl Infusion {
         &mut self.amount
     }
 
-    /// Get a mutable reference to the compartment number (1-indexed) that receives the infusion
-    pub fn mut_input(&mut self) -> &mut ChannelId {
+    /// Get a mutable reference to the route label that receives the infusion
+    pub fn mut_input(&mut self) -> &mut InputLabel {
         &mut self.input
     }
 
@@ -434,7 +443,7 @@ pub enum Censor {
 pub struct Observation {
     time: f64,
     value: Option<f64>,
-    outeq: ChannelId,
+    outeq: OutputLabel,
     errorpoly: Option<ErrorPoly>,
     occasion: usize,
     censoring: Censor,
@@ -446,7 +455,7 @@ impl Observation {
     ///
     /// * `time` - Time of the observation
     /// * `value` - Observed value (e.g., drug concentration)
-    /// * `outeq` - Output equation number corresponding to this observation
+    /// * `outeq` - Output label corresponding to this observation
     /// * `errorpoly` - Optional error polynomial coefficients (c0, c1, c2, c3)
     /// * `occasion` - Occasion index
     /// * `censoring` - Censoring type for this observation
@@ -461,7 +470,7 @@ impl Observation {
         Observation {
             time,
             value,
-            outeq: ChannelId::new(outeq),
+            outeq: OutputLabel::new(outeq),
             errorpoly,
             occasion,
             censoring,
@@ -478,8 +487,8 @@ impl Observation {
         self.value
     }
 
-    /// Get the output equation number corresponding to this observation
-    pub fn outeq(&self) -> &ChannelId {
+    /// Get the output label corresponding to this observation
+    pub fn outeq(&self) -> &OutputLabel {
         &self.outeq
     }
 
@@ -504,9 +513,9 @@ impl Observation {
         self.value = value;
     }
 
-    /// Set the output equation number corresponding to this observation
+    /// Set the output label corresponding to this observation
     pub fn set_outeq(&mut self, outeq: impl ToString) {
-        self.outeq = ChannelId::new(outeq);
+        self.outeq = OutputLabel::new(outeq);
     }
 
     /// Set the [ErrorPoly] for this observation
@@ -524,8 +533,8 @@ impl Observation {
         &mut self.value
     }
 
-    /// Get a mutable reference to the output equation number
-    pub fn mut_outeq(&mut self) -> &mut ChannelId {
+    /// Get a mutable reference to the output label
+    pub fn mut_outeq(&mut self) -> &mut OutputLabel {
         &mut self.outeq
     }
 

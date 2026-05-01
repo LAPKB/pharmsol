@@ -19,7 +19,7 @@ fn oral_subject(input: impl ToString, outeq: impl ToString) -> Subject {
         .build()
 }
 
-fn shared_channel_subject() -> Subject {
+fn shared_input_subject() -> Subject {
     Subject::builder("analytical-macro-shared")
         .bolus(0.0, 100.0, "oral")
         .infusion(6.0, 60.0, "iv", 2.0)
@@ -160,7 +160,7 @@ fn handwritten_one_compartment_with_absorption() -> equation::Analytical {
     .expect("handwritten absorption metadata should validate")
 }
 
-fn macro_shared_channel_analytical() -> equation::Analytical {
+fn macro_shared_input_analytical() -> equation::Analytical {
     analytical! {
         name: "one_cmt_abs_shared",
         params: [ka, ke, v, tlag, f_oral],
@@ -183,7 +183,7 @@ fn macro_shared_channel_analytical() -> equation::Analytical {
     }
 }
 
-fn handwritten_shared_channel_analytical() -> equation::Analytical {
+fn handwritten_shared_input_analytical() -> equation::Analytical {
     equation::Analytical::new(
         equation::one_compartment_with_absorption,
         |_p, _t, _cov| {},
@@ -219,7 +219,7 @@ fn handwritten_shared_channel_analytical() -> equation::Analytical {
             ])
             .analytical_kernel(equation::AnalyticalKernel::OneCompartmentWithAbsorption),
     )
-    .expect("handwritten shared-channel analytical metadata should validate")
+    .expect("handwritten shared-input analytical metadata should validate")
 }
 
 fn macro_covariate_analytical() -> equation::Analytical {
@@ -438,10 +438,10 @@ fn analytical_macro_supports_extra_parameters_and_named_route_bindings() {
 }
 
 #[test]
-fn analytical_macro_shared_channel_lowering_matches_handwritten_metadata_and_predictions() {
-    let macro_model = macro_shared_channel_analytical();
-    let handwritten_model = handwritten_shared_channel_analytical();
-    let subject = shared_channel_subject();
+fn analytical_macro_shared_input_lowering_matches_handwritten_metadata_and_predictions() {
+    let macro_model = macro_shared_input_analytical();
+    let handwritten_model = handwritten_shared_input_analytical();
+    let subject = shared_input_subject();
     let support_point = [1.1, 0.2, 10.0, 0.25, 0.8];
 
     assert_eq!(macro_model.metadata(), handwritten_model.metadata());
@@ -453,12 +453,12 @@ fn analytical_macro_shared_channel_lowering_matches_handwritten_metadata_and_pre
 
     let macro_predictions = macro_model
         .estimate_predictions(&subject, &support_point)
-        .expect("macro shared-channel analytical model should simulate")
+        .expect("macro shared-input analytical model should simulate")
         .flat_predictions()
         .to_vec();
     let handwritten_predictions = handwritten_model
         .estimate_predictions(&subject, &support_point)
-        .expect("handwritten shared-channel analytical model should simulate")
+        .expect("handwritten shared-input analytical model should simulate")
         .flat_predictions()
         .to_vec();
 

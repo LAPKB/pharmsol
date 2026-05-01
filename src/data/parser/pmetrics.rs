@@ -95,14 +95,14 @@ struct Row {
     #[serde(deserialize_with = "deserialize_option_f64")]
     ii: Option<f64>,
     /// Input compartment
-    #[serde(deserialize_with = "deserialize_option_channel_id")]
-    input: Option<ChannelId>,
+    #[serde(deserialize_with = "deserialize_option_route_label")]
+    input: Option<InputLabel>,
     /// Observed value
     #[serde(deserialize_with = "deserialize_option_f64")]
     out: Option<f64>,
     /// Corresponding output equation for the observation
-    #[serde(deserialize_with = "deserialize_option_channel_id")]
-    outeq: Option<ChannelId>,
+    #[serde(deserialize_with = "deserialize_option_output_label")]
+    outeq: Option<OutputLabel>,
     /// Censoring output
     #[serde(default, deserialize_with = "deserialize_option_censor")]
     cens: Option<Censor>,
@@ -196,11 +196,18 @@ where
     }
 }
 
-fn deserialize_option_channel_id<'de, D>(deserializer: D) -> Result<Option<ChannelId>, D::Error>
+fn deserialize_option_route_label<'de, D>(deserializer: D) -> Result<Option<InputLabel>, D::Error>
 where
     D: Deserializer<'de>,
 {
-    deserialize_option::<String, D>(deserializer).map(|value| value.map(ChannelId::from))
+    deserialize_option::<String, D>(deserializer).map(|value| value.map(InputLabel::from))
+}
+
+fn deserialize_option_output_label<'de, D>(deserializer: D) -> Result<Option<OutputLabel>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_option::<String, D>(deserializer).map(|value| value.map(OutputLabel::from))
 }
 
 fn deserialize_option_isize<'de, D>(deserializer: D) -> Result<Option<isize>, D::Error>
@@ -498,7 +505,7 @@ mod tests {
     }
 
     #[test]
-    fn read_pmetrics_preserves_named_channel_labels() {
+    fn read_pmetrics_preserves_named_route_and_output_labels() {
         let file = NamedTempFile::new().unwrap();
         std::fs::write(
             file.path(),

@@ -20,7 +20,7 @@ fn oral_subject(input: impl ToString, outeq: impl ToString) -> Subject {
         .build()
 }
 
-fn shared_channel_subject() -> Subject {
+fn shared_input_subject() -> Subject {
     Subject::builder("sde-macro-shared")
         .bolus(0.0, 100.0, "oral")
         .infusion(6.0, 60.0, "iv", 2.0)
@@ -211,7 +211,7 @@ fn handwritten_absorption_sde() -> equation::SDE {
     .expect("handwritten absorption SDE metadata should validate")
 }
 
-fn macro_shared_channel_sde() -> equation::SDE {
+fn macro_shared_input_sde() -> equation::SDE {
     sde! {
         name: "one_cmt_shared_sde",
         params: [ka, ke, sigma_ke, v, tlag, f_oral],
@@ -246,7 +246,7 @@ fn macro_shared_channel_sde() -> equation::SDE {
     }
 }
 
-fn handwritten_shared_channel_sde() -> equation::SDE {
+fn handwritten_shared_input_sde() -> equation::SDE {
     equation::SDE::new(
         |x, p, _t, dx, rateiv, _cov| {
             fetch_params!(p, ka, ke, _sigma_ke, _v, _tlag, _f_oral);
@@ -296,7 +296,7 @@ fn handwritten_shared_channel_sde() -> equation::SDE {
             ])
             .particles(8),
     )
-    .expect("handwritten shared-channel SDE metadata should validate")
+    .expect("handwritten shared-input SDE metadata should validate")
 }
 
 fn macro_covariate_sde() -> equation::SDE {
@@ -538,10 +538,10 @@ fn sde_macro_supports_lag_fa_init_and_named_sigma_bindings() {
 }
 
 #[test]
-fn sde_macro_shared_channel_lowering_matches_handwritten_metadata_and_predictions() {
-    let macro_model = macro_shared_channel_sde();
-    let handwritten_model = handwritten_shared_channel_sde();
-    let subject = shared_channel_subject();
+fn sde_macro_shared_input_lowering_matches_handwritten_metadata_and_predictions() {
+    let macro_model = macro_shared_input_sde();
+    let handwritten_model = handwritten_shared_input_sde();
+    let subject = shared_input_subject();
     let support_point = [1.1, 0.2, 0.0, 10.0, 0.25, 0.8];
 
     assert_eq!(macro_model.metadata(), handwritten_model.metadata());
@@ -553,10 +553,10 @@ fn sde_macro_shared_channel_lowering_matches_handwritten_metadata_and_prediction
 
     let macro_predictions = macro_model
         .estimate_predictions(&subject, &support_point)
-        .expect("macro shared-channel SDE should simulate");
+        .expect("macro shared-input SDE should simulate");
     let handwritten_predictions = handwritten_model
         .estimate_predictions(&subject, &support_point)
-        .expect("handwritten shared-channel SDE should simulate");
+        .expect("handwritten shared-input SDE should simulate");
 
     assert_prediction_match(
         &prediction_means(&macro_predictions),

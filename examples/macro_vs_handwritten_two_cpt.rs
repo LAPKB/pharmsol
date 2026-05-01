@@ -1,5 +1,5 @@
 //! Compares a declaration-first macro ODE with the equivalent handwritten ODE
-//! on a two-compartment IV problem that shares one numeric input channel across
+//! on a two-compartment IV problem that shares one numeric input across
 //! a loading bolus and a maintenance infusion.
 //!
 //! This keeps the macro story as the default surface while showing the
@@ -9,7 +9,7 @@ use pharmsol::prelude::*;
 
 fn macro_model() -> equation::ODE {
     ode! {
-        name: "two_cpt_shared_channel_parity",
+        name: "two_cpt_shared_input_parity",
         params: [ke, kcp, kpc, v],
         states: [central, peripheral],
         outputs: [cp],
@@ -29,7 +29,7 @@ fn macro_model() -> equation::ODE {
 
 fn handwritten_model() -> equation::ODE {
     equation::ODE::new(
-        // Handwritten closures stay on dense internal channels.
+        // Handwritten closures stay on dense internal slots.
         // Public route labels like `load` and `iv` are metadata names; the
         // low-level `bolus[]`, `rateiv[]`, and `y[]` buffers remain indexed by
         // dense internal slots.
@@ -50,7 +50,7 @@ fn handwritten_model() -> equation::ODE {
     .with_ndrugs(1)
     .with_nout(1)
     .with_metadata(
-        equation::metadata::new("two_cpt_shared_channel_parity")
+        equation::metadata::new("two_cpt_shared_input_parity")
             .parameters(["ke", "kcp", "kpc", "v"])
             .states(["central", "peripheral"])
             .outputs(["cp"])
@@ -83,10 +83,7 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
     let iv = macro_ode.route_index("iv").expect("iv route exists");
     let cp = macro_ode.output_index("cp").expect("cp output exists");
 
-    assert_eq!(
-        load, iv,
-        "load and iv should share one numeric input channel"
-    );
+    assert_eq!(load, iv, "load and iv should share one numeric input");
     assert_eq!(handwritten_ode.route_index("load"), Some(load));
     assert_eq!(handwritten_ode.route_index("iv"), Some(iv));
     assert_eq!(handwritten_ode.output_index("cp"), Some(cp));
