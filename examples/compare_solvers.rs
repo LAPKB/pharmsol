@@ -53,7 +53,7 @@ fn main() {
     // maintenance infusion.
 
     let subject = Subject::builder("id1")
-        .bolus(0.0, 100.0, "iv")
+        .bolus(0.0, 100.0, "load")
         .infusion(12.0, 200.0, "iv", 2.0)
         .missing_observation(0.5, "cp")
         .missing_observation(1.0, "cp")
