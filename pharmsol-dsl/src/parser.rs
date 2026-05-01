@@ -563,7 +563,7 @@ impl Parser {
     }
 
     fn parse_route_decl(&mut self) -> Result<RouteDecl, ParseError> {
-        let input = self.parse_ident()?;
+        let input = self.parse_label_name("route label")?;
         let arrow = self.expect_simple(|kind| matches!(kind, TokenKind::Arrow), "`->`")?;
         self.ensure_not_layout_boundary(
             arrow.span,
@@ -902,9 +902,13 @@ impl Parser {
     }
 
     fn parse_output_target_name(&mut self) -> Result<Ident, ParseError> {
+        self.parse_label_name("output label")
+    }
+
+    fn parse_label_name(&mut self, expected: &str) -> Result<Ident, ParseError> {
         let token = self
             .bump()
-            .ok_or_else(|| ParseError::new("expected output label", Span::empty(self.src_len)))?;
+            .ok_or_else(|| ParseError::new(format!("expected {expected}"), Span::empty(self.src_len)))?;
         match token.kind {
             TokenKind::Ident(name) => Ok(Ident::new(name, token.span)),
             TokenKind::Number(value)
@@ -917,7 +921,7 @@ impl Parser {
             }
             other => Err(ParseError::new(
                 format!(
-                    "expected output label identifier or non-negative integer, found {}",
+                    "expected {expected} identifier or non-negative integer, found {}",
                     other.describe()
                 ),
                 token.span,

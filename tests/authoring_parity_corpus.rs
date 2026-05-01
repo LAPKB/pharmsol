@@ -53,6 +53,59 @@ dx(central) = ka * depot - (cl / v) * central
 out(cp) = central / (v * (wt / 70.0)) ~ continuous()
 "#;
 
+const ODE_MULTI_DIGIT_OUTPUT_ORDER_DSL: &str = r#"
+name = multi_digit_output_order
+kind = ode
+
+params = ke, v
+states = central
+outputs = 2, 10, 11
+
+infusion(iv) -> central
+
+dx(central) = -ke * central
+
+out(10) = central / v ~ continuous()
+out(2) = central / v ~ continuous()
+out(11) = central / v ~ continuous()
+"#;
+
+const ODE_NUMERIC_ROUTE_LABELS_AUTHORING_DSL: &str = r#"
+name = authoring_numeric_routes
+kind = ode
+
+states = first, second
+outputs = cp
+
+bolus(10) -> first
+bolus(11) -> second
+
+dx(first) = 0
+dx(second) = 0
+
+out(cp) = first + second ~ continuous()
+"#;
+
+const ODE_NUMERIC_ROUTE_LABELS_STRUCTURED_DSL: &str = r#"model structured_numeric_routes {
+    kind ode
+    states {
+        first,
+        second,
+    }
+    routes {
+        10 -> first
+        11 -> second
+    }
+    dynamics {
+        ddt(first) = 0
+        ddt(second) = 0
+    }
+    outputs {
+        cp = first + second
+    }
+}
+"#;
+
 const ODE_INVALID_INFUSION_LAG_DSL: &str = r#"
 name = invalid_infusion_lag_parity
 kind = ode
@@ -105,6 +158,58 @@ dx(central) = -ke * central
 out(cp) = central / v ~ continuous()
 out(0) = 2 * central / v ~ continuous()
 out(1) = 3 * central / v ~ continuous()
+"#;
+
+#[cfg(feature = "dsl-jit")]
+const ODE_RUNTIME_UNDECLARED_NUMERIC_OUTPUT_LABEL_DSL: &str = r#"
+name = undeclared_numeric_output_runtime
+kind = ode
+
+params = ke, v
+states = central
+outputs = a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10
+
+infusion(iv) -> central
+
+dx(central) = -ke * central
+
+out(a0) = central / v ~ continuous()
+out(a1) = central / v ~ continuous()
+out(a2) = central / v ~ continuous()
+out(a3) = central / v ~ continuous()
+out(a4) = central / v ~ continuous()
+out(a5) = central / v ~ continuous()
+out(a6) = central / v ~ continuous()
+out(a7) = central / v ~ continuous()
+out(a8) = central / v ~ continuous()
+out(a9) = central / v ~ continuous()
+out(a10) = central / v ~ continuous()
+"#;
+
+#[cfg(feature = "dsl-jit")]
+const ODE_RUNTIME_UNDECLARED_NUMERIC_INPUT_LABEL_DSL: &str = r#"
+name = undeclared_numeric_input_runtime
+kind = ode
+
+params = ke, v
+states = central
+outputs = cp
+
+bolus(r0) -> central
+bolus(r1) -> central
+bolus(r2) -> central
+bolus(r3) -> central
+bolus(r4) -> central
+bolus(r5) -> central
+bolus(r6) -> central
+bolus(r7) -> central
+bolus(r8) -> central
+bolus(r9) -> central
+bolus(r10) -> central
+
+dx(central) = -ke * central
+
+out(cp) = central / v ~ continuous()
 "#;
 
 const ANALYTICAL_DSL: &str = r#"
@@ -1057,6 +1162,93 @@ fn ode_dsl_and_handwritten_metadata_agree_on_public_shape() {
 }
 
 #[test]
+fn ode_dsl_declared_output_order_controls_dense_indices_for_multi_digit_labels() {
+    let dsl_view = dsl_metadata_view(ODE_MULTI_DIGIT_OUTPUT_ORDER_DSL);
+
+    assert_eq!(
+        dsl_view.outputs,
+        vec![
+            NamedIndex {
+                name: "2".to_string(),
+                index: 0,
+            },
+            NamedIndex {
+                name: "10".to_string(),
+                index: 1,
+            },
+            NamedIndex {
+                name: "11".to_string(),
+                index: 2,
+            },
+        ]
+    );
+}
+
+#[test]
+fn ode_authoring_dsl_supports_multi_digit_numeric_route_labels() {
+    let dsl_view = dsl_metadata_view(ODE_NUMERIC_ROUTE_LABELS_AUTHORING_DSL);
+
+    assert_eq!(dsl_view.route_input_count, 2);
+    assert_eq!(
+        dsl_view.routes,
+        vec![
+            RouteParity {
+                name: "10".to_string(),
+                kind: Some(RouteKindParity::Bolus),
+                declaration_index: 0,
+                input_index: 0,
+                destination_name: "first".to_string(),
+                destination_index: 0,
+                has_lag: false,
+                has_bioavailability: false,
+            },
+            RouteParity {
+                name: "11".to_string(),
+                kind: Some(RouteKindParity::Bolus),
+                declaration_index: 1,
+                input_index: 1,
+                destination_name: "second".to_string(),
+                destination_index: 1,
+                has_lag: false,
+                has_bioavailability: false,
+            },
+        ]
+    );
+}
+
+#[test]
+fn ode_structured_dsl_supports_multi_digit_numeric_route_labels() {
+    let dsl_view = dsl_metadata_view(ODE_NUMERIC_ROUTE_LABELS_STRUCTURED_DSL);
+
+    assert_eq!(dsl_view.route_input_count, 2);
+    assert_eq!(
+        dsl_view.routes,
+        vec![
+            RouteParity {
+                name: "10".to_string(),
+                kind: None,
+                declaration_index: 0,
+                input_index: 0,
+                destination_name: "first".to_string(),
+                destination_index: 0,
+                has_lag: false,
+                has_bioavailability: false,
+            },
+            RouteParity {
+                name: "11".to_string(),
+                kind: None,
+                declaration_index: 1,
+                input_index: 1,
+                destination_name: "second".to_string(),
+                destination_index: 1,
+                has_lag: false,
+                has_bioavailability: false,
+            },
+        ]
+    );
+}
+
+#[test]
 fn ode_macro_dsl_and_handwritten_metadata_agree_on_macro_authorable_shape() {
     let handwritten = handwritten_ode_macro_model();
     let macro_model = macro_ode_model();
@@ -1417,4 +1609,50 @@ fn ode_runtime_jit_preserves_mixed_output_labels() {
     assert_eq!(predictions.len(), 3);
     assert_relative_eq!(predictions[1], 2.0 * predictions[0], epsilon = 1e-6);
     assert_relative_eq!(predictions[2], 3.0 * predictions[0], epsilon = 1e-6);
+}
+
+#[cfg(feature = "dsl-jit")]
+#[test]
+fn ode_runtime_jit_rejects_undeclared_numeric_output_labels_even_when_dense_index_exists() {
+    let runtime_model = compile_runtime_jit_model(
+        ODE_RUNTIME_UNDECLARED_NUMERIC_OUTPUT_LABEL_DSL,
+        "undeclared_numeric_output_runtime",
+    );
+    let subject = Subject::builder("runtime-undeclared-numeric-output")
+        .infusion(0.0, 100.0, "iv", 1.0)
+        .missing_observation(0.5, "10")
+        .build();
+    let support_point = [0.2, 10.0];
+
+    let error = runtime_model
+        .estimate_predictions(&subject, &support_point)
+        .expect_err("undeclared numeric output label should fail");
+
+    assert!(matches!(
+        error,
+        dsl::RuntimeError::Runtime(PharmsolError::UnknownOutputLabel { label }) if label == "10"
+    ));
+}
+
+#[cfg(feature = "dsl-jit")]
+#[test]
+fn ode_runtime_jit_rejects_undeclared_numeric_input_labels_even_when_dense_index_exists() {
+    let runtime_model = compile_runtime_jit_model(
+        ODE_RUNTIME_UNDECLARED_NUMERIC_INPUT_LABEL_DSL,
+        "undeclared_numeric_input_runtime",
+    );
+    let subject = Subject::builder("runtime-undeclared-numeric-input")
+        .bolus(0.0, 100.0, "10")
+        .missing_observation(0.5, "cp")
+        .build();
+    let support_point = [0.2, 10.0];
+
+    let error = runtime_model
+        .estimate_predictions(&subject, &support_point)
+        .expect_err("undeclared numeric input label should fail");
+
+    assert!(matches!(
+        error,
+        dsl::RuntimeError::Runtime(PharmsolError::UnknownInputLabel { label }) if label == "10"
+    ));
 }

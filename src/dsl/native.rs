@@ -402,13 +402,8 @@ impl SharedNativeModel {
         label: &InputLabel,
         kind: RouteKind,
     ) -> Result<usize, PharmsolError> {
-        if let Some(input) = self.route_index(label.as_str()) {
-            self.validate_input_for_kind(input, kind)?;
-            return Ok(input);
-        }
-
-        let input = label
-            .index()
+        let input = self
+            .route_index(label.as_str())
             .ok_or_else(|| PharmsolError::UnknownInputLabel {
                 label: label.to_string(),
             })?;
@@ -417,17 +412,11 @@ impl SharedNativeModel {
     }
 
     fn resolve_output_label(&self, label: &OutputLabel) -> Result<usize, PharmsolError> {
-        if let Some(outeq) = self.output_index(label.as_str()) {
-            return Ok(outeq);
-        }
-
-        let outeq = label
-            .index()
-            .ok_or_else(|| PharmsolError::UnknownOutputLabel {
+        self.output_index(label.as_str()).ok_or_else(|| {
+            PharmsolError::UnknownOutputLabel {
                 label: label.to_string(),
-            })?;
-        self.validate_output(outeq)?;
-        Ok(outeq)
+            }
+        })
     }
 
     fn resolve_events(&self, occasion: &Occasion) -> Result<Vec<Event>, PharmsolError> {

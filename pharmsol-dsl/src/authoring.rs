@@ -20,6 +20,7 @@ struct AuthoringParser<'a> {
     states: Vec<StateDecl>,
     declared_derived: BTreeSet<String>,
     declared_outputs: BTreeSet<String>,
+    explicit_output_order: Vec<String>,
     explicit_outputs: BTreeMap<String, Span>,
     assigned_outputs: BTreeMap<String, Span>,
     declared_outputs_span: Option<Span>,
@@ -77,6 +78,7 @@ impl<'a> AuthoringParser<'a> {
             states: Vec::new(),
             declared_derived: BTreeSet::new(),
             declared_outputs: BTreeSet::new(),
+            explicit_output_order: Vec::new(),
             explicit_outputs: BTreeMap::new(),
             assigned_outputs: BTreeMap::new(),
             declared_outputs_span: None,
@@ -173,6 +175,20 @@ impl<'a> AuthoringParser<'a> {
                 "analytical authoring models cannot declare `dx(...)` equations",
                 self.derivative_statements[0].span,
             ));
+        }
+
+        if !self.explicit_output_order.is_empty() {
+            let output_order = self
+                .explicit_output_order
+                .iter()
+                .enumerate()
+                .map(|(index, name)| (name.clone(), index))
+                .collect::<BTreeMap<_, _>>();
+            self.output_statements.sort_by_key(|statement| {
+                output_statement_name(statement)
+                    .and_then(|name| output_order.get(name).copied())
+                    .unwrap_or(usize::MAX)
+            });
         }
 
         let mut derivative_statements = std::mem::take(&mut self.derivative_statements);
@@ -372,6 +388,7 @@ impl<'a> AuthoringParser<'a> {
         if lhs_trimmed == "outputs" {
             self.declared_outputs_span = Some(span);
             for ident in parse_output_label_list(rhs, rhs_abs)? {
+                self.explicit_output_order.push(ident.text.clone());
                 self.declared_outputs.insert(ident.text.clone());
                 self.explicit_outputs.insert(ident.text, ident.span);
             }
@@ -467,7 +484,7 @@ impl<'a> AuthoringParser<'a> {
             }
         };
 
-        let input = parse_ident_segment(call.argument, call.argument_start)?;
+        let input = parse_label_segment(call.argument, call.argument_start, "route label")?;
         let route_name = input.text.clone();
         let destination = parse_place_at(rhs, line_start + arrow + 2)?;
         if self.routes.contains_key(&route_name) {
@@ -498,7 +515,8 @@ impl<'a> AuthoringParser<'a> {
     ) -> Result<(), ParseError> {
         match call.callee.text.as_str() {
             "lag" | "fa" => {
-                let route_name = parse_ident_segment(call.argument, call.argument_start)?;
+                let route_name =
+                    parse_label_segment(call.argument, call.argument_start, "route label")?;
                 let value = parse_expr_at(rhs, rhs_abs)?;
                 let property_name = match call.callee.text.as_str() {
                     "lag" => "lag",
@@ -928,17 +946,25 @@ fn parse_ident_segment(src: &str, abs_start: usize) -> Result<Ident, ParseError>
 }
 
 fn parse_output_label_segment(src: &str, abs_start: usize) -> Result<Ident, ParseError> {
+    parse_label_segment(src, abs_start, "output label")
+}
+
+fn parse_label_segment(
+    src: &str,
+    abs_start: usize,
+    expected: &str,
+) -> Result<Ident, ParseError> {
     let trimmed = src.trim();
     let leading = src.len() - src.trim_start().len();
     if trimmed.is_empty() {
         return Err(ParseError::new(
-            "expected output label",
+            format!("expected {expected}"),
             Span::new(abs_start, abs_start + src.len()),
         ));
     }
     if !is_valid_output_label(trimmed) {
         return Err(ParseError::new(
-            format!("expected output label, found `{trimmed}`"),
+            format!("expected {expected}, found `{trimmed}`"),
             Span::new(abs_start + leading, abs_start + leading + trimmed.len()),
         ));
     }
@@ -1415,6 +1441,16 @@ fn join_covariate_spans(items: &[CovariateDecl]) -> Span {
         .map(|item| item.span)
         .reduce(Span::join)
         .unwrap_or_else(|| Span::empty(0))
+}
+
+fn output_statement_name(statement: &Stmt) -> Option<&str> {
+    match &statement.kind {
+        StmtKind::Assign(assign) => match &assign.target.kind {
+            AssignTargetKind::Name(name) => Some(name.text.as_str()),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 fn join_state_spans(items: &[StateDecl]) -> Span {

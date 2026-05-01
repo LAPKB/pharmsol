@@ -1360,21 +1360,33 @@ out(cp) = central / v ~ continuous()
         let cp = jit.output_index("cp").expect("cp output");
         assert_eq!(oral, 0);
         assert_eq!(iv, 0);
+        assert_eq!(cp, 0);
 
-        let subject = Subject::builder("ode")
-            .bolus(0.0, 120.0, oral)
-            .infusion(6.0, 60.0, iv, 2.0)
-            .observation(0.5, 0.0, cp)
-            .observation(1.0, 0.0, cp)
-            .observation(2.0, 0.0, cp)
-            .observation(6.0, 0.0, cp)
-            .observation(7.0, 0.0, cp)
-            .observation(9.0, 0.0, cp)
+        let jit_subject = Subject::builder("ode")
+            .bolus(0.0, 120.0, "oral")
+            .infusion(6.0, 60.0, "iv", 2.0)
+            .observation(0.5, 0.0, "cp")
+            .observation(1.0, 0.0, "cp")
+            .observation(2.0, 0.0, "cp")
+            .observation(6.0, 0.0, "cp")
+            .observation(7.0, 0.0, "cp")
+            .observation(9.0, 0.0, "cp")
+            .build();
+
+        let reference_subject = Subject::builder("ode")
+            .bolus(0.0, 120.0, 0)
+            .infusion(6.0, 60.0, 0, 2.0)
+            .observation(0.5, 0.0, 0)
+            .observation(1.0, 0.0, 0)
+            .observation(2.0, 0.0, 0)
+            .observation(6.0, 0.0, 0)
+            .observation(7.0, 0.0, 0)
+            .observation(9.0, 0.0, 0)
             .build();
 
         let support = vec![1.2, 0.15, 40.0];
         let jit_predictions = jit
-            .estimate_predictions(&subject, &support)
+            .estimate_predictions(&jit_subject, &support)
             .expect("jit predictions");
 
         let reference = ODE::new(
@@ -1397,7 +1409,7 @@ out(cp) = central / v ~ continuous()
         .with_solver(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45));
 
         let reference_predictions = reference
-            .estimate_predictions(&subject, &support)
+            .estimate_predictions(&reference_subject, &support)
             .expect("reference ode predictions");
 
         for (jit_pred, reference_pred) in jit_predictions
@@ -1491,22 +1503,35 @@ out(cp) = central / v ~ continuous()
         let cp = jit.output_index("cp").expect("cp output");
         assert_eq!(oral, 0);
         assert_eq!(iv, 1);
+        assert_eq!(cp, 0);
 
-        let subject = Subject::builder("ode")
+        let jit_subject = Subject::builder("ode")
             .covariate("wt", 0.0, 70.0)
-            .bolus(0.0, 120.0, oral)
-            .infusion(6.0, 60.0, iv, 2.0)
-            .missing_observation(0.5, cp)
-            .missing_observation(1.0, cp)
-            .missing_observation(2.0, cp)
-            .missing_observation(6.0, cp)
-            .missing_observation(7.0, cp)
-            .missing_observation(9.0, cp)
+            .bolus(0.0, 120.0, "oral")
+            .infusion(6.0, 60.0, "iv", 2.0)
+            .missing_observation(0.5, "cp")
+            .missing_observation(1.0, "cp")
+            .missing_observation(2.0, "cp")
+            .missing_observation(6.0, "cp")
+            .missing_observation(7.0, "cp")
+            .missing_observation(9.0, "cp")
+            .build();
+
+        let reference_subject = Subject::builder("ode")
+            .covariate("wt", 0.0, 70.0)
+            .bolus(0.0, 120.0, 0)
+            .infusion(6.0, 60.0, 1, 2.0)
+            .missing_observation(0.5, 0)
+            .missing_observation(1.0, 0)
+            .missing_observation(2.0, 0)
+            .missing_observation(6.0, 0)
+            .missing_observation(7.0, 0)
+            .missing_observation(9.0, 0)
             .build();
 
         let support = vec![1.2, 5.0, 40.0, 0.5, 0.8];
         let jit_predictions = jit
-            .estimate_predictions(&subject, &support)
+            .estimate_predictions(&jit_subject, &support)
             .expect("jit predictions");
 
         let reference = ODE::new(
@@ -1551,7 +1576,7 @@ out(cp) = central / v ~ continuous()
         .with_solver(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45));
 
         let reference_predictions = reference
-            .estimate_predictions(&subject, &support)
+            .estimate_predictions(&reference_subject, &support)
             .expect("reference ode predictions");
 
         for (jit_pred, reference_pred) in jit_predictions
@@ -1574,18 +1599,28 @@ out(cp) = central / v ~ continuous()
 
         let oral = jit.route_index("oral").expect("oral route");
         let cp = jit.output_index("cp").expect("cp output");
+        assert_eq!(oral, 0);
+        assert_eq!(cp, 0);
 
-        let subject = Subject::builder("analytical")
-            .bolus(0.0, 100.0, oral)
-            .missing_observation(0.5, cp)
-            .missing_observation(1.0, cp)
-            .missing_observation(2.0, cp)
-            .missing_observation(4.0, cp)
+        let jit_subject = Subject::builder("analytical")
+            .bolus(0.0, 100.0, "oral")
+            .missing_observation(0.5, "cp")
+            .missing_observation(1.0, "cp")
+            .missing_observation(2.0, "cp")
+            .missing_observation(4.0, "cp")
+            .build();
+
+        let reference_subject = Subject::builder("analytical")
+            .bolus(0.0, 100.0, 0)
+            .missing_observation(0.5, 0)
+            .missing_observation(1.0, 0)
+            .missing_observation(2.0, 0)
+            .missing_observation(4.0, 0)
             .build();
 
         let support = vec![1.0, 0.15, 25.0];
         let jit_predictions = jit
-            .estimate_predictions(&subject, &support)
+            .estimate_predictions(&jit_subject, &support)
             .expect("jit analytical predictions");
 
         let reference = equation::Analytical::new(
@@ -1603,7 +1638,7 @@ out(cp) = central / v ~ continuous()
         .with_nout(1);
 
         let reference_predictions = reference
-            .estimate_predictions(&subject, &support)
+            .estimate_predictions(&reference_subject, &support)
             .expect("reference analytical predictions");
 
         for (jit_pred, reference_pred) in jit_predictions
@@ -1628,19 +1663,30 @@ out(cp) = central / v ~ continuous()
 
         let oral = jit.route_index("oral").expect("oral route");
         let cp = jit.output_index("cp").expect("cp output");
+        assert_eq!(oral, 0);
+        assert_eq!(cp, 0);
 
-        let subject = Subject::builder("sde")
+        let jit_subject = Subject::builder("sde")
             .covariate("wt", 0.0, 70.0)
-            .bolus(0.0, 80.0, oral)
-            .missing_observation(0.5, cp)
-            .missing_observation(1.0, cp)
-            .missing_observation(2.0, cp)
-            .missing_observation(4.0, cp)
+            .bolus(0.0, 80.0, "oral")
+            .missing_observation(0.5, "cp")
+            .missing_observation(1.0, "cp")
+            .missing_observation(2.0, "cp")
+            .missing_observation(4.0, "cp")
+            .build();
+
+        let reference_subject = Subject::builder("sde")
+            .covariate("wt", 0.0, 70.0)
+            .bolus(0.0, 80.0, 0)
+            .missing_observation(0.5, 0)
+            .missing_observation(1.0, 0)
+            .missing_observation(2.0, 0)
+            .missing_observation(4.0, 0)
             .build();
 
         let support = vec![1.1, 0.2, 0.12, 0.08, 15.0, 0.0];
         let jit_predictions = jit
-            .estimate_predictions(&subject, &support)
+            .estimate_predictions(&jit_subject, &support)
             .expect("jit sde predictions");
 
         let reference = SDE::new(
@@ -1677,7 +1723,7 @@ out(cp) = central / v ~ continuous()
         .with_nout(1);
 
         let reference_predictions = reference
-            .estimate_predictions(&subject, &support)
+            .estimate_predictions(&reference_subject, &support)
             .expect("reference sde predictions");
 
         for (jit_pred, reference_pred) in jit_predictions

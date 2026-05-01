@@ -208,52 +208,52 @@ impl CorpusCase {
     }
 
     fn runtime_subject(self, model: &CompiledRuntimeModel) -> Result<Subject, Box<dyn Error>> {
-        let cp = model
+        model
             .output_index("cp")
             .ok_or_else(|| io::Error::other(format!("{}: missing cp output", self.label())))?;
 
         let subject = match self {
             Self::Ode => {
-                let oral = model.route_index("oral").ok_or_else(|| {
+                model.route_index("oral").ok_or_else(|| {
                     io::Error::other(format!("{}: missing oral route", self.label()))
                 })?;
-                let iv = model.route_index("iv").ok_or_else(|| {
+                model.route_index("iv").ok_or_else(|| {
                     io::Error::other(format!("{}: missing iv route", self.label()))
                 })?;
                 Subject::builder(self.label())
                     .covariate("wt", 0.0, 70.0)
-                    .bolus(0.0, 120.0, oral)
-                    .infusion(6.0, 60.0, iv, 2.0)
-                    .missing_observation(0.5, cp)
-                    .missing_observation(1.0, cp)
-                    .missing_observation(2.0, cp)
-                    .missing_observation(6.0, cp)
-                    .missing_observation(7.0, cp)
-                    .missing_observation(9.0, cp)
+                    .bolus(0.0, 120.0, "oral")
+                    .infusion(6.0, 60.0, "iv", 2.0)
+                    .missing_observation(0.5, "cp")
+                    .missing_observation(1.0, "cp")
+                    .missing_observation(2.0, "cp")
+                    .missing_observation(6.0, "cp")
+                    .missing_observation(7.0, "cp")
+                    .missing_observation(9.0, "cp")
                     .build()
             }
             Self::OdeFull => {
-                let oral = model.route_index("oral").ok_or_else(|| {
+                model.route_index("oral").ok_or_else(|| {
                     io::Error::other(format!("{}: missing oral route", self.label()))
                 })?;
-                let load = model.route_index("load").ok_or_else(|| {
+                model.route_index("load").ok_or_else(|| {
                     io::Error::other(format!("{}: missing load route", self.label()))
                 })?;
-                let iv = model.route_index("iv").ok_or_else(|| {
+                model.route_index("iv").ok_or_else(|| {
                     io::Error::other(format!("{}: missing iv route", self.label()))
                 })?;
                 Subject::builder(self.label())
-                    .bolus(0.0, 80.0, load)
-                    .bolus(1.0, 120.0, oral)
-                    .infusion(6.0, 150.0, iv, 2.5)
-                    .missing_observation(0.25, cp)
-                    .missing_observation(0.75, cp)
-                    .missing_observation(1.5, cp)
-                    .missing_observation(3.0, cp)
-                    .missing_observation(6.5, cp)
-                    .missing_observation(7.0, cp)
-                    .missing_observation(8.0, cp)
-                    .missing_observation(12.0, cp)
+                    .bolus(0.0, 80.0, "load")
+                    .bolus(1.0, 120.0, "oral")
+                    .infusion(6.0, 150.0, "iv", 2.5)
+                    .missing_observation(0.25, "cp")
+                    .missing_observation(0.75, "cp")
+                    .missing_observation(1.5, "cp")
+                    .missing_observation(3.0, "cp")
+                    .missing_observation(6.5, "cp")
+                    .missing_observation(7.0, "cp")
+                    .missing_observation(8.0, "cp")
+                    .missing_observation(12.0, "cp")
                     .covariate("wt", 0.0, 68.0)
                     .covariate("wt", 8.0, 74.0)
                     .covariate("renal", 0.0, 95.0)
@@ -261,39 +261,39 @@ impl CorpusCase {
                     .build()
             }
             Self::Analytical => {
-                let oral = model.route_index("oral").ok_or_else(|| {
+                model.route_index("oral").ok_or_else(|| {
                     io::Error::other(format!("{}: missing oral route", self.label()))
                 })?;
                 Subject::builder(self.label())
-                    .bolus(0.0, 100.0, oral)
-                    .missing_observation(0.5, cp)
-                    .missing_observation(1.0, cp)
-                    .missing_observation(2.0, cp)
-                    .missing_observation(4.0, cp)
+                    .bolus(0.0, 100.0, "oral")
+                    .missing_observation(0.5, "cp")
+                    .missing_observation(1.0, "cp")
+                    .missing_observation(2.0, "cp")
+                    .missing_observation(4.0, "cp")
                     .build()
             }
             Self::AnalyticalFull => {
-                let oral = model.route_index("oral").ok_or_else(|| {
+                model.route_index("oral").ok_or_else(|| {
                     io::Error::other(format!("{}: missing oral route", self.label()))
                 })?;
-                let load = model.route_index("load").ok_or_else(|| {
+                model.route_index("load").ok_or_else(|| {
                     io::Error::other(format!("{}: missing load route", self.label()))
                 })?;
-                let iv = model.route_index("iv").ok_or_else(|| {
+                model.route_index("iv").ok_or_else(|| {
                     io::Error::other(format!("{}: missing iv route", self.label()))
                 })?;
                 Subject::builder(self.label())
-                    .bolus(0.0, 60.0, load)
-                    .bolus(1.0, 100.0, oral)
-                    .infusion(6.0, 140.0, iv, 2.0)
-                    .missing_observation(0.25, cp)
-                    .missing_observation(0.75, cp)
-                    .missing_observation(1.5, cp)
-                    .missing_observation(3.0, cp)
-                    .missing_observation(6.5, cp)
-                    .missing_observation(7.0, cp)
-                    .missing_observation(8.0, cp)
-                    .missing_observation(12.0, cp)
+                    .bolus(0.0, 60.0, "load")
+                    .bolus(1.0, 100.0, "oral")
+                    .infusion(6.0, 140.0, "iv", 2.0)
+                    .missing_observation(0.25, "cp")
+                    .missing_observation(0.75, "cp")
+                    .missing_observation(1.5, "cp")
+                    .missing_observation(3.0, "cp")
+                    .missing_observation(6.5, "cp")
+                    .missing_observation(7.0, "cp")
+                    .missing_observation(8.0, "cp")
+                    .missing_observation(12.0, "cp")
                     .covariate("wt", 0.0, 68.0)
                     .covariate("wt", 8.0, 74.0)
                     .covariate("renal", 0.0, 95.0)
@@ -301,16 +301,16 @@ impl CorpusCase {
                     .build()
             }
             Self::Sde => {
-                let oral = model.route_index("oral").ok_or_else(|| {
+                model.route_index("oral").ok_or_else(|| {
                     io::Error::other(format!("{}: missing oral route", self.label()))
                 })?;
                 Subject::builder(self.label())
                     .covariate("wt", 0.0, 70.0)
-                    .bolus(0.0, 80.0, oral)
-                    .missing_observation(0.5, cp)
-                    .missing_observation(1.0, cp)
-                    .missing_observation(2.0, cp)
-                    .missing_observation(4.0, cp)
+                    .bolus(0.0, 80.0, "oral")
+                    .missing_observation(0.5, "cp")
+                    .missing_observation(1.0, "cp")
+                    .missing_observation(2.0, "cp")
+                    .missing_observation(4.0, "cp")
                     .build()
             }
         };
