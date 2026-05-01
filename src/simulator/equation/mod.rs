@@ -12,7 +12,8 @@ pub use sde::*;
 use crate::{
     error_model::AssayErrorModels,
     simulator::{Fa, Lag},
-    Covariates, Event, Infusion, Observation, PharmsolError, Subject,
+    Covariates, Event, Infusion, InputLabel, Observation, Occasion, OutputLabel, PharmsolError,
+    Subject,
 };
 
 use super::likelihood::Prediction;
@@ -129,6 +130,7 @@ pub(crate) trait EquationPriv: EquationTypes {
     fn get_nstates(&self) -> usize;
     fn get_ndrugs(&self) -> usize;
     fn get_nouteqs(&self) -> usize;
+    fn metadata(&self) -> Option<&ValidatedModelMetadata>;
     fn solve(
         &self,
         state: &mut Self::S,
@@ -140,6 +142,85 @@ pub(crate) trait EquationPriv: EquationTypes {
     ) -> Result<(), PharmsolError>;
     fn nparticles(&self) -> usize {
         1
+    }
+
+    fn resolve_input_label(
+        &self,
+        label: &InputLabel,
+        expected_kind: RouteKind,
+    ) -> Result<usize, PharmsolError> {
+        if let Some(metadata) = self.metadata() {
+            let route =
+                metadata
+                    .route(label.as_str())
+                    .ok_or_else(|| PharmsolError::UnknownInputLabel {
+                        label: label.to_string(),
+                    })?;
+
+            if route.kind() != expected_kind {
+                return Err(PharmsolError::OtherError(format!(
+                    "input label `{}` is declared as {:?} but used as {:?}",
+                    label,
+                    route.kind(),
+                    expected_kind
+                )));
+            }
+
+            return Ok(route.input_index());
+        }
+
+        label
+            .index()
+            .ok_or_else(|| PharmsolError::UnknownInputLabel {
+                label: label.to_string(),
+            })
+    }
+
+    fn resolve_output_label(&self, label: &OutputLabel) -> Result<usize, PharmsolError> {
+        if let Some(metadata) = self.metadata() {
+            return metadata.output_index(label.as_str()).ok_or_else(|| {
+                PharmsolError::UnknownOutputLabel {
+                    label: label.to_string(),
+                }
+            });
+        }
+
+        label
+            .index()
+            .ok_or_else(|| PharmsolError::UnknownOutputLabel {
+                label: label.to_string(),
+            })
+    }
+
+    fn resolve_occasion_events(
+        &self,
+        occasion: &Occasion,
+        support_point: &[f64],
+        covariates: &Covariates,
+    ) -> Result<Vec<Event>, PharmsolError> {
+        let mut resolved = occasion.clone();
+
+        for event in resolved.events_iter_mut() {
+            match event {
+                Event::Bolus(bolus) => {
+                    let input = self.resolve_input_label(bolus.input(), RouteKind::Bolus)?;
+                    bolus.set_input(input);
+                }
+                Event::Infusion(infusion) => {
+                    let input = self.resolve_input_label(infusion.input(), RouteKind::Infusion)?;
+                    infusion.set_input(input);
+                }
+                Event::Observation(observation) => {
+                    let outeq = self.resolve_output_label(observation.outeq())?;
+                    observation.set_outeq(outeq);
+                }
+            }
+        }
+
+        Ok(resolved.process_events(
+            Some((self.fa(), self.lag(), support_point, covariates)),
+            true,
+        ))
     }
     #[allow(dead_code)]
     fn is_sde(&self) -> bool {
@@ -181,13 +262,20 @@ pub(crate) trait EquationPriv: EquationTypes {
     ) -> Result<(), PharmsolError> {
         match event {
             Event::Bolus(bolus) => {
-                if bolus.input() >= self.get_ndrugs() {
+                let input =
+                    bolus
+                        .input_index()
+                        .ok_or_else(|| PharmsolError::UnknownInputLabel {
+                            label: bolus.input().to_string(),
+                        })?;
+
+                if input >= self.get_ndrugs() {
                     return Err(PharmsolError::InputOutOfRange {
-                        input: bolus.input(),
+                        input,
                         ndrugs: self.get_ndrugs(),
                     });
                 }
-                x.add_bolus(bolus.input(), bolus.amount());
+                x.add_bolus(input, bolus.amount());
             }
             Event::Infusion(infusion) => {
                 infusions.push(infusion.clone());
@@ -332,10 +420,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
 
             let mut x = self.initial_state(support_point, covariates, occasion.index());
             let mut infusions = Vec::new();
-            let events = occasion.process_events(
-                Some((self.fa(), self.lag(), support_point, covariates)),
-                true,
-            );
+            let events = self.resolve_occasion_events(occasion, support_point, covariates)?;
             for (index, event) in events.iter().enumerate() {
                 self.simulate_event(
                     support_point,

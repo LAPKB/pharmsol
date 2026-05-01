@@ -27,24 +27,21 @@ let analytical = analytical! {
     params: [ke, v],
     states: [central],
     outputs: [cp],
-    routes: {
+    routes: [
         infusion(iv) -> central,
-    },
+    ],
     structure: one_compartment,
     out: |x, _p, _t, _cov, y| {
         y[cp] = x[central] / v;
     },
 };
 
-let iv = analytical.route_index("iv").unwrap();
-let cp = analytical.output_index("cp").unwrap();
-
 let subject = Subject::builder("patient_001")
-    .infusion(0.0, 500.0, iv, 0.5)
-    .missing_observation(0.5, cp)
-    .missing_observation(1.0, cp)
-    .missing_observation(2.0, cp)
-    .missing_observation(4.0, cp)
+    .infusion(0.0, 500.0, "iv", 0.5)
+    .missing_observation(0.5, "cp")
+    .missing_observation(1.0, "cp")
+    .missing_observation(2.0, "cp")
+    .missing_observation(4.0, "cp")
     .build();
 
 let predictions = analytical
@@ -64,9 +61,9 @@ let ode = ode! {
     params: [ke, v],
     states: [central],
     outputs: [cp],
-    routes: {
+    routes: [
         infusion(iv) -> central,
-    },
+    ],
     diffeq: |x, _p, _t, dx, _cov| {
         dx[central] = -ke * x[central];
     },
@@ -121,12 +118,12 @@ use pharmsol::prelude::*;
 use pharmsol::nca::NCAOptions;
 
 let subject = Subject::builder("patient_001")
-    .bolus(0.0, 100.0, 0)  // 100 mg oral dose
-    .observation(0.5, 5.0, 0)
-    .observation(1.0, 10.0, 0)
-    .observation(2.0, 8.0, 0)
-    .observation(4.0, 4.0, 0)
-    .observation(8.0, 2.0, 0)
+    .bolus(0.0, 100.0, "oral")  // 100 mg oral dose
+    .observation(0.5, 5.0, "cp")
+    .observation(1.0, 10.0, "cp")
+    .observation(2.0, 8.0, "cp")
+    .observation(4.0, 4.0, "cp")
+    .observation(8.0, 2.0, "cp")
     .build();
 
 let result = subject.nca(&NCAOptions::default()).expect("NCA failed");

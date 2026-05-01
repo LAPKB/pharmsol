@@ -243,7 +243,7 @@ model explicit_route_usage {
     }
 
     #[test]
-    fn authoring_shared_channel_routes_keep_declaration_specific_injection() {
+    fn authoring_shared_input_routes_keep_declaration_specific_injection() {
         let info = load_model_info(
             r#"
 name = shared_authoring

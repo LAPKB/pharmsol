@@ -377,10 +377,109 @@ mod tests {
     use super::*;
     use crate::dsl::compile_sde_model_to_jit;
     use crate::test_fixtures::STRUCTURED_BLOCK_CORPUS;
+    use crate::PharmsolError;
     use crate::SubjectBuilderExt;
     use approx::assert_relative_eq;
     use pharmsol_dsl::{DiagnosticPhase, DSL_BACKEND_GENERIC, DSL_PARSE_GENERIC};
     use tempfile::tempdir;
+
+    const MULTI_DIGIT_OUTPUT_ORDER_RUNTIME_DSL: &str = r#"
+name = multi_digit_output_runtime
+kind = ode
+
+params = ke, v
+states = central
+outputs = 2, 10, 11
+
+infusion(iv) -> central
+
+dx(central) = -ke * central
+
+out(10) = central / v ~ continuous()
+out(2) = central / v ~ continuous()
+out(11) = central / v ~ continuous()
+"#;
+
+    const NUMERIC_ROUTE_LABELS_RUNTIME_DSL: &str = r#"
+name = numeric_route_runtime
+kind = ode
+
+params = ke, v
+states = central
+outputs = cp
+
+bolus(10) -> central
+bolus(11) -> central
+
+dx(central) = -ke * central
+
+out(cp) = central / v ~ continuous()
+"#;
+
+    const SHARED_NUMERIC_ROUTE_OUTPUT_LABEL_RUNTIME_DSL: &str = r#"
+name = shared_numeric_route_output_runtime
+kind = ode
+
+params = ke, v
+states = central
+outputs = 1
+
+infusion(1) -> central
+
+dx(central) = -ke * central
+
+out(1) = central / v ~ continuous()
+"#;
+
+    const UNDECLARED_NUMERIC_OUTPUT_LABEL_RUNTIME_DSL: &str = r#"
+name = undeclared_numeric_output_runtime
+kind = ode
+
+params = ke, v
+states = central
+outputs = a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10
+
+infusion(iv) -> central
+
+dx(central) = -ke * central
+
+out(a0) = central / v ~ continuous()
+out(a1) = central / v ~ continuous()
+out(a2) = central / v ~ continuous()
+out(a3) = central / v ~ continuous()
+out(a4) = central / v ~ continuous()
+out(a5) = central / v ~ continuous()
+out(a6) = central / v ~ continuous()
+out(a7) = central / v ~ continuous()
+out(a8) = central / v ~ continuous()
+out(a9) = central / v ~ continuous()
+out(a10) = central / v ~ continuous()
+"#;
+
+    const UNDECLARED_NUMERIC_INPUT_LABEL_RUNTIME_DSL: &str = r#"
+name = undeclared_numeric_input_runtime
+kind = ode
+
+params = ke, v
+states = central
+outputs = cp
+
+bolus(r0) -> central
+bolus(r1) -> central
+bolus(r2) -> central
+bolus(r3) -> central
+bolus(r4) -> central
+bolus(r5) -> central
+bolus(r6) -> central
+bolus(r7) -> central
+bolus(r8) -> central
+bolus(r9) -> central
+bolus(r10) -> central
+
+dx(central) = -ke * central
+
+out(cp) = central / v ~ continuous()
+"#;
 
     fn corpus_source() -> &'static str {
         STRUCTURED_BLOCK_CORPUS
@@ -397,17 +496,17 @@ mod tests {
         pharmsol_dsl::lower_typed_model(model).expect("lower corpus model")
     }
 
-    fn ode_subject(output: usize, oral: usize, iv: usize) -> Subject {
+    fn ode_subject() -> Subject {
         Subject::builder("ode")
             .covariate("wt", 0.0, 70.0)
-            .bolus(0.0, 120.0, oral)
-            .infusion(6.0, 60.0, iv, 2.0)
-            .missing_observation(0.5, output)
-            .missing_observation(1.0, output)
-            .missing_observation(2.0, output)
-            .missing_observation(6.0, output)
-            .missing_observation(7.0, output)
-            .missing_observation(9.0, output)
+            .bolus(0.0, 120.0, "oral")
+            .infusion(6.0, 60.0, "iv", 2.0)
+            .missing_observation(0.5, "cp")
+            .missing_observation(1.0, "cp")
+            .missing_observation(2.0, "cp")
+            .missing_observation(6.0, "cp")
+            .missing_observation(7.0, "cp")
+            .missing_observation(9.0, "cp")
             .build()
     }
 
@@ -419,6 +518,92 @@ mod tests {
             .iter()
             .map(|prediction| prediction.prediction())
             .collect()
+    }
+
+    fn compile_runtime_backend_matrix(
+        source: &str,
+        model_name: &str,
+        work_dir: &std::path::Path,
+    ) -> (
+        CompiledRuntimeModel,
+        CompiledRuntimeModel,
+        CompiledRuntimeModel,
+    ) {
+        let jit = compile_module_source_to_runtime(
+            source,
+            Some(model_name),
+            RuntimeCompilationTarget::Jit,
+            |_, _| {},
+        )
+        .expect("compile jit runtime model");
+        let aot = compile_module_source_to_runtime(
+            source,
+            Some(model_name),
+            RuntimeCompilationTarget::NativeAot(
+                NativeAotCompileOptions::new(work_dir.join(format!("{model_name}-aot-build")))
+                    .with_output(work_dir.join(format!("{model_name}.pkm"))),
+            ),
+            |_, _| {},
+        )
+        .expect("compile aot runtime model");
+        let wasm = compile_module_source_to_runtime(
+            source,
+            Some(model_name),
+            RuntimeCompilationTarget::Wasm,
+            |_, _| {},
+        )
+        .expect("compile wasm runtime model");
+
+        (jit, aot, wasm)
+    }
+
+    fn numeric_route_subject() -> Subject {
+        Subject::builder("numeric-route-runtime")
+            .bolus(0.0, 120.0, "10")
+            .bolus(1.0, 80.0, "11")
+            .missing_observation(0.5, "cp")
+            .missing_observation(1.5, "cp")
+            .build()
+    }
+
+    fn shared_numeric_route_output_subject() -> Subject {
+        Subject::builder("shared-numeric-route-output-runtime")
+            .infusion(0.0, 120.0, "1", 1.0)
+            .missing_observation(0.5, "1")
+            .missing_observation(1.5, "1")
+            .build()
+    }
+
+    fn assert_unknown_output_label(
+        model: &CompiledRuntimeModel,
+        subject: &Subject,
+        support: &[f64],
+        expected_label: &str,
+    ) {
+        let error = model
+            .estimate_predictions(subject, support)
+            .expect_err("undeclared numeric output label should fail");
+
+        assert!(matches!(
+            error,
+            RuntimeError::Runtime(PharmsolError::UnknownOutputLabel { label }) if label == expected_label
+        ));
+    }
+
+    fn assert_unknown_input_label(
+        model: &CompiledRuntimeModel,
+        subject: &Subject,
+        support: &[f64],
+        expected_label: &str,
+    ) {
+        let error = model
+            .estimate_predictions(subject, support)
+            .expect_err("undeclared numeric input label should fail");
+
+        assert!(matches!(
+            error,
+            RuntimeError::Runtime(PharmsolError::UnknownInputLabel { label }) if label == expected_label
+        ));
     }
 
     #[test]
@@ -460,10 +645,10 @@ mod tests {
             vec!["ka", "cl", "v", "tlag", "f_oral"]
         );
 
-        let oral = jit.route_index("oral").expect("oral route");
-        let iv = jit.route_index("iv").expect("iv route");
-        let cp = jit.output_index("cp").expect("cp output");
-        let subject = ode_subject(cp, oral, iv);
+        assert!(jit.route_index("oral").is_some());
+        assert!(jit.route_index("iv").is_some());
+        assert_eq!(jit.output_index("cp"), Some(0));
+        let subject = ode_subject();
 
         let jit_values = subject_values(
             &jit.estimate_predictions(&subject, &support)
@@ -487,6 +672,150 @@ mod tests {
             assert_relative_eq!(jit_value, aot_value, max_relative = 1e-4);
             assert_relative_eq!(jit_value, wasm_value, max_relative = 1e-4);
         }
+    }
+
+    #[test]
+    fn runtime_backend_matrix_preserves_multi_digit_output_label_order() {
+        let work_dir = tempdir().expect("tempdir");
+        let (jit, aot, wasm) = compile_runtime_backend_matrix(
+            MULTI_DIGIT_OUTPUT_ORDER_RUNTIME_DSL,
+            "multi_digit_output_runtime",
+            work_dir.path(),
+        );
+
+        assert_eq!(jit.output_index("2"), Some(0));
+        assert_eq!(jit.output_index("10"), Some(1));
+        assert_eq!(jit.output_index("11"), Some(2));
+        assert_eq!(aot.output_index("2"), Some(0));
+        assert_eq!(aot.output_index("10"), Some(1));
+        assert_eq!(aot.output_index("11"), Some(2));
+        assert_eq!(wasm.output_index("2"), Some(0));
+        assert_eq!(wasm.output_index("10"), Some(1));
+        assert_eq!(wasm.output_index("11"), Some(2));
+    }
+
+    #[test]
+    fn runtime_backend_matrix_supports_multi_digit_numeric_route_labels() {
+        let work_dir = tempdir().expect("tempdir");
+        let support = vec![0.2, 10.0];
+        let (jit, aot, wasm) = compile_runtime_backend_matrix(
+            NUMERIC_ROUTE_LABELS_RUNTIME_DSL,
+            "numeric_route_runtime",
+            work_dir.path(),
+        );
+
+        assert_eq!(jit.route_index("10"), Some(0));
+        assert_eq!(jit.route_index("11"), Some(1));
+        assert_eq!(aot.route_index("10"), Some(0));
+        assert_eq!(aot.route_index("11"), Some(1));
+        assert_eq!(wasm.route_index("10"), Some(0));
+        assert_eq!(wasm.route_index("11"), Some(1));
+
+        let subject = numeric_route_subject();
+
+        let jit_values = subject_values(
+            &jit.estimate_predictions(&subject, &support)
+                .expect("jit predictions"),
+        );
+        let aot_values = subject_values(
+            &aot.estimate_predictions(&subject, &support)
+                .expect("aot predictions"),
+        );
+        let wasm_values = subject_values(
+            &wasm
+                .estimate_predictions(&subject, &support)
+                .expect("wasm predictions"),
+        );
+
+        for ((jit_value, aot_value), wasm_value) in jit_values
+            .iter()
+            .zip(aot_values.iter())
+            .zip(wasm_values.iter())
+        {
+            assert_relative_eq!(jit_value, aot_value, max_relative = 1e-4);
+            assert_relative_eq!(jit_value, wasm_value, max_relative = 1e-4);
+        }
+    }
+
+    #[test]
+    fn runtime_backend_matrix_supports_shared_numeric_route_and_output_labels() {
+        let work_dir = tempdir().expect("tempdir");
+        let support = vec![0.2, 10.0];
+        let (jit, aot, wasm) = compile_runtime_backend_matrix(
+            SHARED_NUMERIC_ROUTE_OUTPUT_LABEL_RUNTIME_DSL,
+            "shared_numeric_route_output_runtime",
+            work_dir.path(),
+        );
+
+        assert_eq!(jit.route_index("1"), Some(0));
+        assert_eq!(jit.output_index("1"), Some(0));
+        assert_eq!(aot.route_index("1"), Some(0));
+        assert_eq!(aot.output_index("1"), Some(0));
+        assert_eq!(wasm.route_index("1"), Some(0));
+        assert_eq!(wasm.output_index("1"), Some(0));
+
+        let subject = shared_numeric_route_output_subject();
+
+        let jit_values = subject_values(
+            &jit.estimate_predictions(&subject, &support)
+                .expect("jit predictions"),
+        );
+        let aot_values = subject_values(
+            &aot.estimate_predictions(&subject, &support)
+                .expect("aot predictions"),
+        );
+        let wasm_values = subject_values(
+            &wasm
+                .estimate_predictions(&subject, &support)
+                .expect("wasm predictions"),
+        );
+
+        for ((jit_value, aot_value), wasm_value) in jit_values
+            .iter()
+            .zip(aot_values.iter())
+            .zip(wasm_values.iter())
+        {
+            assert_relative_eq!(jit_value, aot_value, max_relative = 1e-4);
+            assert_relative_eq!(jit_value, wasm_value, max_relative = 1e-4);
+        }
+    }
+
+    #[test]
+    fn runtime_backend_matrix_rejects_undeclared_numeric_output_labels() {
+        let work_dir = tempdir().expect("tempdir");
+        let support = vec![0.2, 10.0];
+        let (jit, aot, wasm) = compile_runtime_backend_matrix(
+            UNDECLARED_NUMERIC_OUTPUT_LABEL_RUNTIME_DSL,
+            "undeclared_numeric_output_runtime",
+            work_dir.path(),
+        );
+        let subject = Subject::builder("runtime-undeclared-numeric-output")
+            .infusion(0.0, 100.0, "iv", 1.0)
+            .missing_observation(0.5, "10")
+            .build();
+
+        assert_unknown_output_label(&jit, &subject, &support, "10");
+        assert_unknown_output_label(&aot, &subject, &support, "10");
+        assert_unknown_output_label(&wasm, &subject, &support, "10");
+    }
+
+    #[test]
+    fn runtime_backend_matrix_rejects_undeclared_numeric_input_labels() {
+        let work_dir = tempdir().expect("tempdir");
+        let support = vec![0.2, 10.0];
+        let (jit, aot, wasm) = compile_runtime_backend_matrix(
+            UNDECLARED_NUMERIC_INPUT_LABEL_RUNTIME_DSL,
+            "undeclared_numeric_input_runtime",
+            work_dir.path(),
+        );
+        let subject = Subject::builder("runtime-undeclared-numeric-input")
+            .bolus(0.0, 100.0, "10")
+            .missing_observation(0.5, "cp")
+            .build();
+
+        assert_unknown_input_label(&jit, &subject, &support, "10");
+        assert_unknown_input_label(&aot, &subject, &support, "10");
+        assert_unknown_input_label(&wasm, &subject, &support, "10");
     }
 
     #[test]

@@ -34,9 +34,7 @@ pub enum SdeMetadataError {
     Validation(#[from] ModelMetadataError),
     #[error("SDE declares {declared} state metadata entries but model has {expected} states")]
     StateCountMismatch { expected: usize, declared: usize },
-    #[error(
-        "SDE declares {declared} route metadata entries but model has {expected} input channels"
-    )]
+    #[error("SDE declares {declared} route metadata entries but model has {expected} inputs")]
     RouteCountMismatch { expected: usize, declared: usize },
     #[error("SDE declares {declared} output metadata entries but model has {expected} outputs")]
     OutputCountMismatch { expected: usize, declared: usize },
@@ -124,7 +122,10 @@ fn simulate_sde_event(
         let mut rateiv = V::zeros(ndrugs, NalgebraContext);
         for infusion in &infusion_events {
             if time >= infusion.time() && time <= infusion.duration() + infusion.time() {
-                rateiv[infusion.input()] += infusion.amount() / infusion.duration();
+                let input = infusion
+                    .input_index()
+                    .expect("resolved infusions should use numeric input labels");
+                rateiv[input] += infusion.amount() / infusion.duration();
             }
         }
 
@@ -233,7 +234,7 @@ impl SDE {
         self
     }
 
-    /// Set the number of drug input channels (size of bolus[] and rateiv[]).
+    /// Set the number of drug inputs (size of bolus[] and rateiv[]).
     pub fn with_ndrugs(mut self, ndrugs: usize) -> Self {
         self.neqs.ndrugs = ndrugs;
         self.invalidate_metadata();
@@ -306,7 +307,7 @@ fn validate_metadata_dimensions(
         });
     }
 
-    let declared_routes = metadata.route_channel_count();
+    let declared_routes = metadata.route_input_count();
     if declared_routes != neqs.ndrugs {
         return Err(SdeMetadataError::RouteCountMismatch {
             expected: neqs.ndrugs,
@@ -466,6 +467,11 @@ impl EquationPriv for SDE {
     fn get_nouteqs(&self) -> usize {
         self.neqs.nout
     }
+
+    fn metadata(&self) -> Option<&ValidatedModelMetadata> {
+        self.metadata.as_ref()
+    }
+
     #[inline(always)]
     fn solve(
         &self,
@@ -524,7 +530,10 @@ impl EquationPriv for SDE {
                 covariates,
                 &mut y,
             );
-            *p = observation.to_prediction(y[observation.outeq()], x[i].as_slice().to_vec());
+            let outeq = observation
+                .outeq_index()
+                .expect("resolved observations should use numeric output labels");
+            *p = observation.to_prediction(y[outeq], x[i].as_slice().to_vec());
         });
         let out = Array2::from_shape_vec((self.nparticles, 1), pred.clone())?;
         *output = concatenate(Axis(1), &[output.view(), out.view()]).unwrap();
@@ -588,17 +597,21 @@ impl EquationPriv for SDE {
     ) -> Result<(), PharmsolError> {
         match event {
             crate::Event::Bolus(bolus) => {
-                if bolus.input() >= self.get_ndrugs() {
+                let input =
+                    bolus
+                        .input_index()
+                        .ok_or_else(|| PharmsolError::UnknownInputLabel {
+                            label: bolus.input().to_string(),
+                        })?;
+
+                if input >= self.get_ndrugs() {
                     return Err(PharmsolError::InputOutOfRange {
-                        input: bolus.input(),
+                        input,
                         ndrugs: self.get_ndrugs(),
                     });
                 }
-                if !self
-                    .injected_bolus_mappings
-                    .apply(x, bolus.input(), bolus.amount())
-                {
-                    x.add_bolus(bolus.input(), bolus.amount());
+                if !self.injected_bolus_mappings.apply(x, input, bolus.amount()) {
+                    x.add_bolus(input, bolus.amount());
                 }
             }
             crate::Event::Infusion(infusion) => {
@@ -909,8 +922,8 @@ mod tests {
             .expect("injected metadata should validate");
 
         let subject = Subject::builder("bolus_route")
-            .bolus(0.0, 100.0, 0)
-            .missing_observation(0.1, 0)
+            .bolus(0.0, 100.0, "oral")
+            .missing_observation(0.1, "cp")
             .build();
 
         let explicit_predictions = explicit.estimate_predictions(&subject, &[0.0]).unwrap();
@@ -954,8 +967,8 @@ mod tests {
             .expect("injected metadata should validate");
 
         let subject = Subject::builder("infusion_route")
-            .infusion(0.0, 100.0, 0, 1.0)
-            .missing_observation(1.0, 0)
+            .infusion(0.0, 100.0, "iv", 1.0)
+            .missing_observation(1.0, "cp")
             .build();
 
         let explicit_predictions = explicit.estimate_predictions(&subject, &[0.0]).unwrap();

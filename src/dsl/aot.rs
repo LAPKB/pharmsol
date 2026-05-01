@@ -543,14 +543,14 @@ mod tests {
 
         let subject = crate::Subject::builder("ode")
             .covariate("wt", 0.0, 70.0)
-            .bolus(0.0, 120.0, oral)
-            .infusion(6.0, 60.0, iv, 2.0)
-            .missing_observation(0.5, cp)
-            .missing_observation(1.0, cp)
-            .missing_observation(2.0, cp)
-            .missing_observation(6.0, cp)
-            .missing_observation(7.0, cp)
-            .missing_observation(9.0, cp)
+            .bolus(0.0, 120.0, "oral")
+            .infusion(6.0, 60.0, "iv", 2.0)
+            .missing_observation(0.5, "cp")
+            .missing_observation(1.0, "cp")
+            .missing_observation(2.0, "cp")
+            .missing_observation(6.0, "cp")
+            .missing_observation(7.0, "cp")
+            .missing_observation(9.0, "cp")
             .build();
 
         let support = vec![1.2, 5.0, 40.0, 0.5, 0.8];

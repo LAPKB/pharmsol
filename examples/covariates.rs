@@ -7,9 +7,9 @@ fn main() {
         covariates: [creatinine, age],
         states: [gut, central],
         outputs: [cp],
-        routes: {
+        routes: [
             bolus(oral) -> gut,
-        },
+        ],
         diffeq: |x, _t, dx| {
             let scaled_ke = ke * (creatinine / 75.0).powf(0.75) * (age / 25.0).powf(0.5);
 

@@ -1617,29 +1617,32 @@ impl<'a> Analyzer<'a> {
                     span,
                 )));
         }
-        if let Some(existing) = self.globals.all_names.get(name) {
-            return Err(SemanticAssist::default()
-                .context_label(
-                    self.symbol_span(*existing),
-                    self.symbol_declared_here(*existing),
-                )
-                .help(format!(
-                    "rename this declaration to a unique name such as `{}_2`",
-                    name
-                ))
-                .replacement_suggestion(
-                    span,
-                    format!("{}_2", name),
-                    format!("rename this declaration to `{}_2`", name),
-                    Applicability::MaybeIncorrect,
-                )
-                .apply(SemanticError::new(
-                    format!(
-                        "symbol name `{name}` collides with existing `{}`",
-                        self.symbol_name(*existing)
-                    ),
-                    span,
-                )));
+        if let Some(existing) = self.globals.all_names.get(name).copied() {
+            let existing_kind = self.symbols.get(existing).expect("valid symbol id").kind;
+            if !allows_route_output_name_overlap(existing_kind, kind) {
+                return Err(SemanticAssist::default()
+                    .context_label(
+                        self.symbol_span(existing),
+                        self.symbol_declared_here(existing),
+                    )
+                    .help(format!(
+                        "rename this declaration to a unique name such as `{}_2`",
+                        name
+                    ))
+                    .replacement_suggestion(
+                        span,
+                        format!("{}_2", name),
+                        format!("rename this declaration to `{}_2`", name),
+                        Applicability::MaybeIncorrect,
+                    )
+                    .apply(SemanticError::new(
+                        format!(
+                            "symbol name `{name}` collides with existing `{}`",
+                            self.symbol_name(existing)
+                        ),
+                        span,
+                    )));
+            }
         }
         let id = self.symbols.len();
         self.symbols.push(PendingSymbol {
@@ -1649,7 +1652,7 @@ impl<'a> Analyzer<'a> {
             ty,
             span,
         });
-        self.globals.all_names.insert(name.to_string(), id);
+        self.globals.all_names.entry(name.to_string()).or_insert(id);
         Ok(id)
     }
 
@@ -2130,6 +2133,13 @@ impl<'a> Analyzer<'a> {
         }
         Ok(())
     }
+}
+
+fn allows_route_output_name_overlap(existing: SymbolKind, new: SymbolKind) -> bool {
+    matches!(
+        (existing, new),
+        (SymbolKind::Route, SymbolKind::Output) | (SymbolKind::Output, SymbolKind::Route)
+    )
 }
 
 #[derive(Default)]

@@ -24,10 +24,10 @@ fn two_cpt(solver: OdeSolver) -> equation::ODE {
         params: [ke, kcp, kpc, v],
         states: [central, peripheral],
         outputs: [cp],
-        routes: {
+        routes: [
             bolus(load) -> central,
             infusion(iv) -> central,
-        },
+        ],
         diffeq: |x, _p, _t, dx, _cov| {
             dx[central] = -ke * x[central] - kcp * x[central] + kpc * x[peripheral];
             dx[peripheral] = kcp * x[central] - kpc * x[peripheral];
@@ -48,32 +48,24 @@ fn main() {
     let trbdf2 = two_cpt(OdeSolver::Sdirk(SdirkTableau::TrBdf2));
     let esdirk34 = two_cpt(OdeSolver::Sdirk(SdirkTableau::Esdirk34));
 
-    // Both declarations resolve to the same shared input channel, so subject
+    // Both declarations resolve to the same shared input, so subject
     // authoring still uses one numeric index for the loading bolus and the
     // maintenance infusion.
-    let load = bdf.route_index("load").expect("load route exists");
-    let iv = bdf.route_index("iv").expect("iv route exists");
-    let cp = bdf.output_index("cp").expect("cp output exists");
-
-    assert_eq!(
-        load, iv,
-        "mixed IV declarations should share one numeric channel"
-    );
 
     let subject = Subject::builder("id1")
-        .bolus(0.0, 100.0, iv)
-        .infusion(12.0, 200.0, iv, 2.0)
-        .missing_observation(0.5, cp)
-        .missing_observation(1.0, cp)
-        .missing_observation(2.0, cp)
-        .missing_observation(4.0, cp)
-        .missing_observation(8.0, cp)
-        .missing_observation(12.0, cp)
-        .missing_observation(12.5, cp)
-        .missing_observation(13.0, cp)
-        .missing_observation(14.0, cp)
-        .missing_observation(16.0, cp)
-        .missing_observation(24.0, cp)
+        .bolus(0.0, 100.0, "load")
+        .infusion(12.0, 200.0, "iv", 2.0)
+        .missing_observation(0.5, "cp")
+        .missing_observation(1.0, "cp")
+        .missing_observation(2.0, "cp")
+        .missing_observation(4.0, "cp")
+        .missing_observation(8.0, "cp")
+        .missing_observation(12.0, "cp")
+        .missing_observation(12.5, "cp")
+        .missing_observation(13.0, "cp")
+        .missing_observation(14.0, "cp")
+        .missing_observation(16.0, "cp")
+        .missing_observation(24.0, "cp")
         .build();
 
     let spp = vec![0.1, 0.05, 0.03, 50.0]; // ke, kcp, kpc, V

@@ -12,9 +12,9 @@ fn macro_model() -> equation::ODE {
         params: [ke, v],
         states: [central],
         outputs: [cp],
-        routes: {
+        routes: [
             infusion(iv) -> central,
-        },
+        ],
         diffeq: |x, _p, _t, dx, _cov| {
             dx[central] = -ke * x[central];
         },
@@ -26,6 +26,9 @@ fn macro_model() -> equation::ODE {
 
 fn handwritten_model() -> equation::ODE {
     equation::ODE::new(
+        // Handwritten closures stay on dense internal slots.
+        // Public labels like `iv` and `cp` live in attached metadata, not in
+        // the low-level `rateiv[]` / `y[]` buffers.
         |x, p, _t, dx, _bolus, rateiv, _cov| {
             fetch_params!(p, ke, _v);
             dx[0] = rateiv[0] - ke * x[0];
@@ -75,12 +78,12 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
     assert_eq!(handwritten_ode.output_index("cp"), Some(cp));
 
     let subject = Subject::builder("macro-vs-handwritten-one-cpt")
-        .infusion(0.0, 500.0, iv, 0.5)
-        .missing_observation(0.5, cp)
-        .missing_observation(1.0, cp)
-        .missing_observation(2.0, cp)
-        .missing_observation(4.0, cp)
-        .missing_observation(8.0, cp)
+        .infusion(0.0, 500.0, "iv", 0.5)
+        .missing_observation(0.5, "cp")
+        .missing_observation(1.0, "cp")
+        .missing_observation(2.0, "cp")
+        .missing_observation(4.0, "cp")
+        .missing_observation(8.0, "cp")
         .build();
 
     let params = [1.022, 194.0];

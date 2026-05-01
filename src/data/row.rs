@@ -32,8 +32,8 @@ use thiserror::Error;
 ///
 /// # Fields
 ///
-/// All fields use Pmetrics conventions:
-/// - `input` and `outeq` are **1-indexed** (kept as-is, user must size arrays accordingly)
+/// All fields use the public labeling conventions:
+/// - `input` and `outeq` preserve the route and output labels from the source data
 /// - `evid`: 0=observation, 1=dose, 4=reset/new occasion
 /// - `addl`: positive=forward in time, negative=backward in time
 ///
@@ -78,12 +78,12 @@ pub struct DataRow {
     pub addl: Option<i64>,
     /// Interdose interval for ADDL
     pub ii: Option<f64>,
-    /// Input compartment
-    pub input: Option<usize>,
+    /// Input route label
+    pub input: Option<InputLabel>,
     /// Observed value (for EVID=0)
     pub out: Option<f64>,
-    /// Output equation number
-    pub outeq: Option<usize>,
+    /// Output label
+    pub outeq: Option<OutputLabel>,
     /// Censoring indicator
     pub cens: Option<Censor>,
     /// Error polynomial coefficients
@@ -180,14 +180,17 @@ impl DataRow {
         match self.evid {
             0 => {
                 // Observation event
-                events.push(Event::Observation(Observation::new(
-                    self.time,
-                    self.out,
+                let outeq =
                     self.outeq
+                        .clone()
                         .ok_or_else(|| DataError::MissingObservationOuteq {
                             id: self.id.clone(),
                             time: self.time,
-                        })?, // Keep 1-indexed as provided by Pmetrics
+                        })?;
+                events.push(Event::Observation(Observation::new(
+                    self.time,
+                    self.out,
+                    outeq,
                     self.get_errorpoly(),
                     0, // occasion set later
                     self.cens.unwrap_or(Censor::None),
@@ -196,10 +199,13 @@ impl DataRow {
             1 | 4 => {
                 // Dosing event (1) or reset with dose (4)
 
-                let input = self.input.ok_or_else(|| DataError::MissingBolusInput {
-                    id: self.id.clone(),
-                    time: self.time,
-                })?; // Keep 1-indexed as provided by Pmetrics
+                let input = self
+                    .input
+                    .clone()
+                    .ok_or_else(|| DataError::MissingBolusInput {
+                        id: self.id.clone(),
+                        time: self.time,
+                    })?;
 
                 let event = if self.dur.unwrap_or(0.0) > 0.0 {
                     // Infusion
@@ -367,12 +373,12 @@ impl DataRowBuilder {
         self
     }
 
-    /// Set the input compartment (1-indexed)
+    /// Set the input route label
     ///
     /// Required for EVID=1 (dosing events).
-    /// Kept as 1-indexed; user must size state arrays accordingly.
-    pub fn input(mut self, input: usize) -> Self {
-        self.row.input = Some(input);
+    /// Preserved as the public route label until model resolution.
+    pub fn input(mut self, input: impl ToString) -> Self {
+        self.row.input = Some(InputLabel::new(input));
         self
     }
 
@@ -384,12 +390,12 @@ impl DataRowBuilder {
         self
     }
 
-    /// Set the output equation (1-indexed)
+    /// Set the output label
     ///
     /// Required for EVID=0 (observation events).
-    /// Will be converted to 0-indexed internally.
-    pub fn outeq(mut self, outeq: usize) -> Self {
-        self.row.outeq = Some(outeq);
+    /// Preserved as the public output label until model resolution.
+    pub fn outeq(mut self, outeq: impl ToString) -> Self {
+        self.row.outeq = Some(OutputLabel::new(outeq));
         self
     }
 

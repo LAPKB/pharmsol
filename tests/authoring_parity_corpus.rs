@@ -1,3 +1,4 @@
+use approx::assert_relative_eq;
 #[cfg(feature = "dsl-jit")]
 use pharmsol::dsl::{self, RuntimeCompilationTarget, RuntimePredictions};
 #[cfg(feature = "dsl-jit")]
@@ -52,6 +53,59 @@ dx(central) = ka * depot - (cl / v) * central
 out(cp) = central / (v * (wt / 70.0)) ~ continuous()
 "#;
 
+const ODE_MULTI_DIGIT_OUTPUT_ORDER_DSL: &str = r#"
+name = multi_digit_output_order
+kind = ode
+
+params = ke, v
+states = central
+outputs = 2, 10, 11
+
+infusion(iv) -> central
+
+dx(central) = -ke * central
+
+out(10) = central / v ~ continuous()
+out(2) = central / v ~ continuous()
+out(11) = central / v ~ continuous()
+"#;
+
+const ODE_NUMERIC_ROUTE_LABELS_AUTHORING_DSL: &str = r#"
+name = authoring_numeric_routes
+kind = ode
+
+states = first, second
+outputs = cp
+
+bolus(10) -> first
+bolus(11) -> second
+
+dx(first) = 0
+dx(second) = 0
+
+out(cp) = first + second ~ continuous()
+"#;
+
+const ODE_NUMERIC_ROUTE_LABELS_STRUCTURED_DSL: &str = r#"model structured_numeric_routes {
+    kind ode
+    states {
+        first,
+        second,
+    }
+    routes {
+        10 -> first
+        11 -> second
+    }
+    dynamics {
+        ddt(first) = 0
+        ddt(second) = 0
+    }
+    outputs {
+        cp = first + second
+    }
+}
+"#;
+
 const ODE_INVALID_INFUSION_LAG_DSL: &str = r#"
 name = invalid_infusion_lag_parity
 kind = ode
@@ -69,8 +123,8 @@ out(cp) = central / v ~ continuous()
 "#;
 
 #[cfg(feature = "dsl-jit")]
-const ODE_RUNTIME_SHARED_CHANNEL_DSL: &str = r#"
-name = shared_channel_one_cpt
+const ODE_RUNTIME_SHARED_INPUT_DSL: &str = r#"
+name = shared_input_one_cpt
 kind = ode
 
 params = ka, ke, v, tlag, f_oral
@@ -84,6 +138,76 @@ fa(oral) = f_oral
 
 dx(depot) = -ka * depot
 dx(central) = ka * depot - ke * central
+
+out(cp) = central / v ~ continuous()
+"#;
+
+#[cfg(feature = "dsl-jit")]
+const ODE_RUNTIME_MIXED_OUTPUT_LABELS_DSL: &str = r#"
+name = mixed_output_labels_runtime
+kind = ode
+
+params = ke, v
+states = central
+outputs = cp, 0, 1
+
+infusion(iv) -> central
+
+dx(central) = -ke * central
+
+out(cp) = central / v ~ continuous()
+out(0) = 2 * central / v ~ continuous()
+out(1) = 3 * central / v ~ continuous()
+"#;
+
+#[cfg(feature = "dsl-jit")]
+const ODE_RUNTIME_UNDECLARED_NUMERIC_OUTPUT_LABEL_DSL: &str = r#"
+name = undeclared_numeric_output_runtime
+kind = ode
+
+params = ke, v
+states = central
+outputs = a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10
+
+infusion(iv) -> central
+
+dx(central) = -ke * central
+
+out(a0) = central / v ~ continuous()
+out(a1) = central / v ~ continuous()
+out(a2) = central / v ~ continuous()
+out(a3) = central / v ~ continuous()
+out(a4) = central / v ~ continuous()
+out(a5) = central / v ~ continuous()
+out(a6) = central / v ~ continuous()
+out(a7) = central / v ~ continuous()
+out(a8) = central / v ~ continuous()
+out(a9) = central / v ~ continuous()
+out(a10) = central / v ~ continuous()
+"#;
+
+#[cfg(feature = "dsl-jit")]
+const ODE_RUNTIME_UNDECLARED_NUMERIC_INPUT_LABEL_DSL: &str = r#"
+name = undeclared_numeric_input_runtime
+kind = ode
+
+params = ke, v
+states = central
+outputs = cp
+
+bolus(r0) -> central
+bolus(r1) -> central
+bolus(r2) -> central
+bolus(r3) -> central
+bolus(r4) -> central
+bolus(r5) -> central
+bolus(r6) -> central
+bolus(r7) -> central
+bolus(r8) -> central
+bolus(r9) -> central
+bolus(r10) -> central
+
+dx(central) = -ke * central
 
 out(cp) = central / v ~ continuous()
 "#;
@@ -103,7 +227,7 @@ out(cp) = central / v ~ continuous()
 "#;
 
 #[cfg(feature = "dsl-jit")]
-const ANALYTICAL_RUNTIME_SHARED_CHANNEL_DSL: &str = r#"
+const ANALYTICAL_RUNTIME_SHARED_INPUT_DSL: &str = r#"
 name = one_cmt_abs_shared
 kind = analytical
 
@@ -158,7 +282,7 @@ out(cp) = central / v ~ continuous()
 "#;
 
 #[cfg(feature = "dsl-jit")]
-const SDE_RUNTIME_SHARED_CHANNEL_DSL: &str = r#"
+const SDE_RUNTIME_SHARED_INPUT_DSL: &str = r#"
 name = one_cmt_shared_sde
 kind = sde
 
@@ -186,7 +310,7 @@ struct MetadataParityView {
     parameters: Vec<NamedIndex>,
     covariates: Vec<CovariateParity>,
     states: Vec<NamedIndex>,
-    route_channel_count: usize,
+    route_input_count: usize,
     routes: Vec<RouteParity>,
     outputs: Vec<NamedIndex>,
     analytical_kernel: Option<AnalyticalKernel>,
@@ -211,7 +335,7 @@ struct RouteParity {
     name: String,
     kind: Option<RouteKindParity>,
     declaration_index: usize,
-    channel_index: usize,
+    input_index: usize,
     destination_name: String,
     destination_index: usize,
     has_lag: bool,
@@ -223,7 +347,7 @@ struct RouteParity {
 struct RouteInputPolicyParity {
     name: String,
     declaration_index: usize,
-    channel_index: usize,
+    input_index: usize,
     input_policy: RouteInputPolicy,
 }
 
@@ -267,16 +391,16 @@ fn compile_runtime_jit_model(src: &str, model_name: &str) -> dsl::CompiledRuntim
 }
 
 #[cfg(feature = "dsl-jit")]
-fn shared_channel_prediction_subject(input: usize, output: usize) -> Subject {
-    Subject::builder("authoring-parity-shared-channel")
-        .bolus(0.0, 100.0, input)
-        .infusion(6.0, 60.0, input, 2.0)
-        .missing_observation(0.5, output)
-        .missing_observation(1.0, output)
-        .missing_observation(2.0, output)
-        .missing_observation(6.5, output)
-        .missing_observation(7.0, output)
-        .missing_observation(8.0, output)
+fn shared_input_prediction_subject() -> Subject {
+    Subject::builder("authoring-parity-shared-input")
+        .bolus(0.0, 100.0, "oral")
+        .infusion(6.0, 60.0, "iv", 2.0)
+        .missing_observation(0.5, "cp")
+        .missing_observation(1.0, "cp")
+        .missing_observation(2.0, "cp")
+        .missing_observation(6.5, "cp")
+        .missing_observation(7.0, "cp")
+        .missing_observation(8.0, "cp")
         .build()
 }
 
@@ -328,7 +452,7 @@ fn dsl_metadata_view(src: &str) -> MetadataParityView {
             name: route.name.clone(),
             kind: route.kind.map(RouteKindParity::from_dsl),
             declaration_index: route.declaration_index,
-            channel_index: route.index,
+            input_index: route.index,
             destination_name: route.destination.state_name.clone(),
             destination_index: route.destination.state_offset,
             has_lag: route.has_lag,
@@ -342,7 +466,7 @@ fn dsl_metadata_view(src: &str) -> MetadataParityView {
         parameters,
         covariates,
         states,
-        route_channel_count: model.abi.route_buffer.len,
+        route_input_count: model.abi.route_buffer.len,
         routes,
         outputs,
         analytical_kernel: model.metadata.analytical,
@@ -360,7 +484,7 @@ fn dsl_route_input_policy_view(src: &str) -> Vec<RouteInputPolicyParity> {
         .map(|route| RouteInputPolicyParity {
             name: route.name,
             declaration_index: route.declaration_index,
-            channel_index: route.index,
+            input_index: route.index,
             input_policy: if route.inject_input_to_destination {
                 RouteInputPolicy::InjectToDestination
             } else {
@@ -402,7 +526,7 @@ fn validated_metadata_view(metadata: &ValidatedModelMetadata) -> MetadataParityV
                 index,
             })
             .collect(),
-        route_channel_count: metadata.route_channel_count(),
+        route_input_count: metadata.route_input_count(),
         routes: metadata
             .routes()
             .iter()
@@ -410,7 +534,7 @@ fn validated_metadata_view(metadata: &ValidatedModelMetadata) -> MetadataParityV
                 name: route.name().to_string(),
                 kind: Some(RouteKindParity::from_handwritten(route.kind())),
                 declaration_index: route.declaration_index(),
-                channel_index: route.channel_index(),
+                input_index: route.input_index(),
                 destination_name: route.destination().to_string(),
                 destination_index: route.destination_index(),
                 has_lag: route.has_lag(),
@@ -441,7 +565,7 @@ fn handwritten_route_input_policy_view(
         .map(|route| RouteInputPolicyParity {
             name: route.name().to_string(),
             declaration_index: route.declaration_index(),
-            channel_index: route.channel_index(),
+            input_index: route.input_index(),
             input_policy: route
                 .input_policy()
                 .expect("route input policy should be explicit in this handwritten fixture"),
@@ -456,9 +580,9 @@ fn macro_ode_model() -> equation::ODE {
         covariates: [wt],
         states: [depot, central],
         outputs: [cp],
-        routes: {
+        routes: [
             bolus(oral) -> depot,
-        },
+        ],
         diffeq: |x, _p, _t, dx, _cov| {
             dx[depot] = -ka * x[depot];
             dx[central] = ka * x[depot] - (cl / v) * x[central];
@@ -546,19 +670,19 @@ fn handwritten_ode_model() -> equation::ODE {
 }
 
 #[cfg(feature = "dsl-jit")]
-fn runtime_shared_channel_macro_ode() -> equation::ODE {
+fn runtime_shared_input_macro_ode() -> equation::ODE {
     ode! {
-        name: "shared_channel_one_cpt",
+        name: "shared_input_one_cpt",
         params: [ka, ke, v, tlag, f_oral],
         states: [depot, central],
         outputs: [cp],
-        routes: {
+        routes: [
             bolus(oral) -> depot,
             infusion(iv) -> central,
-        },
-        diffeq: |x, _p, _t, dx, bolus, rateiv, _cov| {
-            dx[depot] = bolus[oral] - ka * x[depot];
-            dx[central] = ka * x[depot] + rateiv[iv] - ke * x[central];
+        ],
+        diffeq: |x, _p, _t, dx, _cov| {
+            dx[depot] = -ka * x[depot];
+            dx[central] = ka * x[depot] - ke * x[central];
         },
         lag: |_p, _t, _cov| {
             lag! { oral => tlag }
@@ -573,7 +697,7 @@ fn runtime_shared_channel_macro_ode() -> equation::ODE {
 }
 
 #[cfg(feature = "dsl-jit")]
-fn runtime_shared_channel_handwritten_ode() -> equation::ODE {
+fn runtime_shared_input_handwritten_ode() -> equation::ODE {
     equation::ODE::new(
         |x, p, _t, dx, bolus, rateiv, _cov| {
             fetch_params!(p, ka, ke, _v, _tlag, _f_oral);
@@ -598,7 +722,7 @@ fn runtime_shared_channel_handwritten_ode() -> equation::ODE {
     .with_ndrugs(1)
     .with_nout(1)
     .with_metadata(
-        equation::metadata::new("shared_channel_one_cpt")
+        equation::metadata::new("shared_input_one_cpt")
             .parameters(["ka", "ke", "v", "tlag", "f_oral"])
             .states(["depot", "central"])
             .outputs(["cp"])
@@ -607,17 +731,17 @@ fn runtime_shared_channel_handwritten_ode() -> equation::ODE {
                     .to_state("depot")
                     .with_lag()
                     .with_bioavailability()
-                    .expect_explicit_input(),
+                    .inject_input_to_destination(),
                 equation::Route::infusion("iv")
                     .to_state("central")
-                    .expect_explicit_input(),
+                    .inject_input_to_destination(),
             ]),
     )
-    .expect("handwritten shared-channel ODE metadata should validate")
+    .expect("handwritten shared-input ODE metadata should validate")
 }
 
 #[cfg(feature = "dsl-jit")]
-fn runtime_mismatched_shared_channel_ode() -> equation::ODE {
+fn runtime_mismatched_shared_input_ode() -> equation::ODE {
     equation::ODE::new(
         |x, p, _t, dx, _bolus, _rateiv, _cov| {
             fetch_params!(p, ka, ke, _v, _tlag, _f_oral);
@@ -642,7 +766,7 @@ fn runtime_mismatched_shared_channel_ode() -> equation::ODE {
     .with_ndrugs(1)
     .with_nout(1)
     .with_metadata(
-        equation::metadata::new("shared_channel_one_cpt_mismatched")
+        equation::metadata::new("shared_input_one_cpt_mismatched")
             .parameters(["ka", "ke", "v", "tlag", "f_oral"])
             .states(["depot", "central"])
             .outputs(["cp"])
@@ -657,20 +781,20 @@ fn runtime_mismatched_shared_channel_ode() -> equation::ODE {
                     .expect_explicit_input(),
             ]),
     )
-    .expect("mismatched shared-channel ODE metadata should validate")
+    .expect("mismatched shared-input ODE metadata should validate")
 }
 
 #[cfg(feature = "dsl-jit")]
-fn runtime_shared_channel_macro_analytical() -> equation::Analytical {
+fn runtime_shared_input_macro_analytical() -> equation::Analytical {
     analytical! {
         name: "one_cmt_abs_shared",
         params: [ka, ke, v, tlag, f_oral],
         states: [gut, central],
         outputs: [cp],
-        routes: {
+        routes: [
             bolus(oral) -> gut,
             infusion(iv) -> central,
-        },
+        ],
         structure: one_compartment_with_absorption,
         lag: |_p, _t, _cov| {
             lag! { oral => tlag }
@@ -685,7 +809,7 @@ fn runtime_shared_channel_macro_analytical() -> equation::Analytical {
 }
 
 #[cfg(feature = "dsl-jit")]
-fn runtime_shared_channel_handwritten_analytical() -> equation::Analytical {
+fn runtime_shared_input_handwritten_analytical() -> equation::Analytical {
     equation::Analytical::new(
         equation::one_compartment_with_absorption,
         |_p, _t, _cov| {},
@@ -721,21 +845,21 @@ fn runtime_shared_channel_handwritten_analytical() -> equation::Analytical {
             ])
             .analytical_kernel(equation::AnalyticalKernel::OneCompartmentWithAbsorption),
     )
-    .expect("handwritten shared-channel analytical metadata should validate")
+    .expect("handwritten shared-input analytical metadata should validate")
 }
 
 #[cfg(feature = "dsl-jit")]
-fn runtime_shared_channel_macro_sde() -> equation::SDE {
+fn runtime_shared_input_macro_sde() -> equation::SDE {
     sde! {
         name: "one_cmt_shared_sde",
         params: [ka, ke, sigma_ke, v, tlag, f_oral],
         states: [gut, central],
         outputs: [cp],
         particles: 8,
-        routes: {
+        routes: [
             bolus(oral) -> gut,
             infusion(iv) -> central,
-        },
+        ],
         drift: |x, _p, _t, dx, _cov| {
             dx[gut] = -ka * x[gut];
             dx[central] = ka * x[gut] - ke * x[central];
@@ -761,7 +885,7 @@ fn runtime_shared_channel_macro_sde() -> equation::SDE {
 }
 
 #[cfg(feature = "dsl-jit")]
-fn runtime_shared_channel_handwritten_sde() -> equation::SDE {
+fn runtime_shared_input_handwritten_sde() -> equation::SDE {
     equation::SDE::new(
         |x, p, _t, dx, rateiv, _cov| {
             fetch_params!(p, ka, ke, _sigma_ke, _v, _tlag, _f_oral);
@@ -811,7 +935,7 @@ fn runtime_shared_channel_handwritten_sde() -> equation::SDE {
             ])
             .particles(8),
     )
-    .expect("handwritten shared-channel SDE metadata should validate")
+    .expect("handwritten shared-input SDE metadata should validate")
 }
 
 #[cfg(feature = "dsl-jit")]
@@ -852,9 +976,9 @@ fn macro_analytical_model() -> equation::Analytical {
         params: [ka, ke, v],
         states: [depot, central],
         outputs: [cp],
-        routes: {
+        routes: [
             bolus(oral) -> depot,
-        },
+        ],
         structure: one_compartment_with_absorption,
         out: |x, _p, _t, _cov, y| {
             y[cp] = x[central] / v;
@@ -895,9 +1019,9 @@ fn macro_sde_model() -> equation::SDE {
         states: [depot, central],
         outputs: [cp],
         particles: 256,
-        routes: {
+        routes: [
             bolus(oral) -> depot,
-        },
+        ],
         drift: |x, _p, _t, dx, _cov| {
             dx[depot] = -ka * x[depot];
             dx[central] = ka * x[depot] - ke * x[central];
@@ -1035,6 +1159,93 @@ fn ode_dsl_and_handwritten_metadata_agree_on_public_shape() {
     );
 
     assert_eq!(handwritten_view, dsl_view);
+}
+
+#[test]
+fn ode_dsl_declared_output_order_controls_dense_indices_for_multi_digit_labels() {
+    let dsl_view = dsl_metadata_view(ODE_MULTI_DIGIT_OUTPUT_ORDER_DSL);
+
+    assert_eq!(
+        dsl_view.outputs,
+        vec![
+            NamedIndex {
+                name: "2".to_string(),
+                index: 0,
+            },
+            NamedIndex {
+                name: "10".to_string(),
+                index: 1,
+            },
+            NamedIndex {
+                name: "11".to_string(),
+                index: 2,
+            },
+        ]
+    );
+}
+
+#[test]
+fn ode_authoring_dsl_supports_multi_digit_numeric_route_labels() {
+    let dsl_view = dsl_metadata_view(ODE_NUMERIC_ROUTE_LABELS_AUTHORING_DSL);
+
+    assert_eq!(dsl_view.route_input_count, 2);
+    assert_eq!(
+        dsl_view.routes,
+        vec![
+            RouteParity {
+                name: "10".to_string(),
+                kind: Some(RouteKindParity::Bolus),
+                declaration_index: 0,
+                input_index: 0,
+                destination_name: "first".to_string(),
+                destination_index: 0,
+                has_lag: false,
+                has_bioavailability: false,
+            },
+            RouteParity {
+                name: "11".to_string(),
+                kind: Some(RouteKindParity::Bolus),
+                declaration_index: 1,
+                input_index: 1,
+                destination_name: "second".to_string(),
+                destination_index: 1,
+                has_lag: false,
+                has_bioavailability: false,
+            },
+        ]
+    );
+}
+
+#[test]
+fn ode_structured_dsl_supports_multi_digit_numeric_route_labels() {
+    let dsl_view = dsl_metadata_view(ODE_NUMERIC_ROUTE_LABELS_STRUCTURED_DSL);
+
+    assert_eq!(dsl_view.route_input_count, 2);
+    assert_eq!(
+        dsl_view.routes,
+        vec![
+            RouteParity {
+                name: "10".to_string(),
+                kind: None,
+                declaration_index: 0,
+                input_index: 0,
+                destination_name: "first".to_string(),
+                destination_index: 0,
+                has_lag: false,
+                has_bioavailability: false,
+            },
+            RouteParity {
+                name: "11".to_string(),
+                kind: None,
+                declaration_index: 1,
+                input_index: 1,
+                destination_name: "second".to_string(),
+                destination_index: 1,
+                has_lag: false,
+                has_bioavailability: false,
+            },
+        ]
+    );
 }
 
 #[test]
@@ -1177,11 +1388,11 @@ fn invalid_dsl_infusion_route_properties_fail_explicitly() {
 
 #[cfg(feature = "dsl-jit")]
 #[test]
-fn ode_runtime_jit_macro_and_handwritten_predictions_agree_on_shared_channel_shape() {
+fn ode_runtime_jit_macro_and_handwritten_predictions_agree_on_shared_input_shape() {
     let runtime_model =
-        compile_runtime_jit_model(ODE_RUNTIME_SHARED_CHANNEL_DSL, "shared_channel_one_cpt");
-    let macro_model = runtime_shared_channel_macro_ode();
-    let handwritten_model = runtime_shared_channel_handwritten_ode();
+        compile_runtime_jit_model(ODE_RUNTIME_SHARED_INPUT_DSL, "shared_input_one_cpt");
+    let macro_model = runtime_shared_input_macro_ode();
+    let handwritten_model = runtime_shared_input_handwritten_ode();
 
     let oral = runtime_model
         .route_index("oral")
@@ -1192,11 +1403,12 @@ fn ode_runtime_jit_macro_and_handwritten_predictions_agree_on_shared_channel_sha
     let cp = runtime_model
         .output_index("cp")
         .expect("runtime cp output should exist");
-    let subject = shared_channel_prediction_subject(oral, cp);
+    let subject = shared_input_prediction_subject();
     let support_point = [1.0, 0.2, 10.0, 0.25, 0.8];
 
     assert_eq!(oral, 0);
     assert_eq!(iv, oral);
+    assert_eq!(cp, 0);
     assert_eq!(macro_model.route_index("oral"), Some(oral));
     assert_eq!(macro_model.route_index("iv"), Some(iv));
     assert_eq!(handwritten_model.route_index("oral"), Some(oral));
@@ -1226,11 +1438,11 @@ fn ode_runtime_jit_macro_and_handwritten_predictions_agree_on_shared_channel_sha
 
 #[cfg(feature = "dsl-jit")]
 #[test]
-fn analytical_runtime_jit_macro_and_handwritten_predictions_agree_on_shared_channel_shape() {
+fn analytical_runtime_jit_macro_and_handwritten_predictions_agree_on_shared_input_shape() {
     let runtime_model =
-        compile_runtime_jit_model(ANALYTICAL_RUNTIME_SHARED_CHANNEL_DSL, "one_cmt_abs_shared");
-    let macro_model = runtime_shared_channel_macro_analytical();
-    let handwritten_model = runtime_shared_channel_handwritten_analytical();
+        compile_runtime_jit_model(ANALYTICAL_RUNTIME_SHARED_INPUT_DSL, "one_cmt_abs_shared");
+    let macro_model = runtime_shared_input_macro_analytical();
+    let handwritten_model = runtime_shared_input_handwritten_analytical();
 
     let oral = runtime_model
         .route_index("oral")
@@ -1241,11 +1453,12 @@ fn analytical_runtime_jit_macro_and_handwritten_predictions_agree_on_shared_chan
     let cp = runtime_model
         .output_index("cp")
         .expect("runtime cp output should exist");
-    let subject = shared_channel_prediction_subject(oral, cp);
+    let subject = shared_input_prediction_subject();
     let support_point = [1.1, 0.2, 10.0, 0.25, 0.8];
 
     assert_eq!(oral, 0);
     assert_eq!(iv, oral);
+    assert_eq!(cp, 0);
     assert_eq!(macro_model.route_index("oral"), Some(oral));
     assert_eq!(macro_model.route_index("iv"), Some(iv));
     assert_eq!(handwritten_model.route_index("oral"), Some(oral));
@@ -1277,11 +1490,11 @@ fn analytical_runtime_jit_macro_and_handwritten_predictions_agree_on_shared_chan
 
 #[cfg(feature = "dsl-jit")]
 #[test]
-fn sde_runtime_jit_macro_and_handwritten_predictions_agree_on_shared_channel_shape() {
+fn sde_runtime_jit_macro_and_handwritten_predictions_agree_on_shared_input_shape() {
     let runtime_model =
-        compile_runtime_jit_model(SDE_RUNTIME_SHARED_CHANNEL_DSL, "one_cmt_shared_sde");
-    let macro_model = runtime_shared_channel_macro_sde();
-    let handwritten_model = runtime_shared_channel_handwritten_sde();
+        compile_runtime_jit_model(SDE_RUNTIME_SHARED_INPUT_DSL, "one_cmt_shared_sde");
+    let macro_model = runtime_shared_input_macro_sde();
+    let handwritten_model = runtime_shared_input_handwritten_sde();
 
     let oral = runtime_model
         .route_index("oral")
@@ -1292,11 +1505,12 @@ fn sde_runtime_jit_macro_and_handwritten_predictions_agree_on_shared_channel_sha
     let cp = runtime_model
         .output_index("cp")
         .expect("runtime cp output should exist");
-    let subject = shared_channel_prediction_subject(oral, cp);
+    let subject = shared_input_prediction_subject();
     let support_point = [1.1, 0.2, 0.0, 10.0, 0.25, 0.8];
 
     assert_eq!(oral, 0);
     assert_eq!(iv, oral);
+    assert_eq!(cp, 0);
     assert_eq!(macro_model.route_index("oral"), Some(oral));
     assert_eq!(macro_model.route_index("iv"), Some(iv));
     assert_eq!(handwritten_model.route_index("oral"), Some(oral));
@@ -1328,8 +1542,8 @@ fn sde_runtime_jit_macro_and_handwritten_predictions_agree_on_shared_channel_sha
 #[test]
 fn route_input_policy_runtime_mismatches_are_detected_explicitly() {
     let runtime_model =
-        compile_runtime_jit_model(ODE_RUNTIME_SHARED_CHANNEL_DSL, "shared_channel_one_cpt");
-    let mismatched_model = runtime_mismatched_shared_channel_ode();
+        compile_runtime_jit_model(ODE_RUNTIME_SHARED_INPUT_DSL, "shared_input_one_cpt");
+    let mismatched_model = runtime_mismatched_shared_input_ode();
 
     let oral = runtime_model
         .route_index("oral")
@@ -1340,11 +1554,12 @@ fn route_input_policy_runtime_mismatches_are_detected_explicitly() {
     let cp = runtime_model
         .output_index("cp")
         .expect("runtime cp output should exist");
-    let subject = shared_channel_prediction_subject(oral, cp);
+    let subject = shared_input_prediction_subject();
     let support_point = [1.0, 0.2, 10.0, 0.25, 0.8];
 
     assert_eq!(oral, 0);
     assert_eq!(iv, oral);
+    assert_eq!(cp, 0);
     assert_eq!(mismatched_model.route_index("oral"), Some(oral));
     assert_eq!(mismatched_model.route_index("iv"), Some(iv));
 
@@ -1362,4 +1577,82 @@ fn route_input_policy_runtime_mismatches_are_detected_explicitly() {
         .to_vec();
 
     assert_prediction_vectors_diverge(&runtime_predictions, &mismatched_predictions, 1e-4);
+}
+
+#[cfg(feature = "dsl-jit")]
+#[test]
+fn ode_runtime_jit_preserves_mixed_output_labels() {
+    let runtime_model = compile_runtime_jit_model(
+        ODE_RUNTIME_MIXED_OUTPUT_LABELS_DSL,
+        "mixed_output_labels_runtime",
+    );
+    let subject = Subject::builder("runtime-mixed-output-labels")
+        .infusion(0.0, 100.0, "iv", 1.0)
+        .missing_observation(0.5, "cp")
+        .missing_observation(0.5, "0")
+        .missing_observation(0.5, "1")
+        .build();
+    let support_point = [0.2, 10.0];
+
+    assert_eq!(runtime_model.output_index("cp"), Some(0));
+    assert_eq!(runtime_model.output_index("0"), Some(1));
+    assert_eq!(runtime_model.output_index("1"), Some(2));
+
+    let predictions = match runtime_model
+        .estimate_predictions(&subject, &support_point)
+        .expect("runtime mixed-output model should simulate")
+    {
+        RuntimePredictions::Subject(predictions) => predictions.flat_predictions().to_vec(),
+        RuntimePredictions::Particles(_) => panic!("ODE runtime should return subject predictions"),
+    };
+
+    assert_eq!(predictions.len(), 3);
+    assert_relative_eq!(predictions[1], 2.0 * predictions[0], epsilon = 1e-6);
+    assert_relative_eq!(predictions[2], 3.0 * predictions[0], epsilon = 1e-6);
+}
+
+#[cfg(feature = "dsl-jit")]
+#[test]
+fn ode_runtime_jit_rejects_undeclared_numeric_output_labels_even_when_dense_index_exists() {
+    let runtime_model = compile_runtime_jit_model(
+        ODE_RUNTIME_UNDECLARED_NUMERIC_OUTPUT_LABEL_DSL,
+        "undeclared_numeric_output_runtime",
+    );
+    let subject = Subject::builder("runtime-undeclared-numeric-output")
+        .infusion(0.0, 100.0, "iv", 1.0)
+        .missing_observation(0.5, "10")
+        .build();
+    let support_point = [0.2, 10.0];
+
+    let error = runtime_model
+        .estimate_predictions(&subject, &support_point)
+        .expect_err("undeclared numeric output label should fail");
+
+    assert!(matches!(
+        error,
+        dsl::RuntimeError::Runtime(PharmsolError::UnknownOutputLabel { label }) if label == "10"
+    ));
+}
+
+#[cfg(feature = "dsl-jit")]
+#[test]
+fn ode_runtime_jit_rejects_undeclared_numeric_input_labels_even_when_dense_index_exists() {
+    let runtime_model = compile_runtime_jit_model(
+        ODE_RUNTIME_UNDECLARED_NUMERIC_INPUT_LABEL_DSL,
+        "undeclared_numeric_input_runtime",
+    );
+    let subject = Subject::builder("runtime-undeclared-numeric-input")
+        .bolus(0.0, 100.0, "10")
+        .missing_observation(0.5, "cp")
+        .build();
+    let support_point = [0.2, 10.0];
+
+    let error = runtime_model
+        .estimate_predictions(&subject, &support_point)
+        .expect_err("undeclared numeric input label should fail");
+
+    assert!(matches!(
+        error,
+        dsl::RuntimeError::Runtime(PharmsolError::UnknownInputLabel { label }) if label == "10"
+    ));
 }

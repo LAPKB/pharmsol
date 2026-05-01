@@ -95,14 +95,14 @@ struct Row {
     #[serde(deserialize_with = "deserialize_option_f64")]
     ii: Option<f64>,
     /// Input compartment
-    #[serde(deserialize_with = "deserialize_option_usize")]
-    input: Option<usize>,
+    #[serde(deserialize_with = "deserialize_option_route_label")]
+    input: Option<InputLabel>,
     /// Observed value
     #[serde(deserialize_with = "deserialize_option_f64")]
     out: Option<f64>,
     /// Corresponding output equation for the observation
-    #[serde(deserialize_with = "deserialize_option_usize")]
-    outeq: Option<usize>,
+    #[serde(deserialize_with = "deserialize_option_output_label")]
+    outeq: Option<OutputLabel>,
     /// Censoring output
     #[serde(default, deserialize_with = "deserialize_option_censor")]
     cens: Option<Censor>,
@@ -134,12 +134,12 @@ impl Row {
             dur: self.dur,
             addl: self.addl.map(|a| a as i64),
             ii: self.ii,
-            input: self.input,
+            input: self.input.clone(),
             // Treat -99 as missing value (Pmetrics convention)
             out: self
                 .out
                 .and_then(|v| if v == -99.0 { None } else { Some(v) }),
-            outeq: self.outeq,
+            outeq: self.outeq.clone(),
             cens: self.cens,
             c0: self.c0,
             c1: self.c1,
@@ -196,11 +196,18 @@ where
     }
 }
 
-fn deserialize_option_usize<'de, D>(deserializer: D) -> Result<Option<usize>, D::Error>
+fn deserialize_option_route_label<'de, D>(deserializer: D) -> Result<Option<InputLabel>, D::Error>
 where
     D: Deserializer<'de>,
 {
-    deserialize_option::<usize, D>(deserializer)
+    deserialize_option::<String, D>(deserializer).map(|value| value.map(InputLabel::from))
+}
+
+fn deserialize_option_output_label<'de, D>(deserializer: D) -> Result<Option<OutputLabel>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_option::<String, D>(deserializer).map(|value| value.map(OutputLabel::from))
 }
 
 fn deserialize_option_isize<'de, D>(deserializer: D) -> Result<Option<isize>, D::Error>
@@ -495,5 +502,51 @@ mod tests {
         assert_eq!(second.get(10), Some("-1"));
         assert_eq!(second.get(11), Some("."));
         assert_eq!(second.get(14), Some("."));
+    }
+
+    #[test]
+    fn read_pmetrics_preserves_named_route_and_output_labels() {
+        let file = NamedTempFile::new().unwrap();
+        std::fs::write(
+            file.path(),
+            "ID,EVID,TIME,DUR,DOSE,ADDL,II,INPUT,OUT,OUTEQ,CENS,C0,C1,C2,C3\npt1,1,0,1,100,.,.,iv,.,.,.,.,.,.,.\npt1,0,1,.,.,.,.,.,42,cp,0,.,.,.,.\n",
+        )
+        .unwrap();
+
+        let data = read_pmetrics(file.path().display().to_string()).unwrap();
+        let events = data.subjects()[0].occasions()[0].events();
+
+        match &events[0] {
+            Event::Infusion(infusion) => assert_eq!(infusion.input().as_str(), "iv"),
+            _ => panic!("expected infusion event"),
+        }
+
+        match &events[1] {
+            Event::Observation(observation) => assert_eq!(observation.outeq().as_str(), "cp"),
+            _ => panic!("expected observation event"),
+        }
+    }
+
+    #[test]
+    fn read_pmetrics_preserves_numeric_labels_as_strings() {
+        let file = NamedTempFile::new().unwrap();
+        std::fs::write(
+            file.path(),
+            "ID,EVID,TIME,DUR,DOSE,ADDL,II,INPUT,OUT,OUTEQ,CENS,C0,C1,C2,C3\npt1,1,0,.,100,.,.,1,.,.,.,.,.,.,.\npt1,0,1,.,.,.,.,.,42,1,0,.,.,.,.\n",
+        )
+        .unwrap();
+
+        let data = read_pmetrics(file.path().display().to_string()).unwrap();
+        let events = data.subjects()[0].occasions()[0].events();
+
+        match &events[0] {
+            Event::Bolus(bolus) => assert_eq!(bolus.input().as_str(), "1"),
+            _ => panic!("expected bolus event"),
+        }
+
+        match &events[1] {
+            Event::Observation(observation) => assert_eq!(observation.outeq().as_str(), "1"),
+            _ => panic!("expected observation event"),
+        }
     }
 }

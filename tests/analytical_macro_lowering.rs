@@ -1,47 +1,47 @@
 use approx::assert_relative_eq;
 use pharmsol::prelude::*;
 
-fn infusion_subject(input: usize) -> Subject {
+fn infusion_subject(input: impl ToString, outeq: impl ToString) -> Subject {
     Subject::builder("analytical-macro-iv")
         .infusion(0.0, 120.0, input, 1.0)
-        .missing_observation(0.5, 0)
-        .missing_observation(1.0, 0)
-        .missing_observation(2.0, 0)
+        .missing_observation(0.5, outeq.to_string())
+        .missing_observation(1.0, outeq.to_string())
+        .missing_observation(2.0, outeq)
         .build()
 }
 
-fn oral_subject(input: usize) -> Subject {
+fn oral_subject(input: impl ToString, outeq: impl ToString) -> Subject {
     Subject::builder("analytical-macro-oral")
         .bolus(0.0, 100.0, input)
-        .missing_observation(0.5, 0)
-        .missing_observation(1.0, 0)
-        .missing_observation(2.0, 0)
+        .missing_observation(0.5, outeq.to_string())
+        .missing_observation(1.0, outeq.to_string())
+        .missing_observation(2.0, outeq)
         .build()
 }
 
-fn shared_channel_subject(input: usize) -> Subject {
+fn shared_input_subject() -> Subject {
     Subject::builder("analytical-macro-shared")
-        .bolus(0.0, 100.0, input)
-        .infusion(6.0, 60.0, input, 2.0)
-        .missing_observation(0.5, 0)
-        .missing_observation(1.0, 0)
-        .missing_observation(2.0, 0)
-        .missing_observation(6.5, 0)
-        .missing_observation(7.0, 0)
-        .missing_observation(8.0, 0)
+        .bolus(0.0, 100.0, "oral")
+        .infusion(6.0, 60.0, "iv", 2.0)
+        .missing_observation(0.5, "cp")
+        .missing_observation(1.0, "cp")
+        .missing_observation(2.0, "cp")
+        .missing_observation(6.5, "cp")
+        .missing_observation(7.0, "cp")
+        .missing_observation(8.0, "cp")
         .build()
 }
 
-fn covariate_subject(oral: usize, iv: usize, cp: usize) -> Subject {
+fn covariate_subject(oral: impl ToString, iv: impl ToString, cp: impl ToString) -> Subject {
     Subject::builder("analytical-macro-covariates")
         .bolus(1.0, 100.0, oral)
         .infusion(6.0, 140.0, iv, 2.0)
-        .missing_observation(0.25, cp)
-        .missing_observation(0.75, cp)
-        .missing_observation(1.5, cp)
-        .missing_observation(3.0, cp)
-        .missing_observation(6.5, cp)
-        .missing_observation(7.0, cp)
+        .missing_observation(0.25, cp.to_string())
+        .missing_observation(0.75, cp.to_string())
+        .missing_observation(1.5, cp.to_string())
+        .missing_observation(3.0, cp.to_string())
+        .missing_observation(6.5, cp.to_string())
+        .missing_observation(7.0, cp.to_string())
         .missing_observation(8.0, cp)
         .covariate("wt", 0.0, 68.0)
         .covariate("wt", 8.0, 74.0)
@@ -56,9 +56,9 @@ fn macro_one_compartment() -> equation::Analytical {
         params: [ke, v],
         states: [central],
         outputs: [cp],
-        routes: {
+        routes: [
             infusion(iv) -> central,
-        },
+        ],
         structure: one_compartment,
         out: |x, _t, y| {
             y[cp] = x[central] / v;
@@ -99,9 +99,9 @@ fn macro_one_compartment_with_absorption() -> equation::Analytical {
         params: [ka, ke, v, tlag, f_oral],
         states: [gut, central],
         outputs: [cp],
-        routes: {
+        routes: [
             bolus(oral) -> gut,
-        },
+        ],
         structure: one_compartment_with_absorption,
         lag: |_t| {
             lag! { oral => tlag }
@@ -160,16 +160,16 @@ fn handwritten_one_compartment_with_absorption() -> equation::Analytical {
     .expect("handwritten absorption metadata should validate")
 }
 
-fn macro_shared_channel_analytical() -> equation::Analytical {
+fn macro_shared_input_analytical() -> equation::Analytical {
     analytical! {
         name: "one_cmt_abs_shared",
         params: [ka, ke, v, tlag, f_oral],
         states: [gut, central],
         outputs: [cp],
-        routes: {
+        routes: [
             bolus(oral) -> gut,
             infusion(iv) -> central,
-        },
+        ],
         structure: one_compartment_with_absorption,
         lag: |_t| {
             lag! { oral => tlag }
@@ -183,7 +183,7 @@ fn macro_shared_channel_analytical() -> equation::Analytical {
     }
 }
 
-fn handwritten_shared_channel_analytical() -> equation::Analytical {
+fn handwritten_shared_input_analytical() -> equation::Analytical {
     equation::Analytical::new(
         equation::one_compartment_with_absorption,
         |_p, _t, _cov| {},
@@ -219,7 +219,7 @@ fn handwritten_shared_channel_analytical() -> equation::Analytical {
             ])
             .analytical_kernel(equation::AnalyticalKernel::OneCompartmentWithAbsorption),
     )
-    .expect("handwritten shared-channel analytical metadata should validate")
+    .expect("handwritten shared-input analytical metadata should validate")
 }
 
 fn macro_covariate_analytical() -> equation::Analytical {
@@ -229,10 +229,10 @@ fn macro_covariate_analytical() -> equation::Analytical {
         covariates: [wt, renal],
         states: [gut, central],
         outputs: [cp],
-        routes: {
+        routes: [
             bolus(oral) -> gut,
             infusion(iv) -> central,
-        },
+        ],
         structure: one_compartment_with_absorption,
         sec: |_t| {
             let wt_scale = (wt / 70.0).powf(0.75);
@@ -382,7 +382,7 @@ fn assert_prediction_match(left: &[f64], right: &[f64]) {
 fn analytical_macro_lowering_matches_handwritten_metadata_and_predictions() {
     let macro_model = macro_one_compartment();
     let handwritten_model = handwritten_one_compartment();
-    let subject = infusion_subject(0);
+    let subject = infusion_subject("iv", "cp");
     let support_point = [0.2, 10.0];
 
     assert_eq!(macro_model.metadata(), handwritten_model.metadata());
@@ -408,7 +408,7 @@ fn analytical_macro_lowering_matches_handwritten_metadata_and_predictions() {
 fn analytical_macro_supports_extra_parameters_and_named_route_bindings() {
     let macro_model = macro_one_compartment_with_absorption();
     let handwritten_model = handwritten_one_compartment_with_absorption();
-    let subject = oral_subject(0);
+    let subject = oral_subject("oral", "cp");
     let support_point = [1.1, 0.2, 10.0, 0.25, 0.8];
 
     assert_eq!(macro_model.metadata(), handwritten_model.metadata());
@@ -438,10 +438,10 @@ fn analytical_macro_supports_extra_parameters_and_named_route_bindings() {
 }
 
 #[test]
-fn analytical_macro_shared_channel_lowering_matches_handwritten_metadata_and_predictions() {
-    let macro_model = macro_shared_channel_analytical();
-    let handwritten_model = handwritten_shared_channel_analytical();
-    let subject = shared_channel_subject(0);
+fn analytical_macro_shared_input_lowering_matches_handwritten_metadata_and_predictions() {
+    let macro_model = macro_shared_input_analytical();
+    let handwritten_model = handwritten_shared_input_analytical();
+    let subject = shared_input_subject();
     let support_point = [1.1, 0.2, 10.0, 0.25, 0.8];
 
     assert_eq!(macro_model.metadata(), handwritten_model.metadata());
@@ -453,12 +453,12 @@ fn analytical_macro_shared_channel_lowering_matches_handwritten_metadata_and_pre
 
     let macro_predictions = macro_model
         .estimate_predictions(&subject, &support_point)
-        .expect("macro shared-channel analytical model should simulate")
+        .expect("macro shared-input analytical model should simulate")
         .flat_predictions()
         .to_vec();
     let handwritten_predictions = handwritten_model
         .estimate_predictions(&subject, &support_point)
-        .expect("handwritten shared-channel analytical model should simulate")
+        .expect("handwritten shared-input analytical model should simulate")
         .flat_predictions()
         .to_vec();
 
@@ -472,13 +472,8 @@ fn analytical_macro_covariates_lower_to_handwritten_behavior() {
 
     assert_eq!(macro_model.metadata(), handwritten_model.metadata());
 
-    let oral = macro_model.route_index("oral").expect("oral route exists");
-    let iv = macro_model.route_index("iv").expect("iv route exists");
-    let cp = macro_model.output_index("cp").expect("cp output exists");
-    let subject = covariate_subject(oral, iv, cp);
+    let subject = covariate_subject("oral", "iv", "cp");
     let support_point = [1.0, 0.16, 32.0, 0.5, 0.8, 3.0, 14.0, 0.16];
-
-    assert_eq!(oral, iv);
 
     let macro_predictions = macro_model
         .estimate_predictions(&subject, &support_point)

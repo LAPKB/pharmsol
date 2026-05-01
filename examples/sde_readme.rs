@@ -7,9 +7,9 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
         states: [central],
         outputs: [cp],
         particles: 16,
-        routes: {
+        routes: [
             infusion(iv) -> central,
-        },
+        ],
         drift: |x, _p, _t, dx, _cov| {
             dx[central] = -ke * x[central];
         },
@@ -21,15 +21,12 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
         },
     };
 
-    let iv = sde.route_index("iv").expect("iv route exists");
-    let cp = sde.output_index("cp").expect("cp output exists");
-
     let subject = Subject::builder("sde_readme")
-        .infusion(0.0, 500.0, iv, 0.5)
-        .missing_observation(0.5, cp)
-        .missing_observation(1.0, cp)
-        .missing_observation(2.0, cp)
-        .missing_observation(4.0, cp)
+        .infusion(0.0, 500.0, "iv", 0.5)
+        .missing_observation(0.5, "cp")
+        .missing_observation(1.0, "cp")
+        .missing_observation(2.0, "cp")
+        .missing_observation(4.0, "cp")
         .build();
 
     let predictions = sde.estimate_predictions(&subject, &[1.022, 0.0, 194.0])?;

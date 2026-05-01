@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use diffsol::{
@@ -20,16 +21,19 @@ pub use super::model_info::{
     NativeCovariateInfo, NativeModelInfo, NativeOutputInfo, NativeRouteInfo,
 };
 use crate::{
-    data::{Covariates, Infusion},
+    data::error_model::AssayErrorModels,
+    data::{Covariates, Infusion, InputLabel, OutputLabel},
     simulator::{
+        cache::{PredictionCache, DEFAULT_CACHE_SIZE},
         equation::{
             ode::{closure_helpers::PMProblem, ExplicitRkTableau, OdeSolver, SdirkTableau},
             sde::simulate_sde_event_with,
+            EqnKind, Equation, EquationPriv, EquationTypes,
         },
         likelihood::{Prediction, SubjectPredictions},
-        M, V,
+        Fa, Lag, M, T, V,
     },
-    Event, Observation, PharmsolError, Subject,
+    Event, Observation, Occasion, PharmsolError, Subject,
 };
 
 pub type DenseKernelFn = unsafe extern "C" fn(
@@ -375,6 +379,16 @@ impl SharedNativeModel {
         Ok(())
     }
 
+    fn validate_output(&self, outeq: usize) -> Result<(), PharmsolError> {
+        if outeq >= self.info.output_len {
+            return Err(PharmsolError::OuteqOutOfRange {
+                outeq,
+                nout: self.info.output_len,
+            });
+        }
+        Ok(())
+    }
+
     fn validate_input_for_kind(&self, input: usize, kind: RouteKind) -> Result<(), PharmsolError> {
         self.validate_input(input)?;
         if self.route_semantics.supports_input(input, kind) {
@@ -382,9 +396,53 @@ impl SharedNativeModel {
         }
 
         Err(PharmsolError::OtherError(format!(
-            "model `{}` does not declare a {:?} route for input channel {}",
+            "model `{}` does not declare a {:?} route for input {}",
             self.info.name, kind, input
         )))
+    }
+
+    fn resolve_input_label(
+        &self,
+        label: &InputLabel,
+        kind: RouteKind,
+    ) -> Result<usize, PharmsolError> {
+        let input =
+            self.route_index(label.as_str())
+                .ok_or_else(|| PharmsolError::UnknownInputLabel {
+                    label: label.to_string(),
+                })?;
+        self.validate_input_for_kind(input, kind)?;
+        Ok(input)
+    }
+
+    fn resolve_output_label(&self, label: &OutputLabel) -> Result<usize, PharmsolError> {
+        self.output_index(label.as_str())
+            .ok_or_else(|| PharmsolError::UnknownOutputLabel {
+                label: label.to_string(),
+            })
+    }
+
+    fn resolve_events(&self, occasion: &Occasion) -> Result<Vec<Event>, PharmsolError> {
+        let mut events = occasion.process_events(None, true);
+
+        for event in events.iter_mut() {
+            match event {
+                Event::Bolus(bolus) => {
+                    let input = self.resolve_input_label(bolus.input(), RouteKind::Bolus)?;
+                    bolus.set_input(input);
+                }
+                Event::Infusion(infusion) => {
+                    let input = self.resolve_input_label(infusion.input(), RouteKind::Infusion)?;
+                    infusion.set_input(input);
+                }
+                Event::Observation(observation) => {
+                    let outeq = self.resolve_output_label(observation.outeq())?;
+                    observation.set_outeq(outeq);
+                }
+            }
+        }
+
+        Ok(events)
     }
 
     fn fill_cov_buffer(&self, covariates: &Covariates, time: f64, buf: &mut [f64]) {
@@ -530,7 +588,13 @@ impl SharedNativeModel {
 
         for event in events.iter_mut() {
             if let Event::Bolus(bolus) = event {
-                self.validate_input_for_kind(bolus.input(), RouteKind::Bolus)?;
+                let input =
+                    bolus
+                        .input_index()
+                        .ok_or_else(|| PharmsolError::UnknownInputLabel {
+                            label: bolus.input().to_string(),
+                        })?;
+                self.validate_input_for_kind(input, RouteKind::Bolus)?;
 
                 if self.artifact.has_kernel(KernelRole::RouteLag) {
                     lag_values.fill(0.0);
@@ -556,7 +620,7 @@ impl SharedNativeModel {
                             lag_values.as_mut_ptr(),
                         )?;
                     }
-                    let lag = lag_values[bolus.input()];
+                    let lag = lag_values[input];
                     if lag != 0.0 {
                         *bolus.mut_time() += lag;
                     }
@@ -586,7 +650,7 @@ impl SharedNativeModel {
                             fa_values.as_mut_ptr(),
                         )?;
                     }
-                    let factor = fa_values[bolus.input()];
+                    let factor = fa_values[input];
                     if factor != 1.0 {
                         bolus.set_amount(bolus.amount() * factor);
                     }
@@ -610,7 +674,7 @@ impl SharedNativeModel {
             .bolus_destination(input)
             .ok_or_else(|| {
                 PharmsolError::OtherError(format!(
-                    "model `{}` does not declare a bolus route for input channel {}",
+                    "model `{}` does not declare a bolus route for input index {}",
                     self.info.name, input
                 ))
             })?;
@@ -651,13 +715,13 @@ impl SharedNativeModel {
             &cov_buf,
             &mut outputs,
         )?;
-        if observation.outeq() >= outputs.len() {
-            return Err(PharmsolError::OuteqOutOfRange {
-                outeq: observation.outeq(),
-                nout: outputs.len(),
-            });
-        }
-        Ok(observation.to_prediction(outputs[observation.outeq()], state.to_vec()))
+        let outeq = observation
+            .outeq_index()
+            .ok_or_else(|| PharmsolError::UnknownOutputLabel {
+                label: observation.outeq().to_string(),
+            })?;
+        self.validate_output(outeq)?;
+        Ok(observation.to_prediction(outputs[outeq], state.to_vec()))
     }
 }
 
@@ -667,6 +731,7 @@ pub struct NativeOdeModel {
     solver: OdeSolver,
     rtol: f64,
     atol: f64,
+    cache: Option<PredictionCache>,
 }
 
 #[derive(Clone, Debug)]
@@ -694,6 +759,7 @@ impl NativeOdeModel {
             solver: OdeSolver::default(),
             rtol: DEFAULT_ODE_RTOL,
             atol: DEFAULT_ODE_ATOL,
+            cache: Some(PredictionCache::new(DEFAULT_CACHE_SIZE)),
         }
     }
 
@@ -734,18 +800,15 @@ impl NativeOdeModel {
         let support_vector: V = DVector::from_vec(support_point.to_vec()).into();
 
         for occasion in subject.occasions() {
-            let infusion_refs = occasion.infusions_ref();
-            let infusions = infusion_refs
+            let mut events = self.shared.resolve_events(occasion)?;
+            let infusions = events
                 .iter()
-                .map(|infusion| (*infusion).clone())
+                .filter_map(|event| match event {
+                    Event::Infusion(infusion) => Some(infusion.clone()),
+                    _ => None,
+                })
                 .collect::<Vec<_>>();
-
-            for infusion in &infusions {
-                self.shared
-                    .validate_input_for_kind(infusion.input(), RouteKind::Infusion)?;
-            }
-
-            let mut events = occasion.process_events(None, true);
+            let infusion_refs = infusions.iter().collect::<Vec<_>>();
             let session = RefCell::new(self.shared.artifact.start_session()?);
             let mut route_session = session.borrow_mut();
             self.shared.apply_route_properties(
@@ -901,9 +964,15 @@ impl NativeOdeModel {
         for (index, event) in events.iter().enumerate() {
             match event {
                 Event::Bolus(bolus) => {
+                    let input =
+                        bolus
+                            .input_index()
+                            .ok_or_else(|| PharmsolError::UnknownInputLabel {
+                                label: bolus.input().to_string(),
+                            })?;
                     self.shared.apply_bolus(
                         solver.state_mut().y.as_mut_slice(),
-                        bolus.input(),
+                        input,
                         bolus.amount(),
                     )?;
                 }
@@ -968,6 +1037,175 @@ impl NativeOdeModel {
     }
 }
 
+fn runtime_no_lag(_: &V, _: T, _: &Covariates) -> HashMap<usize, T> {
+    HashMap::new()
+}
+
+fn runtime_no_fa(_: &V, _: T, _: &Covariates) -> HashMap<usize, T> {
+    HashMap::new()
+}
+
+#[inline(always)]
+fn runtime_ode_predictions(
+    model: &NativeOdeModel,
+    subject: &Subject,
+    support_point: &[f64],
+) -> Result<SubjectPredictions, PharmsolError> {
+    if let Some(cache) = &model.cache {
+        let key = (
+            subject.hash(),
+            crate::simulator::equation::spphash(support_point),
+        );
+        if let Some(cached) = cache.get(&key) {
+            return Ok(cached);
+        }
+
+        let result = model.estimate_predictions(subject, support_point)?;
+        cache.insert(key, result.clone());
+        Ok(result)
+    } else {
+        model.estimate_predictions(subject, support_point)
+    }
+}
+
+impl crate::simulator::equation::Cache for NativeOdeModel {
+    fn with_cache_capacity(mut self, size: u64) -> Self {
+        self.cache = Some(PredictionCache::new(size));
+        self
+    }
+
+    fn enable_cache(mut self) -> Self {
+        self.cache = Some(PredictionCache::new(DEFAULT_CACHE_SIZE));
+        self
+    }
+
+    fn clear_cache(&self) {
+        if let Some(cache) = &self.cache {
+            cache.invalidate_all();
+        }
+    }
+
+    fn disable_cache(mut self) -> Self {
+        self.cache = None;
+        self
+    }
+}
+
+impl EquationTypes for NativeOdeModel {
+    type S = V;
+    type P = SubjectPredictions;
+}
+
+impl EquationPriv for NativeOdeModel {
+    fn lag(&self) -> &Lag {
+        &(runtime_no_lag as Lag)
+    }
+
+    fn fa(&self) -> &Fa {
+        &(runtime_no_fa as Fa)
+    }
+
+    fn get_nstates(&self) -> usize {
+        self.shared.info.state_len
+    }
+
+    fn get_ndrugs(&self) -> usize {
+        self.shared.info.route_len
+    }
+
+    fn get_nouteqs(&self) -> usize {
+        self.shared.info.output_len
+    }
+
+    fn metadata(&self) -> Option<&crate::ValidatedModelMetadata> {
+        None
+    }
+
+    fn solve(
+        &self,
+        _state: &mut Self::S,
+        _support_point: &[f64],
+        _covariates: &Covariates,
+        _infusions: &[Infusion],
+        _start_time: f64,
+        _end_time: f64,
+    ) -> Result<(), PharmsolError> {
+        unimplemented!("solve is not used for runtime ODE models")
+    }
+
+    fn process_observation(
+        &self,
+        _support_point: &[f64],
+        _observation: &Observation,
+        _error_models: Option<&AssayErrorModels>,
+        _time: f64,
+        _covariates: &Covariates,
+        _x: &mut Self::S,
+        _likelihood: &mut Vec<f64>,
+        _output: &mut Self::P,
+    ) -> Result<(), PharmsolError> {
+        unimplemented!("process_observation is not used for runtime ODE models")
+    }
+
+    fn initial_state(
+        &self,
+        _support_point: &[f64],
+        _covariates: &Covariates,
+        _occasion_index: usize,
+    ) -> Self::S {
+        V::zeros(self.shared.info.state_len, NalgebraContext)
+    }
+}
+
+impl Equation for NativeOdeModel {
+    fn estimate_likelihood(
+        &self,
+        subject: &Subject,
+        support_point: &[f64],
+        error_models: &AssayErrorModels,
+    ) -> Result<f64, PharmsolError> {
+        Ok(self
+            .estimate_log_likelihood(subject, support_point, error_models)?
+            .exp())
+    }
+
+    fn estimate_log_likelihood(
+        &self,
+        subject: &Subject,
+        support_point: &[f64],
+        error_models: &AssayErrorModels,
+    ) -> Result<f64, PharmsolError> {
+        let predictions = runtime_ode_predictions(self, subject, support_point)?;
+        predictions.log_likelihood(error_models)
+    }
+
+    fn kind() -> EqnKind {
+        EqnKind::ODE
+    }
+
+    fn estimate_predictions(
+        &self,
+        subject: &Subject,
+        support_point: &[f64],
+    ) -> Result<Self::P, PharmsolError> {
+        runtime_ode_predictions(self, subject, support_point)
+    }
+
+    fn simulate_subject(
+        &self,
+        subject: &Subject,
+        support_point: &[f64],
+        error_models: Option<&AssayErrorModels>,
+    ) -> Result<(Self::P, Option<f64>), PharmsolError> {
+        let predictions = runtime_ode_predictions(self, subject, support_point)?;
+        let likelihood = match error_models {
+            Some(error_models) => Some(predictions.log_likelihood(error_models)?.exp()),
+            None => None,
+        };
+        Ok((predictions, likelihood))
+    }
+}
+
 impl NativeAnalyticalModel {
     pub(crate) fn new(info: NativeModelInfo, artifact: impl RuntimeArtifact + 'static) -> Self {
         Self {
@@ -1000,18 +1238,14 @@ impl NativeAnalyticalModel {
         let mut output = SubjectPredictions::default();
 
         for occasion in subject.occasions() {
-            let infusions = occasion
-                .infusions_ref()
+            let mut events = self.shared.resolve_events(occasion)?;
+            let infusions = events
                 .iter()
-                .map(|infusion| (*infusion).clone())
+                .filter_map(|event| match event {
+                    Event::Infusion(infusion) => Some(infusion.clone()),
+                    _ => None,
+                })
                 .collect::<Vec<_>>();
-
-            for infusion in &infusions {
-                self.shared
-                    .validate_input_for_kind(infusion.input(), RouteKind::Infusion)?;
-            }
-
-            let mut events = occasion.process_events(None, true);
             let mut session = self.shared.artifact.start_session()?;
             self.shared.apply_route_properties(
                 &mut *session,
@@ -1030,8 +1264,12 @@ impl NativeAnalyticalModel {
             for (index, event) in events.iter().enumerate() {
                 match event {
                     Event::Bolus(bolus) => {
-                        self.shared
-                            .apply_bolus(&mut state, bolus.input(), bolus.amount())?
+                        let input = bolus.input_index().ok_or_else(|| {
+                            PharmsolError::UnknownInputLabel {
+                                label: bolus.input().to_string(),
+                            }
+                        })?;
+                        self.shared.apply_bolus(&mut state, input, bolus.amount())?
                     }
                     Event::Infusion(_) => {}
                     Event::Observation(observation) => {
@@ -1171,18 +1409,14 @@ impl NativeSdeModel {
         let mut output = Array2::from_shape_fn((self.nparticles, 0), |_| Prediction::default());
 
         for occasion in subject.occasions() {
-            let infusions = occasion
-                .infusions_ref()
+            let mut events = self.shared.resolve_events(occasion)?;
+            let infusions = events
                 .iter()
-                .map(|infusion| (*infusion).clone())
+                .filter_map(|event| match event {
+                    Event::Infusion(infusion) => Some(infusion.clone()),
+                    _ => None,
+                })
                 .collect::<Vec<_>>();
-
-            for infusion in &infusions {
-                self.shared
-                    .validate_input_for_kind(infusion.input(), RouteKind::Infusion)?;
-            }
-
-            let mut events = occasion.process_events(None, true);
             let mut session = self.shared.artifact.start_session()?;
             self.shared.apply_route_properties(
                 &mut *session,
@@ -1204,10 +1438,15 @@ impl NativeSdeModel {
             for (index, event) in events.iter().enumerate() {
                 match event {
                     Event::Bolus(bolus) => {
+                        let input = bolus.input_index().ok_or_else(|| {
+                            PharmsolError::UnknownInputLabel {
+                                label: bolus.input().to_string(),
+                            }
+                        })?;
                         for particle in &mut particles {
                             self.shared.apply_bolus(
                                 particle.as_mut_slice(),
-                                bolus.input(),
+                                input,
                                 bolus.amount(),
                             )?;
                         }
@@ -1398,11 +1637,14 @@ impl NativeSdeModel {
 fn active_route_inputs(infusions: &[Infusion], time: f64, route_len: usize) -> Vec<f64> {
     let mut values = vec![0.0; route_len];
     for infusion in infusions {
-        if infusion.input() < route_len
+        let input = infusion
+            .input_index()
+            .expect("resolved infusions should use numeric input labels");
+        if input < route_len
             && time >= infusion.time()
             && time <= infusion.time() + infusion.duration()
         {
-            values[infusion.input()] += infusion.amount() / infusion.duration();
+            values[input] += infusion.amount() / infusion.duration();
         }
     }
     values
@@ -1417,8 +1659,11 @@ fn interval_route_inputs(
     let mut values = vec![0.0; route_len];
     for infusion in infusions {
         let finish = infusion.time() + infusion.duration();
-        if infusion.input() < route_len && start_time >= infusion.time() && end_time <= finish {
-            values[infusion.input()] += infusion.amount() / infusion.duration();
+        let input = infusion
+            .input_index()
+            .expect("resolved infusions should use numeric input labels");
+        if input < route_len && start_time >= infusion.time() && end_time <= finish {
+            values[input] += infusion.amount() / infusion.duration();
         }
     }
     values

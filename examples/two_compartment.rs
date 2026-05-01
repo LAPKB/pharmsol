@@ -27,9 +27,9 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
         covariates: [wt],
         states: [central, peripheral],
         outputs: [cp],
-        routes: {
+        routes: [
             infusion(iv) -> central,
-        },
+        ],
         diffeq: |x, _t, dx| {
             // CL: Clearance (L/hr), V: Central volume (L)
             // Vp: Peripheral volume (L), Q: Inter-compartmental clearance (L/hr)

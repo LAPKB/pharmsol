@@ -1,4 +1,4 @@
-use pharmsol_dsl::{analyze_model, parse_model, parse_module};
+use pharmsol_dsl::{analyze_model, lower_typed_model, parse_model, parse_module};
 
 #[test]
 fn output_annotation_is_optional() {
@@ -156,6 +156,126 @@ out(cp) = central ~ continous()
 
     assert!(
         rendered.contains("expected the output annotation `continuous()`"),
+        "{}",
+        rendered
+    );
+}
+
+#[test]
+fn mixed_named_and_numeric_output_labels_lower_and_round_trip() {
+    let src = r#"
+name = mixed_output_labels
+kind = ode
+params = ke, v
+states = central
+outputs = cp, 0, 1
+infusion(iv) -> central
+ddt(central) = -ke * central
+out(cp) = central / v
+out(0) = 2 * central / v
+out(1) = 3 * central / v
+"#;
+
+    let module = parse_module(src).expect("mixed output labels should parse in authoring DSL");
+    let model = module
+        .models
+        .first()
+        .expect("authoring DSL should produce one model");
+    let typed = analyze_model(&model).expect("mixed output labels should analyze");
+    let lowered = lower_typed_model(&typed).expect("mixed output labels should lower");
+
+    assert_eq!(
+        lowered
+            .metadata
+            .outputs
+            .iter()
+            .map(|output| output.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["cp", "0", "1"]
+    );
+    assert_eq!(
+        lowered
+            .metadata
+            .outputs
+            .iter()
+            .map(|output| output.index)
+            .collect::<Vec<_>>(),
+        vec![0, 1, 2]
+    );
+
+    let rendered = module.to_string();
+    let reparsed = parse_module(&rendered).expect("rendered mixed-output model should reparse");
+
+    assert_eq!(rendered, reparsed.to_string());
+}
+
+#[test]
+fn shared_numeric_route_and_output_labels_lower_and_round_trip() {
+    let src = r#"
+name = shared_numeric_route_output_labels
+kind = ode
+params = ke, v
+states = central
+outputs = 1
+infusion(1) -> central
+ddt(central) = -ke * central
+out(1) = central / v
+"#;
+
+    let module = parse_module(src).expect("shared numeric route/output labels should parse");
+    let model = module
+        .models
+        .first()
+        .expect("authoring DSL should produce one model");
+    let typed = analyze_model(model).expect("shared numeric route/output labels should analyze");
+    let lowered =
+        lower_typed_model(&typed).expect("shared numeric route/output labels should lower");
+
+    assert_eq!(
+        lowered
+            .metadata
+            .routes
+            .iter()
+            .map(|route| route.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["1"]
+    );
+    assert_eq!(
+        lowered
+            .metadata
+            .outputs
+            .iter()
+            .map(|output| output.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["1"]
+    );
+
+    let rendered = module.to_string();
+    let reparsed = parse_module(&rendered).expect("rendered shared-label model should reparse");
+
+    assert_eq!(rendered, reparsed.to_string());
+}
+
+#[test]
+fn route_labels_still_collide_with_scalar_symbol_names() {
+    let src = r#"
+name = route_state_collision
+kind = ode
+params = ke
+states = central, iv
+outputs = cp
+infusion(iv) -> central
+ddt(central) = -ke * central
+ddt(iv) = 0
+out(cp) = central
+"#;
+
+    let model = parse_model(src).expect("route/state collision model parses");
+    let err = analyze_model(&model).expect_err("route label should still collide with state name");
+    let rendered = err.render(src);
+
+    assert!(
+        rendered.contains("symbol name `iv` collides with existing `iv`"),
         "{}",
         rendered
     );

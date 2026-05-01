@@ -1516,7 +1516,7 @@ mod tests {
     }
 
     #[test]
-    fn authoring_routes_share_channel_indices_by_kind_local_ordinal() {
+    fn authoring_routes_share_input_indices_by_kind_local_ordinal() {
         let src = r#"name = shared_authoring
 kind = ode
 
