@@ -330,6 +330,11 @@ impl EquationPriv for ODE {
     fn get_nouteqs(&self) -> usize {
         self.neqs.nout
     }
+
+    fn metadata(&self) -> Option<&ValidatedModelMetadata> {
+        self.metadata.as_ref()
+    }
+
     #[inline(always)]
     fn solve(
         &self,
@@ -397,14 +402,21 @@ impl ODE {
 
             match event {
                 Event::Bolus(bolus) => {
-                    if bolus.input() >= bolus_v.len() {
+                    let input =
+                        bolus
+                            .input_index()
+                            .ok_or_else(|| PharmsolError::UnknownInputLabel {
+                                label: bolus.input().to_string(),
+                            })?;
+
+                    if input >= bolus_v.len() {
                         return Err(PharmsolError::InputOutOfRange {
-                            input: bolus.input(),
+                            input,
                             ndrugs: bolus_v.len(),
                         });
                     }
                     bolus_v.fill(0.0);
-                    bolus_v[bolus.input()] = bolus.amount();
+                    bolus_v[input] = bolus.amount();
 
                     state_with_bolus.fill(0.0);
                     state_without_bolus.fill(0.0);
@@ -444,7 +456,12 @@ impl ODE {
                         covariates,
                         y_out,
                     );
-                    let pred = y_out[observation.outeq()];
+                    let outeq = observation.outeq_index().ok_or_else(|| {
+                        PharmsolError::UnknownOutputLabel {
+                            label: observation.outeq().to_string(),
+                        }
+                    })?;
+                    let pred = y_out[outeq];
                     let pred =
                         observation.to_prediction(pred, solver.state().y.as_slice().to_vec());
                     if let Some(error_models) = error_models {
@@ -550,11 +567,14 @@ impl Equation for ODE {
         // Iterate over occasions
         for occasion in subject.occasions() {
             let covariates = occasion.covariates();
-            let infusions = occasion.infusions_ref();
-            let events = occasion.process_events(
-                Some((self.fa(), self.lag(), support_point, covariates)),
-                true,
-            );
+            let events = self.resolve_occasion_events(occasion, support_point, covariates)?;
+            let infusions = events
+                .iter()
+                .filter_map(|event| match event {
+                    Event::Infusion(infusion) => Some(infusion),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
 
             let problem = OdeBuilder::<M>::new()
                 .atol(vec![self.atol])
@@ -680,9 +700,9 @@ mod tests {
 
     fn route_policy_subject() -> Subject {
         Subject::builder("route_policy")
-            .bolus(0.0, 100.0, 0)
-            .infusion(0.0, 100.0, 0, 1.0)
-            .observation(1.0, 0.0, 0)
+            .bolus(0.0, 100.0, "oral")
+            .infusion(0.0, 100.0, "iv", 1.0)
+            .observation(1.0, 0.0, "cp")
             .build()
     }
 

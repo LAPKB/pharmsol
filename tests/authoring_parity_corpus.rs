@@ -1,3 +1,4 @@
+use approx::assert_relative_eq;
 #[cfg(feature = "dsl-jit")]
 use pharmsol::dsl::{self, RuntimeCompilationTarget, RuntimePredictions};
 #[cfg(feature = "dsl-jit")]
@@ -86,6 +87,24 @@ dx(depot) = -ka * depot
 dx(central) = ka * depot - ke * central
 
 out(cp) = central / v ~ continuous()
+"#;
+
+#[cfg(feature = "dsl-jit")]
+const ODE_RUNTIME_MIXED_OUTPUT_LABELS_DSL: &str = r#"
+name = mixed_output_labels_runtime
+kind = ode
+
+params = ke, v
+states = central
+outputs = cp, 0, 1
+
+infusion(iv) -> central
+
+dx(central) = -ke * central
+
+out(cp) = central / v ~ continuous()
+out(0) = 2 * central / v ~ continuous()
+out(1) = 3 * central / v ~ continuous()
 "#;
 
 const ANALYTICAL_DSL: &str = r#"
@@ -267,16 +286,16 @@ fn compile_runtime_jit_model(src: &str, model_name: &str) -> dsl::CompiledRuntim
 }
 
 #[cfg(feature = "dsl-jit")]
-fn shared_channel_prediction_subject(input: usize, output: usize) -> Subject {
+fn shared_channel_prediction_subject() -> Subject {
     Subject::builder("authoring-parity-shared-channel")
-        .bolus(0.0, 100.0, input)
-        .infusion(6.0, 60.0, input, 2.0)
-        .missing_observation(0.5, output)
-        .missing_observation(1.0, output)
-        .missing_observation(2.0, output)
-        .missing_observation(6.5, output)
-        .missing_observation(7.0, output)
-        .missing_observation(8.0, output)
+        .bolus(0.0, 100.0, "oral")
+        .infusion(6.0, 60.0, "iv", 2.0)
+        .missing_observation(0.5, "cp")
+        .missing_observation(1.0, "cp")
+        .missing_observation(2.0, "cp")
+        .missing_observation(6.5, "cp")
+        .missing_observation(7.0, "cp")
+        .missing_observation(8.0, "cp")
         .build()
 }
 
@@ -1192,11 +1211,12 @@ fn ode_runtime_jit_macro_and_handwritten_predictions_agree_on_shared_channel_sha
     let cp = runtime_model
         .output_index("cp")
         .expect("runtime cp output should exist");
-    let subject = shared_channel_prediction_subject(oral, cp);
+    let subject = shared_channel_prediction_subject();
     let support_point = [1.0, 0.2, 10.0, 0.25, 0.8];
 
     assert_eq!(oral, 0);
     assert_eq!(iv, oral);
+    assert_eq!(cp, 0);
     assert_eq!(macro_model.route_index("oral"), Some(oral));
     assert_eq!(macro_model.route_index("iv"), Some(iv));
     assert_eq!(handwritten_model.route_index("oral"), Some(oral));
@@ -1241,11 +1261,12 @@ fn analytical_runtime_jit_macro_and_handwritten_predictions_agree_on_shared_chan
     let cp = runtime_model
         .output_index("cp")
         .expect("runtime cp output should exist");
-    let subject = shared_channel_prediction_subject(oral, cp);
+    let subject = shared_channel_prediction_subject();
     let support_point = [1.1, 0.2, 10.0, 0.25, 0.8];
 
     assert_eq!(oral, 0);
     assert_eq!(iv, oral);
+    assert_eq!(cp, 0);
     assert_eq!(macro_model.route_index("oral"), Some(oral));
     assert_eq!(macro_model.route_index("iv"), Some(iv));
     assert_eq!(handwritten_model.route_index("oral"), Some(oral));
@@ -1292,11 +1313,12 @@ fn sde_runtime_jit_macro_and_handwritten_predictions_agree_on_shared_channel_sha
     let cp = runtime_model
         .output_index("cp")
         .expect("runtime cp output should exist");
-    let subject = shared_channel_prediction_subject(oral, cp);
+    let subject = shared_channel_prediction_subject();
     let support_point = [1.1, 0.2, 0.0, 10.0, 0.25, 0.8];
 
     assert_eq!(oral, 0);
     assert_eq!(iv, oral);
+    assert_eq!(cp, 0);
     assert_eq!(macro_model.route_index("oral"), Some(oral));
     assert_eq!(macro_model.route_index("iv"), Some(iv));
     assert_eq!(handwritten_model.route_index("oral"), Some(oral));
@@ -1340,11 +1362,12 @@ fn route_input_policy_runtime_mismatches_are_detected_explicitly() {
     let cp = runtime_model
         .output_index("cp")
         .expect("runtime cp output should exist");
-    let subject = shared_channel_prediction_subject(oral, cp);
+    let subject = shared_channel_prediction_subject();
     let support_point = [1.0, 0.2, 10.0, 0.25, 0.8];
 
     assert_eq!(oral, 0);
     assert_eq!(iv, oral);
+    assert_eq!(cp, 0);
     assert_eq!(mismatched_model.route_index("oral"), Some(oral));
     assert_eq!(mismatched_model.route_index("iv"), Some(iv));
 
@@ -1362,4 +1385,36 @@ fn route_input_policy_runtime_mismatches_are_detected_explicitly() {
         .to_vec();
 
     assert_prediction_vectors_diverge(&runtime_predictions, &mismatched_predictions, 1e-4);
+}
+
+#[cfg(feature = "dsl-jit")]
+#[test]
+fn ode_runtime_jit_preserves_mixed_output_labels() {
+    let runtime_model = compile_runtime_jit_model(
+        ODE_RUNTIME_MIXED_OUTPUT_LABELS_DSL,
+        "mixed_output_labels_runtime",
+    );
+    let subject = Subject::builder("runtime-mixed-output-labels")
+        .infusion(0.0, 100.0, "iv", 1.0)
+        .missing_observation(0.5, "cp")
+        .missing_observation(0.5, "0")
+        .missing_observation(0.5, "1")
+        .build();
+    let support_point = [0.2, 10.0];
+
+    assert_eq!(runtime_model.output_index("cp"), Some(0));
+    assert_eq!(runtime_model.output_index("0"), Some(1));
+    assert_eq!(runtime_model.output_index("1"), Some(2));
+
+    let predictions = match runtime_model
+        .estimate_predictions(&subject, &support_point)
+        .expect("runtime mixed-output model should simulate")
+    {
+        RuntimePredictions::Subject(predictions) => predictions.flat_predictions().to_vec(),
+        RuntimePredictions::Particles(_) => panic!("ODE runtime should return subject predictions"),
+    };
+
+    assert_eq!(predictions.len(), 3);
+    assert_relative_eq!(predictions[1], 2.0 * predictions[0], epsilon = 1e-6);
+    assert_relative_eq!(predictions[2], 3.0 * predictions[0], epsilon = 1e-6);
 }

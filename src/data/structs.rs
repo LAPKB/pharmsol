@@ -180,13 +180,13 @@ impl Data {
                         let old_events = occasion.process_events(None, true);
 
                         // Create a set of existing (time, outeq) pairs for fast lookup
-                        let existing_obs: std::collections::HashSet<(u64, usize)> = old_events
+                        let existing_obs: std::collections::HashSet<(u64, ChannelId)> = old_events
                             .iter()
                             .filter_map(|event| match event {
                                 Event::Observation(obs) => {
                                     // Convert to microseconds for consistent comparison
                                     let time_key = (obs.time() * 1e6).round() as u64;
-                                    Some((time_key, obs.outeq()))
+                                    Some((time_key, obs.outeq().clone()))
                                 }
                                 _ => None,
                             })
@@ -198,13 +198,13 @@ impl Data {
                         while time < last_time {
                             let time_key = (time * 1e6).round() as u64;
 
-                            for &outeq in &outeq_values {
+                            for outeq in &outeq_values {
                                 // Only add if this (time, outeq) combination doesn't exist
-                                if !existing_obs.contains(&(time_key, outeq)) {
+                                if !existing_obs.contains(&(time_key, outeq.clone())) {
                                     let obs = Observation::new(
                                         time,
                                         None,
-                                        outeq,
+                                        outeq.clone(),
                                         None,
                                         occasion.index,
                                         Censor::None,
@@ -274,14 +274,14 @@ impl Data {
     }
 
     /// Get a vector of all unique output equations (outeq) across all subjects
-    pub fn get_output_equations(&self) -> Vec<usize> {
+    pub fn get_output_equations(&self) -> Vec<ChannelId> {
         // Collect all unique outeq values in order of occurrence
-        let mut outeq_values: Vec<usize> = self
+        let mut outeq_values: Vec<ChannelId> = self
             .subjects
             .iter()
             .flat_map(|subject| subject.get_output_equations())
             .collect();
-        outeq_values.sort_unstable();
+        outeq_values.sort();
         outeq_values.dedup();
         outeq_values
     }
@@ -396,14 +396,14 @@ impl Subject {
         self.occasions.iter_mut()
     }
 
-    pub fn get_output_equations(&self) -> Vec<usize> {
+    pub fn get_output_equations(&self) -> Vec<ChannelId> {
         // Collect all unique outeq values in order of occurrence
-        let outeq_values: Vec<usize> = self
+        let outeq_values: Vec<ChannelId> = self
             .occasions
             .iter()
             .flat_map(|occasion| {
                 occasion.events.iter().filter_map(|event| match event {
-                    Event::Observation(obs) => Some(obs.outeq()),
+                    Event::Observation(obs) => Some(obs.outeq().clone()),
                     _ => None,
                 })
             })
@@ -598,8 +598,10 @@ impl Occasion {
                 let time = event.time();
                 if let Event::Bolus(bolus) = event {
                     let lagtime = fn_lag(&spp.clone().into(), time, covariates);
-                    if let Some(l) = lagtime.get(&bolus.input()) {
-                        *bolus.mut_time() += l;
+                    if let Some(input) = bolus.input_index() {
+                        if let Some(l) = lagtime.get(&input) {
+                            *bolus.mut_time() += l;
+                        }
                     }
                 }
             }
@@ -615,8 +617,10 @@ impl Occasion {
                 let time = event.time();
                 if let Event::Bolus(bolus) = event {
                     let fa = fn_fa(&spp.clone().into(), time, covariates);
-                    if let Some(f) = fa.get(&bolus.input()) {
-                        bolus.set_amount(bolus.amount() * f);
+                    if let Some(input) = bolus.input_index() {
+                        if let Some(f) = fa.get(&input) {
+                            bolus.set_amount(bolus.amount() * f);
+                        }
                     }
                 }
             }
@@ -703,7 +707,7 @@ impl Occasion {
         &mut self,
         time: f64,
         value: f64,
-        outeq: usize,
+        outeq: impl ToString,
         errorpoly: Option<ErrorPoly>,
         censored: Censor,
     ) {
@@ -713,7 +717,7 @@ impl Occasion {
     }
 
     /// Add a missing [Observation] event to the [Occasion]
-    pub fn add_missing_observation(&mut self, time: f64, outeq: usize) {
+    pub fn add_missing_observation(&mut self, time: f64, outeq: impl ToString) {
         let observation = Observation::new(time, None, outeq, None, self.index, Censor::None);
         self.add_event(Event::Observation(observation));
     }
@@ -725,7 +729,7 @@ impl Occasion {
         &mut self,
         time: f64,
         value: f64,
-        outeq: usize,
+        outeq: impl ToString,
         errorpoly: ErrorPoly,
         censored: Censor,
     ) {
@@ -741,13 +745,13 @@ impl Occasion {
     }
 
     /// Add a [Bolus] event to the [Occasion]
-    pub fn add_bolus(&mut self, time: f64, amount: f64, input: usize) {
+    pub fn add_bolus(&mut self, time: f64, amount: f64, input: impl ToString) {
         let bolus = Bolus::new(time, amount, input, self.index);
         self.add_event(Event::Bolus(bolus));
     }
 
     /// Add an [Infusion] event to the [Occasion]
-    pub fn add_infusion(&mut self, time: f64, amount: f64, input: usize, duration: f64) {
+    pub fn add_infusion(&mut self, time: f64, amount: f64, input: impl ToString, duration: f64) {
         let infusion = Infusion::new(time, amount, input, duration, self.index);
         self.add_event(Event::Infusion(infusion));
     }
@@ -773,17 +777,6 @@ impl Occasion {
             })
             .min_by(|a, b| a.partial_cmp(b).unwrap())
             .unwrap_or(0.0)
-    }
-
-    pub(crate) fn infusions_ref(&self) -> Vec<&Infusion> {
-        //TODO this can be pre-computed when the struct is initially created
-        self.events
-            .iter()
-            .filter_map(|event| match event {
-                Event::Infusion(infusion) => Some(infusion),
-                _ => None,
-            })
-            .collect()
     }
 
     /// Get an iterator over all events
@@ -967,7 +960,7 @@ impl Occasion {
 
         for event in &self.events {
             if let Event::Observation(obs) = event {
-                if obs.outeq() == outeq {
+                if obs.outeq_index() == Some(outeq) {
                     if let Some(value) = obs.value() {
                         times.push(obs.time());
                         concs.push(value);

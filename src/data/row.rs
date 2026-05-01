@@ -79,11 +79,11 @@ pub struct DataRow {
     /// Interdose interval for ADDL
     pub ii: Option<f64>,
     /// Input compartment
-    pub input: Option<usize>,
+    pub input: Option<ChannelId>,
     /// Observed value (for EVID=0)
     pub out: Option<f64>,
     /// Output equation number
-    pub outeq: Option<usize>,
+    pub outeq: Option<ChannelId>,
     /// Censoring indicator
     pub cens: Option<Censor>,
     /// Error polynomial coefficients
@@ -180,14 +180,17 @@ impl DataRow {
         match self.evid {
             0 => {
                 // Observation event
-                events.push(Event::Observation(Observation::new(
-                    self.time,
-                    self.out,
+                let outeq =
                     self.outeq
+                        .clone()
                         .ok_or_else(|| DataError::MissingObservationOuteq {
                             id: self.id.clone(),
                             time: self.time,
-                        })?, // Keep 1-indexed as provided by Pmetrics
+                        })?;
+                events.push(Event::Observation(Observation::new(
+                    self.time,
+                    self.out,
+                    outeq,
                     self.get_errorpoly(),
                     0, // occasion set later
                     self.cens.unwrap_or(Censor::None),
@@ -196,10 +199,13 @@ impl DataRow {
             1 | 4 => {
                 // Dosing event (1) or reset with dose (4)
 
-                let input = self.input.ok_or_else(|| DataError::MissingBolusInput {
-                    id: self.id.clone(),
-                    time: self.time,
-                })?; // Keep 1-indexed as provided by Pmetrics
+                let input = self
+                    .input
+                    .clone()
+                    .ok_or_else(|| DataError::MissingBolusInput {
+                        id: self.id.clone(),
+                        time: self.time,
+                    })?;
 
                 let event = if self.dur.unwrap_or(0.0) > 0.0 {
                     // Infusion
@@ -371,8 +377,8 @@ impl DataRowBuilder {
     ///
     /// Required for EVID=1 (dosing events).
     /// Kept as 1-indexed; user must size state arrays accordingly.
-    pub fn input(mut self, input: usize) -> Self {
-        self.row.input = Some(input);
+    pub fn input(mut self, input: impl ToString) -> Self {
+        self.row.input = Some(ChannelId::new(input));
         self
     }
 
@@ -388,8 +394,8 @@ impl DataRowBuilder {
     ///
     /// Required for EVID=0 (observation events).
     /// Will be converted to 0-indexed internally.
-    pub fn outeq(mut self, outeq: usize) -> Self {
-        self.row.outeq = Some(outeq);
+    pub fn outeq(mut self, outeq: impl ToString) -> Self {
+        self.row.outeq = Some(ChannelId::new(outeq));
         self
     }
 

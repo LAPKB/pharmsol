@@ -37,6 +37,10 @@ pub enum PharmsolError {
     ZeroLikelihood,
     #[error("Missing observation in prediction")]
     MissingObservation,
+    #[error("Input label `{label}` could not be resolved to a route channel")]
+    UnknownInputLabel { label: String },
+    #[error("Output label `{label}` could not be resolved to an output channel")]
+    UnknownOutputLabel { label: String },
     #[error("Input channel {input} is out of range (ndrugs = {ndrugs})")]
     InputOutOfRange { input: usize, ndrugs: usize },
     #[error("Output equation {outeq} is out of range (nout = {nout})")]

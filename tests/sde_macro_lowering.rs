@@ -2,47 +2,47 @@ use approx::assert_relative_eq;
 use pharmsol::prelude::*;
 use pharmsol::Predictions;
 
-fn infusion_subject(input: usize) -> Subject {
+fn infusion_subject(input: impl ToString, outeq: impl ToString) -> Subject {
     Subject::builder("sde-macro-iv")
         .infusion(0.0, 120.0, input, 1.0)
-        .missing_observation(0.5, 0)
-        .missing_observation(1.0, 0)
-        .missing_observation(2.0, 0)
+        .missing_observation(0.5, outeq.to_string())
+        .missing_observation(1.0, outeq.to_string())
+        .missing_observation(2.0, outeq)
         .build()
 }
 
-fn oral_subject(input: usize) -> Subject {
+fn oral_subject(input: impl ToString, outeq: impl ToString) -> Subject {
     Subject::builder("sde-macro-oral")
         .bolus(0.0, 100.0, input)
-        .missing_observation(0.5, 0)
-        .missing_observation(1.0, 0)
-        .missing_observation(2.0, 0)
+        .missing_observation(0.5, outeq.to_string())
+        .missing_observation(1.0, outeq.to_string())
+        .missing_observation(2.0, outeq)
         .build()
 }
 
-fn shared_channel_subject(input: usize) -> Subject {
+fn shared_channel_subject() -> Subject {
     Subject::builder("sde-macro-shared")
-        .bolus(0.0, 100.0, input)
-        .infusion(6.0, 60.0, input, 2.0)
-        .missing_observation(0.5, 0)
-        .missing_observation(1.0, 0)
-        .missing_observation(2.0, 0)
-        .missing_observation(6.5, 0)
-        .missing_observation(7.0, 0)
-        .missing_observation(8.0, 0)
+        .bolus(0.0, 100.0, "oral")
+        .infusion(6.0, 60.0, "iv", 2.0)
+        .missing_observation(0.5, "cp")
+        .missing_observation(1.0, "cp")
+        .missing_observation(2.0, "cp")
+        .missing_observation(6.5, "cp")
+        .missing_observation(7.0, "cp")
+        .missing_observation(8.0, "cp")
         .build()
 }
 
-fn covariate_subject(oral: usize, iv: usize, cp: usize) -> Subject {
+fn covariate_subject(oral: impl ToString, iv: impl ToString, cp: impl ToString) -> Subject {
     Subject::builder("sde-macro-covariates")
         .bolus(1.0, 100.0, oral)
         .infusion(6.0, 140.0, iv, 2.0)
-        .missing_observation(0.25, cp)
-        .missing_observation(0.75, cp)
-        .missing_observation(1.5, cp)
-        .missing_observation(3.0, cp)
-        .missing_observation(6.5, cp)
-        .missing_observation(7.0, cp)
+        .missing_observation(0.25, cp.to_string())
+        .missing_observation(0.75, cp.to_string())
+        .missing_observation(1.5, cp.to_string())
+        .missing_observation(3.0, cp.to_string())
+        .missing_observation(6.5, cp.to_string())
+        .missing_observation(7.0, cp.to_string())
         .missing_observation(8.0, cp)
         .covariate("wt", 0.0, 68.0)
         .covariate("wt", 8.0, 74.0)
@@ -491,7 +491,7 @@ fn handwritten_covariate_sde() -> equation::SDE {
 fn sde_macro_lowering_matches_handwritten_metadata_and_predictions() {
     let macro_model = macro_infusion_sde();
     let handwritten_model = handwritten_infusion_sde();
-    let subject = infusion_subject(0);
+    let subject = infusion_subject("iv", "cp");
     let support_point = [0.2, 0.0, 10.0];
 
     assert_eq!(macro_model.metadata(), handwritten_model.metadata());
@@ -516,7 +516,7 @@ fn sde_macro_lowering_matches_handwritten_metadata_and_predictions() {
 fn sde_macro_supports_lag_fa_init_and_named_sigma_bindings() {
     let macro_model = macro_absorption_sde();
     let handwritten_model = handwritten_absorption_sde();
-    let subject = oral_subject(0);
+    let subject = oral_subject("oral", "cp");
     let support_point = [1.1, 0.2, 0.0, 10.0, 0.25, 0.8];
 
     assert_eq!(macro_model.metadata(), handwritten_model.metadata());
@@ -541,7 +541,7 @@ fn sde_macro_supports_lag_fa_init_and_named_sigma_bindings() {
 fn sde_macro_shared_channel_lowering_matches_handwritten_metadata_and_predictions() {
     let macro_model = macro_shared_channel_sde();
     let handwritten_model = handwritten_shared_channel_sde();
-    let subject = shared_channel_subject(0);
+    let subject = shared_channel_subject();
     let support_point = [1.1, 0.2, 0.0, 10.0, 0.25, 0.8];
 
     assert_eq!(macro_model.metadata(), handwritten_model.metadata());
@@ -571,13 +571,8 @@ fn sde_macro_covariates_lower_to_handwritten_behavior() {
 
     assert_eq!(macro_model.metadata(), handwritten_model.metadata());
 
-    let oral = macro_model.route_index("oral").expect("oral route exists");
-    let iv = macro_model.route_index("iv").expect("iv route exists");
-    let cp = macro_model.output_index("cp").expect("cp output exists");
-    let subject = covariate_subject(oral, iv, cp);
+    let subject = covariate_subject("oral", "iv", "cp");
     let support_point = [1.0, 0.16, 0.0, 32.0, 0.5, 0.8, 3.0, 14.0];
-
-    assert_eq!(oral, iv);
 
     let macro_predictions = macro_model
         .estimate_predictions(&subject, &support_point)

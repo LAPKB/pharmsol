@@ -67,7 +67,7 @@ impl SubjectBuilder {
     /// * `time` - Time of the bolus dose
     /// * `amount` - Amount of drug administered
     /// * `input` - The compartment number receiving the dose
-    pub fn bolus(self, time: f64, amount: f64, input: usize) -> Self {
+    pub fn bolus(self, time: f64, amount: f64, input: impl ToString) -> Self {
         let bolus = Bolus::new(time, amount, input, self.current_occasion.index());
         let event = Event::Bolus(bolus);
         self.event(event)
@@ -81,7 +81,7 @@ impl SubjectBuilder {
     /// * `amount` - Total amount of drug to be administered
     /// * `input` - The compartment number receiving the dose
     /// * `duration` - Duration of the infusion in time units
-    pub fn infusion(self, time: f64, amount: f64, input: usize, duration: f64) -> Self {
+    pub fn infusion(self, time: f64, amount: f64, input: impl ToString, duration: f64) -> Self {
         let infusion = Infusion::new(time, amount, input, duration, self.current_occasion.index());
         let event = Event::Infusion(infusion);
         self.event(event)
@@ -94,7 +94,7 @@ impl SubjectBuilder {
     /// * `time` - Time of the observation
     /// * `value` - Observed value (e.g., drug concentration)
     /// * `outeq` - Output equation number corresponding to this observation
-    pub fn observation(self, time: f64, value: f64, outeq: usize) -> Self {
+    pub fn observation(self, time: f64, value: f64, outeq: impl ToString) -> Self {
         let observation = Observation::new(
             time,
             Some(value),
@@ -118,7 +118,7 @@ impl SubjectBuilder {
         self,
         time: f64,
         value: f64,
-        outeq: usize,
+        outeq: impl ToString,
         censoring: Censor,
     ) -> Self {
         let observation = Observation::new(
@@ -139,7 +139,7 @@ impl SubjectBuilder {
     ///
     /// * `time` - Time of the observation
     /// * `outeq` - Output equation number (zero-indexed) corresponding to this observation
-    pub fn missing_observation(self, time: f64, outeq: usize) -> Self {
+    pub fn missing_observation(self, time: f64, outeq: impl ToString) -> Self {
         let observation = Observation::new(
             time,
             None,
@@ -165,7 +165,7 @@ impl SubjectBuilder {
         self,
         time: f64,
         value: f64,
-        outeq: usize,
+        outeq: impl ToString,
         errorpoly: ErrorPoly,
         censored: Censor,
     ) -> Self {

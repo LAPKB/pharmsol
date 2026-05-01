@@ -80,7 +80,11 @@ impl InfusionSchedule {
                 continue;
             }
 
-            let input = infusion.input();
+            let input = infusion
+                .input_index()
+                .ok_or_else(|| PharmsolError::UnknownInputLabel {
+                    label: infusion.input().to_string(),
+                })?;
             if input >= ndrugs {
                 return Err(PharmsolError::InputOutOfRange { input, ndrugs });
             }

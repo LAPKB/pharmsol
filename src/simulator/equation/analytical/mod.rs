@@ -278,6 +278,11 @@ impl EquationPriv for Analytical {
     fn get_nouteqs(&self) -> usize {
         self.neqs.nout
     }
+
+    fn metadata(&self) -> Option<&ValidatedModelMetadata> {
+        self.metadata.as_ref()
+    }
+
     #[inline(always)]
     fn solve(
         &self,
@@ -321,13 +326,19 @@ impl EquationPriv for Analytical {
                 let s = inf.time();
                 let e = s + inf.duration();
                 if current_t >= s && next_t <= e {
-                    if inf.input() >= self.get_ndrugs() {
+                    let input =
+                        inf.input_index()
+                            .ok_or_else(|| PharmsolError::UnknownInputLabel {
+                                label: inf.input().to_string(),
+                            })?;
+
+                    if input >= self.get_ndrugs() {
                         return Err(PharmsolError::InputOutOfRange {
-                            input: inf.input(),
+                            input,
                             ndrugs: self.get_ndrugs(),
                         });
                     }
-                    rateiv[inf.input()] += inf.amount() / inf.duration();
+                    rateiv[input] += inf.amount() / inf.duration();
                 }
             }
 
@@ -365,7 +376,12 @@ impl EquationPriv for Analytical {
             covariates,
             &mut y,
         );
-        let pred = y[observation.outeq()];
+        let outeq = observation
+            .outeq_index()
+            .ok_or_else(|| PharmsolError::UnknownOutputLabel {
+                label: observation.outeq().to_string(),
+            })?;
+        let pred = y[outeq];
         let pred = observation.to_prediction(pred, x.as_slice().to_vec());
         if let Some(error_models) = error_models {
             likelihood.push(pred.log_likelihood(error_models)?.exp());

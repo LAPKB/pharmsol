@@ -371,7 +371,7 @@ impl<'a> AuthoringParser<'a> {
 
         if lhs_trimmed == "outputs" {
             self.declared_outputs_span = Some(span);
-            for ident in parse_ident_list(rhs, rhs_abs)? {
+            for ident in parse_output_label_list(rhs, rhs_abs)? {
                 self.declared_outputs.insert(ident.text.clone());
                 self.explicit_outputs.insert(ident.text, ident.span);
             }
@@ -413,7 +413,20 @@ impl<'a> AuthoringParser<'a> {
             return self.parse_call_assignment(call, rhs, rhs_abs, span);
         }
 
-        let target = parse_ident_segment(lhs, lhs_abs)?;
+        let target = match parse_ident_segment(lhs, lhs_abs) {
+            Ok(target) => target,
+            Err(error) => {
+                if self.declared_outputs_span.is_none() {
+                    return Err(error);
+                }
+
+                let target = parse_output_label_segment(lhs, lhs_abs)?;
+                if !self.declared_outputs.contains(&target.text) {
+                    return Err(self.undeclared_output_error(&target.text, target.span));
+                }
+                target
+            }
+        };
         let rhs = parse_surface_rhs(rhs, rhs_abs)?;
         let stmt = build_assignment_statement(
             AssignTarget {
@@ -552,7 +565,7 @@ impl<'a> AuthoringParser<'a> {
                 self.init_statements.push(stmt);
             }
             "out" => {
-                let output = parse_ident_segment(call.argument, call.argument_start)?;
+                let output = parse_output_label_segment(call.argument, call.argument_start)?;
                 self.validate_output_target(&output)?;
                 self.declared_outputs.insert(output.text.clone());
                 self.note_output_assignment(&output);
@@ -839,6 +852,13 @@ fn parse_ident_list(src: &str, abs_start: usize) -> Result<Vec<Ident>, ParseErro
         .collect()
 }
 
+fn parse_output_label_list(src: &str, abs_start: usize) -> Result<Vec<Ident>, ParseError> {
+    split_top_level(src, ',')
+        .into_iter()
+        .map(|(segment, start)| parse_output_label_segment(segment, abs_start + start))
+        .collect()
+}
+
 fn parse_covariates_list(src: &str, abs_start: usize) -> Result<Vec<CovariateDecl>, ParseError> {
     let mut covariates = Vec::new();
     for (segment, start) in split_top_level(src, ',') {
@@ -898,6 +918,27 @@ fn parse_ident_segment(src: &str, abs_start: usize) -> Result<Ident, ParseError>
     if !is_valid_ident(trimmed) {
         return Err(ParseError::new(
             format!("expected identifier, found `{trimmed}`"),
+            Span::new(abs_start + leading, abs_start + leading + trimmed.len()),
+        ));
+    }
+    Ok(Ident::new(
+        trimmed,
+        Span::new(abs_start + leading, abs_start + leading + trimmed.len()),
+    ))
+}
+
+fn parse_output_label_segment(src: &str, abs_start: usize) -> Result<Ident, ParseError> {
+    let trimmed = src.trim();
+    let leading = src.len() - src.trim_start().len();
+    if trimmed.is_empty() {
+        return Err(ParseError::new(
+            "expected output label",
+            Span::new(abs_start, abs_start + src.len()),
+        ));
+    }
+    if !is_valid_output_label(trimmed) {
+        return Err(ParseError::new(
+            format!("expected output label, found `{trimmed}`"),
             Span::new(abs_start + leading, abs_start + leading + trimmed.len()),
         ));
     }
@@ -1342,6 +1383,10 @@ fn is_valid_ident(src: &str) -> bool {
         _ => return false,
     }
     chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+}
+
+fn is_valid_output_label(src: &str) -> bool {
+    is_valid_ident(src) || src.chars().all(|ch| ch.is_ascii_digit())
 }
 
 fn is_ident_byte(byte: u8) -> bool {

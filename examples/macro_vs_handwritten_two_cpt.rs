@@ -29,6 +29,10 @@ fn macro_model() -> equation::ODE {
 
 fn handwritten_model() -> equation::ODE {
     equation::ODE::new(
+        // Handwritten closures stay on dense internal channels.
+        // Public route labels like `load` and `iv` are metadata names; the
+        // low-level `bolus[]`, `rateiv[]`, and `y[]` buffers remain indexed by
+        // dense internal slots.
         |x, p, _t, dx, bolus, rateiv, _cov| {
             fetch_params!(p, ke, kcp, kpc, _v);
             dx[0] = -ke * x[0] - kcp * x[0] + kpc * x[1] + rateiv[0] + bolus[0];
@@ -88,19 +92,19 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
     assert_eq!(handwritten_ode.output_index("cp"), Some(cp));
 
     let subject = Subject::builder("macro-vs-handwritten-two-cpt")
-        .bolus(0.0, 100.0, load)
-        .infusion(12.0, 200.0, iv, 2.0)
-        .missing_observation(0.5, cp)
-        .missing_observation(1.0, cp)
-        .missing_observation(2.0, cp)
-        .missing_observation(4.0, cp)
-        .missing_observation(8.0, cp)
-        .missing_observation(12.0, cp)
-        .missing_observation(12.5, cp)
-        .missing_observation(13.0, cp)
-        .missing_observation(14.0, cp)
-        .missing_observation(16.0, cp)
-        .missing_observation(24.0, cp)
+        .bolus(0.0, 100.0, "load")
+        .infusion(12.0, 200.0, "iv", 2.0)
+        .missing_observation(0.5, "cp")
+        .missing_observation(1.0, "cp")
+        .missing_observation(2.0, "cp")
+        .missing_observation(4.0, "cp")
+        .missing_observation(8.0, "cp")
+        .missing_observation(12.0, "cp")
+        .missing_observation(12.5, "cp")
+        .missing_observation(13.0, "cp")
+        .missing_observation(14.0, "cp")
+        .missing_observation(16.0, "cp")
+        .missing_observation(24.0, "cp")
         .build();
 
     let params = [0.1, 0.05, 0.03, 50.0];

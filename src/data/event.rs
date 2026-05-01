@@ -93,6 +93,78 @@ pub enum Event {
     /// An observation of drug concentration or other measure
     Observation(Observation),
 }
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct ChannelId(String);
+
+impl ChannelId {
+    pub fn new(label: impl ToString) -> Self {
+        Self(label.to_string())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn index(&self) -> Option<usize> {
+        self.0.parse::<usize>().ok()
+    }
+}
+
+impl From<String> for ChannelId {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl From<&str> for ChannelId {
+    fn from(value: &str) -> Self {
+        Self(value.to_string())
+    }
+}
+
+impl From<usize> for ChannelId {
+    fn from(value: usize) -> Self {
+        Self(value.to_string())
+    }
+}
+
+impl AsRef<str> for ChannelId {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl fmt::Display for ChannelId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl PartialEq<usize> for ChannelId {
+    fn eq(&self, other: &usize) -> bool {
+        self.index() == Some(*other)
+    }
+}
+
+impl PartialEq<ChannelId> for usize {
+    fn eq(&self, other: &ChannelId) -> bool {
+        other == self
+    }
+}
+
+impl PartialEq<usize> for &ChannelId {
+    fn eq(&self, other: &usize) -> bool {
+        (**self).eq(other)
+    }
+}
+
+impl PartialEq<&ChannelId> for usize {
+    fn eq(&self, other: &&ChannelId) -> bool {
+        other.eq(self)
+    }
+}
+
 impl Event {
     /// Get the time of the event
     pub fn time(&self) -> f64 {
@@ -152,7 +224,7 @@ impl Event {
 pub struct Bolus {
     time: f64,
     amount: f64,
-    input: usize,
+    input: ChannelId,
     occasion: usize,
 }
 impl Bolus {
@@ -163,11 +235,11 @@ impl Bolus {
     /// * `time` - Time of the bolus dose
     /// * `amount` - Amount of drug administered
     /// * `input` - The compartment number receiving the dose
-    pub fn new(time: f64, amount: f64, input: usize, occasion: usize) -> Self {
+    pub fn new(time: f64, amount: f64, input: impl ToString, occasion: usize) -> Self {
         Bolus {
             time,
             amount,
-            input,
+            input: ChannelId::new(input),
             occasion,
         }
     }
@@ -178,8 +250,12 @@ impl Bolus {
     }
 
     /// Get the compartment number that receives the bolus
-    pub fn input(&self) -> usize {
-        self.input
+    pub fn input(&self) -> &ChannelId {
+        &self.input
+    }
+
+    pub fn input_index(&self) -> Option<usize> {
+        self.input.index()
     }
 
     /// Get the time of the bolus administration
@@ -193,8 +269,8 @@ impl Bolus {
     }
 
     /// Set the compartment number that receives the bolus
-    pub fn set_input(&mut self, input: usize) {
-        self.input = input;
+    pub fn set_input(&mut self, input: impl ToString) {
+        self.input = ChannelId::new(input);
     }
 
     /// Set the time of the bolus administration
@@ -208,7 +284,7 @@ impl Bolus {
     }
 
     /// Get a mutable reference to the compartment number (1-indexed) that receives the bolus
-    pub fn mut_input(&mut self) -> &mut usize {
+    pub fn mut_input(&mut self) -> &mut ChannelId {
         &mut self.input
     }
 
@@ -235,7 +311,7 @@ impl Bolus {
 pub struct Infusion {
     time: f64,
     amount: f64,
-    input: usize,
+    input: ChannelId,
     duration: f64,
     occasion: usize,
 }
@@ -248,11 +324,17 @@ impl Infusion {
     /// * `amount` - Total amount of drug to be administered
     /// * `input` - The compartment number receiving the dose
     /// * `duration` - Duration of the infusion in time units
-    pub fn new(time: f64, amount: f64, input: usize, duration: f64, occasion: usize) -> Self {
+    pub fn new(
+        time: f64,
+        amount: f64,
+        input: impl ToString,
+        duration: f64,
+        occasion: usize,
+    ) -> Self {
         Infusion {
             time,
             amount,
-            input,
+            input: ChannelId::new(input),
             duration,
             occasion,
         }
@@ -264,8 +346,12 @@ impl Infusion {
     }
 
     /// Get the compartment number that receives the infusion
-    pub fn input(&self) -> usize {
-        self.input
+    pub fn input(&self) -> &ChannelId {
+        &self.input
+    }
+
+    pub fn input_index(&self) -> Option<usize> {
+        self.input.index()
     }
 
     /// Get the duration of the infusion
@@ -286,8 +372,8 @@ impl Infusion {
     }
 
     /// Set the compartment number that receives the infusion
-    pub fn set_input(&mut self, input: usize) {
-        self.input = input;
+    pub fn set_input(&mut self, input: impl ToString) {
+        self.input = ChannelId::new(input);
     }
 
     /// Set the time of the infusion administration
@@ -306,7 +392,7 @@ impl Infusion {
     }
 
     /// Get a mutable reference to the compartment number (1-indexed) that receives the infusion
-    pub fn mut_input(&mut self) -> &mut usize {
+    pub fn mut_input(&mut self) -> &mut ChannelId {
         &mut self.input
     }
 
@@ -348,7 +434,7 @@ pub enum Censor {
 pub struct Observation {
     time: f64,
     value: Option<f64>,
-    outeq: usize,
+    outeq: ChannelId,
     errorpoly: Option<ErrorPoly>,
     occasion: usize,
     censoring: Censor,
@@ -367,7 +453,7 @@ impl Observation {
     pub(crate) fn new(
         time: f64,
         value: Option<f64>,
-        outeq: usize,
+        outeq: impl ToString,
         errorpoly: Option<ErrorPoly>,
         occasion: usize,
         censoring: Censor,
@@ -375,7 +461,7 @@ impl Observation {
         Observation {
             time,
             value,
-            outeq,
+            outeq: ChannelId::new(outeq),
             errorpoly,
             occasion,
             censoring,
@@ -393,8 +479,12 @@ impl Observation {
     }
 
     /// Get the output equation number corresponding to this observation
-    pub fn outeq(&self) -> usize {
-        self.outeq
+    pub fn outeq(&self) -> &ChannelId {
+        &self.outeq
+    }
+
+    pub fn outeq_index(&self) -> Option<usize> {
+        self.outeq.index()
     }
 
     /// Get the error polynomial coefficients (c0, c1, c2, c3) if available
@@ -415,8 +505,8 @@ impl Observation {
     }
 
     /// Set the output equation number corresponding to this observation
-    pub fn set_outeq(&mut self, outeq: usize) {
-        self.outeq = outeq;
+    pub fn set_outeq(&mut self, outeq: impl ToString) {
+        self.outeq = ChannelId::new(outeq);
     }
 
     /// Set the [ErrorPoly] for this observation
@@ -435,7 +525,7 @@ impl Observation {
     }
 
     /// Get a mutable reference to the output equation number
-    pub fn mut_outeq(&mut self) -> &mut usize {
+    pub fn mut_outeq(&mut self) -> &mut ChannelId {
         &mut self.outeq
     }
 
@@ -460,7 +550,9 @@ impl Observation {
             time: self.time(),
             observation: self.value(),
             prediction: pred,
-            outeq: self.outeq(),
+            outeq: self
+                .outeq_index()
+                .expect("prediction requires a resolved or numeric output label"),
             errorpoly: self.errorpoly(),
             state,
             occasion: self.occasion(),
@@ -539,6 +631,7 @@ mod tests {
         assert_eq!(bolus.time(), 2.5);
         assert_eq!(bolus.amount(), 100.0);
         assert_eq!(bolus.input(), 1);
+        assert_eq!(bolus.input().as_str(), "1");
     }
 
     #[test]
@@ -561,6 +654,7 @@ mod tests {
         assert_eq!(infusion.time(), 1.0);
         assert_eq!(infusion.amount(), 200.0);
         assert_eq!(infusion.input(), 1);
+        assert_eq!(infusion.input().as_str(), "1");
         assert_eq!(infusion.duration(), 2.5);
     }
 
@@ -589,6 +683,7 @@ mod tests {
         assert_eq!(observation.time(), 5.0);
         assert_eq!(observation.value(), Some(75.5));
         assert_eq!(observation.outeq(), 2);
+        assert_eq!(observation.outeq().as_str(), "2");
         assert_eq!(observation.errorpoly(), error_poly);
     }
 

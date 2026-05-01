@@ -6,13 +6,14 @@
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{quote, ToTokens};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use syn::{
     parse::{Parse, ParseStream, Parser},
     punctuated::Punctuated,
     token,
     visit::Visit,
-    Expr, ExprClosure, Ident, LitStr, Pat, Stmt, Token,
+    visit_mut::VisitMut,
+    Expr, ExprClosure, Ident, Lit, LitInt, LitStr, Pat, Stmt, Token,
 };
 
 // ---------------------------------------------------------------------------
@@ -24,7 +25,7 @@ struct OdeInput {
     params: Vec<Ident>,
     covariates: Vec<Ident>,
     states: Vec<Ident>,
-    outputs: Vec<Ident>,
+    outputs: Vec<SymbolicIndex>,
     routes: Vec<OdeRouteDecl>,
     diffeq_mode: OdeDiffeqMode,
     diffeq: ExprClosure,
@@ -39,7 +40,7 @@ struct AnalyticalInput {
     params: Vec<Ident>,
     covariates: Vec<Ident>,
     states: Vec<Ident>,
-    outputs: Vec<Ident>,
+    outputs: Vec<SymbolicIndex>,
     routes: Vec<OdeRouteDecl>,
     structure: Ident,
     sec: Option<ExprClosure>,
@@ -54,7 +55,7 @@ struct SdeInput {
     params: Vec<Ident>,
     covariates: Vec<Ident>,
     states: Vec<Ident>,
-    outputs: Vec<Ident>,
+    outputs: Vec<SymbolicIndex>,
     routes: Vec<OdeRouteDecl>,
     particles: Expr,
     drift: ExprClosure,
@@ -73,7 +74,7 @@ enum OdeDiffeqMode {
 
 struct OdeRouteDecl {
     kind: OdeRouteKind,
-    input: Ident,
+    input: SymbolicIndex,
     destination: Ident,
 }
 
@@ -91,8 +92,76 @@ struct AnalyticalKernelSpec {
 }
 
 struct RoutePropertyEntry {
-    route: Ident,
+    route: SymbolicIndex,
     value: Expr,
+}
+
+#[derive(Clone)]
+enum SymbolicIndex {
+    Ident(Ident),
+    Int(LitInt),
+}
+
+impl SymbolicIndex {
+    fn name(&self) -> String {
+        match self {
+            Self::Ident(ident) => ident.to_string(),
+            Self::Int(lit) => lit.base10_digits().to_string(),
+        }
+    }
+
+    fn ident(&self) -> Option<&Ident> {
+        match self {
+            Self::Ident(ident) => Some(ident),
+            Self::Int(_) => None,
+        }
+    }
+
+    fn numeric_value(&self) -> Option<usize> {
+        match self {
+            Self::Ident(_) => None,
+            Self::Int(lit) => Some(
+                lit.base10_parse::<usize>()
+                    .expect("validated numeric label should fit usize"),
+            ),
+        }
+    }
+
+    fn numeric(value: usize) -> Self {
+        Self::Int(LitInt::new(&value.to_string(), Span::call_site()))
+    }
+}
+
+impl Parse for SymbolicIndex {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        if input.peek(LitInt) {
+            let lit: LitInt = input.parse()?;
+            lit.base10_parse::<usize>().map_err(|_| {
+                syn::Error::new_spanned(
+                    &lit,
+                    "numeric declaration-first labels must be non-negative base-10 integers that fit in usize",
+                )
+            })?;
+            Ok(Self::Int(lit))
+        } else {
+            Ok(Self::Ident(input.parse()?))
+        }
+    }
+}
+
+impl ToTokens for SymbolicIndex {
+    fn to_tokens(&self, tokens: &mut TokenStream2) {
+        match self {
+            Self::Ident(ident) => ident.to_tokens(tokens),
+            Self::Int(lit) => lit.to_tokens(tokens),
+        }
+    }
+}
+
+impl std::fmt::Display for SymbolicIndex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.name())
+    }
 }
 
 impl Parse for OdeRouteDecl {
@@ -111,7 +180,7 @@ impl Parse for OdeRouteDecl {
 
         let content;
         syn::parenthesized!(content in input);
-        let route_input: Ident = content.parse()?;
+        let route_input: SymbolicIndex = content.parse()?;
         if !content.is_empty() {
             return Err(content.error("expected a single route input name inside `(...)`"));
         }
@@ -166,7 +235,12 @@ impl Parse for OdeInput {
                     "covariates",
                 )?,
                 "states" => set_once_ode(&mut states, parse_ident_list(input)?, &key, "states")?,
-                "outputs" => set_once_ode(&mut outputs, parse_ident_list(input)?, &key, "outputs")?,
+                "outputs" => set_once_ode(
+                    &mut outputs,
+                    parse_symbolic_index_list(input)?,
+                    &key,
+                    "outputs",
+                )?,
                 "routes" => set_once_ode(&mut routes, parse_route_list(input)?, &key, "routes")?,
                 "diffeq" => set_once_ode(&mut diffeq, input.parse()?, &key, "diffeq")?,
                 "lag" => set_once_ode(&mut lag, input.parse()?, &key, "lag")?,
@@ -206,14 +280,16 @@ impl Parse for OdeInput {
         validate_unique_idents("parameter", &params, "ode!")?;
         validate_unique_idents("covariate", &covariates, "ode!")?;
         validate_unique_idents("state", &states, "ode!")?;
-        validate_unique_idents("output", &outputs, "ode!")?;
+        let output_idents = symbolic_index_idents(&outputs);
+
+        validate_unique_symbolic_indices("output", &outputs, "ode!")?;
         validate_routes(&routes, &states, "ode!")?;
         validate_named_binding_compatibility(
             NamedBindingSets {
                 params: &params,
                 covariates: &covariates,
                 states: &states,
-                outputs: &outputs,
+                outputs: &output_idents,
                 routes: &routes,
             },
             OdeBindingClosures {
@@ -247,7 +323,7 @@ impl Parse for OdeInput {
 
 impl Parse for RoutePropertyEntry {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let route: Ident = input.parse()?;
+        let route: SymbolicIndex = input.parse()?;
         input.parse::<Token![=>]>()?;
         let value: Expr = input.parse()?;
         Ok(Self { route, value })
@@ -287,9 +363,12 @@ impl Parse for AnalyticalInput {
                 "states" => {
                     set_once_analytical(&mut states, parse_ident_list(input)?, &key, "states")?
                 }
-                "outputs" => {
-                    set_once_analytical(&mut outputs, parse_ident_list(input)?, &key, "outputs")?
-                }
+                "outputs" => set_once_analytical(
+                    &mut outputs,
+                    parse_symbolic_index_list(input)?,
+                    &key,
+                    "outputs",
+                )?,
                 "routes" => {
                     set_once_analytical(&mut routes, parse_route_list(input)?, &key, "routes")?
                 }
@@ -328,7 +407,9 @@ impl Parse for AnalyticalInput {
         validate_unique_idents("parameter", &params, "analytical!")?;
         validate_unique_idents("covariate", &covariates, "analytical!")?;
         validate_unique_idents("state", &states, "analytical!")?;
-        validate_unique_idents("output", &outputs, "analytical!")?;
+        let output_idents = symbolic_index_idents(&outputs);
+
+        validate_unique_symbolic_indices("output", &outputs, "analytical!")?;
         validate_routes(&routes, &states, "analytical!")?;
 
         let kernel_spec = resolve_analytical_structure(&structure)?;
@@ -358,7 +439,7 @@ impl Parse for AnalyticalInput {
                 params: &params,
                 covariates: &covariates,
                 states: &states,
-                outputs: &outputs,
+                outputs: &output_idents,
                 routes: &routes,
             },
             AnalyticalBindingClosures {
@@ -431,7 +512,12 @@ impl Parse for SdeInput {
                     "covariates",
                 )?,
                 "states" => set_once_sde(&mut states, parse_ident_list(input)?, &key, "states")?,
-                "outputs" => set_once_sde(&mut outputs, parse_ident_list(input)?, &key, "outputs")?,
+                "outputs" => set_once_sde(
+                    &mut outputs,
+                    parse_symbolic_index_list(input)?,
+                    &key,
+                    "outputs",
+                )?,
                 "routes" => set_once_sde(&mut routes, parse_route_list(input)?, &key, "routes")?,
                 "particles" => set_once_sde(&mut particles, input.parse()?, &key, "particles")?,
                 "drift" => set_once_sde(&mut drift, input.parse()?, &key, "drift")?,
@@ -469,14 +555,16 @@ impl Parse for SdeInput {
         validate_unique_idents("parameter", &params, "sde!")?;
         validate_unique_idents("covariate", &covariates, "sde!")?;
         validate_unique_idents("state", &states, "sde!")?;
-        validate_unique_idents("output", &outputs, "sde!")?;
+        let output_idents = symbolic_index_idents(&outputs);
+
+        validate_unique_symbolic_indices("output", &outputs, "sde!")?;
         validate_routes(&routes, &states, "sde!")?;
         validate_sde_named_binding_compatibility(
             NamedBindingSets {
                 params: &params,
                 covariates: &covariates,
                 states: &states,
-                outputs: &outputs,
+                outputs: &output_idents,
                 routes: &routes,
             },
             SdeBindingClosures {
@@ -595,6 +683,16 @@ fn parse_ident_list(input: ParseStream) -> syn::Result<Vec<Ident>> {
         .collect())
 }
 
+fn parse_symbolic_index_list(input: ParseStream) -> syn::Result<Vec<SymbolicIndex>> {
+    let content;
+    syn::bracketed!(content in input);
+    Ok(
+        Punctuated::<SymbolicIndex, Token![,]>::parse_terminated(&content)?
+            .into_iter()
+            .collect(),
+    )
+}
+
 fn parse_route_list(input: ParseStream) -> syn::Result<Vec<OdeRouteDecl>> {
     let content;
     syn::braced!(content in input);
@@ -625,6 +723,29 @@ fn closure_param_ident(c: &ExprClosure, index: usize) -> Option<Ident> {
 
 fn generated_ident(name: &str) -> Ident {
     Ident::new(name, Span::call_site())
+}
+
+fn symbolic_index_idents(labels: &[SymbolicIndex]) -> Vec<Ident> {
+    labels
+        .iter()
+        .filter_map(|label| label.ident().cloned())
+        .collect()
+}
+
+fn symbolic_index_bindings(labels: &[SymbolicIndex]) -> Vec<(SymbolicIndex, usize)> {
+    labels
+        .iter()
+        .cloned()
+        .enumerate()
+        .map(|(index, label)| (label, index))
+        .collect()
+}
+
+fn symbolic_numeric_binding_map(bindings: &[(SymbolicIndex, usize)]) -> HashMap<usize, usize> {
+    bindings
+        .iter()
+        .filter_map(|(label, index)| label.numeric_value().map(|value| (value, *index)))
+        .collect()
 }
 
 #[derive(Default)]
@@ -710,6 +831,124 @@ impl<'ast> Visit<'ast> for ClosureBodyUsage {
         }
 
         syn::visit::visit_expr_assign(self, expr_assign);
+    }
+}
+
+struct IndexRewriteTarget {
+    container: Ident,
+    labels: HashMap<usize, usize>,
+}
+
+impl IndexRewriteTarget {
+    fn new(container: Ident, labels: HashMap<usize, usize>) -> Self {
+        Self { container, labels }
+    }
+}
+
+struct NumericLabelRewriter {
+    index_targets: Vec<IndexRewriteTarget>,
+    route_labels: Option<HashMap<usize, usize>>,
+}
+
+impl NumericLabelRewriter {
+    fn rewrite(
+        expr: &Expr,
+        index_targets: Vec<IndexRewriteTarget>,
+        route_labels: Option<HashMap<usize, usize>>,
+    ) -> Expr {
+        let mut rewritten = expr.clone();
+        let mut rewriter = Self {
+            index_targets,
+            route_labels,
+        };
+        rewriter.visit_expr_mut(&mut rewritten);
+        rewritten
+    }
+
+    fn target_labels(&self, path: &syn::ExprPath) -> Option<&HashMap<usize, usize>> {
+        if path.qself.is_some()
+            || path.path.leading_colon.is_some()
+            || path.path.segments.len() != 1
+        {
+            return None;
+        }
+
+        let ident = &path.path.segments[0].ident;
+        self.index_targets
+            .iter()
+            .find(|target| target.container == *ident)
+            .map(|target| &target.labels)
+    }
+
+    fn rewrite_route_macro(&self, mac: &mut syn::Macro) {
+        let Some(route_labels) = self.route_labels.as_ref() else {
+            return;
+        };
+        if !(mac.path.is_ident("lag") || mac.path.is_ident("fa")) {
+            return;
+        }
+
+        let Ok(entries) = Punctuated::<RoutePropertyEntry, Token![,]>::parse_terminated
+            .parse2(mac.tokens.clone())
+        else {
+            return;
+        };
+
+        let entries = entries.into_iter().map(|mut entry| {
+            if let Some(value) = entry.route.numeric_value() {
+                if let Some(internal_index) = route_labels.get(&value) {
+                    entry.route = SymbolicIndex::numeric(*internal_index);
+                }
+            }
+            entry
+        });
+
+        let tokens = entries.map(|entry| {
+            let route = entry.route;
+            let value = entry.value;
+            quote! { #route => #value }
+        });
+        mac.tokens = quote! { #(#tokens),* };
+    }
+}
+
+impl VisitMut for NumericLabelRewriter {
+    fn visit_expr_index_mut(&mut self, expr_index: &mut syn::ExprIndex) {
+        syn::visit_mut::visit_expr_index_mut(self, expr_index);
+
+        let Expr::Path(expr_path) = expr_index.expr.as_ref() else {
+            return;
+        };
+        let Some(labels) = self.target_labels(expr_path) else {
+            return;
+        };
+        let Expr::Lit(expr_lit) = expr_index.index.as_ref() else {
+            return;
+        };
+        let Lit::Int(lit) = &expr_lit.lit else {
+            return;
+        };
+        let Ok(external_index) = lit.base10_parse::<usize>() else {
+            return;
+        };
+        let Some(internal_index) = labels.get(&external_index) else {
+            return;
+        };
+
+        expr_index.index = Box::new(Expr::Lit(syn::ExprLit {
+            attrs: Vec::new(),
+            lit: Lit::Int(LitInt::new(&internal_index.to_string(), lit.span())),
+        }));
+    }
+
+    fn visit_expr_macro_mut(&mut self, expr_macro: &mut syn::ExprMacro) {
+        self.rewrite_route_macro(&mut expr_macro.mac);
+        syn::visit_mut::visit_expr_macro_mut(self, expr_macro);
+    }
+
+    fn visit_stmt_macro_mut(&mut self, stmt_macro: &mut syn::StmtMacro) {
+        self.rewrite_route_macro(&mut stmt_macro.mac);
+        syn::visit_mut::visit_stmt_macro_mut(self, stmt_macro);
     }
 }
 
@@ -856,10 +1095,17 @@ fn classify_diffeq_mode(
 }
 
 fn route_input_idents(routes: &[OdeRouteDecl]) -> Vec<Ident> {
-    routes.iter().map(|route| route.input.clone()).collect()
+    routes
+        .iter()
+        .filter_map(|route| route.input.ident().cloned())
+        .collect()
 }
 
-fn ode_route_channel_bindings(routes: &[OdeRouteDecl]) -> Vec<(Ident, usize)> {
+fn route_input_names(routes: &[OdeRouteDecl]) -> Vec<String> {
+    routes.iter().map(|route| route.input.name()).collect()
+}
+
+fn ode_route_channel_bindings(routes: &[OdeRouteDecl]) -> Vec<(SymbolicIndex, usize)> {
     let mut next_bolus_index = 0usize;
     let mut next_infusion_index = 0usize;
 
@@ -883,7 +1129,7 @@ fn ode_route_channel_bindings(routes: &[OdeRouteDecl]) -> Vec<(Ident, usize)> {
         .collect()
 }
 
-fn dense_index_len(bindings: &[(Ident, usize)]) -> usize {
+fn dense_index_len(bindings: &[(SymbolicIndex, usize)]) -> usize {
     bindings
         .iter()
         .map(|(_, index)| index + 1)
@@ -1361,12 +1607,14 @@ fn generate_index_consts(idents: &[Ident]) -> TokenStream2 {
     }
 }
 
-fn generate_mapped_index_consts(bindings: &[(Ident, usize)]) -> TokenStream2 {
-    let bindings = bindings.iter().map(|(ident, index)| {
-        quote! {
-            #[allow(non_upper_case_globals, dead_code)]
-            const #ident: usize = #index;
-        }
+fn generate_mapped_index_consts(bindings: &[(SymbolicIndex, usize)]) -> TokenStream2 {
+    let bindings = bindings.iter().filter_map(|(label, index)| {
+        label.ident().map(|ident| {
+            quote! {
+                #[allow(non_upper_case_globals, dead_code)]
+                const #ident: usize = #index;
+            }
+        })
     });
 
     quote! {
@@ -1379,10 +1627,11 @@ fn expand_out(
     params: &[Ident],
     covariates: &[Ident],
     states: &[Ident],
-    outputs: &[Ident],
+    outputs: &[SymbolicIndex],
 ) -> syn::Result<TokenStream2> {
     let state_consts = generate_index_consts(states);
-    let output_consts = generate_index_consts(outputs);
+    let output_bindings = symbolic_index_bindings(outputs);
+    let output_consts = generate_mapped_index_consts(&output_bindings);
     let x = generated_ident("__pharmsol_x");
     let p = generated_ident("__pharmsol_p");
     let t = generated_ident("__pharmsol_t");
@@ -1397,7 +1646,19 @@ fn expand_out(
     )?;
     let parameter_bindings = generate_parameter_bindings(params, out, &p);
     let covariate_bindings = generate_covariate_bindings(covariates, out, &cov, &t);
-    let body = &out.body;
+    let y_binding = if out.inputs.len() == full_inputs.len() {
+        closure_param_ident(out, 4).unwrap_or_else(|| y.clone())
+    } else {
+        closure_param_ident(out, 2).unwrap_or_else(|| y.clone())
+    };
+    let body = NumericLabelRewriter::rewrite(
+        out.body.as_ref(),
+        vec![IndexRewriteTarget::new(
+            y_binding,
+            symbolic_numeric_binding_map(&output_bindings),
+        )],
+        None,
+    );
 
     Ok(quote! {{
         let __pharmsol_out: fn(
@@ -1480,14 +1741,13 @@ fn extract_route_property_routes(
     let macro_expr = find_terminal_macro_invocation(macro_name, label, closure)?;
     let entries = Punctuated::<RoutePropertyEntry, Token![,]>::parse_terminated
         .parse2(macro_expr.tokens.clone())?;
-    let known_routes = route_input_idents(routes)
+    let known_routes = route_input_names(routes)
         .into_iter()
-        .map(|route| route.to_string())
         .collect::<HashSet<_>>();
     let mut seen = HashSet::new();
 
     for entry in entries {
-        let route_name = entry.route.to_string();
+        let route_name = entry.route.name();
         if !known_routes.contains(&route_name) {
             return Err(syn::Error::new_spanned(
                 &entry.route,
@@ -1515,7 +1775,7 @@ fn validate_route_property_kinds(
     property_routes: &HashSet<String>,
 ) -> syn::Result<()> {
     for route in routes {
-        if property_routes.contains(&route.input.to_string())
+        if property_routes.contains(&route.input.name())
             && matches!(route.kind, OdeRouteKind::Infusion)
         {
             return Err(syn::Error::new_spanned(
@@ -1536,7 +1796,7 @@ fn expand_ode_route_map(
     closure: &ExprClosure,
     params: &[Ident],
     covariates: &[Ident],
-    route_bindings: &[(Ident, usize)],
+    route_bindings: &[(SymbolicIndex, usize)],
 ) -> syn::Result<TokenStream2> {
     let route_consts = generate_mapped_index_consts(route_bindings);
     let p = generated_ident("__pharmsol_p");
@@ -1553,7 +1813,11 @@ fn expand_ode_route_map(
     )?;
     let parameter_bindings = generate_parameter_bindings(params, closure, &p);
     let covariate_bindings = generate_covariate_bindings(covariates, closure, &cov, &t);
-    let body = &closure.body;
+    let body = NumericLabelRewriter::rewrite(
+        closure.body.as_ref(),
+        Vec::new(),
+        Some(symbolic_numeric_binding_map(route_bindings)),
+    );
 
     Ok(quote! {{
         let __pharmsol_route_map: fn(
@@ -1626,7 +1890,7 @@ fn expand_route_metadata(
         .map(|route| {
             let input = &route.input;
             let destination = &route.destination;
-            let route_name = route.input.to_string();
+            let route_name = route.input.name();
             let route_builder = match route.kind {
                 OdeRouteKind::Bolus => {
                     quote! { ::pharmsol::equation::Route::bolus(stringify!(#input)) }
@@ -1671,7 +1935,7 @@ fn expand_analytical_route_metadata(
         .map(|route| {
             let input = &route.input;
             let destination = &route.destination;
-            let route_name = route.input.to_string();
+            let route_name = route.input.name();
             let route_builder = match route.kind {
                 OdeRouteKind::Bolus => {
                     quote! { ::pharmsol::equation::Route::bolus(stringify!(#input)) }
@@ -1711,7 +1975,7 @@ fn expand_sde_route_metadata(
         .map(|route| {
             let input = &route.input;
             let destination = &route.destination;
-            let route_name = route.input.to_string();
+            let route_name = route.input.name();
             let route_builder = match route.kind {
                 OdeRouteKind::Bolus => {
                     quote! { ::pharmsol::equation::Route::bolus(stringify!(#input)) }
@@ -1752,7 +2016,7 @@ fn route_destination_index(route: &OdeRouteDecl, states: &[Ident]) -> usize {
 fn expand_injected_ode_route_terms(
     routes: &[OdeRouteDecl],
     states: &[Ident],
-    route_bindings: &[(Ident, usize)],
+    route_bindings: &[(SymbolicIndex, usize)],
     dx: &Ident,
     bolus: &Ident,
     rateiv: &Ident,
@@ -1780,7 +2044,7 @@ fn expand_injected_ode_route_terms(
 fn expand_injected_sde_rate_terms(
     routes: &[OdeRouteDecl],
     states: &[Ident],
-    route_bindings: &[(Ident, usize)],
+    route_bindings: &[(SymbolicIndex, usize)],
     dx: &Ident,
     rateiv: &Ident,
 ) -> TokenStream2 {
@@ -1806,7 +2070,7 @@ fn expand_injected_sde_rate_terms(
 fn expand_injected_sde_bolus_mappings(
     routes: &[OdeRouteDecl],
     states: &[Ident],
-    route_bindings: &[(Ident, usize)],
+    route_bindings: &[(SymbolicIndex, usize)],
 ) -> TokenStream2 {
     let mut destinations = vec![quote! { None }; dense_index_len(route_bindings)];
 
@@ -1836,12 +2100,30 @@ fn validate_unique_idents(kind: &str, idents: &[Ident], macro_name: &str) -> syn
     Ok(())
 }
 
+fn validate_unique_symbolic_indices(
+    kind: &str,
+    labels: &[SymbolicIndex],
+    macro_name: &str,
+) -> syn::Result<()> {
+    let mut seen = HashSet::new();
+    for label in labels {
+        let name = label.name();
+        if !seen.insert(name.clone()) {
+            return Err(syn::Error::new_spanned(
+                label,
+                format!("duplicate {kind} `{name}` in declaration-first `{macro_name}`"),
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn validate_routes(routes: &[OdeRouteDecl], states: &[Ident], macro_name: &str) -> syn::Result<()> {
     let known_states = states.iter().map(Ident::to_string).collect::<HashSet<_>>();
     let mut seen_routes = HashSet::new();
 
     for route in routes {
-        let route_name = route.input.to_string();
+        let route_name = route.input.name();
         if !seen_routes.insert(route_name.clone()) {
             return Err(syn::Error::new_spanned(
                 &route.input,
@@ -1869,7 +2151,7 @@ fn expand_diffeq(
     covariates: &[Ident],
     states: &[Ident],
     routes: &[OdeRouteDecl],
-    route_bindings: &[(Ident, usize)],
+    route_bindings: &[(SymbolicIndex, usize)],
     diffeq_mode: OdeDiffeqMode,
 ) -> syn::Result<TokenStream2> {
     let state_consts = generate_index_consts(states);
@@ -1907,7 +2189,25 @@ fn expand_diffeq(
             )?;
             let parameter_bindings = generate_parameter_bindings(params, diffeq, &p);
             let covariate_bindings = generate_covariate_bindings(covariates, diffeq, &cov, &t);
-            let body = &diffeq.body;
+            let bolus_binding = if diffeq.inputs.len() == full_inputs.len() {
+                closure_param_ident(diffeq, 4).unwrap_or_else(|| bolus.clone())
+            } else {
+                closure_param_ident(diffeq, 3).unwrap_or_else(|| bolus.clone())
+            };
+            let rateiv_binding = if diffeq.inputs.len() == full_inputs.len() {
+                closure_param_ident(diffeq, 5).unwrap_or_else(|| rateiv.clone())
+            } else {
+                closure_param_ident(diffeq, 4).unwrap_or_else(|| rateiv.clone())
+            };
+            let route_label_map = symbolic_numeric_binding_map(route_bindings);
+            let body = NumericLabelRewriter::rewrite(
+                diffeq.body.as_ref(),
+                vec![
+                    IndexRewriteTarget::new(bolus_binding, route_label_map.clone()),
+                    IndexRewriteTarget::new(rateiv_binding, route_label_map),
+                ],
+                None,
+            );
 
             Ok(quote! {{
                 let __pharmsol_diffeq: fn(
@@ -2094,7 +2394,7 @@ fn expand_analytical_route_map(
     closure: &ExprClosure,
     params: &[Ident],
     covariates: &[Ident],
-    route_bindings: &[(Ident, usize)],
+    route_bindings: &[(SymbolicIndex, usize)],
 ) -> syn::Result<TokenStream2> {
     let route_consts = generate_mapped_index_consts(route_bindings);
     let p = generated_ident("__pharmsol_p");
@@ -2111,7 +2411,11 @@ fn expand_analytical_route_map(
     )?;
     let parameter_bindings = generate_parameter_bindings(params, closure, &p);
     let covariate_bindings = generate_covariate_bindings(covariates, closure, &cov, &t);
-    let body = &closure.body;
+    let body = NumericLabelRewriter::rewrite(
+        closure.body.as_ref(),
+        Vec::new(),
+        Some(symbolic_numeric_binding_map(route_bindings)),
+    );
 
     Ok(quote! {{
         let __pharmsol_route_map: fn(
@@ -2221,10 +2525,11 @@ fn expand_analytical_out(
     params: &[Ident],
     covariates: &[Ident],
     states: &[Ident],
-    outputs: &[Ident],
+    outputs: &[SymbolicIndex],
 ) -> syn::Result<TokenStream2> {
     let state_consts = generate_index_consts(states);
-    let output_consts = generate_index_consts(outputs);
+    let output_bindings = symbolic_index_bindings(outputs);
+    let output_consts = generate_mapped_index_consts(&output_bindings);
     let x = generated_ident("__pharmsol_x");
     let p = generated_ident("__pharmsol_p");
     let t = generated_ident("__pharmsol_t");
@@ -2239,7 +2544,19 @@ fn expand_analytical_out(
     )?;
     let parameter_bindings = generate_parameter_bindings(params, out, &p);
     let covariate_bindings = generate_covariate_bindings(covariates, out, &cov, &t);
-    let body = &out.body;
+    let y_binding = if out.inputs.len() == full_inputs.len() {
+        closure_param_ident(out, 4).unwrap_or_else(|| y.clone())
+    } else {
+        closure_param_ident(out, 2).unwrap_or_else(|| y.clone())
+    };
+    let body = NumericLabelRewriter::rewrite(
+        out.body.as_ref(),
+        vec![IndexRewriteTarget::new(
+            y_binding,
+            symbolic_numeric_binding_map(&output_bindings),
+        )],
+        None,
+    );
 
     Ok(quote! {{
         let __pharmsol_out: fn(
@@ -2270,7 +2587,7 @@ fn expand_sde_drift(
     covariates: &[Ident],
     states: &[Ident],
     routes: &[OdeRouteDecl],
-    route_bindings: &[(Ident, usize)],
+    route_bindings: &[(SymbolicIndex, usize)],
 ) -> syn::Result<TokenStream2> {
     let state_consts = generate_index_consts(states);
     let x = generated_ident("__pharmsol_x");
@@ -2360,7 +2677,7 @@ fn expand_sde_route_map(
     closure: &ExprClosure,
     params: &[Ident],
     covariates: &[Ident],
-    route_bindings: &[(Ident, usize)],
+    route_bindings: &[(SymbolicIndex, usize)],
 ) -> syn::Result<TokenStream2> {
     let route_consts = generate_mapped_index_consts(route_bindings);
     let p = generated_ident("__pharmsol_p");
@@ -2377,7 +2694,11 @@ fn expand_sde_route_map(
     )?;
     let parameter_bindings = generate_parameter_bindings(params, closure, &p);
     let covariate_bindings = generate_covariate_bindings(covariates, closure, &cov, &t);
-    let body = &closure.body;
+    let body = NumericLabelRewriter::rewrite(
+        closure.body.as_ref(),
+        Vec::new(),
+        Some(symbolic_numeric_binding_map(route_bindings)),
+    );
 
     Ok(quote! {{
         let __pharmsol_route_map: fn(
@@ -2444,10 +2765,11 @@ fn expand_sde_out(
     params: &[Ident],
     covariates: &[Ident],
     states: &[Ident],
-    outputs: &[Ident],
+    outputs: &[SymbolicIndex],
 ) -> syn::Result<TokenStream2> {
     let state_consts = generate_index_consts(states);
-    let output_consts = generate_index_consts(outputs);
+    let output_bindings = symbolic_index_bindings(outputs);
+    let output_consts = generate_mapped_index_consts(&output_bindings);
     let x = generated_ident("__pharmsol_x");
     let p = generated_ident("__pharmsol_p");
     let t = generated_ident("__pharmsol_t");
@@ -2462,7 +2784,19 @@ fn expand_sde_out(
     )?;
     let parameter_bindings = generate_parameter_bindings(params, out, &p);
     let covariate_bindings = generate_covariate_bindings(covariates, out, &cov, &t);
-    let body = &out.body;
+    let y_binding = if out.inputs.len() == full_inputs.len() {
+        closure_param_ident(out, 4).unwrap_or_else(|| y.clone())
+    } else {
+        closure_param_ident(out, 2).unwrap_or_else(|| y.clone())
+    };
+    let body = NumericLabelRewriter::rewrite(
+        out.body.as_ref(),
+        vec![IndexRewriteTarget::new(
+            y_binding,
+            symbolic_numeric_binding_map(&output_bindings),
+        )],
+        None,
+    );
 
     Ok(quote! {{
         let __pharmsol_out: fn(
@@ -3039,11 +3373,11 @@ mod tests {
         let bindings = ode_route_channel_bindings(&input.routes);
 
         assert_eq!(dense_index_len(&bindings), 2);
-        assert_eq!(bindings[0].0.to_string(), "oral");
+        assert_eq!(bindings[0].0.name(), "oral");
         assert_eq!(bindings[0].1, 0);
-        assert_eq!(bindings[1].0.to_string(), "iv");
+        assert_eq!(bindings[1].0.name(), "iv");
         assert_eq!(bindings[1].1, 0);
-        assert_eq!(bindings[2].0.to_string(), "sc");
+        assert_eq!(bindings[2].0.name(), "sc");
         assert_eq!(bindings[2].1, 1);
     }
 

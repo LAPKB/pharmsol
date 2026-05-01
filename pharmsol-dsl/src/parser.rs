@@ -106,10 +106,16 @@ struct Parser {
 #[derive(Clone, Copy)]
 enum LayoutBoundary {
     ModelItem,
-    Statement,
+    Statement(StatementContext),
     Binding,
     IdentItem,
     RouteDecl,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StatementContext {
+    Standard,
+    Outputs,
 }
 
 impl Parser {
@@ -655,8 +661,13 @@ impl Parser {
     fn parse_statement_block(&mut self, name: &str) -> Result<StatementBlock, ParseError> {
         let start = self.bump().unwrap().span;
         let open = self.expect_simple(|kind| matches!(kind, TokenKind::LBrace), "`{`")?;
+        let statement_context = if name == "outputs" {
+            StatementContext::Outputs
+        } else {
+            StatementContext::Standard
+        };
         let (statements, mut errors) =
-            self.with_layout_boundary(LayoutBoundary::Statement, |parser| {
+            self.with_layout_boundary(LayoutBoundary::Statement(statement_context), |parser| {
                 let mut statements = Vec::new();
                 let mut errors = Vec::new();
                 while !parser.is_eof() && !parser.at(|kind| matches!(kind, TokenKind::RBrace)) {
@@ -790,8 +801,9 @@ impl Parser {
 
     fn parse_stmt_body(&mut self) -> Result<Vec<Stmt>, ParseError> {
         let open = self.expect_simple(|kind| matches!(kind, TokenKind::LBrace), "`{`")?;
+        let statement_context = self.current_statement_context();
         let (statements, mut errors) =
-            self.with_layout_boundary(LayoutBoundary::Statement, |parser| {
+            self.with_layout_boundary(LayoutBoundary::Statement(statement_context), |parser| {
                 let mut statements = Vec::new();
                 let mut errors = Vec::new();
                 while !parser.is_eof() && !parser.at(|kind| matches!(kind, TokenKind::RBrace)) {
@@ -854,7 +866,11 @@ impl Parser {
     }
 
     fn parse_assign_target(&mut self) -> Result<AssignTarget, ParseError> {
-        let name = self.parse_ident()?;
+        let name = if matches!(self.current_statement_context(), StatementContext::Outputs) {
+            self.parse_output_target_name()?
+        } else {
+            self.parse_ident()?
+        };
         let mut span = name.span;
         let kind = if let Some(open) = self.take_if(|kind| matches!(kind, TokenKind::LParen)) {
             let args = self.parse_expr_list(&open, TokenKindMatcher::RPAREN)?;
@@ -883,6 +899,30 @@ impl Parser {
             AssignTargetKind::Name(name)
         };
         Ok(AssignTarget { kind, span })
+    }
+
+    fn parse_output_target_name(&mut self) -> Result<Ident, ParseError> {
+        let token = self
+            .bump()
+            .ok_or_else(|| ParseError::new("expected output label", Span::empty(self.src_len)))?;
+        match token.kind {
+            TokenKind::Ident(name) => Ok(Ident::new(name, token.span)),
+            TokenKind::Number(value)
+                if value.is_finite()
+                    && value >= 0.0
+                    && value.fract() == 0.0
+                    && value <= usize::MAX as f64 =>
+            {
+                Ok(Ident::new((value as usize).to_string(), token.span))
+            }
+            other => Err(ParseError::new(
+                format!(
+                    "expected output label identifier or non-negative integer, found {}",
+                    other.describe()
+                ),
+                token.span,
+            )),
+        }
     }
 
     fn parse_ident(&mut self) -> Result<Ident, ParseError> {
@@ -1320,9 +1360,12 @@ impl Parser {
                     | TokenKind::Diffusion
                     | TokenKind::Particles
             ),
-            LayoutBoundary::Statement => match &token.kind {
+            LayoutBoundary::Statement(context) => match &token.kind {
                 TokenKind::If | TokenKind::For | TokenKind::Let => true,
                 TokenKind::Ident(_) => self.line_starts_assignment_target(index),
+                TokenKind::Number(_) if matches!(context, StatementContext::Outputs) => {
+                    self.line_starts_numeric_output_assignment(index)
+                }
                 _ => false,
             },
             LayoutBoundary::Binding => self.line_starts_named_assignment(index),
@@ -1379,6 +1422,26 @@ impl Parser {
         }
     }
 
+    fn line_starts_numeric_output_assignment(&self, index: usize) -> bool {
+        matches!(
+            self.tokens.get(index).map(|token| &token.kind),
+            Some(TokenKind::Number(_))
+        ) && self
+            .next_same_line_index(index)
+            .is_some_and(|next| matches!(self.tokens[next].kind, TokenKind::Eq))
+    }
+
+    fn current_statement_context(&self) -> StatementContext {
+        self.layout_boundaries
+            .iter()
+            .rev()
+            .find_map(|boundary| match boundary {
+                LayoutBoundary::Statement(context) => Some(*context),
+                _ => None,
+            })
+            .unwrap_or(StatementContext::Standard)
+    }
+
     fn next_same_line_index(&self, index: usize) -> Option<usize> {
         let next = index + 1;
         let token = self.tokens.get(next)?;
@@ -1413,7 +1476,7 @@ impl Parser {
     fn current_boundary_label(&self) -> &'static str {
         match self.current_layout_boundary() {
             Some(LayoutBoundary::ModelItem) => "next model item starts here",
-            Some(LayoutBoundary::Statement) => "next statement starts here",
+            Some(LayoutBoundary::Statement(_)) => "next statement starts here",
             Some(LayoutBoundary::Binding) => "next binding starts here",
             Some(LayoutBoundary::IdentItem) => "next declaration starts here",
             Some(LayoutBoundary::RouteDecl) => "next route starts here",
@@ -1424,7 +1487,7 @@ impl Parser {
     fn current_boundary_subject(&self) -> &'static str {
         match self.current_layout_boundary() {
             Some(LayoutBoundary::ModelItem) => "model item",
-            Some(LayoutBoundary::Statement) => "statement",
+            Some(LayoutBoundary::Statement(_)) => "statement",
             Some(LayoutBoundary::Binding) => "binding",
             Some(LayoutBoundary::IdentItem) => "declaration",
             Some(LayoutBoundary::RouteDecl) => "route",
