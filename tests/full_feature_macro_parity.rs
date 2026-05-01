@@ -197,19 +197,19 @@ fn handwritten_ode_model() -> equation::ODE {
     .expect("handwritten ODE metadata should validate")
 }
 
-fn build_ode_subject(oral: usize, load: usize, iv: usize, cp: usize) -> Subject {
+fn build_ode_subject() -> Subject {
     Subject::builder("macro-vs-handwritten-ode-full-features")
-        .bolus(0.0, 80.0, load)
-        .bolus(1.0, 120.0, oral)
-        .infusion(6.0, 150.0, iv, 2.5)
-        .missing_observation(0.25, cp)
-        .missing_observation(0.75, cp)
-        .missing_observation(1.5, cp)
-        .missing_observation(3.0, cp)
-        .missing_observation(6.5, cp)
-        .missing_observation(7.0, cp)
-        .missing_observation(8.0, cp)
-        .missing_observation(12.0, cp)
+        .bolus(0.0, 80.0, "load")
+        .bolus(1.0, 120.0, "oral")
+        .infusion(6.0, 150.0, "iv", 2.5)
+        .missing_observation(0.25, "cp")
+        .missing_observation(0.75, "cp")
+        .missing_observation(1.5, "cp")
+        .missing_observation(3.0, "cp")
+        .missing_observation(6.5, "cp")
+        .missing_observation(7.0, "cp")
+        .missing_observation(8.0, "cp")
+        .missing_observation(12.0, "cp")
         .covariate("wt", 0.0, 68.0)
         .covariate("wt", 8.0, 74.0)
         .covariate("renal", 0.0, 95.0)
@@ -368,19 +368,19 @@ fn handwritten_analytical_model() -> equation::Analytical {
     .expect("handwritten analytical metadata should validate")
 }
 
-fn build_analytical_subject(oral: usize, load: usize, iv: usize, cp: usize) -> Subject {
+fn build_analytical_subject() -> Subject {
     Subject::builder("macro-vs-handwritten-analytical-full-features")
-        .bolus(0.0, 60.0, load)
-        .bolus(1.0, 100.0, oral)
-        .infusion(6.0, 140.0, iv, 2.0)
-        .missing_observation(0.25, cp)
-        .missing_observation(0.75, cp)
-        .missing_observation(1.5, cp)
-        .missing_observation(3.0, cp)
-        .missing_observation(6.5, cp)
-        .missing_observation(7.0, cp)
-        .missing_observation(8.0, cp)
-        .missing_observation(12.0, cp)
+        .bolus(0.0, 60.0, "load")
+        .bolus(1.0, 100.0, "oral")
+        .infusion(6.0, 140.0, "iv", 2.0)
+        .missing_observation(0.25, "cp")
+        .missing_observation(0.75, "cp")
+        .missing_observation(1.5, "cp")
+        .missing_observation(3.0, "cp")
+        .missing_observation(6.5, "cp")
+        .missing_observation(7.0, "cp")
+        .missing_observation(8.0, "cp")
+        .missing_observation(12.0, "cp")
         .covariate("wt", 0.0, 68.0)
         .covariate("wt", 8.0, 74.0)
         .covariate("renal", 0.0, 95.0)
@@ -407,7 +407,7 @@ fn ode_full_feature_macro_matches_handwritten() -> Result<(), pharmsol::Pharmsol
     assert_eq!(handwritten_ode.route_index("iv"), Some(iv));
     assert_eq!(handwritten_ode.output_index("cp"), Some(cp));
 
-    let subject = build_ode_subject(oral, load, iv, cp);
+    let subject = build_ode_subject();
     let params = [1.1, 0.18, 0.07, 0.04, 35.0, 0.6, 0.85, 4.0, 18.0, 9.0];
 
     let macro_predictions = macro_ode.estimate_predictions(&subject, &params)?;
@@ -453,7 +453,7 @@ fn analytical_full_feature_macro_matches_handwritten() -> Result<(), pharmsol::P
     assert_eq!(handwritten_analytical.route_index("iv"), Some(iv));
     assert_eq!(handwritten_analytical.output_index("cp"), Some(cp));
 
-    let subject = build_analytical_subject(oral, load, iv, cp);
+    let subject = build_analytical_subject();
     let params = [1.0, 0.16, 32.0, 0.5, 0.8, 3.0, 14.0, 0.16];
 
     let macro_predictions = macro_analytical.estimate_predictions(&subject, &params)?;
