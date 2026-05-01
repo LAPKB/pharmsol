@@ -1620,28 +1620,28 @@ impl<'a> Analyzer<'a> {
         if let Some(existing) = self.globals.all_names.get(name).copied() {
             let existing_kind = self.symbols.get(existing).expect("valid symbol id").kind;
             if !allows_route_output_name_overlap(existing_kind, kind) {
-            return Err(SemanticAssist::default()
-                .context_label(
-                    self.symbol_span(existing),
-                    self.symbol_declared_here(existing),
-                )
-                .help(format!(
-                    "rename this declaration to a unique name such as `{}_2`",
-                    name
-                ))
-                .replacement_suggestion(
-                    span,
-                    format!("{}_2", name),
-                    format!("rename this declaration to `{}_2`", name),
-                    Applicability::MaybeIncorrect,
-                )
-                .apply(SemanticError::new(
-                    format!(
-                        "symbol name `{name}` collides with existing `{}`",
-                        self.symbol_name(existing)
-                    ),
-                    span,
-                )));
+                return Err(SemanticAssist::default()
+                    .context_label(
+                        self.symbol_span(existing),
+                        self.symbol_declared_here(existing),
+                    )
+                    .help(format!(
+                        "rename this declaration to a unique name such as `{}_2`",
+                        name
+                    ))
+                    .replacement_suggestion(
+                        span,
+                        format!("{}_2", name),
+                        format!("rename this declaration to `{}_2`", name),
+                        Applicability::MaybeIncorrect,
+                    )
+                    .apply(SemanticError::new(
+                        format!(
+                            "symbol name `{name}` collides with existing `{}`",
+                            self.symbol_name(existing)
+                        ),
+                        span,
+                    )));
             }
         }
         let id = self.symbols.len();

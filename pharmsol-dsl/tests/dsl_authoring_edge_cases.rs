@@ -228,7 +228,8 @@ out(1) = central / v
         .first()
         .expect("authoring DSL should produce one model");
     let typed = analyze_model(model).expect("shared numeric route/output labels should analyze");
-    let lowered = lower_typed_model(&typed).expect("shared numeric route/output labels should lower");
+    let lowered =
+        lower_typed_model(&typed).expect("shared numeric route/output labels should lower");
 
     assert_eq!(
         lowered
