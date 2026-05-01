@@ -210,6 +210,77 @@ out(1) = 3 * central / v
 }
 
 #[test]
+fn shared_numeric_route_and_output_labels_lower_and_round_trip() {
+    let src = r#"
+name = shared_numeric_route_output_labels
+kind = ode
+params = ke, v
+states = central
+outputs = 1
+infusion(1) -> central
+ddt(central) = -ke * central
+out(1) = central / v
+"#;
+
+    let module = parse_module(src).expect("shared numeric route/output labels should parse");
+    let model = module
+        .models
+        .first()
+        .expect("authoring DSL should produce one model");
+    let typed = analyze_model(model).expect("shared numeric route/output labels should analyze");
+    let lowered = lower_typed_model(&typed).expect("shared numeric route/output labels should lower");
+
+    assert_eq!(
+        lowered
+            .metadata
+            .routes
+            .iter()
+            .map(|route| route.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["1"]
+    );
+    assert_eq!(
+        lowered
+            .metadata
+            .outputs
+            .iter()
+            .map(|output| output.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["1"]
+    );
+
+    let rendered = module.to_string();
+    let reparsed = parse_module(&rendered).expect("rendered shared-label model should reparse");
+
+    assert_eq!(rendered, reparsed.to_string());
+}
+
+#[test]
+fn route_labels_still_collide_with_scalar_symbol_names() {
+    let src = r#"
+name = route_state_collision
+kind = ode
+params = ke
+states = central, iv
+outputs = cp
+infusion(iv) -> central
+ddt(central) = -ke * central
+ddt(iv) = 0
+out(cp) = central
+"#;
+
+    let model = parse_model(src).expect("route/state collision model parses");
+    let err = analyze_model(&model).expect_err("route label should still collide with state name");
+    let rendered = err.render(src);
+
+    assert!(
+        rendered.contains("symbol name `iv` collides with existing `iv`"),
+        "{}",
+        rendered
+    );
+}
+
+#[test]
 fn unknown_route_destination_state_suggests_declared_state() {
     let src = r#"
 name = bimodal_ke

@@ -416,6 +416,21 @@ dx(central) = -ke * central
 out(cp) = central / v ~ continuous()
 "#;
 
+    const SHARED_NUMERIC_ROUTE_OUTPUT_LABEL_RUNTIME_DSL: &str = r#"
+name = shared_numeric_route_output_runtime
+kind = ode
+
+params = ke, v
+states = central
+outputs = 1
+
+infusion(1) -> central
+
+dx(central) = -ke * central
+
+out(1) = central / v ~ continuous()
+"#;
+
     const UNDECLARED_NUMERIC_OUTPUT_LABEL_RUNTIME_DSL: &str = r#"
 name = undeclared_numeric_output_runtime
 kind = ode
@@ -548,6 +563,14 @@ out(cp) = central / v ~ continuous()
             .bolus(1.0, 80.0, "11")
             .missing_observation(0.5, "cp")
             .missing_observation(1.5, "cp")
+            .build()
+    }
+
+    fn shared_numeric_route_output_subject() -> Subject {
+        Subject::builder("shared-numeric-route-output-runtime")
+            .infusion(0.0, 120.0, "1", 1.0)
+            .missing_observation(0.5, "1")
+            .missing_observation(1.5, "1")
             .build()
     }
 
@@ -689,6 +712,49 @@ out(cp) = central / v ~ continuous()
         assert_eq!(wasm.route_index("11"), Some(1));
 
         let subject = numeric_route_subject();
+
+        let jit_values = subject_values(
+            &jit.estimate_predictions(&subject, &support)
+                .expect("jit predictions"),
+        );
+        let aot_values = subject_values(
+            &aot.estimate_predictions(&subject, &support)
+                .expect("aot predictions"),
+        );
+        let wasm_values = subject_values(
+            &wasm
+                .estimate_predictions(&subject, &support)
+                .expect("wasm predictions"),
+        );
+
+        for ((jit_value, aot_value), wasm_value) in jit_values
+            .iter()
+            .zip(aot_values.iter())
+            .zip(wasm_values.iter())
+        {
+            assert_relative_eq!(jit_value, aot_value, max_relative = 1e-4);
+            assert_relative_eq!(jit_value, wasm_value, max_relative = 1e-4);
+        }
+    }
+
+    #[test]
+    fn runtime_backend_matrix_supports_shared_numeric_route_and_output_labels() {
+        let work_dir = tempdir().expect("tempdir");
+        let support = vec![0.2, 10.0];
+        let (jit, aot, wasm) = compile_runtime_backend_matrix(
+            SHARED_NUMERIC_ROUTE_OUTPUT_LABEL_RUNTIME_DSL,
+            "shared_numeric_route_output_runtime",
+            work_dir.path(),
+        );
+
+        assert_eq!(jit.route_index("1"), Some(0));
+        assert_eq!(jit.output_index("1"), Some(0));
+        assert_eq!(aot.route_index("1"), Some(0));
+        assert_eq!(aot.output_index("1"), Some(0));
+        assert_eq!(wasm.route_index("1"), Some(0));
+        assert_eq!(wasm.output_index("1"), Some(0));
+
+        let subject = shared_numeric_route_output_subject();
 
         let jit_values = subject_values(
             &jit.estimate_predictions(&subject, &support)

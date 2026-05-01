@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use diffsol::{
@@ -20,14 +21,17 @@ pub use super::model_info::{
     NativeCovariateInfo, NativeModelInfo, NativeOutputInfo, NativeRouteInfo,
 };
 use crate::{
+    data::error_model::AssayErrorModels,
     data::{Covariates, Infusion, InputLabel, OutputLabel},
     simulator::{
+        cache::{PredictionCache, DEFAULT_CACHE_SIZE},
         equation::{
             ode::{closure_helpers::PMProblem, ExplicitRkTableau, OdeSolver, SdirkTableau},
             sde::simulate_sde_event_with,
+            EqnKind, Equation, EquationPriv, EquationTypes,
         },
         likelihood::{Prediction, SubjectPredictions},
-        M, V,
+        Fa, Lag, M, T, V,
     },
     Event, Observation, Occasion, PharmsolError, Subject,
 };
@@ -727,6 +731,7 @@ pub struct NativeOdeModel {
     solver: OdeSolver,
     rtol: f64,
     atol: f64,
+    cache: Option<PredictionCache>,
 }
 
 #[derive(Clone, Debug)]
@@ -754,6 +759,7 @@ impl NativeOdeModel {
             solver: OdeSolver::default(),
             rtol: DEFAULT_ODE_RTOL,
             atol: DEFAULT_ODE_ATOL,
+            cache: Some(PredictionCache::new(DEFAULT_CACHE_SIZE)),
         }
     }
 
@@ -1028,6 +1034,175 @@ impl NativeOdeModel {
         }
 
         Ok(())
+    }
+}
+
+fn runtime_no_lag(_: &V, _: T, _: &Covariates) -> HashMap<usize, T> {
+    HashMap::new()
+}
+
+fn runtime_no_fa(_: &V, _: T, _: &Covariates) -> HashMap<usize, T> {
+    HashMap::new()
+}
+
+#[inline(always)]
+fn runtime_ode_predictions(
+    model: &NativeOdeModel,
+    subject: &Subject,
+    support_point: &[f64],
+) -> Result<SubjectPredictions, PharmsolError> {
+    if let Some(cache) = &model.cache {
+        let key = (
+            subject.hash(),
+            crate::simulator::equation::spphash(support_point),
+        );
+        if let Some(cached) = cache.get(&key) {
+            return Ok(cached);
+        }
+
+        let result = model.estimate_predictions(subject, support_point)?;
+        cache.insert(key, result.clone());
+        Ok(result)
+    } else {
+        model.estimate_predictions(subject, support_point)
+    }
+}
+
+impl crate::simulator::equation::Cache for NativeOdeModel {
+    fn with_cache_capacity(mut self, size: u64) -> Self {
+        self.cache = Some(PredictionCache::new(size));
+        self
+    }
+
+    fn enable_cache(mut self) -> Self {
+        self.cache = Some(PredictionCache::new(DEFAULT_CACHE_SIZE));
+        self
+    }
+
+    fn clear_cache(&self) {
+        if let Some(cache) = &self.cache {
+            cache.invalidate_all();
+        }
+    }
+
+    fn disable_cache(mut self) -> Self {
+        self.cache = None;
+        self
+    }
+}
+
+impl EquationTypes for NativeOdeModel {
+    type S = V;
+    type P = SubjectPredictions;
+}
+
+impl EquationPriv for NativeOdeModel {
+    fn lag(&self) -> &Lag {
+        &(runtime_no_lag as Lag)
+    }
+
+    fn fa(&self) -> &Fa {
+        &(runtime_no_fa as Fa)
+    }
+
+    fn get_nstates(&self) -> usize {
+        self.shared.info.state_len
+    }
+
+    fn get_ndrugs(&self) -> usize {
+        self.shared.info.route_len
+    }
+
+    fn get_nouteqs(&self) -> usize {
+        self.shared.info.output_len
+    }
+
+    fn metadata(&self) -> Option<&crate::ValidatedModelMetadata> {
+        None
+    }
+
+    fn solve(
+        &self,
+        _state: &mut Self::S,
+        _support_point: &[f64],
+        _covariates: &Covariates,
+        _infusions: &[Infusion],
+        _start_time: f64,
+        _end_time: f64,
+    ) -> Result<(), PharmsolError> {
+        unimplemented!("solve is not used for runtime ODE models")
+    }
+
+    fn process_observation(
+        &self,
+        _support_point: &[f64],
+        _observation: &Observation,
+        _error_models: Option<&AssayErrorModels>,
+        _time: f64,
+        _covariates: &Covariates,
+        _x: &mut Self::S,
+        _likelihood: &mut Vec<f64>,
+        _output: &mut Self::P,
+    ) -> Result<(), PharmsolError> {
+        unimplemented!("process_observation is not used for runtime ODE models")
+    }
+
+    fn initial_state(
+        &self,
+        _support_point: &[f64],
+        _covariates: &Covariates,
+        _occasion_index: usize,
+    ) -> Self::S {
+        V::zeros(self.shared.info.state_len, NalgebraContext)
+    }
+}
+
+impl Equation for NativeOdeModel {
+    fn estimate_likelihood(
+        &self,
+        subject: &Subject,
+        support_point: &[f64],
+        error_models: &AssayErrorModels,
+    ) -> Result<f64, PharmsolError> {
+        Ok(self
+            .estimate_log_likelihood(subject, support_point, error_models)?
+            .exp())
+    }
+
+    fn estimate_log_likelihood(
+        &self,
+        subject: &Subject,
+        support_point: &[f64],
+        error_models: &AssayErrorModels,
+    ) -> Result<f64, PharmsolError> {
+        let predictions = runtime_ode_predictions(self, subject, support_point)?;
+        predictions.log_likelihood(error_models)
+    }
+
+    fn kind() -> EqnKind {
+        EqnKind::ODE
+    }
+
+    fn estimate_predictions(
+        &self,
+        subject: &Subject,
+        support_point: &[f64],
+    ) -> Result<Self::P, PharmsolError> {
+        runtime_ode_predictions(self, subject, support_point)
+    }
+
+    fn simulate_subject(
+        &self,
+        subject: &Subject,
+        support_point: &[f64],
+        error_models: Option<&AssayErrorModels>,
+    ) -> Result<(Self::P, Option<f64>), PharmsolError> {
+        let predictions = runtime_ode_predictions(self, subject, support_point)?;
+        let likelihood = match error_models {
+            Some(error_models) => Some(predictions.log_likelihood(error_models)?.exp()),
+            None => None,
+        };
+        Ok((predictions, likelihood))
     }
 }
 
