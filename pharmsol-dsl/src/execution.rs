@@ -542,7 +542,7 @@ impl<'a> ExecutionLowerer<'a> {
         for (declaration_index, route) in model.routes.iter().enumerate() {
             let symbol = lookup_symbol(&symbol_map, route.symbol, route.span)?;
             if route.kind == Some(RouteKind::Infusion) {
-                for property in &route.properties {
+                if let Some(property) = route.properties.first() {
                     let label = match property.kind {
                         RoutePropertyKind::Lag => "lag",
                         RoutePropertyKind::Bioavailability => "bioavailability",
