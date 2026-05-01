@@ -27,18 +27,21 @@ mod tests {
         let info = model.info();
 
         assert_eq!(info.name, "ode_full_feature_parity");
-        assert_eq!(info.parameters, owned_names(&[
-            "ka",
-            "ke",
-            "kcp",
-            "kpc",
-            "v",
-            "tlag",
-            "f_oral",
-            "base_depot",
-            "base_central",
-            "base_peripheral",
-        ]));
+        assert_eq!(
+            info.parameters,
+            owned_names(&[
+                "ka",
+                "ke",
+                "kcp",
+                "kpc",
+                "v",
+                "tlag",
+                "f_oral",
+                "base_depot",
+                "base_central",
+                "base_peripheral",
+            ])
+        );
         assert_eq!(
             info.covariates
                 .iter()
@@ -61,7 +64,10 @@ mod tests {
             vec![0, 1, 2]
         );
         assert_eq!(
-            info.routes.iter().map(|route| route.index).collect::<Vec<_>>(),
+            info.routes
+                .iter()
+                .map(|route| route.index)
+                .collect::<Vec<_>>(),
             vec![0, 1, 0]
         );
         assert_eq!(
@@ -81,16 +87,19 @@ mod tests {
         let info = model.info();
 
         assert_eq!(info.name, "analytical_full_feature_parity");
-        assert_eq!(info.parameters, owned_names(&[
-            "ka",
-            "ke",
-            "v",
-            "tlag",
-            "f_oral",
-            "base_gut",
-            "base_central",
-            "tvke",
-        ]));
+        assert_eq!(
+            info.parameters,
+            owned_names(&[
+                "ka",
+                "ke",
+                "v",
+                "tlag",
+                "f_oral",
+                "base_gut",
+                "base_central",
+                "tvke",
+            ])
+        );
         assert_eq!(
             info.covariates
                 .iter()
@@ -113,7 +122,10 @@ mod tests {
             vec![0, 1, 2]
         );
         assert_eq!(
-            info.routes.iter().map(|route| route.index).collect::<Vec<_>>(),
+            info.routes
+                .iter()
+                .map(|route| route.index)
+                .collect::<Vec<_>>(),
             vec![0, 1, 0]
         );
         assert_eq!(
@@ -196,6 +208,9 @@ mod tests {
     #[test]
     fn analytical_full_feature_dsl_matches_handwritten_across_backends(
     ) -> Result<(), Box<dyn std::error::Error>> {
-        assert_full_backend_parity(CorpusCase::AnalyticalFull, assert_analytical_full_public_shape)
+        assert_full_backend_parity(
+            CorpusCase::AnalyticalFull,
+            assert_analytical_full_public_shape,
+        )
     }
 }

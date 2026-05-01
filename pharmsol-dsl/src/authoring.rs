@@ -949,11 +949,7 @@ fn parse_output_label_segment(src: &str, abs_start: usize) -> Result<Ident, Pars
     parse_label_segment(src, abs_start, "output label")
 }
 
-fn parse_label_segment(
-    src: &str,
-    abs_start: usize,
-    expected: &str,
-) -> Result<Ident, ParseError> {
+fn parse_label_segment(src: &str, abs_start: usize, expected: &str) -> Result<Ident, ParseError> {
     let trimmed = src.trim();
     let leading = src.len() - src.trim_start().len();
     if trimmed.is_empty() {

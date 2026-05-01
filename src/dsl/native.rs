@@ -402,21 +402,20 @@ impl SharedNativeModel {
         label: &InputLabel,
         kind: RouteKind,
     ) -> Result<usize, PharmsolError> {
-        let input = self
-            .route_index(label.as_str())
-            .ok_or_else(|| PharmsolError::UnknownInputLabel {
-                label: label.to_string(),
-            })?;
+        let input =
+            self.route_index(label.as_str())
+                .ok_or_else(|| PharmsolError::UnknownInputLabel {
+                    label: label.to_string(),
+                })?;
         self.validate_input_for_kind(input, kind)?;
         Ok(input)
     }
 
     fn resolve_output_label(&self, label: &OutputLabel) -> Result<usize, PharmsolError> {
-        self.output_index(label.as_str()).ok_or_else(|| {
-            PharmsolError::UnknownOutputLabel {
+        self.output_index(label.as_str())
+            .ok_or_else(|| PharmsolError::UnknownOutputLabel {
                 label: label.to_string(),
-            }
-        })
+            })
     }
 
     fn resolve_events(&self, occasion: &Occasion) -> Result<Vec<Event>, PharmsolError> {

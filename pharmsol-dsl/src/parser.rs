@@ -906,9 +906,9 @@ impl Parser {
     }
 
     fn parse_label_name(&mut self, expected: &str) -> Result<Ident, ParseError> {
-        let token = self
-            .bump()
-            .ok_or_else(|| ParseError::new(format!("expected {expected}"), Span::empty(self.src_len)))?;
+        let token = self.bump().ok_or_else(|| {
+            ParseError::new(format!("expected {expected}"), Span::empty(self.src_len))
+        })?;
         match token.kind {
             TokenKind::Ident(name) => Ok(Ident::new(name, token.span)),
             TokenKind::Number(value)

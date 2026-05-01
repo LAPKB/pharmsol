@@ -376,8 +376,8 @@ fn runtime_model_from_parts(
 mod tests {
     use super::*;
     use crate::dsl::compile_sde_model_to_jit;
-    use crate::PharmsolError;
     use crate::test_fixtures::STRUCTURED_BLOCK_CORPUS;
+    use crate::PharmsolError;
     use crate::SubjectBuilderExt;
     use approx::assert_relative_eq;
     use pharmsol_dsl::{DiagnosticPhase, DSL_BACKEND_GENERIC, DSL_PARSE_GENERIC};
@@ -509,7 +509,11 @@ out(cp) = central / v ~ continuous()
         source: &str,
         model_name: &str,
         work_dir: &std::path::Path,
-    ) -> (CompiledRuntimeModel, CompiledRuntimeModel, CompiledRuntimeModel) {
+    ) -> (
+        CompiledRuntimeModel,
+        CompiledRuntimeModel,
+        CompiledRuntimeModel,
+    ) {
         let jit = compile_module_source_to_runtime(
             source,
             Some(model_name),
