@@ -4,6 +4,8 @@
 //! two-compartment IV, two-compartment oral), this example runs both the
 //! closed-form analytical solution and the equivalent ODE, then prints
 //! the predictions side by side so you can verify they match.
+//! Both authoring paths use the declaration-first macro surface so the
+//! example stays on the preferred public authoring story.
 //!
 //!     cargo run --release --example analytical_vs_ode
 
@@ -11,29 +13,29 @@ use pharmsol::prelude::*;
 
 // ── Subjects ───────────────────────────────────────────────────────
 
-fn subject_iv() -> Subject {
+fn subject_iv(input: usize, output: usize) -> Subject {
     Subject::builder("1")
-        .infusion(0.0, 500.0, 0, 0.5)
-        .observation(0.5, 0.0, 0)
-        .observation(1.0, 0.0, 0)
-        .observation(2.0, 0.0, 0)
-        .observation(4.0, 0.0, 0)
-        .observation(8.0, 0.0, 0)
-        .observation(12.0, 0.0, 0)
-        .observation(24.0, 0.0, 0)
+        .infusion(0.0, 500.0, input, 0.5)
+        .observation(0.5, 0.0, output)
+        .observation(1.0, 0.0, output)
+        .observation(2.0, 0.0, output)
+        .observation(4.0, 0.0, output)
+        .observation(8.0, 0.0, output)
+        .observation(12.0, 0.0, output)
+        .observation(24.0, 0.0, output)
         .build()
 }
 
-fn subject_oral() -> Subject {
+fn subject_oral(input: usize, output: usize) -> Subject {
     Subject::builder("1")
-        .bolus(0.0, 500.0, 0)
-        .observation(0.5, 0.0, 0)
-        .observation(1.0, 0.0, 0)
-        .observation(2.0, 0.0, 0)
-        .observation(4.0, 0.0, 0)
-        .observation(8.0, 0.0, 0)
-        .observation(12.0, 0.0, 0)
-        .observation(24.0, 0.0, 0)
+        .bolus(0.0, 500.0, input)
+        .observation(0.5, 0.0, output)
+        .observation(1.0, 0.0, output)
+        .observation(2.0, 0.0, output)
+        .observation(4.0, 0.0, output)
+        .observation(8.0, 0.0, output)
+        .observation(12.0, 0.0, output)
+        .observation(24.0, 0.0, output)
         .build()
 }
 
@@ -64,168 +66,181 @@ fn print_comparison(label: &str, analytical: &SubjectPredictions, ode: &SubjectP
 
 // ── One-compartment IV ─────────────────────────────────────────────
 
-fn one_cmt_iv(subject: &Subject, params: &[f64]) {
-    let analytical = equation::Analytical::new(
-        one_compartment,
-        |_p, _t, _cov| {},
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
-        |x, p, _t, _cov, y| {
-            fetch_params!(p, _ke, v);
-            y[0] = x[0] / v;
+fn one_cmt_iv(params: &[f64]) {
+    let analytical = analytical! {
+        name: "one_cmt_iv",
+        params: [ke, v],
+        states: [central],
+        outputs: [cp],
+        routes: {
+            infusion(iv) -> central,
         },
-    )
-    .with_nstates(1)
-    .with_nout(1);
+        structure: one_compartment,
+        out: |x, _p, _t, _cov, y| {
+            y[cp] = x[central] / v;
+        },
+    };
 
-    let ode = equation::ODE::new(
-        |x, p, _t, dx, _b, rateiv, _cov| {
-            fetch_params!(p, ke, _v);
-            dx[0] = -ke * x[0] + rateiv[0];
+    let ode = ode! {
+        name: "one_cmt_iv",
+        params: [ke, v],
+        states: [central],
+        outputs: [cp],
+        routes: {
+            infusion(iv) -> central,
         },
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
-        |x, p, _t, _cov, y| {
-            fetch_params!(p, _ke, v);
-            y[0] = x[0] / v;
+        diffeq: |x, _p, _t, dx, _cov| {
+            dx[central] = -ke * x[central];
         },
-    )
-    .with_nstates(1)
-    .with_nout(1);
+        out: |x, _p, _t, _cov, y| {
+            y[cp] = x[central] / v;
+        },
+    };
 
-    let pred_a = analytical.estimate_predictions(subject, params).unwrap();
-    let pred_o = ode.estimate_predictions(subject, params).unwrap();
+    let iv = analytical.route_index("iv").expect("iv route exists");
+    let cp = analytical.output_index("cp").expect("cp output exists");
+    let subject = subject_iv(iv, cp);
+
+    let pred_a = analytical.estimate_predictions(&subject, params).unwrap();
+    let pred_o = ode.estimate_predictions(&subject, params).unwrap();
     print_comparison("One-compartment IV", &pred_a, &pred_o);
 }
 
 // ── One-compartment oral ───────────────────────────────────────────
 
-fn one_cmt_oral(subject: &Subject, params: &[f64]) {
-    let analytical = equation::Analytical::new(
-        one_compartment_with_absorption,
-        |_p, _t, _cov| {},
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
-        |x, p, _t, _cov, y| {
-            fetch_params!(p, _ka, _ke, v);
-            y[0] = x[1] / v;
+fn one_cmt_oral(params: &[f64]) {
+    let analytical = analytical! {
+        name: "one_cmt_oral",
+        params: [ka, ke, v],
+        states: [gut, central],
+        outputs: [cp],
+        routes: {
+            bolus(oral) -> gut,
         },
-    )
-    .with_nstates(2)
-    .with_nout(1);
+        structure: one_compartment_with_absorption,
+        out: |x, _p, _t, _cov, y| {
+            y[cp] = x[central] / v;
+        },
+    };
 
-    let ode = equation::ODE::new(
-        |x, p, _t, dx, _b, _rateiv, _cov| {
-            fetch_params!(p, ka, ke, _v);
-            dx[0] = -ka * x[0];
-            dx[1] = ka * x[0] - ke * x[1];
+    let ode = ode! {
+        name: "one_cmt_oral",
+        params: [ka, ke, v],
+        states: [gut, central],
+        outputs: [cp],
+        routes: {
+            bolus(oral) -> gut,
         },
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
-        |x, p, _t, _cov, y| {
-            fetch_params!(p, _ka, _ke, v);
-            y[0] = x[1] / v;
+        diffeq: |x, _p, _t, dx, _cov| {
+            dx[gut] = -ka * x[gut];
+            dx[central] = ka * x[gut] - ke * x[central];
         },
-    )
-    .with_nstates(2)
-    .with_nout(1);
+        out: |x, _p, _t, _cov, y| {
+            y[cp] = x[central] / v;
+        },
+    };
 
-    let pred_a = analytical.estimate_predictions(subject, params).unwrap();
-    let pred_o = ode.estimate_predictions(subject, params).unwrap();
+    let oral = analytical.route_index("oral").expect("oral route exists");
+    let cp = analytical.output_index("cp").expect("cp output exists");
+    let subject = subject_oral(oral, cp);
+
+    let pred_a = analytical.estimate_predictions(&subject, params).unwrap();
+    let pred_o = ode.estimate_predictions(&subject, params).unwrap();
     print_comparison("One-compartment oral", &pred_a, &pred_o);
 }
 
 // ── Two-compartment IV ─────────────────────────────────────────────
 
-fn two_cmt_iv(subject: &Subject, params: &[f64]) {
-    let analytical = equation::Analytical::new(
-        two_compartments,
-        |_p, _t, _cov| {},
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
-        |x, p, _t, _cov, y| {
-            fetch_params!(p, _ke, _k12, _k21, v);
-            y[0] = x[0] / v;
+fn two_cmt_iv(params: &[f64]) {
+    let analytical = analytical! {
+        name: "two_cmt_iv",
+        params: [ke, k12, k21, v],
+        states: [central, peripheral],
+        outputs: [cp],
+        routes: {
+            infusion(iv) -> central,
         },
-    )
-    .with_nstates(2)
-    .with_nout(1);
+        structure: two_compartments,
+        out: |x, _p, _t, _cov, y| {
+            y[cp] = x[central] / v;
+        },
+    };
 
-    let ode = equation::ODE::new(
-        |x, p, _t, dx, _b, rateiv, _cov| {
-            fetch_params!(p, ke, k12, k21, _v);
-            dx[0] = -ke * x[0] - k12 * x[0] + k21 * x[1] + rateiv[0];
-            dx[1] = k12 * x[0] - k21 * x[1];
+    let ode = ode! {
+        name: "two_cmt_iv",
+        params: [ke, k12, k21, v],
+        states: [central, peripheral],
+        outputs: [cp],
+        routes: {
+            infusion(iv) -> central,
         },
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
-        |x, p, _t, _cov, y| {
-            fetch_params!(p, _ke, _k12, _k21, v);
-            y[0] = x[0] / v;
+        diffeq: |x, _p, _t, dx, _cov| {
+            dx[central] = -ke * x[central] - k12 * x[central] + k21 * x[peripheral];
+            dx[peripheral] = k12 * x[central] - k21 * x[peripheral];
         },
-    )
-    .with_nstates(2)
-    .with_nout(1);
+        out: |x, _p, _t, _cov, y| {
+            y[cp] = x[central] / v;
+        },
+    };
 
-    let pred_a = analytical.estimate_predictions(subject, params).unwrap();
-    let pred_o = ode.estimate_predictions(subject, params).unwrap();
+    let iv = analytical.route_index("iv").expect("iv route exists");
+    let cp = analytical.output_index("cp").expect("cp output exists");
+    let subject = subject_iv(iv, cp);
+
+    let pred_a = analytical.estimate_predictions(&subject, params).unwrap();
+    let pred_o = ode.estimate_predictions(&subject, params).unwrap();
     print_comparison("Two-compartment IV", &pred_a, &pred_o);
 }
 
 // ── Two-compartment oral ───────────────────────────────────────────
 
-fn two_cmt_oral(subject: &Subject, params: &[f64]) {
-    let analytical = equation::Analytical::new(
-        two_compartments_with_absorption,
-        |_p, _t, _cov| {},
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
-        |x, p, _t, _cov, y| {
-            fetch_params!(p, _ka, _ke, _k12, _k21, v);
-            y[0] = x[1] / v;
+fn two_cmt_oral(params: &[f64]) {
+    let analytical = analytical! {
+        name: "two_cmt_oral",
+        params: [ka, ke, k12, k21, v],
+        states: [gut, central, peripheral],
+        outputs: [cp],
+        routes: {
+            bolus(oral) -> gut,
         },
-    )
-    .with_nstates(3)
-    .with_nout(1);
+        structure: two_compartments_with_absorption,
+        out: |x, _p, _t, _cov, y| {
+            y[cp] = x[central] / v;
+        },
+    };
 
-    let ode = equation::ODE::new(
-        |x, p, _t, dx, _b, _rateiv, _cov| {
-            fetch_params!(p, ka, ke, k12, k21, _v);
-            dx[0] = -ka * x[0];
-            dx[1] = ka * x[0] - ke * x[1] - k12 * x[1] + k21 * x[2];
-            dx[2] = k12 * x[1] - k21 * x[2];
+    let ode = ode! {
+        name: "two_cmt_oral",
+        params: [ka, ke, k12, k21, v],
+        states: [gut, central, peripheral],
+        outputs: [cp],
+        routes: {
+            bolus(oral) -> gut,
         },
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
-        |x, p, _t, _cov, y| {
-            fetch_params!(p, _ka, _ke, _k12, _k21, v);
-            y[0] = x[1] / v;
+        diffeq: |x, _p, _t, dx, _cov| {
+            dx[gut] = -ka * x[gut];
+            dx[central] = ka * x[gut] - ke * x[central] - k12 * x[central] + k21 * x[peripheral];
+            dx[peripheral] = k12 * x[central] - k21 * x[peripheral];
         },
-    )
-    .with_nstates(3)
-    .with_nout(1);
+        out: |x, _p, _t, _cov, y| {
+            y[cp] = x[central] / v;
+        },
+    };
 
-    let pred_a = analytical.estimate_predictions(subject, params).unwrap();
-    let pred_o = ode.estimate_predictions(subject, params).unwrap();
+    let oral = analytical.route_index("oral").expect("oral route exists");
+    let cp = analytical.output_index("cp").expect("cp output exists");
+    let subject = subject_oral(oral, cp);
+
+    let pred_a = analytical.estimate_predictions(&subject, params).unwrap();
+    let pred_o = ode.estimate_predictions(&subject, params).unwrap();
     print_comparison("Two-compartment oral", &pred_a, &pred_o);
 }
 
 // ── Main ───────────────────────────────────────────────────────────
 
 fn main() {
-    let iv = subject_iv();
-    let oral = subject_oral();
-
-    one_cmt_iv(&iv, &[0.1, 50.0]); // ke, v
-    one_cmt_oral(&oral, &[1.0, 0.1, 50.0]); // ka, ke, v
-    two_cmt_iv(&iv, &[0.1, 0.3, 0.2, 50.0]); // ke, k12, k21, v
-    two_cmt_oral(&oral, &[1.0, 0.1, 0.3, 0.2, 50.0]); // ka, ke, k12, k21, v
+    one_cmt_iv(&[0.1, 50.0]); // ke, v
+    one_cmt_oral(&[1.0, 0.1, 50.0]); // ka, ke, v
+    two_cmt_iv(&[0.1, 0.3, 0.2, 50.0]); // ke, k12, k21, v
+    two_cmt_oral(&[1.0, 0.1, 0.3, 0.2, 50.0]); // ka, ke, k12, k21, v
 }

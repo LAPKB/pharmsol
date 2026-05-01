@@ -1,10 +1,12 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use pharmsol_dsl::execution::{
     ExecutionExpr, ExecutionExprKind, ExecutionLoad, ExecutionModel, ExecutionStmt,
     ExecutionStmtKind, KernelImplementation, KernelRole,
 };
-use pharmsol_dsl::{AnalyticalKernel, ModelKind};
+use pharmsol_dsl::{AnalyticalKernel, ModelKind, RouteKind};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NativeModelInfo {
@@ -31,7 +33,11 @@ pub struct NativeCovariateInfo {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NativeRouteInfo {
     pub name: String,
+    #[serde(default)]
+    pub declaration_index: usize,
     pub index: usize,
+    #[serde(default)]
+    pub kind: Option<RouteKind>,
     pub destination_offset: usize,
     pub inject_input_to_destination: bool,
 }
@@ -69,10 +75,12 @@ impl NativeModelInfo {
                 .iter()
                 .map(|route| NativeRouteInfo {
                     name: route.name.clone(),
+                    declaration_index: route.declaration_index,
                     index: route.index,
+                    kind: route.kind,
                     destination_offset: route.destination.state_offset,
                     inject_input_to_destination: !explicit_route_input_usage
-                        .get(route.index)
+                        .get(route.declaration_index)
                         .copied()
                         .unwrap_or(false),
                 })
@@ -97,6 +105,12 @@ impl NativeModelInfo {
 }
 
 fn explicit_route_input_usage(model: &ExecutionModel) -> Vec<bool> {
+    let declaration_slots = model
+        .metadata
+        .routes
+        .iter()
+        .map(|route| (route.symbol, route.declaration_index))
+        .collect::<BTreeMap<_, _>>();
     let Some(kernel) = (match model.kind {
         ModelKind::Ode => model.kernel(KernelRole::Dynamics),
         ModelKind::Sde => model.kernel(KernelRole::Drift),
@@ -107,54 +121,155 @@ fn explicit_route_input_usage(model: &ExecutionModel) -> Vec<bool> {
 
     let mut usage = vec![false; model.metadata.routes.len()];
     if let KernelImplementation::Statements(program) = &kernel.implementation {
-        mark_route_inputs_in_statements(&program.body.statements, &mut usage);
+        mark_route_inputs_in_statements(&program.body.statements, &declaration_slots, &mut usage);
     }
     usage
 }
 
-fn mark_route_inputs_in_statements(statements: &[ExecutionStmt], usage: &mut [bool]) {
+fn mark_route_inputs_in_statements(
+    statements: &[ExecutionStmt],
+    declaration_slots: &BTreeMap<usize, usize>,
+    usage: &mut [bool],
+) {
     for statement in statements {
         match &statement.kind {
             ExecutionStmtKind::Let(let_stmt) => {
-                mark_route_inputs_in_expr(&let_stmt.value, usage);
+                mark_route_inputs_in_expr(&let_stmt.value, declaration_slots, usage);
             }
             ExecutionStmtKind::Assign(assign_stmt) => {
-                mark_route_inputs_in_expr(&assign_stmt.value, usage);
+                mark_route_inputs_in_expr(&assign_stmt.value, declaration_slots, usage);
             }
             ExecutionStmtKind::If(if_stmt) => {
-                mark_route_inputs_in_expr(&if_stmt.condition, usage);
-                mark_route_inputs_in_statements(&if_stmt.then_branch, usage);
+                mark_route_inputs_in_expr(&if_stmt.condition, declaration_slots, usage);
+                mark_route_inputs_in_statements(&if_stmt.then_branch, declaration_slots, usage);
                 if let Some(else_branch) = &if_stmt.else_branch {
-                    mark_route_inputs_in_statements(else_branch, usage);
+                    mark_route_inputs_in_statements(else_branch, declaration_slots, usage);
                 }
             }
             ExecutionStmtKind::For(for_stmt) => {
-                mark_route_inputs_in_expr(&for_stmt.range.start, usage);
-                mark_route_inputs_in_expr(&for_stmt.range.end, usage);
-                mark_route_inputs_in_statements(&for_stmt.body, usage);
+                mark_route_inputs_in_expr(&for_stmt.range.start, declaration_slots, usage);
+                mark_route_inputs_in_expr(&for_stmt.range.end, declaration_slots, usage);
+                mark_route_inputs_in_statements(&for_stmt.body, declaration_slots, usage);
             }
         }
     }
 }
 
-fn mark_route_inputs_in_expr(expr: &ExecutionExpr, usage: &mut [bool]) {
+fn mark_route_inputs_in_expr(
+    expr: &ExecutionExpr,
+    declaration_slots: &BTreeMap<usize, usize>,
+    usage: &mut [bool],
+) {
     match &expr.kind {
         ExecutionExprKind::Literal(_) => {}
-        ExecutionExprKind::Load(ExecutionLoad::RouteInput(index)) => {
-            if let Some(slot) = usage.get_mut(*index) {
+        ExecutionExprKind::Load(ExecutionLoad::RouteInput { route, .. }) => {
+            if let Some(slot) = declaration_slots
+                .get(route)
+                .and_then(|index| usage.get_mut(*index))
+            {
                 *slot = true;
             }
         }
         ExecutionExprKind::Load(_) => {}
-        ExecutionExprKind::Unary { expr, .. } => mark_route_inputs_in_expr(expr, usage),
+        ExecutionExprKind::Unary { expr, .. } => {
+            mark_route_inputs_in_expr(expr, declaration_slots, usage)
+        }
         ExecutionExprKind::Binary { lhs, rhs, .. } => {
-            mark_route_inputs_in_expr(lhs, usage);
-            mark_route_inputs_in_expr(rhs, usage);
+            mark_route_inputs_in_expr(lhs, declaration_slots, usage);
+            mark_route_inputs_in_expr(rhs, declaration_slots, usage);
         }
         ExecutionExprKind::Call { args, .. } => {
             for arg in args {
-                mark_route_inputs_in_expr(arg, usage);
+                mark_route_inputs_in_expr(arg, declaration_slots, usage);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pharmsol_dsl::{analyze_model, lower_typed_model, parse_model};
+
+    fn load_model_info(src: &str) -> NativeModelInfo {
+        let model = parse_model(src).expect("model parses");
+        let typed = analyze_model(&model).expect("model analyzes");
+        let lowered = lower_typed_model(&typed).expect("model lowers");
+        NativeModelInfo::from_execution_model(&lowered)
+    }
+
+    #[test]
+    fn declaration_first_routes_inject_by_default() {
+        let info = load_model_info(
+            r#"
+model implicit_route_injection {
+    kind ode
+    states { central }
+    routes { iv -> central }
+    dynamics {
+        ddt(central) = 0
+    }
+    outputs {
+        cp = central
+    }
+}
+"#,
+        );
+
+        assert_eq!(info.routes.len(), 1);
+        assert!(info.routes[0].inject_input_to_destination);
+    }
+
+    #[test]
+    fn explicit_rate_usage_disables_automatic_injection() {
+        let info = load_model_info(
+            r#"
+model explicit_route_usage {
+    kind ode
+    states { central }
+    routes { iv -> central }
+    dynamics {
+        ddt(central) = rate(iv)
+    }
+    outputs {
+        cp = central
+    }
+}
+"#,
+        );
+
+        assert_eq!(info.routes.len(), 1);
+        assert!(!info.routes[0].inject_input_to_destination);
+    }
+
+    #[test]
+    fn authoring_shared_channel_routes_keep_declaration_specific_injection() {
+        let info = load_model_info(
+            r#"
+name = shared_authoring
+kind = ode
+
+params = ka, ke, v
+states = depot, central
+outputs = cp
+
+bolus(oral) -> depot
+infusion(iv) -> central
+
+dx(depot) = -ka * depot
+dx(central) = ka * depot - ke * central
+
+out(cp) = central / v ~ continuous()
+"#,
+        );
+
+        assert_eq!(info.route_len, 1);
+        assert_eq!(info.routes.len(), 2);
+        assert_eq!(info.routes[0].kind, Some(RouteKind::Bolus));
+        assert_eq!(info.routes[1].kind, Some(RouteKind::Infusion));
+        assert_eq!(info.routes[0].index, 0);
+        assert_eq!(info.routes[1].index, 0);
+        assert!(info.routes[0].inject_input_to_destination);
+        assert!(!info.routes[1].inject_input_to_destination);
     }
 }

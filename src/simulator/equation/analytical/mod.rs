@@ -8,6 +8,8 @@ pub mod two_compartment_models;
 use diffsol::{NalgebraContext, Vector, VectorHost};
 pub use one_compartment_cl_models::*;
 pub use one_compartment_models::*;
+use pharmsol_dsl::ModelKind;
+use thiserror::Error;
 pub use three_compartment_cl_models::*;
 pub use three_compartment_models::*;
 pub use two_compartment_cl_models::*;
@@ -15,12 +17,28 @@ pub use two_compartment_models::*;
 
 use super::spphash;
 
+use super::{
+    EqnKind, Equation, EquationPriv, EquationTypes, ModelMetadata, ModelMetadataError,
+    ValidatedModelMetadata,
+};
 use crate::data::error_model::AssayErrorModels;
 use crate::simulator::cache::{PredictionCache, DEFAULT_CACHE_SIZE};
 use crate::PharmsolError;
-use crate::{
-    data::Covariates, simulator::*, Equation, EquationPriv, EquationTypes, Observation, Subject,
-};
+use crate::{data::Covariates, simulator::*, Observation, Subject};
+
+#[derive(Clone, Debug, PartialEq, Eq, Error)]
+pub enum AnalyticalMetadataError {
+    #[error(transparent)]
+    Validation(#[from] ModelMetadataError),
+    #[error("analytical model declares {declared} state metadata entries but model has {expected} states")]
+    StateCountMismatch { expected: usize, declared: usize },
+    #[error(
+        "analytical model declares {declared} route metadata entries but model has {expected} input channels"
+    )]
+    RouteCountMismatch { expected: usize, declared: usize },
+    #[error("analytical model declares {declared} output metadata entries but model has {expected} outputs")]
+    OutputCountMismatch { expected: usize, declared: usize },
+}
 
 /// Model equation using analytical solutions.
 ///
@@ -35,6 +53,7 @@ pub struct Analytical {
     init: Init,
     out: Out,
     neqs: Neqs,
+    metadata: Option<ValidatedModelMetadata>,
     cache: Option<PredictionCache>,
 }
 
@@ -88,6 +107,7 @@ impl Analytical {
             init,
             out,
             neqs: Neqs::default(),
+            metadata: None,
             cache: Some(PredictionCache::new(DEFAULT_CACHE_SIZE)),
         }
     }
@@ -95,20 +115,94 @@ impl Analytical {
     /// Set the number of state variables.
     pub fn with_nstates(mut self, nstates: usize) -> Self {
         self.neqs.nstates = nstates;
+        self.invalidate_metadata();
         self
     }
 
     /// Set the number of drug input channels (size of bolus[] and rateiv[]).
     pub fn with_ndrugs(mut self, ndrugs: usize) -> Self {
         self.neqs.ndrugs = ndrugs;
+        self.invalidate_metadata();
         self
     }
 
     /// Set the number of output equations.
     pub fn with_nout(mut self, nout: usize) -> Self {
         self.neqs.nout = nout;
+        self.invalidate_metadata();
         self
     }
+
+    /// Attach validated handwritten-model metadata to this analytical model.
+    pub fn with_metadata(
+        mut self,
+        metadata: ModelMetadata,
+    ) -> Result<Self, AnalyticalMetadataError> {
+        let metadata = metadata.validate_for(ModelKind::Analytical)?;
+        validate_metadata_dimensions(&metadata, &self.neqs)?;
+        self.metadata = Some(metadata);
+        Ok(self)
+    }
+
+    /// Access the validated metadata attached to this analytical model, if any.
+    pub fn metadata(&self) -> Option<&ValidatedModelMetadata> {
+        self.metadata.as_ref()
+    }
+
+    pub fn parameter_index(&self, name: &str) -> Option<usize> {
+        self.metadata()?.parameter_index(name)
+    }
+
+    pub fn covariate_index(&self, name: &str) -> Option<usize> {
+        self.metadata()?.covariate_index(name)
+    }
+
+    pub fn state_index(&self, name: &str) -> Option<usize> {
+        self.metadata()?.state_index(name)
+    }
+
+    pub fn route_index(&self, name: &str) -> Option<usize> {
+        self.metadata()?.route_index(name)
+    }
+
+    pub fn output_index(&self, name: &str) -> Option<usize> {
+        self.metadata()?.output_index(name)
+    }
+
+    fn invalidate_metadata(&mut self) {
+        self.metadata = None;
+    }
+}
+
+fn validate_metadata_dimensions(
+    metadata: &ValidatedModelMetadata,
+    neqs: &Neqs,
+) -> Result<(), AnalyticalMetadataError> {
+    let declared_states = metadata.states().len();
+    if declared_states != neqs.nstates {
+        return Err(AnalyticalMetadataError::StateCountMismatch {
+            expected: neqs.nstates,
+            declared: declared_states,
+        });
+    }
+
+    let declared_routes = metadata.route_channel_count();
+    if declared_routes != neqs.ndrugs {
+        return Err(AnalyticalMetadataError::RouteCountMismatch {
+            expected: neqs.ndrugs,
+            declared: declared_routes,
+        });
+    }
+
+    let declared_outputs = metadata.outputs().len();
+    if declared_outputs != neqs.nout {
+        return Err(AnalyticalMetadataError::OutputCountMismatch {
+            expected: neqs.nout,
+            declared: declared_outputs,
+        });
+    }
+
+    Ok(())
 }
 
 impl super::Cache for Analytical {
@@ -302,6 +396,7 @@ pub(crate) mod tests {
     use crate::SubjectBuilderExt;
     use approx::assert_relative_eq;
     use diffsol::Vector;
+    use pharmsol_dsl::AnalyticalKernel;
     use std::collections::HashMap;
 
     pub(crate) enum SubjectInfo {
@@ -421,6 +516,158 @@ pub(crate) mod tests {
         let predictions = analytical.estimate_predictions(&subject, &[0.0]).unwrap();
 
         assert_eq!(predictions.predictions()[0].prediction(), 4.0);
+    }
+
+    fn simple_analytical() -> Analytical {
+        let eq = |x: &V, _p: &V, _dt: f64, _rateiv: &V, _cov: &Covariates| x.clone();
+        let seq_eq = |_params: &mut V, _t: f64, _cov: &Covariates| {};
+        let lag = |_p: &V, _t: f64, _cov: &Covariates| HashMap::new();
+        let fa = |_p: &V, _t: f64, _cov: &Covariates| HashMap::new();
+        let init = |_p: &V, _t: f64, _cov: &Covariates, x: &mut V| {
+            x.fill(0.0);
+        };
+        let out = |x: &V, _p: &V, _t: f64, _cov: &Covariates, y: &mut V| {
+            y[0] = x[0];
+        };
+
+        Analytical::new(eq, seq_eq, lag, fa, init, out)
+            .with_nstates(1)
+            .with_ndrugs(1)
+            .with_nout(1)
+    }
+
+    #[test]
+    fn handwritten_analytical_metadata_exposes_name_lookup() {
+        let analytical = simple_analytical()
+            .with_metadata(
+                super::super::metadata::new("one_cmt_analytical")
+                    .parameters(["ke", "v"])
+                    .covariates([super::super::Covariate::continuous("wt")])
+                    .states(["central"])
+                    .outputs(["cp"])
+                    .route(super::super::Route::infusion("iv").to_state("central")),
+            )
+            .expect("metadata attachment should validate");
+
+        assert_eq!(analytical.parameter_index("ke"), Some(0));
+        assert_eq!(analytical.parameter_index("v"), Some(1));
+        assert_eq!(analytical.covariate_index("wt"), Some(0));
+        assert_eq!(analytical.state_index("central"), Some(0));
+        assert_eq!(analytical.route_index("iv"), Some(0));
+        assert_eq!(analytical.output_index("cp"), Some(0));
+        assert_eq!(
+            analytical.metadata().expect("metadata exists").kind(),
+            ModelKind::Analytical
+        );
+    }
+
+    #[test]
+    fn handwritten_analytical_without_metadata_keeps_raw_path() {
+        let analytical = simple_analytical();
+
+        assert!(analytical.metadata().is_none());
+        assert_eq!(analytical.state_index("central"), None);
+        assert_eq!(analytical.route_index("iv"), None);
+        assert_eq!(analytical.output_index("cp"), None);
+    }
+
+    #[test]
+    fn handwritten_analytical_rejects_dimension_mismatches() {
+        let error = simple_analytical()
+            .with_metadata(
+                super::super::metadata::new("wrong_outputs")
+                    .parameters(["ke"])
+                    .states(["central"])
+                    .outputs(["cp", "auc"])
+                    .route(super::super::Route::infusion("iv").to_state("central")),
+            )
+            .expect_err("output-count mismatches must fail");
+
+        assert_eq!(
+            error,
+            AnalyticalMetadataError::OutputCountMismatch {
+                expected: 1,
+                declared: 2,
+            }
+        );
+    }
+
+    #[test]
+    fn handwritten_analytical_rejects_particles_metadata() {
+        let error = simple_analytical()
+            .with_metadata(
+                super::super::metadata::new("invalid_particles")
+                    .parameters(["ke"])
+                    .states(["central"])
+                    .outputs(["cp"])
+                    .route(super::super::Route::infusion("iv").to_state("central"))
+                    .particles(64),
+            )
+            .expect_err("analytical metadata must reject particles");
+
+        assert_eq!(
+            error,
+            AnalyticalMetadataError::Validation(ModelMetadataError::ParticlesNotAllowed {
+                kind: ModelKind::Analytical,
+            })
+        );
+    }
+
+    #[test]
+    fn built_in_analytical_models_can_advertise_kernel_identity() {
+        let seq_eq = |_params: &mut V, _t: f64, _cov: &Covariates| {};
+        let lag = |_p: &V, _t: f64, _cov: &Covariates| HashMap::new();
+        let fa = |_p: &V, _t: f64, _cov: &Covariates| HashMap::new();
+        let init = |_p: &V, _t: f64, _cov: &Covariates, x: &mut V| {
+            x.fill(0.0);
+        };
+        let out = |x: &V, _p: &V, _t: f64, _cov: &Covariates, y: &mut V| {
+            y[0] = x[1];
+        };
+
+        let analytical =
+            Analytical::new(one_compartment_with_absorption, seq_eq, lag, fa, init, out)
+                .with_nstates(2)
+                .with_ndrugs(1)
+                .with_nout(1)
+                .with_metadata(
+                    super::super::metadata::new("one_cmt_abs")
+                        .parameters(["ka", "ke", "v"])
+                        .states(["gut", "central"])
+                        .outputs(["cp"])
+                        .routes([
+                            super::super::Route::bolus("oral").to_state("gut"),
+                            super::super::Route::infusion("iv").to_state("central"),
+                        ])
+                        .analytical_kernel(AnalyticalKernel::OneCompartmentWithAbsorption),
+                )
+                .expect("built-in analytical metadata should validate");
+
+        assert_eq!(
+            analytical
+                .metadata()
+                .expect("metadata exists")
+                .analytical_kernel(),
+            Some(AnalyticalKernel::OneCompartmentWithAbsorption)
+        );
+        assert_eq!(analytical.route_index("oral"), Some(0));
+        assert_eq!(analytical.route_index("iv"), Some(0));
+    }
+
+    #[test]
+    fn changing_dimensions_after_metadata_clears_analytical_metadata() {
+        let analytical = simple_analytical()
+            .with_metadata(
+                super::super::metadata::new("one_cmt_analytical")
+                    .states(["central"])
+                    .outputs(["cp"])
+                    .route(super::super::Route::infusion("iv").to_state("central")),
+            )
+            .expect("metadata attachment should validate")
+            .with_ndrugs(2);
+
+        assert!(analytical.metadata().is_none());
+        assert_eq!(analytical.route_index("iv"), None);
     }
 
     fn assert_pm_wrapper_matches_native(
@@ -567,8 +814,8 @@ impl Equation for Analytical {
         ypred.log_likelihood(error_models)
     }
 
-    fn kind() -> crate::EqnKind {
-        crate::EqnKind::Analytical
+    fn kind() -> EqnKind {
+        EqnKind::Analytical
     }
 }
 

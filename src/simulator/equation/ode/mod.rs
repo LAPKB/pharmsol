@@ -27,8 +27,13 @@ use diffsol::{
     OdeSolverStopReason, Vector, VectorHost,
 };
 use nalgebra::DVector;
+use pharmsol_dsl::ModelKind;
+use thiserror::Error;
 
-use super::{Equation, EquationPriv, EquationTypes, State};
+use super::{
+    EqnKind, Equation, EquationPriv, EquationTypes, ModelMetadata, ModelMetadataError, State,
+    ValidatedModelMetadata,
+};
 
 const RTOL: f64 = 1e-4;
 const ATOL: f64 = 1e-4;
@@ -76,6 +81,20 @@ pub enum ExplicitRkTableau {
     Tsit45,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Error)]
+pub enum OdeMetadataError {
+    #[error(transparent)]
+    Validation(#[from] ModelMetadataError),
+    #[error("ODE declares {declared} state metadata entries but model has {expected} states")]
+    StateCountMismatch { expected: usize, declared: usize },
+    #[error(
+        "ODE declares {declared} route metadata entries but model has {expected} input channels"
+    )]
+    RouteCountMismatch { expected: usize, declared: usize },
+    #[error("ODE declares {declared} output metadata entries but model has {expected} outputs")]
+    OutputCountMismatch { expected: usize, declared: usize },
+}
+
 #[derive(Clone, Debug)]
 pub struct ODE {
     diffeq: DiffEq,
@@ -87,6 +106,7 @@ pub struct ODE {
     solver: OdeSolver,
     rtol: f64,
     atol: f64,
+    metadata: Option<ValidatedModelMetadata>,
     cache: Option<PredictionCache>,
 }
 
@@ -102,6 +122,7 @@ impl ODE {
             solver: OdeSolver::default(),
             rtol: RTOL,
             atol: ATOL,
+            metadata: None,
             cache: Some(PredictionCache::new(DEFAULT_CACHE_SIZE)),
         }
     }
@@ -109,18 +130,21 @@ impl ODE {
     /// Set the number of state variables (ODE compartments).
     pub fn with_nstates(mut self, nstates: usize) -> Self {
         self.neqs.nstates = nstates;
+        self.invalidate_metadata();
         self
     }
 
     /// Set the number of drug input channels (size of bolus[] and rateiv[]).
     pub fn with_ndrugs(mut self, ndrugs: usize) -> Self {
         self.neqs.ndrugs = ndrugs;
+        self.invalidate_metadata();
         self
     }
 
     /// Set the number of output equations.
     pub fn with_nout(mut self, nout: usize) -> Self {
         self.neqs.nout = nout;
+        self.invalidate_metadata();
         self
     }
 
@@ -136,6 +160,74 @@ impl ODE {
         self.atol = atol;
         self
     }
+
+    /// Attach validated handwritten-model metadata to this ODE.
+    pub fn with_metadata(mut self, metadata: ModelMetadata) -> Result<Self, OdeMetadataError> {
+        let metadata = metadata.validate_for(ModelKind::Ode)?;
+        validate_metadata_dimensions(&metadata, &self.neqs)?;
+        self.metadata = Some(metadata);
+        Ok(self)
+    }
+
+    /// Access the validated metadata attached to this ODE, if any.
+    pub fn metadata(&self) -> Option<&ValidatedModelMetadata> {
+        self.metadata.as_ref()
+    }
+
+    pub fn parameter_index(&self, name: &str) -> Option<usize> {
+        self.metadata()?.parameter_index(name)
+    }
+
+    pub fn covariate_index(&self, name: &str) -> Option<usize> {
+        self.metadata()?.covariate_index(name)
+    }
+
+    pub fn state_index(&self, name: &str) -> Option<usize> {
+        self.metadata()?.state_index(name)
+    }
+
+    pub fn route_index(&self, name: &str) -> Option<usize> {
+        self.metadata()?.route_index(name)
+    }
+
+    pub fn output_index(&self, name: &str) -> Option<usize> {
+        self.metadata()?.output_index(name)
+    }
+
+    fn invalidate_metadata(&mut self) {
+        self.metadata = None;
+    }
+}
+
+fn validate_metadata_dimensions(
+    metadata: &ValidatedModelMetadata,
+    neqs: &Neqs,
+) -> Result<(), OdeMetadataError> {
+    let declared_states = metadata.states().len();
+    if declared_states != neqs.nstates {
+        return Err(OdeMetadataError::StateCountMismatch {
+            expected: neqs.nstates,
+            declared: declared_states,
+        });
+    }
+
+    let declared_routes = metadata.route_channel_count();
+    if declared_routes != neqs.ndrugs {
+        return Err(OdeMetadataError::RouteCountMismatch {
+            expected: neqs.ndrugs,
+            declared: declared_routes,
+        });
+    }
+
+    let declared_outputs = metadata.outputs().len();
+    if declared_outputs != neqs.nout {
+        return Err(OdeMetadataError::OutputCountMismatch {
+            expected: neqs.nout,
+            declared: declared_outputs,
+        });
+    }
+
+    Ok(())
 }
 
 impl super::Cache for ODE {
@@ -280,7 +372,7 @@ impl EquationPriv for ODE {
 impl ODE {
     /// Generic event-loop runner, parameterized over the concrete solver type.
     #[allow(clippy::too_many_arguments)]
-    fn run_events<'a, S: OdeSolverMethod<'a, PMProblem<'a, DiffEq>>>(
+    fn run_events<'a, F, S>(
         &self,
         solver: &mut S,
         events: &[Event],
@@ -295,7 +387,11 @@ impl ODE {
         y_out: &mut V,
         likelihood: &mut Vec<f64>,
         output: &mut SubjectPredictions,
-    ) -> Result<(), PharmsolError> {
+    ) -> Result<(), PharmsolError>
+    where
+        F: Fn(&V, &V, f64, &mut V, &V, &V, &Covariates) + 'a,
+        S: OdeSolverMethod<'a, PMProblem<'a, F>>,
+    {
         for (index, event) in events.iter().enumerate() {
             let next_event = events.get(index + 1);
 
@@ -420,8 +516,8 @@ impl Equation for ODE {
         ypred.log_likelihood(error_models)
     }
 
-    fn kind() -> crate::EqnKind {
-        crate::EqnKind::ODE
+    fn kind() -> EqnKind {
+        EqnKind::ODE
     }
 
     fn simulate_subject(
@@ -467,7 +563,9 @@ impl Equation for ODE {
                 .h0(1e-3)
                 .p(support_point.to_vec())
                 .build_from_eqn(PMProblem::with_params_v(
-                    self.diffeq,
+                    move |x, p, t, dx, bolus, rateiv, cov| {
+                        (self.diffeq)(x, p, t, dx, bolus, rateiv, cov);
+                    },
                     nstates,
                     ndrugs,
                     support_point.to_vec(),
@@ -558,5 +656,237 @@ impl Equation for ODE {
         }
         let ll = error_models.map(|_| likelihood.iter().product::<f64>());
         Ok((output, ll))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{fa, lag, Subject, SubjectBuilderExt};
+    use approx::assert_relative_eq;
+
+    fn simple_ode() -> ODE {
+        ODE::new(
+            |_x, _p, _t, _dx, _b, _rateiv, _cov| {},
+            |_p, _t, _cov| lag! {},
+            |_p, _t, _cov| fa! {},
+            |_p, _t, _cov, _x| {},
+            |_x, _p, _t, _cov, _y| {},
+        )
+        .with_nstates(1)
+        .with_ndrugs(1)
+        .with_nout(1)
+    }
+
+    fn route_policy_subject() -> Subject {
+        Subject::builder("route_policy")
+            .bolus(0.0, 100.0, 0)
+            .infusion(0.0, 100.0, 0, 1.0)
+            .observation(1.0, 0.0, 0)
+            .build()
+    }
+
+    fn explicit_route_kernel(
+        _x: &V,
+        _p: &V,
+        _t: f64,
+        dx: &mut V,
+        b: &V,
+        rateiv: &V,
+        _cov: &Covariates,
+    ) {
+        dx[0] = b[0] + rateiv[0];
+    }
+
+    fn injected_route_kernel(
+        _x: &V,
+        _p: &V,
+        _t: f64,
+        dx: &mut V,
+        _b: &V,
+        _rateiv: &V,
+        _cov: &Covariates,
+    ) {
+        dx[0] = 0.0;
+    }
+
+    fn zero_lag(_p: &V, _t: f64, _cov: &Covariates) -> std::collections::HashMap<usize, f64> {
+        std::collections::HashMap::new()
+    }
+
+    fn unit_fa(_p: &V, _t: f64, _cov: &Covariates) -> std::collections::HashMap<usize, f64> {
+        std::collections::HashMap::new()
+    }
+
+    fn zero_init(_p: &V, _t: f64, _cov: &Covariates, _x: &mut V) {}
+
+    fn state_output(x: &V, _p: &V, _t: f64, _cov: &Covariates, y: &mut V) {
+        y[0] = x[0];
+    }
+
+    #[test]
+    fn handwritten_ode_metadata_exposes_name_lookup() {
+        let ode = simple_ode()
+            .with_metadata(
+                super::super::metadata::new("bimodal_ke")
+                    .parameters(["ke", "v"])
+                    .states(["central"])
+                    .outputs(["cp"])
+                    .route(super::super::Route::infusion("iv").to_state("central")),
+            )
+            .expect("metadata attachment should validate");
+
+        assert_eq!(ode.parameter_index("ke"), Some(0));
+        assert_eq!(ode.parameter_index("v"), Some(1));
+        assert_eq!(ode.state_index("central"), Some(0));
+        assert_eq!(ode.route_index("iv"), Some(0));
+        assert_eq!(ode.output_index("cp"), Some(0));
+        assert_eq!(
+            ode.metadata().expect("metadata exists").kind(),
+            ModelKind::Ode
+        );
+    }
+
+    #[test]
+    fn handwritten_ode_without_metadata_keeps_raw_path() {
+        let ode = simple_ode();
+
+        assert!(ode.metadata().is_none());
+        assert_eq!(ode.state_index("central"), None);
+        assert_eq!(ode.route_index("iv"), None);
+        assert_eq!(ode.output_index("cp"), None);
+    }
+
+    #[test]
+    fn handwritten_ode_rejects_dimension_mismatches() {
+        let error = simple_ode()
+            .with_metadata(
+                super::super::metadata::new("wrong_outputs")
+                    .parameters(["ke"])
+                    .states(["central"])
+                    .outputs(["cp", "auc"])
+                    .route(super::super::Route::infusion("iv").to_state("central")),
+            )
+            .expect_err("output-count mismatches must fail");
+
+        assert_eq!(
+            error,
+            OdeMetadataError::OutputCountMismatch {
+                expected: 1,
+                declared: 2,
+            }
+        );
+    }
+
+    #[test]
+    fn handwritten_ode_rejects_invalid_metadata() {
+        let error = simple_ode()
+            .with_metadata(
+                super::super::metadata::new("missing_destination")
+                    .parameters(["ke"])
+                    .states(["central"])
+                    .outputs(["cp"])
+                    .route(super::super::Route::infusion("iv")),
+            )
+            .expect_err("invalid metadata must fail during attachment");
+
+        assert_eq!(
+            error,
+            OdeMetadataError::Validation(ModelMetadataError::MissingRouteDestination {
+                route: "iv".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn handwritten_ode_defaults_to_explicit_route_vectors() {
+        let ode = ODE::new(
+            explicit_route_kernel,
+            zero_lag,
+            unit_fa,
+            zero_init,
+            state_output,
+        )
+        .with_nstates(1)
+        .with_ndrugs(1)
+        .with_nout(1)
+        .with_metadata(
+            super::super::metadata::new("explicit_routes")
+                .states(["central"])
+                .outputs(["cp"])
+                .routes([
+                    super::super::Route::bolus("oral").to_state("central"),
+                    super::super::Route::infusion("iv").to_state("central"),
+                ]),
+        )
+        .expect("metadata attachment should validate");
+
+        let predictions = ode
+            .simulate_subject(&route_policy_subject(), &[], None)
+            .expect("simulation should succeed")
+            .0;
+
+        assert_eq!(ode.route_index("oral").expect("oral route"), 0);
+        assert_eq!(ode.route_index("iv").expect("iv route"), 0);
+        assert_relative_eq!(
+            predictions.predictions()[0].prediction(),
+            200.0,
+            epsilon = 1e-6
+        );
+    }
+
+    #[test]
+    fn handwritten_ode_metadata_input_policy_is_descriptive_only() {
+        let ode = ODE::new(
+            injected_route_kernel,
+            zero_lag,
+            unit_fa,
+            zero_init,
+            state_output,
+        )
+        .with_nstates(1)
+        .with_ndrugs(1)
+        .with_nout(1)
+        .with_metadata(
+            super::super::metadata::new("injected_routes")
+                .states(["central"])
+                .outputs(["cp"])
+                .routes([
+                    super::super::Route::bolus("oral")
+                        .to_state("central")
+                        .inject_input_to_destination(),
+                    super::super::Route::infusion("iv")
+                        .to_state("central")
+                        .inject_input_to_destination(),
+                ]),
+        )
+        .expect("metadata attachment should validate");
+
+        let predictions = ode
+            .simulate_subject(&route_policy_subject(), &[], None)
+            .expect("simulation should succeed")
+            .0;
+
+        assert_relative_eq!(
+            predictions.predictions()[0].prediction(),
+            0.0,
+            epsilon = 1e-6
+        );
+    }
+
+    #[test]
+    fn changing_dimensions_after_metadata_clears_route_metadata() {
+        let ode = simple_ode()
+            .with_metadata(
+                super::super::metadata::new("bimodal_ke")
+                    .states(["central"])
+                    .outputs(["cp"])
+                    .route(super::super::Route::infusion("iv").to_state("central")),
+            )
+            .expect("metadata attachment should validate")
+            .with_ndrugs(2);
+
+        assert!(ode.metadata().is_none());
+        assert_eq!(ode.route_index("iv"), None);
     }
 }

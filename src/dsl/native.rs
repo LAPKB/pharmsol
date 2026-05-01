@@ -14,7 +14,7 @@ use cranelift_jit::JITModule;
 #[cfg(feature = "dsl-aot-load")]
 use libloading::Library;
 use pharmsol_dsl::execution::KernelRole;
-use pharmsol_dsl::AnalyticalKernel;
+use pharmsol_dsl::{AnalyticalKernel, RouteKind};
 
 pub use super::model_info::{
     NativeCovariateInfo, NativeModelInfo, NativeOutputInfo, NativeRouteInfo,
@@ -264,12 +264,74 @@ impl RuntimeArtifact for NativeExecutionArtifact {
 #[derive(Clone, Debug)]
 struct SharedNativeModel {
     info: Arc<NativeModelInfo>,
+    route_semantics: Arc<RouteInputSemantics>,
     artifact: Arc<dyn RuntimeArtifact>,
+}
+
+#[derive(Clone, Debug)]
+struct RouteInputSemantics {
+    bolus_destinations: Vec<Option<usize>>,
+    infusion_inputs: Vec<bool>,
+    injected_infusion_destinations: Vec<Option<usize>>,
+}
+
+impl RouteInputSemantics {
+    fn from_model_info(info: &NativeModelInfo) -> Self {
+        let mut bolus_destinations = vec![None; info.route_len];
+        let mut infusion_inputs = vec![false; info.route_len];
+        let mut injected_infusion_destinations = vec![None; info.route_len];
+
+        for route in &info.routes {
+            match route.kind {
+                Some(RouteKind::Bolus) => {
+                    bolus_destinations[route.index] = Some(route.destination_offset);
+                }
+                Some(RouteKind::Infusion) => {
+                    infusion_inputs[route.index] = true;
+                    if route.inject_input_to_destination {
+                        injected_infusion_destinations[route.index] =
+                            Some(route.destination_offset);
+                    }
+                }
+                None => {
+                    bolus_destinations[route.index] = Some(route.destination_offset);
+                    infusion_inputs[route.index] = true;
+                    if route.inject_input_to_destination {
+                        injected_infusion_destinations[route.index] =
+                            Some(route.destination_offset);
+                    }
+                }
+            }
+        }
+
+        Self {
+            bolus_destinations,
+            infusion_inputs,
+            injected_infusion_destinations,
+        }
+    }
+
+    fn supports_input(&self, input: usize, kind: RouteKind) -> bool {
+        match kind {
+            RouteKind::Bolus => self
+                .bolus_destinations
+                .get(input)
+                .copied()
+                .flatten()
+                .is_some(),
+            RouteKind::Infusion => self.infusion_inputs.get(input).copied().unwrap_or(false),
+        }
+    }
+
+    fn bolus_destination(&self, input: usize) -> Option<usize> {
+        self.bolus_destinations.get(input).copied().flatten()
+    }
 }
 
 impl SharedNativeModel {
     fn new(info: NativeModelInfo, artifact: impl RuntimeArtifact + 'static) -> Self {
         Self {
+            route_semantics: Arc::new(RouteInputSemantics::from_model_info(&info)),
             info: Arc::new(info),
             artifact: Arc::new(artifact),
         }
@@ -313,6 +375,18 @@ impl SharedNativeModel {
         Ok(())
     }
 
+    fn validate_input_for_kind(&self, input: usize, kind: RouteKind) -> Result<(), PharmsolError> {
+        self.validate_input(input)?;
+        if self.route_semantics.supports_input(input, kind) {
+            return Ok(());
+        }
+
+        Err(PharmsolError::OtherError(format!(
+            "model `{}` does not declare a {:?} route for input channel {}",
+            self.info.name, kind, input
+        )))
+    }
+
     fn fill_cov_buffer(&self, covariates: &Covariates, time: f64, buf: &mut [f64]) {
         for covariate in &self.info.covariates {
             buf[covariate.index] = match covariates.get_covariate(&covariate.name) {
@@ -323,9 +397,14 @@ impl SharedNativeModel {
     }
 
     fn apply_route_inputs_to_rates(&self, rates: &mut [f64], route_inputs: &[f64]) {
-        for route in &self.info.routes {
-            if route.inject_input_to_destination {
-                rates[route.destination_offset] += route_inputs[route.index];
+        for (input, destination) in self
+            .route_semantics
+            .injected_infusion_destinations
+            .iter()
+            .enumerate()
+        {
+            if let Some(destination) = destination {
+                rates[*destination] += route_inputs[input];
             }
         }
     }
@@ -451,7 +530,7 @@ impl SharedNativeModel {
 
         for event in events.iter_mut() {
             if let Event::Bolus(bolus) = event {
-                self.validate_input(bolus.input())?;
+                self.validate_input_for_kind(bolus.input(), RouteKind::Bolus)?;
 
                 if self.artifact.has_kernel(KernelRole::RouteLag) {
                     lag_values.fill(0.0);
@@ -525,9 +604,17 @@ impl SharedNativeModel {
         input: usize,
         amount: f64,
     ) -> Result<(), PharmsolError> {
-        self.validate_input(input)?;
-        let destination = &self.info.routes[input];
-        state[destination.destination_offset] += amount;
+        self.validate_input_for_kind(input, RouteKind::Bolus)?;
+        let destination = self
+            .route_semantics
+            .bolus_destination(input)
+            .ok_or_else(|| {
+                PharmsolError::OtherError(format!(
+                    "model `{}` does not declare a bolus route for input channel {}",
+                    self.info.name, input
+                ))
+            })?;
+        state[destination] += amount;
         Ok(())
     }
 
@@ -654,7 +741,8 @@ impl NativeOdeModel {
                 .collect::<Vec<_>>();
 
             for infusion in &infusions {
-                self.shared.validate_input(infusion.input())?;
+                self.shared
+                    .validate_input_for_kind(infusion.input(), RouteKind::Infusion)?;
             }
 
             let mut events = occasion.process_events(None, true);
@@ -919,7 +1007,8 @@ impl NativeAnalyticalModel {
                 .collect::<Vec<_>>();
 
             for infusion in &infusions {
-                self.shared.validate_input(infusion.input())?;
+                self.shared
+                    .validate_input_for_kind(infusion.input(), RouteKind::Infusion)?;
             }
 
             let mut events = occasion.process_events(None, true);
@@ -959,6 +1048,7 @@ impl NativeAnalyticalModel {
 
                 if let Some(next_event) = events.get(index + 1) {
                     self.solve_interval(
+                        &mut *session,
                         &mut state,
                         support_point,
                         occasion.covariates(),
@@ -975,6 +1065,7 @@ impl NativeAnalyticalModel {
 
     fn solve_interval(
         &self,
+        session: &mut dyn KernelSession,
         state: &mut [f64],
         support_point: &[f64],
         covariates: &Covariates,
@@ -1001,11 +1092,25 @@ impl NativeAnalyticalModel {
         breakpoints.dedup_by(|lhs, rhs| (*lhs - *rhs).abs() < 1e-12);
 
         let mut current = breakpoints[0];
-        let projected = project_analytical_parameters(&self.shared.info, support_point)?;
+        let mut cov_buf = vec![0.0; self.shared.info.covariates.len()];
+        let mut derived = vec![0.0; self.shared.info.derived_len];
 
         for next in breakpoints.iter().copied().skip(1) {
             let dt = next - current;
-            let route_inputs = active_route_inputs(infusions, current, self.shared.info.route_len);
+            let route_inputs =
+                interval_route_inputs(infusions, current, next, self.shared.info.route_len);
+            self.shared.refresh_derived(
+                session,
+                next,
+                state,
+                support_point,
+                covariates,
+                &route_inputs,
+                &mut derived,
+                &mut cov_buf,
+            )?;
+            let projected =
+                project_analytical_parameters(&self.shared.info, support_point, &derived)?;
             let next_state = apply_analytical_kernel(
                 self.shared.info.analytical.ok_or_else(|| {
                     PharmsolError::OtherError(format!(
@@ -1073,7 +1178,8 @@ impl NativeSdeModel {
                 .collect::<Vec<_>>();
 
             for infusion in &infusions {
-                self.shared.validate_input(infusion.input())?;
+                self.shared
+                    .validate_input_for_kind(infusion.input(), RouteKind::Infusion)?;
             }
 
             let mut events = occasion.process_events(None, true);
@@ -1302,6 +1408,22 @@ fn active_route_inputs(infusions: &[Infusion], time: f64, route_len: usize) -> V
     values
 }
 
+fn interval_route_inputs(
+    infusions: &[Infusion],
+    start_time: f64,
+    end_time: f64,
+    route_len: usize,
+) -> Vec<f64> {
+    let mut values = vec![0.0; route_len];
+    for infusion in infusions {
+        let finish = infusion.time() + infusion.duration();
+        if infusion.input() < route_len && start_time >= infusion.time() && end_time <= finish {
+            values[infusion.input()] += infusion.amount() / infusion.duration();
+        }
+    }
+    values
+}
+
 fn sort_events(events: &mut [Event]) {
     events.sort_by(|lhs, rhs| {
         fn order(event: &Event) -> u8 {
@@ -1323,6 +1445,7 @@ fn sort_events(events: &mut [Event]) {
 fn project_analytical_parameters(
     info: &NativeModelInfo,
     support_point: &[f64],
+    derived: &[f64],
 ) -> Result<V, PharmsolError> {
     let kernel = info.analytical.ok_or_else(|| {
         PharmsolError::OtherError(format!(
@@ -1339,6 +1462,13 @@ fn project_analytical_parameters(
             support_point.len()
         )));
     }
+
+    // Analytical authoring models can project kernel arguments through a derive
+    // kernel by declaring exactly the built-in kernel arity in `derived`.
+    if derived.len() == arity {
+        return Ok(V::from_vec(derived.to_vec(), NalgebraContext));
+    }
+
     Ok(V::from_vec(
         support_point[..arity].to_vec(),
         NalgebraContext,

@@ -778,7 +778,9 @@ mod tests {
             covariates: Vec::new(),
             routes: vec![NativeRouteInfo {
                 name: "oral".to_string(),
+                declaration_index: 0,
                 index: 0,
+                kind: None,
                 destination_offset: 0,
                 inject_input_to_destination: true,
             }],

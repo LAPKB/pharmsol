@@ -607,6 +607,7 @@ impl Parser {
         Ok(RouteDecl {
             input: input.clone(),
             destination,
+            kind: None,
             properties,
             span: input.span.join(end_span),
         })
@@ -616,19 +617,19 @@ impl Parser {
         let start = self.bump().unwrap().span;
         let open = self.expect_simple(|kind| matches!(kind, TokenKind::LBrace), "`{`")?;
 
-        let kernel_name = self.parse_ident()?;
-        if kernel_name.text != "kernel" {
+        let structure_name = self.parse_ident()?;
+        if structure_name.text != "structure" {
             return Err(ParseError::new(
                 format!(
-                    "expected `kernel = <identifier>` inside analytical block, found `{}`",
-                    kernel_name.text
+                    "expected `structure = <identifier>` inside analytical block, found `{}`",
+                    structure_name.text
                 ),
-                kernel_name.span,
+                structure_name.span,
             ));
         }
 
         let eq = self.expect_simple(|kind| matches!(kind, TokenKind::Eq), "`=`")?;
-        let kernel = self.parse_continuation_ident_after(&eq, "kernel identifier")?;
+        let structure = self.parse_continuation_ident_after(&eq, "structure identifier")?;
         self.consume_separators();
         let end = self.expect_closing(
             |kind| matches!(kind, TokenKind::RBrace),
@@ -637,7 +638,7 @@ impl Parser {
             "`analytical` block",
         )?;
         Ok(AnalyticalBlock {
-            kernel,
+            structure,
             span: start.join(end.span),
         })
     }
@@ -1635,14 +1636,14 @@ out(cp) = gut ~ continuous()
     #[test]
     fn authoring_output_annotation_is_optional() {
         let annotated = r#"
-model = optional_output_annotation
+name = optional_output_annotation
 kind = ode
 states = central
 ddt(central) = 0
 out(cp) = central ~ continuous()
 "#;
         let plain = r#"
-model = optional_output_annotation
+name = optional_output_annotation
 kind = ode
 states = central
 ddt(central) = 0
@@ -1658,14 +1659,14 @@ out(cp) = central
     #[test]
     fn authoring_dx_and_ddt_lower_equivalently() {
         let dx_src = r#"
-model = derivative_alias
+name = derivative_alias
 kind = ode
 states = central
 dx(central) = -ke * central
 out(cp) = central
 "#;
         let ddt_src = r#"
-model = derivative_alias
+name = derivative_alias
 kind = ode
 states = central
 ddt(central) = -ke * central
@@ -1681,7 +1682,7 @@ out(cp) = central
     #[test]
     fn authoring_rejects_out_target_not_in_declared_outputs() {
         let src = r#"
-model = bimodal_ke
+name = bimodal_ke
 kind = ode
 params = ke, v
 states = central

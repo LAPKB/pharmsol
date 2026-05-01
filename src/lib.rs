@@ -28,28 +28,31 @@ pub use crate::data::Interpolation::*;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use crate::data::*;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-pub use crate::equation::*;
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use crate::optimize::effect::get_e2;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use crate::optimize::spp::SppOptimizer;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+pub use crate::simulator::equation::analytical::*;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+pub use crate::simulator::equation::metadata;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use crate::simulator::equation::{
     self,
     ode::{ExplicitRkTableau, OdeSolver, SdirkTableau},
-    ODE,
+    Analytical, AnalyticalKernel, Cache, Equation, ModelKind, ModelMetadata, ModelMetadataError,
+    NameDomain, Predictions, RouteInputPolicy, RouteKind, State, ValidatedModelMetadata, ODE, SDE,
 };
 pub use error::PharmsolError;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use nalgebra::dmatrix;
-pub use pharmsol_macros::ode;
+pub use pharmsol_macros::{analytical, ode, sde};
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use std::collections::HashMap;
 
 /// Prelude module that re-exports all commonly used types and traits.
 ///
-/// Use `use pharmsol::prelude::*;` to import everything needed for basic
-/// pharmacometric modeling.
+/// Importing `pharmsol::prelude::*` brings the main modeling, simulation,
+/// and data APIs into scope.
 ///
 /// # Example
 /// ```rust
@@ -92,7 +95,7 @@ pub mod prelude {
     pub use crate::data::auc::{auc, auc_interval, aumc, interpolate_linear};
 
     #[allow(deprecated)]
-    // Simulator submodule for internal use and advanced users
+    // Simulator submodule for organized access to simulation types.
     pub mod simulator {
         pub use crate::simulator::{
             cache::{self, PredictionCache, SdeLikelihoodCache, DEFAULT_CACHE_SIZE},
@@ -136,6 +139,8 @@ pub mod prelude {
 
     // Re-export macros (they are exported at crate root via #[macro_export])
     #[doc(inline)]
+    pub use crate::analytical;
+    #[doc(inline)]
     pub use crate::fa;
     #[doc(inline)]
     pub use crate::fetch_cov;
@@ -145,6 +150,8 @@ pub mod prelude {
     pub use crate::lag;
     #[doc(inline)]
     pub use crate::ode;
+    #[doc(inline)]
+    pub use crate::sde;
 }
 
 #[macro_export]

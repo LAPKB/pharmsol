@@ -3,6 +3,9 @@
 /// This example demonstrates how to implement a two-compartment pharmacokinetic model
 /// with weight-based covariate scaling using pharmsol.
 ///
+/// It uses the declaration-first `ode!` surface so the route, covariate,
+/// state, and output metadata stay aligned with the generated execution path.
+///
 /// The two-compartment model describes drug distribution between:
 /// - Central compartment (x[0]): where drug enters and is eliminated
 /// - Peripheral compartment (x[1]): a tissue compartment in equilibrium with central
@@ -18,36 +21,18 @@
 fn main() -> Result<(), pharmsol::PharmsolError> {
     use pharmsol::prelude::*;
 
-    // Create a subject using the builder pattern
-    let subject = Subject::builder("subject_001")
-        // An infusion of 500 mg over 0.5 hours (1000 mg/hr rate)
-        .infusion(0.0, 500.0, 0, 0.5)
-        // Weight covariate at baseline (85 kg reference weight)
-        .covariate("wt", 0.0, 70.0)
-        // Observations at various time points (concentration in mg/L)
-        .observation(0.5, 8.5, 0)
-        .observation(1.0, 6.2, 0)
-        .observation(2.0, 4.1, 0)
-        .observation(4.0, 2.3, 0)
-        .observation(6.0, 1.5, 0)
-        .observation(8.0, 1.1, 0)
-        .observation(12.0, 0.7, 0)
-        // Missing observation to force prediction at this time point
-        .missing_observation(24.0, 0)
-        .build();
-
-    // Define the two-compartment ODE model
-    let ode = equation::ODE::new(
-        // Primary differential equation block
-        |x, p, t, dx, _b, rateiv, cov| {
-            // Fetch the (possibly interpolated) weight covariate at time t
-            fetch_cov!(cov, t, wt);
-
-            // Fetch parameters from the parameter vector
+    let ode = ode! {
+        name: "two_cmt_wt",
+        params: [cl, v, vp, q],
+        covariates: [wt],
+        states: [central, peripheral],
+        outputs: [cp],
+        routes: {
+            infusion(iv) -> central,
+        },
+        diffeq: |x, _t, dx| {
             // CL: Clearance (L/hr), V: Central volume (L)
             // Vp: Peripheral volume (L), Q: Inter-compartmental clearance (L/hr)
-            fetch_params!(p, cl, v, vp, q);
-
             // Weight-based allometric scaling
             // Reference weight is 85 kg
             let wt_ratio = wt / 85.0;
@@ -64,36 +49,41 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
             let kpc = q_scaled / vp_scaled; // Peripheral to central rate constant
 
             // Two-compartment model differential equations
-            // Central compartment: elimination + distribution + infusion input
-            dx[0] = -ke * x[0] - kcp * x[0] + kpc * x[1] + rateiv[0];
+            // Central compartment: elimination + distribution
+            dx[central] = -ke * x[central] - kcp * x[central] + kpc * x[peripheral];
             // Peripheral compartment: distribution equilibrium
-            dx[1] = kcp * x[0] - kpc * x[1];
+            dx[peripheral] = kcp * x[central] - kpc * x[peripheral];
         },
-        // Lag time block (no lag in this model)
-        |_p, _t, _cov| lag! {},
-        // Bioavailability block (100% for IV, so not needed)
-        |_p, _t, _cov| fa! {},
-        // Secondary equations block (not used here)
-        |_p, _t, _cov, _x| {},
         // Output equation block - calculates observed concentration
-        |x, p, t, cov, y| {
-            fetch_cov!(cov, t, wt);
-            fetch_params!(p, _cl, v, _vp, _q);
-
+        out: |x, _t, y| {
             // Calculate scaled volume for concentration
             let wt_ratio = wt / 85.0;
             let v_scaled = v * wt_ratio;
 
             // Concentration = Amount / Volume
-            y[0] = x[0] / v_scaled;
+            y[cp] = x[central] / v_scaled;
         },
-        // Model dimensions: (number of compartments, number of outputs)
-    )
-    .with_nstates(2)
-    .with_nout(1);
+    };
+
+    let iv = ode.route_index("iv").expect("iv route exists");
+    let cp = ode.output_index("cp").expect("cp output exists");
+
+    // Create a subject using metadata-backed route and output names instead of
+    // hard-coded numeric indices.
+    let subject = Subject::builder("subject_001")
+        .infusion(0.0, 500.0, iv, 0.5)
+        .covariate("wt", 0.0, 70.0)
+        .observation(0.5, 8.5, cp)
+        .observation(1.0, 6.2, cp)
+        .observation(2.0, 4.1, cp)
+        .observation(4.0, 2.3, cp)
+        .observation(6.0, 1.5, cp)
+        .observation(8.0, 1.1, cp)
+        .observation(12.0, 0.7, cp)
+        .missing_observation(24.0, cp)
+        .build();
 
     // Define parameter values
-    // Note: order must match the fetch_params! macro order
     let cl = 5.0; // Clearance (L/hr)
     let v = 50.0; // Central volume of distribution (L)
     let vp = 100.0; // Peripheral volume of distribution (L)

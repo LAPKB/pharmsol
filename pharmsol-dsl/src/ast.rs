@@ -111,10 +111,17 @@ pub struct RoutesBlock {
     pub span: Span,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RouteKind {
+    Bolus,
+    Infusion,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct RouteDecl {
     pub input: Ident,
     pub destination: Place,
+    pub kind: Option<RouteKind>,
     pub properties: Vec<Binding>,
     pub span: Span,
 }
@@ -141,7 +148,7 @@ pub struct StatementBlock {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AnalyticalBlock {
-    pub kernel: Ident,
+    pub structure: Ident,
     pub span: Span,
 }
 
@@ -491,7 +498,7 @@ fn write_analytical_block(
     indent(out, indent_level);
     writeln!(out, "analytical {{")?;
     indent(out, indent_level + 1);
-    writeln!(out, "kernel = {}", block.kernel.text)?;
+    writeln!(out, "structure = {}", block.structure.text)?;
     indent(out, indent_level);
     write!(out, "}}")
 }

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{ModelKind, Span};
+use crate::{ModelKind, RouteKind, Span};
 
 pub type SymbolId = usize;
 
@@ -145,6 +145,7 @@ pub struct TypedState {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypedRoute {
     pub symbol: SymbolId,
+    pub kind: Option<RouteKind>,
     pub destination: TypedStatePlace,
     pub properties: Vec<TypedRouteProperty>,
     pub span: Span,
@@ -165,7 +166,7 @@ pub enum RoutePropertyKind {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypedAnalytical {
-    pub kernel: AnalyticalKernel,
+    pub structure: AnalyticalKernel,
     pub span: Span,
 }
 
