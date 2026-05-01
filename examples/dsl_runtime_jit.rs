@@ -8,7 +8,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     use pharmsol::prelude::*;
 
     let model_source = r#"
-model = bimodal_ke
+name = bimodal_ke
 kind = ode
 
 params = ke, v

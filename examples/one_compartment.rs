@@ -1,67 +1,58 @@
 fn main() -> Result<(), pharmsol::PharmsolError> {
     use pharmsol::prelude::*;
 
-    // Create a subject using the builder pattern
+    let analytical = analytical! {
+        name: "one_cmt_iv",
+        params: [ke, v],
+        states: [central],
+        outputs: [cp],
+        routes: {
+            infusion(iv) -> central,
+        },
+        structure: one_compartment,
+        out: |x, _p, _t, _cov, y| {
+            y[cp] = x[central] / v;
+        },
+    };
+
+    let ode = ode! {
+        name: "one_cmt_iv",
+        params: [ke, v],
+        states: [central],
+        outputs: [cp],
+        routes: {
+            infusion(iv) -> central,
+        },
+        diffeq: |x, _p, _t, dx, _cov| {
+            dx[central] = -ke * x[central];
+        },
+        out: |x, _p, _t, _cov, y| {
+            y[cp] = x[central] / v;
+        },
+    };
+
+    let iv = analytical.route_index("iv").expect("iv route exists");
+    let cp = analytical.output_index("cp").expect("cp output exists");
+
+    // Create a subject using metadata-backed route and output names instead of
+    // hard-coded indices.
     let subject = Subject::builder("Nikola Tesla")
-        // An initial infusion of 500 units over 0.5 time units
-        .infusion(0., 500.0, 0, 0.5)
-        // Observations at various time points
-        .observation(0.5, 1.645, 0)
-        .observation(1., 1.216, 0)
-        .observation(2., 0.462, 0)
-        .observation(3., 0.169, 0)
-        .observation(4., 0.063, 0)
-        .observation(6., 0.009, 0)
-        .observation(8., 0.001, 0)
-        // A missing observation, to force the simulator to predict to this time point
-        // For missing observations, predictions are made but no likelihood contribution is computed
-        .missing_observation(12.0, 0)
-        // Build the subject
+        .infusion(0., 500.0, iv, 0.5)
+        .observation(0.5, 1.645, cp)
+        .observation(1., 1.216, cp)
+        .observation(2., 0.462, cp)
+        .observation(3., 0.169, cp)
+        .observation(4., 0.063, cp)
+        .observation(6., 0.009, cp)
+        .observation(8., 0.001, cp)
+        .missing_observation(12.0, cp)
         .build();
-
-    // Define the one-compartment analytical solution function
-    let an = equation::Analytical::new(
-        one_compartment,
-        |_p, _t, _cov| {},
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
-        |x, p, _t, _cov, y| {
-            fetch_params!(p, _ke, v);
-            // Calculate the output concentration, here defined as amount over volume
-            y[0] = x[0] / v;
-        },
-    )
-    .with_nstates(1)
-    .with_nout(1);
-
-    let ode = equation::ODE::new(
-        |x, p, _t, dx, _b, rateiv, _cov| {
-            // Macro to fetch parameters from the parameter vector
-            // This exposes them as local variables
-            fetch_params!(p, ke, _v);
-
-            // Define the ODE for the one-compartment model
-            // Note that rateiv is used to include infusion rates
-            dx[0] = -ke * x[0] + rateiv[0];
-        },
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
-        |x, p, _t, _cov, y| {
-            fetch_params!(p, _ke, v);
-            // Calculate the output concentration, here defined as amount over volume
-            y[0] = x[0] / v;
-        },
-    )
-    .with_nstates(1)
-    .with_nout(1);
 
     // Define the error models for the observations
     let ems = AssayErrorModels::new().
     // For this example, we use a simple additive error model with 5% error
     add(
-        0,
+        cp,
         AssayErrorModel::additive(ErrorPoly::new(0.0, 0.05, 0.0, 0.0), 0.0),
     )?;
 
@@ -70,9 +61,9 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
     let v = 194.0; // Volume of distribution
 
     // Compute likelihoods and predictions for both models
-    let analytical_likelihoods = an.estimate_log_likelihood(&subject, &[ke, v], &ems)?;
+    let analytical_likelihoods = analytical.estimate_log_likelihood(&subject, &[ke, v], &ems)?;
 
-    let analytical_predictions = an.estimate_predictions(&subject, &[ke, v])?;
+    let analytical_predictions = analytical.estimate_predictions(&subject, &[ke, v])?;
 
     let ode_likelihoods = ode.estimate_log_likelihood(&subject, &[ke, v], &ems)?;
 

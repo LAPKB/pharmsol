@@ -12,7 +12,7 @@ pub(super) fn parse_module(src: &str) -> Result<Module, ParseError> {
 
 struct AuthoringParser<'a> {
     src: &'a str,
-    model_name: Option<Ident>,
+    name: Option<Ident>,
     explicit_kind: Option<(ModelKind, Span)>,
     parameters: Vec<Ident>,
     constants: Vec<Binding>,
@@ -24,6 +24,7 @@ struct AuthoringParser<'a> {
     assigned_outputs: BTreeMap<String, Span>,
     declared_outputs_span: Option<Span>,
     routes: BTreeMap<String, SurfaceRoute>,
+    route_order: Vec<String>,
     route_modifiers: BTreeMap<String, Vec<Binding>>,
     derive_statements: Vec<Stmt>,
     derivative_statements: Vec<Stmt>,
@@ -68,7 +69,7 @@ impl<'a> AuthoringParser<'a> {
     fn new(src: &'a str) -> Self {
         Self {
             src,
-            model_name: None,
+            name: None,
             explicit_kind: None,
             parameters: Vec::new(),
             constants: Vec::new(),
@@ -80,6 +81,7 @@ impl<'a> AuthoringParser<'a> {
             assigned_outputs: BTreeMap::new(),
             declared_outputs_span: None,
             routes: BTreeMap::new(),
+            route_order: Vec::new(),
             route_modifiers: BTreeMap::new(),
             derive_statements: Vec::new(),
             derivative_statements: Vec::new(),
@@ -132,11 +134,15 @@ impl<'a> AuthoringParser<'a> {
         }
 
         let surface_routes = std::mem::take(&mut self.routes);
+        let route_order = std::mem::take(&mut self.route_order);
         let mut route_modifiers = std::mem::take(&mut self.route_modifiers);
         let mut routes = Vec::with_capacity(surface_routes.len());
-        for (route_name, route) in &surface_routes {
+        for route_name in route_order {
+            let Some(route) = surface_routes.get(&route_name) else {
+                continue;
+            };
             let mut span = route.span;
-            let properties = route_modifiers.remove(route_name).unwrap_or_default();
+            let properties = route_modifiers.remove(&route_name).unwrap_or_default();
             if !properties.is_empty() {
                 span = properties
                     .iter()
@@ -145,6 +151,10 @@ impl<'a> AuthoringParser<'a> {
             routes.push(RouteDecl {
                 input: route.input.clone(),
                 destination: route.destination.clone(),
+                kind: Some(match route.kind {
+                    SurfaceRouteKind::Bolus => RouteKind::Bolus,
+                    SurfaceRouteKind::Infusion => RouteKind::Infusion,
+                }),
                 properties,
                 span,
             });
@@ -169,7 +179,7 @@ impl<'a> AuthoringParser<'a> {
         inject_infusion_rates(&surface_routes, &routes, &mut derivative_statements);
 
         let name = self
-            .model_name
+            .name
             .unwrap_or_else(|| Ident::new(DEFAULT_MODEL_NAME, module_span));
         let mut items = Vec::new();
 
@@ -298,9 +308,19 @@ impl<'a> AuthoringParser<'a> {
 
         if let Some(rest) = lhs_trimmed.strip_prefix("model") {
             if !rest.trim().is_empty() {
-                return Err(ParseError::new("expected `model = <name>`", span));
+                return Err(ParseError::new("expected `name = <identifier>`", span));
             }
-            self.model_name = Some(parse_ident_segment(rhs, rhs_abs)?);
+            return Err(ParseError::new(
+                "`model = ...` has been renamed to `name = ...`",
+                span,
+            ));
+        }
+
+        if let Some(rest) = lhs_trimmed.strip_prefix("name") {
+            if !rest.trim().is_empty() {
+                return Err(ParseError::new("expected `name = <identifier>`", span));
+            }
+            self.name = Some(parse_ident_segment(rhs, rhs_abs)?);
             return Ok(());
         }
 
@@ -365,8 +385,15 @@ impl<'a> AuthoringParser<'a> {
         }
 
         if lhs_trimmed == "kernel" {
-            let kernel = parse_ident_segment(rhs, rhs_abs)?;
-            self.analytical = Some(AnalyticalBlock { span, kernel });
+            return Err(ParseError::new(
+                "`kernel = ...` has been renamed to `structure = ...`",
+                span,
+            ));
+        }
+
+        if lhs_trimmed == "structure" {
+            let structure = parse_ident_segment(rhs, rhs_abs)?;
+            self.analytical = Some(AnalyticalBlock { span, structure });
             return Ok(());
         }
 
@@ -428,15 +455,16 @@ impl<'a> AuthoringParser<'a> {
         };
 
         let input = parse_ident_segment(call.argument, call.argument_start)?;
+        let route_name = input.text.clone();
         let destination = parse_place_at(rhs, line_start + arrow + 2)?;
-        if self.routes.contains_key(&input.text) {
+        if self.routes.contains_key(&route_name) {
             return Err(ParseError::new(
                 format!("duplicate route `{}`", input.text),
                 input.span,
             ));
         }
         self.routes.insert(
-            input.text.clone(),
+            route_name.clone(),
             SurfaceRoute {
                 input,
                 destination,
@@ -444,6 +472,7 @@ impl<'a> AuthoringParser<'a> {
                 span,
             },
         );
+        self.route_order.push(route_name);
         Ok(())
     }
 
@@ -589,7 +618,7 @@ impl<'a> AuthoringParser<'a> {
         if matches!(kind, ModelKind::Sde) {
             if let Some(analytical) = &self.analytical {
                 return Err(ParseError::new(
-                    "SDE authoring models cannot declare an analytical kernel",
+                    "SDE authoring models cannot declare an analytical structure",
                     analytical.span,
                 ));
             }

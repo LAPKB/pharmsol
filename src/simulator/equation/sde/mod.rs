@@ -3,8 +3,10 @@ mod em;
 use diffsol::{NalgebraContext, Vector};
 use nalgebra::DVector;
 use ndarray::{concatenate, Array2, Axis};
+use pharmsol_dsl::ModelKind;
 use rand::{rng, RngExt};
 use rayon::prelude::*;
+use thiserror::Error;
 
 use crate::{
     data::{Covariates, Infusion},
@@ -21,7 +23,59 @@ use diffsol::VectorCommon;
 
 use crate::PharmsolError;
 
-use super::{Equation, EquationPriv, EquationTypes, Predictions, State};
+use super::{
+    EqnKind, Equation, EquationPriv, EquationTypes, ModelMetadata, ModelMetadataError, Predictions,
+    State, ValidatedModelMetadata,
+};
+
+#[derive(Clone, Debug, PartialEq, Eq, Error)]
+pub enum SdeMetadataError {
+    #[error(transparent)]
+    Validation(#[from] ModelMetadataError),
+    #[error("SDE declares {declared} state metadata entries but model has {expected} states")]
+    StateCountMismatch { expected: usize, declared: usize },
+    #[error(
+        "SDE declares {declared} route metadata entries but model has {expected} input channels"
+    )]
+    RouteCountMismatch { expected: usize, declared: usize },
+    #[error("SDE declares {declared} output metadata entries but model has {expected} outputs")]
+    OutputCountMismatch { expected: usize, declared: usize },
+}
+
+#[derive(Clone, Debug, Default)]
+struct InjectedBolusMappings {
+    destinations: Vec<Option<usize>>,
+}
+
+impl InjectedBolusMappings {
+    fn explicit(ndrugs: usize) -> Self {
+        Self {
+            destinations: vec![None; ndrugs],
+        }
+    }
+
+    fn from_destinations(ndrugs: usize, destinations: &[Option<usize>]) -> Self {
+        let mut mappings = Self::explicit(ndrugs);
+        for (input, destination) in destinations.iter().copied().take(ndrugs).enumerate() {
+            mappings.destinations[input] = destination;
+        }
+        mappings
+    }
+
+    fn invalidate_for_ndrugs(&mut self, ndrugs: usize) {
+        *self = Self::explicit(ndrugs);
+    }
+
+    fn apply(&self, state: &mut [DVector<f64>], input: usize, amount: f64) -> bool {
+        let Some(destination) = self.destinations.get(input).copied().flatten() else {
+            return false;
+        };
+        state.par_iter_mut().for_each(|particle| {
+            particle[destination] += amount;
+        });
+        true
+    }
+}
 
 /// Simulate a stochastic differential equation (SDE) event.
 ///
@@ -44,7 +98,7 @@ use super::{Equation, EquationPriv, EquationTypes, Predictions, State};
 /// The state vector at time `tf` after simulation.
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn simulate_sde_event(
+fn simulate_sde_event(
     drift: &Drift,
     difussion: &Diffusion,
     x: V,
@@ -133,6 +187,8 @@ pub struct SDE {
     out: Out,
     neqs: Neqs,
     nparticles: usize,
+    metadata: Option<ValidatedModelMetadata>,
+    injected_bolus_mappings: InjectedBolusMappings,
     cache: Option<SdeLikelihoodCache>,
 }
 
@@ -164,6 +220,8 @@ impl SDE {
             out,
             neqs: Neqs::default(),
             nparticles,
+            metadata: None,
+            injected_bolus_mappings: InjectedBolusMappings::default(),
             cache: Some(SdeLikelihoodCache::new(DEFAULT_CACHE_SIZE)),
         }
     }
@@ -171,20 +229,100 @@ impl SDE {
     /// Set the number of state variables.
     pub fn with_nstates(mut self, nstates: usize) -> Self {
         self.neqs.nstates = nstates;
+        self.invalidate_metadata();
         self
     }
 
     /// Set the number of drug input channels (size of bolus[] and rateiv[]).
     pub fn with_ndrugs(mut self, ndrugs: usize) -> Self {
         self.neqs.ndrugs = ndrugs;
+        self.invalidate_metadata();
         self
     }
 
     /// Set the number of output equations.
     pub fn with_nout(mut self, nout: usize) -> Self {
         self.neqs.nout = nout;
+        self.invalidate_metadata();
         self
     }
+
+    /// Attach validated handwritten-model metadata to this SDE model.
+    pub fn with_metadata(mut self, metadata: ModelMetadata) -> Result<Self, SdeMetadataError> {
+        let metadata = metadata.validate_for_with_particles(ModelKind::Sde, self.nparticles)?;
+        validate_metadata_dimensions(&metadata, &self.neqs)?;
+        self.metadata = Some(metadata);
+        Ok(self)
+    }
+
+    #[doc(hidden)]
+    pub fn with_injected_bolus_inputs(mut self, destinations: &[Option<usize>]) -> Self {
+        self.injected_bolus_mappings =
+            InjectedBolusMappings::from_destinations(self.neqs.ndrugs, destinations);
+        self
+    }
+
+    /// Access the validated metadata attached to this SDE model, if any.
+    pub fn metadata(&self) -> Option<&ValidatedModelMetadata> {
+        self.metadata.as_ref()
+    }
+
+    pub fn parameter_index(&self, name: &str) -> Option<usize> {
+        self.metadata()?.parameter_index(name)
+    }
+
+    pub fn covariate_index(&self, name: &str) -> Option<usize> {
+        self.metadata()?.covariate_index(name)
+    }
+
+    pub fn state_index(&self, name: &str) -> Option<usize> {
+        self.metadata()?.state_index(name)
+    }
+
+    pub fn route_index(&self, name: &str) -> Option<usize> {
+        self.metadata()?.route_index(name)
+    }
+
+    pub fn output_index(&self, name: &str) -> Option<usize> {
+        self.metadata()?.output_index(name)
+    }
+
+    fn invalidate_metadata(&mut self) {
+        self.metadata = None;
+        self.injected_bolus_mappings
+            .invalidate_for_ndrugs(self.neqs.ndrugs);
+    }
+}
+
+fn validate_metadata_dimensions(
+    metadata: &ValidatedModelMetadata,
+    neqs: &Neqs,
+) -> Result<(), SdeMetadataError> {
+    let declared_states = metadata.states().len();
+    if declared_states != neqs.nstates {
+        return Err(SdeMetadataError::StateCountMismatch {
+            expected: neqs.nstates,
+            declared: declared_states,
+        });
+    }
+
+    let declared_routes = metadata.route_channel_count();
+    if declared_routes != neqs.ndrugs {
+        return Err(SdeMetadataError::RouteCountMismatch {
+            expected: neqs.ndrugs,
+            declared: declared_routes,
+        });
+    }
+
+    let declared_outputs = metadata.outputs().len();
+    if declared_outputs != neqs.nout {
+        return Err(SdeMetadataError::OutputCountMismatch {
+            expected: neqs.nout,
+            declared: declared_outputs,
+        });
+    }
+
+    Ok(())
 }
 
 impl super::Cache for SDE {
@@ -435,6 +573,63 @@ impl EquationPriv for SDE {
         }
         x
     }
+
+    fn simulate_event(
+        &self,
+        support_point: &[f64],
+        event: &crate::Event,
+        next_event: Option<&crate::Event>,
+        error_models: Option<&AssayErrorModels>,
+        covariates: &Covariates,
+        x: &mut Self::S,
+        infusions: &mut Vec<Infusion>,
+        likelihood: &mut Vec<f64>,
+        output: &mut Self::P,
+    ) -> Result<(), PharmsolError> {
+        match event {
+            crate::Event::Bolus(bolus) => {
+                if bolus.input() >= self.get_ndrugs() {
+                    return Err(PharmsolError::InputOutOfRange {
+                        input: bolus.input(),
+                        ndrugs: self.get_ndrugs(),
+                    });
+                }
+                if !self
+                    .injected_bolus_mappings
+                    .apply(x, bolus.input(), bolus.amount())
+                {
+                    x.add_bolus(bolus.input(), bolus.amount());
+                }
+            }
+            crate::Event::Infusion(infusion) => {
+                infusions.push(infusion.clone());
+            }
+            crate::Event::Observation(observation) => {
+                self.process_observation(
+                    support_point,
+                    observation,
+                    error_models,
+                    event.time(),
+                    covariates,
+                    x,
+                    likelihood,
+                    output,
+                )?;
+            }
+        }
+
+        if let Some(next_event) = next_event {
+            self.solve(
+                x,
+                support_point,
+                covariates,
+                infusions,
+                event.time(),
+                next_event.time(),
+            )?;
+        }
+        Ok(())
+    }
 }
 
 impl Equation for SDE {
@@ -475,8 +670,8 @@ impl Equation for SDE {
         }
     }
 
-    fn kind() -> crate::EqnKind {
-        crate::EqnKind::SDE
+    fn kind() -> EqnKind {
+        EqnKind::SDE
     }
 }
 
@@ -532,4 +727,277 @@ fn sysresample(q: &[f64]) -> Vec<usize> {
         i[j] = k;
     }
     i
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::simulator::equation::{self, Covariate, Route};
+    use crate::SubjectBuilderExt;
+    use crate::{fa, fetch_params, lag};
+
+    fn simple_sde() -> SDE {
+        let drift = |x: &V, _p: &V, _t: f64, dx: &mut V, rateiv: &V, _cov: &Covariates| {
+            dx[0] = rateiv[0] - x[0];
+        };
+        let diffusion = |_p: &V, g: &mut V| {
+            g[0] = 1.0;
+        };
+        let lag = |_p: &V, _t: f64, _cov: &Covariates| lag! {};
+        let fa = |_p: &V, _t: f64, _cov: &Covariates| fa! {};
+        let init = |_p: &V, _t: f64, _cov: &Covariates, x: &mut V| {
+            x[0] = 0.0;
+        };
+        let out = |x: &V, p: &V, _t: f64, _cov: &Covariates, y: &mut V| {
+            fetch_params!(p, _ke, v);
+            y[0] = x[0] / v;
+        };
+
+        SDE::new(drift, diffusion, lag, fa, init, out, 128)
+            .with_nstates(1)
+            .with_ndrugs(1)
+            .with_nout(1)
+    }
+
+    fn route_policy_sde(drift: Drift) -> SDE {
+        let diffusion = |_p: &V, sigma: &mut V| {
+            sigma.fill(0.0);
+        };
+        let lag = |_p: &V, _t: f64, _cov: &Covariates| lag! {};
+        let fa = |_p: &V, _t: f64, _cov: &Covariates| fa! {};
+        let init = |_p: &V, _t: f64, _cov: &Covariates, x: &mut V| {
+            x.fill(0.0);
+        };
+        let out = |x: &V, _p: &V, _t: f64, _cov: &Covariates, y: &mut V| {
+            y[0] = x[1];
+        };
+
+        SDE::new(drift, diffusion, lag, fa, init, out, 16)
+            .with_nstates(2)
+            .with_ndrugs(1)
+            .with_nout(1)
+    }
+
+    #[test]
+    fn handwritten_sde_metadata_exposes_name_lookup_and_particles() {
+        let sde = simple_sde()
+            .with_metadata(
+                equation::metadata::new("one_cmt_sde")
+                    .parameters(["ke", "v"])
+                    .covariates([Covariate::continuous("wt")])
+                    .states(["central"])
+                    .outputs(["cp"])
+                    .route(Route::infusion("iv").to_state("central"))
+                    .particles(128),
+            )
+            .expect("SDE metadata attachment should validate");
+
+        let metadata = sde.metadata().expect("metadata exists");
+        assert_eq!(metadata.kind(), ModelKind::Sde);
+        assert_eq!(metadata.particles(), Some(128));
+        assert_eq!(sde.parameter_index("ke"), Some(0));
+        assert_eq!(sde.parameter_index("v"), Some(1));
+        assert_eq!(sde.covariate_index("wt"), Some(0));
+        assert_eq!(sde.state_index("central"), Some(0));
+        assert_eq!(sde.route_index("iv"), Some(0));
+        assert_eq!(sde.output_index("cp"), Some(0));
+    }
+
+    #[test]
+    fn handwritten_sde_without_metadata_keeps_raw_path() {
+        let sde = simple_sde();
+
+        assert!(sde.metadata().is_none());
+        assert_eq!(sde.parameter_index("ke"), None);
+        assert_eq!(sde.route_index("iv"), None);
+        assert_eq!(sde.output_index("cp"), None);
+    }
+
+    #[test]
+    fn handwritten_sde_rejects_dimension_mismatches() {
+        let error = simple_sde()
+            .with_metadata(
+                equation::metadata::new("bad_sde")
+                    .parameters(["ke", "v"])
+                    .states(["central", "peripheral"])
+                    .outputs(["cp"])
+                    .route(Route::infusion("iv").to_state("central"))
+                    .particles(128),
+            )
+            .expect_err("mismatched state metadata must fail");
+
+        assert_eq!(
+            error,
+            SdeMetadataError::StateCountMismatch {
+                expected: 1,
+                declared: 2,
+            }
+        );
+    }
+
+    #[test]
+    fn handwritten_sde_rejects_particle_mismatch() {
+        let error = simple_sde()
+            .with_metadata(
+                equation::metadata::new("particle_conflict")
+                    .parameters(["ke", "v"])
+                    .states(["central"])
+                    .outputs(["cp"])
+                    .route(Route::infusion("iv").to_state("central"))
+                    .particles(64),
+            )
+            .expect_err("mismatched SDE particles must fail");
+
+        assert_eq!(
+            error,
+            SdeMetadataError::Validation(ModelMetadataError::ParticleCountConflict {
+                declared: 64,
+                fallback: 128,
+            })
+        );
+    }
+
+    #[test]
+    fn changing_dimensions_after_metadata_clears_sde_metadata() {
+        let sde = simple_sde()
+            .with_metadata(
+                equation::metadata::new("one_cmt_sde")
+                    .parameters(["ke", "v"])
+                    .states(["central"])
+                    .outputs(["cp"])
+                    .route(Route::infusion("iv").to_state("central"))
+                    .particles(128),
+            )
+            .expect("metadata attachment should validate")
+            .with_nout(2);
+
+        assert!(sde.metadata().is_none());
+        assert_eq!(sde.route_index("iv"), None);
+        assert_eq!(sde.output_index("cp"), None);
+    }
+
+    #[test]
+    fn sde_metadata_input_policy_is_descriptive_only_for_bolus_routes() {
+        let zero_drift = |_x: &V, _p: &V, _t: f64, dx: &mut V, _rateiv: &V, _cov: &Covariates| {
+            dx.fill(0.0);
+        };
+
+        let explicit = route_policy_sde(zero_drift)
+            .with_metadata(
+                equation::metadata::new("explicit_bolus")
+                    .parameters(["theta"])
+                    .states(["depot", "central"])
+                    .outputs(["cp"])
+                    .route(Route::bolus("oral").to_state("central"))
+                    .particles(16),
+            )
+            .expect("explicit metadata should validate");
+
+        let injected = route_policy_sde(zero_drift)
+            .with_metadata(
+                equation::metadata::new("injected_bolus")
+                    .parameters(["theta"])
+                    .states(["depot", "central"])
+                    .outputs(["cp"])
+                    .route(
+                        Route::bolus("oral")
+                            .to_state("central")
+                            .inject_input_to_destination(),
+                    )
+                    .particles(16),
+            )
+            .expect("injected metadata should validate");
+
+        let subject = Subject::builder("bolus_route")
+            .bolus(0.0, 100.0, 0)
+            .missing_observation(0.1, 0)
+            .build();
+
+        let explicit_predictions = explicit.estimate_predictions(&subject, &[0.0]).unwrap();
+        let injected_predictions = injected.estimate_predictions(&subject, &[0.0]).unwrap();
+
+        assert_eq!(explicit_predictions[[0, 0]].prediction(), 0.0);
+        assert_eq!(injected_predictions[[0, 0]].prediction(), 0.0);
+    }
+
+    #[test]
+    fn sde_metadata_input_policy_does_not_change_explicit_rateiv_behavior() {
+        let rateiv_drift = |_x: &V, _p: &V, _t: f64, dx: &mut V, rateiv: &V, _cov: &Covariates| {
+            dx.fill(0.0);
+            dx[1] = rateiv[0];
+        };
+
+        let explicit = route_policy_sde(rateiv_drift)
+            .with_metadata(
+                equation::metadata::new("explicit_infusion")
+                    .parameters(["theta"])
+                    .states(["depot", "central"])
+                    .outputs(["cp"])
+                    .route(Route::infusion("iv").to_state("central"))
+                    .particles(16),
+            )
+            .expect("explicit metadata should validate");
+
+        let injected = route_policy_sde(rateiv_drift)
+            .with_metadata(
+                equation::metadata::new("injected_infusion")
+                    .parameters(["theta"])
+                    .states(["depot", "central"])
+                    .outputs(["cp"])
+                    .route(
+                        Route::infusion("iv")
+                            .to_state("central")
+                            .inject_input_to_destination(),
+                    )
+                    .particles(16),
+            )
+            .expect("injected metadata should validate");
+
+        let subject = Subject::builder("infusion_route")
+            .infusion(0.0, 100.0, 0, 1.0)
+            .missing_observation(1.0, 0)
+            .build();
+
+        let explicit_predictions = explicit.estimate_predictions(&subject, &[0.0]).unwrap();
+        let injected_predictions = injected.estimate_predictions(&subject, &[0.0]).unwrap();
+
+        let explicit_prediction = explicit_predictions[[0, 0]].prediction();
+        let injected_prediction = injected_predictions[[0, 0]].prediction();
+
+        assert!(explicit_prediction > 0.0);
+        assert!((injected_prediction - explicit_prediction).abs() < 1e-8);
+    }
+
+    #[test]
+    fn clearing_sde_metadata_preserves_raw_bolus_behavior() {
+        let zero_drift = |_x: &V, _p: &V, _t: f64, dx: &mut V, _rateiv: &V, _cov: &Covariates| {
+            dx.fill(0.0);
+        };
+
+        let sde = route_policy_sde(zero_drift)
+            .with_metadata(
+                equation::metadata::new("injected_bolus")
+                    .parameters(["theta"])
+                    .states(["depot", "central"])
+                    .outputs(["cp"])
+                    .route(
+                        Route::bolus("oral")
+                            .to_state("central")
+                            .inject_input_to_destination(),
+                    )
+                    .particles(16),
+            )
+            .expect("injected metadata should validate")
+            .with_nout(1);
+
+        let subject = Subject::builder("bolus_route")
+            .bolus(0.0, 100.0, 0)
+            .missing_observation(0.1, 0)
+            .build();
+
+        let predictions = sde.estimate_predictions(&subject, &[0.0]).unwrap();
+
+        assert!(sde.metadata().is_none());
+        assert_eq!(predictions[[0, 0]].prediction(), 0.0);
+    }
 }

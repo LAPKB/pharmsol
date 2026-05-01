@@ -848,7 +848,7 @@ mod tests {
     };
 
     const SIMPLE_SOURCE: &str = r#"
-model = example_ode
+name = example_ode
 kind = ode
 
 params = ke, v
@@ -901,7 +901,7 @@ out(cp) = central / v ~ continuous()
         cache
             .compile_module_source_to_wasm_module(
                 r#"
-model = second_ode
+name = second_ode
 kind = ode
 
 params = ke, v
@@ -949,7 +949,7 @@ out(cp) = central / v ~ continuous()
     #[test]
     fn compile_module_source_to_wasm_module_preserves_semantic_diagnostic_structure() {
         let source = r#"
-model = broken
+name = broken
 kind = ode
 
 states = central
@@ -995,7 +995,7 @@ out(cp) = central ~ continuous()
     #[test]
     fn compile_module_source_to_wasm_module_preserves_lowering_diagnostic_structure() {
         let source = r#"
-model = broken
+name = broken
 kind = ode
 
 states = transit[4], central

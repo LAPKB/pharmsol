@@ -731,7 +731,9 @@ fn lower_load(
         ExecutionLoad::Parameter(index) => load_fixed(builder, env.args.params, *index, ty),
         ExecutionLoad::Covariate(index) => load_fixed(builder, env.args.covariates, *index, ty),
         ExecutionLoad::Derived(index) => load_fixed(builder, env.args.derived, *index, ty),
-        ExecutionLoad::RouteInput(index) => load_fixed(builder, env.args.routes, *index, ty),
+        ExecutionLoad::RouteInput { index, .. } => {
+            load_fixed(builder, env.args.routes, *index, ty)
+        }
         ExecutionLoad::Local(index) => {
             let binding = env.locals.get(index).ok_or_else(|| {
                 JitCompileError::new(format!("unknown local slot {index}"), Some(span))
@@ -1328,6 +1330,89 @@ mod tests {
 
         let debugged = format!("{error:?}");
         assert!(debugged.contains("error[DSL4000]"), "{}", debugged);
+    }
+
+    #[test]
+    fn authoring_runtime_shares_channel_between_bolus_and_infusion_routes() {
+        let source = r#"
+name = shared_authoring
+kind = ode
+
+params = ka, ke, v
+states = depot, central
+outputs = cp
+
+bolus(oral) -> depot
+infusion(iv) -> central
+
+dx(depot) = -ka * depot
+dx(central) = ka * depot - ke * central
+
+out(cp) = central / v ~ continuous()
+"#;
+        let parsed = pharmsol_dsl::parse_model(source).expect("authoring model parses");
+        let typed = pharmsol_dsl::analyze_model(&parsed).expect("authoring model analyzes");
+        let model = pharmsol_dsl::lower_typed_model(&typed).expect("authoring model lowers");
+        let jit = compile_ode_model_to_jit(&model)
+            .expect("compile jit ode model")
+            .with_solver(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45));
+
+        let oral = jit.route_index("oral").expect("oral route");
+        let iv = jit.route_index("iv").expect("iv route");
+        let cp = jit.output_index("cp").expect("cp output");
+        assert_eq!(oral, 0);
+        assert_eq!(iv, 0);
+
+        let subject = Subject::builder("ode")
+            .bolus(0.0, 120.0, oral)
+            .infusion(6.0, 60.0, iv, 2.0)
+            .observation(0.5, 0.0, cp)
+            .observation(1.0, 0.0, cp)
+            .observation(2.0, 0.0, cp)
+            .observation(6.0, 0.0, cp)
+            .observation(7.0, 0.0, cp)
+            .observation(9.0, 0.0, cp)
+            .build();
+
+        let support = vec![1.2, 0.15, 40.0];
+        let jit_predictions = jit
+            .estimate_predictions(&subject, &support)
+            .expect("jit predictions");
+
+        let reference = ODE::new(
+            |x, p, _t, dx, bolus, rateiv, _cov| {
+                let ka = p[0];
+                let ke = p[1];
+                dx[0] = -ka * x[0] + bolus[0];
+                dx[1] = ka * x[0] - ke * x[1] + rateiv[0];
+            },
+            |_p, _t, _cov| std::collections::HashMap::new(),
+            |_p, _t, _cov| std::collections::HashMap::new(),
+            |_p, _t, _cov, _x| {},
+            |x, p, _t, _cov, y| {
+                y[0] = x[1] / p[2];
+            },
+        )
+        .with_nstates(2)
+        .with_ndrugs(1)
+        .with_nout(1)
+        .with_solver(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45));
+
+        let reference_predictions = reference
+            .estimate_predictions(&subject, &support)
+            .expect("reference ode predictions");
+
+        for (jit_pred, reference_pred) in jit_predictions
+            .predictions()
+            .iter()
+            .zip(reference_predictions.predictions())
+        {
+            assert_relative_eq!(
+                jit_pred.prediction(),
+                reference_pred.prediction(),
+                max_relative = 1e-4
+            );
+        }
     }
 
     fn slot_index(layout: &DenseBufferLayout, name: &str) -> usize {

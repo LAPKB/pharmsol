@@ -19,7 +19,7 @@ use pharmsol::{equation, fa, fetch_cov, fetch_params, lag, Subject, SubjectBuild
 use tempfile::{tempdir, TempDir};
 
 const ODE_SOURCE: &str = r#"
-model = one_cmt_oral_iv
+name = one_cmt_oral_iv
 kind = ode
 
 params = ka, cl, v, tlag, f_oral
@@ -44,7 +44,7 @@ out(cp) = central / v ~ continuous()
 "#;
 
 const ANALYTICAL_SOURCE: &str = r#"
-model = one_cmt_abs
+name = one_cmt_abs
 kind = analytical
 
 params = ka, ke, v, tlag, f_oral
@@ -56,13 +56,13 @@ bolus(oral) -> depot
 lag(oral) = tlag
 fa(oral) = f_oral
 
-kernel = one_compartment_with_absorption
+structure = one_compartment_with_absorption
 
 out(cp) = central / v ~ continuous()
 "#;
 
 const SDE_SOURCE: &str = r#"
-model = vanco_sde
+name = vanco_sde
 kind = sde
 
 params = ka, ke0, kcp, kpc, vol, ske

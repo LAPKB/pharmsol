@@ -3,14 +3,14 @@ use pharmsol_dsl::{analyze_model, parse_model, parse_module};
 #[test]
 fn output_annotation_is_optional() {
     let annotated = r#"
-model = optional_output_annotation
+name = optional_output_annotation
 kind = ode
 states = central
 ddt(central) = 0
 out(cp) = central ~ continuous()
 "#;
     let plain = r#"
-model = optional_output_annotation
+name = optional_output_annotation
 kind = ode
 states = central
 ddt(central) = 0
@@ -26,7 +26,7 @@ out(cp) = central
 #[test]
 fn dx_and_ddt_lower_equivalently() {
     let dx_src = r#"
-model = derivative_alias
+name = derivative_alias
 kind = ode
 params = ke
 states = central
@@ -34,7 +34,7 @@ dx(central) = -ke * central
 out(cp) = central
 "#;
     let ddt_src = r#"
-model = derivative_alias
+name = derivative_alias
 kind = ode
 params = ke
 states = central
@@ -51,7 +51,7 @@ out(cp) = central
 #[test]
 fn rejects_out_target_not_in_declared_outputs() {
     let src = r#"
-model = bimodal_ke
+name = bimodal_ke
 kind = ode
 params = ke, v
 states = central
@@ -95,7 +95,7 @@ out(cp) = central / v ~ continuous()
 #[test]
 fn rejects_out_target_not_in_declared_outputs_when_declared_later() {
     let src = r#"
-model = bimodal_ke
+name = bimodal_ke
 kind = ode
 params = ke, v
 states = central
@@ -122,7 +122,7 @@ ddt(central) = -ke * central
 #[test]
 fn rejects_declared_output_without_assignment() {
     let src = r#"
-model = bimodal_ke
+name = bimodal_ke
 kind = ode
 params = ke, v
 states = central
@@ -144,7 +144,7 @@ out(cp) = central / v
 #[test]
 fn rejects_unknown_output_annotation_name() {
     let src = r#"
-model = bimodal_ke
+name = bimodal_ke
 kind = ode
 states = central
 ddt(central) = 0
@@ -164,7 +164,7 @@ out(cp) = central ~ continous()
 #[test]
 fn unknown_route_destination_state_suggests_declared_state() {
     let src = r#"
-model = bimodal_ke
+name = bimodal_ke
 kind = ode
 
 params = ke, v

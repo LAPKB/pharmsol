@@ -345,29 +345,29 @@ impl<'a> Analyzer<'a> {
         };
 
         let analytical = if let Some(block) = sections.analytical {
-            let kernel = AnalyticalKernel::from_name(&block.kernel.text).ok_or_else(|| {
+            let structure = AnalyticalKernel::from_name(&block.structure.text).ok_or_else(|| {
                 SemanticError::new(
-                    format!("unknown analytical kernel `{}`", block.kernel.text),
-                    block.kernel.span,
+                    format!("unknown analytical structure `{}`", block.structure.text),
+                    block.structure.span,
                 )
             })?;
             let state_components = states
                 .iter()
                 .map(|state| state.size.unwrap_or(1))
                 .sum::<usize>();
-            if state_components != kernel.state_count() {
+            if state_components != structure.state_count() {
                 return Err(SemanticError::new(
                     format!(
-                        "analytical kernel `{}` expects {} state value(s), but model declares {}",
-                        block.kernel.text,
-                        kernel.state_count(),
+                        "analytical structure `{}` expects {} state value(s), but model declares {}",
+                        block.structure.text,
+                        structure.state_count(),
                         state_components
                     ),
-                    block.kernel.span,
+                    block.structure.span,
                 ));
             }
             Some(TypedAnalytical {
-                kernel,
+                structure,
                 span: block.span,
             })
         } else {
@@ -624,6 +624,7 @@ impl<'a> Analyzer<'a> {
                 }
                 routes.push(TypedRoute {
                     symbol: id,
+                    kind: route.kind,
                     destination,
                     properties,
                     span: route.span,
@@ -2652,6 +2653,7 @@ mod tests {
         RECOMMENDED_STYLE_AUTHORING, RECOMMENDED_STYLE_CANONICAL, STRUCTURED_BLOCK_CORPUS,
     };
     use crate::{parse_model, parse_module};
+    use crate::RouteKind;
 
     #[test]
     fn analyzes_structured_block_corpus() {
@@ -2667,7 +2669,7 @@ mod tests {
 
         let analytical = &typed.models[2];
         assert!(matches!(
-            analytical.analytical.as_ref().map(|value| value.kernel),
+            analytical.analytical.as_ref().map(|value| value.structure),
             Some(AnalyticalKernel::OneCompartmentWithAbsorption)
         ));
 
@@ -2691,7 +2693,7 @@ mod tests {
     }
 
     #[test]
-    fn authoring_fixture_lowers_to_equivalent_typed_ir() {
+    fn authoring_fixture_preserves_route_kind_while_remaining_equivalent() {
         let authoring_surface = RECOMMENDED_STYLE_AUTHORING;
         let canonical = RECOMMENDED_STYLE_CANONICAL;
 
@@ -2705,6 +2707,8 @@ mod tests {
             typed_model_signature(&authoring_typed),
             typed_model_signature(&canonical_typed)
         );
+        assert_eq!(authoring_typed.routes[0].kind, Some(RouteKind::Bolus));
+        assert_eq!(canonical_typed.routes[0].kind, None);
     }
 
     #[test]
@@ -2977,7 +2981,7 @@ model broken {
         lines.push(format!("particles:{:?}", model.particles));
         lines.push(format!(
             "analytical:{:?}",
-            model.analytical.as_ref().map(|value| value.kernel)
+            model.analytical.as_ref().map(|value| value.structure)
         ));
         lines.push(format!(
             "derive:{}",

@@ -1,11 +1,12 @@
 use std::fmt::Debug;
 pub mod analytical;
-pub mod meta;
+pub mod metadata;
 pub mod ode;
 pub mod sde;
 pub use analytical::*;
-pub use meta::*;
+pub use metadata::*;
 pub use ode::*;
+pub use pharmsol_dsl::{AnalyticalKernel, ModelKind};
 pub use sde::*;
 
 use crate::{

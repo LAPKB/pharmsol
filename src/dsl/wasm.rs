@@ -778,7 +778,9 @@ mod tests {
             covariates: Vec::new(),
             routes: vec![NativeRouteInfo {
                 name: "oral".to_string(),
+                declaration_index: 0,
                 index: 0,
+                kind: None,
                 destination_offset: 0,
                 inject_input_to_destination: true,
             }],
@@ -893,7 +895,7 @@ mod tests {
         let model_info = loader_test_model_info("api_version_export_mismatch");
         let metadata = serde_json::to_vec(&CompiledModelInfoEnvelope {
             abi_version: WASM_API_VERSION,
-            model: model_info,
+            name: "model_info",
             kernels: CompiledKernelAvailability {
                 outputs: true,
                 ..CompiledKernelAvailability::default()
@@ -922,7 +924,7 @@ mod tests {
         let model_info = loader_test_model_info("metadata_api_version_mismatch");
         let metadata = serde_json::to_vec(&CompiledModelInfoEnvelope {
             abi_version: WASM_API_VERSION + 1,
-            model: model_info,
+            name: "model_info",
             kernels: CompiledKernelAvailability {
                 outputs: true,
                 ..CompiledKernelAvailability::default()
@@ -948,7 +950,7 @@ mod tests {
         let model_info = loader_test_model_info("kernel_metadata_mismatch");
         let metadata = serde_json::to_vec(&CompiledModelInfoEnvelope {
             abi_version: WASM_API_VERSION,
-            model: model_info,
+            name: "model_info",
             kernels: CompiledKernelAvailability {
                 outputs: true,
                 ..CompiledKernelAvailability::default()

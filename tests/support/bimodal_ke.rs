@@ -12,7 +12,7 @@ pub const OBSERVATION_TIMES: [f64; 7] = [0.5, 1.0, 2.0, 3.0, 4.0, 6.0, 8.0];
 pub const SUPPORT_POINT: [f64; 2] = [1.2, 50.0];
 
 pub const AUTHORING_DSL: &str = r#"
-model = bimodal_ke
+name = bimodal_ke
 kind = ode
 
 params = ke, v

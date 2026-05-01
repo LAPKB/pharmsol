@@ -4,7 +4,7 @@ const precompiledInputs = Object.freeze({
 });
 
 const compileFlowSource = `
-model = example_ode
+name = example_ode
 kind = ode
 
 params = ke, v
@@ -25,7 +25,7 @@ const compileFlowInputs = Object.freeze({
 });
 
 const invalidCompileSource = `
-model = broken
+name = broken
 kind = ode
 
 states = central
