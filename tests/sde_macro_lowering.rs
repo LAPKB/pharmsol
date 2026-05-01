@@ -345,7 +345,17 @@ fn macro_covariate_sde() -> equation::SDE {
 fn handwritten_covariate_sde() -> equation::SDE {
     equation::SDE::new(
         |x, p, t, dx, rateiv, cov| {
-            fetch_params!(p, ka, ke, _sigma_ke, _v, _tlag, _f_oral, _base_gut, _base_central);
+            fetch_params!(
+                p,
+                ka,
+                ke,
+                _sigma_ke,
+                _v,
+                _tlag,
+                _f_oral,
+                _base_gut,
+                _base_central
+            );
             fetch_cov!(cov, t, wt, renal);
 
             let wt_scale = (wt / 70.0).powf(0.75);
@@ -356,33 +366,83 @@ fn handwritten_covariate_sde() -> equation::SDE {
             dx[1] = ka * x[0] + rateiv[0] - adjusted_ke * x[1];
         },
         |p, sigma| {
-            fetch_params!(p, _ka, _ke, sigma_ke, _v, _tlag, _f_oral, _base_gut, _base_central);
+            fetch_params!(
+                p,
+                _ka,
+                _ke,
+                sigma_ke,
+                _v,
+                _tlag,
+                _f_oral,
+                _base_gut,
+                _base_central
+            );
             sigma[0] = 0.0 * sigma_ke;
             sigma[1] = 0.0 * sigma_ke;
         },
         |p, t, cov| {
-            fetch_params!(p, _ka, _ke, _sigma_ke, _v, tlag, _f_oral, _base_gut, _base_central);
+            fetch_params!(
+                p,
+                _ka,
+                _ke,
+                _sigma_ke,
+                _v,
+                tlag,
+                _f_oral,
+                _base_gut,
+                _base_central
+            );
             fetch_cov!(cov, t, wt, renal);
 
             let lag_scale = (wt / 70.0).sqrt() * (90.0 / renal).powf(0.1);
             lag! { 0 => tlag * lag_scale }
         },
         |p, t, cov| {
-            fetch_params!(p, _ka, _ke, _sigma_ke, _v, _tlag, f_oral, _base_gut, _base_central);
+            fetch_params!(
+                p,
+                _ka,
+                _ke,
+                _sigma_ke,
+                _v,
+                _tlag,
+                f_oral,
+                _base_gut,
+                _base_central
+            );
             fetch_cov!(cov, t, wt, renal);
 
             let fa_scale = (renal / 90.0).powf(0.1);
             fa! { 0 => (f_oral * fa_scale).clamp(0.0, 1.0) }
         },
         |p, t, cov, x| {
-            fetch_params!(p, _ka, _ke, _sigma_ke, _v, _tlag, _f_oral, base_gut, base_central);
+            fetch_params!(
+                p,
+                _ka,
+                _ke,
+                _sigma_ke,
+                _v,
+                _tlag,
+                _f_oral,
+                base_gut,
+                base_central
+            );
             fetch_cov!(cov, t, wt, renal);
 
             x[0] = base_gut + 0.03 * wt;
             x[1] = base_central + 0.08 * renal;
         },
         |x, p, t, cov, y| {
-            fetch_params!(p, _ka, _ke, _sigma_ke, v, _tlag, _f_oral, _base_gut, _base_central);
+            fetch_params!(
+                p,
+                _ka,
+                _ke,
+                _sigma_ke,
+                v,
+                _tlag,
+                _f_oral,
+                _base_gut,
+                _base_central
+            );
             fetch_cov!(cov, t, wt, renal);
 
             let adjusted_v = v * (wt / 70.0) * (1.0 + 0.001 * (renal - 90.0));
@@ -396,7 +456,16 @@ fn handwritten_covariate_sde() -> equation::SDE {
     .with_metadata(
         equation::metadata::new("one_cmt_sde_covariates")
             .kind(equation::ModelKind::Sde)
-            .parameters(["ka", "ke", "sigma_ke", "v", "tlag", "f_oral", "base_gut", "base_central"])
+            .parameters([
+                "ka",
+                "ke",
+                "sigma_ke",
+                "v",
+                "tlag",
+                "f_oral",
+                "base_gut",
+                "base_central",
+            ])
             .covariates([
                 equation::Covariate::continuous("wt"),
                 equation::Covariate::continuous("renal"),

@@ -75,9 +75,8 @@ fn handwritten_ode_model() -> equation::ODE {
             let adjusted_kcp = kcp * (wt / 70.0).powf(0.25);
 
             dx[0] = bolus[0] - ka * x[0];
-            dx[1] = bolus[1] + ka * x[0] + rateiv[0]
-                - (adjusted_ke + adjusted_kcp) * x[1]
-                + kpc * x[2];
+            dx[1] =
+                bolus[1] + ka * x[0] + rateiv[0] - (adjusted_ke + adjusted_kcp) * x[1] + kpc * x[2];
             dx[2] = adjusted_kcp * x[1] - kpc * x[2];
         },
         |p, t, cov| {

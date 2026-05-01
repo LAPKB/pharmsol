@@ -99,8 +99,7 @@ mod tests {
         )?;
 
         #[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]
-        let aot =
-            corpus::compile_runtime_native_aot_model(CorpusCase::AnalyticalFull, &workspace)?;
+        let aot = corpus::compile_runtime_native_aot_model(CorpusCase::AnalyticalFull, &workspace)?;
         #[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]
         assert_eq!(aot.backend(), RuntimeBackend::NativeAot);
         #[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]

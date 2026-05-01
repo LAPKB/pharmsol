@@ -321,7 +321,9 @@ impl CorpusCase {
     fn reference_predictions(self) -> Result<ExpectedPredictions, Box<dyn Error>> {
         match self {
             Self::Ode => Ok(ExpectedPredictions::Subject(reference_ode_predictions()?)),
-            Self::OdeFull => Ok(ExpectedPredictions::Subject(reference_ode_full_predictions()?)),
+            Self::OdeFull => Ok(ExpectedPredictions::Subject(
+                reference_ode_full_predictions()?,
+            )),
             Self::Analytical => Ok(ExpectedPredictions::Subject(
                 reference_analytical_predictions()?,
             )),
@@ -761,9 +763,8 @@ fn reference_ode_full_predictions() -> Result<SubjectPredictions, Box<dyn Error>
             let adjusted_kcp = kcp * (wt / 70.0).powf(0.25);
 
             dx[0] = bolus[0] - ka * x[0];
-            dx[1] = bolus[1] + ka * x[0] + rateiv[0]
-                - (adjusted_ke + adjusted_kcp) * x[1]
-                + kpc * x[2];
+            dx[1] =
+                bolus[1] + ka * x[0] + rateiv[0] - (adjusted_ke + adjusted_kcp) * x[1] + kpc * x[2];
             dx[2] = adjusted_kcp * x[1] - kpc * x[2];
         },
         |p, t, cov| {

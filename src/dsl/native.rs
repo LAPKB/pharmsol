@@ -1097,12 +1097,8 @@ impl NativeAnalyticalModel {
 
         for next in breakpoints.iter().copied().skip(1) {
             let dt = next - current;
-            let route_inputs = interval_route_inputs(
-                infusions,
-                current,
-                next,
-                self.shared.info.route_len,
-            );
+            let route_inputs =
+                interval_route_inputs(infusions, current, next, self.shared.info.route_len);
             self.shared.refresh_derived(
                 session,
                 next,
