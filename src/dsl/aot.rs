@@ -37,18 +37,23 @@ use pharmsol_dsl::ModelKind;
 use pharmsol_dsl::{analyze_module, lower_typed_model, parse_module, ExecutionModel};
 use pharmsol_dsl::{Diagnostic, DiagnosticReport, LoweringError, ParseError, SemanticError};
 
+/// ABI version for native AoT artifacts produced by this crate.
 pub const AOT_API_VERSION: u32 = 1;
 
 #[cfg(feature = "dsl-aot")]
+/// Selects the compilation target for a native ahead-of-time artifact.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum NativeAotTarget {
+    /// Compile for the current host toolchain target.
     #[default]
     Host,
+    /// Compile for an explicit Rust target triple.
     Triple(String),
 }
 
 #[cfg(feature = "dsl-aot")]
 impl NativeAotTarget {
+    /// Create a target selector for an explicit Rust target triple.
     pub fn triple(target: impl Into<String>) -> Self {
         Self::Triple(target.into())
     }
@@ -62,15 +67,24 @@ impl NativeAotTarget {
 }
 
 #[cfg(feature = "dsl-aot")]
+/// Options that control native ahead-of-time artifact export.
+///
+/// AoT export writes a small template crate under [`template_root`](Self::template_root),
+/// builds a native shared library, and then copies the resulting artifact to
+/// [`output`](Self::output) or a generated default path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NativeAotCompileOptions {
+    /// Target triple selection for the emitted artifact.
     pub target: NativeAotTarget,
+    /// Optional final artifact location.
     pub output: Option<PathBuf>,
+    /// Working directory used for the temporary template crate and build output.
     pub template_root: PathBuf,
 }
 
 #[cfg(feature = "dsl-aot")]
 impl NativeAotCompileOptions {
+    /// Create AoT options rooted at a template build directory.
     pub fn new(template_root: PathBuf) -> Self {
         Self {
             target: NativeAotTarget::Host,
@@ -79,17 +93,20 @@ impl NativeAotCompileOptions {
         }
     }
 
+    /// Set the final artifact output path.
     pub fn with_output(mut self, output: PathBuf) -> Self {
         self.output = Some(output);
         self
     }
 
+    /// Set the compilation target triple.
     pub fn with_target(mut self, target: NativeAotTarget) -> Self {
         self.target = target;
         self
     }
 }
 
+/// Error produced while exporting, reading, or loading a native AoT artifact.
 #[derive(Error)]
 pub enum AotError {
     #[error(transparent)]
@@ -151,6 +168,43 @@ impl fmt::Debug for AotError {
 }
 
 #[cfg(feature = "dsl-aot")]
+/// Parse DSL source, lower one selected model, and export a native AoT artifact.
+///
+/// Use this when you want a reusable native artifact that can be loaded later
+/// with [`load_aot_model`] or [`crate::dsl::load_runtime_artifact`].
+///
+/// This function requires the `dsl-aot` feature. Loading the resulting artifact
+/// later requires `dsl-aot-load`.
+///
+/// ```rust,no_run
+/// use std::path::PathBuf;
+///
+/// use pharmsol::dsl::{compile_module_source_to_aot, load_aot_model, NativeAotCompileOptions};
+///
+/// let source = r#"
+/// name = bimodal_ke
+/// kind = ode
+///
+/// params = ke, v
+/// states = central
+/// outputs = cp
+///
+/// infusion(iv) -> central
+///
+/// dx(central) = -ke * central
+/// out(cp) = central / v
+/// "#;
+///
+/// let artifact = compile_module_source_to_aot(
+///     source,
+///     Some("bimodal_ke"),
+///     NativeAotCompileOptions::new(PathBuf::from("target/doc-aot-build")),
+///     |_, _| {},
+/// )?;
+/// let loaded = load_aot_model(&artifact)?;
+/// # let _ = loaded;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub fn compile_module_source_to_aot(
     source: &str,
     model_name: Option<&str>,
@@ -184,6 +238,10 @@ pub fn compile_module_source_to_aot(
 }
 
 #[cfg(feature = "dsl-aot")]
+/// Export a lowered execution model as a native AoT artifact.
+///
+/// Use this lower-level entrypoint when you already own the frontend pipeline
+/// and only need artifact generation.
 pub fn export_execution_model_to_aot(
     model: &ExecutionModel,
     options: NativeAotCompileOptions,
@@ -240,6 +298,10 @@ pub fn export_execution_model_to_aot(
 }
 
 #[cfg(feature = "dsl-aot-load")]
+/// Read only the metadata from a native AoT artifact.
+///
+/// This is useful when you need to inspect model identity, routes, outputs, or
+/// buffer sizes without loading the executable kernels.
 pub fn read_aot_model_info(path: impl AsRef<Path>) -> Result<NativeModelInfo, AotError> {
     let library = unsafe { Library::new(path.as_ref()) }
         .map_err(|error| AotError::Load(error.to_string()))?;
@@ -248,6 +310,7 @@ pub fn read_aot_model_info(path: impl AsRef<Path>) -> Result<NativeModelInfo, Ao
 }
 
 #[cfg(feature = "dsl-aot-load")]
+/// Load a native AoT artifact into the native execution runtime.
 pub fn load_aot_model(path: impl AsRef<Path>) -> Result<CompiledNativeModel, AotError> {
     let path = path.as_ref();
     let library =

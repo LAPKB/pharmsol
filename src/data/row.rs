@@ -1,34 +1,51 @@
-//! Row representation of [Data] for flexible parsing
+//! Row-shaped data ingestion for [`Data`] and [`Subject`] assembly.
+//!
+//! Use this module when your source data already looks like rows from a table,
+//! CSV file, database export, or ETL pipeline.
+//!
+//! Choose the ingestion path by source shape:
+//! - Use [`crate::data::builder::SubjectBuilder`] when you want to author a
+//!   schedule directly in Rust.
+//! - Use [`DataRow`] and [`build_data`] when your application already has
+//!   validated row records in memory.
+//! - Use [`crate::data::parser::read_pmetrics`] when the source file already
+//!   follows the Pmetrics column convention.
+//!
+//! [`DataRow`] keeps public route and output labels as strings. Labels such as
+//! `"iv"`, `"depot"`, and `"cp"` are preserved through row parsing and later
+//! resolved against model metadata by downstream workflows.
 //!
 //! # Example
 //!
 //! ```rust
 //! use pharmsol::data::parser::DataRow;
 //!
-//! // Create a dosing row with ADDL expansion
 //! let row = DataRow::builder("subject_1", 0.0)
 //!     .evid(1)
 //!     .dose(100.0)
-//!     .input(1)
-//!     .addl(3)   // 3 additional doses
-//!     .ii(12.0)  // 12 hours apart
+//!     .input("iv")
+//!     .addl(3)
+//!     .ii(12.0)
 //!     .build();
 //!
 //! let events = row.into_events().unwrap();
-//! assert_eq!(events.len(), 4); // Original + 3 additional doses
+//! assert_eq!(events.len(), 4);
 //! ```
-//!
 
 use crate::data::*;
 use std::collections::HashMap;
 use thiserror::Error;
 
-/// A format-agnostic representation of a single data row
+/// A format-agnostic representation of one input row.
 ///
-/// This struct represents the canonical fields needed to create pharmsol Events.
-/// Consumers construct this from their source data (regardless of column names),
-/// then call [`into_events()`](DataRow::into_events) to get properly parsed
-/// Events with full ADDL expansion, EVID handling, censoring, etc.
+/// [`DataRow`] collects the canonical fields needed to turn one external row
+/// into one or more [`Event`] values.
+///
+/// Build this type from your own column mapping or external schema, then call
+/// [`DataRow::into_events`] or [`build_data`] to assemble subjects and datasets.
+///
+/// A single row can expand into several events when `ADDL` and `II` are both
+/// present.
 ///
 /// # Fields
 ///
@@ -42,24 +59,22 @@ use thiserror::Error;
 /// ```rust
 /// use pharmsol::data::parser::DataRow;
 ///
-/// // Observation row
 /// let obs = DataRow::builder("pt1", 1.0)
 ///     .evid(0)
 ///     .out(25.5)
-///     .outeq(1)
+///     .outeq("cp")
 ///     .build();
 ///
-/// // Dosing row with negative ADDL (doses before time 0)
 /// let dose = DataRow::builder("pt1", 0.0)
 ///     .evid(1)
 ///     .dose(100.0)
-///     .input(1)
-///     .addl(-10)  // 10 doses BEFORE time 0
+///     .input("iv")
+///     .addl(-10)
 ///     .ii(12.0)
 ///     .build();
 ///
 /// let events = dose.into_events().unwrap();
-/// // Events at times: -120, -108, -96, ..., -12, 0
+/// assert_eq!(obs.outeq.as_ref().map(|label| label.as_str()), Some("cp"));
 /// assert_eq!(events.len(), 11);
 /// ```
 #[derive(Debug, Clone, Default)]
@@ -99,7 +114,7 @@ pub struct DataRow {
 }
 
 impl DataRow {
-    /// Create a new builder for constructing a DataRow
+    /// Create a builder for constructing one [`DataRow`].
     ///
     /// # Arguments
     ///
@@ -114,7 +129,7 @@ impl DataRow {
     /// let row = DataRow::builder("patient_001", 0.0)
     ///     .evid(1)
     ///     .dose(100.0)
-    ///     .input(1)
+    ///     .input("depot")
     ///     .build();
     /// ```
     pub fn builder(id: impl Into<String>, time: f64) -> DataRowBuilder {
@@ -129,13 +144,14 @@ impl DataRow {
         }
     }
 
-    /// Convert this row into pharmsol Events
+    /// Convert this row into one or more [`Event`] values.
     ///
-    /// This method contains all the complex parsing logic:
+    /// This method performs the row-level translation logic:
     /// - EVID interpretation (0=observation, 1=dose, 4=reset)
     /// - ADDL/II expansion (both positive and negative directions)
     /// - Infusion vs bolus detection based on DUR
     /// - Censoring and error polynomial handling
+    /// - Preservation of public input and output labels
     ///
     /// # ADDL Expansion
     ///
@@ -163,13 +179,13 @@ impl DataRow {
     /// let row = DataRow::builder("pt1", 0.0)
     ///     .evid(1)
     ///     .dose(100.0)
-    ///     .input(1)
+    ///     .input("iv")
     ///     .addl(2)
     ///     .ii(24.0)
     ///     .build();
     ///
     /// let events = row.into_events().unwrap();
-    /// assert_eq!(events.len(), 3); // doses at 24, 48, and 0
+    /// assert_eq!(events.len(), 3);
     ///
     /// let times: Vec<f64> = events.iter().map(|e| e.time()).collect();
     /// assert_eq!(times, vec![24.0, 48.0, 0.0]);
@@ -287,7 +303,11 @@ impl DataRow {
     }
 }
 
-/// Builder for constructing DataRow with a fluent API
+/// Fluent builder for [`DataRow`].
+///
+/// Use [`DataRowBuilder`] when you have row-shaped data in memory and want to
+/// construct rows incrementally before calling [`DataRow::into_events`] or
+/// [`build_data`].
 ///
 /// # Example
 ///
@@ -298,7 +318,7 @@ impl DataRow {
 /// let row = DataRow::builder("patient_001", 1.5)
 ///     .evid(0)
 ///     .out(25.5)
-///     .outeq(1)
+///     .outeq("cp")
 ///     .cens(Censor::None)
 ///     .covariate("weight", 70.0)
 ///     .covariate("age", 45.0)
@@ -373,10 +393,11 @@ impl DataRowBuilder {
         self
     }
 
-    /// Set the input route label
+    /// Set the input route label.
     ///
-    /// Required for EVID=1 (dosing events).
-    /// Preserved as the public route label until model resolution.
+    /// Required for EVID=1 dosing rows.
+    /// The provided value is preserved as the public label until downstream
+    /// model resolution.
     pub fn input(mut self, input: impl ToString) -> Self {
         self.row.input = Some(InputLabel::new(input));
         self
@@ -390,10 +411,11 @@ impl DataRowBuilder {
         self
     }
 
-    /// Set the output label
+    /// Set the output label.
     ///
-    /// Required for EVID=0 (observation events).
-    /// Preserved as the public output label until model resolution.
+    /// Required for EVID=0 observation rows.
+    /// The provided value is preserved as the public label until downstream
+    /// model resolution.
     pub fn outeq(mut self, outeq: impl ToString) -> Self {
         self.row.outeq = Some(OutputLabel::new(outeq));
         self
@@ -436,13 +458,18 @@ impl DataRowBuilder {
     }
 }
 
-/// Build a [Data] object from an iterator of [DataRow]s
+/// Build a [`Data`] object from row-shaped input.
 ///
-/// This function handles all the complex assembly logic:
+/// This function assembles rows into subjects and occasions:
 /// - Groups rows by subject ID
 /// - Splits into occasions at EVID=4 boundaries
 /// - Converts rows to events via [`DataRow::into_events()`]
 /// - Builds covariates from row covariate data
+/// - Preserves per-subject row order within each occasion block
+///
+/// Use this when you already have a collection of [`DataRow`] values in memory.
+/// If your source file is a Pmetrics CSV, use [`crate::data::parser::read_pmetrics`]
+/// instead.
 ///
 /// # Example
 ///
@@ -450,23 +477,21 @@ impl DataRowBuilder {
 /// use pharmsol::data::parser::{DataRow, build_data};
 ///
 /// let rows = vec![
-///     // Subject 1, Occasion 0
 ///     DataRow::builder("pt1", 0.0)
-///         .evid(1).dose(100.0).input(1).build(),
+///         .evid(1).dose(100.0).input("iv").build(),
 ///     DataRow::builder("pt1", 1.0)
-///         .evid(0).out(50.0).outeq(1).build(),
-///     // Subject 1, Occasion 1 (EVID=4 starts new occasion)
+///         .evid(0).out(50.0).outeq("cp").build(),
 ///     DataRow::builder("pt1", 24.0)
-///         .evid(4).dose(100.0).input(1).build(),
+///         .evid(4).dose(100.0).input("iv").build(),
 ///     DataRow::builder("pt1", 25.0)
-///         .evid(0).out(48.0).outeq(1).build(),
-///     // Subject 2
+///         .evid(0).out(48.0).outeq("cp").build(),
 ///     DataRow::builder("pt2", 0.0)
-///         .evid(1).dose(50.0).input(1).build(),
+///         .evid(1).dose(50.0).input("iv").build(),
 /// ];
 ///
 /// let data = build_data(rows).unwrap();
 /// assert_eq!(data.subjects().len(), 2);
+/// assert_eq!(data.subjects()[0].occasions().len(), 2);
 /// ```
 pub fn build_data(rows: impl IntoIterator<Item = DataRow>) -> Result<Data, DataError> {
     // Group rows by subject ID
@@ -562,14 +587,14 @@ pub enum DataError {
     /// Required observation value (OUT) is missing
     #[error("Observation OUT is missing for {id} at time {time}")]
     MissingObservationOut { id: String, time: f64 },
-    /// Required observation output equation (OUTEQ) is missing
-    #[error("Observation OUTEQ is missing in for {id} at time {time}")]
+    /// Required observation output label (`OUTEQ`) is missing
+    #[error("Observation OUTEQ is missing for {id} at time {time}")]
     MissingObservationOuteq { id: String, time: f64 },
     /// Required infusion dose amount is missing
     #[error("Infusion amount (DOSE) is missing for {id} at time {time}")]
     MissingInfusionDose { id: String, time: f64 },
-    /// Required infusion input compartment is missing
-    #[error("Infusion compartment (INPUT) is missing for {id} at time {time}")]
+    /// Required infusion input label (`INPUT`) is missing
+    #[error("Infusion input label (INPUT) is missing for {id} at time {time}")]
     MissingInfusionInput { id: String, time: f64 },
     /// Required infusion duration is missing
     #[error("Infusion duration (DUR) is missing for {id} at time {time}")]
@@ -577,8 +602,8 @@ pub enum DataError {
     /// Required bolus dose amount is missing
     #[error("Bolus amount (DOSE) is missing for {id} at time {time}")]
     MissingBolusDose { id: String, time: f64 },
-    /// Required bolus input compartment is missing
-    #[error("Bolus compartment (INPUT) is missing for {id} at time {time}")]
+    /// Required bolus input label (`INPUT`) is missing
+    #[error("Bolus input label (INPUT) is missing for {id} at time {time}")]
     MissingBolusInput { id: String, time: f64 },
 }
 

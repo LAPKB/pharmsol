@@ -1,3 +1,12 @@
+//! Pmetrics CSV parsing and export helpers.
+//!
+//! This module reads and writes the Pmetrics-style tabular format while keeping
+//! pharmsol's public input and output labels intact.
+//!
+//! `INPUT` and `OUTEQ` values are parsed as labels, not rewritten to dense
+//! indices. Named values such as `iv` and `cp` are preserved exactly, and
+//! numeric values such as `1` are preserved as numeric-looking labels.
+
 use crate::{data::*, PharmsolError};
 use csv::WriterBuilder;
 use serde::de::{MapAccess, Visitor};
@@ -10,19 +19,27 @@ use crate::data::row::DataRow;
 use std::fmt;
 use std::str::FromStr;
 
-/// Read a Pmetrics datafile and convert it to a [Data] object
+/// Read a Pmetrics CSV file into [`Data`].
 ///
-/// This function parses a Pmetrics-formatted CSV file and constructs a [Data] object containing the structured
-/// pharmacokinetic/pharmacodynamic data. The function handles various data formats including doses, observations,
-/// and covariates.
+/// Use [`read_pmetrics`] when the source file already follows the usual
+/// Pmetrics column convention instead of mapping the file into [`DataRow`]
+/// values yourself.
+///
+/// The parser normalizes header names to lowercase, preserves `INPUT` and
+/// `OUTEQ` as public labels, expands `ADDL` dosing rows through the shared row
+/// ingestion path, and groups rows into occasions using `EVID=4`.
+///
+/// All columns not claimed by the core Pmetrics schema are treated as
+/// covariates.
 ///
 /// # Arguments
 ///
-/// * `path` - The path to the Pmetrics CSV file
+/// * `path` - Path to the Pmetrics CSV file
 ///
 /// # Returns
 ///
-/// * `Result<Data, DataError>` - A result containing either the parsed [Data] object or an error
+/// A parsed [`Data`] object or a [`DataError`] if the file cannot be read or a
+/// required row field is missing.
 ///
 /// # Example
 ///
@@ -33,14 +50,25 @@ use std::str::FromStr;
 /// println!("Number of subjects: {}", data.subjects().len());
 /// ```
 ///
-/// # Format details
+/// # Expected columns
 ///
-/// The Pmetrics format expects columns like ID, TIME, EVID, DOSE, DUR, etc. The function will:
+/// The canonical columns are `ID`, `TIME`, `EVID`, `DOSE`, `DUR`, `ADDL`,
+/// `II`, `INPUT`, `OUT`, `OUTEQ`, `CENS`, and optional `C0..C3` error
+/// coefficients.
+///
+/// All other numeric columns are treated as covariates.
+///
+/// # Parsing behavior
+///
+/// The parser will:
 /// - Convert all headers to lowercase for case-insensitivity
 /// - Group rows by subject ID
 /// - Create occasions based on EVID=4 events
 /// - Parse covariates and create appropriate interpolations
 /// - Handle additional doses via ADDL and II fields
+/// - Preserve raw `INPUT` and `OUTEQ` labels as strings until model resolution
+/// - Treat `OUT=-99` as a missing observation value, matching the common
+///   Pmetrics convention
 ///
 /// For specific column definitions, see the `Row` struct.
 #[allow(dead_code)]
@@ -72,7 +100,7 @@ pub fn read_pmetrics(path: impl Into<String>) -> Result<Data, DataError> {
     build_data(data_rows)
 }
 
-/// A [Row] represents a row in the Pmetrics data format
+/// One row from a Pmetrics file after serde deserialization.
 #[derive(Deserialize, Debug, Serialize, Default, Clone)]
 #[serde(rename_all = "lowercase")]
 struct Row {
@@ -94,13 +122,13 @@ struct Row {
     /// Dosing interval
     #[serde(deserialize_with = "deserialize_option_f64")]
     ii: Option<f64>,
-    /// Input compartment
+    /// Input label from the `INPUT` column
     #[serde(deserialize_with = "deserialize_option_route_label")]
     input: Option<InputLabel>,
     /// Observed value
     #[serde(deserialize_with = "deserialize_option_f64")]
     out: Option<f64>,
-    /// Corresponding output equation for the observation
+    /// Output label from the `OUTEQ` column
     #[serde(deserialize_with = "deserialize_option_output_label")]
     outeq: Option<OutputLabel>,
     /// Censoring output
@@ -264,7 +292,14 @@ where
 }
 
 impl Data {
-    /// Write the dataset to a file in Pmetrics format
+    /// Write the dataset to a file in Pmetrics format.
+    ///
+    /// `INPUT` and `OUTEQ` are written using their stored public labels. Named
+    /// labels such as `iv` and `cp` remain named labels, and numeric-looking
+    /// labels are written back exactly as stored.
+    ///
+    /// Missing optional fields are emitted as `.` placeholders to match the
+    /// usual Pmetrics text convention.
     ///
     /// # Arguments
     ///

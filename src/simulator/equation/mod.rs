@@ -1,3 +1,51 @@
+//! Handwritten equation families and their shared simulation interfaces.
+//!
+//! This module is the public home for handwritten [`ODE`], [`Analytical`], and
+//! [`SDE`] models, plus the shared [`Equation`] trait and the metadata types
+//! that attach public names to parameters, states, routes, and outputs.
+//!
+//! Use this module when you want to:
+//! - choose between deterministic ODE, analytical, and stochastic SDE models
+//! - attach metadata so dataset labels such as `"iv"` and `"cp"` resolve by
+//!   name instead of by dense numeric index
+//! - work with prediction or likelihood APIs across equation families
+//!
+//! # Equation Families
+//!
+//! - [`ODE`] for deterministic models that must be numerically integrated.
+//! - [`Analytical`] for supported closed-form models.
+//! - [`SDE`] for stochastic models that use particles.
+//!
+//! # Labels And Metadata
+//!
+//! Input and output labels arrive from public data APIs as strings.
+//!
+//! - Without metadata, handwritten models fall back to numeric labels such as
+//!   `0` or `1`.
+//! - With [`metadata::ModelMetadata`] attached, route and output labels are
+//!   resolved by name against the declared routes and outputs before
+//!   simulation.
+//!
+//! That label-first path is the preferred public workflow for current authoring.
+//!
+//! # Example
+//!
+//! ```rust
+//! use pharmsol::{metadata, ModelKind};
+//!
+//! let metadata = metadata::new("one_cmt")
+//!     .kind(ModelKind::Ode)
+//!     .parameters(["cl", "v"])
+//!     .states(["central"])
+//!     .outputs(["cp"])
+//!     .route(metadata::Route::infusion("iv").to_state("central"))
+//!     .validate()
+//!     .unwrap();
+//!
+//! assert_eq!(metadata.route_index("iv"), Some(0));
+//! assert_eq!(metadata.output_index("cp"), Some(0));
+//! ```
+
 use std::fmt::Debug;
 pub mod analytical;
 pub mod metadata;
@@ -20,10 +68,10 @@ use super::likelihood::Prediction;
 
 /// Trait for state vectors that can receive bolus doses.
 pub trait State {
-    /// Add a bolus dose to the state at the specified input compartment.
+    /// Add a bolus dose to the state at the specified resolved input index.
     ///
     /// # Parameters
-    /// - `input`: The compartment index
+    /// - `input`: The resolved dense input index used by the execution layer
     /// - `amount`: The bolus amount
     fn add_bolus(&mut self, input: usize, amount: f64);
 }
@@ -114,7 +162,7 @@ pub trait Cache: Sized {
     fn disable_cache(self) -> Self;
 }
 
-/// Trait defining the associated types for equations.
+/// Associated state and prediction container types for an equation family.
 pub trait EquationTypes {
     /// The state vector type
     type S: State + Debug;
@@ -308,11 +356,15 @@ pub(crate) trait EquationPriv: EquationTypes {
     }
 }
 
-/// Trait for model equations that can be simulated.
+/// Trait for handwritten model equations that can be simulated.
 ///
-/// This trait defines the interface for different types of model equations
-/// (ODE, SDE, analytical) that can be simulated to generate predictions
-/// and estimate parameters.
+/// [`Equation`] is the shared interface implemented by handwritten [`ODE`],
+/// [`Analytical`], and [`SDE`] models.
+///
+/// Subject data enters this layer through public labels on dose and observation
+/// events. If metadata is attached to the equation, those labels are resolved by
+/// name before simulation. Otherwise, the execution layer expects numeric labels
+/// that can be interpreted as dense indices.
 ///
 /// # Likelihood Calculation
 ///
@@ -440,6 +492,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
     }
 }
 
+/// Runtime family tag for handwritten equations.
 #[repr(C)]
 #[derive(Clone, Debug)]
 pub enum EqnKind {

@@ -406,11 +406,39 @@ impl RuntimeArtifact for WasmExecutionArtifact {
     }
 }
 
+/// Read only the metadata from a compiled WASM artifact on disk.
+///
+/// Use this when you need model identity, route labels, output labels, or
+/// buffer sizes without loading the executable runtime wrapper.
 pub fn read_wasm_model_info(path: impl AsRef<Path>) -> Result<NativeModelInfo, WasmError> {
     let (info, _) = load_wasm_artifact(path)?;
     Ok(info)
 }
 
+/// Read only the metadata from in-memory compiled WASM bytes.
+///
+/// ```rust,no_run
+/// use pharmsol::dsl::{compile_module_source_to_wasm_bytes, read_wasm_model_info_bytes};
+///
+/// let source = r#"
+/// name = bimodal_ke
+/// kind = ode
+///
+/// params = ke, v
+/// states = central
+/// outputs = cp
+///
+/// infusion(iv) -> central
+///
+/// dx(central) = -ke * central
+/// out(cp) = central / v
+/// "#;
+///
+/// let bytes = compile_module_source_to_wasm_bytes(source, Some("bimodal_ke"))?;
+/// let info = read_wasm_model_info_bytes(&bytes)?;
+/// assert_eq!(info.name, "bimodal_ke");
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub fn read_wasm_model_info_bytes(bytes: &[u8]) -> Result<NativeModelInfo, WasmError> {
     let (info, _) = load_wasm_artifact_bytes(bytes)?;
     Ok(info)

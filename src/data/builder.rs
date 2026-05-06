@@ -1,6 +1,21 @@
+//! Builder API for constructing [`Subject`] schedules in Rust.
+//!
+//! Use `Subject::builder(...)` when you want to describe a subject directly in
+//! code with a schedule-oriented API. This is the preferred high-level
+//! path for hand-written datasets.
+//!
+//! Builder methods accept public input and output labels. Prefer stable strings
+//! such as `"depot"`, `"iv"`, and `"cp"`. Numeric values are accepted, but
+//! they remain public labels rather than automatically becoming dense internal
+//! indices.
+
 use crate::{data::*, Censor};
 
-/// Extension trait for creating [Subject] instances using the builder pattern
+/// Extension trait that enables `Subject::builder(...)`.
+///
+/// Most users do not need to import [`SubjectBuilder`] directly. Import this
+/// trait from the crate root or [`crate::prelude`] and then start with
+/// `Subject::builder("id")`.
 pub trait SubjectBuilderExt {
     /// Create a new SubjectBuilder with the specified ID
     ///
@@ -14,8 +29,8 @@ pub trait SubjectBuilderExt {
     /// use pharmsol::*;
     ///
     /// let subject = Subject::builder("patient_001")
-    ///     .bolus(0.0, 100.0, 0)
-    ///     .observation(1.0, 10.5, 0)
+    ///     .bolus(0.0, 100.0, "depot")
+    ///     .observation(1.0, 10.5, "cp")
     ///     .build();
     /// ```
     fn builder(id: impl Into<String>) -> SubjectBuilder;
@@ -34,11 +49,37 @@ impl SubjectBuilderExt for Subject {
     }
 }
 
-/// Builder for creating [Subject] instances with a fluent API
+/// Builder for creating [`Subject`] values with a fluent API.
 ///
-/// The [SubjectBuilder] allows for constructing complex subject data with a
-/// chainable, readable syntax. Events like doses and observations can be
-/// added sequentially, and the builder handles organizing them into occasions.
+/// Use [`SubjectBuilder`] when you want to author common dose and observation
+/// schedules directly in Rust without constructing low-level event values by
+/// hand.
+///
+/// A builder instance accumulates events inside the current [`Occasion`].
+/// [`SubjectBuilder::repeat`] duplicates the most recently added event at later
+/// times, and [`SubjectBuilder::reset`] closes the current occasion and starts a
+/// new one with fresh occasion-local state.
+///
+/// Input and output arguments are public labels. Prefer stable model-facing
+/// names such as `"depot"`, `"iv"`, and `"cp"`.
+///
+/// # Example
+///
+/// ```rust
+/// use pharmsol::*;
+///
+/// let subject = Subject::builder("patient_001")
+///     .bolus(0.0, 100.0, "depot")
+///     .repeat(1, 24.0)
+///     .observation(1.0, 12.3, "cp")
+///     .missing_observation(25.0, "cp")
+///     .reset()
+///     .bolus(0.0, 80.0, "depot")
+///     .observation(1.0, 10.1, "cp")
+///     .build();
+///
+/// assert_eq!(subject.occasions().len(), 2);
+/// ```
 #[derive(Debug, Clone)]
 pub struct SubjectBuilder {
     id: String,
@@ -49,37 +90,39 @@ pub struct SubjectBuilder {
 }
 
 impl SubjectBuilder {
-    /// Add an event to the current occasion
+    /// Add a fully constructed event to the current occasion.
     ///
-    /// # Arguments
-    ///
-    /// * `event` - The event to add
+    /// Use this when you want to mix builder convenience methods with direct
+    /// [`Event`] values.
     pub fn event(mut self, event: Event) -> Self {
         self.last_added_event = Some(event.clone());
         self.current_occasion.add_event(event);
         self
     }
 
-    /// Add a bolus dosing event
+    /// Add an instantaneous dose.
     ///
     /// # Arguments
     ///
     /// * `time` - Time of the bolus dose
     /// * `amount` - Amount of drug administered
-    /// * `input` - The compartment number receiving the dose
+    /// * `input` - Public input label receiving the dose
+    ///
+    /// Prefer stable route names such as `"depot"` or `"iv"` when the model
+    /// declares named routes.
     pub fn bolus(self, time: f64, amount: f64, input: impl ToString) -> Self {
         let bolus = Bolus::new(time, amount, input, self.current_occasion.index());
         let event = Event::Bolus(bolus);
         self.event(event)
     }
 
-    /// Add an infusion event
+    /// Add a continuous dose over a duration.
     ///
     /// # Arguments
     ///
     /// * `time` - Start time of the infusion
     /// * `amount` - Total amount of drug to be administered
-    /// * `input` - The compartment number receiving the dose
+    /// * `input` - Public input label receiving the dose
     /// * `duration` - Duration of the infusion in time units
     pub fn infusion(self, time: f64, amount: f64, input: impl ToString, duration: f64) -> Self {
         let infusion = Infusion::new(time, amount, input, duration, self.current_occasion.index());
@@ -87,13 +130,13 @@ impl SubjectBuilder {
         self.event(event)
     }
 
-    /// Add an observation
+    /// Add an observed value at a given time.
     ///
     /// # Arguments
     ///
     /// * `time` - Time of the observation
     /// * `value` - Observed value (e.g., drug concentration)
-    /// * `outeq` - Output equation number corresponding to this observation
+    /// * `outeq` - Public output label for this observation
     pub fn observation(self, time: f64, value: f64, outeq: impl ToString) -> Self {
         let observation = Observation::new(
             time,
@@ -107,13 +150,14 @@ impl SubjectBuilder {
         self.event(event)
     }
 
-    /// Add a censored observation
+    /// Add an observed value with explicit censoring information.
+    ///
     /// # Arguments
     ///
     /// * `time` - Time of the observation
     /// * `value` - Observed value (e.g., drug concentration)
-    /// * `outeq` - Output equation number (zero-indexed) corresponding to this
-    ///   observation
+    /// * `outeq` - Public output label for this observation
+    /// * `censoring` - Censoring status for the observation value
     pub fn censored_observation(
         self,
         time: f64,
@@ -133,12 +177,15 @@ impl SubjectBuilder {
         self.event(event)
     }
 
-    /// Add an observation
+    /// Add a prediction-only observation slot.
     ///
     /// # Arguments
     ///
     /// * `time` - Time of the observation
-    /// * `outeq` - Output equation number (zero-indexed) corresponding to this observation
+    /// * `outeq` - Public output label for this observation
+    ///
+    /// Use this when you want a prediction at a time point but do not have an
+    /// observed value.
     pub fn missing_observation(self, time: f64, outeq: impl ToString) -> Self {
         let observation = Observation::new(
             time,
@@ -152,15 +199,15 @@ impl SubjectBuilder {
         self.event(event)
     }
 
-    /// Add an observation with a specific error polynomial
+    /// Add an observed value with an explicit assay error polynomial.
     ///
     /// # Arguments
     ///
     /// * `time` - Time of the observation
     /// * `value` - Observed value (e.g., drug concentration)
-    /// * `outeq` - Output equation number (zero-indexed) corresponding to this observation
+    /// * `outeq` - Public output label for this observation
     /// * `errorpoly` - Error polynomial coefficients (c0, c1, c2, c3)
-    /// * `censored` - Whether the observation is censored
+    /// * `censored` - Censoring status for the observation value
     pub fn observation_with_error(
         self,
         time: f64,
@@ -181,7 +228,10 @@ impl SubjectBuilder {
         self.event(event)
     }
 
-    /// Repeat the last event `n` times, separated by some interval `delta`
+    /// Repeat the last event `n` times, separated by `delta`.
+    ///
+    /// The repeated events keep the same label, value, censoring state, and
+    /// error polynomial as the original event. Only the event time changes.
     ///
     /// # Arguments
     ///
@@ -193,9 +243,8 @@ impl SubjectBuilder {
     /// ```rust
     /// use pharmsol::*;
     ///
-    ///
     /// let subject = Subject::builder("patient_001")
-    ///     .bolus(0.0, 100.0, 0)  // First dose at time 0
+    ///     .bolus(0.0, 100.0, "depot") // First dose at time 0
     ///     .repeat(3, 24.0)       // Repeat the dose at times 24, 48, and 72
     ///     .build();
     /// ```
@@ -255,12 +304,14 @@ impl SubjectBuilder {
         self
     }
 
-    /// Complete the current occasion and start a new one
+    /// Complete the current occasion and start a new one.
     ///
     /// This finalizes the current occasion, adds it to the subject,
     /// and creates a new occasion for subsequent events.
-    /// This is useful if a patient has new observations at some other occasion.
-    /// Note that all states are reset!
+    /// Use this when the subject should begin a new occasion with reset state.
+    ///
+    /// Covariates collected since the previous reset are attached to the
+    /// finished occasion. The new occasion starts empty and its state is reset.
     pub fn reset(mut self) -> Self {
         let block_index = self.current_occasion.index() + 1;
         self.current_occasion.sort();
@@ -274,7 +325,7 @@ impl SubjectBuilder {
         self
     }
 
-    /// Add a covariate value at a specific time
+    /// Add a covariate value at a specific time.
     ///
     /// Multiple calls for the same covariate at different times will create
     /// linear interpolation between the time points.
@@ -300,7 +351,7 @@ impl SubjectBuilder {
         self
     }
 
-    /// Finalize and build the Subject
+    /// Finalize and build the [`Subject`].
     ///
     /// This completes the current occasion and returns a new Subject with all
     /// the accumulated data.

@@ -83,6 +83,11 @@ pub type JitAnalyticalModel = NativeAnalyticalModel;
 pub type JitSdeModel = NativeSdeModel;
 pub type CompiledJitModel = CompiledNativeModel;
 
+/// Error reported while lowering an execution model into native in-process JIT
+/// code.
+///
+/// The error retains the backend diagnostic so callers can render the message
+/// against the original DSL source when available.
 #[derive(Clone, PartialEq, Eq)]
 pub struct JitCompileError {
     diagnostic: Box<Diagnostic>,
@@ -214,6 +219,10 @@ struct LoweredValue {
     ty: ValueType,
 }
 
+/// Compile one lowered execution model into a reusable JIT kernel artifact.
+///
+/// This builds the raw Cranelift-compiled kernel bundle for all roles present in
+/// the model. Most callers should use [`compile_execution_model_to_jit`] instead.
 pub fn compile_execution_artifact(
     model: &ExecutionModel,
 ) -> Result<NativeExecutionArtifact, JitCompileError> {
@@ -1217,6 +1226,41 @@ fn state_address(
     Ok(builder.ins().iadd(base, byte_offset))
 }
 
+/// Compile an [`ExecutionModel`](pharmsol_dsl::ExecutionModel) to the native
+/// in-process JIT backend.
+///
+/// Use this low-level entrypoint when you already own the parse, analyze, and
+/// lower steps and want the JIT backend directly instead of the higher-level
+/// runtime facade.
+///
+/// This function requires the `dsl-jit` feature.
+///
+/// ```rust,no_run
+/// use pharmsol::dsl::{
+///     analyze_model, compile_execution_model_to_jit, lower_typed_model, parse_model,
+/// };
+///
+/// let parsed = parse_model(
+///     r#"
+/// model implicit_route_injection {
+///     kind ode
+///     states { central }
+///     routes { iv -> central }
+///     dynamics {
+///         ddt(central) = 0
+///     }
+///     outputs {
+///         cp = central
+///     }
+/// }
+/// "#,
+/// )?;
+/// let typed = analyze_model(&parsed)?;
+/// let execution = lower_typed_model(&typed)?;
+/// let compiled = compile_execution_model_to_jit(&execution)?;
+/// # let _ = compiled;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub fn compile_execution_model_to_jit(
     model: &ExecutionModel,
 ) -> Result<CompiledJitModel, JitCompileError> {
@@ -1229,6 +1273,7 @@ pub fn compile_execution_model_to_jit(
     }
 }
 
+/// Compile an ODE execution model to the native in-process JIT backend.
 pub fn compile_ode_model_to_jit(model: &ExecutionModel) -> Result<JitOdeModel, JitCompileError> {
     if model.kind != ModelKind::Ode {
         return Err(JitCompileError::new(
@@ -1245,6 +1290,7 @@ pub fn compile_ode_model_to_jit(model: &ExecutionModel) -> Result<JitOdeModel, J
     ))
 }
 
+/// Compile an analytical execution model to the native in-process JIT backend.
 pub fn compile_analytical_model_to_jit(
     model: &ExecutionModel,
 ) -> Result<JitAnalyticalModel, JitCompileError> {
@@ -1263,6 +1309,7 @@ pub fn compile_analytical_model_to_jit(
     ))
 }
 
+/// Compile an SDE execution model to the native in-process JIT backend.
 pub fn compile_sde_model_to_jit(model: &ExecutionModel) -> Result<JitSdeModel, JitCompileError> {
     if model.kind != ModelKind::Sde {
         return Err(JitCompileError::new(

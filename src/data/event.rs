@@ -1,3 +1,15 @@
+//! Event types and public label wrappers for subject schedules.
+//!
+//! These types are the low-level representation behind the higher-level
+//! builder and parsing APIs. Most users can start with
+//! [`crate::data::builder::SubjectBuilder`], then inspect or transform
+//! [`Event`] values after construction.
+//!
+//! Dose events carry an [`InputLabel`], and observations carry an
+//! [`OutputLabel`]. Prefer stable strings such as `"depot"`, `"iv"`, and
+//! `"cp"`. Numeric values are accepted, but they remain labels until a
+//! downstream workflow explicitly interprets them as indices.
+
 use crate::data::error_model::ErrorPoly;
 use crate::prelude::simulator::Prediction;
 use serde::{Deserialize, Serialize};
@@ -7,12 +19,16 @@ use std::fmt;
 // Shared Analysis Types
 // ============================================================================
 
-/// Administration route for a dosing event
+/// Administration route classification used by downstream analyses.
 ///
-/// Determined by the type of dose events and their target compartment:
-/// - [`Event::Infusion`] → [`Route::IVInfusion`]
-/// - [`Event::Bolus`] with `input >= 1` (central compartment) → [`Route::IVBolus`]
-/// - [`Event::Bolus`] with `input == 0` (depot compartment) → [`Route::Extravascular`]
+/// [`Route`] is a coarse route category, not the original public input label.
+/// In the current data-side heuristic:
+/// - [`Event::Infusion`] maps to [`Route::IVInfusion`]
+/// - [`Event::Bolus`] with input label `0` maps to [`Route::Extravascular`]
+/// - [`Event::Bolus`] with any other label maps to [`Route::IVBolus`]
+///
+/// If you need the original model-facing label, read [`Bolus::input`] or
+/// [`Infusion::input`] instead.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Route {
     /// Intravenous bolus
@@ -78,12 +94,15 @@ pub enum BLQRule {
     },
 }
 
-/// Represents a pharmacokinetic/pharmacodynamic event
+/// One scheduled item in a subject record.
 ///
-/// Events represent key occurrences in a PK/PD profile, including:
-/// - [Bolus] doses (instantaneous drug input)
-/// - [Infusion]s (continuous drug input over a duration)
-/// - [Observation]s (measured concentrations or other values)
+/// Events are the low-level representation for doses and observations:
+/// - [`Bolus`] for instantaneous input
+/// - [`Infusion`] for input over a duration
+/// - [`Observation`] for measured or missing outputs
+///
+/// Most users create these through `Subject::builder(...)`, row ingestion, or
+/// file parsing rather than constructing them all by hand.
 #[derive(Serialize, Debug, Clone, Deserialize)]
 pub enum Event {
     /// A bolus dose (instantaneous drug input)
@@ -95,21 +114,31 @@ pub enum Event {
 }
 
 macro_rules! impl_label_type {
-    ($name:ident) => {
+    ($(#[$meta:meta])* $name:ident) => {
+        $(#[$meta])*
         #[derive(
             Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
         )]
         pub struct $name(String);
 
         impl $name {
+            /// Create a new public label.
+            ///
+            /// Prefer stable names when the model declares named routes or
+            /// outputs.
             pub fn new(label: impl ToString) -> Self {
                 Self(label.to_string())
             }
 
+            /// Borrow the stored label as a string.
             pub fn as_str(&self) -> &str {
                 &self.0
             }
 
+            /// Try to interpret the label as a numeric index.
+            ///
+            /// This is mainly a compatibility helper for lower-level paths that
+            /// still operate on dense indices after label resolution.
             pub fn index(&self) -> Option<usize> {
                 self.0.parse::<usize>().ok()
             }
@@ -171,8 +200,20 @@ macro_rules! impl_label_type {
     };
 }
 
-impl_label_type!(InputLabel);
-impl_label_type!(OutputLabel);
+impl_label_type!(
+    /// Public label for a dosing input or route.
+    ///
+    /// [`Bolus`] and [`Infusion`] store the original user-facing route name in
+    /// this type.
+    InputLabel
+);
+impl_label_type!(
+    /// Public label for an observation output.
+    ///
+    /// [`Observation`] stores the original user-facing output name in this
+    /// type.
+    OutputLabel
+);
 
 impl Event {
     /// Get the time of the event
@@ -226,9 +267,10 @@ impl Event {
     }
 }
 
-/// Represents an instantaneous input of drug
+/// Instantaneous dose input.
 ///
-/// A [Bolus] is a discrete amount of drug added to a specific compartment at a specific time.
+/// A [`Bolus`] records one discrete amount at one time, tagged with the public
+/// input label that should be matched against the model.
 #[derive(Serialize, Debug, Clone, Deserialize)]
 pub struct Bolus {
     time: f64,
@@ -263,6 +305,9 @@ impl Bolus {
         &self.input
     }
 
+    /// Try to interpret the input label as a numeric index.
+    ///
+    /// Prefer [`Bolus::input`] when working with the public label itself.
     pub fn input_index(&self) -> Option<usize> {
         self.input.index()
     }
@@ -313,9 +358,10 @@ impl Bolus {
     }
 }
 
-/// Represents a continuous dose of drug over time
+/// Continuous dose input over a duration.
 ///
-/// An [Infusion] administers drug at a constant rate over a specified duration.
+/// An [`Infusion`] records the total amount, start time, duration, and public
+/// input label for one infusion event.
 #[derive(Serialize, Debug, Clone, Deserialize)]
 pub struct Infusion {
     time: f64,
@@ -359,6 +405,9 @@ impl Infusion {
         &self.input
     }
 
+    /// Try to interpret the input label as a numeric index.
+    ///
+    /// Prefer [`Infusion::input`] when working with the public label itself.
     pub fn input_index(&self) -> Option<usize> {
         self.input.index()
     }
@@ -438,7 +487,11 @@ pub enum Censor {
     ALOQ,
 }
 
-/// Represents an observation of drug concentration or other measured value
+    /// Observation of a model output.
+    ///
+    /// An [`Observation`] can carry a measured value or `None` for a prediction-only
+    /// time point. Observations also carry the public output label, optional assay
+    /// error polynomial, occasion index, and censoring state.
 #[derive(Serialize, Debug, Clone, Deserialize)]
 pub struct Observation {
     time: f64,
@@ -482,7 +535,9 @@ impl Observation {
         self.time
     }
 
-    /// Get the value of the observation (e.g., drug concentration)
+    /// Get the value of the observation.
+    ///
+    /// `None` means this is a prediction-only or missing-observation slot.
     pub fn value(&self) -> Option<f64> {
         self.value
     }
@@ -492,6 +547,9 @@ impl Observation {
         &self.outeq
     }
 
+    /// Try to interpret the output label as a numeric index.
+    ///
+    /// Prefer [`Observation::outeq`] when working with the public label itself.
     pub fn outeq_index(&self) -> Option<usize> {
         self.outeq.index()
     }
@@ -553,7 +611,11 @@ impl Observation {
         &mut self.occasion
     }
 
-    /// Create a [Prediction] from this observation
+    /// Create a [`Prediction`] from this observation.
+    ///
+    /// This is a low-level helper for code paths that already operate on a
+    /// resolved or numeric output index. Named output labels must be resolved by
+    /// the caller before this conversion happens.
     pub fn to_prediction(&self, pred: f64, state: Vec<f64>) -> Prediction {
         Prediction {
             time: self.time(),

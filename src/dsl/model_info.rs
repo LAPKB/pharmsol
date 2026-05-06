@@ -8,47 +8,80 @@ use pharmsol_dsl::execution::{
 };
 use pharmsol_dsl::{AnalyticalKernel, ModelKind, RouteKind};
 
+/// Public metadata extracted from a compiled backend model.
+///
+/// This is the shared inspection surface returned by the native AoT, WASM, and
+/// runtime loaders. It keeps public labels and buffer sizes available without
+/// exposing backend-specific kernel details.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NativeModelInfo {
+    /// Public model name.
     pub name: String,
+    /// High-level model family.
     pub kind: ModelKind,
+    /// Parameter names in support-point order.
     pub parameters: Vec<String>,
+    /// Declared covariates and their dense runtime indices.
     pub covariates: Vec<NativeCovariateInfo>,
+    /// Declared routes together with declaration-order and dense runtime indices.
     pub routes: Vec<NativeRouteInfo>,
+    /// Declared outputs and their dense runtime indices.
     pub outputs: Vec<NativeOutputInfo>,
+    /// Length of the state buffer used during execution.
     pub state_len: usize,
+    /// Length of the derived-value buffer used during execution.
     pub derived_len: usize,
+    /// Length of the output buffer used during execution.
     pub output_len: usize,
+    /// Length of the dense route-input buffer used during execution.
     pub route_len: usize,
+    /// Analytical kernel metadata when the compiled model is analytical.
     pub analytical: Option<AnalyticalKernel>,
+    /// Particle count when the compiled model is stochastic.
     pub particles: Option<usize>,
 }
 
+/// Metadata for one compiled covariate.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NativeCovariateInfo {
+    /// Public covariate name.
     pub name: String,
+    /// Dense runtime covariate index.
     pub index: usize,
 }
 
+/// Metadata for one compiled route.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NativeRouteInfo {
+    /// Public route label.
     pub name: String,
+    /// Route position in declaration order.
     #[serde(default)]
     pub declaration_index: usize,
+    /// Dense runtime route-input index.
     pub index: usize,
+    /// Coarse route kind when declared in metadata.
     #[serde(default)]
     pub kind: Option<RouteKind>,
+    /// Dense destination state offset used by compiled kernels.
     pub destination_offset: usize,
+    /// Whether the compiled backend injects the route input into the destination
+    /// state automatically when the model does not read the route input
+    /// explicitly.
     pub inject_input_to_destination: bool,
 }
 
+/// Metadata for one compiled output.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NativeOutputInfo {
+    /// Public output label.
     pub name: String,
+    /// Dense runtime output index.
     pub index: usize,
 }
 
 impl NativeModelInfo {
+    /// Build public compiled-model metadata from a lowered execution model.
     pub fn from_execution_model(model: &ExecutionModel) -> Self {
         let explicit_route_input_usage = explicit_route_input_usage(model);
         Self {

@@ -1,3 +1,82 @@
+//! Unified runtime entrypoints for DSL-backed models.
+//!
+//! Use this module when you already know you want an executable model and need
+//! one backend-neutral surface for compile, load, and prediction workflows.
+//! It normalizes the backend-specific JIT, native AoT, and WASM entrypoints so
+//! callers can choose a deployment target without rewriting the downstream
+//! prediction code.
+//!
+//! Use the backend modules directly only when you need a backend-specific
+//! artifact or compile control:
+//!
+//! - [`super::jit`] for direct in-process JIT compilation.
+//! - [`compile_module_source_to_aot`][crate::dsl::compile_module_source_to_aot] for native artifact export and reload.
+//! - [`compile_module_source_to_wasm_bytes`][crate::dsl::compile_module_source_to_wasm_bytes] and [`load_runtime_wasm_bytes`] for portable WASM bytes,
+//!   browser-loader assets, and host-side WASM loading.
+//!
+//! Main entrypoints:
+//!
+//! - [`compile_module_source_to_runtime`] for the one-stop source-to-runtime
+//!   path.
+//! - [`compile_execution_model_to_runtime`] when you already have an
+//!   [`ExecutionModel`](pharmsol_dsl::ExecutionModel).
+//! - [`load_runtime_artifact`] and [`load_runtime_wasm_bytes`] when the model
+//!   has already been compiled and stored elsewhere.
+//! - [`CompiledRuntimeModel::estimate_predictions`] for backend-neutral
+//!   execution against a [`Subject`](crate::Subject).
+//!
+//! Backend choice guide:
+//!
+//! - [`RuntimeCompilationTarget::Jit`] keeps compilation and execution inside
+//!   the current process. Use it for native interactive workflows and tests.
+//! - [`RuntimeCompilationTarget::NativeAot`] emits a native artifact and reloads
+//!   it into the same runtime model shape. Use it when you want reusable native
+//!   artifacts and can control the target platform.
+//! - [`RuntimeCompilationTarget::Wasm`] emits portable WASM bytes and reloads
+//!   them into the host-side runtime adapter. Use it when you need a portable
+//!   artifact or browser-aligned deployment story.
+//!
+//! Smallest compile-and-run example:
+//!
+//! This example requires `dsl-jit`.
+//!
+//! ```rust,no_run
+//! use pharmsol::dsl::{compile_module_source_to_runtime, RuntimeCompilationTarget};
+//! use pharmsol::prelude::*;
+//!
+//! let source = r#"
+//! name = bimodal_ke
+//! kind = ode
+//!
+//! params = ke, v
+//! states = central
+//! outputs = cp
+//!
+//! infusion(iv) -> central
+//!
+//! dx(central) = -ke * central
+//! out(cp) = central / v
+//! "#;
+//!
+//! let model = compile_module_source_to_runtime(
+//!     source,
+//!     Some("bimodal_ke"),
+//!     RuntimeCompilationTarget::Jit,
+//!     |_, _| {},
+//! )?;
+//!
+//! let subject = Subject::builder("patient_001")
+//!     .infusion(0.0, 500.0, "iv", 0.5)
+//!     .missing_observation(0.5, "cp")
+//!     .missing_observation(1.0, "cp")
+//!     .missing_observation(2.0, "cp")
+//!     .build();
+//!
+//! let predictions = model.estimate_predictions(&subject, &[1.2, 50.0])?;
+//! assert!(predictions.as_subject().is_some());
+//! # Ok::<(), pharmsol::dsl::RuntimeError>(())
+//! ```
+
 use std::fmt;
 use std::path::Path;
 
@@ -39,24 +118,39 @@ pub type RuntimeOdeModel = NativeOdeModel;
 pub type RuntimeAnalyticalModel = NativeAnalyticalModel;
 pub type RuntimeSdeModel = NativeSdeModel;
 
+/// Selects which backend should produce the executable runtime model.
+///
+/// This enum is the main backend-switching point for
+/// [`compile_module_source_to_runtime`] and
+/// [`compile_execution_model_to_runtime`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeCompilationTarget {
+    /// Compile and execute the model inside the current native process.
     #[cfg(feature = "dsl-jit")]
     Jit,
+    /// Export a native artifact and reload it as a runtime model.
     #[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]
     NativeAot(NativeAotCompileOptions),
+    /// Emit WASM bytes and reload them through the host-side WASM runtime.
     #[cfg(feature = "dsl-wasm")]
     Wasm,
 }
 
+/// Identifies the on-disk artifact format for [`load_runtime_artifact`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeArtifactFormat {
+    /// A native ahead-of-time artifact produced by the AoT compiler.
     #[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]
     NativeAot,
+    /// A WASM artifact produced by the WASM compiler.
     #[cfg(feature = "dsl-wasm")]
     Wasm,
 }
 
+/// Backend-neutral prediction output from a compiled runtime model.
+///
+/// ODE and analytical models return subject predictions. SDE models return the
+/// particle matrix used by the stochastic workflow.
 #[derive(Clone, Debug)]
 pub enum RuntimePredictions {
     Subject(SubjectPredictions),
@@ -93,6 +187,10 @@ impl RuntimePredictions {
     }
 }
 
+/// Executable runtime model returned by the backend-neutral runtime surface.
+///
+/// This type hides the concrete backend and keeps the prediction entrypoint the
+/// same across JIT, native AoT, and WASM-based flows.
 #[derive(Clone, Debug)]
 pub enum CompiledRuntimeModel {
     Ode(RuntimeOdeModel),
@@ -166,6 +264,8 @@ impl CompiledRuntimeModel {
     }
 }
 
+/// Errors produced while parsing, lowering, compiling, loading, or executing a
+/// runtime DSL model.
 #[derive(Error)]
 pub enum RuntimeError {
     #[error("failed to parse DSL source: {0}")]
@@ -231,6 +331,10 @@ impl fmt::Debug for RuntimeError {
     }
 }
 
+/// Parse, analyze, lower, compile, and return a runtime model in one step.
+///
+/// Use this when your input is DSL source text and you want the shortest path
+/// from source to predictions.
 pub fn compile_module_source_to_runtime(
     source: &str,
     model_name: Option<&str>,
@@ -269,6 +373,10 @@ pub fn compile_module_source_to_runtime(
     })
 }
 
+/// Compile a lowered execution model to a selected runtime backend.
+///
+/// Use this when you already own the frontend pipeline and only need the final
+/// backend step.
 pub fn compile_execution_model_to_runtime(
     model: &ExecutionModel,
     target: RuntimeCompilationTarget,
@@ -309,6 +417,7 @@ pub fn compile_execution_model_to_runtime(
     }
 }
 
+/// Load a previously compiled native AoT or WASM artifact from disk.
 pub fn load_runtime_artifact(
     path: impl AsRef<Path>,
     format: RuntimeArtifactFormat,
@@ -330,6 +439,7 @@ pub fn load_runtime_artifact(
 }
 
 #[cfg(feature = "dsl-wasm")]
+/// Compile DSL source straight to a host-side runtime model via the WASM path.
 pub fn compile_module_source_to_runtime_wasm(
     source: &str,
     model_name: Option<&str>,
@@ -339,6 +449,8 @@ pub fn compile_module_source_to_runtime_wasm(
 }
 
 #[cfg(feature = "dsl-wasm")]
+/// Compile a lowered execution model straight to a host-side runtime model via
+/// the WASM path.
 pub fn compile_execution_model_to_runtime_wasm(
     model: &ExecutionModel,
 ) -> Result<CompiledRuntimeModel, RuntimeError> {
@@ -347,6 +459,7 @@ pub fn compile_execution_model_to_runtime_wasm(
 }
 
 #[cfg(feature = "dsl-wasm")]
+/// Load a runtime model from in-memory WASM bytes.
 pub fn load_runtime_wasm_bytes(bytes: &[u8]) -> Result<CompiledRuntimeModel, RuntimeError> {
     let (info, artifact) = load_wasm_artifact_bytes(bytes)?;
     Ok(runtime_model_from_parts(info, artifact))

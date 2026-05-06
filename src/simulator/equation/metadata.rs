@@ -1,17 +1,40 @@
-//! Shared model metadata for handwritten simulator models.
+//! Metadata builders and validated metadata views for handwritten models.
 //!
-//! This module defines the public metadata contract that handwritten ODE,
-//! analytical, and SDE models can attach to. The field set is intentionally
-//! aligned with the public subset of the DSL/runtime metadata surface.
+//! Use this module when a handwritten [`crate::ODE`], [`crate::Analytical`], or
+//! [`crate::SDE`] model should expose the same public names that appear in data
+//! rows, subject builders, or parsed files.
 //!
-//! Internal runtime layout details such as dense buffer lengths, derived buffer
-//! shape, or ABI-specific offsets remain internal for now.
+//! Metadata gives names to parameters, covariates, states, routes, and outputs.
+//! After validation, the execution layer can resolve public labels such as
+//! `"iv"` and `"cp"` against those declarations before simulation.
+//!
+//! Without metadata, handwritten models fall back to numeric labels. With
+//! metadata, labels are matched by name.
+//!
+//! # Example
+//!
+//! ```rust
+//! use pharmsol::{metadata, ModelKind};
+//!
+//! let metadata = metadata::new("one_cmt")
+//!     .kind(ModelKind::Ode)
+//!     .parameters(["cl", "v"])
+//!     .states(["central"])
+//!     .outputs(["cp"])
+//!     .route(metadata::Route::infusion("iv").to_state("central"))
+//!     .validate()
+//!     .unwrap();
+//!
+//! assert_eq!(metadata.name(), "one_cmt");
+//! assert_eq!(metadata.route("iv").unwrap().destination(), "central");
+//! assert_eq!(metadata.output_index("cp"), Some(0));
+//! ```
 
 use pharmsol_dsl::{AnalyticalKernel, CovariateInterpolation, ModelKind};
 use std::fmt;
 use thiserror::Error;
 
-/// Create a new handwritten-model metadata builder.
+/// Shorthand for [`ModelMetadata::new`].
 pub fn new(name: impl Into<String>) -> ModelMetadata {
     ModelMetadata::new(name)
 }
@@ -71,7 +94,17 @@ impl fmt::Display for NameDomain {
     }
 }
 
-/// Immutable validated metadata view used by later attachment slices.
+/// Validated metadata view used by the execution layer.
+///
+/// This type is what handwritten equation builders store after metadata has
+/// passed validation. It provides stable lookup helpers from public names to the
+/// dense indices used during execution.
+///
+/// Route lookups expose two different indices:
+/// - [`ValidatedModelMetadata::route_declaration_index`] is the route position in
+///   declaration order.
+/// - [`ValidatedModelMetadata::route_index`] is the dense execution input index
+///   for that route kind.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidatedModelMetadata {
     name: String,
@@ -87,10 +120,12 @@ pub struct ValidatedModelMetadata {
 }
 
 impl ValidatedModelMetadata {
+    /// Get the public model name.
     pub fn name(&self) -> &str {
         &self.name
     }
 
+    /// Get the validated model family.
     pub fn kind(&self) -> ModelKind {
         self.kind
     }
@@ -111,6 +146,9 @@ impl ValidatedModelMetadata {
         &self.routes
     }
 
+    /// Get the number of dense execution input slots needed for routes.
+    ///
+    /// This is the maximum of the bolus-route count and infusion-route count.
     pub fn route_input_count(&self) -> usize {
         self.route_input_count
     }
@@ -143,14 +181,17 @@ impl ValidatedModelMetadata {
         self.states.iter().position(|state| state.name() == name)
     }
 
+    /// Look up a route by public name and return its dense execution input index.
     pub fn route_index(&self, name: &str) -> Option<usize> {
         self.route(name).map(ValidatedRoute::input_index)
     }
 
+    /// Look up a route by public name and return its declaration-order index.
     pub fn route_declaration_index(&self, name: &str) -> Option<usize> {
         self.routes.iter().position(|route| route.name() == name)
     }
 
+    /// Look up an output by public name and return its dense output index.
     pub fn output_index(&self, name: &str) -> Option<usize> {
         self.outputs.iter().position(|output| output.name() == name)
     }
@@ -179,7 +220,11 @@ impl ValidatedModelMetadata {
     }
 }
 
-/// One validated route declaration with resolved destination state index.
+/// One validated route declaration with resolved execution details.
+///
+/// A validated route keeps both the declaration-order index and the dense input
+/// index used during execution. Those values can differ from each other when a
+/// model mixes bolus and infusion routes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidatedRoute {
     name: String,
@@ -194,6 +239,7 @@ pub struct ValidatedRoute {
 }
 
 impl ValidatedRoute {
+    /// Get the public route name used for label matching.
     pub fn name(&self) -> &str {
         &self.name
     }
@@ -202,18 +248,22 @@ impl ValidatedRoute {
         self.kind
     }
 
+    /// Get the declaration-order index for this route.
     pub fn declaration_index(&self) -> usize {
         self.declaration_index
     }
 
+    /// Get the dense execution input index for this route kind.
     pub fn input_index(&self) -> usize {
         self.input_index
     }
 
+    /// Get the destination state name.
     pub fn destination(&self) -> &str {
         &self.destination
     }
 
+    /// Get the destination state index in model order.
     pub fn destination_index(&self) -> usize {
         self.destination_index
     }
@@ -231,7 +281,12 @@ impl ValidatedRoute {
     }
 }
 
-/// Metadata describing one handwritten simulator model.
+/// Builder for handwritten model metadata.
+///
+/// Use [`ModelMetadata`] to declare the public names that should be attached to
+/// a handwritten equation. After validation, the resulting metadata can be
+/// attached to handwritten [`crate::ODE`], [`crate::Analytical`], and
+/// [`crate::SDE`] models through their `with_metadata(...)` methods.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelMetadata {
     name: String,
@@ -379,11 +434,17 @@ impl ModelMetadata {
     }
 
     /// Validate this metadata using its declared kind.
+    ///
+    /// Use this when the metadata itself already declares whether the model is
+    /// ODE, analytical, or SDE.
     pub fn validate(self) -> Result<ValidatedModelMetadata, ModelMetadataError> {
         self.validate_internal(None, None)
     }
 
     /// Validate this metadata for a specific model kind.
+    ///
+    /// Use this when the equation type determines the model family and you want
+    /// validation to enforce that family explicitly.
     pub fn validate_for(
         self,
         kind: ModelKind,
@@ -440,6 +501,7 @@ pub struct Parameter {
 }
 
 impl Parameter {
+    /// Create a named parameter declaration.
     pub fn new(name: impl Into<String>) -> Self {
         Self { name: name.into() }
     }
@@ -466,6 +528,7 @@ pub struct Covariate {
 }
 
 impl Covariate {
+    /// Create a named covariate without an explicit interpolation policy.
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -473,14 +536,17 @@ impl Covariate {
         }
     }
 
+    /// Create a continuous covariate that uses linear interpolation.
     pub fn continuous(name: impl Into<String>) -> Self {
         Self::new(name).with_interpolation(CovariateInterpolation::Linear)
     }
 
+    /// Create a covariate that uses last-observation-carried-forward semantics.
     pub fn locf(name: impl Into<String>) -> Self {
         Self::new(name).with_interpolation(CovariateInterpolation::Locf)
     }
 
+    /// Set the interpolation policy explicitly.
     pub fn with_interpolation(mut self, interpolation: CovariateInterpolation) -> Self {
         self.interpolation = Some(interpolation);
         self
@@ -502,6 +568,7 @@ pub struct State {
 }
 
 impl State {
+    /// Create a named state declaration.
     pub fn new(name: impl Into<String>) -> Self {
         Self { name: name.into() }
     }
@@ -527,6 +594,7 @@ pub struct Output {
 }
 
 impl Output {
+    /// Create a named output declaration.
     pub fn new(name: impl Into<String>) -> Self {
         Self { name: name.into() }
     }
@@ -548,18 +616,25 @@ where
 /// Route declaration kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RouteKind {
+    /// Instantaneous dose input.
     Bolus,
+    /// Dose input over a duration.
     Infusion,
 }
 
 /// How route inputs should be interpreted by the execution layer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RouteInputPolicy {
+    /// Inject the resolved input directly into the declared destination state.
     InjectToDestination,
+    /// Expect the low-level execution path to provide an explicit input vector.
     ExplicitInputVector,
 }
 
 /// One named route declaration.
+///
+/// Route names are the public labels matched against dose events such as `iv`
+/// or `oral`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Route {
     name: String,
@@ -571,14 +646,17 @@ pub struct Route {
 }
 
 impl Route {
+    /// Create a named bolus route declaration.
     pub fn bolus(name: impl Into<String>) -> Self {
         Self::new(name, RouteKind::Bolus)
     }
 
+    /// Create a named infusion route declaration.
     pub fn infusion(name: impl Into<String>) -> Self {
         Self::new(name, RouteKind::Infusion)
     }
 
+    /// Create a route declaration with an explicit kind.
     pub fn new(name: impl Into<String>, kind: RouteKind) -> Self {
         Self {
             name: name.into(),
@@ -590,26 +668,31 @@ impl Route {
         }
     }
 
+    /// Declare which state this route targets.
     pub fn to_state(mut self, destination: impl Into<String>) -> Self {
         self.destination = Some(destination.into());
         self
     }
 
+    /// Mark this route as supporting lag handling.
     pub fn with_lag(mut self) -> Self {
         self.has_lag = true;
         self
     }
 
+    /// Mark this route as supporting bioavailability handling.
     pub fn with_bioavailability(mut self) -> Self {
         self.has_bioavailability = true;
         self
     }
 
+    /// Request direct injection into the destination state at execution time.
     pub fn inject_input_to_destination(mut self) -> Self {
         self.input_policy = Some(RouteInputPolicy::InjectToDestination);
         self
     }
 
+    /// Request an explicit low-level input vector at execution time.
     pub fn expect_explicit_input(mut self) -> Self {
         self.input_policy = Some(RouteInputPolicy::ExplicitInputVector);
         self
