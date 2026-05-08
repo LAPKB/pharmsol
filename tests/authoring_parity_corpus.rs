@@ -1398,9 +1398,7 @@ fn invalid_dsl_infusion_route_properties_fail_explicitly() {
     let model =
         parse_model(ODE_INVALID_INFUSION_LAG_DSL).expect("invalid DSL fixture should parse");
     let typed = analyze_model(&model).expect("invalid DSL fixture should analyze");
-    let error = lower_typed_model(&typed)
-        .err()
-        .expect("infusion lag should fail during lowering");
+    let error = lower_typed_model(&typed).expect_err("infusion lag should fail during lowering");
 
     assert!(error
         .to_string()

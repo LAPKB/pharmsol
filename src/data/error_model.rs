@@ -1251,7 +1251,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(models.len(), 2);
-        assert!(matches!(models.error_model(1), Ok(_)));
+        assert!(models.error_model(1).is_ok());
     }
 
     #[test]
@@ -1265,7 +1265,7 @@ mod tests {
 
         let models = error_models.bind_output_names(["cp", "effect"]).unwrap();
         assert_eq!(models.len(), 2);
-        assert!(matches!(models.error_model(1), Ok(_)));
+        assert!(models.error_model(1).is_ok());
     }
 
     #[test]

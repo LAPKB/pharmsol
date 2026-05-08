@@ -936,10 +936,10 @@ impl VisitMut for NumericLabelRewriter {
             return;
         };
 
-        expr_index.index = Box::new(Expr::Lit(syn::ExprLit {
+        *expr_index.index = Expr::Lit(syn::ExprLit {
             attrs: Vec::new(),
             lit: Lit::Int(LitInt::new(&internal_index.to_string(), lit.span())),
-        }));
+        });
     }
 
     fn visit_expr_macro_mut(&mut self, expr_macro: &mut syn::ExprMacro) {

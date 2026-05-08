@@ -1316,6 +1316,7 @@ impl NativeAnalyticalModel {
         Ok(output)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn solve_interval(
         &self,
         session: &mut dyn KernelSession,
