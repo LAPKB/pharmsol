@@ -13,28 +13,28 @@ use pharmsol::prelude::*;
 
 // ── Subjects ───────────────────────────────────────────────────────
 
-fn subject_iv(input: usize, output: usize) -> Subject {
+fn subject_iv(input: impl ToString, output: impl ToString) -> Subject {
     Subject::builder("1")
         .infusion(0.0, 500.0, input, 0.5)
-        .observation(0.5, 0.0, output)
-        .observation(1.0, 0.0, output)
-        .observation(2.0, 0.0, output)
-        .observation(4.0, 0.0, output)
-        .observation(8.0, 0.0, output)
-        .observation(12.0, 0.0, output)
+        .observation(0.5, 0.0, output.to_string())
+        .observation(1.0, 0.0, output.to_string())
+        .observation(2.0, 0.0, output.to_string())
+        .observation(4.0, 0.0, output.to_string())
+        .observation(8.0, 0.0, output.to_string())
+        .observation(12.0, 0.0, output.to_string())
         .observation(24.0, 0.0, output)
         .build()
 }
 
-fn subject_oral(input: usize, output: usize) -> Subject {
+fn subject_oral(input: impl ToString, output: impl ToString) -> Subject {
     Subject::builder("1")
         .bolus(0.0, 500.0, input)
-        .observation(0.5, 0.0, output)
-        .observation(1.0, 0.0, output)
-        .observation(2.0, 0.0, output)
-        .observation(4.0, 0.0, output)
-        .observation(8.0, 0.0, output)
-        .observation(12.0, 0.0, output)
+        .observation(0.5, 0.0, output.to_string())
+        .observation(1.0, 0.0, output.to_string())
+        .observation(2.0, 0.0, output.to_string())
+        .observation(4.0, 0.0, output.to_string())
+        .observation(8.0, 0.0, output.to_string())
+        .observation(12.0, 0.0, output.to_string())
         .observation(24.0, 0.0, output)
         .build()
 }
@@ -97,9 +97,7 @@ fn one_cmt_iv(params: &[f64]) {
         },
     };
 
-    let iv = analytical.route_index("iv").expect("iv route exists");
-    let cp = analytical.output_index("cp").expect("cp output exists");
-    let subject = subject_iv(iv, cp);
+    let subject = subject_iv("iv", "cp");
 
     let pred_a = analytical.estimate_predictions(&subject, params).unwrap();
     let pred_o = ode.estimate_predictions(&subject, params).unwrap();
@@ -140,9 +138,7 @@ fn one_cmt_oral(params: &[f64]) {
         },
     };
 
-    let oral = analytical.route_index("oral").expect("oral route exists");
-    let cp = analytical.output_index("cp").expect("cp output exists");
-    let subject = subject_oral(oral, cp);
+    let subject = subject_oral("oral", "cp");
 
     let pred_a = analytical.estimate_predictions(&subject, params).unwrap();
     let pred_o = ode.estimate_predictions(&subject, params).unwrap();
@@ -183,9 +179,7 @@ fn two_cmt_iv(params: &[f64]) {
         },
     };
 
-    let iv = analytical.route_index("iv").expect("iv route exists");
-    let cp = analytical.output_index("cp").expect("cp output exists");
-    let subject = subject_iv(iv, cp);
+    let subject = subject_iv("iv", "cp");
 
     let pred_a = analytical.estimate_predictions(&subject, params).unwrap();
     let pred_o = ode.estimate_predictions(&subject, params).unwrap();
@@ -227,9 +221,7 @@ fn two_cmt_oral(params: &[f64]) {
         },
     };
 
-    let oral = analytical.route_index("oral").expect("oral route exists");
-    let cp = analytical.output_index("cp").expect("cp output exists");
-    let subject = subject_oral(oral, cp);
+    let subject = subject_oral("oral", "cp");
 
     let pred_a = analytical.estimate_predictions(&subject, params).unwrap();
     let pred_o = ode.estimate_predictions(&subject, params).unwrap();

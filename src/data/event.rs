@@ -113,107 +113,170 @@ pub enum Event {
     Observation(Observation),
 }
 
-macro_rules! impl_label_type {
-    ($(#[$meta:meta])* $name:ident) => {
-        $(#[$meta])*
-        #[derive(
-            Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
-        )]
-        pub struct $name(String);
+/// Public label for a dosing input or route.
+///
+/// [`Bolus`] and [`Infusion`] store the original user-facing route name in
+/// this type.
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct InputLabel(String);
 
-        impl $name {
-            /// Create a new public label.
-            ///
-            /// Prefer stable names when the model declares named routes or
-            /// outputs.
-            pub fn new(label: impl ToString) -> Self {
-                Self(label.to_string())
-            }
+impl InputLabel {
+    /// Create a new public label.
+    ///
+    /// Prefer stable names when the model declares named routes.
+    pub fn new(label: impl ToString) -> Self {
+        Self(label.to_string())
+    }
 
-            /// Borrow the stored label as a string.
-            pub fn as_str(&self) -> &str {
-                &self.0
-            }
+    /// Borrow the stored label as a string.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 
-            /// Try to interpret the label as a numeric index.
-            ///
-            /// This is mainly a compatibility helper for lower-level paths that
-            /// still operate on dense indices after label resolution.
-            pub fn index(&self) -> Option<usize> {
-                self.0.parse::<usize>().ok()
-            }
-        }
-
-        impl From<String> for $name {
-            fn from(value: String) -> Self {
-                Self(value)
-            }
-        }
-
-        impl From<&str> for $name {
-            fn from(value: &str) -> Self {
-                Self(value.to_string())
-            }
-        }
-
-        impl From<usize> for $name {
-            fn from(value: usize) -> Self {
-                Self(value.to_string())
-            }
-        }
-
-        impl AsRef<str> for $name {
-            fn as_ref(&self) -> &str {
-                self.as_str()
-            }
-        }
-
-        impl fmt::Display for $name {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str(self.as_str())
-            }
-        }
-
-        impl PartialEq<usize> for $name {
-            fn eq(&self, other: &usize) -> bool {
-                self.index() == Some(*other)
-            }
-        }
-
-        impl PartialEq<$name> for usize {
-            fn eq(&self, other: &$name) -> bool {
-                other == self
-            }
-        }
-
-        impl PartialEq<usize> for &$name {
-            fn eq(&self, other: &usize) -> bool {
-                (**self).eq(other)
-            }
-        }
-
-        impl PartialEq<&$name> for usize {
-            fn eq(&self, other: &&$name) -> bool {
-                other.eq(self)
-            }
-        }
-    };
+    /// Try to interpret the label as a numeric index.
+    ///
+    /// This is mainly a compatibility helper for lower-level paths that still
+    /// operate on dense indices after label resolution.
+    pub fn index(&self) -> Option<usize> {
+        self.0.parse::<usize>().ok()
+    }
 }
 
-impl_label_type!(
-    /// Public label for a dosing input or route.
+impl From<String> for InputLabel {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl From<&str> for InputLabel {
+    fn from(value: &str) -> Self {
+        Self(value.to_string())
+    }
+}
+
+impl From<usize> for InputLabel {
+    fn from(value: usize) -> Self {
+        Self(value.to_string())
+    }
+}
+
+impl AsRef<str> for InputLabel {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl fmt::Display for InputLabel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl PartialEq<usize> for InputLabel {
+    fn eq(&self, other: &usize) -> bool {
+        self.index() == Some(*other)
+    }
+}
+
+impl PartialEq<InputLabel> for usize {
+    fn eq(&self, other: &InputLabel) -> bool {
+        other == self
+    }
+}
+
+impl PartialEq<usize> for &InputLabel {
+    fn eq(&self, other: &usize) -> bool {
+        (**self).eq(other)
+    }
+}
+
+impl PartialEq<&InputLabel> for usize {
+    fn eq(&self, other: &&InputLabel) -> bool {
+        other.eq(self)
+    }
+}
+
+/// Public label for an observation output.
+///
+/// [`Observation`] stores the original user-facing output name in this type.
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct OutputLabel(String);
+
+impl OutputLabel {
+    /// Create a new public label.
     ///
-    /// [`Bolus`] and [`Infusion`] store the original user-facing route name in
-    /// this type.
-    InputLabel
-);
-impl_label_type!(
-    /// Public label for an observation output.
+    /// Prefer stable names when the model declares named outputs.
+    pub fn new(label: impl ToString) -> Self {
+        Self(label.to_string())
+    }
+
+    /// Borrow the stored label as a string.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Try to interpret the label as a numeric index.
     ///
-    /// [`Observation`] stores the original user-facing output name in this
-    /// type.
-    OutputLabel
-);
+    /// This is mainly a compatibility helper for lower-level paths that still
+    /// operate on dense indices after label resolution.
+    pub fn index(&self) -> Option<usize> {
+        self.0.parse::<usize>().ok()
+    }
+}
+
+impl From<String> for OutputLabel {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl From<&str> for OutputLabel {
+    fn from(value: &str) -> Self {
+        Self(value.to_string())
+    }
+}
+
+impl From<usize> for OutputLabel {
+    fn from(value: usize) -> Self {
+        Self(value.to_string())
+    }
+}
+
+impl AsRef<str> for OutputLabel {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl fmt::Display for OutputLabel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl PartialEq<usize> for OutputLabel {
+    fn eq(&self, other: &usize) -> bool {
+        self.index() == Some(*other)
+    }
+}
+
+impl PartialEq<OutputLabel> for usize {
+    fn eq(&self, other: &OutputLabel) -> bool {
+        other == self
+    }
+}
+
+impl PartialEq<usize> for &OutputLabel {
+    fn eq(&self, other: &usize) -> bool {
+        (**self).eq(other)
+    }
+}
+
+impl PartialEq<&OutputLabel> for usize {
+    fn eq(&self, other: &&OutputLabel) -> bool {
+        other.eq(self)
+    }
+}
 
 impl Event {
     /// Get the time of the event
@@ -487,11 +550,11 @@ pub enum Censor {
     ALOQ,
 }
 
-    /// Observation of a model output.
-    ///
-    /// An [`Observation`] can carry a measured value or `None` for a prediction-only
-    /// time point. Observations also carry the public output label, optional assay
-    /// error polynomial, occasion index, and censoring state.
+/// Observation of a model output.
+///
+/// An [`Observation`] can carry a measured value or `None` for a prediction-only
+/// time point. Observations also carry the public output label, optional assay
+/// error polynomial, occasion index, and censoring state.
 #[derive(Serialize, Debug, Clone, Deserialize)]
 pub struct Observation {
     time: f64,

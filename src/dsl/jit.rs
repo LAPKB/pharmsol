@@ -1402,9 +1402,27 @@ out(cp) = central / v ~ continuous()
             .expect("compile jit ode model")
             .with_solver(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45));
 
-        let oral = jit.route_index("oral").expect("oral route");
-        let iv = jit.route_index("iv").expect("iv route");
-        let cp = jit.output_index("cp").expect("cp output");
+        let oral = jit
+            .info()
+            .routes
+            .iter()
+            .find(|route| route.name == "oral")
+            .map(|route| route.index)
+            .expect("oral route");
+        let iv = jit
+            .info()
+            .routes
+            .iter()
+            .find(|route| route.name == "iv")
+            .map(|route| route.index)
+            .expect("iv route");
+        let cp = jit
+            .info()
+            .outputs
+            .iter()
+            .find(|output| output.name == "cp")
+            .map(|output| output.index)
+            .expect("cp output");
         assert_eq!(oral, 0);
         assert_eq!(iv, 0);
         assert_eq!(cp, 0);
@@ -1545,9 +1563,27 @@ out(cp) = central / v ~ continuous()
             .expect("compile jit ode model")
             .with_solver(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45));
 
-        let oral = jit.route_index("oral").expect("oral route");
-        let iv = jit.route_index("iv").expect("iv route");
-        let cp = jit.output_index("cp").expect("cp output");
+        let oral = jit
+            .info()
+            .routes
+            .iter()
+            .find(|route| route.name == "oral")
+            .map(|route| route.index)
+            .expect("oral route");
+        let iv = jit
+            .info()
+            .routes
+            .iter()
+            .find(|route| route.name == "iv")
+            .map(|route| route.index)
+            .expect("iv route");
+        let cp = jit
+            .info()
+            .outputs
+            .iter()
+            .find(|output| output.name == "cp")
+            .map(|output| output.index)
+            .expect("cp output");
         assert_eq!(oral, 0);
         assert_eq!(iv, 1);
         assert_eq!(cp, 0);
@@ -1644,8 +1680,20 @@ out(cp) = central / v ~ continuous()
         let model = load_corpus_model("one_cmt_abs");
         let jit = compile_analytical_model_to_jit(&model).expect("compile jit analytical model");
 
-        let oral = jit.route_index("oral").expect("oral route");
-        let cp = jit.output_index("cp").expect("cp output");
+        let oral = jit
+            .info()
+            .routes
+            .iter()
+            .find(|route| route.name == "oral")
+            .map(|route| route.index)
+            .expect("oral route");
+        let cp = jit
+            .info()
+            .outputs
+            .iter()
+            .find(|output| output.name == "cp")
+            .map(|output| output.index)
+            .expect("cp output");
         assert_eq!(oral, 0);
         assert_eq!(cp, 0);
 
@@ -1708,8 +1756,20 @@ out(cp) = central / v ~ continuous()
             .expect("compile jit sde model")
             .with_particles(64);
 
-        let oral = jit.route_index("oral").expect("oral route");
-        let cp = jit.output_index("cp").expect("cp output");
+        let oral = jit
+            .info()
+            .routes
+            .iter()
+            .find(|route| route.name == "oral")
+            .map(|route| route.index)
+            .expect("oral route");
+        let cp = jit
+            .info()
+            .outputs
+            .iter()
+            .find(|output| output.name == "cp")
+            .map(|output| output.index)
+            .expect("cp output");
         assert_eq!(oral, 0);
         assert_eq!(cp, 0);
 

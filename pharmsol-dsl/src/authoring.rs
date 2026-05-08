@@ -5,6 +5,8 @@ use super::diagnostic::{Applicability, DiagnosticSuggestion, ParseError, Span, T
 use super::parser::{parse_expr_fragment, parse_place_fragment};
 
 const DEFAULT_MODEL_NAME: &str = "main";
+const NUMERIC_ROUTE_PREFIX: &str = "input_";
+const NUMERIC_OUTPUT_PREFIX: &str = "outeq_";
 
 pub(super) fn parse_module(src: &str) -> Result<Module, ParseError> {
     AuthoringParser::new(src).parse_module()
@@ -484,7 +486,7 @@ impl<'a> AuthoringParser<'a> {
             }
         };
 
-        let input = parse_label_segment(call.argument, call.argument_start, "route label")?;
+        let input = parse_route_label_segment(call.argument, call.argument_start)?;
         let route_name = input.text.clone();
         let destination = parse_place_at(rhs, line_start + arrow + 2)?;
         if self.routes.contains_key(&route_name) {
@@ -515,8 +517,7 @@ impl<'a> AuthoringParser<'a> {
     ) -> Result<(), ParseError> {
         match call.callee.text.as_str() {
             "lag" | "fa" => {
-                let route_name =
-                    parse_label_segment(call.argument, call.argument_start, "route label")?;
+                let route_name = parse_route_label_segment(call.argument, call.argument_start)?;
                 let value = parse_expr_at(rhs, rhs_abs)?;
                 let property_name = match call.callee.text.as_str() {
                     "lag" => "lag",
@@ -946,28 +947,140 @@ fn parse_ident_segment(src: &str, abs_start: usize) -> Result<Ident, ParseError>
 }
 
 fn parse_output_label_segment(src: &str, abs_start: usize) -> Result<Ident, ParseError> {
-    parse_label_segment(src, abs_start, "output label")
+    parse_label_segment(src, abs_start, LabelKind::Output)
 }
 
-fn parse_label_segment(src: &str, abs_start: usize, expected: &str) -> Result<Ident, ParseError> {
+fn parse_route_label_segment(src: &str, abs_start: usize) -> Result<Ident, ParseError> {
+    parse_label_segment(src, abs_start, LabelKind::Route)
+}
+
+fn parse_label_segment(src: &str, abs_start: usize, kind: LabelKind) -> Result<Ident, ParseError> {
     let trimmed = src.trim();
     let leading = src.len() - src.trim_start().len();
+    let span = Span::new(abs_start + leading, abs_start + leading + trimmed.len());
     if trimmed.is_empty() {
         return Err(ParseError::new(
-            format!("expected {expected}"),
+            format!("expected {}", kind.expected()),
             Span::new(abs_start, abs_start + src.len()),
         ));
     }
     if !is_valid_output_label(trimmed) {
         return Err(ParseError::new(
-            format!("expected {expected}, found `{trimmed}`"),
-            Span::new(abs_start + leading, abs_start + leading + trimmed.len()),
+            format!("expected {}, found `{trimmed}`", kind.expected()),
+            span,
         ));
     }
-    Ok(Ident::new(
-        trimmed,
-        Span::new(abs_start + leading, abs_start + leading + trimmed.len()),
-    ))
+
+    if let Some(suffix) = bare_numeric_label(trimmed) {
+        let replacement = kind.canonical_label(suffix);
+        return Err(ParseError::new(
+            format!(
+                "bare numeric {} labels are not allowed in the DSL; use `{replacement}` instead",
+                kind.noun()
+            ),
+            span,
+        )
+        .with_help(format!(
+            "numeric {} labels must use the `{}` prefix in authored DSL",
+            kind.noun(),
+            kind.prefix_pattern()
+        ))
+        .with_suggestion(DiagnosticSuggestion {
+            message: format!("use `{replacement}`"),
+            edits: vec![TextEdit { span, replacement }],
+            applicability: Applicability::Always,
+        }));
+    }
+
+    if let Some(suffix) = canonical_numeric_suffix(trimmed, kind.wrong_prefix()) {
+        let replacement = kind.canonical_label(suffix);
+        return Err(ParseError::new(
+            format!(
+                "`{trimmed}` is {} label and cannot be used as {}; use `{replacement}` here",
+                kind.wrong_kind_phrase(),
+                kind.noun_phrase()
+            ),
+            span,
+        )
+        .with_help(format!(
+            "numeric {} labels use the `{}` prefix",
+            kind.noun(),
+            kind.prefix_pattern()
+        ))
+        .with_suggestion(DiagnosticSuggestion {
+            message: format!("use `{replacement}`"),
+            edits: vec![TextEdit { span, replacement }],
+            applicability: Applicability::Always,
+        }));
+    }
+
+    Ok(Ident::new(trimmed, span))
+}
+
+#[derive(Clone, Copy)]
+enum LabelKind {
+    Route,
+    Output,
+}
+
+impl LabelKind {
+    fn expected(self) -> &'static str {
+        match self {
+            Self::Route => "route label",
+            Self::Output => "output label",
+        }
+    }
+
+    fn noun(self) -> &'static str {
+        match self {
+            Self::Route => "route",
+            Self::Output => "output",
+        }
+    }
+
+    fn noun_phrase(self) -> &'static str {
+        match self {
+            Self::Route => "a route",
+            Self::Output => "an output",
+        }
+    }
+
+    fn wrong_kind_phrase(self) -> &'static str {
+        match self {
+            Self::Route => "an output",
+            Self::Output => "a route",
+        }
+    }
+
+    fn canonical_label(self, suffix: &str) -> String {
+        match self {
+            Self::Route => format!("{NUMERIC_ROUTE_PREFIX}{suffix}"),
+            Self::Output => format!("{NUMERIC_OUTPUT_PREFIX}{suffix}"),
+        }
+    }
+
+    fn wrong_prefix(self) -> &'static str {
+        match self {
+            Self::Route => NUMERIC_OUTPUT_PREFIX,
+            Self::Output => NUMERIC_ROUTE_PREFIX,
+        }
+    }
+
+    fn prefix_pattern(self) -> &'static str {
+        match self {
+            Self::Route => "input_<n>",
+            Self::Output => "outeq_<n>",
+        }
+    }
+}
+
+fn bare_numeric_label(src: &str) -> Option<&str> {
+    (!src.is_empty() && src.chars().all(|ch| ch.is_ascii_digit())).then_some(src)
+}
+
+fn canonical_numeric_suffix<'a>(src: &'a str, prefix: &str) -> Option<&'a str> {
+    let suffix = src.strip_prefix(prefix)?;
+    (!suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit())).then_some(suffix)
 }
 
 fn parse_place_at(src: &str, abs_start: usize) -> Result<Place, ParseError> {

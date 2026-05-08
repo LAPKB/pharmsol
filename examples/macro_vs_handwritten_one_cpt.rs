@@ -26,9 +26,6 @@ fn macro_model() -> equation::ODE {
 
 fn handwritten_model() -> equation::ODE {
     equation::ODE::new(
-        // Handwritten closures stay on dense internal slots.
-        // Public labels like `iv` and `cp` live in attached metadata, not in
-        // the low-level `rateiv[]` / `y[]` buffers.
         |x, p, _t, dx, _bolus, rateiv, _cov| {
             fetch_params!(p, ke, _v);
             dx[0] = rateiv[0] - ke * x[0];
@@ -70,12 +67,6 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
     let handwritten_ode = handwritten_model();
 
     assert_eq!(macro_ode.metadata(), handwritten_ode.metadata());
-
-    let iv = macro_ode.route_index("iv").expect("iv route exists");
-    let cp = macro_ode.output_index("cp").expect("cp output exists");
-
-    assert_eq!(handwritten_ode.route_index("iv"), Some(iv));
-    assert_eq!(handwritten_ode.output_index("cp"), Some(cp));
 
     let subject = Subject::builder("macro-vs-handwritten-one-cpt")
         .infusion(0.0, 500.0, "iv", 0.5)

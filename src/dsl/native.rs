@@ -48,6 +48,8 @@ pub type DenseKernelFn = unsafe extern "C" fn(
 
 const DEFAULT_ODE_RTOL: f64 = 1e-4;
 const DEFAULT_ODE_ATOL: f64 = 1e-4;
+const NUMERIC_ROUTE_PREFIX: &str = "input_";
+const NUMERIC_OUTPUT_PREFIX: &str = "outeq_";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RuntimeBackend {
@@ -357,6 +359,20 @@ impl SharedNativeModel {
             .map(|output| output.index)
     }
 
+    fn metadata_route_index_for_label(&self, label: &str) -> Option<usize> {
+        self.route_index(label).or_else(|| {
+            canonical_numeric_alias(label, NUMERIC_ROUTE_PREFIX)
+                .and_then(|alias| self.route_index(alias.as_str()))
+        })
+    }
+
+    fn metadata_output_index_for_label(&self, label: &str) -> Option<usize> {
+        self.output_index(label).or_else(|| {
+            canonical_numeric_alias(label, NUMERIC_OUTPUT_PREFIX)
+                .and_then(|alias| self.output_index(alias.as_str()))
+        })
+    }
+
     fn validate_support_point(&self, support_point: &[f64]) -> Result<(), PharmsolError> {
         if support_point.len() != self.info.parameters.len() {
             return Err(PharmsolError::OtherError(format!(
@@ -406,17 +422,17 @@ impl SharedNativeModel {
         label: &InputLabel,
         kind: RouteKind,
     ) -> Result<usize, PharmsolError> {
-        let input =
-            self.route_index(label.as_str())
-                .ok_or_else(|| PharmsolError::UnknownInputLabel {
-                    label: label.to_string(),
-                })?;
+        let input = self
+            .metadata_route_index_for_label(label.as_str())
+            .ok_or_else(|| PharmsolError::UnknownInputLabel {
+                label: label.to_string(),
+            })?;
         self.validate_input_for_kind(input, kind)?;
         Ok(input)
     }
 
     fn resolve_output_label(&self, label: &OutputLabel) -> Result<usize, PharmsolError> {
-        self.output_index(label.as_str())
+        self.metadata_output_index_for_label(label.as_str())
             .ok_or_else(|| PharmsolError::UnknownOutputLabel {
                 label: label.to_string(),
             })
@@ -772,14 +788,6 @@ impl NativeOdeModel {
         self.rtol = rtol;
         self.atol = atol;
         self
-    }
-
-    pub fn route_index(&self, name: &str) -> Option<usize> {
-        self.shared.route_index(name)
-    }
-
-    pub fn output_index(&self, name: &str) -> Option<usize> {
-        self.shared.output_index(name)
     }
 
     pub fn info(&self) -> &NativeModelInfo {
@@ -1175,12 +1183,22 @@ impl Equation for NativeOdeModel {
         support_point: &[f64],
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
+        let bound_error_models = self.bind_error_models(error_models)?;
         let predictions = runtime_ode_predictions(self, subject, support_point)?;
-        predictions.log_likelihood(error_models)
+        predictions.log_likelihood(&bound_error_models)
     }
 
     fn kind() -> EqnKind {
         EqnKind::ODE
+    }
+
+    fn assay_error_models(&self) -> AssayErrorModels {
+        AssayErrorModels::with_output_names(
+            self.info()
+                .outputs
+                .iter()
+                .map(|output| output.name.as_str()),
+        )
     }
 
     fn estimate_predictions(
@@ -1197,8 +1215,13 @@ impl Equation for NativeOdeModel {
         support_point: &[f64],
         error_models: Option<&AssayErrorModels>,
     ) -> Result<(Self::P, Option<f64>), PharmsolError> {
+        let bound_error_models = match error_models {
+            Some(error_models) => Some(self.bind_error_models(error_models)?),
+            None => None,
+        };
+
         let predictions = runtime_ode_predictions(self, subject, support_point)?;
-        let likelihood = match error_models {
+        let likelihood = match bound_error_models.as_ref() {
             Some(error_models) => Some(predictions.log_likelihood(error_models)?.exp()),
             None => None,
         };
@@ -1211,14 +1234,6 @@ impl NativeAnalyticalModel {
         Self {
             shared: Arc::new(SharedNativeModel::new(info, artifact)),
         }
-    }
-
-    pub fn route_index(&self, name: &str) -> Option<usize> {
-        self.shared.route_index(name)
-    }
-
-    pub fn output_index(&self, name: &str) -> Option<usize> {
-        self.shared.output_index(name)
     }
 
     pub fn info(&self) -> &NativeModelInfo {
@@ -1382,14 +1397,6 @@ impl NativeSdeModel {
     pub fn with_particles(mut self, nparticles: usize) -> Self {
         self.nparticles = nparticles;
         self
-    }
-
-    pub fn route_index(&self, name: &str) -> Option<usize> {
-        self.shared.route_index(name)
-    }
-
-    pub fn output_index(&self, name: &str) -> Option<usize> {
-        self.shared.output_index(name)
     }
 
     pub fn info(&self) -> &NativeModelInfo {
@@ -1687,6 +1694,13 @@ fn sort_events(events: &mut [Event]) {
     });
 }
 
+fn canonical_numeric_alias(label: &str, prefix: &str) -> Option<String> {
+    if label.is_empty() || !label.chars().all(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
+    Some(format!("{prefix}{label}"))
+}
+
 fn project_analytical_parameters(
     info: &NativeModelInfo,
     support_point: &[f64],
@@ -1856,5 +1870,35 @@ fn apply_analytical_kernel(
                 covariates,
             )
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{canonical_numeric_alias, NUMERIC_OUTPUT_PREFIX, NUMERIC_ROUTE_PREFIX};
+
+    #[test]
+    fn canonical_numeric_alias_maps_bare_numeric_labels_to_contextual_prefixes() {
+        assert_eq!(
+            canonical_numeric_alias("1", NUMERIC_ROUTE_PREFIX),
+            Some("input_1".to_string())
+        );
+        assert_eq!(
+            canonical_numeric_alias("10", NUMERIC_OUTPUT_PREFIX),
+            Some("outeq_10".to_string())
+        );
+    }
+
+    #[test]
+    fn canonical_numeric_alias_ignores_symbolic_and_prefixed_labels() {
+        assert_eq!(canonical_numeric_alias("iv", NUMERIC_ROUTE_PREFIX), None);
+        assert_eq!(
+            canonical_numeric_alias("input_1", NUMERIC_ROUTE_PREFIX),
+            None
+        );
+        assert_eq!(
+            canonical_numeric_alias("outeq_2", NUMERIC_OUTPUT_PREFIX),
+            None
+        );
     }
 }

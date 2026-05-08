@@ -77,10 +77,6 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["cp"]
         );
-        assert_eq!(model.route_index("oral"), Some(0));
-        assert_eq!(model.route_index("load"), Some(1));
-        assert_eq!(model.route_index("iv"), Some(0));
-        assert_eq!(model.output_index("cp"), Some(0));
     }
 
     fn assert_analytical_full_public_shape(model: &CompiledRuntimeModel) {
@@ -135,10 +131,6 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["cp"]
         );
-        assert_eq!(model.route_index("oral"), Some(0));
-        assert_eq!(model.route_index("load"), Some(1));
-        assert_eq!(model.route_index("iv"), Some(0));
-        assert_eq!(model.output_index("cp"), Some(0));
     }
 
     fn assert_full_backend_parity(

@@ -305,4 +305,42 @@ out(cp) = central / v ~ continuous()
         assert!(info.routes[0].inject_input_to_destination);
         assert!(!info.routes[1].inject_input_to_destination);
     }
+
+    #[test]
+    fn native_model_info_preserves_canonical_numeric_channel_names() {
+        let info = load_model_info(
+            r#"
+name = canonical_numeric_channels
+kind = ode
+
+params = ke, v
+states = depot, central
+outputs = cp, outeq_2
+
+bolus(input_10) -> depot
+infusion(iv) -> central
+
+dx(depot) = -ke * depot
+dx(central) = rate(input_10) - ke * central
+
+out(cp) = central / v
+out(outeq_2) = depot / v
+"#,
+        );
+
+        assert_eq!(
+            info.routes
+                .iter()
+                .map(|route| route.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["input_10", "iv"]
+        );
+        assert_eq!(
+            info.outputs
+                .iter()
+                .map(|output| output.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["cp", "outeq_2"]
+        );
+    }
 }

@@ -65,22 +65,18 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
         },
     };
 
-    let iv = ode.route_index("iv").expect("iv route exists");
-    let cp = ode.output_index("cp").expect("cp output exists");
-
-    // Create a subject using metadata-backed route and output names instead of
-    // hard-coded numeric indices.
+    // Create a subject using route and output labels directly.
     let subject = Subject::builder("subject_001")
-        .infusion(0.0, 500.0, iv, 0.5)
+        .infusion(0.0, 500.0, "iv", 0.5)
         .covariate("wt", 0.0, 70.0)
-        .observation(0.5, 8.5, cp)
-        .observation(1.0, 6.2, cp)
-        .observation(2.0, 4.1, cp)
-        .observation(4.0, 2.3, cp)
-        .observation(6.0, 1.5, cp)
-        .observation(8.0, 1.1, cp)
-        .observation(12.0, 0.7, cp)
-        .missing_observation(24.0, cp)
+        .observation(0.5, 8.5, "cp")
+        .observation(1.0, 6.2, "cp")
+        .observation(2.0, 4.1, "cp")
+        .observation(4.0, 2.3, "cp")
+        .observation(6.0, 1.5, "cp")
+        .observation(8.0, 1.1, "cp")
+        .observation(12.0, 0.7, "cp")
+        .missing_observation(24.0, "cp")
         .build();
 
     // Define parameter values

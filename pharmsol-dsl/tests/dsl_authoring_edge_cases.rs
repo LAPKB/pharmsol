@@ -162,18 +162,18 @@ out(cp) = central ~ continous()
 }
 
 #[test]
-fn mixed_named_and_numeric_output_labels_lower_and_round_trip() {
+fn mixed_named_and_prefixed_numeric_output_labels_lower_and_round_trip() {
     let src = r#"
 name = mixed_output_labels
 kind = ode
 params = ke, v
 states = central
-outputs = cp, 0, 1
+outputs = cp, outeq_0, outeq_1
 infusion(iv) -> central
 ddt(central) = -ke * central
 out(cp) = central / v
-out(0) = 2 * central / v
-out(1) = 3 * central / v
+out(outeq_0) = 2 * central / v
+out(outeq_1) = 3 * central / v
 "#;
 
     let module = parse_module(src).expect("mixed output labels should parse in authoring DSL");
@@ -191,7 +191,7 @@ out(1) = 3 * central / v
             .iter()
             .map(|output| output.name.as_str())
             .collect::<Vec<_>>(),
-        vec!["cp", "0", "1"]
+        vec!["cp", "outeq_0", "outeq_1"]
     );
     assert_eq!(
         lowered
@@ -210,26 +210,26 @@ out(1) = 3 * central / v
 }
 
 #[test]
-fn shared_numeric_route_and_output_labels_lower_and_round_trip() {
+fn prefixed_numeric_route_and_output_labels_lower_and_round_trip() {
     let src = r#"
-name = shared_numeric_route_output_labels
+name = prefixed_numeric_route_output_labels
 kind = ode
 params = ke, v
 states = central
-outputs = 1
-infusion(1) -> central
+outputs = outeq_1
+infusion(input_1) -> central
 ddt(central) = -ke * central
-out(1) = central / v
+out(outeq_1) = central / v
 "#;
 
-    let module = parse_module(src).expect("shared numeric route/output labels should parse");
+    let module = parse_module(src).expect("prefixed numeric route/output labels should parse");
     let model = module
         .models
         .first()
         .expect("authoring DSL should produce one model");
-    let typed = analyze_model(model).expect("shared numeric route/output labels should analyze");
+    let typed = analyze_model(model).expect("prefixed numeric route/output labels should analyze");
     let lowered =
-        lower_typed_model(&typed).expect("shared numeric route/output labels should lower");
+        lower_typed_model(&typed).expect("prefixed numeric route/output labels should lower");
 
     assert_eq!(
         lowered
@@ -238,7 +238,7 @@ out(1) = central / v
             .iter()
             .map(|route| route.name.as_str())
             .collect::<Vec<_>>(),
-        vec!["1"]
+        vec!["input_1"]
     );
     assert_eq!(
         lowered
@@ -247,13 +247,212 @@ out(1) = central / v
             .iter()
             .map(|output| output.name.as_str())
             .collect::<Vec<_>>(),
-        vec!["1"]
+        vec!["outeq_1"]
     );
 
     let rendered = module.to_string();
     let reparsed = parse_module(&rendered).expect("rendered shared-label model should reparse");
 
     assert_eq!(rendered, reparsed.to_string());
+}
+
+#[test]
+fn rejects_authoring_bare_numeric_output_declarations() {
+    let src = r#"
+name = numeric_outputs
+kind = ode
+states = central
+outputs = 1, 2
+ddt(central) = 0
+out(1) = central
+"#;
+
+    let err = parse_model(src).expect_err("bare numeric output declarations must fail");
+    let rendered = err.render(src);
+
+    assert!(
+        rendered.contains(
+            "bare numeric output labels are not allowed in the DSL; use `outeq_1` instead"
+        ),
+        "{}",
+        rendered
+    );
+    assert!(
+        rendered.contains("suggestion: use `outeq_1`"),
+        "{}",
+        rendered
+    );
+}
+
+#[test]
+fn rejects_authoring_bare_numeric_route_labels() {
+    let src = r#"
+name = numeric_routes
+kind = ode
+states = central
+outputs = cp
+infusion(1) -> central
+ddt(central) = 0
+out(cp) = central
+"#;
+
+    let err = parse_model(src).expect_err("bare numeric route labels must fail");
+    let rendered = err.render(src);
+
+    assert!(
+        rendered.contains(
+            "bare numeric route labels are not allowed in the DSL; use `input_1` instead"
+        ),
+        "{}",
+        rendered
+    );
+    assert!(
+        rendered.contains("suggestion: use `input_1`"),
+        "{}",
+        rendered
+    );
+}
+
+#[test]
+fn rejects_structured_bare_numeric_output_targets() {
+    let src = r#"
+model numeric_output_target {
+    kind ode
+    states { central }
+    outputs {
+        1 = central
+    }
+}
+"#;
+
+    let model = parse_model(src).expect("structured model parses");
+    let err = analyze_model(&model).expect_err("bare numeric output target must fail");
+    let rendered = err.render(src);
+
+    assert!(
+        rendered.contains(
+            "bare numeric output labels are not allowed in the DSL; use `outeq_1` instead"
+        ),
+        "{}",
+        rendered
+    );
+    assert!(
+        rendered.contains("suggestion: use `outeq_1`"),
+        "{}",
+        rendered
+    );
+}
+
+#[test]
+fn rejects_structured_bare_numeric_route_labels() {
+    let src = r#"
+model numeric_route_label {
+    kind ode
+    states { central }
+    routes {
+        1 -> central
+    }
+    outputs {
+        cp = central
+    }
+}
+"#;
+
+    let model = parse_model(src).expect("structured model parses");
+    let err = analyze_model(&model).expect_err("bare numeric route label must fail");
+    let rendered = err.render(src);
+
+    assert!(
+        rendered.contains(
+            "bare numeric route labels are not allowed in the DSL; use `input_1` instead"
+        ),
+        "{}",
+        rendered
+    );
+    assert!(
+        rendered.contains("suggestion: use `input_1`"),
+        "{}",
+        rendered
+    );
+}
+
+#[test]
+fn rejects_rate_numeric_literals_with_prefixed_guidance() {
+    let src = r#"
+model numeric_rate_arg {
+    kind ode
+    states { central }
+    routes { input_5 -> central }
+    dynamics {
+        ddt(central) = rate(5)
+    }
+    outputs {
+        cp = central
+    }
+}
+"#;
+
+    let model = parse_model(src).expect("structured model parses");
+    let err = analyze_model(&model).expect_err("bare numeric rate argument must fail");
+    let rendered = err.render(src);
+
+    assert!(
+        rendered.contains(
+            "bare numeric route labels are not allowed in the DSL; use `input_5` instead"
+        ),
+        "{}",
+        rendered
+    );
+    assert!(
+        rendered.contains("suggestion: use `input_5`"),
+        "{}",
+        rendered
+    );
+}
+
+#[test]
+fn rejects_wrong_prefix_labels_in_authored_dsl() {
+    let src = r#"
+name = wrong_prefix_route
+kind = ode
+states = central
+outputs = cp
+infusion(outeq_1) -> central
+ddt(central) = 0
+out(cp) = central
+"#;
+
+    let err = parse_model(src).expect_err("wrong-prefix route labels must fail");
+    let rendered = err.render(src);
+
+    assert!(
+        rendered.contains(
+            "`outeq_1` is an output label and cannot be used as a route; use `input_1` here"
+        ),
+        "{}",
+        rendered
+    );
+
+    let src = r#"
+name = wrong_prefix_output
+kind = ode
+states = central
+outputs = cp
+infusion(iv) -> central
+ddt(central) = 0
+out(input_1) = central
+"#;
+
+    let err = parse_model(src).expect_err("wrong-prefix output labels must fail");
+    let rendered = err.render(src);
+
+    assert!(
+        rendered.contains(
+            "`input_1` is a route label and cannot be used as an output; use `outeq_1` here"
+        ),
+        "{}",
+        rendered
+    );
 }
 
 #[test]

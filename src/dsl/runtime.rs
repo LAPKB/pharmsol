@@ -33,7 +33,7 @@
 //!   it into the same runtime model shape. Use it when you want reusable native
 //!   artifacts and can control the target platform.
 //! - [`RuntimeCompilationTarget::Wasm`] emits portable WASM bytes and reloads
-//!   them into the host-side runtime adapter. Use it when you need a portable
+//!   them into the host-side runtime adapter. Choose this target when you need a portable
 //!   artifact or browser-aligned deployment story.
 //!
 //! Smallest compile-and-run example:
@@ -227,22 +227,6 @@ impl CompiledRuntimeModel {
 
     pub fn kind(&self) -> ModelKind {
         self.info().kind
-    }
-
-    pub fn route_index(&self, name: &str) -> Option<usize> {
-        match self {
-            Self::Ode(model) => model.route_index(name),
-            Self::Analytical(model) => model.route_index(name),
-            Self::Sde(model) => model.route_index(name),
-        }
-    }
-
-    pub fn output_index(&self, name: &str) -> Option<usize> {
-        match self {
-            Self::Ode(model) => model.output_index(name),
-            Self::Analytical(model) => model.output_index(name),
-            Self::Sde(model) => model.output_index(name),
-        }
     }
 
     pub fn estimate_predictions(
@@ -502,27 +486,27 @@ kind = ode
 
 params = ke, v
 states = central
-outputs = 2, 10, 11
+outputs = outeq_2, outeq_10, outeq_11
 
 infusion(iv) -> central
 
 dx(central) = -ke * central
 
-out(10) = central / v ~ continuous()
-out(2) = central / v ~ continuous()
-out(11) = central / v ~ continuous()
+out(outeq_10) = central / v ~ continuous()
+out(outeq_2) = central / v ~ continuous()
+out(outeq_11) = central / v ~ continuous()
 "#;
 
     const NUMERIC_ROUTE_LABELS_RUNTIME_DSL: &str = r#"
-name = numeric_route_runtime
+name = prefixed_numeric_route_runtime
 kind = ode
 
 params = ke, v
 states = central
 outputs = cp
 
-bolus(10) -> central
-bolus(11) -> central
+bolus(input_10) -> central
+bolus(input_11) -> central
 
 dx(central) = -ke * central
 
@@ -530,18 +514,18 @@ out(cp) = central / v ~ continuous()
 "#;
 
     const SHARED_NUMERIC_ROUTE_OUTPUT_LABEL_RUNTIME_DSL: &str = r#"
-name = shared_numeric_route_output_runtime
+name = prefixed_numeric_route_output_runtime
 kind = ode
 
 params = ke, v
 states = central
-outputs = 1
+outputs = outeq_1
 
-infusion(1) -> central
+infusion(input_1) -> central
 
 dx(central) = -ke * central
 
-out(1) = central / v ~ continuous()
+out(outeq_1) = central / v ~ continuous()
 "#;
 
     const UNDECLARED_NUMERIC_OUTPUT_LABEL_RUNTIME_DSL: &str = r#"
@@ -670,8 +654,35 @@ out(cp) = central / v ~ continuous()
         (jit, aot, wasm)
     }
 
+    fn compiled_route_input_index(model: &CompiledRuntimeModel, name: &str) -> Option<usize> {
+        model
+            .info()
+            .routes
+            .iter()
+            .find(|route| route.name == name)
+            .map(|route| route.index)
+    }
+
+    fn compiled_output_slot_index(model: &CompiledRuntimeModel, name: &str) -> Option<usize> {
+        model
+            .info()
+            .outputs
+            .iter()
+            .find(|output| output.name == name)
+            .map(|output| output.index)
+    }
+
     fn numeric_route_subject() -> Subject {
         Subject::builder("numeric-route-runtime")
+            .bolus(0.0, 120.0, "input_10")
+            .bolus(1.0, 80.0, "input_11")
+            .missing_observation(0.5, "cp")
+            .missing_observation(1.5, "cp")
+            .build()
+    }
+
+    fn numeric_route_alias_subject() -> Subject {
+        Subject::builder("numeric-route-runtime-alias")
             .bolus(0.0, 120.0, "10")
             .bolus(1.0, 80.0, "11")
             .missing_observation(0.5, "cp")
@@ -680,7 +691,15 @@ out(cp) = central / v ~ continuous()
     }
 
     fn shared_numeric_route_output_subject() -> Subject {
-        Subject::builder("shared-numeric-route-output-runtime")
+        Subject::builder("prefixed-numeric-route-output-runtime")
+            .infusion(0.0, 120.0, "input_1", 1.0)
+            .missing_observation(0.5, "outeq_1")
+            .missing_observation(1.5, "outeq_1")
+            .build()
+    }
+
+    fn shared_numeric_route_output_alias_subject() -> Subject {
+        Subject::builder("raw-numeric-route-output-runtime")
             .infusion(0.0, 120.0, "1", 1.0)
             .missing_observation(0.5, "1")
             .missing_observation(1.5, "1")
@@ -758,9 +777,9 @@ out(cp) = central / v ~ continuous()
             vec!["ka", "cl", "v", "tlag", "f_oral"]
         );
 
-        assert!(jit.route_index("oral").is_some());
-        assert!(jit.route_index("iv").is_some());
-        assert_eq!(jit.output_index("cp"), Some(0));
+        assert!(compiled_route_input_index(&jit, "oral").is_some());
+        assert!(compiled_route_input_index(&jit, "iv").is_some());
+        assert_eq!(compiled_output_slot_index(&jit, "cp"), Some(0));
         let subject = ode_subject();
 
         let jit_values = subject_values(
@@ -796,33 +815,33 @@ out(cp) = central / v ~ continuous()
             work_dir.path(),
         );
 
-        assert_eq!(jit.output_index("2"), Some(0));
-        assert_eq!(jit.output_index("10"), Some(1));
-        assert_eq!(jit.output_index("11"), Some(2));
-        assert_eq!(aot.output_index("2"), Some(0));
-        assert_eq!(aot.output_index("10"), Some(1));
-        assert_eq!(aot.output_index("11"), Some(2));
-        assert_eq!(wasm.output_index("2"), Some(0));
-        assert_eq!(wasm.output_index("10"), Some(1));
-        assert_eq!(wasm.output_index("11"), Some(2));
+        assert_eq!(compiled_output_slot_index(&jit, "outeq_2"), Some(0));
+        assert_eq!(compiled_output_slot_index(&jit, "outeq_10"), Some(1));
+        assert_eq!(compiled_output_slot_index(&jit, "outeq_11"), Some(2));
+        assert_eq!(compiled_output_slot_index(&aot, "outeq_2"), Some(0));
+        assert_eq!(compiled_output_slot_index(&aot, "outeq_10"), Some(1));
+        assert_eq!(compiled_output_slot_index(&aot, "outeq_11"), Some(2));
+        assert_eq!(compiled_output_slot_index(&wasm, "outeq_2"), Some(0));
+        assert_eq!(compiled_output_slot_index(&wasm, "outeq_10"), Some(1));
+        assert_eq!(compiled_output_slot_index(&wasm, "outeq_11"), Some(2));
     }
 
     #[test]
-    fn runtime_backend_matrix_supports_multi_digit_numeric_route_labels() {
+    fn runtime_backend_matrix_supports_prefixed_multi_digit_numeric_route_labels() {
         let work_dir = tempdir().expect("tempdir");
         let support = vec![0.2, 10.0];
         let (jit, aot, wasm) = compile_runtime_backend_matrix(
             NUMERIC_ROUTE_LABELS_RUNTIME_DSL,
-            "numeric_route_runtime",
+            "prefixed_numeric_route_runtime",
             work_dir.path(),
         );
 
-        assert_eq!(jit.route_index("10"), Some(0));
-        assert_eq!(jit.route_index("11"), Some(1));
-        assert_eq!(aot.route_index("10"), Some(0));
-        assert_eq!(aot.route_index("11"), Some(1));
-        assert_eq!(wasm.route_index("10"), Some(0));
-        assert_eq!(wasm.route_index("11"), Some(1));
+        assert_eq!(compiled_route_input_index(&jit, "input_10"), Some(0));
+        assert_eq!(compiled_route_input_index(&jit, "input_11"), Some(1));
+        assert_eq!(compiled_route_input_index(&aot, "input_10"), Some(0));
+        assert_eq!(compiled_route_input_index(&aot, "input_11"), Some(1));
+        assert_eq!(compiled_route_input_index(&wasm, "input_10"), Some(0));
+        assert_eq!(compiled_route_input_index(&wasm, "input_11"), Some(1));
 
         let subject = numeric_route_subject();
 
@@ -851,23 +870,95 @@ out(cp) = central / v ~ continuous()
     }
 
     #[test]
-    fn runtime_backend_matrix_supports_shared_numeric_route_and_output_labels() {
+    fn runtime_backend_matrix_resolves_raw_numeric_route_labels_against_prefixed_metadata() {
+        let work_dir = tempdir().expect("tempdir");
+        let support = vec![0.2, 10.0];
+        let (jit, aot, wasm) = compile_runtime_backend_matrix(
+            NUMERIC_ROUTE_LABELS_RUNTIME_DSL,
+            "prefixed_numeric_route_runtime",
+            work_dir.path(),
+        );
+
+        let subject = numeric_route_alias_subject();
+
+        let jit_values = subject_values(
+            &jit.estimate_predictions(&subject, &support)
+                .expect("jit predictions"),
+        );
+        let aot_values = subject_values(
+            &aot.estimate_predictions(&subject, &support)
+                .expect("aot predictions"),
+        );
+        let wasm_values = subject_values(
+            &wasm
+                .estimate_predictions(&subject, &support)
+                .expect("wasm predictions"),
+        );
+
+        for ((jit_value, aot_value), wasm_value) in jit_values
+            .iter()
+            .zip(aot_values.iter())
+            .zip(wasm_values.iter())
+        {
+            assert_relative_eq!(jit_value, aot_value, max_relative = 1e-4);
+            assert_relative_eq!(jit_value, wasm_value, max_relative = 1e-4);
+        }
+    }
+
+    #[test]
+    fn runtime_backend_matrix_supports_prefixed_numeric_route_and_output_labels() {
         let work_dir = tempdir().expect("tempdir");
         let support = vec![0.2, 10.0];
         let (jit, aot, wasm) = compile_runtime_backend_matrix(
             SHARED_NUMERIC_ROUTE_OUTPUT_LABEL_RUNTIME_DSL,
-            "shared_numeric_route_output_runtime",
+            "prefixed_numeric_route_output_runtime",
             work_dir.path(),
         );
 
-        assert_eq!(jit.route_index("1"), Some(0));
-        assert_eq!(jit.output_index("1"), Some(0));
-        assert_eq!(aot.route_index("1"), Some(0));
-        assert_eq!(aot.output_index("1"), Some(0));
-        assert_eq!(wasm.route_index("1"), Some(0));
-        assert_eq!(wasm.output_index("1"), Some(0));
+        assert_eq!(compiled_route_input_index(&jit, "input_1"), Some(0));
+        assert_eq!(compiled_output_slot_index(&jit, "outeq_1"), Some(0));
+        assert_eq!(compiled_route_input_index(&aot, "input_1"), Some(0));
+        assert_eq!(compiled_output_slot_index(&aot, "outeq_1"), Some(0));
+        assert_eq!(compiled_route_input_index(&wasm, "input_1"), Some(0));
+        assert_eq!(compiled_output_slot_index(&wasm, "outeq_1"), Some(0));
 
         let subject = shared_numeric_route_output_subject();
+
+        let jit_values = subject_values(
+            &jit.estimate_predictions(&subject, &support)
+                .expect("jit predictions"),
+        );
+        let aot_values = subject_values(
+            &aot.estimate_predictions(&subject, &support)
+                .expect("aot predictions"),
+        );
+        let wasm_values = subject_values(
+            &wasm
+                .estimate_predictions(&subject, &support)
+                .expect("wasm predictions"),
+        );
+
+        for ((jit_value, aot_value), wasm_value) in jit_values
+            .iter()
+            .zip(aot_values.iter())
+            .zip(wasm_values.iter())
+        {
+            assert_relative_eq!(jit_value, aot_value, max_relative = 1e-4);
+            assert_relative_eq!(jit_value, wasm_value, max_relative = 1e-4);
+        }
+    }
+
+    #[test]
+    fn runtime_backend_matrix_resolves_shared_raw_numeric_route_and_output_aliases() {
+        let work_dir = tempdir().expect("tempdir");
+        let support = vec![0.2, 10.0];
+        let (jit, aot, wasm) = compile_runtime_backend_matrix(
+            SHARED_NUMERIC_ROUTE_OUTPUT_LABEL_RUNTIME_DSL,
+            "prefixed_numeric_route_output_runtime",
+            work_dir.path(),
+        );
+
+        let subject = shared_numeric_route_output_alias_subject();
 
         let jit_values = subject_values(
             &jit.estimate_predictions(&subject, &support)

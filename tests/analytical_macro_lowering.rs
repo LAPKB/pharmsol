@@ -384,10 +384,13 @@ fn analytical_macro_lowering_matches_handwritten_metadata_and_predictions() {
     let handwritten_model = handwritten_one_compartment();
     let subject = infusion_subject("iv", "cp");
     let support_point = [0.2, 10.0];
+    let macro_metadata = macro_model
+        .metadata()
+        .expect("macro analytical metadata exists");
 
     assert_eq!(macro_model.metadata(), handwritten_model.metadata());
-    assert_eq!(macro_model.route_index("iv"), Some(0));
-    assert_eq!(macro_model.output_index("cp"), Some(0));
+    assert!(macro_metadata.route("iv").is_some());
+    assert!(macro_metadata.output("cp").is_some());
     assert_eq!(macro_model.state_index("central"), Some(0));
 
     let macro_predictions = macro_model
@@ -410,16 +413,14 @@ fn analytical_macro_supports_extra_parameters_and_named_route_bindings() {
     let handwritten_model = handwritten_one_compartment_with_absorption();
     let subject = oral_subject("oral", "cp");
     let support_point = [1.1, 0.2, 10.0, 0.25, 0.8];
+    let macro_metadata = macro_model.metadata().expect("macro metadata exists");
 
     assert_eq!(macro_model.metadata(), handwritten_model.metadata());
-    assert_eq!(macro_model.route_index("oral"), Some(0));
-    assert_eq!(macro_model.output_index("cp"), Some(0));
+    assert!(macro_metadata.route("oral").is_some());
+    assert!(macro_metadata.output("cp").is_some());
     assert_eq!(macro_model.state_index("gut"), Some(0));
     assert_eq!(
-        macro_model
-            .metadata()
-            .expect("macro metadata exists")
-            .analytical_kernel(),
+        macro_metadata.analytical_kernel(),
         Some(equation::AnalyticalKernel::OneCompartmentWithAbsorption)
     );
 
@@ -443,11 +444,12 @@ fn analytical_macro_shared_input_lowering_matches_handwritten_metadata_and_predi
     let handwritten_model = handwritten_shared_input_analytical();
     let subject = shared_input_subject();
     let support_point = [1.1, 0.2, 10.0, 0.25, 0.8];
+    let macro_metadata = macro_model.metadata().expect("macro metadata exists");
 
     assert_eq!(macro_model.metadata(), handwritten_model.metadata());
-    assert_eq!(macro_model.route_index("oral"), Some(0));
-    assert_eq!(macro_model.route_index("iv"), Some(0));
-    assert_eq!(macro_model.output_index("cp"), Some(0));
+    assert!(macro_metadata.route("oral").is_some());
+    assert!(macro_metadata.route("iv").is_some());
+    assert!(macro_metadata.output("cp").is_some());
     assert_eq!(macro_model.state_index("gut"), Some(0));
     assert_eq!(macro_model.state_index("central"), Some(1));
 

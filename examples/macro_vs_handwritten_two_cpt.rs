@@ -29,10 +29,6 @@ fn macro_model() -> equation::ODE {
 
 fn handwritten_model() -> equation::ODE {
     equation::ODE::new(
-        // Handwritten closures stay on dense internal slots.
-        // Public route labels like `load` and `iv` are metadata names; the
-        // low-level `bolus[]`, `rateiv[]`, and `y[]` buffers remain indexed by
-        // dense internal slots.
         |x, p, _t, dx, bolus, rateiv, _cov| {
             fetch_params!(p, ke, kcp, kpc, _v);
             dx[0] = -ke * x[0] - kcp * x[0] + kpc * x[1] + rateiv[0] + bolus[0];
@@ -76,17 +72,17 @@ fn max_abs_diff(left: &[f64], right: &[f64]) -> f64 {
 fn main() -> Result<(), pharmsol::PharmsolError> {
     let macro_ode = macro_model();
     let handwritten_ode = handwritten_model();
+    let macro_metadata = macro_ode.metadata().expect("macro metadata exists");
 
     assert_eq!(macro_ode.metadata(), handwritten_ode.metadata());
-
-    let load = macro_ode.route_index("load").expect("load route exists");
-    let iv = macro_ode.route_index("iv").expect("iv route exists");
-    let cp = macro_ode.output_index("cp").expect("cp output exists");
-
-    assert_eq!(load, iv, "load and iv should share one numeric input");
-    assert_eq!(handwritten_ode.route_index("load"), Some(load));
-    assert_eq!(handwritten_ode.route_index("iv"), Some(iv));
-    assert_eq!(handwritten_ode.output_index("cp"), Some(cp));
+    assert_eq!(
+        macro_metadata
+            .route("load")
+            .map(|route| route.input_index()),
+        macro_metadata.route("iv").map(|route| route.input_index()),
+        "load and iv should share one numeric input"
+    );
+    assert!(macro_metadata.output("cp").is_some());
 
     let subject = Subject::builder("macro-vs-handwritten-two-cpt")
         .bolus(0.0, 100.0, "load")

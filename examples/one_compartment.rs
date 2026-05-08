@@ -31,28 +31,23 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
         },
     };
 
-    let iv = analytical.route_index("iv").expect("iv route exists");
-    let cp = analytical.output_index("cp").expect("cp output exists");
-
-    // Create a subject using metadata-backed route and output names instead of
-    // hard-coded indices.
+    // Create a subject using route and output labels directly.
     let subject = Subject::builder("Nikola Tesla")
-        .infusion(0., 500.0, iv, 0.5)
-        .observation(0.5, 1.645, cp)
-        .observation(1., 1.216, cp)
-        .observation(2., 0.462, cp)
-        .observation(3., 0.169, cp)
-        .observation(4., 0.063, cp)
-        .observation(6., 0.009, cp)
-        .observation(8., 0.001, cp)
-        .missing_observation(12.0, cp)
+        .infusion(0., 500.0, "iv", 0.5)
+        .observation(0.5, 1.645, "cp")
+        .observation(1., 1.216, "cp")
+        .observation(2., 0.462, "cp")
+        .observation(3., 0.169, "cp")
+        .observation(4., 0.063, "cp")
+        .observation(6., 0.009, "cp")
+        .observation(8., 0.001, "cp")
+        .missing_observation(12.0, "cp")
         .build();
 
-    // Define the error models for the observations
-    let ems = AssayErrorModels::new().
-    // For this example, we use a simple additive error model with 5% error
-    add(
-        cp,
+    // Define the assay error models once by label and reuse them across both
+    // equations.
+    let ems = AssayErrorModels::new().add(
+        "cp",
         AssayErrorModel::additive(ErrorPoly::new(0.0, 0.05, 0.0, 0.0), 0.0),
     )?;
 

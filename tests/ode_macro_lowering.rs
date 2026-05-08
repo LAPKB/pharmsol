@@ -104,15 +104,15 @@ fn numeric_label_macro_ode() -> equation::ODE {
         name: "numeric_label_one_cpt",
         params: [ke, v],
         states: [central],
-        outputs: [1],
+        outputs: [outeq_1],
         routes: [
-            infusion(1) -> central,
+            infusion(input_1) -> central,
         ],
         diffeq: |x, _t, dx| {
             dx[central] = -ke * x[central];
         },
         out: |x, _t, y| {
-            y[1] = x[central] / v;
+            y[outeq_1] = x[central] / v;
         },
     }
 }
@@ -138,9 +138,9 @@ fn numeric_label_handwritten_ode() -> equation::ODE {
         equation::metadata::new("numeric_label_one_cpt")
             .parameters(["ke", "v"])
             .states(["central"])
-            .outputs(["1"])
+            .outputs(["outeq_1"])
             .route(
-                equation::Route::infusion("1")
+                equation::Route::infusion("input_1")
                     .to_state("central")
                     .inject_input_to_destination(),
             ),
@@ -222,22 +222,22 @@ fn numeric_route_property_macro_ode() -> equation::ODE {
         name: "numeric_route_property_one_cpt",
         params: [ka, ke, v, tlag, f_oral],
         states: [depot, central],
-        outputs: [1],
+        outputs: [outeq_1],
         routes: [
-            bolus(1) -> depot,
+            bolus(input_1) -> depot,
         ],
         diffeq: |x, _t, dx| {
             dx[depot] = -ka * x[depot];
             dx[central] = ka * x[depot] - ke * x[central];
         },
         lag: |_t| {
-            lag! { 1 => tlag }
+            lag! { input_1 => tlag }
         },
         fa: |_t| {
-            fa! { 1 => f_oral }
+            fa! { input_1 => f_oral }
         },
         out: |x, _t, y| {
-            y[1] = x[central] / v;
+            y[outeq_1] = x[central] / v;
         },
     }
 }
@@ -270,9 +270,9 @@ fn numeric_route_property_handwritten_ode() -> equation::ODE {
         equation::metadata::new("numeric_route_property_one_cpt")
             .parameters(["ka", "ke", "v", "tlag", "f_oral"])
             .states(["depot", "central"])
-            .outputs(["1"])
+            .outputs(["outeq_1"])
             .route(
-                equation::Route::bolus("1")
+                equation::Route::bolus("input_1")
                     .to_state("depot")
                     .with_lag()
                     .with_bioavailability()
@@ -287,7 +287,7 @@ fn mixed_output_labels_macro_ode() -> equation::ODE {
         name: "mixed_output_labels_one_cpt",
         params: [ke, v],
         states: [central],
-        outputs: [cp, 0, 1],
+        outputs: [cp, outeq_0, outeq_1],
         routes: [
             infusion(iv) -> central,
         ],
@@ -296,8 +296,8 @@ fn mixed_output_labels_macro_ode() -> equation::ODE {
         },
         out: |x, _t, y| {
             y[cp] = x[central] / v;
-            y[0] = 2.0 * x[central] / v;
-            y[1] = 3.0 * x[central] / v;
+            y[outeq_0] = 2.0 * x[central] / v;
+            y[outeq_1] = 3.0 * x[central] / v;
         },
     }
 }
@@ -325,7 +325,7 @@ fn mixed_output_labels_handwritten_ode() -> equation::ODE {
         equation::metadata::new("mixed_output_labels_one_cpt")
             .parameters(["ke", "v"])
             .states(["central"])
-            .outputs(["cp", "0", "1"])
+            .outputs(["cp", "outeq_0", "outeq_1"])
             .route(
                 equation::Route::infusion("iv")
                     .to_state("central")
@@ -404,10 +404,13 @@ fn macro_injected_lowering_matches_handwritten_metadata_and_predictions() {
     let handwritten_ode = injected_handwritten_ode();
     let subject = subject_for_route("iv", "cp");
     let support_point = [0.2, 10.0];
+    let macro_metadata = macro_ode
+        .metadata()
+        .expect("macro injected model should carry metadata");
 
     assert_eq!(macro_ode.metadata(), handwritten_ode.metadata());
-    assert_eq!(macro_ode.route_index("iv"), Some(0));
-    assert_eq!(macro_ode.output_index("cp"), Some(0));
+    assert!(macro_metadata.route("iv").is_some());
+    assert!(macro_metadata.output("cp").is_some());
     assert_eq!(macro_ode.state_index("central"), Some(0));
 
     let macro_predictions = macro_ode
@@ -430,10 +433,13 @@ fn macro_numeric_labels_lower_to_dense_slots() {
     let handwritten_ode = numeric_label_handwritten_ode();
     let subject = subject_for_route("1", "1");
     let support_point = [0.2, 10.0];
+    let macro_metadata = macro_ode
+        .metadata()
+        .expect("macro numeric-label model should carry metadata");
 
     assert_eq!(macro_ode.metadata(), handwritten_ode.metadata());
-    assert_eq!(macro_ode.route_index("1"), Some(0));
-    assert_eq!(macro_ode.output_index("1"), Some(0));
+    assert!(macro_metadata.route("input_1").is_some());
+    assert!(macro_metadata.output("outeq_1").is_some());
     assert_eq!(macro_ode.state_index("central"), Some(0));
 
     let macro_predictions = macro_ode
@@ -456,11 +462,14 @@ fn macro_shared_input_lowering_matches_handwritten_metadata_and_predictions() {
     let handwritten_ode = shared_input_handwritten_ode();
     let subject = subject_for_shared_input();
     let support_point = [1.0, 0.2, 10.0, 0.25, 0.8];
+    let macro_metadata = macro_ode
+        .metadata()
+        .expect("macro shared-input model should carry metadata");
 
     assert_eq!(macro_ode.metadata(), handwritten_ode.metadata());
-    assert_eq!(macro_ode.route_index("oral"), Some(0));
-    assert_eq!(macro_ode.route_index("iv"), Some(0));
-    assert_eq!(macro_ode.output_index("cp"), Some(0));
+    assert!(macro_metadata.route("oral").is_some());
+    assert!(macro_metadata.route("iv").is_some());
+    assert!(macro_metadata.output("cp").is_some());
     assert_eq!(macro_ode.state_index("depot"), Some(0));
     assert_eq!(macro_ode.state_index("central"), Some(1));
 
@@ -489,11 +498,14 @@ fn macro_mixed_output_labels_lower_to_dense_slots() {
         .missing_observation(2.0, "1")
         .build();
     let support_point = [0.2, 10.0];
+    let macro_metadata = macro_ode
+        .metadata()
+        .expect("macro mixed-output model should carry metadata");
 
     assert_eq!(macro_ode.metadata(), handwritten_ode.metadata());
-    assert_eq!(macro_ode.output_index("cp"), Some(0));
-    assert_eq!(macro_ode.output_index("0"), Some(1));
-    assert_eq!(macro_ode.output_index("1"), Some(2));
+    assert!(macro_metadata.output("cp").is_some());
+    assert!(macro_metadata.output("outeq_0").is_some());
+    assert!(macro_metadata.output("outeq_1").is_some());
 
     let macro_predictions = macro_ode
         .estimate_predictions(&subject, &support_point)
@@ -515,10 +527,13 @@ fn macro_numeric_route_properties_lower_to_dense_slots() {
     let handwritten_ode = numeric_route_property_handwritten_ode();
     let subject = subject_for_numeric_bolus_route("1", "1");
     let support_point = [1.0, 0.2, 10.0, 0.25, 0.8];
+    let macro_metadata = macro_ode
+        .metadata()
+        .expect("macro numeric route-property model should carry metadata");
 
     assert_eq!(macro_ode.metadata(), handwritten_ode.metadata());
-    assert_eq!(macro_ode.route_index("1"), Some(0));
-    assert_eq!(macro_ode.output_index("1"), Some(0));
+    assert!(macro_metadata.route("input_1").is_some());
+    assert!(macro_metadata.output("outeq_1").is_some());
     assert_eq!(macro_ode.state_index("depot"), Some(0));
     assert_eq!(macro_ode.state_index("central"), Some(1));
 
@@ -598,8 +613,8 @@ fn macro_covariate_lowering_matches_handwritten_metadata_and_predictions() {
 
     assert_eq!(macro_ode.metadata(), handwritten_ode.metadata());
     assert_eq!(macro_metadata.covariates().len(), 1);
-    assert_eq!(macro_ode.route_index("oral"), Some(0));
-    assert_eq!(macro_ode.output_index("cp"), Some(0));
+    assert!(macro_metadata.route("oral").is_some());
+    assert!(macro_metadata.output("cp").is_some());
     assert_eq!(macro_ode.state_index("gut"), Some(0));
     assert_eq!(macro_ode.state_index("central"), Some(1));
 

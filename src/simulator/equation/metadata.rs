@@ -27,7 +27,7 @@
 //!
 //! assert_eq!(metadata.name(), "one_cmt");
 //! assert_eq!(metadata.route("iv").unwrap().destination(), "central");
-//! assert_eq!(metadata.output_index("cp"), Some(0));
+//! assert!(metadata.output("cp").is_some());
 //! ```
 
 use pharmsol_dsl::{AnalyticalKernel, CovariateInterpolation, ModelKind};
@@ -181,18 +181,13 @@ impl ValidatedModelMetadata {
         self.states.iter().position(|state| state.name() == name)
     }
 
-    /// Look up a route by public name and return its dense execution input index.
-    pub fn route_index(&self, name: &str) -> Option<usize> {
-        self.route(name).map(ValidatedRoute::input_index)
-    }
-
     /// Look up a route by public name and return its declaration-order index.
     pub fn route_declaration_index(&self, name: &str) -> Option<usize> {
         self.routes.iter().position(|route| route.name() == name)
     }
 
     /// Look up an output by public name and return its dense output index.
-    pub fn output_index(&self, name: &str) -> Option<usize> {
+    pub(crate) fn output_index(&self, name: &str) -> Option<usize> {
         self.outputs.iter().position(|output| output.name() == name)
     }
 
@@ -983,7 +978,7 @@ mod tests {
         assert_eq!(metadata.parameter_index("v"), Some(1));
         assert_eq!(metadata.covariate_index("wt"), Some(0));
         assert_eq!(metadata.state_index("central"), Some(0));
-        assert_eq!(metadata.route_index("iv"), Some(0));
+        assert!(metadata.route("iv").is_some());
         assert_eq!(metadata.route_declaration_index("iv"), Some(0));
         assert_eq!(metadata.route_input_count(), 1);
         assert_eq!(metadata.output_index("cp"), Some(0));
@@ -1083,8 +1078,6 @@ mod tests {
 
         assert_eq!(metadata.routes().len(), 2);
         assert_eq!(metadata.route_input_count(), 1);
-        assert_eq!(metadata.route_index("oral"), Some(0));
-        assert_eq!(metadata.route_index("iv"), Some(0));
         assert_eq!(metadata.route_declaration_index("oral"), Some(0));
         assert_eq!(metadata.route_declaration_index("iv"), Some(1));
         assert_eq!(metadata.route("oral").expect("oral route").input_index(), 0);

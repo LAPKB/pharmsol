@@ -27,22 +27,18 @@ fn main() {
         },
     };
 
-    let oral = ode.route_index("oral").expect("oral route exists");
-    let cp = ode.output_index("cp").expect("cp output exists");
-
-    // Create a subject with metadata-backed route and output names instead of
-    // hard-coded numeric indices.
+    // Create a subject using route and output labels directly.
     let subject = Subject::builder("id1")
-        .bolus(0.0, 100.0, oral)
+        .bolus(0.0, 100.0, "oral")
         .repeat(2, 2.0)
-        .observation(0.5, 0.1, cp)
-        .observation(1.0, 0.4, cp)
-        .observation(2.0, 1.0, cp)
-        .observation(2.5, 1.1, cp)
+        .observation(0.5, 0.1, "cp")
+        .observation(1.0, 0.4, "cp")
+        .observation(2.0, 1.0, "cp")
+        .observation(2.5, 1.1, "cp")
         .covariate("creatinine", 0.0, 80.0)
         .covariate("creatinine", 1.0, 40.0)
         .covariate("age", 0.0, 25.0)
-        .missing_observation(8.0, cp)
+        .missing_observation(8.0, "cp")
         .build();
 
     // Define parameter values

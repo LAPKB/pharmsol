@@ -209,17 +209,30 @@ impl CorpusCase {
 
     fn runtime_subject(self, model: &CompiledRuntimeModel) -> Result<Subject, Box<dyn Error>> {
         model
-            .output_index("cp")
+            .info()
+            .outputs
+            .iter()
+            .find(|output| output.name == "cp")
             .ok_or_else(|| io::Error::other(format!("{}: missing cp output", self.label())))?;
 
         let subject = match self {
             Self::Ode => {
-                model.route_index("oral").ok_or_else(|| {
-                    io::Error::other(format!("{}: missing oral route", self.label()))
-                })?;
-                model.route_index("iv").ok_or_else(|| {
-                    io::Error::other(format!("{}: missing iv route", self.label()))
-                })?;
+                model
+                    .info()
+                    .routes
+                    .iter()
+                    .find(|route| route.name == "oral")
+                    .ok_or_else(|| {
+                        io::Error::other(format!("{}: missing oral route", self.label()))
+                    })?;
+                model
+                    .info()
+                    .routes
+                    .iter()
+                    .find(|route| route.name == "iv")
+                    .ok_or_else(|| {
+                        io::Error::other(format!("{}: missing iv route", self.label()))
+                    })?;
                 Subject::builder(self.label())
                     .covariate("wt", 0.0, 70.0)
                     .bolus(0.0, 120.0, "oral")
@@ -233,15 +246,30 @@ impl CorpusCase {
                     .build()
             }
             Self::OdeFull => {
-                model.route_index("oral").ok_or_else(|| {
-                    io::Error::other(format!("{}: missing oral route", self.label()))
-                })?;
-                model.route_index("load").ok_or_else(|| {
-                    io::Error::other(format!("{}: missing load route", self.label()))
-                })?;
-                model.route_index("iv").ok_or_else(|| {
-                    io::Error::other(format!("{}: missing iv route", self.label()))
-                })?;
+                model
+                    .info()
+                    .routes
+                    .iter()
+                    .find(|route| route.name == "oral")
+                    .ok_or_else(|| {
+                        io::Error::other(format!("{}: missing oral route", self.label()))
+                    })?;
+                model
+                    .info()
+                    .routes
+                    .iter()
+                    .find(|route| route.name == "load")
+                    .ok_or_else(|| {
+                        io::Error::other(format!("{}: missing load route", self.label()))
+                    })?;
+                model
+                    .info()
+                    .routes
+                    .iter()
+                    .find(|route| route.name == "iv")
+                    .ok_or_else(|| {
+                        io::Error::other(format!("{}: missing iv route", self.label()))
+                    })?;
                 Subject::builder(self.label())
                     .bolus(0.0, 80.0, "load")
                     .bolus(1.0, 120.0, "oral")
@@ -261,9 +289,14 @@ impl CorpusCase {
                     .build()
             }
             Self::Analytical => {
-                model.route_index("oral").ok_or_else(|| {
-                    io::Error::other(format!("{}: missing oral route", self.label()))
-                })?;
+                model
+                    .info()
+                    .routes
+                    .iter()
+                    .find(|route| route.name == "oral")
+                    .ok_or_else(|| {
+                        io::Error::other(format!("{}: missing oral route", self.label()))
+                    })?;
                 Subject::builder(self.label())
                     .bolus(0.0, 100.0, "oral")
                     .missing_observation(0.5, "cp")
@@ -273,15 +306,30 @@ impl CorpusCase {
                     .build()
             }
             Self::AnalyticalFull => {
-                model.route_index("oral").ok_or_else(|| {
-                    io::Error::other(format!("{}: missing oral route", self.label()))
-                })?;
-                model.route_index("load").ok_or_else(|| {
-                    io::Error::other(format!("{}: missing load route", self.label()))
-                })?;
-                model.route_index("iv").ok_or_else(|| {
-                    io::Error::other(format!("{}: missing iv route", self.label()))
-                })?;
+                model
+                    .info()
+                    .routes
+                    .iter()
+                    .find(|route| route.name == "oral")
+                    .ok_or_else(|| {
+                        io::Error::other(format!("{}: missing oral route", self.label()))
+                    })?;
+                model
+                    .info()
+                    .routes
+                    .iter()
+                    .find(|route| route.name == "load")
+                    .ok_or_else(|| {
+                        io::Error::other(format!("{}: missing load route", self.label()))
+                    })?;
+                model
+                    .info()
+                    .routes
+                    .iter()
+                    .find(|route| route.name == "iv")
+                    .ok_or_else(|| {
+                        io::Error::other(format!("{}: missing iv route", self.label()))
+                    })?;
                 Subject::builder(self.label())
                     .bolus(0.0, 60.0, "load")
                     .bolus(1.0, 100.0, "oral")
@@ -301,9 +349,14 @@ impl CorpusCase {
                     .build()
             }
             Self::Sde => {
-                model.route_index("oral").ok_or_else(|| {
-                    io::Error::other(format!("{}: missing oral route", self.label()))
-                })?;
+                model
+                    .info()
+                    .routes
+                    .iter()
+                    .find(|route| route.name == "oral")
+                    .ok_or_else(|| {
+                        io::Error::other(format!("{}: missing oral route", self.label()))
+                    })?;
                 Subject::builder(self.label())
                     .covariate("wt", 0.0, 70.0)
                     .bolus(0.0, 80.0, "oral")

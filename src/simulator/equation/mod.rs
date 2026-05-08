@@ -42,8 +42,8 @@
 //!     .validate()
 //!     .unwrap();
 //!
-//! assert_eq!(metadata.route_index("iv"), Some(0));
-//! assert_eq!(metadata.output_index("cp"), Some(0));
+//! assert_eq!(metadata.route("iv").unwrap().destination(), "central");
+//! assert!(metadata.output("cp").is_some());
 //! ```
 
 use std::fmt::Debug;
@@ -65,6 +65,9 @@ use crate::{
 };
 
 use super::likelihood::Prediction;
+
+const NUMERIC_ROUTE_PREFIX: &str = "input_";
+const NUMERIC_OUTPUT_PREFIX: &str = "outeq_";
 
 /// Trait for state vectors that can receive bolus doses.
 pub trait State {
@@ -198,12 +201,15 @@ pub(crate) trait EquationPriv: EquationTypes {
         expected_kind: RouteKind,
     ) -> Result<usize, PharmsolError> {
         if let Some(metadata) = self.metadata() {
-            let route =
-                metadata
-                    .route(label.as_str())
-                    .ok_or_else(|| PharmsolError::UnknownInputLabel {
-                        label: label.to_string(),
-                    })?;
+            let route = metadata
+                .route(label.as_str())
+                .or_else(|| {
+                    canonical_numeric_alias(label.as_str(), NUMERIC_ROUTE_PREFIX)
+                        .and_then(|alias| metadata.route(alias.as_str()))
+                })
+                .ok_or_else(|| PharmsolError::UnknownInputLabel {
+                    label: label.to_string(),
+                })?;
 
             if route.kind() != expected_kind {
                 return Err(PharmsolError::OtherError(format!(
@@ -226,11 +232,15 @@ pub(crate) trait EquationPriv: EquationTypes {
 
     fn resolve_output_label(&self, label: &OutputLabel) -> Result<usize, PharmsolError> {
         if let Some(metadata) = self.metadata() {
-            return metadata.output_index(label.as_str()).ok_or_else(|| {
-                PharmsolError::UnknownOutputLabel {
+            return metadata
+                .output_index(label.as_str())
+                .or_else(|| {
+                    canonical_numeric_alias(label.as_str(), NUMERIC_OUTPUT_PREFIX)
+                        .and_then(|alias| metadata.output_index(alias.as_str()))
+                })
+                .ok_or_else(|| PharmsolError::UnknownOutputLabel {
                     label: label.to_string(),
-                }
-            });
+                });
         }
 
         label
@@ -356,6 +366,13 @@ pub(crate) trait EquationPriv: EquationTypes {
     }
 }
 
+fn canonical_numeric_alias(label: &str, prefix: &str) -> Option<String> {
+    if label.is_empty() || !label.chars().all(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
+    Some(format!("{prefix}{label}"))
+}
+
 /// Trait for handwritten model equations that can be simulated.
 ///
 /// [`Equation`] is the shared interface implemented by handwritten [`ODE`],
@@ -373,6 +390,14 @@ pub(crate) trait EquationPriv: EquationTypes {
 /// is provided for backward compatibility.
 #[allow(private_bounds)]
 pub trait Equation: EquationPriv + 'static + Clone + Sync {
+    #[doc(hidden)]
+    fn bind_error_models(
+        &self,
+        error_models: &AssayErrorModels,
+    ) -> Result<AssayErrorModels, PharmsolError> {
+        Ok(error_models.bind_to(self)?)
+    }
+
     /// Estimate the likelihood of the subject given the support point and error model.
     ///
     /// **Deprecated**: Use [`estimate_log_likelihood`](Self::estimate_log_likelihood) instead
@@ -450,6 +475,22 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
         self.get_nstates()
     }
 
+    /// Build a label-aware [`AssayErrorModels`] set for this equation.
+    ///
+    /// Handwritten equations resolve output labels from attached metadata.
+    /// Equations without metadata fall back to an explicit unbound set so dense
+    /// output-slot workflows remain available without adding runtime lookup cost.
+    #[doc(hidden)]
+    fn assay_error_models(&self) -> AssayErrorModels {
+        self.metadata()
+            .map(|metadata| {
+                AssayErrorModels::with_output_names(
+                    metadata.outputs().iter().map(|output| output.name()),
+                )
+            })
+            .unwrap_or_else(AssayErrorModels::empty)
+    }
+
     /// Simulate a subject with given parameters and optionally calculate likelihood.
     ///
     /// # Parameters
@@ -465,6 +506,11 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
         support_point: &[f64],
         error_models: Option<&AssayErrorModels>,
     ) -> Result<(Self::P, Option<f64>), PharmsolError> {
+        let bound_error_models = match error_models {
+            Some(error_models) => Some(self.bind_error_models(error_models)?),
+            None => None,
+        };
+
         let mut output = Self::P::new(self.nparticles());
         let mut likelihood = Vec::new();
         for occasion in subject.occasions() {
@@ -478,7 +524,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
                     support_point,
                     event,
                     events.get(index + 1),
-                    error_models,
+                    bound_error_models.as_ref(),
                     covariates,
                     &mut x,
                     &mut infusions,
@@ -487,7 +533,9 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
                 )?;
             }
         }
-        let ll = error_models.map(|_| likelihood.iter().product::<f64>());
+        let ll = bound_error_models
+            .as_ref()
+            .map(|_| likelihood.iter().product::<f64>());
         Ok((output, ll))
     }
 }

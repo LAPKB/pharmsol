@@ -159,14 +159,6 @@ impl Analytical {
         self.metadata()?.state_index(name)
     }
 
-    pub fn route_index(&self, name: &str) -> Option<usize> {
-        self.metadata()?.route_index(name)
-    }
-
-    pub fn output_index(&self, name: &str) -> Option<usize> {
-        self.metadata()?.output_index(name)
-    }
-
     fn invalidate_metadata(&mut self) {
         self.metadata = None;
     }
@@ -562,16 +554,66 @@ pub(crate) mod tests {
                     .route(super::super::Route::infusion("iv").to_state("central")),
             )
             .expect("metadata attachment should validate");
+        let metadata = analytical.metadata().expect("metadata exists");
 
         assert_eq!(analytical.parameter_index("ke"), Some(0));
         assert_eq!(analytical.parameter_index("v"), Some(1));
         assert_eq!(analytical.covariate_index("wt"), Some(0));
         assert_eq!(analytical.state_index("central"), Some(0));
-        assert_eq!(analytical.route_index("iv"), Some(0));
-        assert_eq!(analytical.output_index("cp"), Some(0));
-        assert_eq!(
-            analytical.metadata().expect("metadata exists").kind(),
-            ModelKind::Analytical
+        assert!(metadata.route("iv").is_some());
+        assert!(metadata.output("cp").is_some());
+        assert_eq!(metadata.kind(), ModelKind::Analytical);
+    }
+
+    #[test]
+    fn handwritten_analytical_metadata_resolves_raw_numeric_aliases_against_canonical_labels() {
+        let eq = |x: &V, _p: &V, dt: f64, rateiv: &V, _cov: &Covariates| {
+            let mut next = x.clone();
+            next[0] += rateiv[0] * dt;
+            next
+        };
+        let seq_eq = |_params: &mut V, _t: f64, _cov: &Covariates| {};
+        let lag = |_p: &V, _t: f64, _cov: &Covariates| HashMap::new();
+        let fa = |_p: &V, _t: f64, _cov: &Covariates| HashMap::new();
+        let init = |_p: &V, _t: f64, _cov: &Covariates, x: &mut V| {
+            x.fill(0.0);
+        };
+        let out = |x: &V, _p: &V, _t: f64, _cov: &Covariates, y: &mut V| {
+            y[0] = x[0];
+        };
+
+        let analytical = Analytical::new(eq, seq_eq, lag, fa, init, out)
+            .with_nstates(1)
+            .with_ndrugs(1)
+            .with_nout(1)
+            .with_metadata(
+                super::super::metadata::new("numeric_alias_analytical")
+                    .states(["central"])
+                    .outputs(["outeq_1"])
+                    .route(super::super::Route::infusion("input_1").to_state("central")),
+            )
+            .expect("metadata attachment should validate");
+
+        let canonical = Subject::builder("canonical")
+            .infusion(0.0, 100.0, "input_1", 1.0)
+            .observation(1.0, 0.0, "outeq_1")
+            .build();
+        let aliased = Subject::builder("aliased")
+            .infusion(0.0, 100.0, "1", 1.0)
+            .observation(1.0, 0.0, "1")
+            .build();
+
+        let canonical_predictions = analytical
+            .estimate_predictions(&canonical, &[])
+            .expect("canonical labels should simulate");
+        let aliased_predictions = analytical
+            .estimate_predictions(&aliased, &[])
+            .expect("raw numeric aliases should simulate");
+
+        assert_relative_eq!(
+            canonical_predictions.predictions()[0].prediction(),
+            aliased_predictions.predictions()[0].prediction(),
+            epsilon = 1e-10
         );
     }
 
@@ -581,8 +623,6 @@ pub(crate) mod tests {
 
         assert!(analytical.metadata().is_none());
         assert_eq!(analytical.state_index("central"), None);
-        assert_eq!(analytical.route_index("iv"), None);
-        assert_eq!(analytical.output_index("cp"), None);
     }
 
     #[test]
@@ -664,8 +704,15 @@ pub(crate) mod tests {
                 .analytical_kernel(),
             Some(AnalyticalKernel::OneCompartmentWithAbsorption)
         );
-        assert_eq!(analytical.route_index("oral"), Some(0));
-        assert_eq!(analytical.route_index("iv"), Some(0));
+        let metadata = analytical.metadata().expect("metadata exists");
+        assert_eq!(
+            metadata.route("oral").map(|route| route.input_index()),
+            Some(0)
+        );
+        assert_eq!(
+            metadata.route("iv").map(|route| route.input_index()),
+            Some(0)
+        );
     }
 
     #[test]
@@ -681,7 +728,6 @@ pub(crate) mod tests {
             .with_ndrugs(2);
 
         assert!(analytical.metadata().is_none());
-        assert_eq!(analytical.route_index("iv"), None);
     }
 
     fn assert_pm_wrapper_matches_native(
@@ -824,8 +870,9 @@ impl Equation for Analytical {
         support_point: &[f64],
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
+        let bound_error_models = self.bind_error_models(error_models)?;
         let ypred = _subject_predictions(self, subject, support_point)?;
-        ypred.log_likelihood(error_models)
+        ypred.log_likelihood(&bound_error_models)
     }
 
     fn kind() -> EqnKind {
@@ -859,6 +906,7 @@ fn _estimate_likelihood(
     support_point: &[f64],
     error_models: &AssayErrorModels,
 ) -> Result<f64, PharmsolError> {
+    let bound_error_models = ode.bind_error_models(error_models)?;
     let ypred = _subject_predictions(ode, subject, support_point)?;
-    Ok(ypred.log_likelihood(error_models)?.exp())
+    Ok(ypred.log_likelihood(&bound_error_models)?.exp())
 }

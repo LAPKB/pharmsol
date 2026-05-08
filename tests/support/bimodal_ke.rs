@@ -73,14 +73,26 @@ pub fn subject() -> Subject {
     feature = "dsl-wasm"
 ))]
 pub fn subject_for_runtime_model(model: &pharmsol::dsl::CompiledRuntimeModel) -> Subject {
-    let route_label = if model.route_index("iv").is_some() {
+    let route_label = if model.info().routes.iter().any(|route| route.name == "iv") {
         "iv"
-    } else if model.route_index("input_0").is_some() {
+    } else if model
+        .info()
+        .routes
+        .iter()
+        .any(|route| route.name == "input_0")
+    {
         "input_0"
     } else {
         panic!("bimodal_ke route is available");
     };
-    model.output_index("cp").expect("cp output is available");
+    assert!(
+        model
+            .info()
+            .outputs
+            .iter()
+            .any(|output| output.name == "cp"),
+        "cp output is available"
+    );
     subject_for_labels(route_label, "cp")
 }
 

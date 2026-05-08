@@ -597,12 +597,51 @@ mod tests {
             other => panic!("expected ode model, got {other:?}"),
         };
 
-        let oral = jit.route_index("oral").expect("jit oral route");
-        let iv = jit.route_index("iv").expect("jit iv route");
-        let cp = jit.output_index("cp").expect("jit cp output");
-        assert_eq!(aot.route_index("oral"), Some(oral));
-        assert_eq!(aot.route_index("iv"), Some(iv));
-        assert_eq!(aot.output_index("cp"), Some(cp));
+        let oral = jit
+            .info()
+            .routes
+            .iter()
+            .find(|route| route.name == "oral")
+            .map(|route| route.index)
+            .expect("jit oral route");
+        let iv = jit
+            .info()
+            .routes
+            .iter()
+            .find(|route| route.name == "iv")
+            .map(|route| route.index)
+            .expect("jit iv route");
+        let cp = jit
+            .info()
+            .outputs
+            .iter()
+            .find(|output| output.name == "cp")
+            .map(|output| output.index)
+            .expect("jit cp output");
+        assert_eq!(
+            aot.info()
+                .routes
+                .iter()
+                .find(|route| route.name == "oral")
+                .map(|route| route.index),
+            Some(oral)
+        );
+        assert_eq!(
+            aot.info()
+                .routes
+                .iter()
+                .find(|route| route.name == "iv")
+                .map(|route| route.index),
+            Some(iv)
+        );
+        assert_eq!(
+            aot.info()
+                .outputs
+                .iter()
+                .find(|output| output.name == "cp")
+                .map(|output| output.index),
+            Some(cp)
+        );
 
         let subject = crate::Subject::builder("ode")
             .covariate("wt", 0.0, 70.0)

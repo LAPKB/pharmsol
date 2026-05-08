@@ -392,20 +392,26 @@ fn build_analytical_subject() -> Subject {
 fn ode_full_feature_macro_matches_handwritten() -> Result<(), pharmsol::PharmsolError> {
     let macro_ode = macro_ode_model();
     let handwritten_ode = handwritten_ode_model();
+    let macro_metadata = macro_ode.metadata().expect("macro ODE metadata exists");
 
     assert_eq!(macro_ode.metadata(), handwritten_ode.metadata());
 
-    let oral = macro_ode.route_index("oral").expect("oral route exists");
-    let load = macro_ode.route_index("load").expect("load route exists");
-    let iv = macro_ode.route_index("iv").expect("iv route exists");
-    let cp = macro_ode.output_index("cp").expect("cp output exists");
+    let oral = macro_metadata
+        .route("oral")
+        .map(|route| route.input_index())
+        .expect("oral route exists");
+    let load = macro_metadata
+        .route("load")
+        .map(|route| route.input_index())
+        .expect("load route exists");
+    let iv = macro_metadata
+        .route("iv")
+        .map(|route| route.input_index())
+        .expect("iv route exists");
 
     assert_eq!(oral, iv);
     assert_eq!(load, 1);
-    assert_eq!(handwritten_ode.route_index("oral"), Some(oral));
-    assert_eq!(handwritten_ode.route_index("load"), Some(load));
-    assert_eq!(handwritten_ode.route_index("iv"), Some(iv));
-    assert_eq!(handwritten_ode.output_index("cp"), Some(cp));
+    assert!(macro_metadata.output("cp").is_some());
 
     let subject = build_ode_subject();
     let params = [1.1, 0.18, 0.07, 0.04, 35.0, 0.6, 0.85, 4.0, 18.0, 9.0];
@@ -429,29 +435,31 @@ fn ode_full_feature_macro_matches_handwritten() -> Result<(), pharmsol::Pharmsol
 fn analytical_full_feature_macro_matches_handwritten() -> Result<(), pharmsol::PharmsolError> {
     let macro_analytical = macro_analytical_model();
     let handwritten_analytical = handwritten_analytical_model();
+    let macro_metadata = macro_analytical
+        .metadata()
+        .expect("macro analytical metadata exists");
 
     assert_eq!(
         macro_analytical.metadata(),
         handwritten_analytical.metadata()
     );
 
-    let oral = macro_analytical
-        .route_index("oral")
+    let oral = macro_metadata
+        .route("oral")
+        .map(|route| route.input_index())
         .expect("oral route exists");
-    let load = macro_analytical
-        .route_index("load")
+    let load = macro_metadata
+        .route("load")
+        .map(|route| route.input_index())
         .expect("load route exists");
-    let iv = macro_analytical.route_index("iv").expect("iv route exists");
-    let cp = macro_analytical
-        .output_index("cp")
-        .expect("cp output exists");
+    let iv = macro_metadata
+        .route("iv")
+        .map(|route| route.input_index())
+        .expect("iv route exists");
 
     assert_eq!(oral, iv);
     assert_eq!(load, 1);
-    assert_eq!(handwritten_analytical.route_index("oral"), Some(oral));
-    assert_eq!(handwritten_analytical.route_index("load"), Some(load));
-    assert_eq!(handwritten_analytical.route_index("iv"), Some(iv));
-    assert_eq!(handwritten_analytical.output_index("cp"), Some(cp));
+    assert!(macro_metadata.output("cp").is_some());
 
     let subject = build_analytical_subject();
     let params = [1.0, 0.16, 32.0, 0.5, 0.8, 3.0, 14.0, 0.16];

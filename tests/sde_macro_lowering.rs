@@ -493,10 +493,11 @@ fn sde_macro_lowering_matches_handwritten_metadata_and_predictions() {
     let handwritten_model = handwritten_infusion_sde();
     let subject = infusion_subject("iv", "cp");
     let support_point = [0.2, 0.0, 10.0];
+    let macro_metadata = macro_model.metadata().expect("macro SDE metadata exists");
 
     assert_eq!(macro_model.metadata(), handwritten_model.metadata());
-    assert_eq!(macro_model.route_index("iv"), Some(0));
-    assert_eq!(macro_model.output_index("cp"), Some(0));
+    assert!(macro_metadata.route("iv").is_some());
+    assert!(macro_metadata.output("cp").is_some());
     assert_eq!(macro_model.state_index("central"), Some(0));
 
     let macro_predictions = macro_model
@@ -518,10 +519,11 @@ fn sde_macro_supports_lag_fa_init_and_named_sigma_bindings() {
     let handwritten_model = handwritten_absorption_sde();
     let subject = oral_subject("oral", "cp");
     let support_point = [1.1, 0.2, 0.0, 10.0, 0.25, 0.8];
+    let macro_metadata = macro_model.metadata().expect("macro SDE metadata exists");
 
     assert_eq!(macro_model.metadata(), handwritten_model.metadata());
-    assert_eq!(macro_model.route_index("oral"), Some(0));
-    assert_eq!(macro_model.output_index("cp"), Some(0));
+    assert!(macro_metadata.route("oral").is_some());
+    assert!(macro_metadata.output("cp").is_some());
     assert_eq!(macro_model.state_index("gut"), Some(0));
 
     let macro_predictions = macro_model
@@ -543,11 +545,12 @@ fn sde_macro_shared_input_lowering_matches_handwritten_metadata_and_predictions(
     let handwritten_model = handwritten_shared_input_sde();
     let subject = shared_input_subject();
     let support_point = [1.1, 0.2, 0.0, 10.0, 0.25, 0.8];
+    let macro_metadata = macro_model.metadata().expect("macro SDE metadata exists");
 
     assert_eq!(macro_model.metadata(), handwritten_model.metadata());
-    assert_eq!(macro_model.route_index("oral"), Some(0));
-    assert_eq!(macro_model.route_index("iv"), Some(0));
-    assert_eq!(macro_model.output_index("cp"), Some(0));
+    assert!(macro_metadata.route("oral").is_some());
+    assert!(macro_metadata.route("iv").is_some());
+    assert!(macro_metadata.output("cp").is_some());
     assert_eq!(macro_model.state_index("gut"), Some(0));
     assert_eq!(macro_model.state_index("central"), Some(1));
 

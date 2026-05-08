@@ -223,7 +223,7 @@ mod tests {
         };
 
         // Create error model with additive error
-        let error_models = crate::AssayErrorModels::new()
+        let error_models = crate::AssayErrorModels::empty()
             .add(
                 0,
                 AssayErrorModel::additive(ErrorPoly::new(0.0, 1.0, 0.0, 0.0), 0.0),
@@ -270,7 +270,7 @@ mod tests {
         ];
 
         let subject_predictions = SubjectPredictions::from(predictions);
-        let error_models = crate::AssayErrorModels::new()
+        let error_models = crate::AssayErrorModels::empty()
             .add(
                 0,
                 AssayErrorModel::additive(ErrorPoly::new(0.0, 1.0, 0.0, 0.0), 0.0),
@@ -294,7 +294,7 @@ mod tests {
     #[test]
     fn test_empty_predictions_have_neutral_log_likelihood() {
         let preds = SubjectPredictions::default();
-        let errors = crate::AssayErrorModels::new();
+        let errors = crate::AssayErrorModels::empty();
         assert_eq!(preds.log_likelihood(&errors).unwrap(), 0.0); // log(1) = 0
     }
 
@@ -305,7 +305,9 @@ mod tests {
         preds.add_prediction(obs.to_prediction(1.0, vec![]));
 
         let error_model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 0.0);
-        let errors = crate::AssayErrorModels::new().add(0, error_model).unwrap();
+        let errors = crate::AssayErrorModels::empty()
+            .add(0, error_model)
+            .unwrap();
 
         let log_lik = preds.log_likelihood(&errors).unwrap();
         assert!(log_lik.is_finite());

@@ -1,3 +1,4 @@
+#[cfg(feature = "dsl-jit")]
 use approx::assert_relative_eq;
 #[cfg(feature = "dsl-jit")]
 use pharmsol::dsl::{self, RuntimeCompilationTarget, RuntimePredictions};
@@ -59,26 +60,26 @@ kind = ode
 
 params = ke, v
 states = central
-outputs = 2, 10, 11
+outputs = outeq_2, outeq_10, outeq_11
 
 infusion(iv) -> central
 
 dx(central) = -ke * central
 
-out(10) = central / v ~ continuous()
-out(2) = central / v ~ continuous()
-out(11) = central / v ~ continuous()
+out(outeq_10) = central / v ~ continuous()
+out(outeq_2) = central / v ~ continuous()
+out(outeq_11) = central / v ~ continuous()
 "#;
 
 const ODE_NUMERIC_ROUTE_LABELS_AUTHORING_DSL: &str = r#"
-name = authoring_numeric_routes
+name = authoring_prefixed_numeric_routes
 kind = ode
 
 states = first, second
 outputs = cp
 
-bolus(10) -> first
-bolus(11) -> second
+bolus(input_10) -> first
+bolus(input_11) -> second
 
 dx(first) = 0
 dx(second) = 0
@@ -93,8 +94,8 @@ const ODE_NUMERIC_ROUTE_LABELS_STRUCTURED_DSL: &str = r#"model structured_numeri
         second,
     }
     routes {
-        10 -> first
-        11 -> second
+        input_10 -> first
+        input_11 -> second
     }
     dynamics {
         ddt(first) = 0
@@ -149,15 +150,15 @@ kind = ode
 
 params = ke, v
 states = central
-outputs = cp, 0, 1
+outputs = cp, outeq_0, outeq_1
 
 infusion(iv) -> central
 
 dx(central) = -ke * central
 
 out(cp) = central / v ~ continuous()
-out(0) = 2 * central / v ~ continuous()
-out(1) = 3 * central / v ~ continuous()
+out(outeq_0) = 2 * central / v ~ continuous()
+out(outeq_1) = 3 * central / v ~ continuous()
 "#;
 
 #[cfg(feature = "dsl-jit")]
@@ -388,6 +389,26 @@ fn compile_runtime_jit_model(src: &str, model_name: &str) -> dsl::CompiledRuntim
         |_, _| {},
     )
     .expect("DSL runtime model should compile")
+}
+
+#[cfg(feature = "dsl-jit")]
+fn compiled_route_input_index(model: &dsl::CompiledRuntimeModel, name: &str) -> Option<usize> {
+    model
+        .info()
+        .routes
+        .iter()
+        .find(|route| route.name == name)
+        .map(|route| route.index)
+}
+
+#[cfg(feature = "dsl-jit")]
+fn compiled_output_slot_index(model: &dsl::CompiledRuntimeModel, name: &str) -> Option<usize> {
+    model
+        .info()
+        .outputs
+        .iter()
+        .find(|output| output.name == name)
+        .map(|output| output.index)
 }
 
 #[cfg(feature = "dsl-jit")]
@@ -1169,15 +1190,15 @@ fn ode_dsl_declared_output_order_controls_dense_indices_for_multi_digit_labels()
         dsl_view.outputs,
         vec![
             NamedIndex {
-                name: "2".to_string(),
+                name: "outeq_2".to_string(),
                 index: 0,
             },
             NamedIndex {
-                name: "10".to_string(),
+                name: "outeq_10".to_string(),
                 index: 1,
             },
             NamedIndex {
-                name: "11".to_string(),
+                name: "outeq_11".to_string(),
                 index: 2,
             },
         ]
@@ -1185,7 +1206,7 @@ fn ode_dsl_declared_output_order_controls_dense_indices_for_multi_digit_labels()
 }
 
 #[test]
-fn ode_authoring_dsl_supports_multi_digit_numeric_route_labels() {
+fn ode_authoring_dsl_supports_prefixed_multi_digit_numeric_route_labels() {
     let dsl_view = dsl_metadata_view(ODE_NUMERIC_ROUTE_LABELS_AUTHORING_DSL);
 
     assert_eq!(dsl_view.route_input_count, 2);
@@ -1193,7 +1214,7 @@ fn ode_authoring_dsl_supports_multi_digit_numeric_route_labels() {
         dsl_view.routes,
         vec![
             RouteParity {
-                name: "10".to_string(),
+                name: "input_10".to_string(),
                 kind: Some(RouteKindParity::Bolus),
                 declaration_index: 0,
                 input_index: 0,
@@ -1203,7 +1224,7 @@ fn ode_authoring_dsl_supports_multi_digit_numeric_route_labels() {
                 has_bioavailability: false,
             },
             RouteParity {
-                name: "11".to_string(),
+                name: "input_11".to_string(),
                 kind: Some(RouteKindParity::Bolus),
                 declaration_index: 1,
                 input_index: 1,
@@ -1217,7 +1238,7 @@ fn ode_authoring_dsl_supports_multi_digit_numeric_route_labels() {
 }
 
 #[test]
-fn ode_structured_dsl_supports_multi_digit_numeric_route_labels() {
+fn ode_structured_dsl_supports_prefixed_multi_digit_numeric_route_labels() {
     let dsl_view = dsl_metadata_view(ODE_NUMERIC_ROUTE_LABELS_STRUCTURED_DSL);
 
     assert_eq!(dsl_view.route_input_count, 2);
@@ -1225,7 +1246,7 @@ fn ode_structured_dsl_supports_multi_digit_numeric_route_labels() {
         dsl_view.routes,
         vec![
             RouteParity {
-                name: "10".to_string(),
+                name: "input_10".to_string(),
                 kind: None,
                 declaration_index: 0,
                 input_index: 0,
@@ -1235,7 +1256,7 @@ fn ode_structured_dsl_supports_multi_digit_numeric_route_labels() {
                 has_bioavailability: false,
             },
             RouteParity {
-                name: "11".to_string(),
+                name: "input_11".to_string(),
                 kind: None,
                 declaration_index: 1,
                 input_index: 1,
@@ -1393,26 +1414,45 @@ fn ode_runtime_jit_macro_and_handwritten_predictions_agree_on_shared_input_shape
         compile_runtime_jit_model(ODE_RUNTIME_SHARED_INPUT_DSL, "shared_input_one_cpt");
     let macro_model = runtime_shared_input_macro_ode();
     let handwritten_model = runtime_shared_input_handwritten_ode();
+    let macro_metadata = macro_model.metadata().expect("macro ODE metadata exists");
+    let handwritten_metadata = handwritten_model
+        .metadata()
+        .expect("handwritten ODE metadata exists");
 
-    let oral = runtime_model
-        .route_index("oral")
+    let oral = compiled_route_input_index(&runtime_model, "oral")
         .expect("runtime oral route should exist");
-    let iv = runtime_model
-        .route_index("iv")
-        .expect("runtime iv route should exist");
-    let cp = runtime_model
-        .output_index("cp")
-        .expect("runtime cp output should exist");
+    let iv =
+        compiled_route_input_index(&runtime_model, "iv").expect("runtime iv route should exist");
+    let cp =
+        compiled_output_slot_index(&runtime_model, "cp").expect("runtime cp output should exist");
     let subject = shared_input_prediction_subject();
     let support_point = [1.0, 0.2, 10.0, 0.25, 0.8];
 
     assert_eq!(oral, 0);
     assert_eq!(iv, oral);
     assert_eq!(cp, 0);
-    assert_eq!(macro_model.route_index("oral"), Some(oral));
-    assert_eq!(macro_model.route_index("iv"), Some(iv));
-    assert_eq!(handwritten_model.route_index("oral"), Some(oral));
-    assert_eq!(handwritten_model.route_index("iv"), Some(iv));
+    assert_eq!(
+        macro_metadata
+            .route("oral")
+            .map(|route| route.input_index()),
+        Some(oral)
+    );
+    assert_eq!(
+        macro_metadata.route("iv").map(|route| route.input_index()),
+        Some(iv)
+    );
+    assert_eq!(
+        handwritten_metadata
+            .route("oral")
+            .map(|route| route.input_index()),
+        Some(oral)
+    );
+    assert_eq!(
+        handwritten_metadata
+            .route("iv")
+            .map(|route| route.input_index()),
+        Some(iv)
+    );
 
     let runtime_predictions = match runtime_model
         .estimate_predictions(&subject, &support_point)
@@ -1443,26 +1483,47 @@ fn analytical_runtime_jit_macro_and_handwritten_predictions_agree_on_shared_inpu
         compile_runtime_jit_model(ANALYTICAL_RUNTIME_SHARED_INPUT_DSL, "one_cmt_abs_shared");
     let macro_model = runtime_shared_input_macro_analytical();
     let handwritten_model = runtime_shared_input_handwritten_analytical();
+    let macro_metadata = macro_model
+        .metadata()
+        .expect("macro analytical metadata exists");
+    let handwritten_metadata = handwritten_model
+        .metadata()
+        .expect("handwritten analytical metadata exists");
 
-    let oral = runtime_model
-        .route_index("oral")
+    let oral = compiled_route_input_index(&runtime_model, "oral")
         .expect("runtime oral route should exist");
-    let iv = runtime_model
-        .route_index("iv")
-        .expect("runtime iv route should exist");
-    let cp = runtime_model
-        .output_index("cp")
-        .expect("runtime cp output should exist");
+    let iv =
+        compiled_route_input_index(&runtime_model, "iv").expect("runtime iv route should exist");
+    let cp =
+        compiled_output_slot_index(&runtime_model, "cp").expect("runtime cp output should exist");
     let subject = shared_input_prediction_subject();
     let support_point = [1.1, 0.2, 10.0, 0.25, 0.8];
 
     assert_eq!(oral, 0);
     assert_eq!(iv, oral);
     assert_eq!(cp, 0);
-    assert_eq!(macro_model.route_index("oral"), Some(oral));
-    assert_eq!(macro_model.route_index("iv"), Some(iv));
-    assert_eq!(handwritten_model.route_index("oral"), Some(oral));
-    assert_eq!(handwritten_model.route_index("iv"), Some(iv));
+    assert_eq!(
+        macro_metadata
+            .route("oral")
+            .map(|route| route.input_index()),
+        Some(oral)
+    );
+    assert_eq!(
+        macro_metadata.route("iv").map(|route| route.input_index()),
+        Some(iv)
+    );
+    assert_eq!(
+        handwritten_metadata
+            .route("oral")
+            .map(|route| route.input_index()),
+        Some(oral)
+    );
+    assert_eq!(
+        handwritten_metadata
+            .route("iv")
+            .map(|route| route.input_index()),
+        Some(iv)
+    );
 
     let runtime_predictions = match runtime_model
         .estimate_predictions(&subject, &support_point)
@@ -1495,26 +1556,45 @@ fn sde_runtime_jit_macro_and_handwritten_predictions_agree_on_shared_input_shape
         compile_runtime_jit_model(SDE_RUNTIME_SHARED_INPUT_DSL, "one_cmt_shared_sde");
     let macro_model = runtime_shared_input_macro_sde();
     let handwritten_model = runtime_shared_input_handwritten_sde();
+    let macro_metadata = macro_model.metadata().expect("macro SDE metadata exists");
+    let handwritten_metadata = handwritten_model
+        .metadata()
+        .expect("handwritten SDE metadata exists");
 
-    let oral = runtime_model
-        .route_index("oral")
+    let oral = compiled_route_input_index(&runtime_model, "oral")
         .expect("runtime oral route should exist");
-    let iv = runtime_model
-        .route_index("iv")
-        .expect("runtime iv route should exist");
-    let cp = runtime_model
-        .output_index("cp")
-        .expect("runtime cp output should exist");
+    let iv =
+        compiled_route_input_index(&runtime_model, "iv").expect("runtime iv route should exist");
+    let cp =
+        compiled_output_slot_index(&runtime_model, "cp").expect("runtime cp output should exist");
     let subject = shared_input_prediction_subject();
     let support_point = [1.1, 0.2, 0.0, 10.0, 0.25, 0.8];
 
     assert_eq!(oral, 0);
     assert_eq!(iv, oral);
     assert_eq!(cp, 0);
-    assert_eq!(macro_model.route_index("oral"), Some(oral));
-    assert_eq!(macro_model.route_index("iv"), Some(iv));
-    assert_eq!(handwritten_model.route_index("oral"), Some(oral));
-    assert_eq!(handwritten_model.route_index("iv"), Some(iv));
+    assert_eq!(
+        macro_metadata
+            .route("oral")
+            .map(|route| route.input_index()),
+        Some(oral)
+    );
+    assert_eq!(
+        macro_metadata.route("iv").map(|route| route.input_index()),
+        Some(iv)
+    );
+    assert_eq!(
+        handwritten_metadata
+            .route("oral")
+            .map(|route| route.input_index()),
+        Some(oral)
+    );
+    assert_eq!(
+        handwritten_metadata
+            .route("iv")
+            .map(|route| route.input_index()),
+        Some(iv)
+    );
 
     let runtime_predictions = match runtime_model
         .estimate_predictions(&subject, &support_point)
@@ -1544,24 +1624,34 @@ fn route_input_policy_runtime_mismatches_are_detected_explicitly() {
     let runtime_model =
         compile_runtime_jit_model(ODE_RUNTIME_SHARED_INPUT_DSL, "shared_input_one_cpt");
     let mismatched_model = runtime_mismatched_shared_input_ode();
+    let mismatched_metadata = mismatched_model
+        .metadata()
+        .expect("mismatched handwritten metadata exists");
 
-    let oral = runtime_model
-        .route_index("oral")
+    let oral = compiled_route_input_index(&runtime_model, "oral")
         .expect("runtime oral route should exist");
-    let iv = runtime_model
-        .route_index("iv")
-        .expect("runtime iv route should exist");
-    let cp = runtime_model
-        .output_index("cp")
-        .expect("runtime cp output should exist");
+    let iv =
+        compiled_route_input_index(&runtime_model, "iv").expect("runtime iv route should exist");
+    let cp =
+        compiled_output_slot_index(&runtime_model, "cp").expect("runtime cp output should exist");
     let subject = shared_input_prediction_subject();
     let support_point = [1.0, 0.2, 10.0, 0.25, 0.8];
 
     assert_eq!(oral, 0);
     assert_eq!(iv, oral);
     assert_eq!(cp, 0);
-    assert_eq!(mismatched_model.route_index("oral"), Some(oral));
-    assert_eq!(mismatched_model.route_index("iv"), Some(iv));
+    assert_eq!(
+        mismatched_metadata
+            .route("oral")
+            .map(|route| route.input_index()),
+        Some(oral)
+    );
+    assert_eq!(
+        mismatched_metadata
+            .route("iv")
+            .map(|route| route.input_index()),
+        Some(iv)
+    );
 
     let runtime_predictions = match runtime_model
         .estimate_predictions(&subject, &support_point)
@@ -1589,14 +1679,20 @@ fn ode_runtime_jit_preserves_mixed_output_labels() {
     let subject = Subject::builder("runtime-mixed-output-labels")
         .infusion(0.0, 100.0, "iv", 1.0)
         .missing_observation(0.5, "cp")
-        .missing_observation(0.5, "0")
-        .missing_observation(0.5, "1")
+        .missing_observation(0.5, "outeq_0")
+        .missing_observation(0.5, "outeq_1")
         .build();
     let support_point = [0.2, 10.0];
 
-    assert_eq!(runtime_model.output_index("cp"), Some(0));
-    assert_eq!(runtime_model.output_index("0"), Some(1));
-    assert_eq!(runtime_model.output_index("1"), Some(2));
+    assert_eq!(compiled_output_slot_index(&runtime_model, "cp"), Some(0));
+    assert_eq!(
+        compiled_output_slot_index(&runtime_model, "outeq_0"),
+        Some(1)
+    );
+    assert_eq!(
+        compiled_output_slot_index(&runtime_model, "outeq_1"),
+        Some(2)
+    );
 
     let predictions = match runtime_model
         .estimate_predictions(&subject, &support_point)

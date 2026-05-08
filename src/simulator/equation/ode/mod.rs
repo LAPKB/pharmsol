@@ -184,14 +184,6 @@ impl ODE {
         self.metadata()?.state_index(name)
     }
 
-    pub fn route_index(&self, name: &str) -> Option<usize> {
-        self.metadata()?.route_index(name)
-    }
-
-    pub fn output_index(&self, name: &str) -> Option<usize> {
-        self.metadata()?.output_index(name)
-    }
-
     fn invalidate_metadata(&mut self) {
         self.metadata = None;
     }
@@ -264,8 +256,9 @@ fn _estimate_likelihood(
     support_point: &[f64],
     error_models: &AssayErrorModels,
 ) -> Result<f64, PharmsolError> {
+    let bound_error_models = ode.bind_error_models(error_models)?;
     let ypred = _subject_predictions(ode, subject, support_point)?;
-    Ok(ypred.log_likelihood(error_models)?.exp())
+    Ok(ypred.log_likelihood(&bound_error_models)?.exp())
 }
 
 #[inline(always)]
@@ -527,8 +520,9 @@ impl Equation for ODE {
         support_point: &[f64],
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
+        let bound_error_models = self.bind_error_models(error_models)?;
         let ypred = _subject_predictions(self, subject, support_point)?;
-        ypred.log_likelihood(error_models)
+        ypred.log_likelihood(&bound_error_models)
     }
 
     fn kind() -> EqnKind {
@@ -541,6 +535,11 @@ impl Equation for ODE {
         support_point: &[f64],
         error_models: Option<&AssayErrorModels>,
     ) -> Result<(Self::P, Option<f64>), PharmsolError> {
+        let bound_error_models = match error_models {
+            Some(error_models) => Some(self.bind_error_models(error_models)?),
+            None => None,
+        };
+
         let mut output = Self::P::new(self.nparticles());
 
         // Preallocate likelihood vector
@@ -602,7 +601,7 @@ impl Equation for ODE {
                         &events,
                         &spp_v,
                         covariates,
-                        error_models,
+                        bound_error_models.as_ref(),
                         &mut bolus_v,
                         &zero_bolus,
                         &zero_rateiv,
@@ -621,7 +620,7 @@ impl Equation for ODE {
                         &events,
                         &spp_v,
                         covariates,
-                        error_models,
+                        bound_error_models.as_ref(),
                         &mut bolus_v,
                         &zero_bolus,
                         &zero_rateiv,
@@ -640,7 +639,7 @@ impl Equation for ODE {
                         &events,
                         &spp_v,
                         covariates,
-                        error_models,
+                        bound_error_models.as_ref(),
                         &mut bolus_v,
                         &zero_bolus,
                         &zero_rateiv,
@@ -659,7 +658,7 @@ impl Equation for ODE {
                         &events,
                         &spp_v,
                         covariates,
-                        error_models,
+                        bound_error_models.as_ref(),
                         &mut bolus_v,
                         &zero_bolus,
                         &zero_rateiv,
@@ -672,7 +671,9 @@ impl Equation for ODE {
                 }
             }
         }
-        let ll = error_models.map(|_| likelihood.iter().product::<f64>());
+        let ll = bound_error_models
+            .as_ref()
+            .map(|_| likelihood.iter().product::<f64>());
         Ok((output, ll))
     }
 }
@@ -753,16 +754,14 @@ mod tests {
                     .route(super::super::Route::infusion("iv").to_state("central")),
             )
             .expect("metadata attachment should validate");
+        let metadata = ode.metadata().expect("metadata exists");
 
         assert_eq!(ode.parameter_index("ke"), Some(0));
         assert_eq!(ode.parameter_index("v"), Some(1));
         assert_eq!(ode.state_index("central"), Some(0));
-        assert_eq!(ode.route_index("iv"), Some(0));
-        assert_eq!(ode.output_index("cp"), Some(0));
-        assert_eq!(
-            ode.metadata().expect("metadata exists").kind(),
-            ModelKind::Ode
-        );
+        assert!(metadata.route("iv").is_some());
+        assert!(metadata.output("cp").is_some());
+        assert_eq!(metadata.kind(), ModelKind::Ode);
     }
 
     #[test]
@@ -771,8 +770,6 @@ mod tests {
 
         assert!(ode.metadata().is_none());
         assert_eq!(ode.state_index("central"), None);
-        assert_eq!(ode.route_index("iv"), None);
-        assert_eq!(ode.output_index("cp"), None);
     }
 
     #[test]
@@ -843,9 +840,16 @@ mod tests {
             .simulate_subject(&route_policy_subject(), &[], None)
             .expect("simulation should succeed")
             .0;
+        let metadata = ode.metadata().expect("metadata exists");
 
-        assert_eq!(ode.route_index("oral").expect("oral route"), 0);
-        assert_eq!(ode.route_index("iv").expect("iv route"), 0);
+        assert_eq!(
+            metadata.route("oral").map(|route| route.input_index()),
+            Some(0)
+        );
+        assert_eq!(
+            metadata.route("iv").map(|route| route.input_index()),
+            Some(0)
+        );
         assert_relative_eq!(
             predictions.predictions()[0].prediction(),
             200.0,
@@ -893,6 +897,51 @@ mod tests {
     }
 
     #[test]
+    fn handwritten_ode_metadata_resolves_raw_numeric_aliases_against_canonical_labels() {
+        let ode = ODE::new(
+            explicit_route_kernel,
+            zero_lag,
+            unit_fa,
+            zero_init,
+            state_output,
+        )
+        .with_nstates(1)
+        .with_ndrugs(1)
+        .with_nout(1)
+        .with_metadata(
+            super::super::metadata::new("numeric_alias_ode")
+                .states(["central"])
+                .outputs(["outeq_1"])
+                .route(super::super::Route::infusion("input_1").to_state("central")),
+        )
+        .expect("metadata attachment should validate");
+
+        let canonical = Subject::builder("canonical")
+            .infusion(0.0, 100.0, "input_1", 1.0)
+            .observation(1.0, 0.0, "outeq_1")
+            .build();
+        let aliased = Subject::builder("aliased")
+            .infusion(0.0, 100.0, "1", 1.0)
+            .observation(1.0, 0.0, "1")
+            .build();
+
+        let canonical_predictions = ode
+            .simulate_subject(&canonical, &[], None)
+            .expect("canonical labels should simulate")
+            .0;
+        let aliased_predictions = ode
+            .simulate_subject(&aliased, &[], None)
+            .expect("raw numeric aliases should simulate")
+            .0;
+
+        assert_relative_eq!(
+            canonical_predictions.predictions()[0].prediction(),
+            aliased_predictions.predictions()[0].prediction(),
+            epsilon = 1e-6
+        );
+    }
+
+    #[test]
     fn changing_dimensions_after_metadata_clears_route_metadata() {
         let ode = simple_ode()
             .with_metadata(
@@ -905,6 +954,5 @@ mod tests {
             .with_ndrugs(2);
 
         assert!(ode.metadata().is_none());
-        assert_eq!(ode.route_index("iv"), None);
     }
 }

@@ -280,14 +280,6 @@ impl SDE {
         self.metadata()?.state_index(name)
     }
 
-    pub fn route_index(&self, name: &str) -> Option<usize> {
-        self.metadata()?.route_index(name)
-    }
-
-    pub fn output_index(&self, name: &str) -> Option<usize> {
-        self.metadata()?.output_index(name)
-    }
-
     fn invalidate_metadata(&mut self) {
         self.metadata = None;
         self.injected_bolus_mappings
@@ -812,8 +804,62 @@ mod tests {
         assert_eq!(sde.parameter_index("v"), Some(1));
         assert_eq!(sde.covariate_index("wt"), Some(0));
         assert_eq!(sde.state_index("central"), Some(0));
-        assert_eq!(sde.route_index("iv"), Some(0));
-        assert_eq!(sde.output_index("cp"), Some(0));
+        assert!(metadata.route("iv").is_some());
+        assert!(metadata.output("cp").is_some());
+    }
+
+    #[test]
+    fn handwritten_sde_metadata_resolves_raw_numeric_aliases_against_canonical_labels() {
+        let drift = |_x: &V, _p: &V, _t: f64, dx: &mut V, rateiv: &V, _cov: &Covariates| {
+            dx.fill(0.0);
+            dx[1] = rateiv[0];
+        };
+        let diffusion = |_p: &V, sigma: &mut V| {
+            sigma.fill(0.0);
+        };
+        let lag = |_p: &V, _t: f64, _cov: &Covariates| lag! {};
+        let fa = |_p: &V, _t: f64, _cov: &Covariates| fa! {};
+        let init = |_p: &V, _t: f64, _cov: &Covariates, x: &mut V| {
+            x.fill(0.0);
+        };
+        let out = |x: &V, _p: &V, _t: f64, _cov: &Covariates, y: &mut V| {
+            y[0] = x[1];
+        };
+
+        let sde = SDE::new(drift, diffusion, lag, fa, init, out, 16)
+            .with_nstates(2)
+            .with_ndrugs(1)
+            .with_nout(1)
+            .with_metadata(
+                equation::metadata::new("numeric_alias_sde")
+                    .states(["depot", "central"])
+                    .outputs(["outeq_1"])
+                    .route(Route::infusion("input_1").to_state("central"))
+                    .particles(16),
+            )
+            .expect("SDE metadata attachment should validate");
+
+        let canonical = Subject::builder("canonical")
+            .infusion(0.0, 100.0, "input_1", 1.0)
+            .observation(1.0, 0.0, "outeq_1")
+            .build();
+        let aliased = Subject::builder("aliased")
+            .infusion(0.0, 100.0, "1", 1.0)
+            .observation(1.0, 0.0, "1")
+            .build();
+
+        let canonical_predictions = sde
+            .estimate_predictions(&canonical, &[])
+            .expect("canonical labels should simulate");
+        let aliased_predictions = sde
+            .estimate_predictions(&aliased, &[])
+            .expect("raw numeric aliases should simulate");
+
+        assert!(
+            (canonical_predictions[[0, 0]].prediction() - aliased_predictions[[0, 0]].prediction())
+                .abs()
+                < 1e-10
+        );
     }
 
     #[test]
@@ -822,8 +868,6 @@ mod tests {
 
         assert!(sde.metadata().is_none());
         assert_eq!(sde.parameter_index("ke"), None);
-        assert_eq!(sde.route_index("iv"), None);
-        assert_eq!(sde.output_index("cp"), None);
     }
 
     #[test]
@@ -885,8 +929,6 @@ mod tests {
             .with_nout(2);
 
         assert!(sde.metadata().is_none());
-        assert_eq!(sde.route_index("iv"), None);
-        assert_eq!(sde.output_index("cp"), None);
     }
 
     #[test]
