@@ -8,7 +8,7 @@ use crate::diagnostic::{
     TextEdit, DSL_SEMANTIC_GENERIC,
 };
 use crate::ir::*;
-use crate::ModelKind;
+use crate::{ModelKind, NUMERIC_OUTPUT_PREFIX, NUMERIC_ROUTE_PREFIX, RATE_FUNCTION_NAME};
 
 const RESERVED_NAMES: &[&str] = &[
     "abs",
@@ -29,17 +29,13 @@ const RESERVED_NAMES: &[&str] = &[
     "min",
     "noise",
     "pow",
-    "rate",
+    RATE_FUNCTION_NAME,
     "round",
     "sin",
     "cos",
     "tan",
     "sqrt",
 ];
-
-const RATE_FUNCTION_NAME: &str = "rate";
-const NUMERIC_ROUTE_PREFIX: &str = "input_";
-const NUMERIC_OUTPUT_PREFIX: &str = "outeq_";
 
 #[derive(Default)]
 struct SemanticAssist {
@@ -1314,7 +1310,7 @@ impl<'a> Analyzer<'a> {
         span: Span,
         env: &BlockEnv,
     ) -> Result<TypedExpr, SemanticError> {
-        if callee.text == "rate" {
+        if callee.text == RATE_FUNCTION_NAME {
             if args.len() != 1 {
                 return Err(SemanticError::new(
                     format!(
@@ -1575,7 +1571,7 @@ impl<'a> Analyzer<'a> {
                 })
             }
             syntax::ExprKind::Call { callee, args } => {
-                if callee.text == "rate" {
+                if callee.text == RATE_FUNCTION_NAME {
                     return Err(SemanticError::new(
                         "`rate(...)` cannot appear in a compile-time expression",
                         callee.span,

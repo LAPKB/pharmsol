@@ -79,6 +79,10 @@ mod semantic;
 #[cfg(test)]
 mod test_fixtures;
 
+pub const NUMERIC_ROUTE_PREFIX: &str = "input_";
+pub const NUMERIC_OUTPUT_PREFIX: &str = "outeq_";
+pub(crate) const RATE_FUNCTION_NAME: &str = "rate";
+
 pub use ast::*;
 pub use diagnostic::*;
 pub use execution::{

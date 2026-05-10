@@ -15,7 +15,7 @@ use cranelift_jit::JITModule;
 #[cfg(feature = "dsl-aot-load")]
 use libloading::Library;
 use pharmsol_dsl::execution::KernelRole;
-use pharmsol_dsl::{AnalyticalKernel, RouteKind};
+use pharmsol_dsl::{AnalyticalKernel, RouteKind, NUMERIC_OUTPUT_PREFIX, NUMERIC_ROUTE_PREFIX};
 
 pub use super::model_info::{
     NativeCovariateInfo, NativeModelInfo, NativeOutputInfo, NativeRouteInfo,
@@ -48,8 +48,6 @@ pub type DenseKernelFn = unsafe extern "C" fn(
 
 const DEFAULT_ODE_RTOL: f64 = 1e-4;
 const DEFAULT_ODE_ATOL: f64 = 1e-4;
-const NUMERIC_ROUTE_PREFIX: &str = "input_";
-const NUMERIC_OUTPUT_PREFIX: &str = "outeq_";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RuntimeBackend {

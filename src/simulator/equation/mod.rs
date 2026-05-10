@@ -55,6 +55,7 @@ pub use analytical::*;
 pub use metadata::*;
 pub use ode::*;
 pub use pharmsol_dsl::{AnalyticalKernel, ModelKind};
+use pharmsol_dsl::{NUMERIC_OUTPUT_PREFIX, NUMERIC_ROUTE_PREFIX};
 pub use sde::*;
 
 use crate::{
@@ -65,9 +66,6 @@ use crate::{
 };
 
 use super::likelihood::Prediction;
-
-const NUMERIC_ROUTE_PREFIX: &str = "input_";
-const NUMERIC_OUTPUT_PREFIX: &str = "outeq_";
 
 /// Trait for state vectors that can receive bolus doses.
 pub trait State {

@@ -3,10 +3,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::ast::*;
 use super::diagnostic::{Applicability, DiagnosticSuggestion, ParseError, Span, TextEdit};
 use super::parser::{parse_expr_fragment, parse_place_fragment};
+use crate::{NUMERIC_OUTPUT_PREFIX, NUMERIC_ROUTE_PREFIX, RATE_FUNCTION_NAME};
 
 const DEFAULT_MODEL_NAME: &str = "main";
-const NUMERIC_ROUTE_PREFIX: &str = "input_";
-const NUMERIC_OUTPUT_PREFIX: &str = "outeq_";
 
 pub(super) fn parse_module(src: &str) -> Result<Module, ParseError> {
     AuthoringParser::new(src).parse_module()
@@ -802,7 +801,7 @@ fn inject_infusion_rates(
         let rate_expr = Expr {
             span: surface_route.span,
             kind: ExprKind::Call {
-                callee: Ident::new("rate", surface_route.input.span),
+                callee: Ident::new(RATE_FUNCTION_NAME, surface_route.input.span),
                 args: vec![Expr {
                     span: surface_route.input.span,
                     kind: ExprKind::Name(surface_route.input.clone()),
