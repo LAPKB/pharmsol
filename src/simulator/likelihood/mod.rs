@@ -111,8 +111,8 @@ pub fn log_likelihood_batch(
     parameters: &Array2<f64>,
     residual_error_models: &crate::ResidualErrorModels,
 ) -> Result<Vec<f64>, PharmsolError> {
-    let subjects_vec = subjects.subjects();
-    let n_subjects = subjects_vec.len();
+    let subject_slice = subjects.subjects_slice();
+    let n_subjects = subject_slice.len();
 
     if parameters.nrows() != n_subjects {
         return Err(PharmsolError::OtherError(format!(
@@ -123,10 +123,10 @@ pub fn log_likelihood_batch(
     }
 
     // Parallel computation across subjects
-    let results: Vec<f64> = (0..n_subjects)
-        .into_par_iter()
-        .map(|i| {
-            let subject = &subjects_vec[i];
+    let results: Vec<f64> = subject_slice
+        .par_iter()
+        .enumerate()
+        .map(|(i, subject)| {
             let params = parameters.row(i).to_vec();
 
             // Simulate to get predictions

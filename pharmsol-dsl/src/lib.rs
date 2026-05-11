@@ -79,7 +79,9 @@ mod semantic;
 #[cfg(test)]
 mod test_fixtures;
 
+/// Canonical prefix for numeric route labels such as `input_1`.
 pub const NUMERIC_ROUTE_PREFIX: &str = "input_";
+/// Canonical prefix for numeric output labels such as `outeq_1`.
 pub const NUMERIC_OUTPUT_PREFIX: &str = "outeq_";
 pub(crate) const RATE_FUNCTION_NAME: &str = "rate";
 

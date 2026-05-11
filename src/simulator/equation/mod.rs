@@ -210,12 +210,13 @@ pub(crate) trait EquationPriv: EquationTypes {
                 })?;
 
             if route.kind() != expected_kind {
-                return Err(PharmsolError::OtherError(format!(
-                    "input label `{}` is declared as {:?} but used as {:?}",
-                    label,
-                    route.kind(),
-                    expected_kind
-                )));
+                return Err(PharmsolError::UnsupportedInputRouteKind {
+                    input: route.input_index(),
+                    kind: match expected_kind {
+                        RouteKind::Bolus => pharmsol_dsl::RouteKind::Bolus,
+                        RouteKind::Infusion => pharmsol_dsl::RouteKind::Infusion,
+                    },
+                });
             }
 
             return Ok(route.input_index());

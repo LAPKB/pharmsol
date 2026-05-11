@@ -47,16 +47,20 @@ pub fn log_likelihood_matrix(
     error_models: &AssayErrorModels,
     progress: bool,
 ) -> Result<Array2<f64>, PharmsolError> {
-    let mut log_psi: Array2<f64> = Array2::default((subjects.len(), support_points.nrows()).f());
-
-    let subjects_vec = subjects.subjects();
+    let n_support_points = support_points.nrows();
+    let mut log_psi: Array2<f64> = Array2::default((subjects.len(), n_support_points).f());
+    let subject_slice = subjects.subjects_slice();
+    let support_point_rows = support_points
+        .axis_iter(Axis(0))
+        .map(|row| row.to_vec())
+        .collect::<Vec<_>>();
 
     let progress_tracker = if progress {
-        let total = subjects_vec.len() * support_points.nrows();
+        let total = subject_slice.len() * n_support_points;
         println!(
             "Computing log-likelihood matrix: {} subjects × {} support points...",
-            subjects_vec.len(),
-            support_points.nrows()
+            subject_slice.len(),
+            n_support_points
         );
         Some(ProgressTracker::new(total))
     } else {
@@ -68,26 +72,20 @@ pub fn log_likelihood_matrix(
         .into_par_iter()
         .enumerate()
         .try_for_each(|(i, mut row)| {
-            row.axis_iter_mut(Axis(0))
-                .into_par_iter()
-                .enumerate()
-                .try_for_each(|(j, mut element)| {
-                    let subject = subjects_vec.get(i).unwrap();
-                    match equation.estimate_log_likelihood(
-                        subject,
-                        &support_points.row(j).to_vec(),
-                        error_models,
-                    ) {
-                        Ok(log_likelihood) => {
-                            element.fill(log_likelihood);
-                            if let Some(ref tracker) = progress_tracker {
-                                tracker.inc();
-                            }
-                        }
-                        Err(e) => return Err(e),
-                    };
-                    Ok(())
-                })
+            let subject = &subject_slice[i];
+
+            for (element, support_point) in row.iter_mut().zip(support_point_rows.iter()) {
+                *element = equation.estimate_log_likelihood(
+                    subject,
+                    support_point.as_slice(),
+                    error_models,
+                )?;
+                if let Some(ref tracker) = progress_tracker {
+                    tracker.inc();
+                }
+            }
+
+            Ok(())
         });
 
     if let Some(tracker) = progress_tracker {

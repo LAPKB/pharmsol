@@ -1,9 +1,8 @@
 use crate::{Covariates, Infusion, PharmsolError};
 use diffsol::{
     ConstantOp, LinearOp, MatrixCommon, NalgebraContext, NalgebraMat, NonLinearOp,
-    NonLinearOpJacobian, OdeEquations, OdeEquationsRef, Op, UnitCallable, Vector, VectorCommon,
+    NonLinearOpJacobian, OdeEquations, OdeEquationsRef, Op, UnitCallable, Vector,
 };
-use nalgebra::DVector;
 use std::{cell::RefCell, cmp::Ordering};
 type M = NalgebraMat<f64>;
 type V = <M as MatrixCommon>::V;
@@ -67,13 +66,18 @@ struct InfusionSchedule {
 }
 
 impl InfusionSchedule {
-    fn new(ndrugs: usize, infusions: &[&Infusion]) -> Result<Self, PharmsolError> {
-        if ndrugs == 0 || infusions.is_empty() {
+    fn new<'a, I>(ndrugs: usize, infusions: I) -> Result<Self, PharmsolError>
+    where
+        I: IntoIterator<Item = &'a Infusion>,
+    {
+        if ndrugs == 0 {
             return Ok(Self { tracks: Vec::new() });
         }
 
         let mut per_input: Vec<Vec<(f64, f64)>> = vec![Vec::new(); ndrugs];
+        let mut saw_infusion = false;
         for infusion in infusions {
+            saw_infusion = true;
             if infusion.duration() <= 0.0 {
                 continue;
             }
@@ -90,6 +94,10 @@ impl InfusionSchedule {
             let rate = infusion.amount() / infusion.duration();
             per_input[input].push((infusion.time(), rate));
             per_input[input].push((infusion.time() + infusion.duration(), -rate));
+        }
+
+        if !saw_infusion {
+            return Ok(Self { tracks: Vec::new() });
         }
 
         let tracks = per_input
@@ -319,7 +327,6 @@ where
     nstates: usize,
     nparams: usize,
     init: V,
-    p: Vec<f64>,
     p_as_v: V,
     zero_bolus: V,
     covariates: &'a Covariates,
@@ -334,17 +341,19 @@ where
     /// Creates a new PMProblem with a pre-converted parameter vector.
     /// This avoids an allocation when the caller already has a V representation.
     #[allow(clippy::too_many_arguments)]
-    pub fn with_params_v(
+    pub fn with_params_v<'b, I>(
         func: F,
         nstates: usize,
         ndrugs: usize,
-        p: Vec<f64>,
         p_as_v: V,
         covariates: &'a Covariates,
-        infusions: &[&'a Infusion],
+        infusions: I,
         init: V,
-    ) -> Result<Self, PharmsolError> {
-        let nparams = p.len();
+    ) -> Result<Self, PharmsolError>
+    where
+        I: IntoIterator<Item = &'b Infusion>,
+    {
+        let nparams = p_as_v.len();
         let rateiv_buffer = RefCell::new(V::zeros(ndrugs, NalgebraContext));
         let infusion_schedule = InfusionSchedule::new(ndrugs, infusions)?;
         // Pre-allocate zero bolus vector
@@ -355,7 +364,6 @@ where
             nstates,
             nparams,
             init,
-            p,
             p_as_v,
             zero_bolus,
             covariates,
@@ -432,13 +440,10 @@ where
     }
 
     fn get_params(&self, p: &mut V) {
-        // Avoid unnecessary cloning by directly copying values from self.p
-        if p.len() == self.p.len() {
-            for i in 0..self.p.len() {
-                p[i] = self.p[i];
-            }
+        if p.len() == self.p_as_v.len() {
+            p.copy_from(&self.p_as_v);
         } else {
-            p.copy_from(&DVector::from_vec(self.p.clone()).into());
+            *p = self.p_as_v.clone();
         }
     }
 
@@ -455,13 +460,9 @@ where
     }
 
     fn set_params(&mut self, p: &V) {
-        if self.p.len() == p.len() {
-            for i in 0..p.len() {
-                self.p[i] = p[i];
-                self.p_as_v[i] = p[i];
-            }
+        if self.p_as_v.len() == p.len() {
+            self.p_as_v.copy_from(p);
         } else {
-            self.p = p.inner().iter().cloned().collect();
             self.p_as_v = p.clone();
         }
     }

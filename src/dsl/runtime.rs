@@ -477,7 +477,7 @@ mod tests {
     use crate::PharmsolError;
     use crate::SubjectBuilderExt;
     use approx::assert_relative_eq;
-    use pharmsol_dsl::{DiagnosticPhase, DSL_BACKEND_GENERIC, DSL_PARSE_GENERIC};
+    use pharmsol_dsl::{DiagnosticPhase, RouteKind, DSL_BACKEND_GENERIC, DSL_PARSE_GENERIC};
     use tempfile::tempdir;
 
     const MULTI_DIGIT_OUTPUT_ORDER_RUNTIME_DSL: &str = r#"
@@ -706,6 +706,13 @@ out(cp) = central / v ~ continuous()
             .build()
     }
 
+    fn mismatched_route_kind_subject() -> Subject {
+        Subject::builder("mismatched-route-kind-runtime")
+            .infusion(0.0, 120.0, "10", 1.0)
+            .missing_observation(0.5, "cp")
+            .build()
+    }
+
     fn assert_unknown_output_label(
         model: &CompiledRuntimeModel,
         subject: &Subject,
@@ -736,6 +743,27 @@ out(cp) = central / v ~ continuous()
             error,
             RuntimeError::Runtime(PharmsolError::UnknownInputLabel { label }) if label == expected_label
         ));
+    }
+
+    fn assert_unsupported_input_route_kind(
+        model: &CompiledRuntimeModel,
+        subject: &Subject,
+        support: &[f64],
+        expected_input: usize,
+        expected_kind: RouteKind,
+    ) {
+        let error = model
+            .estimate_predictions(subject, support)
+            .expect_err("mismatched route kind should fail");
+
+        match error {
+            RuntimeError::Runtime(PharmsolError::UnsupportedInputRouteKind { input, kind })
+                if input == expected_input && kind == expected_kind => {}
+            other => panic!(
+                "expected UnsupportedInputRouteKind {{ input: {expected_input}, kind: {:?} }}, got {other:?}",
+                expected_kind
+            ),
+        }
     }
 
     #[test]
@@ -803,6 +831,31 @@ out(cp) = central / v ~ continuous()
         {
             assert_relative_eq!(jit_value, aot_value, max_relative = 1e-4);
             assert_relative_eq!(jit_value, wasm_value, max_relative = 1e-4);
+        }
+    }
+
+    #[test]
+    fn runtime_backend_matrix_reports_route_kind_mismatch() {
+        let work_dir = tempdir().expect("tempdir");
+        let support = vec![0.2, 10.0];
+        let subject = mismatched_route_kind_subject();
+
+        let (jit, aot, wasm) = compile_runtime_backend_matrix(
+            NUMERIC_ROUTE_LABELS_RUNTIME_DSL,
+            "prefixed_numeric_route_runtime",
+            work_dir.path(),
+        );
+        let expected_input =
+            compiled_route_input_index(&jit, "input_10").expect("input_10 route index");
+
+        for model in [&jit, &aot, &wasm] {
+            assert_unsupported_input_route_kind(
+                model,
+                &subject,
+                &support,
+                expected_input,
+                RouteKind::Infusion,
+            );
         }
     }
 

@@ -514,6 +514,14 @@ impl Equation for ODE {
         _estimate_likelihood(self, subject, support_point, error_models)
     }
 
+    fn estimate_predictions(
+        &self,
+        subject: &Subject,
+        support_point: &[f64],
+    ) -> Result<Self::P, PharmsolError> {
+        _subject_predictions(self, subject, support_point)
+    }
+
     fn estimate_log_likelihood(
         &self,
         subject: &Subject,
@@ -556,7 +564,8 @@ impl Equation for ODE {
         let zero_bolus = V::zeros(ndrugs, NalgebraContext);
         let zero_rateiv = V::zeros(ndrugs, NalgebraContext);
         let mut bolus_v = V::zeros(ndrugs, NalgebraContext);
-        let spp_v: V = DVector::from_vec(support_point.to_vec()).into();
+        let support_point_vec = support_point.to_vec();
+        let spp_v: V = DVector::from_vec(support_point_vec.clone()).into();
 
         // Pre-allocate output vector for observations
         let mut y_out = V::zeros(self.get_nouteqs(), NalgebraContext);
@@ -565,30 +574,25 @@ impl Equation for ODE {
         for occasion in subject.occasions() {
             let covariates = occasion.covariates();
             let events = self.resolve_occasion_events(occasion, support_point, covariates)?;
-            let infusions = events
-                .iter()
-                .filter_map(|event| match event {
-                    Event::Infusion(infusion) => Some(infusion),
-                    _ => None,
-                })
-                .collect::<Vec<_>>();
 
             let problem = OdeBuilder::<M>::new()
                 .atol(vec![self.atol])
                 .rtol(self.rtol)
                 .t0(occasion.initial_time())
                 .h0(1e-3)
-                .p(support_point.to_vec())
+                .p(support_point_vec.clone())
                 .build_from_eqn(PMProblem::with_params_v(
                     move |x, p, t, dx, bolus, rateiv, cov| {
                         (self.diffeq)(x, p, t, dx, bolus, rateiv, cov);
                     },
                     nstates,
                     ndrugs,
-                    support_point.to_vec(),
                     spp_v.clone(),
                     covariates,
-                    infusions.as_slice(),
+                    events.iter().filter_map(|event| match event {
+                        Event::Infusion(infusion) => Some(infusion),
+                        _ => None,
+                    }),
                     self.initial_state(support_point, covariates, occasion.index()),
                 )?)?;
 
@@ -683,6 +687,9 @@ mod tests {
     use super::*;
     use crate::{fa, lag, Subject, SubjectBuilderExt};
     use approx::assert_relative_eq;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static PREDICTION_CACHE_DIFFEQ_CALLS: AtomicUsize = AtomicUsize::new(0);
 
     fn simple_ode() -> ODE {
         ODE::new(
@@ -741,6 +748,19 @@ mod tests {
 
     fn state_output(x: &V, _p: &V, _t: f64, _cov: &Covariates, y: &mut V) {
         y[0] = x[0];
+    }
+
+    fn counting_kernel(
+        _x: &V,
+        _p: &V,
+        _t: f64,
+        dx: &mut V,
+        _b: &V,
+        _rateiv: &V,
+        _cov: &Covariates,
+    ) {
+        PREDICTION_CACHE_DIFFEQ_CALLS.fetch_add(1, Ordering::SeqCst);
+        dx[0] = 0.0;
     }
 
     #[test]
@@ -954,5 +974,33 @@ mod tests {
             .with_ndrugs(2);
 
         assert!(ode.metadata().is_none());
+    }
+
+    #[test]
+    fn handwritten_ode_estimate_predictions_uses_prediction_cache() {
+        PREDICTION_CACHE_DIFFEQ_CALLS.store(0, Ordering::SeqCst);
+
+        let ode = ODE::new(counting_kernel, zero_lag, unit_fa, zero_init, state_output)
+            .with_nstates(1)
+            .with_ndrugs(1)
+            .with_nout(1);
+        let subject = Subject::builder("cached_predictions")
+            .bolus(0.0, 100.0, 0)
+            .observation(1.0, 0.0, 0)
+            .build();
+
+        let first = ode
+            .estimate_predictions(&subject, &[])
+            .expect("first prediction run should succeed");
+        let first_calls = PREDICTION_CACHE_DIFFEQ_CALLS.load(Ordering::SeqCst);
+        assert!(first_calls > 0);
+
+        let second = ode
+            .estimate_predictions(&subject, &[])
+            .expect("second prediction run should succeed");
+        let second_calls = PREDICTION_CACHE_DIFFEQ_CALLS.load(Ordering::SeqCst);
+
+        assert_eq!(first.predictions().len(), second.predictions().len());
+        assert_eq!(first_calls, second_calls);
     }
 }

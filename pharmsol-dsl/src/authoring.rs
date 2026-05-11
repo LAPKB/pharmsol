@@ -173,7 +173,7 @@ impl<'a> AuthoringParser<'a> {
         let kind = self.determine_kind(module_span)?;
         if matches!(kind, ModelKind::Analytical) && !self.derivative_statements.is_empty() {
             return Err(ParseError::new(
-                "analytical authoring models cannot declare `dx(...)` equations",
+                "analytical models cannot declare `dx(...)` equations",
                 self.derivative_statements[0].span,
             ));
         }
@@ -312,7 +312,7 @@ impl<'a> AuthoringParser<'a> {
 
         let eq_index = find_top_level_assignment(trimmed).ok_or_else(|| {
             ParseError::new(
-                "expected an authoring declaration, equation, or route shorthand",
+                "expected an declaration, equation, or route shorthand",
                 span,
             )
         })?;
@@ -605,7 +605,7 @@ impl<'a> AuthoringParser<'a> {
             }
             other => {
                 return Err(ParseError::new(
-                    format!("unsupported authoring equation target `{other}`"),
+                    format!("unsupported equation target `{other}`"),
                     call.callee.span,
                 ))
             }
@@ -632,14 +632,14 @@ impl<'a> AuthoringParser<'a> {
             && (!self.diffusion_statements.is_empty() || self.particles.is_some())
         {
             return Err(ParseError::new(
-                "analytical authoring models cannot declare particles or noise equations",
+                "analytical models cannot declare particles or noise equations",
                 kind_span,
             ));
         }
 
         if matches!(kind, ModelKind::Ode) && !self.diffusion_statements.is_empty() {
             return Err(ParseError::new(
-                "ODE authoring models cannot declare `noise(...)` equations",
+                "ODE models cannot declare `noise(...)` equations",
                 self.diffusion_statements[0].span,
             ));
         }
@@ -647,7 +647,7 @@ impl<'a> AuthoringParser<'a> {
         if matches!(kind, ModelKind::Sde) {
             if let Some(analytical) = &self.analytical {
                 return Err(ParseError::new(
-                    "SDE authoring models cannot declare an analytical structure",
+                    "SDE models cannot declare an analytical structure",
                     analytical.span,
                 ));
             }
@@ -841,13 +841,13 @@ fn parse_call_head<'a>(src: &'a str, abs_start: usize) -> Result<Option<CallHead
     };
     let Some(close) = trimmed.rfind(')') else {
         return Err(ParseError::new(
-            "expected `)` to close call-style authoring target",
+            "expected `)` to close call-style target",
             Span::new(abs_start + leading + open, abs_start + src.len()),
         ));
     };
     if !trimmed[close + 1..].trim().is_empty() {
         return Err(ParseError::new(
-            "unexpected trailing tokens after authoring target",
+            "unexpected trailing tokens after target",
             Span::new(abs_start + leading + close + 1, abs_start + src.len()),
         ));
     }
@@ -1110,14 +1110,14 @@ fn parse_if_rhs(src: &str, abs_start: usize) -> Result<SurfaceRhs, ParseError> {
     let rest_abs = abs_start + 2 + rest_leading;
     if !rest.starts_with('(') {
         return Err(ParseError::new(
-            "expected `(` after `if` in authoring conditional expression",
+            "expected `(` after `if` in conditional expression",
             Span::new(rest_abs, rest_abs + rest.len().min(1)),
         ));
     }
 
     let close = find_matching_delimiter(rest, '(', ')').ok_or_else(|| {
         ParseError::new(
-            "unclosed `(` in authoring conditional expression",
+            "unclosed `(` in conditional expression",
             Span::new(rest_abs, rest_abs + rest.len()),
         )
     })?;
@@ -1127,7 +1127,7 @@ fn parse_if_rhs(src: &str, abs_start: usize) -> Result<SurfaceRhs, ParseError> {
     let remaining_abs = rest_abs + close + 1;
     let else_index = find_top_level_keyword(remaining, "else").ok_or_else(|| {
         ParseError::new(
-            "expected `else` in authoring conditional expression",
+            "expected `else` in conditional expression",
             Span::new(remaining_abs, remaining_abs + remaining.len()),
         )
     })?;

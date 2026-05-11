@@ -409,10 +409,7 @@ impl SharedNativeModel {
             return Ok(());
         }
 
-        Err(PharmsolError::OtherError(format!(
-            "model `{}` does not declare a {:?} route for input {}",
-            self.info.name, kind, input
-        )))
+        Err(PharmsolError::UnsupportedInputRouteKind { input, kind })
     }
 
     fn resolve_input_label(
@@ -683,15 +680,12 @@ impl SharedNativeModel {
         amount: f64,
     ) -> Result<(), PharmsolError> {
         self.validate_input_for_kind(input, RouteKind::Bolus)?;
-        let destination = self
-            .route_semantics
-            .bolus_destination(input)
-            .ok_or_else(|| {
-                PharmsolError::OtherError(format!(
-                    "model `{}` does not declare a bolus route for input index {}",
-                    self.info.name, input
-                ))
-            })?;
+        let destination = self.route_semantics.bolus_destination(input).ok_or(
+            PharmsolError::UnsupportedInputRouteKind {
+                input,
+                kind: RouteKind::Bolus,
+            },
+        )?;
         state[destination] += amount;
         Ok(())
     }
@@ -814,7 +808,6 @@ impl NativeOdeModel {
                     _ => None,
                 })
                 .collect::<Vec<_>>();
-            let infusion_refs = infusions.iter().collect::<Vec<_>>();
             let session = RefCell::new(self.shared.artifact.start_session()?);
             let mut route_session = session.borrow_mut();
             self.shared.apply_route_properties(
@@ -899,20 +892,20 @@ impl NativeOdeModel {
                 },
                 NalgebraContext,
             );
+            let support_point_vec = support_point.to_vec();
             let problem = OdeBuilder::<M>::new()
                 .atol(vec![self.atol])
                 .rtol(self.rtol)
                 .t0(occasion.initial_time())
                 .h0(1e-3)
-                .p(support_point.to_vec())
+                .p(support_point_vec.clone())
                 .build_from_eqn(PMProblem::with_params_v(
                     diffeq,
                     self.shared.info.state_len,
                     self.shared.info.route_len,
-                    support_point.to_vec(),
                     support_vector.clone(),
                     occasion.covariates(),
-                    infusion_refs.as_slice(),
+                    infusions.iter(),
                     initial_state,
                 )?)?;
 
@@ -1874,7 +1867,61 @@ fn apply_analytical_kernel(
 
 #[cfg(test)]
 mod tests {
-    use super::{canonical_numeric_alias, NUMERIC_OUTPUT_PREFIX, NUMERIC_ROUTE_PREFIX};
+    use super::{
+        canonical_numeric_alias, KernelSession, NativeModelInfo, NativeOutputInfo, NativeRouteInfo,
+        RuntimeArtifact, RuntimeBackend, SharedNativeModel, NUMERIC_OUTPUT_PREFIX,
+        NUMERIC_ROUTE_PREFIX,
+    };
+    use crate::PharmsolError;
+    use pharmsol_dsl::execution::KernelRole;
+    use pharmsol_dsl::{ModelKind, RouteKind};
+
+    #[derive(Debug)]
+    struct DummyArtifact;
+
+    impl RuntimeArtifact for DummyArtifact {
+        fn backend(&self) -> RuntimeBackend {
+            panic!("dummy artifact backend should not be used in tests")
+        }
+
+        fn has_kernel(&self, _role: KernelRole) -> bool {
+            false
+        }
+
+        fn start_session(&self) -> Result<Box<dyn KernelSession + '_>, PharmsolError> {
+            panic!("dummy artifact sessions should not be used in tests")
+        }
+    }
+
+    fn bolus_only_shared_model() -> SharedNativeModel {
+        SharedNativeModel::new(
+            NativeModelInfo {
+                name: "bolus_only".to_string(),
+                kind: ModelKind::Ode,
+                parameters: Vec::new(),
+                covariates: Vec::new(),
+                routes: vec![NativeRouteInfo {
+                    name: "oral".to_string(),
+                    declaration_index: 0,
+                    index: 0,
+                    kind: Some(RouteKind::Bolus),
+                    destination_offset: 0,
+                    inject_input_to_destination: false,
+                }],
+                outputs: vec![NativeOutputInfo {
+                    name: "cp".to_string(),
+                    index: 0,
+                }],
+                state_len: 1,
+                derived_len: 0,
+                output_len: 1,
+                route_len: 1,
+                analytical: None,
+                particles: None,
+            },
+            DummyArtifact,
+        )
+    }
 
     #[test]
     fn canonical_numeric_alias_maps_bare_numeric_labels_to_contextual_prefixes() {
@@ -1899,5 +1946,22 @@ mod tests {
             canonical_numeric_alias("outeq_2", NUMERIC_OUTPUT_PREFIX),
             None
         );
+    }
+
+    #[test]
+    fn validate_input_for_kind_reports_structured_route_kind_error() {
+        let model = bolus_only_shared_model();
+
+        let error = model
+            .validate_input_for_kind(0, RouteKind::Infusion)
+            .expect_err("bolus-only route should reject infusion usage");
+
+        assert!(matches!(
+            error,
+            PharmsolError::UnsupportedInputRouteKind {
+                input: 0,
+                kind: RouteKind::Infusion,
+            }
+        ));
     }
 }

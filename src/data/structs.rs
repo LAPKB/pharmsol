@@ -59,6 +59,10 @@ impl Data {
         self.subjects.iter().collect()
     }
 
+    pub(crate) fn subjects_slice(&self) -> &[Subject] {
+        &self.subjects
+    }
+
     /// Add a subject to the dataset
     ///
     /// # Arguments
