@@ -1,27 +1,78 @@
+//! Handwritten equation families and their shared simulation interfaces.
+//!
+//! This module is the public home for handwritten [`ODE`], [`Analytical`], and
+//! [`SDE`] models, plus the shared [`Equation`] trait and the metadata types
+//! that attach public names to parameters, states, routes, and outputs.
+//!
+//! Use this module when you want to:
+//! - choose between deterministic ODE, analytical, and stochastic SDE models
+//! - attach metadata so dataset labels such as `"iv"` and `"cp"` resolve by
+//!   name instead of by dense numeric index
+//! - work with prediction or likelihood APIs across equation families
+//!
+//! # Equation Families
+//!
+//! - [`ODE`] for deterministic models that must be numerically integrated.
+//! - [`Analytical`] for supported closed-form models.
+//! - [`SDE`] for stochastic models that use particles.
+//!
+//! # Labels And Metadata
+//!
+//! Input and output labels arrive from public data APIs as strings.
+//!
+//! - Without metadata, handwritten models fall back to numeric labels such as
+//!   `0` or `1`.
+//! - With [`metadata::ModelMetadata`] attached, route and output labels are
+//!   resolved by name against the declared routes and outputs before
+//!   simulation.
+//!
+//! That label-first path is the preferred public workflow for current authoring.
+//!
+//! # Example
+//!
+//! ```rust
+//! use pharmsol::{metadata, ModelKind};
+//!
+//! let metadata = metadata::new("one_cmt")
+//!     .kind(ModelKind::Ode)
+//!     .parameters(["cl", "v"])
+//!     .states(["central"])
+//!     .outputs(["cp"])
+//!     .route(metadata::Route::infusion("iv").to_state("central"))
+//!     .validate()
+//!     .unwrap();
+//!
+//! assert_eq!(metadata.route("iv").unwrap().destination(), "central");
+//! assert!(metadata.output("cp").is_some());
+//! ```
+
 use std::fmt::Debug;
 pub mod analytical;
-pub mod meta;
+pub mod metadata;
 pub mod ode;
 pub mod sde;
 pub use analytical::*;
-pub use meta::*;
+pub use metadata::*;
 pub use ode::*;
+pub use pharmsol_dsl::{AnalyticalKernel, ModelKind};
+use pharmsol_dsl::{NUMERIC_OUTPUT_PREFIX, NUMERIC_ROUTE_PREFIX};
 pub use sde::*;
 
 use crate::{
     error_model::AssayErrorModels,
     simulator::{Fa, Lag},
-    Covariates, Event, Infusion, Observation, PharmsolError, Subject,
+    Covariates, Event, Infusion, InputLabel, Observation, Occasion, OutputLabel, PharmsolError,
+    Subject,
 };
 
 use super::likelihood::Prediction;
 
 /// Trait for state vectors that can receive bolus doses.
 pub trait State {
-    /// Add a bolus dose to the state at the specified input compartment.
+    /// Add a bolus dose to the state at the specified resolved input index.
     ///
     /// # Parameters
-    /// - `input`: The compartment index
+    /// - `input`: The resolved dense input index used by the execution layer
     /// - `amount`: The bolus amount
     fn add_bolus(&mut self, input: usize, amount: f64);
 }
@@ -112,7 +163,7 @@ pub trait Cache: Sized {
     fn disable_cache(self) -> Self;
 }
 
-/// Trait defining the associated types for equations.
+/// Associated state and prediction container types for an equation family.
 pub trait EquationTypes {
     /// The state vector type
     type S: State + Debug;
@@ -128,6 +179,7 @@ pub(crate) trait EquationPriv: EquationTypes {
     fn get_nstates(&self) -> usize;
     fn get_ndrugs(&self) -> usize;
     fn get_nouteqs(&self) -> usize;
+    fn metadata(&self) -> Option<&ValidatedModelMetadata>;
     fn solve(
         &self,
         state: &mut Self::S,
@@ -139,6 +191,93 @@ pub(crate) trait EquationPriv: EquationTypes {
     ) -> Result<(), PharmsolError>;
     fn nparticles(&self) -> usize {
         1
+    }
+
+    fn resolve_input_label(
+        &self,
+        label: &InputLabel,
+        expected_kind: RouteKind,
+    ) -> Result<usize, PharmsolError> {
+        if let Some(metadata) = self.metadata() {
+            let route = metadata
+                .route(label.as_str())
+                .or_else(|| {
+                    canonical_numeric_alias(label.as_str(), NUMERIC_ROUTE_PREFIX)
+                        .and_then(|alias| metadata.route(alias.as_str()))
+                })
+                .ok_or_else(|| PharmsolError::UnknownInputLabel {
+                    label: label.to_string(),
+                })?;
+
+            if route.kind() != expected_kind {
+                return Err(PharmsolError::UnsupportedInputRouteKind {
+                    input: route.input_index(),
+                    kind: match expected_kind {
+                        RouteKind::Bolus => pharmsol_dsl::RouteKind::Bolus,
+                        RouteKind::Infusion => pharmsol_dsl::RouteKind::Infusion,
+                    },
+                });
+            }
+
+            return Ok(route.input_index());
+        }
+
+        label
+            .index()
+            .ok_or_else(|| PharmsolError::UnknownInputLabel {
+                label: label.to_string(),
+            })
+    }
+
+    fn resolve_output_label(&self, label: &OutputLabel) -> Result<usize, PharmsolError> {
+        if let Some(metadata) = self.metadata() {
+            return metadata
+                .output_index(label.as_str())
+                .or_else(|| {
+                    canonical_numeric_alias(label.as_str(), NUMERIC_OUTPUT_PREFIX)
+                        .and_then(|alias| metadata.output_index(alias.as_str()))
+                })
+                .ok_or_else(|| PharmsolError::UnknownOutputLabel {
+                    label: label.to_string(),
+                });
+        }
+
+        label
+            .index()
+            .ok_or_else(|| PharmsolError::UnknownOutputLabel {
+                label: label.to_string(),
+            })
+    }
+
+    fn resolve_occasion_events(
+        &self,
+        occasion: &Occasion,
+        support_point: &[f64],
+        covariates: &Covariates,
+    ) -> Result<Vec<Event>, PharmsolError> {
+        let mut resolved = occasion.clone();
+
+        for event in resolved.events_iter_mut() {
+            match event {
+                Event::Bolus(bolus) => {
+                    let input = self.resolve_input_label(bolus.input(), RouteKind::Bolus)?;
+                    bolus.set_input(input);
+                }
+                Event::Infusion(infusion) => {
+                    let input = self.resolve_input_label(infusion.input(), RouteKind::Infusion)?;
+                    infusion.set_input(input);
+                }
+                Event::Observation(observation) => {
+                    let outeq = self.resolve_output_label(observation.outeq())?;
+                    observation.set_outeq(outeq);
+                }
+            }
+        }
+
+        Ok(resolved.process_events(
+            Some((self.fa(), self.lag(), support_point, covariates)),
+            true,
+        ))
     }
     #[allow(dead_code)]
     fn is_sde(&self) -> bool {
@@ -180,13 +319,20 @@ pub(crate) trait EquationPriv: EquationTypes {
     ) -> Result<(), PharmsolError> {
         match event {
             Event::Bolus(bolus) => {
-                if bolus.input() >= self.get_ndrugs() {
+                let input =
+                    bolus
+                        .input_index()
+                        .ok_or_else(|| PharmsolError::UnknownInputLabel {
+                            label: bolus.input().to_string(),
+                        })?;
+
+                if input >= self.get_ndrugs() {
                     return Err(PharmsolError::InputOutOfRange {
-                        input: bolus.input(),
+                        input,
                         ndrugs: self.get_ndrugs(),
                     });
                 }
-                x.add_bolus(bolus.input(), bolus.amount());
+                x.add_bolus(input, bolus.amount());
             }
             Event::Infusion(infusion) => {
                 infusions.push(infusion.clone());
@@ -219,11 +365,22 @@ pub(crate) trait EquationPriv: EquationTypes {
     }
 }
 
-/// Trait for model equations that can be simulated.
+fn canonical_numeric_alias(label: &str, prefix: &str) -> Option<String> {
+    if label.is_empty() || !label.chars().all(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
+    Some(format!("{prefix}{label}"))
+}
+
+/// Trait for handwritten model equations that can be simulated.
 ///
-/// This trait defines the interface for different types of model equations
-/// (ODE, SDE, analytical) that can be simulated to generate predictions
-/// and estimate parameters.
+/// [`Equation`] is the shared interface implemented by handwritten [`ODE`],
+/// [`Analytical`], and [`SDE`] models.
+///
+/// Subject data enters this layer through public labels on dose and observation
+/// events. If metadata is attached to the equation, those labels are resolved by
+/// name before simulation. Otherwise, the execution layer expects numeric labels
+/// that can be interpreted as dense indices.
 ///
 /// # Likelihood Calculation
 ///
@@ -232,6 +389,14 @@ pub(crate) trait EquationPriv: EquationTypes {
 /// is provided for backward compatibility.
 #[allow(private_bounds)]
 pub trait Equation: EquationPriv + 'static + Clone + Sync {
+    #[doc(hidden)]
+    fn bind_error_models(
+        &self,
+        error_models: &AssayErrorModels,
+    ) -> Result<AssayErrorModels, PharmsolError> {
+        Ok(error_models.bind_to(self)?)
+    }
+
     /// Estimate the likelihood of the subject given the support point and error model.
     ///
     /// **Deprecated**: Use [`estimate_log_likelihood`](Self::estimate_log_likelihood) instead
@@ -309,6 +474,22 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
         self.get_nstates()
     }
 
+    /// Build a label-aware [`AssayErrorModels`] set for this equation.
+    ///
+    /// Handwritten equations resolve output labels from attached metadata.
+    /// Equations without metadata fall back to an explicit unbound set so dense
+    /// output-slot workflows remain available without adding runtime lookup cost.
+    #[doc(hidden)]
+    fn assay_error_models(&self) -> AssayErrorModels {
+        self.metadata()
+            .map(|metadata| {
+                AssayErrorModels::with_output_names(
+                    metadata.outputs().iter().map(|output| output.name()),
+                )
+            })
+            .unwrap_or_else(AssayErrorModels::empty)
+    }
+
     /// Simulate a subject with given parameters and optionally calculate likelihood.
     ///
     /// # Parameters
@@ -324,6 +505,11 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
         support_point: &[f64],
         error_models: Option<&AssayErrorModels>,
     ) -> Result<(Self::P, Option<f64>), PharmsolError> {
+        let bound_error_models = match error_models {
+            Some(error_models) => Some(self.bind_error_models(error_models)?),
+            None => None,
+        };
+
         let mut output = Self::P::new(self.nparticles());
         let mut likelihood = Vec::new();
         for occasion in subject.occasions() {
@@ -331,16 +517,13 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
 
             let mut x = self.initial_state(support_point, covariates, occasion.index());
             let mut infusions = Vec::new();
-            let events = occasion.process_events(
-                Some((self.fa(), self.lag(), support_point, covariates)),
-                true,
-            );
+            let events = self.resolve_occasion_events(occasion, support_point, covariates)?;
             for (index, event) in events.iter().enumerate() {
                 self.simulate_event(
                     support_point,
                     event,
                     events.get(index + 1),
-                    error_models,
+                    bound_error_models.as_ref(),
                     covariates,
                     &mut x,
                     &mut infusions,
@@ -349,11 +532,14 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
                 )?;
             }
         }
-        let ll = error_models.map(|_| likelihood.iter().product::<f64>());
+        let ll = bound_error_models
+            .as_ref()
+            .map(|_| likelihood.iter().product::<f64>());
         Ok((output, ll))
     }
 }
 
+/// Runtime family tag for handwritten equations.
 #[repr(C)]
 #[derive(Clone, Debug)]
 pub enum EqnKind {

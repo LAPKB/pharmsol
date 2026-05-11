@@ -79,3 +79,7 @@ harness = false
 [[bench]]
 name = "runtime_matrix"
 harness = false
+
+[[bench]]
+name = "likelihood_matrix"
+harness = false

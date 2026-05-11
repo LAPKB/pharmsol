@@ -8,7 +8,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     use pharmsol::prelude::*;
 
     let model_source = r#"
-model = bimodal_ke
+name = bimodal_ke
 kind = ode
 
 params = ke, v
@@ -43,24 +43,16 @@ out(cp) = central / v
         on_compile_event,
     )?;
 
-    // 2. Resolve the route and output indices declared by the model.
-    let iv = model
-        .route_index("iv")
-        .ok_or_else(|| io::Error::other("missing iv route"))?;
-    let cp = model
-        .output_index("cp")
-        .ok_or_else(|| io::Error::other("missing cp output"))?;
-
     // 3. Define the subject data.
     let subject = Subject::builder("bimodal_ke")
-        .infusion(0.0, 500.0, iv, 0.5)
-        .missing_observation(0.5, cp)
-        .missing_observation(1.0, cp)
-        .missing_observation(2.0, cp)
-        .missing_observation(3.0, cp)
-        .missing_observation(4.0, cp)
-        .missing_observation(6.0, cp)
-        .missing_observation(8.0, cp)
+        .infusion(0.0, 500.0, "iv", 0.5)
+        .missing_observation(0.5, "cp")
+        .missing_observation(1.0, "cp")
+        .missing_observation(2.0, "cp")
+        .missing_observation(3.0, "cp")
+        .missing_observation(4.0, "cp")
+        .missing_observation(6.0, "cp")
+        .missing_observation(8.0, "cp")
         .build();
 
     // 4. Estimate predictions for one support point.

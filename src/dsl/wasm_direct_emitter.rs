@@ -922,7 +922,7 @@ fn emit_load(
             function.instruction(&Instruction::LocalGet(local.wasm_local));
             emit_cast_stack(local.ty, target_ty, function, state.model_name)
         }
-        ExecutionLoad::RouteInput(index) => emit_dense_load(
+        ExecutionLoad::RouteInput { index, .. } => emit_dense_load(
             function,
             KERNEL_PARAM_ROUTES,
             *index,

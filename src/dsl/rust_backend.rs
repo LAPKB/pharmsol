@@ -264,7 +264,7 @@ fn emit_load(load: &ExecutionLoad, ty: ValueType) -> Result<String, String> {
         ExecutionLoad::Covariate(index) => format!("load_f64(covariates, {index})"),
         ExecutionLoad::Derived(index) => format!("load_f64(derived, {index})"),
         ExecutionLoad::Local(index) => return Ok(format!("local_{index}")),
-        ExecutionLoad::RouteInput(index) => format!("load_f64(routes, {index})"),
+        ExecutionLoad::RouteInput { index, .. } => format!("load_f64(routes, {index})"),
         ExecutionLoad::State(state) => {
             let index = emit_state_ref_index(state)?;
             format!("load_f64(states, {index})")

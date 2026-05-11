@@ -85,6 +85,84 @@ mod tests {
     }
 
     #[test]
+    fn analytical_full_runtime_backend_matrix_matches_reference_predictions(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        #[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]
+        let workspace = super::runtime_corpus::ArtifactWorkspace::new()?;
+
+        let jit = corpus::compile_runtime_jit_model(CorpusCase::AnalyticalFull)?;
+        assert_eq!(jit.backend(), RuntimeBackend::Jit);
+        corpus::assert_runtime_model_matches_reference(
+            CorpusCase::AnalyticalFull,
+            "runtime-jit",
+            &jit,
+        )?;
+
+        #[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]
+        let aot = corpus::compile_runtime_native_aot_model(CorpusCase::AnalyticalFull, &workspace)?;
+        #[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]
+        assert_eq!(aot.backend(), RuntimeBackend::NativeAot);
+        #[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]
+        corpus::assert_runtime_model_matches_reference(
+            CorpusCase::AnalyticalFull,
+            "runtime-native-aot",
+            &aot,
+        )?;
+
+        let wasm = corpus::compile_runtime_wasm_model(CorpusCase::AnalyticalFull)?;
+        assert_eq!(wasm.backend(), RuntimeBackend::Wasm);
+        corpus::assert_runtime_model_matches_reference(
+            CorpusCase::AnalyticalFull,
+            "runtime-wasm",
+            &wasm,
+        )?;
+        corpus::assert_runtime_models_match_each_other(
+            CorpusCase::AnalyticalFull,
+            "runtime-jit",
+            &jit,
+            "runtime-wasm",
+            &wasm,
+        )?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn ode_full_runtime_backend_matrix_matches_reference_predictions(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        #[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]
+        let workspace = super::runtime_corpus::ArtifactWorkspace::new()?;
+
+        let jit = corpus::compile_runtime_jit_model(CorpusCase::OdeFull)?;
+        assert_eq!(jit.backend(), RuntimeBackend::Jit);
+        corpus::assert_runtime_model_matches_reference(CorpusCase::OdeFull, "runtime-jit", &jit)?;
+
+        #[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]
+        let aot = corpus::compile_runtime_native_aot_model(CorpusCase::OdeFull, &workspace)?;
+        #[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]
+        assert_eq!(aot.backend(), RuntimeBackend::NativeAot);
+        #[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]
+        corpus::assert_runtime_model_matches_reference(
+            CorpusCase::OdeFull,
+            "runtime-native-aot",
+            &aot,
+        )?;
+
+        let wasm = corpus::compile_runtime_wasm_model(CorpusCase::OdeFull)?;
+        assert_eq!(wasm.backend(), RuntimeBackend::Wasm);
+        corpus::assert_runtime_model_matches_reference(CorpusCase::OdeFull, "runtime-wasm", &wasm)?;
+        corpus::assert_runtime_models_match_each_other(
+            CorpusCase::OdeFull,
+            "runtime-jit",
+            &jit,
+            "runtime-wasm",
+            &wasm,
+        )?;
+
+        Ok(())
+    }
+
+    #[test]
     fn sde_runtime_backend_matrix_matches_reference_predictions(
     ) -> Result<(), Box<dyn std::error::Error>> {
         #[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]

@@ -1,5 +1,7 @@
 use thiserror::Error;
 
+use pharmsol_dsl::RouteKind;
+
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 use crate::data::error_model::ErrorModelError;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
@@ -37,7 +39,13 @@ pub enum PharmsolError {
     ZeroLikelihood,
     #[error("Missing observation in prediction")]
     MissingObservation,
-    #[error("Input channel {input} is out of range (ndrugs = {ndrugs})")]
+    #[error("Input label `{label}` could not be resolved to a route input")]
+    UnknownInputLabel { label: String },
+    #[error("Output label `{label}` could not be resolved to an output")]
+    UnknownOutputLabel { label: String },
+    #[error("Input index {input} does not support route kind {kind:?}")]
+    UnsupportedInputRouteKind { input: usize, kind: RouteKind },
+    #[error("Input index {input} is out of range (ndrugs = {ndrugs})")]
     InputOutOfRange { input: usize, ndrugs: usize },
     #[error("Output equation {outeq} is out of range (nout = {nout})")]
     OuteqOutOfRange { outeq: usize, nout: usize },

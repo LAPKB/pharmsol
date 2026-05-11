@@ -1,3 +1,15 @@
+//! Event types and public label wrappers for subject schedules.
+//!
+//! These types are the low-level representation behind the higher-level
+//! builder and parsing APIs. Most users can start with
+//! [`crate::data::builder::SubjectBuilder`], then inspect or transform
+//! [`Event`] values after construction.
+//!
+//! Dose events carry an [`InputLabel`], and observations carry an
+//! [`OutputLabel`]. Prefer stable strings such as `"depot"`, `"iv"`, and
+//! `"cp"`. Numeric values are accepted, but they remain labels until a
+//! downstream workflow explicitly interprets them as indices.
+
 use crate::data::error_model::ErrorPoly;
 use crate::prelude::simulator::Prediction;
 use serde::{Deserialize, Serialize};
@@ -7,12 +19,16 @@ use std::fmt;
 // Shared Analysis Types
 // ============================================================================
 
-/// Administration route for a dosing event
+/// Administration route classification used by downstream analyses.
 ///
-/// Determined by the type of dose events and their target compartment:
-/// - [`Event::Infusion`] → [`Route::IVInfusion`]
-/// - [`Event::Bolus`] with `input >= 1` (central compartment) → [`Route::IVBolus`]
-/// - [`Event::Bolus`] with `input == 0` (depot compartment) → [`Route::Extravascular`]
+/// [`Route`] is a coarse route category, not the original public input label.
+/// In the current data-side heuristic:
+/// - [`Event::Infusion`] maps to [`Route::IVInfusion`]
+/// - [`Event::Bolus`] with input label `0` maps to [`Route::Extravascular`]
+/// - [`Event::Bolus`] with any other label maps to [`Route::IVBolus`]
+///
+/// If you need the original model-facing label, read [`Bolus::input`] or
+/// [`Infusion::input`] instead.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Route {
     /// Intravenous bolus
@@ -78,12 +94,15 @@ pub enum BLQRule {
     },
 }
 
-/// Represents a pharmacokinetic/pharmacodynamic event
+/// One scheduled item in a subject record.
 ///
-/// Events represent key occurrences in a PK/PD profile, including:
-/// - [Bolus] doses (instantaneous drug input)
-/// - [Infusion]s (continuous drug input over a duration)
-/// - [Observation]s (measured concentrations or other values)
+/// Events are the low-level representation for doses and observations:
+/// - [`Bolus`] for instantaneous input
+/// - [`Infusion`] for input over a duration
+/// - [`Observation`] for measured or missing outputs
+///
+/// Most users create these through `Subject::builder(...)`, row ingestion, or
+/// file parsing rather than constructing them all by hand.
 #[derive(Serialize, Debug, Clone, Deserialize)]
 pub enum Event {
     /// A bolus dose (instantaneous drug input)
@@ -93,6 +112,172 @@ pub enum Event {
     /// An observation of drug concentration or other measure
     Observation(Observation),
 }
+
+/// Public label for a dosing input or route.
+///
+/// [`Bolus`] and [`Infusion`] store the original user-facing route name in
+/// this type.
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct InputLabel(String);
+
+impl InputLabel {
+    /// Create a new public label.
+    ///
+    /// Prefer stable names when the model declares named routes.
+    pub fn new(label: impl ToString) -> Self {
+        Self(label.to_string())
+    }
+
+    /// Borrow the stored label as a string.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Try to interpret the label as a numeric index.
+    ///
+    /// This is mainly a compatibility helper for lower-level paths that still
+    /// operate on dense indices after label resolution.
+    pub fn index(&self) -> Option<usize> {
+        self.0.parse::<usize>().ok()
+    }
+}
+
+impl From<String> for InputLabel {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl From<&str> for InputLabel {
+    fn from(value: &str) -> Self {
+        Self(value.to_string())
+    }
+}
+
+impl From<usize> for InputLabel {
+    fn from(value: usize) -> Self {
+        Self(value.to_string())
+    }
+}
+
+impl AsRef<str> for InputLabel {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl fmt::Display for InputLabel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl PartialEq<usize> for InputLabel {
+    fn eq(&self, other: &usize) -> bool {
+        self.index() == Some(*other)
+    }
+}
+
+impl PartialEq<InputLabel> for usize {
+    fn eq(&self, other: &InputLabel) -> bool {
+        other == self
+    }
+}
+
+impl PartialEq<usize> for &InputLabel {
+    fn eq(&self, other: &usize) -> bool {
+        (**self).eq(other)
+    }
+}
+
+impl PartialEq<&InputLabel> for usize {
+    fn eq(&self, other: &&InputLabel) -> bool {
+        other.eq(self)
+    }
+}
+
+/// Public label for an observation output.
+///
+/// [`Observation`] stores the original user-facing output name in this type.
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct OutputLabel(String);
+
+impl OutputLabel {
+    /// Create a new public label.
+    ///
+    /// Prefer stable names when the model declares named outputs.
+    pub fn new(label: impl ToString) -> Self {
+        Self(label.to_string())
+    }
+
+    /// Borrow the stored label as a string.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Try to interpret the label as a numeric index.
+    ///
+    /// This is mainly a compatibility helper for lower-level paths that still
+    /// operate on dense indices after label resolution.
+    pub fn index(&self) -> Option<usize> {
+        self.0.parse::<usize>().ok()
+    }
+}
+
+impl From<String> for OutputLabel {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl From<&str> for OutputLabel {
+    fn from(value: &str) -> Self {
+        Self(value.to_string())
+    }
+}
+
+impl From<usize> for OutputLabel {
+    fn from(value: usize) -> Self {
+        Self(value.to_string())
+    }
+}
+
+impl AsRef<str> for OutputLabel {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl fmt::Display for OutputLabel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl PartialEq<usize> for OutputLabel {
+    fn eq(&self, other: &usize) -> bool {
+        self.index() == Some(*other)
+    }
+}
+
+impl PartialEq<OutputLabel> for usize {
+    fn eq(&self, other: &OutputLabel) -> bool {
+        other == self
+    }
+}
+
+impl PartialEq<usize> for &OutputLabel {
+    fn eq(&self, other: &usize) -> bool {
+        (**self).eq(other)
+    }
+}
+
+impl PartialEq<&OutputLabel> for usize {
+    fn eq(&self, other: &&OutputLabel) -> bool {
+        other.eq(self)
+    }
+}
+
 impl Event {
     /// Get the time of the event
     pub fn time(&self) -> f64 {
@@ -145,14 +330,15 @@ impl Event {
     }
 }
 
-/// Represents an instantaneous input of drug
+/// Instantaneous dose input.
 ///
-/// A [Bolus] is a discrete amount of drug added to a specific compartment at a specific time.
+/// A [`Bolus`] records one discrete amount at one time, tagged with the public
+/// input label that should be matched against the model.
 #[derive(Serialize, Debug, Clone, Deserialize)]
 pub struct Bolus {
     time: f64,
     amount: f64,
-    input: usize,
+    input: InputLabel,
     occasion: usize,
 }
 impl Bolus {
@@ -162,12 +348,12 @@ impl Bolus {
     ///
     /// * `time` - Time of the bolus dose
     /// * `amount` - Amount of drug administered
-    /// * `input` - The compartment number receiving the dose
-    pub fn new(time: f64, amount: f64, input: usize, occasion: usize) -> Self {
+    /// * `input` - The route label receiving the dose
+    pub fn new(time: f64, amount: f64, input: impl ToString, occasion: usize) -> Self {
         Bolus {
             time,
             amount,
-            input,
+            input: InputLabel::new(input),
             occasion,
         }
     }
@@ -177,9 +363,16 @@ impl Bolus {
         self.amount
     }
 
-    /// Get the compartment number that receives the bolus
-    pub fn input(&self) -> usize {
-        self.input
+    /// Get the route label that receives the bolus
+    pub fn input(&self) -> &InputLabel {
+        &self.input
+    }
+
+    /// Try to interpret the input label as a numeric index.
+    ///
+    /// Prefer [`Bolus::input`] when working with the public label itself.
+    pub fn input_index(&self) -> Option<usize> {
+        self.input.index()
     }
 
     /// Get the time of the bolus administration
@@ -192,9 +385,9 @@ impl Bolus {
         self.amount = amount;
     }
 
-    /// Set the compartment number that receives the bolus
-    pub fn set_input(&mut self, input: usize) {
-        self.input = input;
+    /// Set the route label that receives the bolus
+    pub fn set_input(&mut self, input: impl ToString) {
+        self.input = InputLabel::new(input);
     }
 
     /// Set the time of the bolus administration
@@ -207,8 +400,8 @@ impl Bolus {
         &mut self.amount
     }
 
-    /// Get a mutable reference to the compartment number (1-indexed) that receives the bolus
-    pub fn mut_input(&mut self) -> &mut usize {
+    /// Get a mutable reference to the route label that receives the bolus
+    pub fn mut_input(&mut self) -> &mut InputLabel {
         &mut self.input
     }
 
@@ -228,14 +421,15 @@ impl Bolus {
     }
 }
 
-/// Represents a continuous dose of drug over time
+/// Continuous dose input over a duration.
 ///
-/// An [Infusion] administers drug at a constant rate over a specified duration.
+/// An [`Infusion`] records the total amount, start time, duration, and public
+/// input label for one infusion event.
 #[derive(Serialize, Debug, Clone, Deserialize)]
 pub struct Infusion {
     time: f64,
     amount: f64,
-    input: usize,
+    input: InputLabel,
     duration: f64,
     occasion: usize,
 }
@@ -246,13 +440,19 @@ impl Infusion {
     ///
     /// * `time` - Start time of the infusion
     /// * `amount` - Total amount of drug to be administered
-    /// * `input` - The compartment number receiving the dose
+    /// * `input` - The route label receiving the dose
     /// * `duration` - Duration of the infusion in time units
-    pub fn new(time: f64, amount: f64, input: usize, duration: f64, occasion: usize) -> Self {
+    pub fn new(
+        time: f64,
+        amount: f64,
+        input: impl ToString,
+        duration: f64,
+        occasion: usize,
+    ) -> Self {
         Infusion {
             time,
             amount,
-            input,
+            input: InputLabel::new(input),
             duration,
             occasion,
         }
@@ -263,9 +463,16 @@ impl Infusion {
         self.amount
     }
 
-    /// Get the compartment number that receives the infusion
-    pub fn input(&self) -> usize {
-        self.input
+    /// Get the route label that receives the infusion
+    pub fn input(&self) -> &InputLabel {
+        &self.input
+    }
+
+    /// Try to interpret the input label as a numeric index.
+    ///
+    /// Prefer [`Infusion::input`] when working with the public label itself.
+    pub fn input_index(&self) -> Option<usize> {
+        self.input.index()
     }
 
     /// Get the duration of the infusion
@@ -285,9 +492,9 @@ impl Infusion {
         self.amount = amount;
     }
 
-    /// Set the compartment number that receives the infusion
-    pub fn set_input(&mut self, input: usize) {
-        self.input = input;
+    /// Set the route label that receives the infusion
+    pub fn set_input(&mut self, input: impl ToString) {
+        self.input = InputLabel::new(input);
     }
 
     /// Set the time of the infusion administration
@@ -305,8 +512,8 @@ impl Infusion {
         &mut self.amount
     }
 
-    /// Get a mutable reference to the compartment number (1-indexed) that receives the infusion
-    pub fn mut_input(&mut self) -> &mut usize {
+    /// Get a mutable reference to the route label that receives the infusion
+    pub fn mut_input(&mut self) -> &mut InputLabel {
         &mut self.input
     }
 
@@ -343,12 +550,16 @@ pub enum Censor {
     ALOQ,
 }
 
-/// Represents an observation of drug concentration or other measured value
+/// Observation of a model output.
+///
+/// An [`Observation`] can carry a measured value or `None` for a prediction-only
+/// time point. Observations also carry the public output label, optional assay
+/// error polynomial, occasion index, and censoring state.
 #[derive(Serialize, Debug, Clone, Deserialize)]
 pub struct Observation {
     time: f64,
     value: Option<f64>,
-    outeq: usize,
+    outeq: OutputLabel,
     errorpoly: Option<ErrorPoly>,
     occasion: usize,
     censoring: Censor,
@@ -360,14 +571,14 @@ impl Observation {
     ///
     /// * `time` - Time of the observation
     /// * `value` - Observed value (e.g., drug concentration)
-    /// * `outeq` - Output equation number corresponding to this observation
+    /// * `outeq` - Output label corresponding to this observation
     /// * `errorpoly` - Optional error polynomial coefficients (c0, c1, c2, c3)
     /// * `occasion` - Occasion index
     /// * `censoring` - Censoring type for this observation
     pub(crate) fn new(
         time: f64,
         value: Option<f64>,
-        outeq: usize,
+        outeq: impl ToString,
         errorpoly: Option<ErrorPoly>,
         occasion: usize,
         censoring: Censor,
@@ -375,7 +586,7 @@ impl Observation {
         Observation {
             time,
             value,
-            outeq,
+            outeq: OutputLabel::new(outeq),
             errorpoly,
             occasion,
             censoring,
@@ -387,14 +598,23 @@ impl Observation {
         self.time
     }
 
-    /// Get the value of the observation (e.g., drug concentration)
+    /// Get the value of the observation.
+    ///
+    /// `None` means this is a prediction-only or missing-observation slot.
     pub fn value(&self) -> Option<f64> {
         self.value
     }
 
-    /// Get the output equation number corresponding to this observation
-    pub fn outeq(&self) -> usize {
-        self.outeq
+    /// Get the output label corresponding to this observation
+    pub fn outeq(&self) -> &OutputLabel {
+        &self.outeq
+    }
+
+    /// Try to interpret the output label as a numeric index.
+    ///
+    /// Prefer [`Observation::outeq`] when working with the public label itself.
+    pub fn outeq_index(&self) -> Option<usize> {
+        self.outeq.index()
     }
 
     /// Get the error polynomial coefficients (c0, c1, c2, c3) if available
@@ -414,9 +634,9 @@ impl Observation {
         self.value = value;
     }
 
-    /// Set the output equation number corresponding to this observation
-    pub fn set_outeq(&mut self, outeq: usize) {
-        self.outeq = outeq;
+    /// Set the output label corresponding to this observation
+    pub fn set_outeq(&mut self, outeq: impl ToString) {
+        self.outeq = OutputLabel::new(outeq);
     }
 
     /// Set the [ErrorPoly] for this observation
@@ -434,8 +654,8 @@ impl Observation {
         &mut self.value
     }
 
-    /// Get a mutable reference to the output equation number
-    pub fn mut_outeq(&mut self) -> &mut usize {
+    /// Get a mutable reference to the output label
+    pub fn mut_outeq(&mut self) -> &mut OutputLabel {
         &mut self.outeq
     }
 
@@ -454,13 +674,19 @@ impl Observation {
         &mut self.occasion
     }
 
-    /// Create a [Prediction] from this observation
+    /// Create a [`Prediction`] from this observation.
+    ///
+    /// This is a low-level helper for code paths that already operate on a
+    /// resolved or numeric output index. Named output labels must be resolved by
+    /// the caller before this conversion happens.
     pub fn to_prediction(&self, pred: f64, state: Vec<f64>) -> Prediction {
         Prediction {
             time: self.time(),
             observation: self.value(),
             prediction: pred,
-            outeq: self.outeq(),
+            outeq: self
+                .outeq_index()
+                .expect("prediction requires a resolved or numeric output label"),
             errorpoly: self.errorpoly(),
             state,
             occasion: self.occasion(),
@@ -539,6 +765,7 @@ mod tests {
         assert_eq!(bolus.time(), 2.5);
         assert_eq!(bolus.amount(), 100.0);
         assert_eq!(bolus.input(), 1);
+        assert_eq!(bolus.input().as_str(), "1");
     }
 
     #[test]
@@ -561,6 +788,7 @@ mod tests {
         assert_eq!(infusion.time(), 1.0);
         assert_eq!(infusion.amount(), 200.0);
         assert_eq!(infusion.input(), 1);
+        assert_eq!(infusion.input().as_str(), "1");
         assert_eq!(infusion.duration(), 2.5);
     }
 
@@ -589,6 +817,7 @@ mod tests {
         assert_eq!(observation.time(), 5.0);
         assert_eq!(observation.value(), Some(75.5));
         assert_eq!(observation.outeq(), 2);
+        assert_eq!(observation.outeq().as_str(), "2");
         assert_eq!(observation.errorpoly(), error_poly);
     }
 

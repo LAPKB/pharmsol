@@ -83,6 +83,11 @@ pub type JitAnalyticalModel = NativeAnalyticalModel;
 pub type JitSdeModel = NativeSdeModel;
 pub type CompiledJitModel = CompiledNativeModel;
 
+/// Error reported while lowering an execution model into native in-process JIT
+/// code.
+///
+/// The error retains the backend diagnostic so callers can render the message
+/// against the original DSL source when available.
 #[derive(Clone, PartialEq, Eq)]
 pub struct JitCompileError {
     diagnostic: Box<Diagnostic>,
@@ -214,6 +219,10 @@ struct LoweredValue {
     ty: ValueType,
 }
 
+/// Compile one lowered execution model into a reusable JIT kernel artifact.
+///
+/// This builds the raw Cranelift-compiled kernel bundle for all roles present in
+/// the model. Most callers should use [`compile_execution_model_to_jit`] instead.
 pub fn compile_execution_artifact(
     model: &ExecutionModel,
 ) -> Result<NativeExecutionArtifact, JitCompileError> {
@@ -731,7 +740,7 @@ fn lower_load(
         ExecutionLoad::Parameter(index) => load_fixed(builder, env.args.params, *index, ty),
         ExecutionLoad::Covariate(index) => load_fixed(builder, env.args.covariates, *index, ty),
         ExecutionLoad::Derived(index) => load_fixed(builder, env.args.derived, *index, ty),
-        ExecutionLoad::RouteInput(index) => load_fixed(builder, env.args.routes, *index, ty),
+        ExecutionLoad::RouteInput { index, .. } => load_fixed(builder, env.args.routes, *index, ty),
         ExecutionLoad::Local(index) => {
             let binding = env.locals.get(index).ok_or_else(|| {
                 JitCompileError::new(format!("unknown local slot {index}"), Some(span))
@@ -1217,6 +1226,41 @@ fn state_address(
     Ok(builder.ins().iadd(base, byte_offset))
 }
 
+/// Compile an [`ExecutionModel`](pharmsol_dsl::ExecutionModel) to the native
+/// in-process JIT backend.
+///
+/// Use this low-level entrypoint when you already own the parse, analyze, and
+/// lower steps and want the JIT backend directly instead of the higher-level
+/// runtime facade.
+///
+/// This function requires the `dsl-jit` feature.
+///
+/// ```rust,no_run
+/// use pharmsol::dsl::{
+///     analyze_model, compile_execution_model_to_jit, lower_typed_model, parse_model,
+/// };
+///
+/// let parsed = parse_model(
+///     r#"
+/// model implicit_route_injection {
+///     kind ode
+///     states { central }
+///     routes { iv -> central }
+///     dynamics {
+///         ddt(central) = 0
+///     }
+///     outputs {
+///         cp = central
+///     }
+/// }
+/// "#,
+/// )?;
+/// let typed = analyze_model(&parsed)?;
+/// let execution = lower_typed_model(&typed)?;
+/// let compiled = compile_execution_model_to_jit(&execution)?;
+/// # let _ = compiled;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub fn compile_execution_model_to_jit(
     model: &ExecutionModel,
 ) -> Result<CompiledJitModel, JitCompileError> {
@@ -1229,6 +1273,7 @@ pub fn compile_execution_model_to_jit(
     }
 }
 
+/// Compile an ODE execution model to the native in-process JIT backend.
 pub fn compile_ode_model_to_jit(model: &ExecutionModel) -> Result<JitOdeModel, JitCompileError> {
     if model.kind != ModelKind::Ode {
         return Err(JitCompileError::new(
@@ -1245,6 +1290,7 @@ pub fn compile_ode_model_to_jit(model: &ExecutionModel) -> Result<JitOdeModel, J
     ))
 }
 
+/// Compile an analytical execution model to the native in-process JIT backend.
 pub fn compile_analytical_model_to_jit(
     model: &ExecutionModel,
 ) -> Result<JitAnalyticalModel, JitCompileError> {
@@ -1263,6 +1309,7 @@ pub fn compile_analytical_model_to_jit(
     ))
 }
 
+/// Compile an SDE execution model to the native in-process JIT backend.
 pub fn compile_sde_model_to_jit(model: &ExecutionModel) -> Result<JitSdeModel, JitCompileError> {
     if model.kind != ModelKind::Sde {
         return Err(JitCompileError::new(
@@ -1328,6 +1375,119 @@ mod tests {
 
         let debugged = format!("{error:?}");
         assert!(debugged.contains("error[DSL4000]"), "{}", debugged);
+    }
+
+    #[test]
+    fn authoring_runtime_shares_input_between_bolus_and_infusion_routes() {
+        let source = r#"
+name = shared_authoring
+kind = ode
+
+params = ka, ke, v
+states = depot, central
+outputs = cp
+
+bolus(oral) -> depot
+infusion(iv) -> central
+
+dx(depot) = -ka * depot
+dx(central) = ka * depot - ke * central
+
+out(cp) = central / v ~ continuous()
+"#;
+        let parsed = pharmsol_dsl::parse_model(source).expect("authoring model parses");
+        let typed = pharmsol_dsl::analyze_model(&parsed).expect("authoring model analyzes");
+        let model = pharmsol_dsl::lower_typed_model(&typed).expect("authoring model lowers");
+        let jit = compile_ode_model_to_jit(&model)
+            .expect("compile jit ode model")
+            .with_solver(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45));
+
+        let oral = jit
+            .info()
+            .routes
+            .iter()
+            .find(|route| route.name == "oral")
+            .map(|route| route.index)
+            .expect("oral route");
+        let iv = jit
+            .info()
+            .routes
+            .iter()
+            .find(|route| route.name == "iv")
+            .map(|route| route.index)
+            .expect("iv route");
+        let cp = jit
+            .info()
+            .outputs
+            .iter()
+            .find(|output| output.name == "cp")
+            .map(|output| output.index)
+            .expect("cp output");
+        assert_eq!(oral, 0);
+        assert_eq!(iv, 0);
+        assert_eq!(cp, 0);
+
+        let jit_subject = Subject::builder("ode")
+            .bolus(0.0, 120.0, "oral")
+            .infusion(6.0, 60.0, "iv", 2.0)
+            .observation(0.5, 0.0, "cp")
+            .observation(1.0, 0.0, "cp")
+            .observation(2.0, 0.0, "cp")
+            .observation(6.0, 0.0, "cp")
+            .observation(7.0, 0.0, "cp")
+            .observation(9.0, 0.0, "cp")
+            .build();
+
+        let reference_subject = Subject::builder("ode")
+            .bolus(0.0, 120.0, 0)
+            .infusion(6.0, 60.0, 0, 2.0)
+            .observation(0.5, 0.0, 0)
+            .observation(1.0, 0.0, 0)
+            .observation(2.0, 0.0, 0)
+            .observation(6.0, 0.0, 0)
+            .observation(7.0, 0.0, 0)
+            .observation(9.0, 0.0, 0)
+            .build();
+
+        let support = vec![1.2, 0.15, 40.0];
+        let jit_predictions = jit
+            .estimate_predictions(&jit_subject, &support)
+            .expect("jit predictions");
+
+        let reference = ODE::new(
+            |x, p, _t, dx, bolus, rateiv, _cov| {
+                let ka = p[0];
+                let ke = p[1];
+                dx[0] = -ka * x[0] + bolus[0];
+                dx[1] = ka * x[0] - ke * x[1] + rateiv[0];
+            },
+            |_p, _t, _cov| std::collections::HashMap::new(),
+            |_p, _t, _cov| std::collections::HashMap::new(),
+            |_p, _t, _cov, _x| {},
+            |x, p, _t, _cov, y| {
+                y[0] = x[1] / p[2];
+            },
+        )
+        .with_nstates(2)
+        .with_ndrugs(1)
+        .with_nout(1)
+        .with_solver(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45));
+
+        let reference_predictions = reference
+            .estimate_predictions(&reference_subject, &support)
+            .expect("reference ode predictions");
+
+        for (jit_pred, reference_pred) in jit_predictions
+            .predictions()
+            .iter()
+            .zip(reference_predictions.predictions())
+        {
+            assert_relative_eq!(
+                jit_pred.prediction(),
+                reference_pred.prediction(),
+                max_relative = 1e-4
+            );
+        }
     }
 
     fn slot_index(layout: &DenseBufferLayout, name: &str) -> usize {
@@ -1403,27 +1563,58 @@ mod tests {
             .expect("compile jit ode model")
             .with_solver(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45));
 
-        let oral = jit.route_index("oral").expect("oral route");
-        let iv = jit.route_index("iv").expect("iv route");
-        let cp = jit.output_index("cp").expect("cp output");
+        let oral = jit
+            .info()
+            .routes
+            .iter()
+            .find(|route| route.name == "oral")
+            .map(|route| route.index)
+            .expect("oral route");
+        let iv = jit
+            .info()
+            .routes
+            .iter()
+            .find(|route| route.name == "iv")
+            .map(|route| route.index)
+            .expect("iv route");
+        let cp = jit
+            .info()
+            .outputs
+            .iter()
+            .find(|output| output.name == "cp")
+            .map(|output| output.index)
+            .expect("cp output");
         assert_eq!(oral, 0);
         assert_eq!(iv, 1);
+        assert_eq!(cp, 0);
 
-        let subject = Subject::builder("ode")
+        let jit_subject = Subject::builder("ode")
             .covariate("wt", 0.0, 70.0)
-            .bolus(0.0, 120.0, oral)
-            .infusion(6.0, 60.0, iv, 2.0)
-            .missing_observation(0.5, cp)
-            .missing_observation(1.0, cp)
-            .missing_observation(2.0, cp)
-            .missing_observation(6.0, cp)
-            .missing_observation(7.0, cp)
-            .missing_observation(9.0, cp)
+            .bolus(0.0, 120.0, "oral")
+            .infusion(6.0, 60.0, "iv", 2.0)
+            .missing_observation(0.5, "cp")
+            .missing_observation(1.0, "cp")
+            .missing_observation(2.0, "cp")
+            .missing_observation(6.0, "cp")
+            .missing_observation(7.0, "cp")
+            .missing_observation(9.0, "cp")
+            .build();
+
+        let reference_subject = Subject::builder("ode")
+            .covariate("wt", 0.0, 70.0)
+            .bolus(0.0, 120.0, 0)
+            .infusion(6.0, 60.0, 1, 2.0)
+            .missing_observation(0.5, 0)
+            .missing_observation(1.0, 0)
+            .missing_observation(2.0, 0)
+            .missing_observation(6.0, 0)
+            .missing_observation(7.0, 0)
+            .missing_observation(9.0, 0)
             .build();
 
         let support = vec![1.2, 5.0, 40.0, 0.5, 0.8];
         let jit_predictions = jit
-            .estimate_predictions(&subject, &support)
+            .estimate_predictions(&jit_subject, &support)
             .expect("jit predictions");
 
         let reference = ODE::new(
@@ -1468,7 +1659,7 @@ mod tests {
         .with_solver(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45));
 
         let reference_predictions = reference
-            .estimate_predictions(&subject, &support)
+            .estimate_predictions(&reference_subject, &support)
             .expect("reference ode predictions");
 
         for (jit_pred, reference_pred) in jit_predictions
@@ -1489,20 +1680,42 @@ mod tests {
         let model = load_corpus_model("one_cmt_abs");
         let jit = compile_analytical_model_to_jit(&model).expect("compile jit analytical model");
 
-        let oral = jit.route_index("oral").expect("oral route");
-        let cp = jit.output_index("cp").expect("cp output");
+        let oral = jit
+            .info()
+            .routes
+            .iter()
+            .find(|route| route.name == "oral")
+            .map(|route| route.index)
+            .expect("oral route");
+        let cp = jit
+            .info()
+            .outputs
+            .iter()
+            .find(|output| output.name == "cp")
+            .map(|output| output.index)
+            .expect("cp output");
+        assert_eq!(oral, 0);
+        assert_eq!(cp, 0);
 
-        let subject = Subject::builder("analytical")
-            .bolus(0.0, 100.0, oral)
-            .missing_observation(0.5, cp)
-            .missing_observation(1.0, cp)
-            .missing_observation(2.0, cp)
-            .missing_observation(4.0, cp)
+        let jit_subject = Subject::builder("analytical")
+            .bolus(0.0, 100.0, "oral")
+            .missing_observation(0.5, "cp")
+            .missing_observation(1.0, "cp")
+            .missing_observation(2.0, "cp")
+            .missing_observation(4.0, "cp")
+            .build();
+
+        let reference_subject = Subject::builder("analytical")
+            .bolus(0.0, 100.0, 0)
+            .missing_observation(0.5, 0)
+            .missing_observation(1.0, 0)
+            .missing_observation(2.0, 0)
+            .missing_observation(4.0, 0)
             .build();
 
         let support = vec![1.0, 0.15, 25.0];
         let jit_predictions = jit
-            .estimate_predictions(&subject, &support)
+            .estimate_predictions(&jit_subject, &support)
             .expect("jit analytical predictions");
 
         let reference = equation::Analytical::new(
@@ -1520,7 +1733,7 @@ mod tests {
         .with_nout(1);
 
         let reference_predictions = reference
-            .estimate_predictions(&subject, &support)
+            .estimate_predictions(&reference_subject, &support)
             .expect("reference analytical predictions");
 
         for (jit_pred, reference_pred) in jit_predictions
@@ -1543,21 +1756,44 @@ mod tests {
             .expect("compile jit sde model")
             .with_particles(64);
 
-        let oral = jit.route_index("oral").expect("oral route");
-        let cp = jit.output_index("cp").expect("cp output");
+        let oral = jit
+            .info()
+            .routes
+            .iter()
+            .find(|route| route.name == "oral")
+            .map(|route| route.index)
+            .expect("oral route");
+        let cp = jit
+            .info()
+            .outputs
+            .iter()
+            .find(|output| output.name == "cp")
+            .map(|output| output.index)
+            .expect("cp output");
+        assert_eq!(oral, 0);
+        assert_eq!(cp, 0);
 
-        let subject = Subject::builder("sde")
+        let jit_subject = Subject::builder("sde")
             .covariate("wt", 0.0, 70.0)
-            .bolus(0.0, 80.0, oral)
-            .missing_observation(0.5, cp)
-            .missing_observation(1.0, cp)
-            .missing_observation(2.0, cp)
-            .missing_observation(4.0, cp)
+            .bolus(0.0, 80.0, "oral")
+            .missing_observation(0.5, "cp")
+            .missing_observation(1.0, "cp")
+            .missing_observation(2.0, "cp")
+            .missing_observation(4.0, "cp")
+            .build();
+
+        let reference_subject = Subject::builder("sde")
+            .covariate("wt", 0.0, 70.0)
+            .bolus(0.0, 80.0, 0)
+            .missing_observation(0.5, 0)
+            .missing_observation(1.0, 0)
+            .missing_observation(2.0, 0)
+            .missing_observation(4.0, 0)
             .build();
 
         let support = vec![1.1, 0.2, 0.12, 0.08, 15.0, 0.0];
         let jit_predictions = jit
-            .estimate_predictions(&subject, &support)
+            .estimate_predictions(&jit_subject, &support)
             .expect("jit sde predictions");
 
         let reference = SDE::new(
@@ -1594,7 +1830,7 @@ mod tests {
         .with_nout(1);
 
         let reference_predictions = reference
-            .estimate_predictions(&subject, &support)
+            .estimate_predictions(&reference_subject, &support)
             .expect("reference sde predictions");
 
         for (jit_pred, reference_pred) in jit_predictions

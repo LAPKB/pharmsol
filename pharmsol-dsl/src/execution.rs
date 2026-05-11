@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use crate::{
     AnalyticalKernel, ConstValue, CovariateInterpolation, Diagnostic, DiagnosticPhase,
-    DiagnosticReport, MathIntrinsic, ModelKind, RoutePropertyKind, Span, Symbol, SymbolId,
-    SymbolKind, SymbolType, TypedAssignTargetKind, TypedBinaryOp, TypedCall, TypedExpr,
+    DiagnosticReport, MathIntrinsic, ModelKind, RouteKind, RoutePropertyKind, Span, Symbol,
+    SymbolId, SymbolKind, SymbolType, TypedAssignTargetKind, TypedBinaryOp, TypedCall, TypedExpr,
     TypedExprKind, TypedModel, TypedModule, TypedRangeExpr, TypedStatePlace, TypedStatementBlock,
     TypedStmt, TypedStmtKind, TypedUnaryOp, ValueType, DSL_LOWERING_GENERIC,
 };
@@ -98,7 +98,9 @@ pub struct ExecutionState {
 pub struct ExecutionRoute {
     pub symbol: SymbolId,
     pub name: String,
+    pub declaration_index: usize,
     pub index: usize,
+    pub kind: Option<RouteKind>,
     pub destination: RouteDestination,
     pub has_lag: bool,
     pub has_bioavailability: bool,
@@ -349,7 +351,7 @@ pub enum ExecutionLoad {
     State(ExecutionStateRef),
     Derived(usize),
     Local(usize),
-    RouteInput(usize),
+    RouteInput { route: SymbolId, index: usize },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -531,33 +533,67 @@ impl<'a> ExecutionLowerer<'a> {
             next_state_offset += len;
         }
 
+        let uses_authoring_route_kinds =
+            !model.routes.is_empty() && model.routes.iter().all(|route| route.kind.is_some());
         let mut route_slots = BTreeMap::new();
-        let routes = model
-            .routes
-            .iter()
-            .enumerate()
-            .map(|(index, route)| {
-                let symbol = lookup_symbol(&symbol_map, route.symbol, route.span)?;
-                route_slots.insert(route.symbol, index);
-                let destination =
-                    lower_route_destination(&symbol_map, &state_slots, &route.destination)?;
-                Ok(ExecutionRoute {
-                    symbol: route.symbol,
-                    name: symbol.name.clone(),
-                    index,
-                    destination,
-                    has_lag: route
-                        .properties
-                        .iter()
-                        .any(|property| property.kind == RoutePropertyKind::Lag),
-                    has_bioavailability: route
-                        .properties
-                        .iter()
-                        .any(|property| property.kind == RoutePropertyKind::Bioavailability),
-                    span: route.span,
-                })
-            })
-            .collect::<Result<Vec<_>, LoweringError>>()?;
+        let mut routes = Vec::with_capacity(model.routes.len());
+        let mut next_bolus_index = 0usize;
+        let mut next_infusion_index = 0usize;
+        for (declaration_index, route) in model.routes.iter().enumerate() {
+            let symbol = lookup_symbol(&symbol_map, route.symbol, route.span)?;
+            if route.kind == Some(RouteKind::Infusion) {
+                if let Some(property) = route.properties.first() {
+                    let label = match property.kind {
+                        RoutePropertyKind::Lag => "lag",
+                        RoutePropertyKind::Bioavailability => "bioavailability",
+                    };
+                    return Err(LoweringError::new(
+                        format!(
+                            "DSL authoring does not allow `{label}` on infusion route `{}`",
+                            symbol.name
+                        ),
+                        property.span,
+                    )
+                    .with_note("lag and bioavailability are bolus-only route properties"));
+                }
+            }
+            let index = if uses_authoring_route_kinds {
+                match route.kind.expect("authoring routes must preserve kind") {
+                    RouteKind::Bolus => {
+                        let index = next_bolus_index;
+                        next_bolus_index += 1;
+                        index
+                    }
+                    RouteKind::Infusion => {
+                        let index = next_infusion_index;
+                        next_infusion_index += 1;
+                        index
+                    }
+                }
+            } else {
+                declaration_index
+            };
+            route_slots.insert(route.symbol, index);
+            let destination =
+                lower_route_destination(&symbol_map, &state_slots, &route.destination)?;
+            routes.push(ExecutionRoute {
+                symbol: route.symbol,
+                name: symbol.name.clone(),
+                declaration_index,
+                index,
+                kind: route.kind,
+                destination,
+                has_lag: route
+                    .properties
+                    .iter()
+                    .any(|property| property.kind == RoutePropertyKind::Lag),
+                has_bioavailability: route
+                    .properties
+                    .iter()
+                    .any(|property| property.kind == RoutePropertyKind::Bioavailability),
+                span: route.span,
+            });
+        }
 
         let mut derived_slots = BTreeMap::new();
         let derived = model
@@ -607,7 +643,7 @@ impl<'a> ExecutionLowerer<'a> {
                 analytical: model
                     .analytical
                     .as_ref()
-                    .map(|analytical| analytical.kernel),
+                    .map(|analytical| analytical.structure),
             },
             symbol_map,
             parameter_slots,
@@ -653,7 +689,7 @@ impl<'a> ExecutionLowerer<'a> {
             kernels.push(ExecutionKernel {
                 role: KernelRole::Analytical,
                 signature: signature_for(KernelRole::Analytical),
-                implementation: KernelImplementation::AnalyticalBuiltin(analytical.kernel),
+                implementation: KernelImplementation::AnalyticalBuiltin(analytical.structure),
                 span: analytical.span,
             });
         }
@@ -745,7 +781,13 @@ impl<'a> ExecutionLowerer<'a> {
             },
             route_buffer: DenseBufferLayout {
                 kind: BufferKind::Routes,
-                len: self.metadata.routes.len(),
+                len: self
+                    .metadata
+                    .routes
+                    .iter()
+                    .map(|route| route.index + 1)
+                    .max()
+                    .unwrap_or(0),
                 slots: self
                     .metadata
                     .routes
@@ -858,7 +900,39 @@ impl<'a> ExecutionLowerer<'a> {
 
         let mut statements = Vec::with_capacity(self.model.routes.len());
         let mut locals = LocalLowering::default();
+        let default_value = match property_kind {
+            RoutePropertyKind::Lag => literal_real(0.0, self.model.span),
+            RoutePropertyKind::Bioavailability => literal_real(1.0, self.model.span),
+        };
+        let route_len = self
+            .metadata
+            .routes
+            .iter()
+            .map(|route| route.index + 1)
+            .max()
+            .unwrap_or(0);
+        for route_index in 0..route_len {
+            let target_kind = match property_kind {
+                RoutePropertyKind::Lag => ExecutionTargetKind::RouteLag(route_index),
+                RoutePropertyKind::Bioavailability => {
+                    ExecutionTargetKind::RouteBioavailability(route_index)
+                }
+            };
+            statements.push(ExecutionStmt {
+                kind: ExecutionStmtKind::Assign(ExecutionAssignStmt {
+                    target: ExecutionTarget {
+                        kind: target_kind,
+                        span: self.model.span,
+                    },
+                    value: default_value.clone(),
+                }),
+                span: self.model.span,
+            });
+        }
         for route in &self.model.routes {
+            if route.kind == Some(RouteKind::Infusion) {
+                continue;
+            }
             let route_name = self.symbol_name(route.symbol)?.to_string();
             let route_index = *self.route_slots.get(&route.symbol).ok_or_else(|| {
                 LoweringError::new(
@@ -872,8 +946,7 @@ impl<'a> ExecutionLowerer<'a> {
                 .find(|property| property.kind == property_kind)
             {
                 Some(property) => self.lower_expr(&property.value, &mut locals)?,
-                None if property_kind == RoutePropertyKind::Lag => literal_real(0.0, route.span),
-                None => literal_real(1.0, route.span),
+                None => continue,
             };
             let target_kind = match property_kind {
                 RoutePropertyKind::Lag => ExecutionTargetKind::RouteLag(route_index),
@@ -1098,7 +1171,10 @@ impl<'a> ExecutionLowerer<'a> {
                             expr.span,
                         )
                     })?;
-                    ExecutionExprKind::Load(ExecutionLoad::RouteInput(route_index))
+                    ExecutionExprKind::Load(ExecutionLoad::RouteInput {
+                        route: *route,
+                        index: route_index,
+                    })
                 }
             },
         };
@@ -1440,6 +1516,163 @@ mod tests {
     }
 
     #[test]
+    fn authoring_routes_share_input_indices_by_kind_local_ordinal() {
+        let src = r#"name = shared_authoring
+kind = ode
+
+params = ka, ke, v, tlag, f_oral
+states = depot, central
+outputs = cp
+
+bolus(oral) -> depot
+infusion(iv) -> central
+lag(oral) = tlag
+fa(oral) = f_oral
+
+dx(depot) = -ka * depot
+dx(central) = ka * depot - ke * central
+
+out(cp) = central / v ~ continuous()
+"#;
+
+        let model = crate::parse_model(src).expect("authoring model parses");
+        let typed = crate::analyze_model(&model).expect("authoring model analyzes");
+        let lowered = crate::lower_typed_model(&typed).expect("authoring model lowers");
+
+        assert_eq!(lowered.abi.route_buffer.len, 1);
+        assert_eq!(lowered.metadata.routes.len(), 2);
+        assert_eq!(lowered.metadata.routes[0].kind, Some(RouteKind::Bolus));
+        assert_eq!(lowered.metadata.routes[1].kind, Some(RouteKind::Infusion));
+        assert_eq!(lowered.metadata.routes[0].declaration_index, 0);
+        assert_eq!(lowered.metadata.routes[1].declaration_index, 1);
+        assert_eq!(lowered.metadata.routes[0].index, 0);
+        assert_eq!(lowered.metadata.routes[1].index, 0);
+        assert!(lowered.metadata.routes[0].has_lag);
+        assert!(lowered.metadata.routes[0].has_bioavailability);
+        assert!(!lowered.metadata.routes[1].has_lag);
+        assert!(!lowered.metadata.routes[1].has_bioavailability);
+    }
+
+    #[test]
+    fn canonical_numeric_channel_names_flow_into_execution_metadata_and_abi() {
+        let src = r#"name = canonical_numeric_channels
+kind = ode
+
+params = ke, v
+states = depot, central
+outputs = cp, outeq_2
+
+bolus(input_10) -> depot
+infusion(iv) -> central
+
+dx(depot) = -ke * depot
+dx(central) = rate(input_10) - ke * central
+
+out(cp) = central / v
+out(outeq_2) = depot / v
+"#;
+
+        let model = crate::parse_model(src).expect("authoring model parses");
+        let typed = crate::analyze_model(&model).expect("authoring model analyzes");
+        let lowered = crate::lower_typed_model(&typed).expect("authoring model lowers");
+
+        assert_eq!(
+            lowered
+                .metadata
+                .routes
+                .iter()
+                .map(|route| route.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["input_10", "iv"]
+        );
+        assert_eq!(
+            lowered
+                .metadata
+                .outputs
+                .iter()
+                .map(|output| output.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["cp", "outeq_2"]
+        );
+        assert_eq!(
+            lowered
+                .abi
+                .route_buffer
+                .slots
+                .iter()
+                .map(|slot| slot.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["input_10", "iv"]
+        );
+        assert_eq!(
+            lowered
+                .abi
+                .output_buffer
+                .slots
+                .iter()
+                .map(|slot| slot.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["cp", "outeq_2"]
+        );
+    }
+
+    #[test]
+    fn authoring_routes_reject_infusion_lag_properties() {
+        let src = r#"name = invalid_infusion_lag
+kind = ode
+
+params = ke, v, tlag
+states = central
+outputs = cp
+
+infusion(iv) -> central
+lag(iv) = tlag
+
+dx(central) = -ke * central
+
+out(cp) = central / v ~ continuous()
+"#;
+
+        let model = crate::parse_model(src).expect("authoring model parses");
+        let typed = crate::analyze_model(&model).expect("authoring model analyzes");
+        let error = crate::lower_typed_model(&typed)
+            .err()
+            .expect("infusion lag should fail during lowering");
+
+        assert!(error
+            .to_string()
+            .contains("DSL authoring does not allow `lag` on infusion route `iv`"));
+    }
+
+    #[test]
+    fn authoring_routes_reject_infusion_bioavailability_properties() {
+        let src = r#"name = invalid_infusion_fa
+kind = ode
+
+params = ke, v, f_iv
+states = central
+outputs = cp
+
+infusion(iv) -> central
+fa(iv) = f_iv
+
+dx(central) = -ke * central
+
+out(cp) = central / v ~ continuous()
+"#;
+
+        let model = crate::parse_model(src).expect("authoring model parses");
+        let typed = crate::analyze_model(&model).expect("authoring model analyzes");
+        let error = crate::lower_typed_model(&typed)
+            .err()
+            .expect("infusion bioavailability should fail during lowering");
+
+        assert!(error
+            .to_string()
+            .contains("DSL authoring does not allow `bioavailability` on infusion route `iv`"));
+    }
+
+    #[test]
     fn flattens_array_states_and_preserves_loop_structure() {
         let execution = structured_block_execution();
         let transit = find_model(&execution, "transit_absorption");
@@ -1538,8 +1771,8 @@ mod tests {
             panic!("expected statement bioavailability kernel");
         };
 
-        assert_eq!(lag_program.body.statements.len(), 2);
-        assert_eq!(bio_program.body.statements.len(), 2);
+        assert_eq!(lag_program.body.statements.len(), 3);
+        assert_eq!(bio_program.body.statements.len(), 3);
         assert!(matches!(
             lag_program.body.statements[1].kind,
             ExecutionStmtKind::Assign(ExecutionAssignStmt {

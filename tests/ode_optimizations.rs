@@ -900,7 +900,7 @@ fn likelihood_calculation_matches_analytical() {
     .with_nstates(1)
     .with_nout(1);
 
-    let error_models = AssayErrorModels::new()
+    let error_models = AssayErrorModels::default()
         .add(
             0,
             AssayErrorModel::additive(ErrorPoly::new(0.0, 0.1, 0.0, 0.0), 0.0),
