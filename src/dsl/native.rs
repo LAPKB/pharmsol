@@ -1055,7 +1055,7 @@ fn runtime_ode_predictions(
     if let Some(cache) = &model.cache {
         let key = (
             subject.hash(),
-            crate::simulator::equation::spphash(support_point),
+            crate::simulator::equation::parameters_hash(support_point),
         );
         if let Some(cached) = cache.get(&key) {
             return Ok(cached);

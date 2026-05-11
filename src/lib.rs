@@ -132,7 +132,7 @@ pub use crate::data::*;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use crate::optimize::effect::get_e2;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-pub use crate::optimize::spp::SppOptimizer;
+pub use crate::optimize::parameters::ParameterOptimizer;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use crate::simulator::equation::analytical::*;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
