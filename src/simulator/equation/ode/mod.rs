@@ -354,7 +354,12 @@ impl EquationPriv for ODE {
     }
 
     #[inline(always)]
-    fn initial_state(&self, parameters: &[f64], covariates: &Covariates, occasion_index: usize) -> V {
+    fn initial_state(
+        &self,
+        parameters: &[f64],
+        covariates: &Covariates,
+        occasion_index: usize,
+    ) -> V {
         let init = &self.init;
         let mut x = V::zeros(self.get_nstates(), NalgebraContext);
         if occasion_index == 0 {

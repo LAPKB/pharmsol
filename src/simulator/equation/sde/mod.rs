@@ -688,7 +688,11 @@ fn _estimate_likelihood(
     error_models: &AssayErrorModels,
 ) -> Result<f64, PharmsolError> {
     if let Some(cache) = &sde.cache {
-        let key = (subject.hash(), parameters_hash(parameters), error_models.hash());
+        let key = (
+            subject.hash(),
+            parameters_hash(parameters),
+            error_models.hash(),
+        );
         if let Some(cached) = cache.get(&key) {
             return Ok(cached);
         }
