@@ -6,6 +6,7 @@ resolver = "2"
 name = "pharmsol"
 version = "0.26.1"
 edition = "2021"
+autobenches = false
 authors = ["Julián D. Otálvaro <juliandavid347@gmail.com>", "Markus Hovd"]
 description = "Rust library for solving analytic and ode-defined pharmacometric models."
 license = "GPL-3.0"
@@ -14,7 +15,13 @@ documentation = "https://lapkb.github.io/pharmsol/"
 [features]
 default = []
 dsl-core = []
-dsl-jit = ["dsl-core", "dep:cranelift", "dep:cranelift-jit", "dep:cranelift-module", "dep:cranelift-native"]
+dsl-jit = [
+    "dsl-core",
+    "dep:cranelift",
+    "dep:cranelift-jit",
+    "dep:cranelift-module",
+    "dep:cranelift-native",
+]
 dsl-aot = ["dsl-core"]
 dsl-aot-load = ["dsl-core", "dep:libloading"]
 dsl-wasm-compile = ["dsl-core", "dep:wasm-encoder"]
@@ -61,15 +68,7 @@ webbrowser = "1.2.1"
 bench = false
 
 [[bench]]
-name = "performance"
-harness = false
-
-[[bench]]
-name = "data"
-harness = false
-
-[[bench]]
-name = "ode"
+name = "predictions"
 harness = false
 
 [[bench]]
@@ -77,9 +76,5 @@ name = "nca"
 harness = false
 
 [[bench]]
-name = "runtime_matrix"
-harness = false
-
-[[bench]]
-name = "likelihood_matrix"
+name = "likelihood"
 harness = false
