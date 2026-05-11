@@ -2189,9 +2189,9 @@ fn apply_analytical_kernel(
 mod tests {
     use super::{
         canonical_numeric_alias, project_analytical_parameters,
-        CompiledAnalyticalParameterProjection, KernelSession, NativeModelInfo,
-        NativeOutputInfo, NativeRouteInfo, RuntimeArtifact, RuntimeBackend, SharedNativeModel,
-        NUMERIC_OUTPUT_PREFIX, NUMERIC_ROUTE_PREFIX,
+        CompiledAnalyticalParameterProjection, KernelSession, NativeModelInfo, NativeOutputInfo,
+        NativeRouteInfo, RuntimeArtifact, RuntimeBackend, SharedNativeModel, NUMERIC_OUTPUT_PREFIX,
+        NUMERIC_ROUTE_PREFIX,
     };
     use crate::PharmsolError;
     use diffsol::VectorHost;
@@ -2320,13 +2320,9 @@ mod tests {
         let projection = CompiledAnalyticalParameterProjection::from_model_info(&info)
             .expect("projection should build from declared names");
 
-        let projected = project_analytical_parameters(
-            &projection,
-            &info,
-            &[1.1, 0.15, 0.08, 0.05, 25.0],
-            &[],
-        )
-        .expect("support point should project into structure order");
+        let projected =
+            project_analytical_parameters(&projection, &info, &[1.1, 0.15, 0.08, 0.05, 25.0], &[])
+                .expect("support point should project into structure order");
 
         assert_eq!(projected.as_slice(), &[0.15, 1.1, 0.08, 0.05]);
     }
@@ -2343,7 +2339,10 @@ mod tests {
             .expect_err("missing required structure parameter should fail early");
         let message = error.to_string();
 
-        assert!(message.contains("one_compartment_with_absorption"), "{message}");
+        assert!(
+            message.contains("one_compartment_with_absorption"),
+            "{message}"
+        );
         assert!(message.contains("requires parameter `ke`"), "{message}");
         assert!(message.contains("did you mean `kel`"), "{message}");
     }
@@ -2360,9 +2359,15 @@ mod tests {
             .expect_err("missing required structure parameter should fail early");
         let message = error.to_string();
 
-        assert!(message.contains("one_compartment_with_absorption"), "{message}");
+        assert!(
+            message.contains("one_compartment_with_absorption"),
+            "{message}"
+        );
         assert!(message.contains("requires parameter `ke`"), "{message}");
-        assert!(message.contains("params = [ka, ke, volume, aux]"), "{message}");
+        assert!(
+            message.contains("params = [ka, ke, volume, aux]"),
+            "{message}"
+        );
     }
 
     #[test]
@@ -2392,9 +2397,8 @@ mod tests {
         let projection = CompiledAnalyticalParameterProjection::from_model_info(&info)
             .expect("projection should build from derived names");
 
-        let projected =
-            project_analytical_parameters(&projection, &info, &[25.0], &[0.2, 1.0])
-                .expect("derived analytical inputs should project by name");
+        let projected = project_analytical_parameters(&projection, &info, &[25.0], &[0.2, 1.0])
+            .expect("derived analytical inputs should project by name");
 
         assert_eq!(projected.as_slice(), &[1.0, 0.2]);
     }
@@ -2411,7 +2415,10 @@ mod tests {
             .expect_err("missing required structure parameter should fail early");
         let message = error.to_string();
 
-        assert!(message.contains("one_compartment_with_absorption"), "{message}");
+        assert!(
+            message.contains("one_compartment_with_absorption"),
+            "{message}"
+        );
         assert!(message.contains("requires parameter `ke`"), "{message}");
         assert!(message.contains("did you mean `kel`"), "{message}");
     }
