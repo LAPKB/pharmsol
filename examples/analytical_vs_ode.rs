@@ -5,10 +5,8 @@
 //! closed-form analytical solution and the equivalent ODE, then prints
 //! the predictions side by side so you can verify they match.
 //! Both authoring paths use the declaration-first macro surface so the
-//! example stays on the preferred public authoring story.
-//! Built-in analytical structures are positional: the `params: [...]`
-//! declaration becomes metadata, but the runtime kernel still expects values
-//! in the structure's native positional order.
+//! example stays on the preferred public authoring story and the analytical
+//! structure follows the declared parameter names directly.
 //!
 //!     cargo run --release --example analytical_vs_ode
 
@@ -194,7 +192,7 @@ fn two_cmt_iv(params: &[f64]) {
 fn two_cmt_oral(params: &[f64]) {
     let analytical = analytical! {
         name: "two_cmt_oral",
-        params: [ke, ka, k12, k21, v],
+        params: [ka, ke, k12, k21, v],
         states: [gut, central, peripheral],
         outputs: [cp],
         routes: [
@@ -226,14 +224,7 @@ fn two_cmt_oral(params: &[f64]) {
 
     let subject = subject_oral("oral", "cp");
 
-    // `two_compartments_with_absorption` is positional and expects
-    // `ke, ka, k12, k21, v`, while the ODE closure below is authored as
-    // `ka, ke, k12, k21, v`.
-    let analytical_params = [params[1], params[0], params[2], params[3], params[4]];
-
-    let pred_a = analytical
-        .estimate_predictions(&subject, &analytical_params)
-        .unwrap();
+    let pred_a = analytical.estimate_predictions(&subject, params).unwrap();
     let pred_o = ode.estimate_predictions(&subject, params).unwrap();
     print_comparison("Two-compartment oral", &pred_a, &pred_o);
 }

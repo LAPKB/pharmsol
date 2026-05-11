@@ -8,7 +8,7 @@ pub mod two_compartment_models;
 use diffsol::{NalgebraContext, Vector, VectorHost};
 pub use one_compartment_cl_models::*;
 pub use one_compartment_models::*;
-use pharmsol_dsl::ModelKind;
+use pharmsol_dsl::{AnalyticalKernel, ModelKind};
 use thiserror::Error;
 pub use three_compartment_cl_models::*;
 pub use three_compartment_models::*;
@@ -36,6 +36,23 @@ pub enum AnalyticalMetadataError {
     RouteCountMismatch { expected: usize, declared: usize },
     #[error("analytical model declares {declared} output metadata entries but model has {expected} outputs")]
     OutputCountMismatch { expected: usize, declared: usize },
+    #[error("analytical structure `{structure}` requires parameter `{parameter}`; declare it in params: {declaration_example}")]
+    MissingRequiredParameter {
+        structure: &'static str,
+        parameter: &'static str,
+        declaration_example: String,
+    },
+    #[error("analytical structure `{structure}` requires parameter `{parameter}`; did you mean `{suggested_parameter}`?")]
+    MissingRequiredParameterSuggestion {
+        structure: &'static str,
+        parameter: &'static str,
+        suggested_parameter: String,
+    },
+}
+
+#[derive(Clone, Debug)]
+struct AnalyticalParameterProjection {
+    source_indices: Box<[usize]>,
 }
 
 /// Model equation using analytical solutions.
@@ -52,6 +69,7 @@ pub struct Analytical {
     out: Out,
     neqs: Neqs,
     metadata: Option<ValidatedModelMetadata>,
+    parameter_projection: Option<AnalyticalParameterProjection>,
     cache: Option<PredictionCache>,
 }
 
@@ -106,6 +124,7 @@ impl Analytical {
             out,
             neqs: Neqs::default(),
             metadata: None,
+            parameter_projection: None,
             cache: Some(PredictionCache::new(DEFAULT_CACHE_SIZE)),
         }
     }
@@ -132,12 +151,22 @@ impl Analytical {
     }
 
     /// Attach validated handwritten-model metadata to this analytical model.
+    ///
+    /// When the metadata advertises a built-in analytical structure with
+    /// [`ModelMetadata::analytical_kernel`], declared parameter names can stay
+    /// in public teaching order. Setup validates the structure's required names
+    /// once and precomputes the small projection needed to feed the low-level
+    /// structure in its internal order.
+    ///
+    /// Missing required names fail early with either a `did you mean ...?`
+    /// suggestion or a prescriptive `params: [...]` example.
     pub fn with_metadata(
         mut self,
         metadata: ModelMetadata,
     ) -> Result<Self, AnalyticalMetadataError> {
         let metadata = metadata.validate_for(ModelKind::Analytical)?;
         validate_metadata_dimensions(&metadata, &self.neqs)?;
+        self.parameter_projection = build_parameter_projection(&metadata)?;
         self.metadata = Some(metadata);
         Ok(self)
     }
@@ -161,6 +190,7 @@ impl Analytical {
 
     fn invalidate_metadata(&mut self) {
         self.metadata = None;
+        self.parameter_projection = None;
     }
 }
 
@@ -193,6 +223,197 @@ fn validate_metadata_dimensions(
     }
 
     Ok(())
+}
+
+fn build_parameter_projection(
+    metadata: &ValidatedModelMetadata,
+) -> Result<Option<AnalyticalParameterProjection>, AnalyticalMetadataError> {
+    let Some(structure) = metadata.analytical_kernel() else {
+        return Ok(None);
+    };
+
+    let mut source_indices = Vec::with_capacity(structure.required_parameter_count());
+    let mut reordered = false;
+
+    for (required_index, required_name) in structure.required_parameter_names().iter().enumerate() {
+        let Some(source_index) = metadata.parameter_index(required_name) else {
+            return Err(missing_required_parameter_error(
+                structure,
+                required_name,
+                metadata,
+            ));
+        };
+
+        reordered |= source_index != required_index;
+        source_indices.push(source_index);
+    }
+
+    if reordered {
+        Ok(Some(AnalyticalParameterProjection {
+            source_indices: source_indices.into_boxed_slice(),
+        }))
+    } else {
+        Ok(None)
+    }
+}
+
+fn missing_required_parameter_error(
+    structure: AnalyticalKernel,
+    parameter: &'static str,
+    metadata: &ValidatedModelMetadata,
+) -> AnalyticalMetadataError {
+    if let Some(suggested_parameter) = best_parameter_suggestion(parameter, structure, metadata) {
+        AnalyticalMetadataError::MissingRequiredParameterSuggestion {
+            structure: structure.name(),
+            parameter,
+            suggested_parameter,
+        }
+    } else {
+        AnalyticalMetadataError::MissingRequiredParameter {
+            structure: structure.name(),
+            parameter,
+            declaration_example: suggested_parameter_declaration(structure, metadata),
+        }
+    }
+}
+
+fn suggested_parameter_declaration(
+    structure: AnalyticalKernel,
+    metadata: &ValidatedModelMetadata,
+) -> String {
+    let required_names = structure.required_parameter_names();
+    let mut declaration = required_names.to_vec();
+
+    for parameter in metadata.parameters() {
+        let name = parameter.name();
+        if !required_names.contains(&name) {
+            declaration.push(name);
+        }
+    }
+
+    format!("[{}]", declaration.join(", "))
+}
+
+fn best_parameter_suggestion(
+    needle: &str,
+    structure: AnalyticalKernel,
+    metadata: &ValidatedModelMetadata,
+) -> Option<String> {
+    let original_needle = needle;
+    let needle = needle.to_ascii_lowercase();
+    let mut best: Option<((usize, usize, usize), &str)> = None;
+    let mut tied = false;
+    let required_names = structure.required_parameter_names();
+
+    for parameter in metadata.parameters() {
+        let candidate = parameter.name();
+        if candidate == original_needle || required_names.contains(&candidate) {
+            continue;
+        }
+
+        let lookup = candidate.to_ascii_lowercase();
+        let distance = if is_single_adjacent_transposition(&needle, &lookup) {
+            1
+        } else {
+            edit_distance(&needle, &lookup)
+        };
+        let prefix = common_prefix_len(&needle, &lookup);
+        if !is_high_confidence_match(&needle, &lookup, distance, prefix) {
+            continue;
+        }
+
+        let score = (
+            distance,
+            usize::MAX - prefix,
+            needle.len().abs_diff(lookup.len()),
+        );
+
+        match &best {
+            None => {
+                best = Some((score, candidate));
+                tied = false;
+            }
+            Some((best_score, _)) if score < *best_score => {
+                best = Some((score, candidate));
+                tied = false;
+            }
+            Some((best_score, _)) if score == *best_score => tied = true,
+            _ => {}
+        }
+    }
+
+    if tied {
+        None
+    } else {
+        best.map(|(_, candidate)| candidate.to_string())
+    }
+}
+
+fn is_high_confidence_match(needle: &str, candidate: &str, distance: usize, prefix: usize) -> bool {
+    let max_len = needle.len().max(candidate.len());
+    let max_distance = match max_len {
+        0..=4 => 1,
+        5..=8 => 2,
+        _ => 3,
+    };
+
+    distance <= max_distance && (prefix > 0 || distance <= 1)
+}
+
+fn common_prefix_len(lhs: &str, rhs: &str) -> usize {
+    lhs.chars()
+        .zip(rhs.chars())
+        .take_while(|(lhs, rhs)| lhs == rhs)
+        .count()
+}
+
+fn is_single_adjacent_transposition(lhs: &str, rhs: &str) -> bool {
+    let lhs: Vec<char> = lhs.chars().collect();
+    let rhs: Vec<char> = rhs.chars().collect();
+    if lhs.len() != rhs.len() {
+        return false;
+    }
+
+    let differing = lhs
+        .iter()
+        .zip(rhs.iter())
+        .enumerate()
+        .filter_map(|(index, (lhs, rhs))| (lhs != rhs).then_some(index))
+        .collect::<Vec<_>>();
+
+    if differing.len() != 2 || differing[1] != differing[0] + 1 {
+        return false;
+    }
+
+    let first = differing[0];
+    lhs[first] == rhs[first + 1] && lhs[first + 1] == rhs[first]
+}
+
+fn edit_distance(lhs: &str, rhs: &str) -> usize {
+    let lhs: Vec<char> = lhs.chars().collect();
+    let rhs: Vec<char> = rhs.chars().collect();
+    if lhs.is_empty() {
+        return rhs.len();
+    }
+    if rhs.is_empty() {
+        return lhs.len();
+    }
+
+    let mut previous: Vec<usize> = (0..=rhs.len()).collect();
+    let mut current = vec![0; rhs.len() + 1];
+
+    for (lhs_index, lhs_char) in lhs.iter().enumerate() {
+        current[0] = lhs_index + 1;
+        for (rhs_index, rhs_char) in rhs.iter().enumerate() {
+            let substitution_cost = usize::from(lhs_char != rhs_char);
+            current[rhs_index + 1] = (current[rhs_index] + 1)
+                .min(previous[rhs_index + 1] + 1)
+                .min(previous[rhs_index] + substitution_cost);
+        }
+        previous.clone_from_slice(&current);
+    }
+
+    previous[rhs.len()]
 }
 
 impl super::Cache for Analytical {
@@ -308,6 +529,10 @@ impl EquationPriv for Analytical {
         let mut current_t = ts[0];
         let mut sp = V::from_vec(support_point.to_vec(), NalgebraContext);
         let mut rateiv = V::zeros(self.get_ndrugs(), NalgebraContext);
+        let mut projected_support_point = self
+            .parameter_projection
+            .as_ref()
+            .map(|projection| V::zeros(projection.source_indices.len(), NalgebraContext));
 
         for &next_t in &ts[1..] {
             // prepare support and infusion rate for [current_t .. next_t]
@@ -337,7 +562,22 @@ impl EquationPriv for Analytical {
 
             // advance state by dt
             let dt = next_t - current_t;
-            *x = (self.eq)(x, &sp, dt, &rateiv, covariates);
+            let structure_support_point: &V = if let Some(projection) = &self.parameter_projection {
+                let projected = projected_support_point
+                    .as_mut()
+                    .expect("projection buffer should exist when projection indices exist");
+                for (target, source_index) in projected
+                    .as_mut_slice()
+                    .iter_mut()
+                    .zip(projection.source_indices.iter())
+                {
+                    *target = sp[*source_index];
+                }
+                projected
+            } else {
+                &sp
+            };
+            *x = (self.eq)(x, structure_support_point, dt, &rateiv, covariates);
 
             current_t = next_t;
         }
@@ -728,6 +968,152 @@ pub(crate) mod tests {
             .with_ndrugs(2);
 
         assert!(analytical.metadata().is_none());
+    }
+
+    #[test]
+    fn handwritten_built_in_analytical_metadata_reorders_structure_parameters() {
+        let seq_eq = |_params: &mut V, _t: f64, _cov: &Covariates| {};
+        let lag = |_p: &V, _t: f64, _cov: &Covariates| HashMap::new();
+        let fa = |_p: &V, _t: f64, _cov: &Covariates| HashMap::new();
+        let init = |_p: &V, _t: f64, _cov: &Covariates, x: &mut V| {
+            x.fill(0.0);
+        };
+        let out = |x: &V, _p: &V, _t: f64, _cov: &Covariates, y: &mut V| {
+            y[0] = x[1];
+        };
+
+        let canonical =
+            Analytical::new(one_compartment_with_absorption, seq_eq, lag, fa, init, out)
+                .with_nstates(2)
+                .with_ndrugs(1)
+                .with_nout(1)
+                .with_metadata(
+                    super::super::metadata::new("one_cmt_abs_canonical")
+                        .parameters(["ka", "ke", "v"])
+                        .states(["gut", "central"])
+                        .outputs(["central_amount"])
+                        .route(super::super::Route::bolus("oral").to_state("gut"))
+                        .analytical_kernel(AnalyticalKernel::OneCompartmentWithAbsorption),
+                )
+                .expect("canonical metadata should validate");
+
+        let reordered =
+            Analytical::new(one_compartment_with_absorption, seq_eq, lag, fa, init, out)
+                .with_nstates(2)
+                .with_ndrugs(1)
+                .with_nout(1)
+                .with_metadata(
+                    super::super::metadata::new("one_cmt_abs_reordered")
+                        .parameters(["ke", "v", "ka"])
+                        .states(["gut", "central"])
+                        .outputs(["central_amount"])
+                        .route(super::super::Route::bolus("oral").to_state("gut"))
+                        .analytical_kernel(AnalyticalKernel::OneCompartmentWithAbsorption),
+                )
+                .expect("reordered metadata should validate");
+
+        let subject = Subject::builder("oral")
+            .bolus(0.0, 100.0, "oral")
+            .observation(0.5, 0.0, "central_amount")
+            .observation(1.0, 0.0, "central_amount")
+            .observation(2.0, 0.0, "central_amount")
+            .build();
+
+        let canonical_predictions = canonical
+            .estimate_predictions(&subject, &[1.2, 0.2, 10.0])
+            .expect("canonical support order should simulate");
+        let reordered_predictions = reordered
+            .estimate_predictions(&subject, &[0.2, 10.0, 1.2])
+            .expect("declared-name order should simulate");
+
+        for (canonical, reordered) in canonical_predictions
+            .predictions()
+            .iter()
+            .zip(reordered_predictions.predictions().iter())
+        {
+            assert_relative_eq!(
+                canonical.prediction(),
+                reordered.prediction(),
+                max_relative = 1e-10,
+                epsilon = 1e-10
+            );
+        }
+    }
+
+    #[test]
+    fn handwritten_built_in_analytical_metadata_rejects_missing_required_parameter_with_suggestion()
+    {
+        let error = Analytical::new(
+            one_compartment_with_absorption,
+            |_params: &mut V, _t: f64, _cov: &Covariates| {},
+            |_p: &V, _t: f64, _cov: &Covariates| HashMap::new(),
+            |_p: &V, _t: f64, _cov: &Covariates| HashMap::new(),
+            |_p: &V, _t: f64, _cov: &Covariates, x: &mut V| {
+                x.fill(0.0);
+            },
+            |x: &V, _p: &V, _t: f64, _cov: &Covariates, y: &mut V| {
+                y[0] = x[1];
+            },
+        )
+        .with_nstates(2)
+        .with_ndrugs(1)
+        .with_nout(1)
+        .with_metadata(
+            super::super::metadata::new("one_cmt_abs_missing_ke")
+                .parameters(["ka", "kel", "v"])
+                .states(["gut", "central"])
+                .outputs(["central_amount"])
+                .route(super::super::Route::bolus("oral").to_state("gut"))
+                .analytical_kernel(AnalyticalKernel::OneCompartmentWithAbsorption),
+        )
+        .expect_err("missing required parameters must fail early");
+
+        assert_eq!(
+            error,
+            AnalyticalMetadataError::MissingRequiredParameterSuggestion {
+                structure: "one_compartment_with_absorption",
+                parameter: "ke",
+                suggested_parameter: "kel".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn handwritten_built_in_analytical_metadata_rejects_missing_required_parameter_without_suggestion(
+    ) {
+        let error = Analytical::new(
+            one_compartment_with_absorption,
+            |_params: &mut V, _t: f64, _cov: &Covariates| {},
+            |_p: &V, _t: f64, _cov: &Covariates| HashMap::new(),
+            |_p: &V, _t: f64, _cov: &Covariates| HashMap::new(),
+            |_p: &V, _t: f64, _cov: &Covariates, x: &mut V| {
+                x.fill(0.0);
+            },
+            |x: &V, _p: &V, _t: f64, _cov: &Covariates, y: &mut V| {
+                y[0] = x[1];
+            },
+        )
+        .with_nstates(2)
+        .with_ndrugs(1)
+        .with_nout(1)
+        .with_metadata(
+            super::super::metadata::new("one_cmt_abs_missing_ka")
+                .parameters(["ke", "v"])
+                .states(["gut", "central"])
+                .outputs(["central_amount"])
+                .route(super::super::Route::bolus("oral").to_state("gut"))
+                .analytical_kernel(AnalyticalKernel::OneCompartmentWithAbsorption),
+        )
+        .expect_err("missing required parameters must fail early");
+
+        assert_eq!(
+            error,
+            AnalyticalMetadataError::MissingRequiredParameter {
+                structure: "one_compartment_with_absorption",
+                parameter: "ka",
+                declaration_example: "[ka, ke, v]".to_string(),
+            }
+        );
     }
 
     fn assert_pm_wrapper_matches_native(

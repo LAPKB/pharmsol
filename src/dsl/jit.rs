@@ -1303,10 +1303,11 @@ pub fn compile_analytical_model_to_jit(
             Some(model.span),
         ));
     }
-    Ok(JitAnalyticalModel::new(
+    JitAnalyticalModel::new(
         NativeModelInfo::from_execution_model(model),
         compile_execution_artifact(model)?,
-    ))
+    )
+    .map_err(|error| JitCompileError::new(error.to_string(), Some(model.span)))
 }
 
 /// Compile an SDE execution model to the native in-process JIT backend.
@@ -1330,7 +1331,9 @@ pub fn compile_sde_model_to_jit(model: &ExecutionModel) -> Result<JitSdeModel, J
 mod tests {
     use super::*;
     use crate::equation::ode::{ExplicitRkTableau, OdeSolver};
-    use crate::simulator::equation::analytical::one_compartment_with_absorption;
+    use crate::simulator::equation::analytical::{
+        one_compartment_with_absorption, two_compartments_with_absorption,
+    };
     use crate::simulator::equation::{Equation, Predictions as PredictionTrait};
     use crate::test_fixtures::STRUCTURED_BLOCK_CORPUS;
     use crate::{equation, Subject, SubjectBuilderExt, ODE, SDE};
@@ -1348,6 +1351,12 @@ mod tests {
             .find(|model| model.name == name)
             .expect("model present in corpus module");
         pharmsol_dsl::lower_typed_model(model).expect("lower corpus model")
+    }
+
+    fn load_model_from_source(source: &str) -> ExecutionModel {
+        let parsed = pharmsol_dsl::parse_model(source).expect("parse analytical source");
+        let typed = pharmsol_dsl::analyze_model(&parsed).expect("analyze analytical source");
+        pharmsol_dsl::lower_typed_model(&typed).expect("lower analytical source")
     }
 
     #[test]
@@ -1747,6 +1756,238 @@ out(cp) = central / v ~ continuous()
                 max_relative = 1e-4
             );
         }
+    }
+
+    #[test]
+    fn jit_analytical_wrapper_projects_support_point_parameters_by_declared_name() {
+        let source = r#"
+name = two_cmt_abs_reordered
+kind = analytical
+
+params = ka, ke, k12, k21, v
+states = depot, central, peripheral
+outputs = cp
+
+bolus(oral) -> depot
+structure = two_compartments_with_absorption
+
+out(cp) = central / v ~ continuous()
+"#;
+        let model = load_model_from_source(source);
+        let jit =
+            compile_analytical_model_to_jit(&model).expect("compile reordered analytical model");
+
+        let oral = jit
+            .info()
+            .routes
+            .iter()
+            .find(|route| route.name == "oral")
+            .map(|route| route.index)
+            .expect("oral route");
+        let cp = jit
+            .info()
+            .outputs
+            .iter()
+            .find(|output| output.name == "cp")
+            .map(|output| output.index)
+            .expect("cp output");
+        assert_eq!(oral, 0);
+        assert_eq!(cp, 0);
+
+        let jit_subject = Subject::builder("analytical-reordered")
+            .bolus(0.0, 100.0, "oral")
+            .missing_observation(0.5, "cp")
+            .missing_observation(1.0, "cp")
+            .missing_observation(2.0, "cp")
+            .missing_observation(4.0, "cp")
+            .build();
+
+        let reference_subject = Subject::builder("analytical-reordered")
+            .bolus(0.0, 100.0, 0)
+            .missing_observation(0.5, 0)
+            .missing_observation(1.0, 0)
+            .missing_observation(2.0, 0)
+            .missing_observation(4.0, 0)
+            .build();
+
+        let support = vec![1.1, 0.15, 0.08, 0.05, 25.0];
+        let reference_support = vec![support[1], support[0], support[2], support[3], support[4]];
+        let jit_predictions = jit
+            .estimate_predictions(&jit_subject, &support)
+            .expect("jit analytical predictions");
+
+        let reference = equation::Analytical::new(
+            two_compartments_with_absorption,
+            |_p, _t, _cov| {},
+            |_p, _t, _cov| std::collections::HashMap::new(),
+            |_p, _t, _cov| std::collections::HashMap::new(),
+            |_p, _t, _cov, _x| {},
+            |x, p, _t, _cov, y| {
+                y[0] = x[1] / p[4];
+            },
+        )
+        .with_nstates(3)
+        .with_ndrugs(1)
+        .with_nout(1);
+
+        let reference_predictions = reference
+            .estimate_predictions(&reference_subject, &reference_support)
+            .expect("reference analytical predictions");
+
+        for (jit_pred, reference_pred) in jit_predictions
+            .predictions()
+            .iter()
+            .zip(reference_predictions.predictions())
+        {
+            assert_relative_eq!(
+                jit_pred.prediction(),
+                reference_pred.prediction(),
+                max_relative = 1e-4
+            );
+        }
+    }
+
+    #[test]
+    fn jit_analytical_wrapper_rejects_missing_required_structure_parameter_names() {
+        let source = r#"
+name = one_cmt_abs_missing_ke
+kind = analytical
+
+params = ka, kel, v
+states = depot, central
+outputs = cp
+
+bolus(oral) -> depot
+structure = one_compartment_with_absorption
+
+out(cp) = central / v ~ continuous()
+"#;
+        let model = load_model_from_source(source);
+        let error = compile_analytical_model_to_jit(&model)
+            .expect_err("missing required analytical parameter should fail at compiled setup")
+            .with_source(source);
+
+        assert!(
+            error
+                .diagnostic()
+                .message
+                .contains("analytical structure `one_compartment_with_absorption` for model `one_cmt_abs_missing_ke` requires parameter `ke`; did you mean `kel`?"),
+            "{}",
+            error.render(source)
+        );
+    }
+
+    #[test]
+    fn jit_analytical_wrapper_projects_mixed_support_point_and_derived_structure_parameters_by_name(
+    ) {
+        let source = r#"
+name = one_cmt_abs_derived_ke
+kind = analytical
+
+params = ka, cl, v
+derived = ke
+states = depot, central
+outputs = cp
+
+bolus(oral) -> depot
+
+ke = cl / v
+
+structure = one_compartment_with_absorption
+
+out(cp) = central / v ~ continuous()
+"#;
+        let model = load_model_from_source(source);
+        let jit = compile_analytical_model_to_jit(&model)
+            .expect("compile analytical model with mixed support-point and derived inputs");
+
+        let support = vec![1.0, 5.0, 25.0];
+        let reference_support = vec![support[0], support[1] / support[2], support[2]];
+        let jit_subject = Subject::builder("analytical-derived")
+            .bolus(0.0, 100.0, "oral")
+            .missing_observation(0.5, "cp")
+            .missing_observation(1.0, "cp")
+            .missing_observation(2.0, "cp")
+            .missing_observation(4.0, "cp")
+            .build();
+        let reference_subject = Subject::builder("analytical-derived")
+            .bolus(0.0, 100.0, 0)
+            .missing_observation(0.5, 0)
+            .missing_observation(1.0, 0)
+            .missing_observation(2.0, 0)
+            .missing_observation(4.0, 0)
+            .build();
+
+        let jit_predictions = jit
+            .estimate_predictions(&jit_subject, &support)
+            .expect("jit analytical predictions");
+
+        let reference = equation::Analytical::new(
+            one_compartment_with_absorption,
+            |_p, _t, _cov| {},
+            |_p, _t, _cov| std::collections::HashMap::new(),
+            |_p, _t, _cov| std::collections::HashMap::new(),
+            |_p, _t, _cov, _x| {},
+            |x, p, _t, _cov, y| {
+                y[0] = x[1] / p[2];
+            },
+        )
+        .with_nstates(2)
+        .with_ndrugs(1)
+        .with_nout(1);
+
+        let reference_predictions = reference
+            .estimate_predictions(&reference_subject, &reference_support)
+            .expect("reference analytical predictions");
+
+        for (jit_pred, reference_pred) in jit_predictions
+            .predictions()
+            .iter()
+            .zip(reference_predictions.predictions())
+        {
+            assert_relative_eq!(
+                jit_pred.prediction(),
+                reference_pred.prediction(),
+                max_relative = 1e-4
+            );
+        }
+    }
+
+    #[test]
+    fn jit_analytical_wrapper_rejects_missing_required_structure_parameter_names_across_params_and_derived(
+    ) {
+        let source = r#"
+name = one_cmt_abs_missing_derived_ke
+kind = analytical
+
+params = ka, cl, v
+derived = kel
+states = depot, central
+outputs = cp
+
+bolus(oral) -> depot
+
+kel = cl / v
+
+structure = one_compartment_with_absorption
+
+out(cp) = central / v ~ continuous()
+"#;
+        let model = load_model_from_source(source);
+        let error = compile_analytical_model_to_jit(&model)
+            .expect_err(
+                "missing required analytical parameter should fail across params and derived",
+            )
+            .with_source(source);
+
+        assert!(
+            error
+                .diagnostic()
+                .message
+                .contains("analytical structure `one_compartment_with_absorption` for model `one_cmt_abs_missing_derived_ke` requires parameter `ke`; did you mean `kel`?"),
+            "{}",
+            error.render(source)
+        );
     }
 
     #[test]

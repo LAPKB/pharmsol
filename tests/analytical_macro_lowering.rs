@@ -160,6 +160,49 @@ fn handwritten_one_compartment_with_absorption() -> equation::Analytical {
     .expect("handwritten absorption metadata should validate")
 }
 
+fn macro_two_compartments_with_absorption_declared_order() -> equation::Analytical {
+    analytical! {
+        name: "two_cmt_abs_declared_order",
+        params: [ka, ke, k12, k21, v],
+        states: [gut, central, peripheral],
+        outputs: [cp],
+        routes: [
+            bolus(oral) -> gut,
+        ],
+        structure: two_compartments_with_absorption,
+        out: |x, _t, y| {
+            y[cp] = x[central] / v;
+        },
+    }
+}
+
+fn handwritten_two_compartments_with_absorption_declared_order() -> equation::Analytical {
+    equation::Analytical::new(
+        equation::two_compartments_with_absorption,
+        |_p, _t, _cov| {},
+        |_p, _t, _cov| lag! {},
+        |_p, _t, _cov| fa! {},
+        |_p, _t, _cov, _x| {},
+        |x, p, _t, _cov, y| {
+            fetch_params!(p, _ka, _ke, _k12, _k21, v);
+            y[0] = x[1] / v;
+        },
+    )
+    .with_nstates(3)
+    .with_ndrugs(1)
+    .with_nout(1)
+    .with_metadata(
+        equation::metadata::new("two_cmt_abs_declared_order")
+            .kind(equation::ModelKind::Analytical)
+            .parameters(["ka", "ke", "k12", "k21", "v"])
+            .states(["gut", "central", "peripheral"])
+            .outputs(["cp"])
+            .route(equation::Route::bolus("oral").to_state("gut"))
+            .analytical_kernel(equation::AnalyticalKernel::TwoCompartmentsWithAbsorption),
+    )
+    .expect("handwritten reordered analytical metadata should validate")
+}
+
 fn macro_shared_input_analytical() -> equation::Analytical {
     analytical! {
         name: "one_cmt_abs_shared",
@@ -432,6 +475,36 @@ fn analytical_macro_supports_extra_parameters_and_named_route_bindings() {
     let handwritten_predictions = handwritten_model
         .estimate_predictions(&subject, &support_point)
         .expect("handwritten absorption model should simulate")
+        .flat_predictions()
+        .to_vec();
+
+    assert_prediction_match(&macro_predictions, &handwritten_predictions);
+}
+
+#[test]
+fn analytical_macro_supports_declared_parameter_order_for_built_in_structures() {
+    let macro_model = macro_two_compartments_with_absorption_declared_order();
+    let handwritten_model = handwritten_two_compartments_with_absorption_declared_order();
+    let subject = oral_subject("oral", "cp");
+    let support_point = [1.1, 0.2, 0.3, 0.15, 10.0];
+    let macro_metadata = macro_model.metadata().expect("macro metadata exists");
+
+    assert_eq!(macro_model.metadata(), handwritten_model.metadata());
+    assert_eq!(macro_model.parameter_index("ka"), Some(0));
+    assert_eq!(macro_model.parameter_index("ke"), Some(1));
+    assert_eq!(
+        macro_metadata.analytical_kernel(),
+        Some(equation::AnalyticalKernel::TwoCompartmentsWithAbsorption)
+    );
+
+    let macro_predictions = macro_model
+        .estimate_predictions(&subject, &support_point)
+        .expect("macro reordered analytical model should simulate")
+        .flat_predictions()
+        .to_vec();
+    let handwritten_predictions = handwritten_model
+        .estimate_predictions(&subject, &support_point)
+        .expect("handwritten reordered analytical model should simulate")
         .flat_predictions()
         .to_vec();
 

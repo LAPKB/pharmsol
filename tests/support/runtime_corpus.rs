@@ -97,9 +97,9 @@ const ANALYTICAL_FULL_SOURCE: &str = r#"
 name = analytical_full_feature_parity
 kind = analytical
 
-params = ka, ke, v, tlag, f_oral, base_gut, base_central, tvke
+params = ka, v, tlag, f_oral, base_gut, base_central, tvke
 covariates = wt@linear, renal@linear
-derived = ka_proj, ke_proj
+derived = ke
 states = gut, central
 outputs = cp
 
@@ -110,8 +110,7 @@ infusion(iv) -> central
 lag(oral) = tlag * sqrt(wt / 70.0) * pow(90.0 / renal, 0.1)
 fa(oral) = min(max(f_oral * pow(renal / 90.0, 0.1), 0.0), 1.0)
 
-ka_proj = ka
-ke_proj = tvke * pow(wt / 70.0, 0.75) * pow(renal / 90.0, 0.25)
+ke = tvke * pow(wt / 70.0, 0.75) * pow(renal / 90.0, 0.25)
 
 structure = one_compartment_with_absorption
 
@@ -202,7 +201,7 @@ impl CorpusCase {
             Self::Ode => &[1.2, 5.0, 40.0, 0.5, 0.8],
             Self::OdeFull => &[1.1, 0.18, 0.07, 0.04, 35.0, 0.6, 0.85, 4.0, 18.0, 9.0],
             Self::Analytical => &[1.0, 0.15, 25.0, 0.5, 0.8],
-            Self::AnalyticalFull => &[1.0, 0.16, 32.0, 0.5, 0.8, 3.0, 14.0, 0.16],
+            Self::AnalyticalFull => &[1.0, 32.0, 0.5, 0.8, 3.0, 14.0, 0.16],
             Self::Sde => &[1.1, 0.2, 0.12, 0.08, 15.0, 0.0],
         }
     }
@@ -957,6 +956,8 @@ fn reference_analytical_predictions() -> Result<SubjectPredictions, Box<dyn Erro
 }
 
 fn reference_analytical_full_predictions() -> Result<SubjectPredictions, Box<dyn Error>> {
+    let reference_support_point = [1.0, 0.16, 32.0, 0.5, 0.8, 3.0, 14.0, 0.16];
+
     Ok(equation::Analytical::new(
         equation::one_compartment_with_absorption,
         |p, t, cov| {
@@ -1056,7 +1057,7 @@ fn reference_analytical_full_predictions() -> Result<SubjectPredictions, Box<dyn
             .covariate("renal", 0.0, 95.0)
             .covariate("renal", 8.0, 72.0)
             .build(),
-        CorpusCase::AnalyticalFull.support_point(),
+        &reference_support_point,
     )?)
 }
 

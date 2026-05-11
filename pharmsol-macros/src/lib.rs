@@ -3,6 +3,7 @@
 //! This crate is not intended to be used directly. Use the re-exports from the
 //! `pharmsol` crate instead.
 
+use pharmsol_dsl::AnalyticalKernel;
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{quote, ToTokens};
@@ -78,10 +79,9 @@ enum OdeRouteKind {
 }
 
 struct AnalyticalKernelSpec {
+    structure_kind: AnalyticalKernel,
     runtime_path: TokenStream2,
     metadata_kernel: TokenStream2,
-    parameter_arity: usize,
-    state_count: usize,
 }
 
 struct RoutePropertyEntry {
@@ -404,26 +404,12 @@ impl Parse for AnalyticalInput {
         validate_routes(&routes, &states, "analytical!")?;
 
         let kernel_spec = resolve_analytical_structure(&structure)?;
-        if params.len() < kernel_spec.parameter_arity {
-            return Err(syn::Error::new_spanned(
-                &structure,
-                format!(
-                    "analytical structure `{}` requires at least {} parameter value(s), but `params` declares {}",
-                    structure, kernel_spec.parameter_arity, params.len()
-                ),
-            ));
-        }
-        if states.len() != kernel_spec.state_count {
-            return Err(syn::Error::new_spanned(
-                &structure,
-                format!(
-                    "analytical structure `{}` expects {} state value(s), but `states` declares {}",
-                    structure,
-                    kernel_spec.state_count,
-                    states.len()
-                ),
-            ));
-        }
+        validate_analytical_structure_requirements(
+            &structure,
+            &params,
+            &states,
+            kernel_spec.structure_kind,
+        )?;
 
         validate_analytical_named_binding_compatibility(
             NamedBindingSets {
@@ -471,6 +457,210 @@ impl Parse for AnalyticalInput {
             out,
         })
     }
+}
+
+fn validate_analytical_structure_requirements(
+    structure: &Ident,
+    params: &[Ident],
+    states: &[Ident],
+    structure_kind: AnalyticalKernel,
+) -> syn::Result<()> {
+    let structure_name = structure_kind.name();
+    if states.len() != structure_kind.state_count() {
+        return Err(syn::Error::new_spanned(
+            structure,
+            format!(
+                "analytical structure `{structure_name}` expects {} state value(s), but `states` declares {}",
+                structure_kind.state_count(),
+                states.len()
+            ),
+        ));
+    }
+
+    let declared_params = params
+        .iter()
+        .map(|param| param.to_string())
+        .collect::<Vec<_>>();
+    for required_name in structure_kind.required_parameter_names() {
+        if !declared_params.iter().any(|param| param == required_name) {
+            return Err(missing_required_analytical_parameter_error(
+                structure,
+                structure_kind,
+                required_name,
+                &declared_params,
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn missing_required_analytical_parameter_error(
+    structure: &Ident,
+    structure_kind: AnalyticalKernel,
+    parameter: &'static str,
+    declared_params: &[String],
+) -> syn::Error {
+    let structure_name = structure_kind.name();
+
+    if let Some(suggested_parameter) =
+        best_analytical_parameter_suggestion(parameter, structure_kind, declared_params)
+    {
+        syn::Error::new_spanned(
+            structure,
+            format!(
+                "analytical structure `{structure_name}` requires parameter `{parameter}`; did you mean `{suggested_parameter}`?"
+            ),
+        )
+    } else {
+        syn::Error::new_spanned(
+            structure,
+            format!(
+                "analytical structure `{structure_name}` requires parameter `{parameter}`; declare it in `params: {}`",
+                suggested_analytical_parameter_declaration(structure_kind, declared_params)
+            ),
+        )
+    }
+}
+
+fn suggested_analytical_parameter_declaration(
+    structure_kind: AnalyticalKernel,
+    declared_params: &[String],
+) -> String {
+    let required_names = structure_kind.required_parameter_names();
+    let mut declaration = required_names
+        .iter()
+        .map(|name| (*name).to_string())
+        .collect::<Vec<_>>();
+
+    for declared_param in declared_params {
+        if !required_names.contains(&declared_param.as_str()) {
+            declaration.push(declared_param.clone());
+        }
+    }
+
+    format!("[{}]", declaration.join(", "))
+}
+
+fn best_analytical_parameter_suggestion(
+    needle: &str,
+    structure_kind: AnalyticalKernel,
+    declared_params: &[String],
+) -> Option<String> {
+    let original_needle = needle;
+    let needle = needle.to_ascii_lowercase();
+    let required_names = structure_kind.required_parameter_names();
+    let mut best: Option<((usize, usize, usize), &str)> = None;
+    let mut tied = false;
+
+    for declared_param in declared_params {
+        let candidate = declared_param.as_str();
+        if candidate == original_needle || required_names.contains(&candidate) {
+            continue;
+        }
+
+        let lookup = candidate.to_ascii_lowercase();
+        let distance = if is_single_adjacent_transposition(&needle, &lookup) {
+            1
+        } else {
+            edit_distance(&needle, &lookup)
+        };
+        let prefix = common_prefix_len(&needle, &lookup);
+        if !is_high_confidence_match(&needle, &lookup, distance, prefix) {
+            continue;
+        }
+
+        let score = (
+            distance,
+            usize::MAX - prefix,
+            needle.len().abs_diff(lookup.len()),
+        );
+        match &best {
+            None => {
+                best = Some((score, candidate));
+                tied = false;
+            }
+            Some((best_score, _)) if score < *best_score => {
+                best = Some((score, candidate));
+                tied = false;
+            }
+            Some((best_score, _)) if score == *best_score => tied = true,
+            _ => {}
+        }
+    }
+
+    if tied {
+        None
+    } else {
+        best.map(|(_, candidate)| candidate.to_string())
+    }
+}
+
+fn is_high_confidence_match(needle: &str, candidate: &str, distance: usize, prefix: usize) -> bool {
+    let max_len = needle.len().max(candidate.len());
+    let max_distance = match max_len {
+        0..=4 => 1,
+        5..=8 => 2,
+        _ => 3,
+    };
+
+    distance <= max_distance && (prefix > 0 || distance <= 1)
+}
+
+fn common_prefix_len(lhs: &str, rhs: &str) -> usize {
+    lhs.chars()
+        .zip(rhs.chars())
+        .take_while(|(lhs, rhs)| lhs == rhs)
+        .count()
+}
+
+fn is_single_adjacent_transposition(lhs: &str, rhs: &str) -> bool {
+    let lhs: Vec<char> = lhs.chars().collect();
+    let rhs: Vec<char> = rhs.chars().collect();
+    if lhs.len() != rhs.len() {
+        return false;
+    }
+
+    let differing = lhs
+        .iter()
+        .zip(rhs.iter())
+        .enumerate()
+        .filter_map(|(index, (lhs, rhs))| (lhs != rhs).then_some(index))
+        .collect::<Vec<_>>();
+
+    if differing.len() != 2 || differing[1] != differing[0] + 1 {
+        return false;
+    }
+
+    let first = differing[0];
+    lhs[first] == rhs[first + 1] && lhs[first + 1] == rhs[first]
+}
+
+fn edit_distance(lhs: &str, rhs: &str) -> usize {
+    let lhs: Vec<char> = lhs.chars().collect();
+    let rhs: Vec<char> = rhs.chars().collect();
+    if lhs.is_empty() {
+        return rhs.len();
+    }
+    if rhs.is_empty() {
+        return lhs.len();
+    }
+
+    let mut previous: Vec<usize> = (0..=rhs.len()).collect();
+    let mut current = vec![0; rhs.len() + 1];
+
+    for (lhs_index, lhs_char) in lhs.iter().enumerate() {
+        current[0] = lhs_index + 1;
+        for (rhs_index, rhs_char) in rhs.iter().enumerate() {
+            let substitution_cost = usize::from(lhs_char != rhs_char);
+            current[rhs_index + 1] = (current[rhs_index] + 1)
+                .min(previous[rhs_index + 1] + 1)
+                .min(previous[rhs_index] + substitution_cost);
+        }
+        previous.clone_from_slice(&current);
+    }
+
+    previous[rhs.len()]
 }
 
 impl Parse for SdeInput {
@@ -2184,94 +2374,67 @@ fn expand_diffeq(
 
 fn resolve_analytical_structure(structure: &Ident) -> syn::Result<AnalyticalKernelSpec> {
     let structure_name = structure.to_string();
-    let (runtime_path, metadata_kernel, parameter_arity, state_count) = match structure_name
-        .as_str()
-    {
-        "one_compartment" => (
+    let structure_kind = AnalyticalKernel::from_name(&structure_name).ok_or_else(|| {
+        syn::Error::new_spanned(
+            structure,
+            format!("unknown analytical structure `{structure_name}`"),
+        )
+    })?;
+    let (runtime_path, metadata_kernel) = match structure_kind {
+        AnalyticalKernel::OneCompartment => (
             quote! { ::pharmsol::equation::one_compartment },
             quote! { ::pharmsol::equation::AnalyticalKernel::OneCompartment },
-            1,
-            1,
         ),
-        "one_compartment_cl" => (
+        AnalyticalKernel::OneCompartmentCl => (
             quote! { ::pharmsol::equation::one_compartment_cl },
             quote! { ::pharmsol::equation::AnalyticalKernel::OneCompartmentCl },
-            2,
-            1,
         ),
-        "one_compartment_cl_with_absorption" => (
+        AnalyticalKernel::OneCompartmentClWithAbsorption => (
             quote! { ::pharmsol::equation::one_compartment_cl_with_absorption },
             quote! { ::pharmsol::equation::AnalyticalKernel::OneCompartmentClWithAbsorption },
-            3,
-            2,
         ),
-        "one_compartment_with_absorption" => (
+        AnalyticalKernel::OneCompartmentWithAbsorption => (
             quote! { ::pharmsol::equation::one_compartment_with_absorption },
             quote! { ::pharmsol::equation::AnalyticalKernel::OneCompartmentWithAbsorption },
-            2,
-            2,
         ),
-        "two_compartments" => (
+        AnalyticalKernel::TwoCompartments => (
             quote! { ::pharmsol::equation::two_compartments },
             quote! { ::pharmsol::equation::AnalyticalKernel::TwoCompartments },
-            3,
-            2,
         ),
-        "two_compartments_cl" => (
+        AnalyticalKernel::TwoCompartmentsCl => (
             quote! { ::pharmsol::equation::two_compartments_cl },
             quote! { ::pharmsol::equation::AnalyticalKernel::TwoCompartmentsCl },
-            4,
-            2,
         ),
-        "two_compartments_cl_with_absorption" => (
+        AnalyticalKernel::TwoCompartmentsClWithAbsorption => (
             quote! { ::pharmsol::equation::two_compartments_cl_with_absorption },
             quote! { ::pharmsol::equation::AnalyticalKernel::TwoCompartmentsClWithAbsorption },
-            5,
-            3,
         ),
-        "two_compartments_with_absorption" => (
+        AnalyticalKernel::TwoCompartmentsWithAbsorption => (
             quote! { ::pharmsol::equation::two_compartments_with_absorption },
             quote! { ::pharmsol::equation::AnalyticalKernel::TwoCompartmentsWithAbsorption },
-            4,
-            3,
         ),
-        "three_compartments" => (
+        AnalyticalKernel::ThreeCompartments => (
             quote! { ::pharmsol::equation::three_compartments },
             quote! { ::pharmsol::equation::AnalyticalKernel::ThreeCompartments },
-            5,
-            3,
         ),
-        "three_compartments_cl" => (
+        AnalyticalKernel::ThreeCompartmentsCl => (
             quote! { ::pharmsol::equation::three_compartments_cl },
             quote! { ::pharmsol::equation::AnalyticalKernel::ThreeCompartmentsCl },
-            6,
-            3,
         ),
-        "three_compartments_cl_with_absorption" => (
+        AnalyticalKernel::ThreeCompartmentsClWithAbsorption => (
             quote! { ::pharmsol::equation::three_compartments_cl_with_absorption },
             quote! { ::pharmsol::equation::AnalyticalKernel::ThreeCompartmentsClWithAbsorption },
-            7,
-            4,
         ),
-        "three_compartments_with_absorption" => (
+        AnalyticalKernel::ThreeCompartmentsWithAbsorption => (
             quote! { ::pharmsol::equation::three_compartments_with_absorption },
             quote! { ::pharmsol::equation::AnalyticalKernel::ThreeCompartmentsWithAbsorption },
-            6,
-            4,
         ),
-        _ => {
-            return Err(syn::Error::new_spanned(
-                structure,
-                format!("unknown analytical structure `{structure_name}`"),
-            ));
-        }
     };
 
     Ok(AnalyticalKernelSpec {
+        structure_kind,
         runtime_path,
         metadata_kernel,
-        parameter_arity,
-        state_count,
     })
 }
 
@@ -3326,16 +3489,41 @@ mod tests {
     }
 
     #[test]
-    fn analytical_rejects_insufficient_kernel_parameters() {
+    fn analytical_accepts_declared_parameter_order_different_from_structure_order() {
+        let input = syn::parse_str::<AnalyticalInput>(
+            "name: \"demo\", params: [ka, ke, k12, k21, v], states: [gut, central, peripheral], outputs: [cp], routes: [bolus(oral) -> gut], structure: two_compartments_with_absorption, out: |x, p, t, cov, y| {}",
+        )
+        .expect("declared-name parameter order should be accepted");
+
+        assert_eq!(input.params[0].to_string(), "ka");
+        assert_eq!(input.params[1].to_string(), "ke");
+        assert_eq!(input.states.len(), 3);
+    }
+
+    #[test]
+    fn analytical_rejects_missing_required_parameter_with_suggestion() {
         let error = syn::parse_str::<AnalyticalInput>(
-            "name: \"demo\", params: [ke], states: [gut, central], outputs: [cp], routes: [bolus(oral) -> gut], structure: one_compartment_with_absorption, out: |x, p, t, cov, y| {}",
+            "name: \"demo\", params: [ka, kel, v], states: [gut, central], outputs: [cp], routes: [bolus(oral) -> gut], structure: one_compartment_with_absorption, out: |x, p, t, cov, y| {}",
         )
         .err()
-        .expect("insufficient kernel parameters must fail");
+        .expect("missing required parameter must fail");
 
         assert!(error
             .to_string()
-            .contains("requires at least 2 parameter value(s)"));
+            .contains("requires parameter `ke`; did you mean `kel`?"));
+    }
+
+    #[test]
+    fn analytical_rejects_missing_required_parameter_without_suggestion() {
+        let error = syn::parse_str::<AnalyticalInput>(
+            "name: \"demo\", params: [ke, v], states: [gut, central], outputs: [cp], routes: [bolus(oral) -> gut], structure: one_compartment_with_absorption, out: |x, p, t, cov, y| {}",
+        )
+        .err()
+        .expect("missing required parameter must fail");
+
+        assert!(error
+            .to_string()
+            .contains("requires parameter `ka`; declare it in `params: [ka, ke, v]`"));
     }
 
     #[test]

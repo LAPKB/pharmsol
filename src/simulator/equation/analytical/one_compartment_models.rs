@@ -25,7 +25,7 @@ pub fn pm_one_compartment(x: &V, p: &V, t: T, rateiv: &V, cov: &Covariates) -> V
 /// Analytical solution for one compartment model with first-order absorption.
 ///
 /// # Assumptions
-/// - `p` is a vector of length 2 with ke and ka in that order
+/// - `p` is a vector of length 2 with ka and ke in that order
 /// - `rateiv` is a vector of length 1 with the value of the infusion rate (only one drug)
 /// - `x` is a vector of length 2
 /// - covariates are not used

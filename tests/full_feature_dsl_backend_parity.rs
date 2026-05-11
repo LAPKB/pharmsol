@@ -87,15 +87,15 @@ mod tests {
             info.parameters,
             owned_names(&[
                 "ka",
-                "ke",
                 "v",
                 "tlag",
                 "f_oral",
                 "base_gut",
                 "base_central",
-                "tvke",
+                "tvke"
             ])
         );
+        assert_eq!(info.derived, owned_names(&["ke"]));
         assert_eq!(
             info.covariates
                 .iter()

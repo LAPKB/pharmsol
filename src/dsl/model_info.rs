@@ -21,6 +21,9 @@ pub struct NativeModelInfo {
     pub kind: ModelKind,
     /// Parameter names in support-point order.
     pub parameters: Vec<String>,
+    /// Derived value names in dense runtime order.
+    #[serde(default)]
+    pub derived: Vec<String>,
     /// Declared covariates and their dense runtime indices.
     pub covariates: Vec<NativeCovariateInfo>,
     /// Declared routes together with declaration-order and dense runtime indices.
@@ -35,7 +38,8 @@ pub struct NativeModelInfo {
     pub output_len: usize,
     /// Length of the dense route-input buffer used during execution.
     pub route_len: usize,
-    /// Analytical kernel metadata when the compiled model is analytical.
+    /// Built-in analytical structure metadata when the compiled model is
+    /// analytical.
     pub analytical: Option<AnalyticalKernel>,
     /// Particle count when the compiled model is stochastic.
     pub particles: Option<usize>,
@@ -92,6 +96,12 @@ impl NativeModelInfo {
                 .parameters
                 .iter()
                 .map(|parameter| parameter.name.clone())
+                .collect(),
+            derived: model
+                .metadata
+                .derived
+                .iter()
+                .map(|derived| derived.name.clone())
                 .collect(),
             covariates: model
                 .metadata
@@ -341,6 +351,36 @@ out(outeq_2) = depot / v
                 .map(|output| output.name.as_str())
                 .collect::<Vec<_>>(),
             vec!["cp", "outeq_2"]
+        );
+    }
+
+    #[test]
+    fn native_model_info_preserves_derived_names_for_analytical_models() {
+        let info = load_model_info(
+            r#"
+name = analytical_derived_names
+kind = analytical
+
+params = ka, cl, v
+derived = ke
+states = depot, central
+outputs = cp
+
+bolus(oral) -> depot
+
+ke = cl / v
+
+structure = one_compartment_with_absorption
+
+out(cp) = central / v ~ continuous()
+"#,
+        );
+
+        assert_eq!(info.parameters, vec!["ka", "cl", "v"]);
+        assert_eq!(info.derived, vec!["ke"]);
+        assert_eq!(
+            info.analytical,
+            Some(AnalyticalKernel::OneCompartmentWithAbsorption)
         );
     }
 }

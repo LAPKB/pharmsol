@@ -377,7 +377,13 @@ impl ModelMetadata {
         self
     }
 
-    /// Set the analytical kernel identity for built-in analytical models.
+    /// Set the built-in analytical structure identity for handwritten
+    /// analytical models.
+    ///
+    /// The declared parameter list remains the public authoring order. When
+    /// you later attach this metadata with [`crate::Analytical::with_metadata`],
+    /// pharmsol validates the required structure parameter names and projects
+    /// the support point into the low-level structure order automatically.
     pub fn analytical_kernel(mut self, analytical: AnalyticalKernel) -> Self {
         self.analytical = Some(analytical);
         self
@@ -423,7 +429,7 @@ impl ModelMetadata {
         self.particles
     }
 
-    /// Get the declared analytical kernel identity.
+    /// Get the declared built-in analytical structure identity.
     pub fn analytical_kernel_decl(&self) -> Option<AnalyticalKernel> {
         self.analytical
     }

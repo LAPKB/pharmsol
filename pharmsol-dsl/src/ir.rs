@@ -207,6 +207,44 @@ impl AnalyticalKernel {
         }
     }
 
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::OneCompartment => "one_compartment",
+            Self::OneCompartmentCl => "one_compartment_cl",
+            Self::OneCompartmentClWithAbsorption => "one_compartment_cl_with_absorption",
+            Self::OneCompartmentWithAbsorption => "one_compartment_with_absorption",
+            Self::TwoCompartments => "two_compartments",
+            Self::TwoCompartmentsCl => "two_compartments_cl",
+            Self::TwoCompartmentsClWithAbsorption => "two_compartments_cl_with_absorption",
+            Self::TwoCompartmentsWithAbsorption => "two_compartments_with_absorption",
+            Self::ThreeCompartments => "three_compartments",
+            Self::ThreeCompartmentsCl => "three_compartments_cl",
+            Self::ThreeCompartmentsClWithAbsorption => "three_compartments_cl_with_absorption",
+            Self::ThreeCompartmentsWithAbsorption => "three_compartments_with_absorption",
+        }
+    }
+
+    pub fn required_parameter_names(self) -> &'static [&'static str] {
+        match self {
+            Self::OneCompartment => &["ke"],
+            Self::OneCompartmentCl => &["cl", "v"],
+            Self::OneCompartmentClWithAbsorption => &["ka", "cl", "v"],
+            Self::OneCompartmentWithAbsorption => &["ka", "ke"],
+            Self::TwoCompartments => &["ke", "k12", "k21"],
+            Self::TwoCompartmentsCl => &["cl", "q", "vc", "vp"],
+            Self::TwoCompartmentsClWithAbsorption => &["ka", "cl", "q", "vc", "vp"],
+            Self::TwoCompartmentsWithAbsorption => &["ke", "ka", "k12", "k21"],
+            Self::ThreeCompartments => &["k10", "k12", "k13", "k21", "k31"],
+            Self::ThreeCompartmentsCl => &["cl", "q2", "q3", "vc", "v2", "v3"],
+            Self::ThreeCompartmentsClWithAbsorption => &["ka", "cl", "q2", "q3", "vc", "v2", "v3"],
+            Self::ThreeCompartmentsWithAbsorption => &["ka", "k10", "k12", "k13", "k21", "k31"],
+        }
+    }
+
+    pub fn required_parameter_count(self) -> usize {
+        self.required_parameter_names().len()
+    }
+
     pub fn state_count(self) -> usize {
         match self {
             Self::OneCompartment | Self::OneCompartmentCl => 1,
@@ -215,6 +253,82 @@ impl AnalyticalKernel {
             Self::TwoCompartmentsClWithAbsorption | Self::TwoCompartmentsWithAbsorption => 3,
             Self::ThreeCompartments | Self::ThreeCompartmentsCl => 3,
             Self::ThreeCompartmentsClWithAbsorption | Self::ThreeCompartmentsWithAbsorption => 4,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AnalyticalKernel;
+
+    #[test]
+    fn analytical_structures_publish_required_parameter_order() {
+        let cases = [
+            (AnalyticalKernel::OneCompartment, &["ke"][..], 1),
+            (AnalyticalKernel::OneCompartmentCl, &["cl", "v"][..], 1),
+            (
+                AnalyticalKernel::OneCompartmentClWithAbsorption,
+                &["ka", "cl", "v"][..],
+                2,
+            ),
+            (
+                AnalyticalKernel::OneCompartmentWithAbsorption,
+                &["ka", "ke"][..],
+                2,
+            ),
+            (
+                AnalyticalKernel::TwoCompartments,
+                &["ke", "k12", "k21"][..],
+                2,
+            ),
+            (
+                AnalyticalKernel::TwoCompartmentsCl,
+                &["cl", "q", "vc", "vp"][..],
+                2,
+            ),
+            (
+                AnalyticalKernel::TwoCompartmentsClWithAbsorption,
+                &["ka", "cl", "q", "vc", "vp"][..],
+                3,
+            ),
+            (
+                AnalyticalKernel::TwoCompartmentsWithAbsorption,
+                &["ke", "ka", "k12", "k21"][..],
+                3,
+            ),
+            (
+                AnalyticalKernel::ThreeCompartments,
+                &["k10", "k12", "k13", "k21", "k31"][..],
+                3,
+            ),
+            (
+                AnalyticalKernel::ThreeCompartmentsCl,
+                &["cl", "q2", "q3", "vc", "v2", "v3"][..],
+                3,
+            ),
+            (
+                AnalyticalKernel::ThreeCompartmentsClWithAbsorption,
+                &["ka", "cl", "q2", "q3", "vc", "v2", "v3"][..],
+                4,
+            ),
+            (
+                AnalyticalKernel::ThreeCompartmentsWithAbsorption,
+                &["ka", "k10", "k12", "k13", "k21", "k31"][..],
+                4,
+            ),
+        ];
+
+        for (structure, expected_parameters, expected_state_count) in cases {
+            assert_eq!(
+                AnalyticalKernel::from_name(structure.name()),
+                Some(structure)
+            );
+            assert_eq!(structure.required_parameter_names(), expected_parameters);
+            assert_eq!(
+                structure.required_parameter_count(),
+                expected_parameters.len(),
+            );
+            assert_eq!(structure.state_count(), expected_state_count);
         }
     }
 }

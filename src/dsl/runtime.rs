@@ -417,7 +417,7 @@ pub fn load_runtime_artifact(
         #[cfg(feature = "dsl-wasm")]
         RuntimeArtifactFormat::Wasm => {
             let (info, artifact) = load_wasm_artifact(path)?;
-            Ok(runtime_model_from_parts(info, artifact))
+            runtime_model_from_parts(info, artifact)
         }
     }
 }
@@ -446,21 +446,21 @@ pub fn compile_execution_model_to_runtime_wasm(
 /// Load a runtime model from in-memory WASM bytes.
 pub fn load_runtime_wasm_bytes(bytes: &[u8]) -> Result<CompiledRuntimeModel, RuntimeError> {
     let (info, artifact) = load_wasm_artifact_bytes(bytes)?;
-    Ok(runtime_model_from_parts(info, artifact))
+    runtime_model_from_parts(info, artifact)
 }
 
 #[cfg(feature = "dsl-wasm")]
 fn runtime_model_from_parts(
     info: NativeModelInfo,
     artifact: impl RuntimeArtifact + 'static,
-) -> CompiledRuntimeModel {
-    match info.kind {
+) -> Result<CompiledRuntimeModel, RuntimeError> {
+    Ok(match info.kind {
         ModelKind::Ode => CompiledRuntimeModel::Ode(NativeOdeModel::new(info, artifact)),
         ModelKind::Analytical => {
-            CompiledRuntimeModel::Analytical(NativeAnalyticalModel::new(info, artifact))
+            CompiledRuntimeModel::Analytical(NativeAnalyticalModel::new(info, artifact)?)
         }
         ModelKind::Sde => CompiledRuntimeModel::Sde(NativeSdeModel::new(info, artifact)),
-    }
+    })
 }
 
 #[cfg(all(

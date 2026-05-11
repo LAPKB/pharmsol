@@ -332,6 +332,101 @@ impl RouteInputSemantics {
     }
 }
 
+#[derive(Clone, Debug)]
+enum CompiledAnalyticalParameterSource {
+    SupportPoint(usize),
+    Derived(usize),
+}
+
+#[derive(Clone, Debug)]
+enum CompiledAnalyticalParameterProjection {
+    Derived {
+        required_parameter_count: usize,
+        reordered_source_indices: Option<Box<[usize]>>,
+    },
+    SupportPoint {
+        required_parameter_count: usize,
+        reordered_source_indices: Option<Box<[usize]>>,
+    },
+    Mixed {
+        sources: Box<[CompiledAnalyticalParameterSource]>,
+    },
+}
+
+impl CompiledAnalyticalParameterProjection {
+    fn from_model_info(info: &NativeModelInfo) -> Result<Self, PharmsolError> {
+        let structure = info.analytical.ok_or_else(|| {
+            PharmsolError::OtherError(format!(
+                "model `{}` does not declare an analytical structure",
+                info.name
+            ))
+        })?;
+        let required_parameter_count = structure.required_parameter_count();
+
+        let mut sources = Vec::with_capacity(required_parameter_count);
+        let mut support_point_indices = Vec::with_capacity(required_parameter_count);
+        let mut derived_indices = Vec::with_capacity(required_parameter_count);
+        let mut uses_support_point = false;
+        let mut uses_derived = false;
+        let mut support_point_reordered = false;
+        let mut derived_reordered = false;
+
+        for (required_index, required_name) in
+            structure.required_parameter_names().iter().enumerate()
+        {
+            if let Some(source_index) = info
+                .derived
+                .iter()
+                .position(|derived| derived == required_name)
+            {
+                uses_derived = true;
+                derived_reordered |= source_index != required_index;
+                derived_indices.push(source_index);
+                sources.push(CompiledAnalyticalParameterSource::Derived(source_index));
+                continue;
+            }
+
+            let Some(source_index) = info
+                .parameters
+                .iter()
+                .position(|parameter| parameter == required_name)
+            else {
+                return Err(missing_required_analytical_parameter_error(
+                    info,
+                    structure,
+                    required_name,
+                ));
+            };
+
+            uses_support_point = true;
+            support_point_reordered |= source_index != required_index;
+            support_point_indices.push(source_index);
+            sources.push(CompiledAnalyticalParameterSource::SupportPoint(
+                source_index,
+            ));
+        }
+
+        Ok(match (uses_support_point, uses_derived) {
+            (true, false) => Self::SupportPoint {
+                required_parameter_count,
+                reordered_source_indices: support_point_reordered
+                    .then(|| support_point_indices.into_boxed_slice()),
+            },
+            (false, true) => Self::Derived {
+                required_parameter_count,
+                reordered_source_indices: derived_reordered
+                    .then(|| derived_indices.into_boxed_slice()),
+            },
+            (true, true) => Self::Mixed {
+                sources: sources.into_boxed_slice(),
+            },
+            (false, false) => unreachable!(
+                "required analytical structure inputs must come from params or derived values"
+            ),
+        })
+    }
+}
+
 impl SharedNativeModel {
     fn new(info: NativeModelInfo, artifact: impl RuntimeArtifact + 'static) -> Self {
         Self {
@@ -745,6 +840,7 @@ pub struct NativeOdeModel {
 #[derive(Clone, Debug)]
 pub struct NativeAnalyticalModel {
     shared: Arc<SharedNativeModel>,
+    parameter_projection: Arc<CompiledAnalyticalParameterProjection>,
 }
 
 #[derive(Clone, Debug)]
@@ -1221,10 +1317,16 @@ impl Equation for NativeOdeModel {
 }
 
 impl NativeAnalyticalModel {
-    pub(crate) fn new(info: NativeModelInfo, artifact: impl RuntimeArtifact + 'static) -> Self {
-        Self {
+    pub(crate) fn new(
+        info: NativeModelInfo,
+        artifact: impl RuntimeArtifact + 'static,
+    ) -> Result<Self, PharmsolError> {
+        let parameter_projection = CompiledAnalyticalParameterProjection::from_model_info(&info)?;
+
+        Ok(Self {
             shared: Arc::new(SharedNativeModel::new(info, artifact)),
-        }
+            parameter_projection: Arc::new(parameter_projection),
+        })
     }
 
     pub fn info(&self) -> &NativeModelInfo {
@@ -1354,8 +1456,12 @@ impl NativeAnalyticalModel {
                 &mut derived,
                 &mut cov_buf,
             )?;
-            let projected =
-                project_analytical_parameters(&self.shared.info, support_point, &derived)?;
+            let projected = project_analytical_parameters(
+                &self.parameter_projection,
+                &self.shared.info,
+                support_point,
+                &derived,
+            )?;
             let next_state = apply_analytical_kernel(
                 self.shared.info.analytical.ok_or_else(|| {
                     PharmsolError::OtherError(format!(
@@ -1694,53 +1800,267 @@ fn canonical_numeric_alias(label: &str, prefix: &str) -> Option<String> {
 }
 
 fn project_analytical_parameters(
+    projection: &CompiledAnalyticalParameterProjection,
     info: &NativeModelInfo,
     support_point: &[f64],
     derived: &[f64],
 ) -> Result<V, PharmsolError> {
-    let kernel = info.analytical.ok_or_else(|| {
+    let structure = info.analytical.ok_or_else(|| {
         PharmsolError::OtherError(format!(
-            "model `{}` does not declare an analytical kernel",
+            "model `{}` does not declare an analytical structure",
             info.name
         ))
     })?;
-    let arity = analytical_parameter_count(kernel);
-    if support_point.len() < arity {
-        return Err(PharmsolError::OtherError(format!(
-            "analytical kernel for model `{}` requires {} parameter value(s), got {}",
-            info.name,
-            arity,
-            support_point.len()
-        )));
-    }
 
-    // Analytical authoring models can project kernel arguments through a derive
-    // kernel by declaring exactly the built-in kernel arity in `derived`.
-    if derived.len() == arity {
-        return Ok(V::from_vec(derived.to_vec(), NalgebraContext));
-    }
+    match projection {
+        CompiledAnalyticalParameterProjection::Derived {
+            required_parameter_count,
+            reordered_source_indices,
+        } => {
+            if derived.len() < *required_parameter_count {
+                return Err(PharmsolError::OtherError(format!(
+                    "analytical structure `{}` for model `{}` requires at least {} derived value(s), got {}",
+                    structure.name(),
+                    info.name,
+                    required_parameter_count,
+                    derived.len()
+                )));
+            }
 
-    Ok(V::from_vec(
-        support_point[..arity].to_vec(),
-        NalgebraContext,
-    ))
+            let projected = if let Some(source_indices) = reordered_source_indices {
+                source_indices
+                    .iter()
+                    .map(|source_index| derived[*source_index])
+                    .collect::<Vec<_>>()
+            } else {
+                derived[..*required_parameter_count].to_vec()
+            };
+
+            Ok(V::from_vec(projected, NalgebraContext))
+        }
+        CompiledAnalyticalParameterProjection::SupportPoint {
+            required_parameter_count,
+            reordered_source_indices,
+        } => {
+            if support_point.len() < *required_parameter_count {
+                return Err(PharmsolError::OtherError(format!(
+                    "analytical structure `{}` for model `{}` requires {} parameter value(s), got {}",
+                    structure.name(),
+                    info.name,
+                    required_parameter_count,
+                    support_point.len()
+                )));
+            }
+
+            let projected = if let Some(source_indices) = reordered_source_indices {
+                source_indices
+                    .iter()
+                    .map(|source_index| support_point[*source_index])
+                    .collect::<Vec<_>>()
+            } else {
+                support_point[..*required_parameter_count].to_vec()
+            };
+
+            Ok(V::from_vec(projected, NalgebraContext))
+        }
+        CompiledAnalyticalParameterProjection::Mixed { sources } => Ok(V::from_vec(
+            sources
+                .iter()
+                .map(|source| match source {
+                    CompiledAnalyticalParameterSource::SupportPoint(index) => support_point[*index],
+                    CompiledAnalyticalParameterSource::Derived(index) => derived[*index],
+                })
+                .collect(),
+            NalgebraContext,
+        )),
+    }
 }
 
-fn analytical_parameter_count(kernel: AnalyticalKernel) -> usize {
-    match kernel {
-        AnalyticalKernel::OneCompartment => 1,
-        AnalyticalKernel::OneCompartmentCl => 2,
-        AnalyticalKernel::OneCompartmentClWithAbsorption => 3,
-        AnalyticalKernel::OneCompartmentWithAbsorption => 2,
-        AnalyticalKernel::TwoCompartments => 3,
-        AnalyticalKernel::TwoCompartmentsCl => 4,
-        AnalyticalKernel::TwoCompartmentsClWithAbsorption => 5,
-        AnalyticalKernel::TwoCompartmentsWithAbsorption => 4,
-        AnalyticalKernel::ThreeCompartments => 5,
-        AnalyticalKernel::ThreeCompartmentsCl => 6,
-        AnalyticalKernel::ThreeCompartmentsClWithAbsorption => 7,
-        AnalyticalKernel::ThreeCompartmentsWithAbsorption => 6,
+fn missing_required_analytical_parameter_error(
+    info: &NativeModelInfo,
+    structure: AnalyticalKernel,
+    parameter: &'static str,
+) -> PharmsolError {
+    if let Some(suggested_parameter) =
+        best_analytical_parameter_suggestion(parameter, structure, info)
+    {
+        PharmsolError::OtherError(format!(
+            "analytical structure `{}` for model `{}` requires parameter `{parameter}`; did you mean `{suggested_parameter}`?",
+            structure.name(),
+            info.name,
+        ))
+    } else if info.derived.is_empty() {
+        PharmsolError::OtherError(format!(
+            "analytical structure `{}` for model `{}` requires parameter `{parameter}`; declare it in `params = {}`",
+            structure.name(),
+            info.name,
+            suggested_analytical_parameter_declaration(structure, info),
+        ))
+    } else {
+        PharmsolError::OtherError(format!(
+            "analytical structure `{}` for model `{}` requires parameter `{parameter}`; declare it in `params = {}` or compute it in `derived = {}`",
+            structure.name(),
+            info.name,
+            suggested_analytical_parameter_declaration(structure, info),
+            suggested_analytical_derived_declaration(parameter, info),
+        ))
     }
+}
+
+fn suggested_analytical_parameter_declaration(
+    structure: AnalyticalKernel,
+    info: &NativeModelInfo,
+) -> String {
+    let required_names = structure.required_parameter_names();
+    let mut declaration = required_names
+        .iter()
+        .map(|name| (*name).to_string())
+        .collect::<Vec<_>>();
+
+    for parameter in &info.parameters {
+        if !required_names.contains(&parameter.as_str()) {
+            declaration.push(parameter.clone());
+        }
+    }
+
+    format!("[{}]", declaration.join(", "))
+}
+
+fn suggested_analytical_derived_declaration(
+    parameter: &'static str,
+    info: &NativeModelInfo,
+) -> String {
+    let mut declaration = info.derived.clone();
+    if !declaration.iter().any(|candidate| candidate == parameter) {
+        declaration.push(parameter.to_string());
+    }
+
+    format!("[{}]", declaration.join(", "))
+}
+
+fn best_analytical_parameter_suggestion(
+    needle: &str,
+    structure: AnalyticalKernel,
+    info: &NativeModelInfo,
+) -> Option<String> {
+    let original_needle = needle;
+    let needle = needle.to_ascii_lowercase();
+    let required_names = structure.required_parameter_names();
+    let mut best: Option<((usize, usize, usize), &str)> = None;
+    let mut tied = false;
+
+    for candidate in info
+        .parameters
+        .iter()
+        .chain(info.derived.iter())
+        .map(|value| value.as_str())
+    {
+        if candidate == original_needle || required_names.contains(&candidate) {
+            continue;
+        }
+
+        let lookup = candidate.to_ascii_lowercase();
+        let distance = if is_single_adjacent_transposition(&needle, &lookup) {
+            1
+        } else {
+            edit_distance(&needle, &lookup)
+        };
+        let prefix = common_prefix_len(&needle, &lookup);
+        if !is_high_confidence_match(&needle, &lookup, distance, prefix) {
+            continue;
+        }
+
+        let score = (
+            distance,
+            usize::MAX - prefix,
+            needle.len().abs_diff(lookup.len()),
+        );
+        match &best {
+            None => {
+                best = Some((score, candidate));
+                tied = false;
+            }
+            Some((best_score, _)) if score < *best_score => {
+                best = Some((score, candidate));
+                tied = false;
+            }
+            Some((best_score, _)) if score == *best_score => tied = true,
+            _ => {}
+        }
+    }
+
+    if tied {
+        None
+    } else {
+        best.map(|(_, candidate)| candidate.to_string())
+    }
+}
+
+fn is_high_confidence_match(needle: &str, candidate: &str, distance: usize, prefix: usize) -> bool {
+    let max_len = needle.len().max(candidate.len());
+    let max_distance = match max_len {
+        0..=4 => 1,
+        5..=8 => 2,
+        _ => 3,
+    };
+
+    distance <= max_distance && (prefix > 0 || distance <= 1)
+}
+
+fn common_prefix_len(lhs: &str, rhs: &str) -> usize {
+    lhs.chars()
+        .zip(rhs.chars())
+        .take_while(|(lhs, rhs)| lhs == rhs)
+        .count()
+}
+
+fn is_single_adjacent_transposition(lhs: &str, rhs: &str) -> bool {
+    let lhs: Vec<char> = lhs.chars().collect();
+    let rhs: Vec<char> = rhs.chars().collect();
+    if lhs.len() != rhs.len() {
+        return false;
+    }
+
+    let differing = lhs
+        .iter()
+        .zip(rhs.iter())
+        .enumerate()
+        .filter_map(|(index, (lhs, rhs))| (lhs != rhs).then_some(index))
+        .collect::<Vec<_>>();
+
+    if differing.len() != 2 || differing[1] != differing[0] + 1 {
+        return false;
+    }
+
+    let first = differing[0];
+    lhs[first] == rhs[first + 1] && lhs[first + 1] == rhs[first]
+}
+
+fn edit_distance(lhs: &str, rhs: &str) -> usize {
+    let lhs: Vec<char> = lhs.chars().collect();
+    let rhs: Vec<char> = rhs.chars().collect();
+    if lhs.is_empty() {
+        return rhs.len();
+    }
+    if rhs.is_empty() {
+        return lhs.len();
+    }
+
+    let mut previous: Vec<usize> = (0..=rhs.len()).collect();
+    let mut current = vec![0; rhs.len() + 1];
+
+    for (lhs_index, lhs_char) in lhs.iter().enumerate() {
+        current[0] = lhs_index + 1;
+        for (rhs_index, rhs_char) in rhs.iter().enumerate() {
+            let substitution_cost = usize::from(lhs_char != rhs_char);
+            current[rhs_index + 1] = (current[rhs_index] + 1)
+                .min(previous[rhs_index + 1] + 1)
+                .min(previous[rhs_index] + substitution_cost);
+        }
+        previous.clone_from_slice(&current);
+    }
+
+    previous[rhs.len()]
 }
 
 fn apply_analytical_kernel(
@@ -1868,13 +2188,15 @@ fn apply_analytical_kernel(
 #[cfg(test)]
 mod tests {
     use super::{
-        canonical_numeric_alias, KernelSession, NativeModelInfo, NativeOutputInfo, NativeRouteInfo,
-        RuntimeArtifact, RuntimeBackend, SharedNativeModel, NUMERIC_OUTPUT_PREFIX,
-        NUMERIC_ROUTE_PREFIX,
+        canonical_numeric_alias, project_analytical_parameters,
+        CompiledAnalyticalParameterProjection, KernelSession, NativeModelInfo,
+        NativeOutputInfo, NativeRouteInfo, RuntimeArtifact, RuntimeBackend, SharedNativeModel,
+        NUMERIC_OUTPUT_PREFIX, NUMERIC_ROUTE_PREFIX,
     };
     use crate::PharmsolError;
+    use diffsol::VectorHost;
     use pharmsol_dsl::execution::KernelRole;
-    use pharmsol_dsl::{ModelKind, RouteKind};
+    use pharmsol_dsl::{AnalyticalKernel, ModelKind, RouteKind};
 
     #[derive(Debug)]
     struct DummyArtifact;
@@ -1899,6 +2221,7 @@ mod tests {
                 name: "bolus_only".to_string(),
                 kind: ModelKind::Ode,
                 parameters: Vec::new(),
+                derived: Vec::new(),
                 covariates: Vec::new(),
                 routes: vec![NativeRouteInfo {
                     name: "oral".to_string(),
@@ -1921,6 +2244,28 @@ mod tests {
             },
             DummyArtifact,
         )
+    }
+
+    fn analytical_model_info(
+        parameters: &[&str],
+        derived: &[&str],
+        structure: AnalyticalKernel,
+    ) -> NativeModelInfo {
+        NativeModelInfo {
+            name: "compiled_analytical".to_string(),
+            kind: ModelKind::Analytical,
+            parameters: parameters.iter().map(|name| (*name).to_string()).collect(),
+            derived: derived.iter().map(|name| (*name).to_string()).collect(),
+            covariates: Vec::new(),
+            routes: Vec::new(),
+            outputs: Vec::new(),
+            state_len: structure.state_count(),
+            derived_len: derived.len(),
+            output_len: 1,
+            route_len: 1,
+            analytical: Some(structure),
+            particles: None,
+        }
     }
 
     #[test]
@@ -1963,5 +2308,111 @@ mod tests {
                 kind: RouteKind::Infusion,
             }
         ));
+    }
+
+    #[test]
+    fn compiled_analytical_projection_reorders_support_point_values() {
+        let info = analytical_model_info(
+            &["ka", "ke", "k12", "k21", "v"],
+            &[],
+            AnalyticalKernel::TwoCompartmentsWithAbsorption,
+        );
+        let projection = CompiledAnalyticalParameterProjection::from_model_info(&info)
+            .expect("projection should build from declared names");
+
+        let projected = project_analytical_parameters(
+            &projection,
+            &info,
+            &[1.1, 0.15, 0.08, 0.05, 25.0],
+            &[],
+        )
+        .expect("support point should project into structure order");
+
+        assert_eq!(projected.as_slice(), &[0.15, 1.1, 0.08, 0.05]);
+    }
+
+    #[test]
+    fn compiled_analytical_projection_rejects_missing_required_parameter_with_suggestion() {
+        let info = analytical_model_info(
+            &["ka", "kel", "v"],
+            &[],
+            AnalyticalKernel::OneCompartmentWithAbsorption,
+        );
+
+        let error = CompiledAnalyticalParameterProjection::from_model_info(&info)
+            .expect_err("missing required structure parameter should fail early");
+        let message = error.to_string();
+
+        assert!(message.contains("one_compartment_with_absorption"), "{message}");
+        assert!(message.contains("requires parameter `ke`"), "{message}");
+        assert!(message.contains("did you mean `kel`"), "{message}");
+    }
+
+    #[test]
+    fn compiled_analytical_projection_rejects_missing_required_parameter_without_suggestion() {
+        let info = analytical_model_info(
+            &["ka", "volume", "aux"],
+            &[],
+            AnalyticalKernel::OneCompartmentWithAbsorption,
+        );
+
+        let error = CompiledAnalyticalParameterProjection::from_model_info(&info)
+            .expect_err("missing required structure parameter should fail early");
+        let message = error.to_string();
+
+        assert!(message.contains("one_compartment_with_absorption"), "{message}");
+        assert!(message.contains("requires parameter `ke`"), "{message}");
+        assert!(message.contains("params = [ka, ke, volume, aux]"), "{message}");
+    }
+
+    #[test]
+    fn compiled_analytical_projection_mixes_support_point_and_derived_values_by_name() {
+        let info = analytical_model_info(
+            &["ka", "cl", "v"],
+            &["ke"],
+            AnalyticalKernel::OneCompartmentWithAbsorption,
+        );
+        let projection = CompiledAnalyticalParameterProjection::from_model_info(&info)
+            .expect("projection should build from params and derived names");
+
+        let projected =
+            project_analytical_parameters(&projection, &info, &[1.0, 5.0, 25.0], &[0.2])
+                .expect("mixed-source analytical inputs should project by name");
+
+        assert_eq!(projected.as_slice(), &[1.0, 0.2]);
+    }
+
+    #[test]
+    fn compiled_analytical_projection_reorders_all_derived_values_by_name() {
+        let info = analytical_model_info(
+            &["v"],
+            &["ke", "ka"],
+            AnalyticalKernel::OneCompartmentWithAbsorption,
+        );
+        let projection = CompiledAnalyticalParameterProjection::from_model_info(&info)
+            .expect("projection should build from derived names");
+
+        let projected =
+            project_analytical_parameters(&projection, &info, &[25.0], &[0.2, 1.0])
+                .expect("derived analytical inputs should project by name");
+
+        assert_eq!(projected.as_slice(), &[1.0, 0.2]);
+    }
+
+    #[test]
+    fn compiled_analytical_projection_rejects_missing_required_parameter_with_derived_suggestion() {
+        let info = analytical_model_info(
+            &["ka", "cl", "v"],
+            &["kel"],
+            AnalyticalKernel::OneCompartmentWithAbsorption,
+        );
+
+        let error = CompiledAnalyticalParameterProjection::from_model_info(&info)
+            .expect_err("missing required structure parameter should fail early");
+        let message = error.to_string();
+
+        assert!(message.contains("one_compartment_with_absorption"), "{message}");
+        assert!(message.contains("requires parameter `ke`"), "{message}");
+        assert!(message.contains("did you mean `kel`"), "{message}");
     }
 }

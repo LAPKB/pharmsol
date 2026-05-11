@@ -49,6 +49,19 @@ let predictions = analytical
     .unwrap();
 ```
 
+Built-in analytical structures follow declared parameter names on the public
+surface. For example,
+`structure: two_compartments_with_absorption` can be authored as
+`params: [ka, ke, k12, k21, v]` in
+[examples/analytical_vs_ode.rs](examples/analytical_vs_ode.rs) even though the
+low-level structure consumes its required inputs in a different internal
+order. Extra declared parameters such as `v` remain available to `out`, `lag`,
+and `fa` logic.
+
+If a required analytical structure name is missing, setup fails early with a
+direct `did you mean ...?` suggestion when pharmsol can infer the intended
+name, or with a prescriptive declaration example when it cannot.
+
 ## Modeling Surfaces
 
 Here is the same one-compartment IV setup written as an ODE:
@@ -81,7 +94,7 @@ See [examples/analytical_readme.rs](examples/analytical_readme.rs),
 see [docs/analytical-authoring-migration.md](docs/analytical-authoring-migration.md) and
 [docs/ode-authoring-migration.md](docs/ode-authoring-migration.md).
 
-### Built-In Analytical Kernels
+### Built-In Analytical Structures
 
 - [x] One-compartment with IV infusion
 - [x] One-compartment with IV infusion and oral absorption
@@ -96,6 +109,32 @@ If the model needs to be loaded or compiled at runtime, pharmsol also provides a
 the same broad modeling coverage: ODE, analytical, and SDE authoring. The DSL can target
 an in-process JIT runtime, native ahead-of-time artifacts, or WASM bundles depending on
 how you want to ship and execute the model.
+
+Analytical DSL models follow the same declared-name rule across `params` and
+`derived`. A built-in analytical structure input can come from either source by
+name, for example:
+
+```text
+name = one_cmt_abs_derived_ke
+kind = analytical
+
+params = ka, cl, v
+derived = ke
+states = depot, central
+outputs = cp
+
+bolus(oral) -> depot
+
+ke = cl / v
+
+structure = one_compartment_with_absorption
+
+out(cp) = central / v ~ continuous()
+```
+
+Compiled analytical setup fails early when a required structure parameter is
+missing, with either `did you mean ...?` guidance or a prescriptive
+`params = [...]` / `derived = [...]` fix.
 
 - `dsl-jit`: compile DSL source into a runtime model inside the current process.
 - `dsl-aot` and `dsl-aot-load`: emit a native artifact and load it later.

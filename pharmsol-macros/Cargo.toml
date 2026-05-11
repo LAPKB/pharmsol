@@ -11,6 +11,7 @@ readme = "README.md"
 proc-macro = true
 
 [dependencies]
+pharmsol-dsl = { path = "../pharmsol-dsl", version = "0.1.0" }
 proc-macro2 = "1.0.106"
 quote = "1.0.45"
 syn = { version = "2.0.117", features = ["full", "visit", "visit-mut"] }

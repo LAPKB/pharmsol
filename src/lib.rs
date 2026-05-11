@@ -52,6 +52,25 @@
 //! # Ok::<(), pharmsol::PharmsolError>(())
 //! ```
 //!
+//! ## Built-In Analytical Structures
+//!
+//! Public analytical authoring follows declared parameter names. For example,
+//! the built-in `two_compartments_with_absorption` structure can be authored as
+//! `params: [ka, ke, k12, k21, v]` even though the low-level structure consumes
+//! its required inputs in a different internal order.
+//!
+//! Metadata-backed handwritten analytical models follow the same rule when you
+//! attach [`ModelMetadata`] with
+//! [`ModelMetadata::analytical_kernel`](crate::ModelMetadata::analytical_kernel)
+//! and then call [`Analytical::with_metadata`](crate::Analytical::with_metadata).
+//! Missing required names fail early with either a `did you mean ...?`
+//! suggestion or a prescriptive `params: [...]` example.
+//!
+//! Compiled analytical DSL models also follow the same declared-name rule
+//! across `params` and `derived`. A required structure input can come from
+//! either source by name, and missing names fail early with `did you mean ...?`
+//! or `params = [...]` / `derived = [...]` guidance.
+//!
 //! ## Choose A Workflow
 //!
 //! Use this guide when you are deciding where to start.

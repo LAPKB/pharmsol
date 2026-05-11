@@ -119,6 +119,8 @@ pub enum AotError {
     Semantic(#[source] SemanticError),
     #[error("failed to lower DSL model: {0}")]
     Lowering(#[source] LoweringError),
+    #[error(transparent)]
+    Runtime(#[from] crate::PharmsolError),
     #[error("{0}")]
     ModelSelection(String),
     #[error("AoT artifact API version mismatch: expected {expected}, found {found}")]
@@ -337,7 +339,7 @@ pub fn load_aot_model(path: impl AsRef<Path>) -> Result<CompiledNativeModel, Aot
     Ok(match info.kind {
         ModelKind::Ode => CompiledNativeModel::Ode(super::NativeOdeModel::new(info, artifact)),
         ModelKind::Analytical => {
-            CompiledNativeModel::Analytical(super::NativeAnalyticalModel::new(info, artifact))
+            CompiledNativeModel::Analytical(super::NativeAnalyticalModel::new(info, artifact)?)
         }
         ModelKind::Sde => CompiledNativeModel::Sde(super::NativeSdeModel::new(info, artifact)),
     })
