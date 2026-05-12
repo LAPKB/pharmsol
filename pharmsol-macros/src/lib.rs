@@ -1079,7 +1079,7 @@ fn generate_covariate_bindings(
 }
 
 fn analytical_error_span<'a>(names: &'a [Ident], target: &str) -> Option<&'a Ident> {
-    names.iter().find(|ident| ident.to_string() == target)
+    names.iter().find(|ident| *ident == target)
 }
 
 fn validate_analytical_structure_inputs(

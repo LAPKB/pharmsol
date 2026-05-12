@@ -33,7 +33,7 @@ out(cp) = central / v ~ continuous()
 
     let analytical = analytical! {
         name: "one_cmt_covariates",
-        params: [ka, ke0, v],
+        params: [ke0, ka, v],
         derived: [ke],
         covariates: [wt],
         states: [gut, central],
