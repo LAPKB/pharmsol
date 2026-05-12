@@ -76,5 +76,9 @@ name = "nca"
 harness = false
 
 [[bench]]
+name = "runtime_matrix"
+harness = false
+
+[[bench]]
 name = "likelihood"
 harness = false
