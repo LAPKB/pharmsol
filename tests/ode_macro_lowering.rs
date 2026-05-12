@@ -633,11 +633,9 @@ fn macro_covariate_lowering_matches_handwritten_metadata_and_predictions() {
     let macro_ode = covariate_macro_ode();
     let handwritten_ode = covariate_handwritten_ode();
     let subject = subject_for_covariates("oral", "cp");
-    let support_point = pharmsol::Parameters::with_model(
-        &macro_ode,
-        [("ka", 1.0), ("ke", 0.2), ("v", 10.0)],
-    )
-    .expect("valid named parameters");
+    let support_point =
+        pharmsol::Parameters::with_model(&macro_ode, [("ka", 1.0), ("ke", 0.2), ("v", 10.0)])
+            .expect("valid named parameters");
     let macro_metadata = macro_ode
         .metadata()
         .expect("macro covariate model should carry metadata");

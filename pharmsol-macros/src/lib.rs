@@ -3,12 +3,12 @@
 //! This crate is not intended to be used directly. Use the re-exports from the
 //! `pharmsol` crate instead.
 
-use proc_macro::TokenStream;
-use proc_macro2::{Span, TokenStream as TokenStream2};
 use pharmsol_dsl::{
     AnalyticalKernel as ResolverAnalyticalKernel, AnalyticalStructureInputKind,
     AnalyticalStructureInputPlan, AnalyticalStructureInputSource,
 };
+use proc_macro::TokenStream;
+use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{quote, ToTokens};
 use std::collections::{HashMap, HashSet};
 use syn::{
@@ -352,12 +352,9 @@ impl Parse for AnalyticalInput {
                 "params" => {
                     set_once_analytical(&mut params, parse_ident_list(input)?, &key, "params")?
                 }
-                "derived" => set_once_analytical(
-                    &mut derived,
-                    parse_ident_list(input)?,
-                    &key,
-                    "derived",
-                )?,
+                "derived" => {
+                    set_once_analytical(&mut derived, parse_ident_list(input)?, &key, "derived")?
+                }
                 "covariates" => set_once_analytical(
                     &mut covariates,
                     parse_ident_list(input)?,
@@ -379,9 +376,7 @@ impl Parse for AnalyticalInput {
                 "structure" => {
                     set_once_analytical(&mut structure, input.parse()?, &key, "structure")?
                 }
-                "derive" => {
-                    set_once_analytical(&mut derive, input.parse()?, &key, "derive")?
-                }
+                "derive" => set_once_analytical(&mut derive, input.parse()?, &key, "derive")?,
                 "sec" => {
                     return Err(syn::Error::new_spanned(
                         &key,
@@ -1364,7 +1359,9 @@ fn validate_analytical_derive_contract(
                 .iter()
                 .filter_map(|binding| match binding.source {
                     AnalyticalStructureInputSource::Primary => None,
-                    AnalyticalStructureInputSource::Derived => Some(derived[binding.index].to_string()),
+                    AnalyticalStructureInputSource::Derived => {
+                        Some(derived[binding.index].to_string())
+                    }
                 })
                 .collect::<HashSet<_>>(),
         },
@@ -2781,7 +2778,9 @@ fn expand_analytical_runtime(
             }}
         }
         AnalyticalStructureInputKind::AllDerived { indices, .. } => {
-            let projected = indices.iter().map(|index| quote! { __pharmsol_derived[#index] });
+            let projected = indices
+                .iter()
+                .map(|index| quote! { __pharmsol_derived[#index] });
             quote! {{
                 let __pharmsol_eq: fn(
                     &::pharmsol::simulator::V,
@@ -3866,9 +3865,7 @@ mod tests {
         .err()
         .expect("missing required structure name must fail");
 
-        assert!(error
-            .to_string()
-            .contains("requires `ka`"));
+        assert!(error.to_string().contains("requires `ka`"));
     }
 
     #[test]
@@ -3892,7 +3889,9 @@ mod tests {
         .err()
         .expect("invalid derive target must fail");
 
-        assert!(error.to_string().contains("`derive` cannot assign to `ke0`"));
+        assert!(error
+            .to_string()
+            .contains("`derive` cannot assign to `ke0`"));
     }
 
     #[test]

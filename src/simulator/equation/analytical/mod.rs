@@ -901,11 +901,15 @@ fn _subject_predictions(
             return Ok(cached);
         }
 
-        let result = analytical.simulate_subject_dense(subject, parameters, None)?.0;
+        let result = analytical
+            .simulate_subject_dense(subject, parameters, None)?
+            .0;
         cache.insert(key, result.clone());
         Ok(result)
     } else {
-        Ok(analytical.simulate_subject_dense(subject, parameters, None)?.0)
+        Ok(analytical
+            .simulate_subject_dense(subject, parameters, None)?
+            .0)
     }
 }
 

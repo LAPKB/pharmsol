@@ -2178,9 +2178,7 @@ fn project_analytical_parameters(
                     pharmsol_dsl::AnalyticalStructureInputSource::Primary => {
                         support_point[binding.index]
                     }
-                    pharmsol_dsl::AnalyticalStructureInputSource::Derived => {
-                        derived[binding.index]
-                    }
+                    pharmsol_dsl::AnalyticalStructureInputSource::Derived => derived[binding.index],
                 })
                 .collect(),
             NalgebraContext,
@@ -2481,7 +2479,10 @@ mod tests {
 
         assert!(matches!(
             model.parameter_projection,
-            AnalyticalStructureInputKind::AllDerived { identity: false, .. }
+            AnalyticalStructureInputKind::AllDerived {
+                identity: false,
+                ..
+            }
         ));
         assert_eq!(
             analytical_projection_values(&model, &[0.15, 25.0], &[0.15, 1.0]),
@@ -2527,7 +2528,8 @@ mod tests {
         assert!(message.contains(
             "compiled analytical model `analytical_projection` has invalid structure inputs"
         ));
-        assert!(message.contains("analytical structure `one_compartment_with_absorption` requires `ke`"));
+        assert!(message
+            .contains("analytical structure `one_compartment_with_absorption` requires `ke`"));
         assert!(message.contains("declare it in `params` or `derived`"));
     }
 

@@ -103,7 +103,9 @@ fn one_cmt_iv() {
     let subject = subject_iv("iv", "cp");
     let parameters = Parameters::with_model(&analytical, [("ke", 0.1), ("v", 50.0)]).unwrap();
 
-    let pred_a = analytical.estimate_predictions(&subject, &parameters).unwrap();
+    let pred_a = analytical
+        .estimate_predictions(&subject, &parameters)
+        .unwrap();
     let pred_o = ode.estimate_predictions(&subject, &parameters).unwrap();
     print_comparison("One-compartment IV", &pred_a, &pred_o);
 }
@@ -143,9 +145,12 @@ fn one_cmt_oral() {
     };
 
     let subject = subject_oral("oral", "cp");
-    let parameters = Parameters::with_model(&analytical, [("ka", 1.0), ("ke", 0.1), ("v", 50.0)]).unwrap();
+    let parameters =
+        Parameters::with_model(&analytical, [("ka", 1.0), ("ke", 0.1), ("v", 50.0)]).unwrap();
 
-    let pred_a = analytical.estimate_predictions(&subject, &parameters).unwrap();
+    let pred_a = analytical
+        .estimate_predictions(&subject, &parameters)
+        .unwrap();
     let pred_o = ode.estimate_predictions(&subject, &parameters).unwrap();
     print_comparison("One-compartment oral", &pred_a, &pred_o);
 }
@@ -185,10 +190,15 @@ fn two_cmt_iv() {
     };
 
     let subject = subject_iv("iv", "cp");
-    let parameters =
-        Parameters::with_model(&analytical, [("ke", 0.1), ("kcp", 0.3), ("kpc", 0.2), ("v", 50.0)]).unwrap();
+    let parameters = Parameters::with_model(
+        &analytical,
+        [("ke", 0.1), ("kcp", 0.3), ("kpc", 0.2), ("v", 50.0)],
+    )
+    .unwrap();
 
-    let pred_a = analytical.estimate_predictions(&subject, &parameters).unwrap();
+    let pred_a = analytical
+        .estimate_predictions(&subject, &parameters)
+        .unwrap();
     let pred_o = ode.estimate_predictions(&subject, &parameters).unwrap();
     print_comparison("Two-compartment IV", &pred_a, &pred_o);
 }
@@ -231,11 +241,19 @@ fn two_cmt_oral() {
     let subject = subject_oral("oral", "cp");
     let parameters = Parameters::with_model(
         &analytical,
-        [("ka", 1.0), ("ke", 0.1), ("kcp", 0.3), ("kpc", 0.2), ("v", 50.0)],
+        [
+            ("ka", 1.0),
+            ("ke", 0.1),
+            ("kcp", 0.3),
+            ("kpc", 0.2),
+            ("v", 50.0),
+        ],
     )
     .unwrap();
 
-    let pred_a = analytical.estimate_predictions(&subject, &parameters).unwrap();
+    let pred_a = analytical
+        .estimate_predictions(&subject, &parameters)
+        .unwrap();
     let pred_o = ode.estimate_predictions(&subject, &parameters).unwrap();
     print_comparison("Two-compartment oral", &pred_a, &pred_o);
 }

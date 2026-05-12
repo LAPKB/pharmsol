@@ -220,10 +220,16 @@ mod tests {
         .with_nout(1);
 
         let op_ode = ode
-            .estimate_predictions(&subject, &crate::Parameters::dense([0.1, 1.0, 3.0, 1.0, 1.0]))
+            .estimate_predictions(
+                &subject,
+                &crate::Parameters::dense([0.1, 1.0, 3.0, 1.0, 1.0]),
+            )
             .unwrap();
         let op_analytical = analytical
-            .estimate_predictions(&subject, &crate::Parameters::dense([0.1, 1.0, 3.0, 1.0, 1.0]))
+            .estimate_predictions(
+                &subject,
+                &crate::Parameters::dense([0.1, 1.0, 3.0, 1.0, 1.0]),
+            )
             .unwrap();
 
         let pred_ode = &op_ode.flat_predictions()[..];

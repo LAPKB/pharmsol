@@ -269,64 +269,28 @@ fn handwritten_analytical_model() -> equation::Analytical {
         },
         |_p, _t, _cov| {},
         |p, t, cov| {
-            fetch_params!(
-                p,
-                _ka,
-                _ke0,
-                _v,
-                tlag,
-                _f_oral,
-                _base_gut,
-                _base_central
-            );
+            fetch_params!(p, _ka, _ke0, _v, tlag, _f_oral, _base_gut, _base_central);
             fetch_cov!(cov, t, wt, renal);
 
             let lag_scale = (wt / 70.0).sqrt() * (90.0 / renal).powf(0.1);
             lag! { 0 => tlag * lag_scale }
         },
         |p, t, cov| {
-            fetch_params!(
-                p,
-                _ka,
-                _ke0,
-                _v,
-                _tlag,
-                f_oral,
-                _base_gut,
-                _base_central
-            );
+            fetch_params!(p, _ka, _ke0, _v, _tlag, f_oral, _base_gut, _base_central);
             fetch_cov!(cov, t, wt, renal);
 
             let fa_scale = (renal / 90.0).powf(0.1);
             fa! { 0 => (f_oral * fa_scale).clamp(0.0, 1.0) }
         },
         |p, t, cov, x| {
-            fetch_params!(
-                p,
-                _ka,
-                _ke0,
-                _v,
-                _tlag,
-                _f_oral,
-                base_gut,
-                base_central
-            );
+            fetch_params!(p, _ka, _ke0, _v, _tlag, _f_oral, base_gut, base_central);
             fetch_cov!(cov, t, wt, renal);
 
             x[0] = base_gut + 0.03 * wt;
             x[1] = base_central + 0.08 * renal;
         },
         |x, p, t, cov, y| {
-            fetch_params!(
-                p,
-                _ka,
-                _ke0,
-                v,
-                _tlag,
-                _f_oral,
-                _base_gut,
-                _base_central
-            );
+            fetch_params!(p, _ka, _ke0, v, _tlag, _f_oral, _base_gut, _base_central);
             fetch_cov!(cov, t, wt, renal);
 
             let adjusted_v = v * (wt / 70.0) * (1.0 + 0.001 * (renal - 90.0));

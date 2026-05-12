@@ -24,8 +24,8 @@ use diffsol::VectorCommon;
 use crate::PharmsolError;
 
 use super::{
-    EqnKind, Equation, EquationPriv, EquationTypes, ModelMetadata,
-    ModelMetadataError, Predictions, State, ValidatedModelMetadata,
+    EqnKind, Equation, EquationPriv, EquationTypes, ModelMetadata, ModelMetadataError, Predictions,
+    State, ValidatedModelMetadata,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Error)]

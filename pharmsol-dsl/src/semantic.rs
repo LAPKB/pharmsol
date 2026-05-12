@@ -9,8 +9,7 @@ use crate::diagnostic::{
 };
 use crate::ir::*;
 use crate::name_match::{
-    common_prefix_len, edit_distance, is_high_confidence_match,
-    is_single_adjacent_transposition,
+    common_prefix_len, edit_distance, is_high_confidence_match, is_single_adjacent_transposition,
 };
 use crate::{ModelKind, NUMERIC_OUTPUT_PREFIX, NUMERIC_ROUTE_PREFIX, RATE_FUNCTION_NAME};
 
@@ -675,10 +674,7 @@ impl<'a> Analyzer<'a> {
                         .replacement_suggestion(
                             ident.span,
                             format!("{}_derived", ident.text),
-                            format!(
-                                "rename this derive target to `{}_derived`",
-                                ident.text
-                            ),
+                            format!("rename this derive target to `{}_derived`", ident.text),
                             Applicability::MaybeIncorrect,
                         )
                         .apply(SemanticError::new(
@@ -2854,9 +2850,9 @@ mod tests {
         assert!(matches!(ke_symbol.ty, SymbolType::Scalar(ValueType::Real)));
     }
 
-        #[test]
-        fn analytical_model_accepts_straight_line_required_derived_assignment() {
-                let src = r#"
+    #[test]
+    fn analytical_model_accepts_straight_line_required_derived_assignment() {
+        let src = r#"
 model analytical_ok {
     kind analytical
     parameters { ka, ke0, v }
@@ -2874,17 +2870,17 @@ model analytical_ok {
 }
 "#;
 
-                let model = parse_model(src).expect("model parses");
-                let typed = analyze_model(&model).expect("model analyzes");
-                assert!(matches!(
-                        typed.analytical.as_ref().map(|value| value.structure),
-                        Some(AnalyticalKernel::OneCompartmentWithAbsorption)
-                ));
-        }
+        let model = parse_model(src).expect("model parses");
+        let typed = analyze_model(&model).expect("model analyzes");
+        assert!(matches!(
+            typed.analytical.as_ref().map(|value| value.structure),
+            Some(AnalyticalKernel::OneCompartmentWithAbsorption)
+        ));
+    }
 
-        #[test]
-        fn analytical_model_accepts_required_derived_assignment_across_if_else() {
-                let src = r#"
+    #[test]
+    fn analytical_model_accepts_required_derived_assignment_across_if_else() {
+        let src = r#"
 model analytical_ok {
     kind analytical
     parameters { ka, ke0, v }
@@ -2906,13 +2902,13 @@ model analytical_ok {
 }
 "#;
 
-                let model = parse_model(src).expect("model parses");
-                analyze_model(&model).expect("model analyzes");
-        }
+        let model = parse_model(src).expect("model parses");
+        analyze_model(&model).expect("model analyzes");
+    }
 
-        #[test]
-        fn analytical_model_accepts_loop_updates_after_initial_derived_assignment() {
-                let src = r#"
+    #[test]
+    fn analytical_model_accepts_loop_updates_after_initial_derived_assignment() {
+        let src = r#"
 model analytical_ok {
     kind analytical
     parameters { ka, ke0, v }
@@ -2933,13 +2929,13 @@ model analytical_ok {
 }
 "#;
 
-                let model = parse_model(src).expect("model parses");
-                analyze_model(&model).expect("model analyzes");
-        }
+        let model = parse_model(src).expect("model parses");
+        analyze_model(&model).expect("model analyzes");
+    }
 
-        #[test]
-        fn analytical_model_rejects_missing_required_structure_name_across_params_and_derived() {
-                let src = r#"
+    #[test]
+    fn analytical_model_rejects_missing_required_structure_name_across_params_and_derived() {
+        let src = r#"
 model analytical_broken {
     kind analytical
     parameters { ka, kel, v }
@@ -2954,19 +2950,19 @@ model analytical_broken {
 }
 "#;
 
-                let model = parse_model(src).expect("model parses");
-                let err = analyze_model(&model).expect_err("missing required structure name must fail");
-                assert!(err
-                        .render(src)
-                        .contains("analytical structure `one_compartment_with_absorption` requires `ke`"));
-                assert!(err
-                        .render(src)
-                        .contains("did you mean `ke` instead of `kel`?"));
-        }
+        let model = parse_model(src).expect("model parses");
+        let err = analyze_model(&model).expect_err("missing required structure name must fail");
+        assert!(err
+            .render(src)
+            .contains("analytical structure `one_compartment_with_absorption` requires `ke`"));
+        assert!(err
+            .render(src)
+            .contains("did you mean `ke` instead of `kel`?"));
+    }
 
-        #[test]
-        fn analytical_model_rejects_overlap_between_params_and_derive_assigned_names() {
-                let src = r#"
+    #[test]
+    fn analytical_model_rejects_overlap_between_params_and_derive_assigned_names() {
+        let src = r#"
 model analytical_broken {
     kind analytical
     parameters { ka, ke, v }
@@ -2984,19 +2980,19 @@ model analytical_broken {
 }
 "#;
 
-                let model = parse_model(src).expect("model parses");
-                let err = analyze_model(&model).expect_err("param/derived overlap must fail");
-                assert!(err
-                        .render(src)
-                        .contains("derived name `ke` collides with primary parameter `ke`"));
-                assert!(err
-                        .render(src)
-                        .contains("names declared in `params` and derive-assigned names must be distinct"));
-        }
+        let model = parse_model(src).expect("model parses");
+        let err = analyze_model(&model).expect_err("param/derived overlap must fail");
+        assert!(err
+            .render(src)
+            .contains("derived name `ke` collides with primary parameter `ke`"));
+        assert!(err
+            .render(src)
+            .contains("names declared in `params` and derive-assigned names must be distinct"));
+    }
 
-        #[test]
-        fn analytical_model_rejects_non_bare_derive_target() {
-                let src = r#"
+    #[test]
+    fn analytical_model_rejects_non_bare_derive_target() {
+        let src = r#"
 model analytical_broken {
     kind analytical
     parameters { ka, ke0, v }
@@ -3014,16 +3010,16 @@ model analytical_broken {
 }
 "#;
 
-                let model = parse_model(src).expect("model parses");
+        let model = parse_model(src).expect("model parses");
         let err = analyze_model(&model).expect_err("non-bare derive target must fail");
         assert!(err
             .render(src)
             .contains("derive assignments must target a bare identifier"));
-        }
+    }
 
-        #[test]
-        fn analytical_model_rejects_conditionally_assigned_required_derived_name() {
-                let src = r#"
+    #[test]
+    fn analytical_model_rejects_conditionally_assigned_required_derived_name() {
+        let src = r#"
 model analytical_broken {
     kind analytical
     parameters { ka, ke0, v }
@@ -3043,20 +3039,20 @@ model analytical_broken {
 }
 "#;
 
-                let model = parse_model(src).expect("model parses");
-                let err = analyze_model(&model)
-                        .expect_err("conditionally assigned required derived name must fail");
-                assert!(err.render(src).contains(
+        let model = parse_model(src).expect("model parses");
+        let err = analyze_model(&model)
+            .expect_err("conditionally assigned required derived name must fail");
+        assert!(err.render(src).contains(
                         "derived value `ke` is not definitely assigned on all control-flow paths before analytical structure `one_compartment_with_absorption` uses it"
                 ));
-                assert!(err
+        assert!(err
                         .render(src)
                         .contains("assign `ke` on every control-flow path in `derive` before the analytical structure runs"));
-        }
+    }
 
-        #[test]
-        fn analytical_model_rejects_loop_only_required_derived_assignment() {
-                let src = r#"
+    #[test]
+    fn analytical_model_rejects_loop_only_required_derived_assignment() {
+        let src = r#"
 model analytical_broken {
     kind analytical
     parameters { ka, ke0, v }
@@ -3076,17 +3072,17 @@ model analytical_broken {
 }
 "#;
 
-                let model = parse_model(src).expect("model parses");
-                let err = analyze_model(&model)
-                        .expect_err("loop-only required derived assignment must fail");
-                assert!(err.render(src).contains(
+        let model = parse_model(src).expect("model parses");
+        let err =
+            analyze_model(&model).expect_err("loop-only required derived assignment must fail");
+        assert!(err.render(src).contains(
                         "derived value `ke` is not definitely assigned on all control-flow paths before analytical structure `one_compartment_with_absorption` uses it"
                 ));
-        }
+    }
 
-            #[test]
-            fn analytical_model_authoring_surface_accepts_declared_derived_assignment() {
-                let src = r#"
+    #[test]
+    fn analytical_model_authoring_surface_accepts_declared_derived_assignment() {
+        let src = r#"
         name = analytical_authoring
         kind = analytical
         params = ka, ke0, v
@@ -3101,13 +3097,13 @@ model analytical_broken {
         out(cp) = central / v ~ continuous()
         "#;
 
-                let model = parse_model(src).expect("authoring model parses");
-                analyze_model(&model).expect("authoring model analyzes");
-            }
+        let model = parse_model(src).expect("authoring model parses");
+        analyze_model(&model).expect("authoring model analyzes");
+    }
 
-            #[test]
-            fn analytical_model_authoring_surface_rejects_undeclared_derived_assignment() {
-                let src = r#"
+    #[test]
+    fn analytical_model_authoring_surface_rejects_undeclared_derived_assignment() {
+        let src = r#"
         name = analytical_authoring
         kind = analytical
         params = ka, ke0, v
@@ -3122,15 +3118,15 @@ model analytical_broken {
         out(cp) = central / v ~ continuous()
         "#;
 
-                let err = parse_model(src).expect_err("undeclared derived assignment must fail");
-                assert!(err
-                    .render(src)
-                    .contains("derived value `ke` is not declared in `derived = ...`"));
-            }
+        let err = parse_model(src).expect_err("undeclared derived assignment must fail");
+        assert!(err
+            .render(src)
+            .contains("derived value `ke` is not declared in `derived = ...`"));
+    }
 
-            #[test]
-            fn analytical_model_authoring_surface_rejects_param_derived_overlap() {
-                let src = r#"
+    #[test]
+    fn analytical_model_authoring_surface_rejects_param_derived_overlap() {
+        let src = r#"
         name = analytical_authoring
         kind = analytical
         params = ka, ke, v
@@ -3144,14 +3140,14 @@ model analytical_broken {
         out(cp) = central / v ~ continuous()
         "#;
 
-                let err = parse_model(src).expect_err("param/derived overlap must fail");
-                assert!(err
-                    .render(src)
-                    .contains("derived name `ke` collides with primary parameter `ke`"));
-                assert!(err
-                    .render(src)
-                    .contains("names declared in `params` and `derived` must be distinct"));
-            }
+        let err = parse_model(src).expect_err("param/derived overlap must fail");
+        assert!(err
+            .render(src)
+            .contains("derived name `ke` collides with primary parameter `ke`"));
+        assert!(err
+            .render(src)
+            .contains("names declared in `params` and `derived` must be distinct"));
+    }
 
     #[test]
     fn authoring_fixture_preserves_route_kind_while_remaining_equivalent() {

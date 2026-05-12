@@ -1,5 +1,5 @@
 fn main() -> Result<(), pharmsol::PharmsolError> {
-    use pharmsol::{Parameters, prelude::*};
+    use pharmsol::{prelude::*, Parameters};
 
     let analytical = analytical! {
         name: "one_cmt_iv",
@@ -56,14 +56,15 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
     let v = 194.0; // Volume of distribution
     let analytical_parameters = Parameters::with_model(&analytical, [("ke", ke), ("v", v)])
         .expect("valid named parameters");
-    let ode_parameters = Parameters::with_model(&ode, [("ke", ke), ("v", v)])
-        .expect("valid named parameters");
+    let ode_parameters =
+        Parameters::with_model(&ode, [("ke", ke), ("v", v)]).expect("valid named parameters");
 
     // Compute likelihoods and predictions for both models
     let analytical_likelihoods =
         analytical.estimate_log_likelihood(&subject, &analytical_parameters, &ems)?;
 
-    let analytical_predictions = analytical.estimate_predictions(&subject, &analytical_parameters)?;
+    let analytical_predictions =
+        analytical.estimate_predictions(&subject, &analytical_parameters)?;
 
     let ode_likelihoods = ode.estimate_log_likelihood(&subject, &ode_parameters, &ems)?;
 

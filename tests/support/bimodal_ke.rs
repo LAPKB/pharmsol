@@ -178,7 +178,8 @@ pub fn report_runtime_model(
     model: &pharmsol::dsl::CompiledRuntimeModel,
     tolerance: f64,
 ) -> Result<(), Box<dyn Error>> {
-    let support = Parameters::with_model(model, [("ke", SUPPORT_POINT[0]), ("v", SUPPORT_POINT[1])])?;
+    let support =
+        Parameters::with_model(model, [("ke", SUPPORT_POINT[0]), ("v", SUPPORT_POINT[1])])?;
     let predictions = model
         .estimate_predictions(&subject_for_runtime_model(model), &support)?
         .into_subject()

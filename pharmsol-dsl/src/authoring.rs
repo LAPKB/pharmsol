@@ -4,8 +4,7 @@ use super::ast::*;
 use super::diagnostic::{Applicability, DiagnosticSuggestion, ParseError, Span, TextEdit};
 use super::parser::{parse_expr_fragment, parse_place_fragment};
 use crate::name_match::{
-    common_prefix_len, edit_distance, is_high_confidence_match,
-    is_single_adjacent_transposition,
+    common_prefix_len, edit_distance, is_high_confidence_match, is_single_adjacent_transposition,
 };
 use crate::{NUMERIC_OUTPUT_PREFIX, NUMERIC_ROUTE_PREFIX, RATE_FUNCTION_NAME};
 
@@ -386,7 +385,8 @@ impl<'a> AuthoringParser<'a> {
 
         if lhs_trimmed == "derived" {
             for ident in parse_ident_list(rhs, rhs_abs)? {
-                if let Some(existing_span) = self.declared_derived.insert(ident.text.clone(), ident.span)
+                if let Some(existing_span) =
+                    self.declared_derived.insert(ident.text.clone(), ident.span)
                 {
                     return Err(ParseError::new(
                         format!("duplicate derived declaration `{}`", ident.text),

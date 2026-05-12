@@ -1721,8 +1721,9 @@ fn ode_runtime_jit_preserves_mixed_output_labels() {
         .missing_observation(0.5, "outeq_0")
         .missing_observation(0.5, "outeq_1")
         .build();
-    let support_point = pharmsol::Parameters::with_model(&runtime_model, [("ke", 0.2), ("v", 10.0)])
-        .expect("valid named parameters");
+    let support_point =
+        pharmsol::Parameters::with_model(&runtime_model, [("ke", 0.2), ("v", 10.0)])
+            .expect("valid named parameters");
 
     assert_eq!(compiled_output_slot_index(&runtime_model, "cp"), Some(0));
     assert_eq!(
@@ -1758,8 +1759,9 @@ fn ode_runtime_jit_rejects_undeclared_numeric_output_labels_even_when_dense_inde
         .infusion(0.0, 100.0, "iv", 1.0)
         .missing_observation(0.5, "10")
         .build();
-    let support_point = pharmsol::Parameters::with_model(&runtime_model, [("ke", 0.2), ("v", 10.0)])
-        .expect("valid named parameters");
+    let support_point =
+        pharmsol::Parameters::with_model(&runtime_model, [("ke", 0.2), ("v", 10.0)])
+            .expect("valid named parameters");
 
     let error = runtime_model
         .estimate_predictions(&subject, &support_point)
@@ -1782,8 +1784,9 @@ fn ode_runtime_jit_rejects_undeclared_numeric_input_labels_even_when_dense_index
         .bolus(0.0, 100.0, "10")
         .missing_observation(0.5, "cp")
         .build();
-    let support_point = pharmsol::Parameters::with_model(&runtime_model, [("ke", 0.2), ("v", 10.0)])
-        .expect("valid named parameters");
+    let support_point =
+        pharmsol::Parameters::with_model(&runtime_model, [("ke", 0.2), ("v", 10.0)])
+            .expect("valid named parameters");
 
     let error = runtime_model
         .estimate_predictions(&subject, &support_point)
