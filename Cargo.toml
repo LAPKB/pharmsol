@@ -78,6 +78,7 @@ harness = false
 [[bench]]
 name = "runtime_matrix"
 harness = false
+required-features = ["dsl-jit", "dsl-aot", "dsl-aot-load", "dsl-wasm"]
 
 [[bench]]
 name = "likelihood"
