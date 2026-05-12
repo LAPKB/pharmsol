@@ -1,11 +1,5 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 
-#[cfg(all(
-    feature = "dsl-jit",
-    feature = "dsl-aot",
-    feature = "dsl-aot-load",
-    feature = "dsl-wasm"
-))]
 mod self_contained {
     use std::error::Error;
     use std::io;
@@ -315,12 +309,6 @@ out(plasma) = central / (vol * wt) ~ continuous()
     }
 }
 
-#[cfg(all(
-    feature = "dsl-jit",
-    feature = "dsl-aot",
-    feature = "dsl-aot-load",
-    feature = "dsl-wasm"
-))]
 fn runtime_matrix_benchmark(c: &mut Criterion) {
     use std::hint::black_box;
     use std::time::Duration;
@@ -396,14 +384,6 @@ fn runtime_matrix_benchmark(c: &mut Criterion) {
     }
     runtime_group.finish();
 }
-
-#[cfg(not(all(
-    feature = "dsl-jit",
-    feature = "dsl-aot",
-    feature = "dsl-aot-load",
-    feature = "dsl-wasm"
-)))]
-fn runtime_matrix_benchmark(_: &mut Criterion) {}
 
 criterion_group!(benches, runtime_matrix_benchmark);
 criterion_main!(benches);
