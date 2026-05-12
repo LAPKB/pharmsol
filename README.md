@@ -20,7 +20,7 @@ Most Rust-first workflows start with one of the equation macros: `analytical!`,
 `ode!`, or `sde!`. Here is a simple one-compartment IV infusion model using `analytical!`:
 
 ```rust
-use pharmsol::prelude::*;
+use pharmsol::{Parameters, prelude::*};
 
 let analytical = analytical! {
     name: "one_cmt_iv",
@@ -44,8 +44,14 @@ let subject = Subject::builder("patient_001")
     .missing_observation(4.0, "cp")
     .build();
 
+let parameters = Parameters::with_model(
+    &analytical,
+    [("ke", 1.022), ("v", 194.0)],
+)
+.unwrap();
+
 let predictions = analytical
-    .estimate_predictions(&subject, &[1.022, 194.0])
+    .estimate_predictions(&subject, &parameters)
     .unwrap();
 ```
 

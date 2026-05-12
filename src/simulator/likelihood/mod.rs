@@ -18,17 +18,26 @@
 //! ## For Non-Parametric Algorithms
 //!
 //! Use [`log_likelihood_matrix`] to compute a matrix of log-likelihoods across
-//! all subjects and support points:
+//! all subjects and support points.
+//!
+//! Validate any external support-point column order once with
+//! [`crate::ParameterOrder`] before calling [`log_likelihood_matrix`]. The
+//! runtime still consumes a dense model-order matrix:
 //!
 //! ```ignore
-//! use pharmsol::prelude::simulator::{log_likelihood_matrix, LikelihoodMatrixOptions};
+//! use ndarray::array;
+//! use pharmsol::{ParameterOrder, prelude::simulator::log_likelihood_matrix};
+//!
+//! let order = ParameterOrder::with_model(&equation, ["ka", "ke"])?;
+//! let support_points_in_source_order = array![[0.1, 0.3], [0.2, 0.4]];
+//! let support_points = order.matrix(support_points_in_source_order)?;
 //!
 //! let log_liks = log_likelihood_matrix(
 //!     &equation,
 //!     &data,
 //!     &support_points,
 //!     &error_models,
-//!     LikelihoodMatrixOptions::new().with_progress(),
+//!     false,
 //! )?;
 //! ```
 //!

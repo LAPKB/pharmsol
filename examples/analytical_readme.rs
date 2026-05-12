@@ -1,5 +1,5 @@
 fn main() -> Result<(), pharmsol::PharmsolError> {
-    use pharmsol::prelude::*;
+    use pharmsol::{prelude::*, Parameters};
 
     let analytical = analytical! {
         name: "one_cmt_iv",
@@ -23,7 +23,8 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
         .missing_observation(4.0, "cp")
         .build();
 
-    let predictions = analytical.estimate_predictions(&subject, &[1.022, 194.0])?;
+    let parameters = Parameters::with_model(&analytical, [("v", 194.0), ("ke", 1.022)])?;
+    let predictions = analytical.estimate_predictions(&subject, &parameters)?;
 
     println!("times => {:?}", predictions.flat_times());
     println!("predictions => {:?}", predictions.flat_predictions());

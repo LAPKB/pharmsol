@@ -42,7 +42,7 @@
 //!
 //! ```rust,no_run
 //! use pharmsol::dsl::{compile_module_source_to_runtime, RuntimeCompilationTarget};
-//! use pharmsol::prelude::*;
+//! use pharmsol::{Parameters, prelude::*};
 //!
 //! let source = r#"
 //! name = bimodal_ke
@@ -72,7 +72,9 @@
 //!     .missing_observation(2.0, "cp")
 //!     .build();
 //!
-//! let predictions = model.estimate_predictions(&subject, &[1.2, 50.0])?;
+//! let parameters = Parameters::with_model(&model, [("ke", 1.2), ("v", 50.0)])
+//!     .expect("valid named parameters");
+//! let predictions = model.estimate_predictions(&subject, &parameters)?;
 //! assert!(predictions.as_subject().is_some());
 //! # Ok::<(), pharmsol::dsl::RuntimeError>(())
 //! ```
