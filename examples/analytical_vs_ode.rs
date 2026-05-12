@@ -6,13 +6,13 @@
 //! the predictions side by side so you can verify they match.
 //! Both authoring paths use the declaration-first macro surface so the
 //! example stays on the preferred public authoring story.
-//! Built-in analytical structures are positional: the `params: [...]`
-//! declaration becomes metadata, but the runtime kernel still expects values
-//! in the structure's native positional order.
+//! Built-in analytical structures resolve required inputs by declared name from
+//! `params` and, when needed, `derived`, so the public analytical parameter
+//! order can stay aligned with the surrounding model story.
 //!
 //!     cargo run --release --example analytical_vs_ode
 
-use pharmsol::prelude::*;
+use pharmsol::{prelude::*, Parameters};
 
 // ── Subjects ───────────────────────────────────────────────────────
 
@@ -69,7 +69,7 @@ fn print_comparison(label: &str, analytical: &SubjectPredictions, ode: &SubjectP
 
 // ── One-compartment IV ─────────────────────────────────────────────
 
-fn one_cmt_iv(params: &[f64]) {
+fn one_cmt_iv() {
     let analytical = analytical! {
         name: "one_cmt_iv",
         params: [ke, v],
@@ -101,15 +101,16 @@ fn one_cmt_iv(params: &[f64]) {
     };
 
     let subject = subject_iv("iv", "cp");
+    let parameters = Parameters::with_model(&analytical, [("ke", 0.1), ("v", 50.0)]).unwrap();
 
-    let pred_a = analytical.estimate_predictions(&subject, params).unwrap();
-    let pred_o = ode.estimate_predictions(&subject, params).unwrap();
+    let pred_a = analytical.estimate_predictions(&subject, &parameters).unwrap();
+    let pred_o = ode.estimate_predictions(&subject, &parameters).unwrap();
     print_comparison("One-compartment IV", &pred_a, &pred_o);
 }
 
 // ── One-compartment oral ───────────────────────────────────────────
 
-fn one_cmt_oral(params: &[f64]) {
+fn one_cmt_oral() {
     let analytical = analytical! {
         name: "one_cmt_oral",
         params: [ka, ke, v],
@@ -142,18 +143,19 @@ fn one_cmt_oral(params: &[f64]) {
     };
 
     let subject = subject_oral("oral", "cp");
+    let parameters = Parameters::with_model(&analytical, [("ka", 1.0), ("ke", 0.1), ("v", 50.0)]).unwrap();
 
-    let pred_a = analytical.estimate_predictions(&subject, params).unwrap();
-    let pred_o = ode.estimate_predictions(&subject, params).unwrap();
+    let pred_a = analytical.estimate_predictions(&subject, &parameters).unwrap();
+    let pred_o = ode.estimate_predictions(&subject, &parameters).unwrap();
     print_comparison("One-compartment oral", &pred_a, &pred_o);
 }
 
 // ── Two-compartment IV ─────────────────────────────────────────────
 
-fn two_cmt_iv(params: &[f64]) {
+fn two_cmt_iv() {
     let analytical = analytical! {
         name: "two_cmt_iv",
-        params: [ke, k12, k21, v],
+        params: [ke, kcp, kpc, v],
         states: [central, peripheral],
         outputs: [cp],
         routes: [
@@ -167,15 +169,15 @@ fn two_cmt_iv(params: &[f64]) {
 
     let ode = ode! {
         name: "two_cmt_iv",
-        params: [ke, k12, k21, v],
+        params: [ke, kcp, kpc, v],
         states: [central, peripheral],
         outputs: [cp],
         routes: [
             infusion(iv) -> central,
         ],
         diffeq: |x, _p, _t, dx, _cov| {
-            dx[central] = -ke * x[central] - k12 * x[central] + k21 * x[peripheral];
-            dx[peripheral] = k12 * x[central] - k21 * x[peripheral];
+            dx[central] = -ke * x[central] - kcp * x[central] + kpc * x[peripheral];
+            dx[peripheral] = kcp * x[central] - kpc * x[peripheral];
         },
         out: |x, _p, _t, _cov, y| {
             y[cp] = x[central] / v;
@@ -183,18 +185,20 @@ fn two_cmt_iv(params: &[f64]) {
     };
 
     let subject = subject_iv("iv", "cp");
+    let parameters =
+        Parameters::with_model(&analytical, [("ke", 0.1), ("kcp", 0.3), ("kpc", 0.2), ("v", 50.0)]).unwrap();
 
-    let pred_a = analytical.estimate_predictions(&subject, params).unwrap();
-    let pred_o = ode.estimate_predictions(&subject, params).unwrap();
+    let pred_a = analytical.estimate_predictions(&subject, &parameters).unwrap();
+    let pred_o = ode.estimate_predictions(&subject, &parameters).unwrap();
     print_comparison("Two-compartment IV", &pred_a, &pred_o);
 }
 
 // ── Two-compartment oral ───────────────────────────────────────────
 
-fn two_cmt_oral(params: &[f64]) {
+fn two_cmt_oral() {
     let analytical = analytical! {
         name: "two_cmt_oral",
-        params: [ke, ka, k12, k21, v],
+        params: [ka, ke, kcp, kpc, v],
         states: [gut, central, peripheral],
         outputs: [cp],
         routes: [
@@ -208,7 +212,7 @@ fn two_cmt_oral(params: &[f64]) {
 
     let ode = ode! {
         name: "two_cmt_oral",
-        params: [ka, ke, k12, k21, v],
+        params: [ka, ke, kcp, kpc, v],
         states: [gut, central, peripheral],
         outputs: [cp],
         routes: [
@@ -216,8 +220,8 @@ fn two_cmt_oral(params: &[f64]) {
         ],
         diffeq: |x, _p, _t, dx, _cov| {
             dx[gut] = -ka * x[gut];
-            dx[central] = ka * x[gut] - ke * x[central] - k12 * x[central] + k21 * x[peripheral];
-            dx[peripheral] = k12 * x[central] - k21 * x[peripheral];
+            dx[central] = ka * x[gut] - ke * x[central] - kcp * x[central] + kpc * x[peripheral];
+            dx[peripheral] = kcp * x[central] - kpc * x[peripheral];
         },
         out: |x, _p, _t, _cov, y| {
             y[cp] = x[central] / v;
@@ -225,24 +229,22 @@ fn two_cmt_oral(params: &[f64]) {
     };
 
     let subject = subject_oral("oral", "cp");
+    let parameters = Parameters::with_model(
+        &analytical,
+        [("ka", 1.0), ("ke", 0.1), ("kcp", 0.3), ("kpc", 0.2), ("v", 50.0)],
+    )
+    .unwrap();
 
-    // `two_compartments_with_absorption` is positional and expects
-    // `ke, ka, k12, k21, v`, while the ODE closure below is authored as
-    // `ka, ke, k12, k21, v`.
-    let analytical_params = [params[1], params[0], params[2], params[3], params[4]];
-
-    let pred_a = analytical
-        .estimate_predictions(&subject, &analytical_params)
-        .unwrap();
-    let pred_o = ode.estimate_predictions(&subject, params).unwrap();
+    let pred_a = analytical.estimate_predictions(&subject, &parameters).unwrap();
+    let pred_o = ode.estimate_predictions(&subject, &parameters).unwrap();
     print_comparison("Two-compartment oral", &pred_a, &pred_o);
 }
 
 // ── Main ───────────────────────────────────────────────────────────
 
 fn main() {
-    one_cmt_iv(&[0.1, 50.0]); // ke, v
-    one_cmt_oral(&[1.0, 0.1, 50.0]); // ka, ke, v
-    two_cmt_iv(&[0.1, 0.3, 0.2, 50.0]); // ke, k12, k21, v
-    two_cmt_oral(&[1.0, 0.1, 0.3, 0.2, 50.0]); // ka, ke, k12, k21, v
+    one_cmt_iv();
+    one_cmt_oral();
+    two_cmt_iv();
+    two_cmt_oral();
 }

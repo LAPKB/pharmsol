@@ -803,6 +803,7 @@ mod tests {
             name: name.to_string(),
             kind: ModelKind::Ode,
             parameters: vec!["ka".to_string()],
+            derived: Vec::new(),
             covariates: Vec::new(),
             routes: vec![NativeRouteInfo {
                 name: "oral".to_string(),

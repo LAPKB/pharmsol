@@ -40,7 +40,7 @@ fn assert_models_agree(
     subject: &Subject,
     params: &[f64],
 ) {
-    let params_vec: Vec<f64> = params.to_vec();
+    let params_vec = Parameters::dense(params.to_vec());
     let analytical_predictions = analytical
         .estimate_predictions(subject, &params_vec)
         .expect("analytical predictions");

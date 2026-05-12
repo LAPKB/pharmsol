@@ -5,6 +5,10 @@
 
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
+use pharmsol_dsl::{
+    AnalyticalKernel as ResolverAnalyticalKernel, AnalyticalStructureInputKind,
+    AnalyticalStructureInputPlan, AnalyticalStructureInputSource,
+};
 use quote::{quote, ToTokens};
 use std::collections::{HashMap, HashSet};
 use syn::{
@@ -37,12 +41,13 @@ struct OdeInput {
 struct AnalyticalInput {
     name: LitStr,
     params: Vec<Ident>,
+    derived: Vec<Ident>,
     covariates: Vec<Ident>,
     states: Vec<Ident>,
     outputs: Vec<SymbolicIndex>,
     routes: Vec<OdeRouteDecl>,
     structure: Ident,
-    sec: Option<ExprClosure>,
+    derive: Option<ExprClosure>,
     lag: Option<ExprClosure>,
     fa: Option<ExprClosure>,
     init: Option<ExprClosure>,
@@ -78,9 +83,9 @@ enum OdeRouteKind {
 }
 
 struct AnalyticalKernelSpec {
+    kernel: ResolverAnalyticalKernel,
     runtime_path: TokenStream2,
     metadata_kernel: TokenStream2,
-    parameter_arity: usize,
     state_count: usize,
 }
 
@@ -280,6 +285,7 @@ impl Parse for OdeInput {
         validate_named_binding_compatibility(
             NamedBindingSets {
                 params: &params,
+                derived: &[],
                 covariates: &covariates,
                 states: &states,
                 outputs: &output_idents,
@@ -325,12 +331,13 @@ impl Parse for AnalyticalInput {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let mut name = None;
         let mut params = None;
+        let mut derived = None;
         let mut covariates = None;
         let mut states = None;
         let mut outputs = None;
         let mut routes = None;
         let mut structure = None;
-        let mut sec = None;
+        let mut derive = None;
         let mut lag = None;
         let mut fa = None;
         let mut init = None;
@@ -345,6 +352,12 @@ impl Parse for AnalyticalInput {
                 "params" => {
                     set_once_analytical(&mut params, parse_ident_list(input)?, &key, "params")?
                 }
+                "derived" => set_once_analytical(
+                    &mut derived,
+                    parse_ident_list(input)?,
+                    &key,
+                    "derived",
+                )?,
                 "covariates" => set_once_analytical(
                     &mut covariates,
                     parse_ident_list(input)?,
@@ -366,7 +379,15 @@ impl Parse for AnalyticalInput {
                 "structure" => {
                     set_once_analytical(&mut structure, input.parse()?, &key, "structure")?
                 }
-                "sec" => set_once_analytical(&mut sec, input.parse()?, &key, "sec")?,
+                "derive" => {
+                    set_once_analytical(&mut derive, input.parse()?, &key, "derive")?
+                }
+                "sec" => {
+                    return Err(syn::Error::new_spanned(
+                        &key,
+                        "built-in `analytical!` no longer supports `sec`; use `derived: [...]` plus `derive: ...`",
+                    ));
+                }
                 "lag" => set_once_analytical(&mut lag, input.parse()?, &key, "lag")?,
                 "fa" => set_once_analytical(&mut fa, input.parse()?, &key, "fa")?,
                 "init" => set_once_analytical(&mut init, input.parse()?, &key, "init")?,
@@ -375,7 +396,7 @@ impl Parse for AnalyticalInput {
                     return Err(syn::Error::new_spanned(
                         &key,
                         format!(
-                            "unknown field `{other}`, expected one of: name, params, covariates, states, outputs, routes, structure, sec, lag, fa, init, out"
+                            "unknown field `{other}`, expected one of: name, params, derived, covariates, states, outputs, routes, structure, derive, lag, fa, init, out"
                         ),
                     ));
                 }
@@ -388,6 +409,7 @@ impl Parse for AnalyticalInput {
 
         let name = name.ok_or_else(|| missing_required_analytical_field("name"))?;
         let params = params.ok_or_else(|| missing_required_analytical_field("params"))?;
+        let derived = derived.unwrap_or_default();
         let covariates = covariates.unwrap_or_default();
         let states = states.ok_or_else(|| missing_required_analytical_field("states"))?;
         let outputs = outputs.ok_or_else(|| missing_required_analytical_field("outputs"))?;
@@ -395,7 +417,6 @@ impl Parse for AnalyticalInput {
         let structure = structure.ok_or_else(|| missing_required_analytical_field("structure"))?;
         let out = out.ok_or_else(|| missing_required_analytical_field("out"))?;
 
-        validate_unique_idents("parameter", &params, "analytical!")?;
         validate_unique_idents("covariate", &covariates, "analytical!")?;
         validate_unique_idents("state", &states, "analytical!")?;
         let output_idents = symbolic_index_idents(&outputs);
@@ -404,15 +425,7 @@ impl Parse for AnalyticalInput {
         validate_routes(&routes, &states, "analytical!")?;
 
         let kernel_spec = resolve_analytical_structure(&structure)?;
-        if params.len() < kernel_spec.parameter_arity {
-            return Err(syn::Error::new_spanned(
-                &structure,
-                format!(
-                    "analytical structure `{}` requires at least {} parameter value(s), but `params` declares {}",
-                    structure, kernel_spec.parameter_arity, params.len()
-                ),
-            ));
-        }
+        validate_analytical_structure_inputs(&structure, kernel_spec.kernel, &params, &derived)?;
         if states.len() != kernel_spec.state_count {
             return Err(syn::Error::new_spanned(
                 &structure,
@@ -428,13 +441,14 @@ impl Parse for AnalyticalInput {
         validate_analytical_named_binding_compatibility(
             NamedBindingSets {
                 params: &params,
+                derived: &derived,
                 covariates: &covariates,
                 states: &states,
                 outputs: &output_idents,
                 routes: &routes,
             },
             AnalyticalBindingClosures {
-                sec: sec.as_ref(),
+                derive: derive.as_ref(),
                 common: CommonBindingClosures {
                     lag: lag.as_ref(),
                     fa: fa.as_ref(),
@@ -442,6 +456,14 @@ impl Parse for AnalyticalInput {
                     out: &out,
                 },
             },
+        )?;
+
+        validate_analytical_derive_contract(
+            kernel_spec.kernel,
+            &params,
+            &derived,
+            &covariates,
+            derive.as_ref(),
         )?;
 
         if let Some(lag) = lag.as_ref() {
@@ -459,12 +481,13 @@ impl Parse for AnalyticalInput {
         Ok(Self {
             name,
             params,
+            derived,
             covariates,
             states,
             outputs,
             routes,
             structure,
-            sec,
+            derive,
             lag,
             fa,
             init,
@@ -553,6 +576,7 @@ impl Parse for SdeInput {
         validate_sde_named_binding_compatibility(
             NamedBindingSets {
                 params: &params,
+                derived: &[],
                 covariates: &covariates,
                 states: &states,
                 outputs: &output_idents,
@@ -1016,31 +1040,26 @@ fn generate_parameter_bindings(
     }
 }
 
-fn generate_mutable_parameter_bindings(
-    params: &[Ident],
+fn generate_derived_bindings(
+    derived: &[Ident],
     closure: &ExprClosure,
-    parameter_vector: &Ident,
-) -> (TokenStream2, TokenStream2) {
+    derived_values: &Ident,
+) -> TokenStream2 {
     let usage = ClosureBodyUsage::analyze(closure.body.as_ref());
-    let used_params = params
+    let bindings = derived
         .iter()
         .enumerate()
         .filter(|(_, ident)| usage.uses(ident))
-        .collect::<Vec<_>>();
+        .map(|(index, ident)| {
+            quote! {
+                #[allow(unused_variables)]
+                let #ident = #derived_values[#index];
+            }
+        });
 
-    let bindings = used_params.iter().map(|(index, ident)| {
-        quote! {
-            #[allow(unused_mut, unused_variables)]
-            let mut #ident = #parameter_vector[#index];
-        }
-    });
-    let writebacks = used_params.iter().map(|(index, ident)| {
-        quote! {
-            #parameter_vector[#index] = #ident;
-        }
-    });
-
-    (quote! { #(#bindings)* }, quote! { #(#writebacks)* })
+    quote! {
+        #(#bindings)*
+    }
 }
 
 fn generate_covariate_bindings(
@@ -1062,6 +1081,314 @@ fn generate_covariate_bindings(
             ::pharmsol::fetch_cov!(#covariate_map, #time, #(#used_covariates),*);
         }
     }
+}
+
+fn analytical_error_span<'a>(names: &'a [Ident], target: &str) -> Option<&'a Ident> {
+    names.iter().find(|ident| ident.to_string() == target)
+}
+
+fn validate_analytical_structure_inputs(
+    structure: &Ident,
+    kernel: ResolverAnalyticalKernel,
+    params: &[Ident],
+    derived: &[Ident],
+) -> syn::Result<AnalyticalStructureInputPlan> {
+    let primary_names = params.iter().map(Ident::to_string).collect::<Vec<_>>();
+    let derived_names = derived.iter().map(Ident::to_string).collect::<Vec<_>>();
+    AnalyticalStructureInputPlan::for_kernel(kernel, &primary_names, &derived_names).map_err(
+        |error| match error {
+            pharmsol_dsl::AnalyticalStructureInputError::DuplicatePrimary { name } => {
+                let span = analytical_error_span(params, &name).unwrap_or(structure);
+                syn::Error::new_spanned(span, format!("duplicate primary parameter `{name}`"))
+            }
+            pharmsol_dsl::AnalyticalStructureInputError::DuplicateDerived { name } => {
+                let span = analytical_error_span(derived, &name).unwrap_or(structure);
+                syn::Error::new_spanned(span, format!("duplicate derived parameter `{name}`"))
+            }
+            pharmsol_dsl::AnalyticalStructureInputError::ConflictingName { name } => {
+                let span = analytical_error_span(derived, &name)
+                    .or_else(|| analytical_error_span(params, &name))
+                    .unwrap_or(structure);
+                syn::Error::new_spanned(
+                    span,
+                    format!("`{name}` is declared in both `params` and `derived`"),
+                )
+            }
+            pharmsol_dsl::AnalyticalStructureInputError::MissingRequiredName {
+                structure,
+                name,
+                suggestion,
+            } => {
+                let message = if let Some(candidate) = suggestion {
+                    format!(
+                        "analytical structure `{structure}` requires `{name}`; did you mean `{candidate}`? declare it in `params: [...]` or `derived: [...]`"
+                    )
+                } else {
+                    format!(
+                        "analytical structure `{structure}` requires `{name}`; declare it in `params: [...]` or `derived: [...]`"
+                    )
+                };
+                syn::Error::new_spanned(structure, message)
+            }
+        },
+    )
+}
+
+#[derive(Clone)]
+struct DeriveValidationContext {
+    params: HashSet<String>,
+    covariates: HashSet<String>,
+    derived: HashSet<String>,
+}
+
+impl DeriveValidationContext {
+    fn new(params: &[Ident], covariates: &[Ident], derived: &[Ident]) -> Self {
+        Self {
+            params: params.iter().map(Ident::to_string).collect(),
+            covariates: covariates.iter().map(Ident::to_string).collect(),
+            derived: derived.iter().map(Ident::to_string).collect(),
+        }
+    }
+
+    fn invalid_target_error(&self, ident: &Ident) -> syn::Error {
+        let name = ident.to_string();
+        let message = if self.params.contains(&name) {
+            format!(
+                "`derive` cannot assign to `{name}`; only names declared in `derived: [...]` are valid derive targets"
+            )
+        } else if self.covariates.contains(&name) {
+            format!(
+                "`derive` cannot assign to covariate `{name}`; only names declared in `derived: [...]` are valid derive targets"
+            )
+        } else {
+            format!(
+                "`derive` cannot assign to `{name}`; declare it in `derived: [...]` before assigning to it"
+            )
+        };
+        syn::Error::new_spanned(ident, message)
+    }
+}
+
+fn bound_local_names(pat: &Pat) -> Vec<String> {
+    struct BoundNames {
+        names: Vec<String>,
+    }
+
+    impl<'ast> Visit<'ast> for BoundNames {
+        fn visit_pat_ident(&mut self, pat_ident: &'ast syn::PatIdent) {
+            self.names.push(pat_ident.ident.to_string());
+        }
+    }
+
+    let mut bound = BoundNames { names: Vec::new() };
+    bound.visit_pat(pat);
+    bound.names
+}
+
+fn analyze_derive_block(
+    block: &syn::Block,
+    context: &DeriveValidationContext,
+    locals: &mut HashSet<String>,
+    assigned: &HashSet<String>,
+) -> syn::Result<HashSet<String>> {
+    let mut assigned_now = assigned.clone();
+    for stmt in &block.stmts {
+        assigned_now = analyze_derive_stmt(stmt, context, locals, &assigned_now)?;
+    }
+    Ok(assigned_now)
+}
+
+fn analyze_derive_stmt(
+    stmt: &Stmt,
+    context: &DeriveValidationContext,
+    locals: &mut HashSet<String>,
+    assigned: &HashSet<String>,
+) -> syn::Result<HashSet<String>> {
+    match stmt {
+        Stmt::Local(local) => {
+            if let Some(init) = &local.init {
+                let _ = analyze_derive_expr(&init.expr, context, &mut locals.clone(), assigned)?;
+            }
+            for name in bound_local_names(&local.pat) {
+                locals.insert(name);
+            }
+            Ok(assigned.clone())
+        }
+        Stmt::Expr(expr, _) => analyze_derive_expr(expr, context, locals, assigned),
+        Stmt::Macro(stmt_macro) => Err(syn::Error::new_spanned(
+            stmt_macro,
+            "`derive` only supports assignments, `if`, `if` / `else`, `for`, and local `let` bindings",
+        )),
+        _ => Ok(assigned.clone()),
+    }
+}
+
+fn analyze_derive_expr(
+    expr: &Expr,
+    context: &DeriveValidationContext,
+    locals: &mut HashSet<String>,
+    assigned: &HashSet<String>,
+) -> syn::Result<HashSet<String>> {
+    match expr {
+        Expr::Assign(assign) => {
+            if let Expr::Path(path) = assign.left.as_ref() {
+                if path.qself.is_none()
+                    && path.path.leading_colon.is_none()
+                    && path.path.segments.len() == 1
+                {
+                    let ident = &path.path.segments[0].ident;
+                    let name = ident.to_string();
+                    if context.derived.contains(&name) {
+                        let mut next = assigned.clone();
+                        next.insert(name);
+                        return Ok(next);
+                    }
+                    if locals.contains(&name) {
+                        return Ok(assigned.clone());
+                    }
+                    return Err(context.invalid_target_error(ident));
+                }
+            }
+            Err(syn::Error::new_spanned(
+                &assign.left,
+                "`derive` assignments must target a name declared in `derived: [...]`",
+            ))
+        }
+        Expr::If(expr_if) => {
+            let mut then_locals = locals.clone();
+            let then_assigned = analyze_derive_block(
+                &expr_if.then_branch,
+                context,
+                &mut then_locals,
+                assigned,
+            )?;
+
+            if let Some((_, else_branch)) = &expr_if.else_branch {
+                let mut else_locals = locals.clone();
+                let else_assigned = analyze_derive_expr(
+                    else_branch,
+                    context,
+                    &mut else_locals,
+                    assigned,
+                )?;
+                Ok(then_assigned
+                    .intersection(&else_assigned)
+                    .cloned()
+                    .collect::<HashSet<_>>())
+            } else {
+                Ok(assigned.clone())
+            }
+        }
+        Expr::ForLoop(expr_for) => {
+            let mut loop_locals = locals.clone();
+            for name in bound_local_names(&expr_for.pat) {
+                loop_locals.insert(name);
+            }
+            let _ = analyze_derive_block(&expr_for.body, context, &mut loop_locals, assigned)?;
+            Ok(assigned.clone())
+        }
+        Expr::Block(expr_block) => analyze_derive_block(&expr_block.block, context, locals, assigned),
+        Expr::While(expr_while) => Err(syn::Error::new_spanned(
+            expr_while,
+            "`derive` does not support `while`; use straight-line code, `if`, `if` / `else`, or `for`",
+        )),
+        Expr::Loop(expr_loop) => Err(syn::Error::new_spanned(
+            expr_loop,
+            "`derive` does not support `loop`; use straight-line code, `if`, `if` / `else`, or `for`",
+        )),
+        Expr::Match(expr_match) => Err(syn::Error::new_spanned(
+            expr_match,
+            "`derive` does not support `match`; use straight-line code, `if`, `if` / `else`, or `for`",
+        )),
+        _ => Ok(assigned.clone()),
+    }
+}
+
+fn validate_analytical_derive_contract(
+    kernel: ResolverAnalyticalKernel,
+    params: &[Ident],
+    derived: &[Ident],
+    covariates: &[Ident],
+    derive: Option<&ExprClosure>,
+) -> syn::Result<()> {
+    if derived.is_empty() {
+        if let Some(derive) = derive {
+            return Err(syn::Error::new_spanned(
+                derive,
+                "built-in `analytical!` `derive` requires `derived: [...]`",
+            ));
+        }
+        return Ok(());
+    }
+
+    let derive = derive.ok_or_else(|| {
+        syn::Error::new_spanned(
+            &derived[0],
+            "built-in `analytical!` declares `derived: [...]` but is missing `derive: ...`",
+        )
+    })?;
+
+    let p = generated_ident("__pharmsol_p");
+    let t = generated_ident("__pharmsol_t");
+    let cov = generated_ident("__pharmsol_cov");
+    let full_inputs = [p, t.clone(), cov];
+    let reduced_inputs = [t];
+    generate_supported_input_aliases(
+        derive,
+        &[&full_inputs, &reduced_inputs],
+        "built-in `analytical!` requires `derive` to have either 3 parameters: |p, t, cov| or 1 parameter: |t|",
+    )?;
+
+    let context = DeriveValidationContext::new(params, covariates, derived);
+    let mut locals = HashSet::new();
+    let assigned = match derive.body.as_ref() {
+        Expr::Block(expr_block) => {
+            analyze_derive_block(&expr_block.block, &context, &mut locals, &HashSet::new())?
+        }
+        expr => analyze_derive_expr(expr, &context, &mut locals, &HashSet::new())?,
+    };
+
+    let required_derived = match validate_analytical_structure_inputs(
+        &Ident::new(kernel.name(), Span::call_site()),
+        kernel,
+        params,
+        derived,
+    ) {
+        Ok(plan) => match plan.kind() {
+            AnalyticalStructureInputKind::AllPrimary { .. } => HashSet::new(),
+            AnalyticalStructureInputKind::AllDerived { indices, .. } => indices
+                .iter()
+                .map(|index| derived[*index].to_string())
+                .collect::<HashSet<_>>(),
+            AnalyticalStructureInputKind::Mixed { bindings } => bindings
+                .iter()
+                .filter_map(|binding| match binding.source {
+                    AnalyticalStructureInputSource::Primary => None,
+                    AnalyticalStructureInputSource::Derived => Some(derived[binding.index].to_string()),
+                })
+                .collect::<HashSet<_>>(),
+        },
+        Err(_) => HashSet::new(),
+    };
+
+    for ident in derived {
+        let name = ident.to_string();
+        if !assigned.contains(&name) {
+            let message = if required_derived.contains(&name) {
+                format!(
+                    "derived parameter `{name}` is not definitely assigned on every path before analytical structure `{}` uses it",
+                    kernel.name()
+                )
+            } else {
+                format!(
+                    "derived parameter `{name}` is declared in `derived: [...]` but is not definitely assigned in `derive`"
+                )
+            };
+            return Err(syn::Error::new_spanned(ident, message));
+        }
+    }
+
+    Ok(())
 }
 
 fn validate_ode_diffeq_uses_automatic_injection(
@@ -1193,6 +1520,7 @@ fn validate_closure_param_conflicts(
 #[derive(Clone, Copy)]
 struct NamedBindingSets<'a> {
     params: &'a [Ident],
+    derived: &'a [Ident],
     covariates: &'a [Ident],
     states: &'a [Ident],
     outputs: &'a [Ident],
@@ -1209,7 +1537,7 @@ struct CommonBindingClosures<'a> {
 
 #[derive(Clone, Copy)]
 struct AnalyticalBindingClosures<'a> {
-    sec: Option<&'a ExprClosure>,
+    derive: Option<&'a ExprClosure>,
     common: CommonBindingClosures<'a>,
 }
 
@@ -1232,6 +1560,7 @@ fn validate_named_binding_compatibility(
 ) -> syn::Result<()> {
     let NamedBindingSets {
         params,
+        derived: _,
         covariates,
         states,
         outputs,
@@ -1336,13 +1665,14 @@ fn validate_analytical_named_binding_compatibility(
 ) -> syn::Result<()> {
     let NamedBindingSets {
         params,
+        derived,
         covariates,
         states,
         outputs,
         routes,
     } = bindings;
     let AnalyticalBindingClosures {
-        sec,
+        derive,
         common: CommonBindingClosures { lag, fa, init, out },
     } = closures;
     let route_inputs = route_input_idents(routes);
@@ -1355,6 +1685,13 @@ fn validate_analytical_named_binding_compatibility(
         "`analytical!` named binding generation",
     )?;
     validate_binding_conflicts(
+        "derived parameter",
+        derived,
+        "covariate",
+        covariates,
+        "`analytical!` named binding generation",
+    )?;
+    validate_binding_conflicts(
         "parameter",
         params,
         "state",
@@ -1362,8 +1699,22 @@ fn validate_analytical_named_binding_compatibility(
         "`analytical!` named binding generation",
     )?;
     validate_binding_conflicts(
+        "derived parameter",
+        derived,
+        "state",
+        states,
+        "`analytical!` named binding generation",
+    )?;
+    validate_binding_conflicts(
         "parameter",
         params,
+        "output",
+        outputs,
+        "`analytical!` named binding generation",
+    )?;
+    validate_binding_conflicts(
+        "derived parameter",
+        derived,
         "output",
         outputs,
         "`analytical!` named binding generation",
@@ -1392,6 +1743,13 @@ fn validate_analytical_named_binding_compatibility(
     validate_binding_conflicts(
         "parameter",
         params,
+        "route",
+        &route_inputs,
+        "`analytical!` named binding generation",
+    )?;
+    validate_binding_conflicts(
+        "derived parameter",
+        derived,
         "route",
         &route_inputs,
         "`analytical!` named binding generation",
@@ -1418,30 +1776,35 @@ fn validate_analytical_named_binding_compatibility(
         "`analytical!` named binding generation",
     )?;
 
-    if let Some(sec) = sec {
-        validate_closure_param_conflicts("sec", sec, params, "parameter")?;
-        validate_closure_param_conflicts("sec", sec, covariates, "covariate")?;
+    if let Some(derive) = derive {
+        validate_closure_param_conflicts("derive", derive, params, "parameter")?;
+        validate_closure_param_conflicts("derive", derive, derived, "derived parameter")?;
+        validate_closure_param_conflicts("derive", derive, covariates, "covariate")?;
     }
 
     if let Some(lag) = lag {
         validate_closure_param_conflicts("lag", lag, params, "parameter")?;
+        validate_closure_param_conflicts("lag", lag, derived, "derived parameter")?;
         validate_closure_param_conflicts("lag", lag, covariates, "covariate")?;
         validate_closure_param_conflicts("lag", lag, &route_inputs, "route")?;
     }
 
     if let Some(fa) = fa {
         validate_closure_param_conflicts("fa", fa, params, "parameter")?;
+        validate_closure_param_conflicts("fa", fa, derived, "derived parameter")?;
         validate_closure_param_conflicts("fa", fa, covariates, "covariate")?;
         validate_closure_param_conflicts("fa", fa, &route_inputs, "route")?;
     }
 
     if let Some(init) = init {
         validate_closure_param_conflicts("init", init, params, "parameter")?;
+        validate_closure_param_conflicts("init", init, derived, "derived parameter")?;
         validate_closure_param_conflicts("init", init, covariates, "covariate")?;
         validate_closure_param_conflicts("init", init, states, "state")?;
     }
 
     validate_closure_param_conflicts("out", out, params, "parameter")?;
+    validate_closure_param_conflicts("out", out, derived, "derived parameter")?;
     validate_closure_param_conflicts("out", out, covariates, "covariate")?;
     validate_closure_param_conflicts("out", out, states, "state")?;
     validate_closure_param_conflicts("out", out, outputs, "output")?;
@@ -1455,6 +1818,7 @@ fn validate_sde_named_binding_compatibility(
 ) -> syn::Result<()> {
     let NamedBindingSets {
         params,
+        derived: _,
         covariates,
         states,
         outputs,
@@ -2184,79 +2548,77 @@ fn expand_diffeq(
 
 fn resolve_analytical_structure(structure: &Ident) -> syn::Result<AnalyticalKernelSpec> {
     let structure_name = structure.to_string();
-    let (runtime_path, metadata_kernel, parameter_arity, state_count) = match structure_name
-        .as_str()
-    {
+    let (kernel, runtime_path, metadata_kernel, state_count) = match structure_name.as_str() {
         "one_compartment" => (
+            ResolverAnalyticalKernel::OneCompartment,
             quote! { ::pharmsol::equation::one_compartment },
             quote! { ::pharmsol::equation::AnalyticalKernel::OneCompartment },
             1,
-            1,
         ),
         "one_compartment_cl" => (
+            ResolverAnalyticalKernel::OneCompartmentCl,
             quote! { ::pharmsol::equation::one_compartment_cl },
             quote! { ::pharmsol::equation::AnalyticalKernel::OneCompartmentCl },
-            2,
             1,
         ),
         "one_compartment_cl_with_absorption" => (
+            ResolverAnalyticalKernel::OneCompartmentClWithAbsorption,
             quote! { ::pharmsol::equation::one_compartment_cl_with_absorption },
             quote! { ::pharmsol::equation::AnalyticalKernel::OneCompartmentClWithAbsorption },
-            3,
             2,
         ),
         "one_compartment_with_absorption" => (
+            ResolverAnalyticalKernel::OneCompartmentWithAbsorption,
             quote! { ::pharmsol::equation::one_compartment_with_absorption },
             quote! { ::pharmsol::equation::AnalyticalKernel::OneCompartmentWithAbsorption },
             2,
-            2,
         ),
         "two_compartments" => (
+            ResolverAnalyticalKernel::TwoCompartments,
             quote! { ::pharmsol::equation::two_compartments },
             quote! { ::pharmsol::equation::AnalyticalKernel::TwoCompartments },
-            3,
             2,
         ),
         "two_compartments_cl" => (
+            ResolverAnalyticalKernel::TwoCompartmentsCl,
             quote! { ::pharmsol::equation::two_compartments_cl },
             quote! { ::pharmsol::equation::AnalyticalKernel::TwoCompartmentsCl },
-            4,
             2,
         ),
         "two_compartments_cl_with_absorption" => (
+            ResolverAnalyticalKernel::TwoCompartmentsClWithAbsorption,
             quote! { ::pharmsol::equation::two_compartments_cl_with_absorption },
             quote! { ::pharmsol::equation::AnalyticalKernel::TwoCompartmentsClWithAbsorption },
-            5,
             3,
         ),
         "two_compartments_with_absorption" => (
+            ResolverAnalyticalKernel::TwoCompartmentsWithAbsorption,
             quote! { ::pharmsol::equation::two_compartments_with_absorption },
             quote! { ::pharmsol::equation::AnalyticalKernel::TwoCompartmentsWithAbsorption },
-            4,
             3,
         ),
         "three_compartments" => (
+            ResolverAnalyticalKernel::ThreeCompartments,
             quote! { ::pharmsol::equation::three_compartments },
             quote! { ::pharmsol::equation::AnalyticalKernel::ThreeCompartments },
-            5,
             3,
         ),
         "three_compartments_cl" => (
+            ResolverAnalyticalKernel::ThreeCompartmentsCl,
             quote! { ::pharmsol::equation::three_compartments_cl },
             quote! { ::pharmsol::equation::AnalyticalKernel::ThreeCompartmentsCl },
-            6,
             3,
         ),
         "three_compartments_cl_with_absorption" => (
+            ResolverAnalyticalKernel::ThreeCompartmentsClWithAbsorption,
             quote! { ::pharmsol::equation::three_compartments_cl_with_absorption },
             quote! { ::pharmsol::equation::AnalyticalKernel::ThreeCompartmentsClWithAbsorption },
-            7,
             4,
         ),
         "three_compartments_with_absorption" => (
+            ResolverAnalyticalKernel::ThreeCompartmentsWithAbsorption,
             quote! { ::pharmsol::equation::three_compartments_with_absorption },
             quote! { ::pharmsol::equation::AnalyticalKernel::ThreeCompartmentsWithAbsorption },
-            6,
             4,
         ),
         _ => {
@@ -2268,9 +2630,9 @@ fn resolve_analytical_structure(structure: &Ident) -> syn::Result<AnalyticalKern
     };
 
     Ok(AnalyticalKernelSpec {
+        kernel,
         runtime_path,
         metadata_kernel,
-        parameter_arity,
         state_count,
     })
 }
@@ -2279,6 +2641,7 @@ fn expand_analytical_route_map(
     label: &str,
     closure: &ExprClosure,
     params: &[Ident],
+    derived: &[Ident],
     covariates: &[Ident],
     route_bindings: &[(SymbolicIndex, usize)],
 ) -> syn::Result<TokenStream2> {
@@ -2296,6 +2659,15 @@ fn expand_analytical_route_map(
         ),
     )?;
     let parameter_bindings = generate_parameter_bindings(params, closure, &p);
+    let derived_values = generated_ident("__pharmsol_derived");
+    let derived_bindings = generate_derived_bindings(derived, closure, &derived_values);
+    let derive_values = if derived_bindings.is_empty() {
+        quote! {}
+    } else {
+        quote! {
+            let #derived_values = __pharmsol_derive(#p, #t, #cov);
+        }
+    };
     let covariate_bindings = generate_covariate_bindings(covariates, closure, &cov, &t);
     let body = NumericLabelRewriter::rewrite(
         closure.body.as_ref(),
@@ -2314,6 +2686,8 @@ fn expand_analytical_route_map(
             #input_aliases
             #route_consts
             #parameter_bindings
+            #derive_values
+            #derived_bindings
             #covariate_bindings
             #body
         };
@@ -2321,52 +2695,153 @@ fn expand_analytical_route_map(
     }})
 }
 
-fn expand_analytical_sec(
-    sec: &ExprClosure,
+fn expand_analytical_derive(
+    derive: Option<&ExprClosure>,
     params: &[Ident],
     covariates: &[Ident],
+    derived: &[Ident],
 ) -> syn::Result<TokenStream2> {
     let p = generated_ident("__pharmsol_p");
     let t = generated_ident("__pharmsol_t");
     let cov = generated_ident("__pharmsol_cov");
-    let full_inputs = [p.clone(), t.clone(), cov.clone()];
-    let reduced_inputs = [t.clone()];
-    let input_aliases = generate_supported_input_aliases(
-        sec,
-        &[&full_inputs, &reduced_inputs],
-        "built-in `analytical!` requires `sec` to have either 3 parameters: |p, t, cov| or 1 parameter: |t|",
-    )?;
-    let parameter_vector = if sec.inputs.len() == full_inputs.len() {
-        closure_param_ident(sec, 0).unwrap_or_else(|| p.clone())
-    } else {
-        p.clone()
-    };
-    let (parameter_bindings, parameter_writebacks) =
-        generate_mutable_parameter_bindings(params, sec, &parameter_vector);
-    let covariate_bindings = generate_covariate_bindings(covariates, sec, &cov, &t);
-    let body = &sec.body;
+    let derived_len = syn::LitInt::new(&derived.len().to_string(), Span::call_site());
 
-    Ok(quote! {{
-        let __pharmsol_sec: fn(
-            &mut ::pharmsol::simulator::V,
-            f64,
-            &::pharmsol::data::Covariates,
-        ) = |#p: &mut ::pharmsol::simulator::V,
-             #t: f64,
-             #cov: &::pharmsol::data::Covariates| {
-            #input_aliases
-            #parameter_bindings
-            #covariate_bindings
-            #body
-            #parameter_writebacks
-        };
-        __pharmsol_sec
-    }})
+    if let Some(derive) = derive {
+        let full_inputs = [p.clone(), t.clone(), cov.clone()];
+        let reduced_inputs = [t.clone()];
+        let input_aliases = generate_supported_input_aliases(
+            derive,
+            &[&full_inputs, &reduced_inputs],
+            "built-in `analytical!` requires `derive` to have either 3 parameters: |p, t, cov| or 1 parameter: |t|",
+        )?;
+        let parameter_bindings = generate_parameter_bindings(params, derive, &p);
+        let covariate_bindings = generate_covariate_bindings(covariates, derive, &cov, &t);
+        let derived_decls = derived.iter().map(|ident| {
+            quote! {
+                #[allow(unused_mut)]
+                let mut #ident: f64;
+            }
+        });
+        let body = &derive.body;
+
+        Ok(quote! {
+            fn __pharmsol_derive(
+                #p: &::pharmsol::simulator::V,
+                #t: f64,
+                #cov: &::pharmsol::data::Covariates,
+            ) -> [f64; #derived_len] {
+                #input_aliases
+                #parameter_bindings
+                #covariate_bindings
+                #(#derived_decls)*
+                #body
+                [#(#derived),*]
+            }
+        })
+    } else {
+        let zeros = derived.iter().map(|_| quote! { 0.0 });
+        Ok(quote! {
+            fn __pharmsol_derive(
+                _: &::pharmsol::simulator::V,
+                _: f64,
+                _: &::pharmsol::data::Covariates,
+            ) -> [f64; #derived_len] {
+                [#(#zeros),*]
+            }
+        })
+    }
+}
+
+fn expand_analytical_runtime(
+    runtime_path: &TokenStream2,
+    projection: &AnalyticalStructureInputKind,
+) -> TokenStream2 {
+    match projection {
+        AnalyticalStructureInputKind::AllPrimary { identity: true, .. } => runtime_path.clone(),
+        AnalyticalStructureInputKind::AllPrimary { indices, .. } => {
+            let projected = indices.iter().map(|index| quote! { __pharmsol_p[#index] });
+            quote! {{
+                let __pharmsol_eq: fn(
+                    &::pharmsol::simulator::V,
+                    &::pharmsol::simulator::V,
+                    f64,
+                    &::pharmsol::simulator::V,
+                    &::pharmsol::data::Covariates,
+                ) -> ::pharmsol::simulator::V = |
+                    __pharmsol_x: &::pharmsol::simulator::V,
+                    __pharmsol_p: &::pharmsol::simulator::V,
+                    __pharmsol_t: f64,
+                    __pharmsol_rateiv: &::pharmsol::simulator::V,
+                    __pharmsol_cov: &::pharmsol::data::Covariates,
+                | {
+                    let __pharmsol_projected = ::pharmsol::__macro_support::vector_from_values(vec![#(#projected),*]);
+                    #runtime_path(__pharmsol_x, &__pharmsol_projected, __pharmsol_t, __pharmsol_rateiv, __pharmsol_cov)
+                };
+                __pharmsol_eq
+            }}
+        }
+        AnalyticalStructureInputKind::AllDerived { indices, .. } => {
+            let projected = indices.iter().map(|index| quote! { __pharmsol_derived[#index] });
+            quote! {{
+                let __pharmsol_eq: fn(
+                    &::pharmsol::simulator::V,
+                    &::pharmsol::simulator::V,
+                    f64,
+                    &::pharmsol::simulator::V,
+                    &::pharmsol::data::Covariates,
+                ) -> ::pharmsol::simulator::V = |
+                    __pharmsol_x: &::pharmsol::simulator::V,
+                    __pharmsol_p: &::pharmsol::simulator::V,
+                    __pharmsol_t: f64,
+                    __pharmsol_rateiv: &::pharmsol::simulator::V,
+                    __pharmsol_cov: &::pharmsol::data::Covariates,
+                | {
+                    let __pharmsol_derived = __pharmsol_derive(__pharmsol_p, __pharmsol_t, __pharmsol_cov);
+                    let __pharmsol_projected = ::pharmsol::__macro_support::vector_from_values(vec![#(#projected),*]);
+                    #runtime_path(__pharmsol_x, &__pharmsol_projected, __pharmsol_t, __pharmsol_rateiv, __pharmsol_cov)
+                };
+                __pharmsol_eq
+            }}
+        }
+        AnalyticalStructureInputKind::Mixed { bindings } => {
+            let projected = bindings.iter().map(|binding| match binding.source {
+                AnalyticalStructureInputSource::Primary => {
+                    let index = binding.index;
+                    quote! { __pharmsol_p[#index] }
+                }
+                AnalyticalStructureInputSource::Derived => {
+                    let index = binding.index;
+                    quote! { __pharmsol_derived[#index] }
+                }
+            });
+            quote! {{
+                let __pharmsol_eq: fn(
+                    &::pharmsol::simulator::V,
+                    &::pharmsol::simulator::V,
+                    f64,
+                    &::pharmsol::simulator::V,
+                    &::pharmsol::data::Covariates,
+                ) -> ::pharmsol::simulator::V = |
+                    __pharmsol_x: &::pharmsol::simulator::V,
+                    __pharmsol_p: &::pharmsol::simulator::V,
+                    __pharmsol_t: f64,
+                    __pharmsol_rateiv: &::pharmsol::simulator::V,
+                    __pharmsol_cov: &::pharmsol::data::Covariates,
+                | {
+                    let __pharmsol_derived = __pharmsol_derive(__pharmsol_p, __pharmsol_t, __pharmsol_cov);
+                    let __pharmsol_projected = ::pharmsol::__macro_support::vector_from_values(vec![#(#projected),*]);
+                    #runtime_path(__pharmsol_x, &__pharmsol_projected, __pharmsol_t, __pharmsol_rateiv, __pharmsol_cov)
+                };
+                __pharmsol_eq
+            }}
+        }
+    }
 }
 
 fn expand_analytical_init(
     init: &ExprClosure,
     params: &[Ident],
+    derived: &[Ident],
     covariates: &[Ident],
     states: &[Ident],
 ) -> syn::Result<TokenStream2> {
@@ -2383,6 +2858,15 @@ fn expand_analytical_init(
         "built-in `analytical!` requires `init` to have either 4 parameters: |p, t, cov, x| or 2 parameters: |t, x|",
     )?;
     let parameter_bindings = generate_parameter_bindings(params, init, &p);
+    let derived_values = generated_ident("__pharmsol_derived");
+    let derived_bindings = generate_derived_bindings(derived, init, &derived_values);
+    let derive_values = if derived_bindings.is_empty() {
+        quote! {}
+    } else {
+        quote! {
+            let #derived_values = __pharmsol_derive(#p, #t, #cov);
+        }
+    };
     let covariate_bindings = generate_covariate_bindings(covariates, init, &cov, &t);
     let body = &init.body;
 
@@ -2399,6 +2883,8 @@ fn expand_analytical_init(
             #input_aliases
             #state_consts
             #parameter_bindings
+            #derive_values
+            #derived_bindings
             #covariate_bindings
             #body
         };
@@ -2409,6 +2895,7 @@ fn expand_analytical_init(
 fn expand_analytical_out(
     out: &ExprClosure,
     params: &[Ident],
+    derived: &[Ident],
     covariates: &[Ident],
     states: &[Ident],
     outputs: &[SymbolicIndex],
@@ -2429,6 +2916,15 @@ fn expand_analytical_out(
         "built-in `analytical!` requires `out` to have either 5 parameters: |x, p, t, cov, y| or 3 parameters: |x, t, y|",
     )?;
     let parameter_bindings = generate_parameter_bindings(params, out, &p);
+    let derived_values = generated_ident("__pharmsol_derived");
+    let derived_bindings = generate_derived_bindings(derived, out, &derived_values);
+    let derive_values = if derived_bindings.is_empty() {
+        quote! {}
+    } else {
+        quote! {
+            let #derived_values = __pharmsol_derive(#p, #t, #cov);
+        }
+    };
     let covariate_bindings = generate_covariate_bindings(covariates, out, &cov, &t);
     let y_binding = if out.inputs.len() == full_inputs.len() {
         closure_param_ident(out, 4).unwrap_or_else(|| y.clone())
@@ -2460,6 +2956,8 @@ fn expand_analytical_out(
             #state_consts
             #output_consts
             #parameter_bindings
+            #derive_values
+            #derived_bindings
             #covariate_bindings
             #body
         };
@@ -2877,6 +3375,15 @@ pub fn analytical(input: TokenStream) -> TokenStream {
         Ok(spec) => spec,
         Err(error) => return error.to_compile_error().into(),
     };
+    let projection = match validate_analytical_structure_inputs(
+        &input.structure,
+        kernel_spec.kernel,
+        &input.params,
+        &input.derived,
+    ) {
+        Ok(plan) => plan,
+        Err(error) => return error.to_compile_error().into(),
+    };
 
     let lag_routes = match input.lag.as_ref() {
         Some(closure) => match extract_route_property_routes(
@@ -2924,17 +3431,21 @@ pub fn analytical(input: TokenStream) -> TokenStream {
         None => HashSet::new(),
     };
 
-    let sec = match input.sec.as_ref() {
-        Some(closure) => match expand_analytical_sec(closure, &input.params, &input.covariates) {
-            Ok(sec) => sec,
-            Err(error) => return error.to_compile_error().into(),
-        },
-        None => quote! { |_, _, _| {} },
+    let derive = match expand_analytical_derive(
+        input.derive.as_ref(),
+        &input.params,
+        &input.covariates,
+        &input.derived,
+    ) {
+        Ok(derive) => derive,
+        Err(error) => return error.to_compile_error().into(),
     };
+    let eq = expand_analytical_runtime(&kernel_spec.runtime_path, projection.kind());
 
     let out = match expand_analytical_out(
         &input.out,
         &input.params,
+        &input.derived,
         &input.covariates,
         &input.states,
         &input.outputs,
@@ -2949,6 +3460,7 @@ pub fn analytical(input: TokenStream) -> TokenStream {
                 "lag",
                 closure,
                 &input.params,
+                &input.derived,
                 &input.covariates,
                 &route_bindings,
             ) {
@@ -2965,6 +3477,7 @@ pub fn analytical(input: TokenStream) -> TokenStream {
                 "fa",
                 closure,
                 &input.params,
+                &input.derived,
                 &input.covariates,
                 &route_bindings,
             ) {
@@ -2977,7 +3490,13 @@ pub fn analytical(input: TokenStream) -> TokenStream {
 
     let init = match input.init.as_ref() {
         Some(closure) => {
-            match expand_analytical_init(closure, &input.params, &input.covariates, &input.states) {
+            match expand_analytical_init(
+                closure,
+                &input.params,
+                &input.derived,
+                &input.covariates,
+                &input.states,
+            ) {
                 Ok(init) => init,
                 Err(error) => return error.to_compile_error().into(),
             }
@@ -2995,7 +3514,6 @@ pub fn analytical(input: TokenStream) -> TokenStream {
     let states = &input.states;
     let outputs = &input.outputs;
     let routes = expand_analytical_route_metadata(&input.routes, &lag_routes, &fa_routes);
-    let runtime_path = kernel_spec.runtime_path;
     let metadata_kernel = kernel_spec.metadata_kernel;
     let covariate_metadata = if covariates.is_empty() {
         quote! {}
@@ -3006,6 +3524,7 @@ pub fn analytical(input: TokenStream) -> TokenStream {
     };
 
     quote! {{
+        #derive
         let __pharmsol_metadata = ::pharmsol::equation::metadata::new(#name)
             .kind(::pharmsol::equation::ModelKind::Analytical)
             .parameters([#(stringify!(#params)),*])
@@ -3016,8 +3535,8 @@ pub fn analytical(input: TokenStream) -> TokenStream {
             .analytical_kernel(#metadata_kernel);
 
         ::pharmsol::equation::Analytical::new(
-            #runtime_path,
-            #sec,
+            #eq,
+            |_, _, _| {},
             #lag,
             #fa,
             #init,
@@ -3302,14 +3821,28 @@ mod tests {
     #[test]
     fn analytical_accepts_extra_parameters_beyond_kernel_arity() {
         let input = syn::parse_str::<AnalyticalInput>(
-            "name: \"demo\", params: [ka, ke, v, tlag, tvke], covariates: [wt, renal], states: [gut, central], outputs: [cp], routes: [bolus(oral) -> gut], structure: one_compartment_with_absorption, sec: |_t| { ke = tvke; }, out: |x, p, t, cov, y| {}",
+            "name: \"demo\", params: [ka, ke0, v, tlag, tvke], derived: [ke], covariates: [wt, renal], states: [gut, central], outputs: [cp], routes: [bolus(oral) -> gut], structure: one_compartment_with_absorption, derive: |_t| { ke = tvke; }, out: |x, p, t, cov, y| {}",
         )
         .expect("extra declared parameters should be allowed");
 
         assert_eq!(input.params.len(), 5);
+        assert_eq!(input.derived.len(), 1);
         assert_eq!(input.covariates.len(), 2);
-        assert!(input.sec.is_some());
+        assert!(input.derive.is_some());
         assert_eq!(input.states.len(), 2);
+    }
+
+    #[test]
+    fn analytical_rejects_legacy_sec_with_migration_message() {
+        let error = syn::parse_str::<AnalyticalInput>(
+            "name: \"demo\", params: [ka, ke, v], states: [gut, central], outputs: [cp], routes: [bolus(oral) -> gut], structure: one_compartment_with_absorption, sec: |_t| { ke = 1.0; }, out: |x, p, t, cov, y| {}",
+        )
+        .err()
+        .expect("legacy sec must fail");
+
+        assert!(error
+            .to_string()
+            .contains("no longer supports `sec`; use `derived: [...]` plus `derive: ...`"));
     }
 
     #[test]
@@ -3326,16 +3859,82 @@ mod tests {
     }
 
     #[test]
-    fn analytical_rejects_insufficient_kernel_parameters() {
+    fn analytical_rejects_missing_required_structure_name() {
         let error = syn::parse_str::<AnalyticalInput>(
             "name: \"demo\", params: [ke], states: [gut, central], outputs: [cp], routes: [bolus(oral) -> gut], structure: one_compartment_with_absorption, out: |x, p, t, cov, y| {}",
         )
         .err()
-        .expect("insufficient kernel parameters must fail");
+        .expect("missing required structure name must fail");
 
         assert!(error
             .to_string()
-            .contains("requires at least 2 parameter value(s)"));
+            .contains("requires `ka`"));
+    }
+
+    #[test]
+    fn analytical_rejects_overlap_between_params_and_derived() {
+        let error = syn::parse_str::<AnalyticalInput>(
+            "name: \"demo\", params: [ka, ke, v], derived: [ke], states: [gut, central], outputs: [cp], routes: [bolus(oral) -> gut], structure: one_compartment_with_absorption, derive: |_t| { ke = 1.0; }, out: |x, p, t, cov, y| {}",
+        )
+        .err()
+        .expect("overlap must fail");
+
+        assert!(error
+            .to_string()
+            .contains("`ke` is declared in both `params` and `derived`"));
+    }
+
+    #[test]
+    fn analytical_rejects_invalid_derive_target() {
+        let error = syn::parse_str::<AnalyticalInput>(
+            "name: \"demo\", params: [ka, ke0, v], derived: [ke], states: [gut, central], outputs: [cp], routes: [bolus(oral) -> gut], structure: one_compartment_with_absorption, derive: |_t| { ke0 = 1.0; ke = 0.1; }, out: |x, p, t, cov, y| {}",
+        )
+        .err()
+        .expect("invalid derive target must fail");
+
+        assert!(error.to_string().contains("`derive` cannot assign to `ke0`"));
+    }
+
+    #[test]
+    fn analytical_rejects_if_only_assignment_for_required_derived_name() {
+        let error = syn::parse_str::<AnalyticalInput>(
+            "name: \"demo\", params: [ka, ke0, v], derived: [ke], covariates: [wt], states: [gut, central], outputs: [cp], routes: [bolus(oral) -> gut], structure: one_compartment_with_absorption, derive: |_t| { if wt > 70.0 { ke = ke0; } }, out: |x, p, t, cov, y| {}",
+        )
+        .err()
+        .expect("bare if must fail");
+
+        assert!(error
+            .to_string()
+            .contains("not definitely assigned on every path"));
+    }
+
+    #[test]
+    fn analytical_accepts_if_else_assignment_for_required_derived_name() {
+        syn::parse_str::<AnalyticalInput>(
+            "name: \"demo\", params: [ka, ke0, v], derived: [ke], covariates: [wt], states: [gut, central], outputs: [cp], routes: [bolus(oral) -> gut], structure: one_compartment_with_absorption, derive: |_t| { if wt > 70.0 { ke = ke0; } else { ke = ke0 * 0.5; } }, out: |x, p, t, cov, y| {}",
+        )
+        .expect("if / else should establish derived assignment");
+    }
+
+    #[test]
+    fn analytical_rejects_loop_only_assignment_for_required_derived_name() {
+        let error = syn::parse_str::<AnalyticalInput>(
+            "name: \"demo\", params: [ka, ke0, v], derived: [ke], states: [gut, central], outputs: [cp], routes: [bolus(oral) -> gut], structure: one_compartment_with_absorption, derive: |_t| { for i in 0..1 { let _ = i; ke = ke0; } }, out: |x, p, t, cov, y| {}",
+        )
+        .err()
+        .expect("loop-only assignment must fail");
+
+        assert!(error
+            .to_string()
+            .contains("not definitely assigned on every path"));
+    }
+
+    #[test]
+    fn analytical_accepts_initial_assignment_followed_by_loop_updates() {
+        syn::parse_str::<AnalyticalInput>(
+            "name: \"demo\", params: [ka, ke0, v], derived: [ke], states: [gut, central], outputs: [cp], routes: [bolus(oral) -> gut], structure: one_compartment_with_absorption, derive: |_t| { ke = ke0; for i in 0..2 { let _ = i; ke = ke + 1.0; } }, out: |x, p, t, cov, y| {}",
+        )
+        .expect("initial assignment plus loop updates should pass");
     }
 
     #[test]

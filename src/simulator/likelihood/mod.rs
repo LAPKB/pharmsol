@@ -46,19 +46,21 @@
 //! Use [`log_likelihood_batch`] when each subject has individual parameters:
 //!
 //! ```ignore
+//! use ndarray::array;
 //! use pharmsol::prelude::simulator::log_likelihood_batch;
+//!
+//! let params = array![[0.1, 0.3], [0.2, 0.4]];
 //!
 //! let log_liks = log_likelihood_batch(
 //!     &equation,
 //!     &data,
-//!     &parameters,
+//!     &params,
 //!     &residual_error_models,
 //! )?;
 //! ```
 //!
 //! # Numerical Stability
 //!
-//! All likelihood functions operate in log-space for numerical stability.
 //! The deprecated `likelihood()` and `psi()` functions are provided for
 //! backward compatibility but should be avoided in new code.
 
@@ -77,7 +79,7 @@ pub use matrix::psi;
 pub use prediction::Prediction;
 pub use subject::{PopulationPredictions, SubjectPredictions};
 
-use ndarray::Array2;
+use ndarray::{Array2, Axis};
 use rayon::prelude::*;
 
 use crate::{Data, Equation, PharmsolError, Predictions, Subject};
@@ -131,31 +133,45 @@ pub fn log_likelihood_batch(
         )));
     }
 
-    // Parallel computation across subjects
-    let results: Vec<f64> = subject_slice
-        .par_iter()
-        .enumerate()
-        .map(|(i, subject)| {
-            let params = parameters.row(i).to_vec();
+    let score_subject = |subject: &Subject, parameter_row: &[f64]| {
+        let predictions = match equation.estimate_predictions_dense(subject, parameter_row) {
+            Ok(preds) => preds,
+            Err(_) => return f64::NEG_INFINITY,
+        };
 
-            // Simulate to get predictions
-            let predictions = match equation.estimate_predictions(subject, &params) {
-                Ok(preds) => preds,
-                Err(_) => return f64::NEG_INFINITY,
-            };
+        let obs_pred_pairs = predictions
+            .get_predictions()
+            .into_iter()
+            .filter_map(|pred| {
+                pred.observation()
+                    .map(|obs| (pred.outeq(), obs, pred.prediction()))
+            });
 
-            // Extract (outeq, observation, prediction) tuples and compute log-likelihood
-            let obs_pred_pairs = predictions
-                .get_predictions()
-                .into_iter()
-                .filter_map(|pred| {
-                    pred.observation()
-                        .map(|obs| (pred.outeq(), obs, pred.prediction()))
-                });
+        residual_error_models.total_log_likelihood(obs_pred_pairs)
+    };
 
-            residual_error_models.total_log_likelihood(obs_pred_pairs)
-        })
-        .collect();
+    let results: Vec<f64> = if let Some(flat_parameters) = parameters.as_slice() {
+        let width = parameters.ncols();
+        subject_slice
+            .par_iter()
+            .enumerate()
+            .map(|(i, subject)| {
+                let start = i * width;
+                score_subject(subject, &flat_parameters[start..start + width])
+            })
+            .collect()
+    } else {
+        let parameter_rows = parameters
+            .axis_iter(Axis(0))
+            .map(|row| row.to_vec())
+            .collect::<Vec<_>>();
+
+        subject_slice
+            .par_iter()
+            .enumerate()
+            .map(|(i, subject)| score_subject(subject, &parameter_rows[i]))
+            .collect()
+    };
 
     Ok(results)
 }
@@ -189,11 +205,11 @@ pub fn log_likelihood_batch(
 pub fn log_likelihood_subject(
     equation: &impl Equation,
     subject: &Subject,
-    params: &[f64],
+    params: &crate::Parameters,
     residual_error_models: &crate::ResidualErrorModels,
 ) -> f64 {
     // Simulate to get predictions
-    let predictions = match equation.estimate_predictions(subject, params) {
+    let predictions = match equation.estimate_predictions_dense(subject, params.as_slice()) {
         Ok(preds) => preds,
         Err(_) => return f64::NEG_INFINITY,
     };

@@ -225,7 +225,8 @@ fn handwritten_shared_input_analytical() -> equation::Analytical {
 fn macro_covariate_analytical() -> equation::Analytical {
     analytical! {
         name: "one_cmt_abs_covariates",
-        params: [ka, ke, v, tlag, f_oral, base_gut, base_central, tvke],
+        params: [ka, ke0, v, tlag, f_oral, base_gut, base_central],
+        derived: [ke, adjusted_v],
         covariates: [wt, renal],
         states: [gut, central],
         outputs: [cp],
@@ -234,10 +235,11 @@ fn macro_covariate_analytical() -> equation::Analytical {
             infusion(iv) -> central,
         ],
         structure: one_compartment_with_absorption,
-        sec: |_t| {
+        derive: |_t| {
             let wt_scale = (wt / 70.0).powf(0.75);
             let renal_scale = (renal / 90.0).powf(0.25);
-            ke = tvke * wt_scale * renal_scale;
+            ke = ke0 * wt_scale * renal_scale;
+            adjusted_v = v * (wt / 70.0) * (1.0 + 0.001 * (renal - 90.0));
         },
         lag: |_t| {
             let lag_scale = (wt / 70.0).sqrt() * (90.0 / renal).powf(0.1);
@@ -252,7 +254,6 @@ fn macro_covariate_analytical() -> equation::Analytical {
             x[central] = base_central + 0.08 * renal;
         },
         out: |x, _t, y| {
-            let adjusted_v = v * (wt / 70.0) * (1.0 + 0.001 * (renal - 90.0));
             y[cp] = x[central] / adjusted_v;
         },
     }
@@ -260,77 +261,40 @@ fn macro_covariate_analytical() -> equation::Analytical {
 
 fn handwritten_covariate_analytical() -> equation::Analytical {
     equation::Analytical::new(
-        equation::one_compartment_with_absorption,
-        |p, t, cov| {
+        |x, p, t, rateiv, cov| {
+            fetch_params!(p, ka, ke0, _v, _tlag, _f_oral, _base_gut, _base_central);
             fetch_cov!(cov, t, wt, renal);
 
             let wt_scale = (wt / 70.0).powf(0.75);
             let renal_scale = (renal / 90.0).powf(0.25);
-            p[1] = p[7] * wt_scale * renal_scale;
+            let ke = ke0 * wt_scale * renal_scale;
+            let projected = pharmsol::__macro_support::vector_from_values(vec![ka, ke]);
+            equation::one_compartment_with_absorption(x, &projected, t, rateiv, cov)
         },
+        |_p, _t, _cov| {},
         |p, t, cov| {
-            fetch_params!(
-                p,
-                _ka,
-                _ke,
-                _v,
-                tlag,
-                _f_oral,
-                _base_gut,
-                _base_central,
-                _tvke
-            );
+            fetch_params!(p, _ka, _ke0, _v, tlag, _f_oral, _base_gut, _base_central);
             fetch_cov!(cov, t, wt, renal);
 
             let lag_scale = (wt / 70.0).sqrt() * (90.0 / renal).powf(0.1);
             lag! { 0 => tlag * lag_scale }
         },
         |p, t, cov| {
-            fetch_params!(
-                p,
-                _ka,
-                _ke,
-                _v,
-                _tlag,
-                f_oral,
-                _base_gut,
-                _base_central,
-                _tvke
-            );
+            fetch_params!(p, _ka, _ke0, _v, _tlag, f_oral, _base_gut, _base_central);
             fetch_cov!(cov, t, wt, renal);
 
             let fa_scale = (renal / 90.0).powf(0.1);
             fa! { 0 => (f_oral * fa_scale).clamp(0.0, 1.0) }
         },
         |p, t, cov, x| {
-            fetch_params!(
-                p,
-                _ka,
-                _ke,
-                _v,
-                _tlag,
-                _f_oral,
-                base_gut,
-                base_central,
-                _tvke
-            );
+            fetch_params!(p, _ka, _ke0, _v, _tlag, _f_oral, base_gut, base_central);
             fetch_cov!(cov, t, wt, renal);
 
             x[0] = base_gut + 0.03 * wt;
             x[1] = base_central + 0.08 * renal;
         },
         |x, p, t, cov, y| {
-            fetch_params!(
-                p,
-                _ka,
-                _ke,
-                v,
-                _tlag,
-                _f_oral,
-                _base_gut,
-                _base_central,
-                _tvke
-            );
+            fetch_params!(p, _ka, _ke0, v, _tlag, _f_oral, _base_gut, _base_central);
             fetch_cov!(cov, t, wt, renal);
 
             let adjusted_v = v * (wt / 70.0) * (1.0 + 0.001 * (renal - 90.0));
@@ -345,13 +309,12 @@ fn handwritten_covariate_analytical() -> equation::Analytical {
             .kind(equation::ModelKind::Analytical)
             .parameters([
                 "ka",
-                "ke",
+                "ke0",
                 "v",
                 "tlag",
                 "f_oral",
                 "base_gut",
                 "base_central",
-                "tvke",
             ])
             .covariates([
                 equation::Covariate::continuous("wt"),
@@ -383,7 +346,8 @@ fn analytical_macro_lowering_matches_handwritten_metadata_and_predictions() {
     let macro_model = macro_one_compartment();
     let handwritten_model = handwritten_one_compartment();
     let subject = infusion_subject("iv", "cp");
-    let support_point = [0.2, 10.0];
+    let support_point = pharmsol::Parameters::with_model(&macro_model, [("ke", 0.2), ("v", 10.0)])
+        .expect("valid named parameters");
     let macro_metadata = macro_model
         .metadata()
         .expect("macro analytical metadata exists");
@@ -412,7 +376,17 @@ fn analytical_macro_supports_extra_parameters_and_named_route_bindings() {
     let macro_model = macro_one_compartment_with_absorption();
     let handwritten_model = handwritten_one_compartment_with_absorption();
     let subject = oral_subject("oral", "cp");
-    let support_point = [1.1, 0.2, 10.0, 0.25, 0.8];
+    let support_point = pharmsol::Parameters::with_model(
+        &macro_model,
+        [
+            ("ka", 1.1),
+            ("ke", 0.2),
+            ("v", 10.0),
+            ("tlag", 0.25),
+            ("f_oral", 0.8),
+        ],
+    )
+    .expect("valid named parameters");
     let macro_metadata = macro_model.metadata().expect("macro metadata exists");
 
     assert_eq!(macro_model.metadata(), handwritten_model.metadata());
@@ -443,7 +417,17 @@ fn analytical_macro_shared_input_lowering_matches_handwritten_metadata_and_predi
     let macro_model = macro_shared_input_analytical();
     let handwritten_model = handwritten_shared_input_analytical();
     let subject = shared_input_subject();
-    let support_point = [1.1, 0.2, 10.0, 0.25, 0.8];
+    let support_point = pharmsol::Parameters::with_model(
+        &macro_model,
+        [
+            ("ka", 1.1),
+            ("ke", 0.2),
+            ("v", 10.0),
+            ("tlag", 0.25),
+            ("f_oral", 0.8),
+        ],
+    )
+    .expect("valid named parameters");
     let macro_metadata = macro_model.metadata().expect("macro metadata exists");
 
     assert_eq!(macro_model.metadata(), handwritten_model.metadata());
@@ -475,7 +459,19 @@ fn analytical_macro_covariates_lower_to_handwritten_behavior() {
     assert_eq!(macro_model.metadata(), handwritten_model.metadata());
 
     let subject = covariate_subject("oral", "iv", "cp");
-    let support_point = [1.0, 0.16, 32.0, 0.5, 0.8, 3.0, 14.0, 0.16];
+    let support_point = pharmsol::Parameters::with_model(
+        &macro_model,
+        [
+            ("ka", 1.0),
+            ("ke0", 0.16),
+            ("v", 32.0),
+            ("tlag", 0.5),
+            ("f_oral", 0.8),
+            ("base_gut", 3.0),
+            ("base_central", 14.0),
+        ],
+    )
+    .expect("valid named parameters");
 
     let macro_predictions = macro_model
         .estimate_predictions(&subject, &support_point)

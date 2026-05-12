@@ -13,7 +13,7 @@ use crate::parameter_order::{ParameterOrderError, ParameterOrderPlan};
         not(all(target_arch = "wasm32", target_os = "unknown"))
     )
 ))]
-use crate::dsl::CompiledRuntimeModel;
+use crate::dsl::{CompiledRuntimeModel, RuntimeAnalyticalModel, RuntimeSdeModel};
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 use crate::Equation;
 
@@ -63,6 +63,17 @@ pub struct ParameterOrder {
 }
 
 impl Parameters {
+    /// Build dense parameter values that are already in model order.
+    ///
+    /// This is the explicit manual path for already-validated dense
+    /// parameters and for handwritten models without parameter metadata.
+    pub fn dense<V>(values: V) -> Self
+    where
+        V: Into<Vec<f64>>,
+    {
+        Self(values.into())
+    }
+
     /// Build a dense parameter vector from named values using model metadata.
     #[allow(private_bounds)]
     pub fn with_model<M, S, N>(model: &M, named_parameters: S) -> Result<Self, ParameterError>
@@ -206,6 +217,44 @@ where
     )
 ))]
 impl NamedParameterModel for CompiledRuntimeModel {
+    fn parameter_order_plan<S>(&self, source_names: S) -> Result<ParameterOrderPlan, ParameterError>
+    where
+        S: IntoIterator,
+        S::Item: AsRef<str>,
+    {
+        ParameterOrderPlan::from_runtime_info(self.info(), source_names)
+            .map_err(ParameterError::from)
+    }
+}
+
+#[cfg(any(
+    feature = "dsl-jit",
+    all(feature = "dsl-aot", feature = "dsl-aot-load"),
+    all(
+        feature = "dsl-wasm",
+        not(all(target_arch = "wasm32", target_os = "unknown"))
+    )
+))]
+impl NamedParameterModel for RuntimeAnalyticalModel {
+    fn parameter_order_plan<S>(&self, source_names: S) -> Result<ParameterOrderPlan, ParameterError>
+    where
+        S: IntoIterator,
+        S::Item: AsRef<str>,
+    {
+        ParameterOrderPlan::from_runtime_info(self.info(), source_names)
+            .map_err(ParameterError::from)
+    }
+}
+
+#[cfg(any(
+    feature = "dsl-jit",
+    all(feature = "dsl-aot", feature = "dsl-aot-load"),
+    all(
+        feature = "dsl-wasm",
+        not(all(target_arch = "wasm32", target_os = "unknown"))
+    )
+))]
+impl NamedParameterModel for RuntimeSdeModel {
     fn parameter_order_plan<S>(&self, source_names: S) -> Result<ParameterOrderPlan, ParameterError>
     where
         S: IntoIterator,

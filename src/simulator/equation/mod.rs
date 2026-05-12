@@ -61,8 +61,8 @@ pub use sde::*;
 use crate::{
     error_model::AssayErrorModels,
     simulator::{Fa, Lag},
-    Covariates, Event, Infusion, InputLabel, Observation, Occasion, OutputLabel, PharmsolError,
-    Subject,
+    Covariates, Event, Infusion, InputLabel, Observation, Occasion, OutputLabel, Parameters,
+    PharmsolError, Subject,
 };
 
 use super::likelihood::Prediction;
@@ -416,7 +416,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
     fn estimate_likelihood(
         &self,
         subject: &Subject,
-        parameters: &[f64],
+        parameters: &Parameters,
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError>;
 
@@ -439,11 +439,72 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
     fn estimate_log_likelihood(
         &self,
         subject: &Subject,
-        parameters: &[f64],
+        parameters: &Parameters,
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError>;
 
     fn kind() -> EqnKind;
+
+    #[doc(hidden)]
+    fn estimate_predictions_dense(
+        &self,
+        subject: &Subject,
+        parameters: &[f64],
+    ) -> Result<Self::P, PharmsolError> {
+        Ok(self.simulate_subject_dense(subject, parameters, None)?.0)
+    }
+
+    #[doc(hidden)]
+    fn estimate_log_likelihood_dense(
+        &self,
+        subject: &Subject,
+        parameters: &[f64],
+        error_models: &AssayErrorModels,
+    ) -> Result<f64, PharmsolError> {
+        let bound_error_models = self.bind_error_models(error_models)?;
+        let predictions = self.estimate_predictions_dense(subject, parameters)?;
+        predictions.log_likelihood(&bound_error_models)
+    }
+
+    #[doc(hidden)]
+    fn simulate_subject_dense(
+        &self,
+        subject: &Subject,
+        parameters: &[f64],
+        error_models: Option<&AssayErrorModels>,
+    ) -> Result<(Self::P, Option<f64>), PharmsolError> {
+        let bound_error_models = match error_models {
+            Some(error_models) => Some(self.bind_error_models(error_models)?),
+            None => None,
+        };
+
+        let mut output = Self::P::new(self.nparticles());
+        let mut likelihood = Vec::new();
+        for occasion in subject.occasions() {
+            let covariates = occasion.covariates();
+
+            let mut x = self.initial_state(parameters, covariates, occasion.index());
+            let mut infusions = Vec::new();
+            let events = self.resolve_occasion_events(occasion, parameters, covariates)?;
+            for (index, event) in events.iter().enumerate() {
+                self.simulate_event(
+                    parameters,
+                    event,
+                    events.get(index + 1),
+                    bound_error_models.as_ref(),
+                    covariates,
+                    &mut x,
+                    &mut infusions,
+                    &mut likelihood,
+                    &mut output,
+                )?;
+            }
+        }
+        let ll = bound_error_models
+            .as_ref()
+            .map(|_| likelihood.iter().product::<f64>());
+        Ok((output, ll))
+    }
 
     /// Generate predictions for a subject with given parameters.
     ///
@@ -456,9 +517,9 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
     fn estimate_predictions(
         &self,
         subject: &Subject,
-        parameters: &[f64],
+        parameters: &Parameters,
     ) -> Result<Self::P, PharmsolError> {
-        Ok(self.simulate_subject(subject, parameters, None)?.0)
+        self.estimate_predictions_dense(subject, parameters.as_slice())
     }
 
     /// Get the number of output equations in the model.
@@ -499,40 +560,10 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
     fn simulate_subject(
         &self,
         subject: &Subject,
-        parameters: &[f64],
+        parameters: &Parameters,
         error_models: Option<&AssayErrorModels>,
     ) -> Result<(Self::P, Option<f64>), PharmsolError> {
-        let bound_error_models = match error_models {
-            Some(error_models) => Some(self.bind_error_models(error_models)?),
-            None => None,
-        };
-
-        let mut output = Self::P::new(self.nparticles());
-        let mut likelihood = Vec::new();
-        for occasion in subject.occasions() {
-            let covariates = occasion.covariates();
-
-            let mut x = self.initial_state(parameters, covariates, occasion.index());
-            let mut infusions = Vec::new();
-            let events = self.resolve_occasion_events(occasion, parameters, covariates)?;
-            for (index, event) in events.iter().enumerate() {
-                self.simulate_event(
-                    parameters,
-                    event,
-                    events.get(index + 1),
-                    bound_error_models.as_ref(),
-                    covariates,
-                    &mut x,
-                    &mut infusions,
-                    &mut likelihood,
-                    &mut output,
-                )?;
-            }
-        }
-        let ll = bound_error_models
-            .as_ref()
-            .map(|_| likelihood.iter().product::<f64>());
-        Ok((output, ll))
+        self.simulate_subject_dense(subject, parameters.as_slice(), error_models)
     }
 }
 

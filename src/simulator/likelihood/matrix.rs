@@ -84,7 +84,7 @@ pub fn log_likelihood_matrix(
             let subject = &subject_slice[i];
 
             for (element, support_point) in row.iter_mut().zip(support_point_rows.iter()) {
-                *element = equation.estimate_log_likelihood(
+                *element = equation.estimate_log_likelihood_dense(
                     subject,
                     support_point.as_slice(),
                     error_models,
@@ -154,7 +154,7 @@ mod tests {
     use super::log_likelihood_matrix;
     use crate::data::builder::SubjectBuilderExt;
     use crate::data::error_model::{AssayErrorModel, ErrorPoly};
-    use crate::{fa, lag, metadata, AssayErrorModels, Data, ModelKind, ODE, ParameterOrder};
+    use crate::{fa, lag, metadata, AssayErrorModels, Data, ModelKind, ParameterOrder, ODE};
     use ndarray::array;
 
     fn likelihood_named_order_ode() -> ODE {

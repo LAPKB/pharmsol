@@ -4,7 +4,7 @@ use std::error::Error;
 use std::io;
 use std::path::PathBuf;
 
-use pharmsol::prelude::*;
+use pharmsol::{prelude::*, Parameters};
 use tempfile::{tempdir, TempDir};
 
 pub const MODEL_NAME: &str = "bimodal_ke";
@@ -113,7 +113,7 @@ pub fn reference_values() -> Result<Vec<f64>, Box<dyn Error>> {
     .with_nstates(1)
     .with_ndrugs(1)
     .with_nout(1)
-    .estimate_predictions(&subject(), &SUPPORT_POINT)?;
+    .estimate_predictions(&subject(), &Parameters::dense(SUPPORT_POINT))?;
 
     Ok(predictions.flat_predictions())
 }
@@ -178,8 +178,9 @@ pub fn report_runtime_model(
     model: &pharmsol::dsl::CompiledRuntimeModel,
     tolerance: f64,
 ) -> Result<(), Box<dyn Error>> {
+    let support = Parameters::with_model(model, [("ke", SUPPORT_POINT[0]), ("v", SUPPORT_POINT[1])])?;
     let predictions = model
-        .estimate_predictions(&subject_for_runtime_model(model), &SUPPORT_POINT)?
+        .estimate_predictions(&subject_for_runtime_model(model), &support)?
         .into_subject()
         .ok_or_else(|| io::Error::other(format!("{label}: expected subject predictions")))?;
 

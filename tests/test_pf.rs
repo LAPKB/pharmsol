@@ -46,8 +46,9 @@ fn test_particle_filter_likelihood() {
     let mut likelihoods = Vec::with_capacity(NUM_RUNS);
 
     for i in 0..NUM_RUNS {
+        let parameters = Parameters::dense([1.0]);
         let ll = sde
-            .estimate_log_likelihood(&subject, &[1.0], &ems)
+            .estimate_log_likelihood(&subject, &parameters, &ems)
             .unwrap()
             .exp();
         println!("Run {}: likelihood = {}", i + 1, ll);

@@ -105,7 +105,7 @@ use super::wasm_compile::{
 };
 use crate::{
     simulator::likelihood::{Prediction, SubjectPredictions},
-    PharmsolError, Subject,
+    Parameters, PharmsolError, Subject,
 };
 use pharmsol_dsl::{
     analyze_module, lower_typed_model, parse_module, Diagnostic, DiagnosticReport, ExecutionModel,
@@ -234,17 +234,17 @@ impl CompiledRuntimeModel {
     pub fn estimate_predictions(
         &self,
         subject: &Subject,
-        support_point: &[f64],
+        parameters: &Parameters,
     ) -> Result<RuntimePredictions, RuntimeError> {
         Ok(match self {
             Self::Ode(model) => {
-                RuntimePredictions::Subject(model.estimate_predictions(subject, support_point)?)
+                RuntimePredictions::Subject(model.estimate_predictions(subject, parameters)?)
             }
             Self::Analytical(model) => {
-                RuntimePredictions::Subject(model.estimate_predictions(subject, support_point)?)
+                RuntimePredictions::Subject(model.estimate_predictions(subject, parameters)?)
             }
             Self::Sde(model) => {
-                RuntimePredictions::Particles(model.estimate_predictions(subject, support_point)?)
+                RuntimePredictions::Particles(model.estimate_predictions(subject, parameters)?)
             }
         })
     }
@@ -419,7 +419,7 @@ pub fn load_runtime_artifact(
         #[cfg(feature = "dsl-wasm")]
         RuntimeArtifactFormat::Wasm => {
             let (info, artifact) = load_wasm_artifact(path)?;
-            Ok(runtime_model_from_parts(info, artifact))
+            Ok(runtime_model_from_parts(info, artifact)?)
         }
     }
 }
@@ -448,21 +448,21 @@ pub fn compile_execution_model_to_runtime_wasm(
 /// Load a runtime model from in-memory WASM bytes.
 pub fn load_runtime_wasm_bytes(bytes: &[u8]) -> Result<CompiledRuntimeModel, RuntimeError> {
     let (info, artifact) = load_wasm_artifact_bytes(bytes)?;
-    Ok(runtime_model_from_parts(info, artifact))
+    Ok(runtime_model_from_parts(info, artifact)?)
 }
 
 #[cfg(feature = "dsl-wasm")]
 fn runtime_model_from_parts(
     info: NativeModelInfo,
     artifact: impl RuntimeArtifact + 'static,
-) -> CompiledRuntimeModel {
-    match info.kind {
+) -> Result<CompiledRuntimeModel, PharmsolError> {
+    Ok(match info.kind {
         ModelKind::Ode => CompiledRuntimeModel::Ode(NativeOdeModel::new(info, artifact)),
         ModelKind::Analytical => {
-            CompiledRuntimeModel::Analytical(NativeAnalyticalModel::new(info, artifact))
+            CompiledRuntimeModel::Analytical(NativeAnalyticalModel::new(info, artifact)?)
         }
         ModelKind::Sde => CompiledRuntimeModel::Sde(NativeSdeModel::new(info, artifact)),
-    }
+    })
 }
 
 #[cfg(all(
@@ -718,7 +718,7 @@ out(cp) = central / v ~ continuous()
     fn assert_unknown_output_label(
         model: &CompiledRuntimeModel,
         subject: &Subject,
-        support: &[f64],
+        support: &Parameters,
         expected_label: &str,
     ) {
         let error = model
@@ -734,7 +734,7 @@ out(cp) = central / v ~ continuous()
     fn assert_unknown_input_label(
         model: &CompiledRuntimeModel,
         subject: &Subject,
-        support: &[f64],
+        support: &Parameters,
         expected_label: &str,
     ) {
         let error = model
@@ -750,7 +750,7 @@ out(cp) = central / v ~ continuous()
     fn assert_unsupported_input_route_kind(
         model: &CompiledRuntimeModel,
         subject: &Subject,
-        support: &[f64],
+        support: &Parameters,
         expected_input: usize,
         expected_kind: RouteKind,
     ) {
@@ -771,7 +771,6 @@ out(cp) = central / v ~ continuous()
     #[test]
     fn runtime_backend_matrix_matches_ode_predictions() {
         let work_dir = tempdir().expect("tempdir");
-        let support = vec![1.2, 5.0, 40.0, 0.5, 0.8];
 
         let jit = compile_module_source_to_runtime(
             corpus_source(),
@@ -806,6 +805,17 @@ out(cp) = central / v ~ continuous()
             wasm.info().parameters,
             vec!["ka", "cl", "v", "tlag", "f_oral"]
         );
+        let support = Parameters::with_model(
+            &jit,
+            [
+                ("ka", 1.2),
+                ("cl", 5.0),
+                ("v", 40.0),
+                ("tlag", 0.5),
+                ("f_oral", 0.8),
+            ],
+        )
+        .expect("valid named parameters");
 
         assert!(compiled_route_input_index(&jit, "oral").is_some());
         assert!(compiled_route_input_index(&jit, "iv").is_some());
@@ -839,7 +849,6 @@ out(cp) = central / v ~ continuous()
     #[test]
     fn runtime_backend_matrix_reports_route_kind_mismatch() {
         let work_dir = tempdir().expect("tempdir");
-        let support = vec![0.2, 10.0];
         let subject = mismatched_route_kind_subject();
 
         let (jit, aot, wasm) = compile_runtime_backend_matrix(
@@ -847,6 +856,8 @@ out(cp) = central / v ~ continuous()
             "prefixed_numeric_route_runtime",
             work_dir.path(),
         );
+        let support = Parameters::with_model(&jit, [("ke", 0.2), ("v", 10.0)])
+            .expect("valid named parameters");
         let expected_input =
             compiled_route_input_index(&jit, "input_10").expect("input_10 route index");
 
@@ -884,12 +895,13 @@ out(cp) = central / v ~ continuous()
     #[test]
     fn runtime_backend_matrix_supports_prefixed_multi_digit_numeric_route_labels() {
         let work_dir = tempdir().expect("tempdir");
-        let support = vec![0.2, 10.0];
         let (jit, aot, wasm) = compile_runtime_backend_matrix(
             NUMERIC_ROUTE_LABELS_RUNTIME_DSL,
             "prefixed_numeric_route_runtime",
             work_dir.path(),
         );
+        let support = Parameters::with_model(&jit, [("ke", 0.2), ("v", 10.0)])
+            .expect("valid named parameters");
 
         assert_eq!(compiled_route_input_index(&jit, "input_10"), Some(0));
         assert_eq!(compiled_route_input_index(&jit, "input_11"), Some(1));
@@ -927,12 +939,13 @@ out(cp) = central / v ~ continuous()
     #[test]
     fn runtime_backend_matrix_resolves_raw_numeric_route_labels_against_prefixed_metadata() {
         let work_dir = tempdir().expect("tempdir");
-        let support = vec![0.2, 10.0];
         let (jit, aot, wasm) = compile_runtime_backend_matrix(
             NUMERIC_ROUTE_LABELS_RUNTIME_DSL,
             "prefixed_numeric_route_runtime",
             work_dir.path(),
         );
+        let support = Parameters::with_model(&jit, [("ke", 0.2), ("v", 10.0)])
+            .expect("valid named parameters");
 
         let subject = numeric_route_alias_subject();
 
@@ -963,12 +976,13 @@ out(cp) = central / v ~ continuous()
     #[test]
     fn runtime_backend_matrix_supports_prefixed_numeric_route_and_output_labels() {
         let work_dir = tempdir().expect("tempdir");
-        let support = vec![0.2, 10.0];
         let (jit, aot, wasm) = compile_runtime_backend_matrix(
             SHARED_NUMERIC_ROUTE_OUTPUT_LABEL_RUNTIME_DSL,
             "prefixed_numeric_route_output_runtime",
             work_dir.path(),
         );
+        let support = Parameters::with_model(&jit, [("ke", 0.2), ("v", 10.0)])
+            .expect("valid named parameters");
 
         assert_eq!(compiled_route_input_index(&jit, "input_1"), Some(0));
         assert_eq!(compiled_output_slot_index(&jit, "outeq_1"), Some(0));
@@ -1006,12 +1020,13 @@ out(cp) = central / v ~ continuous()
     #[test]
     fn runtime_backend_matrix_resolves_shared_raw_numeric_route_and_output_aliases() {
         let work_dir = tempdir().expect("tempdir");
-        let support = vec![0.2, 10.0];
         let (jit, aot, wasm) = compile_runtime_backend_matrix(
             SHARED_NUMERIC_ROUTE_OUTPUT_LABEL_RUNTIME_DSL,
             "prefixed_numeric_route_output_runtime",
             work_dir.path(),
         );
+        let support = Parameters::with_model(&jit, [("ke", 0.2), ("v", 10.0)])
+            .expect("valid named parameters");
 
         let subject = shared_numeric_route_output_alias_subject();
 
@@ -1042,12 +1057,13 @@ out(cp) = central / v ~ continuous()
     #[test]
     fn runtime_backend_matrix_rejects_undeclared_numeric_output_labels() {
         let work_dir = tempdir().expect("tempdir");
-        let support = vec![0.2, 10.0];
         let (jit, aot, wasm) = compile_runtime_backend_matrix(
             UNDECLARED_NUMERIC_OUTPUT_LABEL_RUNTIME_DSL,
             "undeclared_numeric_output_runtime",
             work_dir.path(),
         );
+        let support = Parameters::with_model(&jit, [("ke", 0.2), ("v", 10.0)])
+            .expect("valid named parameters");
         let subject = Subject::builder("runtime-undeclared-numeric-output")
             .infusion(0.0, 100.0, "iv", 1.0)
             .missing_observation(0.5, "10")
@@ -1061,12 +1077,13 @@ out(cp) = central / v ~ continuous()
     #[test]
     fn runtime_backend_matrix_rejects_undeclared_numeric_input_labels() {
         let work_dir = tempdir().expect("tempdir");
-        let support = vec![0.2, 10.0];
         let (jit, aot, wasm) = compile_runtime_backend_matrix(
             UNDECLARED_NUMERIC_INPUT_LABEL_RUNTIME_DSL,
             "undeclared_numeric_input_runtime",
             work_dir.path(),
         );
+        let support = Parameters::with_model(&jit, [("ke", 0.2), ("v", 10.0)])
+            .expect("valid named parameters");
         let subject = Subject::builder("runtime-undeclared-numeric-input")
             .bolus(0.0, 100.0, "10")
             .missing_observation(0.5, "cp")

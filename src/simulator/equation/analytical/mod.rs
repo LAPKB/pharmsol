@@ -24,7 +24,7 @@ use super::{
 use crate::data::error_model::AssayErrorModels;
 use crate::simulator::cache::{PredictionCache, DEFAULT_CACHE_SIZE};
 use crate::PharmsolError;
-use crate::{data::Covariates, simulator::*, Observation, Subject};
+use crate::{data::Covariates, simulator::*, Observation, Parameters, Subject};
 
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
 pub enum AnalyticalMetadataError {
@@ -492,7 +492,9 @@ pub(crate) mod tests {
             .observation(1.0, 0.0, 0)
             .build();
 
-        let predictions = analytical.estimate_predictions(&subject, &[1.0]).unwrap();
+        let predictions = analytical
+            .estimate_predictions(&subject, &crate::Parameters::dense([1.0]))
+            .unwrap();
 
         let value = predictions.predictions()[0].prediction();
         assert!((value - 2.5).abs() < 1e-12);
@@ -524,7 +526,9 @@ pub(crate) mod tests {
             .observation(1.0, 0.0, 0)
             .build();
 
-        let predictions = analytical.estimate_predictions(&subject, &[0.0]).unwrap();
+        let predictions = analytical
+            .estimate_predictions(&subject, &crate::Parameters::dense([0.0]))
+            .unwrap();
 
         assert_eq!(predictions.predictions()[0].prediction(), 4.0);
     }
@@ -609,10 +613,10 @@ pub(crate) mod tests {
             .build();
 
         let canonical_predictions = analytical
-            .estimate_predictions(&canonical, &[])
+            .estimate_predictions(&canonical, &crate::Parameters::dense([]))
             .expect("canonical labels should simulate");
         let aliased_predictions = analytical
-            .estimate_predictions(&aliased, &[])
+            .estimate_predictions(&aliased, &crate::Parameters::dense([]))
             .expect("raw numeric aliases should simulate");
 
         assert_relative_eq!(
@@ -863,20 +867,20 @@ impl Equation for Analytical {
     fn estimate_likelihood(
         &self,
         subject: &Subject,
-        parameters: &[f64],
+        parameters: &Parameters,
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
-        _estimate_likelihood(self, subject, parameters, error_models)
+        _estimate_likelihood(self, subject, parameters.as_slice(), error_models)
     }
 
     fn estimate_log_likelihood(
         &self,
         subject: &Subject,
-        parameters: &[f64],
+        parameters: &Parameters,
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
         let bound_error_models = self.bind_error_models(error_models)?;
-        let ypred = _subject_predictions(self, subject, parameters)?;
+        let ypred = _subject_predictions(self, subject, parameters.as_slice())?;
         ypred.log_likelihood(&bound_error_models)
     }
 
@@ -897,11 +901,11 @@ fn _subject_predictions(
             return Ok(cached);
         }
 
-        let result = analytical.simulate_subject(subject, parameters, None)?.0;
+        let result = analytical.simulate_subject_dense(subject, parameters, None)?.0;
         cache.insert(key, result.clone());
         Ok(result)
     } else {
-        Ok(analytical.simulate_subject(subject, parameters, None)?.0)
+        Ok(analytical.simulate_subject_dense(subject, parameters, None)?.0)
     }
 }
 

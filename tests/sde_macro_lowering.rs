@@ -492,7 +492,11 @@ fn sde_macro_lowering_matches_handwritten_metadata_and_predictions() {
     let macro_model = macro_infusion_sde();
     let handwritten_model = handwritten_infusion_sde();
     let subject = infusion_subject("iv", "cp");
-    let support_point = [0.2, 0.0, 10.0];
+    let support_point = pharmsol::Parameters::with_model(
+        &macro_model,
+        [("ke", 0.2), ("sigma_ke", 0.0), ("v", 10.0)],
+    )
+    .expect("valid named parameters");
     let macro_metadata = macro_model.metadata().expect("macro SDE metadata exists");
 
     assert_eq!(macro_model.metadata(), handwritten_model.metadata());
@@ -518,7 +522,18 @@ fn sde_macro_supports_lag_fa_init_and_named_sigma_bindings() {
     let macro_model = macro_absorption_sde();
     let handwritten_model = handwritten_absorption_sde();
     let subject = oral_subject("oral", "cp");
-    let support_point = [1.1, 0.2, 0.0, 10.0, 0.25, 0.8];
+    let support_point = pharmsol::Parameters::with_model(
+        &macro_model,
+        [
+            ("ka", 1.1),
+            ("ke", 0.2),
+            ("sigma_ke", 0.0),
+            ("v", 10.0),
+            ("tlag", 0.25),
+            ("f_oral", 0.8),
+        ],
+    )
+    .expect("valid named parameters");
     let macro_metadata = macro_model.metadata().expect("macro SDE metadata exists");
 
     assert_eq!(macro_model.metadata(), handwritten_model.metadata());
@@ -544,7 +559,18 @@ fn sde_macro_shared_input_lowering_matches_handwritten_metadata_and_predictions(
     let macro_model = macro_shared_input_sde();
     let handwritten_model = handwritten_shared_input_sde();
     let subject = shared_input_subject();
-    let support_point = [1.1, 0.2, 0.0, 10.0, 0.25, 0.8];
+    let support_point = pharmsol::Parameters::with_model(
+        &macro_model,
+        [
+            ("ka", 1.1),
+            ("ke", 0.2),
+            ("sigma_ke", 0.0),
+            ("v", 10.0),
+            ("tlag", 0.25),
+            ("f_oral", 0.8),
+        ],
+    )
+    .expect("valid named parameters");
     let macro_metadata = macro_model.metadata().expect("macro SDE metadata exists");
 
     assert_eq!(macro_model.metadata(), handwritten_model.metadata());
@@ -575,7 +601,20 @@ fn sde_macro_covariates_lower_to_handwritten_behavior() {
     assert_eq!(macro_model.metadata(), handwritten_model.metadata());
 
     let subject = covariate_subject("oral", "iv", "cp");
-    let support_point = [1.0, 0.16, 0.0, 32.0, 0.5, 0.8, 3.0, 14.0];
+    let support_point = pharmsol::Parameters::with_model(
+        &macro_model,
+        [
+            ("ka", 1.0),
+            ("ke", 0.16),
+            ("sigma_ke", 0.0),
+            ("v", 32.0),
+            ("tlag", 0.5),
+            ("f_oral", 0.8),
+            ("base_gut", 3.0),
+            ("base_central", 14.0),
+        ],
+    )
+    .expect("valid named parameters");
 
     let macro_predictions = macro_model
         .estimate_predictions(&subject, &support_point)

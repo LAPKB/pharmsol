@@ -40,7 +40,7 @@ fn one_cpt(solver: OdeSolver) -> equation::ODE {
 
 fn preds(solver: OdeSolver) -> Vec<f64> {
     let sub = subject();
-    let parameters = vec![0.1, 50.0];
+    let parameters = pharmsol::Parameters::dense([0.1, 50.0]);
     one_cpt(solver)
         .estimate_predictions(&sub, &parameters)
         .unwrap()

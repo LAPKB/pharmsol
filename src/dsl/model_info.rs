@@ -21,6 +21,9 @@ pub struct NativeModelInfo {
     pub kind: ModelKind,
     /// Parameter names in support-point order.
     pub parameters: Vec<String>,
+    /// Derived names in dense derived-buffer order.
+    #[serde(default)]
+    pub derived: Vec<String>,
     /// Declared covariates and their dense runtime indices.
     pub covariates: Vec<NativeCovariateInfo>,
     /// Declared routes together with declaration-order and dense runtime indices.
@@ -92,6 +95,12 @@ impl NativeModelInfo {
                 .parameters
                 .iter()
                 .map(|parameter| parameter.name.clone())
+                .collect(),
+            derived: model
+                .metadata
+                .derived
+                .iter()
+                .map(|derived| derived.name.clone())
                 .collect(),
             covariates: model
                 .metadata
@@ -342,5 +351,32 @@ out(outeq_2) = depot / v
                 .collect::<Vec<_>>(),
             vec!["cp", "outeq_2"]
         );
+    }
+
+    #[test]
+    fn native_model_info_preserves_declared_derived_order() {
+        let info = load_model_info(
+            r#"
+model analytical_projection {
+    kind analytical
+    parameters { ka, ke0, v }
+    states { depot, central }
+    routes { oral -> depot }
+    derive {
+        ke = ke0
+        scale = v / 10
+    }
+    analytical {
+        structure = one_compartment_with_absorption
+    }
+    outputs {
+        cp = central / scale
+    }
+}
+"#,
+        );
+
+        assert_eq!(info.derived, vec!["ke".to_string(), "scale".to_string()]);
+        assert_eq!(info.derived_len, 2);
     }
 }

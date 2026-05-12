@@ -15,7 +15,10 @@ use cranelift_jit::JITModule;
 #[cfg(feature = "dsl-aot-load")]
 use libloading::Library;
 use pharmsol_dsl::execution::KernelRole;
-use pharmsol_dsl::{AnalyticalKernel, RouteKind, NUMERIC_OUTPUT_PREFIX, NUMERIC_ROUTE_PREFIX};
+use pharmsol_dsl::{
+    AnalyticalKernel, AnalyticalStructureInputKind, AnalyticalStructureInputPlan, RouteKind,
+    NUMERIC_OUTPUT_PREFIX, NUMERIC_ROUTE_PREFIX,
+};
 
 pub use super::model_info::{
     NativeCovariateInfo, NativeModelInfo, NativeOutputInfo, NativeRouteInfo,
@@ -33,7 +36,7 @@ use crate::{
         likelihood::{Prediction, SubjectPredictions},
         Fa, Lag, M, T, V,
     },
-    Event, Observation, Occasion, PharmsolError, Subject,
+    Event, Observation, Occasion, Parameters, PharmsolError, Subject,
 };
 
 pub type DenseKernelFn = unsafe extern "C" fn(
@@ -746,6 +749,7 @@ pub struct NativeOdeModel {
 pub struct NativeAnalyticalModel {
     shared: Arc<SharedNativeModel>,
     cache: Option<PredictionCache>,
+    parameter_projection: AnalyticalStructureInputKind,
 }
 
 #[derive(Clone, Debug)]
@@ -793,6 +797,14 @@ impl NativeOdeModel {
     }
 
     pub fn estimate_predictions(
+        &self,
+        subject: &Subject,
+        parameters: &Parameters,
+    ) -> Result<SubjectPredictions, PharmsolError> {
+        self.estimate_predictions_dense(subject, parameters.as_slice())
+    }
+
+    fn estimate_predictions_dense(
         &self,
         subject: &Subject,
         support_point: &[f64],
@@ -1061,11 +1073,11 @@ fn runtime_ode_predictions(
             return Ok(cached);
         }
 
-        let result = model.estimate_predictions(subject, support_point)?;
+        let result = model.estimate_predictions_dense(subject, support_point)?;
         cache.insert(key, result.clone());
         Ok(result)
     } else {
-        model.estimate_predictions(subject, support_point)
+        model.estimate_predictions_dense(subject, support_point)
     }
 }
 
@@ -1162,23 +1174,61 @@ impl Equation for NativeOdeModel {
     fn estimate_likelihood(
         &self,
         subject: &Subject,
-        support_point: &[f64],
+        parameters: &Parameters,
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
         Ok(self
-            .estimate_log_likelihood(subject, support_point, error_models)?
+            .estimate_log_likelihood(subject, parameters, error_models)?
             .exp())
     }
 
     fn estimate_log_likelihood(
         &self,
         subject: &Subject,
-        support_point: &[f64],
+        parameters: &Parameters,
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
         let bound_error_models = self.bind_error_models(error_models)?;
-        let predictions = runtime_ode_predictions(self, subject, support_point)?;
+        let predictions = runtime_ode_predictions(self, subject, parameters.as_slice())?;
         predictions.log_likelihood(&bound_error_models)
+    }
+
+    fn estimate_predictions_dense(
+        &self,
+        subject: &Subject,
+        parameters: &[f64],
+    ) -> Result<Self::P, PharmsolError> {
+        runtime_ode_predictions(self, subject, parameters)
+    }
+
+    fn estimate_log_likelihood_dense(
+        &self,
+        subject: &Subject,
+        parameters: &[f64],
+        error_models: &AssayErrorModels,
+    ) -> Result<f64, PharmsolError> {
+        let bound_error_models = self.bind_error_models(error_models)?;
+        let predictions = runtime_ode_predictions(self, subject, parameters)?;
+        predictions.log_likelihood(&bound_error_models)
+    }
+
+    fn simulate_subject_dense(
+        &self,
+        subject: &Subject,
+        parameters: &[f64],
+        error_models: Option<&AssayErrorModels>,
+    ) -> Result<(Self::P, Option<f64>), PharmsolError> {
+        let bound_error_models = match error_models {
+            Some(error_models) => Some(self.bind_error_models(error_models)?),
+            None => None,
+        };
+
+        let predictions = runtime_ode_predictions(self, subject, parameters)?;
+        let likelihood = match bound_error_models.as_ref() {
+            Some(error_models) => Some(predictions.log_likelihood(error_models)?.exp()),
+            None => None,
+        };
+        Ok((predictions, likelihood))
     }
 
     fn kind() -> EqnKind {
@@ -1197,17 +1247,18 @@ impl Equation for NativeOdeModel {
     fn estimate_predictions(
         &self,
         subject: &Subject,
-        support_point: &[f64],
+        parameters: &Parameters,
     ) -> Result<Self::P, PharmsolError> {
-        runtime_ode_predictions(self, subject, support_point)
+        runtime_ode_predictions(self, subject, parameters.as_slice())
     }
 
     fn simulate_subject(
         &self,
         subject: &Subject,
-        support_point: &[f64],
+        parameters: &Parameters,
         error_models: Option<&AssayErrorModels>,
     ) -> Result<(Self::P, Option<f64>), PharmsolError> {
+        let support_point = parameters.as_slice();
         let bound_error_models = match error_models {
             Some(error_models) => Some(self.bind_error_models(error_models)?),
             None => None,
@@ -1223,11 +1274,16 @@ impl Equation for NativeOdeModel {
 }
 
 impl NativeAnalyticalModel {
-    pub(crate) fn new(info: NativeModelInfo, artifact: impl RuntimeArtifact + 'static) -> Self {
-        Self {
+    pub(crate) fn new(
+        info: NativeModelInfo,
+        artifact: impl RuntimeArtifact + 'static,
+    ) -> Result<Self, PharmsolError> {
+        let parameter_projection = build_analytical_parameter_projection(&info)?;
+        Ok(Self {
             shared: Arc::new(SharedNativeModel::new(info, artifact)),
             cache: Some(PredictionCache::new(DEFAULT_CACHE_SIZE)),
-        }
+            parameter_projection,
+        })
     }
 
     pub fn info(&self) -> &NativeModelInfo {
@@ -1241,8 +1297,9 @@ impl NativeAnalyticalModel {
     pub fn estimate_predictions(
         &self,
         subject: &Subject,
-        support_point: &[f64],
+        parameters: &Parameters,
     ) -> Result<SubjectPredictions, PharmsolError> {
+        let support_point = parameters.as_slice();
         self.shared.validate_support_point(support_point)?;
         let mut output = SubjectPredictions::default();
 
@@ -1358,7 +1415,7 @@ impl NativeAnalyticalModel {
                 &mut cov_buf,
             )?;
             let projected =
-                project_analytical_parameters(&self.shared.info, support_point, &derived)?;
+                project_analytical_parameters(&self.parameter_projection, support_point, &derived);
             let next_state = apply_analytical_kernel(
                 self.shared.info.analytical.ok_or_else(|| {
                     PharmsolError::OtherError(format!(
@@ -1582,8 +1639,9 @@ impl NativeSdeModel {
     pub fn estimate_predictions(
         &self,
         subject: &Subject,
-        support_point: &[f64],
+        parameters: &Parameters,
     ) -> Result<Array2<Prediction>, PharmsolError> {
+        let support_point = parameters.as_slice();
         self.shared.validate_support_point(support_point)?;
         let mut output = Array2::from_shape_fn((self.nparticles, 0), |_| Prediction::default());
 
@@ -2059,53 +2117,74 @@ fn canonical_numeric_alias(label: &str, prefix: &str) -> Option<String> {
     Some(format!("{prefix}{label}"))
 }
 
-fn project_analytical_parameters(
+fn build_analytical_parameter_projection(
     info: &NativeModelInfo,
-    support_point: &[f64],
-    derived: &[f64],
-) -> Result<V, PharmsolError> {
+) -> Result<AnalyticalStructureInputKind, PharmsolError> {
     let kernel = info.analytical.ok_or_else(|| {
         PharmsolError::OtherError(format!(
             "model `{}` does not declare an analytical kernel",
             info.name
         ))
     })?;
-    let arity = analytical_parameter_count(kernel);
-    if support_point.len() < arity {
+    if info.derived.len() != info.derived_len {
         return Err(PharmsolError::OtherError(format!(
-            "analytical kernel for model `{}` requires {} parameter value(s), got {}",
+            "compiled analytical model `{}` has inconsistent derived metadata: {} declared name(s), {} derived slot(s)",
             info.name,
-            arity,
-            support_point.len()
+            info.derived.len(),
+            info.derived_len
         )));
     }
 
-    // Analytical authoring models can project kernel arguments through a derive
-    // kernel by declaring exactly the built-in kernel arity in `derived`.
-    if derived.len() == arity {
-        return Ok(V::from_vec(derived.to_vec(), NalgebraContext));
-    }
-
-    Ok(V::from_vec(
-        support_point[..arity].to_vec(),
-        NalgebraContext,
-    ))
+    AnalyticalStructureInputPlan::for_kernel(
+        kernel,
+        info.parameters.iter().map(String::as_str),
+        info.derived.iter().map(String::as_str),
+    )
+    .map(|plan| plan.kind().clone())
+    .map_err(|error| {
+        PharmsolError::OtherError(format!(
+            "compiled analytical model `{}` has invalid structure inputs: {error}",
+            info.name
+        ))
+    })
 }
 
-fn analytical_parameter_count(kernel: AnalyticalKernel) -> usize {
-    match kernel {
-        AnalyticalKernel::OneCompartment => 1,
-        AnalyticalKernel::OneCompartmentCl => 2,
-        AnalyticalKernel::OneCompartmentClWithAbsorption => 3,
-        AnalyticalKernel::OneCompartmentWithAbsorption => 2,
-        AnalyticalKernel::TwoCompartments => 3,
-        AnalyticalKernel::TwoCompartmentsCl => 4,
-        AnalyticalKernel::TwoCompartmentsClWithAbsorption => 5,
-        AnalyticalKernel::TwoCompartmentsWithAbsorption => 4,
-        AnalyticalKernel::ThreeCompartments => 5,
-        AnalyticalKernel::ThreeCompartmentsCl => 6,
-        AnalyticalKernel::ThreeCompartmentsClWithAbsorption => 7,
-        AnalyticalKernel::ThreeCompartmentsWithAbsorption => 6,
+fn project_analytical_parameters(
+    projection: &AnalyticalStructureInputKind,
+    support_point: &[f64],
+    derived: &[f64],
+) -> V {
+    match projection {
+        AnalyticalStructureInputKind::AllPrimary { indices, identity } => {
+            let values = if *identity {
+                support_point[..indices.len()].to_vec()
+            } else {
+                indices.iter().map(|&index| support_point[index]).collect()
+            };
+            V::from_vec(values, NalgebraContext)
+        }
+        AnalyticalStructureInputKind::AllDerived { indices, identity } => {
+            let values = if *identity {
+                derived[..indices.len()].to_vec()
+            } else {
+                indices.iter().map(|&index| derived[index]).collect()
+            };
+            V::from_vec(values, NalgebraContext)
+        }
+        AnalyticalStructureInputKind::Mixed { bindings } => V::from_vec(
+            bindings
+                .iter()
+                .map(|binding| match binding.source {
+                    pharmsol_dsl::AnalyticalStructureInputSource::Primary => {
+                        support_point[binding.index]
+                    }
+                    pharmsol_dsl::AnalyticalStructureInputSource::Derived => {
+                        derived[binding.index]
+                    }
+                })
+                .collect(),
+            NalgebraContext,
+        ),
     }
 }
 
@@ -2234,13 +2313,15 @@ fn apply_analytical_kernel(
 #[cfg(test)]
 mod tests {
     use super::{
-        canonical_numeric_alias, KernelSession, NativeModelInfo, NativeOutputInfo, NativeRouteInfo,
-        RuntimeArtifact, RuntimeBackend, SharedNativeModel, NUMERIC_OUTPUT_PREFIX,
-        NUMERIC_ROUTE_PREFIX,
+        build_analytical_parameter_projection, canonical_numeric_alias,
+        project_analytical_parameters, KernelSession, NativeAnalyticalModel, NativeModelInfo,
+        NativeOutputInfo, NativeRouteInfo, RuntimeArtifact, RuntimeBackend, SharedNativeModel,
+        NUMERIC_OUTPUT_PREFIX, NUMERIC_ROUTE_PREFIX,
     };
     use crate::PharmsolError;
+    use diffsol::VectorHost;
     use pharmsol_dsl::execution::KernelRole;
-    use pharmsol_dsl::{ModelKind, RouteKind};
+    use pharmsol_dsl::{AnalyticalKernel, AnalyticalStructureInputKind, ModelKind, RouteKind};
 
     #[derive(Debug)]
     struct DummyArtifact;
@@ -2265,6 +2346,7 @@ mod tests {
                 name: "bolus_only".to_string(),
                 kind: ModelKind::Ode,
                 parameters: Vec::new(),
+                derived: Vec::new(),
                 covariates: Vec::new(),
                 routes: vec![NativeRouteInfo {
                     name: "oral".to_string(),
@@ -2287,6 +2369,38 @@ mod tests {
             },
             DummyArtifact,
         )
+    }
+
+    fn analytical_model_info(
+        parameters: &[&str],
+        derived: &[&str],
+        kernel: AnalyticalKernel,
+    ) -> NativeModelInfo {
+        NativeModelInfo {
+            name: "analytical_projection".to_string(),
+            kind: ModelKind::Analytical,
+            parameters: parameters.iter().map(|name| (*name).to_string()).collect(),
+            derived: derived.iter().map(|name| (*name).to_string()).collect(),
+            covariates: Vec::new(),
+            routes: Vec::new(),
+            outputs: Vec::new(),
+            state_len: kernel.state_count(),
+            derived_len: derived.len(),
+            output_len: 0,
+            route_len: 0,
+            analytical: Some(kernel),
+            particles: None,
+        }
+    }
+
+    fn analytical_projection_values(
+        model: &NativeAnalyticalModel,
+        support_point: &[f64],
+        derived: &[f64],
+    ) -> Vec<f64> {
+        project_analytical_parameters(&model.parameter_projection, support_point, derived)
+            .as_slice()
+            .to_vec()
     }
 
     #[test]
@@ -2328,6 +2442,126 @@ mod tests {
                 input: 0,
                 kind: RouteKind::Infusion,
             }
+        ));
+    }
+
+    #[test]
+    fn compiled_analytical_projection_uses_primary_identity_order() {
+        let model = NativeAnalyticalModel::new(
+            analytical_model_info(
+                &["ka", "ke", "v"],
+                &[],
+                AnalyticalKernel::OneCompartmentWithAbsorption,
+            ),
+            DummyArtifact,
+        )
+        .expect("analytical model builds");
+
+        assert!(matches!(
+            model.parameter_projection,
+            AnalyticalStructureInputKind::AllPrimary { identity: true, .. }
+        ));
+        assert_eq!(
+            analytical_projection_values(&model, &[1.0, 0.15, 25.0], &[]),
+            vec![1.0, 0.15]
+        );
+    }
+
+    #[test]
+    fn compiled_analytical_projection_reorders_all_derived_inputs() {
+        let model = NativeAnalyticalModel::new(
+            analytical_model_info(
+                &["ke0", "v"],
+                &["ke", "ka"],
+                AnalyticalKernel::OneCompartmentWithAbsorption,
+            ),
+            DummyArtifact,
+        )
+        .expect("analytical model builds");
+
+        assert!(matches!(
+            model.parameter_projection,
+            AnalyticalStructureInputKind::AllDerived { identity: false, .. }
+        ));
+        assert_eq!(
+            analytical_projection_values(&model, &[0.15, 25.0], &[0.15, 1.0]),
+            vec![1.0, 0.15]
+        );
+    }
+
+    #[test]
+    fn compiled_analytical_projection_gathers_mixed_primary_and_derived_inputs() {
+        let model = NativeAnalyticalModel::new(
+            analytical_model_info(
+                &["ka", "v", "ke0"],
+                &["ke"],
+                AnalyticalKernel::OneCompartmentWithAbsorption,
+            ),
+            DummyArtifact,
+        )
+        .expect("analytical model builds");
+
+        assert!(matches!(
+            model.parameter_projection,
+            AnalyticalStructureInputKind::Mixed { .. }
+        ));
+        assert_eq!(
+            analytical_projection_values(&model, &[1.0, 25.0, 0.2], &[0.15]),
+            vec![1.0, 0.15]
+        );
+    }
+
+    #[test]
+    fn compiled_analytical_projection_reports_missing_required_name_at_setup() {
+        let error = NativeAnalyticalModel::new(
+            analytical_model_info(
+                &["ka", "v"],
+                &[],
+                AnalyticalKernel::OneCompartmentWithAbsorption,
+            ),
+            DummyArtifact,
+        )
+        .expect_err("missing required name must fail at setup");
+
+        let message = error.to_string();
+        assert!(message.contains(
+            "compiled analytical model `analytical_projection` has invalid structure inputs"
+        ));
+        assert!(message.contains("analytical structure `one_compartment_with_absorption` requires `ke`"));
+        assert!(message.contains("declare it in `params` or `derived`"));
+    }
+
+    #[test]
+    fn compiled_analytical_projection_reports_conflicting_primary_and_derived_name_at_setup() {
+        let error = NativeAnalyticalModel::new(
+            analytical_model_info(
+                &["ka", "ke", "v"],
+                &["ke"],
+                AnalyticalKernel::OneCompartmentWithAbsorption,
+            ),
+            DummyArtifact,
+        )
+        .expect_err("conflicting name must fail at setup");
+
+        assert!(error.to_string().contains(
+            "compiled analytical model `analytical_projection` has invalid structure inputs: `ke` is declared in both `params` and `derived`"
+        ));
+    }
+
+    #[test]
+    fn compiled_analytical_projection_rejects_inconsistent_derived_metadata() {
+        let mut info = analytical_model_info(
+            &["ka", "ke0", "v"],
+            &["ke"],
+            AnalyticalKernel::OneCompartmentWithAbsorption,
+        );
+        info.derived_len = 2;
+
+        let error = build_analytical_parameter_projection(&info)
+            .expect_err("inconsistent derived metadata must fail");
+
+        assert!(error.to_string().contains(
+            "compiled analytical model `analytical_projection` has inconsistent derived metadata"
         ));
     }
 }

@@ -15,7 +15,7 @@ use pharmsol::dsl::{self, CompiledRuntimeModel, RuntimeCompilationTarget, Runtim
 use pharmsol::prelude::{
     one_compartment_with_absorption, Equation, Prediction, SubjectPredictions,
 };
-use pharmsol::{equation, fa, fetch_cov, fetch_params, lag, Subject, SubjectBuilderExt, SDE};
+use pharmsol::{equation, fa, fetch_cov, fetch_params, lag, Parameters, Subject, SubjectBuilderExt, SDE};
 use tempfile::{tempdir, TempDir};
 
 const ODE_SOURCE: &str = r#"
@@ -97,9 +97,9 @@ const ANALYTICAL_FULL_SOURCE: &str = r#"
 name = analytical_full_feature_parity
 kind = analytical
 
-params = ka, ke, v, tlag, f_oral, base_gut, base_central, tvke
+params = ka, ke, v, tlag, f_oral, base_gut, base_central
 covariates = wt@linear, renal@linear
-derived = ka_proj, ke_proj
+derived = adjusted_v
 states = gut, central
 outputs = cp
 
@@ -110,15 +110,14 @@ infusion(iv) -> central
 lag(oral) = tlag * sqrt(wt / 70.0) * pow(90.0 / renal, 0.1)
 fa(oral) = min(max(f_oral * pow(renal / 90.0, 0.1), 0.0), 1.0)
 
-ka_proj = ka
-ke_proj = tvke * pow(wt / 70.0, 0.75) * pow(renal / 90.0, 0.25)
+adjusted_v = v * (wt / 70.0) * (1.0 + 0.001 * (renal - 90.0))
 
 structure = one_compartment_with_absorption
 
 init(gut) = base_gut + 0.03 * wt
 init(central) = base_central + 0.08 * renal
 
-out(cp) = central / (v * (wt / 70.0) * (1.0 + 0.001 * (renal - 90.0))) ~ continuous()
+out(cp) = central / adjusted_v ~ continuous()
 "#;
 
 const SDE_SOURCE: &str = r#"
@@ -202,7 +201,7 @@ impl CorpusCase {
             Self::Ode => &[1.2, 5.0, 40.0, 0.5, 0.8],
             Self::OdeFull => &[1.1, 0.18, 0.07, 0.04, 35.0, 0.6, 0.85, 4.0, 18.0, 9.0],
             Self::Analytical => &[1.0, 0.15, 25.0, 0.5, 0.8],
-            Self::AnalyticalFull => &[1.0, 0.16, 32.0, 0.5, 0.8, 3.0, 14.0, 0.16],
+            Self::AnalyticalFull => &[1.0, 0.16, 32.0, 0.5, 0.8, 3.0, 14.0],
             Self::Sde => &[1.1, 0.2, 0.12, 0.08, 15.0, 0.0],
         }
     }
@@ -567,7 +566,8 @@ pub fn estimate_runtime_predictions(
     case: CorpusCase,
     model: &CompiledRuntimeModel,
 ) -> Result<RuntimePredictions, Box<dyn Error>> {
-    Ok(model.estimate_predictions(&case.runtime_subject(model)?, case.support_point())?)
+    let parameters = Parameters::dense(case.support_point().to_vec());
+    Ok(model.estimate_predictions(&case.runtime_subject(model)?, &parameters)?)
 }
 
 fn compare_subject_predictions(
@@ -788,7 +788,7 @@ fn reference_ode_predictions() -> Result<SubjectPredictions, Box<dyn Error>> {
             .missing_observation(7.0, 0)
             .missing_observation(9.0, 0)
             .build(),
-        CorpusCase::Ode.support_point(),
+        &Parameters::dense(CorpusCase::Ode.support_point().to_vec()),
     )?)
 }
 
@@ -919,7 +919,7 @@ fn reference_ode_full_predictions() -> Result<SubjectPredictions, Box<dyn Error>
             .covariate("renal", 0.0, 95.0)
             .covariate("renal", 8.0, 72.0)
             .build(),
-        CorpusCase::OdeFull.support_point(),
+        &Parameters::dense(CorpusCase::OdeFull.support_point().to_vec()),
     )?)
 }
 
@@ -952,83 +952,37 @@ fn reference_analytical_predictions() -> Result<SubjectPredictions, Box<dyn Erro
             .missing_observation(2.0, 0)
             .missing_observation(4.0, 0)
             .build(),
-        CorpusCase::Analytical.support_point(),
+        &Parameters::dense(CorpusCase::Analytical.support_point().to_vec()),
     )?)
 }
 
 fn reference_analytical_full_predictions() -> Result<SubjectPredictions, Box<dyn Error>> {
     Ok(equation::Analytical::new(
         equation::one_compartment_with_absorption,
+        |_p, _t, _cov| {},
         |p, t, cov| {
-            fetch_cov!(cov, t, wt, renal);
-
-            let wt_scale = (wt / 70.0).powf(0.75);
-            let renal_scale = (renal / 90.0).powf(0.25);
-            p[1] = p[7] * wt_scale * renal_scale;
-        },
-        |p, t, cov| {
-            fetch_params!(
-                p,
-                _ka,
-                _ke,
-                _v,
-                tlag,
-                _f_oral,
-                _base_gut,
-                _base_central,
-                _tvke
-            );
+            fetch_params!(p, _ka, _ke, _v, tlag, _f_oral, _base_gut, _base_central);
             fetch_cov!(cov, t, wt, renal);
 
             let lag_scale = (wt / 70.0).sqrt() * (90.0 / renal).powf(0.1);
             lag! { 0 => tlag * lag_scale }
         },
         |p, t, cov| {
-            fetch_params!(
-                p,
-                _ka,
-                _ke,
-                _v,
-                _tlag,
-                f_oral,
-                _base_gut,
-                _base_central,
-                _tvke
-            );
+            fetch_params!(p, _ka, _ke, _v, _tlag, f_oral, _base_gut, _base_central);
             fetch_cov!(cov, t, wt, renal);
 
             let fa_scale = (renal / 90.0).powf(0.1);
             fa! { 0 => (f_oral * fa_scale).clamp(0.0, 1.0) }
         },
         |p, t, cov, x| {
-            fetch_params!(
-                p,
-                _ka,
-                _ke,
-                _v,
-                _tlag,
-                _f_oral,
-                base_gut,
-                base_central,
-                _tvke
-            );
+            fetch_params!(p, _ka, _ke, _v, _tlag, _f_oral, base_gut, base_central);
             fetch_cov!(cov, t, wt, renal);
 
             x[0] = base_gut + 0.03 * wt;
             x[1] = base_central + 0.08 * renal;
         },
         |x, p, t, cov, y| {
-            fetch_params!(
-                p,
-                _ka,
-                _ke,
-                v,
-                _tlag,
-                _f_oral,
-                _base_gut,
-                _base_central,
-                _tvke
-            );
+            fetch_params!(p, _ka, _ke, v, _tlag, _f_oral, _base_gut, _base_central);
             fetch_cov!(cov, t, wt, renal);
 
             let adjusted_v = v * (wt / 70.0) * (1.0 + 0.001 * (renal - 90.0));
@@ -1056,7 +1010,7 @@ fn reference_analytical_full_predictions() -> Result<SubjectPredictions, Box<dyn
             .covariate("renal", 0.0, 95.0)
             .covariate("renal", 8.0, 72.0)
             .build(),
-        CorpusCase::AnalyticalFull.support_point(),
+        &Parameters::dense(CorpusCase::AnalyticalFull.support_point().to_vec()),
     )?)
 }
 
@@ -1102,6 +1056,6 @@ fn reference_sde_predictions() -> Result<Array2<Prediction>, Box<dyn Error>> {
             .missing_observation(2.0, 0)
             .missing_observation(4.0, 0)
             .build(),
-        CorpusCase::Sde.support_point(),
+        &Parameters::dense(CorpusCase::Sde.support_point().to_vec()),
     )?)
 }

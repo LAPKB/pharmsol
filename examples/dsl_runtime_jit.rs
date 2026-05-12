@@ -5,7 +5,7 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     use std::io;
 
-    use pharmsol::prelude::*;
+    use pharmsol::{prelude::*, Parameters};
 
     let model_source = r#"
 name = bimodal_ke
@@ -21,7 +21,6 @@ dx(central) = -ke * central
 
 out(cp) = central / v
 "#;
-    let support_point = [1.2, 50.0];
     let show_compile_logs = false;
     let on_compile_event = move |kind: String, message: String| {
         if !show_compile_logs || message.is_empty() {
@@ -42,6 +41,7 @@ out(cp) = central / v
         pharmsol::dsl::RuntimeCompilationTarget::Jit,
         on_compile_event,
     )?;
+    let support_point = Parameters::with_model(&model, [("ke", 1.2), ("v", 50.0)])?;
 
     // 3. Define the subject data.
     let subject = Subject::builder("bimodal_ke")

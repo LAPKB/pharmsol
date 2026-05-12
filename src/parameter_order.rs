@@ -307,6 +307,7 @@ mod tests {
             name: "one_cmt".to_string(),
             kind: DslModelKind::Ode,
             parameters: vec!["ka".to_string(), "ke".to_string()],
+            derived: Vec::new(),
             covariates: Vec::new(),
             routes: Vec::new(),
             outputs: Vec::new(),

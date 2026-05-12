@@ -13,7 +13,7 @@ use crate::{
     error_model::AssayErrorModels,
     prelude::simulator::Prediction,
     simulator::{Diffusion, Drift, Fa, Init, Lag, Neqs, Out, V},
-    Subject,
+    Parameters, Subject,
 };
 
 use super::parameters_hash;
@@ -24,8 +24,8 @@ use diffsol::VectorCommon;
 use crate::PharmsolError;
 
 use super::{
-    EqnKind, Equation, EquationPriv, EquationTypes, ModelMetadata, ModelMetadataError, Predictions,
-    State, ValidatedModelMetadata,
+    EqnKind, Equation, EquationPriv, EquationTypes, ModelMetadata,
+    ModelMetadataError, Predictions, State, ValidatedModelMetadata,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
@@ -652,21 +652,21 @@ impl Equation for SDE {
     fn estimate_likelihood(
         &self,
         subject: &Subject,
-        parameters: &[f64],
+        parameters: &Parameters,
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
-        _estimate_likelihood(self, subject, parameters, error_models)
+        _estimate_likelihood(self, subject, parameters.as_slice(), error_models)
     }
 
     fn estimate_log_likelihood(
         &self,
         subject: &Subject,
-        parameters: &[f64],
+        parameters: &Parameters,
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
         // For SDE, the particle filter computes likelihood in regular space.
         // We compute it directly and then take the log.
-        let lik = _estimate_likelihood(self, subject, parameters, error_models)?;
+        let lik = _estimate_likelihood(self, subject, parameters.as_slice(), error_models)?;
 
         if lik > 0.0 {
             Ok(lik.ln())
@@ -697,12 +697,12 @@ fn _estimate_likelihood(
             return Ok(cached);
         }
 
-        let ypred = sde.simulate_subject(subject, parameters, Some(error_models))?;
+        let ypred = sde.simulate_subject_dense(subject, parameters, Some(error_models))?;
         let result = ypred.1.unwrap();
         cache.insert(key, result);
         Ok(result)
     } else {
-        let ypred = sde.simulate_subject(subject, parameters, Some(error_models))?;
+        let ypred = sde.simulate_subject_dense(subject, parameters, Some(error_models))?;
         Ok(ypred.1.unwrap())
     }
 }
@@ -853,10 +853,10 @@ mod tests {
             .build();
 
         let canonical_predictions = sde
-            .estimate_predictions(&canonical, &[])
+            .estimate_predictions(&canonical, &crate::Parameters::dense([]))
             .expect("canonical labels should simulate");
         let aliased_predictions = sde
-            .estimate_predictions(&aliased, &[])
+            .estimate_predictions(&aliased, &crate::Parameters::dense([]))
             .expect("raw numeric aliases should simulate");
 
         assert!(
@@ -972,8 +972,12 @@ mod tests {
             .missing_observation(0.1, "cp")
             .build();
 
-        let explicit_predictions = explicit.estimate_predictions(&subject, &[0.0]).unwrap();
-        let injected_predictions = injected.estimate_predictions(&subject, &[0.0]).unwrap();
+        let explicit_predictions = explicit
+            .estimate_predictions(&subject, &crate::Parameters::dense([0.0]))
+            .unwrap();
+        let injected_predictions = injected
+            .estimate_predictions(&subject, &crate::Parameters::dense([0.0]))
+            .unwrap();
 
         assert_eq!(explicit_predictions[[0, 0]].prediction(), 0.0);
         assert_eq!(injected_predictions[[0, 0]].prediction(), 0.0);
@@ -1017,8 +1021,12 @@ mod tests {
             .missing_observation(1.0, "cp")
             .build();
 
-        let explicit_predictions = explicit.estimate_predictions(&subject, &[0.0]).unwrap();
-        let injected_predictions = injected.estimate_predictions(&subject, &[0.0]).unwrap();
+        let explicit_predictions = explicit
+            .estimate_predictions(&subject, &crate::Parameters::dense([0.0]))
+            .unwrap();
+        let injected_predictions = injected
+            .estimate_predictions(&subject, &crate::Parameters::dense([0.0]))
+            .unwrap();
 
         let explicit_prediction = explicit_predictions[[0, 0]].prediction();
         let injected_prediction = injected_predictions[[0, 0]].prediction();
@@ -1054,7 +1062,9 @@ mod tests {
             .missing_observation(0.1, 0)
             .build();
 
-        let predictions = sde.estimate_predictions(&subject, &[0.0]).unwrap();
+        let predictions = sde
+            .estimate_predictions(&subject, &crate::Parameters::dense([0.0]))
+            .unwrap();
 
         assert!(sde.metadata().is_none());
         assert_eq!(predictions[[0, 0]].prediction(), 0.0);

@@ -220,7 +220,8 @@ fn build_ode_subject() -> Subject {
 fn macro_analytical_model() -> equation::Analytical {
     analytical! {
         name: "analytical_full_feature_parity",
-        params: [ka, ke, v, tlag, f_oral, base_gut, base_central, tvke],
+        params: [ka, ke0, v, tlag, f_oral, base_gut, base_central],
+        derived: [ke, adjusted_v],
         covariates: [wt, renal],
         states: [gut, central],
         outputs: [cp],
@@ -230,10 +231,11 @@ fn macro_analytical_model() -> equation::Analytical {
             infusion(iv) -> central,
         ],
         structure: one_compartment_with_absorption,
-        sec: |_t| {
+        derive: |_t| {
             let wt_scale = (wt / 70.0).powf(0.75);
             let renal_scale = (renal / 90.0).powf(0.25);
-            ke = tvke * wt_scale * renal_scale;
+            ke = ke0 * wt_scale * renal_scale;
+            adjusted_v = v * (wt / 70.0) * (1.0 + 0.001 * (renal - 90.0));
         },
         lag: |_t| {
             let lag_scale = (wt / 70.0).sqrt() * (90.0 / renal).powf(0.1);
@@ -248,7 +250,6 @@ fn macro_analytical_model() -> equation::Analytical {
             x[central] = base_central + 0.08 * renal;
         },
         out: |x, _t, y| {
-            let adjusted_v = v * (wt / 70.0) * (1.0 + 0.001 * (renal - 90.0));
             y[cp] = x[central] / adjusted_v;
         },
     }
@@ -256,25 +257,27 @@ fn macro_analytical_model() -> equation::Analytical {
 
 fn handwritten_analytical_model() -> equation::Analytical {
     equation::Analytical::new(
-        equation::one_compartment_with_absorption,
-        |p, t, cov| {
+        |x, p, t, rateiv, cov| {
+            fetch_params!(p, ka, ke0, _v, _tlag, _f_oral, _base_gut, _base_central);
             fetch_cov!(cov, t, wt, renal);
 
             let wt_scale = (wt / 70.0).powf(0.75);
             let renal_scale = (renal / 90.0).powf(0.25);
-            p[1] = p[7] * wt_scale * renal_scale;
+            let ke = ke0 * wt_scale * renal_scale;
+            let projected = pharmsol::__macro_support::vector_from_values(vec![ka, ke]);
+            equation::one_compartment_with_absorption(x, &projected, t, rateiv, cov)
         },
+        |_p, _t, _cov| {},
         |p, t, cov| {
             fetch_params!(
                 p,
                 _ka,
-                _ke,
+                _ke0,
                 _v,
                 tlag,
                 _f_oral,
                 _base_gut,
-                _base_central,
-                _tvke
+                _base_central
             );
             fetch_cov!(cov, t, wt, renal);
 
@@ -285,13 +288,12 @@ fn handwritten_analytical_model() -> equation::Analytical {
             fetch_params!(
                 p,
                 _ka,
-                _ke,
+                _ke0,
                 _v,
                 _tlag,
                 f_oral,
                 _base_gut,
-                _base_central,
-                _tvke
+                _base_central
             );
             fetch_cov!(cov, t, wt, renal);
 
@@ -302,13 +304,12 @@ fn handwritten_analytical_model() -> equation::Analytical {
             fetch_params!(
                 p,
                 _ka,
-                _ke,
+                _ke0,
                 _v,
                 _tlag,
                 _f_oral,
                 base_gut,
-                base_central,
-                _tvke
+                base_central
             );
             fetch_cov!(cov, t, wt, renal);
 
@@ -319,13 +320,12 @@ fn handwritten_analytical_model() -> equation::Analytical {
             fetch_params!(
                 p,
                 _ka,
-                _ke,
+                _ke0,
                 v,
                 _tlag,
                 _f_oral,
                 _base_gut,
-                _base_central,
-                _tvke
+                _base_central
             );
             fetch_cov!(cov, t, wt, renal);
 
@@ -341,13 +341,12 @@ fn handwritten_analytical_model() -> equation::Analytical {
             .kind(equation::ModelKind::Analytical)
             .parameters([
                 "ka",
-                "ke",
+                "ke0",
                 "v",
                 "tlag",
                 "f_oral",
                 "base_gut",
                 "base_central",
-                "tvke",
             ])
             .covariates([
                 equation::Covariate::continuous("wt"),
@@ -414,7 +413,21 @@ fn ode_full_feature_macro_matches_handwritten() -> Result<(), pharmsol::Pharmsol
     assert!(macro_metadata.output("cp").is_some());
 
     let subject = build_ode_subject();
-    let params = [1.1, 0.18, 0.07, 0.04, 35.0, 0.6, 0.85, 4.0, 18.0, 9.0];
+    let params = pharmsol::Parameters::with_model(
+        &macro_ode,
+        [
+            ("ka", 1.1),
+            ("ke", 0.18),
+            ("kcp", 0.07),
+            ("kpc", 0.04),
+            ("v", 35.0),
+            ("tlag", 0.6),
+            ("f_oral", 0.85),
+            ("base_depot", 4.0),
+            ("base_central", 18.0),
+            ("base_peripheral", 9.0),
+        ],
+    )?;
 
     let macro_predictions = macro_ode.estimate_predictions(&subject, &params)?;
     let handwritten_predictions = handwritten_ode.estimate_predictions(&subject, &params)?;
@@ -462,7 +475,18 @@ fn analytical_full_feature_macro_matches_handwritten() -> Result<(), pharmsol::P
     assert!(macro_metadata.output("cp").is_some());
 
     let subject = build_analytical_subject();
-    let params = [1.0, 0.16, 32.0, 0.5, 0.8, 3.0, 14.0, 0.16];
+    let params = pharmsol::Parameters::with_model(
+        &macro_analytical,
+        [
+            ("ka", 1.0),
+            ("ke0", 0.16),
+            ("v", 32.0),
+            ("tlag", 0.5),
+            ("f_oral", 0.8),
+            ("base_gut", 3.0),
+            ("base_central", 14.0),
+        ],
+    )?;
 
     let macro_predictions = macro_analytical.estimate_predictions(&subject, &params)?;
     let handwritten_predictions = handwritten_analytical.estimate_predictions(&subject, &params)?;

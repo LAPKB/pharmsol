@@ -22,7 +22,7 @@ fn assert_ode_matches_analytical(
     subject: &Subject,
     params: &[f64],
 ) {
-    let params_vec: Vec<f64> = params.to_vec();
+    let params_vec = Parameters::dense(params.to_vec());
 
     let analytical_predictions = analytical
         .estimate_predictions(subject, &params_vec)
@@ -826,7 +826,8 @@ fn time_varying_covariates_work_correctly() {
     .with_nout(1);
 
     // Just verify it runs without error and produces reasonable output
-    let result = ode.estimate_predictions(&subject, &[0.1, 50.0]);
+    let parameters = Parameters::dense([0.1, 50.0]);
+    let result = ode.estimate_predictions(&subject, &parameters);
     assert!(result.is_ok(), "ODE with covariates should succeed");
 
     let predictions = result.unwrap();
@@ -907,7 +908,7 @@ fn likelihood_calculation_matches_analytical() {
         )
         .unwrap();
 
-    let params = vec![0.1, 50.0];
+    let params = Parameters::dense([0.1, 50.0]);
 
     let ll_analytical = analytical
         .estimate_log_likelihood(&subject, &params, &error_models)

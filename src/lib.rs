@@ -54,11 +54,10 @@
 //! # Ok::<(), pharmsol::PharmsolError>(())
 //! ```
 //!
-//! For metadata-backed models, prefer [`Parameters::with_model`] for one
-//! support point and [`ParameterOrder::with_model`] for repeated dense batches.
-//! Raw slices and dense matrices remain the low-level execution substrate, and
-//! handwritten models without attached parameter metadata cannot validate named
-//! input.
+//! For metadata-backed models, use [`Parameters::with_model`] for one support
+//! point and [`ParameterOrder::with_model`] for repeated dense batches.
+//! Handwritten models without attached parameter metadata cannot validate
+//! named input.
 //!
 //! ## Choose A Workflow
 //!
@@ -161,6 +160,14 @@ pub use parameters::{ParameterError, ParameterOrder, Parameters};
 pub use pharmsol_macros::{analytical, ode, sde};
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use std::collections::HashMap;
+
+#[doc(hidden)]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+pub mod __macro_support {
+    pub fn vector_from_values(values: Vec<f64>) -> crate::simulator::V {
+        nalgebra::DVector::from_vec(values).into()
+    }
+}
 
 /// Common imports for the main pharmsol workflow.
 ///
