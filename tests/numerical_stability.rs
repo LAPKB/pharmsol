@@ -6,13 +6,59 @@ use pharmsol::*;
 const REL_TOL: f64 = 1e-2;
 const ABS_TOL: f64 = 1e-2;
 
+fn parameters_for_analytical(
+    label: &str,
+    analytical: &equation::Analytical,
+    param_names: &[&str],
+    params: &[f64],
+) -> Parameters {
+    assert_eq!(
+        param_names.len(),
+        params.len(),
+        "{label}: expected {} parameter value(s), got {}",
+        param_names.len(),
+        params.len()
+    );
+
+    Parameters::with_model(
+        analytical,
+        param_names.iter().copied().zip(params.iter().copied()),
+    )
+    .unwrap_or_else(|error| panic!("{label}: analytical parameters should validate: {error}"))
+}
+
+fn parameters_for_ode(
+    label: &str,
+    ode: &equation::ODE,
+    param_names: &[&str],
+    params: &[f64],
+) -> Parameters {
+    assert_eq!(
+        param_names.len(),
+        params.len(),
+        "{label}: expected {} parameter value(s), got {}",
+        param_names.len(),
+        params.len()
+    );
+
+    Parameters::with_model(ode, param_names.iter().copied().zip(params.iter().copied()))
+        .unwrap_or_else(|error| panic!("{label}: ODE parameters should validate: {error}"))
+}
+
 #[test]
 fn infusion_vs_analytical_is_stable() {
     let subject = infusion_subject();
     let params = vec![0.1, 1.0];
     let (analytical, ode) = infusion_models();
 
-    assert_models_agree("infusion", &analytical, &ode, &subject, &params);
+    assert_models_agree(
+        "infusion",
+        &analytical,
+        &ode,
+        &subject,
+        &["ke", "v"],
+        &params,
+    );
 }
 
 #[test]
@@ -21,7 +67,14 @@ fn oral_absorption_tracks_reference() {
     let params = vec![1.0, 0.1, 1.0];
     let (analytical, ode) = absorption_models();
 
-    assert_models_agree("absorption", &analytical, &ode, &subject, &params);
+    assert_models_agree(
+        "absorption",
+        &analytical,
+        &ode,
+        &subject,
+        &["ka", "ke", "v"],
+        &params,
+    );
 }
 
 #[test]
@@ -30,7 +83,14 @@ fn two_compartment_multi_dose_is_well_behaved() {
     let params = vec![0.1, 3.0, 1.0, 1.0];
     let (analytical, ode) = two_compartment_models();
 
-    assert_models_agree("two_compartment", &analytical, &ode, &subject, &params);
+    assert_models_agree(
+        "two_compartment",
+        &analytical,
+        &ode,
+        &subject,
+        &["ke", "kcp", "kpc", "v"],
+        &params,
+    );
 }
 
 fn assert_models_agree(
@@ -38,14 +98,16 @@ fn assert_models_agree(
     analytical: &equation::Analytical,
     ode: &equation::ODE,
     subject: &Subject,
+    param_names: &[&str],
     params: &[f64],
 ) {
-    let params_vec = Parameters::dense(params.to_vec());
+    let analytical_params = parameters_for_analytical(label, analytical, param_names, params);
+    let ode_params = parameters_for_ode(label, ode, param_names, params);
     let analytical_predictions = analytical
-        .estimate_predictions(subject, &params_vec)
+        .estimate_predictions(subject, &analytical_params)
         .expect("analytical predictions");
     let ode_predictions = ode
-        .estimate_predictions(subject, &params_vec)
+        .estimate_predictions(subject, &ode_params)
         .expect("ode predictions");
 
     let expected = analytical_predictions.flat_predictions();
@@ -76,13 +138,13 @@ fn assert_models_agree(
 
 fn infusion_subject() -> Subject {
     let mut builder = Subject::builder("infusion_reference")
-        .bolus(0.0, 100.0, 0)
-        .infusion(24.0, 150.0, 0, 3.0);
+        .bolus(0.0, 100.0, "load")
+        .infusion(24.0, 150.0, "iv", 3.0);
 
     for &time in &[
         0.0, 1.0, 2.0, 4.0, 8.0, 12.0, 24.0, 25.0, 26.0, 27.0, 28.0, 32.0, 36.0,
     ] {
-        builder = builder.missing_observation(time, 0);
+        builder = builder.missing_observation(time, "cp");
     }
 
     builder.build()
@@ -101,7 +163,21 @@ fn infusion_models() -> (equation::Analytical, equation::ODE) {
         },
     )
     .with_nstates(1)
-    .with_nout(1);
+    .with_ndrugs(1)
+    .with_nout(1)
+    .with_metadata(
+        equation::metadata::new("infusion_reference")
+            .kind(equation::ModelKind::Analytical)
+            .parameters(["ke", "v"])
+            .states(["central"])
+            .outputs(["cp"])
+            .routes([
+                equation::Route::bolus("load").to_state("central"),
+                equation::Route::infusion("iv").to_state("central"),
+            ])
+            .analytical_kernel(equation::AnalyticalKernel::OneCompartment),
+    )
+    .expect("infusion analytical metadata should validate");
 
     let ode = equation::ODE::new(
         |x, p, _t, dx, b, rateiv, _cov| {
@@ -117,22 +193,38 @@ fn infusion_models() -> (equation::Analytical, equation::ODE) {
         },
     )
     .with_nstates(1)
-    .with_nout(1);
+    .with_ndrugs(1)
+    .with_nout(1)
+    .with_metadata(
+        equation::metadata::new("infusion_reference")
+            .parameters(["ke", "v"])
+            .states(["central"])
+            .outputs(["cp"])
+            .routes([
+                equation::Route::bolus("load")
+                    .to_state("central")
+                    .expect_explicit_input(),
+                equation::Route::infusion("iv")
+                    .to_state("central")
+                    .expect_explicit_input(),
+            ]),
+    )
+    .expect("infusion ODE metadata should validate");
 
     (analytical, ode)
 }
 
 fn absorption_subject() -> Subject {
     let mut builder = Subject::builder("absorption_reference")
-        .bolus(0.0, 100.0, 1)
-        .infusion(24.0, 150.0, 0, 3.0)
-        .bolus(48.0, 100.0, 0);
+        .bolus(0.0, 100.0, "oral")
+        .infusion(24.0, 150.0, "iv", 3.0)
+        .bolus(48.0, 100.0, "load");
 
     for &time in &[
         0.0, 1.0, 2.0, 4.0, 8.0, 12.0, 24.0, 25.0, 26.0, 27.0, 28.0, 32.0, 36.0, 48.0, 49.0, 50.0,
         52.0, 56.0, 60.0,
     ] {
-        builder = builder.missing_observation(time, 0);
+        builder = builder.missing_observation(time, "cp");
     }
 
     builder.build()
@@ -151,7 +243,22 @@ fn absorption_models() -> (equation::Analytical, equation::ODE) {
         },
     )
     .with_nstates(2)
-    .with_nout(1);
+    .with_ndrugs(2)
+    .with_nout(1)
+    .with_metadata(
+        equation::metadata::new("absorption_reference")
+            .kind(equation::ModelKind::Analytical)
+            .parameters(["ka", "ke", "v"])
+            .states(["gut", "central"])
+            .outputs(["cp"])
+            .routes([
+                equation::Route::bolus("load").to_state("central"),
+                equation::Route::bolus("oral").to_state("gut"),
+                equation::Route::infusion("iv").to_state("central"),
+            ])
+            .analytical_kernel(equation::AnalyticalKernel::OneCompartmentWithAbsorption),
+    )
+    .expect("absorption analytical metadata should validate");
 
     let ode = equation::ODE::new(
         |x, p, _t, dx, b, rateiv, _cov| {
@@ -168,20 +275,39 @@ fn absorption_models() -> (equation::Analytical, equation::ODE) {
         },
     )
     .with_nstates(2)
-    .with_nout(1);
+    .with_ndrugs(2)
+    .with_nout(1)
+    .with_metadata(
+        equation::metadata::new("absorption_reference")
+            .parameters(["ka", "ke", "v"])
+            .states(["gut", "central"])
+            .outputs(["cp"])
+            .routes([
+                equation::Route::bolus("load")
+                    .to_state("central")
+                    .expect_explicit_input(),
+                equation::Route::bolus("oral")
+                    .to_state("gut")
+                    .expect_explicit_input(),
+                equation::Route::infusion("iv")
+                    .to_state("central")
+                    .expect_explicit_input(),
+            ]),
+    )
+    .expect("absorption ODE metadata should validate");
 
     (analytical, ode)
 }
 
 fn two_compartment_subject() -> Subject {
     let mut builder = Subject::builder("two_comp_reference")
-        .bolus(0.0, 100.0, 0)
-        .infusion(24.0, 150.0, 0, 3.0);
+        .bolus(0.0, 100.0, "load")
+        .infusion(24.0, 150.0, "iv", 3.0);
 
     for &time in &[
         0.0, 1.0, 2.0, 4.0, 8.0, 12.0, 24.0, 25.0, 26.0, 27.0, 28.0, 32.0, 36.0,
     ] {
-        builder = builder.missing_observation(time, 0);
+        builder = builder.missing_observation(time, "cp");
     }
 
     builder.build()
@@ -200,7 +326,21 @@ fn two_compartment_models() -> (equation::Analytical, equation::ODE) {
         },
     )
     .with_nstates(2)
-    .with_nout(1);
+    .with_ndrugs(1)
+    .with_nout(1)
+    .with_metadata(
+        equation::metadata::new("two_comp_reference")
+            .kind(equation::ModelKind::Analytical)
+            .parameters(["ke", "kcp", "kpc", "v"])
+            .states(["central", "peripheral"])
+            .outputs(["cp"])
+            .routes([
+                equation::Route::bolus("load").to_state("central"),
+                equation::Route::infusion("iv").to_state("central"),
+            ])
+            .analytical_kernel(equation::AnalyticalKernel::TwoCompartments),
+    )
+    .expect("two-compartment analytical metadata should validate");
 
     let ode = equation::ODE::new(
         |x, p, _t, dx, b, rateiv, _cov| {
@@ -217,7 +357,26 @@ fn two_compartment_models() -> (equation::Analytical, equation::ODE) {
         },
     )
     .with_nstates(2)
-    .with_nout(1);
+    .with_ndrugs(2)
+    .with_nout(1)
+    .with_metadata(
+        equation::metadata::new("two_comp_reference")
+            .parameters(["ke", "kcp", "kpc", "v"])
+            .states(["central", "peripheral"])
+            .outputs(["cp"])
+            .routes([
+                equation::Route::bolus("load")
+                    .to_state("central")
+                    .expect_explicit_input(),
+                equation::Route::bolus("peripheral_load")
+                    .to_state("peripheral")
+                    .expect_explicit_input(),
+                equation::Route::infusion("iv")
+                    .to_state("central")
+                    .expect_explicit_input(),
+            ]),
+    )
+    .expect("two-compartment ODE metadata should validate");
 
     (analytical, ode)
 }

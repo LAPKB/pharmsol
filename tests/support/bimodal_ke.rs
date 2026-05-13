@@ -4,7 +4,7 @@ use std::error::Error;
 use std::io;
 use std::path::PathBuf;
 
-use pharmsol::{prelude::*, Parameters};
+use pharmsol::prelude::*;
 use tempfile::{tempdir, TempDir};
 
 pub const MODEL_NAME: &str = "bimodal_ke";
@@ -64,7 +64,7 @@ fn subject_for_labels(route_label: &str, output_label: &str) -> Subject {
 }
 
 pub fn subject() -> Subject {
-    subject_for_indices(0, 0)
+    subject_for_labels("iv", "cp")
 }
 
 #[cfg(any(
@@ -97,7 +97,7 @@ pub fn subject_for_runtime_model(model: &pharmsol::dsl::CompiledRuntimeModel) ->
 }
 
 pub fn reference_values() -> Result<Vec<f64>, Box<dyn Error>> {
-    let predictions = equation::ODE::new(
+    let model = equation::ODE::new(
         |x, p, _t, dx, _bolus, rateiv, _cov| {
             fetch_params!(p, ke, _v);
             dx[0] = -ke * x[0] + rateiv[0];
@@ -113,7 +113,24 @@ pub fn reference_values() -> Result<Vec<f64>, Box<dyn Error>> {
     .with_nstates(1)
     .with_ndrugs(1)
     .with_nout(1)
-    .estimate_predictions(&subject(), &Parameters::dense(SUPPORT_POINT))?;
+    .with_metadata(
+        equation::metadata::new(MODEL_NAME)
+            .parameters(["ke", "v"])
+            .states(["central"])
+            .outputs(["cp"])
+            .route(
+                equation::Route::infusion("iv")
+                    .to_state("central")
+                    .expect_explicit_input(),
+            ),
+    )
+    .expect("bimodal_ke metadata should validate");
+
+    let parameters =
+        Parameters::with_model(&model, [("ke", SUPPORT_POINT[0]), ("v", SUPPORT_POINT[1])])
+            .expect("bimodal_ke parameters should validate");
+
+    let predictions = model.estimate_predictions(&subject(), &parameters)?;
 
     Ok(predictions.flat_predictions())
 }

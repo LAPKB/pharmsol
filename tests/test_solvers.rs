@@ -7,14 +7,14 @@ use pharmsol::prelude::*;
 
 fn subject() -> Subject {
     Subject::builder("id1")
-        .bolus(0.0, 100.0, 0)
-        .infusion(12.0, 200.0, 0, 2.0)
-        .observation(0.5, 0.0, 0)
-        .observation(2.0, 0.0, 0)
-        .observation(8.0, 0.0, 0)
-        .observation(12.5, 0.0, 0)
-        .observation(14.0, 0.0, 0)
-        .observation(24.0, 0.0, 0)
+        .bolus(0.0, 100.0, "iv_bolus")
+        .infusion(12.0, 200.0, "iv", 2.0)
+        .observation(0.5, 0.0, "cp")
+        .observation(2.0, 0.0, "cp")
+        .observation(8.0, 0.0, "cp")
+        .observation(12.5, 0.0, "cp")
+        .observation(14.0, 0.0, "cp")
+        .observation(24.0, 0.0, "cp")
         .build()
 }
 
@@ -36,12 +36,29 @@ fn one_cpt(solver: OdeSolver) -> equation::ODE {
     .with_ndrugs(1)
     .with_nout(1)
     .with_solver(solver)
+    .with_metadata(
+        equation::metadata::new("solver_selection_one_cpt")
+            .parameters(["ke", "v"])
+            .states(["central"])
+            .outputs(["cp"])
+            .routes([
+                equation::Route::bolus("iv_bolus")
+                    .to_state("central")
+                    .expect_explicit_input(),
+                equation::Route::infusion("iv")
+                    .to_state("central")
+                    .expect_explicit_input(),
+            ]),
+    )
+    .expect("solver selection metadata should validate")
 }
 
 fn preds(solver: OdeSolver) -> Vec<f64> {
     let sub = subject();
-    let parameters = pharmsol::Parameters::dense([0.1, 50.0]);
-    one_cpt(solver)
+    let model = one_cpt(solver);
+    let parameters = Parameters::with_model(&model, [("ke", 0.1), ("v", 50.0)])
+        .expect("solver selection parameters should validate");
+    model
         .estimate_predictions(&sub, &parameters)
         .unwrap()
         .flat_predictions()

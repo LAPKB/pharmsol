@@ -1,5 +1,6 @@
 use std::ops::Deref;
 
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 use ndarray::Array2;
 use thiserror::Error;
 
@@ -63,11 +64,8 @@ pub struct ParameterOrder {
 }
 
 impl Parameters {
-    /// Build dense parameter values that are already in model order.
-    ///
-    /// This is the explicit manual path for already-validated dense
-    /// parameters and for handwritten models without parameter metadata.
-    pub fn dense<V>(values: V) -> Self
+    #[allow(dead_code)]
+    pub(crate) fn dense<V>(values: V) -> Self
     where
         V: Into<Vec<f64>>,
     {
@@ -127,6 +125,7 @@ impl ParameterOrder {
     }
 
     /// Reorder a dense support-point matrix whose rows are support points.
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     pub fn matrix(&self, source_values: Array2<f64>) -> Result<Array2<f64>, ParameterError> {
         if source_values.ncols() != self.width() {
             return Err(ParameterError::WidthMismatch {
@@ -269,6 +268,7 @@ impl NamedParameterModel for RuntimeSdeModel {
 mod tests {
     use super::{ParameterError, ParameterOrder, Parameters};
 
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     use ndarray::array;
 
     #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]

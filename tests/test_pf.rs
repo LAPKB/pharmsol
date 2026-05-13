@@ -6,12 +6,12 @@ use pharmsol::*;
 #[test]
 fn test_particle_filter_likelihood() {
     let subject = data::Subject::builder("id1")
-        .bolus(0.0, 20.0, 0)
-        .observation(0.2, 16.6434, 0)
-        .observation(0.4, 14.3233, 0)
-        .observation(0.6, 9.8468, 0)
-        .observation(0.8, 9.4177, 0)
-        .observation(1.0, 7.5170, 0)
+        .bolus(0.0, 20.0, "dose")
+        .observation(0.2, 16.6434, "cp")
+        .observation(0.4, 14.3233, "cp")
+        .observation(0.6, 9.8468, "cp")
+        .observation(0.8, 9.4177, "cp")
+        .observation(1.0, 7.5170, "cp")
         .build();
 
     let sde = equation::SDE::new(
@@ -32,7 +32,24 @@ fn test_particle_filter_likelihood() {
         10000,
     )
     .with_nstates(2)
+    .with_ndrugs(1)
     .with_nout(1);
+
+    let sde = sde
+        .with_metadata(
+            equation::metadata::new("particle_filter_test")
+                .kind(equation::ModelKind::Sde)
+                .parameters(["ke0"])
+                .states(["central", "ke_latent"])
+                .outputs(["cp"])
+                .route(
+                    equation::Route::bolus("dose")
+                        .to_state("central")
+                        .inject_input_to_destination(),
+                )
+                .particles(10000),
+        )
+        .expect("particle filter metadata should validate");
 
     let ems = AssayErrorModels::default()
         .add(
@@ -46,7 +63,8 @@ fn test_particle_filter_likelihood() {
     let mut likelihoods = Vec::with_capacity(NUM_RUNS);
 
     for i in 0..NUM_RUNS {
-        let parameters = Parameters::dense([1.0]);
+        let parameters = Parameters::with_model(&sde, [("ke0", 1.0)])
+            .expect("particle filter parameters should validate");
         let ll = sde
             .estimate_log_likelihood(&subject, &parameters, &ems)
             .unwrap()
