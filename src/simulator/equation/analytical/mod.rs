@@ -22,7 +22,9 @@ use super::{
     ValidatedModelMetadata,
 };
 use crate::data::error_model::AssayErrorModels;
-use crate::simulator::cache::{PredictionCache, DEFAULT_CACHE_SIZE};
+use crate::simulator::cache::{
+    BoundErrorModelCache, PredictionCache, DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE, DEFAULT_CACHE_SIZE,
+};
 use crate::PharmsolError;
 use crate::{data::Covariates, simulator::*, Observation, Parameters, Subject};
 
@@ -53,6 +55,7 @@ pub struct Analytical {
     neqs: Neqs,
     metadata: Option<ValidatedModelMetadata>,
     cache: Option<PredictionCache>,
+    error_model_cache: Option<BoundErrorModelCache>,
 }
 
 #[inline(always)]
@@ -107,6 +110,9 @@ impl Analytical {
             neqs: Neqs::default(),
             metadata: None,
             cache: Some(PredictionCache::new(DEFAULT_CACHE_SIZE)),
+            error_model_cache: Some(BoundErrorModelCache::new(
+                DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
+            )),
         }
     }
 
@@ -139,6 +145,9 @@ impl Analytical {
         let metadata = metadata.validate_for(ModelKind::Analytical)?;
         validate_metadata_dimensions(&metadata, &self.neqs)?;
         self.metadata = Some(metadata);
+        self.error_model_cache = Some(BoundErrorModelCache::new(
+            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
+        ));
         Ok(self)
     }
 
@@ -161,6 +170,9 @@ impl Analytical {
 
     fn invalidate_metadata(&mut self) {
         self.metadata = None;
+        self.error_model_cache = Some(BoundErrorModelCache::new(
+            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
+        ));
     }
 }
 
@@ -198,11 +210,17 @@ fn validate_metadata_dimensions(
 impl super::Cache for Analytical {
     fn with_cache_capacity(mut self, size: u64) -> Self {
         self.cache = Some(PredictionCache::new(size));
+        self.error_model_cache = Some(BoundErrorModelCache::new(
+            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
+        ));
         self
     }
 
     fn enable_cache(mut self) -> Self {
         self.cache = Some(PredictionCache::new(DEFAULT_CACHE_SIZE));
+        self.error_model_cache = Some(BoundErrorModelCache::new(
+            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
+        ));
         self
     }
 
@@ -210,10 +228,14 @@ impl super::Cache for Analytical {
         if let Some(cache) = &self.cache {
             cache.invalidate_all();
         }
+        if let Some(cache) = &self.error_model_cache {
+            cache.invalidate_all();
+        }
     }
 
     fn disable_cache(mut self) -> Self {
         self.cache = None;
+        self.error_model_cache = None;
         self
     }
 }
@@ -864,6 +886,10 @@ pub(crate) mod tests {
     }
 }
 impl Equation for Analytical {
+    fn bound_error_model_cache(&self) -> Option<&BoundErrorModelCache> {
+        self.error_model_cache.as_ref()
+    }
+
     fn estimate_likelihood(
         &self,
         subject: &Subject,

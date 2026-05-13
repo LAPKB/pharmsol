@@ -27,7 +27,10 @@ use crate::{
     data::error_model::AssayErrorModels,
     data::{Covariates, Infusion, InputLabel, OutputLabel},
     simulator::{
-        cache::{PredictionCache, SdeLikelihoodCache, DEFAULT_CACHE_SIZE},
+        cache::{
+            BoundErrorModelCache, PredictionCache, SdeLikelihoodCache,
+            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE, DEFAULT_CACHE_SIZE,
+        },
         equation::{
             ode::{closure_helpers::PMProblem, ExplicitRkTableau, OdeSolver, SdirkTableau},
             sde::simulate_sde_event_with,
@@ -743,6 +746,7 @@ pub struct NativeOdeModel {
     rtol: f64,
     atol: f64,
     cache: Option<PredictionCache>,
+    error_model_cache: Option<BoundErrorModelCache>,
 }
 
 #[derive(Clone, Debug)]
@@ -774,6 +778,9 @@ impl NativeOdeModel {
             rtol: DEFAULT_ODE_RTOL,
             atol: DEFAULT_ODE_ATOL,
             cache: Some(PredictionCache::new(DEFAULT_CACHE_SIZE)),
+            error_model_cache: Some(BoundErrorModelCache::new(
+                DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
+            )),
         }
     }
 
@@ -1084,11 +1091,17 @@ fn runtime_ode_predictions(
 impl crate::simulator::equation::Cache for NativeOdeModel {
     fn with_cache_capacity(mut self, size: u64) -> Self {
         self.cache = Some(PredictionCache::new(size));
+        self.error_model_cache = Some(BoundErrorModelCache::new(
+            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
+        ));
         self
     }
 
     fn enable_cache(mut self) -> Self {
         self.cache = Some(PredictionCache::new(DEFAULT_CACHE_SIZE));
+        self.error_model_cache = Some(BoundErrorModelCache::new(
+            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
+        ));
         self
     }
 
@@ -1096,10 +1109,14 @@ impl crate::simulator::equation::Cache for NativeOdeModel {
         if let Some(cache) = &self.cache {
             cache.invalidate_all();
         }
+        if let Some(cache) = &self.error_model_cache {
+            cache.invalidate_all();
+        }
     }
 
     fn disable_cache(mut self) -> Self {
         self.cache = None;
+        self.error_model_cache = None;
         self
     }
 }
@@ -1171,6 +1188,10 @@ impl EquationPriv for NativeOdeModel {
 }
 
 impl Equation for NativeOdeModel {
+    fn bound_error_model_cache(&self) -> Option<&BoundErrorModelCache> {
+        self.error_model_cache.as_ref()
+    }
+
     fn estimate_likelihood(
         &self,
         subject: &Subject,

@@ -19,7 +19,9 @@ use crate::{
 };
 
 use super::parameters_hash;
-use crate::simulator::cache::{PredictionCache, DEFAULT_CACHE_SIZE};
+use crate::simulator::cache::{
+    BoundErrorModelCache, PredictionCache, DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE, DEFAULT_CACHE_SIZE,
+};
 use crate::simulator::equation::Predictions;
 use closure::PMProblem;
 use diffsol::{
@@ -106,6 +108,7 @@ pub struct ODE {
     atol: f64,
     metadata: Option<ValidatedModelMetadata>,
     cache: Option<PredictionCache>,
+    error_model_cache: Option<BoundErrorModelCache>,
 }
 
 impl ODE {
@@ -122,6 +125,9 @@ impl ODE {
             atol: ATOL,
             metadata: None,
             cache: Some(PredictionCache::new(DEFAULT_CACHE_SIZE)),
+            error_model_cache: Some(BoundErrorModelCache::new(
+                DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
+            )),
         }
     }
 
@@ -164,6 +170,9 @@ impl ODE {
         let metadata = metadata.validate_for(ModelKind::Ode)?;
         validate_metadata_dimensions(&metadata, &self.neqs)?;
         self.metadata = Some(metadata);
+        self.error_model_cache = Some(BoundErrorModelCache::new(
+            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
+        ));
         Ok(self)
     }
 
@@ -186,6 +195,9 @@ impl ODE {
 
     fn invalidate_metadata(&mut self) {
         self.metadata = None;
+        self.error_model_cache = Some(BoundErrorModelCache::new(
+            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
+        ));
     }
 }
 
@@ -223,11 +235,17 @@ fn validate_metadata_dimensions(
 impl super::Cache for ODE {
     fn with_cache_capacity(mut self, size: u64) -> Self {
         self.cache = Some(PredictionCache::new(size));
+        self.error_model_cache = Some(BoundErrorModelCache::new(
+            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
+        ));
         self
     }
 
     fn enable_cache(mut self) -> Self {
         self.cache = Some(PredictionCache::new(DEFAULT_CACHE_SIZE));
+        self.error_model_cache = Some(BoundErrorModelCache::new(
+            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
+        ));
         self
     }
 
@@ -235,10 +253,14 @@ impl super::Cache for ODE {
         if let Some(cache) = &self.cache {
             cache.invalidate_all();
         }
+        if let Some(cache) = &self.error_model_cache {
+            cache.invalidate_all();
+        }
     }
 
     fn disable_cache(mut self) -> Self {
         self.cache = None;
+        self.error_model_cache = None;
         self
     }
 }
@@ -291,6 +313,7 @@ fn _simulate_subject_dense(
         Some(error_models) => Some(ode.bind_error_models(error_models)?),
         None => None,
     };
+    let bound_error_models = bound_error_models.as_ref().map(|models| &**models);
 
     let mut output = SubjectPredictions::new(ode.nparticles());
 
@@ -344,7 +367,7 @@ fn _simulate_subject_dense(
                     &events,
                     &parameters_v,
                     covariates,
-                    bound_error_models.as_ref(),
+                    bound_error_models,
                     &mut bolus_v,
                     &zero_bolus,
                     &zero_rateiv,
@@ -363,7 +386,7 @@ fn _simulate_subject_dense(
                     &events,
                     &parameters_v,
                     covariates,
-                    bound_error_models.as_ref(),
+                    bound_error_models,
                     &mut bolus_v,
                     &zero_bolus,
                     &zero_rateiv,
@@ -382,7 +405,7 @@ fn _simulate_subject_dense(
                     &events,
                     &parameters_v,
                     covariates,
-                    bound_error_models.as_ref(),
+                    bound_error_models,
                     &mut bolus_v,
                     &zero_bolus,
                     &zero_rateiv,
@@ -401,7 +424,7 @@ fn _simulate_subject_dense(
                     &events,
                     &parameters_v,
                     covariates,
-                    bound_error_models.as_ref(),
+                    bound_error_models,
                     &mut bolus_v,
                     &zero_bolus,
                     &zero_rateiv,
@@ -415,9 +438,7 @@ fn _simulate_subject_dense(
         }
     }
 
-    let ll = bound_error_models
-        .as_ref()
-        .map(|_| likelihood.iter().product::<f64>());
+    let ll = bound_error_models.map(|_| likelihood.iter().product::<f64>());
     Ok((output, ll))
 }
 
@@ -650,6 +671,10 @@ impl ODE {
 }
 
 impl Equation for ODE {
+    fn bound_error_model_cache(&self) -> Option<&BoundErrorModelCache> {
+        self.error_model_cache.as_ref()
+    }
+
     fn estimate_likelihood(
         &self,
         subject: &Subject,

@@ -46,7 +46,7 @@
 //! assert!(metadata.output("cp").is_some());
 //! ```
 
-use std::fmt::Debug;
+use std::{fmt::Debug, sync::Arc};
 pub mod analytical;
 pub mod metadata;
 pub mod ode;
@@ -59,8 +59,8 @@ use pharmsol_dsl::{NUMERIC_OUTPUT_PREFIX, NUMERIC_ROUTE_PREFIX};
 pub use sde::*;
 
 use crate::{
-    error_model::AssayErrorModels,
-    simulator::{Fa, Lag},
+    error_model::{AssayErrorModels, BoundAssayErrorModels},
+    simulator::{cache::BoundErrorModelCache, Fa, Lag},
     Covariates, Event, Infusion, InputLabel, Observation, Occasion, OutputLabel, Parameters,
     PharmsolError, Subject,
 };
@@ -387,10 +387,31 @@ fn canonical_numeric_alias(label: &str, prefix: &str) -> Option<String> {
 #[allow(private_bounds)]
 pub trait Equation: EquationPriv + 'static + Clone + Sync {
     #[doc(hidden)]
-    fn bind_error_models(
-        &self,
-        error_models: &AssayErrorModels,
-    ) -> Result<AssayErrorModels, PharmsolError> {
+    fn bound_error_model_cache(&self) -> Option<&BoundErrorModelCache> {
+        None
+    }
+
+    #[doc(hidden)]
+    fn bind_error_models<'a>(
+        &'a self,
+        error_models: &'a AssayErrorModels,
+    ) -> Result<BoundAssayErrorModels<'a>, PharmsolError> {
+        if let Some(cache) = self.bound_error_model_cache() {
+            let key = error_models.hash();
+            if let Some(bound_error_models) = cache.get(&key) {
+                return Ok(BoundAssayErrorModels::Shared(bound_error_models));
+            }
+
+            return match error_models.bind_to(self)? {
+                BoundAssayErrorModels::Owned(bound_error_models) => {
+                    let bound_error_models = Arc::new(bound_error_models);
+                    cache.insert(key, Arc::clone(&bound_error_models));
+                    Ok(BoundAssayErrorModels::Shared(bound_error_models))
+                }
+                bound_error_models => Ok(bound_error_models),
+            };
+        }
+
         Ok(error_models.bind_to(self)?)
     }
 
@@ -477,6 +498,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
             Some(error_models) => Some(self.bind_error_models(error_models)?),
             None => None,
         };
+        let bound_error_models = bound_error_models.as_ref().map(|models| &**models);
 
         let mut output = Self::P::new(self.nparticles());
         let mut likelihood = Vec::new();
@@ -491,7 +513,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
                     parameters,
                     event,
                     events.get(index + 1),
-                    bound_error_models.as_ref(),
+                    bound_error_models,
                     covariates,
                     &mut x,
                     &mut infusions,
@@ -500,9 +522,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
                 )?;
             }
         }
-        let ll = bound_error_models
-            .as_ref()
-            .map(|_| likelihood.iter().product::<f64>());
+        let ll = bound_error_models.map(|_| likelihood.iter().product::<f64>());
         Ok((output, ll))
     }
 

@@ -17,7 +17,10 @@ use crate::{
 };
 
 use super::parameters_hash;
-use crate::simulator::cache::{SdeLikelihoodCache, DEFAULT_CACHE_SIZE};
+use crate::simulator::cache::{
+    BoundErrorModelCache, SdeLikelihoodCache, DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
+    DEFAULT_CACHE_SIZE,
+};
 
 use diffsol::VectorCommon;
 
@@ -191,6 +194,7 @@ pub struct SDE {
     metadata: Option<ValidatedModelMetadata>,
     injected_bolus_mappings: InjectedBolusMappings,
     cache: Option<SdeLikelihoodCache>,
+    error_model_cache: Option<BoundErrorModelCache>,
 }
 
 impl SDE {
@@ -224,6 +228,9 @@ impl SDE {
             metadata: None,
             injected_bolus_mappings: InjectedBolusMappings::default(),
             cache: Some(SdeLikelihoodCache::new(DEFAULT_CACHE_SIZE)),
+            error_model_cache: Some(BoundErrorModelCache::new(
+                DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
+            )),
         }
     }
 
@@ -253,6 +260,9 @@ impl SDE {
         let metadata = metadata.validate_for_with_particles(ModelKind::Sde, self.nparticles)?;
         validate_metadata_dimensions(&metadata, &self.neqs)?;
         self.metadata = Some(metadata);
+        self.error_model_cache = Some(BoundErrorModelCache::new(
+            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
+        ));
         Ok(self)
     }
 
@@ -282,6 +292,9 @@ impl SDE {
 
     fn invalidate_metadata(&mut self) {
         self.metadata = None;
+        self.error_model_cache = Some(BoundErrorModelCache::new(
+            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
+        ));
         self.injected_bolus_mappings
             .invalidate_for_ndrugs(self.neqs.ndrugs);
     }
@@ -321,11 +334,17 @@ fn validate_metadata_dimensions(
 impl super::Cache for SDE {
     fn with_cache_capacity(mut self, size: u64) -> Self {
         self.cache = Some(SdeLikelihoodCache::new(size));
+        self.error_model_cache = Some(BoundErrorModelCache::new(
+            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
+        ));
         self
     }
 
     fn enable_cache(mut self) -> Self {
         self.cache = Some(SdeLikelihoodCache::new(DEFAULT_CACHE_SIZE));
+        self.error_model_cache = Some(BoundErrorModelCache::new(
+            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
+        ));
         self
     }
 
@@ -333,10 +352,14 @@ impl super::Cache for SDE {
         if let Some(cache) = &self.cache {
             cache.invalidate_all();
         }
+        if let Some(cache) = &self.error_model_cache {
+            cache.invalidate_all();
+        }
     }
 
     fn disable_cache(mut self) -> Self {
         self.cache = None;
+        self.error_model_cache = None;
         self
     }
 }
@@ -638,6 +661,10 @@ impl EquationPriv for SDE {
 }
 
 impl Equation for SDE {
+    fn bound_error_model_cache(&self) -> Option<&BoundErrorModelCache> {
+        self.error_model_cache.as_ref()
+    }
+
     /// Estimates the likelihood of observed data given a model and parameters.
     ///
     /// # Arguments
