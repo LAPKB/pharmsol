@@ -808,7 +808,7 @@ impl NativeOdeModel {
         subject: &Subject,
         parameters: &Parameters,
     ) -> Result<SubjectPredictions, PharmsolError> {
-        self.estimate_predictions_dense(subject, parameters.as_slice())
+        runtime_ode_predictions(self, subject, parameters.as_slice())
     }
 
     fn estimate_predictions_dense(
@@ -2333,14 +2333,20 @@ fn apply_analytical_kernel(
 mod tests {
     use super::{
         build_analytical_parameter_projection, canonical_numeric_alias,
-        project_analytical_parameters, KernelSession, NativeAnalyticalModel, NativeModelInfo,
-        NativeOutputInfo, NativeRouteInfo, RuntimeArtifact, RuntimeBackend, SharedNativeModel,
+        project_analytical_parameters, runtime_ode_predictions, BoundErrorModelCache,
+        KernelSession, NativeAnalyticalModel, NativeModelInfo, NativeOdeModel, NativeOutputInfo,
+        NativeRouteInfo, PredictionCache, RuntimeArtifact, RuntimeBackend, SharedNativeModel,
+        DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE, DEFAULT_ODE_ATOL, DEFAULT_ODE_RTOL,
         NUMERIC_OUTPUT_PREFIX, NUMERIC_ROUTE_PREFIX,
     };
-    use crate::PharmsolError;
+    use crate::{
+        data::builder::SubjectBuilderExt, dsl::CompiledRuntimeModel, dsl::RuntimePredictions,
+        prelude::SubjectPredictions, Parameters, PharmsolError, Subject,
+    };
     use diffsol::VectorHost;
     use pharmsol_dsl::execution::KernelRole;
     use pharmsol_dsl::{AnalyticalKernel, AnalyticalStructureInputKind, ModelKind, RouteKind};
+    use std::sync::Arc;
 
     #[derive(Debug)]
     struct DummyArtifact;
@@ -2420,6 +2426,26 @@ mod tests {
         project_analytical_parameters(&model.parameter_projection, support_point, derived)
             .as_slice()
             .to_vec()
+    }
+
+    fn cached_runtime_ode_model() -> NativeOdeModel {
+        NativeOdeModel {
+            shared: Arc::new(bolus_only_shared_model()),
+            solver: Default::default(),
+            rtol: DEFAULT_ODE_RTOL,
+            atol: DEFAULT_ODE_ATOL,
+            cache: Some(PredictionCache::new(1)),
+            error_model_cache: Some(BoundErrorModelCache::new(
+                DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
+            )),
+        }
+    }
+
+    fn cached_runtime_subject() -> Subject {
+        Subject::builder("runtime_cached_prediction")
+            .bolus(0.0, 100.0, "oral")
+            .missing_observation(0.5, "cp")
+            .build()
     }
 
     #[test]
@@ -2586,5 +2612,42 @@ mod tests {
         assert!(error.to_string().contains(
             "compiled analytical model `analytical_projection` has inconsistent derived metadata"
         ));
+    }
+
+    #[test]
+    fn compiled_runtime_ode_predictions_use_prefilled_cache() {
+        let model = cached_runtime_ode_model();
+        let compiled = CompiledRuntimeModel::Ode(model.clone());
+        let subject = cached_runtime_subject();
+        let parameters = Parameters::with_model(&compiled, std::iter::empty::<(&str, f64)>())
+            .expect("empty parameter list should validate");
+        let expected = SubjectPredictions::default();
+        let key = (
+            subject.hash(),
+            crate::simulator::equation::parameters_hash(parameters.as_slice()),
+        );
+
+        model
+            .cache
+            .as_ref()
+            .expect("cache should be enabled")
+            .insert(key, expected.clone());
+
+        let actual = compiled
+            .estimate_predictions(&subject, &parameters)
+            .expect("compiled runtime should use cached prediction");
+
+        match actual {
+            RuntimePredictions::Subject(predictions) => {
+                assert_eq!(predictions.flat_predictions(), expected.flat_predictions());
+            }
+            RuntimePredictions::Particles(_) => {
+                panic!("ODE runtime model should return subject predictions")
+            }
+        }
+
+        let direct = runtime_ode_predictions(&model, &subject, parameters.as_slice())
+            .expect("direct native helper should return cached prediction");
+        assert_eq!(direct.flat_predictions(), expected.flat_predictions());
     }
 }

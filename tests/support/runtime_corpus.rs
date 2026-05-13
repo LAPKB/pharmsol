@@ -568,6 +568,14 @@ pub fn estimate_runtime_predictions(
     case: CorpusCase,
     model: &CompiledRuntimeModel,
 ) -> Result<RuntimePredictions, Box<dyn Error>> {
+    let (subject, parameters) = runtime_prediction_inputs(case, model)?;
+    Ok(model.estimate_predictions(&subject, &parameters)?)
+}
+
+pub fn runtime_prediction_inputs(
+    case: CorpusCase,
+    model: &CompiledRuntimeModel,
+) -> Result<(Subject, Parameters), Box<dyn Error>> {
     if model.info().parameters.len() != case.support_point().len() {
         return Err(io::Error::other(format!(
             "{}: expected {} runtime parameter(s), got {}",
@@ -587,7 +595,7 @@ pub fn estimate_runtime_predictions(
             .map(String::as_str)
             .zip(case.support_point().iter().copied()),
     )?;
-    Ok(model.estimate_predictions(&case.runtime_subject(model)?, &parameters)?)
+    Ok((case.runtime_subject(model)?, parameters))
 }
 
 fn compare_subject_predictions(

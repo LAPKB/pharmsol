@@ -20,7 +20,7 @@ use pharmsol_dsl::{
 };
 
 /// ABI version for compiled WASM artifacts produced by this crate.
-pub const WASM_API_VERSION: u32 = 1;
+pub const WASM_API_VERSION: u32 = 2;
 /// Default entry capacity for [`WasmCompileCache`].
 pub const DEFAULT_WASM_COMPILE_CACHE_CAPACITY: usize = 32;
 

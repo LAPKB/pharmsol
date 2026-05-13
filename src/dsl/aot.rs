@@ -38,7 +38,7 @@ use pharmsol_dsl::{analyze_module, lower_typed_model, parse_module, ExecutionMod
 use pharmsol_dsl::{Diagnostic, DiagnosticReport, LoweringError, ParseError, SemanticError};
 
 /// ABI version for native AoT artifacts produced by this crate.
-pub const AOT_API_VERSION: u32 = 1;
+pub const AOT_API_VERSION: u32 = 2;
 
 #[cfg(feature = "dsl-aot")]
 /// Selects the compilation target for a native ahead-of-time artifact.
