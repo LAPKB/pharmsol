@@ -1827,7 +1827,7 @@ model analytical_mixed {
         .with_ndrugs(1)
         .with_nout(1);
 
-        let reference_support = Parameters::dense(vec![1.0, 0.15, 25.0]);
+        let reference_support = crate::parameters::dense(vec![1.0, 0.15, 25.0]);
         let reference_predictions = reference
             .estimate_predictions(&reference_subject, &reference_support)
             .expect("reference analytical predictions");

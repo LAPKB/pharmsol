@@ -515,7 +515,7 @@ pub(crate) mod tests {
             .build();
 
         let predictions = analytical
-            .estimate_predictions(&subject, &crate::Parameters::dense([1.0]))
+            .estimate_predictions(&subject, &crate::parameters::dense([1.0]))
             .unwrap();
 
         let value = predictions.predictions()[0].prediction();
@@ -549,7 +549,7 @@ pub(crate) mod tests {
             .build();
 
         let predictions = analytical
-            .estimate_predictions(&subject, &crate::Parameters::dense([0.0]))
+            .estimate_predictions(&subject, &crate::parameters::dense([0.0]))
             .unwrap();
 
         assert_eq!(predictions.predictions()[0].prediction(), 4.0);
@@ -635,10 +635,10 @@ pub(crate) mod tests {
             .build();
 
         let canonical_predictions = analytical
-            .estimate_predictions(&canonical, &crate::Parameters::dense([]))
+            .estimate_predictions(&canonical, &crate::parameters::dense([]))
             .expect("canonical labels should simulate");
         let aliased_predictions = analytical
-            .estimate_predictions(&aliased, &crate::Parameters::dense([]))
+            .estimate_predictions(&aliased, &crate::parameters::dense([]))
             .expect("raw numeric aliases should simulate");
 
         assert_relative_eq!(

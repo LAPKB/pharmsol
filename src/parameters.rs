@@ -63,15 +63,15 @@ pub struct ParameterOrder {
     plan: ParameterOrderPlan,
 }
 
-impl Parameters {
-    #[allow(dead_code)]
-    pub(crate) fn dense<V>(values: V) -> Self
-    where
-        V: Into<Vec<f64>>,
-    {
-        Self(values.into())
-    }
+#[cfg(test)]
+pub(crate) fn dense<V>(values: V) -> Parameters
+where
+    V: Into<Vec<f64>>,
+{
+    Parameters(values.into())
+}
 
+impl Parameters {
     /// Build a dense parameter vector from named values using model metadata.
     #[allow(private_bounds)]
     pub fn with_model<M, S, N>(model: &M, named_parameters: S) -> Result<Self, ParameterError>

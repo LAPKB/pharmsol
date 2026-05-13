@@ -880,10 +880,10 @@ mod tests {
             .build();
 
         let canonical_predictions = sde
-            .estimate_predictions(&canonical, &crate::Parameters::dense([]))
+            .estimate_predictions(&canonical, &crate::parameters::dense([]))
             .expect("canonical labels should simulate");
         let aliased_predictions = sde
-            .estimate_predictions(&aliased, &crate::Parameters::dense([]))
+            .estimate_predictions(&aliased, &crate::parameters::dense([]))
             .expect("raw numeric aliases should simulate");
 
         assert!(
@@ -1000,10 +1000,10 @@ mod tests {
             .build();
 
         let explicit_predictions = explicit
-            .estimate_predictions(&subject, &crate::Parameters::dense([0.0]))
+            .estimate_predictions(&subject, &crate::parameters::dense([0.0]))
             .unwrap();
         let injected_predictions = injected
-            .estimate_predictions(&subject, &crate::Parameters::dense([0.0]))
+            .estimate_predictions(&subject, &crate::parameters::dense([0.0]))
             .unwrap();
 
         assert_eq!(explicit_predictions[[0, 0]].prediction(), 0.0);
@@ -1049,10 +1049,10 @@ mod tests {
             .build();
 
         let explicit_predictions = explicit
-            .estimate_predictions(&subject, &crate::Parameters::dense([0.0]))
+            .estimate_predictions(&subject, &crate::parameters::dense([0.0]))
             .unwrap();
         let injected_predictions = injected
-            .estimate_predictions(&subject, &crate::Parameters::dense([0.0]))
+            .estimate_predictions(&subject, &crate::parameters::dense([0.0]))
             .unwrap();
 
         let explicit_prediction = explicit_predictions[[0, 0]].prediction();
@@ -1090,7 +1090,7 @@ mod tests {
             .build();
 
         let predictions = sde
-            .estimate_predictions(&subject, &crate::Parameters::dense([0.0]))
+            .estimate_predictions(&subject, &crate::parameters::dense([0.0]))
             .unwrap();
 
         assert!(sde.metadata().is_none());

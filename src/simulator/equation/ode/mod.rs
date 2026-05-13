@@ -920,7 +920,7 @@ mod tests {
         .expect("metadata attachment should validate");
 
         let predictions = ode
-            .simulate_subject(&route_policy_subject(), &crate::Parameters::dense([]), None)
+            .simulate_subject(&route_policy_subject(), &crate::parameters::dense([]), None)
             .expect("simulation should succeed")
             .0;
         let metadata = ode.metadata().expect("metadata exists");
@@ -968,7 +968,7 @@ mod tests {
         .expect("metadata attachment should validate");
 
         let predictions = ode
-            .simulate_subject(&route_policy_subject(), &crate::Parameters::dense([]), None)
+            .simulate_subject(&route_policy_subject(), &crate::parameters::dense([]), None)
             .expect("simulation should succeed")
             .0;
 
@@ -1009,11 +1009,11 @@ mod tests {
             .build();
 
         let canonical_predictions = ode
-            .simulate_subject(&canonical, &crate::Parameters::dense([]), None)
+            .simulate_subject(&canonical, &crate::parameters::dense([]), None)
             .expect("canonical labels should simulate")
             .0;
         let aliased_predictions = ode
-            .simulate_subject(&aliased, &crate::Parameters::dense([]), None)
+            .simulate_subject(&aliased, &crate::parameters::dense([]), None)
             .expect("raw numeric aliases should simulate")
             .0;
 
@@ -1053,13 +1053,13 @@ mod tests {
             .build();
 
         let first = ode
-            .estimate_predictions(&subject, &crate::Parameters::dense([]))
+            .estimate_predictions(&subject, &crate::parameters::dense([]))
             .expect("first prediction run should succeed");
         let first_calls = PREDICTION_CACHE_DIFFEQ_CALLS.load(Ordering::SeqCst);
         assert!(first_calls > 0);
 
         let second = ode
-            .estimate_predictions(&subject, &crate::Parameters::dense([]))
+            .estimate_predictions(&subject, &crate::parameters::dense([]))
             .expect("second prediction run should succeed");
         let second_calls = PREDICTION_CACHE_DIFFEQ_CALLS.load(Ordering::SeqCst);
 
