@@ -12,7 +12,7 @@ pub const OBSERVATION_TIMES: [f64; 7] = [0.5, 1.0, 2.0, 3.0, 4.0, 6.0, 8.0];
 pub const SUPPORT_POINT: [f64; 2] = [1.2, 50.0];
 
 pub const AUTHORING_DSL: &str = r#"
-model = bimodal_ke
+name = bimodal_ke
 kind = ode
 
 params = ke, v
@@ -55,6 +55,14 @@ fn subject_for_indices(route_index: usize, output_index: usize) -> Subject {
     builder.build()
 }
 
+fn subject_for_labels(route_label: &str, output_label: &str) -> Subject {
+    let mut builder = Subject::builder(MODEL_NAME).infusion(0.0, 500.0, route_label, 0.5);
+    for time in OBSERVATION_TIMES {
+        builder = builder.missing_observation(time, output_label);
+    }
+    builder.build()
+}
+
 pub fn subject() -> Subject {
     subject_for_indices(0, 0)
 }
@@ -65,12 +73,27 @@ pub fn subject() -> Subject {
     feature = "dsl-wasm"
 ))]
 pub fn subject_for_runtime_model(model: &pharmsol::dsl::CompiledRuntimeModel) -> Subject {
-    let route_index = model
-        .route_index("iv")
-        .or_else(|| model.route_index("input_0"))
-        .expect("bimodal_ke route is available");
-    let output_index = model.output_index("cp").expect("cp output is available");
-    subject_for_indices(route_index, output_index)
+    let route_label = if model.info().routes.iter().any(|route| route.name == "iv") {
+        "iv"
+    } else if model
+        .info()
+        .routes
+        .iter()
+        .any(|route| route.name == "input_0")
+    {
+        "input_0"
+    } else {
+        panic!("bimodal_ke route is available");
+    };
+    assert!(
+        model
+            .info()
+            .outputs
+            .iter()
+            .any(|output| output.name == "cp"),
+        "cp output is available"
+    );
+    subject_for_labels(route_label, "cp")
 }
 
 pub fn reference_values() -> Result<Vec<f64>, Box<dyn Error>> {

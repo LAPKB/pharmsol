@@ -8,7 +8,7 @@ A high-performance Rust library for pharmacokinetic/pharmacodynamic (PK/PD) simu
 
 ## Installation
 
-Add `pharmsol` to your `Cargo.toml`, either manually or using
+Add `pharmsol` to `Cargo.toml`:
 
 ```bash
 cargo add pharmsol
@@ -16,65 +16,72 @@ cargo add pharmsol
 
 ## Quick Start
 
-```rust
-use pharmsol::*;
+Most Rust-first workflows start with one of the equation macros: `analytical!`,
+`ode!`, or `sde!`. Here is a simple one-compartment IV infusion model using `analytical!`:
 
-// Create a subject with an IV infusion and observations
+```rust
+use pharmsol::prelude::*;
+
+let analytical = analytical! {
+    name: "one_cmt_iv",
+    params: [ke, v],
+    states: [central],
+    outputs: [cp],
+    routes: [
+        infusion(iv) -> central,
+    ],
+    structure: one_compartment,
+    out: |x, _p, _t, _cov, y| {
+        y[cp] = x[central] / v;
+    },
+};
+
 let subject = Subject::builder("patient_001")
-    .infusion(0.0, 500.0, 0, 0.5)  // 500 units over 0.5 hours
-    .observation(0.5, 1.645, 0)
-    .observation(1.0, 1.216, 0)
-    .observation(2.0, 0.462, 0)
-    .observation(4.0, 0.063, 0)
+    .infusion(0.0, 500.0, "iv", 0.5)
+    .missing_observation(0.5, "cp")
+    .missing_observation(1.0, "cp")
+    .missing_observation(2.0, "cp")
+    .missing_observation(4.0, "cp")
     .build();
 
-// Define parameters: ke (elimination rate), v (volume)
-let ke = 1.022;
-let v = 194.0;
-
-// Use the built-in one-compartment analytical solution
-let analytical = equation::Analytical::new(
-    one_compartment,
-    |_p, _t, _cov| {},
-    |_p, _t, _cov| lag! {},
-    |_p, _t, _cov| fa! {},
-    |_p, _t, _cov, _x| {},
-    |x, p, _t, _cov, y| {
-        fetch_params!(p, _ke, v);
-        y[0] = x[0] / v;  // Concentration = Amount / Volume
-    },
-    (1, 1),  // (compartments, outputs)
-);
-
-// Get predictions
-let predictions = analytical.estimate_predictions(&subject, &vec![ke, v]).unwrap();
+let predictions = analytical
+    .estimate_predictions(&subject, &[1.022, 194.0])
+    .unwrap();
 ```
 
-## ODE-Based Models
+## Modeling Surfaces
 
-For custom or complex models, define your own ODEs:
+Here is the same one-compartment IV setup written as an ODE:
 
 ```rust
-use pharmsol::*;
+use pharmsol::prelude::*;
 
-let ode = equation::ODE::new(
-    |x, p, _t, dx, _b, rateiv, _cov| {
-        fetch_params!(p, ke, _v);
-        // One-compartment model with IV infusion support
-        dx[0] = -ke * x[0] + rateiv[0];
+let ode = ode! {
+    name: "one_cmt_iv",
+    params: [ke, v],
+    states: [central],
+    outputs: [cp],
+    routes: [
+        infusion(iv) -> central,
+    ],
+    diffeq: |x, _p, _t, dx, _cov| {
+        dx[central] = -ke * x[central];
     },
-    |_p, _t, _cov| lag! {},
-    |_p, _t, _cov| fa! {},
-    |_p, _t, _cov, _x| {},
-    |x, p, _t, _cov, y| {
-        fetch_params!(p, _ke, v);
-        y[0] = x[0] / v;
+    out: |x, _p, _t, _cov, y| {
+        y[cp] = x[central] / v;
     },
-    (1, 1),
-);
+};
 ```
 
-## Supported Analytical Models
+See [examples/analytical_readme.rs](examples/analytical_readme.rs),
+[examples/ode_readme.rs](examples/ode_readme.rs),
+[examples/sde_readme.rs](examples/sde_readme.rs),
+[examples/analytical_vs_ode.rs](examples/analytical_vs_ode.rs), and
+[examples/compare_solvers.rs](examples/compare_solvers.rs). For migration-oriented notes,
+see [docs/analytical-authoring-migration.md](docs/analytical-authoring-migration.md) and
+[docs/ode-authoring-migration.md](docs/ode-authoring-migration.md).
+
+### Built-In Analytical Kernels
 
 - [x] One-compartment with IV infusion
 - [x] One-compartment with IV infusion and oral absorption
@@ -82,6 +89,21 @@ let ode = equation::ODE::new(
 - [x] Two-compartment with IV infusion and oral absorption
 - [x] Three-compartment with IV infusion
 - [x] Three-compartment with IV infusion and oral absorption
+
+## DSL and Runtime Targets
+
+If the model needs to be loaded or compiled at runtime, pharmsol also provides a DSL with
+the same broad modeling coverage: ODE, analytical, and SDE authoring. The DSL can target
+an in-process JIT runtime, native ahead-of-time artifacts, or WASM bundles depending on
+how you want to ship and execute the model.
+
+- `dsl-jit`: compile DSL source into a runtime model inside the current process.
+- `dsl-aot` and `dsl-aot-load`: emit a native artifact and load it later.
+- `dsl-wasm`: compile and execute portable WASM model artifacts.
+
+See [examples/dsl_runtime_jit.rs](examples/dsl_runtime_jit.rs) for the in-repo JIT flow.
+The companion `pharmsol-examples` crate includes end-to-end native AOT and WASM runtime
+examples.
 
 ## Performance
 
@@ -96,12 +118,12 @@ use pharmsol::prelude::*;
 use pharmsol::nca::NCAOptions;
 
 let subject = Subject::builder("patient_001")
-    .bolus(0.0, 100.0, 0)  // 100 mg oral dose
-    .observation(0.5, 5.0, 0)
-    .observation(1.0, 10.0, 0)
-    .observation(2.0, 8.0, 0)
-    .observation(4.0, 4.0, 0)
-    .observation(8.0, 2.0, 0)
+    .bolus(0.0, 100.0, "oral")  // 100 mg oral dose
+    .observation(0.5, 5.0, "cp")
+    .observation(1.0, 10.0, "cp")
+    .observation(2.0, 8.0, "cp")
+    .observation(4.0, 4.0, "cp")
+    .observation(8.0, 2.0, "cp")
     .build();
 
 let result = subject.nca(&NCAOptions::default()).expect("NCA failed");

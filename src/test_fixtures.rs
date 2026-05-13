@@ -83,7 +83,7 @@ model one_cmt_abs {
     oral -> depot
   }
   analytical {
-    kernel = one_compartment_with_absorption
+    structure = one_compartment_with_absorption
   }
   outputs {
     cp = central / v

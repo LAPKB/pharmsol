@@ -324,7 +324,9 @@ mod tests {
                 }],
                 routes: vec![NativeRouteInfo {
                     name: "iv".to_string(),
+                    declaration_index: 0,
                     index: 0,
+                    kind: None,
                     destination_offset: 1,
                     inject_input_to_destination: true,
                 }],

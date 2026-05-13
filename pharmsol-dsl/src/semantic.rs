@@ -8,7 +8,7 @@ use crate::diagnostic::{
     TextEdit, DSL_SEMANTIC_GENERIC,
 };
 use crate::ir::*;
-use crate::ModelKind;
+use crate::{ModelKind, NUMERIC_OUTPUT_PREFIX, NUMERIC_ROUTE_PREFIX, RATE_FUNCTION_NAME};
 
 const RESERVED_NAMES: &[&str] = &[
     "abs",
@@ -29,15 +29,13 @@ const RESERVED_NAMES: &[&str] = &[
     "min",
     "noise",
     "pow",
-    "rate",
+    RATE_FUNCTION_NAME,
     "round",
     "sin",
     "cos",
     "tan",
     "sqrt",
 ];
-
-const RATE_FUNCTION_NAME: &str = "rate";
 
 #[derive(Default)]
 struct SemanticAssist {
@@ -345,29 +343,30 @@ impl<'a> Analyzer<'a> {
         };
 
         let analytical = if let Some(block) = sections.analytical {
-            let kernel = AnalyticalKernel::from_name(&block.kernel.text).ok_or_else(|| {
-                SemanticError::new(
-                    format!("unknown analytical kernel `{}`", block.kernel.text),
-                    block.kernel.span,
-                )
-            })?;
+            let structure =
+                AnalyticalKernel::from_name(&block.structure.text).ok_or_else(|| {
+                    SemanticError::new(
+                        format!("unknown analytical structure `{}`", block.structure.text),
+                        block.structure.span,
+                    )
+                })?;
             let state_components = states
                 .iter()
                 .map(|state| state.size.unwrap_or(1))
                 .sum::<usize>();
-            if state_components != kernel.state_count() {
+            if state_components != structure.state_count() {
                 return Err(SemanticError::new(
                     format!(
-                        "analytical kernel `{}` expects {} state value(s), but model declares {}",
-                        block.kernel.text,
-                        kernel.state_count(),
+                        "analytical structure `{}` expects {} state value(s), but model declares {}",
+                        block.structure.text,
+                        structure.state_count(),
                         state_components
                     ),
-                    block.kernel.span,
+                    block.structure.span,
                 ));
             }
             Some(TypedAnalytical {
-                kernel,
+                structure,
                 span: block.span,
             })
         } else {
@@ -571,6 +570,7 @@ impl<'a> Analyzer<'a> {
         let mut routes = Vec::new();
         if let Some(block) = block {
             for route in &block.routes {
+                self.validate_route_label_name(&route.input)?;
                 let id = self.insert_global_symbol(
                     &route.input.text,
                     SymbolKind::Route,
@@ -624,6 +624,7 @@ impl<'a> Analyzer<'a> {
                 }
                 routes.push(TypedRoute {
                     symbol: id,
+                    kind: route.kind,
                     destination,
                     properties,
                     span: route.span,
@@ -647,6 +648,9 @@ impl<'a> Analyzer<'a> {
         collect_bare_assignment_names(statements, &mut seen, &mut collected_idents);
         let mut symbols = Vec::new();
         for ident in collected_idents {
+            if matches!(kind, SymbolKind::Output) {
+                self.validate_output_label_name(&ident)?;
+            }
             let id = self.insert_global_symbol(
                 &ident.text,
                 kind,
@@ -1306,7 +1310,7 @@ impl<'a> Analyzer<'a> {
         span: Span,
         env: &BlockEnv,
     ) -> Result<TypedExpr, SemanticError> {
-        if callee.text == "rate" {
+        if callee.text == RATE_FUNCTION_NAME {
             if args.len() != 1 {
                 return Err(SemanticError::new(
                     format!(
@@ -1316,12 +1320,18 @@ impl<'a> Analyzer<'a> {
                     callee.span,
                 ));
             }
+            if let syntax::ExprKind::Number(value) = &args[0].kind {
+                if let Some(suffix) = numeric_label_literal_suffix(*value) {
+                    return Err(self.bare_numeric_route_error(args[0].span, &suffix));
+                }
+            }
             let syntax::ExprKind::Name(route_name) = &args[0].kind else {
                 return Err(SemanticError::new(
                     "`rate` expects a route identifier argument",
                     args[0].span,
                 ));
             };
+            self.validate_route_label_name(route_name)?;
             let route = self
                 .globals
                 .routes
@@ -1561,7 +1571,7 @@ impl<'a> Analyzer<'a> {
                 })
             }
             syntax::ExprKind::Call { callee, args } => {
-                if callee.text == "rate" {
+                if callee.text == RATE_FUNCTION_NAME {
                     return Err(SemanticError::new(
                         "`rate(...)` cannot appear in a compile-time expression",
                         callee.span,
@@ -1615,29 +1625,32 @@ impl<'a> Analyzer<'a> {
                     span,
                 )));
         }
-        if let Some(existing) = self.globals.all_names.get(name) {
-            return Err(SemanticAssist::default()
-                .context_label(
-                    self.symbol_span(*existing),
-                    self.symbol_declared_here(*existing),
-                )
-                .help(format!(
-                    "rename this declaration to a unique name such as `{}_2`",
-                    name
-                ))
-                .replacement_suggestion(
-                    span,
-                    format!("{}_2", name),
-                    format!("rename this declaration to `{}_2`", name),
-                    Applicability::MaybeIncorrect,
-                )
-                .apply(SemanticError::new(
-                    format!(
-                        "symbol name `{name}` collides with existing `{}`",
-                        self.symbol_name(*existing)
-                    ),
-                    span,
-                )));
+        if let Some(existing) = self.globals.all_names.get(name).copied() {
+            let existing_kind = self.symbols.get(existing).expect("valid symbol id").kind;
+            if !allows_route_output_name_overlap(existing_kind, kind) {
+                return Err(SemanticAssist::default()
+                    .context_label(
+                        self.symbol_span(existing),
+                        self.symbol_declared_here(existing),
+                    )
+                    .help(format!(
+                        "rename this declaration to a unique name such as `{}_2`",
+                        name
+                    ))
+                    .replacement_suggestion(
+                        span,
+                        format!("{}_2", name),
+                        format!("rename this declaration to `{}_2`", name),
+                        Applicability::MaybeIncorrect,
+                    )
+                    .apply(SemanticError::new(
+                        format!(
+                            "symbol name `{name}` collides with existing `{}`",
+                            self.symbol_name(existing)
+                        ),
+                        span,
+                    )));
+            }
         }
         let id = self.symbols.len();
         self.symbols.push(PendingSymbol {
@@ -1647,8 +1660,102 @@ impl<'a> Analyzer<'a> {
             ty,
             span,
         });
-        self.globals.all_names.insert(name.to_string(), id);
+        self.globals.all_names.entry(name.to_string()).or_insert(id);
         Ok(id)
+    }
+
+    fn validate_route_label_name(&self, label: &syntax::Ident) -> Result<(), SemanticError> {
+        if let Some(suffix) = bare_numeric_label(&label.text) {
+            return Err(self.bare_numeric_route_error(label.span, suffix));
+        }
+        if let Some(suffix) = canonical_numeric_suffix(&label.text, NUMERIC_OUTPUT_PREFIX) {
+            return Err(self.wrong_prefix_route_error(label, suffix));
+        }
+        Ok(())
+    }
+
+    fn validate_output_label_name(&self, label: &syntax::Ident) -> Result<(), SemanticError> {
+        if let Some(suffix) = bare_numeric_label(&label.text) {
+            return Err(self.bare_numeric_output_error(label.span, suffix));
+        }
+        if let Some(suffix) = canonical_numeric_suffix(&label.text, NUMERIC_ROUTE_PREFIX) {
+            return Err(self.wrong_prefix_output_error(label, suffix));
+        }
+        Ok(())
+    }
+
+    fn bare_numeric_route_error(&self, span: Span, suffix: &str) -> SemanticError {
+        let replacement = format!("{NUMERIC_ROUTE_PREFIX}{suffix}");
+        SemanticAssist::default()
+            .help("numeric route labels must use the `input_<n>` form in authored DSL")
+            .replacement_suggestion(
+                span,
+                replacement.clone(),
+                format!("use `{replacement}`"),
+                Applicability::Always,
+            )
+            .apply(SemanticError::new(
+                format!(
+                    "bare numeric route labels are not allowed in the DSL; use `{replacement}` instead"
+                ),
+                span,
+            ))
+    }
+
+    fn bare_numeric_output_error(&self, span: Span, suffix: &str) -> SemanticError {
+        let replacement = format!("{NUMERIC_OUTPUT_PREFIX}{suffix}");
+        SemanticAssist::default()
+            .help("numeric output labels must use the `outeq_<n>` form in authored DSL")
+            .replacement_suggestion(
+                span,
+                replacement.clone(),
+                format!("use `{replacement}`"),
+                Applicability::Always,
+            )
+            .apply(SemanticError::new(
+                format!(
+                    "bare numeric output labels are not allowed in the DSL; use `{replacement}` instead"
+                ),
+                span,
+            ))
+    }
+
+    fn wrong_prefix_route_error(&self, label: &syntax::Ident, suffix: &str) -> SemanticError {
+        let replacement = format!("{NUMERIC_ROUTE_PREFIX}{suffix}");
+        SemanticAssist::default()
+            .help("numeric route labels use the `input_<n>` prefix")
+            .replacement_suggestion(
+                label.span,
+                replacement.clone(),
+                format!("use `{replacement}`"),
+                Applicability::Always,
+            )
+            .apply(SemanticError::new(
+                format!(
+                    "`{}` is an output label and cannot be used as a route; use `{replacement}` here",
+                    label.text
+                ),
+                label.span,
+            ))
+    }
+
+    fn wrong_prefix_output_error(&self, label: &syntax::Ident, suffix: &str) -> SemanticError {
+        let replacement = format!("{NUMERIC_OUTPUT_PREFIX}{suffix}");
+        SemanticAssist::default()
+            .help("numeric output labels use the `outeq_<n>` prefix")
+            .replacement_suggestion(
+                label.span,
+                replacement.clone(),
+                format!("use `{replacement}`"),
+                Applicability::Always,
+            )
+            .apply(SemanticError::new(
+                format!(
+                    "`{}` is a route label and cannot be used as an output target; use `{replacement}` here",
+                    label.text
+                ),
+                label.span,
+            ))
     }
 
     fn insert_local_symbol(
@@ -2128,6 +2235,27 @@ impl<'a> Analyzer<'a> {
         }
         Ok(())
     }
+}
+
+fn allows_route_output_name_overlap(existing: SymbolKind, new: SymbolKind) -> bool {
+    matches!(
+        (existing, new),
+        (SymbolKind::Route, SymbolKind::Output) | (SymbolKind::Output, SymbolKind::Route)
+    )
+}
+
+fn bare_numeric_label(src: &str) -> Option<&str> {
+    (!src.is_empty() && src.chars().all(|ch| ch.is_ascii_digit())).then_some(src)
+}
+
+fn canonical_numeric_suffix<'a>(src: &'a str, prefix: &str) -> Option<&'a str> {
+    let suffix = src.strip_prefix(prefix)?;
+    (!suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit())).then_some(suffix)
+}
+
+fn numeric_label_literal_suffix(value: f64) -> Option<String> {
+    (value.is_finite() && value >= 0.0 && value.fract() == 0.0 && value <= usize::MAX as f64)
+        .then(|| (value as usize).to_string())
 }
 
 #[derive(Default)]
@@ -2651,6 +2779,7 @@ mod tests {
     use crate::test_fixtures::{
         RECOMMENDED_STYLE_AUTHORING, RECOMMENDED_STYLE_CANONICAL, STRUCTURED_BLOCK_CORPUS,
     };
+    use crate::RouteKind;
     use crate::{parse_model, parse_module};
 
     #[test]
@@ -2667,7 +2796,7 @@ mod tests {
 
         let analytical = &typed.models[2];
         assert!(matches!(
-            analytical.analytical.as_ref().map(|value| value.kernel),
+            analytical.analytical.as_ref().map(|value| value.structure),
             Some(AnalyticalKernel::OneCompartmentWithAbsorption)
         ));
 
@@ -2691,7 +2820,7 @@ mod tests {
     }
 
     #[test]
-    fn authoring_fixture_lowers_to_equivalent_typed_ir() {
+    fn authoring_fixture_preserves_route_kind_while_remaining_equivalent() {
         let authoring_surface = RECOMMENDED_STYLE_AUTHORING;
         let canonical = RECOMMENDED_STYLE_CANONICAL;
 
@@ -2705,6 +2834,8 @@ mod tests {
             typed_model_signature(&authoring_typed),
             typed_model_signature(&canonical_typed)
         );
+        assert_eq!(authoring_typed.routes[0].kind, Some(RouteKind::Bolus));
+        assert_eq!(canonical_typed.routes[0].kind, None);
     }
 
     #[test]
@@ -2977,7 +3108,7 @@ model broken {
         lines.push(format!("particles:{:?}", model.particles));
         lines.push(format!(
             "analytical:{:?}",
-            model.analytical.as_ref().map(|value| value.kernel)
+            model.analytical.as_ref().map(|value| value.structure)
         ));
         lines.push(format!(
             "derive:{}",

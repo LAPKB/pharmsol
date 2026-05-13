@@ -83,7 +83,7 @@ model one_cmt_abs {
     oral -> depot
   }
   analytical {
-    kernel = one_compartment_with_absorption
+    structure = one_compartment_with_absorption
   }
   outputs {
     cp = central / v
@@ -132,7 +132,7 @@ model vanco_sde {
 }
 "#;
 
-pub(crate) const RECOMMENDED_STYLE_AUTHORING: &str = r#"model = recommended_style
+pub(crate) const RECOMMENDED_STYLE_AUTHORING: &str = r#"name = recommended_style
 kind = ode
 
 params = ka, ke, v

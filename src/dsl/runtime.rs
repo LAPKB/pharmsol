@@ -1,3 +1,82 @@
+//! Unified runtime entrypoints for DSL-backed models.
+//!
+//! Use this module when you already know you want an executable model and need
+//! one backend-neutral surface for compile, load, and prediction workflows.
+//! It normalizes the backend-specific JIT, native AoT, and WASM entrypoints so
+//! callers can choose a deployment target without rewriting the downstream
+//! prediction code.
+//!
+//! Use the backend modules directly only when you need a backend-specific
+//! artifact or compile control:
+//!
+//! - [`super::jit`] for direct in-process JIT compilation.
+//! - [`compile_module_source_to_aot`][crate::dsl::compile_module_source_to_aot] for native artifact export and reload.
+//! - [`compile_module_source_to_wasm_bytes`][crate::dsl::compile_module_source_to_wasm_bytes] and [`load_runtime_wasm_bytes`] for portable WASM bytes,
+//!   browser-loader assets, and host-side WASM loading.
+//!
+//! Main entrypoints:
+//!
+//! - [`compile_module_source_to_runtime`] for the one-stop source-to-runtime
+//!   path.
+//! - [`compile_execution_model_to_runtime`] when you already have an
+//!   [`ExecutionModel`](pharmsol_dsl::ExecutionModel).
+//! - [`load_runtime_artifact`] and [`load_runtime_wasm_bytes`] when the model
+//!   has already been compiled and stored elsewhere.
+//! - [`CompiledRuntimeModel::estimate_predictions`] for backend-neutral
+//!   execution against a [`Subject`](crate::Subject).
+//!
+//! Backend choice guide:
+//!
+//! - [`RuntimeCompilationTarget::Jit`] keeps compilation and execution inside
+//!   the current process. Use it for native interactive workflows and tests.
+//! - [`RuntimeCompilationTarget::NativeAot`] emits a native artifact and reloads
+//!   it into the same runtime model shape. Use it when you want reusable native
+//!   artifacts and can control the target platform.
+//! - [`RuntimeCompilationTarget::Wasm`] emits portable WASM bytes and reloads
+//!   them into the host-side runtime adapter. Choose this target when you need a portable
+//!   artifact or browser-aligned deployment story.
+//!
+//! Smallest compile-and-run example:
+//!
+//! This example requires `dsl-jit`.
+//!
+//! ```rust,no_run
+//! use pharmsol::dsl::{compile_module_source_to_runtime, RuntimeCompilationTarget};
+//! use pharmsol::prelude::*;
+//!
+//! let source = r#"
+//! name = bimodal_ke
+//! kind = ode
+//!
+//! params = ke, v
+//! states = central
+//! outputs = cp
+//!
+//! infusion(iv) -> central
+//!
+//! dx(central) = -ke * central
+//! out(cp) = central / v
+//! "#;
+//!
+//! let model = compile_module_source_to_runtime(
+//!     source,
+//!     Some("bimodal_ke"),
+//!     RuntimeCompilationTarget::Jit,
+//!     |_, _| {},
+//! )?;
+//!
+//! let subject = Subject::builder("patient_001")
+//!     .infusion(0.0, 500.0, "iv", 0.5)
+//!     .missing_observation(0.5, "cp")
+//!     .missing_observation(1.0, "cp")
+//!     .missing_observation(2.0, "cp")
+//!     .build();
+//!
+//! let predictions = model.estimate_predictions(&subject, &[1.2, 50.0])?;
+//! assert!(predictions.as_subject().is_some());
+//! # Ok::<(), pharmsol::dsl::RuntimeError>(())
+//! ```
+
 use std::fmt;
 use std::path::Path;
 
@@ -39,24 +118,39 @@ pub type RuntimeOdeModel = NativeOdeModel;
 pub type RuntimeAnalyticalModel = NativeAnalyticalModel;
 pub type RuntimeSdeModel = NativeSdeModel;
 
+/// Selects which backend should produce the executable runtime model.
+///
+/// This enum is the main backend-switching point for
+/// [`compile_module_source_to_runtime`] and
+/// [`compile_execution_model_to_runtime`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeCompilationTarget {
+    /// Compile and execute the model inside the current native process.
     #[cfg(feature = "dsl-jit")]
     Jit,
+    /// Export a native artifact and reload it as a runtime model.
     #[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]
     NativeAot(NativeAotCompileOptions),
+    /// Emit WASM bytes and reload them through the host-side WASM runtime.
     #[cfg(feature = "dsl-wasm")]
     Wasm,
 }
 
+/// Identifies the on-disk artifact format for [`load_runtime_artifact`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeArtifactFormat {
+    /// A native ahead-of-time artifact produced by the AoT compiler.
     #[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]
     NativeAot,
+    /// A WASM artifact produced by the WASM compiler.
     #[cfg(feature = "dsl-wasm")]
     Wasm,
 }
 
+/// Backend-neutral prediction output from a compiled runtime model.
+///
+/// ODE and analytical models return subject predictions. SDE models return the
+/// particle matrix used by the stochastic workflow.
 #[derive(Clone, Debug)]
 pub enum RuntimePredictions {
     Subject(SubjectPredictions),
@@ -93,6 +187,10 @@ impl RuntimePredictions {
     }
 }
 
+/// Executable runtime model returned by the backend-neutral runtime surface.
+///
+/// This type hides the concrete backend and keeps the prediction entrypoint the
+/// same across JIT, native AoT, and WASM-based flows.
 #[derive(Clone, Debug)]
 pub enum CompiledRuntimeModel {
     Ode(RuntimeOdeModel),
@@ -131,22 +229,6 @@ impl CompiledRuntimeModel {
         self.info().kind
     }
 
-    pub fn route_index(&self, name: &str) -> Option<usize> {
-        match self {
-            Self::Ode(model) => model.route_index(name),
-            Self::Analytical(model) => model.route_index(name),
-            Self::Sde(model) => model.route_index(name),
-        }
-    }
-
-    pub fn output_index(&self, name: &str) -> Option<usize> {
-        match self {
-            Self::Ode(model) => model.output_index(name),
-            Self::Analytical(model) => model.output_index(name),
-            Self::Sde(model) => model.output_index(name),
-        }
-    }
-
     pub fn estimate_predictions(
         &self,
         subject: &Subject,
@@ -166,6 +248,8 @@ impl CompiledRuntimeModel {
     }
 }
 
+/// Errors produced while parsing, lowering, compiling, loading, or executing a
+/// runtime DSL model.
 #[derive(Error)]
 pub enum RuntimeError {
     #[error("failed to parse DSL source: {0}")]
@@ -231,6 +315,10 @@ impl fmt::Debug for RuntimeError {
     }
 }
 
+/// Parse, analyze, lower, compile, and return a runtime model in one step.
+///
+/// Use this when your input is DSL source text and you want the shortest path
+/// from source to predictions.
 pub fn compile_module_source_to_runtime(
     source: &str,
     model_name: Option<&str>,
@@ -269,6 +357,10 @@ pub fn compile_module_source_to_runtime(
     })
 }
 
+/// Compile a lowered execution model to a selected runtime backend.
+///
+/// Use this when you already own the frontend pipeline and only need the final
+/// backend step.
 pub fn compile_execution_model_to_runtime(
     model: &ExecutionModel,
     target: RuntimeCompilationTarget,
@@ -309,6 +401,7 @@ pub fn compile_execution_model_to_runtime(
     }
 }
 
+/// Load a previously compiled native AoT or WASM artifact from disk.
 pub fn load_runtime_artifact(
     path: impl AsRef<Path>,
     format: RuntimeArtifactFormat,
@@ -330,6 +423,7 @@ pub fn load_runtime_artifact(
 }
 
 #[cfg(feature = "dsl-wasm")]
+/// Compile DSL source straight to a host-side runtime model via the WASM path.
 pub fn compile_module_source_to_runtime_wasm(
     source: &str,
     model_name: Option<&str>,
@@ -339,6 +433,8 @@ pub fn compile_module_source_to_runtime_wasm(
 }
 
 #[cfg(feature = "dsl-wasm")]
+/// Compile a lowered execution model straight to a host-side runtime model via
+/// the WASM path.
 pub fn compile_execution_model_to_runtime_wasm(
     model: &ExecutionModel,
 ) -> Result<CompiledRuntimeModel, RuntimeError> {
@@ -347,6 +443,7 @@ pub fn compile_execution_model_to_runtime_wasm(
 }
 
 #[cfg(feature = "dsl-wasm")]
+/// Load a runtime model from in-memory WASM bytes.
 pub fn load_runtime_wasm_bytes(bytes: &[u8]) -> Result<CompiledRuntimeModel, RuntimeError> {
     let (info, artifact) = load_wasm_artifact_bytes(bytes)?;
     Ok(runtime_model_from_parts(info, artifact))
@@ -377,10 +474,109 @@ mod tests {
     use super::*;
     use crate::dsl::compile_sde_model_to_jit;
     use crate::test_fixtures::STRUCTURED_BLOCK_CORPUS;
+    use crate::PharmsolError;
     use crate::SubjectBuilderExt;
     use approx::assert_relative_eq;
-    use pharmsol_dsl::{DiagnosticPhase, DSL_BACKEND_GENERIC, DSL_PARSE_GENERIC};
+    use pharmsol_dsl::{DiagnosticPhase, RouteKind, DSL_BACKEND_GENERIC, DSL_PARSE_GENERIC};
     use tempfile::tempdir;
+
+    const MULTI_DIGIT_OUTPUT_ORDER_RUNTIME_DSL: &str = r#"
+name = multi_digit_output_runtime
+kind = ode
+
+params = ke, v
+states = central
+outputs = outeq_2, outeq_10, outeq_11
+
+infusion(iv) -> central
+
+dx(central) = -ke * central
+
+out(outeq_10) = central / v ~ continuous()
+out(outeq_2) = central / v ~ continuous()
+out(outeq_11) = central / v ~ continuous()
+"#;
+
+    const NUMERIC_ROUTE_LABELS_RUNTIME_DSL: &str = r#"
+name = prefixed_numeric_route_runtime
+kind = ode
+
+params = ke, v
+states = central
+outputs = cp
+
+bolus(input_10) -> central
+bolus(input_11) -> central
+
+dx(central) = -ke * central
+
+out(cp) = central / v ~ continuous()
+"#;
+
+    const SHARED_NUMERIC_ROUTE_OUTPUT_LABEL_RUNTIME_DSL: &str = r#"
+name = prefixed_numeric_route_output_runtime
+kind = ode
+
+params = ke, v
+states = central
+outputs = outeq_1
+
+infusion(input_1) -> central
+
+dx(central) = -ke * central
+
+out(outeq_1) = central / v ~ continuous()
+"#;
+
+    const UNDECLARED_NUMERIC_OUTPUT_LABEL_RUNTIME_DSL: &str = r#"
+name = undeclared_numeric_output_runtime
+kind = ode
+
+params = ke, v
+states = central
+outputs = a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10
+
+infusion(iv) -> central
+
+dx(central) = -ke * central
+
+out(a0) = central / v ~ continuous()
+out(a1) = central / v ~ continuous()
+out(a2) = central / v ~ continuous()
+out(a3) = central / v ~ continuous()
+out(a4) = central / v ~ continuous()
+out(a5) = central / v ~ continuous()
+out(a6) = central / v ~ continuous()
+out(a7) = central / v ~ continuous()
+out(a8) = central / v ~ continuous()
+out(a9) = central / v ~ continuous()
+out(a10) = central / v ~ continuous()
+"#;
+
+    const UNDECLARED_NUMERIC_INPUT_LABEL_RUNTIME_DSL: &str = r#"
+name = undeclared_numeric_input_runtime
+kind = ode
+
+params = ke, v
+states = central
+outputs = cp
+
+bolus(r0) -> central
+bolus(r1) -> central
+bolus(r2) -> central
+bolus(r3) -> central
+bolus(r4) -> central
+bolus(r5) -> central
+bolus(r6) -> central
+bolus(r7) -> central
+bolus(r8) -> central
+bolus(r9) -> central
+bolus(r10) -> central
+
+dx(central) = -ke * central
+
+out(cp) = central / v ~ continuous()
+"#;
 
     fn corpus_source() -> &'static str {
         STRUCTURED_BLOCK_CORPUS
@@ -397,17 +593,17 @@ mod tests {
         pharmsol_dsl::lower_typed_model(model).expect("lower corpus model")
     }
 
-    fn ode_subject(output: usize, oral: usize, iv: usize) -> Subject {
+    fn ode_subject() -> Subject {
         Subject::builder("ode")
             .covariate("wt", 0.0, 70.0)
-            .bolus(0.0, 120.0, oral)
-            .infusion(6.0, 60.0, iv, 2.0)
-            .missing_observation(0.5, output)
-            .missing_observation(1.0, output)
-            .missing_observation(2.0, output)
-            .missing_observation(6.0, output)
-            .missing_observation(7.0, output)
-            .missing_observation(9.0, output)
+            .bolus(0.0, 120.0, "oral")
+            .infusion(6.0, 60.0, "iv", 2.0)
+            .missing_observation(0.5, "cp")
+            .missing_observation(1.0, "cp")
+            .missing_observation(2.0, "cp")
+            .missing_observation(6.0, "cp")
+            .missing_observation(7.0, "cp")
+            .missing_observation(9.0, "cp")
             .build()
     }
 
@@ -419,6 +615,155 @@ mod tests {
             .iter()
             .map(|prediction| prediction.prediction())
             .collect()
+    }
+
+    fn compile_runtime_backend_matrix(
+        source: &str,
+        model_name: &str,
+        work_dir: &std::path::Path,
+    ) -> (
+        CompiledRuntimeModel,
+        CompiledRuntimeModel,
+        CompiledRuntimeModel,
+    ) {
+        let jit = compile_module_source_to_runtime(
+            source,
+            Some(model_name),
+            RuntimeCompilationTarget::Jit,
+            |_, _| {},
+        )
+        .expect("compile jit runtime model");
+        let aot = compile_module_source_to_runtime(
+            source,
+            Some(model_name),
+            RuntimeCompilationTarget::NativeAot(
+                NativeAotCompileOptions::new(work_dir.join(format!("{model_name}-aot-build")))
+                    .with_output(work_dir.join(format!("{model_name}.pkm"))),
+            ),
+            |_, _| {},
+        )
+        .expect("compile aot runtime model");
+        let wasm = compile_module_source_to_runtime(
+            source,
+            Some(model_name),
+            RuntimeCompilationTarget::Wasm,
+            |_, _| {},
+        )
+        .expect("compile wasm runtime model");
+
+        (jit, aot, wasm)
+    }
+
+    fn compiled_route_input_index(model: &CompiledRuntimeModel, name: &str) -> Option<usize> {
+        model
+            .info()
+            .routes
+            .iter()
+            .find(|route| route.name == name)
+            .map(|route| route.index)
+    }
+
+    fn compiled_output_slot_index(model: &CompiledRuntimeModel, name: &str) -> Option<usize> {
+        model
+            .info()
+            .outputs
+            .iter()
+            .find(|output| output.name == name)
+            .map(|output| output.index)
+    }
+
+    fn numeric_route_subject() -> Subject {
+        Subject::builder("numeric-route-runtime")
+            .bolus(0.0, 120.0, "input_10")
+            .bolus(1.0, 80.0, "input_11")
+            .missing_observation(0.5, "cp")
+            .missing_observation(1.5, "cp")
+            .build()
+    }
+
+    fn numeric_route_alias_subject() -> Subject {
+        Subject::builder("numeric-route-runtime-alias")
+            .bolus(0.0, 120.0, "10")
+            .bolus(1.0, 80.0, "11")
+            .missing_observation(0.5, "cp")
+            .missing_observation(1.5, "cp")
+            .build()
+    }
+
+    fn shared_numeric_route_output_subject() -> Subject {
+        Subject::builder("prefixed-numeric-route-output-runtime")
+            .infusion(0.0, 120.0, "input_1", 1.0)
+            .missing_observation(0.5, "outeq_1")
+            .missing_observation(1.5, "outeq_1")
+            .build()
+    }
+
+    fn shared_numeric_route_output_alias_subject() -> Subject {
+        Subject::builder("raw-numeric-route-output-runtime")
+            .infusion(0.0, 120.0, "1", 1.0)
+            .missing_observation(0.5, "1")
+            .missing_observation(1.5, "1")
+            .build()
+    }
+
+    fn mismatched_route_kind_subject() -> Subject {
+        Subject::builder("mismatched-route-kind-runtime")
+            .infusion(0.0, 120.0, "10", 1.0)
+            .missing_observation(0.5, "cp")
+            .build()
+    }
+
+    fn assert_unknown_output_label(
+        model: &CompiledRuntimeModel,
+        subject: &Subject,
+        support: &[f64],
+        expected_label: &str,
+    ) {
+        let error = model
+            .estimate_predictions(subject, support)
+            .expect_err("undeclared numeric output label should fail");
+
+        assert!(matches!(
+            error,
+            RuntimeError::Runtime(PharmsolError::UnknownOutputLabel { label }) if label == expected_label
+        ));
+    }
+
+    fn assert_unknown_input_label(
+        model: &CompiledRuntimeModel,
+        subject: &Subject,
+        support: &[f64],
+        expected_label: &str,
+    ) {
+        let error = model
+            .estimate_predictions(subject, support)
+            .expect_err("undeclared numeric input label should fail");
+
+        assert!(matches!(
+            error,
+            RuntimeError::Runtime(PharmsolError::UnknownInputLabel { label }) if label == expected_label
+        ));
+    }
+
+    fn assert_unsupported_input_route_kind(
+        model: &CompiledRuntimeModel,
+        subject: &Subject,
+        support: &[f64],
+        expected_input: usize,
+        expected_kind: RouteKind,
+    ) {
+        let error = model
+            .estimate_predictions(subject, support)
+            .expect_err("mismatched route kind should fail");
+
+        match error {
+            RuntimeError::Runtime(PharmsolError::UnsupportedInputRouteKind { input, kind })
+                if input == expected_input && kind == expected_kind => {}
+            other => panic!(
+                "expected UnsupportedInputRouteKind {{ input: {expected_input}, kind: {:?} }}, got {other:?}",
+                expected_kind
+            ),
+        }
     }
 
     #[test]
@@ -460,10 +805,10 @@ mod tests {
             vec!["ka", "cl", "v", "tlag", "f_oral"]
         );
 
-        let oral = jit.route_index("oral").expect("oral route");
-        let iv = jit.route_index("iv").expect("iv route");
-        let cp = jit.output_index("cp").expect("cp output");
-        let subject = ode_subject(cp, oral, iv);
+        assert!(compiled_route_input_index(&jit, "oral").is_some());
+        assert!(compiled_route_input_index(&jit, "iv").is_some());
+        assert_eq!(compiled_output_slot_index(&jit, "cp"), Some(0));
+        let subject = ode_subject();
 
         let jit_values = subject_values(
             &jit.estimate_predictions(&subject, &support)
@@ -487,6 +832,247 @@ mod tests {
             assert_relative_eq!(jit_value, aot_value, max_relative = 1e-4);
             assert_relative_eq!(jit_value, wasm_value, max_relative = 1e-4);
         }
+    }
+
+    #[test]
+    fn runtime_backend_matrix_reports_route_kind_mismatch() {
+        let work_dir = tempdir().expect("tempdir");
+        let support = vec![0.2, 10.0];
+        let subject = mismatched_route_kind_subject();
+
+        let (jit, aot, wasm) = compile_runtime_backend_matrix(
+            NUMERIC_ROUTE_LABELS_RUNTIME_DSL,
+            "prefixed_numeric_route_runtime",
+            work_dir.path(),
+        );
+        let expected_input =
+            compiled_route_input_index(&jit, "input_10").expect("input_10 route index");
+
+        for model in [&jit, &aot, &wasm] {
+            assert_unsupported_input_route_kind(
+                model,
+                &subject,
+                &support,
+                expected_input,
+                RouteKind::Infusion,
+            );
+        }
+    }
+
+    #[test]
+    fn runtime_backend_matrix_preserves_multi_digit_output_label_order() {
+        let work_dir = tempdir().expect("tempdir");
+        let (jit, aot, wasm) = compile_runtime_backend_matrix(
+            MULTI_DIGIT_OUTPUT_ORDER_RUNTIME_DSL,
+            "multi_digit_output_runtime",
+            work_dir.path(),
+        );
+
+        assert_eq!(compiled_output_slot_index(&jit, "outeq_2"), Some(0));
+        assert_eq!(compiled_output_slot_index(&jit, "outeq_10"), Some(1));
+        assert_eq!(compiled_output_slot_index(&jit, "outeq_11"), Some(2));
+        assert_eq!(compiled_output_slot_index(&aot, "outeq_2"), Some(0));
+        assert_eq!(compiled_output_slot_index(&aot, "outeq_10"), Some(1));
+        assert_eq!(compiled_output_slot_index(&aot, "outeq_11"), Some(2));
+        assert_eq!(compiled_output_slot_index(&wasm, "outeq_2"), Some(0));
+        assert_eq!(compiled_output_slot_index(&wasm, "outeq_10"), Some(1));
+        assert_eq!(compiled_output_slot_index(&wasm, "outeq_11"), Some(2));
+    }
+
+    #[test]
+    fn runtime_backend_matrix_supports_prefixed_multi_digit_numeric_route_labels() {
+        let work_dir = tempdir().expect("tempdir");
+        let support = vec![0.2, 10.0];
+        let (jit, aot, wasm) = compile_runtime_backend_matrix(
+            NUMERIC_ROUTE_LABELS_RUNTIME_DSL,
+            "prefixed_numeric_route_runtime",
+            work_dir.path(),
+        );
+
+        assert_eq!(compiled_route_input_index(&jit, "input_10"), Some(0));
+        assert_eq!(compiled_route_input_index(&jit, "input_11"), Some(1));
+        assert_eq!(compiled_route_input_index(&aot, "input_10"), Some(0));
+        assert_eq!(compiled_route_input_index(&aot, "input_11"), Some(1));
+        assert_eq!(compiled_route_input_index(&wasm, "input_10"), Some(0));
+        assert_eq!(compiled_route_input_index(&wasm, "input_11"), Some(1));
+
+        let subject = numeric_route_subject();
+
+        let jit_values = subject_values(
+            &jit.estimate_predictions(&subject, &support)
+                .expect("jit predictions"),
+        );
+        let aot_values = subject_values(
+            &aot.estimate_predictions(&subject, &support)
+                .expect("aot predictions"),
+        );
+        let wasm_values = subject_values(
+            &wasm
+                .estimate_predictions(&subject, &support)
+                .expect("wasm predictions"),
+        );
+
+        for ((jit_value, aot_value), wasm_value) in jit_values
+            .iter()
+            .zip(aot_values.iter())
+            .zip(wasm_values.iter())
+        {
+            assert_relative_eq!(jit_value, aot_value, max_relative = 1e-4);
+            assert_relative_eq!(jit_value, wasm_value, max_relative = 1e-4);
+        }
+    }
+
+    #[test]
+    fn runtime_backend_matrix_resolves_raw_numeric_route_labels_against_prefixed_metadata() {
+        let work_dir = tempdir().expect("tempdir");
+        let support = vec![0.2, 10.0];
+        let (jit, aot, wasm) = compile_runtime_backend_matrix(
+            NUMERIC_ROUTE_LABELS_RUNTIME_DSL,
+            "prefixed_numeric_route_runtime",
+            work_dir.path(),
+        );
+
+        let subject = numeric_route_alias_subject();
+
+        let jit_values = subject_values(
+            &jit.estimate_predictions(&subject, &support)
+                .expect("jit predictions"),
+        );
+        let aot_values = subject_values(
+            &aot.estimate_predictions(&subject, &support)
+                .expect("aot predictions"),
+        );
+        let wasm_values = subject_values(
+            &wasm
+                .estimate_predictions(&subject, &support)
+                .expect("wasm predictions"),
+        );
+
+        for ((jit_value, aot_value), wasm_value) in jit_values
+            .iter()
+            .zip(aot_values.iter())
+            .zip(wasm_values.iter())
+        {
+            assert_relative_eq!(jit_value, aot_value, max_relative = 1e-4);
+            assert_relative_eq!(jit_value, wasm_value, max_relative = 1e-4);
+        }
+    }
+
+    #[test]
+    fn runtime_backend_matrix_supports_prefixed_numeric_route_and_output_labels() {
+        let work_dir = tempdir().expect("tempdir");
+        let support = vec![0.2, 10.0];
+        let (jit, aot, wasm) = compile_runtime_backend_matrix(
+            SHARED_NUMERIC_ROUTE_OUTPUT_LABEL_RUNTIME_DSL,
+            "prefixed_numeric_route_output_runtime",
+            work_dir.path(),
+        );
+
+        assert_eq!(compiled_route_input_index(&jit, "input_1"), Some(0));
+        assert_eq!(compiled_output_slot_index(&jit, "outeq_1"), Some(0));
+        assert_eq!(compiled_route_input_index(&aot, "input_1"), Some(0));
+        assert_eq!(compiled_output_slot_index(&aot, "outeq_1"), Some(0));
+        assert_eq!(compiled_route_input_index(&wasm, "input_1"), Some(0));
+        assert_eq!(compiled_output_slot_index(&wasm, "outeq_1"), Some(0));
+
+        let subject = shared_numeric_route_output_subject();
+
+        let jit_values = subject_values(
+            &jit.estimate_predictions(&subject, &support)
+                .expect("jit predictions"),
+        );
+        let aot_values = subject_values(
+            &aot.estimate_predictions(&subject, &support)
+                .expect("aot predictions"),
+        );
+        let wasm_values = subject_values(
+            &wasm
+                .estimate_predictions(&subject, &support)
+                .expect("wasm predictions"),
+        );
+
+        for ((jit_value, aot_value), wasm_value) in jit_values
+            .iter()
+            .zip(aot_values.iter())
+            .zip(wasm_values.iter())
+        {
+            assert_relative_eq!(jit_value, aot_value, max_relative = 1e-4);
+            assert_relative_eq!(jit_value, wasm_value, max_relative = 1e-4);
+        }
+    }
+
+    #[test]
+    fn runtime_backend_matrix_resolves_shared_raw_numeric_route_and_output_aliases() {
+        let work_dir = tempdir().expect("tempdir");
+        let support = vec![0.2, 10.0];
+        let (jit, aot, wasm) = compile_runtime_backend_matrix(
+            SHARED_NUMERIC_ROUTE_OUTPUT_LABEL_RUNTIME_DSL,
+            "prefixed_numeric_route_output_runtime",
+            work_dir.path(),
+        );
+
+        let subject = shared_numeric_route_output_alias_subject();
+
+        let jit_values = subject_values(
+            &jit.estimate_predictions(&subject, &support)
+                .expect("jit predictions"),
+        );
+        let aot_values = subject_values(
+            &aot.estimate_predictions(&subject, &support)
+                .expect("aot predictions"),
+        );
+        let wasm_values = subject_values(
+            &wasm
+                .estimate_predictions(&subject, &support)
+                .expect("wasm predictions"),
+        );
+
+        for ((jit_value, aot_value), wasm_value) in jit_values
+            .iter()
+            .zip(aot_values.iter())
+            .zip(wasm_values.iter())
+        {
+            assert_relative_eq!(jit_value, aot_value, max_relative = 1e-4);
+            assert_relative_eq!(jit_value, wasm_value, max_relative = 1e-4);
+        }
+    }
+
+    #[test]
+    fn runtime_backend_matrix_rejects_undeclared_numeric_output_labels() {
+        let work_dir = tempdir().expect("tempdir");
+        let support = vec![0.2, 10.0];
+        let (jit, aot, wasm) = compile_runtime_backend_matrix(
+            UNDECLARED_NUMERIC_OUTPUT_LABEL_RUNTIME_DSL,
+            "undeclared_numeric_output_runtime",
+            work_dir.path(),
+        );
+        let subject = Subject::builder("runtime-undeclared-numeric-output")
+            .infusion(0.0, 100.0, "iv", 1.0)
+            .missing_observation(0.5, "10")
+            .build();
+
+        assert_unknown_output_label(&jit, &subject, &support, "10");
+        assert_unknown_output_label(&aot, &subject, &support, "10");
+        assert_unknown_output_label(&wasm, &subject, &support, "10");
+    }
+
+    #[test]
+    fn runtime_backend_matrix_rejects_undeclared_numeric_input_labels() {
+        let work_dir = tempdir().expect("tempdir");
+        let support = vec![0.2, 10.0];
+        let (jit, aot, wasm) = compile_runtime_backend_matrix(
+            UNDECLARED_NUMERIC_INPUT_LABEL_RUNTIME_DSL,
+            "undeclared_numeric_input_runtime",
+            work_dir.path(),
+        );
+        let subject = Subject::builder("runtime-undeclared-numeric-input")
+            .bolus(0.0, 100.0, "10")
+            .missing_observation(0.5, "cp")
+            .build();
+
+        assert_unknown_input_label(&jit, &subject, &support, "10");
+        assert_unknown_input_label(&aot, &subject, &support, "10");
+        assert_unknown_input_label(&wasm, &subject, &support, "10");
     }
 
     #[test]

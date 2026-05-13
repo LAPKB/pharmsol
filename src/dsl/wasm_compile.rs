@@ -19,15 +19,24 @@ use pharmsol_dsl::{
     LoweringError, ParseError, SemanticError,
 };
 
+/// ABI version for compiled WASM artifacts produced by this crate.
 pub const WASM_API_VERSION: u32 = 1;
+/// Default entry capacity for [`WasmCompileCache`].
 pub const DEFAULT_WASM_COMPILE_CACHE_CAPACITY: usize = 32;
 
 static BROWSER_LOADER_SOURCE: OnceLock<String> = OnceLock::new();
 
+/// Portable WASM artifact bundle produced by the WASM compiler path.
+///
+/// The bundle includes the raw WASM bytes, model metadata, and a browser loader
+/// source string that can instantiate the model in JavaScript.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CompiledWasmModule {
+    /// Raw compiled WASM bytes.
     pub wasm_bytes: Vec<u8>,
+    /// Serialized model metadata and kernel availability.
     pub metadata: CompiledModelInfoEnvelope,
+    /// JavaScript loader source for browser-side instantiation.
     pub browser_loader_source: String,
 }
 
@@ -52,6 +61,7 @@ struct WasmCompileCacheState {
     lru: VecDeque<WasmCompileCacheKey>,
 }
 
+/// In-memory LRU cache for repeated WASM compilation from the same DSL source.
 #[derive(Debug)]
 pub struct WasmCompileCache {
     capacity: usize,
@@ -65,6 +75,7 @@ impl Default for WasmCompileCache {
 }
 
 impl WasmCompileCache {
+    /// Create a new compile cache with at least one entry of capacity.
     pub fn new(capacity: usize) -> Self {
         Self {
             capacity: capacity.max(1),
@@ -72,10 +83,12 @@ impl WasmCompileCache {
         }
     }
 
+    /// Return the configured cache capacity.
     pub fn capacity(&self) -> usize {
         self.capacity
     }
 
+    /// Return the number of cached compiled modules.
     pub fn entry_count(&self) -> usize {
         self.state
             .lock()
@@ -84,6 +97,7 @@ impl WasmCompileCache {
             .len()
     }
 
+    /// Remove all cached compiled modules.
     pub fn clear(&self) {
         let mut state = self
             .state
@@ -93,6 +107,8 @@ impl WasmCompileCache {
         state.lru.clear();
     }
 
+    /// Compile DSL source to a full WASM module bundle, reusing the cache when
+    /// possible.
     pub fn compile_module_source_to_wasm_module(
         &self,
         source: &str,
@@ -108,6 +124,7 @@ impl WasmCompileCache {
         Ok(compiled)
     }
 
+    /// Compile DSL source to raw WASM bytes, reusing the cache when possible.
     pub fn compile_module_source_to_wasm_bytes(
         &self,
         source: &str,
@@ -145,6 +162,8 @@ impl WasmCompileCache {
     }
 }
 
+/// Error produced while compiling, inspecting, or loading a DSL-backed WASM
+/// artifact.
 #[derive(Error)]
 pub enum WasmError {
     #[error(transparent)]
@@ -224,10 +243,12 @@ impl fmt::Debug for WasmError {
     }
 }
 
+/// Compile a lowered execution model to raw WASM bytes.
 pub fn compile_execution_model_to_wasm_bytes(model: &ExecutionModel) -> Result<Vec<u8>, WasmError> {
     emit_execution_model_to_wasm_bytes(model, WASM_API_VERSION)
 }
 
+/// Compile a lowered execution model to a portable WASM bundle.
 pub fn compile_execution_model_to_wasm_module(
     model: &ExecutionModel,
 ) -> Result<CompiledWasmModule, WasmError> {
@@ -238,6 +259,7 @@ pub fn compile_execution_model_to_wasm_module(
     })
 }
 
+/// Parse DSL source, lower one selected model, and return raw WASM bytes.
 pub fn compile_module_source_to_wasm_bytes(
     source: &str,
     model_name: Option<&str>,
@@ -245,6 +267,35 @@ pub fn compile_module_source_to_wasm_bytes(
     Ok(compile_module_source_to_wasm_module(source, model_name)?.wasm_bytes)
 }
 
+/// Parse DSL source, lower one selected model, and return the full WASM bundle.
+///
+/// Use this when you want a portable artifact for browser or host-side loading
+/// together with the browser loader source.
+///
+/// This function requires `dsl-wasm-compile`.
+///
+/// ```rust,no_run
+/// use pharmsol::dsl::{browser_loader_source, compile_module_source_to_wasm_module};
+///
+/// let source = r#"
+/// name = bimodal_ke
+/// kind = ode
+///
+/// params = ke, v
+/// states = central
+/// outputs = cp
+///
+/// infusion(iv) -> central
+///
+/// dx(central) = -ke * central
+/// out(cp) = central / v
+/// "#;
+///
+/// let compiled = compile_module_source_to_wasm_module(source, Some("bimodal_ke"))?;
+/// let loader = browser_loader_source();
+/// # let _ = (compiled, loader);
+/// # Ok::<(), pharmsol::dsl::WasmError>(())
+/// ```
 pub fn compile_module_source_to_wasm_module(
     source: &str,
     model_name: Option<&str>,
@@ -282,6 +333,10 @@ fn compile_module_source_to_wasm_module_uncached(
     compile_execution_model_to_wasm_module(&execution)
 }
 
+/// Return the JavaScript loader source for browser-side WASM model execution.
+///
+/// This helper is useful when you want to ship compiled WASM bytes together
+/// with the minimal browser glue code that understands the pharmsol ABI.
 pub fn browser_loader_source() -> String {
     BROWSER_LOADER_SOURCE
         .get_or_init(build_browser_loader_source)
@@ -848,7 +903,7 @@ mod tests {
     };
 
     const SIMPLE_SOURCE: &str = r#"
-model = example_ode
+name = example_ode
 kind = ode
 
 params = ke, v
@@ -901,7 +956,7 @@ out(cp) = central / v ~ continuous()
         cache
             .compile_module_source_to_wasm_module(
                 r#"
-model = second_ode
+name = second_ode
 kind = ode
 
 params = ke, v
@@ -949,7 +1004,7 @@ out(cp) = central / v ~ continuous()
     #[test]
     fn compile_module_source_to_wasm_module_preserves_semantic_diagnostic_structure() {
         let source = r#"
-model = broken
+name = broken
 kind = ode
 
 states = central
@@ -995,7 +1050,7 @@ out(cp) = central ~ continuous()
     #[test]
     fn compile_module_source_to_wasm_module_preserves_lowering_diagnostic_structure() {
         let source = r#"
-model = broken
+name = broken
 kind = ode
 
 states = transit[4], central

@@ -1,50 +1,65 @@
 # pharmsol-dsl
 
-`pharmsol-dsl` is the extraction target for the backend-neutral frontend of the pharmsol DSL.
+`pharmsol-dsl` is the backend-neutral frontend crate for the pharmsol DSL.
 
-The crate is introduced as an internal workspace member so the codebase can move to a clean engine / DSL split without duplicating workflows or breaking the current `pharmsol::dsl` user-facing API mid-migration.
+Use this crate when you need to work with model source as data:
 
-## Current Status
+- parse DSL text into syntax nodes
+- inspect spans and diagnostics
+- analyze names and types into typed IR
+- lower validated models into the execution model used by runtime backends
 
-Slices 1 through 7 have moved the shared frontend data modules, parsing frontend, semantic analysis, and execution lowering here, rewired `pharmsol` backend modules to consume that frontend directly, and cleaned up frontend test ownership:
+Do not use this crate for JIT compilation, native AoT export or load, WASM runtime loading, or `Subject`-based prediction helpers. Those workflows stay in `pharmsol::dsl` in the main `pharmsol` crate.
 
-- AST types
-- diagnostics and spans
-- typed IR
-- lexer
-- parser
-- authoring desugaring used by the parser
-- semantic analysis and semantic diagnostics
-- execution lowering and execution model types
-- frontend-only integration tests and authoring fixtures
+## Main Pipeline
 
-`pharmsol::dsl` now acts as a deliberate compatibility façade: it re-exports the frontend surface from this crate while keeping runtime compilation, artifact loading, and execution wrappers in `pharmsol`.
+The public pipeline is:
 
-## Planned Ownership
+1. `parse_model` or `parse_module`
+2. `analyze_model` or `analyze_module`
+3. `lower_typed_model` or `lower_typed_module`
 
-The crate will own the backend-neutral frontend pipeline:
+The main public modules are:
 
-- AST and syntax types
-- authoring desugaring
-- diagnostics and spans
-- lexical analysis
-- parse entrypoints
-- typed IR
-- execution IR and lowering
-- parse / analyze / lower entrypoints
+- `ast` for syntax-level nodes
+- `diagnostic` for spans, codes, and rendered reports
+- `ir` for the typed intermediate representation
+- `execution` for the lowered execution model shared by JIT, AoT, and WASM backends
 
-The crate will not own runtime-facing APIs such as JIT, AoT, WASM loading, or `Subject`-based prediction wrappers in the initial extraction.
+The parser accepts both canonical `model { ... }` source and the authoring shorthand used by the `pharmsol` examples.
 
-## Migration Rule
+## Small Example
 
-Until the move is complete, `pharmsol::dsl` remains the compatibility façade.
+```rust
+use pharmsol_dsl::{analyze_model, lower_typed_model, parse_model};
 
-That means:
+let source = r#"
+name = bimodal_ke
+kind = ode
 
-- backend code continues to live in `pharmsol`
-- frontend modules move here slice by slice
-- user-facing import churn is deferred until the architecture is stable
+params = ke, v
+states = central
+outputs = cp
 
-## Transitional Note
+infusion(iv) -> central
 
-The temporary lexer bridge from Slice 1 is gone. Frontend-only authoring fixtures now live under `pharmsol-dsl/tests/fixtures/dsl`, while the shared structured-block corpus remains under `tests/fixtures/dsl` because both crates still consume it.
+dx(central) = -ke * central
+out(cp) = central / v
+"#;
+
+let syntax = parse_model(source).expect("model parses");
+let typed = analyze_model(&syntax).expect("model analyzes");
+let execution = lower_typed_model(&typed).expect("model lowers");
+
+assert_eq!(execution.name, "bimodal_ke");
+assert_eq!(execution.metadata.routes.len(), 1);
+assert_eq!(execution.metadata.outputs.len(), 1);
+```
+
+## Boundary With `pharmsol`
+
+`pharmsol-dsl` owns the frontend pipeline and its data structures.
+
+`pharmsol::dsl` re-exports that frontend surface and adds the runtime-facing APIs for backend selection, artifact loading, and prediction execution.
+
+Use `pharmsol-dsl` when you are building tooling, validation, migration, or your own backend. Use `pharmsol::dsl` when you want a complete source-to-runtime workflow.

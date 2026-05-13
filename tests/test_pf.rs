@@ -34,7 +34,7 @@ fn test_particle_filter_likelihood() {
     .with_nstates(2)
     .with_nout(1);
 
-    let ems = AssayErrorModels::new()
+    let ems = AssayErrorModels::default()
         .add(
             0,
             AssayErrorModel::additive(ErrorPoly::new(0.5, 0.0, 0.0, 0.0), 0.0),
