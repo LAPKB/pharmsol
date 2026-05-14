@@ -31,6 +31,7 @@ const MATRIX_N_SUBJECTS: usize = 32;
 const MATRIX_N_SUPPORT: usize = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // Aot/Wasm temporarily disabled in `Backend::all`
 enum Backend {
     Jit,
     Aot,
@@ -46,8 +47,9 @@ impl Backend {
         }
     }
 
-    fn all() -> [Backend; 3] {
-        [Backend::Jit, Backend::Aot, Backend::Wasm]
+    // AoT and WASM backends temporarily disabled — too slow for the current matrix.
+    fn all() -> [Backend; 1] {
+        [Backend::Jit]
     }
 }
 

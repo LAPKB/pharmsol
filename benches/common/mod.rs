@@ -106,8 +106,9 @@ impl SolverKind {
         }
     }
 
-    pub fn all() -> [SolverKind; 3] {
-        [SolverKind::Ode, SolverKind::Analytical, SolverKind::Sde]
+    // SDE bench cells temporarily disabled — too slow for the current matrix.
+    pub fn all() -> [SolverKind; 2] {
+        [SolverKind::Ode, SolverKind::Analytical]
     }
 }
 
