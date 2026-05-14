@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.0](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.26.1...pharmsol-v0.27.0) - 2026-05-14
+
+### Added
+
+- Domain Specific Language (DSL) using JIT or AOT ([#252](https://github.com/LAPKB/pharmsol/pull/252))
+
+### Other
+
+- Refactor benchmarks ([#258](https://github.com/LAPKB/pharmsol/pull/258))
+- add missing macros ([#253](https://github.com/LAPKB/pharmsol/pull/253))
+- Bump actions/upload-pages-artifact from 4 to 5 ([#248](https://github.com/LAPKB/pharmsol/pull/248))
+
 ## [0.26.1](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.26.0...pharmsol-v0.26.1) - 2026-04-20
 
 ### Added

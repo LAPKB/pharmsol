@@ -1,6 +1,6 @@
 [package]
 name = "pharmsol-macros"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Procedural macros for pharmsol. Not intended for direct use."
 license = "GPL-3.0"
