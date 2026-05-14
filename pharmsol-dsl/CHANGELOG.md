@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.1](https://github.com/LAPKB/pharmsol/compare/pharmsol-dsl-v0.27.0...pharmsol-dsl-v0.27.1) - 2026-05-14
+
+### Added
+
+- Metadata contract ([#262](https://github.com/LAPKB/pharmsol/pull/262))
+
 ## [0.27.0](https://github.com/LAPKB/pharmsol/releases/tag/pharmsol-dsl-v0.27.0) - 2026-05-14
 
 ### Added
