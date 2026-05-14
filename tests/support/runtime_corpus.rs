@@ -15,7 +15,9 @@ use pharmsol::dsl::{self, CompiledRuntimeModel, RuntimeCompilationTarget, Runtim
 use pharmsol::prelude::{
     one_compartment_with_absorption, Equation, Prediction, SubjectPredictions,
 };
-use pharmsol::{equation, fa, fetch_cov, fetch_params, lag, Subject, SubjectBuilderExt, SDE};
+use pharmsol::{
+    equation, fa, fetch_cov, fetch_params, lag, Parameters, Subject, SubjectBuilderExt, SDE,
+};
 use tempfile::{tempdir, TempDir};
 
 const ODE_SOURCE: &str = r#"
@@ -97,9 +99,9 @@ const ANALYTICAL_FULL_SOURCE: &str = r#"
 name = analytical_full_feature_parity
 kind = analytical
 
-params = ka, ke, v, tlag, f_oral, base_gut, base_central, tvke
+params = ka, ke, v, tlag, f_oral, base_gut, base_central
 covariates = wt@linear, renal@linear
-derived = ka_proj, ke_proj
+derived = adjusted_v
 states = gut, central
 outputs = cp
 
@@ -110,15 +112,14 @@ infusion(iv) -> central
 lag(oral) = tlag * sqrt(wt / 70.0) * pow(90.0 / renal, 0.1)
 fa(oral) = min(max(f_oral * pow(renal / 90.0, 0.1), 0.0), 1.0)
 
-ka_proj = ka
-ke_proj = tvke * pow(wt / 70.0, 0.75) * pow(renal / 90.0, 0.25)
+adjusted_v = v * (wt / 70.0) * (1.0 + 0.001 * (renal - 90.0))
 
 structure = one_compartment_with_absorption
 
 init(gut) = base_gut + 0.03 * wt
 init(central) = base_central + 0.08 * renal
 
-out(cp) = central / (v * (wt / 70.0) * (1.0 + 0.001 * (renal - 90.0))) ~ continuous()
+out(cp) = central / adjusted_v ~ continuous()
 "#;
 
 const SDE_SOURCE: &str = r#"
@@ -202,7 +203,7 @@ impl CorpusCase {
             Self::Ode => &[1.2, 5.0, 40.0, 0.5, 0.8],
             Self::OdeFull => &[1.1, 0.18, 0.07, 0.04, 35.0, 0.6, 0.85, 4.0, 18.0, 9.0],
             Self::Analytical => &[1.0, 0.15, 25.0, 0.5, 0.8],
-            Self::AnalyticalFull => &[1.0, 0.16, 32.0, 0.5, 0.8, 3.0, 14.0, 0.16],
+            Self::AnalyticalFull => &[1.0, 0.16, 32.0, 0.5, 0.8, 3.0, 14.0],
             Self::Sde => &[1.1, 0.2, 0.12, 0.08, 15.0, 0.0],
         }
     }
@@ -567,7 +568,34 @@ pub fn estimate_runtime_predictions(
     case: CorpusCase,
     model: &CompiledRuntimeModel,
 ) -> Result<RuntimePredictions, Box<dyn Error>> {
-    Ok(model.estimate_predictions(&case.runtime_subject(model)?, case.support_point())?)
+    let (subject, parameters) = runtime_prediction_inputs(case, model)?;
+    Ok(model.estimate_predictions(&subject, &parameters)?)
+}
+
+pub fn runtime_prediction_inputs(
+    case: CorpusCase,
+    model: &CompiledRuntimeModel,
+) -> Result<(Subject, Parameters), Box<dyn Error>> {
+    if model.info().parameters.len() != case.support_point().len() {
+        return Err(io::Error::other(format!(
+            "{}: expected {} runtime parameter(s), got {}",
+            case.label(),
+            case.support_point().len(),
+            model.info().parameters.len()
+        ))
+        .into());
+    }
+
+    let parameters = Parameters::with_model(
+        model,
+        model
+            .info()
+            .parameters
+            .iter()
+            .map(String::as_str)
+            .zip(case.support_point().iter().copied()),
+    )?;
+    Ok((case.runtime_subject(model)?, parameters))
 }
 
 fn compare_subject_predictions(
@@ -742,7 +770,7 @@ fn compare_particle_predictions_pairwise(
 }
 
 fn reference_ode_predictions() -> Result<SubjectPredictions, Box<dyn Error>> {
-    Ok(equation::ODE::new(
+    let model = equation::ODE::new(
         |x, p, t, dx, bolus, rateiv, cov| {
             fetch_cov!(cov, t, wt);
             fetch_params!(p, ka, cl, v, _tlag, _f_oral);
@@ -752,7 +780,7 @@ fn reference_ode_predictions() -> Result<SubjectPredictions, Box<dyn Error>> {
             let ke = cl_i / v_i;
 
             dx[0] = -ka * x[0] + bolus[0];
-            dx[1] = ka * x[0] - ke * x[1] + bolus[1] + rateiv[1];
+            dx[1] = ka * x[0] - ke * x[1] + rateiv[0];
         },
         |p, _t, _cov| {
             fetch_params!(p, _ka, _cl, _v, tlag, f_oral);
@@ -774,26 +802,55 @@ fn reference_ode_predictions() -> Result<SubjectPredictions, Box<dyn Error>> {
         },
     )
     .with_nstates(2)
-    .with_ndrugs(2)
+    .with_ndrugs(1)
     .with_nout(1)
-    .estimate_predictions(
-        &Subject::builder(CorpusCase::Ode.label())
-            .covariate("wt", 0.0, 70.0)
-            .bolus(0.0, 120.0, 0)
-            .infusion(6.0, 60.0, 1, 2.0)
-            .missing_observation(0.5, 0)
-            .missing_observation(1.0, 0)
-            .missing_observation(2.0, 0)
-            .missing_observation(6.0, 0)
-            .missing_observation(7.0, 0)
-            .missing_observation(9.0, 0)
-            .build(),
-        CorpusCase::Ode.support_point(),
-    )?)
+    .with_metadata(
+        equation::metadata::new(CorpusCase::Ode.label())
+            .parameters(["ka", "cl", "v", "tlag", "f_oral"])
+            .covariates([equation::Covariate::continuous("wt")])
+            .states(["depot", "central"])
+            .outputs(["cp"])
+            .routes([
+                equation::Route::bolus("oral")
+                    .to_state("depot")
+                    .with_lag()
+                    .with_bioavailability()
+                    .expect_explicit_input(),
+                equation::Route::infusion("iv")
+                    .to_state("central")
+                    .expect_explicit_input(),
+            ]),
+    )
+    .expect("reference ODE metadata should validate");
+
+    let subject = Subject::builder(CorpusCase::Ode.label())
+        .covariate("wt", 0.0, 70.0)
+        .bolus(0.0, 120.0, "oral")
+        .infusion(6.0, 60.0, "iv", 2.0)
+        .missing_observation(0.5, "cp")
+        .missing_observation(1.0, "cp")
+        .missing_observation(2.0, "cp")
+        .missing_observation(6.0, "cp")
+        .missing_observation(7.0, "cp")
+        .missing_observation(9.0, "cp")
+        .build();
+    let parameters = Parameters::with_model(
+        &model,
+        [
+            ("ka", CorpusCase::Ode.support_point()[0]),
+            ("cl", CorpusCase::Ode.support_point()[1]),
+            ("v", CorpusCase::Ode.support_point()[2]),
+            ("tlag", CorpusCase::Ode.support_point()[3]),
+            ("f_oral", CorpusCase::Ode.support_point()[4]),
+        ],
+    )
+    .expect("reference ODE parameters should validate");
+
+    Ok(model.estimate_predictions(&subject, &parameters)?)
 }
 
 fn reference_ode_full_predictions() -> Result<SubjectPredictions, Box<dyn Error>> {
-    Ok(equation::ODE::new(
+    let model = equation::ODE::new(
         |x, p, t, dx, bolus, rateiv, cov| {
             fetch_params!(
                 p,
@@ -901,30 +958,81 @@ fn reference_ode_full_predictions() -> Result<SubjectPredictions, Box<dyn Error>
     .with_nstates(3)
     .with_ndrugs(2)
     .with_nout(1)
-    .estimate_predictions(
-        &Subject::builder(CorpusCase::OdeFull.label())
-            .bolus(0.0, 80.0, 1)
-            .bolus(1.0, 120.0, 0)
-            .infusion(6.0, 150.0, 0, 2.5)
-            .missing_observation(0.25, 0)
-            .missing_observation(0.75, 0)
-            .missing_observation(1.5, 0)
-            .missing_observation(3.0, 0)
-            .missing_observation(6.5, 0)
-            .missing_observation(7.0, 0)
-            .missing_observation(8.0, 0)
-            .missing_observation(12.0, 0)
-            .covariate("wt", 0.0, 68.0)
-            .covariate("wt", 8.0, 74.0)
-            .covariate("renal", 0.0, 95.0)
-            .covariate("renal", 8.0, 72.0)
-            .build(),
-        CorpusCase::OdeFull.support_point(),
-    )?)
+    .with_metadata(
+        equation::metadata::new(CorpusCase::OdeFull.label())
+            .parameters([
+                "ka",
+                "ke",
+                "kcp",
+                "kpc",
+                "v",
+                "tlag",
+                "f_oral",
+                "base_depot",
+                "base_central",
+                "base_peripheral",
+            ])
+            .covariates([
+                equation::Covariate::continuous("wt"),
+                equation::Covariate::continuous("renal"),
+            ])
+            .states(["depot", "central", "peripheral"])
+            .outputs(["cp"])
+            .routes([
+                equation::Route::bolus("oral")
+                    .to_state("depot")
+                    .with_lag()
+                    .with_bioavailability()
+                    .expect_explicit_input(),
+                equation::Route::bolus("load")
+                    .to_state("central")
+                    .expect_explicit_input(),
+                equation::Route::infusion("iv")
+                    .to_state("central")
+                    .expect_explicit_input(),
+            ]),
+    )
+    .expect("reference full ODE metadata should validate");
+
+    let subject = Subject::builder(CorpusCase::OdeFull.label())
+        .bolus(0.0, 80.0, "load")
+        .bolus(1.0, 120.0, "oral")
+        .infusion(6.0, 150.0, "iv", 2.5)
+        .missing_observation(0.25, "cp")
+        .missing_observation(0.75, "cp")
+        .missing_observation(1.5, "cp")
+        .missing_observation(3.0, "cp")
+        .missing_observation(6.5, "cp")
+        .missing_observation(7.0, "cp")
+        .missing_observation(8.0, "cp")
+        .missing_observation(12.0, "cp")
+        .covariate("wt", 0.0, 68.0)
+        .covariate("wt", 8.0, 74.0)
+        .covariate("renal", 0.0, 95.0)
+        .covariate("renal", 8.0, 72.0)
+        .build();
+    let parameters = Parameters::with_model(
+        &model,
+        [
+            ("ka", CorpusCase::OdeFull.support_point()[0]),
+            ("ke", CorpusCase::OdeFull.support_point()[1]),
+            ("kcp", CorpusCase::OdeFull.support_point()[2]),
+            ("kpc", CorpusCase::OdeFull.support_point()[3]),
+            ("v", CorpusCase::OdeFull.support_point()[4]),
+            ("tlag", CorpusCase::OdeFull.support_point()[5]),
+            ("f_oral", CorpusCase::OdeFull.support_point()[6]),
+            ("base_depot", CorpusCase::OdeFull.support_point()[7]),
+            ("base_central", CorpusCase::OdeFull.support_point()[8]),
+            ("base_peripheral", CorpusCase::OdeFull.support_point()[9]),
+        ],
+    )
+    .expect("reference full ODE parameters should validate");
+
+    Ok(model.estimate_predictions(&subject, &parameters)?)
 }
 
 fn reference_analytical_predictions() -> Result<SubjectPredictions, Box<dyn Error>> {
-    Ok(equation::Analytical::new(
+    let model = equation::Analytical::new(
         one_compartment_with_absorption,
         |_p, _t, _cov| {},
         |p, _t, _cov| {
@@ -944,91 +1052,71 @@ fn reference_analytical_predictions() -> Result<SubjectPredictions, Box<dyn Erro
     .with_nstates(2)
     .with_ndrugs(1)
     .with_nout(1)
-    .estimate_predictions(
-        &Subject::builder(CorpusCase::Analytical.label())
-            .bolus(0.0, 100.0, 0)
-            .missing_observation(0.5, 0)
-            .missing_observation(1.0, 0)
-            .missing_observation(2.0, 0)
-            .missing_observation(4.0, 0)
-            .build(),
-        CorpusCase::Analytical.support_point(),
-    )?)
+    .with_metadata(
+        equation::metadata::new(CorpusCase::Analytical.label())
+            .kind(equation::ModelKind::Analytical)
+            .parameters(["ka", "ke", "v", "tlag", "f_oral"])
+            .states(["gut", "central"])
+            .outputs(["cp"])
+            .route(
+                equation::Route::bolus("oral")
+                    .to_state("gut")
+                    .with_lag()
+                    .with_bioavailability(),
+            )
+            .analytical_kernel(equation::AnalyticalKernel::OneCompartmentWithAbsorption),
+    )
+    .expect("reference analytical metadata should validate");
+
+    let subject = Subject::builder(CorpusCase::Analytical.label())
+        .bolus(0.0, 100.0, "oral")
+        .missing_observation(0.5, "cp")
+        .missing_observation(1.0, "cp")
+        .missing_observation(2.0, "cp")
+        .missing_observation(4.0, "cp")
+        .build();
+    let parameters = Parameters::with_model(
+        &model,
+        [
+            ("ka", CorpusCase::Analytical.support_point()[0]),
+            ("ke", CorpusCase::Analytical.support_point()[1]),
+            ("v", CorpusCase::Analytical.support_point()[2]),
+            ("tlag", CorpusCase::Analytical.support_point()[3]),
+            ("f_oral", CorpusCase::Analytical.support_point()[4]),
+        ],
+    )
+    .expect("reference analytical parameters should validate");
+
+    Ok(model.estimate_predictions(&subject, &parameters)?)
 }
 
 fn reference_analytical_full_predictions() -> Result<SubjectPredictions, Box<dyn Error>> {
-    Ok(equation::Analytical::new(
+    let model = equation::Analytical::new(
         equation::one_compartment_with_absorption,
+        |_p, _t, _cov| {},
         |p, t, cov| {
-            fetch_cov!(cov, t, wt, renal);
-
-            let wt_scale = (wt / 70.0).powf(0.75);
-            let renal_scale = (renal / 90.0).powf(0.25);
-            p[1] = p[7] * wt_scale * renal_scale;
-        },
-        |p, t, cov| {
-            fetch_params!(
-                p,
-                _ka,
-                _ke,
-                _v,
-                tlag,
-                _f_oral,
-                _base_gut,
-                _base_central,
-                _tvke
-            );
+            fetch_params!(p, _ka, _ke, _v, tlag, _f_oral, _base_gut, _base_central);
             fetch_cov!(cov, t, wt, renal);
 
             let lag_scale = (wt / 70.0).sqrt() * (90.0 / renal).powf(0.1);
             lag! { 0 => tlag * lag_scale }
         },
         |p, t, cov| {
-            fetch_params!(
-                p,
-                _ka,
-                _ke,
-                _v,
-                _tlag,
-                f_oral,
-                _base_gut,
-                _base_central,
-                _tvke
-            );
+            fetch_params!(p, _ka, _ke, _v, _tlag, f_oral, _base_gut, _base_central);
             fetch_cov!(cov, t, wt, renal);
 
             let fa_scale = (renal / 90.0).powf(0.1);
             fa! { 0 => (f_oral * fa_scale).clamp(0.0, 1.0) }
         },
         |p, t, cov, x| {
-            fetch_params!(
-                p,
-                _ka,
-                _ke,
-                _v,
-                _tlag,
-                _f_oral,
-                base_gut,
-                base_central,
-                _tvke
-            );
+            fetch_params!(p, _ka, _ke, _v, _tlag, _f_oral, base_gut, base_central);
             fetch_cov!(cov, t, wt, renal);
 
             x[0] = base_gut + 0.03 * wt;
             x[1] = base_central + 0.08 * renal;
         },
         |x, p, t, cov, y| {
-            fetch_params!(
-                p,
-                _ka,
-                _ke,
-                v,
-                _tlag,
-                _f_oral,
-                _base_gut,
-                _base_central,
-                _tvke
-            );
+            fetch_params!(p, _ka, _ke, v, _tlag, _f_oral, _base_gut, _base_central);
             fetch_cov!(cov, t, wt, renal);
 
             let adjusted_v = v * (wt / 70.0) * (1.0 + 0.001 * (renal - 90.0));
@@ -1038,30 +1126,75 @@ fn reference_analytical_full_predictions() -> Result<SubjectPredictions, Box<dyn
     .with_nstates(2)
     .with_ndrugs(2)
     .with_nout(1)
-    .estimate_predictions(
-        &Subject::builder(CorpusCase::AnalyticalFull.label())
-            .bolus(0.0, 60.0, 1)
-            .bolus(1.0, 100.0, 0)
-            .infusion(6.0, 140.0, 0, 2.0)
-            .missing_observation(0.25, 0)
-            .missing_observation(0.75, 0)
-            .missing_observation(1.5, 0)
-            .missing_observation(3.0, 0)
-            .missing_observation(6.5, 0)
-            .missing_observation(7.0, 0)
-            .missing_observation(8.0, 0)
-            .missing_observation(12.0, 0)
-            .covariate("wt", 0.0, 68.0)
-            .covariate("wt", 8.0, 74.0)
-            .covariate("renal", 0.0, 95.0)
-            .covariate("renal", 8.0, 72.0)
-            .build(),
-        CorpusCase::AnalyticalFull.support_point(),
-    )?)
+    .with_metadata(
+        equation::metadata::new(CorpusCase::AnalyticalFull.label())
+            .kind(equation::ModelKind::Analytical)
+            .parameters([
+                "ka",
+                "ke",
+                "v",
+                "tlag",
+                "f_oral",
+                "base_gut",
+                "base_central",
+            ])
+            .covariates([
+                equation::Covariate::continuous("wt"),
+                equation::Covariate::continuous("renal"),
+            ])
+            .states(["gut", "central"])
+            .outputs(["cp"])
+            .routes([
+                equation::Route::bolus("oral")
+                    .to_state("gut")
+                    .with_lag()
+                    .with_bioavailability(),
+                equation::Route::bolus("load").to_state("central"),
+                equation::Route::infusion("iv").to_state("central"),
+            ])
+            .analytical_kernel(equation::AnalyticalKernel::OneCompartmentWithAbsorption),
+    )
+    .expect("reference full analytical metadata should validate");
+
+    let subject = Subject::builder(CorpusCase::AnalyticalFull.label())
+        .bolus(0.0, 60.0, "load")
+        .bolus(1.0, 100.0, "oral")
+        .infusion(6.0, 140.0, "iv", 2.0)
+        .missing_observation(0.25, "cp")
+        .missing_observation(0.75, "cp")
+        .missing_observation(1.5, "cp")
+        .missing_observation(3.0, "cp")
+        .missing_observation(6.5, "cp")
+        .missing_observation(7.0, "cp")
+        .missing_observation(8.0, "cp")
+        .missing_observation(12.0, "cp")
+        .covariate("wt", 0.0, 68.0)
+        .covariate("wt", 8.0, 74.0)
+        .covariate("renal", 0.0, 95.0)
+        .covariate("renal", 8.0, 72.0)
+        .build();
+    let parameters = Parameters::with_model(
+        &model,
+        [
+            ("ka", CorpusCase::AnalyticalFull.support_point()[0]),
+            ("ke", CorpusCase::AnalyticalFull.support_point()[1]),
+            ("v", CorpusCase::AnalyticalFull.support_point()[2]),
+            ("tlag", CorpusCase::AnalyticalFull.support_point()[3]),
+            ("f_oral", CorpusCase::AnalyticalFull.support_point()[4]),
+            ("base_gut", CorpusCase::AnalyticalFull.support_point()[5]),
+            (
+                "base_central",
+                CorpusCase::AnalyticalFull.support_point()[6],
+            ),
+        ],
+    )
+    .expect("reference full analytical parameters should validate");
+
+    Ok(model.estimate_predictions(&subject, &parameters)?)
 }
 
 fn reference_sde_predictions() -> Result<Array2<Prediction>, Box<dyn Error>> {
-    Ok(SDE::new(
+    let model = SDE::new(
         |x, p, _t, dx, _rateiv, _cov| {
             fetch_params!(p, ka, ke0, kcp, kpc, _vol, _ske);
             dx[0] = -ka * x[0];
@@ -1093,15 +1226,42 @@ fn reference_sde_predictions() -> Result<Array2<Prediction>, Box<dyn Error>> {
     .with_nstates(4)
     .with_ndrugs(1)
     .with_nout(1)
-    .estimate_predictions(
-        &Subject::builder(CorpusCase::Sde.label())
-            .covariate("wt", 0.0, 70.0)
-            .bolus(0.0, 80.0, 0)
-            .missing_observation(0.5, 0)
-            .missing_observation(1.0, 0)
-            .missing_observation(2.0, 0)
-            .missing_observation(4.0, 0)
-            .build(),
-        CorpusCase::Sde.support_point(),
-    )?)
+    .with_metadata(
+        equation::metadata::new(CorpusCase::Sde.label())
+            .kind(equation::ModelKind::Sde)
+            .parameters(["ka", "ke0", "kcp", "kpc", "vol", "ske"])
+            .covariates([equation::Covariate::locf("wt")])
+            .states(["depot", "central", "peripheral", "ke_latent"])
+            .outputs(["cp"])
+            .route(
+                equation::Route::bolus("oral")
+                    .to_state("depot")
+                    .inject_input_to_destination(),
+            )
+            .particles(SDE_PARTICLE_COUNT),
+    )
+    .expect("reference SDE metadata should validate");
+
+    let subject = Subject::builder(CorpusCase::Sde.label())
+        .covariate("wt", 0.0, 70.0)
+        .bolus(0.0, 80.0, "oral")
+        .missing_observation(0.5, "cp")
+        .missing_observation(1.0, "cp")
+        .missing_observation(2.0, "cp")
+        .missing_observation(4.0, "cp")
+        .build();
+    let parameters = Parameters::with_model(
+        &model,
+        [
+            ("ka", CorpusCase::Sde.support_point()[0]),
+            ("ke0", CorpusCase::Sde.support_point()[1]),
+            ("kcp", CorpusCase::Sde.support_point()[2]),
+            ("kpc", CorpusCase::Sde.support_point()[3]),
+            ("vol", CorpusCase::Sde.support_point()[4]),
+            ("ske", CorpusCase::Sde.support_point()[5]),
+        ],
+    )
+    .expect("reference SDE parameters should validate");
+
+    Ok(model.estimate_predictions(&subject, &parameters)?)
 }

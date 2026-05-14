@@ -1,6 +1,8 @@
 use std::{
     collections::BTreeMap,
     hash::{Hash, Hasher},
+    ops::Deref,
+    sync::Arc,
 };
 
 use crate::{data::event::OutputLabel, simulator::likelihood::Prediction};
@@ -161,6 +163,26 @@ pub struct AssayErrorModels {
 )]
 pub type ErrorModels = AssayErrorModels;
 
+#[doc(hidden)]
+#[derive(Debug)]
+pub enum BoundAssayErrorModels<'a> {
+    Borrowed(&'a AssayErrorModels),
+    Owned(AssayErrorModels),
+    Shared(Arc<AssayErrorModels>),
+}
+
+impl Deref for BoundAssayErrorModels<'_> {
+    type Target = AssayErrorModels;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Borrowed(models) => models,
+            Self::Owned(models) => models,
+            Self::Shared(models) => models.as_ref(),
+        }
+    }
+}
+
 impl Default for AssayErrorModels {
     fn default() -> Self {
         Self::new()
@@ -211,11 +233,17 @@ impl AssayErrorModels {
         Err(ErrorModelError::IncompatibleOutputContext { expected, found })
     }
 
-    pub(crate) fn bind_to(&self, context: &impl crate::Equation) -> Result<Self, ErrorModelError> {
+    pub(crate) fn bind_to(
+        &self,
+        context: &impl crate::Equation,
+    ) -> Result<BoundAssayErrorModels<'_>, ErrorModelError> {
         self.bind_output_names(context.assay_error_models().bound_output_names())
     }
 
-    pub(crate) fn bind_output_names<I, S>(&self, outputs: I) -> Result<Self, ErrorModelError>
+    pub(crate) fn bind_output_names<I, S>(
+        &self,
+        outputs: I,
+    ) -> Result<BoundAssayErrorModels<'_>, ErrorModelError>
     where
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
@@ -227,11 +255,11 @@ impl AssayErrorModels {
 
         if !self.output_lookup.is_empty() {
             self.assert_compatible_output_names(outputs.iter().map(String::as_str))?;
-            return Ok(self.clone());
+            return Ok(BoundAssayErrorModels::Borrowed(self));
         }
 
         if self.named_models.is_empty() {
-            return Ok(self.clone());
+            return Ok(BoundAssayErrorModels::Borrowed(self));
         }
 
         let mut bound = Self::with_output_names(outputs.iter().map(String::as_str));
@@ -241,7 +269,7 @@ impl AssayErrorModels {
             bound = bound.add(label.clone(), model.clone())?;
         }
 
-        Ok(bound)
+        Ok(BoundAssayErrorModels::Owned(bound))
     }
 
     /// Create an unbound error-model set for dense-slot callers.
@@ -1306,9 +1334,8 @@ mod tests {
                 "cp",
                 AssayErrorModel::additive(ErrorPoly::new(0.0, 0.05, 0.0, 0.0), 0.0),
             )
-            .unwrap()
-            .bind_output_names(["cp", "effect"])
             .unwrap();
+        let error_models = error_models.bind_output_names(["cp", "effect"]).unwrap();
 
         match error_models.assert_compatible_output_names(["effect", "cp"]) {
             Err(ErrorModelError::IncompatibleOutputContext { expected, found }) => {

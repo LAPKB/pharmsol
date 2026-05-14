@@ -1,5 +1,11 @@
+use std::error::Error;
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
 
+use crate::name_match::{
+    common_prefix_len, edit_distance, is_high_confidence_match, is_single_adjacent_transposition,
+};
 use crate::{ModelKind, RouteKind, Span};
 
 pub type SymbolId = usize;
@@ -207,6 +213,44 @@ impl AnalyticalKernel {
         }
     }
 
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::OneCompartment => "one_compartment",
+            Self::OneCompartmentCl => "one_compartment_cl",
+            Self::OneCompartmentClWithAbsorption => "one_compartment_cl_with_absorption",
+            Self::OneCompartmentWithAbsorption => "one_compartment_with_absorption",
+            Self::TwoCompartments => "two_compartments",
+            Self::TwoCompartmentsCl => "two_compartments_cl",
+            Self::TwoCompartmentsClWithAbsorption => "two_compartments_cl_with_absorption",
+            Self::TwoCompartmentsWithAbsorption => "two_compartments_with_absorption",
+            Self::ThreeCompartments => "three_compartments",
+            Self::ThreeCompartmentsCl => "three_compartments_cl",
+            Self::ThreeCompartmentsClWithAbsorption => "three_compartments_cl_with_absorption",
+            Self::ThreeCompartmentsWithAbsorption => "three_compartments_with_absorption",
+        }
+    }
+
+    pub fn required_parameter_names(self) -> &'static [&'static str] {
+        match self {
+            Self::OneCompartment => &["ke"],
+            Self::OneCompartmentCl => &["cl", "v"],
+            Self::OneCompartmentClWithAbsorption => &["ka", "cl", "v"],
+            Self::OneCompartmentWithAbsorption => &["ka", "ke"],
+            Self::TwoCompartments => &["ke", "kcp", "kpc"],
+            Self::TwoCompartmentsCl => &["cl", "q", "vc", "vp"],
+            Self::TwoCompartmentsClWithAbsorption => &["ka", "cl", "q", "vc", "vp"],
+            Self::TwoCompartmentsWithAbsorption => &["ke", "ka", "kcp", "kpc"],
+            Self::ThreeCompartments => &["k10", "k12", "k13", "k21", "k31"],
+            Self::ThreeCompartmentsCl => &["cl", "q2", "q3", "vc", "v2", "v3"],
+            Self::ThreeCompartmentsClWithAbsorption => &["ka", "cl", "q2", "q3", "vc", "v2", "v3"],
+            Self::ThreeCompartmentsWithAbsorption => &["ka", "k10", "k12", "k13", "k21", "k31"],
+        }
+    }
+
+    pub fn required_parameter_count(self) -> usize {
+        self.required_parameter_names().len()
+    }
+
     pub fn state_count(self) -> usize {
         match self {
             Self::OneCompartment | Self::OneCompartmentCl => 1,
@@ -216,6 +260,251 @@ impl AnalyticalKernel {
             Self::ThreeCompartments | Self::ThreeCompartmentsCl => 3,
             Self::ThreeCompartmentsClWithAbsorption | Self::ThreeCompartmentsWithAbsorption => 4,
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnalyticalStructureInputSource {
+    Primary,
+    Derived,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AnalyticalStructureInputBinding {
+    pub source: AnalyticalStructureInputSource,
+    pub index: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AnalyticalStructureInputKind {
+    AllPrimary {
+        indices: Vec<usize>,
+        identity: bool,
+    },
+    AllDerived {
+        indices: Vec<usize>,
+        identity: bool,
+    },
+    Mixed {
+        bindings: Vec<AnalyticalStructureInputBinding>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnalyticalStructureInputPlan {
+    kind: AnalyticalStructureInputKind,
+}
+
+impl AnalyticalStructureInputPlan {
+    pub fn for_kernel<P, D>(
+        kernel: AnalyticalKernel,
+        primary_names: P,
+        derived_names: D,
+    ) -> Result<Self, AnalyticalStructureInputError>
+    where
+        P: IntoIterator,
+        P::Item: AsRef<str>,
+        D: IntoIterator,
+        D::Item: AsRef<str>,
+    {
+        let primary_names = primary_names
+            .into_iter()
+            .map(|name| name.as_ref().to_string())
+            .collect::<Vec<_>>();
+        let derived_names = derived_names
+            .into_iter()
+            .map(|name| name.as_ref().to_string())
+            .collect::<Vec<_>>();
+
+        let mut primary_index_by_name =
+            std::collections::HashMap::with_capacity(primary_names.len());
+        for (index, name) in primary_names.iter().enumerate() {
+            if primary_index_by_name.insert(name.as_str(), index).is_some() {
+                return Err(AnalyticalStructureInputError::DuplicatePrimary { name: name.clone() });
+            }
+        }
+
+        let mut derived_index_by_name =
+            std::collections::HashMap::with_capacity(derived_names.len());
+        for (index, name) in derived_names.iter().enumerate() {
+            if derived_index_by_name.insert(name.as_str(), index).is_some() {
+                return Err(AnalyticalStructureInputError::DuplicateDerived { name: name.clone() });
+            }
+            if primary_index_by_name.contains_key(name.as_str()) {
+                return Err(AnalyticalStructureInputError::ConflictingName { name: name.clone() });
+            }
+        }
+
+        let mut bindings = Vec::with_capacity(kernel.required_parameter_count());
+        for required_name in kernel.required_parameter_names() {
+            match (
+                primary_index_by_name.get(required_name).copied(),
+                derived_index_by_name.get(required_name).copied(),
+            ) {
+                (Some(index), None) => bindings.push(AnalyticalStructureInputBinding {
+                    source: AnalyticalStructureInputSource::Primary,
+                    index,
+                }),
+                (None, Some(index)) => bindings.push(AnalyticalStructureInputBinding {
+                    source: AnalyticalStructureInputSource::Derived,
+                    index,
+                }),
+                (None, None) => {
+                    return Err(AnalyticalStructureInputError::MissingRequiredName {
+                        structure: kernel.name(),
+                        name: (*required_name).to_string(),
+                        suggestion: best_similar_candidate(
+                            required_name,
+                            primary_names
+                                .iter()
+                                .chain(derived_names.iter())
+                                .map(String::as_str),
+                        ),
+                    });
+                }
+                (Some(_), Some(_)) => {
+                    return Err(AnalyticalStructureInputError::ConflictingName {
+                        name: (*required_name).to_string(),
+                    });
+                }
+            }
+        }
+
+        let all_primary = bindings
+            .iter()
+            .all(|binding| binding.source == AnalyticalStructureInputSource::Primary);
+        if all_primary {
+            let indices = bindings
+                .iter()
+                .map(|binding| binding.index)
+                .collect::<Vec<_>>();
+            let identity = indices
+                .iter()
+                .enumerate()
+                .all(|(required_index, source_index)| required_index == *source_index);
+            return Ok(Self {
+                kind: AnalyticalStructureInputKind::AllPrimary { indices, identity },
+            });
+        }
+
+        let all_derived = bindings
+            .iter()
+            .all(|binding| binding.source == AnalyticalStructureInputSource::Derived);
+        if all_derived {
+            let indices = bindings
+                .iter()
+                .map(|binding| binding.index)
+                .collect::<Vec<_>>();
+            let identity = indices
+                .iter()
+                .enumerate()
+                .all(|(required_index, source_index)| required_index == *source_index);
+            return Ok(Self {
+                kind: AnalyticalStructureInputKind::AllDerived { indices, identity },
+            });
+        }
+
+        Ok(Self {
+            kind: AnalyticalStructureInputKind::Mixed { bindings },
+        })
+    }
+
+    pub fn kind(&self) -> &AnalyticalStructureInputKind {
+        &self.kind
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AnalyticalStructureInputError {
+    DuplicatePrimary {
+        name: String,
+    },
+    DuplicateDerived {
+        name: String,
+    },
+    ConflictingName {
+        name: String,
+    },
+    MissingRequiredName {
+        structure: &'static str,
+        name: String,
+        suggestion: Option<String>,
+    },
+}
+
+impl fmt::Display for AnalyticalStructureInputError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DuplicatePrimary { name } => write!(f, "duplicate primary parameter `{name}`"),
+            Self::DuplicateDerived { name } => write!(f, "duplicate derived parameter `{name}`"),
+            Self::ConflictingName { name } => {
+                write!(f, "`{name}` is declared in both `params` and `derived`")
+            }
+            Self::MissingRequiredName {
+                structure,
+                name,
+                suggestion,
+            } => {
+                write!(f, "analytical structure `{structure}` requires `{name}`; ")?;
+                if let Some(candidate) = suggestion {
+                    write!(f, "did you mean `{name}` instead of `{candidate}`? ")?;
+                }
+                f.write_str("declare it in `params` or `derived`")
+            }
+        }
+    }
+}
+
+impl Error for AnalyticalStructureInputError {}
+
+fn best_similar_candidate<'a, I>(needle: &str, candidates: I) -> Option<String>
+where
+    I: IntoIterator<Item = &'a str>,
+{
+    let original_needle = needle;
+    let needle = needle.to_ascii_lowercase();
+    let mut best: Option<((usize, usize, usize), String)> = None;
+    let mut tied = false;
+
+    for candidate in candidates {
+        if candidate == original_needle {
+            continue;
+        }
+
+        let lookup = candidate.to_ascii_lowercase();
+        let distance = if is_single_adjacent_transposition(&needle, &lookup) {
+            1
+        } else {
+            edit_distance(&needle, &lookup)
+        };
+        let prefix = common_prefix_len(&needle, &lookup);
+        if !is_high_confidence_match(&needle, &lookup, distance, prefix) {
+            continue;
+        }
+
+        let score = (
+            distance,
+            usize::MAX - prefix,
+            needle.len().abs_diff(lookup.len()),
+        );
+        match &best {
+            None => {
+                best = Some((score, candidate.to_string()));
+                tied = false;
+            }
+            Some((best_score, _)) if score < *best_score => {
+                best = Some((score, candidate.to_string()));
+                tied = false;
+            }
+            Some((best_score, _)) if score == *best_score => tied = true,
+            _ => {}
+        }
+    }
+
+    if tied {
+        None
+    } else {
+        best.map(|(_, candidate)| candidate)
     }
 }
 
@@ -457,4 +746,246 @@ impl MathIntrinsic {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IntrinsicArity {
     Exact(usize),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        AnalyticalKernel, AnalyticalStructureInputBinding, AnalyticalStructureInputError,
+        AnalyticalStructureInputKind, AnalyticalStructureInputPlan, AnalyticalStructureInputSource,
+    };
+
+    #[test]
+    fn analytical_structures_publish_required_parameter_order() {
+        let cases = [
+            (AnalyticalKernel::OneCompartment, &["ke"][..]),
+            (AnalyticalKernel::OneCompartmentCl, &["cl", "v"][..]),
+            (
+                AnalyticalKernel::OneCompartmentClWithAbsorption,
+                &["ka", "cl", "v"][..],
+            ),
+            (
+                AnalyticalKernel::OneCompartmentWithAbsorption,
+                &["ka", "ke"][..],
+            ),
+            (AnalyticalKernel::TwoCompartments, &["ke", "kcp", "kpc"][..]),
+            (
+                AnalyticalKernel::TwoCompartmentsCl,
+                &["cl", "q", "vc", "vp"][..],
+            ),
+            (
+                AnalyticalKernel::TwoCompartmentsClWithAbsorption,
+                &["ka", "cl", "q", "vc", "vp"][..],
+            ),
+            (
+                AnalyticalKernel::TwoCompartmentsWithAbsorption,
+                &["ke", "ka", "kcp", "kpc"][..],
+            ),
+            (
+                AnalyticalKernel::ThreeCompartments,
+                &["k10", "k12", "k13", "k21", "k31"][..],
+            ),
+            (
+                AnalyticalKernel::ThreeCompartmentsCl,
+                &["cl", "q2", "q3", "vc", "v2", "v3"][..],
+            ),
+            (
+                AnalyticalKernel::ThreeCompartmentsClWithAbsorption,
+                &["ka", "cl", "q2", "q3", "vc", "v2", "v3"][..],
+            ),
+            (
+                AnalyticalKernel::ThreeCompartmentsWithAbsorption,
+                &["ka", "k10", "k12", "k13", "k21", "k31"][..],
+            ),
+        ];
+
+        for (kernel, expected) in cases {
+            assert_eq!(kernel.required_parameter_names(), expected);
+            assert_eq!(kernel.required_parameter_count(), expected.len());
+            assert_eq!(AnalyticalKernel::from_name(kernel.name()), Some(kernel));
+        }
+    }
+
+    #[test]
+    fn builds_identity_all_primary_plan() {
+        let plan = AnalyticalStructureInputPlan::for_kernel(
+            AnalyticalKernel::OneCompartmentClWithAbsorption,
+            ["ka", "cl", "v", "tvcl"],
+            std::iter::empty::<&str>(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            plan.kind(),
+            &AnalyticalStructureInputKind::AllPrimary {
+                indices: vec![0, 1, 2],
+                identity: true,
+            }
+        );
+    }
+
+    #[test]
+    fn builds_reordered_all_primary_plan() {
+        let plan = AnalyticalStructureInputPlan::for_kernel(
+            AnalyticalKernel::TwoCompartmentsWithAbsorption,
+            ["ka", "ke", "kcp", "kpc", "v"],
+            std::iter::empty::<&str>(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            plan.kind(),
+            &AnalyticalStructureInputKind::AllPrimary {
+                indices: vec![1, 0, 2, 3],
+                identity: false,
+            }
+        );
+    }
+
+    #[test]
+    fn builds_identity_all_derived_plan() {
+        let plan = AnalyticalStructureInputPlan::for_kernel(
+            AnalyticalKernel::OneCompartmentWithAbsorption,
+            ["ka0", "ke0", "v"],
+            ["ka", "ke"],
+        )
+        .unwrap();
+
+        assert_eq!(
+            plan.kind(),
+            &AnalyticalStructureInputKind::AllDerived {
+                indices: vec![0, 1],
+                identity: true,
+            }
+        );
+    }
+
+    #[test]
+    fn builds_mixed_source_plan() {
+        let plan = AnalyticalStructureInputPlan::for_kernel(
+            AnalyticalKernel::OneCompartmentWithAbsorption,
+            ["ka", "ke0", "v"],
+            ["ke"],
+        )
+        .unwrap();
+
+        assert_eq!(
+            plan.kind(),
+            &AnalyticalStructureInputKind::Mixed {
+                bindings: vec![
+                    AnalyticalStructureInputBinding {
+                        source: AnalyticalStructureInputSource::Primary,
+                        index: 0,
+                    },
+                    AnalyticalStructureInputBinding {
+                        source: AnalyticalStructureInputSource::Derived,
+                        index: 0,
+                    },
+                ],
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_primary_name() {
+        let error = AnalyticalStructureInputPlan::for_kernel(
+            AnalyticalKernel::OneCompartmentWithAbsorption,
+            ["ka", "ka", "ke"],
+            std::iter::empty::<&str>(),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            AnalyticalStructureInputError::DuplicatePrimary {
+                name: "ka".to_string(),
+            }
+        );
+        assert_eq!(error.to_string(), "duplicate primary parameter `ka`");
+    }
+
+    #[test]
+    fn rejects_duplicate_derived_name() {
+        let error = AnalyticalStructureInputPlan::for_kernel(
+            AnalyticalKernel::OneCompartmentWithAbsorption,
+            ["ka", "ke0", "v"],
+            ["ke", "ke"],
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            AnalyticalStructureInputError::DuplicateDerived {
+                name: "ke".to_string(),
+            }
+        );
+        assert_eq!(error.to_string(), "duplicate derived parameter `ke`");
+    }
+
+    #[test]
+    fn rejects_conflicting_primary_and_derived_name() {
+        let error = AnalyticalStructureInputPlan::for_kernel(
+            AnalyticalKernel::OneCompartmentWithAbsorption,
+            ["ka", "ke", "v"],
+            ["ke"],
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            AnalyticalStructureInputError::ConflictingName {
+                name: "ke".to_string(),
+            }
+        );
+        assert_eq!(
+            error.to_string(),
+            "`ke` is declared in both `params` and `derived`"
+        );
+    }
+
+    #[test]
+    fn reports_missing_required_name_with_suggestion() {
+        let error = AnalyticalStructureInputPlan::for_kernel(
+            AnalyticalKernel::OneCompartmentWithAbsorption,
+            ["ka", "kel", "v"],
+            std::iter::empty::<&str>(),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            AnalyticalStructureInputError::MissingRequiredName {
+                structure: "one_compartment_with_absorption",
+                name: "ke".to_string(),
+                suggestion: Some("kel".to_string()),
+            }
+        );
+        assert_eq!(
+            error.to_string(),
+            "analytical structure `one_compartment_with_absorption` requires `ke`; did you mean `ke` instead of `kel`? declare it in `params` or `derived`"
+        );
+    }
+
+    #[test]
+    fn reports_missing_required_name_without_suggestion() {
+        let error = AnalyticalStructureInputPlan::for_kernel(
+            AnalyticalKernel::OneCompartmentWithAbsorption,
+            ["ka0", "v"],
+            std::iter::empty::<&str>(),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            AnalyticalStructureInputError::MissingRequiredName {
+                structure: "one_compartment_with_absorption",
+                name: "ka".to_string(),
+                suggestion: None,
+            }
+        );
+        assert_eq!(
+            error.to_string(),
+            "analytical structure `one_compartment_with_absorption` requires `ka`; declare it in `params` or `derived`"
+        );
+    }
 }

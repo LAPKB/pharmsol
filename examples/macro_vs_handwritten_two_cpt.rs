@@ -5,7 +5,7 @@
 //! This keeps the macro story as the default surface while showing the
 //! low-level API as an explicit advanced comparison path.
 
-use pharmsol::prelude::*;
+use pharmsol::{prelude::*, Parameters};
 
 fn macro_model() -> equation::ODE {
     ode! {
@@ -100,7 +100,11 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
         .missing_observation(24.0, "cp")
         .build();
 
-    let params = [0.1, 0.05, 0.03, 50.0];
+    let params = Parameters::with_model(
+        &macro_ode,
+        [("ke", 0.1), ("kcp", 0.05), ("kpc", 0.03), ("v", 50.0)],
+    )
+    .expect("valid named parameters");
     let macro_predictions = macro_ode.estimate_predictions(&subject, &params)?;
     let handwritten_predictions = handwritten_ode.estimate_predictions(&subject, &params)?;
 

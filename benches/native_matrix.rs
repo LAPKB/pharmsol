@@ -11,13 +11,13 @@ use std::time::Duration;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, SamplingMode};
 use pharmsol::prelude::*;
-use pharmsol::Cache;
+use pharmsol::{Analytical, Cache, Parameters, ODE, SDE};
 
 mod common;
 use common::{
     assay_error_models, handwritten_analytical, handwritten_ode, handwritten_sde, macro_analytical,
-    macro_ode, macro_sde, matrix_data, params, subject_for_likelihood, subject_for_predictions,
-    support_points, SolverKind, Workload,
+    macro_ode, macro_sde, matrix_data, named_params, subject_for_likelihood,
+    subject_for_predictions, support_points, SolverKind, Workload,
 };
 
 const MATRIX_N_SUBJECTS: usize = 32;
@@ -71,6 +71,21 @@ fn id(workload: Workload, kind: SolverKind, authoring: Authoring, cache: CacheSt
     )
 }
 
+fn ode_parameters(model: &ODE, workload: Workload) -> Parameters {
+    Parameters::with_model(model, named_params(workload, SolverKind::Ode))
+        .expect("native ODE bench parameters should validate")
+}
+
+fn analytical_parameters(model: &Analytical, workload: Workload) -> Parameters {
+    Parameters::with_model(model, named_params(workload, SolverKind::Analytical))
+        .expect("native analytical bench parameters should validate")
+}
+
+fn sde_parameters(model: &SDE, workload: Workload) -> Parameters {
+    Parameters::with_model(model, named_params(workload, SolverKind::Sde))
+        .expect("native SDE bench parameters should validate")
+}
+
 fn predictions_group(c: &mut Criterion) {
     let mut group = c.benchmark_group("native/predictions");
     group.sampling_mode(SamplingMode::Flat);
@@ -78,7 +93,6 @@ fn predictions_group(c: &mut Criterion) {
     for workload in Workload::all() {
         let subject = subject_for_predictions(workload);
         for kind in SolverKind::all() {
-            let theta = params(workload, kind);
             for authoring in Authoring::all() {
                 for cache in CacheState::all() {
                     let bench_id =
@@ -86,6 +100,7 @@ fn predictions_group(c: &mut Criterion) {
                     group.bench_function(bench_id, |b| match (kind, authoring, cache) {
                         (SolverKind::Ode, Authoring::Handwritten, CacheState::Hot) => {
                             let model = handwritten_ode(workload);
+                            let theta = ode_parameters(&model, workload);
                             b.iter(|| {
                                 black_box(
                                     model
@@ -99,6 +114,7 @@ fn predictions_group(c: &mut Criterion) {
                         }
                         (SolverKind::Ode, Authoring::Handwritten, CacheState::Cold) => {
                             let model = handwritten_ode(workload).disable_cache();
+                            let theta = ode_parameters(&model, workload);
                             b.iter(|| {
                                 black_box(
                                     model
@@ -112,6 +128,7 @@ fn predictions_group(c: &mut Criterion) {
                         }
                         (SolverKind::Ode, Authoring::Macro, CacheState::Hot) => {
                             let model = macro_ode(workload);
+                            let theta = ode_parameters(&model, workload);
                             b.iter(|| {
                                 black_box(
                                     model
@@ -125,6 +142,7 @@ fn predictions_group(c: &mut Criterion) {
                         }
                         (SolverKind::Ode, Authoring::Macro, CacheState::Cold) => {
                             let model = macro_ode(workload).disable_cache();
+                            let theta = ode_parameters(&model, workload);
                             b.iter(|| {
                                 black_box(
                                     model
@@ -138,6 +156,7 @@ fn predictions_group(c: &mut Criterion) {
                         }
                         (SolverKind::Analytical, Authoring::Handwritten, CacheState::Hot) => {
                             let model = handwritten_analytical(workload);
+                            let theta = analytical_parameters(&model, workload);
                             b.iter(|| {
                                 black_box(
                                     model
@@ -151,6 +170,7 @@ fn predictions_group(c: &mut Criterion) {
                         }
                         (SolverKind::Analytical, Authoring::Handwritten, CacheState::Cold) => {
                             let model = handwritten_analytical(workload).disable_cache();
+                            let theta = analytical_parameters(&model, workload);
                             b.iter(|| {
                                 black_box(
                                     model
@@ -164,6 +184,7 @@ fn predictions_group(c: &mut Criterion) {
                         }
                         (SolverKind::Analytical, Authoring::Macro, CacheState::Hot) => {
                             let model = macro_analytical(workload);
+                            let theta = analytical_parameters(&model, workload);
                             b.iter(|| {
                                 black_box(
                                     model
@@ -177,6 +198,7 @@ fn predictions_group(c: &mut Criterion) {
                         }
                         (SolverKind::Analytical, Authoring::Macro, CacheState::Cold) => {
                             let model = macro_analytical(workload).disable_cache();
+                            let theta = analytical_parameters(&model, workload);
                             b.iter(|| {
                                 black_box(
                                     model
@@ -190,6 +212,7 @@ fn predictions_group(c: &mut Criterion) {
                         }
                         (SolverKind::Sde, Authoring::Handwritten, CacheState::Hot) => {
                             let model = handwritten_sde(workload);
+                            let theta = sde_parameters(&model, workload);
                             b.iter(|| {
                                 black_box(
                                     model
@@ -203,6 +226,7 @@ fn predictions_group(c: &mut Criterion) {
                         }
                         (SolverKind::Sde, Authoring::Handwritten, CacheState::Cold) => {
                             let model = handwritten_sde(workload).disable_cache();
+                            let theta = sde_parameters(&model, workload);
                             b.iter(|| {
                                 black_box(
                                     model
@@ -216,6 +240,7 @@ fn predictions_group(c: &mut Criterion) {
                         }
                         (SolverKind::Sde, Authoring::Macro, CacheState::Hot) => {
                             let model = macro_sde(workload);
+                            let theta = sde_parameters(&model, workload);
                             b.iter(|| {
                                 black_box(
                                     model
@@ -229,6 +254,7 @@ fn predictions_group(c: &mut Criterion) {
                         }
                         (SolverKind::Sde, Authoring::Macro, CacheState::Cold) => {
                             let model = macro_sde(workload).disable_cache();
+                            let theta = sde_parameters(&model, workload);
                             b.iter(|| {
                                 black_box(
                                     model
@@ -257,7 +283,6 @@ fn log_likelihood_group(c: &mut Criterion) {
     for workload in Workload::all() {
         let subject = subject_for_likelihood(workload);
         for kind in SolverKind::all() {
-            let theta = params(workload, kind);
             for authoring in Authoring::all() {
                 for cache in CacheState::all() {
                     let bench_id =
@@ -265,6 +290,7 @@ fn log_likelihood_group(c: &mut Criterion) {
                     group.bench_function(bench_id, |b| match (kind, authoring, cache) {
                         (SolverKind::Ode, Authoring::Handwritten, CacheState::Hot) => {
                             let model = handwritten_ode(workload);
+                            let theta = ode_parameters(&model, workload);
                             b.iter(|| {
                                 black_box(
                                     model
@@ -279,6 +305,7 @@ fn log_likelihood_group(c: &mut Criterion) {
                         }
                         (SolverKind::Ode, Authoring::Handwritten, CacheState::Cold) => {
                             let model = handwritten_ode(workload).disable_cache();
+                            let theta = ode_parameters(&model, workload);
                             b.iter(|| {
                                 black_box(
                                     model
@@ -293,6 +320,7 @@ fn log_likelihood_group(c: &mut Criterion) {
                         }
                         (SolverKind::Ode, Authoring::Macro, CacheState::Hot) => {
                             let model = macro_ode(workload);
+                            let theta = ode_parameters(&model, workload);
                             b.iter(|| {
                                 black_box(
                                     model
@@ -307,6 +335,7 @@ fn log_likelihood_group(c: &mut Criterion) {
                         }
                         (SolverKind::Ode, Authoring::Macro, CacheState::Cold) => {
                             let model = macro_ode(workload).disable_cache();
+                            let theta = ode_parameters(&model, workload);
                             b.iter(|| {
                                 black_box(
                                     model
@@ -321,6 +350,7 @@ fn log_likelihood_group(c: &mut Criterion) {
                         }
                         (SolverKind::Analytical, Authoring::Handwritten, CacheState::Hot) => {
                             let model = handwritten_analytical(workload);
+                            let theta = analytical_parameters(&model, workload);
                             b.iter(|| {
                                 black_box(
                                     model
@@ -335,6 +365,7 @@ fn log_likelihood_group(c: &mut Criterion) {
                         }
                         (SolverKind::Analytical, Authoring::Handwritten, CacheState::Cold) => {
                             let model = handwritten_analytical(workload).disable_cache();
+                            let theta = analytical_parameters(&model, workload);
                             b.iter(|| {
                                 black_box(
                                     model
@@ -349,6 +380,7 @@ fn log_likelihood_group(c: &mut Criterion) {
                         }
                         (SolverKind::Analytical, Authoring::Macro, CacheState::Hot) => {
                             let model = macro_analytical(workload);
+                            let theta = analytical_parameters(&model, workload);
                             b.iter(|| {
                                 black_box(
                                     model
@@ -363,6 +395,7 @@ fn log_likelihood_group(c: &mut Criterion) {
                         }
                         (SolverKind::Analytical, Authoring::Macro, CacheState::Cold) => {
                             let model = macro_analytical(workload).disable_cache();
+                            let theta = analytical_parameters(&model, workload);
                             b.iter(|| {
                                 black_box(
                                     model
@@ -377,6 +410,7 @@ fn log_likelihood_group(c: &mut Criterion) {
                         }
                         (SolverKind::Sde, Authoring::Handwritten, CacheState::Hot) => {
                             let model = handwritten_sde(workload);
+                            let theta = sde_parameters(&model, workload);
                             b.iter(|| {
                                 black_box(
                                     model
@@ -391,6 +425,7 @@ fn log_likelihood_group(c: &mut Criterion) {
                         }
                         (SolverKind::Sde, Authoring::Handwritten, CacheState::Cold) => {
                             let model = handwritten_sde(workload).disable_cache();
+                            let theta = sde_parameters(&model, workload);
                             b.iter(|| {
                                 black_box(
                                     model
@@ -405,6 +440,7 @@ fn log_likelihood_group(c: &mut Criterion) {
                         }
                         (SolverKind::Sde, Authoring::Macro, CacheState::Hot) => {
                             let model = macro_sde(workload);
+                            let theta = sde_parameters(&model, workload);
                             b.iter(|| {
                                 black_box(
                                     model
@@ -419,6 +455,7 @@ fn log_likelihood_group(c: &mut Criterion) {
                         }
                         (SolverKind::Sde, Authoring::Macro, CacheState::Cold) => {
                             let model = macro_sde(workload).disable_cache();
+                            let theta = sde_parameters(&model, workload);
                             b.iter(|| {
                                 black_box(
                                     model

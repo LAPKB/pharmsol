@@ -15,16 +15,18 @@ pub use three_compartment_models::*;
 pub use two_compartment_cl_models::*;
 pub use two_compartment_models::*;
 
-use super::spphash;
+use super::parameters_hash;
 
 use super::{
     EqnKind, Equation, EquationPriv, EquationTypes, ModelMetadata, ModelMetadataError,
     ValidatedModelMetadata,
 };
 use crate::data::error_model::AssayErrorModels;
-use crate::simulator::cache::{PredictionCache, DEFAULT_CACHE_SIZE};
+use crate::simulator::cache::{
+    BoundErrorModelCache, PredictionCache, DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE, DEFAULT_CACHE_SIZE,
+};
 use crate::PharmsolError;
-use crate::{data::Covariates, simulator::*, Observation, Subject};
+use crate::{data::Covariates, simulator::*, Observation, Parameters, Subject};
 
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
 pub enum AnalyticalMetadataError {
@@ -53,6 +55,7 @@ pub struct Analytical {
     neqs: Neqs,
     metadata: Option<ValidatedModelMetadata>,
     cache: Option<PredictionCache>,
+    error_model_cache: Option<BoundErrorModelCache>,
 }
 
 #[inline(always)]
@@ -107,6 +110,9 @@ impl Analytical {
             neqs: Neqs::default(),
             metadata: None,
             cache: Some(PredictionCache::new(DEFAULT_CACHE_SIZE)),
+            error_model_cache: Some(BoundErrorModelCache::new(
+                DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
+            )),
         }
     }
 
@@ -139,6 +145,9 @@ impl Analytical {
         let metadata = metadata.validate_for(ModelKind::Analytical)?;
         validate_metadata_dimensions(&metadata, &self.neqs)?;
         self.metadata = Some(metadata);
+        self.error_model_cache = Some(BoundErrorModelCache::new(
+            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
+        ));
         Ok(self)
     }
 
@@ -161,6 +170,9 @@ impl Analytical {
 
     fn invalidate_metadata(&mut self) {
         self.metadata = None;
+        self.error_model_cache = Some(BoundErrorModelCache::new(
+            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
+        ));
     }
 }
 
@@ -198,11 +210,17 @@ fn validate_metadata_dimensions(
 impl super::Cache for Analytical {
     fn with_cache_capacity(mut self, size: u64) -> Self {
         self.cache = Some(PredictionCache::new(size));
+        self.error_model_cache = Some(BoundErrorModelCache::new(
+            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
+        ));
         self
     }
 
     fn enable_cache(mut self) -> Self {
         self.cache = Some(PredictionCache::new(DEFAULT_CACHE_SIZE));
+        self.error_model_cache = Some(BoundErrorModelCache::new(
+            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
+        ));
         self
     }
 
@@ -210,10 +228,14 @@ impl super::Cache for Analytical {
         if let Some(cache) = &self.cache {
             cache.invalidate_all();
         }
+        if let Some(cache) = &self.error_model_cache {
+            cache.invalidate_all();
+        }
     }
 
     fn disable_cache(mut self) -> Self {
         self.cache = None;
+        self.error_model_cache = None;
         self
     }
 }
@@ -235,13 +257,13 @@ impl EquationPriv for Analytical {
     // }
 
     // #[inline(always)]
-    // fn get_lag(&self, spp: &[f64]) -> Option<HashMap<usize, f64>> {
-    //     Some((self.lag)(&V::from_vec(spp.to_owned())))
+    // fn get_lag(&self, parameters: &[f64]) -> Option<HashMap<usize, f64>> {
+    //     Some((self.lag)(&V::from_vec(parameters.to_owned())))
     // }
 
     // #[inline(always)]
-    // fn get_fa(&self, spp: &[f64]) -> Option<HashMap<usize, f64>> {
-    //     Some((self.fa)(&V::from_vec(spp.to_owned())))
+    // fn get_fa(&self, parameters: &[f64]) -> Option<HashMap<usize, f64>> {
+    //     Some((self.fa)(&V::from_vec(parameters.to_owned())))
     // }
 
     #[inline(always)]
@@ -277,7 +299,7 @@ impl EquationPriv for Analytical {
     fn solve(
         &self,
         x: &mut Self::S,
-        support_point: &[f64],
+        parameters: &[f64],
         covariates: &Covariates,
         infusions: &[Infusion],
         ti: f64,
@@ -306,11 +328,11 @@ impl EquationPriv for Analytical {
 
         // 2) March over each sub-interval
         let mut current_t = ts[0];
-        let mut sp = V::from_vec(support_point.to_vec(), NalgebraContext);
+        let mut parameters_v = V::from_vec(parameters.to_vec(), NalgebraContext);
         let mut rateiv = V::zeros(self.get_ndrugs(), NalgebraContext);
 
         for &next_t in &ts[1..] {
-            // prepare support and infusion rate for [current_t .. next_t]
+            // prepare parameters and infusion rate for [current_t .. next_t]
             rateiv.fill(0.0);
             for inf in infusions {
                 let s = inf.time();
@@ -332,12 +354,12 @@ impl EquationPriv for Analytical {
                 }
             }
 
-            // advance the support-point to next_t
-            (self.seq_eq)(&mut sp, next_t, covariates);
+            // advance the parameters to next_t
+            (self.seq_eq)(&mut parameters_v, next_t, covariates);
 
             // advance state by dt
             let dt = next_t - current_t;
-            *x = (self.eq)(x, &sp, dt, &rateiv, covariates);
+            *x = (self.eq)(x, &parameters_v, dt, &rateiv, covariates);
 
             current_t = next_t;
         }
@@ -348,7 +370,7 @@ impl EquationPriv for Analytical {
     #[inline(always)]
     fn process_observation(
         &self,
-        support_point: &[f64],
+        parameters: &[f64],
         observation: &Observation,
         error_models: Option<&AssayErrorModels>,
         _time: f64,
@@ -361,7 +383,7 @@ impl EquationPriv for Analytical {
         let out = &self.out;
         (out)(
             x,
-            &V::from_vec(support_point.to_vec(), NalgebraContext),
+            &V::from_vec(parameters.to_vec(), NalgebraContext),
             observation.time(),
             covariates,
             &mut y,
@@ -380,12 +402,17 @@ impl EquationPriv for Analytical {
         Ok(())
     }
     #[inline(always)]
-    fn initial_state(&self, spp: &[f64], covariates: &Covariates, occasion_index: usize) -> V {
+    fn initial_state(
+        &self,
+        parameters: &[f64],
+        covariates: &Covariates,
+        occasion_index: usize,
+    ) -> V {
         let init = &self.init;
         let mut x = V::zeros(self.get_nstates(), NalgebraContext);
         if occasion_index == 0 {
             (init)(
-                &V::from_vec(spp.to_vec(), NalgebraContext),
+                &V::from_vec(parameters.to_vec(), NalgebraContext),
                 0.0,
                 covariates,
                 &mut x,
@@ -487,7 +514,9 @@ pub(crate) mod tests {
             .observation(1.0, 0.0, 0)
             .build();
 
-        let predictions = analytical.estimate_predictions(&subject, &[1.0]).unwrap();
+        let predictions = analytical
+            .estimate_predictions(&subject, &crate::parameters::dense([1.0]))
+            .unwrap();
 
         let value = predictions.predictions()[0].prediction();
         assert!((value - 2.5).abs() < 1e-12);
@@ -519,7 +548,9 @@ pub(crate) mod tests {
             .observation(1.0, 0.0, 0)
             .build();
 
-        let predictions = analytical.estimate_predictions(&subject, &[0.0]).unwrap();
+        let predictions = analytical
+            .estimate_predictions(&subject, &crate::parameters::dense([0.0]))
+            .unwrap();
 
         assert_eq!(predictions.predictions()[0].prediction(), 4.0);
     }
@@ -604,10 +635,10 @@ pub(crate) mod tests {
             .build();
 
         let canonical_predictions = analytical
-            .estimate_predictions(&canonical, &[])
+            .estimate_predictions(&canonical, &crate::parameters::dense([]))
             .expect("canonical labels should simulate");
         let aliased_predictions = analytical
-            .estimate_predictions(&aliased, &[])
+            .estimate_predictions(&aliased, &crate::parameters::dense([]))
             .expect("raw numeric aliases should simulate");
 
         assert_relative_eq!(
@@ -855,23 +886,27 @@ pub(crate) mod tests {
     }
 }
 impl Equation for Analytical {
+    fn bound_error_model_cache(&self) -> Option<&BoundErrorModelCache> {
+        self.error_model_cache.as_ref()
+    }
+
     fn estimate_likelihood(
         &self,
         subject: &Subject,
-        support_point: &[f64],
+        parameters: &Parameters,
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
-        _estimate_likelihood(self, subject, support_point, error_models)
+        _estimate_likelihood(self, subject, parameters.as_slice(), error_models)
     }
 
     fn estimate_log_likelihood(
         &self,
         subject: &Subject,
-        support_point: &[f64],
+        parameters: &Parameters,
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
         let bound_error_models = self.bind_error_models(error_models)?;
-        let ypred = _subject_predictions(self, subject, support_point)?;
+        let ypred = _subject_predictions(self, subject, parameters.as_slice())?;
         ypred.log_likelihood(&bound_error_models)
     }
 
@@ -884,29 +919,33 @@ impl Equation for Analytical {
 fn _subject_predictions(
     analytical: &Analytical,
     subject: &Subject,
-    support_point: &[f64],
+    parameters: &[f64],
 ) -> Result<SubjectPredictions, PharmsolError> {
     if let Some(cache) = &analytical.cache {
-        let key = (subject.hash(), spphash(support_point));
+        let key = (subject.hash(), parameters_hash(parameters));
         if let Some(cached) = cache.get(&key) {
             return Ok(cached);
         }
 
-        let result = analytical.simulate_subject(subject, support_point, None)?.0;
+        let result = analytical
+            .simulate_subject_dense(subject, parameters, None)?
+            .0;
         cache.insert(key, result.clone());
         Ok(result)
     } else {
-        Ok(analytical.simulate_subject(subject, support_point, None)?.0)
+        Ok(analytical
+            .simulate_subject_dense(subject, parameters, None)?
+            .0)
     }
 }
 
 fn _estimate_likelihood(
     ode: &Analytical,
     subject: &Subject,
-    support_point: &[f64],
+    parameters: &[f64],
     error_models: &AssayErrorModels,
 ) -> Result<f64, PharmsolError> {
     let bound_error_models = ode.bind_error_models(error_models)?;
-    let ypred = _subject_predictions(ode, subject, support_point)?;
+    let ypred = _subject_predictions(ode, subject, parameters)?;
     Ok(ypred.log_likelihood(&bound_error_models)?.exp())
 }

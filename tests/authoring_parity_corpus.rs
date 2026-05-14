@@ -1424,7 +1424,17 @@ fn ode_runtime_jit_macro_and_handwritten_predictions_agree_on_shared_input_shape
     let cp =
         compiled_output_slot_index(&runtime_model, "cp").expect("runtime cp output should exist");
     let subject = shared_input_prediction_subject();
-    let support_point = [1.0, 0.2, 10.0, 0.25, 0.8];
+    let support_point = pharmsol::Parameters::with_model(
+        &runtime_model,
+        [
+            ("ka", 1.0),
+            ("ke", 0.2),
+            ("v", 10.0),
+            ("tlag", 0.25),
+            ("f_oral", 0.8),
+        ],
+    )
+    .expect("valid named parameters");
 
     assert_eq!(oral, 0);
     assert_eq!(iv, oral);
@@ -1495,7 +1505,17 @@ fn analytical_runtime_jit_macro_and_handwritten_predictions_agree_on_shared_inpu
     let cp =
         compiled_output_slot_index(&runtime_model, "cp").expect("runtime cp output should exist");
     let subject = shared_input_prediction_subject();
-    let support_point = [1.1, 0.2, 10.0, 0.25, 0.8];
+    let support_point = pharmsol::Parameters::with_model(
+        &runtime_model,
+        [
+            ("ka", 1.1),
+            ("ke", 0.2),
+            ("v", 10.0),
+            ("tlag", 0.25),
+            ("f_oral", 0.8),
+        ],
+    )
+    .expect("valid named parameters");
 
     assert_eq!(oral, 0);
     assert_eq!(iv, oral);
@@ -1566,7 +1586,18 @@ fn sde_runtime_jit_macro_and_handwritten_predictions_agree_on_shared_input_shape
     let cp =
         compiled_output_slot_index(&runtime_model, "cp").expect("runtime cp output should exist");
     let subject = shared_input_prediction_subject();
-    let support_point = [1.1, 0.2, 0.0, 10.0, 0.25, 0.8];
+    let support_point = pharmsol::Parameters::with_model(
+        &runtime_model,
+        [
+            ("ka", 1.1),
+            ("ke", 0.2),
+            ("sigma_ke", 0.0),
+            ("v", 10.0),
+            ("tlag", 0.25),
+            ("f_oral", 0.8),
+        ],
+    )
+    .expect("valid named parameters");
 
     assert_eq!(oral, 0);
     assert_eq!(iv, oral);
@@ -1633,7 +1664,17 @@ fn route_input_policy_runtime_mismatches_are_detected_explicitly() {
     let cp =
         compiled_output_slot_index(&runtime_model, "cp").expect("runtime cp output should exist");
     let subject = shared_input_prediction_subject();
-    let support_point = [1.0, 0.2, 10.0, 0.25, 0.8];
+    let support_point = pharmsol::Parameters::with_model(
+        &runtime_model,
+        [
+            ("ka", 1.0),
+            ("ke", 0.2),
+            ("v", 10.0),
+            ("tlag", 0.25),
+            ("f_oral", 0.8),
+        ],
+    )
+    .expect("valid named parameters");
 
     assert_eq!(oral, 0);
     assert_eq!(iv, oral);
@@ -1680,7 +1721,9 @@ fn ode_runtime_jit_preserves_mixed_output_labels() {
         .missing_observation(0.5, "outeq_0")
         .missing_observation(0.5, "outeq_1")
         .build();
-    let support_point = [0.2, 10.0];
+    let support_point =
+        pharmsol::Parameters::with_model(&runtime_model, [("ke", 0.2), ("v", 10.0)])
+            .expect("valid named parameters");
 
     assert_eq!(compiled_output_slot_index(&runtime_model, "cp"), Some(0));
     assert_eq!(
@@ -1716,7 +1759,9 @@ fn ode_runtime_jit_rejects_undeclared_numeric_output_labels_even_when_dense_inde
         .infusion(0.0, 100.0, "iv", 1.0)
         .missing_observation(0.5, "10")
         .build();
-    let support_point = [0.2, 10.0];
+    let support_point =
+        pharmsol::Parameters::with_model(&runtime_model, [("ke", 0.2), ("v", 10.0)])
+            .expect("valid named parameters");
 
     let error = runtime_model
         .estimate_predictions(&subject, &support_point)
@@ -1739,7 +1784,9 @@ fn ode_runtime_jit_rejects_undeclared_numeric_input_labels_even_when_dense_index
         .bolus(0.0, 100.0, "10")
         .missing_observation(0.5, "cp")
         .build();
-    let support_point = [0.2, 10.0];
+    let support_point =
+        pharmsol::Parameters::with_model(&runtime_model, [("ke", 0.2), ("v", 10.0)])
+            .expect("valid named parameters");
 
     let error = runtime_model
         .estimate_predictions(&subject, &support_point)

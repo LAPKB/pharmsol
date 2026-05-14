@@ -46,7 +46,7 @@
 //! assert!(metadata.output("cp").is_some());
 //! ```
 
-use std::fmt::Debug;
+use std::{fmt::Debug, sync::Arc};
 pub mod analytical;
 pub mod metadata;
 pub mod ode;
@@ -59,10 +59,10 @@ use pharmsol_dsl::{NUMERIC_OUTPUT_PREFIX, NUMERIC_ROUTE_PREFIX};
 pub use sde::*;
 
 use crate::{
-    error_model::AssayErrorModels,
-    simulator::{Fa, Lag},
-    Covariates, Event, Infusion, InputLabel, Observation, Occasion, OutputLabel, PharmsolError,
-    Subject,
+    error_model::{AssayErrorModels, BoundAssayErrorModels},
+    simulator::{cache::BoundErrorModelCache, Fa, Lag},
+    Covariates, Event, Infusion, InputLabel, Observation, Occasion, OutputLabel, Parameters,
+    PharmsolError, Subject,
 };
 
 use super::likelihood::Prediction;
@@ -183,7 +183,7 @@ pub(crate) trait EquationPriv: EquationTypes {
     fn solve(
         &self,
         state: &mut Self::S,
-        support_point: &[f64],
+        parameters: &[f64],
         covariates: &Covariates,
         infusions: &[Infusion],
         start_time: f64,
@@ -252,7 +252,7 @@ pub(crate) trait EquationPriv: EquationTypes {
     fn resolve_occasion_events(
         &self,
         occasion: &Occasion,
-        support_point: &[f64],
+        parameters: &[f64],
         covariates: &Covariates,
     ) -> Result<Vec<Event>, PharmsolError> {
         let mut resolved = occasion.clone();
@@ -274,10 +274,7 @@ pub(crate) trait EquationPriv: EquationTypes {
             }
         }
 
-        Ok(resolved.process_events(
-            Some((self.fa(), self.lag(), support_point, covariates)),
-            true,
-        ))
+        Ok(resolved.process_events(Some((self.fa(), self.lag(), parameters, covariates)), true))
     }
     #[allow(dead_code)]
     fn is_sde(&self) -> bool {
@@ -287,7 +284,7 @@ pub(crate) trait EquationPriv: EquationTypes {
     #[allow(clippy::too_many_arguments)]
     fn process_observation(
         &self,
-        support_point: &[f64],
+        parameters: &[f64],
         observation: &Observation,
         error_models: Option<&AssayErrorModels>,
         time: f64,
@@ -299,7 +296,7 @@ pub(crate) trait EquationPriv: EquationTypes {
 
     fn initial_state(
         &self,
-        support_point: &[f64],
+        parameters: &[f64],
         covariates: &Covariates,
         occasion_index: usize,
     ) -> Self::S;
@@ -307,7 +304,7 @@ pub(crate) trait EquationPriv: EquationTypes {
     #[allow(clippy::too_many_arguments)]
     fn simulate_event(
         &self,
-        support_point: &[f64],
+        parameters: &[f64],
         event: &Event,
         next_event: Option<&Event>,
         error_models: Option<&AssayErrorModels>,
@@ -339,7 +336,7 @@ pub(crate) trait EquationPriv: EquationTypes {
             }
             Event::Observation(observation) => {
                 self.process_observation(
-                    support_point,
+                    parameters,
                     observation,
                     error_models,
                     event.time(),
@@ -354,7 +351,7 @@ pub(crate) trait EquationPriv: EquationTypes {
         if let Some(next_event) = next_event {
             self.solve(
                 x,
-                support_point,
+                parameters,
                 covariates,
                 infusions,
                 event.time(),
@@ -390,14 +387,35 @@ fn canonical_numeric_alias(label: &str, prefix: &str) -> Option<String> {
 #[allow(private_bounds)]
 pub trait Equation: EquationPriv + 'static + Clone + Sync {
     #[doc(hidden)]
-    fn bind_error_models(
-        &self,
-        error_models: &AssayErrorModels,
-    ) -> Result<AssayErrorModels, PharmsolError> {
+    fn bound_error_model_cache(&self) -> Option<&BoundErrorModelCache> {
+        None
+    }
+
+    #[doc(hidden)]
+    fn bind_error_models<'a>(
+        &'a self,
+        error_models: &'a AssayErrorModels,
+    ) -> Result<BoundAssayErrorModels<'a>, PharmsolError> {
+        if let Some(cache) = self.bound_error_model_cache() {
+            let key = error_models.hash();
+            if let Some(bound_error_models) = cache.get(&key) {
+                return Ok(BoundAssayErrorModels::Shared(bound_error_models));
+            }
+
+            return match error_models.bind_to(self)? {
+                BoundAssayErrorModels::Owned(bound_error_models) => {
+                    let bound_error_models = Arc::new(bound_error_models);
+                    cache.insert(key, Arc::clone(&bound_error_models));
+                    Ok(BoundAssayErrorModels::Shared(bound_error_models))
+                }
+                bound_error_models => Ok(bound_error_models),
+            };
+        }
+
         Ok(error_models.bind_to(self)?)
     }
 
-    /// Estimate the likelihood of the subject given the support point and error model.
+    /// Estimate the likelihood of the subject given the parameters and error model.
     ///
     /// **Deprecated**: Use [`estimate_log_likelihood`](Self::estimate_log_likelihood) instead
     /// for better numerical stability, especially with many observations or extreme parameter values.
@@ -407,7 +425,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
     ///
     /// # Parameters
     /// - `subject`: The subject data
-    /// - `support_point`: The parameter values
+    /// - `parameters`: The parameter values
     /// - `error_model`: The error model
     ///
     /// # Returns
@@ -419,11 +437,11 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
     fn estimate_likelihood(
         &self,
         subject: &Subject,
-        support_point: &[f64],
+        parameters: &Parameters,
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError>;
 
-    /// Estimate the log-likelihood of the subject given the support point and error model.
+    /// Estimate the log-likelihood of the subject given the parameters and error model.
     ///
     /// This function calculates the log of how likely the observed data is given the model
     /// parameters and error model. It is numerically more stable than `estimate_likelihood`
@@ -434,7 +452,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
     ///
     /// # Parameters
     /// - `subject`: The subject data
-    /// - `support_point`: The parameter values
+    /// - `parameters`: The parameter values
     /// - `error_models`: The error model
     ///
     /// # Returns
@@ -442,26 +460,86 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
     fn estimate_log_likelihood(
         &self,
         subject: &Subject,
-        support_point: &[f64],
+        parameters: &Parameters,
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError>;
 
     fn kind() -> EqnKind;
 
+    #[doc(hidden)]
+    fn estimate_predictions_dense(
+        &self,
+        subject: &Subject,
+        parameters: &[f64],
+    ) -> Result<Self::P, PharmsolError> {
+        Ok(self.simulate_subject_dense(subject, parameters, None)?.0)
+    }
+
+    #[doc(hidden)]
+    fn estimate_log_likelihood_dense(
+        &self,
+        subject: &Subject,
+        parameters: &[f64],
+        error_models: &AssayErrorModels,
+    ) -> Result<f64, PharmsolError> {
+        let bound_error_models = self.bind_error_models(error_models)?;
+        let predictions = self.estimate_predictions_dense(subject, parameters)?;
+        predictions.log_likelihood(&bound_error_models)
+    }
+
+    #[doc(hidden)]
+    fn simulate_subject_dense(
+        &self,
+        subject: &Subject,
+        parameters: &[f64],
+        error_models: Option<&AssayErrorModels>,
+    ) -> Result<(Self::P, Option<f64>), PharmsolError> {
+        let bound_error_models = match error_models {
+            Some(error_models) => Some(self.bind_error_models(error_models)?),
+            None => None,
+        };
+        let bound_error_models = bound_error_models.as_ref().map(|models| &**models);
+
+        let mut output = Self::P::new(self.nparticles());
+        let mut likelihood = Vec::new();
+        for occasion in subject.occasions() {
+            let covariates = occasion.covariates();
+
+            let mut x = self.initial_state(parameters, covariates, occasion.index());
+            let mut infusions = Vec::new();
+            let events = self.resolve_occasion_events(occasion, parameters, covariates)?;
+            for (index, event) in events.iter().enumerate() {
+                self.simulate_event(
+                    parameters,
+                    event,
+                    events.get(index + 1),
+                    bound_error_models,
+                    covariates,
+                    &mut x,
+                    &mut infusions,
+                    &mut likelihood,
+                    &mut output,
+                )?;
+            }
+        }
+        let ll = bound_error_models.map(|_| likelihood.iter().product::<f64>());
+        Ok((output, ll))
+    }
+
     /// Generate predictions for a subject with given parameters.
     ///
     /// # Parameters
     /// - `subject`: The subject data
-    /// - `support_point`: The parameter values
+    /// - `parameters`: The parameter values
     ///
     /// # Returns
     /// Predicted concentrations
     fn estimate_predictions(
         &self,
         subject: &Subject,
-        support_point: &[f64],
+        parameters: &Parameters,
     ) -> Result<Self::P, PharmsolError> {
-        Ok(self.simulate_subject(subject, support_point, None)?.0)
+        self.estimate_predictions_dense(subject, parameters.as_slice())
     }
 
     /// Get the number of output equations in the model.
@@ -494,7 +572,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
     ///
     /// # Parameters
     /// - `subject`: The subject data
-    /// - `support_point`: The parameter values
+    /// - `parameters`: The parameter values
     /// - `error_model`: The error model (optional)
     ///
     /// # Returns
@@ -502,40 +580,10 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
     fn simulate_subject(
         &self,
         subject: &Subject,
-        support_point: &[f64],
+        parameters: &Parameters,
         error_models: Option<&AssayErrorModels>,
     ) -> Result<(Self::P, Option<f64>), PharmsolError> {
-        let bound_error_models = match error_models {
-            Some(error_models) => Some(self.bind_error_models(error_models)?),
-            None => None,
-        };
-
-        let mut output = Self::P::new(self.nparticles());
-        let mut likelihood = Vec::new();
-        for occasion in subject.occasions() {
-            let covariates = occasion.covariates();
-
-            let mut x = self.initial_state(support_point, covariates, occasion.index());
-            let mut infusions = Vec::new();
-            let events = self.resolve_occasion_events(occasion, support_point, covariates)?;
-            for (index, event) in events.iter().enumerate() {
-                self.simulate_event(
-                    support_point,
-                    event,
-                    events.get(index + 1),
-                    bound_error_models.as_ref(),
-                    covariates,
-                    &mut x,
-                    &mut infusions,
-                    &mut likelihood,
-                    &mut output,
-                )?;
-            }
-        }
-        let ll = bound_error_models
-            .as_ref()
-            .map(|_| likelihood.iter().product::<f64>());
-        Ok((output, ll))
+        self.simulate_subject_dense(subject, parameters.as_slice(), error_models)
     }
 }
 
@@ -558,12 +606,12 @@ impl EqnKind {
     }
 }
 
-/// Hash support points to a u64 for cache key generation.
+/// Hash parameter vectors to a u64 for cache key generation.
 #[inline(always)]
-pub(crate) fn spphash(spp: &[f64]) -> u64 {
+pub(crate) fn parameters_hash(parameters: &[f64]) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = ahash::AHasher::default();
-    for &value in spp {
+    for &value in parameters {
         // Normalize -0.0 to 0.0 for consistent hashing
         let bits = if value == 0.0 { 0u64 } else { value.to_bits() };
         bits.hash(&mut hasher);

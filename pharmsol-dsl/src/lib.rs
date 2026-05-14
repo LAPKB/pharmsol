@@ -74,6 +74,7 @@ pub mod diagnostic;
 pub mod execution;
 pub mod ir;
 mod lexer;
+mod name_match;
 mod parser;
 mod semantic;
 #[cfg(test)]

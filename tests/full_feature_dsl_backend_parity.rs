@@ -93,9 +93,9 @@ mod tests {
                 "f_oral",
                 "base_gut",
                 "base_central",
-                "tvke",
             ])
         );
+        assert_eq!(info.derived, owned_names(&["adjusted_v"]));
         assert_eq!(
             info.covariates
                 .iter()

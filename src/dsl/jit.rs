@@ -1303,10 +1303,11 @@ pub fn compile_analytical_model_to_jit(
             Some(model.span),
         ));
     }
-    Ok(JitAnalyticalModel::new(
+    JitAnalyticalModel::new(
         NativeModelInfo::from_execution_model(model),
         compile_execution_artifact(model)?,
-    ))
+    )
+    .map_err(|error| JitCompileError::new(error.to_string(), Some(model.span)))
 }
 
 /// Compile an SDE execution model to the native in-process JIT backend.
@@ -1333,7 +1334,7 @@ mod tests {
     use crate::simulator::equation::analytical::one_compartment_with_absorption;
     use crate::simulator::equation::{Equation, Predictions as PredictionTrait};
     use crate::test_fixtures::STRUCTURED_BLOCK_CORPUS;
-    use crate::{equation, Subject, SubjectBuilderExt, ODE, SDE};
+    use crate::{equation, Parameters, Subject, SubjectBuilderExt, ODE, SDE};
     use approx::assert_relative_eq;
     use diffsol::Vector;
     use pharmsol_dsl::execution::DenseBufferLayout;
@@ -1449,7 +1450,11 @@ out(cp) = central / v ~ continuous()
             .observation(9.0, 0.0, 0)
             .build();
 
-        let support = vec![1.2, 0.15, 40.0];
+        let support = Parameters::with_model(
+            &crate::dsl::CompiledRuntimeModel::Ode(jit.clone()),
+            [("ka", 1.2), ("ke", 0.15), ("v", 40.0)],
+        )
+        .expect("valid named parameters");
         let jit_predictions = jit
             .estimate_predictions(&jit_subject, &support)
             .expect("jit predictions");
@@ -1612,7 +1617,17 @@ out(cp) = central / v ~ continuous()
             .missing_observation(9.0, 0)
             .build();
 
-        let support = vec![1.2, 5.0, 40.0, 0.5, 0.8];
+        let support = Parameters::with_model(
+            &crate::dsl::CompiledRuntimeModel::Ode(jit.clone()),
+            [
+                ("ka", 1.2),
+                ("cl", 5.0),
+                ("v", 40.0),
+                ("tlag", 0.5),
+                ("f_oral", 0.8),
+            ],
+        )
+        .expect("valid named parameters");
         let jit_predictions = jit
             .estimate_predictions(&jit_subject, &support)
             .expect("jit predictions");
@@ -1713,7 +1728,8 @@ out(cp) = central / v ~ continuous()
             .missing_observation(4.0, 0)
             .build();
 
-        let support = vec![1.0, 0.15, 25.0];
+        let support = Parameters::with_model(&jit, [("ka", 1.0), ("ke", 0.15), ("v", 25.0)])
+            .expect("valid named parameters");
         let jit_predictions = jit
             .estimate_predictions(&jit_subject, &support)
             .expect("jit analytical predictions");
@@ -1734,6 +1750,86 @@ out(cp) = central / v ~ continuous()
 
         let reference_predictions = reference
             .estimate_predictions(&reference_subject, &support)
+            .expect("reference analytical predictions");
+
+        for (jit_pred, reference_pred) in jit_predictions
+            .predictions()
+            .iter()
+            .zip(reference_predictions.predictions())
+        {
+            assert_relative_eq!(
+                jit_pred.prediction(),
+                reference_pred.prediction(),
+                max_relative = 1e-4
+            );
+        }
+    }
+
+    #[test]
+    fn jit_analytical_wrapper_supports_mixed_primary_and_derived_structure_inputs() {
+        let source = r#"
+model analytical_mixed {
+    kind analytical
+    parameters { ka, v, ke0 }
+    states { depot, central }
+    routes { oral -> depot }
+    derive {
+        ke = ke0
+    }
+    analytical {
+        structure = one_compartment_with_absorption
+    }
+    outputs {
+        cp = central / v
+    }
+}
+"#;
+        let parsed = pharmsol_dsl::parse_model(source).expect("analytical model parses");
+        let typed = pharmsol_dsl::analyze_model(&parsed).expect("analytical model analyzes");
+        let model = pharmsol_dsl::lower_typed_model(&typed).expect("analytical model lowers");
+        let jit = compile_analytical_model_to_jit(&model).expect("compile jit analytical model");
+
+        assert_eq!(jit.info().derived, vec!["ke".to_string()]);
+
+        let jit_subject = Subject::builder("analytical")
+            .bolus(0.0, 100.0, "oral")
+            .missing_observation(0.5, "cp")
+            .missing_observation(1.0, "cp")
+            .missing_observation(2.0, "cp")
+            .missing_observation(4.0, "cp")
+            .build();
+
+        let reference_subject = Subject::builder("analytical")
+            .bolus(0.0, 100.0, 0)
+            .missing_observation(0.5, 0)
+            .missing_observation(1.0, 0)
+            .missing_observation(2.0, 0)
+            .missing_observation(4.0, 0)
+            .build();
+
+        let jit_support = Parameters::with_model(&jit, [("ka", 1.0), ("v", 25.0), ("ke0", 0.15)])
+            .expect("valid named parameters");
+        let jit_predictions = jit
+            .estimate_predictions(&jit_subject, &jit_support)
+            .expect("jit analytical predictions");
+
+        let reference = equation::Analytical::new(
+            one_compartment_with_absorption,
+            |_p, _t, _cov| {},
+            |_p, _t, _cov| std::collections::HashMap::new(),
+            |_p, _t, _cov| std::collections::HashMap::new(),
+            |_p, _t, _cov, _x| {},
+            |x, p, _t, _cov, y| {
+                y[0] = x[1] / p[2];
+            },
+        )
+        .with_nstates(2)
+        .with_ndrugs(1)
+        .with_nout(1);
+
+        let reference_support = crate::parameters::dense(vec![1.0, 0.15, 25.0]);
+        let reference_predictions = reference
+            .estimate_predictions(&reference_subject, &reference_support)
             .expect("reference analytical predictions");
 
         for (jit_pred, reference_pred) in jit_predictions
@@ -1791,7 +1887,18 @@ out(cp) = central / v ~ continuous()
             .missing_observation(4.0, 0)
             .build();
 
-        let support = vec![1.1, 0.2, 0.12, 0.08, 15.0, 0.0];
+        let support = Parameters::with_model(
+            &jit,
+            [
+                ("ka", 1.1),
+                ("ke0", 0.2),
+                ("kcp", 0.12),
+                ("kpc", 0.08),
+                ("vol", 15.0),
+                ("ske", 0.0),
+            ],
+        )
+        .expect("valid named parameters");
         let jit_predictions = jit
             .estimate_predictions(&jit_subject, &support)
             .expect("jit sde predictions");

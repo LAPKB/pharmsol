@@ -403,7 +403,8 @@ fn macro_injected_lowering_matches_handwritten_metadata_and_predictions() {
     let macro_ode = injected_macro_ode();
     let handwritten_ode = injected_handwritten_ode();
     let subject = subject_for_route("iv", "cp");
-    let support_point = [0.2, 10.0];
+    let support_point = pharmsol::Parameters::with_model(&macro_ode, [("ke", 0.2), ("v", 10.0)])
+        .expect("valid named parameters");
     let macro_metadata = macro_ode
         .metadata()
         .expect("macro injected model should carry metadata");
@@ -432,7 +433,8 @@ fn macro_numeric_labels_lower_to_dense_slots() {
     let macro_ode = numeric_label_macro_ode();
     let handwritten_ode = numeric_label_handwritten_ode();
     let subject = subject_for_route("1", "1");
-    let support_point = [0.2, 10.0];
+    let support_point = pharmsol::Parameters::with_model(&macro_ode, [("ke", 0.2), ("v", 10.0)])
+        .expect("valid named parameters");
     let macro_metadata = macro_ode
         .metadata()
         .expect("macro numeric-label model should carry metadata");
@@ -461,7 +463,17 @@ fn macro_shared_input_lowering_matches_handwritten_metadata_and_predictions() {
     let macro_ode = shared_input_macro_ode();
     let handwritten_ode = shared_input_handwritten_ode();
     let subject = subject_for_shared_input();
-    let support_point = [1.0, 0.2, 10.0, 0.25, 0.8];
+    let support_point = pharmsol::Parameters::with_model(
+        &macro_ode,
+        [
+            ("ka", 1.0),
+            ("ke", 0.2),
+            ("v", 10.0),
+            ("tlag", 0.25),
+            ("f_oral", 0.8),
+        ],
+    )
+    .expect("valid named parameters");
     let macro_metadata = macro_ode
         .metadata()
         .expect("macro shared-input model should carry metadata");
@@ -497,7 +509,8 @@ fn macro_mixed_output_labels_lower_to_dense_slots() {
         .missing_observation(1.0, "0")
         .missing_observation(2.0, "1")
         .build();
-    let support_point = [0.2, 10.0];
+    let support_point = pharmsol::Parameters::with_model(&macro_ode, [("ke", 0.2), ("v", 10.0)])
+        .expect("valid named parameters");
     let macro_metadata = macro_ode
         .metadata()
         .expect("macro mixed-output model should carry metadata");
@@ -526,7 +539,17 @@ fn macro_numeric_route_properties_lower_to_dense_slots() {
     let macro_ode = numeric_route_property_macro_ode();
     let handwritten_ode = numeric_route_property_handwritten_ode();
     let subject = subject_for_numeric_bolus_route("1", "1");
-    let support_point = [1.0, 0.2, 10.0, 0.25, 0.8];
+    let support_point = pharmsol::Parameters::with_model(
+        &macro_ode,
+        [
+            ("ka", 1.0),
+            ("ke", 0.2),
+            ("v", 10.0),
+            ("tlag", 0.25),
+            ("f_oral", 0.8),
+        ],
+    )
+    .expect("valid named parameters");
     let macro_metadata = macro_ode
         .metadata()
         .expect("macro numeric route-property model should carry metadata");
@@ -560,14 +583,16 @@ fn macro_named_labels_resolve_from_pmetrics_ingestion() {
     let data =
         read_pmetrics(file.path().display().to_string()).expect("read named-label Pmetrics data");
     let subject = &data.subjects()[0];
-    let support_point = [0.2, 10.0];
+    let macro_ode = injected_macro_ode();
+    let support_point = pharmsol::Parameters::with_model(&macro_ode, [("ke", 0.2), ("v", 10.0)])
+        .expect("valid named parameters");
 
-    let pmetrics_predictions = injected_macro_ode()
+    let pmetrics_predictions = macro_ode
         .estimate_predictions(subject, &support_point)
         .expect("macro named-label model should simulate")
         .flat_predictions()
         .to_vec();
-    let manual_predictions = injected_macro_ode()
+    let manual_predictions = macro_ode
         .estimate_predictions(&subject_for_route("iv", "cp"), &support_point)
         .expect("macro internal-index model should simulate")
         .flat_predictions()
@@ -585,14 +610,16 @@ fn macro_numeric_labels_resolve_from_pmetrics_ingestion() {
     let data =
         read_pmetrics(file.path().display().to_string()).expect("read numeric-label Pmetrics data");
     let subject = &data.subjects()[0];
-    let support_point = [0.2, 10.0];
+    let macro_ode = numeric_label_macro_ode();
+    let support_point = pharmsol::Parameters::with_model(&macro_ode, [("ke", 0.2), ("v", 10.0)])
+        .expect("valid named parameters");
 
-    let pmetrics_predictions = numeric_label_macro_ode()
+    let pmetrics_predictions = macro_ode
         .estimate_predictions(subject, &support_point)
         .expect("macro numeric-label model should simulate")
         .flat_predictions()
         .to_vec();
-    let manual_predictions = numeric_label_macro_ode()
+    let manual_predictions = macro_ode
         .estimate_predictions(&subject_for_route("1", "1"), &support_point)
         .expect("macro internal-index numeric-label model should simulate")
         .flat_predictions()
@@ -606,7 +633,9 @@ fn macro_covariate_lowering_matches_handwritten_metadata_and_predictions() {
     let macro_ode = covariate_macro_ode();
     let handwritten_ode = covariate_handwritten_ode();
     let subject = subject_for_covariates("oral", "cp");
-    let support_point = [1.0, 0.2, 10.0];
+    let support_point =
+        pharmsol::Parameters::with_model(&macro_ode, [("ka", 1.0), ("ke", 0.2), ("v", 10.0)])
+            .expect("valid named parameters");
     let macro_metadata = macro_ode
         .metadata()
         .expect("macro covariate model should carry metadata");

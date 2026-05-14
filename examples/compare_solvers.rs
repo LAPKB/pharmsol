@@ -11,7 +11,7 @@
 
 use std::time::Instant;
 
-use pharmsol::prelude::*;
+use pharmsol::{prelude::*, Parameters};
 
 // ── Model ──────────────────────────────────────────────────────────
 // Two-compartment IV model. The solver is the only thing that changes
@@ -68,7 +68,11 @@ fn main() {
         .missing_observation(24.0, "cp")
         .build();
 
-    let spp = vec![0.1, 0.05, 0.03, 50.0]; // ke, kcp, kpc, V
+    let parameters = Parameters::with_model(
+        &bdf,
+        [("ke", 0.1), ("kcp", 0.05), ("kpc", 0.03), ("v", 50.0)],
+    )
+    .expect("valid named parameters");
 
     let results: Vec<(&str, equation::ODE)> = vec![
         ("Bdf", bdf),
@@ -80,7 +84,7 @@ fn main() {
     // ── Run all solvers and collect results ───────────────────────
     let mut rows: Vec<(&str, u128, Vec<f64>)> = Vec::new();
     for (name, ode) in &results {
-        let (preds, us) = timed(|| ode.estimate_predictions(&subject, &spp).unwrap());
+        let (preds, us) = timed(|| ode.estimate_predictions(&subject, &parameters).unwrap());
         let preds: Vec<f64> = preds.flat_predictions().to_vec();
         rows.push((name, us, preds));
     }

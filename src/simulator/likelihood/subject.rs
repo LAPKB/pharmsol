@@ -65,14 +65,16 @@ impl SubjectPredictions {
             return Ok(0.0);
         }
 
-        let log_liks: Result<Vec<f64>, _> = self
+        let mut total = 0.0;
+        for prediction in self
             .predictions
             .iter()
-            .filter(|p| p.observation().is_some())
-            .map(|p| p.log_likelihood(error_models))
-            .collect();
+            .filter(|prediction| prediction.observation().is_some())
+        {
+            total += prediction.log_likelihood(error_models)?;
+        }
 
-        log_liks.map(|lls| lls.iter().sum())
+        Ok(total)
     }
 
     /// Calculate the likelihood of all predictions.

@@ -7,6 +7,7 @@ use crate::data::error_model::ErrorModelError;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 use crate::data::row::DataError;
 
+use crate::parameters::ParameterError;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 use crate::CovariateError;
 
@@ -15,6 +16,8 @@ use ndarray::ShapeError;
 
 #[derive(Error, Debug, Clone)]
 pub enum PharmsolError {
+    #[error("Parameter error: {0}")]
+    ParameterError(#[from] ParameterError),
     #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     #[error("Error in the error model: {0}")]
     ErrorModelError(#[from] ErrorModelError),

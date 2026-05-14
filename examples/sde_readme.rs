@@ -1,5 +1,5 @@
 fn main() -> Result<(), pharmsol::PharmsolError> {
-    use pharmsol::prelude::*;
+    use pharmsol::{prelude::*, Parameters};
 
     let sde = sde! {
         name: "one_cmt_sde",
@@ -29,7 +29,9 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
         .missing_observation(4.0, "cp")
         .build();
 
-    let predictions = sde.estimate_predictions(&subject, &[1.022, 0.0, 194.0])?;
+    let parameters = Parameters::with_model(&sde, [("ke", 1.022), ("sigma_ke", 0.0), ("v", 194.0)])
+        .expect("valid named parameters");
+    let predictions = sde.estimate_predictions(&subject, &parameters)?;
 
     println!("first prediction => {}", predictions[[0, 0]].prediction());
     println!("prediction grid shape => {:?}", predictions.dim());

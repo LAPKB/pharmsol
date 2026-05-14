@@ -25,7 +25,7 @@
 //! subject, and generate predictions.
 //!
 //! ```rust
-//! use pharmsol::prelude::*;
+//! use pharmsol::{Parameters, prelude::*};
 //!
 //! let model = analytical! {
 //!     name: "one_cmt_iv",
@@ -47,10 +47,17 @@
 //!     .missing_observation(1.0, "cp")
 //!     .build();
 //!
-//! let predictions = model.estimate_predictions(&subject, &[1.022, 194.0])?;
+//! let parameters = Parameters::with_model(&model, [("ke", 1.022), ("v", 194.0)])
+//!     .expect("valid named parameters");
+//! let predictions = model.estimate_predictions(&subject, &parameters)?;
 //! assert_eq!(predictions.flat_predictions().len(), 2);
 //! # Ok::<(), pharmsol::PharmsolError>(())
 //! ```
+//!
+//! For metadata-backed models, use [`Parameters::with_model`] for one support
+//! point and [`ParameterOrder::with_model`] for repeated dense batches.
+//! Handwritten models without attached parameter metadata cannot validate
+//! named input.
 //!
 //! ## Choose A Workflow
 //!
@@ -111,6 +118,8 @@ pub mod error;
 pub mod nca;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub mod optimize;
+mod parameter_order;
+mod parameters;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub mod simulator;
 #[cfg(all(
@@ -132,7 +141,7 @@ pub use crate::data::*;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use crate::optimize::effect::get_e2;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-pub use crate::optimize::spp::SppOptimizer;
+pub use crate::optimize::parameters::ParameterOptimizer;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use crate::simulator::equation::analytical::*;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
@@ -147,9 +156,18 @@ pub use crate::simulator::equation::{
 pub use error::PharmsolError;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use nalgebra::dmatrix;
+pub use parameters::{ParameterError, ParameterOrder, Parameters};
 pub use pharmsol_macros::{analytical, ode, sde};
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use std::collections::HashMap;
+
+#[doc(hidden)]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+pub mod __macro_support {
+    pub fn vector_from_values(values: Vec<f64>) -> crate::simulator::V {
+        nalgebra::DVector::from_vec(values).into()
+    }
+}
 
 /// Common imports for the main pharmsol workflow.
 ///
@@ -179,6 +197,8 @@ pub use std::collections::HashMap;
 /// ```
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub mod prelude {
+
+    pub use crate::Parameters;
     // Re-export error type
     pub use crate::error::PharmsolError;
 

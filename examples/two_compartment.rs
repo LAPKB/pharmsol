@@ -19,7 +19,7 @@
 ///   Kcp = Q / V    (central to peripheral rate constant)
 ///   Kpc = Q / Vp   (peripheral to central rate constant)
 fn main() -> Result<(), pharmsol::PharmsolError> {
-    use pharmsol::prelude::*;
+    use pharmsol::{prelude::*, Parameters};
 
     let ode = ode! {
         name: "two_cmt_wt",
@@ -84,7 +84,8 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
     let v = 50.0; // Central volume of distribution (L)
     let vp = 100.0; // Peripheral volume of distribution (L)
     let q = 10.0; // Inter-compartmental clearance (L/hr)
-    let params = vec![cl, v, vp, q];
+    let params = Parameters::with_model(&ode, [("cl", cl), ("v", v), ("vp", vp), ("q", q)])
+        .expect("valid named parameters");
 
     // Compute predictions
     let predictions = ode.estimate_predictions(&subject, &params)?;

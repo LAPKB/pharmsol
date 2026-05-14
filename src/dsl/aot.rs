@@ -38,7 +38,7 @@ use pharmsol_dsl::{analyze_module, lower_typed_model, parse_module, ExecutionMod
 use pharmsol_dsl::{Diagnostic, DiagnosticReport, LoweringError, ParseError, SemanticError};
 
 /// ABI version for native AoT artifacts produced by this crate.
-pub const AOT_API_VERSION: u32 = 1;
+pub const AOT_API_VERSION: u32 = 2;
 
 #[cfg(feature = "dsl-aot")]
 /// Selects the compilation target for a native ahead-of-time artifact.
@@ -336,9 +336,10 @@ pub fn load_aot_model(path: impl AsRef<Path>) -> Result<CompiledNativeModel, Aot
 
     Ok(match info.kind {
         ModelKind::Ode => CompiledNativeModel::Ode(super::NativeOdeModel::new(info, artifact)),
-        ModelKind::Analytical => {
-            CompiledNativeModel::Analytical(super::NativeAnalyticalModel::new(info, artifact))
-        }
+        ModelKind::Analytical => CompiledNativeModel::Analytical(
+            super::NativeAnalyticalModel::new(info, artifact)
+                .map_err(|error| AotError::Load(error.to_string()))?,
+        ),
         ModelKind::Sde => CompiledNativeModel::Sde(super::NativeSdeModel::new(info, artifact)),
     })
 }
@@ -457,7 +458,7 @@ mod tests {
     use super::*;
     use crate::dsl::compile_ode_model_to_jit;
     use crate::test_fixtures::STRUCTURED_BLOCK_CORPUS;
-    use crate::SubjectBuilderExt;
+    use crate::{Parameters, SubjectBuilderExt};
     use approx::assert_relative_eq;
     use pharmsol_dsl::{DiagnosticPhase, DSL_SEMANTIC_GENERIC};
     use std::sync::{Arc, Mutex};
@@ -655,7 +656,17 @@ mod tests {
             .missing_observation(9.0, "cp")
             .build();
 
-        let support = vec![1.2, 5.0, 40.0, 0.5, 0.8];
+        let support = Parameters::with_model(
+            &crate::dsl::CompiledRuntimeModel::Ode(jit.clone()),
+            [
+                ("ka", 1.2),
+                ("cl", 5.0),
+                ("v", 40.0),
+                ("tlag", 0.5),
+                ("f_oral", 0.8),
+            ],
+        )
+        .expect("valid named parameters");
         let jit_predictions = jit
             .estimate_predictions(&subject, &support)
             .expect("jit predictions");

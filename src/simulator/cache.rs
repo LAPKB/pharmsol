@@ -19,20 +19,26 @@
 //! let ode = ODE::new(diffeq, lag, fa, init, out).disable_cache();
 //! ```
 
-use std::fmt;
+use std::{fmt, sync::Arc};
 
 use moka::sync::Cache;
 
-use crate::simulator::likelihood::SubjectPredictions;
+use crate::{data::error_model::AssayErrorModels, simulator::likelihood::SubjectPredictions};
 
 /// Default maximum number of entries per cache.
 pub const DEFAULT_CACHE_SIZE: u64 = 100_000;
 
-/// Cache key: (subject_hash, support_point_hash)
+/// Default maximum number of cached bound assay-error contexts per equation.
+pub const DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE: u64 = 32;
+
+/// Cache key: (subject_hash, parameters_hash)
 pub(crate) type PredictionKey = (u64, u64);
 
-/// Cache key for SDE: (subject_hash, support_point_hash, error_model_hash)
+/// Cache key for SDE: (subject_hash, parameters_hash, error_model_hash)
 pub(crate) type SdeKey = (u64, u64, u64);
+
+/// Cache key for bound assay error models.
+pub(crate) type BoundErrorModelKey = u64;
 
 /// Thread-safe LRU cache for subject predictions.
 ///
@@ -76,6 +82,45 @@ impl PredictionCache {
 impl fmt::Debug for PredictionCache {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PredictionCache")
+            .field("entry_count", &self.0.entry_count())
+            .finish()
+    }
+}
+
+/// Cache for equation-bound assay error models.
+///
+/// Entries are keyed by the public error-model definition hash and hold the
+/// dense, equation-specific binding that likelihood evaluation needs.
+#[derive(Clone)]
+pub struct BoundErrorModelCache(Cache<BoundErrorModelKey, Arc<AssayErrorModels>>);
+
+impl BoundErrorModelCache {
+    pub fn new(size: u64) -> Self {
+        Self(Cache::new(size))
+    }
+
+    #[inline]
+    pub fn get(&self, key: &BoundErrorModelKey) -> Option<Arc<AssayErrorModels>> {
+        self.0.get(key)
+    }
+
+    #[inline]
+    pub fn insert(&self, key: BoundErrorModelKey, value: Arc<AssayErrorModels>) {
+        self.0.insert(key, value);
+    }
+
+    pub fn invalidate_all(&self) {
+        self.0.invalidate_all();
+    }
+
+    pub fn entry_count(&self) -> u64 {
+        self.0.entry_count()
+    }
+}
+
+impl fmt::Debug for BoundErrorModelCache {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BoundErrorModelCache")
             .field("entry_count", &self.0.entry_count())
             .finish()
     }
@@ -217,6 +262,17 @@ mod tests {
         let key: SdeKey = (10, 20, 30);
         cache.insert(key, -42.5);
         assert_eq!(cache.get(&key), Some(-42.5));
+    }
+
+    #[test]
+    fn bound_error_model_cache_clone_shares_data() {
+        let cache = BoundErrorModelCache::new(10);
+        let models = Arc::new(AssayErrorModels::empty());
+        cache.insert(7, Arc::clone(&models));
+
+        let clone = cache.clone();
+        assert!(clone.get(&7).is_some());
+        assert!(Arc::ptr_eq(&clone.get(&7).unwrap(), &models));
     }
 
     #[test]
