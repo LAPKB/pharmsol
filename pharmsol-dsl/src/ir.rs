@@ -128,7 +128,7 @@ pub struct TypedConstant {
     pub span: Span,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CovariateInterpolation {
     Linear,
     Locf,

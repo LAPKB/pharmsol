@@ -1284,10 +1284,11 @@ pub fn compile_ode_model_to_jit(model: &ExecutionModel) -> Result<JitOdeModel, J
             Some(model.span),
         ));
     }
-    Ok(JitOdeModel::new(
+    JitOdeModel::new(
         NativeModelInfo::from_execution_model(model),
         compile_execution_artifact(model)?,
-    ))
+    )
+    .map_err(|error| JitCompileError::new(error.to_string(), Some(model.span)))
 }
 
 /// Compile an analytical execution model to the native in-process JIT backend.
@@ -1321,10 +1322,11 @@ pub fn compile_sde_model_to_jit(model: &ExecutionModel) -> Result<JitSdeModel, J
             Some(model.span),
         ));
     }
-    Ok(JitSdeModel::new(
+    JitSdeModel::new(
         NativeModelInfo::from_execution_model(model),
         compile_execution_artifact(model)?,
-    ))
+    )
+    .map_err(|error| JitCompileError::new(error.to_string(), Some(model.span)))
 }
 
 #[cfg(test)]

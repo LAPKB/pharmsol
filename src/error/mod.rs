@@ -52,6 +52,8 @@ pub enum PharmsolError {
     InputOutOfRange { input: usize, ndrugs: usize },
     #[error("Output equation {outeq} is out of range (nout = {nout})")]
     OuteqOutOfRange { outeq: usize, nout: usize },
+    #[error("Compiled model `{model}` has invalid runtime metadata: {detail}")]
+    InvalidMetadata { model: String, detail: String },
 }
 
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]

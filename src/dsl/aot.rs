@@ -335,12 +335,18 @@ pub fn load_aot_model(path: impl AsRef<Path>) -> Result<CompiledNativeModel, Aot
     };
 
     Ok(match info.kind {
-        ModelKind::Ode => CompiledNativeModel::Ode(super::NativeOdeModel::new(info, artifact)),
+        ModelKind::Ode => CompiledNativeModel::Ode(
+            super::NativeOdeModel::new(info, artifact)
+                .map_err(|error| AotError::Load(error.to_string()))?,
+        ),
         ModelKind::Analytical => CompiledNativeModel::Analytical(
             super::NativeAnalyticalModel::new(info, artifact)
                 .map_err(|error| AotError::Load(error.to_string()))?,
         ),
-        ModelKind::Sde => CompiledNativeModel::Sde(super::NativeSdeModel::new(info, artifact)),
+        ModelKind::Sde => CompiledNativeModel::Sde(
+            super::NativeSdeModel::new(info, artifact)
+                .map_err(|error| AotError::Load(error.to_string()))?,
+        ),
     })
 }
 

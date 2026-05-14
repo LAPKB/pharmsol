@@ -2,7 +2,8 @@ use std::ops::Range;
 use std::path::Path;
 use std::sync::Mutex;
 
-use serde_json;
+#[allow(unused)]
+use crate::dsl::model_info;
 use wasmtime::{Engine, Instance, Linker, Memory, Module, Store, TypedFunc};
 
 use super::compiled_backend_abi::{
@@ -496,15 +497,13 @@ fn load_wasm_artifact_from_module(
             .get_func(&mut store, ROUTE_BIOAVAILABILITY_SYMBOL)
             .is_some(),
     };
-    if let Some(expected_kernels) = expected_kernels {
-        let found_kernels = kernels.compiled();
-        if found_kernels != expected_kernels {
-            return Err(WasmError::KernelMetadataMismatch {
-                model: info.name.clone(),
-                expected: expected_kernels,
-                found: found_kernels,
-            });
-        }
+    let found_kernels = kernels.compiled();
+    if found_kernels != expected_kernels {
+        return Err(WasmError::KernelMetadataMismatch {
+            model: info.name.clone(),
+            expected: expected_kernels,
+            found: found_kernels,
+        });
     }
 
     Ok((
@@ -633,7 +632,7 @@ fn read_model_info_envelope(
     instance: &Instance,
     store: &mut Store<()>,
     memory: &Memory,
-) -> Result<(NativeModelInfo, Option<CompiledKernelAvailability>), WasmError> {
+) -> Result<(NativeModelInfo, CompiledKernelAvailability), WasmError> {
     let ptr = typed_func::<(), i32>(instance, store, MODEL_INFO_JSON_PTR_SYMBOL)?
         .call(&mut *store, ())
         .map_err(|error| WasmError::Load(error.to_string()))?;
@@ -649,16 +648,14 @@ fn read_model_info_envelope(
     })?;
     let range = byte_range(ptr, len, data.len(), "model info")?;
     let bytes = &data[range];
-    if let Ok(envelope) = decode_compiled_model_info(bytes) {
-        if envelope.abi_version != WASM_API_VERSION {
-            return Err(WasmError::ApiVersionMismatch {
-                expected: WASM_API_VERSION,
-                found: envelope.abi_version,
-            });
-        }
-        return Ok((envelope.model, Some(envelope.kernels)));
+    let envelope = decode_compiled_model_info(bytes)?;
+    if envelope.abi_version != WASM_API_VERSION {
+        return Err(WasmError::ApiVersionMismatch {
+            expected: WASM_API_VERSION,
+            found: envelope.abi_version,
+        });
     }
-    Ok((serde_json::from_slice(bytes)?, None))
+    Ok((envelope.model, envelope.kernels))
 }
 
 fn write_f64s(
@@ -776,7 +773,7 @@ mod tests {
     use crate::test_fixtures::STRUCTURED_BLOCK_CORPUS;
     use approx::assert_relative_eq;
     use pharmsol_dsl::{
-        analyze_module, lower_typed_model, parse_module, ExecutionModel, ModelKind,
+        analyze_module, lower_typed_model, parse_module, ExecutionModel, ModelKind, RouteKind,
     };
     use std::path::{Path, PathBuf};
     use tempfile::tempdir;
@@ -805,12 +802,19 @@ mod tests {
             parameters: vec!["ka".to_string()],
             derived: Vec::new(),
             covariates: Vec::new(),
+            states: vec![super::model_info::NativeStateInfo {
+                name: "depot".to_string(),
+                offset: 0,
+            }],
             routes: vec![NativeRouteInfo {
                 name: "oral".to_string(),
                 declaration_index: 0,
                 index: 0,
-                kind: None,
+                kind: Some(RouteKind::Bolus),
                 destination_offset: 0,
+                destination_name: "depot".to_string(),
+                has_lag: false,
+                has_bioavailability: false,
                 inject_input_to_destination: true,
             }],
             outputs: vec![NativeOutputInfo {
@@ -1007,16 +1011,15 @@ mod tests {
     }
 
     #[test]
-    fn accepts_legacy_plain_model_info_metadata() {
+    fn rejects_plain_model_info_metadata_without_compiled_envelope() {
         let model_info = loader_test_model_info("legacy_plain_metadata");
         let metadata = serde_json::to_vec(&model_info).expect("legacy metadata json");
 
-        let (loaded, artifact) =
+        let error =
             load_wasm_artifact_bytes(&loader_test_module_bytes(WASM_API_VERSION, &metadata, true))
-                .expect("legacy metadata should still load");
+                .expect_err("plain model info metadata must be rejected");
 
-        assert_eq!(loaded, model_info);
-        assert!(artifact.has_kernel(KernelRole::Outputs));
+        assert!(matches!(error, WasmError::Json(_)));
     }
 
     #[test]

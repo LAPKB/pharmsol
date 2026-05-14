@@ -275,9 +275,11 @@ fn kernel_output_len(info: &NativeModelInfo, role: KernelRole) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::super::model_info::{NativeCovariateInfo, NativeOutputInfo, NativeRouteInfo};
+    use super::super::model_info::{
+        NativeCovariateInfo, NativeOutputInfo, NativeRouteInfo, NativeStateInfo,
+    };
     use super::*;
-    use pharmsol_dsl::ModelKind;
+    use pharmsol_dsl::{ModelKind, RouteKind};
 
     #[test]
     fn compiled_backend_symbol_names_are_frozen() {
@@ -322,13 +324,27 @@ mod tests {
                 covariates: vec![NativeCovariateInfo {
                     name: "wt".to_string(),
                     index: 0,
+                    interpolation: None,
                 }],
+                states: vec![
+                    NativeStateInfo {
+                        name: "depot".to_string(),
+                        offset: 0,
+                    },
+                    NativeStateInfo {
+                        name: "central".to_string(),
+                        offset: 1,
+                    },
+                ],
                 routes: vec![NativeRouteInfo {
                     name: "iv".to_string(),
                     declaration_index: 0,
                     index: 0,
-                    kind: None,
+                    kind: Some(RouteKind::Infusion),
                     destination_offset: 1,
+                    destination_name: "central".to_string(),
+                    has_lag: false,
+                    has_bioavailability: false,
                     inject_input_to_destination: true,
                 }],
                 outputs: vec![NativeOutputInfo {
@@ -367,6 +383,7 @@ mod tests {
             parameters: vec![],
             derived: vec!["ke_i".to_string(), "v_i".to_string(), "cl_i".to_string()],
             covariates: vec![],
+            states: vec![],
             routes: vec![],
             outputs: vec![],
             state_len: 2,

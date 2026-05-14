@@ -168,7 +168,7 @@ pub use runtime::{
     compile_execution_model_to_runtime, compile_module_source_to_runtime, load_runtime_artifact,
     CompiledRuntimeModel, RuntimeAnalyticalModel, RuntimeArtifactFormat, RuntimeCompilationTarget,
     RuntimeCovariateInfo, RuntimeError, RuntimeModelInfo, RuntimeOdeModel, RuntimeOutputInfo,
-    RuntimePredictions, RuntimeRouteInfo, RuntimeSdeModel,
+    RuntimePredictions, RuntimeRouteInfo, RuntimeSdeModel, RuntimeStateInfo,
 };
 #[cfg(all(
     feature = "dsl-wasm",

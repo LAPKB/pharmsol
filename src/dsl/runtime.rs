@@ -95,7 +95,8 @@ use super::jit::{compile_execution_model_to_jit, JitCompileError};
 use super::native::RuntimeArtifact;
 use super::native::{
     CompiledNativeModel, NativeAnalyticalModel, NativeCovariateInfo, NativeModelInfo,
-    NativeOdeModel, NativeOutputInfo, NativeRouteInfo, NativeSdeModel, RuntimeBackend,
+    NativeOdeModel, NativeOutputInfo, NativeRouteInfo, NativeSdeModel, NativeStateInfo,
+    RuntimeBackend,
 };
 #[cfg(feature = "dsl-wasm")]
 use super::wasm::{load_wasm_artifact, load_wasm_artifact_bytes};
@@ -105,7 +106,7 @@ use super::wasm_compile::{
 };
 use crate::{
     simulator::likelihood::{Prediction, SubjectPredictions},
-    Parameters, PharmsolError, Subject,
+    Parameters, PharmsolError, Subject, ValidatedModelMetadata,
 };
 use pharmsol_dsl::{
     analyze_module, lower_typed_model, parse_module, Diagnostic, DiagnosticReport, ExecutionModel,
@@ -114,6 +115,7 @@ use pharmsol_dsl::{
 
 pub type RuntimeModelInfo = NativeModelInfo;
 pub type RuntimeCovariateInfo = NativeCovariateInfo;
+pub type RuntimeStateInfo = NativeStateInfo;
 pub type RuntimeRouteInfo = NativeRouteInfo;
 pub type RuntimeOutputInfo = NativeOutputInfo;
 pub type RuntimeOdeModel = NativeOdeModel;
@@ -229,6 +231,14 @@ impl CompiledRuntimeModel {
 
     pub fn kind(&self) -> ModelKind {
         self.info().kind
+    }
+
+    pub fn metadata(&self) -> &ValidatedModelMetadata {
+        match self {
+            Self::Ode(model) => model.metadata(),
+            Self::Analytical(model) => model.metadata(),
+            Self::Sde(model) => model.metadata(),
+        }
     }
 
     pub fn estimate_predictions(
@@ -457,11 +467,11 @@ fn runtime_model_from_parts(
     artifact: impl RuntimeArtifact + 'static,
 ) -> Result<CompiledRuntimeModel, PharmsolError> {
     Ok(match info.kind {
-        ModelKind::Ode => CompiledRuntimeModel::Ode(NativeOdeModel::new(info, artifact)),
+        ModelKind::Ode => CompiledRuntimeModel::Ode(NativeOdeModel::new(info, artifact)?),
         ModelKind::Analytical => {
             CompiledRuntimeModel::Analytical(NativeAnalyticalModel::new(info, artifact)?)
         }
-        ModelKind::Sde => CompiledRuntimeModel::Sde(NativeSdeModel::new(info, artifact)),
+        ModelKind::Sde => CompiledRuntimeModel::Sde(NativeSdeModel::new(info, artifact)?),
     })
 }
 
@@ -844,6 +854,27 @@ out(cp) = central / v ~ continuous()
             assert_relative_eq!(jit_value, aot_value, max_relative = 1e-4);
             assert_relative_eq!(jit_value, wasm_value, max_relative = 1e-4);
         }
+    }
+
+    #[test]
+    fn runtime_jit_preserves_array_state_metadata() {
+        let model = compile_module_source_to_runtime(
+            corpus_source(),
+            Some("transit_absorption"),
+            RuntimeCompilationTarget::Jit,
+            |_, _| {},
+        )
+        .expect("compile jit runtime model");
+
+        let metadata = model.metadata();
+        assert_eq!(metadata.states()[0].name(), "transit");
+        assert_eq!(metadata.states()[1].name(), "central");
+        assert_eq!(metadata.route("oral").unwrap().destination(), "transit");
+        assert_eq!(metadata.route("oral").unwrap().destination_index(), 0);
+
+        assert_eq!(model.info().state_len, 5);
+        assert_eq!(model.info().states[0].offset, 0);
+        assert_eq!(model.info().states[1].offset, 4);
     }
 
     #[test]

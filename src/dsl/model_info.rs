@@ -6,7 +6,7 @@ use pharmsol_dsl::execution::{
     ExecutionExpr, ExecutionExprKind, ExecutionLoad, ExecutionModel, ExecutionStmt,
     ExecutionStmtKind, KernelImplementation, KernelRole,
 };
-use pharmsol_dsl::{AnalyticalKernel, ModelKind, RouteKind};
+use pharmsol_dsl::{AnalyticalKernel, CovariateInterpolation, ModelKind, RouteKind};
 
 /// Public metadata extracted from a compiled backend model.
 ///
@@ -26,6 +26,8 @@ pub struct NativeModelInfo {
     pub derived: Vec<String>,
     /// Declared covariates and their dense runtime indices.
     pub covariates: Vec<NativeCovariateInfo>,
+    /// Declared states together with their dense runtime offsets.
+    pub states: Vec<NativeStateInfo>,
     /// Declared routes together with declaration-order and dense runtime indices.
     pub routes: Vec<NativeRouteInfo>,
     /// Declared outputs and their dense runtime indices.
@@ -51,6 +53,17 @@ pub struct NativeCovariateInfo {
     pub name: String,
     /// Dense runtime covariate index.
     pub index: usize,
+    /// Optional interpolation policy declared for this covariate.
+    pub interpolation: Option<CovariateInterpolation>,
+}
+
+/// Metadata for one compiled state.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NativeStateInfo {
+    /// Public state name.
+    pub name: String,
+    /// Dense runtime state offset.
+    pub offset: usize,
 }
 
 /// Metadata for one compiled route.
@@ -59,15 +72,19 @@ pub struct NativeRouteInfo {
     /// Public route label.
     pub name: String,
     /// Route position in declaration order.
-    #[serde(default)]
     pub declaration_index: usize,
     /// Dense runtime route-input index.
     pub index: usize,
     /// Coarse route kind when declared in metadata.
-    #[serde(default)]
     pub kind: Option<RouteKind>,
     /// Dense destination state offset used by compiled kernels.
     pub destination_offset: usize,
+    /// Public destination state name.
+    pub destination_name: String,
+    /// Whether this route declares lag handling.
+    pub has_lag: bool,
+    /// Whether this route declares bioavailability handling.
+    pub has_bioavailability: bool,
     /// Whether the compiled backend injects the route input into the destination
     /// state automatically when the model does not read the route input
     /// explicitly.
@@ -109,6 +126,16 @@ impl NativeModelInfo {
                 .map(|covariate| NativeCovariateInfo {
                     name: covariate.name.clone(),
                     index: covariate.index,
+                    interpolation: covariate.interpolation,
+                })
+                .collect(),
+            states: model
+                .metadata
+                .states
+                .iter()
+                .map(|state| NativeStateInfo {
+                    name: state.name.clone(),
+                    offset: state.offset,
                 })
                 .collect(),
             routes: model
@@ -121,6 +148,9 @@ impl NativeModelInfo {
                     index: route.index,
                     kind: route.kind,
                     destination_offset: route.destination.state_offset,
+                    destination_name: route.destination.state_name.clone(),
+                    has_lag: route.has_lag,
+                    has_bioavailability: route.has_bioavailability,
                     inject_input_to_destination: !explicit_route_input_usage
                         .get(route.declaration_index)
                         .copied()
@@ -313,6 +343,45 @@ out(cp) = central / v ~ continuous()
         assert_eq!(info.routes[1].index, 0);
         assert!(info.routes[0].inject_input_to_destination);
         assert!(!info.routes[1].inject_input_to_destination);
+    }
+
+    #[test]
+    fn native_model_info_preserves_state_covariate_and_route_metadata() {
+        let info = load_model_info(
+            r#"
+name = metadata_surface
+kind = ode
+
+params = ke, v
+covariates = wt@linear
+states = depot, central
+outputs = cp
+
+bolus(oral) -> depot
+infusion(iv) -> central
+lag(oral) = 1.0
+fa(oral) = 0.8
+
+dx(depot) = -ke * depot
+dx(central) = ke * depot - rate(iv)
+
+out(cp) = central / v
+"#,
+        );
+
+        assert_eq!(info.states.len(), 2);
+        assert_eq!(info.states[0].name, "depot");
+        assert_eq!(info.states[1].name, "central");
+        assert_eq!(
+            info.covariates[0].interpolation,
+            Some(CovariateInterpolation::Linear)
+        );
+        assert_eq!(info.routes[0].destination_name, "depot");
+        assert!(info.routes[0].has_lag);
+        assert!(info.routes[0].has_bioavailability);
+        assert_eq!(info.routes[1].destination_name, "central");
+        assert!(!info.routes[1].has_lag);
+        assert!(!info.routes[1].has_bioavailability);
     }
 
     #[test]

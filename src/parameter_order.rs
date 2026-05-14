@@ -309,6 +309,7 @@ mod tests {
             parameters: vec!["ka".to_string(), "ke".to_string()],
             derived: Vec::new(),
             covariates: Vec::new(),
+            states: Vec::new(),
             routes: Vec::new(),
             outputs: Vec::new(),
             state_len: 0,
