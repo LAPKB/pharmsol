@@ -322,10 +322,104 @@ fn sorted_dense_metadata<'a, T>(
     Ok(sorted)
 }
 
+fn sorted_state_metadata<'a>(
+    info: &'a NativeModelInfo,
+) -> Result<Vec<&'a NativeStateInfo>, PharmsolError> {
+    if info.state_len == 0 {
+        if info.states.is_empty() {
+            return Ok(Vec::new());
+        }
+        return Err(compiled_metadata_error(
+            info,
+            format!(
+                "expected no state metadata for an empty state buffer, found {} declaration(s)",
+                info.states.len()
+            ),
+        ));
+    }
+
+    if info.states.is_empty() {
+        return Err(compiled_metadata_error(
+            info,
+            format!(
+                "expected state metadata for {} state slot(s), found none",
+                info.state_len
+            ),
+        ));
+    }
+
+    let mut states = info.states.iter().collect::<Vec<_>>();
+    states.sort_by_key(|state| state.offset);
+
+    if states[0].offset != 0 {
+        return Err(compiled_metadata_error(
+            info,
+            format!(
+                "state metadata must start at offset 0; first declaration starts at {}",
+                states[0].offset
+            ),
+        ));
+    }
+
+    for window in states.windows(2) {
+        let current = window[0];
+        let next = window[1];
+        if next.offset <= current.offset {
+            return Err(compiled_metadata_error(
+                info,
+                format!(
+                    "state metadata offsets must be strictly increasing; saw {} followed by {}",
+                    current.offset, next.offset
+                ),
+            ));
+        }
+    }
+
+    let last_offset = states.last().expect("non-empty states").offset;
+    if last_offset >= info.state_len {
+        return Err(compiled_metadata_error(
+            info,
+            format!(
+                "state metadata offset {} is out of range for state buffer length {}",
+                last_offset, info.state_len
+            ),
+        ));
+    }
+
+    Ok(states)
+}
+
+fn state_declaration_for_offset<'a>(
+    info: &NativeModelInfo,
+    states: &[&'a NativeStateInfo],
+    offset: usize,
+) -> Result<(usize, &'a NativeStateInfo), PharmsolError> {
+    if offset >= info.state_len {
+        return Err(compiled_metadata_error(
+            info,
+            format!(
+                "state offset {} is out of range for state buffer length {}",
+                offset, info.state_len
+            ),
+        ));
+    }
+
+    let declaration_index = match states.binary_search_by_key(&offset, |state| state.offset) {
+        Ok(index) => index,
+        Err(0) => {
+            return Err(compiled_metadata_error(
+                info,
+                format!("state offset {} precedes the first declared state", offset),
+            ));
+        }
+        Err(index) => index - 1,
+    };
+
+    Ok((declaration_index, states[declaration_index]))
+}
+
 fn runtime_model_metadata(info: &NativeModelInfo) -> Result<ValidatedModelMetadata, PharmsolError> {
-    let states = sorted_dense_metadata(info, "state", info.state_len, &info.states, |state| {
-        state.offset
-    })?;
+    let states = sorted_state_metadata(info)?;
     let state_names = states
         .iter()
         .map(|state| state.name.clone())
@@ -373,18 +467,9 @@ fn runtime_model_metadata(info: &NativeModelInfo) -> Result<ValidatedModelMetada
     }
 
     for route in &routes {
-        let destination = state_names
-            .get(route.destination_offset)
-            .ok_or_else(|| {
-                compiled_metadata_error(
-                    info,
-                    format!(
-                        "route `{}` targets out-of-range state offset {}",
-                        route.name, route.destination_offset
-                    ),
-                )
-            })?
-            .clone();
+        let (_destination_index, destination_state) =
+            state_declaration_for_offset(info, &states, route.destination_offset)?;
+        let destination = destination_state.name.clone();
         if route.destination_name != destination {
             return Err(compiled_metadata_error(
                 info,
@@ -449,6 +534,8 @@ fn runtime_model_metadata(info: &NativeModelInfo) -> Result<ValidatedModelMetada
     }
 
     for route in routes {
+        let (destination_index, _) =
+            state_declaration_for_offset(info, &states, route.destination_offset)?;
         let validated_route = &validated.routes()[route.declaration_index];
         if validated_route.input_index() != route.index {
             return Err(compiled_metadata_error(
@@ -461,13 +548,13 @@ fn runtime_model_metadata(info: &NativeModelInfo) -> Result<ValidatedModelMetada
                 ),
             ));
         }
-        if validated_route.destination_index() != route.destination_offset {
+        if validated_route.destination_index() != destination_index {
             return Err(compiled_metadata_error(
                 info,
                 format!(
-                    "route `{}` targets state offset {} but validated metadata resolves to {}",
+                    "route `{}` targets state declaration {} but validated metadata resolves to {}",
                     route.name,
-                    route.destination_offset,
+                    destination_index,
                     validated_route.destination_index()
                 ),
             ));
@@ -538,16 +625,29 @@ impl RouteInputSemantics {
 }
 
 impl SharedNativeModel {
+    fn with_info(&self, info: NativeModelInfo) -> Result<Self, PharmsolError> {
+        let metadata = Arc::new(runtime_model_metadata(&info)?);
+        let route_semantics = Arc::new(RouteInputSemantics::from_model_info(&info));
+        Ok(Self {
+            info: Arc::new(info),
+            metadata,
+            route_semantics,
+            artifact: Arc::clone(&self.artifact),
+        })
+    }
+
     fn new(
         info: NativeModelInfo,
         artifact: impl RuntimeArtifact + 'static,
     ) -> Result<Self, PharmsolError> {
+        let artifact = Arc::new(artifact);
         let metadata = Arc::new(runtime_model_metadata(&info)?);
+        let route_semantics = Arc::new(RouteInputSemantics::from_model_info(&info));
         Ok(Self {
             metadata,
-            route_semantics: Arc::new(RouteInputSemantics::from_model_info(&info)),
+            route_semantics,
             info: Arc::new(info),
-            artifact: Arc::new(artifact),
+            artifact,
         })
     }
 
@@ -1905,6 +2005,21 @@ impl NativeSdeModel {
     }
 
     pub fn with_particles(mut self, nparticles: usize) -> Self {
+        if self.nparticles == nparticles {
+            return self;
+        }
+
+        if let Some(cache) = &self.cache {
+            cache.invalidate_all();
+        }
+
+        let mut info = self.shared.info.as_ref().clone();
+        info.particles = Some(nparticles);
+        self.shared = Arc::new(
+            self.shared
+                .with_info(info)
+                .expect("compiled SDE metadata should stay valid after particle override"),
+        );
         self.nparticles = nparticles;
         self
     }
@@ -2633,8 +2748,8 @@ mod tests {
     use super::{
         build_analytical_parameter_projection, canonical_numeric_alias,
         project_analytical_parameters, KernelSession, NativeAnalyticalModel, NativeCovariateInfo,
-        NativeModelInfo, NativeOdeModel, NativeOutputInfo, NativeRouteInfo, NativeStateInfo,
-        RuntimeArtifact, RuntimeBackend, SharedNativeModel, NUMERIC_OUTPUT_PREFIX,
+        NativeModelInfo, NativeOdeModel, NativeOutputInfo, NativeRouteInfo, NativeSdeModel,
+        NativeStateInfo, RuntimeArtifact, RuntimeBackend, SharedNativeModel, NUMERIC_OUTPUT_PREFIX,
         NUMERIC_ROUTE_PREFIX,
     };
     #[cfg(any(
@@ -2824,6 +2939,74 @@ mod tests {
     }
 
     #[test]
+    fn runtime_ode_models_map_array_state_offsets_to_declarations() {
+        let model = NativeOdeModel::new(
+            NativeModelInfo {
+                name: "array_state_runtime_metadata".to_string(),
+                kind: ModelKind::Ode,
+                parameters: vec!["ke".to_string(), "v".to_string()],
+                derived: Vec::new(),
+                covariates: Vec::new(),
+                states: vec![
+                    NativeStateInfo {
+                        name: "transit".to_string(),
+                        offset: 0,
+                    },
+                    NativeStateInfo {
+                        name: "central".to_string(),
+                        offset: 4,
+                    },
+                ],
+                routes: vec![
+                    NativeRouteInfo {
+                        name: "oral".to_string(),
+                        declaration_index: 0,
+                        index: 0,
+                        kind: Some(RouteKind::Bolus),
+                        destination_offset: 0,
+                        destination_name: "transit".to_string(),
+                        has_lag: false,
+                        has_bioavailability: false,
+                        inject_input_to_destination: false,
+                    },
+                    NativeRouteInfo {
+                        name: "iv".to_string(),
+                        declaration_index: 1,
+                        index: 0,
+                        kind: Some(RouteKind::Infusion),
+                        destination_offset: 4,
+                        destination_name: "central".to_string(),
+                        has_lag: false,
+                        has_bioavailability: false,
+                        inject_input_to_destination: false,
+                    },
+                ],
+                outputs: vec![NativeOutputInfo {
+                    name: "cp".to_string(),
+                    index: 0,
+                }],
+                state_len: 5,
+                derived_len: 0,
+                output_len: 1,
+                route_len: 1,
+                analytical: None,
+                particles: None,
+            },
+            DummyArtifact,
+        )
+        .expect("array-state runtime metadata should build");
+
+        let metadata = model.metadata();
+        assert_eq!(metadata.states()[0].name(), "transit");
+        assert_eq!(metadata.states()[1].name(), "central");
+        assert_eq!(metadata.route_input_count(), 1);
+        assert_eq!(metadata.route("oral").unwrap().destination(), "transit");
+        assert_eq!(metadata.route("oral").unwrap().destination_index(), 0);
+        assert_eq!(metadata.route("iv").unwrap().destination(), "central");
+        assert_eq!(metadata.route("iv").unwrap().destination_index(), 1);
+    }
+
+    #[test]
     fn runtime_ode_model_setup_rejects_invalid_route_destination_metadata() {
         let error = NativeOdeModel::new(
             NativeModelInfo {
@@ -2867,7 +3050,41 @@ mod tests {
         ));
         assert!(error
             .to_string()
-            .contains("route `iv` targets out-of-range state offset 1"));
+            .contains("state offset 1 is out of range for state buffer length 1"));
+    }
+
+    #[test]
+    fn runtime_sde_with_particles_updates_metadata_and_info() {
+        let model = NativeSdeModel::new(
+            NativeModelInfo {
+                name: "runtime_sde_particles".to_string(),
+                kind: ModelKind::Sde,
+                parameters: vec!["ke".to_string()],
+                derived: Vec::new(),
+                covariates: Vec::new(),
+                states: vec![NativeStateInfo {
+                    name: "central".to_string(),
+                    offset: 0,
+                }],
+                routes: Vec::new(),
+                outputs: vec![NativeOutputInfo {
+                    name: "cp".to_string(),
+                    index: 0,
+                }],
+                state_len: 1,
+                derived_len: 0,
+                output_len: 1,
+                route_len: 0,
+                analytical: None,
+                particles: Some(32),
+            },
+            DummyArtifact,
+        )
+        .expect("runtime SDE metadata should build")
+        .with_particles(64);
+
+        assert_eq!(model.info().particles, Some(64));
+        assert_eq!(model.metadata().particles(), Some(64));
     }
 
     fn analytical_projection_values(

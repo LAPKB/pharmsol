@@ -857,6 +857,27 @@ out(cp) = central / v ~ continuous()
     }
 
     #[test]
+    fn runtime_jit_preserves_array_state_metadata() {
+        let model = compile_module_source_to_runtime(
+            corpus_source(),
+            Some("transit_absorption"),
+            RuntimeCompilationTarget::Jit,
+            |_, _| {},
+        )
+        .expect("compile jit runtime model");
+
+        let metadata = model.metadata();
+        assert_eq!(metadata.states()[0].name(), "transit");
+        assert_eq!(metadata.states()[1].name(), "central");
+        assert_eq!(metadata.route("oral").unwrap().destination(), "transit");
+        assert_eq!(metadata.route("oral").unwrap().destination_index(), 0);
+
+        assert_eq!(model.info().state_len, 5);
+        assert_eq!(model.info().states[0].offset, 0);
+        assert_eq!(model.info().states[1].offset, 4);
+    }
+
+    #[test]
     fn runtime_backend_matrix_reports_route_kind_mismatch() {
         let work_dir = tempdir().expect("tempdir");
         let subject = mismatched_route_kind_subject();
