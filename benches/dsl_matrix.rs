@@ -157,11 +157,19 @@ fn compile_sde(workload: Workload, backend: Backend, aot: &AotWorkspace) -> Nati
 // ───────────────────────────── compile group ─────────────────────────
 
 fn compile_group(c: &mut Criterion) {
+    use std::time::Instant;
+
     let mut group = c.benchmark_group("dsl/compile");
     group.sampling_mode(SamplingMode::Flat);
-    // AoT especially is expensive — full rustc invocation per iteration.
     group.sample_size(10);
-    group.measurement_time(Duration::from_secs(30));
+    group.measurement_time(Duration::from_secs(5));
+    // Each compile leaks an executable mmap (JIT) or runs rustc (AoT). Without
+    // a cap, a fast JIT compile (~60 µs) lets Criterion request hundreds of
+    // thousands of iterations per cell and exhausts the runner's executable
+    // memory pool / `vm.max_map_count`. We hard-cap real iterations per
+    // Criterion batch to `MAX_ITERS_PER_BATCH` and scale the reported elapsed
+    // time linearly so per-iteration timings stay accurate.
+    const MAX_ITERS_PER_BATCH: u64 = 25;
 
     let aot = AotWorkspace::new();
 
@@ -175,13 +183,19 @@ fn compile_group(c: &mut Criterion) {
                     backend.label()
                 ));
                 group.bench_function(bench_id, |b| {
-                    b.iter(|| {
-                        black_box(compile_runtime(
-                            black_box(workload),
-                            black_box(kind),
-                            black_box(backend),
-                            &aot,
-                        ));
+                    b.iter_custom(|iters| {
+                        let actual = iters.min(MAX_ITERS_PER_BATCH).max(1);
+                        let start = Instant::now();
+                        for _ in 0..actual {
+                            black_box(compile_runtime(
+                                black_box(workload),
+                                black_box(kind),
+                                black_box(backend),
+                                &aot,
+                            ));
+                        }
+                        let elapsed = start.elapsed();
+                        elapsed.mul_f64(iters as f64 / actual as f64)
                     });
                 });
             }
