@@ -279,14 +279,6 @@ struct SharedNativeModel {
     artifact: Arc<dyn RuntimeArtifact>,
 }
 
-fn compiled_metadata_error(info: &NativeModelInfo, detail: impl Into<String>) -> PharmsolError {
-    PharmsolError::OtherError(format!(
-        "compiled model `{}` has invalid runtime metadata: {}",
-        info.name,
-        detail.into()
-    ))
-}
-
 fn sorted_dense_metadata<'a, T>(
     info: &NativeModelInfo,
     domain: &str,
@@ -295,14 +287,14 @@ fn sorted_dense_metadata<'a, T>(
     index_of: impl Fn(&T) -> usize,
 ) -> Result<Vec<&'a T>, PharmsolError> {
     if entries.len() != expected_len {
-        return Err(compiled_metadata_error(
-            info,
-            format!(
+        return Err(PharmsolError::InvalidMetadata {
+            model: info.name.clone(),
+            detail: format!(
                 "expected {expected_len} {domain} entr{} but found {}",
                 if expected_len == 1 { "y" } else { "ies" },
                 entries.len()
             ),
-        ));
+        });
     }
 
     let mut sorted = entries.iter().collect::<Vec<_>>();
@@ -310,12 +302,12 @@ fn sorted_dense_metadata<'a, T>(
     for (expected, entry) in sorted.iter().enumerate() {
         let found = index_of(entry);
         if found != expected {
-            return Err(compiled_metadata_error(
-                info,
-                format!(
+            return Err(PharmsolError::InvalidMetadata {
+                model: info.name.clone(),
+                detail: format!(
                     "{domain} metadata must use dense 0-based indices; expected {expected}, found {found}"
                 ),
-            ));
+            });
         }
     }
 
@@ -329,61 +321,61 @@ fn sorted_state_metadata<'a>(
         if info.states.is_empty() {
             return Ok(Vec::new());
         }
-        return Err(compiled_metadata_error(
-            info,
-            format!(
+        return Err(PharmsolError::InvalidMetadata {
+            model: info.name.clone(),
+            detail: format!(
                 "expected no state metadata for an empty state buffer, found {} declaration(s)",
                 info.states.len()
             ),
-        ));
+        });
     }
 
     if info.states.is_empty() {
-        return Err(compiled_metadata_error(
-            info,
-            format!(
+        return Err(PharmsolError::InvalidMetadata {
+            model: info.name.clone(),
+            detail: format!(
                 "expected state metadata for {} state slot(s), found none",
                 info.state_len
             ),
-        ));
+        });
     }
 
     let mut states = info.states.iter().collect::<Vec<_>>();
     states.sort_by_key(|state| state.offset);
 
     if states[0].offset != 0 {
-        return Err(compiled_metadata_error(
-            info,
-            format!(
+        return Err(PharmsolError::InvalidMetadata {
+            model: info.name.clone(),
+            detail: format!(
                 "state metadata must start at offset 0; first declaration starts at {}",
                 states[0].offset
             ),
-        ));
+        });
     }
 
     for window in states.windows(2) {
         let current = window[0];
         let next = window[1];
         if next.offset <= current.offset {
-            return Err(compiled_metadata_error(
-                info,
-                format!(
+            return Err(PharmsolError::InvalidMetadata {
+                model: info.name.clone(),
+                detail: format!(
                     "state metadata offsets must be strictly increasing; saw {} followed by {}",
                     current.offset, next.offset
                 ),
-            ));
+            });
         }
     }
 
     let last_offset = states.last().expect("non-empty states").offset;
     if last_offset >= info.state_len {
-        return Err(compiled_metadata_error(
-            info,
-            format!(
+        return Err(PharmsolError::InvalidMetadata {
+            model: info.name.clone(),
+            detail: format!(
                 "state metadata offset {} is out of range for state buffer length {}",
                 last_offset, info.state_len
             ),
-        ));
+        });
     }
 
     Ok(states)
@@ -395,22 +387,22 @@ fn state_declaration_for_offset<'a>(
     offset: usize,
 ) -> Result<(usize, &'a NativeStateInfo), PharmsolError> {
     if offset >= info.state_len {
-        return Err(compiled_metadata_error(
-            info,
-            format!(
+        return Err(PharmsolError::InvalidMetadata {
+            model: info.name.clone(),
+            detail: format!(
                 "state offset {} is out of range for state buffer length {}",
                 offset, info.state_len
             ),
-        ));
+        });
     }
 
     let declaration_index = match states.binary_search_by_key(&offset, |state| state.offset) {
         Ok(index) => index,
         Err(0) => {
-            return Err(compiled_metadata_error(
-                info,
-                format!("state offset {} precedes the first declared state", offset),
-            ));
+            return Err(PharmsolError::InvalidMetadata {
+                model: info.name.clone(),
+                detail: format!("state offset {} precedes the first declared state", offset),
+            });
         }
         Err(index) => index - 1,
     };
@@ -471,13 +463,13 @@ fn runtime_model_metadata(info: &NativeModelInfo) -> Result<ValidatedModelMetada
             state_declaration_for_offset(info, &states, route.destination_offset)?;
         let destination = destination_state.name.clone();
         if route.destination_name != destination {
-            return Err(compiled_metadata_error(
-                info,
-                format!(
+            return Err(PharmsolError::InvalidMetadata {
+                model: info.name.clone(),
+                detail: format!(
                     "route `{}` names destination `{}` but offset {} resolves to `{}`",
                     route.name, route.destination_name, route.destination_offset, destination
                 ),
-            ));
+            });
         }
         // Structured-block DSL routes still lower without an explicit kind.
         // Treat them as declaration-ordered bolus routes for the shared
@@ -513,24 +505,30 @@ fn runtime_model_metadata(info: &NativeModelInfo) -> Result<ValidatedModelMetada
 
     let validated = match info.kind {
         ModelKind::Sde => {
-            let particles = info.particles.ok_or_else(|| {
-                compiled_metadata_error(info, "SDE models must declare a particle count")
-            })?;
+            let particles = info
+                .particles
+                .ok_or_else(|| PharmsolError::InvalidMetadata {
+                    model: info.name.clone(),
+                    detail: "SDE models must declare a particle count".to_string(),
+                })?;
             metadata.validate_for_with_particles(ModelKind::Sde, particles)
         }
         kind => metadata.validate_for(kind),
     }
-    .map_err(|error| compiled_metadata_error(info, error.to_string()))?;
+    .map_err(|error| PharmsolError::InvalidMetadata {
+        model: info.name.clone(),
+        detail: error.to_string(),
+    })?;
 
     if validated.route_input_count() != info.route_len {
-        return Err(compiled_metadata_error(
-            info,
-            format!(
+        return Err(PharmsolError::InvalidMetadata {
+            model: info.name.clone(),
+            detail: format!(
                 "route input count {} does not match declared route buffer length {}",
                 validated.route_input_count(),
                 info.route_len
             ),
-        ));
+        });
     }
 
     for route in routes {
@@ -538,26 +536,26 @@ fn runtime_model_metadata(info: &NativeModelInfo) -> Result<ValidatedModelMetada
             state_declaration_for_offset(info, &states, route.destination_offset)?;
         let validated_route = &validated.routes()[route.declaration_index];
         if validated_route.input_index() != route.index {
-            return Err(compiled_metadata_error(
-                info,
-                format!(
+            return Err(PharmsolError::InvalidMetadata {
+                model: info.name.clone(),
+                detail: format!(
                     "route `{}` uses input index {} but validated metadata resolves to {}",
                     route.name,
                     route.index,
                     validated_route.input_index()
                 ),
-            ));
+            });
         }
         if validated_route.destination_index() != destination_index {
-            return Err(compiled_metadata_error(
-                info,
-                format!(
+            return Err(PharmsolError::InvalidMetadata {
+                model: info.name.clone(),
+                detail: format!(
                     "route `{}` targets state declaration {} but validated metadata resolves to {}",
                     route.name,
                     destination_index,
                     validated_route.destination_index()
                 ),
-            ));
+            });
         }
     }
 
@@ -1994,9 +1992,12 @@ impl NativeSdeModel {
         info: NativeModelInfo,
         artifact: impl RuntimeArtifact + 'static,
     ) -> Result<Self, PharmsolError> {
-        let nparticles = info.particles.ok_or_else(|| {
-            compiled_metadata_error(&info, "SDE models must declare a particle count")
-        })?;
+        let nparticles = info
+            .particles
+            .ok_or_else(|| PharmsolError::InvalidMetadata {
+                model: info.name.clone(),
+                detail: "SDE models must declare a particle count".to_string(),
+            })?;
         Ok(Self {
             shared: Arc::new(SharedNativeModel::new(info, artifact)?),
             nparticles,
