@@ -1,22 +1,10 @@
-//! Native (Rust-authored) benchmark matrix.
+//! Native bench matrix: handwritten + macro models, all solvers, both workloads.
+//! Default features only — this is the CI regression signal. DSL backends are in `dsl_matrix.rs`.
 //!
-//! Covers handwritten and macro-authored models across all three solver kinds
-//! (ODE, Analytical, SDE), both workloads (short 1-cpt PO; long 2-cpt IV q12h),
-//! and the three measured methods: `estimate_predictions`,
-//! `estimate_log_likelihood`, and `log_likelihood_matrix`.
-//!
-//! This bench compiles with **default features only** so it produces a stable
-//! regression signal on CI (which runs plain `cargo bench`). DSL backends
-//! live in `dsl_matrix.rs` behind feature gates.
-//!
-//! Benchmark id format:
-//! - `native/predictions`     → `{workload}/{solver}/{authoring}/{cache}`
-//! - `native/log-likelihood`  → `{workload}/{solver}/{authoring}/{cache}`
-//! - `native/likelihood-matrix` → `{workload}/{solver}/{authoring}` (matrix is
-//!   the unit of work; per-cell cache toggling is not meaningful here).
-//!
-//! `cache` is `hot` or `cold` (cold = `.disable_cache()` on a fresh handle).
-//! `authoring` is `handwritten` or `macro`.
+//! IDs:
+//! - `native/predictions`       → `{workload}/{solver}/{authoring}/{cache}`
+//! - `native/log-likelihood`    → `{workload}/{solver}/{authoring}/{cache}`
+//! - `native/likelihood-matrix` → `{workload}/{solver}/{authoring}`
 
 use std::hint::black_box;
 use std::time::Duration;
@@ -32,9 +20,7 @@ use common::{
     support_points, SolverKind, Workload,
 };
 
-/// Size of the population dataset (rows) for `log_likelihood_matrix`.
 const MATRIX_N_SUBJECTS: usize = 32;
-/// Size of the parameter grid (columns) for `log_likelihood_matrix`.
 const MATRIX_N_SUPPORT: usize = 64;
 
 #[derive(Debug, Clone, Copy)]
@@ -75,11 +61,6 @@ impl CacheState {
     }
 }
 
-/// Helper that materializes the correct concrete handwritten/macro factory
-/// then dispatches `estimate_predictions` on it. The `match` over solver kind
-/// stays inside each closure so the chosen branch is a fresh handle every
-/// time we configure a new (cold) instance, and we don't pay any virtual
-/// dispatch cost (each model type has its own concrete `Equation` impl).
 fn id(workload: Workload, kind: SolverKind, authoring: Authoring, cache: CacheState) -> String {
     format!(
         "{}/{}/{}/{}",
@@ -464,8 +445,7 @@ fn likelihood_matrix_group(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("native/likelihood-matrix");
     group.sampling_mode(SamplingMode::Flat);
-    // Each matrix iteration is multi-second under any solver — small sample
-    // budgets keep wall-clock manageable while still producing a useful signal.
+    // One matrix iteration is multi-second; small sample budget keeps wall-clock sane.
     group.sample_size(10);
     group.measurement_time(Duration::from_secs(20));
 

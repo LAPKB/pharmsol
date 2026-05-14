@@ -1,25 +1,13 @@
-//! Shared bench fixtures for the native + DSL benchmark suites.
+//! Shared bench fixtures (workloads, subjects, params, error models, model factories)
+//! used by both `native_matrix.rs` and `dsl_matrix.rs`. Every backend measures the
+//! same model + subject + params so only the engine varies between cells.
 //!
-//! This module centralizes the model definitions, subjects, parameter vectors,
-//! and error-model fixtures that every backend variant in `benches/native_matrix.rs`
-//! and `benches/dsl_matrix.rs` reuses. The goal is to keep all backends
-//! (handwritten, macro, dsl-jit, dsl-aot, dsl-wasm) measuring **the same**
-//! model, subject, and parameters so the only thing that differs between
-//! cells is the engine itself.
+//! Workloads:
+//! - [`Workload::Short`]: 1-cpt, 100 mg PO at t=0, 9 obs over 12 h.
+//! - [`Workload::Repeat`]: 2-cpt, 100 mg IV q12h × 10, 14 obs over 120 h.
 //!
-//! Two workloads are exposed:
-//! - [`Workload::Short`]: 1-compartment, single 100 mg PO bolus at t=0,
-//!   9 observations spread across 12 hours.
-//! - [`Workload::Repeat`]: 2-compartment, 100 mg IV bolus q12h × 10
-//!   (doses at t=0,12,…,108), 14 observations spread across 120 hours.
-//!
-//! For each workload three solver kinds (ODE, Analytical, SDE) and three
-//! authoring/backend flavors (handwritten, macro, DSL-source) are provided.
-//!
-//! Some helpers (`SDE_PARTICLES`, `matrix_data`, `support_points`) are
-//! deliberately public — both bench binaries consume them, but cargo compiles
-//! each bench separately so unused helpers would trigger dead-code lints in
-//! one binary or the other. We silence those with `#![allow(dead_code)]`.
+//! `#![allow(dead_code)]` since each bench binary compiles separately and may
+//! not use every helper.
 
 #![allow(dead_code)]
 
@@ -33,10 +21,7 @@ use pharmsol::{
     Analytical, ResidualErrorModel, ResidualErrorModels, ODE, SDE,
 };
 
-/// Build the `ModelMetadata` for `(workload, kind)`. Handwritten factories
-/// attach this so they resolve string route labels (`"po"`/`"iv"`) and output
-/// labels (`"plasma"`) the same way the `ode!` / `analytical!` / `sde!`
-/// macros and the DSL do.
+/// `ModelMetadata` for handwritten factories so route/output labels resolve like the macro/DSL paths.
 fn model_metadata(workload: Workload, kind: SolverKind) -> equation::ModelMetadata {
     let name = match (workload, kind) {
         (Workload::Short, SolverKind::Ode) => "bench_one_cpt_po_ode",
@@ -80,16 +65,14 @@ fn model_metadata(workload: Workload, kind: SolverKind) -> equation::ModelMetada
     }
 }
 
-/// SDE particle count used across every SDE bench cell. Kept low so SDE
-/// wall-clock stays comparable to ODE/Analytical at the same workload.
+/// SDE particle count. Kept low so SDE wall-clock stays in the same ballpark as ODE/Analytical.
 pub const SDE_PARTICLES: usize = 16;
 
-/// Two scenarios that every backend variant must implement identically.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Workload {
-    /// 1-compartment, single 100 mg PO bolus, 12 h horizon.
+    /// 1-cpt, 100 mg PO, 12 h.
     Short,
-    /// 2-compartment, 100 mg IV bolus q12h × 10, 120 h horizon.
+    /// 2-cpt, 100 mg IV q12h × 10, 120 h.
     Repeat,
 }
 
@@ -106,7 +89,7 @@ impl Workload {
     }
 }
 
-/// Solver kinds covered by the matrix.
+/// Solver kinds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SolverKind {
     Ode,
@@ -130,15 +113,13 @@ impl SolverKind {
 
 // ───────────────────────────── Subjects ──────────────────────────────
 
-/// Time grid for the short workload (1-cpt, 12 h). 9 sampling points.
+/// 9 sampling points for the short workload.
 const SHORT_TIMES: &[f64] = &[0.25, 0.5, 1.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0];
 
-/// Synthetic concentration values for the short workload. These do not need to
-/// match any specific model exactly — they only feed into the likelihood
-/// calculation so that we exercise the same code path across backends.
+/// Synthetic plasma concentrations — only need to exercise the likelihood path, not match any model.
 const SHORT_OBS: &[f64] = &[0.50, 0.90, 1.60, 2.40, 2.10, 1.50, 1.05, 0.72, 0.48];
 
-/// Time grid for the repeat workload (2-cpt, 120 h). 14 sampling points.
+/// 14 sampling points for the repeat workload.
 const REPEAT_TIMES: &[f64] = &[
     0.5, 2.0, 6.0, 10.0, 14.0, 24.0, 36.0, 48.0, 60.0, 72.0, 84.0, 96.0, 108.0, 120.0,
 ];
@@ -147,9 +128,7 @@ const REPEAT_OBS: &[f64] = &[
     1.80, 1.45, 1.10, 0.90, 1.30, 1.60, 1.55, 1.50, 1.48, 1.45, 1.43, 1.42, 1.41, 0.95,
 ];
 
-/// Build a subject for the given workload, using `missing_observation` so it
-/// can drive `estimate_predictions` benchmarks without paying for observation
-/// allocation.
+/// Subject with `missing_observation` slots — used for prediction benches.
 pub fn subject_for_predictions(workload: Workload) -> Subject {
     let id = format!("{}-pred", workload.label());
     let mut builder = Subject::builder(id);
@@ -173,8 +152,7 @@ pub fn subject_for_predictions(workload: Workload) -> Subject {
     builder.build()
 }
 
-/// Build a subject for the given workload with real observations, suitable
-/// for `estimate_log_likelihood` and `log_likelihood_matrix` benchmarks.
+/// Subject with real observations — used for log-likelihood / matrix benches.
 pub fn subject_for_likelihood(workload: Workload) -> Subject {
     let id = format!("{}-lik", workload.label());
     let mut builder = Subject::builder(id);
@@ -198,9 +176,7 @@ pub fn subject_for_likelihood(workload: Workload) -> Subject {
     builder.build()
 }
 
-/// Population dataset for `log_likelihood_matrix`. `n` subjects share the
-/// same template with small per-subject perturbations on observation values
-/// (mirrors the pattern used in the original `benches/likelihood.rs`).
+/// Population dataset for `log_likelihood_matrix`: `n` subjects, same template with small obs perturbations.
 pub fn matrix_data(workload: Workload, n: usize) -> Data {
     let subjects = (0..n)
         .map(|i| {
@@ -232,14 +208,9 @@ pub fn matrix_data(workload: Workload, n: usize) -> Data {
 
 // ───────────────────────────── Parameters ────────────────────────────
 
-/// Reference parameter vector for the given (workload, solver) cell.
-///
-/// **Short / ODE**: `[ka, ke, v]` = `[1.0, 0.2, 50.0]`
-/// **Short / Analytical**: `[ka, ke, v]` = `[1.0, 0.2, 50.0]`
-/// **Short / SDE**: `[ka, ke, v, sigma_ke]` = `[1.0, 0.2, 50.0, 0.05]`
-/// **Repeat / ODE**: `[ke, kcp, kpc, v]` = `[0.10, 0.05, 0.04, 50.0]`
-/// **Repeat / Analytical**: `[ke, kcp, kpc, v]` = `[0.10, 0.05, 0.04, 50.0]`
-/// **Repeat / SDE**: `[ke, kcp, kpc, v, sigma_ke]` = `[0.10, 0.05, 0.04, 50.0, 0.01]`
+/// Reference parameter vector per `(workload, kind)`:
+/// Short ODE/Analytical `[ka, ke, v]`, Short SDE adds `sigma_ke`;
+/// Repeat ODE/Analytical `[ke, kcp, kpc, v]`, Repeat SDE adds `sigma_ke`.
 pub fn params(workload: Workload, kind: SolverKind) -> Vec<f64> {
     match (workload, kind) {
         (Workload::Short, SolverKind::Ode | SolverKind::Analytical) => vec![1.0, 0.2, 50.0],
@@ -251,9 +222,8 @@ pub fn params(workload: Workload, kind: SolverKind) -> Vec<f64> {
     }
 }
 
-/// Support-point grid for `log_likelihood_matrix`. Shape: `(n, nparams)`.
-/// Rows are small perturbations of [`params`] so every grid cell stays inside
-/// a numerically well-behaved region.
+/// Support-point grid for `log_likelihood_matrix`, shape `(n, nparams)`.
+/// Rows are small perturbations of [`params`].
 pub fn support_points(workload: Workload, kind: SolverKind, n: usize) -> Array2<f64> {
     let base = params(workload, kind);
     let nparams = base.len();
@@ -276,11 +246,8 @@ pub fn assay_error_models() -> AssayErrorModels {
         .expect("plasma assay error model")
 }
 
-/// Residual error model (kept for symmetry with the existing benches even
-/// though the new suite does not currently exercise `log_likelihood_batch`).
+/// Residual error model. Indexes outputs by dense `usize` — assumes a single output at index 0.
 pub fn residual_error_models() -> ResidualErrorModels {
-    // `ResidualErrorModels` indexes outputs by their dense `usize` index
-    // (not by label), so this assumes a single output equation at index 0.
     ResidualErrorModels::new().add(0, ResidualErrorModel::constant(0.2))
 }
 
@@ -557,9 +524,7 @@ pub fn macro_sde(workload: Workload) -> SDE {
 
 // ───────────────────────────── DSL source strings ────────────────────
 
-/// DSL source for `(workload, kind)`. Consumed by `benches/dsl_matrix.rs`
-/// via `compile_module_source_to_runtime` (JIT/AOT) and
-/// `compile_module_source_to_runtime_wasm` (WASM).
+/// DSL source for `(workload, kind)`. Compiled via `compile_module_source_to_runtime`.
 pub fn dsl_source(workload: Workload, kind: SolverKind) -> &'static str {
     match (workload, kind) {
         (Workload::Short, SolverKind::Ode) => SHORT_ODE_DSL,
@@ -571,8 +536,7 @@ pub fn dsl_source(workload: Workload, kind: SolverKind) -> &'static str {
     }
 }
 
-/// DSL `name = ...` field for `(workload, kind)`. Used by `Some(model_name)`
-/// arguments on the DSL compile entrypoints.
+/// DSL `name = ...` field for `(workload, kind)`.
 pub fn dsl_model_name(workload: Workload, kind: SolverKind) -> &'static str {
     match (workload, kind) {
         (Workload::Short, SolverKind::Ode) => "bench_one_cpt_po_ode",
