@@ -3047,7 +3047,7 @@ mod tests {
         .expect_err("invalid route destination metadata must fail at setup");
 
         assert!(error.to_string().contains(
-            "compiled model `runtime_metadata_invalid_destination` has invalid runtime metadata"
+            "Compiled model `runtime_metadata_invalid_destination` has invalid runtime metadata"
         ));
         assert!(error
             .to_string()
