@@ -1,0 +1,355 @@
+//! DSL backend benchmark matrix (feature-gated).
+//!
+//! Covers the three DSL backends — JIT, native AoT, WASM — across the same
+//! two workloads and three solver kinds as `native_matrix.rs`.
+//!
+//! Coverage notes:
+//! - Predictions: every (workload, kind, backend) cell.
+//! - Log-likelihood + likelihood-matrix: **ODE only** across all three
+//!   backends. The DSL ODE runtime model is `RuntimeOdeModel = NativeOdeModel`
+//!   (see `src/dsl/runtime.rs:117`), and `NativeOdeModel` implements both the
+//!   `Equation` and `Cache` traits. `NativeAnalyticalModel` and
+//!   `NativeSdeModel` do not, so analytical/SDE backends remain
+//!   predictions-only on this bench surface.
+//! - Hot/cold cache: ODE only, via `.disable_cache()` on the extracted
+//!   `NativeOdeModel`. Analytical/SDE skip the cache axis.
+//! - Compile-time: one bench per (workload, kind, backend) that measures the
+//!   `source -> CompiledRuntimeModel` pipeline end-to-end.
+//!
+//! Bench id format:
+//! - `dsl/compile`               → `{workload}/{kind}/{backend}`
+//! - `dsl/predictions`           → `{workload}/{kind}/{backend}/{cache}` (ODE)
+//!                                 `{workload}/{kind}/{backend}` (Ana/SDE)
+//! - `dsl/log-likelihood`        → `{workload}/ode/{backend}/{cache}`
+//! - `dsl/likelihood-matrix`     → `{workload}/ode/{backend}`
+
+use std::hint::black_box;
+use std::path::PathBuf;
+use std::time::Duration;
+
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, SamplingMode};
+use tempfile::TempDir;
+
+use pharmsol::dsl::{
+    compile_module_source_to_runtime, CompiledRuntimeModel, NativeAotCompileOptions, NativeOdeModel,
+    RuntimeCompilationTarget,
+};
+use pharmsol::prelude::*;
+use pharmsol::Cache;
+
+mod common;
+use common::{
+    assay_error_models, dsl_model_name, dsl_source, matrix_data, params, subject_for_likelihood,
+    subject_for_predictions, support_points, SolverKind, Workload,
+};
+
+const MATRIX_N_SUBJECTS: usize = 32;
+const MATRIX_N_SUPPORT: usize = 64;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Backend {
+    Jit,
+    Aot,
+    Wasm,
+}
+
+impl Backend {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Jit => "dsl-jit",
+            Self::Aot => "dsl-aot",
+            Self::Wasm => "dsl-wasm",
+        }
+    }
+
+    fn all() -> [Backend; 3] {
+        [Backend::Jit, Backend::Aot, Backend::Wasm]
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum CacheState {
+    Hot,
+    Cold,
+}
+
+impl CacheState {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Hot => "hot",
+            Self::Cold => "cold",
+        }
+    }
+
+    fn all() -> [CacheState; 2] {
+        [CacheState::Hot, CacheState::Cold]
+    }
+}
+
+/// Per-bench AoT workspace. One `TempDir` for the whole bench binary; each
+/// compile call uses a fresh subdirectory so artifacts don't clash.
+struct AotWorkspace {
+    root: TempDir,
+    counter: std::cell::Cell<usize>,
+}
+
+impl AotWorkspace {
+    fn new() -> Self {
+        Self {
+            root: tempfile::Builder::new()
+                .prefix("pharmsol-bench-dsl-aot-")
+                .tempdir()
+                .expect("create AoT workspace tempdir"),
+            counter: std::cell::Cell::new(0),
+        }
+    }
+
+    fn fresh(&self, stem: &str) -> PathBuf {
+        let n = self.counter.get();
+        self.counter.set(n + 1);
+        self.root.path().join(format!("{stem}-{n:04}"))
+    }
+}
+
+/// Compile a (workload, kind) DSL model with the chosen backend, returning the
+/// full `CompiledRuntimeModel`.
+fn compile_runtime(
+    workload: Workload,
+    kind: SolverKind,
+    backend: Backend,
+    aot: &AotWorkspace,
+) -> CompiledRuntimeModel {
+    let source = dsl_source(workload, kind);
+    let name = dsl_model_name(workload, kind);
+    let target = match backend {
+        Backend::Jit => RuntimeCompilationTarget::Jit,
+        Backend::Aot => {
+            let dir = aot.fresh(&format!("{}-{}", workload.label(), kind.label()));
+            RuntimeCompilationTarget::NativeAot(NativeAotCompileOptions::new(dir))
+        }
+        Backend::Wasm => RuntimeCompilationTarget::Wasm,
+    };
+    compile_module_source_to_runtime(source, Some(name), target, |_, _| {})
+        .unwrap_or_else(|e| panic!("compile {} via {} failed: {e:?}", name, backend.label()))
+}
+
+/// Compile and extract the inner ODE model so the bench can drive `Equation`
+/// directly (and toggle the cache).
+fn compile_ode(workload: Workload, backend: Backend, aot: &AotWorkspace) -> NativeOdeModel {
+    match compile_runtime(workload, SolverKind::Ode, backend, aot) {
+        CompiledRuntimeModel::Ode(model) => model,
+        other => panic!(
+            "expected Ode model for {}, got {:?}",
+            workload.label(),
+            other.backend()
+        ),
+    }
+}
+
+// ───────────────────────────── compile group ─────────────────────────
+
+fn compile_group(c: &mut Criterion) {
+    let mut group = c.benchmark_group("dsl/compile");
+    group.sampling_mode(SamplingMode::Flat);
+    // Each compile is expensive (especially AoT — full rustc invocation).
+    group.sample_size(10);
+    group.measurement_time(Duration::from_secs(30));
+
+    let aot = AotWorkspace::new();
+
+    for workload in Workload::all() {
+        for kind in SolverKind::all() {
+            for backend in Backend::all() {
+                let bench_id = BenchmarkId::from_parameter(format!(
+                    "{}/{}/{}",
+                    workload.label(),
+                    kind.label(),
+                    backend.label()
+                ));
+                group.bench_function(bench_id, |b| {
+                    b.iter(|| {
+                        black_box(compile_runtime(
+                            black_box(workload),
+                            black_box(kind),
+                            black_box(backend),
+                            &aot,
+                        ));
+                    });
+                });
+            }
+        }
+    }
+
+    group.finish();
+}
+
+// ───────────────────────────── predictions group ─────────────────────
+
+fn predictions_group(c: &mut Criterion) {
+    let mut group = c.benchmark_group("dsl/predictions");
+    group.sampling_mode(SamplingMode::Flat);
+
+    let aot = AotWorkspace::new();
+
+    for workload in Workload::all() {
+        let subject = subject_for_predictions(workload);
+        for kind in SolverKind::all() {
+            let theta = params(workload, kind);
+            for backend in Backend::all() {
+                match kind {
+                    SolverKind::Ode => {
+                        // ODE supports hot/cold via NativeOdeModel.disable_cache().
+                        for cache in CacheState::all() {
+                            let model = match cache {
+                                CacheState::Hot => compile_ode(workload, backend, &aot),
+                                CacheState::Cold => {
+                                    compile_ode(workload, backend, &aot).disable_cache()
+                                }
+                            };
+                            let bench_id = BenchmarkId::from_parameter(format!(
+                                "{}/{}/{}/{}",
+                                workload.label(),
+                                kind.label(),
+                                backend.label(),
+                                cache.label()
+                            ));
+                            group.bench_function(bench_id, |b| {
+                                b.iter(|| {
+                                    black_box(
+                                        model
+                                            .estimate_predictions(
+                                                black_box(&subject),
+                                                black_box(&theta),
+                                            )
+                                            .unwrap(),
+                                    )
+                                });
+                            });
+                        }
+                    }
+                    SolverKind::Analytical | SolverKind::Sde => {
+                        // Analytical / SDE: no cache axis. Drive predictions
+                        // through the enum-level `estimate_predictions`.
+                        let model = compile_runtime(workload, kind, backend, &aot);
+                        let bench_id = BenchmarkId::from_parameter(format!(
+                            "{}/{}/{}",
+                            workload.label(),
+                            kind.label(),
+                            backend.label()
+                        ));
+                        group.bench_function(bench_id, |b| {
+                            b.iter(|| {
+                                black_box(
+                                    model
+                                        .estimate_predictions(
+                                            black_box(&subject),
+                                            black_box(&theta),
+                                        )
+                                        .unwrap(),
+                                )
+                            });
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    group.finish();
+}
+
+// ───────────────────────────── log-likelihood group ──────────────────
+
+fn log_likelihood_group(c: &mut Criterion) {
+    let mut group = c.benchmark_group("dsl/log-likelihood");
+    group.sampling_mode(SamplingMode::Flat);
+
+    let aot = AotWorkspace::new();
+    let error_models = assay_error_models();
+
+    for workload in Workload::all() {
+        let subject = subject_for_likelihood(workload);
+        let theta = params(workload, SolverKind::Ode);
+        for backend in Backend::all() {
+            for cache in CacheState::all() {
+                let model = match cache {
+                    CacheState::Hot => compile_ode(workload, backend, &aot),
+                    CacheState::Cold => compile_ode(workload, backend, &aot).disable_cache(),
+                };
+                let bench_id = BenchmarkId::from_parameter(format!(
+                    "{}/ode/{}/{}",
+                    workload.label(),
+                    backend.label(),
+                    cache.label()
+                ));
+                group.bench_function(bench_id, |b| {
+                    b.iter(|| {
+                        black_box(
+                            model
+                                .estimate_log_likelihood(
+                                    black_box(&subject),
+                                    black_box(&theta),
+                                    black_box(&error_models),
+                                )
+                                .unwrap(),
+                        )
+                    });
+                });
+            }
+        }
+    }
+
+    group.finish();
+}
+
+// ───────────────────────────── likelihood-matrix group ───────────────
+
+fn likelihood_matrix_group(c: &mut Criterion) {
+    use pharmsol::prelude::simulator::log_likelihood_matrix;
+
+    let mut group = c.benchmark_group("dsl/likelihood-matrix");
+    group.sampling_mode(SamplingMode::Flat);
+    group.sample_size(10);
+    group.measurement_time(Duration::from_secs(20));
+
+    let aot = AotWorkspace::new();
+    let error_models = assay_error_models();
+
+    for workload in Workload::all() {
+        let data = matrix_data(workload, MATRIX_N_SUBJECTS);
+        let theta = support_points(workload, SolverKind::Ode, MATRIX_N_SUPPORT);
+        for backend in Backend::all() {
+            let model = compile_ode(workload, backend, &aot);
+            let bench_id = BenchmarkId::from_parameter(format!(
+                "{}/ode/{}",
+                workload.label(),
+                backend.label()
+            ));
+            group.bench_function(bench_id, |b| {
+                b.iter(|| {
+                    black_box(
+                        log_likelihood_matrix(
+                            black_box(&model),
+                            black_box(&data),
+                            black_box(&theta),
+                            black_box(&error_models),
+                            false,
+                        )
+                        .unwrap(),
+                    )
+                });
+            });
+        }
+    }
+
+    group.finish();
+}
+
+criterion_group!(
+    dsl_matrix,
+    compile_group,
+    predictions_group,
+    log_likelihood_group,
+    likelihood_matrix_group
+);
+criterion_main!(dsl_matrix);

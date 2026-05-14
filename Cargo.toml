@@ -68,18 +68,10 @@ webbrowser = "1.2.1"
 bench = false
 
 [[bench]]
-name = "predictions"
+name = "native_matrix"
 harness = false
 
 [[bench]]
-name = "nca"
-harness = false
-
-[[bench]]
-name = "runtime_matrix"
+name = "dsl_matrix"
 harness = false
 required-features = ["dsl-jit", "dsl-aot", "dsl-aot-load", "dsl-wasm"]
-
-[[bench]]
-name = "likelihood"
-harness = false
