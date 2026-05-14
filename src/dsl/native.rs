@@ -1320,7 +1320,14 @@ impl NativeAnalyticalModel {
         subject: &Subject,
         parameters: &Parameters,
     ) -> Result<SubjectPredictions, PharmsolError> {
-        let support_point = parameters.as_slice();
+        self.estimate_predictions_dense(subject, parameters.as_slice())
+    }
+
+    fn estimate_predictions_dense(
+        &self,
+        subject: &Subject,
+        support_point: &[f64],
+    ) -> Result<SubjectPredictions, PharmsolError> {
         self.shared.validate_support_point(support_point)?;
         let mut output = SubjectPredictions::default();
 
@@ -1467,17 +1474,17 @@ fn runtime_analytical_predictions(
     if let Some(cache) = &model.cache {
         let key = (
             subject.hash(),
-            crate::simulator::equation::spphash(support_point),
+            crate::simulator::equation::parameters_hash(support_point),
         );
         if let Some(cached) = cache.get(&key) {
             return Ok(cached);
         }
 
-        let result = model.estimate_predictions(subject, support_point)?;
+        let result = model.estimate_predictions_dense(subject, support_point)?;
         cache.insert(key, result.clone());
         Ok(result)
     } else {
-        model.estimate_predictions(subject, support_point)
+        model.estimate_predictions_dense(subject, support_point)
     }
 }
 
@@ -1574,23 +1581,31 @@ impl Equation for NativeAnalyticalModel {
     fn estimate_likelihood(
         &self,
         subject: &Subject,
-        support_point: &[f64],
+        parameters: &Parameters,
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
         Ok(self
-            .estimate_log_likelihood(subject, support_point, error_models)?
+            .estimate_log_likelihood(subject, parameters, error_models)?
             .exp())
     }
 
     fn estimate_log_likelihood(
         &self,
         subject: &Subject,
-        support_point: &[f64],
+        parameters: &Parameters,
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
         let bound_error_models = self.bind_error_models(error_models)?;
-        let predictions = runtime_analytical_predictions(self, subject, support_point)?;
+        let predictions = runtime_analytical_predictions(self, subject, parameters.as_slice())?;
         predictions.log_likelihood(&bound_error_models)
+    }
+
+    fn estimate_predictions_dense(
+        &self,
+        subject: &Subject,
+        parameters: &[f64],
+    ) -> Result<Self::P, PharmsolError> {
+        NativeAnalyticalModel::estimate_predictions_dense(self, subject, parameters)
     }
 
     fn kind() -> EqnKind {
@@ -1609,15 +1624,24 @@ impl Equation for NativeAnalyticalModel {
     fn estimate_predictions(
         &self,
         subject: &Subject,
-        support_point: &[f64],
+        parameters: &Parameters,
     ) -> Result<Self::P, PharmsolError> {
-        runtime_analytical_predictions(self, subject, support_point)
+        NativeAnalyticalModel::estimate_predictions(self, subject, parameters)
     }
 
     fn simulate_subject(
         &self,
         subject: &Subject,
-        support_point: &[f64],
+        parameters: &Parameters,
+        error_models: Option<&AssayErrorModels>,
+    ) -> Result<(Self::P, Option<f64>), PharmsolError> {
+        self.simulate_subject_dense(subject, parameters.as_slice(), error_models)
+    }
+
+    fn simulate_subject_dense(
+        &self,
+        subject: &Subject,
+        parameters: &[f64],
         error_models: Option<&AssayErrorModels>,
     ) -> Result<(Self::P, Option<f64>), PharmsolError> {
         let bound_error_models = match error_models {
@@ -1625,7 +1649,7 @@ impl Equation for NativeAnalyticalModel {
             None => None,
         };
 
-        let predictions = runtime_analytical_predictions(self, subject, support_point)?;
+        let predictions = runtime_analytical_predictions(self, subject, parameters)?;
         let likelihood = match bound_error_models.as_ref() {
             Some(error_models) => Some(predictions.log_likelihood(error_models)?.exp()),
             None => None,
@@ -1662,7 +1686,14 @@ impl NativeSdeModel {
         subject: &Subject,
         parameters: &Parameters,
     ) -> Result<Array2<Prediction>, PharmsolError> {
-        let support_point = parameters.as_slice();
+        self.estimate_predictions_dense(subject, parameters.as_slice())
+    }
+
+    fn estimate_predictions_dense(
+        &self,
+        subject: &Subject,
+        support_point: &[f64],
+    ) -> Result<Array2<Prediction>, PharmsolError> {
         self.shared.validate_support_point(support_point)?;
         let mut output = Array2::from_shape_fn((self.nparticles, 0), |_| Prediction::default());
 
@@ -1902,19 +1933,19 @@ fn runtime_sde_log_likelihood(
     if let Some(cache) = &model.cache {
         let key = (
             subject.hash(),
-            crate::simulator::equation::spphash(support_point),
+            crate::simulator::equation::parameters_hash(support_point),
             error_models.hash(),
         );
         if let Some(cached) = cache.get(&key) {
             return Ok(cached);
         }
 
-        let predictions = model.estimate_predictions(subject, support_point)?;
+        let predictions = model.estimate_predictions_dense(subject, support_point)?;
         let log_lik = predictions.log_likelihood(error_models)?;
         cache.insert(key, log_lik);
         Ok(log_lik)
     } else {
-        let predictions = model.estimate_predictions(subject, support_point)?;
+        let predictions = model.estimate_predictions_dense(subject, support_point)?;
         predictions.log_likelihood(error_models)
     }
 }
@@ -2020,21 +2051,21 @@ impl Equation for NativeSdeModel {
     fn estimate_likelihood(
         &self,
         subject: &Subject,
-        support_point: &[f64],
+        parameters: &Parameters,
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
-        let log_lik = self.estimate_log_likelihood(subject, support_point, error_models)?;
+        let log_lik = self.estimate_log_likelihood(subject, parameters, error_models)?;
         Ok(log_lik.exp())
     }
 
     fn estimate_log_likelihood(
         &self,
         subject: &Subject,
-        support_point: &[f64],
+        parameters: &Parameters,
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
         let bound_error_models = self.bind_error_models(error_models)?;
-        runtime_sde_log_likelihood(self, subject, support_point, &bound_error_models)
+        runtime_sde_log_likelihood(self, subject, parameters.as_slice(), &bound_error_models)
     }
 
     fn kind() -> EqnKind {
@@ -2053,15 +2084,42 @@ impl Equation for NativeSdeModel {
     fn estimate_predictions(
         &self,
         subject: &Subject,
-        support_point: &[f64],
+        parameters: &Parameters,
     ) -> Result<Self::P, PharmsolError> {
-        NativeSdeModel::estimate_predictions(self, subject, support_point)
+        NativeSdeModel::estimate_predictions(self, subject, parameters)
+    }
+
+    fn estimate_predictions_dense(
+        &self,
+        subject: &Subject,
+        parameters: &[f64],
+    ) -> Result<Self::P, PharmsolError> {
+        NativeSdeModel::estimate_predictions_dense(self, subject, parameters)
+    }
+
+    fn estimate_log_likelihood_dense(
+        &self,
+        subject: &Subject,
+        parameters: &[f64],
+        error_models: &AssayErrorModels,
+    ) -> Result<f64, PharmsolError> {
+        let bound_error_models = self.bind_error_models(error_models)?;
+        runtime_sde_log_likelihood(self, subject, parameters, &bound_error_models)
     }
 
     fn simulate_subject(
         &self,
         subject: &Subject,
-        support_point: &[f64],
+        parameters: &Parameters,
+        error_models: Option<&AssayErrorModels>,
+    ) -> Result<(Self::P, Option<f64>), PharmsolError> {
+        self.simulate_subject_dense(subject, parameters.as_slice(), error_models)
+    }
+
+    fn simulate_subject_dense(
+        &self,
+        subject: &Subject,
+        parameters: &[f64],
         error_models: Option<&AssayErrorModels>,
     ) -> Result<(Self::P, Option<f64>), PharmsolError> {
         let bound_error_models = match error_models {
@@ -2069,7 +2127,7 @@ impl Equation for NativeSdeModel {
             None => None,
         };
 
-        let predictions = NativeSdeModel::estimate_predictions(self, subject, support_point)?;
+        let predictions = NativeSdeModel::estimate_predictions_dense(self, subject, parameters)?;
         let likelihood = match bound_error_models.as_ref() {
             Some(error_models) => Some(predictions.log_likelihood(error_models)?.exp()),
             None => None,

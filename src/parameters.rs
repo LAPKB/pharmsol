@@ -14,9 +14,9 @@ use crate::parameter_order::{ParameterOrderError, ParameterOrderPlan};
         not(all(target_arch = "wasm32", target_os = "unknown"))
     )
 ))]
-use crate::dsl::{CompiledRuntimeModel, RuntimeAnalyticalModel, RuntimeSdeModel};
+use crate::dsl::{CompiledRuntimeModel, RuntimeAnalyticalModel, RuntimeOdeModel, RuntimeSdeModel};
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-use crate::Equation;
+use crate::{Analytical, ODE, SDE};
 
 /// Errors produced while validating named parameter input against model order.
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
@@ -193,10 +193,31 @@ trait NamedParameterModel {
 }
 
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-impl<M> NamedParameterModel for M
-where
-    M: Equation,
-{
+impl NamedParameterModel for ODE {
+    fn parameter_order_plan<S>(&self, source_names: S) -> Result<ParameterOrderPlan, ParameterError>
+    where
+        S: IntoIterator,
+        S::Item: AsRef<str>,
+    {
+        ParameterOrderPlan::from_metadata(self.metadata(), source_names)
+            .map_err(ParameterError::from)
+    }
+}
+
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+impl NamedParameterModel for Analytical {
+    fn parameter_order_plan<S>(&self, source_names: S) -> Result<ParameterOrderPlan, ParameterError>
+    where
+        S: IntoIterator,
+        S::Item: AsRef<str>,
+    {
+        ParameterOrderPlan::from_metadata(self.metadata(), source_names)
+            .map_err(ParameterError::from)
+    }
+}
+
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+impl NamedParameterModel for SDE {
     fn parameter_order_plan<S>(&self, source_names: S) -> Result<ParameterOrderPlan, ParameterError>
     where
         S: IntoIterator,
@@ -216,6 +237,25 @@ where
     )
 ))]
 impl NamedParameterModel for CompiledRuntimeModel {
+    fn parameter_order_plan<S>(&self, source_names: S) -> Result<ParameterOrderPlan, ParameterError>
+    where
+        S: IntoIterator,
+        S::Item: AsRef<str>,
+    {
+        ParameterOrderPlan::from_runtime_info(self.info(), source_names)
+            .map_err(ParameterError::from)
+    }
+}
+
+#[cfg(any(
+    feature = "dsl-jit",
+    all(feature = "dsl-aot", feature = "dsl-aot-load"),
+    all(
+        feature = "dsl-wasm",
+        not(all(target_arch = "wasm32", target_os = "unknown"))
+    )
+))]
+impl NamedParameterModel for RuntimeOdeModel {
     fn parameter_order_plan<S>(&self, source_names: S) -> Result<ParameterOrderPlan, ParameterError>
     where
         S: IntoIterator,
