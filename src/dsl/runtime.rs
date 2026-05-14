@@ -95,7 +95,8 @@ use super::jit::{compile_execution_model_to_jit, JitCompileError};
 use super::native::RuntimeArtifact;
 use super::native::{
     CompiledNativeModel, NativeAnalyticalModel, NativeCovariateInfo, NativeModelInfo,
-    NativeOdeModel, NativeOutputInfo, NativeRouteInfo, NativeSdeModel, RuntimeBackend,
+    NativeOdeModel, NativeOutputInfo, NativeRouteInfo, NativeSdeModel, NativeStateInfo,
+    RuntimeBackend,
 };
 #[cfg(feature = "dsl-wasm")]
 use super::wasm::{load_wasm_artifact, load_wasm_artifact_bytes};
@@ -105,7 +106,7 @@ use super::wasm_compile::{
 };
 use crate::{
     simulator::likelihood::{Prediction, SubjectPredictions},
-    Parameters, PharmsolError, Subject,
+    Parameters, PharmsolError, Subject, ValidatedModelMetadata,
 };
 use pharmsol_dsl::{
     analyze_module, lower_typed_model, parse_module, Diagnostic, DiagnosticReport, ExecutionModel,
@@ -114,6 +115,7 @@ use pharmsol_dsl::{
 
 pub type RuntimeModelInfo = NativeModelInfo;
 pub type RuntimeCovariateInfo = NativeCovariateInfo;
+pub type RuntimeStateInfo = NativeStateInfo;
 pub type RuntimeRouteInfo = NativeRouteInfo;
 pub type RuntimeOutputInfo = NativeOutputInfo;
 pub type RuntimeOdeModel = NativeOdeModel;
@@ -229,6 +231,14 @@ impl CompiledRuntimeModel {
 
     pub fn kind(&self) -> ModelKind {
         self.info().kind
+    }
+
+    pub fn metadata(&self) -> &ValidatedModelMetadata {
+        match self {
+            Self::Ode(model) => model.metadata(),
+            Self::Analytical(model) => model.metadata(),
+            Self::Sde(model) => model.metadata(),
+        }
     }
 
     pub fn estimate_predictions(
@@ -457,11 +467,11 @@ fn runtime_model_from_parts(
     artifact: impl RuntimeArtifact + 'static,
 ) -> Result<CompiledRuntimeModel, PharmsolError> {
     Ok(match info.kind {
-        ModelKind::Ode => CompiledRuntimeModel::Ode(NativeOdeModel::new(info, artifact)),
+        ModelKind::Ode => CompiledRuntimeModel::Ode(NativeOdeModel::new(info, artifact)?),
         ModelKind::Analytical => {
             CompiledRuntimeModel::Analytical(NativeAnalyticalModel::new(info, artifact)?)
         }
-        ModelKind::Sde => CompiledRuntimeModel::Sde(NativeSdeModel::new(info, artifact)),
+        ModelKind::Sde => CompiledRuntimeModel::Sde(NativeSdeModel::new(info, artifact)?),
     })
 }
 

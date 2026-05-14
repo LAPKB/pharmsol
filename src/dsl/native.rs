@@ -16,12 +16,12 @@ use cranelift_jit::JITModule;
 use libloading::Library;
 use pharmsol_dsl::execution::KernelRole;
 use pharmsol_dsl::{
-    AnalyticalKernel, AnalyticalStructureInputKind, AnalyticalStructureInputPlan, RouteKind,
-    NUMERIC_OUTPUT_PREFIX, NUMERIC_ROUTE_PREFIX,
+    AnalyticalKernel, AnalyticalStructureInputKind, AnalyticalStructureInputPlan, ModelKind,
+    RouteKind, NUMERIC_OUTPUT_PREFIX, NUMERIC_ROUTE_PREFIX,
 };
 
 pub use super::model_info::{
-    NativeCovariateInfo, NativeModelInfo, NativeOutputInfo, NativeRouteInfo,
+    NativeCovariateInfo, NativeModelInfo, NativeOutputInfo, NativeRouteInfo, NativeStateInfo,
 };
 use crate::{
     data::error_model::AssayErrorModels,
@@ -39,7 +39,7 @@ use crate::{
         likelihood::{Prediction, SubjectPredictions},
         Fa, Lag, M, T, V,
     },
-    Event, Observation, Occasion, Parameters, PharmsolError, Subject,
+    Event, Observation, Occasion, Parameters, PharmsolError, Subject, ValidatedModelMetadata,
 };
 
 pub type DenseKernelFn = unsafe extern "C" fn(
@@ -274,8 +274,207 @@ impl RuntimeArtifact for NativeExecutionArtifact {
 #[derive(Clone, Debug)]
 struct SharedNativeModel {
     info: Arc<NativeModelInfo>,
+    metadata: Arc<ValidatedModelMetadata>,
     route_semantics: Arc<RouteInputSemantics>,
     artifact: Arc<dyn RuntimeArtifact>,
+}
+
+fn compiled_metadata_error(info: &NativeModelInfo, detail: impl Into<String>) -> PharmsolError {
+    PharmsolError::OtherError(format!(
+        "compiled model `{}` has invalid runtime metadata: {}",
+        info.name,
+        detail.into()
+    ))
+}
+
+fn sorted_dense_metadata<'a, T>(
+    info: &NativeModelInfo,
+    domain: &str,
+    expected_len: usize,
+    entries: &'a [T],
+    index_of: impl Fn(&T) -> usize,
+) -> Result<Vec<&'a T>, PharmsolError> {
+    if entries.len() != expected_len {
+        return Err(compiled_metadata_error(
+            info,
+            format!(
+                "expected {expected_len} {domain} entr{} but found {}",
+                if expected_len == 1 { "y" } else { "ies" },
+                entries.len()
+            ),
+        ));
+    }
+
+    let mut sorted = entries.iter().collect::<Vec<_>>();
+    sorted.sort_by_key(|entry| index_of(entry));
+    for (expected, entry) in sorted.iter().enumerate() {
+        let found = index_of(entry);
+        if found != expected {
+            return Err(compiled_metadata_error(
+                info,
+                format!(
+                    "{domain} metadata must use dense 0-based indices; expected {expected}, found {found}"
+                ),
+            ));
+        }
+    }
+
+    Ok(sorted)
+}
+
+fn runtime_model_metadata(info: &NativeModelInfo) -> Result<ValidatedModelMetadata, PharmsolError> {
+    let states = sorted_dense_metadata(info, "state", info.state_len, &info.states, |state| {
+        state.offset
+    })?;
+    let state_names = states
+        .iter()
+        .map(|state| state.name.clone())
+        .collect::<Vec<_>>();
+
+    let covariates = sorted_dense_metadata(
+        info,
+        "covariate",
+        info.covariates.len(),
+        &info.covariates,
+        |covariate| covariate.index,
+    )?;
+    let routes = sorted_dense_metadata(
+        info,
+        "route declaration",
+        info.routes.len(),
+        &info.routes,
+        |route| route.declaration_index,
+    )?;
+    let outputs =
+        sorted_dense_metadata(info, "output", info.output_len, &info.outputs, |output| {
+            output.index
+        })?;
+
+    let mut metadata = crate::simulator::equation::metadata::new(info.name.clone())
+        .kind(info.kind)
+        .parameters(info.parameters.iter().cloned())
+        .covariates(covariates.into_iter().map(|covariate| {
+            let mut declaration =
+                crate::simulator::equation::metadata::Covariate::new(covariate.name.clone());
+            if let Some(interpolation) = covariate.interpolation {
+                declaration = declaration.with_interpolation(interpolation);
+            }
+            declaration
+        }))
+        .states(state_names.iter().cloned())
+        .outputs(outputs.into_iter().map(|output| output.name.clone()));
+
+    if let Some(kernel) = info.analytical {
+        metadata = metadata.analytical_kernel(kernel);
+    }
+
+    if let Some(particles) = info.particles {
+        metadata = metadata.particles(particles);
+    }
+
+    for route in &routes {
+        let destination = state_names
+            .get(route.destination_offset)
+            .ok_or_else(|| {
+                compiled_metadata_error(
+                    info,
+                    format!(
+                        "route `{}` targets out-of-range state offset {}",
+                        route.name, route.destination_offset
+                    ),
+                )
+            })?
+            .clone();
+        if route.destination_name != destination {
+            return Err(compiled_metadata_error(
+                info,
+                format!(
+                    "route `{}` names destination `{}` but offset {} resolves to `{}`",
+                    route.name, route.destination_name, route.destination_offset, destination
+                ),
+            ));
+        }
+        // Structured-block DSL routes still lower without an explicit kind.
+        // Treat them as declaration-ordered bolus routes for the shared
+        // metadata surface while preserving the original runtime semantics
+        // from `info.routes` below.
+        let kind = route.kind.unwrap_or(RouteKind::Bolus);
+
+        let mut declaration = match kind {
+            RouteKind::Bolus => {
+                crate::simulator::equation::metadata::Route::bolus(route.name.clone())
+            }
+            RouteKind::Infusion => {
+                crate::simulator::equation::metadata::Route::infusion(route.name.clone())
+            }
+        }
+        .to_state(destination);
+
+        if route.has_lag {
+            declaration = declaration.with_lag();
+        }
+        if route.has_bioavailability {
+            declaration = declaration.with_bioavailability();
+        }
+
+        declaration = if route.inject_input_to_destination {
+            declaration.inject_input_to_destination()
+        } else {
+            declaration.expect_explicit_input()
+        };
+
+        metadata = metadata.route(declaration);
+    }
+
+    let validated = match info.kind {
+        ModelKind::Sde => {
+            let particles = info.particles.ok_or_else(|| {
+                compiled_metadata_error(info, "SDE models must declare a particle count")
+            })?;
+            metadata.validate_for_with_particles(ModelKind::Sde, particles)
+        }
+        kind => metadata.validate_for(kind),
+    }
+    .map_err(|error| compiled_metadata_error(info, error.to_string()))?;
+
+    if validated.route_input_count() != info.route_len {
+        return Err(compiled_metadata_error(
+            info,
+            format!(
+                "route input count {} does not match declared route buffer length {}",
+                validated.route_input_count(),
+                info.route_len
+            ),
+        ));
+    }
+
+    for route in routes {
+        let validated_route = &validated.routes()[route.declaration_index];
+        if validated_route.input_index() != route.index {
+            return Err(compiled_metadata_error(
+                info,
+                format!(
+                    "route `{}` uses input index {} but validated metadata resolves to {}",
+                    route.name,
+                    route.index,
+                    validated_route.input_index()
+                ),
+            ));
+        }
+        if validated_route.destination_index() != route.destination_offset {
+            return Err(compiled_metadata_error(
+                info,
+                format!(
+                    "route `{}` targets state offset {} but validated metadata resolves to {}",
+                    route.name,
+                    route.destination_offset,
+                    validated_route.destination_index()
+                ),
+            ));
+        }
+    }
+
+    Ok(validated)
 }
 
 #[derive(Clone, Debug)]
@@ -339,12 +538,21 @@ impl RouteInputSemantics {
 }
 
 impl SharedNativeModel {
-    fn new(info: NativeModelInfo, artifact: impl RuntimeArtifact + 'static) -> Self {
-        Self {
+    fn new(
+        info: NativeModelInfo,
+        artifact: impl RuntimeArtifact + 'static,
+    ) -> Result<Self, PharmsolError> {
+        let metadata = Arc::new(runtime_model_metadata(&info)?);
+        Ok(Self {
+            metadata,
             route_semantics: Arc::new(RouteInputSemantics::from_model_info(&info)),
             info: Arc::new(info),
             artifact: Arc::new(artifact),
-        }
+        })
+    }
+
+    fn metadata(&self) -> &ValidatedModelMetadata {
+        self.metadata.as_ref()
     }
 
     fn route_index(&self, name: &str) -> Option<usize> {
@@ -770,10 +978,23 @@ pub enum CompiledNativeModel {
     Sde(NativeSdeModel),
 }
 
+impl CompiledNativeModel {
+    pub fn metadata(&self) -> &ValidatedModelMetadata {
+        match self {
+            Self::Ode(model) => model.metadata(),
+            Self::Analytical(model) => model.metadata(),
+            Self::Sde(model) => model.metadata(),
+        }
+    }
+}
+
 impl NativeOdeModel {
-    pub(crate) fn new(info: NativeModelInfo, artifact: impl RuntimeArtifact + 'static) -> Self {
-        Self {
-            shared: Arc::new(SharedNativeModel::new(info, artifact)),
+    pub(crate) fn new(
+        info: NativeModelInfo,
+        artifact: impl RuntimeArtifact + 'static,
+    ) -> Result<Self, PharmsolError> {
+        Ok(Self {
+            shared: Arc::new(SharedNativeModel::new(info, artifact)?),
             solver: OdeSolver::default(),
             rtol: DEFAULT_ODE_RTOL,
             atol: DEFAULT_ODE_ATOL,
@@ -781,7 +1002,7 @@ impl NativeOdeModel {
             error_model_cache: Some(BoundErrorModelCache::new(
                 DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
             )),
-        }
+        })
     }
 
     pub fn with_solver(mut self, solver: OdeSolver) -> Self {
@@ -797,6 +1018,11 @@ impl NativeOdeModel {
 
     pub fn info(&self) -> &NativeModelInfo {
         self.shared.info.as_ref()
+    }
+
+    /// Access the validated metadata attached to this compiled ODE model.
+    pub fn metadata(&self) -> &ValidatedModelMetadata {
+        self.shared.metadata()
     }
 
     pub fn backend(&self) -> RuntimeBackend {
@@ -1148,7 +1374,7 @@ impl EquationPriv for NativeOdeModel {
     }
 
     fn metadata(&self) -> Option<&crate::ValidatedModelMetadata> {
-        None
+        Some(self.shared.metadata())
     }
 
     fn solve(
@@ -1301,7 +1527,7 @@ impl NativeAnalyticalModel {
     ) -> Result<Self, PharmsolError> {
         let parameter_projection = build_analytical_parameter_projection(&info)?;
         Ok(Self {
-            shared: Arc::new(SharedNativeModel::new(info, artifact)),
+            shared: Arc::new(SharedNativeModel::new(info, artifact)?),
             cache: Some(PredictionCache::new(DEFAULT_CACHE_SIZE)),
             parameter_projection,
         })
@@ -1309,6 +1535,11 @@ impl NativeAnalyticalModel {
 
     pub fn info(&self) -> &NativeModelInfo {
         self.shared.info.as_ref()
+    }
+
+    /// Access the validated metadata attached to this compiled analytical model.
+    pub fn metadata(&self) -> &ValidatedModelMetadata {
+        self.shared.metadata()
     }
 
     pub fn backend(&self) -> RuntimeBackend {
@@ -1538,7 +1769,7 @@ impl EquationPriv for NativeAnalyticalModel {
     }
 
     fn metadata(&self) -> Option<&crate::ValidatedModelMetadata> {
-        None
+        Some(self.shared.metadata())
     }
 
     fn solve(
@@ -1659,13 +1890,18 @@ impl Equation for NativeAnalyticalModel {
 }
 
 impl NativeSdeModel {
-    pub(crate) fn new(info: NativeModelInfo, artifact: impl RuntimeArtifact + 'static) -> Self {
-        let nparticles = info.particles.unwrap_or(1);
-        Self {
-            shared: Arc::new(SharedNativeModel::new(info, artifact)),
+    pub(crate) fn new(
+        info: NativeModelInfo,
+        artifact: impl RuntimeArtifact + 'static,
+    ) -> Result<Self, PharmsolError> {
+        let nparticles = info.particles.ok_or_else(|| {
+            compiled_metadata_error(&info, "SDE models must declare a particle count")
+        })?;
+        Ok(Self {
+            shared: Arc::new(SharedNativeModel::new(info, artifact)?),
             nparticles,
             cache: Some(SdeLikelihoodCache::new(DEFAULT_CACHE_SIZE)),
-        }
+        })
     }
 
     pub fn with_particles(mut self, nparticles: usize) -> Self {
@@ -1675,6 +1911,11 @@ impl NativeSdeModel {
 
     pub fn info(&self) -> &NativeModelInfo {
         self.shared.info.as_ref()
+    }
+
+    /// Access the validated metadata attached to this compiled SDE model.
+    pub fn metadata(&self) -> &ValidatedModelMetadata {
+        self.shared.metadata()
     }
 
     pub fn backend(&self) -> RuntimeBackend {
@@ -2008,7 +2249,7 @@ impl EquationPriv for NativeSdeModel {
     }
 
     fn metadata(&self) -> Option<&crate::ValidatedModelMetadata> {
-        None
+        Some(self.shared.metadata())
     }
 
     fn solve(
@@ -2391,19 +2632,52 @@ fn apply_analytical_kernel(
 mod tests {
     use super::{
         build_analytical_parameter_projection, canonical_numeric_alias,
-        project_analytical_parameters, runtime_ode_predictions, BoundErrorModelCache,
-        KernelSession, NativeAnalyticalModel, NativeModelInfo, NativeOdeModel, NativeOutputInfo,
-        NativeRouteInfo, PredictionCache, RuntimeArtifact, RuntimeBackend, SharedNativeModel,
-        DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE, DEFAULT_ODE_ATOL, DEFAULT_ODE_RTOL,
-        NUMERIC_OUTPUT_PREFIX, NUMERIC_ROUTE_PREFIX,
+        project_analytical_parameters, KernelSession, NativeAnalyticalModel, NativeCovariateInfo,
+        NativeModelInfo, NativeOdeModel, NativeOutputInfo, NativeRouteInfo, NativeStateInfo,
+        RuntimeArtifact, RuntimeBackend, SharedNativeModel, NUMERIC_OUTPUT_PREFIX,
+        NUMERIC_ROUTE_PREFIX,
     };
+    #[cfg(any(
+        feature = "dsl-jit",
+        all(feature = "dsl-aot", feature = "dsl-aot-load"),
+        all(
+            feature = "dsl-wasm",
+            not(all(target_arch = "wasm32", target_os = "unknown"))
+        )
+    ))]
+    use super::{
+        runtime_ode_predictions, BoundErrorModelCache, PredictionCache,
+        DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE, DEFAULT_ODE_ATOL, DEFAULT_ODE_RTOL,
+    };
+    use crate::PharmsolError;
+    #[cfg(any(
+        feature = "dsl-jit",
+        all(feature = "dsl-aot", feature = "dsl-aot-load"),
+        all(
+            feature = "dsl-wasm",
+            not(all(target_arch = "wasm32", target_os = "unknown"))
+        )
+    ))]
     use crate::{
-        data::builder::SubjectBuilderExt, dsl::CompiledRuntimeModel, dsl::RuntimePredictions,
-        prelude::SubjectPredictions, Parameters, PharmsolError, Subject,
+        data::builder::SubjectBuilderExt,
+        dsl::{CompiledRuntimeModel, RuntimePredictions},
+        prelude::SubjectPredictions,
+        Parameters, Subject,
     };
     use diffsol::VectorHost;
     use pharmsol_dsl::execution::KernelRole;
-    use pharmsol_dsl::{AnalyticalKernel, AnalyticalStructureInputKind, ModelKind, RouteKind};
+    use pharmsol_dsl::{
+        AnalyticalKernel, AnalyticalStructureInputKind, CovariateInterpolation, ModelKind,
+        RouteKind,
+    };
+    #[cfg(any(
+        feature = "dsl-jit",
+        all(feature = "dsl-aot", feature = "dsl-aot-load"),
+        all(
+            feature = "dsl-wasm",
+            not(all(target_arch = "wasm32", target_os = "unknown"))
+        )
+    ))]
     use std::sync::Arc;
 
     #[derive(Debug)]
@@ -2431,12 +2705,19 @@ mod tests {
                 parameters: Vec::new(),
                 derived: Vec::new(),
                 covariates: Vec::new(),
+                states: vec![NativeStateInfo {
+                    name: "gut".to_string(),
+                    offset: 0,
+                }],
                 routes: vec![NativeRouteInfo {
                     name: "oral".to_string(),
                     declaration_index: 0,
                     index: 0,
                     kind: Some(RouteKind::Bolus),
                     destination_offset: 0,
+                    destination_name: "gut".to_string(),
+                    has_lag: false,
+                    has_bioavailability: false,
                     inject_input_to_destination: false,
                 }],
                 outputs: vec![NativeOutputInfo {
@@ -2452,6 +2733,7 @@ mod tests {
             },
             DummyArtifact,
         )
+        .expect("bolus-only metadata should build")
     }
 
     fn analytical_model_info(
@@ -2465,6 +2747,12 @@ mod tests {
             parameters: parameters.iter().map(|name| (*name).to_string()).collect(),
             derived: derived.iter().map(|name| (*name).to_string()).collect(),
             covariates: Vec::new(),
+            states: (0..kernel.state_count())
+                .map(|offset| NativeStateInfo {
+                    name: format!("state_{offset}"),
+                    offset,
+                })
+                .collect(),
             routes: Vec::new(),
             outputs: Vec::new(),
             state_len: kernel.state_count(),
@@ -2474,6 +2762,112 @@ mod tests {
             analytical: Some(kernel),
             particles: None,
         }
+    }
+
+    #[test]
+    fn runtime_ode_models_expose_validated_metadata_for_declared_routes() {
+        let model = NativeOdeModel::new(
+            NativeModelInfo {
+                name: "runtime_metadata".to_string(),
+                kind: ModelKind::Ode,
+                parameters: vec!["ke".to_string(), "v".to_string()],
+                derived: Vec::new(),
+                covariates: vec![NativeCovariateInfo {
+                    name: "wt".to_string(),
+                    index: 0,
+                    interpolation: Some(CovariateInterpolation::Linear),
+                }],
+                states: vec![NativeStateInfo {
+                    name: "central".to_string(),
+                    offset: 0,
+                }],
+                routes: vec![NativeRouteInfo {
+                    name: "iv".to_string(),
+                    declaration_index: 0,
+                    index: 0,
+                    kind: Some(RouteKind::Infusion),
+                    destination_offset: 0,
+                    destination_name: "central".to_string(),
+                    has_lag: false,
+                    has_bioavailability: false,
+                    inject_input_to_destination: false,
+                }],
+                outputs: vec![NativeOutputInfo {
+                    name: "cp".to_string(),
+                    index: 0,
+                }],
+                state_len: 1,
+                derived_len: 0,
+                output_len: 1,
+                route_len: 1,
+                analytical: None,
+                particles: None,
+            },
+            DummyArtifact,
+        )
+        .expect("runtime ODE metadata should build");
+
+        let metadata = model.metadata();
+        assert_eq!(metadata.parameter_index("ke"), Some(0));
+        assert_eq!(
+            metadata.covariate("wt").unwrap().interpolation(),
+            Some(CovariateInterpolation::Linear)
+        );
+        assert_eq!(metadata.route("iv").unwrap().destination(), "central");
+        assert_eq!(metadata.output("cp").unwrap().name(), "cp");
+
+        let compiled = super::CompiledNativeModel::Ode(model.clone());
+        assert_eq!(
+            compiled.metadata().route("iv").unwrap().destination(),
+            "central"
+        );
+    }
+
+    #[test]
+    fn runtime_ode_model_setup_rejects_invalid_route_destination_metadata() {
+        let error = NativeOdeModel::new(
+            NativeModelInfo {
+                name: "runtime_metadata_invalid_destination".to_string(),
+                kind: ModelKind::Ode,
+                parameters: vec!["ke".to_string()],
+                derived: Vec::new(),
+                covariates: Vec::new(),
+                states: vec![NativeStateInfo {
+                    name: "central".to_string(),
+                    offset: 0,
+                }],
+                routes: vec![NativeRouteInfo {
+                    name: "iv".to_string(),
+                    declaration_index: 0,
+                    index: 0,
+                    kind: Some(RouteKind::Infusion),
+                    destination_offset: 1,
+                    destination_name: "central".to_string(),
+                    has_lag: false,
+                    has_bioavailability: false,
+                    inject_input_to_destination: false,
+                }],
+                outputs: vec![NativeOutputInfo {
+                    name: "cp".to_string(),
+                    index: 0,
+                }],
+                state_len: 1,
+                derived_len: 0,
+                output_len: 1,
+                route_len: 1,
+                analytical: None,
+                particles: None,
+            },
+            DummyArtifact,
+        )
+        .expect_err("invalid route destination metadata must fail at setup");
+
+        assert!(error.to_string().contains(
+            "compiled model `runtime_metadata_invalid_destination` has invalid runtime metadata"
+        ));
+        assert!(error
+            .to_string()
+            .contains("route `iv` targets out-of-range state offset 1"));
     }
 
     fn analytical_projection_values(
@@ -2486,6 +2880,14 @@ mod tests {
             .to_vec()
     }
 
+    #[cfg(any(
+        feature = "dsl-jit",
+        all(feature = "dsl-aot", feature = "dsl-aot-load"),
+        all(
+            feature = "dsl-wasm",
+            not(all(target_arch = "wasm32", target_os = "unknown"))
+        )
+    ))]
     fn cached_runtime_ode_model() -> NativeOdeModel {
         NativeOdeModel {
             shared: Arc::new(bolus_only_shared_model()),
@@ -2499,6 +2901,14 @@ mod tests {
         }
     }
 
+    #[cfg(any(
+        feature = "dsl-jit",
+        all(feature = "dsl-aot", feature = "dsl-aot-load"),
+        all(
+            feature = "dsl-wasm",
+            not(all(target_arch = "wasm32", target_os = "unknown"))
+        )
+    ))]
     fn cached_runtime_subject() -> Subject {
         Subject::builder("runtime_cached_prediction")
             .bolus(0.0, 100.0, "oral")
@@ -2672,6 +3082,14 @@ mod tests {
         ));
     }
 
+    #[cfg(any(
+        feature = "dsl-jit",
+        all(feature = "dsl-aot", feature = "dsl-aot-load"),
+        all(
+            feature = "dsl-wasm",
+            not(all(target_arch = "wasm32", target_os = "unknown"))
+        )
+    ))]
     #[test]
     fn compiled_runtime_ode_predictions_use_prefilled_cache() {
         let model = cached_runtime_ode_model();
