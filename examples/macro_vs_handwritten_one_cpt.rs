@@ -4,7 +4,7 @@
 //! preferred macro surface and the low-level API produce the same metadata and
 //! predictions on the same one-compartment IV problem.
 
-use pharmsol::prelude::*;
+use pharmsol::{prelude::*, Parameters};
 
 fn macro_model() -> equation::ODE {
     ode! {
@@ -77,7 +77,8 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
         .missing_observation(8.0, "cp")
         .build();
 
-    let params = [1.022, 194.0];
+    let params = Parameters::with_model(&macro_ode, [("ke", 1.022), ("v", 194.0)])
+        .expect("valid named parameters");
     let macro_predictions = macro_ode.estimate_predictions(&subject, &params)?;
     let handwritten_predictions = handwritten_ode.estimate_predictions(&subject, &params)?;
 

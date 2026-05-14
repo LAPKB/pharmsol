@@ -1,5 +1,5 @@
 fn main() -> Result<(), pharmsol::PharmsolError> {
-    use pharmsol::prelude::*;
+    use pharmsol::{prelude::*, Parameters};
 
     let analytical = analytical! {
         name: "one_cmt_iv",
@@ -54,15 +54,21 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
     // Define the parameter values for the simulations
     let ke = 1.022; // Elimination rate constant
     let v = 194.0; // Volume of distribution
+    let analytical_parameters = Parameters::with_model(&analytical, [("ke", ke), ("v", v)])
+        .expect("valid named parameters");
+    let ode_parameters =
+        Parameters::with_model(&ode, [("ke", ke), ("v", v)]).expect("valid named parameters");
 
     // Compute likelihoods and predictions for both models
-    let analytical_likelihoods = analytical.estimate_log_likelihood(&subject, &[ke, v], &ems)?;
+    let analytical_likelihoods =
+        analytical.estimate_log_likelihood(&subject, &analytical_parameters, &ems)?;
 
-    let analytical_predictions = analytical.estimate_predictions(&subject, &[ke, v])?;
+    let analytical_predictions =
+        analytical.estimate_predictions(&subject, &analytical_parameters)?;
 
-    let ode_likelihoods = ode.estimate_log_likelihood(&subject, &[ke, v], &ems)?;
+    let ode_likelihoods = ode.estimate_log_likelihood(&subject, &ode_parameters, &ems)?;
 
-    let ode_predictions = ode.estimate_predictions(&subject, &[ke, v])?;
+    let ode_predictions = ode.estimate_predictions(&subject, &ode_parameters)?;
 
     // Print comparison table
     println!("\n┌───────────┬─────────────────┬─────────────────┬─────────────────────┐");

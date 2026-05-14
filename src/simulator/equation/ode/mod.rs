@@ -15,11 +15,13 @@ use crate::{
     error_model::AssayErrorModels,
     prelude::simulator::SubjectPredictions,
     simulator::{DiffEq, Fa, Init, Lag, Neqs, Out, M, V},
-    Event, Observation, PharmsolError, Subject,
+    Event, Observation, Parameters, PharmsolError, Subject,
 };
 
-use super::spphash;
-use crate::simulator::cache::{PredictionCache, DEFAULT_CACHE_SIZE};
+use super::parameters_hash;
+use crate::simulator::cache::{
+    BoundErrorModelCache, PredictionCache, DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE, DEFAULT_CACHE_SIZE,
+};
 use crate::simulator::equation::Predictions;
 use closure::PMProblem;
 use diffsol::{
@@ -106,6 +108,7 @@ pub struct ODE {
     atol: f64,
     metadata: Option<ValidatedModelMetadata>,
     cache: Option<PredictionCache>,
+    error_model_cache: Option<BoundErrorModelCache>,
 }
 
 impl ODE {
@@ -122,6 +125,9 @@ impl ODE {
             atol: ATOL,
             metadata: None,
             cache: Some(PredictionCache::new(DEFAULT_CACHE_SIZE)),
+            error_model_cache: Some(BoundErrorModelCache::new(
+                DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
+            )),
         }
     }
 
@@ -164,6 +170,9 @@ impl ODE {
         let metadata = metadata.validate_for(ModelKind::Ode)?;
         validate_metadata_dimensions(&metadata, &self.neqs)?;
         self.metadata = Some(metadata);
+        self.error_model_cache = Some(BoundErrorModelCache::new(
+            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
+        ));
         Ok(self)
     }
 
@@ -186,6 +195,9 @@ impl ODE {
 
     fn invalidate_metadata(&mut self) {
         self.metadata = None;
+        self.error_model_cache = Some(BoundErrorModelCache::new(
+            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
+        ));
     }
 }
 
@@ -223,11 +235,17 @@ fn validate_metadata_dimensions(
 impl super::Cache for ODE {
     fn with_cache_capacity(mut self, size: u64) -> Self {
         self.cache = Some(PredictionCache::new(size));
+        self.error_model_cache = Some(BoundErrorModelCache::new(
+            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
+        ));
         self
     }
 
     fn enable_cache(mut self) -> Self {
         self.cache = Some(PredictionCache::new(DEFAULT_CACHE_SIZE));
+        self.error_model_cache = Some(BoundErrorModelCache::new(
+            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
+        ));
         self
     }
 
@@ -235,10 +253,14 @@ impl super::Cache for ODE {
         if let Some(cache) = &self.cache {
             cache.invalidate_all();
         }
+        if let Some(cache) = &self.error_model_cache {
+            cache.invalidate_all();
+        }
     }
 
     fn disable_cache(mut self) -> Self {
         self.cache = None;
+        self.error_model_cache = None;
         self
     }
 }
@@ -253,11 +275,11 @@ impl State for V {
 fn _estimate_likelihood(
     ode: &ODE,
     subject: &Subject,
-    support_point: &[f64],
+    parameters: &[f64],
     error_models: &AssayErrorModels,
 ) -> Result<f64, PharmsolError> {
     let bound_error_models = ode.bind_error_models(error_models)?;
-    let ypred = _subject_predictions(ode, subject, support_point)?;
+    let ypred = _subject_predictions(ode, subject, parameters)?;
     Ok(ypred.log_likelihood(&bound_error_models)?.exp())
 }
 
@@ -265,20 +287,159 @@ fn _estimate_likelihood(
 fn _subject_predictions(
     ode: &ODE,
     subject: &Subject,
-    support_point: &[f64],
+    parameters: &[f64],
 ) -> Result<SubjectPredictions, PharmsolError> {
     if let Some(cache) = &ode.cache {
-        let key = (subject.hash(), spphash(support_point));
+        let key = (subject.hash(), parameters_hash(parameters));
         if let Some(cached) = cache.get(&key) {
             return Ok(cached);
         }
 
-        let result = ode.simulate_subject(subject, support_point, None)?.0;
+        let result = _simulate_subject_dense(ode, subject, parameters, None)?.0;
         cache.insert(key, result.clone());
         Ok(result)
     } else {
-        Ok(ode.simulate_subject(subject, support_point, None)?.0)
+        Ok(_simulate_subject_dense(ode, subject, parameters, None)?.0)
     }
+}
+
+fn _simulate_subject_dense(
+    ode: &ODE,
+    subject: &Subject,
+    parameters: &[f64],
+    error_models: Option<&AssayErrorModels>,
+) -> Result<(SubjectPredictions, Option<f64>), PharmsolError> {
+    let bound_error_models = match error_models {
+        Some(error_models) => Some(ode.bind_error_models(error_models)?),
+        None => None,
+    };
+    let bound_error_models = bound_error_models.as_ref().map(|models| &**models);
+
+    let mut output = SubjectPredictions::new(ode.nparticles());
+
+    let event_count: usize = subject.occasions().iter().map(|o| o.events().len()).sum();
+    let mut likelihood = Vec::with_capacity(event_count);
+
+    let nstates = ode.get_nstates();
+    let ndrugs = ode.get_ndrugs();
+
+    let mut state_with_bolus = V::zeros(nstates, NalgebraContext);
+    let mut state_without_bolus = V::zeros(nstates, NalgebraContext);
+    let zero_bolus = V::zeros(ndrugs, NalgebraContext);
+    let zero_rateiv = V::zeros(ndrugs, NalgebraContext);
+    let mut bolus_v = V::zeros(ndrugs, NalgebraContext);
+    let parameters_vec = parameters.to_vec();
+    let parameters_v: V = DVector::from_vec(parameters_vec.clone()).into();
+
+    let mut y_out = V::zeros(ode.get_nouteqs(), NalgebraContext);
+
+    for occasion in subject.occasions() {
+        let covariates = occasion.covariates();
+        let events = ode.resolve_occasion_events(occasion, parameters, covariates)?;
+
+        let problem = OdeBuilder::<M>::new()
+            .atol(vec![ode.atol])
+            .rtol(ode.rtol)
+            .t0(occasion.initial_time())
+            .h0(1e-3)
+            .p(parameters_vec.clone())
+            .build_from_eqn(PMProblem::with_params_v(
+                move |x, p, t, dx, bolus, rateiv, cov| {
+                    (ode.diffeq)(x, p, t, dx, bolus, rateiv, cov);
+                },
+                nstates,
+                ndrugs,
+                parameters_v.clone(),
+                covariates,
+                events.iter().filter_map(|event| match event {
+                    Event::Infusion(infusion) => Some(infusion),
+                    _ => None,
+                }),
+                ode.initial_state(parameters, covariates, occasion.index()),
+            )?)?;
+
+        match &ode.solver {
+            OdeSolver::Bdf => {
+                let mut solver = problem.bdf::<diffsol::NalgebraLU<f64>>()?;
+                ODE::run_events(
+                    ode,
+                    &mut solver,
+                    &events,
+                    &parameters_v,
+                    covariates,
+                    bound_error_models,
+                    &mut bolus_v,
+                    &zero_bolus,
+                    &zero_rateiv,
+                    &mut state_with_bolus,
+                    &mut state_without_bolus,
+                    &mut y_out,
+                    &mut likelihood,
+                    &mut output,
+                )?;
+            }
+            OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45) => {
+                let mut solver = problem.tsit45()?;
+                ODE::run_events(
+                    ode,
+                    &mut solver,
+                    &events,
+                    &parameters_v,
+                    covariates,
+                    bound_error_models,
+                    &mut bolus_v,
+                    &zero_bolus,
+                    &zero_rateiv,
+                    &mut state_with_bolus,
+                    &mut state_without_bolus,
+                    &mut y_out,
+                    &mut likelihood,
+                    &mut output,
+                )?;
+            }
+            OdeSolver::Sdirk(SdirkTableau::TrBdf2) => {
+                let mut solver = problem.tr_bdf2::<diffsol::NalgebraLU<f64>>()?;
+                ODE::run_events(
+                    ode,
+                    &mut solver,
+                    &events,
+                    &parameters_v,
+                    covariates,
+                    bound_error_models,
+                    &mut bolus_v,
+                    &zero_bolus,
+                    &zero_rateiv,
+                    &mut state_with_bolus,
+                    &mut state_without_bolus,
+                    &mut y_out,
+                    &mut likelihood,
+                    &mut output,
+                )?;
+            }
+            OdeSolver::Sdirk(SdirkTableau::Esdirk34) => {
+                let mut solver = problem.esdirk34::<diffsol::NalgebraLU<f64>>()?;
+                ODE::run_events(
+                    ode,
+                    &mut solver,
+                    &events,
+                    &parameters_v,
+                    covariates,
+                    bound_error_models,
+                    &mut bolus_v,
+                    &zero_bolus,
+                    &zero_rateiv,
+                    &mut state_with_bolus,
+                    &mut state_without_bolus,
+                    &mut y_out,
+                    &mut likelihood,
+                    &mut output,
+                )?;
+            }
+        }
+    }
+
+    let ll = bound_error_models.map(|_| likelihood.iter().product::<f64>());
+    Ok((output, ll))
 }
 
 impl EquationTypes for ODE {
@@ -288,15 +449,15 @@ impl EquationTypes for ODE {
 
 impl EquationPriv for ODE {
     //#[inline(always)]
-    // fn get_lag(&self, spp: &[f64]) -> Option<HashMap<usize, f64>> {
-    //     let spp = DVector::from_vec(spp.to_vec());
-    //     Some((self.lag)(&spp))
+    // fn get_lag(&self, parameters: &[f64]) -> Option<HashMap<usize, f64>> {
+    //     let parameters = DVector::from_vec(parameters.to_vec());
+    //     Some((self.lag)(&parameters))
     // }
 
     // #[inline(always)]
-    // fn get_fa(&self, spp: &[f64]) -> Option<HashMap<usize, f64>> {
-    //     let spp = DVector::from_vec(spp.to_vec());
-    //     Some((self.fa)(&spp))
+    // fn get_fa(&self, parameters: &[f64]) -> Option<HashMap<usize, f64>> {
+    //     let parameters = DVector::from_vec(parameters.to_vec());
+    //     Some((self.fa)(&parameters))
     // }
     #[inline(always)]
     fn lag(&self) -> &Lag {
@@ -330,7 +491,7 @@ impl EquationPriv for ODE {
     fn solve(
         &self,
         _state: &mut Self::S,
-        _support_point: &[f64],
+        _parameters: &[f64],
         _covariates: &Covariates,
         _infusions: &[Infusion],
         _start_time: f64,
@@ -341,7 +502,7 @@ impl EquationPriv for ODE {
     #[inline(always)]
     fn process_observation(
         &self,
-        _support_point: &[f64],
+        _parameters: &[f64],
         _observation: &Observation,
         _error_models: Option<&AssayErrorModels>,
         _time: f64,
@@ -354,12 +515,17 @@ impl EquationPriv for ODE {
     }
 
     #[inline(always)]
-    fn initial_state(&self, spp: &[f64], covariates: &Covariates, occasion_index: usize) -> V {
+    fn initial_state(
+        &self,
+        parameters: &[f64],
+        covariates: &Covariates,
+        occasion_index: usize,
+    ) -> V {
         let init = &self.init;
         let mut x = V::zeros(self.get_nstates(), NalgebraContext);
         if occasion_index == 0 {
-            let spp = DVector::from_vec(spp.to_vec());
-            (init)(&spp.into(), 0.0, covariates, &mut x);
+            let parameters = DVector::from_vec(parameters.to_vec());
+            (init)(&parameters.into(), 0.0, covariates, &mut x);
         }
         x
     }
@@ -372,7 +538,7 @@ impl ODE {
         &self,
         solver: &mut S,
         events: &[Event],
-        spp_v: &V,
+        parameters_v: &V,
         covariates: &Covariates,
         error_models: Option<&AssayErrorModels>,
         bolus_v: &mut V,
@@ -414,7 +580,7 @@ impl ODE {
 
                     (self.diffeq)(
                         solver.state().y,
-                        spp_v,
+                        parameters_v,
                         event.time(),
                         state_without_bolus,
                         zero_bolus,
@@ -424,7 +590,7 @@ impl ODE {
 
                     (self.diffeq)(
                         solver.state().y,
-                        spp_v,
+                        parameters_v,
                         event.time(),
                         state_with_bolus,
                         bolus_v,
@@ -442,7 +608,7 @@ impl ODE {
                     y_out.fill(0.0);
                     (self.out)(
                         solver.state().y,
-                        spp_v,
+                        parameters_v,
                         observation.time(),
                         covariates,
                         y_out,
@@ -505,32 +671,64 @@ impl ODE {
 }
 
 impl Equation for ODE {
+    fn bound_error_model_cache(&self) -> Option<&BoundErrorModelCache> {
+        self.error_model_cache.as_ref()
+    }
+
     fn estimate_likelihood(
         &self,
         subject: &Subject,
-        support_point: &[f64],
+        parameters: &Parameters,
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
-        _estimate_likelihood(self, subject, support_point, error_models)
+        _estimate_likelihood(self, subject, parameters.as_slice(), error_models)
     }
 
     fn estimate_predictions(
         &self,
         subject: &Subject,
-        support_point: &[f64],
+        parameters: &Parameters,
     ) -> Result<Self::P, PharmsolError> {
-        _subject_predictions(self, subject, support_point)
+        _subject_predictions(self, subject, parameters.as_slice())
     }
 
     fn estimate_log_likelihood(
         &self,
         subject: &Subject,
-        support_point: &[f64],
+        parameters: &Parameters,
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
         let bound_error_models = self.bind_error_models(error_models)?;
-        let ypred = _subject_predictions(self, subject, support_point)?;
+        let ypred = _subject_predictions(self, subject, parameters.as_slice())?;
         ypred.log_likelihood(&bound_error_models)
+    }
+
+    fn estimate_predictions_dense(
+        &self,
+        subject: &Subject,
+        parameters: &[f64],
+    ) -> Result<Self::P, PharmsolError> {
+        _subject_predictions(self, subject, parameters)
+    }
+
+    fn estimate_log_likelihood_dense(
+        &self,
+        subject: &Subject,
+        parameters: &[f64],
+        error_models: &AssayErrorModels,
+    ) -> Result<f64, PharmsolError> {
+        let bound_error_models = self.bind_error_models(error_models)?;
+        let ypred = _subject_predictions(self, subject, parameters)?;
+        ypred.log_likelihood(&bound_error_models)
+    }
+
+    fn simulate_subject_dense(
+        &self,
+        subject: &Subject,
+        parameters: &[f64],
+        error_models: Option<&AssayErrorModels>,
+    ) -> Result<(Self::P, Option<f64>), PharmsolError> {
+        _simulate_subject_dense(self, subject, parameters, error_models)
     }
 
     fn kind() -> EqnKind {
@@ -540,145 +738,10 @@ impl Equation for ODE {
     fn simulate_subject(
         &self,
         subject: &Subject,
-        support_point: &[f64],
+        parameters: &Parameters,
         error_models: Option<&AssayErrorModels>,
     ) -> Result<(Self::P, Option<f64>), PharmsolError> {
-        let bound_error_models = match error_models {
-            Some(error_models) => Some(self.bind_error_models(error_models)?),
-            None => None,
-        };
-
-        let mut output = Self::P::new(self.nparticles());
-
-        // Preallocate likelihood vector
-        let event_count: usize = subject.occasions().iter().map(|o| o.events().len()).sum();
-        let mut likelihood = Vec::with_capacity(event_count);
-
-        // Cache dimensions to avoid repeated method calls
-        let nstates = self.get_nstates();
-        let ndrugs = self.get_ndrugs();
-
-        // Preallocate reusable vectors for bolus computation (sized by ndrugs)
-        let mut state_with_bolus = V::zeros(nstates, NalgebraContext);
-        let mut state_without_bolus = V::zeros(nstates, NalgebraContext);
-        let zero_bolus = V::zeros(ndrugs, NalgebraContext);
-        let zero_rateiv = V::zeros(ndrugs, NalgebraContext);
-        let mut bolus_v = V::zeros(ndrugs, NalgebraContext);
-        let support_point_vec = support_point.to_vec();
-        let spp_v: V = DVector::from_vec(support_point_vec.clone()).into();
-
-        // Pre-allocate output vector for observations
-        let mut y_out = V::zeros(self.get_nouteqs(), NalgebraContext);
-
-        // Iterate over occasions
-        for occasion in subject.occasions() {
-            let covariates = occasion.covariates();
-            let events = self.resolve_occasion_events(occasion, support_point, covariates)?;
-
-            let problem = OdeBuilder::<M>::new()
-                .atol(vec![self.atol])
-                .rtol(self.rtol)
-                .t0(occasion.initial_time())
-                .h0(1e-3)
-                .p(support_point_vec.clone())
-                .build_from_eqn(PMProblem::with_params_v(
-                    move |x, p, t, dx, bolus, rateiv, cov| {
-                        (self.diffeq)(x, p, t, dx, bolus, rateiv, cov);
-                    },
-                    nstates,
-                    ndrugs,
-                    spp_v.clone(),
-                    covariates,
-                    events.iter().filter_map(|event| match event {
-                        Event::Infusion(infusion) => Some(infusion),
-                        _ => None,
-                    }),
-                    self.initial_state(support_point, covariates, occasion.index()),
-                )?)?;
-
-            match &self.solver {
-                OdeSolver::Bdf => {
-                    let mut solver = problem.bdf::<diffsol::NalgebraLU<f64>>()?;
-                    Self::run_events(
-                        self,
-                        &mut solver,
-                        &events,
-                        &spp_v,
-                        covariates,
-                        bound_error_models.as_ref(),
-                        &mut bolus_v,
-                        &zero_bolus,
-                        &zero_rateiv,
-                        &mut state_with_bolus,
-                        &mut state_without_bolus,
-                        &mut y_out,
-                        &mut likelihood,
-                        &mut output,
-                    )?;
-                }
-                OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45) => {
-                    let mut solver = problem.tsit45()?;
-                    Self::run_events(
-                        self,
-                        &mut solver,
-                        &events,
-                        &spp_v,
-                        covariates,
-                        bound_error_models.as_ref(),
-                        &mut bolus_v,
-                        &zero_bolus,
-                        &zero_rateiv,
-                        &mut state_with_bolus,
-                        &mut state_without_bolus,
-                        &mut y_out,
-                        &mut likelihood,
-                        &mut output,
-                    )?;
-                }
-                OdeSolver::Sdirk(SdirkTableau::TrBdf2) => {
-                    let mut solver = problem.tr_bdf2::<diffsol::NalgebraLU<f64>>()?;
-                    Self::run_events(
-                        self,
-                        &mut solver,
-                        &events,
-                        &spp_v,
-                        covariates,
-                        bound_error_models.as_ref(),
-                        &mut bolus_v,
-                        &zero_bolus,
-                        &zero_rateiv,
-                        &mut state_with_bolus,
-                        &mut state_without_bolus,
-                        &mut y_out,
-                        &mut likelihood,
-                        &mut output,
-                    )?;
-                }
-                OdeSolver::Sdirk(SdirkTableau::Esdirk34) => {
-                    let mut solver = problem.esdirk34::<diffsol::NalgebraLU<f64>>()?;
-                    Self::run_events(
-                        self,
-                        &mut solver,
-                        &events,
-                        &spp_v,
-                        covariates,
-                        bound_error_models.as_ref(),
-                        &mut bolus_v,
-                        &zero_bolus,
-                        &zero_rateiv,
-                        &mut state_with_bolus,
-                        &mut state_without_bolus,
-                        &mut y_out,
-                        &mut likelihood,
-                        &mut output,
-                    )?;
-                }
-            }
-        }
-        let ll = bound_error_models
-            .as_ref()
-            .map(|_| likelihood.iter().product::<f64>());
-        Ok((output, ll))
+        _simulate_subject_dense(self, subject, parameters.as_slice(), error_models)
     }
 }
 
@@ -857,7 +920,7 @@ mod tests {
         .expect("metadata attachment should validate");
 
         let predictions = ode
-            .simulate_subject(&route_policy_subject(), &[], None)
+            .simulate_subject(&route_policy_subject(), &crate::parameters::dense([]), None)
             .expect("simulation should succeed")
             .0;
         let metadata = ode.metadata().expect("metadata exists");
@@ -905,7 +968,7 @@ mod tests {
         .expect("metadata attachment should validate");
 
         let predictions = ode
-            .simulate_subject(&route_policy_subject(), &[], None)
+            .simulate_subject(&route_policy_subject(), &crate::parameters::dense([]), None)
             .expect("simulation should succeed")
             .0;
 
@@ -946,11 +1009,11 @@ mod tests {
             .build();
 
         let canonical_predictions = ode
-            .simulate_subject(&canonical, &[], None)
+            .simulate_subject(&canonical, &crate::parameters::dense([]), None)
             .expect("canonical labels should simulate")
             .0;
         let aliased_predictions = ode
-            .simulate_subject(&aliased, &[], None)
+            .simulate_subject(&aliased, &crate::parameters::dense([]), None)
             .expect("raw numeric aliases should simulate")
             .0;
 
@@ -990,13 +1053,13 @@ mod tests {
             .build();
 
         let first = ode
-            .estimate_predictions(&subject, &[])
+            .estimate_predictions(&subject, &crate::parameters::dense([]))
             .expect("first prediction run should succeed");
         let first_calls = PREDICTION_CACHE_DIFFEQ_CALLS.load(Ordering::SeqCst);
         assert!(first_calls > 0);
 
         let second = ode
-            .estimate_predictions(&subject, &[])
+            .estimate_predictions(&subject, &crate::parameters::dense([]))
             .expect("second prediction run should succeed");
         let second_calls = PREDICTION_CACHE_DIFFEQ_CALLS.load(Ordering::SeqCst);
 

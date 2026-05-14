@@ -3,6 +3,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::ast::*;
 use super::diagnostic::{Applicability, DiagnosticSuggestion, ParseError, Span, TextEdit};
 use super::parser::{parse_expr_fragment, parse_place_fragment};
+use crate::name_match::{
+    common_prefix_len, edit_distance, is_high_confidence_match, is_single_adjacent_transposition,
+};
 use crate::{NUMERIC_OUTPUT_PREFIX, NUMERIC_ROUTE_PREFIX, RATE_FUNCTION_NAME};
 
 const DEFAULT_MODEL_NAME: &str = "main";
@@ -19,7 +22,7 @@ struct AuthoringParser<'a> {
     constants: Vec<Binding>,
     covariates: Vec<CovariateDecl>,
     states: Vec<StateDecl>,
-    declared_derived: BTreeSet<String>,
+    declared_derived: BTreeMap<String, Span>,
     declared_outputs: BTreeSet<String>,
     explicit_output_order: Vec<String>,
     explicit_outputs: BTreeMap<String, Span>,
@@ -77,7 +80,7 @@ impl<'a> AuthoringParser<'a> {
             constants: Vec::new(),
             covariates: Vec::new(),
             states: Vec::new(),
-            declared_derived: BTreeSet::new(),
+            declared_derived: BTreeMap::new(),
             declared_outputs: BTreeSet::new(),
             explicit_output_order: Vec::new(),
             explicit_outputs: BTreeMap::new(),
@@ -111,6 +114,7 @@ impl<'a> AuthoringParser<'a> {
         }
 
         self.validate_declared_outputs_assigned()?;
+        self.validate_declared_derived()?;
 
         let module_span = match (self.first_span, self.last_span) {
             (Some(first), Some(last)) => first.join(last),
@@ -298,7 +302,7 @@ impl<'a> AuthoringParser<'a> {
         let code = &line[..comment_cutoff];
         let leading = code.len() - code.trim_start().len();
         let trailing = code.trim_end().len();
-        if leading == trailing {
+        if leading >= trailing {
             return Ok(());
         }
 
@@ -381,7 +385,22 @@ impl<'a> AuthoringParser<'a> {
 
         if lhs_trimmed == "derived" {
             for ident in parse_ident_list(rhs, rhs_abs)? {
-                self.declared_derived.insert(ident.text);
+                if let Some(existing_span) =
+                    self.declared_derived.insert(ident.text.clone(), ident.span)
+                {
+                    return Err(ParseError::new(
+                        format!("duplicate derived declaration `{}`", ident.text),
+                        ident.span,
+                    )
+                    .with_context_label(
+                        existing_span,
+                        format!("derived `{}` first declared here", ident.text),
+                    )
+                    .with_help(format!(
+                        "remove the duplicate `{}` from `derived = ...`",
+                        ident.text
+                    )));
+                }
             }
             return Ok(());
         }
@@ -704,6 +723,60 @@ impl<'a> AuthoringParser<'a> {
         } else {
             Err(ParseError::from_diagnostics(diagnostics))
         }
+    }
+
+    fn validate_declared_derived(&self) -> Result<(), ParseError> {
+        for parameter in &self.parameters {
+            if let Some(derived_span) = self.declared_derived.get(&parameter.text).copied() {
+                return Err(ParseError::new(
+                    format!(
+                        "derived name `{}` collides with primary parameter `{}`",
+                        parameter.text, parameter.text
+                    ),
+                    derived_span,
+                )
+                .with_context_label(
+                    parameter.span,
+                    format!("primary parameter `{}` declared here", parameter.text),
+                )
+                .with_help("names declared in `params` and `derived` must be distinct"));
+            }
+        }
+
+        if self.declared_derived.is_empty() {
+            return Ok(());
+        }
+
+        let mut assigned = BTreeMap::new();
+        collect_named_assign_targets(&self.derive_statements, &mut assigned);
+
+        for (name, span) in &assigned {
+            if self.declared_derived.contains_key(name) {
+                continue;
+            }
+            return Err(ParseError::new(
+                format!("derived value `{name}` is not declared in `derived = ...`"),
+                *span,
+            )
+            .with_help(format!(
+                "add `{name}` to `derived = ...` or rename the assignment target"
+            )));
+        }
+
+        for (name, span) in &self.declared_derived {
+            if assigned.contains_key(name) {
+                continue;
+            }
+            return Err(ParseError::new(
+                format!("derived value `{name}` is declared in `derived = ...` but never assigned"),
+                *span,
+            )
+            .with_help(format!(
+                "add `{name} = ...` or remove `{name}` from `derived = ...`"
+            )));
+        }
+
+        Ok(())
     }
 
     fn undeclared_output_error(&self, name: &str, span: Span) -> ParseError {
@@ -1213,72 +1286,6 @@ fn validate_output_annotation(src: &str, abs_start: usize) -> Result<(), ParseEr
     }
 }
 
-fn is_high_confidence_match(needle: &str, candidate: &str, distance: usize, prefix: usize) -> bool {
-    let max_len = needle.len().max(candidate.len());
-    let max_distance = match max_len {
-        0..=4 => 1,
-        5..=8 => 2,
-        _ => 3,
-    };
-    distance <= max_distance && (prefix > 0 || distance <= 1)
-}
-
-fn common_prefix_len(lhs: &str, rhs: &str) -> usize {
-    lhs.chars()
-        .zip(rhs.chars())
-        .take_while(|(lhs, rhs)| lhs == rhs)
-        .count()
-}
-
-fn is_single_adjacent_transposition(lhs: &str, rhs: &str) -> bool {
-    let lhs: Vec<char> = lhs.chars().collect();
-    let rhs: Vec<char> = rhs.chars().collect();
-    if lhs.len() != rhs.len() {
-        return false;
-    }
-
-    let differing = lhs
-        .iter()
-        .zip(rhs.iter())
-        .enumerate()
-        .filter_map(|(index, (lhs, rhs))| (lhs != rhs).then_some(index))
-        .collect::<Vec<_>>();
-
-    if differing.len() != 2 || differing[1] != differing[0] + 1 {
-        return false;
-    }
-
-    let first = differing[0];
-    lhs[first] == rhs[first + 1] && lhs[first + 1] == rhs[first]
-}
-
-fn edit_distance(lhs: &str, rhs: &str) -> usize {
-    let lhs: Vec<char> = lhs.chars().collect();
-    let rhs: Vec<char> = rhs.chars().collect();
-    if lhs.is_empty() {
-        return rhs.len();
-    }
-    if rhs.is_empty() {
-        return lhs.len();
-    }
-
-    let mut previous: Vec<usize> = (0..=rhs.len()).collect();
-    let mut current = vec![0; rhs.len() + 1];
-
-    for (lhs_index, lhs_char) in lhs.iter().enumerate() {
-        current[0] = lhs_index + 1;
-        for (rhs_index, rhs_char) in rhs.iter().enumerate() {
-            let substitution_cost = usize::from(lhs_char != rhs_char);
-            current[rhs_index + 1] = (current[rhs_index] + 1)
-                .min(previous[rhs_index + 1] + 1)
-                .min(previous[rhs_index] + substitution_cost);
-        }
-        previous.clone_from_slice(&current);
-    }
-
-    previous[rhs.len()]
-}
-
 fn augment_derivative_statements(
     statements: &mut [Stmt],
     destination: &Place,
@@ -1558,6 +1565,26 @@ fn output_statement_name(statement: &Stmt) -> Option<&str> {
             _ => None,
         },
         _ => None,
+    }
+}
+
+fn collect_named_assign_targets(statements: &[Stmt], names: &mut BTreeMap<String, Span>) {
+    for statement in statements {
+        match &statement.kind {
+            StmtKind::Assign(assign) => {
+                if let AssignTargetKind::Name(name) = &assign.target.kind {
+                    names.entry(name.text.clone()).or_insert(name.span);
+                }
+            }
+            StmtKind::If(if_stmt) => {
+                collect_named_assign_targets(&if_stmt.then_branch, names);
+                if let Some(branch) = &if_stmt.else_branch {
+                    collect_named_assign_targets(branch, names);
+                }
+            }
+            StmtKind::For(for_stmt) => collect_named_assign_targets(&for_stmt.body, names),
+            _ => {}
+        }
     }
 }
 

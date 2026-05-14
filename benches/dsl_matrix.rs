@@ -19,12 +19,12 @@ use pharmsol::dsl::{
     NativeAotCompileOptions, NativeOdeModel, NativeSdeModel, RuntimeCompilationTarget,
 };
 use pharmsol::prelude::*;
-use pharmsol::Cache;
+use pharmsol::{Cache, Parameters};
 
 mod common;
 use common::{
-    assay_error_models, dsl_model_name, dsl_source, matrix_data, params, subject_for_likelihood,
-    subject_for_predictions, support_points, SolverKind, Workload,
+    assay_error_models, dsl_model_name, dsl_source, matrix_data, named_params,
+    subject_for_likelihood, subject_for_predictions, support_points, SolverKind, Workload,
 };
 
 const MATRIX_N_SUBJECTS: usize = 32;
@@ -154,6 +154,21 @@ fn compile_sde(workload: Workload, backend: Backend, aot: &AotWorkspace) -> Nati
     }
 }
 
+fn ode_parameters(model: &NativeOdeModel, workload: Workload) -> Parameters {
+    Parameters::with_model(model, named_params(workload, SolverKind::Ode))
+        .expect("DSL ODE bench parameters should validate")
+}
+
+fn analytical_parameters(model: &NativeAnalyticalModel, workload: Workload) -> Parameters {
+    Parameters::with_model(model, named_params(workload, SolverKind::Analytical))
+        .expect("DSL analytical bench parameters should validate")
+}
+
+fn sde_parameters(model: &NativeSdeModel, workload: Workload) -> Parameters {
+    Parameters::with_model(model, named_params(workload, SolverKind::Sde))
+        .expect("DSL SDE bench parameters should validate")
+}
+
 // ───────────────────────────── compile group ─────────────────────────
 
 fn compile_group(c: &mut Criterion) {
@@ -216,7 +231,6 @@ fn predictions_group(c: &mut Criterion) {
     for workload in Workload::all() {
         let subject = subject_for_predictions(workload);
         for kind in SolverKind::all() {
-            let theta = params(workload, kind);
             for backend in Backend::all() {
                 for cache in CacheState::all() {
                     let bench_id = BenchmarkId::from_parameter(format!(
@@ -234,6 +248,7 @@ fn predictions_group(c: &mut Criterion) {
                                     compile_ode(workload, backend, &aot).disable_cache()
                                 }
                             };
+                            let theta = ode_parameters(&model, workload);
                             group.bench_function(bench_id, |b| {
                                 b.iter(|| {
                                     black_box(
@@ -254,6 +269,7 @@ fn predictions_group(c: &mut Criterion) {
                                     compile_analytical(workload, backend, &aot).disable_cache()
                                 }
                             };
+                            let theta = analytical_parameters(&model, workload);
                             group.bench_function(bench_id, |b| {
                                 b.iter(|| {
                                     black_box(
@@ -274,6 +290,7 @@ fn predictions_group(c: &mut Criterion) {
                                     compile_sde(workload, backend, &aot).disable_cache()
                                 }
                             };
+                            let theta = sde_parameters(&model, workload);
                             group.bench_function(bench_id, |b| {
                                 b.iter(|| {
                                     black_box(
@@ -308,7 +325,6 @@ fn log_likelihood_group(c: &mut Criterion) {
     for workload in Workload::all() {
         let subject = subject_for_likelihood(workload);
         for kind in SolverKind::all() {
-            let theta = params(workload, kind);
             for backend in Backend::all() {
                 for cache in CacheState::all() {
                     let bench_id = BenchmarkId::from_parameter(format!(
@@ -326,6 +342,7 @@ fn log_likelihood_group(c: &mut Criterion) {
                                     compile_ode(workload, backend, &aot).disable_cache()
                                 }
                             };
+                            let theta = ode_parameters(&model, workload);
                             group.bench_function(bench_id, |b| {
                                 b.iter(|| {
                                     black_box(
@@ -347,6 +364,7 @@ fn log_likelihood_group(c: &mut Criterion) {
                                     compile_analytical(workload, backend, &aot).disable_cache()
                                 }
                             };
+                            let theta = analytical_parameters(&model, workload);
                             group.bench_function(bench_id, |b| {
                                 b.iter(|| {
                                     black_box(
@@ -368,6 +386,7 @@ fn log_likelihood_group(c: &mut Criterion) {
                                     compile_sde(workload, backend, &aot).disable_cache()
                                 }
                             };
+                            let theta = sde_parameters(&model, workload);
                             group.bench_function(bench_id, |b| {
                                 b.iter(|| {
                                     black_box(

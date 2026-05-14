@@ -113,10 +113,10 @@ mod tests {
         .with_ndrugs(2);
 
         let op_ode = ode
-            .estimate_predictions(&subject, &[0.1, 3.0, 1.0, 3.0])
+            .estimate_predictions(&subject, &crate::parameters::dense([0.1, 3.0, 1.0, 3.0]))
             .unwrap();
         let op_analytical = analytical
-            .estimate_predictions(&subject, &[0.1, 3.0, 1.0, 3.0])
+            .estimate_predictions(&subject, &crate::parameters::dense([0.1, 3.0, 1.0, 3.0]))
             .unwrap();
 
         let pred_ode = &op_ode.flat_predictions()[..];
@@ -172,10 +172,16 @@ mod tests {
         .with_ndrugs(3);
 
         let op_ode = ode
-            .estimate_predictions(&subject, &[1.0, 0.1, 3.0, 1.0, 3.0])
+            .estimate_predictions(
+                &subject,
+                &crate::parameters::dense([1.0, 0.1, 3.0, 1.0, 3.0]),
+            )
             .unwrap();
         let op_analytical = analytical
-            .estimate_predictions(&subject, &[1.0, 0.1, 3.0, 1.0, 3.0])
+            .estimate_predictions(
+                &subject,
+                &crate::parameters::dense([1.0, 0.1, 3.0, 1.0, 3.0]),
+            )
             .unwrap();
 
         let pred_ode = &op_ode.flat_predictions()[..];

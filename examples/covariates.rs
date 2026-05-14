@@ -1,5 +1,5 @@
 fn main() {
-    use pharmsol::prelude::*;
+    use pharmsol::{prelude::*, Parameters};
 
     let ode = ode! {
         name: "one_cmt_covariates",
@@ -46,7 +46,8 @@ fn main() {
     let ke = 0.2; // Elimination rate constant
     let tlag = 0.0; // Lag time
     let v = 70.0; // Volume of distribution
-    let params = vec![ka, ke, tlag, v];
+    let params = Parameters::with_model(&ode, [("ka", ka), ("ke", ke), ("tlag", tlag), ("v", v)])
+        .expect("valid named parameters");
 
     let result = ode.estimate_predictions(&subject, &params).unwrap();
 

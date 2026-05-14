@@ -17,35 +17,48 @@ cargo add pharmsol
 ## Quick Start
 
 Most Rust-first workflows start with one of the equation macros: `analytical!`,
-`ode!`, or `sde!`. Here is a simple one-compartment IV infusion model using `analytical!`:
+`ode!`, or `sde!`. Here is a one-compartment oral model using `analytical!`
+with a derived analytical structure input:
 
 ```rust
-use pharmsol::prelude::*;
+use pharmsol::{Parameters, prelude::*};
 
 let analytical = analytical! {
-    name: "one_cmt_iv",
-    params: [ke, v],
-    states: [central],
+    name: "one_cmt_oral",
+    params: [ka, ke0, v],
+    derived: [ke],
+    covariates: [wt],
+    states: [gut, central],
     outputs: [cp],
     routes: [
-        infusion(iv) -> central,
+        bolus(oral) -> gut,
     ],
-    structure: one_compartment,
-    out: |x, _p, _t, _cov, y| {
+    structure: one_compartment_with_absorption,
+    derive: |_t| {
+        ke = ke0 * (wt / 70.0).powf(0.75);
+    },
+    out: |x, _t, y| {
         y[cp] = x[central] / v;
     },
 };
 
 let subject = Subject::builder("patient_001")
-    .infusion(0.0, 500.0, "iv", 0.5)
+    .bolus(0.0, 500.0, "oral")
     .missing_observation(0.5, "cp")
     .missing_observation(1.0, "cp")
     .missing_observation(2.0, "cp")
     .missing_observation(4.0, "cp")
+    .covariate("wt", 0.0, 75.0)
     .build();
 
+let parameters = Parameters::with_model(
+    &analytical,
+    [("ka", 1.2), ("ke0", 0.08), ("v", 194.0)],
+)
+.unwrap();
+
 let predictions = analytical
-    .estimate_predictions(&subject, &[1.022, 194.0])
+    .estimate_predictions(&subject, &parameters)
     .unwrap();
 ```
 
@@ -76,6 +89,7 @@ let ode = ode! {
 See [examples/analytical_readme.rs](examples/analytical_readme.rs),
 [examples/ode_readme.rs](examples/ode_readme.rs),
 [examples/sde_readme.rs](examples/sde_readme.rs),
+[examples/dsl_jit_analytical_covariates.rs](examples/dsl_jit_analytical_covariates.rs),
 [examples/analytical_vs_ode.rs](examples/analytical_vs_ode.rs), and
 [examples/compare_solvers.rs](examples/compare_solvers.rs). For migration-oriented notes,
 see [docs/analytical-authoring-migration.md](docs/analytical-authoring-migration.md) and
@@ -101,7 +115,10 @@ how you want to ship and execute the model.
 - `dsl-aot` and `dsl-aot-load`: emit a native artifact and load it later.
 - `dsl-wasm`: compile and execute portable WASM model artifacts.
 
-See [examples/dsl_runtime_jit.rs](examples/dsl_runtime_jit.rs) for the in-repo JIT flow.
+See [examples/dsl_runtime_jit.rs](examples/dsl_runtime_jit.rs) for the in-repo JIT flow and
+[examples/dsl_jit_analytical_covariates.rs](examples/dsl_jit_analytical_covariates.rs) for a
+small analytical covariate example written both as DSL JIT source and as an
+`analytical!` model.
 The companion `pharmsol-examples` crate includes end-to-end native AOT and WASM runtime
 examples.
 

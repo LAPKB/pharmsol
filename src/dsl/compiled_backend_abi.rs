@@ -318,6 +318,7 @@ mod tests {
                 name: "example".to_string(),
                 kind: ModelKind::Ode,
                 parameters: vec!["ke".to_string(), "v".to_string()],
+                derived: vec!["ke_i".to_string(), "v_i".to_string(), "cl_i".to_string()],
                 covariates: vec![NativeCovariateInfo {
                     name: "wt".to_string(),
                     index: 0,
@@ -364,6 +365,7 @@ mod tests {
             name: "example".to_string(),
             kind: ModelKind::Ode,
             parameters: vec![],
+            derived: vec!["ke_i".to_string(), "v_i".to_string(), "cl_i".to_string()],
             covariates: vec![],
             routes: vec![],
             outputs: vec![],

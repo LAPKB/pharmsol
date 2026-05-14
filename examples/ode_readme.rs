@@ -25,7 +25,9 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
         .missing_observation(4.0, "cp")
         .build();
 
-    let predictions = ode.estimate_predictions(&subject, &[1.022, 194.0])?;
+    let parameters = Parameters::with_model(&ode, [("ke", 1.022), ("v", 194.0)])
+        .expect("valid named parameters");
+    let predictions = ode.estimate_predictions(&subject, &parameters)?;
     println!(
         "state central => {}",
         ode.state_index("central").expect("central state exists")

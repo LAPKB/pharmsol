@@ -209,18 +209,36 @@ pub fn matrix_data(workload: Workload, n: usize) -> Data {
 
 // ───────────────────────────── Parameters ────────────────────────────
 
+/// Reference named parameters per `(workload, kind)` in the source order shared by bench fixtures.
+pub fn named_params(workload: Workload, kind: SolverKind) -> Vec<(&'static str, f64)> {
+    match (workload, kind) {
+        (Workload::Short, SolverKind::Ode | SolverKind::Analytical) => {
+            vec![("ka", 1.0), ("ke", 0.2), ("v", 50.0)]
+        }
+        (Workload::Short, SolverKind::Sde) => {
+            vec![("ka", 1.0), ("ke", 0.2), ("v", 50.0), ("sigma_ke", 0.05)]
+        }
+        (Workload::Repeat, SolverKind::Ode | SolverKind::Analytical) => {
+            vec![("ke", 0.10), ("kcp", 0.05), ("kpc", 0.04), ("v", 50.0)]
+        }
+        (Workload::Repeat, SolverKind::Sde) => vec![
+            ("ke", 0.10),
+            ("kcp", 0.05),
+            ("kpc", 0.04),
+            ("v", 50.0),
+            ("sigma_ke", 0.01),
+        ],
+    }
+}
+
 /// Reference parameter vector per `(workload, kind)`:
 /// Short ODE/Analytical `[ka, ke, v]`, Short SDE adds `sigma_ke`;
 /// Repeat ODE/Analytical `[ke, kcp, kpc, v]`, Repeat SDE adds `sigma_ke`.
 pub fn params(workload: Workload, kind: SolverKind) -> Vec<f64> {
-    match (workload, kind) {
-        (Workload::Short, SolverKind::Ode | SolverKind::Analytical) => vec![1.0, 0.2, 50.0],
-        (Workload::Short, SolverKind::Sde) => vec![1.0, 0.2, 50.0, 0.05],
-        (Workload::Repeat, SolverKind::Ode | SolverKind::Analytical) => {
-            vec![0.10, 0.05, 0.04, 50.0]
-        }
-        (Workload::Repeat, SolverKind::Sde) => vec![0.10, 0.05, 0.04, 50.0, 0.01],
-    }
+    named_params(workload, kind)
+        .into_iter()
+        .map(|(_, value)| value)
+        .collect()
 }
 
 /// Support-point grid for `log_likelihood_matrix`, shape `(n, nparams)`.
