@@ -1,0 +1,17 @@
+[package]
+name = "pharmsol-dsl"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Backend-neutral frontend crate for the pharmsol model DSL."
+readme = "README.md"
+publish = true
+
+[lib]
+bench = false
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }

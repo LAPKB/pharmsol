@@ -1,0 +1,292 @@
+use argmin::{
+    core::{CostFunction, Executor, TerminationReason, TerminationStatus},
+    solver::neldermead::NelderMead,
+};
+
+#[derive(Debug, Clone)]
+struct BestM0 {
+    a: f64,
+    b: f64,
+    w: f64,
+    h1: f64,
+    h2: f64,
+    xx: f64,
+}
+
+/// We'll optimize over y = ln(xm), so Param = f64 (the log of xm)
+impl CostFunction for BestM0 {
+    type Param = f64; // this is ln(xm)
+    type Output = f64;
+
+    fn cost(&self, y: &Self::Param) -> Result<Self::Output, argmin::core::Error> {
+        // compute xm from log-parameter
+        let xm = y.exp();
+
+        // guard: xm must be > 0 and finite
+        if !(xm.is_finite() && xm > 0.0) {
+            // return a very large cost instead of NaN
+            return Ok(1.0e100);
+        }
+
+        // guard a,b,w positive/negative combinations: powf with positive base fine
+        let t1 = if self.a == 0.0 {
+            0.0
+        } else {
+            self.a / xm.powf(self.h1)
+        };
+        let t2 = if self.b == 0.0 {
+            0.0
+        } else {
+            self.b / xm.powf(self.h2)
+        };
+        let t3 = if self.w == 0.0 {
+            0.0
+        } else {
+            self.w / xm.powf(self.xx)
+        };
+
+        // If any term is NaN or infinite, treat as bad point
+        if !t1.is_finite() || !t2.is_finite() || !t3.is_finite() {
+            return Ok(1.0e100);
+        }
+
+        let val = (1.0 - t1 - t2 - t3).powi(2);
+        if !val.is_finite() {
+            return Ok(1.0e100);
+        }
+
+        Ok(val)
+    }
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum BestM0Error {
+    #[error("Optimization error: {0}")]
+    OptimizationError(String),
+}
+
+impl BestM0 {
+    /// start and step are in log-space (ln(x))
+    fn get_best(&self, start_log: f64, step_log: f64) -> Result<(f64, f64, bool), BestM0Error> {
+        // Build a simplex with two log-parameters, both finite and distinct
+        let second = start_log + step_log;
+        // if step pushed us to invalid values, choose a small positive step
+        let initial_simplex = if !(second.is_finite()) || (second - start_log).abs() < 1e-12 {
+            vec![start_log, start_log + 0.1_f64] // 0.1 in log-space ~ 10% change
+        } else {
+            vec![start_log, second]
+        };
+
+        let solver = NelderMead::new(initial_simplex)
+            .with_sd_tolerance(1e-8)
+            .map_err(|e| {
+                BestM0Error::OptimizationError(format!(
+                    "Failed setting up the tolerance of the NelderMead solver: {}",
+                    e
+                ))
+            })?;
+
+        let res = Executor::new(self.clone(), solver)
+            .configure(|state| state.max_iters(1000))
+            .run()
+            .map_err(|e| {
+                BestM0Error::OptimizationError(format!(
+                    "Failed creating the configuration for the NelderMead solver: {}",
+                    e
+                ))
+            })?;
+
+        let converged = match &res.state.termination_status {
+            TerminationStatus::Terminated(reason) => {
+                matches!(reason, TerminationReason::SolverConverged)
+            }
+            _ => false,
+        };
+
+        // best_param is ln(xm). Convert back to xm
+        let best_log = res.state.best_param.unwrap();
+        let xm = best_log.exp();
+
+        Ok((xm, res.state.best_cost, converged))
+    }
+}
+
+/// find_m0 left largely as-is, but consider returning Result<f64>
+/// Keep in mind it expects a,b,h1,h2 in valid ranges
+fn find_m0(afinal: f64, b: f64, alpha: f64, h1: f64, h2: f64) -> f64 {
+    let noint = 1000;
+    let del_a = afinal / (noint as f64);
+    // initial guess; must be positive
+    let mut xm = if b > 0.0 { b.powf(1.0 / h2) } else { 1.0 };
+    let mut a = 0.0;
+    let hh = (h1 + h2) / 2.0;
+
+    for int in 1..=noint {
+        // safe guards: avoid dividing by zero
+        if xm <= 0.0 || xm.is_nan() || !xm.is_finite() {
+            return -1.0;
+        }
+
+        let top = 1.0 / xm.powf(h1) + alpha * b / xm.powf(hh);
+        let b1 = a * h1 / xm.powf(h1 + 1.0);
+        let b2 = b * h2 / xm.powf(h2 + 1.0);
+        let b3 = alpha * a * b * hh / xm.powf(hh + 1.0);
+
+        let denom = b1 + b2 + b3;
+        if denom == 0.0 || !denom.is_finite() {
+            return -1.0;
+        }
+
+        let xmp = top / denom;
+        xm += xmp * del_a;
+
+        if !(xm.is_finite() && xm > 0.0) {
+            return -1.0;
+        }
+
+        a = del_a * (int as f64);
+    }
+
+    xm
+}
+
+#[inline]
+fn effect_from_xm(xm: f64) -> f64 {
+    xm / (xm + 1.0)
+}
+
+/// Computes the effect metric for a dual-site pharmacodynamic model.
+///
+/// This function calculates the maximum effect for a model where two binding sites
+/// contribute to the overall effect. The effect is computed as `xm / (xm + 1)` where `xm`
+/// is the optimal concentration that maximizes the combined effect from both sites.
+///
+/// # Model Description
+///
+/// The underlying model assumes the total effect is:
+/// ```text
+/// Effect = a / xm^h1 + b / xm^h2 + w / xm^((h1+h2)/2)
+/// ```
+/// where:
+/// - `a` and `b` are the coefficients for the two binding sites
+/// - `h1` and `h2` are the Hill coefficients for each site
+/// - `w` is a cross-interaction term
+/// - `xm` is the concentration
+///
+/// The function finds the optimal `xm` that makes this sum equal to 1, then returns
+/// the corresponding effect value `xm / (xm + 1)`.
+///
+/// # Arguments
+///
+/// * `a` - Coefficient for the first binding site (typically positive)
+/// * `b` - Coefficient for the second binding site (typically positive)
+/// * `w` - Cross-interaction term between the two sites
+/// * `h1` - Hill coefficient for the first binding site
+/// * `h2` - Hill coefficient for the second binding site
+/// * `alpha_s` - Scaling factor used in the fallback numerical estimator
+///
+/// # Returns
+///
+/// The E2 effect value in the range [0, 1), representing the maximum achievable effect.
+/// Returns 0.0 if both `a` and `b` are essentially zero.
+///
+/// # Algorithm
+///
+/// 1. If both coefficients are near zero, returns 0.0
+/// 2. If only one coefficient is positive, uses a closed-form solution
+/// 3. Otherwise, uses Nelder-Mead optimization in log-space to find the optimal `xm`
+/// 4. Falls back to an iterative numerical estimator if optimization fails to converge
+///
+/// # Example
+///
+/// ```
+/// use pharmsol::get_e2;
+///
+/// // Single-site model (b = 0)
+/// let e2 = get_e2(1.0, 0.0, 0.0, 1.0, 1.0, 0.5);
+/// assert!((e2 - 0.5).abs() < 1e-6); // xm = 1, so E2 = 1/(1+1) = 0.5
+///
+/// // Dual-site model
+/// let e2 = get_e2(1.0, 1.0, 0.0, 1.0, 2.0, 0.5);
+/// assert!(e2 > 0.0 && e2 < 1.0);
+/// ```
+pub fn get_e2(a: f64, b: f64, w: f64, h1: f64, h2: f64, alpha_s: f64) -> f64 {
+    // trivial cases
+    if a.abs() < 1.0e-12 && b.abs() < 1.0e-12 {
+        0.0
+    } else {
+        // precompute
+        let xx = (h1 + h2) / 2.0;
+        let bm0 = BestM0 {
+            a,
+            b,
+            w,
+            h1,
+            h2,
+            xx,
+        };
+
+        // if one coefficient negative/zero, return simple closed-form estimate
+        if b <= 0.0 && a > 0.0 {
+            effect_from_xm(a.powf(1.0 / h1))
+        } else if a <= 0.0 && b > 0.0 {
+            effect_from_xm(b.powf(1.0 / h2))
+        } else {
+            // both positive: do optimization in log-space
+            // choose a safe initial guess > 0
+            let xm_guess = if b > 0.0 {
+                b.powf(1.0 / h2)
+            } else if a > 0.0 {
+                a.powf(1.0 / h1)
+            } else {
+                1.0
+            };
+            let start_log = xm_guess.max(1e-12).ln();
+            let step_log = 0.1_f64; // ~10% step in xm
+
+            // first optimization from small start
+            match bm0.get_best(start_log, step_log) {
+                Ok((xm0best1, valmin1, conv1)) => {
+                    if !conv1 {
+                        // we still keep the answer if cost is tiny
+                        if valmin1 < 1e-10 {
+                            effect_from_xm(xm0best1)
+                        } else {
+                            // fallback to iterative estimator
+                            let xm0est = find_m0(a, b, alpha_s, h1, h2);
+                            if xm0est < 0.0 {
+                                effect_from_xm(xm0best1)
+                            } else {
+                                // refine from bg estimate:
+                                let start_log2 = xm0est.ln();
+                                match bm0.get_best(start_log2, 0.1) {
+                                    Ok((xm0best2, valmin2, conv2))
+                                        if conv2 && valmin2 < valmin1 =>
+                                    {
+                                        effect_from_xm(xm0best2)
+                                    }
+                                    _ => effect_from_xm(xm0best1),
+                                }
+                            }
+                        }
+                    } else {
+                        effect_from_xm(xm0best1)
+                    }
+                }
+                Err(_) => {
+                    // if optimizer failed, fallback to numerical estimator
+                    let xm0est = find_m0(a, b, alpha_s, h1, h2);
+                    if xm0est > 0.0 {
+                        effect_from_xm(xm0est)
+                    } else if a > 0.0 {
+                        effect_from_xm(a.powf(1.0 / h1))
+                    } else if b > 0.0 {
+                        effect_from_xm(b.powf(1.0 / h2))
+                    } else {
+                        0.0
+                    }
+                }
+            }
+        }
+    }
+}

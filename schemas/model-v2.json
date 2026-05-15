@@ -1,0 +1,166 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pharmsol.rs/schemas/model-v2.json",
+  "title": "pharmsol Model Definition v2",
+  "description": "Canonical JSON Schema for pharmacometric model definitions in pharmsol. Supports analytical, ODE, and SDE models with optional editor metadata.",
+  "type": "object",
+  "additionalProperties": false,
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(?:[\\/_-][a-z0-9]+)*$"
+    },
+    "symbol": {
+      "type": "string",
+      "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$"
+    },
+    "expression": {
+      "type": "string",
+      "minLength": 1
+    },
+    "outputDefinition": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/symbol" },
+        "equation": { "$ref": "#/$defs/expression" },
+        "name": { "type": "string" },
+        "units": { "type": "string" }
+      },
+      "required": ["id", "equation"]
+    },
+    "namedEquation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/symbol" },
+        "equation": { "$ref": "#/$defs/expression" }
+      },
+      "required": ["id", "equation"]
+    },
+    "covariateDefinition": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/symbol" },
+        "column": { "type": "string" },
+        "required": { "type": "boolean" },
+        "reference": { "type": "number" }
+      },
+      "required": ["id"]
+    },
+    "expressionMap": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/expression" }
+    },
+    "expressionOrNumberMap": {
+      "type": "object",
+      "additionalProperties": {
+        "oneOf": [{ "$ref": "#/$defs/expression" }, { "type": "number" }]
+      }
+    },
+    "position": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" }
+      },
+      "required": ["x", "y"]
+    },
+    "editor": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "display": { "type": "object" },
+        "layout": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/position" }
+        },
+        "documentation": { "type": "object" }
+      }
+    }
+  },
+  "properties": {
+    "schema": { "const": "2.0" },
+    "id": { "$ref": "#/$defs/identifier" },
+    "type": {
+      "type": "string",
+      "enum": ["analytical", "ode", "sde"]
+    },
+    "version": { "type": "string" },
+    "aliases": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "extends": { "$ref": "#/$defs/identifier" },
+    "parameters": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/symbol" }
+    },
+    "compartments": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/symbol" }
+    },
+    "states": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/symbol" }
+    },
+    "analytical": {
+      "type": "string",
+      "enum": [
+        "one_compartment",
+        "one_compartment_with_absorption",
+        "two_compartments",
+        "two_compartments_with_absorption",
+        "three_compartments",
+        "three_compartments_with_absorption"
+      ]
+    },
+    "diffeq": { "$ref": "#/$defs/expressionMap" },
+    "drift": { "$ref": "#/$defs/expressionMap" },
+    "diffusion": { "$ref": "#/$defs/expressionOrNumberMap" },
+    "secondary": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/namedEquation" }
+    },
+    "outputs": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/outputDefinition" }
+    },
+    "init": { "$ref": "#/$defs/expressionOrNumberMap" },
+    "lag": { "$ref": "#/$defs/expressionOrNumberMap" },
+    "fa": { "$ref": "#/$defs/expressionOrNumberMap" },
+    "particles": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "covariates": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/covariateDefinition" }
+    },
+    "editor": { "$ref": "#/$defs/editor" }
+  },
+  "required": ["schema", "id", "type"],
+  "allOf": [
+    {
+      "if": { "properties": { "type": { "const": "analytical" } } },
+      "then": {
+        "required": ["analytical", "parameters", "compartments", "outputs"]
+      }
+    },
+    {
+      "if": { "properties": { "type": { "const": "ode" } } },
+      "then": {
+        "required": ["parameters", "compartments", "diffeq", "outputs"]
+      }
+    },
+    {
+      "if": { "properties": { "type": { "const": "sde" } } },
+      "then": {
+        "required": ["parameters", "states", "drift", "diffusion", "outputs"]
+      }
+    }
+  ]
+}

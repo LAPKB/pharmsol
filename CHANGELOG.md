@@ -7,6 +7,331 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.1](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.27.0...pharmsol-v0.27.1) - 2026-05-14
+
+### Added
+
+- Metadata contract ([#262](https://github.com/LAPKB/pharmsol/pull/262))
+
+## [0.27.0](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.26.1...pharmsol-v0.27.0) - 2026-05-14
+
+### Added
+
+- Domain Specific Language (DSL) using JIT or AOT ([#252](https://github.com/LAPKB/pharmsol/pull/252))
+
+### Other
+
+- Rename support points to parameters ([#251](https://github.com/LAPKB/pharmsol/pull/251))
+- Refactor benchmarks ([#258](https://github.com/LAPKB/pharmsol/pull/258))
+- add missing macros ([#253](https://github.com/LAPKB/pharmsol/pull/253))
+- Bump actions/upload-pages-artifact from 4 to 5 ([#248](https://github.com/LAPKB/pharmsol/pull/248))
+
+## [0.26.1](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.26.0...pharmsol-v0.26.1) - 2026-04-20
+
+### Added
+
+- Add Pmetrics analytical compatibility wrappers ([#245](https://github.com/LAPKB/pharmsol/pull/245))
+
+### Other
+
+- Move ODE/analytical comparisons to examples ([#243](https://github.com/LAPKB/pharmsol/pull/243))
+
+## [0.26.0](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.25.0...pharmsol-v0.26.0) - 2026-04-10
+
+### Added
+
+- Update cache API ([#242](https://github.com/LAPKB/pharmsol/pull/242))
+
+## [0.25.0](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.24.1...pharmsol-v0.25.0) - 2026-04-09
+
+### Added
+
+- JSON model representation schema v2 ([#241](https://github.com/LAPKB/pharmsol/pull/241))
+- Use slices instead of vectors when possible ([#239](https://github.com/LAPKB/pharmsol/pull/239))
+- Improved cache performance and API ([#240](https://github.com/LAPKB/pharmsol/pull/240))
+
+### Other
+
+- Update diffsol requirement from =0.10.4 to =0.11.0 ([#237](https://github.com/LAPKB/pharmsol/pull/237))
+- Bump actions/configure-pages from 5 to 6 ([#236](https://github.com/LAPKB/pharmsol/pull/236))
+- Bump actions/deploy-pages from 4 to 5 ([#235](https://github.com/LAPKB/pharmsol/pull/235))
+
+## [0.24.1](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.24.0...pharmsol-v0.24.1) - 2026-03-24
+
+### Added
+
+- Json ([#199](https://github.com/LAPKB/pharmsol/pull/199))
+- Non-compartmental analysis ([#208](https://github.com/LAPKB/pharmsol/pull/208))
+
+### Fixed
+
+- Handle missing observations in log-likelihood ([#230](https://github.com/LAPKB/pharmsol/pull/230))
+
+## [0.24.0](https://github.com/LAPKB/pharmsol/compare/v0.23.0...v0.24.0) - 2026-03-23
+
+### Added
+
+- Improved functionality for defining equations ([#226](https://github.com/LAPKB/pharmsol/pull/226))
+- Add CL-based one and two compartment models ([#227](https://github.com/LAPKB/pharmsol/pull/227))
+
+## [0.23.0](https://github.com/LAPKB/pharmsol/compare/v0.22.1...v0.23.0) - 2026-03-16
+
+### Added
+
+- Remove LikelihoodMatrixOptions ([#222](https://github.com/LAPKB/pharmsol/pull/222))
+- Use a sized cache with new subject hashing ([#214](https://github.com/LAPKB/pharmsol/pull/214))
+- Normalized rows ([#205](https://github.com/LAPKB/pharmsol/pull/205))
+
+### Fixed
+
+- Fix test and capture error to drop ([#220](https://github.com/LAPKB/pharmsol/pull/220))
+- Prevents creating a terminal on windows ([#179](https://github.com/LAPKB/pharmsol/pull/179))
+- _(exa)_ invalidate compilation cache when pharmsol version changes ([#217](https://github.com/LAPKB/pharmsol/pull/217))
+- Update sort order of events ([#219](https://github.com/LAPKB/pharmsol/pull/219))
+
+### Other
+
+- Bump actions/upload-artifact from 6 to 7 ([#215](https://github.com/LAPKB/pharmsol/pull/215))
+- Update ndarray requirement from 0.16.1 to 0.17.2 ([#195](https://github.com/LAPKB/pharmsol/pull/195))
+- Update rand requirement from 0.9.0 to 0.10.0 ([#207](https://github.com/LAPKB/pharmsol/pull/207))
+- Update diffsol requirement from =0.8.0 to =0.10.4 ([#206](https://github.com/LAPKB/pharmsol/pull/206))
+- Bump actions/cache from 4 to 5 ([#184](https://github.com/LAPKB/pharmsol/pull/184))
+- Delete .DS_Store ([#191](https://github.com/LAPKB/pharmsol/pull/191))
+- Bump actions/upload-artifact from 4 to 6 ([#193](https://github.com/LAPKB/pharmsol/pull/193))
+- Bump actions/checkout from 4 to 6 ([#192](https://github.com/LAPKB/pharmsol/pull/192))
+- Prepare for submission to JOSS ([#186](https://github.com/LAPKB/pharmsol/pull/186))
+- Update examples ([#183](https://github.com/LAPKB/pharmsol/pull/183))
+
+## [0.22.1](https://github.com/LAPKB/pharmsol/compare/v0.22.0...v0.22.1) - 2025-12-11
+
+### Other
+
+- _(Exa)_ when installing Papir on MacOs, the environment variables are not completely shared to the sandbox in which Papir is running, this changes are meant to provide papir a better way to approach finding the rust binary ([#181](https://github.com/LAPKB/pharmsol/pull/181))
+- Update diffsol requirement from =0.7.0 to =0.8.0 ([#176](https://github.com/LAPKB/pharmsol/pull/176))
+- Update criterion requirement from 0.7.0 to 0.8.0 ([#177](https://github.com/LAPKB/pharmsol/pull/177))
+- Update libloading requirement from 0.8.6 to 0.9.0 ([#162](https://github.com/LAPKB/pharmsol/pull/162))
+
+## [0.22.0](https://github.com/LAPKB/pharmsol/compare/v0.21.0...v0.22.0) - 2025-11-27
+
+### Added
+
+- Add a function to calculate the psi matrix directly in log space ([#174](https://github.com/LAPKB/pharmsol/pull/174))
+- optimize ODE ([#167](https://github.com/LAPKB/pharmsol/pull/167))
+
+### Fixed
+
+- address parser and simulator regressions ([#166](https://github.com/LAPKB/pharmsol/pull/166))
+
+### Other
+
+- Bump actions/checkout from 5 to 6 ([#169](https://github.com/LAPKB/pharmsol/pull/169))
+
+## [0.21.0](https://github.com/LAPKB/pharmsol/compare/v0.20.0...v0.21.0) - 2025-11-16
+
+### Added
+
+- [**breaking**] Use Option<f64> for time to instead of f64::Infinity ([#164](https://github.com/LAPKB/pharmsol/pull/164))
+- More callbacks in Exa
+
+### Fixed
+
+- Repeat in subject builder ([#157](https://github.com/LAPKB/pharmsol/pull/157)) ([#158](https://github.com/LAPKB/pharmsol/pull/158))
+
+## [0.19.1](https://github.com/LAPKB/pharmsol/compare/v0.19.0...v0.20.0) - 2025-11-04
+
+### Added
+
+- Template path is now user defined ([#153](https://github.com/LAPKB/pharmsol/pull/153))
+
+## [0.19.0](https://github.com/LAPKB/pharmsol/compare/v0.18.1...v0.19.0) - 2025-10-23
+
+### Other
+
+- Add method to get censor status for prediction ([#146](https://github.com/LAPKB/pharmsol/pull/146))
+
+## [0.18.1](https://github.com/LAPKB/pharmsol/compare/v0.18.0...v0.18.1) - 2025-10-23
+
+### Other
+
+- diffsol 0.7
+
+## [0.18.0](https://github.com/LAPKB/pharmsol/compare/v0.17.2...v0.18.0) - 2025-10-21
+
+### Added
+
+- Add support for censoring (LLOQ and ULOQ) ([#140](https://github.com/LAPKB/pharmsol/pull/140))
+- add support to EXA
+- Doses are now defined in the model
+- Initial for the new censoring column in the Pmetrics format.
+
+### Other
+
+- Remove dbg statements
+- set the local flag
+- set the local flag
+- debug
+- Trying to handle the windows case correctly
+- Force diffsol's version
+- Bump nalgebra ([#144](https://github.com/LAPKB/pharmsol/pull/144))
+- Were we are going, there are no maps... This commit removes mappings as their functionality is now replaced by having the model define the bolus inputs inside them
+- if-else
+- Exhaustive match instead of if-else block
+- Add setters
+- Make cens column optional
+- Censoring likelihood calculation
+- Update argmin requirement from 0.10.0 to 0.11.0 ([#135](https://github.com/LAPKB/pharmsol/pull/135))
+
+## [0.17.2](https://github.com/LAPKB/pharmsol/compare/v0.17.1...v0.17.2) - 2025-09-30
+
+### Added
+
+- Implement into Data for Subject(s) ([#131](https://github.com/LAPKB/pharmsol/pull/131))
+
+### Other
+
+- moved the optim module into pharmsol, the idea is that the SppOptimizer and the EffectOptimizer both can be directly used in the model and because of this they belong in pharmsol
+- Bump actions/upload-pages-artifact from 3 to 4 ([#124](https://github.com/LAPKB/pharmsol/pull/124))
+
+## [0.17.1](https://github.com/LAPKB/pharmsol/compare/v0.17.0...v0.17.1) - 2025-09-06
+
+### Added
+
+- make mappings optional
+
+### Fixed
+
+- Add missing implementation for occasion on Prediction ([#126](https://github.com/LAPKB/pharmsol/pull/126))
+
+## [0.17.0](https://github.com/LAPKB/pharmsol/compare/v0.16.0...v0.17.0) - 2025-09-03
+
+### Added
+
+- Adds the occasion index to events and predictions ([#123](https://github.com/LAPKB/pharmsol/pull/123))
+
+## [0.16.0](https://github.com/LAPKB/pharmsol/compare/v0.15.0...v0.16.0) - 2025-08-14
+
+### Added
+
+- Update API for covariates ([#108](https://github.com/LAPKB/pharmsol/pull/108))
+- Add mapping support to boluses ([#119](https://github.com/LAPKB/pharmsol/pull/119))
+
+### Other
+
+- Implicit lifetimes where elided ([#120](https://github.com/LAPKB/pharmsol/pull/120))
+- Add helper function to check if error model should be optimized ([#122](https://github.com/LAPKB/pharmsol/pull/122))
+- Bump actions/checkout from 4 to 5 ([#117](https://github.com/LAPKB/pharmsol/pull/117))
+
+## [0.15.0](https://github.com/LAPKB/pharmsol/compare/v0.14.1...v0.14.2) - 2025-08-10
+
+### Added
+
+- Change how SDE predictions are calculated ([#115](https://github.com/LAPKB/pharmsol/pull/115))
+- Update API for Data ([#102](https://github.com/LAPKB/pharmsol/pull/102))
+- Support fixed and variable scalars for error models ([#106](https://github.com/LAPKB/pharmsol/pull/106))
+
+### Fixed
+
+- Fix test missing Some ([#114](https://github.com/LAPKB/pharmsol/pull/114))
+- Handle NA in Pmetrics files ([#109](https://github.com/LAPKB/pharmsol/pull/109))
+
+### Other
+
+- Update diffsol to 0.6.5 ([#94](https://github.com/LAPKB/pharmsol/pull/94))
+- Adding covariate benchmarks ([#107](https://github.com/LAPKB/pharmsol/pull/107))
+- Update criterion and cached ([#105](https://github.com/LAPKB/pharmsol/pull/105))
+
+## [0.14.1](https://github.com/LAPKB/pharmsol/compare/v0.14.0...v0.14.1) - 2025-07-25
+
+### Other
+
+- quiet-lloq
+- Update CI for building and testing ([#97](https://github.com/LAPKB/pharmsol/pull/97))
+
+## [0.14.0](https://github.com/LAPKB/pharmsol/compare/v0.13.1...v0.14.0) - 2025-07-21
+
+### Other
+
+- cleaning up
+- renaming get_error_model to error_model
+- some documentation
+- error propagation
+- blq->lloq
+- blq->llq
+- support for BLQ
+
+## [0.13.1](https://github.com/LAPKB/pharmsol/compare/v0.13.0...v0.13.1) - 2025-07-09
+
+### Other
+
+- hms
+- suggestions by @mhovd
+- remove indicatif
+- remove indicatif
+- remove indicatif, implemented a simple progress tracker that is compatible with R non-TTY terminal
+
+## [0.13.0](https://github.com/LAPKB/pharmsol/compare/v0.12.0...v0.13.0) - 2025-07-03
+
+### Added
+
+- Added support for covariates on the fa, and lag blocks ([#87](https://github.com/LAPKB/pharmsol/pull/87))
+
+## [0.12.0](https://github.com/LAPKB/pharmsol/compare/v0.11.1...v0.12.0) - 2025-06-25
+
+### Fixed
+
+- This commit properly handles multiple events at the sime time, avoiding an error by the ODE solver
+
+### Other
+
+- Improve error handling
+
+## [0.11.1](https://github.com/LAPKB/pharmsol/compare/v0.11.0...v0.11.1) - 2025-06-19
+
+### Fixed
+
+- Infusions were not being handled correctly by the analytic solver. The old approach made a big jump without taking into account the discontinuities introduced by the infusions. This new approach detects the points in time where those discontinuities happen and solve the analytic model step by step.
+
+## [0.11.0](https://github.com/LAPKB/pharmsol/compare/v0.10.0...v0.11.0) - 2025-06-17
+
+### Added
+
+- env variable PHARMSOL_LOCAL_EXA controls the execution of EXA via a remote or local phamrsol dependency. Thanks to @mhovd
+- Exa now supports Analytical equations too
+
+### Fixed
+
+- params are fetched as mut
+- fix, EqnKind is not behind exa anymore
+
+### Other
+
+- Apply suggestions from code review
+
+## [0.10.0](https://github.com/LAPKB/pharmsol/compare/v0.9.1...v0.10.0) - 2025-06-11
+
+### Added
+
+- Add events to occasions
+- Expose functions for number of states and outeqs
+- Add support for multiple error models ([#65](https://github.com/LAPKB/pharmsol/pull/65))
+
+## [0.9.1](https://github.com/LAPKB/pharmsol/compare/v0.9.0...v0.9.1) - 2025-05-22
+
+### Other
+
+- Update README.md
+
+## [0.9.0](https://github.com/LAPKB/pharmsol/compare/v0.8.0...v0.9.0) - 2025-05-19
+
+### Added
+
+- Improve error handling ([#58](https://github.com/LAPKB/pharmsol/pull/58))
+
+### Other
+
+- Update criterion requirement from 0.5.1 to 0.6.0 ([#62](https://github.com/LAPKB/pharmsol/pull/62))
+- Benchmark with self-hosted runners ([#60](https://github.com/LAPKB/pharmsol/pull/60))
+
 ## [0.7.8](https://github.com/LAPKB/pharmsol/compare/v0.7.7...v0.7.8) - 2025-03-11
 
 ### Fixed

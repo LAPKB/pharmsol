@@ -3,3 +3,8 @@ cargo.lock
 Cargo.lock
 /.vscode
 /.idea
+*.pkm
+/paper_files
+paper.html
+/tests/browser-e2e/node_modules/
+docs/
