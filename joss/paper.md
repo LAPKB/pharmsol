@@ -31,7 +31,7 @@ bibliography: paper.bib
 
 # Summary
 
-`pharmsol` is a library for pharmacokinetic/pharmacodynamic (PK/PD) simulation written in Rust. It provides the necessary tools and frameworks for defining, solving, and analyzing compartmental models, with support for differential equations, their analytical solutions, and experimental support for stochastic differential equations. Written in Rust, the library aims to provide researchers and developers with a framework for pharmacokinetic simulation in a memory-safe and performant language. The library is distributed via crates.io with comprehensive API documentation, usage examples, and a test suite validated through continuous integration.
+`pharmsol` is a library for pharmacokinetic/pharmacodynamic (PK/PD) simulation written in Rust. It provides the necessary tools and frameworks for defining, solving, and analyzing compartmental models, with support for differential equations, their analytical solutions, experimental support for stochastic differential equations, and a domain-specific language (DSL) for models that need to be validated or compiled at runtime. The DSL can target an in-process JIT runtime, native ahead-of-time artifacts, or WebAssembly (WASM) bundles depending on deployment needs. Written in Rust, the library aims to provide researchers and developers with a framework for pharmacokinetic simulation in a memory-safe and performant language. The library is distributed via crates.io with comprehensive API documentation, usage examples, and a test suite validated through continuous integration.
 
 # Statement of Need
 
@@ -55,7 +55,7 @@ The equation module provides the mathematical foundation for simulating PK/PD ou
 
 ## Analytical Solutions
 
-For standard compartmental models, `pharmsol` provides closed-form solutions for one- and two-compartment models, with and without oral absorption. These have been verified against their differential equation counterparts. Benchmarks demonstrate 20-33× speedups compared to equivalent ODE formulations without loss of precision (see repository benchmarks for details). Additional analytical solutions will be added in future versions.
+For standard compartmental models, `pharmsol` provides closed-form solutions for one-, two-, and three-compartment models, including oral absorption variants. These have been verified against their differential equation counterparts. Benchmarks demonstrate 20-33× speedups compared to equivalent ODE formulations without loss of precision (see repository benchmarks for details). Additional analytical solutions will be added in future versions.
 
 ## Ordinary Differential Equations
 
@@ -65,9 +65,13 @@ For more complex or non-standard models, `pharmsol` supports user-defined ordina
 
 Experimental support for stochastic differential equations (SDEs) is available using the Euler-Maruyama method. SDEs allow modeling of within-subject variability as a continuous stochastic process. However, particular care should be taken if applying SDEs in a non-parametric approach to population pharmacokinetic modeling, such as when using the non-parametric adaptive grid algorithm (NPAG) [@npag] for parameter estimation.
 
+## DSL and execution runtimes
+
+`pharmsol` also provides a DSL for models that need to be parsed, validated, and compiled at runtime. The DSL supports analytical, ODE, and SDE models and can target an in-process JIT runtime, native ahead-of-time artifacts, or WebAssembly (WASM) bundles. This allows the same model description to move between interactive research workflows and deployment-oriented settings without changing the surrounding data structures.
+
 # Conclusion and Future Work
 
-`pharmsol` aims to support the evolving needs of pharmacometric research by providing a modern, efficient platform that can adapt to the increasing complexity of pharmaceutical development while remaining accessible through its open-source licensing model. Future development will focus on additional analytical model implementations, support for common data formats used by other pharmacometric software, non-compartmental analysis and continued performance improvements.
+`pharmsol` aims to support the evolving needs of pharmacometric research by providing a modern, efficient platform that can adapt to the increasing complexity of pharmaceutical development while remaining accessible through its open-source licensing model. Future development will focus on additional analytical model implementations, support for common data formats used by other pharmacometric software, and continued performance improvements.
 
 # Acknowledgements
 
