@@ -109,8 +109,12 @@ impl std::fmt::Debug for NativeArtifactOwner {
     }
 }
 
-pub struct NativeExecutionArtifact {
-    pub model_name: String,
+/// Table of compiled native kernels indexed by [`KernelRole`].
+///
+/// `outputs` is the only required kernel; every other role is optional and
+/// absent when the source model does not declare it.
+#[derive(Clone, Copy)]
+pub struct NativeKernels {
     pub derive: Option<DenseKernelFn>,
     pub dynamics: Option<DenseKernelFn>,
     pub outputs: DenseKernelFn,
@@ -119,6 +123,49 @@ pub struct NativeExecutionArtifact {
     pub diffusion: Option<DenseKernelFn>,
     pub route_lag: Option<DenseKernelFn>,
     pub route_bioavailability: Option<DenseKernelFn>,
+}
+
+impl NativeKernels {
+    /// Look up the kernel registered for `role`, treating `Outputs` as always
+    /// present and `Analytical` as never having a dense kernel.
+    pub(crate) fn get(&self, role: KernelRole) -> Option<DenseKernelFn> {
+        match role {
+            KernelRole::Derive => self.derive,
+            KernelRole::Dynamics => self.dynamics,
+            KernelRole::Outputs => Some(self.outputs),
+            KernelRole::Init => self.init,
+            KernelRole::Drift => self.drift,
+            KernelRole::Diffusion => self.diffusion,
+            KernelRole::RouteLag => self.route_lag,
+            KernelRole::RouteBioavailability => self.route_bioavailability,
+            KernelRole::Analytical => None,
+        }
+    }
+
+    pub(crate) fn has(&self, role: KernelRole) -> bool {
+        self.get(role).is_some()
+    }
+}
+
+impl std::fmt::Debug for NativeKernels {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let as_ptr = |k: Option<DenseKernelFn>| k.map(|ptr| ptr as *const ());
+        f.debug_struct("NativeKernels")
+            .field("derive", &as_ptr(self.derive))
+            .field("dynamics", &as_ptr(self.dynamics))
+            .field("outputs", &(self.outputs as *const ()))
+            .field("init", &as_ptr(self.init))
+            .field("drift", &as_ptr(self.drift))
+            .field("diffusion", &as_ptr(self.diffusion))
+            .field("route_lag", &as_ptr(self.route_lag))
+            .field("route_bioavailability", &as_ptr(self.route_bioavailability))
+            .finish()
+    }
+}
+
+pub struct NativeExecutionArtifact {
+    pub model_name: String,
+    pub kernels: NativeKernels,
     _owner: Option<NativeArtifactOwner>,
 }
 
@@ -129,74 +176,34 @@ impl std::fmt::Debug for NativeExecutionArtifact {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("NativeExecutionArtifact")
             .field("model_name", &self.model_name)
-            .field("derive", &self.derive.map(|ptr| ptr as *const ()))
-            .field("dynamics", &self.dynamics.map(|ptr| ptr as *const ()))
-            .field("outputs", &(self.outputs as *const ()))
-            .field("init", &self.init.map(|ptr| ptr as *const ()))
-            .field("drift", &self.drift.map(|ptr| ptr as *const ()))
-            .field("diffusion", &self.diffusion.map(|ptr| ptr as *const ()))
-            .field("route_lag", &self.route_lag.map(|ptr| ptr as *const ()))
-            .field(
-                "route_bioavailability",
-                &self.route_bioavailability.map(|ptr| ptr as *const ()),
-            )
+            .field("kernels", &self.kernels)
             .finish()
     }
 }
 
 impl NativeExecutionArtifact {
     #[cfg(feature = "dsl-jit")]
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn from_jit_module(
         model_name: String,
-        derive: Option<DenseKernelFn>,
-        dynamics: Option<DenseKernelFn>,
-        outputs: DenseKernelFn,
-        init: Option<DenseKernelFn>,
-        drift: Option<DenseKernelFn>,
-        diffusion: Option<DenseKernelFn>,
-        route_lag: Option<DenseKernelFn>,
-        route_bioavailability: Option<DenseKernelFn>,
+        kernels: NativeKernels,
         module: JITModule,
     ) -> Self {
         Self {
             model_name,
-            derive,
-            dynamics,
-            outputs,
-            init,
-            drift,
-            diffusion,
-            route_lag,
-            route_bioavailability,
+            kernels,
             _owner: Some(NativeArtifactOwner::Jit(Box::new(module))),
         }
     }
 
     #[cfg(feature = "dsl-aot-load")]
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn from_library(
         model_name: String,
-        derive: Option<DenseKernelFn>,
-        dynamics: Option<DenseKernelFn>,
-        outputs: DenseKernelFn,
-        init: Option<DenseKernelFn>,
-        drift: Option<DenseKernelFn>,
-        diffusion: Option<DenseKernelFn>,
-        route_lag: Option<DenseKernelFn>,
-        route_bioavailability: Option<DenseKernelFn>,
+        kernels: NativeKernels,
         library: Library,
     ) -> Self {
         Self {
             model_name,
-            derive,
-            dynamics,
-            outputs,
-            init,
-            drift,
-            diffusion,
-            route_lag,
-            route_bioavailability,
+            kernels,
             _owner: Some(NativeArtifactOwner::Library(library)),
         }
     }
@@ -218,18 +225,7 @@ impl KernelSession for NativeKernelSession<'_> {
         derived: *const f64,
         out: *mut f64,
     ) -> Result<(), PharmsolError> {
-        let kernel = match role {
-            KernelRole::Derive => self.artifact.derive,
-            KernelRole::Dynamics => self.artifact.dynamics,
-            KernelRole::Outputs => Some(self.artifact.outputs),
-            KernelRole::Init => self.artifact.init,
-            KernelRole::Drift => self.artifact.drift,
-            KernelRole::Diffusion => self.artifact.diffusion,
-            KernelRole::RouteLag => self.artifact.route_lag,
-            KernelRole::RouteBioavailability => self.artifact.route_bioavailability,
-            KernelRole::Analytical => None,
-        }
-        .ok_or_else(|| {
+        let kernel = self.artifact.kernels.get(role).ok_or_else(|| {
             PharmsolError::OtherError(format!(
                 "model `{}` does not provide a {:?} kernel",
                 self.artifact.model_name, role
@@ -253,17 +249,7 @@ impl RuntimeArtifact for NativeExecutionArtifact {
     }
 
     fn has_kernel(&self, role: KernelRole) -> bool {
-        match role {
-            KernelRole::Derive => self.derive.is_some(),
-            KernelRole::Dynamics => self.dynamics.is_some(),
-            KernelRole::Outputs => true,
-            KernelRole::Init => self.init.is_some(),
-            KernelRole::Drift => self.drift.is_some(),
-            KernelRole::Diffusion => self.diffusion.is_some(),
-            KernelRole::RouteLag => self.route_lag.is_some(),
-            KernelRole::RouteBioavailability => self.route_bioavailability.is_some(),
-            KernelRole::Analytical => false,
-        }
+        self.kernels.has(role)
     }
 
     fn start_session(&self) -> Result<Box<dyn KernelSession + '_>, PharmsolError> {

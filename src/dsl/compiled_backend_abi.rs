@@ -260,8 +260,7 @@ pub fn output_buffer_plan(
     }
 }
 
-#[cfg(test)]
-fn kernel_output_len(info: &NativeModelInfo, role: KernelRole) -> usize {
+pub(super) fn kernel_output_len(info: &NativeModelInfo, role: KernelRole) -> usize {
     match role {
         KernelRole::Derive => info.derived_len,
         KernelRole::Dynamics | KernelRole::Init | KernelRole::Drift | KernelRole::Diffusion => {

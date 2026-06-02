@@ -1,3 +1,12 @@
+pub(crate) fn bare_numeric_label(src: &str) -> Option<&str> {
+    (!src.is_empty() && src.chars().all(|ch| ch.is_ascii_digit())).then_some(src)
+}
+
+pub(crate) fn canonical_numeric_suffix<'a>(src: &'a str, prefix: &str) -> Option<&'a str> {
+    let suffix = src.strip_prefix(prefix)?;
+    (!suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit())).then_some(suffix)
+}
+
 pub(crate) fn is_high_confidence_match(
     needle: &str,
     candidate: &str,

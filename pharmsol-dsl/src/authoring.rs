@@ -4,7 +4,8 @@ use super::ast::*;
 use super::diagnostic::{Applicability, DiagnosticSuggestion, ParseError, Span, TextEdit};
 use super::parser::{parse_expr_fragment, parse_place_fragment};
 use crate::name_match::{
-    common_prefix_len, edit_distance, is_high_confidence_match, is_single_adjacent_transposition,
+    bare_numeric_label, canonical_numeric_suffix, common_prefix_len, edit_distance,
+    is_high_confidence_match, is_single_adjacent_transposition,
 };
 use crate::{NUMERIC_OUTPUT_PREFIX, NUMERIC_ROUTE_PREFIX, RATE_FUNCTION_NAME};
 
@@ -1144,15 +1145,6 @@ impl LabelKind {
             Self::Output => "outeq_<n>",
         }
     }
-}
-
-fn bare_numeric_label(src: &str) -> Option<&str> {
-    (!src.is_empty() && src.chars().all(|ch| ch.is_ascii_digit())).then_some(src)
-}
-
-fn canonical_numeric_suffix<'a>(src: &'a str, prefix: &str) -> Option<&'a str> {
-    let suffix = src.strip_prefix(prefix)?;
-    (!suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit())).then_some(suffix)
 }
 
 fn parse_place_at(src: &str, abs_start: usize) -> Result<Place, ParseError> {

@@ -21,7 +21,9 @@ use super::compiled_backend_abi::{
     OUTPUTS_SYMBOL, ROUTE_BIOAVAILABILITY_SYMBOL, ROUTE_LAG_SYMBOL,
 };
 #[cfg(feature = "dsl-aot-load")]
-use super::native::{CompiledNativeModel, DenseKernelFn, NativeExecutionArtifact, NativeModelInfo};
+use super::native::{
+    CompiledNativeModel, DenseKernelFn, NativeExecutionArtifact, NativeKernels, NativeModelInfo,
+};
 #[cfg(feature = "dsl-aot")]
 use super::rust_backend::{emit_rust_backend_source, RustBackendFlavor};
 #[cfg(feature = "dsl-aot")]
@@ -320,18 +322,17 @@ pub fn load_aot_model(path: impl AsRef<Path>) -> Result<CompiledNativeModel, Aot
     let info = unsafe { read_model_info_from_library(&library)? };
     let model_name = info.name.clone();
     let artifact = unsafe {
-        NativeExecutionArtifact::from_library(
-            model_name,
-            load_optional_kernel(&library, DERIVE_SYMBOL),
-            load_optional_kernel(&library, DYNAMICS_SYMBOL),
-            load_required_kernel(&library, OUTPUTS_SYMBOL)?,
-            load_optional_kernel(&library, INIT_SYMBOL),
-            load_optional_kernel(&library, DRIFT_SYMBOL),
-            load_optional_kernel(&library, DIFFUSION_SYMBOL),
-            load_optional_kernel(&library, ROUTE_LAG_SYMBOL),
-            load_optional_kernel(&library, ROUTE_BIOAVAILABILITY_SYMBOL),
-            library,
-        )
+        let kernels = NativeKernels {
+            derive: load_optional_kernel(&library, DERIVE_SYMBOL),
+            dynamics: load_optional_kernel(&library, DYNAMICS_SYMBOL),
+            outputs: load_required_kernel(&library, OUTPUTS_SYMBOL)?,
+            init: load_optional_kernel(&library, INIT_SYMBOL),
+            drift: load_optional_kernel(&library, DRIFT_SYMBOL),
+            diffusion: load_optional_kernel(&library, DIFFUSION_SYMBOL),
+            route_lag: load_optional_kernel(&library, ROUTE_LAG_SYMBOL),
+            route_bioavailability: load_optional_kernel(&library, ROUTE_BIOAVAILABILITY_SYMBOL),
+        };
+        NativeExecutionArtifact::from_library(model_name, kernels, library)
     };
 
     Ok(match info.kind {

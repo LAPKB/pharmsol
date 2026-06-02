@@ -261,96 +261,82 @@ pub fn compile_execution_artifact(
     let mut ctx = module.make_context();
     let mut builder_context = FunctionBuilderContext::new();
 
-    let derive = compile_role_kernel(
-        &mut module,
-        &mut ctx,
-        &mut builder_context,
-        ptr_ty,
-        externs,
-        model,
-        KernelRole::Derive,
-    )?;
-    let dynamics = compile_role_kernel(
-        &mut module,
-        &mut ctx,
-        &mut builder_context,
-        ptr_ty,
-        externs,
-        model,
-        KernelRole::Dynamics,
-    )?;
-    let outputs = compile_role_kernel(
-        &mut module,
-        &mut ctx,
-        &mut builder_context,
-        ptr_ty,
-        externs,
-        model,
-        KernelRole::Outputs,
-    )?
-    .ok_or_else(|| JitCompileError::new("missing outputs kernel", Some(model.span)))?;
-    let init = compile_role_kernel(
-        &mut module,
-        &mut ctx,
-        &mut builder_context,
-        ptr_ty,
-        externs,
-        model,
-        KernelRole::Init,
-    )?;
-    let drift = compile_role_kernel(
-        &mut module,
-        &mut ctx,
-        &mut builder_context,
-        ptr_ty,
-        externs,
-        model,
-        KernelRole::Drift,
-    )?;
-    let diffusion = compile_role_kernel(
-        &mut module,
-        &mut ctx,
-        &mut builder_context,
-        ptr_ty,
-        externs,
-        model,
-        KernelRole::Diffusion,
-    )?;
-    let route_lag = compile_role_kernel(
-        &mut module,
-        &mut ctx,
-        &mut builder_context,
-        ptr_ty,
-        externs,
-        model,
-        KernelRole::RouteLag,
-    )?;
-    let route_bioavailability = compile_role_kernel(
-        &mut module,
-        &mut ctx,
-        &mut builder_context,
-        ptr_ty,
-        externs,
-        model,
-        KernelRole::RouteBioavailability,
-    )?;
+    let mut compiled: [Option<cranelift_module::FuncId>; 8] = [None; 8];
+    for role in ROLES_IN_TABLE_ORDER {
+        compiled[role_index(role)] = compile_role_kernel(
+            &mut module,
+            &mut ctx,
+            &mut builder_context,
+            ptr_ty,
+            externs,
+            model,
+            role,
+        )?;
+    }
+
+    let outputs_id = compiled[role_index(KernelRole::Outputs)]
+        .ok_or_else(|| JitCompileError::new("missing outputs kernel", Some(model.span)))?;
 
     module
         .finalize_definitions()
         .map_err(|error| JitCompileError::new(error.to_string(), Some(model.span)))?;
 
+    let lookup =
+        |role: KernelRole| compiled[role_index(role)].map(|id| function_pointer(&mut module, id));
+    // Borrow checker forbids reusing the closure once `module` is moved into the
+    // artifact, so resolve every pointer up front.
+    let derive = lookup(KernelRole::Derive);
+    let dynamics = lookup(KernelRole::Dynamics);
+    let init = lookup(KernelRole::Init);
+    let drift = lookup(KernelRole::Drift);
+    let diffusion = lookup(KernelRole::Diffusion);
+    let route_lag = lookup(KernelRole::RouteLag);
+    let route_bioavailability = lookup(KernelRole::RouteBioavailability);
+    let outputs = function_pointer(&mut module, outputs_id);
+
     Ok(NativeExecutionArtifact::from_jit_module(
         model.name.clone(),
-        derive.map(|id| function_pointer(&mut module, id)),
-        dynamics.map(|id| function_pointer(&mut module, id)),
-        function_pointer(&mut module, outputs),
-        init.map(|id| function_pointer(&mut module, id)),
-        drift.map(|id| function_pointer(&mut module, id)),
-        diffusion.map(|id| function_pointer(&mut module, id)),
-        route_lag.map(|id| function_pointer(&mut module, id)),
-        route_bioavailability.map(|id| function_pointer(&mut module, id)),
+        super::native::NativeKernels {
+            derive,
+            dynamics,
+            outputs,
+            init,
+            drift,
+            diffusion,
+            route_lag,
+            route_bioavailability,
+        },
         module,
     ))
+}
+
+/// The eight kernel roles materialised by the JIT/AoT/WASM backends, in the
+/// canonical order used by [`NativeKernels`].
+const ROLES_IN_TABLE_ORDER: [KernelRole; 8] = [
+    KernelRole::Derive,
+    KernelRole::Dynamics,
+    KernelRole::Outputs,
+    KernelRole::Init,
+    KernelRole::Drift,
+    KernelRole::Diffusion,
+    KernelRole::RouteLag,
+    KernelRole::RouteBioavailability,
+];
+
+fn role_index(role: KernelRole) -> usize {
+    match role {
+        KernelRole::Derive => 0,
+        KernelRole::Dynamics => 1,
+        KernelRole::Outputs => 2,
+        KernelRole::Init => 3,
+        KernelRole::Drift => 4,
+        KernelRole::Diffusion => 5,
+        KernelRole::RouteLag => 6,
+        KernelRole::RouteBioavailability => 7,
+        KernelRole::Analytical => {
+            unreachable!("analytical kernels are not stored in the JIT table")
+        }
+    }
 }
 
 fn declare_externs(module: &mut JITModule, span: Span) -> Result<ExternIds, JitCompileError> {
@@ -1519,7 +1505,7 @@ out(cp) = central / v ~ continuous()
         let covariates = [70.0];
         let routes = [0.0, 0.0];
 
-        let derive = artifact.derive.expect("derive kernel present");
+        let derive = artifact.kernels.derive.expect("derive kernel present");
         unsafe {
             derive(
                 0.0,
@@ -1530,7 +1516,7 @@ out(cp) = central / v ~ continuous()
                 derived.as_ptr(),
                 derived.as_mut_ptr(),
             );
-            artifact.dynamics.expect("dynamics kernel present")(
+            artifact.kernels.dynamics.expect("dynamics kernel present")(
                 0.0,
                 states.as_ptr(),
                 params.as_ptr(),
@@ -1539,7 +1525,7 @@ out(cp) = central / v ~ continuous()
                 derived.as_ptr(),
                 dx.as_mut_ptr(),
             );
-            (artifact.outputs)(
+            (artifact.kernels.outputs)(
                 0.0,
                 states.as_ptr(),
                 params.as_ptr(),

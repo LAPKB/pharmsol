@@ -2,15 +2,13 @@ use std::ops::Range;
 use std::path::Path;
 use std::sync::Mutex;
 
-#[allow(unused)]
-use crate::dsl::model_info;
 use wasmtime::{Engine, Instance, Linker, Memory, Module, Store, TypedFunc};
 
 use super::compiled_backend_abi::{
-    decode_compiled_model_info, CompiledKernelAvailability, ALLOC_F64_BUFFER_SYMBOL,
-    API_VERSION_SYMBOL, DERIVE_SYMBOL, DIFFUSION_SYMBOL, DRIFT_SYMBOL, DYNAMICS_SYMBOL,
-    FREE_F64_BUFFER_SYMBOL, INIT_SYMBOL, MODEL_INFO_JSON_LEN_SYMBOL, MODEL_INFO_JSON_PTR_SYMBOL,
-    OUTPUTS_SYMBOL, ROUTE_BIOAVAILABILITY_SYMBOL, ROUTE_LAG_SYMBOL,
+    decode_compiled_model_info, kernel_output_len, CompiledKernelAvailability,
+    ALLOC_F64_BUFFER_SYMBOL, API_VERSION_SYMBOL, DERIVE_SYMBOL, DIFFUSION_SYMBOL, DRIFT_SYMBOL,
+    DYNAMICS_SYMBOL, FREE_F64_BUFFER_SYMBOL, INIT_SYMBOL, MODEL_INFO_JSON_LEN_SYMBOL,
+    MODEL_INFO_JSON_PTR_SYMBOL, OUTPUTS_SYMBOL, ROUTE_BIOAVAILABILITY_SYMBOL, ROUTE_LAG_SYMBOL,
 };
 use super::native::{KernelSession, NativeModelInfo, RuntimeArtifact, RuntimeBackend};
 use super::wasm_compile::{WasmError, WASM_API_VERSION};
@@ -20,52 +18,11 @@ use super::wasm_direct_emitter::{
 use crate::PharmsolError;
 use pharmsol_dsl::execution::KernelRole;
 
-#[derive(Clone, Copy, Debug, Default)]
-struct WasmKernelAvailability {
-    derive: bool,
-    dynamics: bool,
-    outputs: bool,
-    init: bool,
-    drift: bool,
-    diffusion: bool,
-    route_lag: bool,
-    route_bioavailability: bool,
-}
-
-impl WasmKernelAvailability {
-    fn has(self, role: KernelRole) -> bool {
-        match role {
-            KernelRole::Derive => self.derive,
-            KernelRole::Dynamics => self.dynamics,
-            KernelRole::Outputs => self.outputs,
-            KernelRole::Init => self.init,
-            KernelRole::Drift => self.drift,
-            KernelRole::Diffusion => self.diffusion,
-            KernelRole::RouteLag => self.route_lag,
-            KernelRole::RouteBioavailability => self.route_bioavailability,
-            KernelRole::Analytical => false,
-        }
-    }
-
-    fn compiled(self) -> CompiledKernelAvailability {
-        CompiledKernelAvailability {
-            derive: self.derive,
-            dynamics: self.dynamics,
-            outputs: self.outputs,
-            init: self.init,
-            drift: self.drift,
-            diffusion: self.diffusion,
-            route_lag: self.route_lag,
-            route_bioavailability: self.route_bioavailability,
-        }
-    }
-}
-
 pub(crate) struct WasmExecutionArtifact {
     info: NativeModelInfo,
     engine: Engine,
     module: Module,
-    kernels: WasmKernelAvailability,
+    kernels: CompiledKernelAvailability,
     session_pool: Mutex<Vec<WasmKernelSession>>,
 }
 
@@ -120,7 +77,7 @@ impl WasmKernelSession {
         info: &NativeModelInfo,
         engine: &Engine,
         module: &Module,
-        kernels: WasmKernelAvailability,
+        kernels: CompiledKernelAvailability,
     ) -> Result<Self, WasmError> {
         let mut store = Store::new(engine, ());
         let linker = configured_wasm_linker(engine)?;
@@ -147,42 +104,21 @@ impl WasmKernelSession {
                 .max(info.route_len),
         )?;
 
-        let derive = if kernels.derive {
-            optional_typed_func(&instance, &mut store, DERIVE_SYMBOL)?
-        } else {
-            None
-        };
-        let dynamics = if kernels.dynamics {
-            optional_typed_func(&instance, &mut store, DYNAMICS_SYMBOL)?
-        } else {
-            None
-        };
+        let derive = maybe_typed_func(&instance, &mut store, kernels.derive, DERIVE_SYMBOL)?;
+        let dynamics = maybe_typed_func(&instance, &mut store, kernels.dynamics, DYNAMICS_SYMBOL)?;
         let outputs = typed_func(&instance, &mut store, OUTPUTS_SYMBOL)?;
-        let init = if kernels.init {
-            optional_typed_func(&instance, &mut store, INIT_SYMBOL)?
-        } else {
-            None
-        };
-        let drift = if kernels.drift {
-            optional_typed_func(&instance, &mut store, DRIFT_SYMBOL)?
-        } else {
-            None
-        };
-        let diffusion = if kernels.diffusion {
-            optional_typed_func(&instance, &mut store, DIFFUSION_SYMBOL)?
-        } else {
-            None
-        };
-        let route_lag = if kernels.route_lag {
-            optional_typed_func(&instance, &mut store, ROUTE_LAG_SYMBOL)?
-        } else {
-            None
-        };
-        let route_bioavailability = if kernels.route_bioavailability {
-            optional_typed_func(&instance, &mut store, ROUTE_BIOAVAILABILITY_SYMBOL)?
-        } else {
-            None
-        };
+        let init = maybe_typed_func(&instance, &mut store, kernels.init, INIT_SYMBOL)?;
+        let drift = maybe_typed_func(&instance, &mut store, kernels.drift, DRIFT_SYMBOL)?;
+        let diffusion =
+            maybe_typed_func(&instance, &mut store, kernels.diffusion, DIFFUSION_SYMBOL)?;
+        let route_lag =
+            maybe_typed_func(&instance, &mut store, kernels.route_lag, ROUTE_LAG_SYMBOL)?;
+        let route_bioavailability = maybe_typed_func(
+            &instance,
+            &mut store,
+            kernels.route_bioavailability,
+            ROUTE_BIOAVAILABILITY_SYMBOL,
+        )?;
 
         Ok(Self {
             info: info.clone(),
@@ -485,7 +421,7 @@ fn load_wasm_artifact_from_module(
         .get_memory(&mut store, "memory")
         .ok_or(WasmError::MissingExport("memory"))?;
     let (info, expected_kernels) = read_model_info_envelope(&instance, &mut store, &memory)?;
-    let kernels = WasmKernelAvailability {
+    let kernels = CompiledKernelAvailability {
         derive: instance.get_func(&mut store, DERIVE_SYMBOL).is_some(),
         dynamics: instance.get_func(&mut store, DYNAMICS_SYMBOL).is_some(),
         outputs: instance.get_func(&mut store, OUTPUTS_SYMBOL).is_some(),
@@ -497,12 +433,11 @@ fn load_wasm_artifact_from_module(
             .get_func(&mut store, ROUTE_BIOAVAILABILITY_SYMBOL)
             .is_some(),
     };
-    let found_kernels = kernels.compiled();
-    if found_kernels != expected_kernels {
+    if kernels != expected_kernels {
         return Err(WasmError::KernelMetadataMismatch {
             model: info.name.clone(),
             expected: expected_kernels,
-            found: found_kernels,
+            found: kernels,
         });
     }
 
@@ -571,18 +506,6 @@ fn alloc_buffer(
     Ok(WasmBuffer { ptr, len })
 }
 
-fn kernel_output_len(info: &NativeModelInfo, role: KernelRole) -> usize {
-    match role {
-        KernelRole::Derive => info.derived_len,
-        KernelRole::Dynamics | KernelRole::Init | KernelRole::Drift | KernelRole::Diffusion => {
-            info.state_len
-        }
-        KernelRole::Outputs => info.output_len,
-        KernelRole::RouteLag | KernelRole::RouteBioavailability => info.route_len,
-        KernelRole::Analytical => 0,
-    }
-}
-
 fn typed_func<Params, Results>(
     instance: &Instance,
     store: &mut Store<()>,
@@ -609,6 +532,23 @@ where
     match instance.get_typed_func(store, name) {
         Ok(func) => Ok(Some(func)),
         Err(_) => Ok(None),
+    }
+}
+
+fn maybe_typed_func<Params, Results>(
+    instance: &Instance,
+    store: &mut Store<()>,
+    available: bool,
+    name: &'static str,
+) -> Result<Option<TypedFunc<Params, Results>>, WasmError>
+where
+    Params: wasmtime::WasmParams,
+    Results: wasmtime::WasmResults,
+{
+    if available {
+        optional_typed_func(instance, store, name)
+    } else {
+        Ok(None)
     }
 }
 
