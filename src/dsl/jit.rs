@@ -281,7 +281,7 @@ pub fn compile_execution_artifact(
         .finalize_definitions()
         .map_err(|error| JitCompileError::new(error.to_string(), Some(model.span)))?;
 
-    let lookup =
+    let mut lookup =
         |role: KernelRole| compiled[role_index(role)].map(|id| function_pointer(&mut module, id));
     // Borrow checker forbids reusing the closure once `module` is moved into the
     // artifact, so resolve every pointer up front.
