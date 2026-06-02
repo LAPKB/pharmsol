@@ -1325,7 +1325,8 @@ mod tests {
                 derived.as_ptr(),
                 expected_lag.as_mut_ptr(),
             );
-            jit.kernels.route_bioavailability
+            jit.kernels
+                .route_bioavailability
                 .expect("jit route bioavailability")(
                 0.0,
                 states.as_ptr(),
