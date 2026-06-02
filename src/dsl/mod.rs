@@ -142,7 +142,9 @@ pub use jit::{
     compile_ode_model_to_jit, compile_sde_model_to_jit, CompiledJitModel, JitAnalyticalModel,
     JitCompileError, JitExecutionArtifact, JitOdeModel, JitSdeModel,
 };
-pub use model_info::{NativeCovariateInfo, NativeModelInfo, NativeOutputInfo, NativeRouteInfo};
+pub use model_info::{
+    NativeCovariateInfo, NativeModelInfo, NativeOutputInfo, NativeRouteInfo, NativeStateInfo,
+};
 #[cfg(any(
     feature = "dsl-jit",
     feature = "dsl-aot-load",

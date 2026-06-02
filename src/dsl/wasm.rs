@@ -708,7 +708,7 @@ mod tests {
     use super::*;
     use crate::dsl::{
         compile_execution_artifact, CompiledKernelAvailability, CompiledModelInfoEnvelope,
-        NativeModelInfo, NativeOutputInfo, NativeRouteInfo,
+        NativeModelInfo, NativeOutputInfo, NativeRouteInfo, NativeStateInfo,
     };
     use crate::test_fixtures::STRUCTURED_BLOCK_CORPUS;
     use approx::assert_relative_eq;
@@ -742,7 +742,7 @@ mod tests {
             parameters: vec!["ka".to_string()],
             derived: Vec::new(),
             covariates: Vec::new(),
-            states: vec![super::model_info::NativeStateInfo {
+            states: vec![NativeStateInfo {
                 name: "depot".to_string(),
                 offset: 0,
             }],
@@ -1047,7 +1047,7 @@ mod tests {
         let mut jit_dynamics = vec![0.0; info.state_len];
 
         unsafe {
-            jit.derive.expect("jit derive")(
+            jit.kernels.derive.expect("jit derive")(
                 0.0,
                 states.as_ptr(),
                 params.as_ptr(),
@@ -1056,7 +1056,7 @@ mod tests {
                 jit_derived.as_ptr(),
                 jit_derived.as_mut_ptr(),
             );
-            (jit.outputs)(
+            (jit.kernels.outputs)(
                 0.0,
                 states.as_ptr(),
                 params.as_ptr(),
@@ -1065,7 +1065,7 @@ mod tests {
                 jit_derived.as_ptr(),
                 jit_outputs.as_mut_ptr(),
             );
-            jit.dynamics.expect("jit dynamics")(
+            jit.kernels.dynamics.expect("jit dynamics")(
                 0.0,
                 states.as_ptr(),
                 params.as_ptr(),
@@ -1212,7 +1212,7 @@ mod tests {
         let mut derived = vec![0.0; info.derived_len];
 
         unsafe {
-            jit.derive.expect("jit derive")(
+            jit.kernels.derive.expect("jit derive")(
                 0.0,
                 expected.as_ptr(),
                 params.as_ptr(),
@@ -1221,7 +1221,7 @@ mod tests {
                 derived.as_ptr(),
                 derived.as_mut_ptr(),
             );
-            jit.dynamics.expect("jit dynamics")(
+            jit.kernels.dynamics.expect("jit dynamics")(
                 0.0,
                 expected.as_ptr(),
                 params.as_ptr(),
@@ -1267,7 +1267,7 @@ mod tests {
         let mut actual = vec![42.0; info.state_len];
 
         unsafe {
-            jit.diffusion.expect("jit diffusion")(
+            jit.kernels.diffusion.expect("jit diffusion")(
                 0.0,
                 states.as_ptr(),
                 params.as_ptr(),
@@ -1316,7 +1316,7 @@ mod tests {
         let mut actual_bioavailability = vec![f64::NAN; info.route_len];
 
         unsafe {
-            jit.route_lag.expect("jit route lag")(
+            jit.kernels.route_lag.expect("jit route lag")(
                 0.0,
                 states.as_ptr(),
                 params.as_ptr(),
@@ -1325,7 +1325,7 @@ mod tests {
                 derived.as_ptr(),
                 expected_lag.as_mut_ptr(),
             );
-            jit.route_bioavailability
+            jit.kernels.route_bioavailability
                 .expect("jit route bioavailability")(
                 0.0,
                 states.as_ptr(),
