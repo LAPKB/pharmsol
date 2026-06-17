@@ -1,12 +1,12 @@
 #[cfg(feature = "dsl-jit")]
 use approx::assert_relative_eq;
 #[cfg(feature = "dsl-jit")]
-use pharmsol::dsl::{self, RuntimeCompilationTarget, RuntimePredictions};
-#[cfg(feature = "dsl-jit")]
 use pharmsol::backends::RouteInputPolicy;
 use pharmsol::backends::{
     self, AnalyticalKernel, RouteKind as HandwrittenRouteKind, ValidatedModelMetadata,
 };
+#[cfg(feature = "dsl-jit")]
+use pharmsol::dsl::{self, RuntimeCompilationTarget, RuntimePredictions};
 use pharmsol::prelude::*;
 #[cfg(feature = "dsl-jit")]
 use pharmsol::Predictions;

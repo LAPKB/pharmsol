@@ -29,13 +29,13 @@ use crate::{
     data::error_model::AssayErrorModels,
     data::{Covariates, Infusion, InputLabel, OutputLabel},
     simulator::{
-        cache::{
-            BoundErrorModelCache, PredictionCache, SdeLikelihoodCache,
-            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE, DEFAULT_CACHE_SIZE,
-        },
         backends::{
             ode::{closure_helpers::PMProblem, ExplicitRkTableau, OdeSolver, SdirkTableau},
             sde::simulate_sde_event_with,
+        },
+        cache::{
+            BoundErrorModelCache, PredictionCache, SdeLikelihoodCache,
+            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE, DEFAULT_CACHE_SIZE,
         },
         likelihood::{Prediction, SubjectPredictions},
         Fa, Lag, M, T, V,
@@ -441,8 +441,7 @@ fn runtime_model_metadata(info: &NativeModelInfo) -> Result<ValidatedModelMetada
         .kind(info.kind)
         .parameters(info.parameters.iter().cloned())
         .covariates(covariates.into_iter().map(|covariate| {
-            let mut declaration =
-                crate::core::metadata::Covariate::new(covariate.name.clone());
+            let mut declaration = crate::core::metadata::Covariate::new(covariate.name.clone());
             if let Some(interpolation) = covariate.interpolation {
                 declaration = declaration.with_interpolation(interpolation);
             }
@@ -479,12 +478,8 @@ fn runtime_model_metadata(info: &NativeModelInfo) -> Result<ValidatedModelMetada
         let kind = route.kind.unwrap_or(RouteKind::Bolus);
 
         let mut declaration = match kind {
-            RouteKind::Bolus => {
-                crate::core::metadata::Route::bolus(route.name.clone())
-            }
-            RouteKind::Infusion => {
-                crate::core::metadata::Route::infusion(route.name.clone())
-            }
+            RouteKind::Bolus => crate::core::metadata::Route::bolus(route.name.clone()),
+            RouteKind::Infusion => crate::core::metadata::Route::infusion(route.name.clone()),
         }
         .to_state(destination);
 
@@ -1413,11 +1408,15 @@ fn runtime_ode_predictions(
     }
 }
 
-
 impl Solver for NativeOdeModel {
     type State = V;
 
-    fn initial_state(&self, _params: &[f64], _covariates: &Covariates, _occasion_index: usize) -> V {
+    fn initial_state(
+        &self,
+        _params: &[f64],
+        _covariates: &Covariates,
+        _occasion_index: usize,
+    ) -> V {
         V::zeros(self.shared.info.state_len, NalgebraContext)
     }
 
@@ -1427,36 +1426,64 @@ impl Solver for NativeOdeModel {
 }
 
 impl ModelInfo for NativeOdeModel {
-    fn nstates(&self) -> usize { self.shared.info.state_len }
-    fn ndrugs(&self) -> usize { self.shared.info.route_len }
-    fn nout(&self) -> usize { self.shared.info.output_len }
-    fn metadata(&self) -> Option<&ValidatedModelMetadata> { Some(self.shared.metadata()) }
-    fn lag(&self) -> &Lag { &(runtime_no_lag as Lag) }
-    fn fa(&self) -> &Fa { &(runtime_no_fa as Fa) }
+    fn nstates(&self) -> usize {
+        self.shared.info.state_len
+    }
+    fn ndrugs(&self) -> usize {
+        self.shared.info.route_len
+    }
+    fn nout(&self) -> usize {
+        self.shared.info.output_len
+    }
+    fn metadata(&self) -> Option<&ValidatedModelMetadata> {
+        Some(self.shared.metadata())
+    }
+    fn lag(&self) -> &Lag {
+        &(runtime_no_lag as Lag)
+    }
+    fn fa(&self) -> &Fa {
+        &(runtime_no_fa as Fa)
+    }
 }
 
 impl Caching for NativeOdeModel {
-    fn prediction_cache(&self) -> Option<&PredictionCache> { self.cache.as_ref() }
-    fn error_model_cache(&self) -> Option<&BoundErrorModelCache> { self.error_model_cache.as_ref() }
+    fn prediction_cache(&self) -> Option<&PredictionCache> {
+        self.cache.as_ref()
+    }
+    fn error_model_cache(&self) -> Option<&BoundErrorModelCache> {
+        self.error_model_cache.as_ref()
+    }
     fn with_cache_capacity(mut self, size: u64) -> Self {
         self.cache = Some(PredictionCache::new(size));
-        self.error_model_cache = Some(BoundErrorModelCache::new(DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE));
+        self.error_model_cache = Some(BoundErrorModelCache::new(
+            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
+        ));
         self
     }
-    fn without_cache(mut self) -> Self { self.cache = None; self.error_model_cache = None; self }
+    fn without_cache(mut self) -> Self {
+        self.cache = None;
+        self.error_model_cache = None;
+        self
+    }
     fn clear_cache(&self) {
-        if let Some(c) = &self.cache { c.invalidate_all(); }
-        if let Some(c) = &self.error_model_cache { c.invalidate_all(); }
+        if let Some(c) = &self.cache {
+            c.invalidate_all();
+        }
+        if let Some(c) = &self.error_model_cache {
+            c.invalidate_all();
+        }
     }
 }
 
 impl Simulate for NativeOdeModel {
     type Predictions = SubjectPredictions;
 
-    fn simulate_subject(&self, subject: &Subject, parameters: &[f64],
-                        error_models: Option<&AssayErrorModels>)
-        -> Result<(Self::Predictions, Option<f64>), PharmsolError>
-    {
+    fn simulate_subject(
+        &self,
+        subject: &Subject,
+        parameters: &[f64],
+        error_models: Option<&AssayErrorModels>,
+    ) -> Result<(Self::Predictions, Option<f64>), PharmsolError> {
         let bound_error_models = match error_models {
             Some(em) => Some(crate::core::simulate::bind_error_models_inner(self, em)?),
             None => None,
@@ -1469,15 +1496,20 @@ impl Simulate for NativeOdeModel {
         Ok((predictions, likelihood))
     }
 
-    fn log_likelihood(&self, subject: &Subject, params: &[f64],
-                      error_models: &AssayErrorModels) -> Result<f64, PharmsolError>
-    {
+    fn log_likelihood(
+        &self,
+        subject: &Subject,
+        params: &[f64],
+        error_models: &AssayErrorModels,
+    ) -> Result<f64, PharmsolError> {
         let bound = crate::core::simulate::bind_error_models_inner(self, error_models)?;
         let predictions = runtime_ode_predictions(self, subject, params)?;
         predictions.log_likelihood(&bound)
     }
 
-    fn kind() -> ModelKind { ModelKind::Ode }
+    fn kind() -> ModelKind {
+        ModelKind::Ode
+    }
 }
 
 impl NativeAnalyticalModel {
@@ -1679,43 +1711,75 @@ fn runtime_analytical_predictions(
     }
 }
 
-
 impl Solver for NativeAnalyticalModel {
     type State = V;
 
-    fn initial_state(&self, _params: &[f64], _covariates: &Covariates, _occasion_index: usize) -> V {
+    fn initial_state(
+        &self,
+        _params: &[f64],
+        _covariates: &Covariates,
+        _occasion_index: usize,
+    ) -> V {
         V::zeros(self.shared.info.state_len, NalgebraContext)
     }
 
-    fn is_batch(&self) -> bool { true }
+    fn is_batch(&self) -> bool {
+        true
+    }
 }
 
 impl ModelInfo for NativeAnalyticalModel {
-    fn nstates(&self) -> usize { self.shared.info.state_len }
-    fn ndrugs(&self) -> usize { self.shared.info.route_len }
-    fn nout(&self) -> usize { self.shared.info.output_len }
-    fn metadata(&self) -> Option<&ValidatedModelMetadata> { Some(self.shared.metadata()) }
-    fn lag(&self) -> &Lag { &(runtime_no_lag as Lag) }
-    fn fa(&self) -> &Fa { &(runtime_no_fa as Fa) }
+    fn nstates(&self) -> usize {
+        self.shared.info.state_len
+    }
+    fn ndrugs(&self) -> usize {
+        self.shared.info.route_len
+    }
+    fn nout(&self) -> usize {
+        self.shared.info.output_len
+    }
+    fn metadata(&self) -> Option<&ValidatedModelMetadata> {
+        Some(self.shared.metadata())
+    }
+    fn lag(&self) -> &Lag {
+        &(runtime_no_lag as Lag)
+    }
+    fn fa(&self) -> &Fa {
+        &(runtime_no_fa as Fa)
+    }
 }
 
 impl Caching for NativeAnalyticalModel {
-    fn prediction_cache(&self) -> Option<&PredictionCache> { self.cache.as_ref() }
-    fn error_model_cache(&self) -> Option<&BoundErrorModelCache> { None }
-    fn with_cache_capacity(mut self, size: u64) -> Self {
-        self.cache = Some(PredictionCache::new(size)); self
+    fn prediction_cache(&self) -> Option<&PredictionCache> {
+        self.cache.as_ref()
     }
-    fn without_cache(mut self) -> Self { self.cache = None; self }
-    fn clear_cache(&self) { if let Some(c) = &self.cache { c.invalidate_all(); } }
+    fn error_model_cache(&self) -> Option<&BoundErrorModelCache> {
+        None
+    }
+    fn with_cache_capacity(mut self, size: u64) -> Self {
+        self.cache = Some(PredictionCache::new(size));
+        self
+    }
+    fn without_cache(mut self) -> Self {
+        self.cache = None;
+        self
+    }
+    fn clear_cache(&self) {
+        if let Some(c) = &self.cache {
+            c.invalidate_all();
+        }
+    }
 }
 
 impl Simulate for NativeAnalyticalModel {
     type Predictions = SubjectPredictions;
 
-    fn simulate_subject(&self, subject: &Subject, parameters: &[f64],
-                        error_models: Option<&AssayErrorModels>)
-        -> Result<(Self::Predictions, Option<f64>), PharmsolError>
-    {
+    fn simulate_subject(
+        &self,
+        subject: &Subject,
+        parameters: &[f64],
+        error_models: Option<&AssayErrorModels>,
+    ) -> Result<(Self::Predictions, Option<f64>), PharmsolError> {
         let bound_em = match error_models {
             Some(em) => Some(crate::core::simulate::bind_error_models_inner(self, em)?),
             None => None,
@@ -1728,15 +1792,20 @@ impl Simulate for NativeAnalyticalModel {
         Ok((predictions, likelihood))
     }
 
-    fn log_likelihood(&self, subject: &Subject, params: &[f64],
-                      error_models: &AssayErrorModels) -> Result<f64, PharmsolError>
-    {
+    fn log_likelihood(
+        &self,
+        subject: &Subject,
+        params: &[f64],
+        error_models: &AssayErrorModels,
+    ) -> Result<f64, PharmsolError> {
         let bound = crate::core::simulate::bind_error_models_inner(self, error_models)?;
         let predictions = runtime_analytical_predictions(self, subject, params)?;
         predictions.log_likelihood(&bound)
     }
 
-    fn kind() -> ModelKind { ModelKind::Analytical }
+    fn kind() -> ModelKind {
+        ModelKind::Analytical
+    }
 }
 
 impl NativeSdeModel {
@@ -2059,44 +2128,78 @@ fn runtime_sde_log_likelihood(
     }
 }
 
-
 impl Solver for NativeSdeModel {
     type State = Vec<DVector<f64>>;
 
-    fn initial_state(&self, _params: &[f64], _covariates: &Covariates, _occasion_index: usize) -> Vec<DVector<f64>> {
+    fn initial_state(
+        &self,
+        _params: &[f64],
+        _covariates: &Covariates,
+        _occasion_index: usize,
+    ) -> Vec<DVector<f64>> {
         vec![DVector::zeros(self.shared.info.state_len); self.nparticles]
     }
 
-    fn nparticles(&self) -> usize { self.nparticles }
-    fn is_batch(&self) -> bool { true }
+    fn nparticles(&self) -> usize {
+        self.nparticles
+    }
+    fn is_batch(&self) -> bool {
+        true
+    }
 }
 
 impl ModelInfo for NativeSdeModel {
-    fn nstates(&self) -> usize { self.shared.info.state_len }
-    fn ndrugs(&self) -> usize { self.shared.info.route_len }
-    fn nout(&self) -> usize { self.shared.info.output_len }
-    fn metadata(&self) -> Option<&ValidatedModelMetadata> { Some(self.shared.metadata()) }
-    fn lag(&self) -> &Lag { &(runtime_no_lag as Lag) }
-    fn fa(&self) -> &Fa { &(runtime_no_fa as Fa) }
+    fn nstates(&self) -> usize {
+        self.shared.info.state_len
+    }
+    fn ndrugs(&self) -> usize {
+        self.shared.info.route_len
+    }
+    fn nout(&self) -> usize {
+        self.shared.info.output_len
+    }
+    fn metadata(&self) -> Option<&ValidatedModelMetadata> {
+        Some(self.shared.metadata())
+    }
+    fn lag(&self) -> &Lag {
+        &(runtime_no_lag as Lag)
+    }
+    fn fa(&self) -> &Fa {
+        &(runtime_no_fa as Fa)
+    }
 }
 
 impl Caching for NativeSdeModel {
-    fn prediction_cache(&self) -> Option<&PredictionCache> { None }
-    fn error_model_cache(&self) -> Option<&BoundErrorModelCache> { None }
-    fn with_cache_capacity(mut self, size: u64) -> Self {
-        self.cache = Some(SdeLikelihoodCache::new(size)); self
+    fn prediction_cache(&self) -> Option<&PredictionCache> {
+        None
     }
-    fn without_cache(mut self) -> Self { self.cache = None; self }
-    fn clear_cache(&self) { if let Some(c) = &self.cache { c.invalidate_all(); } }
+    fn error_model_cache(&self) -> Option<&BoundErrorModelCache> {
+        None
+    }
+    fn with_cache_capacity(mut self, size: u64) -> Self {
+        self.cache = Some(SdeLikelihoodCache::new(size));
+        self
+    }
+    fn without_cache(mut self) -> Self {
+        self.cache = None;
+        self
+    }
+    fn clear_cache(&self) {
+        if let Some(c) = &self.cache {
+            c.invalidate_all();
+        }
+    }
 }
 
 impl Simulate for NativeSdeModel {
     type Predictions = Array2<Prediction>;
 
-    fn simulate_subject(&self, subject: &Subject, parameters: &[f64],
-                        error_models: Option<&AssayErrorModels>)
-        -> Result<(Self::Predictions, Option<f64>), PharmsolError>
-    {
+    fn simulate_subject(
+        &self,
+        subject: &Subject,
+        parameters: &[f64],
+        error_models: Option<&AssayErrorModels>,
+    ) -> Result<(Self::Predictions, Option<f64>), PharmsolError> {
         let bound_em = match error_models {
             Some(em) => Some(crate::core::simulate::bind_error_models_inner(self, em)?),
             None => None,
@@ -2109,14 +2212,19 @@ impl Simulate for NativeSdeModel {
         Ok((predictions, likelihood))
     }
 
-    fn log_likelihood(&self, subject: &Subject, params: &[f64],
-                      error_models: &AssayErrorModels) -> Result<f64, PharmsolError>
-    {
+    fn log_likelihood(
+        &self,
+        subject: &Subject,
+        params: &[f64],
+        error_models: &AssayErrorModels,
+    ) -> Result<f64, PharmsolError> {
         let bound = crate::core::simulate::bind_error_models_inner(self, error_models)?;
         runtime_sde_log_likelihood(self, subject, params, &bound)
     }
 
-    fn kind() -> ModelKind { ModelKind::Sde }
+    fn kind() -> ModelKind {
+        ModelKind::Sde
+    }
 }
 
 fn active_route_inputs(infusions: &[Infusion], time: f64, route_len: usize) -> Vec<f64> {

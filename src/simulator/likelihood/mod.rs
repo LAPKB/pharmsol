@@ -140,13 +140,10 @@ pub fn log_likelihood_batch(
             Err(_) => return f64::NEG_INFINITY,
         };
 
-        let obs_pred_pairs = predictions
-            .predictions()
-            .iter()
-            .filter_map(|pred| {
-                pred.observation()
-                    .map(|obs| (pred.outeq(), obs, pred.prediction()))
-            });
+        let obs_pred_pairs = predictions.predictions().iter().filter_map(|pred| {
+            pred.observation()
+                .map(|obs| (pred.outeq(), obs, pred.prediction()))
+        });
 
         residual_error_models.total_log_likelihood(obs_pred_pairs)
     };
@@ -216,13 +213,10 @@ pub fn log_likelihood_subject(
     };
 
     // Extract (outeq, observation, prediction) tuples and compute log-likelihood
-    let obs_pred_pairs = predictions
-        .predictions()
-        .iter()
-        .filter_map(|pred| {
-            pred.observation()
-                .map(|obs| (pred.outeq(), obs, pred.prediction()))
-        });
+    let obs_pred_pairs = predictions.predictions().iter().filter_map(|pred| {
+        pred.observation()
+            .map(|obs| (pred.outeq(), obs, pred.prediction()))
+    });
 
     residual_error_models.total_log_likelihood(obs_pred_pairs)
 }

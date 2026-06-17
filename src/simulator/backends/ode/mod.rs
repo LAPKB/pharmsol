@@ -19,11 +19,9 @@ use crate::{
     Event, PharmsolError, Subject,
 };
 
-use crate::simulator::backends::parameters_hash;
-use crate::simulator::cache::{
-    BoundErrorModelCache, PredictionCache, DEFAULT_CACHE_SIZE,
-};
 use crate::core::Predictions;
+use crate::simulator::backends::parameters_hash;
+use crate::simulator::cache::{BoundErrorModelCache, PredictionCache, DEFAULT_CACHE_SIZE};
 use closure::PMProblem;
 use diffsol::{
     error::OdeSolverError, ode_solver::method::OdeSolverMethod, NalgebraContext, OdeBuilder,
@@ -155,7 +153,9 @@ impl ODE {
 
     /// Attach validated handwritten-model metadata to this ODE.
     pub fn with_metadata(mut self, metadata: ModelMetadata) -> Result<Self, OdeMetadataError> {
-        let validated = metadata.validate_for(ModelKind::Ode).map_err(OdeMetadataError::Validation)?;
+        let validated = metadata
+            .validate_for(ModelKind::Ode)
+            .map_err(OdeMetadataError::Validation)?;
         validate_metadata_dimensions(&validated, &self.core.dims())?;
         self.core.set_metadata(validated);
         Ok(self)
@@ -203,11 +203,12 @@ impl ODE {
 
             match event {
                 Event::Bolus(bolus) => {
-                    let input = bolus.input_index().ok_or_else(|| {
-                        PharmsolError::UnknownInputLabel {
-                            label: bolus.input().to_string(),
-                        }
-                    })?;
+                    let input =
+                        bolus
+                            .input_index()
+                            .ok_or_else(|| PharmsolError::UnknownInputLabel {
+                                label: bolus.input().to_string(),
+                            })?;
                     if input >= bolus_v.len() {
                         return Err(PharmsolError::InputOutOfRange {
                             input,
@@ -221,12 +222,22 @@ impl ODE {
                     state_without_bolus.fill(0.0);
 
                     (self.diffeq)(
-                        solver.state().y, parameters_v, event.time(),
-                        state_without_bolus, zero_bolus, zero_rateiv, covariates,
+                        solver.state().y,
+                        parameters_v,
+                        event.time(),
+                        state_without_bolus,
+                        zero_bolus,
+                        zero_rateiv,
+                        covariates,
                     );
                     (self.diffeq)(
-                        solver.state().y, parameters_v, event.time(),
-                        state_with_bolus, bolus_v, zero_rateiv, covariates,
+                        solver.state().y,
+                        parameters_v,
+                        event.time(),
+                        state_with_bolus,
+                        bolus_v,
+                        zero_rateiv,
+                        covariates,
                     );
                     state_with_bolus.axpy(-1.0, state_without_bolus, 1.0);
                     solver.state_mut().y.axpy(1.0, state_with_bolus, 1.0);
@@ -235,7 +246,11 @@ impl ODE {
                 Event::Observation(observation) => {
                     y_out.fill(0.0);
                     (self.out)(
-                        solver.state().y, parameters_v, observation.time(), covariates, y_out,
+                        solver.state().y,
+                        parameters_v,
+                        observation.time(),
+                        covariates,
+                        y_out,
                     );
                     let outeq = observation.outeq_index().ok_or_else(|| {
                         PharmsolError::UnknownOutputLabel {
@@ -365,7 +380,10 @@ fn _simulate_subject_dense(
     error_models: Option<&AssayErrorModels>,
 ) -> Result<(SubjectPredictions, Option<f64>), PharmsolError> {
     let bound_error_models = match error_models {
-        Some(error_models) => Some(crate::core::simulate::bind_error_models_inner(ode, error_models)?),
+        Some(error_models) => Some(crate::core::simulate::bind_error_models_inner(
+            ode,
+            error_models,
+        )?),
         None => None,
     };
     let bound_error_models = bound_error_models.as_deref();
@@ -620,7 +638,8 @@ impl crate::core::Simulate for ODE {
         params: &[f64],
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
-        let bound_error_models = crate::core::simulate::bind_error_models_inner(self, error_models)?;
+        let bound_error_models =
+            crate::core::simulate::bind_error_models_inner(self, error_models)?;
         let ypred = _subject_predictions(self, subject, params)?;
         ypred.log_likelihood(&bound_error_models)
     }

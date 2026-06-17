@@ -79,8 +79,8 @@ pub fn pm_three_compartments_cl_with_absorption(
 #[cfg(test)]
 mod tests {
     use super::super::tests::SubjectInfo;
-    use crate::core::Simulate;
     use super::{three_compartments_cl, three_compartments_cl_with_absorption};
+    use crate::core::Simulate;
     use crate::*;
     use approx::assert_relative_eq;
 

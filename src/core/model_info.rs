@@ -1,7 +1,7 @@
 use pharmsol_dsl::{NUMERIC_OUTPUT_PREFIX, NUMERIC_ROUTE_PREFIX};
 
-use crate::data::{Covariates, InputLabel, OutputLabel};
 use crate::core::metadata::RouteKind;
+use crate::data::{Covariates, InputLabel, OutputLabel};
 use crate::simulator::{Fa, Lag};
 use crate::{Event, Occasion, PharmsolError, ValidatedModelMetadata};
 
@@ -109,8 +109,7 @@ pub trait ModelInfo {
                     bolus.set_input(input);
                 }
                 Event::Infusion(infusion) => {
-                    let input =
-                        self.resolve_input(infusion.input(), RouteKind::Infusion)?;
+                    let input = self.resolve_input(infusion.input(), RouteKind::Infusion)?;
                     infusion.set_input(input);
                 }
                 Event::Observation(observation) => {

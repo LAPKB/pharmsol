@@ -85,11 +85,7 @@ pub fn log_likelihood_matrix(
             let subject = &subject_slice[i];
 
             for (element, support_point) in row.iter_mut().zip(support_point_rows.iter()) {
-                *element = model.log_likelihood(
-                    subject,
-                    support_point.as_slice(),
-                    error_models,
-                )?;
+                *element = model.log_likelihood(subject, support_point.as_slice(), error_models)?;
                 if let Some(ref tracker) = progress_tracker {
                     tracker.inc();
                 }

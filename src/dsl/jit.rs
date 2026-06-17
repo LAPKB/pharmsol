@@ -1332,10 +1332,10 @@ pub fn compile_sde_model_to_jit(model: &ExecutionModel) -> Result<JitSdeModel, J
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::simulator::backends::ode::{ExplicitRkTableau, OdeSolver};
-    use crate::simulator::backends::analytical::one_compartment_with_absorption;
+    use crate::core::Predictions as PredictionTrait;
     use crate::core::Simulate;
-use crate::core::Predictions as PredictionTrait;
+    use crate::simulator::backends::analytical::one_compartment_with_absorption;
+    use crate::simulator::backends::ode::{ExplicitRkTableau, OdeSolver};
     use crate::test_fixtures::STRUCTURED_BLOCK_CORPUS;
     use crate::{backends, Parameters, Subject, SubjectBuilderExt, ODE, SDE};
     use approx::assert_relative_eq;

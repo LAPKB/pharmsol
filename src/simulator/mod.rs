@@ -1,5 +1,5 @@
-pub mod cache;
 pub mod backends;
+pub mod cache;
 pub(crate) mod likelihood;
 use diffsol::{NalgebraMat, NalgebraVec};
 

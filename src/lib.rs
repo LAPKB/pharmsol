@@ -110,11 +110,11 @@
 #[cfg(feature = "dsl-aot")]
 mod build_support;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+pub mod core;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub mod data;
 #[cfg(feature = "dsl-core")]
 pub mod dsl;
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-pub mod core;
 pub mod error;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub mod nca;
@@ -135,6 +135,16 @@ mod test_fixtures;
 
 //extension traits
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+pub use crate::core::metadata;
+pub use crate::core::metadata::{
+    ModelMetadata, ModelMetadataError, NameDomain, RouteInputPolicy, RouteKind,
+    ValidatedModelMetadata,
+};
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+pub use crate::core::{Caching, ModelInfo, Simulate, Solver};
+pub use crate::core::{Predictions, State};
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use crate::data::builder::SubjectBuilderExt;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use crate::data::Interpolation::*;
@@ -147,21 +157,11 @@ pub use crate::optimize::parameters::ParameterOptimizer;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use crate::simulator::backends::analytical::*;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-pub use crate::core::{Caching, ModelInfo, Simulate, Solver};
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-pub use crate::core::metadata;
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use crate::simulator::backends::{
     self,
     ode::{ExplicitRkTableau, OdeSolver, SdirkTableau},
     Analytical, AnalyticalKernel, ModelKind, ODE, SDE,
 };
-pub use crate::core::metadata::{
-    ModelMetadata, ModelMetadataError, NameDomain, RouteInputPolicy, RouteKind,
-    ValidatedModelMetadata,
-};
-pub use crate::core::{Predictions, State};
 pub use error::PharmsolError;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use nalgebra::dmatrix;
@@ -254,11 +254,11 @@ pub mod prelude {
 
     // Direct simulator re-exports for convenience
     pub use crate::simulator::{
-        cache::{PredictionCache, SdeLikelihoodCache, DEFAULT_CACHE_SIZE},
         backends::{
             self,
             ode::{ExplicitRkTableau, OdeSolver, SdirkTableau},
         },
+        cache::{PredictionCache, SdeLikelihoodCache, DEFAULT_CACHE_SIZE},
         likelihood::{Prediction, SubjectPredictions},
     };
 

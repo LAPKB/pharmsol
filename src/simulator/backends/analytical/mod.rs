@@ -5,8 +5,8 @@ pub mod three_compartment_models;
 pub mod two_compartment_cl_models;
 pub mod two_compartment_models;
 
-use diffsol::{NalgebraContext, Vector, VectorHost};
 use crate::core::ModelInfo;
+use diffsol::{NalgebraContext, Vector, VectorHost};
 pub use one_compartment_cl_models::*;
 pub use one_compartment_models::*;
 use pharmsol_dsl::ModelKind;
@@ -20,9 +20,7 @@ use crate::simulator::backends::parameters_hash;
 
 use crate::core::metadata::{ModelMetadata, ModelMetadataError, ValidatedModelMetadata};
 use crate::data::error_model::AssayErrorModels;
-use crate::simulator::cache::{
-    BoundErrorModelCache, PredictionCache, DEFAULT_CACHE_SIZE,
-};
+use crate::simulator::cache::{BoundErrorModelCache, PredictionCache, DEFAULT_CACHE_SIZE};
 use crate::simulator::likelihood::Prediction;
 use crate::PharmsolError;
 use crate::{data::Covariates, simulator::*, Observation, Subject};
@@ -117,7 +115,9 @@ impl Analytical {
         mut self,
         metadata: ModelMetadata,
     ) -> Result<Self, AnalyticalMetadataError> {
-        let validated = metadata.validate_for(ModelKind::Analytical).map_err(AnalyticalMetadataError::Validation)?;
+        let validated = metadata
+            .validate_for(ModelKind::Analytical)
+            .map_err(AnalyticalMetadataError::Validation)?;
         validate_metadata_dimensions(&validated, &self.core.dims())?;
         self.core.set_metadata(validated);
         Ok(self)
@@ -680,11 +680,11 @@ impl crate::core::Solver for Analytical {
                 let s = inf.time();
                 let e = s + inf.duration();
                 if current_t >= s && next_t <= e {
-                    let input = inf.input_index().ok_or_else(|| {
-                        PharmsolError::UnknownInputLabel {
-                            label: inf.input().to_string(),
-                        }
-                    })?;
+                    let input =
+                        inf.input_index()
+                            .ok_or_else(|| PharmsolError::UnknownInputLabel {
+                                label: inf.input().to_string(),
+                            })?;
                     if input >= self.ndrugs() {
                         return Err(PharmsolError::InputOutOfRange {
                             input,
@@ -720,11 +720,11 @@ impl crate::core::Solver for Analytical {
             covariates,
             &mut y,
         );
-        let outeq = observation.outeq_index().ok_or_else(|| {
-            PharmsolError::UnknownOutputLabel {
+        let outeq = observation
+            .outeq_index()
+            .ok_or_else(|| PharmsolError::UnknownOutputLabel {
                 label: observation.outeq().to_string(),
-            }
-        })?;
+            })?;
         let pred = observation.to_prediction(y[outeq], x.as_slice().to_vec());
         let lik = error_models
             .map(|em| pred.log_likelihood(em).map(f64::exp))
@@ -823,7 +823,10 @@ impl crate::core::Simulate for Analytical {
         }
 
         let result = crate::core::standard_event_loop::<Self, SubjectPredictions>(
-            self, subject, params, error_models,
+            self,
+            subject,
+            params,
+            error_models,
         )?;
 
         if error_models.is_none() {

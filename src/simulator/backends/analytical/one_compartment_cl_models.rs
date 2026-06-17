@@ -57,8 +57,8 @@ pub fn pm_one_compartment_cl_with_absorption(
 #[cfg(test)]
 mod tests {
     use super::super::tests::SubjectInfo;
-    use crate::core::Simulate;
     use super::{one_compartment_cl, one_compartment_cl_with_absorption};
+    use crate::core::Simulate;
     use crate::*;
     use approx::assert_relative_eq;
 

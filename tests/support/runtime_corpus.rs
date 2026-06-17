@@ -13,7 +13,7 @@ use diffsol::Vector;
 use ndarray::Array2;
 use pharmsol::dsl::{self, CompiledRuntimeModel, RuntimeCompilationTarget, RuntimePredictions};
 use pharmsol::prelude::{
-    one_compartment_with_absorption, Simulate, Prediction, SubjectPredictions,
+    one_compartment_with_absorption, Prediction, Simulate, SubjectPredictions,
 };
 use pharmsol::{
     backends, fa, fetch_cov, fetch_params, lag, Parameters, Subject, SubjectBuilderExt, SDE,

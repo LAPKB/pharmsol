@@ -1,8 +1,8 @@
 use crate::core::State;
+use crate::data::error_model::AssayErrorModels;
 use crate::data::{Covariates, Infusion};
 use crate::simulator::likelihood::Prediction;
 use crate::{Observation, PharmsolError};
-use crate::data::error_model::AssayErrorModels;
 
 /// How to advance a model's state through time.
 ///

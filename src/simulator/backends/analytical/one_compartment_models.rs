@@ -50,8 +50,8 @@ pub fn pm_one_compartment_with_absorption(x: &V, p: &V, t: T, rateiv: &V, cov: &
 #[cfg(test)]
 mod tests {
     use super::super::tests::SubjectInfo;
-    use crate::core::Simulate;
     use super::{one_compartment, one_compartment_with_absorption};
+    use crate::core::Simulate;
     use crate::*;
     use approx::assert_relative_eq;
 
