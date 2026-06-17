@@ -6,6 +6,7 @@ pub mod two_compartment_cl_models;
 pub mod two_compartment_models;
 
 use diffsol::{NalgebraContext, Vector, VectorHost};
+use crate::core::ModelInfo;
 pub use one_compartment_cl_models::*;
 pub use one_compartment_models::*;
 use pharmsol_dsl::ModelKind;
@@ -15,18 +16,16 @@ pub use three_compartment_models::*;
 pub use two_compartment_cl_models::*;
 pub use two_compartment_models::*;
 
-use super::parameters_hash;
+use crate::simulator::backends::parameters_hash;
 
-use super::{
-    EqnKind, Equation, EquationPriv, EquationTypes, ModelMetadata, ModelMetadataError,
-    ValidatedModelMetadata,
-};
+use crate::core::metadata::{ModelMetadata, ModelMetadataError, ValidatedModelMetadata};
 use crate::data::error_model::AssayErrorModels;
 use crate::simulator::cache::{
-    BoundErrorModelCache, PredictionCache, DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE, DEFAULT_CACHE_SIZE,
+    BoundErrorModelCache, PredictionCache, DEFAULT_CACHE_SIZE,
 };
+use crate::simulator::likelihood::Prediction;
 use crate::PharmsolError;
-use crate::{data::Covariates, simulator::*, Observation, Parameters, Subject};
+use crate::{data::Covariates, simulator::*, Observation, Subject};
 
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
 pub enum AnalyticalMetadataError {
@@ -46,16 +45,13 @@ pub enum AnalyticalMetadataError {
 /// equations rather than numerical integration.
 #[derive(Clone, Debug)]
 pub struct Analytical {
+    core: crate::core::ModelCore<PredictionCache>,
     eq: AnalyticalEq,
     seq_eq: SecEq,
     lag: Lag,
     fa: Fa,
     init: Init,
     out: Out,
-    neqs: Neqs,
-    metadata: Option<ValidatedModelMetadata>,
-    cache: Option<PredictionCache>,
-    error_model_cache: Option<BoundErrorModelCache>,
 }
 
 #[inline(always)]
@@ -90,89 +86,57 @@ pub(crate) fn wrap_pmetrics_analytical(
 }
 
 impl Analytical {
-    /// Create a new Analytical equation model with default Neqs (all sizes = 5).
-    ///
-    /// Use builder methods to configure dimensions:
-    /// ```ignore
-    /// Analytical::new(eq, seq_eq, lag, fa, init, out)
-    ///     .with_nstates(2)
-    ///     .with_ndrugs(1)
-    ///     .with_nout(1)
-    /// ```
     pub fn new(eq: AnalyticalEq, seq_eq: SecEq, lag: Lag, fa: Fa, init: Init, out: Out) -> Self {
         Self {
+            core: crate::core::ModelCore::new(Some(PredictionCache::new(DEFAULT_CACHE_SIZE))),
             eq,
             seq_eq,
             lag,
             fa,
             init,
             out,
-            neqs: Neqs::default(),
-            metadata: None,
-            cache: Some(PredictionCache::new(DEFAULT_CACHE_SIZE)),
-            error_model_cache: Some(BoundErrorModelCache::new(
-                DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
-            )),
         }
     }
 
-    /// Set the number of state variables.
     pub fn with_nstates(mut self, nstates: usize) -> Self {
-        self.neqs.nstates = nstates;
-        self.invalidate_metadata();
+        self.core = self.core.with_nstates(nstates);
         self
     }
 
-    /// Set the number of drug inputs (size of bolus[] and rateiv[]).
     pub fn with_ndrugs(mut self, ndrugs: usize) -> Self {
-        self.neqs.ndrugs = ndrugs;
-        self.invalidate_metadata();
+        self.core = self.core.with_ndrugs(ndrugs);
         self
     }
 
-    /// Set the number of output equations.
     pub fn with_nout(mut self, nout: usize) -> Self {
-        self.neqs.nout = nout;
-        self.invalidate_metadata();
+        self.core = self.core.with_nout(nout);
         self
     }
 
-    /// Attach validated handwritten-model metadata to this analytical model.
     pub fn with_metadata(
         mut self,
         metadata: ModelMetadata,
     ) -> Result<Self, AnalyticalMetadataError> {
-        let metadata = metadata.validate_for(ModelKind::Analytical)?;
-        validate_metadata_dimensions(&metadata, &self.neqs)?;
-        self.metadata = Some(metadata);
-        self.error_model_cache = Some(BoundErrorModelCache::new(
-            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
-        ));
+        let validated = metadata.validate_for(ModelKind::Analytical).map_err(AnalyticalMetadataError::Validation)?;
+        validate_metadata_dimensions(&validated, &self.core.dims())?;
+        self.core.set_metadata(validated);
         Ok(self)
     }
 
-    /// Access the validated metadata attached to this analytical model, if any.
     pub fn metadata(&self) -> Option<&ValidatedModelMetadata> {
-        self.metadata.as_ref()
+        self.core.metadata()
     }
 
     pub fn parameter_index(&self, name: &str) -> Option<usize> {
-        self.metadata()?.parameter_index(name)
+        self.core.metadata()?.parameter_index(name)
     }
 
     pub fn covariate_index(&self, name: &str) -> Option<usize> {
-        self.metadata()?.covariate_index(name)
+        self.core.metadata()?.covariate_index(name)
     }
 
     pub fn state_index(&self, name: &str) -> Option<usize> {
-        self.metadata()?.state_index(name)
-    }
-
-    fn invalidate_metadata(&mut self) {
-        self.metadata = None;
-        self.error_model_cache = Some(BoundErrorModelCache::new(
-            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
-        ));
+        self.core.metadata()?.state_index(name)
     }
 }
 
@@ -207,225 +171,11 @@ fn validate_metadata_dimensions(
     Ok(())
 }
 
-impl super::Cache for Analytical {
-    fn with_cache_capacity(mut self, size: u64) -> Self {
-        self.cache = Some(PredictionCache::new(size));
-        self.error_model_cache = Some(BoundErrorModelCache::new(
-            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
-        ));
-        self
-    }
-
-    fn enable_cache(mut self) -> Self {
-        self.cache = Some(PredictionCache::new(DEFAULT_CACHE_SIZE));
-        self.error_model_cache = Some(BoundErrorModelCache::new(
-            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
-        ));
-        self
-    }
-
-    fn clear_cache(&self) {
-        if let Some(cache) = &self.cache {
-            cache.invalidate_all();
-        }
-        if let Some(cache) = &self.error_model_cache {
-            cache.invalidate_all();
-        }
-    }
-
-    fn disable_cache(mut self) -> Self {
-        self.cache = None;
-        self.error_model_cache = None;
-        self
-    }
-}
-
-impl EquationTypes for Analytical {
-    type S = V;
-    type P = SubjectPredictions;
-}
-
-impl EquationPriv for Analytical {
-    // #[inline(always)]
-    // fn get_init(&self) -> &Init {
-    //     &self.init
-    // }
-
-    // #[inline(always)]
-    // fn get_out(&self) -> &Out {
-    //     &self.out
-    // }
-
-    // #[inline(always)]
-    // fn get_lag(&self, parameters: &[f64]) -> Option<HashMap<usize, f64>> {
-    //     Some((self.lag)(&V::from_vec(parameters.to_owned())))
-    // }
-
-    // #[inline(always)]
-    // fn get_fa(&self, parameters: &[f64]) -> Option<HashMap<usize, f64>> {
-    //     Some((self.fa)(&V::from_vec(parameters.to_owned())))
-    // }
-
-    #[inline(always)]
-    fn lag(&self) -> &Lag {
-        &self.lag
-    }
-
-    #[inline(always)]
-    fn fa(&self) -> &Fa {
-        &self.fa
-    }
-
-    #[inline(always)]
-    fn get_nstates(&self) -> usize {
-        self.neqs.nstates
-    }
-
-    #[inline(always)]
-    fn get_ndrugs(&self) -> usize {
-        self.neqs.ndrugs
-    }
-
-    #[inline(always)]
-    fn get_nouteqs(&self) -> usize {
-        self.neqs.nout
-    }
-
-    fn metadata(&self) -> Option<&ValidatedModelMetadata> {
-        self.metadata.as_ref()
-    }
-
-    #[inline(always)]
-    fn solve(
-        &self,
-        x: &mut Self::S,
-        parameters: &[f64],
-        covariates: &Covariates,
-        infusions: &[Infusion],
-        ti: f64,
-        tf: f64,
-    ) -> Result<(), PharmsolError> {
-        if ti == tf {
-            return Ok(());
-        }
-
-        // 1) Build and sort event times
-        let mut ts = Vec::new();
-        ts.push(ti);
-        ts.push(tf);
-        for inf in infusions {
-            let t0 = inf.time();
-            let t1 = t0 + inf.duration();
-            if t0 > ti && t0 < tf {
-                ts.push(t0)
-            }
-            if t1 > ti && t1 < tf {
-                ts.push(t1)
-            }
-        }
-        ts.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        ts.dedup_by(|a, b| (*a - *b).abs() < 1e-12);
-
-        // 2) March over each sub-interval
-        let mut current_t = ts[0];
-        let mut parameters_v = V::from_vec(parameters.to_vec(), NalgebraContext);
-        let mut rateiv = V::zeros(self.get_ndrugs(), NalgebraContext);
-
-        for &next_t in &ts[1..] {
-            // prepare parameters and infusion rate for [current_t .. next_t]
-            rateiv.fill(0.0);
-            for inf in infusions {
-                let s = inf.time();
-                let e = s + inf.duration();
-                if current_t >= s && next_t <= e {
-                    let input =
-                        inf.input_index()
-                            .ok_or_else(|| PharmsolError::UnknownInputLabel {
-                                label: inf.input().to_string(),
-                            })?;
-
-                    if input >= self.get_ndrugs() {
-                        return Err(PharmsolError::InputOutOfRange {
-                            input,
-                            ndrugs: self.get_ndrugs(),
-                        });
-                    }
-                    rateiv[input] += inf.amount() / inf.duration();
-                }
-            }
-
-            // advance the parameters to next_t
-            (self.seq_eq)(&mut parameters_v, next_t, covariates);
-
-            // advance state by dt
-            let dt = next_t - current_t;
-            *x = (self.eq)(x, &parameters_v, dt, &rateiv, covariates);
-
-            current_t = next_t;
-        }
-
-        Ok(())
-    }
-
-    #[inline(always)]
-    fn process_observation(
-        &self,
-        parameters: &[f64],
-        observation: &Observation,
-        error_models: Option<&AssayErrorModels>,
-        _time: f64,
-        covariates: &Covariates,
-        x: &mut Self::S,
-        likelihood: &mut Vec<f64>,
-        output: &mut Self::P,
-    ) -> Result<(), PharmsolError> {
-        let mut y = V::zeros(self.get_nouteqs(), NalgebraContext);
-        let out = &self.out;
-        (out)(
-            x,
-            &V::from_vec(parameters.to_vec(), NalgebraContext),
-            observation.time(),
-            covariates,
-            &mut y,
-        );
-        let outeq = observation
-            .outeq_index()
-            .ok_or_else(|| PharmsolError::UnknownOutputLabel {
-                label: observation.outeq().to_string(),
-            })?;
-        let pred = y[outeq];
-        let pred = observation.to_prediction(pred, x.as_slice().to_vec());
-        if let Some(error_models) = error_models {
-            likelihood.push(pred.log_likelihood(error_models)?.exp());
-        }
-        output.add_prediction(pred);
-        Ok(())
-    }
-    #[inline(always)]
-    fn initial_state(
-        &self,
-        parameters: &[f64],
-        covariates: &Covariates,
-        occasion_index: usize,
-    ) -> V {
-        let init = &self.init;
-        let mut x = V::zeros(self.get_nstates(), NalgebraContext);
-        if occasion_index == 0 {
-            (init)(
-                &V::from_vec(parameters.to_vec(), NalgebraContext),
-                0.0,
-                covariates,
-                &mut x,
-            );
-        }
-        x
-    }
-}
-
 #[allow(clippy::items_after_test_module)]
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::core::Simulate;
     use crate::SubjectBuilderExt;
     use approx::assert_relative_eq;
     use diffsol::Vector;
@@ -577,7 +327,7 @@ pub(crate) mod tests {
     fn handwritten_analytical_metadata_exposes_name_lookup() {
         let analytical = simple_analytical()
             .with_metadata(
-                super::super::metadata::new("one_cmt_analytical")
+                crate::core::metadata::new("one_cmt_analytical")
                     .parameters(["ke", "v"])
                     .covariates([super::super::Covariate::continuous("wt")])
                     .states(["central"])
@@ -618,7 +368,7 @@ pub(crate) mod tests {
             .with_ndrugs(1)
             .with_nout(1)
             .with_metadata(
-                super::super::metadata::new("numeric_alias_analytical")
+                crate::core::metadata::new("numeric_alias_analytical")
                     .states(["central"])
                     .outputs(["outeq_1"])
                     .route(super::super::Route::infusion("input_1").to_state("central")),
@@ -660,7 +410,7 @@ pub(crate) mod tests {
     fn handwritten_analytical_rejects_dimension_mismatches() {
         let error = simple_analytical()
             .with_metadata(
-                super::super::metadata::new("wrong_outputs")
+                crate::core::metadata::new("wrong_outputs")
                     .parameters(["ke"])
                     .states(["central"])
                     .outputs(["cp", "auc"])
@@ -681,7 +431,7 @@ pub(crate) mod tests {
     fn handwritten_analytical_rejects_particles_metadata() {
         let error = simple_analytical()
             .with_metadata(
-                super::super::metadata::new("invalid_particles")
+                crate::core::metadata::new("invalid_particles")
                     .parameters(["ke"])
                     .states(["central"])
                     .outputs(["cp"])
@@ -716,7 +466,7 @@ pub(crate) mod tests {
                 .with_ndrugs(1)
                 .with_nout(1)
                 .with_metadata(
-                    super::super::metadata::new("one_cmt_abs")
+                    crate::core::metadata::new("one_cmt_abs")
                         .parameters(["ka", "ke", "v"])
                         .states(["gut", "central"])
                         .outputs(["cp"])
@@ -750,7 +500,7 @@ pub(crate) mod tests {
     fn changing_dimensions_after_metadata_clears_analytical_metadata() {
         let analytical = simple_analytical()
             .with_metadata(
-                super::super::metadata::new("one_cmt_analytical")
+                crate::core::metadata::new("one_cmt_analytical")
                     .states(["central"])
                     .outputs(["cp"])
                     .route(super::super::Route::infusion("iv").to_state("central")),
@@ -885,67 +635,208 @@ pub(crate) mod tests {
         );
     }
 }
-impl Equation for Analytical {
-    fn bound_error_model_cache(&self) -> Option<&BoundErrorModelCache> {
-        self.error_model_cache.as_ref()
-    }
 
-    fn estimate_likelihood(
+// ── New core traits ─────────────────────────────────────────────────────────
+
+impl crate::core::Solver for Analytical {
+    type State = V;
+
+    fn solve(
         &self,
-        subject: &Subject,
-        parameters: &Parameters,
-        error_models: &AssayErrorModels,
-    ) -> Result<f64, PharmsolError> {
-        _estimate_likelihood(self, subject, parameters.as_slice(), error_models)
-    }
-
-    fn estimate_log_likelihood(
-        &self,
-        subject: &Subject,
-        parameters: &Parameters,
-        error_models: &AssayErrorModels,
-    ) -> Result<f64, PharmsolError> {
-        let bound_error_models = self.bind_error_models(error_models)?;
-        let ypred = _subject_predictions(self, subject, parameters.as_slice())?;
-        ypred.log_likelihood(&bound_error_models)
-    }
-
-    fn kind() -> EqnKind {
-        EqnKind::Analytical
-    }
-}
-
-#[inline(always)]
-fn _subject_predictions(
-    analytical: &Analytical,
-    subject: &Subject,
-    parameters: &[f64],
-) -> Result<SubjectPredictions, PharmsolError> {
-    if let Some(cache) = &analytical.cache {
-        let key = (subject.hash(), parameters_hash(parameters));
-        if let Some(cached) = cache.get(&key) {
-            return Ok(cached);
+        x: &mut Self::State,
+        parameters: &[f64],
+        covariates: &Covariates,
+        infusions: &[Infusion],
+        ti: f64,
+        tf: f64,
+    ) -> Result<(), PharmsolError> {
+        if ti == tf {
+            return Ok(());
         }
 
-        let result = analytical
-            .simulate_subject_dense(subject, parameters, None)?
-            .0;
-        cache.insert(key, result.clone());
-        Ok(result)
-    } else {
-        Ok(analytical
-            .simulate_subject_dense(subject, parameters, None)?
-            .0)
+        let mut ts = Vec::new();
+        ts.push(ti);
+        ts.push(tf);
+        for inf in infusions {
+            let t0 = inf.time();
+            let t1 = t0 + inf.duration();
+            if t0 > ti && t0 < tf {
+                ts.push(t0)
+            }
+            if t1 > ti && t1 < tf {
+                ts.push(t1)
+            }
+        }
+        ts.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        ts.dedup_by(|a, b| (*a - *b).abs() < 1e-12);
+
+        let mut current_t = ts[0];
+        let mut parameters_v = V::from_vec(parameters.to_vec(), NalgebraContext);
+        let mut rateiv = V::zeros(self.ndrugs(), NalgebraContext);
+
+        for &next_t in &ts[1..] {
+            rateiv.fill(0.0);
+            for inf in infusions {
+                let s = inf.time();
+                let e = s + inf.duration();
+                if current_t >= s && next_t <= e {
+                    let input = inf.input_index().ok_or_else(|| {
+                        PharmsolError::UnknownInputLabel {
+                            label: inf.input().to_string(),
+                        }
+                    })?;
+                    if input >= self.ndrugs() {
+                        return Err(PharmsolError::InputOutOfRange {
+                            input,
+                            ndrugs: self.ndrugs(),
+                        });
+                    }
+                    rateiv[input] += inf.amount() / inf.duration();
+                }
+            }
+
+            (self.seq_eq)(&mut parameters_v, next_t, covariates);
+            let dt = next_t - current_t;
+            *x = (self.eq)(x, &parameters_v, dt, &rateiv, covariates);
+            current_t = next_t;
+        }
+
+        Ok(())
+    }
+
+    fn process_observation(
+        &self,
+        x: &Self::State,
+        parameters: &[f64],
+        observation: &Observation,
+        error_models: Option<&AssayErrorModels>,
+        covariates: &Covariates,
+    ) -> Result<(Prediction, Option<f64>), PharmsolError> {
+        let mut y = V::zeros(self.nout(), NalgebraContext);
+        (self.out)(
+            x,
+            &V::from_vec(parameters.to_vec(), NalgebraContext),
+            observation.time(),
+            covariates,
+            &mut y,
+        );
+        let outeq = observation.outeq_index().ok_or_else(|| {
+            PharmsolError::UnknownOutputLabel {
+                label: observation.outeq().to_string(),
+            }
+        })?;
+        let pred = observation.to_prediction(y[outeq], x.as_slice().to_vec());
+        let lik = error_models
+            .map(|em| pred.log_likelihood(em).map(f64::exp))
+            .transpose()?;
+        Ok((pred, lik))
+    }
+
+    fn initial_state(
+        &self,
+        parameters: &[f64],
+        covariates: &Covariates,
+        occasion_index: usize,
+    ) -> V {
+        let mut x = V::zeros(self.nstates(), NalgebraContext);
+        if occasion_index == 0 {
+            (self.init)(
+                &V::from_vec(parameters.to_vec(), NalgebraContext),
+                0.0,
+                covariates,
+                &mut x,
+            );
+        }
+        x
     }
 }
 
-fn _estimate_likelihood(
-    ode: &Analytical,
-    subject: &Subject,
-    parameters: &[f64],
-    error_models: &AssayErrorModels,
-) -> Result<f64, PharmsolError> {
-    let bound_error_models = ode.bind_error_models(error_models)?;
-    let ypred = _subject_predictions(ode, subject, parameters)?;
-    Ok(ypred.log_likelihood(&bound_error_models)?.exp())
+impl crate::core::ModelInfo for Analytical {
+    fn nstates(&self) -> usize {
+        self.core.nstates()
+    }
+
+    fn ndrugs(&self) -> usize {
+        self.core.ndrugs()
+    }
+
+    fn nout(&self) -> usize {
+        self.core.nout()
+    }
+
+    fn metadata(&self) -> Option<&ValidatedModelMetadata> {
+        self.core.metadata()
+    }
+
+    fn lag(&self) -> &Lag {
+        &self.lag
+    }
+
+    fn fa(&self) -> &Fa {
+        &self.fa
+    }
+}
+
+impl crate::core::Caching for Analytical {
+    fn prediction_cache(&self) -> Option<&PredictionCache> {
+        self.core.cache()
+    }
+
+    fn error_model_cache(&self) -> Option<&BoundErrorModelCache> {
+        self.core.error_model_cache()
+    }
+
+    fn with_cache_capacity(mut self, size: u64) -> Self {
+        self.core = self.core.with_cache_capacity(PredictionCache::new(size));
+        self
+    }
+
+    fn without_cache(mut self) -> Self {
+        self.core = self.core.without_cache();
+        self
+    }
+
+    fn clear_cache(&self) {
+        self.core.clear_cache();
+        if let Some(cache) = self.core.cache() {
+            cache.invalidate_all();
+        }
+    }
+}
+
+impl crate::core::Simulate for Analytical {
+    type Predictions = SubjectPredictions;
+
+    fn simulate_subject(
+        &self,
+        subject: &Subject,
+        params: &[f64],
+        error_models: Option<&AssayErrorModels>,
+    ) -> Result<(Self::Predictions, Option<f64>), PharmsolError> {
+        if error_models.is_none() {
+            if let Some(cache) = self.core.cache() {
+                let key = (subject.hash(), parameters_hash(params));
+                if let Some(cached) = cache.get(&key) {
+                    return Ok((cached, None));
+                }
+            }
+        }
+
+        let result = crate::core::standard_event_loop::<Self, SubjectPredictions>(
+            self, subject, params, error_models,
+        )?;
+
+        if error_models.is_none() {
+            if let Some(cache) = self.core.cache() {
+                let key = (subject.hash(), parameters_hash(params));
+                cache.insert(key, result.0.clone());
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn kind() -> pharmsol_dsl::ModelKind {
+        pharmsol_dsl::ModelKind::Analytical
+    }
 }

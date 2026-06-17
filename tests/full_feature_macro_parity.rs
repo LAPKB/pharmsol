@@ -7,7 +7,7 @@ fn max_abs_diff(left: &[f64], right: &[f64]) -> f64 {
         .fold(0.0_f64, f64::max)
 }
 
-fn macro_ode_model() -> equation::ODE {
+fn macro_ode_model() -> backends::ODE {
     ode! {
         name: "ode_full_feature_parity",
         params: [ka, ke, kcp, kpc, v, tlag, f_oral, base_depot, base_central, base_peripheral],
@@ -51,8 +51,8 @@ fn macro_ode_model() -> equation::ODE {
     }
 }
 
-fn handwritten_ode_model() -> equation::ODE {
-    equation::ODE::new(
+fn handwritten_ode_model() -> backends::ODE {
+    backends::ODE::new(
         |x, p, t, dx, bolus, rateiv, cov| {
             fetch_params!(
                 p,
@@ -161,7 +161,7 @@ fn handwritten_ode_model() -> equation::ODE {
     .with_ndrugs(2)
     .with_nout(1)
     .with_metadata(
-        equation::metadata::new("ode_full_feature_parity")
+        pharmsol::metadata::new("ode_full_feature_parity")
             .parameters([
                 "ka",
                 "ke",
@@ -175,21 +175,21 @@ fn handwritten_ode_model() -> equation::ODE {
                 "base_peripheral",
             ])
             .covariates([
-                equation::Covariate::continuous("wt"),
-                equation::Covariate::continuous("renal"),
+                backends::Covariate::continuous("wt"),
+                backends::Covariate::continuous("renal"),
             ])
             .states(["depot", "central", "peripheral"])
             .outputs(["cp"])
             .routes([
-                equation::Route::bolus("oral")
+                backends::Route::bolus("oral")
                     .to_state("depot")
                     .with_lag()
                     .with_bioavailability()
                     .inject_input_to_destination(),
-                equation::Route::bolus("load")
+                backends::Route::bolus("load")
                     .to_state("central")
                     .inject_input_to_destination(),
-                equation::Route::infusion("iv")
+                backends::Route::infusion("iv")
                     .to_state("central")
                     .inject_input_to_destination(),
             ]),
@@ -217,7 +217,7 @@ fn build_ode_subject() -> Subject {
         .build()
 }
 
-fn macro_analytical_model() -> equation::Analytical {
+fn macro_analytical_model() -> backends::Analytical {
     analytical! {
         name: "analytical_full_feature_parity",
         params: [ka, ke0, v, tlag, f_oral, base_gut, base_central],
@@ -255,8 +255,8 @@ fn macro_analytical_model() -> equation::Analytical {
     }
 }
 
-fn handwritten_analytical_model() -> equation::Analytical {
-    equation::Analytical::new(
+fn handwritten_analytical_model() -> backends::Analytical {
+    backends::Analytical::new(
         |x, p, t, rateiv, cov| {
             fetch_params!(p, ka, ke0, _v, _tlag, _f_oral, _base_gut, _base_central);
             fetch_cov!(cov, t, wt, renal);
@@ -265,7 +265,7 @@ fn handwritten_analytical_model() -> equation::Analytical {
             let renal_scale = (renal / 90.0).powf(0.25);
             let ke = ke0 * wt_scale * renal_scale;
             let projected = pharmsol::__macro_support::vector_from_values(vec![ka, ke]);
-            equation::one_compartment_with_absorption(x, &projected, t, rateiv, cov)
+            backends::one_compartment_with_absorption(x, &projected, t, rateiv, cov)
         },
         |_p, _t, _cov| {},
         |p, t, cov| {
@@ -301,8 +301,8 @@ fn handwritten_analytical_model() -> equation::Analytical {
     .with_ndrugs(2)
     .with_nout(1)
     .with_metadata(
-        equation::metadata::new("analytical_full_feature_parity")
-            .kind(equation::ModelKind::Analytical)
+        pharmsol::metadata::new("analytical_full_feature_parity")
+            .kind(backends::ModelKind::Analytical)
             .parameters([
                 "ka",
                 "ke0",
@@ -313,20 +313,20 @@ fn handwritten_analytical_model() -> equation::Analytical {
                 "base_central",
             ])
             .covariates([
-                equation::Covariate::continuous("wt"),
-                equation::Covariate::continuous("renal"),
+                backends::Covariate::continuous("wt"),
+                backends::Covariate::continuous("renal"),
             ])
             .states(["gut", "central"])
             .outputs(["cp"])
             .routes([
-                equation::Route::bolus("oral")
+                backends::Route::bolus("oral")
                     .to_state("gut")
                     .with_lag()
                     .with_bioavailability(),
-                equation::Route::bolus("load").to_state("central"),
-                equation::Route::infusion("iv").to_state("central"),
+                backends::Route::bolus("load").to_state("central"),
+                backends::Route::infusion("iv").to_state("central"),
             ])
-            .analytical_kernel(equation::AnalyticalKernel::OneCompartmentWithAbsorption),
+            .analytical_kernel(backends::AnalyticalKernel::OneCompartmentWithAbsorption),
     )
     .expect("handwritten analytical metadata should validate")
 }

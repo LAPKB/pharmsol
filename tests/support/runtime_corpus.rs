@@ -13,10 +13,10 @@ use diffsol::Vector;
 use ndarray::Array2;
 use pharmsol::dsl::{self, CompiledRuntimeModel, RuntimeCompilationTarget, RuntimePredictions};
 use pharmsol::prelude::{
-    one_compartment_with_absorption, Equation, Prediction, SubjectPredictions,
+    one_compartment_with_absorption, Simulate, Prediction, SubjectPredictions,
 };
 use pharmsol::{
-    equation, fa, fetch_cov, fetch_params, lag, Parameters, Subject, SubjectBuilderExt, SDE,
+    backends, fa, fetch_cov, fetch_params, lag, Parameters, Subject, SubjectBuilderExt, SDE,
 };
 use tempfile::{tempdir, TempDir};
 
@@ -770,7 +770,7 @@ fn compare_particle_predictions_pairwise(
 }
 
 fn reference_ode_predictions() -> Result<SubjectPredictions, Box<dyn Error>> {
-    let model = equation::ODE::new(
+    let model = backends::ODE::new(
         |x, p, t, dx, bolus, rateiv, cov| {
             fetch_cov!(cov, t, wt);
             fetch_params!(p, ka, cl, v, _tlag, _f_oral);
@@ -805,18 +805,18 @@ fn reference_ode_predictions() -> Result<SubjectPredictions, Box<dyn Error>> {
     .with_ndrugs(1)
     .with_nout(1)
     .with_metadata(
-        equation::metadata::new(CorpusCase::Ode.label())
+        pharmsol::metadata::new(CorpusCase::Ode.label())
             .parameters(["ka", "cl", "v", "tlag", "f_oral"])
-            .covariates([equation::Covariate::continuous("wt")])
+            .covariates([backends::Covariate::continuous("wt")])
             .states(["depot", "central"])
             .outputs(["cp"])
             .routes([
-                equation::Route::bolus("oral")
+                backends::Route::bolus("oral")
                     .to_state("depot")
                     .with_lag()
                     .with_bioavailability()
                     .expect_explicit_input(),
-                equation::Route::infusion("iv")
+                backends::Route::infusion("iv")
                     .to_state("central")
                     .expect_explicit_input(),
             ]),
@@ -850,7 +850,7 @@ fn reference_ode_predictions() -> Result<SubjectPredictions, Box<dyn Error>> {
 }
 
 fn reference_ode_full_predictions() -> Result<SubjectPredictions, Box<dyn Error>> {
-    let model = equation::ODE::new(
+    let model = backends::ODE::new(
         |x, p, t, dx, bolus, rateiv, cov| {
             fetch_params!(
                 p,
@@ -959,7 +959,7 @@ fn reference_ode_full_predictions() -> Result<SubjectPredictions, Box<dyn Error>
     .with_ndrugs(2)
     .with_nout(1)
     .with_metadata(
-        equation::metadata::new(CorpusCase::OdeFull.label())
+        pharmsol::metadata::new(CorpusCase::OdeFull.label())
             .parameters([
                 "ka",
                 "ke",
@@ -973,21 +973,21 @@ fn reference_ode_full_predictions() -> Result<SubjectPredictions, Box<dyn Error>
                 "base_peripheral",
             ])
             .covariates([
-                equation::Covariate::continuous("wt"),
-                equation::Covariate::continuous("renal"),
+                backends::Covariate::continuous("wt"),
+                backends::Covariate::continuous("renal"),
             ])
             .states(["depot", "central", "peripheral"])
             .outputs(["cp"])
             .routes([
-                equation::Route::bolus("oral")
+                backends::Route::bolus("oral")
                     .to_state("depot")
                     .with_lag()
                     .with_bioavailability()
                     .expect_explicit_input(),
-                equation::Route::bolus("load")
+                backends::Route::bolus("load")
                     .to_state("central")
                     .expect_explicit_input(),
-                equation::Route::infusion("iv")
+                backends::Route::infusion("iv")
                     .to_state("central")
                     .expect_explicit_input(),
             ]),
@@ -1032,7 +1032,7 @@ fn reference_ode_full_predictions() -> Result<SubjectPredictions, Box<dyn Error>
 }
 
 fn reference_analytical_predictions() -> Result<SubjectPredictions, Box<dyn Error>> {
-    let model = equation::Analytical::new(
+    let model = backends::Analytical::new(
         one_compartment_with_absorption,
         |_p, _t, _cov| {},
         |p, _t, _cov| {
@@ -1053,18 +1053,18 @@ fn reference_analytical_predictions() -> Result<SubjectPredictions, Box<dyn Erro
     .with_ndrugs(1)
     .with_nout(1)
     .with_metadata(
-        equation::metadata::new(CorpusCase::Analytical.label())
-            .kind(equation::ModelKind::Analytical)
+        pharmsol::metadata::new(CorpusCase::Analytical.label())
+            .kind(backends::ModelKind::Analytical)
             .parameters(["ka", "ke", "v", "tlag", "f_oral"])
             .states(["gut", "central"])
             .outputs(["cp"])
             .route(
-                equation::Route::bolus("oral")
+                backends::Route::bolus("oral")
                     .to_state("gut")
                     .with_lag()
                     .with_bioavailability(),
             )
-            .analytical_kernel(equation::AnalyticalKernel::OneCompartmentWithAbsorption),
+            .analytical_kernel(backends::AnalyticalKernel::OneCompartmentWithAbsorption),
     )
     .expect("reference analytical metadata should validate");
 
@@ -1091,8 +1091,8 @@ fn reference_analytical_predictions() -> Result<SubjectPredictions, Box<dyn Erro
 }
 
 fn reference_analytical_full_predictions() -> Result<SubjectPredictions, Box<dyn Error>> {
-    let model = equation::Analytical::new(
-        equation::one_compartment_with_absorption,
+    let model = backends::Analytical::new(
+        backends::one_compartment_with_absorption,
         |_p, _t, _cov| {},
         |p, t, cov| {
             fetch_params!(p, _ka, _ke, _v, tlag, _f_oral, _base_gut, _base_central);
@@ -1127,8 +1127,8 @@ fn reference_analytical_full_predictions() -> Result<SubjectPredictions, Box<dyn
     .with_ndrugs(2)
     .with_nout(1)
     .with_metadata(
-        equation::metadata::new(CorpusCase::AnalyticalFull.label())
-            .kind(equation::ModelKind::Analytical)
+        pharmsol::metadata::new(CorpusCase::AnalyticalFull.label())
+            .kind(backends::ModelKind::Analytical)
             .parameters([
                 "ka",
                 "ke",
@@ -1139,20 +1139,20 @@ fn reference_analytical_full_predictions() -> Result<SubjectPredictions, Box<dyn
                 "base_central",
             ])
             .covariates([
-                equation::Covariate::continuous("wt"),
-                equation::Covariate::continuous("renal"),
+                backends::Covariate::continuous("wt"),
+                backends::Covariate::continuous("renal"),
             ])
             .states(["gut", "central"])
             .outputs(["cp"])
             .routes([
-                equation::Route::bolus("oral")
+                backends::Route::bolus("oral")
                     .to_state("gut")
                     .with_lag()
                     .with_bioavailability(),
-                equation::Route::bolus("load").to_state("central"),
-                equation::Route::infusion("iv").to_state("central"),
+                backends::Route::bolus("load").to_state("central"),
+                backends::Route::infusion("iv").to_state("central"),
             ])
-            .analytical_kernel(equation::AnalyticalKernel::OneCompartmentWithAbsorption),
+            .analytical_kernel(backends::AnalyticalKernel::OneCompartmentWithAbsorption),
     )
     .expect("reference full analytical metadata should validate");
 
@@ -1227,14 +1227,14 @@ fn reference_sde_predictions() -> Result<Array2<Prediction>, Box<dyn Error>> {
     .with_ndrugs(1)
     .with_nout(1)
     .with_metadata(
-        equation::metadata::new(CorpusCase::Sde.label())
-            .kind(equation::ModelKind::Sde)
+        pharmsol::metadata::new(CorpusCase::Sde.label())
+            .kind(backends::ModelKind::Sde)
             .parameters(["ka", "ke0", "kcp", "kpc", "vol", "ske"])
-            .covariates([equation::Covariate::locf("wt")])
+            .covariates([backends::Covariate::locf("wt")])
             .states(["depot", "central", "peripheral", "ke_latent"])
             .outputs(["cp"])
             .route(
-                equation::Route::bolus("oral")
+                backends::Route::bolus("oral")
                     .to_state("depot")
                     .inject_input_to_destination(),
             )

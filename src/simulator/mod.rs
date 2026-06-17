@@ -1,5 +1,5 @@
 pub mod cache;
-pub mod equation;
+pub mod backends;
 pub(crate) mod likelihood;
 use diffsol::{NalgebraMat, NalgebraVec};
 
@@ -41,7 +41,7 @@ pub type M = NalgebraMat<T>;
 pub type DiffEq = fn(&V, &V, T, &mut V, &V, &V, &Covariates);
 
 /// This closure represents an Analytical solution of the model.
-/// See [`equation::analytical`] module for examples.
+/// See [`backends::analytical`] module for examples.
 ///
 /// # Parameters
 /// - `x`: The state vector at time t
@@ -209,7 +209,7 @@ pub type Fa = fn(&V, T, &Covariates) -> HashMap<usize, T>;
 /// # Example
 /// ```ignore
 /// // Using the builder pattern on ODE/Analytical/SDE
-/// let ode = equation::ODE::new(diffeq, lag, fa, init, out)
+/// let ode = backends::ODE::new(diffeq, lag, fa, init, out)
 ///     .with_nstates(2)
 ///     .with_ndrugs(1)
 ///     .with_nout(1);

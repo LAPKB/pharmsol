@@ -14,7 +14,7 @@ fn test_particle_filter_likelihood() {
         .observation(1.0, 7.5170, "cp")
         .build();
 
-    let sde = equation::SDE::new(
+    let sde = backends::SDE::new(
         |x, p, _t, dx, _rateiv, _cov| {
             dx[0] = -x[0] * x[1]; // ke *x[0]
             dx[1] = -x[1] + p[0]; // mean reverting
@@ -37,13 +37,13 @@ fn test_particle_filter_likelihood() {
 
     let sde = sde
         .with_metadata(
-            equation::metadata::new("particle_filter_test")
-                .kind(equation::ModelKind::Sde)
+            pharmsol::metadata::new("particle_filter_test")
+                .kind(backends::ModelKind::Sde)
                 .parameters(["ke0"])
                 .states(["central", "ke_latent"])
                 .outputs(["cp"])
                 .route(
-                    equation::Route::bolus("dose")
+                    backends::Route::bolus("dose")
                         .to_state("central")
                         .inject_input_to_destination(),
                 )

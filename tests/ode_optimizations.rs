@@ -16,7 +16,7 @@ const ABS_TOL: f64 = 1e-6;
 
 fn parameters_for_analytical(
     label: &str,
-    analytical: &equation::Analytical,
+    analytical: &backends::Analytical,
     param_names: &[&str],
     params: &[f64],
 ) -> Parameters {
@@ -37,7 +37,7 @@ fn parameters_for_analytical(
 
 fn parameters_for_ode(
     label: &str,
-    ode: &equation::ODE,
+    ode: &backends::ODE,
     param_names: &[&str],
     params: &[f64],
 ) -> Parameters {
@@ -54,38 +54,38 @@ fn parameters_for_ode(
 }
 
 fn with_one_compartment_analytical_metadata(
-    analytical: equation::Analytical,
+    analytical: backends::Analytical,
     model_name: &str,
-) -> equation::Analytical {
+) -> backends::Analytical {
     analytical
         .with_ndrugs(1)
         .with_metadata(
-            equation::metadata::new(model_name)
-                .kind(equation::ModelKind::Analytical)
+            pharmsol::metadata::new(model_name)
+                .kind(backends::ModelKind::Analytical)
                 .parameters(["ke", "v"])
                 .states(["central"])
                 .outputs(["cp"])
                 .routes([
-                    equation::Route::bolus("iv_bolus").to_state("central"),
-                    equation::Route::infusion("iv").to_state("central"),
+                    backends::Route::bolus("iv_bolus").to_state("central"),
+                    backends::Route::infusion("iv").to_state("central"),
                 ])
-                .analytical_kernel(equation::AnalyticalKernel::OneCompartment),
+                .analytical_kernel(backends::AnalyticalKernel::OneCompartment),
         )
         .expect("one-compartment analytical metadata should validate")
 }
 
-fn with_one_compartment_ode_metadata(ode: equation::ODE, model_name: &str) -> equation::ODE {
+fn with_one_compartment_ode_metadata(ode: backends::ODE, model_name: &str) -> backends::ODE {
     ode.with_ndrugs(1)
         .with_metadata(
-            equation::metadata::new(model_name)
+            pharmsol::metadata::new(model_name)
                 .parameters(["ke", "v"])
                 .states(["central"])
                 .outputs(["cp"])
                 .routes([
-                    equation::Route::bolus("iv_bolus")
+                    backends::Route::bolus("iv_bolus")
                         .to_state("central")
                         .expect_explicit_input(),
-                    equation::Route::infusion("iv")
+                    backends::Route::infusion("iv")
                         .to_state("central")
                         .expect_explicit_input(),
                 ]),
@@ -94,32 +94,32 @@ fn with_one_compartment_ode_metadata(ode: equation::ODE, model_name: &str) -> eq
 }
 
 fn with_absorption_analytical_metadata(
-    analytical: equation::Analytical,
+    analytical: backends::Analytical,
     model_name: &str,
-) -> equation::Analytical {
+) -> backends::Analytical {
     analytical
         .with_ndrugs(1)
         .with_metadata(
-            equation::metadata::new(model_name)
-                .kind(equation::ModelKind::Analytical)
+            pharmsol::metadata::new(model_name)
+                .kind(backends::ModelKind::Analytical)
                 .parameters(["ka", "ke", "v"])
                 .states(["gut", "central"])
                 .outputs(["cp"])
-                .route(equation::Route::bolus("oral").to_state("gut"))
-                .analytical_kernel(equation::AnalyticalKernel::OneCompartmentWithAbsorption),
+                .route(backends::Route::bolus("oral").to_state("gut"))
+                .analytical_kernel(backends::AnalyticalKernel::OneCompartmentWithAbsorption),
         )
         .expect("absorption analytical metadata should validate")
 }
 
-fn with_absorption_ode_metadata(ode: equation::ODE, model_name: &str) -> equation::ODE {
+fn with_absorption_ode_metadata(ode: backends::ODE, model_name: &str) -> backends::ODE {
     ode.with_ndrugs(1)
         .with_metadata(
-            equation::metadata::new(model_name)
+            pharmsol::metadata::new(model_name)
                 .parameters(["ka", "ke", "v"])
                 .states(["gut", "central"])
                 .outputs(["cp"])
                 .route(
-                    equation::Route::bolus("oral")
+                    backends::Route::bolus("oral")
                         .to_state("gut")
                         .expect_explicit_input(),
                 ),
@@ -127,16 +127,16 @@ fn with_absorption_ode_metadata(ode: equation::ODE, model_name: &str) -> equatio
         .expect("absorption ODE metadata should validate")
 }
 
-fn with_covariate_ode_metadata(ode: equation::ODE, model_name: &str) -> equation::ODE {
+fn with_covariate_ode_metadata(ode: backends::ODE, model_name: &str) -> backends::ODE {
     ode.with_ndrugs(1)
         .with_metadata(
-            equation::metadata::new(model_name)
+            pharmsol::metadata::new(model_name)
                 .parameters(["ke", "v"])
-                .covariates([equation::Covariate::continuous("wt")])
+                .covariates([backends::Covariate::continuous("wt")])
                 .states(["central"])
                 .outputs(["cp"])
                 .route(
-                    equation::Route::bolus("iv_bolus")
+                    backends::Route::bolus("iv_bolus")
                         .to_state("central")
                         .expect_explicit_input(),
                 ),
@@ -147,8 +147,8 @@ fn with_covariate_ode_metadata(ode: equation::ODE, model_name: &str) -> equation
 /// Helper to compare ODE vs Analytical predictions
 fn assert_ode_matches_analytical(
     label: &str,
-    analytical: &equation::Analytical,
-    ode: &equation::ODE,
+    analytical: &backends::Analytical,
+    ode: &backends::ODE,
     subject: &Subject,
     param_names: &[&str],
     params: &[f64],
@@ -215,7 +215,7 @@ fn single_iv_bolus_matches_analytical() {
         .build();
 
     let analytical = with_one_compartment_analytical_metadata(
-        equation::Analytical::new(
+        backends::Analytical::new(
             one_compartment,
             |_p, _t, _cov| {},
             |_p, _t, _cov| lag! {},
@@ -232,7 +232,7 @@ fn single_iv_bolus_matches_analytical() {
     );
 
     let ode = with_one_compartment_ode_metadata(
-        equation::ODE::new(
+        backends::ODE::new(
             |x, p, _t, dx, b, _rateiv, _cov| {
                 fetch_params!(p, ke, _v);
                 // Bolus appears in derivative as instantaneous input
@@ -281,7 +281,7 @@ fn multiple_iv_boluses_match_analytical() {
         .build();
 
     let analytical = with_one_compartment_analytical_metadata(
-        equation::Analytical::new(
+        backends::Analytical::new(
             one_compartment,
             |_p, _t, _cov| {},
             |_p, _t, _cov| lag! {},
@@ -298,7 +298,7 @@ fn multiple_iv_boluses_match_analytical() {
     );
 
     let ode = with_one_compartment_ode_metadata(
-        equation::ODE::new(
+        backends::ODE::new(
             |x, p, _t, dx, b, _rateiv, _cov| {
                 fetch_params!(p, ke, _v);
                 dx[0] = -ke * x[0] + b[0];
@@ -341,7 +341,7 @@ fn oral_bolus_with_absorption_matches_analytical() {
         .build();
 
     let analytical = with_absorption_analytical_metadata(
-        equation::Analytical::new(
+        backends::Analytical::new(
             one_compartment_with_absorption,
             |_p, _t, _cov| {},
             |_p, _t, _cov| lag! {},
@@ -358,7 +358,7 @@ fn oral_bolus_with_absorption_matches_analytical() {
     );
 
     let ode = with_absorption_ode_metadata(
-        equation::ODE::new(
+        backends::ODE::new(
             |x, p, _t, dx, b, _rateiv, _cov| {
                 fetch_params!(p, ka, ke, _v);
                 dx[0] = -ka * x[0] + b[0]; // Gut compartment with oral bolus
@@ -409,7 +409,7 @@ fn multiple_oral_doses_match_analytical() {
         .build();
 
     let analytical = with_absorption_analytical_metadata(
-        equation::Analytical::new(
+        backends::Analytical::new(
             one_compartment_with_absorption,
             |_p, _t, _cov| {},
             |_p, _t, _cov| lag! {},
@@ -426,7 +426,7 @@ fn multiple_oral_doses_match_analytical() {
     );
 
     let ode = with_absorption_ode_metadata(
-        equation::ODE::new(
+        backends::ODE::new(
             |x, p, _t, dx, b, _rateiv, _cov| {
                 fetch_params!(p, ka, ke, _v);
                 dx[0] = -ka * x[0] + b[0];
@@ -474,7 +474,7 @@ fn single_infusion_matches_analytical() {
         .build();
 
     let analytical = with_one_compartment_analytical_metadata(
-        equation::Analytical::new(
+        backends::Analytical::new(
             one_compartment,
             |_p, _t, _cov| {},
             |_p, _t, _cov| lag! {},
@@ -491,7 +491,7 @@ fn single_infusion_matches_analytical() {
     );
 
     let ode = with_one_compartment_ode_metadata(
-        equation::ODE::new(
+        backends::ODE::new(
             |x, p, _t, dx, _b, rateiv, _cov| {
                 fetch_params!(p, ke, _v);
                 dx[0] = -ke * x[0] + rateiv[0];
@@ -536,7 +536,7 @@ fn overlapping_infusions_match_analytical() {
         .build();
 
     let analytical = with_one_compartment_analytical_metadata(
-        equation::Analytical::new(
+        backends::Analytical::new(
             one_compartment,
             |_p, _t, _cov| {},
             |_p, _t, _cov| lag! {},
@@ -553,7 +553,7 @@ fn overlapping_infusions_match_analytical() {
     );
 
     let ode = with_one_compartment_ode_metadata(
-        equation::ODE::new(
+        backends::ODE::new(
             |x, p, _t, dx, _b, rateiv, _cov| {
                 fetch_params!(p, ke, _v);
                 dx[0] = -ke * x[0] + rateiv[0];
@@ -601,7 +601,7 @@ fn bolus_plus_infusion_matches_analytical() {
         .build();
 
     let analytical = with_one_compartment_analytical_metadata(
-        equation::Analytical::new(
+        backends::Analytical::new(
             one_compartment,
             |_p, _t, _cov| {},
             |_p, _t, _cov| lag! {},
@@ -618,7 +618,7 @@ fn bolus_plus_infusion_matches_analytical() {
     );
 
     let ode = with_one_compartment_ode_metadata(
-        equation::ODE::new(
+        backends::ODE::new(
             |x, p, _t, dx, b, rateiv, _cov| {
                 fetch_params!(p, ke, _v);
                 dx[0] = -ke * x[0] + b[0] + rateiv[0];
@@ -667,7 +667,7 @@ fn complex_dosing_scenario_matches_analytical() {
         .build();
 
     let analytical = with_absorption_analytical_metadata(
-        equation::Analytical::new(
+        backends::Analytical::new(
             one_compartment_with_absorption,
             |_p, _t, _cov| {},
             |_p, _t, _cov| lag! {},
@@ -684,7 +684,7 @@ fn complex_dosing_scenario_matches_analytical() {
     );
 
     let ode = with_absorption_ode_metadata(
-        equation::ODE::new(
+        backends::ODE::new(
             |x, p, _t, dx, b, _rateiv, _cov| {
                 fetch_params!(p, ka, ke, _v);
                 dx[0] = -ka * x[0] + b[0]; // Gut: oral doses
@@ -734,7 +734,7 @@ fn mixed_bolus_infusion_iv_matches_analytical() {
         .build();
 
     let analytical = with_one_compartment_analytical_metadata(
-        equation::Analytical::new(
+        backends::Analytical::new(
             one_compartment,
             |_p, _t, _cov| {},
             |_p, _t, _cov| lag! {},
@@ -751,7 +751,7 @@ fn mixed_bolus_infusion_iv_matches_analytical() {
     );
 
     let ode = with_one_compartment_ode_metadata(
-        equation::ODE::new(
+        backends::ODE::new(
             |x, p, _t, dx, b, rateiv, _cov| {
                 fetch_params!(p, ke, _v);
                 dx[0] = -ke * x[0] + b[0] + rateiv[0];
@@ -797,7 +797,7 @@ fn bolus_at_observation_time_matches_analytical() {
         .build();
 
     let analytical = with_one_compartment_analytical_metadata(
-        equation::Analytical::new(
+        backends::Analytical::new(
             one_compartment,
             |_p, _t, _cov| {},
             |_p, _t, _cov| lag! {},
@@ -814,7 +814,7 @@ fn bolus_at_observation_time_matches_analytical() {
     );
 
     let ode = with_one_compartment_ode_metadata(
-        equation::ODE::new(
+        backends::ODE::new(
             |x, p, _t, dx, b, _rateiv, _cov| {
                 fetch_params!(p, ke, _v);
                 dx[0] = -ke * x[0] + b[0];
@@ -855,7 +855,7 @@ fn very_fast_elimination_matches_analytical() {
         .build();
 
     let analytical = with_one_compartment_analytical_metadata(
-        equation::Analytical::new(
+        backends::Analytical::new(
             one_compartment,
             |_p, _t, _cov| {},
             |_p, _t, _cov| lag! {},
@@ -872,7 +872,7 @@ fn very_fast_elimination_matches_analytical() {
     );
 
     let ode = with_one_compartment_ode_metadata(
-        equation::ODE::new(
+        backends::ODE::new(
             |x, p, _t, dx, b, _rateiv, _cov| {
                 fetch_params!(p, ke, _v);
                 dx[0] = -ke * x[0] + b[0];
@@ -914,7 +914,7 @@ fn very_slow_elimination_matches_analytical() {
         .build();
 
     let analytical = with_one_compartment_analytical_metadata(
-        equation::Analytical::new(
+        backends::Analytical::new(
             one_compartment,
             |_p, _t, _cov| {},
             |_p, _t, _cov| lag! {},
@@ -931,7 +931,7 @@ fn very_slow_elimination_matches_analytical() {
     );
 
     let ode = with_one_compartment_ode_metadata(
-        equation::ODE::new(
+        backends::ODE::new(
             |x, p, _t, dx, b, _rateiv, _cov| {
                 fetch_params!(p, ke, _v);
                 dx[0] = -ke * x[0] + b[0];
@@ -974,7 +974,7 @@ fn rapid_absorption_matches_analytical() {
         .build();
 
     let analytical = with_absorption_analytical_metadata(
-        equation::Analytical::new(
+        backends::Analytical::new(
             one_compartment_with_absorption,
             |_p, _t, _cov| {},
             |_p, _t, _cov| lag! {},
@@ -991,7 +991,7 @@ fn rapid_absorption_matches_analytical() {
     );
 
     let ode = with_absorption_ode_metadata(
-        equation::ODE::new(
+        backends::ODE::new(
             |x, p, _t, dx, b, _rateiv, _cov| {
                 fetch_params!(p, ka, ke, _v);
                 dx[0] = -ka * x[0] + b[0];
@@ -1042,7 +1042,7 @@ fn time_varying_covariates_work_correctly() {
 
     // ODE with weight-based clearance
     let ode = with_covariate_ode_metadata(
-        equation::ODE::new(
+        backends::ODE::new(
             |x, p, t, dx, b, _rateiv, cov| {
                 fetch_params!(p, ke_ref, _v);
                 fetch_cov!(cov, t, wt);
@@ -1111,7 +1111,7 @@ fn likelihood_calculation_matches_analytical() {
         .build();
 
     let analytical = with_one_compartment_analytical_metadata(
-        equation::Analytical::new(
+        backends::Analytical::new(
             one_compartment,
             |_p, _t, _cov| {},
             |_p, _t, _cov| lag! {},
@@ -1128,7 +1128,7 @@ fn likelihood_calculation_matches_analytical() {
     );
 
     let ode = with_one_compartment_ode_metadata(
-        equation::ODE::new(
+        backends::ODE::new(
             |x, p, _t, dx, b, _rateiv, _cov| {
                 fetch_params!(p, ke, _v);
                 dx[0] = -ke * x[0] + b[0];

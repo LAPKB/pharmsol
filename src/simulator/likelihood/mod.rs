@@ -82,7 +82,8 @@ pub use subject::{PopulationPredictions, SubjectPredictions};
 use ndarray::{Array2, Axis};
 use rayon::prelude::*;
 
-use crate::{Data, Equation, PharmsolError, Predictions, Subject};
+use crate::core::{PredictionsContainer, Simulate};
+use crate::{Data, PharmsolError, Subject};
 
 /// Compute log-likelihoods for all subjects in parallel, where each subject
 /// has its own parameter vector.
@@ -117,7 +118,7 @@ use crate::{Data, Equation, PharmsolError, Predictions, Subject};
 /// )?;
 /// ```
 pub fn log_likelihood_batch(
-    equation: &impl Equation,
+    model: &impl Simulate,
     subjects: &Data,
     parameters: &Array2<f64>,
     residual_error_models: &crate::ResidualErrorModels,
@@ -134,14 +135,14 @@ pub fn log_likelihood_batch(
     }
 
     let score_subject = |subject: &Subject, parameter_row: &[f64]| {
-        let predictions = match equation.estimate_predictions_dense(subject, parameter_row) {
+        let predictions = match model.predictions(subject, parameter_row) {
             Ok(preds) => preds,
             Err(_) => return f64::NEG_INFINITY,
         };
 
         let obs_pred_pairs = predictions
-            .get_predictions()
-            .into_iter()
+            .predictions()
+            .iter()
             .filter_map(|pred| {
                 pred.observation()
                     .map(|obs| (pred.outeq(), obs, pred.prediction()))
@@ -203,21 +204,21 @@ pub fn log_likelihood_batch(
 /// );
 /// ```
 pub fn log_likelihood_subject(
-    equation: &impl Equation,
+    model: &impl Simulate,
     subject: &Subject,
     params: &crate::Parameters,
     residual_error_models: &crate::ResidualErrorModels,
 ) -> f64 {
     // Simulate to get predictions
-    let predictions = match equation.estimate_predictions_dense(subject, params.as_slice()) {
+    let predictions = match model.predictions(subject, params.as_slice()) {
         Ok(preds) => preds,
         Err(_) => return f64::NEG_INFINITY,
     };
 
     // Extract (outeq, observation, prediction) tuples and compute log-likelihood
     let obs_pred_pairs = predictions
-        .get_predictions()
-        .into_iter()
+        .predictions()
+        .iter()
         .filter_map(|pred| {
             pred.observation()
                 .map(|obs| (pred.outeq(), obs, pred.prediction()))

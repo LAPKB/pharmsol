@@ -66,7 +66,7 @@ fn assert_prediction_match(left: &[f64], right: &[f64]) {
     }
 }
 
-fn macro_infusion_sde() -> equation::SDE {
+fn macro_infusion_sde() -> backends::SDE {
     sde! {
         name: "one_cpt_sde",
         params: [ke, sigma_ke, v],
@@ -88,8 +88,8 @@ fn macro_infusion_sde() -> equation::SDE {
     }
 }
 
-fn handwritten_infusion_sde() -> equation::SDE {
-    equation::SDE::new(
+fn handwritten_infusion_sde() -> backends::SDE {
+    backends::SDE::new(
         |x, p, _t, dx, rateiv, _cov| {
             fetch_params!(p, ke, _sigma_ke, _v);
             dx[0] = rateiv[0] - ke * x[0];
@@ -111,13 +111,13 @@ fn handwritten_infusion_sde() -> equation::SDE {
     .with_ndrugs(1)
     .with_nout(1)
     .with_metadata(
-        equation::metadata::new("one_cpt_sde")
-            .kind(equation::ModelKind::Sde)
+        pharmsol::metadata::new("one_cpt_sde")
+            .kind(backends::ModelKind::Sde)
             .parameters(["ke", "sigma_ke", "v"])
             .states(["central"])
             .outputs(["cp"])
             .route(
-                equation::Route::infusion("iv")
+                backends::Route::infusion("iv")
                     .to_state("central")
                     .inject_input_to_destination(),
             )
@@ -126,7 +126,7 @@ fn handwritten_infusion_sde() -> equation::SDE {
     .expect("handwritten SDE metadata should validate")
 }
 
-fn macro_absorption_sde() -> equation::SDE {
+fn macro_absorption_sde() -> backends::SDE {
     sde! {
         name: "one_cmt_abs_sde",
         params: [ka, ke, sigma_ke, v, tlag, f_oral],
@@ -160,8 +160,8 @@ fn macro_absorption_sde() -> equation::SDE {
     }
 }
 
-fn handwritten_absorption_sde() -> equation::SDE {
-    equation::SDE::new(
+fn handwritten_absorption_sde() -> backends::SDE {
+    backends::SDE::new(
         |x, p, _t, dx, _rateiv, _cov| {
             fetch_params!(p, ka, ke, _sigma_ke, _v, _tlag, _f_oral);
             dx[0] = -ka * x[0];
@@ -194,13 +194,13 @@ fn handwritten_absorption_sde() -> equation::SDE {
     .with_ndrugs(1)
     .with_nout(1)
     .with_metadata(
-        equation::metadata::new("one_cmt_abs_sde")
-            .kind(equation::ModelKind::Sde)
+        pharmsol::metadata::new("one_cmt_abs_sde")
+            .kind(backends::ModelKind::Sde)
             .parameters(["ka", "ke", "sigma_ke", "v", "tlag", "f_oral"])
             .states(["gut", "central"])
             .outputs(["cp"])
             .route(
-                equation::Route::bolus("oral")
+                backends::Route::bolus("oral")
                     .to_state("gut")
                     .inject_input_to_destination()
                     .with_lag()
@@ -211,7 +211,7 @@ fn handwritten_absorption_sde() -> equation::SDE {
     .expect("handwritten absorption SDE metadata should validate")
 }
 
-fn macro_shared_input_sde() -> equation::SDE {
+fn macro_shared_input_sde() -> backends::SDE {
     sde! {
         name: "one_cmt_shared_sde",
         params: [ka, ke, sigma_ke, v, tlag, f_oral],
@@ -246,8 +246,8 @@ fn macro_shared_input_sde() -> equation::SDE {
     }
 }
 
-fn handwritten_shared_input_sde() -> equation::SDE {
-    equation::SDE::new(
+fn handwritten_shared_input_sde() -> backends::SDE {
+    backends::SDE::new(
         |x, p, _t, dx, rateiv, _cov| {
             fetch_params!(p, ka, ke, _sigma_ke, _v, _tlag, _f_oral);
             dx[0] = -ka * x[0];
@@ -279,18 +279,18 @@ fn handwritten_shared_input_sde() -> equation::SDE {
     .with_ndrugs(1)
     .with_nout(1)
     .with_metadata(
-        equation::metadata::new("one_cmt_shared_sde")
-            .kind(equation::ModelKind::Sde)
+        pharmsol::metadata::new("one_cmt_shared_sde")
+            .kind(backends::ModelKind::Sde)
             .parameters(["ka", "ke", "sigma_ke", "v", "tlag", "f_oral"])
             .states(["gut", "central"])
             .outputs(["cp"])
             .routes([
-                equation::Route::bolus("oral")
+                backends::Route::bolus("oral")
                     .to_state("gut")
                     .inject_input_to_destination()
                     .with_lag()
                     .with_bioavailability(),
-                equation::Route::infusion("iv")
+                backends::Route::infusion("iv")
                     .to_state("central")
                     .inject_input_to_destination(),
             ])
@@ -299,7 +299,7 @@ fn handwritten_shared_input_sde() -> equation::SDE {
     .expect("handwritten shared-input SDE metadata should validate")
 }
 
-fn macro_covariate_sde() -> equation::SDE {
+fn macro_covariate_sde() -> backends::SDE {
     sde! {
         name: "one_cmt_sde_covariates",
         params: [ka, ke, sigma_ke, v, tlag, f_oral, base_gut, base_central],
@@ -342,8 +342,8 @@ fn macro_covariate_sde() -> equation::SDE {
     }
 }
 
-fn handwritten_covariate_sde() -> equation::SDE {
-    equation::SDE::new(
+fn handwritten_covariate_sde() -> backends::SDE {
+    backends::SDE::new(
         |x, p, t, dx, rateiv, cov| {
             fetch_params!(
                 p,
@@ -454,8 +454,8 @@ fn handwritten_covariate_sde() -> equation::SDE {
     .with_ndrugs(1)
     .with_nout(1)
     .with_metadata(
-        equation::metadata::new("one_cmt_sde_covariates")
-            .kind(equation::ModelKind::Sde)
+        pharmsol::metadata::new("one_cmt_sde_covariates")
+            .kind(backends::ModelKind::Sde)
             .parameters([
                 "ka",
                 "ke",
@@ -467,18 +467,18 @@ fn handwritten_covariate_sde() -> equation::SDE {
                 "base_central",
             ])
             .covariates([
-                equation::Covariate::continuous("wt"),
-                equation::Covariate::continuous("renal"),
+                backends::Covariate::continuous("wt"),
+                backends::Covariate::continuous("renal"),
             ])
             .states(["gut", "central"])
             .outputs(["cp"])
             .routes([
-                equation::Route::bolus("oral")
+                backends::Route::bolus("oral")
                     .to_state("gut")
                     .inject_input_to_destination()
                     .with_lag()
                     .with_bioavailability(),
-                equation::Route::infusion("iv")
+                backends::Route::infusion("iv")
                     .to_state("central")
                     .inject_input_to_destination(),
             ])

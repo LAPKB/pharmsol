@@ -97,7 +97,7 @@ pub fn subject_for_runtime_model(model: &pharmsol::dsl::CompiledRuntimeModel) ->
 }
 
 pub fn reference_values() -> Result<Vec<f64>, Box<dyn Error>> {
-    let model = equation::ODE::new(
+    let model = backends::ODE::new(
         |x, p, _t, dx, _bolus, rateiv, _cov| {
             fetch_params!(p, ke, _v);
             dx[0] = -ke * x[0] + rateiv[0];
@@ -114,12 +114,12 @@ pub fn reference_values() -> Result<Vec<f64>, Box<dyn Error>> {
     .with_ndrugs(1)
     .with_nout(1)
     .with_metadata(
-        equation::metadata::new(MODEL_NAME)
+        pharmsol::metadata::new(MODEL_NAME)
             .parameters(["ke", "v"])
             .states(["central"])
             .outputs(["cp"])
             .route(
-                equation::Route::infusion("iv")
+                backends::Route::infusion("iv")
                     .to_state("central")
                     .expect_explicit_input(),
             ),

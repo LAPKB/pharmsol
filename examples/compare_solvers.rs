@@ -18,7 +18,7 @@ use pharmsol::{prelude::*, Parameters};
 // between runs; the declaration-first `ode!` surface and the generated
 // metadata stay the same.
 
-fn two_cpt(solver: OdeSolver) -> equation::ODE {
+fn two_cpt(solver: OdeSolver) -> backends::ODE {
     ode! {
         name: "two_cpt",
         params: [ke, kcp, kpc, v],
@@ -74,7 +74,7 @@ fn main() {
     )
     .expect("valid named parameters");
 
-    let results: Vec<(&str, equation::ODE)> = vec![
+    let results: Vec<(&str, backends::ODE)> = vec![
         ("Bdf", bdf),
         ("Sdirk(TrBdf2)", trbdf2),
         ("Sdirk(Esdirk34)", esdirk34),

@@ -312,7 +312,7 @@ mod tests {
     use ndarray::array;
 
     #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-    use crate::{fa, lag, metadata, Equation, ModelKind, Subject, SubjectBuilderExt, ODE};
+    use crate::{core::Simulate, fa, lag, metadata, ModelKind, Subject, SubjectBuilderExt, ODE};
 
     #[cfg(feature = "dsl-jit")]
     use crate::dsl::{compile_module_source_to_runtime, RuntimeCompilationTarget};

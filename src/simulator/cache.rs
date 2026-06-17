@@ -42,7 +42,7 @@ pub(crate) type BoundErrorModelKey = u64;
 
 /// Thread-safe LRU cache for subject predictions.
 ///
-/// Used by [`ODE`](crate::ODE) and [`Analytical`](crate::simulator::equation::Analytical)
+/// Used by [`ODE`](crate::ODE) and [`Analytical`](crate::simulator::backends::Analytical)
 /// to avoid recomputing predictions for the same (subject, parameters) pair.
 ///
 /// `Clone` produces a shallow clone that shares the same underlying cache data,

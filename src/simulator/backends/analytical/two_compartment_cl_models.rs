@@ -65,6 +65,7 @@ pub fn pm_two_compartments_cl_with_absorption(
 #[cfg(test)]
 mod tests {
     use super::super::tests::SubjectInfo;
+    use crate::core::Simulate;
     use super::{two_compartments_cl, two_compartments_cl_with_absorption};
     use crate::*;
     use approx::assert_relative_eq;
@@ -74,7 +75,7 @@ mod tests {
         let infusion_dosing = SubjectInfo::InfusionDosing;
         let subject = infusion_dosing.get_subject();
 
-        let ode = equation::ODE::new(
+        let ode = crate::simulator::backends::ODE::new(
             |x, p, _t, dx, b, rateiv, _cov| {
                 fetch_params!(p, cl, q, vc, vp);
 
@@ -97,7 +98,7 @@ mod tests {
         .with_nout(1)
         .with_ndrugs(2);
 
-        let analytical = equation::Analytical::new(
+        let analytical = crate::simulator::backends::Analytical::new(
             two_compartments_cl,
             |_p, _t, _cov| {},
             |_p, _t, _cov| lag! {},
@@ -132,7 +133,7 @@ mod tests {
         let oral_infusion_dosing = SubjectInfo::OralInfusionDosage;
         let subject = oral_infusion_dosing.get_subject();
 
-        let ode = equation::ODE::new(
+        let ode = crate::simulator::backends::ODE::new(
             |x, p, _t, dx, b, rateiv, _cov| {
                 fetch_params!(p, ka, cl, q, vc, vp);
 
@@ -156,7 +157,7 @@ mod tests {
         .with_nout(1)
         .with_ndrugs(3);
 
-        let analytical = equation::Analytical::new(
+        let analytical = crate::simulator::backends::Analytical::new(
             two_compartments_cl_with_absorption,
             |_p, _t, _cov| {},
             |_p, _t, _cov| lag! {},

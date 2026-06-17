@@ -13,17 +13,18 @@ use argmin::{
 
 use ndarray::{Array1, Axis};
 
-use crate::{prelude::simulator::log_likelihood_matrix, AssayErrorModels, Data, Equation};
+use crate::core::Simulate;
+use crate::{prelude::simulator::log_likelihood_matrix, AssayErrorModels, Data};
 
 /// Optimizer that refines a single parameter vector against observed data.
-pub struct ParameterOptimizer<'a, E: Equation> {
+pub struct ParameterOptimizer<'a, E: Simulate> {
     equation: &'a E,
     data: &'a Data,
     sig: &'a AssayErrorModels,
     pyl: &'a Array1<f64>,
 }
 
-impl<E: Equation> CostFunction for ParameterOptimizer<'_, E> {
+impl<E: Simulate> CostFunction for ParameterOptimizer<'_, E> {
     type Param = Vec<f64>;
     type Output = f64;
 
@@ -52,7 +53,7 @@ impl<E: Equation> CostFunction for ParameterOptimizer<'_, E> {
     }
 }
 
-impl<'a, E: Equation> ParameterOptimizer<'a, E> {
+impl<'a, E: Simulate> ParameterOptimizer<'a, E> {
     /// Create a new optimizer.
     ///
     /// * `equation` — the model to evaluate.
@@ -74,7 +75,6 @@ impl<'a, E: Equation> ParameterOptimizer<'a, E> {
     }
 
     /// Optimize the parameters to minimize the negative log-likelihood against the data.
-
     pub fn optimize_point(self, parameters: Array1<f64>) -> Result<Array1<f64>, Error> {
         let simplex = create_initial_simplex(&parameters.to_vec());
         let solver: NelderMead<Vec<f64>, f64> = NelderMead::new(simplex).with_sd_tolerance(1e-2)?;
