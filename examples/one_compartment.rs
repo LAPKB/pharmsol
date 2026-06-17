@@ -1,3 +1,9 @@
+//! Compares analytical and ODE solutions for a one-compartment IV model.
+//!
+//! Both the `analytical!` and `ode!` macros define the same model. Predictions
+//! and log-likelihoods are computed with each and printed side by side to
+//! confirm they match.
+
 fn main() -> Result<(), pharmsol::PharmsolError> {
     use pharmsol::{prelude::*, Parameters};
 

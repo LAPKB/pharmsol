@@ -1,3 +1,9 @@
+//! Demonstrates JIT compilation of an ODE model from DSL source text.
+//!
+//! A simple one-compartment IV infusion model is defined as a DSL string,
+//! compiled at runtime via `compile_module_source_to_runtime`, and then used
+//! to estimate predictions — no recompilation of the host binary needed.
+//!
 //! Run with:
 //! cargo run --example dsl_runtime_jit --features dsl-jit
 
