@@ -3211,7 +3211,7 @@ fn expand_sde_out(
 /// Define an ODE (ordinary differential equation) model.
 ///
 /// This is the primary entry point for building pharmacometric ODE models.
-/// The macro generates and validates an [`ODE`] model and automatically generates its metadata
+/// The macro generates and validates an `ODE` model and automatically generates its metadata
 /// (parameter names, state labels, output labels, route declarations).
 ///
 /// # Fields
@@ -3407,7 +3407,7 @@ pub fn ode(input: TokenStream) -> TokenStream {
 /// Define an analytical (closed‑form) PK model.
 ///
 /// Builds a model that uses a built‑in analytical solution. The macro validates that the declared parameters
-/// match the chosen analytical solution's requirements and generates an [`Analytical`] value
+/// match the chosen analytical solution's requirements and generates an `Analytical` value
 /// with full metadata.
 ///
 /// # Fields
@@ -3630,7 +3630,7 @@ pub fn analytical(input: TokenStream) -> TokenStream {
 /// Define an SDE (stochastic differential equation) model.
 ///
 /// Builds a particle‑based stochastic model with a drift term, a diffusion
-/// term, and a configurable number of particles. The macro generates an [`SDE`]
+/// term, and a configurable number of particles. The macro generates an `SDE`
 /// value with full metadata.
 ///
 /// # Fields
