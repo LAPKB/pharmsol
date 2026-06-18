@@ -2,19 +2,19 @@ mod em;
 
 use diffsol::{NalgebraContext, Vector};
 use nalgebra::DVector;
-use ndarray::{concatenate, Array2, Axis};
+use ndarray::Array2;
 use pharmsol_dsl::ModelKind;
 use rand::{rng, RngExt};
 use rayon::prelude::*;
 use thiserror::Error;
 
-use crate::core::{ModelInfo, Simulate, Solver};
+use crate::core::{ModelInfo, Simulate};
 use crate::{
     data::{Covariates, Infusion},
     error_model::AssayErrorModels,
     prelude::simulator::Prediction,
     simulator::{Diffusion, Drift, Fa, Init, Lag, Neqs, Out, V},
-    Event, Observation, PharmsolError, Subject,
+    Observation, PharmsolError, Subject,
 };
 
 use crate::simulator::backends::parameters_hash;
@@ -236,7 +236,7 @@ impl crate::core::PredictionsContainer for Array2<Prediction> {
     }
 
     fn push(&mut self, pred: Prediction) {
-        let col = Array2::from_shape_vec((self.nrows(), 1), vec![pred]).unwrap();
+        let col = Array2::from_shape_vec((self.nrows(), 1), vec![pred; self.nrows()]).unwrap();
         *self = ndarray::concatenate(ndarray::Axis(1), &[self.view(), col.view()]).unwrap();
     }
 
@@ -403,9 +403,15 @@ impl crate::core::Solver for SDE {
         Ok(())
     }
 
+    fn process_bolus(&self, state: &mut Self::State, input: usize, amount: f64) {
+        if !self.injected_bolus_mappings.apply(state, input, amount) {
+            state.add_bolus(input, amount);
+        }
+    }
+
     fn process_observation(
         &self,
-        x: &Self::State,
+        x: &mut Self::State,
         parameters: &[f64],
         observation: &Observation,
         error_models: Option<&AssayErrorModels>,
@@ -430,15 +436,16 @@ impl crate::core::Solver for SDE {
             *p = observation.to_prediction(y[outeq], x[i].as_slice().to_vec());
         });
 
-        // Resampling and likelihood computation
+        // Resampling — mutate state to concentrate particles on high-likelihood regions
         let lik = if let Some(em) = error_models {
             let q: Vec<f64> = preds
                 .iter()
                 .map(|p| p.log_likelihood(em).map(f64::exp).unwrap_or(0.0))
                 .collect();
             let sum_q: f64 = q.iter().sum();
-            // Note: resampling is skipped here because state is borrowed.
-            // Full resampling happens in simulate_subject.
+            let w: Vec<f64> = q.iter().map(|qi| qi / sum_q).collect();
+            let indices = sysresample(&w);
+            *x = indices.iter().map(|&i| x[i].clone()).collect();
             Some(sum_q / nparticles as f64)
         } else {
             None
@@ -542,103 +549,12 @@ impl crate::core::Simulate for SDE {
         params: &[f64],
         error_models: Option<&AssayErrorModels>,
     ) -> Result<(Self::Predictions, Option<f64>), PharmsolError> {
-        let bound_em = match error_models {
-            Some(em) => Some(crate::core::simulate::bind_error_models_inner(self, em)?),
-            None => None,
-        };
-
-        let mut output =
-            Array2::<Prediction>::from_shape_fn((self.nparticles, 0), |_| Prediction::default());
-        let mut likelihood = Vec::new();
-
-        for occasion in subject.occasions() {
-            let covariates = occasion.covariates();
-            let events = self.resolve_events(occasion, params, covariates)?;
-            let mut state = self.initial_state(params, covariates, occasion.index());
-            let mut infusions: Vec<Infusion> = Vec::new();
-
-            for (idx, event) in events.iter().enumerate() {
-                match event {
-                    Event::Bolus(bolus) => {
-                        let input = bolus.input_index().ok_or_else(|| {
-                            PharmsolError::UnknownInputLabel {
-                                label: bolus.input().to_string(),
-                            }
-                        })?;
-                        if input >= self.ndrugs() {
-                            return Err(PharmsolError::InputOutOfRange {
-                                input,
-                                ndrugs: self.ndrugs(),
-                            });
-                        }
-                        if !self
-                            .injected_bolus_mappings
-                            .apply(&mut state, input, bolus.amount())
-                        {
-                            state.add_bolus(input, bolus.amount());
-                        }
-                    }
-                    Event::Infusion(inf) => infusions.push(inf.clone()),
-                    Event::Observation(obs) => {
-                        // Compute predictions across particles
-                        let mut preds = vec![Prediction::default(); self.nparticles];
-                        preds.par_iter_mut().enumerate().for_each(|(i, p)| {
-                            let mut y = V::zeros(self.nout(), NalgebraContext);
-                            (self.out)(
-                                &state[i].clone().into(),
-                                &V::from_vec(params.to_vec(), NalgebraContext),
-                                obs.time(),
-                                covariates,
-                                &mut y,
-                            );
-                            let outeq = obs.outeq_index().expect("resolved obs");
-                            *p = obs.to_prediction(y[outeq], state[i].as_slice().to_vec());
-                        });
-
-                        // Resampling
-                        if let Some(em) = &bound_em {
-                            let q: Vec<f64> = preds
-                                .iter()
-                                .map(|p| p.log_likelihood(em).map(f64::exp).unwrap_or(0.0))
-                                .collect();
-                            let sum_q: f64 = q.iter().sum();
-                            let w: Vec<f64> = q.iter().map(|qi| qi / sum_q).collect();
-                            let indices = sysresample(&w);
-                            state = indices.iter().map(|&i| state[i].clone()).collect();
-                            likelihood.push(sum_q / self.nparticles as f64);
-                        }
-
-                        // Store mean prediction
-                        let mean_pred: f64 = preds.iter().map(|p| p.prediction()).sum::<f64>()
-                            / self.nparticles as f64;
-                        let mut pred = preds[0].clone();
-                        pred.set_prediction(mean_pred);
-                        let col = Array2::from_shape_vec(
-                            (self.nparticles, 1),
-                            vec![pred; self.nparticles],
-                        )
-                        .unwrap();
-                        output = concatenate(Axis(1), &[output.view(), col.view()]).unwrap();
-                    }
-                }
-
-                if let Some(next) = events.get(idx + 1) {
-                    if !event.time().eq(&next.time()) {
-                        self.solve(
-                            &mut state,
-                            params,
-                            covariates,
-                            &infusions,
-                            event.time(),
-                            next.time(),
-                        )?;
-                    }
-                }
-            }
-        }
-
-        let ll = bound_em.map(|_| likelihood.iter().product::<f64>());
-        Ok((output, ll))
+        crate::core::standard_event_loop::<Self, Self::Predictions>(
+            self,
+            subject,
+            params,
+            error_models,
+        )
     }
 
     fn log_likelihood(

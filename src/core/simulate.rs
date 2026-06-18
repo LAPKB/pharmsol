@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::core::{Caching, ModelInfo, Solver, State};
+use crate::core::{Caching, ModelInfo, Solver};
 use crate::data::error_model::{AssayErrorModels, BoundAssayErrorModels};
 use crate::simulator::likelihood::Prediction;
 use crate::{Event, Infusion, Parameters, PharmsolError, Subject};
@@ -146,14 +146,14 @@ where
                             ndrugs: model.ndrugs(),
                         });
                     }
-                    state.add_bolus(input, bolus.amount());
+                    model.process_bolus(&mut state, input, bolus.amount());
                 }
                 Event::Infusion(infusion) => {
                     infusions.push(infusion.clone());
                 }
                 Event::Observation(observation) => {
                     let (pred, lik) = model.process_observation(
-                        &state,
+                        &mut state,
                         params,
                         observation,
                         bound_error_models.as_deref(),

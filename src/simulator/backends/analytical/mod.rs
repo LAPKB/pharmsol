@@ -706,7 +706,7 @@ impl crate::core::Solver for Analytical {
 
     fn process_observation(
         &self,
-        x: &Self::State,
+        x: &mut Self::State,
         parameters: &[f64],
         observation: &Observation,
         error_models: Option<&AssayErrorModels>,

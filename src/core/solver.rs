@@ -72,11 +72,23 @@ pub trait Solver {
         )
     }
 
+    /// Apply a bolus to the state, with optional solver-specific preprocessing.
+    ///
+    /// The default implementation calls [`State::add_bolus`]. Override this if
+    /// the solver needs to redirect or transform bolus inputs before application
+    /// (e.g. SDE injected-bolus mappings).
+    fn process_bolus(&self, state: &mut Self::State, input: usize, amount: f64) {
+        state.add_bolus(input, amount);
+    }
+
     /// Compute a prediction (and optionally a likelihood component) from the
     /// current state at an observation time point.
+    ///
+    /// The state is `&mut` so that backends that need post-observation mutation
+    /// (e.g. SDE resampling) can perform it inline.
     fn process_observation(
         &self,
-        _state: &Self::State,
+        _state: &mut Self::State,
         _params: &[f64],
         _observation: &Observation,
         _error_models: Option<&AssayErrorModels>,

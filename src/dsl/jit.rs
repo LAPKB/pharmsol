@@ -1337,7 +1337,7 @@ mod tests {
     use crate::simulator::backends::analytical::one_compartment_with_absorption;
     use crate::simulator::backends::ode::{ExplicitRkTableau, OdeSolver};
     use crate::test_fixtures::STRUCTURED_BLOCK_CORPUS;
-    use crate::{backends, Parameters, Subject, SubjectBuilderExt, ODE, SDE};
+    use crate::{Parameters, Subject, SubjectBuilderExt, ODE, SDE};
     use approx::assert_relative_eq;
     use diffsol::Vector;
     use pharmsol_dsl::execution::DenseBufferLayout;
