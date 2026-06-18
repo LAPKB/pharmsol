@@ -135,14 +135,15 @@ mod test_fixtures;
 
 //extension traits
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use crate::core::metadata;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use crate::core::metadata::{
     ModelMetadata, ModelMetadataError, NameDomain, RouteInputPolicy, RouteKind,
     ValidatedModelMetadata,
 };
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use crate::core::{Caching, ModelInfo, Simulate, Solver};
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use crate::core::{Predictions, State};
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use crate::data::builder::SubjectBuilderExt;
