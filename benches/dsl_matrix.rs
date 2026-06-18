@@ -19,7 +19,7 @@ use pharmsol::dsl::{
     NativeAotCompileOptions, NativeOdeModel, NativeSdeModel, RuntimeCompilationTarget,
 };
 use pharmsol::prelude::*;
-use pharmsol::{Cache, Parameters};
+use pharmsol::Parameters;
 
 mod common;
 use common::{
@@ -245,7 +245,7 @@ fn predictions_group(c: &mut Criterion) {
                             let model = match cache {
                                 CacheState::Hot => compile_ode(workload, backend, &aot),
                                 CacheState::Cold => {
-                                    compile_ode(workload, backend, &aot).disable_cache()
+                                    compile_ode(workload, backend, &aot).without_cache()
                                 }
                             };
                             let theta = ode_parameters(&model, workload);
@@ -266,7 +266,7 @@ fn predictions_group(c: &mut Criterion) {
                             let model = match cache {
                                 CacheState::Hot => compile_analytical(workload, backend, &aot),
                                 CacheState::Cold => {
-                                    compile_analytical(workload, backend, &aot).disable_cache()
+                                    compile_analytical(workload, backend, &aot).without_cache()
                                 }
                             };
                             let theta = analytical_parameters(&model, workload);
@@ -287,7 +287,7 @@ fn predictions_group(c: &mut Criterion) {
                             let model = match cache {
                                 CacheState::Hot => compile_sde(workload, backend, &aot),
                                 CacheState::Cold => {
-                                    compile_sde(workload, backend, &aot).disable_cache()
+                                    compile_sde(workload, backend, &aot).without_cache()
                                 }
                             };
                             let theta = sde_parameters(&model, workload);
@@ -339,7 +339,7 @@ fn log_likelihood_group(c: &mut Criterion) {
                             let model = match cache {
                                 CacheState::Hot => compile_ode(workload, backend, &aot),
                                 CacheState::Cold => {
-                                    compile_ode(workload, backend, &aot).disable_cache()
+                                    compile_ode(workload, backend, &aot).without_cache()
                                 }
                             };
                             let theta = ode_parameters(&model, workload);
@@ -361,7 +361,7 @@ fn log_likelihood_group(c: &mut Criterion) {
                             let model = match cache {
                                 CacheState::Hot => compile_analytical(workload, backend, &aot),
                                 CacheState::Cold => {
-                                    compile_analytical(workload, backend, &aot).disable_cache()
+                                    compile_analytical(workload, backend, &aot).without_cache()
                                 }
                             };
                             let theta = analytical_parameters(&model, workload);
@@ -383,7 +383,7 @@ fn log_likelihood_group(c: &mut Criterion) {
                             let model = match cache {
                                 CacheState::Hot => compile_sde(workload, backend, &aot),
                                 CacheState::Cold => {
-                                    compile_sde(workload, backend, &aot).disable_cache()
+                                    compile_sde(workload, backend, &aot).without_cache()
                                 }
                             };
                             let theta = sde_parameters(&model, workload);

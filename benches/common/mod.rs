@@ -17,10 +17,7 @@ use pharmsol::prelude::*;
 use pharmsol::simulator::backends::analytical::{
     one_compartment_with_absorption, two_compartments,
 };
-use pharmsol::{
-    backends::{self, Route},
-    Analytical, ResidualErrorModel, ResidualErrorModels, ODE, SDE,
-};
+use pharmsol::{backends::Route, Analytical, ResidualErrorModel, ResidualErrorModels, ODE, SDE};
 
 /// `ModelMetadata` for handwritten factories so route/output labels resolve like the macro/DSL paths.
 fn model_metadata(workload: Workload, kind: SolverKind) -> ModelMetadata {
