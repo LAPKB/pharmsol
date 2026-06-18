@@ -1,9 +1,9 @@
 //! Nelder‑Mead parameter refinement for pharmacometric models.
 //!
 //! This module provides a [`ParameterOptimizer`] that refines a single parameter
-//! Given an [`Equation`], observed [`Data`], and [`AssayErrorModels`] via
-//! Nelder‑Mead optimization in log‑space. The optimizer finds the parameter vector
-//! that minimizes the negative log-likelihood of the model predictions against the data,
+//! vector. Given a [`Simulate`] model, observed [`Data`], and [`AssayErrorModels`],
+//! it runs Nelder‑Mead optimization in log‑space to find the parameter vector that
+//! minimizes the negative log-likelihood of the model predictions against the data,
 //! as measured by the provided error models.
 
 use argmin::{

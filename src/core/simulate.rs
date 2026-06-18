@@ -116,16 +116,6 @@ where
     S: Solver + ModelInfo + Caching,
     P: PredictionsContainer,
 {
-    // Check prediction cache
-    if let (Some(cache), None) = (model.prediction_cache(), error_models) {
-        let key = (subject.hash(), parameters_hash(params));
-        // Cache hit would need to return (P, None) but P isn't necessarily the same
-        // type as what's in the cache. We skip cache-based return here and let
-        // individual backends handle caching in their simulate_subject impl.
-        // The cache check pattern is used by Analytical and ODE backends.
-        let _ = (cache, key);
-    }
-
     let bound_error_models = match error_models {
         Some(em) => Some(bind_error_models_inner(model, em)?),
         None => None,
@@ -166,7 +156,7 @@ where
                         &state,
                         params,
                         observation,
-                        error_models,
+                        bound_error_models.as_deref(),
                         covariates,
                     )?;
                     if let Some(lik) = lik {
@@ -238,16 +228,4 @@ pub(crate) fn bind_error_models_inner<'a, M: ModelInfo + Caching>(
                 .flatten(),
         )
         .map_err(PharmsolError::from)
-}
-
-/// Hash a parameter slice for cache keys.
-#[inline(always)]
-pub(crate) fn parameters_hash(params: &[f64]) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = ahash::AHasher::default();
-    for &value in params {
-        let bits = if value == 0.0 { 0u64 } else { value.to_bits() };
-        bits.hash(&mut hasher);
-    }
-    hasher.finish()
 }

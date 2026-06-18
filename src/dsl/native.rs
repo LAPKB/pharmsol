@@ -1394,7 +1394,7 @@ fn runtime_ode_predictions(
     if let Some(cache) = &model.cache {
         let key = (
             subject.hash(),
-            crate::core::simulate::parameters_hash(support_point),
+            crate::simulator::backends::parameters_hash(support_point),
         );
         if let Some(cached) = cache.get(&key) {
             return Ok(cached);
@@ -1697,7 +1697,7 @@ fn runtime_analytical_predictions(
     if let Some(cache) = &model.cache {
         let key = (
             subject.hash(),
-            crate::core::simulate::parameters_hash(support_point),
+            crate::simulator::backends::parameters_hash(support_point),
         );
         if let Some(cached) = cache.get(&key) {
             return Ok(cached);
@@ -2111,7 +2111,7 @@ fn runtime_sde_log_likelihood(
     if let Some(cache) = &model.cache {
         let key = (
             subject.hash(),
-            crate::core::simulate::parameters_hash(support_point),
+            crate::simulator::backends::parameters_hash(support_point),
             error_models.hash(),
         );
         if let Some(cached) = cache.get(&key) {
@@ -3052,7 +3052,7 @@ mod tests {
         let expected = SubjectPredictions::default();
         let key = (
             subject.hash(),
-            crate::core::simulate::parameters_hash(parameters.as_slice()),
+            crate::simulator::backends::parameters_hash(parameters.as_slice()),
         );
 
         model
