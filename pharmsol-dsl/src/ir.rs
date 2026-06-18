@@ -472,6 +472,9 @@ where
         }
 
         let lookup = candidate.to_ascii_lowercase();
+        if differs_only_by_trailing_digits(&needle, &lookup) {
+            continue;
+        }
         let distance = if is_single_adjacent_transposition(&needle, &lookup) {
             1
         } else {
@@ -506,6 +509,18 @@ where
     } else {
         best.map(|(_, candidate)| candidate)
     }
+}
+
+fn differs_only_by_trailing_digits(lhs: &str, rhs: &str) -> bool {
+    let (shorter, longer) = if lhs.len() < rhs.len() {
+        (lhs, rhs)
+    } else {
+        (rhs, lhs)
+    };
+    if shorter.is_empty() || shorter == longer {
+        return false;
+    }
+    longer.starts_with(shorter) && longer[shorter.len()..].chars().all(|c| c.is_ascii_digit())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

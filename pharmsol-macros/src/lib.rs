@@ -3891,7 +3891,7 @@ mod tests {
     #[test]
     fn ode_route_bindings_share_inputs_by_kind_local_ordinal() {
         let input = syn::parse_str::<OdeInput>(
-            "name: \"demo\", params: [ka, ke, v], states: [depot, central], outputs: [cp], routes: [bolus(oral) -> depot, infusion(iv) -> central, bolus(sc) -> depot], diffeq: |x, p, t, dx, b, rateiv, cov| {}, out: |x, p, t, cov, y| {}",
+            "name: \"demo\", params: [ka, ke, v], states: [depot, central], outputs: [cp], routes: [bolus(oral) -> depot, infusion(iv) -> central, bolus(sc) -> depot], diffeq: |x, p, t, dx, cov| {}, out: |x, p, t, cov, y| {}",
         )
         .expect("declaration-first ode input should parse");
 
