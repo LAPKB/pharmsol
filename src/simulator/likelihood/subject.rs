@@ -9,6 +9,7 @@ use ndarray::{Array2, ShapeBuilder};
 use crate::data::error_model::AssayErrorModels;
 use crate::{PharmsolError, Predictions};
 
+use super::model::LikelihoodModel;
 use super::prediction::Prediction;
 
 /// Container for predictions associated with a single subject.
@@ -32,8 +33,16 @@ impl Predictions for SubjectPredictions {
         self.predictions.clone()
     }
 
-    fn log_likelihood(&self, error_models: &AssayErrorModels) -> Result<f64, PharmsolError> {
-        SubjectPredictions::log_likelihood(self, error_models)
+    fn log_likelihood(&self, model: &dyn LikelihoodModel) -> Result<f64, PharmsolError> {
+        let mut total = 0.0;
+        for prediction in self
+            .predictions
+            .iter()
+            .filter(|prediction| prediction.observation().is_some())
+        {
+            total += model.observation_log_likelihood(prediction)?;
+        }
+        Ok(total)
     }
 }
 
@@ -152,6 +161,51 @@ impl SubjectPredictions {
 impl From<Vec<Prediction>> for SubjectPredictions {
     fn from(predictions: Vec<Prediction>) -> Self {
         Self { predictions }
+    }
+}
+
+/// Simulation output for particle-based (SDE) solvers.
+///
+/// Unlike deterministic solvers, where the output is a set of predictions that
+/// can be re-scored under any [`LikelihoodModel`], a particle filter computes
+/// the marginal likelihood *during* the forward pass (it drives resampling).
+/// The result is therefore a likelihood value rather than a prediction trajectory.
+///
+/// This is the SDE counterpart to [`SubjectPredictions`] and is selected via the
+/// [`Solver::Predictions`](crate::core::Solver::Predictions) associated type.
+#[derive(Debug, Clone, Default)]
+pub struct ParticleLikelihood {
+    log_likelihood: f64,
+}
+
+impl ParticleLikelihood {
+    /// Wrap a likelihood value accumulated by the particle filter.
+    pub fn new(log_likelihood: f64) -> Self {
+        Self { log_likelihood }
+    }
+
+    /// The likelihood value computed during simulation.
+    pub fn value(&self) -> f64 {
+        self.log_likelihood
+    }
+}
+
+impl Predictions for ParticleLikelihood {
+    fn squared_error(&self) -> f64 {
+        unimplemented!("squared error is not defined for particle-filter likelihood output")
+    }
+
+    fn get_predictions(&self) -> Vec<Prediction> {
+        Vec::new()
+    }
+
+    /// Returns the likelihood accumulated during the forward pass.
+    ///
+    /// The `model` argument is ignored: a particle filter commits to a
+    /// likelihood model while it runs (resampling depends on it), so the value
+    /// cannot be re-scored after the fact.
+    fn log_likelihood(&self, _model: &dyn LikelihoodModel) -> Result<f64, PharmsolError> {
+        Ok(self.log_likelihood)
     }
 }
 

@@ -21,7 +21,7 @@ use crate::simulator::backends::parameters_hash;
 use crate::core::metadata::{ModelMetadata, ModelMetadataError, ValidatedModelMetadata};
 use crate::data::error_model::AssayErrorModels;
 use crate::simulator::cache::{BoundErrorModelCache, PredictionCache, DEFAULT_CACHE_SIZE};
-use crate::simulator::likelihood::Prediction;
+use crate::simulator::likelihood::{LikelihoodModel, Prediction};
 use crate::PharmsolError;
 use crate::{data::Covariates, simulator::*, Observation, Subject};
 
@@ -640,6 +640,7 @@ pub(crate) mod tests {
 
 impl crate::core::Solver for Analytical {
     type State = V;
+    type Predictions = SubjectPredictions;
 
     fn solve(
         &self,
@@ -709,7 +710,7 @@ impl crate::core::Solver for Analytical {
         x: &mut Self::State,
         parameters: &[f64],
         observation: &Observation,
-        error_models: Option<&AssayErrorModels>,
+        likelihood: Option<&dyn LikelihoodModel>,
         covariates: &Covariates,
     ) -> Result<(Prediction, Option<f64>), PharmsolError> {
         let mut y = V::zeros(self.nout(), NalgebraContext);
@@ -726,8 +727,8 @@ impl crate::core::Solver for Analytical {
                 label: observation.outeq().to_string(),
             })?;
         let pred = observation.to_prediction(y[outeq], x.as_slice().to_vec());
-        let lik = error_models
-            .map(|em| pred.log_likelihood(em).map(f64::exp))
+        let lik = likelihood
+            .map(|model| model.observation_log_likelihood(&pred).map(f64::exp))
             .transpose()?;
         Ok((pred, lik))
     }
@@ -805,19 +806,17 @@ impl crate::core::Caching for Analytical {
 }
 
 impl crate::core::Simulate for Analytical {
-    type Predictions = SubjectPredictions;
-
     fn simulate_subject(
         &self,
         subject: &Subject,
         params: &[f64],
         error_models: Option<&AssayErrorModels>,
-    ) -> Result<(Self::Predictions, Option<f64>), PharmsolError> {
+    ) -> Result<Self::Predictions, PharmsolError> {
         if error_models.is_none() {
             if let Some(cache) = self.core.cache() {
                 let key = (subject.hash(), parameters_hash(params));
                 if let Some(cached) = cache.get(&key) {
-                    return Ok((cached, None));
+                    return Ok(cached);
                 }
             }
         }
@@ -836,7 +835,7 @@ impl crate::core::Simulate for Analytical {
             }
         }
 
-        Ok(result)
+        Ok(result.0)
     }
 
     fn kind() -> pharmsol_dsl::ModelKind {

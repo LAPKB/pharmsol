@@ -519,6 +519,7 @@ fn _simulate_subject_dense(
 
 impl crate::core::Solver for ODE {
     type State = V;
+    type Predictions = SubjectPredictions;
 
     fn initial_state(
         &self,
@@ -602,24 +603,22 @@ impl crate::core::Caching for ODE {
 }
 
 impl crate::core::Simulate for ODE {
-    type Predictions = SubjectPredictions;
-
     fn simulate_subject(
         &self,
         subject: &Subject,
         params: &[f64],
         error_models: Option<&AssayErrorModels>,
-    ) -> Result<(Self::Predictions, Option<f64>), PharmsolError> {
+    ) -> Result<Self::Predictions, PharmsolError> {
         if error_models.is_none() {
             if let Some(cache) = self.core.cache() {
                 let key = (subject.hash(), super::parameters_hash(params));
                 if let Some(cached) = cache.get(&key) {
-                    return Ok((cached, None));
+                    return Ok(cached);
                 }
             }
         }
 
-        let (predictions, likelihood) =
+        let (predictions, _likelihood) =
             _simulate_subject_dense(self, subject, params, error_models)?;
 
         if error_models.is_none() {
@@ -629,7 +628,7 @@ impl crate::core::Simulate for ODE {
             }
         }
 
-        Ok((predictions, likelihood))
+        Ok(predictions)
     }
 
     fn log_likelihood(
@@ -826,8 +825,7 @@ mod tests {
 
         let predictions = ode
             .simulate_subject(&route_policy_subject(), &crate::parameters::dense([]), None)
-            .expect("simulation should succeed")
-            .0;
+            .expect("simulation should succeed");
         let metadata = ode.metadata().expect("metadata exists");
 
         assert_eq!(
@@ -874,8 +872,7 @@ mod tests {
 
         let predictions = ode
             .simulate_subject(&route_policy_subject(), &crate::parameters::dense([]), None)
-            .expect("simulation should succeed")
-            .0;
+            .expect("simulation should succeed");
 
         assert_relative_eq!(
             predictions.predictions()[0].prediction(),
@@ -915,12 +912,10 @@ mod tests {
 
         let canonical_predictions = ode
             .simulate_subject(&canonical, &crate::parameters::dense([]), None)
-            .expect("canonical labels should simulate")
-            .0;
+            .expect("canonical labels should simulate");
         let aliased_predictions = ode
             .simulate_subject(&aliased, &crate::parameters::dense([]), None)
-            .expect("raw numeric aliases should simulate")
-            .0;
+            .expect("raw numeric aliases should simulate");
 
         assert_relative_eq!(
             canonical_predictions.predictions()[0].prediction(),

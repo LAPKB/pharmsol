@@ -66,6 +66,7 @@
 
 mod distributions;
 mod matrix;
+mod model;
 mod prediction;
 mod progress;
 mod subject;
@@ -76,13 +77,14 @@ pub use matrix::log_likelihood_matrix;
 pub use matrix::log_psi;
 #[allow(deprecated)]
 pub use matrix::psi;
+pub use model::LikelihoodModel;
 pub use prediction::Prediction;
-pub use subject::{PopulationPredictions, SubjectPredictions};
+pub use subject::{ParticleLikelihood, PopulationPredictions, SubjectPredictions};
 
 use ndarray::{Array2, Axis};
 use rayon::prelude::*;
 
-use crate::core::{PredictionsContainer, Simulate};
+use crate::core::{Predictions, Simulate};
 use crate::{Data, PharmsolError, Subject};
 
 /// Compute log-likelihoods for all subjects in parallel, where each subject
@@ -140,7 +142,7 @@ pub fn log_likelihood_batch(
             Err(_) => return f64::NEG_INFINITY,
         };
 
-        let obs_pred_pairs = predictions.predictions().iter().filter_map(|pred| {
+        let obs_pred_pairs = predictions.get_predictions().into_iter().filter_map(|pred| {
             pred.observation()
                 .map(|obs| (pred.outeq(), obs, pred.prediction()))
         });
@@ -213,7 +215,7 @@ pub fn log_likelihood_subject(
     };
 
     // Extract (outeq, observation, prediction) tuples and compute log-likelihood
-    let obs_pred_pairs = predictions.predictions().iter().filter_map(|pred| {
+    let obs_pred_pairs = predictions.get_predictions().into_iter().filter_map(|pred| {
         pred.observation()
             .map(|obs| (pred.outeq(), obs, pred.prediction()))
     });

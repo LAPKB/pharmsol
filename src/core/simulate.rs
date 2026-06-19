@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use crate::core::{Caching, ModelInfo, Solver};
+use crate::core::{Caching, ModelInfo, Predictions, Solver};
 use crate::data::error_model::{AssayErrorModels, BoundAssayErrorModels};
-use crate::simulator::likelihood::Prediction;
+use crate::simulator::likelihood::{LikelihoodModel, Prediction};
 use crate::{Event, Infusion, Parameters, PharmsolError, Subject};
 
 /// A container that accumulates predictions during simulation.
@@ -37,28 +37,31 @@ pub trait PredictionsContainer: Default {
 /// - [`estimate_predictions`](Self::estimate_predictions) — accept `&Parameters` instead of `&[f64]`
 /// - [`estimate_log_likelihood`](Self::estimate_log_likelihood) — accept `&Parameters` instead of `&[f64]`
 pub trait Simulate: Solver + ModelInfo + Caching + Clone + Sync + 'static {
-    /// The predictions container type for this backend.
-    type Predictions: PredictionsContainer;
-
-    /// Run the simulation for a subject and return predictions + optional likelihood.
+    /// Run the simulation for a subject and return its output.
     ///
-    /// This is the only required method. Implementors can call
-    /// [`standard_event_loop`] for the default per-event loop, or provide
-    /// their own (e.g. batch diffsol integration).
+    /// The output type is [`Solver::Predictions`] — rich predictions for
+    /// deterministic solvers, a likelihood for particle-based ones. This is the
+    /// only required method. Implementors can call [`standard_event_loop`] for
+    /// the default per-event loop, or provide their own (e.g. batch diffsol
+    /// integration).
+    ///
+    /// `error_models` is consumed by solvers that need a likelihood model during
+    /// the forward pass (e.g. SDE resampling); deterministic solvers may ignore
+    /// it and score predictions afterwards via [`Predictions::log_likelihood`].
     fn simulate_subject(
         &self,
         subject: &Subject,
         params: &[f64],
         error_models: Option<&AssayErrorModels>,
-    ) -> Result<(Self::Predictions, Option<f64>), PharmsolError>;
+    ) -> Result<Self::Predictions, PharmsolError>;
 
-    /// Simulate and return predictions only.
+    /// Simulate and return the output only.
     fn predictions(
         &self,
         subject: &Subject,
         params: &[f64],
     ) -> Result<Self::Predictions, PharmsolError> {
-        Ok(self.simulate_subject(subject, params, None)?.0)
+        self.simulate_subject(subject, params, None)
     }
 
     /// Simulate and return the log-likelihood.
@@ -68,9 +71,9 @@ pub trait Simulate: Solver + ModelInfo + Caching + Clone + Sync + 'static {
         params: &[f64],
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
-        let predictions = self.predictions(subject, params)?;
         let bound = bind_error_models_inner(self, error_models)?;
-        predictions.log_likelihood(&bound)
+        let output = self.simulate_subject(subject, params, Some(&*bound))?;
+        output.log_likelihood(&*bound)
     }
 
     /// Convenience: accept `&Parameters` instead of `&[f64]`.
@@ -156,7 +159,9 @@ where
                         &mut state,
                         params,
                         observation,
-                        bound_error_models.as_deref(),
+                        bound_error_models
+                            .as_deref()
+                            .map(|m| m as &dyn LikelihoodModel),
                         covariates,
                     )?;
                     if let Some(lik) = lik {

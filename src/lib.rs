@@ -248,7 +248,8 @@ pub mod prelude {
             cache::{self, PredictionCache, SdeLikelihoodCache, DEFAULT_CACHE_SIZE},
             likelihood::{
                 log_likelihood_batch, log_likelihood_matrix, log_likelihood_subject, log_psi, psi,
-                PopulationPredictions, Prediction, SubjectPredictions,
+                LikelihoodModel, ParticleLikelihood, PopulationPredictions, Prediction,
+                SubjectPredictions,
             },
         };
     }
@@ -260,7 +261,7 @@ pub mod prelude {
             ode::{ExplicitRkTableau, OdeSolver, SdirkTableau},
         },
         cache::{PredictionCache, SdeLikelihoodCache, DEFAULT_CACHE_SIZE},
-        likelihood::{Prediction, SubjectPredictions},
+        likelihood::{LikelihoodModel, ParticleLikelihood, Prediction, SubjectPredictions},
     };
 
     // Analytical model functions

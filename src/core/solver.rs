@@ -1,7 +1,6 @@
-use crate::core::State;
-use crate::data::error_model::AssayErrorModels;
+use crate::core::{Predictions, State};
 use crate::data::{Covariates, Infusion};
-use crate::simulator::likelihood::Prediction;
+use crate::simulator::likelihood::{LikelihoodModel, Prediction};
 use crate::{Observation, PharmsolError};
 
 /// How to advance a model's state through time.
@@ -31,14 +30,14 @@ use crate::{Observation, PharmsolError};
 ///         Ok(())
 ///     }
 ///
-///     fn process_observation(&self, state: &V, params: &[f64],
-///                            observation: &Observation, error_models: Option<&AssayErrorModels>,
+///     fn process_observation(&self, state: &mut V, params: &[f64],
+///                            observation: &Observation, likelihood: Option<&dyn LikelihoodModel>,
 ///                            covariates: &Covariates) -> Result<(Prediction, Option<f64>), Error> {
 ///         let mut y = V::zeros(self.nout(), NalgebraContext);
 ///         (self.output_fn)(state, &params_vector(params), observation.time(), covariates, &mut y);
 ///         let ix = observation.outeq_index().unwrap();
 ///         let pred = observation.to_prediction(y[ix], state.as_slice().to_vec());
-///         let lik = error_models.map(|em| pred.log_likelihood(em).map(f64::exp)).transpose()?;
+///         let lik = likelihood.map(|m| m.observation_log_likelihood(&pred).map(f64::exp)).transpose()?;
 ///         Ok((pred, lik))
 ///     }
 ///     // ...
@@ -47,6 +46,16 @@ use crate::{Observation, PharmsolError};
 pub trait Solver {
     /// The state vector type this solver operates on.
     type State: State;
+
+    /// The output this solver produces.
+    ///
+    /// Deterministic solvers (ODE/Analytical) produce [`SubjectPredictions`],
+    /// while particle-based solvers (SDE) produce a [`ParticleLikelihood`]
+    /// computed during the forward pass.
+    ///
+    /// [`SubjectPredictions`]: crate::simulator::likelihood::SubjectPredictions
+    /// [`ParticleLikelihood`]: crate::simulator::likelihood::ParticleLikelihood
+    type Predictions: Predictions;
 
     /// Advance the system state from `ti` to `tf`.
     ///
@@ -84,6 +93,10 @@ pub trait Solver {
     /// Compute a prediction (and optionally a likelihood component) from the
     /// current state at an observation time point.
     ///
+    /// `likelihood` selects how the observation is scored (Gaussian assay
+    /// error, Poisson, …) for solvers that need a likelihood during the forward
+    /// pass (e.g. SDE resampling).
+    ///
     /// The state is `&mut` so that backends that need post-observation mutation
     /// (e.g. SDE resampling) can perform it inline.
     fn process_observation(
@@ -91,7 +104,7 @@ pub trait Solver {
         _state: &mut Self::State,
         _params: &[f64],
         _observation: &Observation,
-        _error_models: Option<&AssayErrorModels>,
+        _likelihood: Option<&dyn LikelihoodModel>,
         _covariates: &Covariates,
     ) -> Result<(Prediction, Option<f64>), PharmsolError> {
         unimplemented!(

@@ -26,6 +26,7 @@ use diffsol::VectorCommon;
 
 use crate::core::metadata::{ModelMetadata, ModelMetadataError, ValidatedModelMetadata};
 use crate::core::{Predictions, State};
+use crate::simulator::likelihood::{LikelihoodModel, ParticleLikelihood};
 
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
 pub enum SdeMetadataError {
@@ -216,7 +217,7 @@ impl Predictions for Array2<Prediction> {
         }
         result
     }
-    fn log_likelihood(&self, error_models: &AssayErrorModels) -> Result<f64, crate::PharmsolError> {
+    fn log_likelihood(&self, model: &dyn LikelihoodModel) -> Result<f64, crate::PharmsolError> {
         let predictions = self.get_predictions();
         if predictions.is_empty() {
             return Ok(0.0);
@@ -224,7 +225,7 @@ impl Predictions for Array2<Prediction> {
         let log_liks: Result<Vec<f64>, _> = predictions
             .iter()
             .filter(|p| p.observation().is_some())
-            .map(|p| p.log_likelihood(error_models))
+            .map(|p| model.observation_log_likelihood(p))
             .collect();
         log_liks.map(|lls| lls.iter().sum())
     }
@@ -374,6 +375,7 @@ fn validate_metadata_dimensions(
 
 impl crate::core::Solver for SDE {
     type State = Vec<DVector<f64>>;
+    type Predictions = ParticleLikelihood;
 
     fn solve(
         &self,
@@ -414,7 +416,7 @@ impl crate::core::Solver for SDE {
         x: &mut Self::State,
         parameters: &[f64],
         observation: &Observation,
-        error_models: Option<&AssayErrorModels>,
+        likelihood: Option<&dyn LikelihoodModel>,
         covariates: &Covariates,
     ) -> Result<(Prediction, Option<f64>), PharmsolError> {
         // Compute predictions across all particles
@@ -437,10 +439,15 @@ impl crate::core::Solver for SDE {
         });
 
         // Resampling — mutate state to concentrate particles on high-likelihood regions
-        let lik = if let Some(em) = error_models {
+        let lik = if let Some(model) = likelihood {
             let q: Vec<f64> = preds
                 .iter()
-                .map(|p| p.log_likelihood(em).map(f64::exp).unwrap_or(0.0))
+                .map(|p| {
+                    model
+                        .observation_log_likelihood(p)
+                        .map(f64::exp)
+                        .unwrap_or(0.0)
+                })
                 .collect();
             let sum_q: f64 = q.iter().sum();
             let w: Vec<f64> = q.iter().map(|qi| qi / sum_q).collect();
@@ -540,21 +547,37 @@ impl crate::core::Caching for SDE {
     }
 }
 
-impl crate::core::Simulate for SDE {
-    type Predictions = Array2<Prediction>;
+impl SDE {
+    /// Estimate the per-particle prediction matrix (dense trajectory) for a subject.
+    ///
+    /// The SDE [`Simulate`](crate::core::Simulate) output is a
+    /// [`ParticleLikelihood`]; use this method when you need the particle
+    /// prediction matrix itself (e.g. to inspect the mean trajectory).
+    pub fn estimate_predictions(
+        &self,
+        subject: &Subject,
+        parameters: &crate::Parameters,
+    ) -> Result<Array2<Prediction>, PharmsolError> {
+        let (predictions, _likelihood) = crate::core::standard_event_loop::<
+            Self,
+            Array2<Prediction>,
+        >(self, subject, parameters.as_slice(), None)?;
+        Ok(predictions)
+    }
+}
 
+impl crate::core::Simulate for SDE {
     fn simulate_subject(
         &self,
         subject: &Subject,
         params: &[f64],
         error_models: Option<&AssayErrorModels>,
-    ) -> Result<(Self::Predictions, Option<f64>), PharmsolError> {
-        crate::core::standard_event_loop::<Self, Self::Predictions>(
-            self,
-            subject,
-            params,
-            error_models,
-        )
+    ) -> Result<Self::Predictions, PharmsolError> {
+        let (_predictions, likelihood) = crate::core::standard_event_loop::<
+            Self,
+            Array2<Prediction>,
+        >(self, subject, params, error_models)?;
+        Ok(ParticleLikelihood::new(likelihood.unwrap_or(0.0)))
     }
 
     fn log_likelihood(
@@ -591,13 +614,13 @@ fn _estimate_likelihood(
 
         let ypred =
             <SDE as Simulate>::simulate_subject(sde, subject, parameters, Some(error_models))?;
-        let result = ypred.1.unwrap();
+        let result = ypred.value();
         cache.insert(key, result);
         Ok(result)
     } else {
         let ypred =
             <SDE as Simulate>::simulate_subject(sde, subject, parameters, Some(error_models))?;
-        Ok(ypred.1.unwrap())
+        Ok(ypred.value())
     }
 }
 
@@ -636,7 +659,6 @@ fn sysresample(q: &[f64]) -> Vec<usize> {
 mod tests {
     use super::*;
     use crate::core::metadata::{Covariate, Route};
-    use crate::core::Simulate;
     use crate::SubjectBuilderExt;
     use crate::{fa, fetch_params, lag};
 

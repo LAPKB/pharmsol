@@ -37,7 +37,7 @@ use crate::{
             BoundErrorModelCache, PredictionCache, SdeLikelihoodCache,
             DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE, DEFAULT_CACHE_SIZE,
         },
-        likelihood::{Prediction, SubjectPredictions},
+        likelihood::{ParticleLikelihood, Prediction, SubjectPredictions},
         Fa, Lag, M, T, V,
     },
     Event, Observation, Occasion, Parameters, PharmsolError, Subject, ValidatedModelMetadata,
@@ -1410,6 +1410,7 @@ fn runtime_ode_predictions(
 
 impl Solver for NativeOdeModel {
     type State = V;
+    type Predictions = SubjectPredictions;
 
     fn initial_state(
         &self,
@@ -1476,24 +1477,13 @@ impl Caching for NativeOdeModel {
 }
 
 impl Simulate for NativeOdeModel {
-    type Predictions = SubjectPredictions;
-
     fn simulate_subject(
         &self,
         subject: &Subject,
         parameters: &[f64],
-        error_models: Option<&AssayErrorModels>,
-    ) -> Result<(Self::Predictions, Option<f64>), PharmsolError> {
-        let bound_error_models = match error_models {
-            Some(em) => Some(crate::core::simulate::bind_error_models_inner(self, em)?),
-            None => None,
-        };
-        let predictions = runtime_ode_predictions(self, subject, parameters)?;
-        let likelihood = match bound_error_models.as_ref() {
-            Some(em) => Some(predictions.log_likelihood(em)?.exp()),
-            None => None,
-        };
-        Ok((predictions, likelihood))
+        _error_models: Option<&AssayErrorModels>,
+    ) -> Result<Self::Predictions, PharmsolError> {
+        runtime_ode_predictions(self, subject, parameters)
     }
 
     fn log_likelihood(
@@ -1713,6 +1703,7 @@ fn runtime_analytical_predictions(
 
 impl Solver for NativeAnalyticalModel {
     type State = V;
+    type Predictions = SubjectPredictions;
 
     fn initial_state(
         &self,
@@ -1772,24 +1763,13 @@ impl Caching for NativeAnalyticalModel {
 }
 
 impl Simulate for NativeAnalyticalModel {
-    type Predictions = SubjectPredictions;
-
     fn simulate_subject(
         &self,
         subject: &Subject,
         parameters: &[f64],
-        error_models: Option<&AssayErrorModels>,
-    ) -> Result<(Self::Predictions, Option<f64>), PharmsolError> {
-        let bound_em = match error_models {
-            Some(em) => Some(crate::core::simulate::bind_error_models_inner(self, em)?),
-            None => None,
-        };
-        let predictions = runtime_analytical_predictions(self, subject, parameters)?;
-        let likelihood = match bound_em.as_ref() {
-            Some(em) => Some(predictions.log_likelihood(em)?.exp()),
-            None => None,
-        };
-        Ok((predictions, likelihood))
+        _error_models: Option<&AssayErrorModels>,
+    ) -> Result<Self::Predictions, PharmsolError> {
+        runtime_analytical_predictions(self, subject, parameters)
     }
 
     fn log_likelihood(
@@ -2119,17 +2099,18 @@ fn runtime_sde_log_likelihood(
         }
 
         let predictions = model.estimate_predictions_dense(subject, support_point)?;
-        let log_lik = predictions.log_likelihood(error_models)?;
+        let log_lik = Predictions::log_likelihood(&predictions, error_models)?;
         cache.insert(key, log_lik);
         Ok(log_lik)
     } else {
         let predictions = model.estimate_predictions_dense(subject, support_point)?;
-        predictions.log_likelihood(error_models)
+        Predictions::log_likelihood(&predictions, error_models)
     }
 }
 
 impl Solver for NativeSdeModel {
     type State = Vec<DVector<f64>>;
+    type Predictions = ParticleLikelihood;
 
     fn initial_state(
         &self,
@@ -2192,24 +2173,21 @@ impl Caching for NativeSdeModel {
 }
 
 impl Simulate for NativeSdeModel {
-    type Predictions = Array2<Prediction>;
-
     fn simulate_subject(
         &self,
         subject: &Subject,
         parameters: &[f64],
         error_models: Option<&AssayErrorModels>,
-    ) -> Result<(Self::Predictions, Option<f64>), PharmsolError> {
-        let bound_em = match error_models {
-            Some(em) => Some(crate::core::simulate::bind_error_models_inner(self, em)?),
-            None => None,
-        };
+    ) -> Result<Self::Predictions, PharmsolError> {
         let predictions = NativeSdeModel::estimate_predictions_dense(self, subject, parameters)?;
-        let likelihood = match bound_em.as_ref() {
-            Some(em) => Some(predictions.log_likelihood(em)?.exp()),
-            None => None,
+        let log_likelihood = match error_models {
+            Some(em) => {
+                let bound = crate::core::simulate::bind_error_models_inner(self, em)?;
+                Predictions::log_likelihood(&predictions, &*bound)?
+            }
+            None => 0.0,
         };
-        Ok((predictions, likelihood))
+        Ok(ParticleLikelihood::new(log_likelihood))
     }
 
     fn log_likelihood(
