@@ -80,6 +80,7 @@ pub fn pm_three_compartments_cl_with_absorption(
 mod tests {
     use super::super::tests::SubjectInfo;
     use super::{three_compartments_cl, three_compartments_cl_with_absorption};
+    use crate::core::Simulate;
     use crate::*;
     use approx::assert_relative_eq;
 
@@ -91,7 +92,7 @@ mod tests {
         // CL=0.1, Q2=3.0, Q3=2.0, Vc=1.0, V2=3.0, V3=4.0
         // => k10=0.1, k12=3.0, k13=2.0, k21=1.0, k31=0.5
 
-        let ode = equation::ODE::new(
+        let ode = crate::simulator::backends::ODE::new(
             |x, p, _t, dx, b, rateiv, _cov| {
                 fetch_params!(p, cl, q2, q3, vc, v2, v3);
                 let k10 = cl / vc;
@@ -116,7 +117,7 @@ mod tests {
         .with_nout(1)
         .with_ndrugs(3);
 
-        let analytical = equation::Analytical::new(
+        let analytical = crate::simulator::backends::Analytical::new(
             three_compartments_cl,
             |_p, _t, _cov| {},
             |_p, _t, _cov| lag! {},
@@ -160,7 +161,7 @@ mod tests {
         // ka=1.0, CL=0.1, Q2=3.0, Q3=2.0, Vc=1.0, V2=3.0, V3=4.0
         // => k10=0.1, k12=3.0, k13=2.0, k21=1.0, k31=0.5
 
-        let ode = equation::ODE::new(
+        let ode = crate::simulator::backends::ODE::new(
             |x, p, _t, dx, b, rateiv, _cov| {
                 fetch_params!(p, ka, cl, q2, q3, vc, v2, v3);
                 let k10 = cl / vc;
@@ -187,7 +188,7 @@ mod tests {
             },
         );
 
-        let analytical = equation::Analytical::new(
+        let analytical = crate::simulator::backends::Analytical::new(
             three_compartments_cl_with_absorption,
             |_p, _t, _cov| {},
             |_p, _t, _cov| lag! {},

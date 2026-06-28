@@ -50,7 +50,7 @@ fn covariate_subject(oral: impl ToString, iv: impl ToString, cp: impl ToString) 
         .build()
 }
 
-fn macro_one_compartment() -> equation::Analytical {
+fn macro_one_compartment() -> backends::Analytical {
     analytical! {
         name: "one_cpt_iv",
         params: [ke, v],
@@ -66,9 +66,9 @@ fn macro_one_compartment() -> equation::Analytical {
     }
 }
 
-fn handwritten_one_compartment() -> equation::Analytical {
-    equation::Analytical::new(
-        equation::one_compartment,
+fn handwritten_one_compartment() -> backends::Analytical {
+    backends::Analytical::new(
+        backends::one_compartment,
         |_p, _t, _cov| {},
         |_p, _t, _cov| lag! {},
         |_p, _t, _cov| fa! {},
@@ -82,18 +82,18 @@ fn handwritten_one_compartment() -> equation::Analytical {
     .with_ndrugs(1)
     .with_nout(1)
     .with_metadata(
-        equation::metadata::new("one_cpt_iv")
-            .kind(equation::ModelKind::Analytical)
+        pharmsol::metadata::new("one_cpt_iv")
+            .kind(backends::ModelKind::Analytical)
             .parameters(["ke", "v"])
             .states(["central"])
             .outputs(["cp"])
-            .route(equation::Route::infusion("iv").to_state("central"))
-            .analytical_kernel(equation::AnalyticalKernel::OneCompartment),
+            .route(backends::Route::infusion("iv").to_state("central"))
+            .analytical_kernel(backends::AnalyticalKernel::OneCompartment),
     )
     .expect("handwritten analytical metadata should validate")
 }
 
-fn macro_one_compartment_with_absorption() -> equation::Analytical {
+fn macro_one_compartment_with_absorption() -> backends::Analytical {
     analytical! {
         name: "one_cmt_abs",
         params: [ka, ke, v, tlag, f_oral],
@@ -119,9 +119,9 @@ fn macro_one_compartment_with_absorption() -> equation::Analytical {
     }
 }
 
-fn handwritten_one_compartment_with_absorption() -> equation::Analytical {
-    equation::Analytical::new(
-        equation::one_compartment_with_absorption,
+fn handwritten_one_compartment_with_absorption() -> backends::Analytical {
+    backends::Analytical::new(
+        backends::one_compartment_with_absorption,
         |_p, _t, _cov| {},
         |p, _t, _cov| {
             fetch_params!(p, _ka, _ke, _v, tlag, _f_oral);
@@ -144,23 +144,23 @@ fn handwritten_one_compartment_with_absorption() -> equation::Analytical {
     .with_ndrugs(1)
     .with_nout(1)
     .with_metadata(
-        equation::metadata::new("one_cmt_abs")
-            .kind(equation::ModelKind::Analytical)
+        pharmsol::metadata::new("one_cmt_abs")
+            .kind(backends::ModelKind::Analytical)
             .parameters(["ka", "ke", "v", "tlag", "f_oral"])
             .states(["gut", "central"])
             .outputs(["cp"])
             .route(
-                equation::Route::bolus("oral")
+                backends::Route::bolus("oral")
                     .to_state("gut")
                     .with_lag()
                     .with_bioavailability(),
             )
-            .analytical_kernel(equation::AnalyticalKernel::OneCompartmentWithAbsorption),
+            .analytical_kernel(backends::AnalyticalKernel::OneCompartmentWithAbsorption),
     )
     .expect("handwritten absorption metadata should validate")
 }
 
-fn macro_shared_input_analytical() -> equation::Analytical {
+fn macro_shared_input_analytical() -> backends::Analytical {
     analytical! {
         name: "one_cmt_abs_shared",
         params: [ka, ke, v, tlag, f_oral],
@@ -183,9 +183,9 @@ fn macro_shared_input_analytical() -> equation::Analytical {
     }
 }
 
-fn handwritten_shared_input_analytical() -> equation::Analytical {
-    equation::Analytical::new(
-        equation::one_compartment_with_absorption,
+fn handwritten_shared_input_analytical() -> backends::Analytical {
+    backends::Analytical::new(
+        backends::one_compartment_with_absorption,
         |_p, _t, _cov| {},
         |p, _t, _cov| {
             fetch_params!(p, _ka, _ke, _v, tlag, _f_oral);
@@ -205,24 +205,24 @@ fn handwritten_shared_input_analytical() -> equation::Analytical {
     .with_ndrugs(1)
     .with_nout(1)
     .with_metadata(
-        equation::metadata::new("one_cmt_abs_shared")
-            .kind(equation::ModelKind::Analytical)
+        pharmsol::metadata::new("one_cmt_abs_shared")
+            .kind(backends::ModelKind::Analytical)
             .parameters(["ka", "ke", "v", "tlag", "f_oral"])
             .states(["gut", "central"])
             .outputs(["cp"])
             .routes([
-                equation::Route::bolus("oral")
+                backends::Route::bolus("oral")
                     .to_state("gut")
                     .with_lag()
                     .with_bioavailability(),
-                equation::Route::infusion("iv").to_state("central"),
+                backends::Route::infusion("iv").to_state("central"),
             ])
-            .analytical_kernel(equation::AnalyticalKernel::OneCompartmentWithAbsorption),
+            .analytical_kernel(backends::AnalyticalKernel::OneCompartmentWithAbsorption),
     )
     .expect("handwritten shared-input analytical metadata should validate")
 }
 
-fn macro_covariate_analytical() -> equation::Analytical {
+fn macro_covariate_analytical() -> backends::Analytical {
     analytical! {
         name: "one_cmt_abs_covariates",
         params: [ka, ke0, v, tlag, f_oral, base_gut, base_central],
@@ -259,8 +259,8 @@ fn macro_covariate_analytical() -> equation::Analytical {
     }
 }
 
-fn handwritten_covariate_analytical() -> equation::Analytical {
-    equation::Analytical::new(
+fn handwritten_covariate_analytical() -> backends::Analytical {
+    backends::Analytical::new(
         |x, p, t, rateiv, cov| {
             fetch_params!(p, ka, ke0, _v, _tlag, _f_oral, _base_gut, _base_central);
             fetch_cov!(cov, t, wt, renal);
@@ -269,7 +269,7 @@ fn handwritten_covariate_analytical() -> equation::Analytical {
             let renal_scale = (renal / 90.0).powf(0.25);
             let ke = ke0 * wt_scale * renal_scale;
             let projected = pharmsol::__macro_support::vector_from_values(vec![ka, ke]);
-            equation::one_compartment_with_absorption(x, &projected, t, rateiv, cov)
+            backends::one_compartment_with_absorption(x, &projected, t, rateiv, cov)
         },
         |_p, _t, _cov| {},
         |p, t, cov| {
@@ -305,8 +305,8 @@ fn handwritten_covariate_analytical() -> equation::Analytical {
     .with_ndrugs(1)
     .with_nout(1)
     .with_metadata(
-        equation::metadata::new("one_cmt_abs_covariates")
-            .kind(equation::ModelKind::Analytical)
+        pharmsol::metadata::new("one_cmt_abs_covariates")
+            .kind(backends::ModelKind::Analytical)
             .parameters([
                 "ka",
                 "ke0",
@@ -317,19 +317,19 @@ fn handwritten_covariate_analytical() -> equation::Analytical {
                 "base_central",
             ])
             .covariates([
-                equation::Covariate::continuous("wt"),
-                equation::Covariate::continuous("renal"),
+                backends::Covariate::continuous("wt"),
+                backends::Covariate::continuous("renal"),
             ])
             .states(["gut", "central"])
             .outputs(["cp"])
             .routes([
-                equation::Route::bolus("oral")
+                backends::Route::bolus("oral")
                     .to_state("gut")
                     .with_lag()
                     .with_bioavailability(),
-                equation::Route::infusion("iv").to_state("central"),
+                backends::Route::infusion("iv").to_state("central"),
             ])
-            .analytical_kernel(equation::AnalyticalKernel::OneCompartmentWithAbsorption),
+            .analytical_kernel(backends::AnalyticalKernel::OneCompartmentWithAbsorption),
     )
     .expect("handwritten covariate analytical metadata should validate")
 }
@@ -395,7 +395,7 @@ fn analytical_macro_supports_extra_parameters_and_named_route_bindings() {
     assert_eq!(macro_model.state_index("gut"), Some(0));
     assert_eq!(
         macro_metadata.analytical_kernel(),
-        Some(equation::AnalyticalKernel::OneCompartmentWithAbsorption)
+        Some(backends::AnalyticalKernel::OneCompartmentWithAbsorption)
     );
 
     let macro_predictions = macro_model

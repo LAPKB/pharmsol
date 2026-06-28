@@ -1,12 +1,12 @@
 #[cfg(feature = "dsl-jit")]
 use approx::assert_relative_eq;
 #[cfg(feature = "dsl-jit")]
-use pharmsol::dsl::{self, RuntimeCompilationTarget, RuntimePredictions};
-#[cfg(feature = "dsl-jit")]
-use pharmsol::equation::RouteInputPolicy;
-use pharmsol::equation::{
+use pharmsol::backends::RouteInputPolicy;
+use pharmsol::backends::{
     self, AnalyticalKernel, RouteKind as HandwrittenRouteKind, ValidatedModelMetadata,
 };
+#[cfg(feature = "dsl-jit")]
+use pharmsol::dsl::{self, RuntimeCompilationTarget, RuntimePredictions};
 use pharmsol::prelude::*;
 #[cfg(feature = "dsl-jit")]
 use pharmsol::Predictions;
@@ -594,7 +594,7 @@ fn handwritten_route_input_policy_view(
         .collect()
 }
 
-fn macro_ode_model() -> equation::ODE {
+fn macro_ode_model() -> backends::ODE {
     ode! {
         name: "one_cmt_oral_covariate_parity",
         params: [ka, cl, v, tlag, f_oral],
@@ -621,8 +621,8 @@ fn macro_ode_model() -> equation::ODE {
     }
 }
 
-fn handwritten_ode_macro_model() -> equation::ODE {
-    equation::ODE::new(
+fn handwritten_ode_macro_model() -> backends::ODE {
+    backends::ODE::new(
         |_x, _p, _t, dx, _bolus, _rateiv, _cov| {
             dx[0] = 0.0;
             dx[1] = 0.0;
@@ -638,13 +638,13 @@ fn handwritten_ode_macro_model() -> equation::ODE {
     .with_ndrugs(1)
     .with_nout(1)
     .with_metadata(
-        equation::metadata::new("one_cmt_oral_covariate_parity")
+        pharmsol::metadata::new("one_cmt_oral_covariate_parity")
             .parameters(["ka", "cl", "v", "tlag", "f_oral"])
-            .covariates([equation::Covariate::continuous("wt")])
+            .covariates([backends::Covariate::continuous("wt")])
             .states(["depot", "central"])
             .outputs(["cp"])
             .route(
-                equation::Route::bolus("oral")
+                backends::Route::bolus("oral")
                     .to_state("depot")
                     .inject_input_to_destination()
                     .with_lag()
@@ -654,8 +654,8 @@ fn handwritten_ode_macro_model() -> equation::ODE {
     .expect("handwritten macro-shape ODE metadata should validate")
 }
 
-fn handwritten_ode_model() -> equation::ODE {
-    equation::ODE::new(
+fn handwritten_ode_model() -> backends::ODE {
+    backends::ODE::new(
         |_x, _p, _t, dx, _bolus, _rateiv, _cov| {
             dx[0] = 0.0;
             dx[1] = 0.0;
@@ -671,18 +671,18 @@ fn handwritten_ode_model() -> equation::ODE {
     .with_ndrugs(1)
     .with_nout(1)
     .with_metadata(
-        equation::metadata::new("one_cmt_oral_iv")
+        pharmsol::metadata::new("one_cmt_oral_iv")
             .parameters(["ka", "cl", "v", "tlag", "f_oral"])
-            .covariates([equation::Covariate::continuous("wt")])
+            .covariates([backends::Covariate::continuous("wt")])
             .states(["depot", "central"])
             .outputs(["cp"])
             .routes([
-                equation::Route::bolus("oral")
+                backends::Route::bolus("oral")
                     .to_state("depot")
                     .inject_input_to_destination()
                     .with_lag()
                     .with_bioavailability(),
-                equation::Route::infusion("iv")
+                backends::Route::infusion("iv")
                     .to_state("central")
                     .expect_explicit_input(),
             ]),
@@ -691,7 +691,7 @@ fn handwritten_ode_model() -> equation::ODE {
 }
 
 #[cfg(feature = "dsl-jit")]
-fn runtime_shared_input_macro_ode() -> equation::ODE {
+fn runtime_shared_input_macro_ode() -> backends::ODE {
     ode! {
         name: "shared_input_one_cpt",
         params: [ka, ke, v, tlag, f_oral],
@@ -718,8 +718,8 @@ fn runtime_shared_input_macro_ode() -> equation::ODE {
 }
 
 #[cfg(feature = "dsl-jit")]
-fn runtime_shared_input_handwritten_ode() -> equation::ODE {
-    equation::ODE::new(
+fn runtime_shared_input_handwritten_ode() -> backends::ODE {
+    backends::ODE::new(
         |x, p, _t, dx, bolus, rateiv, _cov| {
             fetch_params!(p, ka, ke, _v, _tlag, _f_oral);
             dx[0] = bolus[0] - ka * x[0];
@@ -743,17 +743,17 @@ fn runtime_shared_input_handwritten_ode() -> equation::ODE {
     .with_ndrugs(1)
     .with_nout(1)
     .with_metadata(
-        equation::metadata::new("shared_input_one_cpt")
+        pharmsol::metadata::new("shared_input_one_cpt")
             .parameters(["ka", "ke", "v", "tlag", "f_oral"])
             .states(["depot", "central"])
             .outputs(["cp"])
             .routes([
-                equation::Route::bolus("oral")
+                backends::Route::bolus("oral")
                     .to_state("depot")
                     .with_lag()
                     .with_bioavailability()
                     .inject_input_to_destination(),
-                equation::Route::infusion("iv")
+                backends::Route::infusion("iv")
                     .to_state("central")
                     .inject_input_to_destination(),
             ]),
@@ -762,8 +762,8 @@ fn runtime_shared_input_handwritten_ode() -> equation::ODE {
 }
 
 #[cfg(feature = "dsl-jit")]
-fn runtime_mismatched_shared_input_ode() -> equation::ODE {
-    equation::ODE::new(
+fn runtime_mismatched_shared_input_ode() -> backends::ODE {
+    backends::ODE::new(
         |x, p, _t, dx, _bolus, _rateiv, _cov| {
             fetch_params!(p, ka, ke, _v, _tlag, _f_oral);
             dx[0] = -ka * x[0];
@@ -787,17 +787,17 @@ fn runtime_mismatched_shared_input_ode() -> equation::ODE {
     .with_ndrugs(1)
     .with_nout(1)
     .with_metadata(
-        equation::metadata::new("shared_input_one_cpt_mismatched")
+        pharmsol::metadata::new("shared_input_one_cpt_mismatched")
             .parameters(["ka", "ke", "v", "tlag", "f_oral"])
             .states(["depot", "central"])
             .outputs(["cp"])
             .routes([
-                equation::Route::bolus("oral")
+                backends::Route::bolus("oral")
                     .to_state("depot")
                     .with_lag()
                     .with_bioavailability()
                     .expect_explicit_input(),
-                equation::Route::infusion("iv")
+                backends::Route::infusion("iv")
                     .to_state("central")
                     .expect_explicit_input(),
             ]),
@@ -806,7 +806,7 @@ fn runtime_mismatched_shared_input_ode() -> equation::ODE {
 }
 
 #[cfg(feature = "dsl-jit")]
-fn runtime_shared_input_macro_analytical() -> equation::Analytical {
+fn runtime_shared_input_macro_analytical() -> backends::Analytical {
     analytical! {
         name: "one_cmt_abs_shared",
         params: [ka, ke, v, tlag, f_oral],
@@ -830,9 +830,9 @@ fn runtime_shared_input_macro_analytical() -> equation::Analytical {
 }
 
 #[cfg(feature = "dsl-jit")]
-fn runtime_shared_input_handwritten_analytical() -> equation::Analytical {
-    equation::Analytical::new(
-        equation::one_compartment_with_absorption,
+fn runtime_shared_input_handwritten_analytical() -> backends::Analytical {
+    backends::Analytical::new(
+        backends::one_compartment_with_absorption,
         |_p, _t, _cov| {},
         |p, _t, _cov| {
             fetch_params!(p, _ka, _ke, _v, tlag, _f_oral);
@@ -852,25 +852,25 @@ fn runtime_shared_input_handwritten_analytical() -> equation::Analytical {
     .with_ndrugs(1)
     .with_nout(1)
     .with_metadata(
-        equation::metadata::new("one_cmt_abs_shared")
-            .kind(equation::ModelKind::Analytical)
+        pharmsol::metadata::new("one_cmt_abs_shared")
+            .kind(backends::ModelKind::Analytical)
             .parameters(["ka", "ke", "v", "tlag", "f_oral"])
             .states(["gut", "central"])
             .outputs(["cp"])
             .routes([
-                equation::Route::bolus("oral")
+                backends::Route::bolus("oral")
                     .to_state("gut")
                     .with_lag()
                     .with_bioavailability(),
-                equation::Route::infusion("iv").to_state("central"),
+                backends::Route::infusion("iv").to_state("central"),
             ])
-            .analytical_kernel(equation::AnalyticalKernel::OneCompartmentWithAbsorption),
+            .analytical_kernel(backends::AnalyticalKernel::OneCompartmentWithAbsorption),
     )
     .expect("handwritten shared-input analytical metadata should validate")
 }
 
 #[cfg(feature = "dsl-jit")]
-fn runtime_shared_input_macro_sde() -> equation::SDE {
+fn runtime_shared_input_macro_sde() -> backends::SDE {
     sde! {
         name: "one_cmt_shared_sde",
         params: [ka, ke, sigma_ke, v, tlag, f_oral],
@@ -906,8 +906,8 @@ fn runtime_shared_input_macro_sde() -> equation::SDE {
 }
 
 #[cfg(feature = "dsl-jit")]
-fn runtime_shared_input_handwritten_sde() -> equation::SDE {
-    equation::SDE::new(
+fn runtime_shared_input_handwritten_sde() -> backends::SDE {
+    backends::SDE::new(
         |x, p, _t, dx, rateiv, _cov| {
             fetch_params!(p, ka, ke, _sigma_ke, _v, _tlag, _f_oral);
             dx[0] = -ka * x[0];
@@ -939,18 +939,18 @@ fn runtime_shared_input_handwritten_sde() -> equation::SDE {
     .with_ndrugs(1)
     .with_nout(1)
     .with_metadata(
-        equation::metadata::new("one_cmt_shared_sde")
-            .kind(equation::ModelKind::Sde)
+        pharmsol::metadata::new("one_cmt_shared_sde")
+            .kind(backends::ModelKind::Sde)
             .parameters(["ka", "ke", "sigma_ke", "v", "tlag", "f_oral"])
             .states(["gut", "central"])
             .outputs(["cp"])
             .routes([
-                equation::Route::bolus("oral")
+                backends::Route::bolus("oral")
                     .to_state("gut")
                     .inject_input_to_destination()
                     .with_lag()
                     .with_bioavailability(),
-                equation::Route::infusion("iv")
+                backends::Route::infusion("iv")
                     .to_state("central")
                     .inject_input_to_destination(),
             ])
@@ -991,7 +991,7 @@ fn particle_prediction_means(predictions: &ndarray::Array2<Prediction>) -> Vec<f
         .collect()
 }
 
-fn macro_analytical_model() -> equation::Analytical {
+fn macro_analytical_model() -> backends::Analytical {
     analytical! {
         name: "one_cmt_abs_parity",
         params: [ka, ke, v],
@@ -1007,9 +1007,9 @@ fn macro_analytical_model() -> equation::Analytical {
     }
 }
 
-fn handwritten_analytical_model() -> equation::Analytical {
-    equation::Analytical::new(
-        equation::one_compartment_with_absorption,
+fn handwritten_analytical_model() -> backends::Analytical {
+    backends::Analytical::new(
+        backends::one_compartment_with_absorption,
         |_p, _t, _cov| {},
         |_p, _t, _cov| lag! {},
         |_p, _t, _cov| fa! {},
@@ -1022,18 +1022,18 @@ fn handwritten_analytical_model() -> equation::Analytical {
     .with_ndrugs(1)
     .with_nout(1)
     .with_metadata(
-        equation::metadata::new("one_cmt_abs_parity")
+        pharmsol::metadata::new("one_cmt_abs_parity")
             .kind(ModelKind::Analytical)
             .parameters(["ka", "ke", "v"])
             .states(["depot", "central"])
             .outputs(["cp"])
-            .route(equation::Route::bolus("oral").to_state("depot"))
+            .route(backends::Route::bolus("oral").to_state("depot"))
             .analytical_kernel(AnalyticalKernel::OneCompartmentWithAbsorption),
     )
     .expect("handwritten analytical metadata should validate")
 }
 
-fn macro_sde_model() -> equation::SDE {
+fn macro_sde_model() -> backends::SDE {
     sde! {
         name: "one_cmt_sde_macro_parity",
         params: [ka, ke, v, sigma],
@@ -1057,8 +1057,8 @@ fn macro_sde_model() -> equation::SDE {
     }
 }
 
-fn handwritten_sde_model() -> equation::SDE {
-    equation::SDE::new(
+fn handwritten_sde_model() -> backends::SDE {
+    backends::SDE::new(
         |_x, _p, _t, dx, _rateiv, _cov| {
             dx[0] = 0.0;
             dx[1] = 0.0;
@@ -1079,14 +1079,14 @@ fn handwritten_sde_model() -> equation::SDE {
     .with_ndrugs(1)
     .with_nout(1)
     .with_metadata(
-        equation::metadata::new("one_cmt_sde_parity")
+        pharmsol::metadata::new("one_cmt_sde_parity")
             .kind(ModelKind::Sde)
             .parameters(["ka", "ke", "v", "sigma"])
-            .covariates([equation::Covariate::locf("wt")])
+            .covariates([backends::Covariate::locf("wt")])
             .states(["depot", "central"])
             .outputs(["cp"])
             .route(
-                equation::Route::bolus("oral")
+                backends::Route::bolus("oral")
                     .to_state("depot")
                     .inject_input_to_destination(),
             )
@@ -1095,8 +1095,8 @@ fn handwritten_sde_model() -> equation::SDE {
     .expect("handwritten SDE metadata should validate")
 }
 
-fn handwritten_sde_macro_model() -> equation::SDE {
-    equation::SDE::new(
+fn handwritten_sde_macro_model() -> backends::SDE {
+    backends::SDE::new(
         |_x, _p, _t, dx, _rateiv, _cov| {
             dx[0] = 0.0;
             dx[1] = 0.0;
@@ -1117,13 +1117,13 @@ fn handwritten_sde_macro_model() -> equation::SDE {
     .with_ndrugs(1)
     .with_nout(1)
     .with_metadata(
-        equation::metadata::new("one_cmt_sde_macro_parity")
+        pharmsol::metadata::new("one_cmt_sde_macro_parity")
             .kind(ModelKind::Sde)
             .parameters(["ka", "ke", "v", "sigma"])
             .states(["depot", "central"])
             .outputs(["cp"])
             .route(
-                equation::Route::bolus("oral")
+                backends::Route::bolus("oral")
                     .to_state("depot")
                     .inject_input_to_destination(),
             )
@@ -1133,8 +1133,8 @@ fn handwritten_sde_macro_model() -> equation::SDE {
 }
 
 #[cfg(feature = "dsl-jit")]
-fn mismatched_ode_model() -> equation::ODE {
-    equation::ODE::new(
+fn mismatched_ode_model() -> backends::ODE {
+    backends::ODE::new(
         |_x, _p, _t, dx, _bolus, _rateiv, _cov| {
             dx[0] = 0.0;
             dx[1] = 0.0;
@@ -1150,18 +1150,18 @@ fn mismatched_ode_model() -> equation::ODE {
     .with_ndrugs(1)
     .with_nout(1)
     .with_metadata(
-        equation::metadata::new("one_cmt_oral_iv")
+        pharmsol::metadata::new("one_cmt_oral_iv")
             .parameters(["ka", "cl", "v", "tlag", "f_oral"])
-            .covariates([equation::Covariate::continuous("wt")])
+            .covariates([backends::Covariate::continuous("wt")])
             .states(["depot", "central"])
             .outputs(["cp"])
             .routes([
-                equation::Route::bolus("oral")
+                backends::Route::bolus("oral")
                     .to_state("depot")
                     .expect_explicit_input()
                     .with_lag()
                     .with_bioavailability(),
-                equation::Route::infusion("iv")
+                backends::Route::infusion("iv")
                     .to_state("central")
                     .expect_explicit_input(),
             ]),

@@ -12,17 +12,15 @@
 #![allow(dead_code)]
 
 use ndarray::Array2;
+use pharmsol::metadata::{self, ModelMetadata};
 use pharmsol::prelude::*;
-use pharmsol::simulator::equation::analytical::{
+use pharmsol::simulator::backends::analytical::{
     one_compartment_with_absorption, two_compartments,
 };
-use pharmsol::{
-    equation::{self, Route},
-    Analytical, ResidualErrorModel, ResidualErrorModels, ODE, SDE,
-};
+use pharmsol::{backends::Route, Analytical, ResidualErrorModel, ResidualErrorModels, ODE, SDE};
 
 /// `ModelMetadata` for handwritten factories so route/output labels resolve like the macro/DSL paths.
-fn model_metadata(workload: Workload, kind: SolverKind) -> equation::ModelMetadata {
+fn model_metadata(workload: Workload, kind: SolverKind) -> ModelMetadata {
     let name = match (workload, kind) {
         (Workload::Short, SolverKind::Ode) => "bench_one_cpt_po_ode",
         (Workload::Short, SolverKind::Analytical) => "bench_one_cpt_po_analytical",
@@ -37,7 +35,7 @@ fn model_metadata(workload: Workload, kind: SolverKind) -> equation::ModelMetada
                 SolverKind::Sde => &["ka", "ke", "v", "sigma_ke"],
                 _ => &["ka", "ke", "v"],
             };
-            equation::metadata::new(name)
+            metadata::new(name)
                 .parameters(params.iter().copied())
                 .states(["depot", "central"])
                 .outputs(["plasma"])
@@ -52,7 +50,7 @@ fn model_metadata(workload: Workload, kind: SolverKind) -> equation::ModelMetada
                 SolverKind::Sde => &["ke", "kcp", "kpc", "v", "sigma_ke"],
                 _ => &["ke", "kcp", "kpc", "v"],
             };
-            equation::metadata::new(name)
+            metadata::new(name)
                 .parameters(params.iter().copied())
                 .states(["central", "peripheral"])
                 .outputs(["plasma"])

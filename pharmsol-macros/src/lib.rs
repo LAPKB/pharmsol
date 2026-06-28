@@ -2229,10 +2229,10 @@ fn expand_route_metadata(
             let route_name = route.input.name();
             let route_builder = match route.kind {
                 OdeRouteKind::Bolus => {
-                    quote! { ::pharmsol::equation::Route::bolus(stringify!(#input)) }
+                    quote! { ::pharmsol::core::metadata::Route::bolus(stringify!(#input)) }
                 }
                 OdeRouteKind::Infusion => {
-                    quote! { ::pharmsol::equation::Route::infusion(stringify!(#input)) }
+                    quote! { ::pharmsol::core::metadata::Route::infusion(stringify!(#input)) }
                 }
             };
             let lag_flag = if lag_routes.contains(&route_name) {
@@ -2270,10 +2270,10 @@ fn expand_analytical_route_metadata(
             let route_name = route.input.name();
             let route_builder = match route.kind {
                 OdeRouteKind::Bolus => {
-                    quote! { ::pharmsol::equation::Route::bolus(stringify!(#input)) }
+                    quote! { ::pharmsol::core::metadata::Route::bolus(stringify!(#input)) }
                 }
                 OdeRouteKind::Infusion => {
-                    quote! { ::pharmsol::equation::Route::infusion(stringify!(#input)) }
+                    quote! { ::pharmsol::core::metadata::Route::infusion(stringify!(#input)) }
                 }
             };
             let lag_flag = if lag_routes.contains(&route_name) {
@@ -2310,10 +2310,10 @@ fn expand_sde_route_metadata(
             let route_name = route.input.name();
             let route_builder = match route.kind {
                 OdeRouteKind::Bolus => {
-                    quote! { ::pharmsol::equation::Route::bolus(stringify!(#input)) }
+                    quote! { ::pharmsol::core::metadata::Route::bolus(stringify!(#input)) }
                 }
                 OdeRouteKind::Infusion => {
-                    quote! { ::pharmsol::equation::Route::infusion(stringify!(#input)) }
+                    quote! { ::pharmsol::core::metadata::Route::infusion(stringify!(#input)) }
                 }
             };
             let lag_flag = if lag_routes.contains(&route_name) {
@@ -2548,74 +2548,74 @@ fn resolve_analytical_structure(structure: &Ident) -> syn::Result<AnalyticalKern
     let (kernel, runtime_path, metadata_kernel, state_count) = match structure_name.as_str() {
         "one_compartment" => (
             ResolverAnalyticalKernel::OneCompartment,
-            quote! { ::pharmsol::equation::one_compartment },
-            quote! { ::pharmsol::equation::AnalyticalKernel::OneCompartment },
+            quote! { ::pharmsol::backends::one_compartment },
+            quote! { ::pharmsol::backends::AnalyticalKernel::OneCompartment },
             1,
         ),
         "one_compartment_cl" => (
             ResolverAnalyticalKernel::OneCompartmentCl,
-            quote! { ::pharmsol::equation::one_compartment_cl },
-            quote! { ::pharmsol::equation::AnalyticalKernel::OneCompartmentCl },
+            quote! { ::pharmsol::backends::one_compartment_cl },
+            quote! { ::pharmsol::backends::AnalyticalKernel::OneCompartmentCl },
             1,
         ),
         "one_compartment_cl_with_absorption" => (
             ResolverAnalyticalKernel::OneCompartmentClWithAbsorption,
-            quote! { ::pharmsol::equation::one_compartment_cl_with_absorption },
-            quote! { ::pharmsol::equation::AnalyticalKernel::OneCompartmentClWithAbsorption },
+            quote! { ::pharmsol::backends::one_compartment_cl_with_absorption },
+            quote! { ::pharmsol::backends::AnalyticalKernel::OneCompartmentClWithAbsorption },
             2,
         ),
         "one_compartment_with_absorption" => (
             ResolverAnalyticalKernel::OneCompartmentWithAbsorption,
-            quote! { ::pharmsol::equation::one_compartment_with_absorption },
-            quote! { ::pharmsol::equation::AnalyticalKernel::OneCompartmentWithAbsorption },
+            quote! { ::pharmsol::backends::one_compartment_with_absorption },
+            quote! { ::pharmsol::backends::AnalyticalKernel::OneCompartmentWithAbsorption },
             2,
         ),
         "two_compartments" => (
             ResolverAnalyticalKernel::TwoCompartments,
-            quote! { ::pharmsol::equation::two_compartments },
-            quote! { ::pharmsol::equation::AnalyticalKernel::TwoCompartments },
+            quote! { ::pharmsol::backends::two_compartments },
+            quote! { ::pharmsol::backends::AnalyticalKernel::TwoCompartments },
             2,
         ),
         "two_compartments_cl" => (
             ResolverAnalyticalKernel::TwoCompartmentsCl,
-            quote! { ::pharmsol::equation::two_compartments_cl },
-            quote! { ::pharmsol::equation::AnalyticalKernel::TwoCompartmentsCl },
+            quote! { ::pharmsol::backends::two_compartments_cl },
+            quote! { ::pharmsol::backends::AnalyticalKernel::TwoCompartmentsCl },
             2,
         ),
         "two_compartments_cl_with_absorption" => (
             ResolverAnalyticalKernel::TwoCompartmentsClWithAbsorption,
-            quote! { ::pharmsol::equation::two_compartments_cl_with_absorption },
-            quote! { ::pharmsol::equation::AnalyticalKernel::TwoCompartmentsClWithAbsorption },
+            quote! { ::pharmsol::backends::two_compartments_cl_with_absorption },
+            quote! { ::pharmsol::backends::AnalyticalKernel::TwoCompartmentsClWithAbsorption },
             3,
         ),
         "two_compartments_with_absorption" => (
             ResolverAnalyticalKernel::TwoCompartmentsWithAbsorption,
-            quote! { ::pharmsol::equation::two_compartments_with_absorption },
-            quote! { ::pharmsol::equation::AnalyticalKernel::TwoCompartmentsWithAbsorption },
+            quote! { ::pharmsol::backends::two_compartments_with_absorption },
+            quote! { ::pharmsol::backends::AnalyticalKernel::TwoCompartmentsWithAbsorption },
             3,
         ),
         "three_compartments" => (
             ResolverAnalyticalKernel::ThreeCompartments,
-            quote! { ::pharmsol::equation::three_compartments },
-            quote! { ::pharmsol::equation::AnalyticalKernel::ThreeCompartments },
+            quote! { ::pharmsol::backends::three_compartments },
+            quote! { ::pharmsol::backends::AnalyticalKernel::ThreeCompartments },
             3,
         ),
         "three_compartments_cl" => (
             ResolverAnalyticalKernel::ThreeCompartmentsCl,
-            quote! { ::pharmsol::equation::three_compartments_cl },
-            quote! { ::pharmsol::equation::AnalyticalKernel::ThreeCompartmentsCl },
+            quote! { ::pharmsol::backends::three_compartments_cl },
+            quote! { ::pharmsol::backends::AnalyticalKernel::ThreeCompartmentsCl },
             3,
         ),
         "three_compartments_cl_with_absorption" => (
             ResolverAnalyticalKernel::ThreeCompartmentsClWithAbsorption,
-            quote! { ::pharmsol::equation::three_compartments_cl_with_absorption },
-            quote! { ::pharmsol::equation::AnalyticalKernel::ThreeCompartmentsClWithAbsorption },
+            quote! { ::pharmsol::backends::three_compartments_cl_with_absorption },
+            quote! { ::pharmsol::backends::AnalyticalKernel::ThreeCompartmentsClWithAbsorption },
             4,
         ),
         "three_compartments_with_absorption" => (
             ResolverAnalyticalKernel::ThreeCompartmentsWithAbsorption,
-            quote! { ::pharmsol::equation::three_compartments_with_absorption },
-            quote! { ::pharmsol::equation::AnalyticalKernel::ThreeCompartmentsWithAbsorption },
+            quote! { ::pharmsol::backends::three_compartments_with_absorption },
+            quote! { ::pharmsol::backends::AnalyticalKernel::ThreeCompartmentsWithAbsorption },
             4,
         ),
         _ => {
@@ -3208,6 +3208,45 @@ fn expand_sde_out(
 // Proc macros
 // ---------------------------------------------------------------------------
 
+/// Define an ODE (ordinary differential equation) model.
+///
+/// This is the primary entry point for building pharmacometric ODE models.
+/// The macro generates and validates an [`ODE`] model and automatically generates its metadata
+/// (parameter names, state labels, output labels, route declarations).
+///
+/// # Fields
+///
+/// | Field | Required | Description |
+/// |-------|----------|-------------|
+/// | `name` | yes | Model name (`"my_model"`) |
+/// | `params` | yes | Parameter identifiers `[ka, ke, v]` |
+/// | `covariates` | no | Covariate identifiers `[wt, age]` |
+/// | `states` | yes | State identifiers `[gut, central]` |
+/// | `outputs` | yes | Output identifiers `[cp]` |
+/// | `routes` | no | Route declarations `[bolus(oral) -> gut, infusion(iv) -> central]` |
+/// | `diffeq` | yes | Closure `\|x, p, t, dx, cov\| { … }` writing derivatives into `dx` |
+/// | `lag` | no | Closure returning route‑specific lag times via `lag! { route => expr }` |
+/// | `fa` | no | Closure returning bioavailability fractions |
+/// | `init` | no | Closure setting initial state values |
+/// | `out` | yes | Closure `\|x, p, t, cov, y\| { … }` mapping states to outputs |
+///
+/// # Example
+///
+/// ```ignore
+/// let model = ode! {
+///     name: "one_cmt_iv",
+///     params: [ke, v],
+///     states: [central],
+///     outputs: [cp],
+///     routes: [infusion(iv) -> central],
+///     diffeq: |x, _p, _t, dx, _cov| {
+///         dx[central] = -ke * x[central];
+///     },
+///     out: |x, _p, _t, _cov, y| {
+///         y[cp] = x[central] / v;
+///     },
+/// };
+/// ```
 #[proc_macro]
 pub fn ode(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as OdeInput);
@@ -3297,7 +3336,7 @@ pub fn ode(input: TokenStream) -> TokenStream {
         quote! {}
     } else {
         quote! {
-            .covariates([#(::pharmsol::equation::Covariate::continuous(stringify!(#covariates))),*])
+            .covariates([#(::pharmsol::core::metadata::Covariate::continuous(stringify!(#covariates))),*])
         }
     };
 
@@ -3342,14 +3381,14 @@ pub fn ode(input: TokenStream) -> TokenStream {
     };
 
     quote! {{
-        let __pharmsol_metadata = ::pharmsol::equation::metadata::new(#name)
+        let __pharmsol_metadata = ::pharmsol::core::metadata::new(#name)
             .parameters([#(stringify!(#params)),*])
             #covariate_metadata
             .states([#(stringify!(#states)),*])
             .outputs([#(stringify!(#outputs)),*])
             #(.route(#routes))*;
 
-        ::pharmsol::equation::ODE::new(
+        ::pharmsol::backends::ODE::new(
             #diffeq,
             #lag,
             #fa,
@@ -3365,6 +3404,45 @@ pub fn ode(input: TokenStream) -> TokenStream {
     .into()
 }
 
+/// Define an analytical (closed‑form) PK model.
+///
+/// Builds a model that uses a built‑in analytical solution. The macro validates that the declared parameters
+/// match the chosen analytical solution's requirements and generates an [`Analytical`] value
+/// with full metadata.
+///
+/// # Fields
+///
+/// | Field | Required | Description |
+/// |-------|----------|-------------|
+/// | `name` | yes | Model name |
+/// | `params` | yes | Parameter identifiers |
+/// | `derived` | no | Derived parameter identifiers (computed in `derive`) |
+/// | `covariates` | no | Covariate identifiers |
+/// | `states` | yes | State identifiers |
+/// | `outputs` | yes | Output identifiers |
+/// | `routes` | no | Route declarations |
+/// | `structure` | yes | Built‑in kernel name, e.g. `one_compartment` or `one_compartment_with_absorption` |
+/// | `derive` | no | Closure `\|t\| { … }` computing derived parameters from primaries and covariates |
+/// | `lag` | no | Lag‑time closure |
+/// | `fa` | no | Bioavailability closure |
+/// | `init` | no | Initial‑state closure |
+/// | `out` | yes | Output mapping closure |
+///
+/// # Example
+///
+/// ```ignore
+/// let model = analytical! {
+///     name: "one_cmt_oral",
+///     params: [ka, ke, v],
+///     states: [gut, central],
+///     outputs: [cp],
+///     routes: [bolus(oral) -> gut],
+///     structure: one_compartment_with_absorption,
+///     out: |x, _t, y| {
+///         y[cp] = x[central] / v;
+///     },
+/// };
+/// ```
 #[proc_macro]
 pub fn analytical(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as AnalyticalInput);
@@ -3506,7 +3584,6 @@ pub fn analytical(input: TokenStream) -> TokenStream {
     let nstates = input.states.len();
     let ndrugs = dense_index_len(&route_bindings);
     let nout = input.outputs.len();
-
     let name = &input.name;
     let params = &input.params;
     let covariates = &input.covariates;
@@ -3518,14 +3595,14 @@ pub fn analytical(input: TokenStream) -> TokenStream {
         quote! {}
     } else {
         quote! {
-            .covariates([#(::pharmsol::equation::Covariate::continuous(stringify!(#covariates))),*])
+            .covariates([#(::pharmsol::core::metadata::Covariate::continuous(stringify!(#covariates))),*])
         }
     };
 
     quote! {{
         #derive
-        let __pharmsol_metadata = ::pharmsol::equation::metadata::new(#name)
-            .kind(::pharmsol::equation::ModelKind::Analytical)
+        let __pharmsol_metadata = ::pharmsol::core::metadata::new(#name)
+            .kind(::pharmsol::backends::ModelKind::Analytical)
             .parameters([#(stringify!(#params)),*])
             #covariate_metadata
             .states([#(stringify!(#states)),*])
@@ -3533,7 +3610,7 @@ pub fn analytical(input: TokenStream) -> TokenStream {
             #(.route(#routes))*
             .analytical_kernel(#metadata_kernel);
 
-        ::pharmsol::equation::Analytical::new(
+        ::pharmsol::backends::Analytical::new(
             #eq,
             |_, _, _| {},
             #lag,
@@ -3550,6 +3627,51 @@ pub fn analytical(input: TokenStream) -> TokenStream {
     .into()
 }
 
+/// Define an SDE (stochastic differential equation) model.
+///
+/// Builds a particle‑based stochastic model with a drift term, a diffusion
+/// term, and a configurable number of particles. The macro generates an [`SDE`]
+/// value with full metadata.
+///
+/// # Fields
+///
+/// | Field | Required | Description |
+/// |-------|----------|-------------|
+/// | `name` | yes | Model name |
+/// | `params` | yes | Parameter identifiers |
+/// | `covariates` | no | Covariate identifiers |
+/// | `states` | yes | State identifiers |
+/// | `outputs` | yes | Output identifiers |
+/// | `particles` | yes | Number of particles for the simulation |
+/// | `routes` | no | Route declarations |
+/// | `drift` | yes | Closure `\|x, p, t, dx, cov\| { … }` for the deterministic drift |
+/// | `diffusion` | yes | Closure `\|p, sigma\| { … }` setting per‑state diffusion coefficients |
+/// | `lag` | no | Lag‑time closure |
+/// | `fa` | no | Bioavailability closure |
+/// | `init` | no | Initial‑state closure |
+/// | `out` | yes | Output mapping closure |
+///
+/// # Example
+///
+/// ```ignore
+/// let model = sde! {
+///     name: "one_cmt_sde",
+///     params: [ke, sigma_ke, v],
+///     states: [central],
+///     outputs: [cp],
+///     particles: 16,
+///     routes: [infusion(iv) -> central],
+///     drift: |x, _p, _t, dx, _cov| {
+///         dx[central] = -ke * x[central];
+///     },
+///     diffusion: |_p, sigma| {
+///         sigma[central] = sigma_ke;
+///     },
+///     out: |x, _p, _t, _cov, y| {
+///         y[cp] = x[central] / v;
+///     },
+/// };
+/// ```
 #[proc_macro]
 pub fn sde(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as SdeInput);
@@ -3686,14 +3808,14 @@ pub fn sde(input: TokenStream) -> TokenStream {
         quote! {}
     } else {
         quote! {
-            .covariates([#(::pharmsol::equation::Covariate::continuous(stringify!(#covariates))),*])
+            .covariates([#(::pharmsol::core::metadata::Covariate::continuous(stringify!(#covariates))),*])
         }
     };
 
     quote! {{
         let __pharmsol_particles: usize = #particles;
-        let __pharmsol_metadata = ::pharmsol::equation::metadata::new(#name)
-            .kind(::pharmsol::equation::ModelKind::Sde)
+        let __pharmsol_metadata = ::pharmsol::core::metadata::new(#name)
+            .kind(::pharmsol::backends::ModelKind::Sde)
             .parameters([#(stringify!(#params)),*])
             #covariate_metadata
             .states([#(stringify!(#states)),*])
@@ -3701,7 +3823,7 @@ pub fn sde(input: TokenStream) -> TokenStream {
             #(.route(#routes))*
             .particles(__pharmsol_particles);
 
-        ::pharmsol::equation::SDE::new(
+        ::pharmsol::backends::SDE::new(
             #drift,
             #diffusion,
             #lag,

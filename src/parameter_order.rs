@@ -4,10 +4,10 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+use crate::core::metadata::ValidatedModelMetadata;
 #[cfg(feature = "dsl-core")]
 use crate::dsl::NativeModelInfo;
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-use crate::simulator::equation::ValidatedModelMetadata;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ParameterOrderPlan {

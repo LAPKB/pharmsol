@@ -110,6 +110,8 @@
 #[cfg(feature = "dsl-aot")]
 mod build_support;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+pub mod core;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub mod data;
 #[cfg(feature = "dsl-core")]
 pub mod dsl;
@@ -133,6 +135,17 @@ mod test_fixtures;
 
 //extension traits
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+pub use crate::core::metadata;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+pub use crate::core::metadata::{
+    ModelMetadata, ModelMetadataError, NameDomain, RouteInputPolicy, RouteKind,
+    ValidatedModelMetadata,
+};
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+pub use crate::core::{Caching, ModelInfo, Simulate, Solver};
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+pub use crate::core::{Predictions, State};
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use crate::data::builder::SubjectBuilderExt;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use crate::data::Interpolation::*;
@@ -143,15 +156,12 @@ pub use crate::optimize::effect::get_e2;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use crate::optimize::parameters::ParameterOptimizer;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-pub use crate::simulator::equation::analytical::*;
+pub use crate::simulator::backends::analytical::*;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-pub use crate::simulator::equation::metadata;
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-pub use crate::simulator::equation::{
+pub use crate::simulator::backends::{
     self,
     ode::{ExplicitRkTableau, OdeSolver, SdirkTableau},
-    Analytical, AnalyticalKernel, Cache, Equation, ModelKind, ModelMetadata, ModelMetadataError,
-    NameDomain, Predictions, RouteInputPolicy, RouteKind, State, ValidatedModelMetadata, ODE, SDE,
+    Analytical, AnalyticalKernel, ModelKind, ODE, SDE,
 };
 pub use error::PharmsolError;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
@@ -220,6 +230,9 @@ pub mod prelude {
         Covariates, Data, Event, Interpolation, Occasion, Subject,
     };
 
+    // Core traits
+    pub use crate::core::{Caching, ModelInfo, Simulate, Solver};
+
     // NCA extension traits (provides .nca(), .nca_all(), etc. on data types)
     pub use crate::nca::NCA;
     pub use crate::nca::{MetricsError, ObservationMetrics};
@@ -233,8 +246,6 @@ pub mod prelude {
     pub mod simulator {
         pub use crate::simulator::{
             cache::{self, PredictionCache, SdeLikelihoodCache, DEFAULT_CACHE_SIZE},
-            equation,
-            equation::Equation,
             likelihood::{
                 log_likelihood_batch, log_likelihood_matrix, log_likelihood_subject, log_psi, psi,
                 PopulationPredictions, Prediction, SubjectPredictions,
@@ -244,17 +255,16 @@ pub mod prelude {
 
     // Direct simulator re-exports for convenience
     pub use crate::simulator::{
-        cache::{PredictionCache, SdeLikelihoodCache, DEFAULT_CACHE_SIZE},
-        equation::{
+        backends::{
             self,
             ode::{ExplicitRkTableau, OdeSolver, SdirkTableau},
-            Equation,
         },
+        cache::{PredictionCache, SdeLikelihoodCache, DEFAULT_CACHE_SIZE},
         likelihood::{Prediction, SubjectPredictions},
     };
 
     // Analytical model functions
-    pub use crate::simulator::equation::analytical::{
+    pub use crate::simulator::backends::analytical::{
         one_compartment, one_compartment_cl, one_compartment_cl_with_absorption,
         one_compartment_with_absorption, three_compartments, three_compartments_with_absorption,
         two_compartments, two_compartments_cl, two_compartments_cl_with_absorption,
@@ -263,7 +273,7 @@ pub mod prelude {
 
     /// Models submodule for organized access to analytical model functions
     pub mod models {
-        pub use crate::simulator::equation::analytical::{
+        pub use crate::simulator::backends::analytical::{
             one_compartment, one_compartment_cl, one_compartment_cl_with_absorption,
             one_compartment_with_absorption, three_compartments,
             three_compartments_with_absorption, two_compartments, two_compartments_cl,
@@ -318,14 +328,14 @@ macro_rules! fetch_cov {
 #[macro_export]
 macro_rules! lag {
     ($($k:expr => $v:expr),* $(,)?) => {{
-        core::convert::From::from([$(($k, $v),)*])
+        [$((($k), ($v)),)*].into()
     }};
 }
 
 #[macro_export]
 macro_rules! fa {
     ($($k:expr => $v:expr),* $(,)?) => {{
-        core::convert::From::from([$(($k, $v),)*])
+        [$((($k), ($v)),)*].into()
     }};
 }
 

@@ -37,6 +37,24 @@ impl Predictions for SubjectPredictions {
     }
 }
 
+impl crate::core::PredictionsContainer for SubjectPredictions {
+    fn new(_nparticles: usize) -> Self {
+        Self::default()
+    }
+
+    fn push(&mut self, pred: Prediction) {
+        self.predictions.push(pred);
+    }
+
+    fn predictions(&self) -> &[Prediction] {
+        &self.predictions
+    }
+
+    fn log_likelihood(&self, error_models: &AssayErrorModels) -> Result<f64, PharmsolError> {
+        SubjectPredictions::log_likelihood(self, error_models)
+    }
+}
+
 impl SubjectPredictions {
     /// Calculate the log-likelihood of all predictions given an error model.
     ///

@@ -23,18 +23,19 @@ use pharmsol_dsl::{
 pub use super::model_info::{
     NativeCovariateInfo, NativeModelInfo, NativeOutputInfo, NativeRouteInfo, NativeStateInfo,
 };
+use crate::core::Predictions;
 use crate::{
+    core::{Caching, ModelInfo, Simulate, Solver},
     data::error_model::AssayErrorModels,
     data::{Covariates, Infusion, InputLabel, OutputLabel},
     simulator::{
+        backends::{
+            ode::{closure_helpers::PMProblem, ExplicitRkTableau, OdeSolver, SdirkTableau},
+            sde::simulate_sde_event_with,
+        },
         cache::{
             BoundErrorModelCache, PredictionCache, SdeLikelihoodCache,
             DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE, DEFAULT_CACHE_SIZE,
-        },
-        equation::{
-            ode::{closure_helpers::PMProblem, ExplicitRkTableau, OdeSolver, SdirkTableau},
-            sde::simulate_sde_event_with,
-            EqnKind, Equation, EquationPriv, EquationTypes, Predictions,
         },
         likelihood::{Prediction, SubjectPredictions},
         Fa, Lag, M, T, V,
@@ -436,12 +437,11 @@ fn runtime_model_metadata(info: &NativeModelInfo) -> Result<ValidatedModelMetada
             output.index
         })?;
 
-    let mut metadata = crate::simulator::equation::metadata::new(info.name.clone())
+    let mut metadata = crate::core::metadata::new(info.name.clone())
         .kind(info.kind)
         .parameters(info.parameters.iter().cloned())
         .covariates(covariates.into_iter().map(|covariate| {
-            let mut declaration =
-                crate::simulator::equation::metadata::Covariate::new(covariate.name.clone());
+            let mut declaration = crate::core::metadata::Covariate::new(covariate.name.clone());
             if let Some(interpolation) = covariate.interpolation {
                 declaration = declaration.with_interpolation(interpolation);
             }
@@ -478,12 +478,8 @@ fn runtime_model_metadata(info: &NativeModelInfo) -> Result<ValidatedModelMetada
         let kind = route.kind.unwrap_or(RouteKind::Bolus);
 
         let mut declaration = match kind {
-            RouteKind::Bolus => {
-                crate::simulator::equation::metadata::Route::bolus(route.name.clone())
-            }
-            RouteKind::Infusion => {
-                crate::simulator::equation::metadata::Route::infusion(route.name.clone())
-            }
+            RouteKind::Bolus => crate::core::metadata::Route::bolus(route.name.clone()),
+            RouteKind::Infusion => crate::core::metadata::Route::infusion(route.name.clone()),
         }
         .to_state(destination);
 
@@ -1398,7 +1394,7 @@ fn runtime_ode_predictions(
     if let Some(cache) = &model.cache {
         let key = (
             subject.hash(),
-            crate::simulator::equation::parameters_hash(support_point),
+            crate::simulator::backends::parameters_hash(support_point),
         );
         if let Some(cached) = cache.get(&key) {
             return Ok(cached);
@@ -1412,7 +1408,51 @@ fn runtime_ode_predictions(
     }
 }
 
-impl crate::simulator::equation::Cache for NativeOdeModel {
+impl Solver for NativeOdeModel {
+    type State = V;
+
+    fn initial_state(
+        &self,
+        _params: &[f64],
+        _covariates: &Covariates,
+        _occasion_index: usize,
+    ) -> V {
+        V::zeros(self.shared.info.state_len, NalgebraContext)
+    }
+
+    fn is_batch(&self) -> bool {
+        true
+    }
+}
+
+impl ModelInfo for NativeOdeModel {
+    fn nstates(&self) -> usize {
+        self.shared.info.state_len
+    }
+    fn ndrugs(&self) -> usize {
+        self.shared.info.route_len
+    }
+    fn nout(&self) -> usize {
+        self.shared.info.output_len
+    }
+    fn metadata(&self) -> Option<&ValidatedModelMetadata> {
+        Some(self.shared.metadata())
+    }
+    fn lag(&self) -> &Lag {
+        &(runtime_no_lag as Lag)
+    }
+    fn fa(&self) -> &Fa {
+        &(runtime_no_fa as Fa)
+    }
+}
+
+impl Caching for NativeOdeModel {
+    fn prediction_cache(&self) -> Option<&PredictionCache> {
+        self.cache.as_ref()
+    }
+    fn error_model_cache(&self) -> Option<&BoundErrorModelCache> {
+        self.error_model_cache.as_ref()
+    }
     fn with_cache_capacity(mut self, size: u64) -> Self {
         self.cache = Some(PredictionCache::new(size));
         self.error_model_cache = Some(BoundErrorModelCache::new(
@@ -1420,201 +1460,55 @@ impl crate::simulator::equation::Cache for NativeOdeModel {
         ));
         self
     }
-
-    fn enable_cache(mut self) -> Self {
-        self.cache = Some(PredictionCache::new(DEFAULT_CACHE_SIZE));
-        self.error_model_cache = Some(BoundErrorModelCache::new(
-            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
-        ));
-        self
-    }
-
-    fn clear_cache(&self) {
-        if let Some(cache) = &self.cache {
-            cache.invalidate_all();
-        }
-        if let Some(cache) = &self.error_model_cache {
-            cache.invalidate_all();
-        }
-    }
-
-    fn disable_cache(mut self) -> Self {
+    fn without_cache(mut self) -> Self {
         self.cache = None;
         self.error_model_cache = None;
         self
     }
-}
-
-impl EquationTypes for NativeOdeModel {
-    type S = V;
-    type P = SubjectPredictions;
-}
-
-impl EquationPriv for NativeOdeModel {
-    fn lag(&self) -> &Lag {
-        &(runtime_no_lag as Lag)
-    }
-
-    fn fa(&self) -> &Fa {
-        &(runtime_no_fa as Fa)
-    }
-
-    fn get_nstates(&self) -> usize {
-        self.shared.info.state_len
-    }
-
-    fn get_ndrugs(&self) -> usize {
-        self.shared.info.route_len
-    }
-
-    fn get_nouteqs(&self) -> usize {
-        self.shared.info.output_len
-    }
-
-    fn metadata(&self) -> Option<&crate::ValidatedModelMetadata> {
-        Some(self.shared.metadata())
-    }
-
-    fn solve(
-        &self,
-        _state: &mut Self::S,
-        _support_point: &[f64],
-        _covariates: &Covariates,
-        _infusions: &[Infusion],
-        _start_time: f64,
-        _end_time: f64,
-    ) -> Result<(), PharmsolError> {
-        unimplemented!("solve is not used for runtime ODE models")
-    }
-
-    fn process_observation(
-        &self,
-        _support_point: &[f64],
-        _observation: &Observation,
-        _error_models: Option<&AssayErrorModels>,
-        _time: f64,
-        _covariates: &Covariates,
-        _x: &mut Self::S,
-        _likelihood: &mut Vec<f64>,
-        _output: &mut Self::P,
-    ) -> Result<(), PharmsolError> {
-        unimplemented!("process_observation is not used for runtime ODE models")
-    }
-
-    fn initial_state(
-        &self,
-        _support_point: &[f64],
-        _covariates: &Covariates,
-        _occasion_index: usize,
-    ) -> Self::S {
-        V::zeros(self.shared.info.state_len, NalgebraContext)
+    fn clear_cache(&self) {
+        if let Some(c) = &self.cache {
+            c.invalidate_all();
+        }
+        if let Some(c) = &self.error_model_cache {
+            c.invalidate_all();
+        }
     }
 }
 
-impl Equation for NativeOdeModel {
-    fn bound_error_model_cache(&self) -> Option<&BoundErrorModelCache> {
-        self.error_model_cache.as_ref()
-    }
-
-    fn estimate_likelihood(
-        &self,
-        subject: &Subject,
-        parameters: &Parameters,
-        error_models: &AssayErrorModels,
-    ) -> Result<f64, PharmsolError> {
-        Ok(self
-            .estimate_log_likelihood(subject, parameters, error_models)?
-            .exp())
-    }
-
-    fn estimate_log_likelihood(
-        &self,
-        subject: &Subject,
-        parameters: &Parameters,
-        error_models: &AssayErrorModels,
-    ) -> Result<f64, PharmsolError> {
-        let bound_error_models = self.bind_error_models(error_models)?;
-        let predictions = runtime_ode_predictions(self, subject, parameters.as_slice())?;
-        predictions.log_likelihood(&bound_error_models)
-    }
-
-    fn estimate_predictions_dense(
-        &self,
-        subject: &Subject,
-        parameters: &[f64],
-    ) -> Result<Self::P, PharmsolError> {
-        runtime_ode_predictions(self, subject, parameters)
-    }
-
-    fn estimate_log_likelihood_dense(
-        &self,
-        subject: &Subject,
-        parameters: &[f64],
-        error_models: &AssayErrorModels,
-    ) -> Result<f64, PharmsolError> {
-        let bound_error_models = self.bind_error_models(error_models)?;
-        let predictions = runtime_ode_predictions(self, subject, parameters)?;
-        predictions.log_likelihood(&bound_error_models)
-    }
-
-    fn simulate_subject_dense(
-        &self,
-        subject: &Subject,
-        parameters: &[f64],
-        error_models: Option<&AssayErrorModels>,
-    ) -> Result<(Self::P, Option<f64>), PharmsolError> {
-        let bound_error_models = match error_models {
-            Some(error_models) => Some(self.bind_error_models(error_models)?),
-            None => None,
-        };
-
-        let predictions = runtime_ode_predictions(self, subject, parameters)?;
-        let likelihood = match bound_error_models.as_ref() {
-            Some(error_models) => Some(predictions.log_likelihood(error_models)?.exp()),
-            None => None,
-        };
-        Ok((predictions, likelihood))
-    }
-
-    fn kind() -> EqnKind {
-        EqnKind::ODE
-    }
-
-    fn assay_error_models(&self) -> AssayErrorModels {
-        AssayErrorModels::with_output_names(
-            self.info()
-                .outputs
-                .iter()
-                .map(|output| output.name.as_str()),
-        )
-    }
-
-    fn estimate_predictions(
-        &self,
-        subject: &Subject,
-        parameters: &Parameters,
-    ) -> Result<Self::P, PharmsolError> {
-        runtime_ode_predictions(self, subject, parameters.as_slice())
-    }
+impl Simulate for NativeOdeModel {
+    type Predictions = SubjectPredictions;
 
     fn simulate_subject(
         &self,
         subject: &Subject,
-        parameters: &Parameters,
+        parameters: &[f64],
         error_models: Option<&AssayErrorModels>,
-    ) -> Result<(Self::P, Option<f64>), PharmsolError> {
-        let support_point = parameters.as_slice();
+    ) -> Result<(Self::Predictions, Option<f64>), PharmsolError> {
         let bound_error_models = match error_models {
-            Some(error_models) => Some(self.bind_error_models(error_models)?),
+            Some(em) => Some(crate::core::simulate::bind_error_models_inner(self, em)?),
             None => None,
         };
-
-        let predictions = runtime_ode_predictions(self, subject, support_point)?;
+        let predictions = runtime_ode_predictions(self, subject, parameters)?;
         let likelihood = match bound_error_models.as_ref() {
-            Some(error_models) => Some(predictions.log_likelihood(error_models)?.exp()),
+            Some(em) => Some(predictions.log_likelihood(em)?.exp()),
             None => None,
         };
         Ok((predictions, likelihood))
+    }
+
+    fn log_likelihood(
+        &self,
+        subject: &Subject,
+        params: &[f64],
+        error_models: &AssayErrorModels,
+    ) -> Result<f64, PharmsolError> {
+        let bound = crate::core::simulate::bind_error_models_inner(self, error_models)?;
+        let predictions = runtime_ode_predictions(self, subject, params)?;
+        predictions.log_likelihood(&bound)
+    }
+
+    fn kind() -> ModelKind {
+        ModelKind::Ode
     }
 }
 
@@ -1803,7 +1697,7 @@ fn runtime_analytical_predictions(
     if let Some(cache) = &model.cache {
         let key = (
             subject.hash(),
-            crate::simulator::equation::parameters_hash(support_point),
+            crate::simulator::backends::parameters_hash(support_point),
         );
         if let Some(cached) = cache.get(&key) {
             return Ok(cached);
@@ -1817,173 +1711,100 @@ fn runtime_analytical_predictions(
     }
 }
 
-impl crate::simulator::equation::Cache for NativeAnalyticalModel {
+impl Solver for NativeAnalyticalModel {
+    type State = V;
+
+    fn initial_state(
+        &self,
+        _params: &[f64],
+        _covariates: &Covariates,
+        _occasion_index: usize,
+    ) -> V {
+        V::zeros(self.shared.info.state_len, NalgebraContext)
+    }
+
+    fn is_batch(&self) -> bool {
+        true
+    }
+}
+
+impl ModelInfo for NativeAnalyticalModel {
+    fn nstates(&self) -> usize {
+        self.shared.info.state_len
+    }
+    fn ndrugs(&self) -> usize {
+        self.shared.info.route_len
+    }
+    fn nout(&self) -> usize {
+        self.shared.info.output_len
+    }
+    fn metadata(&self) -> Option<&ValidatedModelMetadata> {
+        Some(self.shared.metadata())
+    }
+    fn lag(&self) -> &Lag {
+        &(runtime_no_lag as Lag)
+    }
+    fn fa(&self) -> &Fa {
+        &(runtime_no_fa as Fa)
+    }
+}
+
+impl Caching for NativeAnalyticalModel {
+    fn prediction_cache(&self) -> Option<&PredictionCache> {
+        self.cache.as_ref()
+    }
+    fn error_model_cache(&self) -> Option<&BoundErrorModelCache> {
+        None
+    }
     fn with_cache_capacity(mut self, size: u64) -> Self {
         self.cache = Some(PredictionCache::new(size));
         self
     }
-
-    fn enable_cache(mut self) -> Self {
-        self.cache = Some(PredictionCache::new(DEFAULT_CACHE_SIZE));
-        self
-    }
-
-    fn clear_cache(&self) {
-        if let Some(cache) = &self.cache {
-            cache.invalidate_all();
-        }
-    }
-
-    fn disable_cache(mut self) -> Self {
+    fn without_cache(mut self) -> Self {
         self.cache = None;
         self
     }
-}
-
-impl EquationTypes for NativeAnalyticalModel {
-    type S = V;
-    type P = SubjectPredictions;
-}
-
-impl EquationPriv for NativeAnalyticalModel {
-    fn lag(&self) -> &Lag {
-        &(runtime_no_lag as Lag)
-    }
-
-    fn fa(&self) -> &Fa {
-        &(runtime_no_fa as Fa)
-    }
-
-    fn get_nstates(&self) -> usize {
-        self.shared.info.state_len
-    }
-
-    fn get_ndrugs(&self) -> usize {
-        self.shared.info.route_len
-    }
-
-    fn get_nouteqs(&self) -> usize {
-        self.shared.info.output_len
-    }
-
-    fn metadata(&self) -> Option<&crate::ValidatedModelMetadata> {
-        Some(self.shared.metadata())
-    }
-
-    fn solve(
-        &self,
-        _state: &mut Self::S,
-        _support_point: &[f64],
-        _covariates: &Covariates,
-        _infusions: &[Infusion],
-        _start_time: f64,
-        _end_time: f64,
-    ) -> Result<(), PharmsolError> {
-        unimplemented!("solve is not used for runtime analytical models")
-    }
-
-    fn process_observation(
-        &self,
-        _support_point: &[f64],
-        _observation: &Observation,
-        _error_models: Option<&AssayErrorModels>,
-        _time: f64,
-        _covariates: &Covariates,
-        _x: &mut Self::S,
-        _likelihood: &mut Vec<f64>,
-        _output: &mut Self::P,
-    ) -> Result<(), PharmsolError> {
-        unimplemented!("process_observation is not used for runtime analytical models")
-    }
-
-    fn initial_state(
-        &self,
-        _support_point: &[f64],
-        _covariates: &Covariates,
-        _occasion_index: usize,
-    ) -> Self::S {
-        V::zeros(self.shared.info.state_len, NalgebraContext)
+    fn clear_cache(&self) {
+        if let Some(c) = &self.cache {
+            c.invalidate_all();
+        }
     }
 }
 
-impl Equation for NativeAnalyticalModel {
-    fn estimate_likelihood(
-        &self,
-        subject: &Subject,
-        parameters: &Parameters,
-        error_models: &AssayErrorModels,
-    ) -> Result<f64, PharmsolError> {
-        Ok(self
-            .estimate_log_likelihood(subject, parameters, error_models)?
-            .exp())
-    }
-
-    fn estimate_log_likelihood(
-        &self,
-        subject: &Subject,
-        parameters: &Parameters,
-        error_models: &AssayErrorModels,
-    ) -> Result<f64, PharmsolError> {
-        let bound_error_models = self.bind_error_models(error_models)?;
-        let predictions = runtime_analytical_predictions(self, subject, parameters.as_slice())?;
-        predictions.log_likelihood(&bound_error_models)
-    }
-
-    fn estimate_predictions_dense(
-        &self,
-        subject: &Subject,
-        parameters: &[f64],
-    ) -> Result<Self::P, PharmsolError> {
-        NativeAnalyticalModel::estimate_predictions_dense(self, subject, parameters)
-    }
-
-    fn kind() -> EqnKind {
-        EqnKind::Analytical
-    }
-
-    fn assay_error_models(&self) -> AssayErrorModels {
-        AssayErrorModels::with_output_names(
-            self.info()
-                .outputs
-                .iter()
-                .map(|output| output.name.as_str()),
-        )
-    }
-
-    fn estimate_predictions(
-        &self,
-        subject: &Subject,
-        parameters: &Parameters,
-    ) -> Result<Self::P, PharmsolError> {
-        NativeAnalyticalModel::estimate_predictions(self, subject, parameters)
-    }
+impl Simulate for NativeAnalyticalModel {
+    type Predictions = SubjectPredictions;
 
     fn simulate_subject(
         &self,
         subject: &Subject,
-        parameters: &Parameters,
-        error_models: Option<&AssayErrorModels>,
-    ) -> Result<(Self::P, Option<f64>), PharmsolError> {
-        self.simulate_subject_dense(subject, parameters.as_slice(), error_models)
-    }
-
-    fn simulate_subject_dense(
-        &self,
-        subject: &Subject,
         parameters: &[f64],
         error_models: Option<&AssayErrorModels>,
-    ) -> Result<(Self::P, Option<f64>), PharmsolError> {
-        let bound_error_models = match error_models {
-            Some(error_models) => Some(self.bind_error_models(error_models)?),
+    ) -> Result<(Self::Predictions, Option<f64>), PharmsolError> {
+        let bound_em = match error_models {
+            Some(em) => Some(crate::core::simulate::bind_error_models_inner(self, em)?),
             None => None,
         };
-
         let predictions = runtime_analytical_predictions(self, subject, parameters)?;
-        let likelihood = match bound_error_models.as_ref() {
-            Some(error_models) => Some(predictions.log_likelihood(error_models)?.exp()),
+        let likelihood = match bound_em.as_ref() {
+            Some(em) => Some(predictions.log_likelihood(em)?.exp()),
             None => None,
         };
         Ok((predictions, likelihood))
+    }
+
+    fn log_likelihood(
+        &self,
+        subject: &Subject,
+        params: &[f64],
+        error_models: &AssayErrorModels,
+    ) -> Result<f64, PharmsolError> {
+        let bound = crate::core::simulate::bind_error_models_inner(self, error_models)?;
+        let predictions = runtime_analytical_predictions(self, subject, params)?;
+        predictions.log_likelihood(&bound)
+    }
+
+    fn kind() -> ModelKind {
+        ModelKind::Analytical
     }
 }
 
@@ -2290,7 +2111,7 @@ fn runtime_sde_log_likelihood(
     if let Some(cache) = &model.cache {
         let key = (
             subject.hash(),
-            crate::simulator::equation::parameters_hash(support_point),
+            crate::simulator::backends::parameters_hash(support_point),
             error_models.hash(),
         );
         if let Some(cached) = cache.get(&key) {
@@ -2307,189 +2128,102 @@ fn runtime_sde_log_likelihood(
     }
 }
 
-impl crate::simulator::equation::Cache for NativeSdeModel {
-    fn with_cache_capacity(mut self, size: u64) -> Self {
-        self.cache = Some(SdeLikelihoodCache::new(size));
-        self
-    }
+impl Solver for NativeSdeModel {
+    type State = Vec<DVector<f64>>;
 
-    fn enable_cache(mut self) -> Self {
-        self.cache = Some(SdeLikelihoodCache::new(DEFAULT_CACHE_SIZE));
-        self
-    }
-
-    fn clear_cache(&self) {
-        if let Some(cache) = &self.cache {
-            cache.invalidate_all();
-        }
-    }
-
-    fn disable_cache(mut self) -> Self {
-        self.cache = None;
-        self
-    }
-}
-
-impl EquationTypes for NativeSdeModel {
-    type S = Vec<DVector<f64>>;
-    type P = Array2<Prediction>;
-}
-
-impl EquationPriv for NativeSdeModel {
-    fn lag(&self) -> &Lag {
-        &(runtime_no_lag as Lag)
-    }
-
-    fn fa(&self) -> &Fa {
-        &(runtime_no_fa as Fa)
-    }
-
-    fn get_nstates(&self) -> usize {
-        self.shared.info.state_len
-    }
-
-    fn get_ndrugs(&self) -> usize {
-        self.shared.info.route_len
-    }
-
-    fn get_nouteqs(&self) -> usize {
-        self.shared.info.output_len
+    fn initial_state(
+        &self,
+        _params: &[f64],
+        _covariates: &Covariates,
+        _occasion_index: usize,
+    ) -> Vec<DVector<f64>> {
+        vec![DVector::zeros(self.shared.info.state_len); self.nparticles]
     }
 
     fn nparticles(&self) -> usize {
         self.nparticles
     }
-
-    fn is_sde(&self) -> bool {
+    fn is_batch(&self) -> bool {
         true
-    }
-
-    fn metadata(&self) -> Option<&crate::ValidatedModelMetadata> {
-        Some(self.shared.metadata())
-    }
-
-    fn solve(
-        &self,
-        _state: &mut Self::S,
-        _support_point: &[f64],
-        _covariates: &Covariates,
-        _infusions: &[Infusion],
-        _start_time: f64,
-        _end_time: f64,
-    ) -> Result<(), PharmsolError> {
-        unimplemented!("solve is not used for runtime SDE models")
-    }
-
-    fn process_observation(
-        &self,
-        _support_point: &[f64],
-        _observation: &Observation,
-        _error_models: Option<&AssayErrorModels>,
-        _time: f64,
-        _covariates: &Covariates,
-        _x: &mut Self::S,
-        _likelihood: &mut Vec<f64>,
-        _output: &mut Self::P,
-    ) -> Result<(), PharmsolError> {
-        unimplemented!("process_observation is not used for runtime SDE models")
-    }
-
-    fn initial_state(
-        &self,
-        _support_point: &[f64],
-        _covariates: &Covariates,
-        _occasion_index: usize,
-    ) -> Self::S {
-        vec![DVector::zeros(self.shared.info.state_len); self.nparticles]
     }
 }
 
-impl Equation for NativeSdeModel {
-    fn estimate_likelihood(
-        &self,
-        subject: &Subject,
-        parameters: &Parameters,
-        error_models: &AssayErrorModels,
-    ) -> Result<f64, PharmsolError> {
-        let log_lik = self.estimate_log_likelihood(subject, parameters, error_models)?;
-        Ok(log_lik.exp())
+impl ModelInfo for NativeSdeModel {
+    fn nstates(&self) -> usize {
+        self.shared.info.state_len
     }
+    fn ndrugs(&self) -> usize {
+        self.shared.info.route_len
+    }
+    fn nout(&self) -> usize {
+        self.shared.info.output_len
+    }
+    fn metadata(&self) -> Option<&ValidatedModelMetadata> {
+        Some(self.shared.metadata())
+    }
+    fn lag(&self) -> &Lag {
+        &(runtime_no_lag as Lag)
+    }
+    fn fa(&self) -> &Fa {
+        &(runtime_no_fa as Fa)
+    }
+}
 
-    fn estimate_log_likelihood(
-        &self,
-        subject: &Subject,
-        parameters: &Parameters,
-        error_models: &AssayErrorModels,
-    ) -> Result<f64, PharmsolError> {
-        let bound_error_models = self.bind_error_models(error_models)?;
-        runtime_sde_log_likelihood(self, subject, parameters.as_slice(), &bound_error_models)
+impl Caching for NativeSdeModel {
+    fn prediction_cache(&self) -> Option<&PredictionCache> {
+        None
     }
+    fn error_model_cache(&self) -> Option<&BoundErrorModelCache> {
+        None
+    }
+    fn with_cache_capacity(mut self, size: u64) -> Self {
+        self.cache = Some(SdeLikelihoodCache::new(size));
+        self
+    }
+    fn without_cache(mut self) -> Self {
+        self.cache = None;
+        self
+    }
+    fn clear_cache(&self) {
+        if let Some(c) = &self.cache {
+            c.invalidate_all();
+        }
+    }
+}
 
-    fn kind() -> EqnKind {
-        EqnKind::SDE
-    }
-
-    fn assay_error_models(&self) -> AssayErrorModels {
-        AssayErrorModels::with_output_names(
-            self.info()
-                .outputs
-                .iter()
-                .map(|output| output.name.as_str()),
-        )
-    }
-
-    fn estimate_predictions(
-        &self,
-        subject: &Subject,
-        parameters: &Parameters,
-    ) -> Result<Self::P, PharmsolError> {
-        NativeSdeModel::estimate_predictions(self, subject, parameters)
-    }
-
-    fn estimate_predictions_dense(
-        &self,
-        subject: &Subject,
-        parameters: &[f64],
-    ) -> Result<Self::P, PharmsolError> {
-        NativeSdeModel::estimate_predictions_dense(self, subject, parameters)
-    }
-
-    fn estimate_log_likelihood_dense(
-        &self,
-        subject: &Subject,
-        parameters: &[f64],
-        error_models: &AssayErrorModels,
-    ) -> Result<f64, PharmsolError> {
-        let bound_error_models = self.bind_error_models(error_models)?;
-        runtime_sde_log_likelihood(self, subject, parameters, &bound_error_models)
-    }
+impl Simulate for NativeSdeModel {
+    type Predictions = Array2<Prediction>;
 
     fn simulate_subject(
         &self,
         subject: &Subject,
-        parameters: &Parameters,
-        error_models: Option<&AssayErrorModels>,
-    ) -> Result<(Self::P, Option<f64>), PharmsolError> {
-        self.simulate_subject_dense(subject, parameters.as_slice(), error_models)
-    }
-
-    fn simulate_subject_dense(
-        &self,
-        subject: &Subject,
         parameters: &[f64],
         error_models: Option<&AssayErrorModels>,
-    ) -> Result<(Self::P, Option<f64>), PharmsolError> {
-        let bound_error_models = match error_models {
-            Some(error_models) => Some(self.bind_error_models(error_models)?),
+    ) -> Result<(Self::Predictions, Option<f64>), PharmsolError> {
+        let bound_em = match error_models {
+            Some(em) => Some(crate::core::simulate::bind_error_models_inner(self, em)?),
             None => None,
         };
-
         let predictions = NativeSdeModel::estimate_predictions_dense(self, subject, parameters)?;
-        let likelihood = match bound_error_models.as_ref() {
-            Some(error_models) => Some(predictions.log_likelihood(error_models)?.exp()),
+        let likelihood = match bound_em.as_ref() {
+            Some(em) => Some(predictions.log_likelihood(em)?.exp()),
             None => None,
         };
         Ok((predictions, likelihood))
+    }
+
+    fn log_likelihood(
+        &self,
+        subject: &Subject,
+        params: &[f64],
+        error_models: &AssayErrorModels,
+    ) -> Result<f64, PharmsolError> {
+        let bound = crate::core::simulate::bind_error_models_inner(self, error_models)?;
+        runtime_sde_log_likelihood(self, subject, params, &bound)
+    }
+
+    fn kind() -> ModelKind {
+        ModelKind::Sde
     }
 }
 
@@ -2634,7 +2368,7 @@ fn apply_analytical_kernel(
     let route_inputs = V::from_vec(route_inputs.to_vec(), NalgebraContext);
     match kernel {
         AnalyticalKernel::OneCompartment => {
-            crate::simulator::equation::analytical::one_compartment(
+            crate::simulator::backends::analytical::one_compartment(
                 &state,
                 params,
                 dt,
@@ -2643,7 +2377,7 @@ fn apply_analytical_kernel(
             )
         }
         AnalyticalKernel::OneCompartmentCl => {
-            crate::simulator::equation::analytical::one_compartment_cl(
+            crate::simulator::backends::analytical::one_compartment_cl(
                 &state,
                 params,
                 dt,
@@ -2652,7 +2386,7 @@ fn apply_analytical_kernel(
             )
         }
         AnalyticalKernel::OneCompartmentClWithAbsorption => {
-            crate::simulator::equation::analytical::one_compartment_cl_with_absorption(
+            crate::simulator::backends::analytical::one_compartment_cl_with_absorption(
                 &state,
                 params,
                 dt,
@@ -2661,7 +2395,7 @@ fn apply_analytical_kernel(
             )
         }
         AnalyticalKernel::OneCompartmentWithAbsorption => {
-            crate::simulator::equation::analytical::one_compartment_with_absorption(
+            crate::simulator::backends::analytical::one_compartment_with_absorption(
                 &state,
                 params,
                 dt,
@@ -2670,7 +2404,7 @@ fn apply_analytical_kernel(
             )
         }
         AnalyticalKernel::TwoCompartments => {
-            crate::simulator::equation::analytical::two_compartments(
+            crate::simulator::backends::analytical::two_compartments(
                 &state,
                 params,
                 dt,
@@ -2679,7 +2413,7 @@ fn apply_analytical_kernel(
             )
         }
         AnalyticalKernel::TwoCompartmentsCl => {
-            crate::simulator::equation::analytical::two_compartments_cl(
+            crate::simulator::backends::analytical::two_compartments_cl(
                 &state,
                 params,
                 dt,
@@ -2688,7 +2422,7 @@ fn apply_analytical_kernel(
             )
         }
         AnalyticalKernel::TwoCompartmentsClWithAbsorption => {
-            crate::simulator::equation::analytical::two_compartments_cl_with_absorption(
+            crate::simulator::backends::analytical::two_compartments_cl_with_absorption(
                 &state,
                 params,
                 dt,
@@ -2697,7 +2431,7 @@ fn apply_analytical_kernel(
             )
         }
         AnalyticalKernel::TwoCompartmentsWithAbsorption => {
-            crate::simulator::equation::analytical::two_compartments_with_absorption(
+            crate::simulator::backends::analytical::two_compartments_with_absorption(
                 &state,
                 params,
                 dt,
@@ -2706,7 +2440,7 @@ fn apply_analytical_kernel(
             )
         }
         AnalyticalKernel::ThreeCompartments => {
-            crate::simulator::equation::analytical::three_compartments(
+            crate::simulator::backends::analytical::three_compartments(
                 &state,
                 params,
                 dt,
@@ -2715,7 +2449,7 @@ fn apply_analytical_kernel(
             )
         }
         AnalyticalKernel::ThreeCompartmentsCl => {
-            crate::simulator::equation::analytical::three_compartments_cl(
+            crate::simulator::backends::analytical::three_compartments_cl(
                 &state,
                 params,
                 dt,
@@ -2724,7 +2458,7 @@ fn apply_analytical_kernel(
             )
         }
         AnalyticalKernel::ThreeCompartmentsClWithAbsorption => {
-            crate::simulator::equation::analytical::three_compartments_cl_with_absorption(
+            crate::simulator::backends::analytical::three_compartments_cl_with_absorption(
                 &state,
                 params,
                 dt,
@@ -2733,7 +2467,7 @@ fn apply_analytical_kernel(
             )
         }
         AnalyticalKernel::ThreeCompartmentsWithAbsorption => {
-            crate::simulator::equation::analytical::three_compartments_with_absorption(
+            crate::simulator::backends::analytical::three_compartments_with_absorption(
                 &state,
                 params,
                 dt,
@@ -3318,7 +3052,7 @@ mod tests {
         let expected = SubjectPredictions::default();
         let key = (
             subject.hash(),
-            crate::simulator::equation::parameters_hash(parameters.as_slice()),
+            crate::simulator::backends::parameters_hash(parameters.as_slice()),
         );
 
         model

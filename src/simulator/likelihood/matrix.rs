@@ -6,8 +6,9 @@
 use ndarray::{Array2, Axis, ShapeBuilder};
 use rayon::prelude::*;
 
+use crate::core::Simulate;
 use crate::data::error_model::AssayErrorModels;
-use crate::{Data, Equation, PharmsolError};
+use crate::{Data, PharmsolError};
 
 use super::progress::ProgressTracker;
 
@@ -50,7 +51,7 @@ use super::progress::ProgressTracker;
 /// )?;
 /// ```
 pub fn log_likelihood_matrix(
-    equation: &impl Equation,
+    model: &impl Simulate,
     subjects: &Data,
     support_points: &Array2<f64>,
     error_models: &AssayErrorModels,
@@ -84,11 +85,7 @@ pub fn log_likelihood_matrix(
             let subject = &subject_slice[i];
 
             for (element, support_point) in row.iter_mut().zip(support_point_rows.iter()) {
-                *element = equation.estimate_log_likelihood_dense(
-                    subject,
-                    support_point.as_slice(),
-                    error_models,
-                )?;
+                *element = model.log_likelihood(subject, support_point.as_slice(), error_models)?;
                 if let Some(ref tracker) = progress_tracker {
                     tracker.inc();
                 }
@@ -115,13 +112,13 @@ pub fn log_likelihood_matrix(
     note = "Use log_likelihood_matrix() with LikelihoodMatrixOptions instead"
 )]
 pub fn log_psi(
-    equation: &impl Equation,
+    model: &impl Simulate,
     subjects: &Data,
     support_points: &Array2<f64>,
     error_models: &AssayErrorModels,
     progress: bool,
 ) -> Result<Array2<f64>, PharmsolError> {
-    log_likelihood_matrix(equation, subjects, support_points, error_models, progress)
+    log_likelihood_matrix(model, subjects, support_points, error_models, progress)
 }
 
 /// Calculate the likelihood matrix (deprecated).
@@ -136,14 +133,14 @@ pub fn log_psi(
     note = "Use log_likelihood_matrix() instead and exponentiate if needed"
 )]
 pub fn psi(
-    equation: &impl Equation,
+    model: &impl Simulate,
     subjects: &Data,
     support_points: &Array2<f64>,
     error_models: &AssayErrorModels,
     progress: bool,
 ) -> Result<Array2<f64>, PharmsolError> {
     let log_psi_matrix =
-        log_likelihood_matrix(equation, subjects, support_points, error_models, progress)?;
+        log_likelihood_matrix(model, subjects, support_points, error_models, progress)?;
 
     // Exponentiate to get likelihoods (may underflow to 0 for extreme values)
     Ok(log_psi_matrix.mapv(f64::exp))

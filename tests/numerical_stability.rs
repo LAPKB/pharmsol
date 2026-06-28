@@ -8,7 +8,7 @@ const ABS_TOL: f64 = 1e-2;
 
 fn parameters_for_analytical(
     label: &str,
-    analytical: &equation::Analytical,
+    analytical: &backends::Analytical,
     param_names: &[&str],
     params: &[f64],
 ) -> Parameters {
@@ -29,7 +29,7 @@ fn parameters_for_analytical(
 
 fn parameters_for_ode(
     label: &str,
-    ode: &equation::ODE,
+    ode: &backends::ODE,
     param_names: &[&str],
     params: &[f64],
 ) -> Parameters {
@@ -95,8 +95,8 @@ fn two_compartment_multi_dose_is_well_behaved() {
 
 fn assert_models_agree(
     label: &str,
-    analytical: &equation::Analytical,
-    ode: &equation::ODE,
+    analytical: &backends::Analytical,
+    ode: &backends::ODE,
     subject: &Subject,
     param_names: &[&str],
     params: &[f64],
@@ -150,8 +150,8 @@ fn infusion_subject() -> Subject {
     builder.build()
 }
 
-fn infusion_models() -> (equation::Analytical, equation::ODE) {
-    let analytical = equation::Analytical::new(
+fn infusion_models() -> (backends::Analytical, backends::ODE) {
+    let analytical = backends::Analytical::new(
         one_compartment,
         |_p, _t, _cov| {},
         |_p, _t, _cov| lag! {},
@@ -166,20 +166,20 @@ fn infusion_models() -> (equation::Analytical, equation::ODE) {
     .with_ndrugs(1)
     .with_nout(1)
     .with_metadata(
-        equation::metadata::new("infusion_reference")
-            .kind(equation::ModelKind::Analytical)
+        pharmsol::metadata::new("infusion_reference")
+            .kind(backends::ModelKind::Analytical)
             .parameters(["ke", "v"])
             .states(["central"])
             .outputs(["cp"])
             .routes([
-                equation::Route::bolus("load").to_state("central"),
-                equation::Route::infusion("iv").to_state("central"),
+                backends::Route::bolus("load").to_state("central"),
+                backends::Route::infusion("iv").to_state("central"),
             ])
-            .analytical_kernel(equation::AnalyticalKernel::OneCompartment),
+            .analytical_kernel(backends::AnalyticalKernel::OneCompartment),
     )
     .expect("infusion analytical metadata should validate");
 
-    let ode = equation::ODE::new(
+    let ode = backends::ODE::new(
         |x, p, _t, dx, b, rateiv, _cov| {
             fetch_params!(p, ke, _v);
             dx[0] = -ke * x[0] + rateiv[0] + b[0];
@@ -196,15 +196,15 @@ fn infusion_models() -> (equation::Analytical, equation::ODE) {
     .with_ndrugs(1)
     .with_nout(1)
     .with_metadata(
-        equation::metadata::new("infusion_reference")
+        pharmsol::metadata::new("infusion_reference")
             .parameters(["ke", "v"])
             .states(["central"])
             .outputs(["cp"])
             .routes([
-                equation::Route::bolus("load")
+                backends::Route::bolus("load")
                     .to_state("central")
                     .expect_explicit_input(),
-                equation::Route::infusion("iv")
+                backends::Route::infusion("iv")
                     .to_state("central")
                     .expect_explicit_input(),
             ]),
@@ -230,8 +230,8 @@ fn absorption_subject() -> Subject {
     builder.build()
 }
 
-fn absorption_models() -> (equation::Analytical, equation::ODE) {
-    let analytical = equation::Analytical::new(
+fn absorption_models() -> (backends::Analytical, backends::ODE) {
+    let analytical = backends::Analytical::new(
         one_compartment_with_absorption,
         |_p, _t, _cov| {},
         |_p, _t, _cov| lag! {},
@@ -246,21 +246,21 @@ fn absorption_models() -> (equation::Analytical, equation::ODE) {
     .with_ndrugs(2)
     .with_nout(1)
     .with_metadata(
-        equation::metadata::new("absorption_reference")
-            .kind(equation::ModelKind::Analytical)
+        pharmsol::metadata::new("absorption_reference")
+            .kind(backends::ModelKind::Analytical)
             .parameters(["ka", "ke", "v"])
             .states(["gut", "central"])
             .outputs(["cp"])
             .routes([
-                equation::Route::bolus("load").to_state("central"),
-                equation::Route::bolus("oral").to_state("gut"),
-                equation::Route::infusion("iv").to_state("central"),
+                backends::Route::bolus("load").to_state("central"),
+                backends::Route::bolus("oral").to_state("gut"),
+                backends::Route::infusion("iv").to_state("central"),
             ])
-            .analytical_kernel(equation::AnalyticalKernel::OneCompartmentWithAbsorption),
+            .analytical_kernel(backends::AnalyticalKernel::OneCompartmentWithAbsorption),
     )
     .expect("absorption analytical metadata should validate");
 
-    let ode = equation::ODE::new(
+    let ode = backends::ODE::new(
         |x, p, _t, dx, b, rateiv, _cov| {
             fetch_params!(p, ka, ke, _v);
             dx[0] = -ka * x[0] + b[0];
@@ -278,18 +278,18 @@ fn absorption_models() -> (equation::Analytical, equation::ODE) {
     .with_ndrugs(2)
     .with_nout(1)
     .with_metadata(
-        equation::metadata::new("absorption_reference")
+        pharmsol::metadata::new("absorption_reference")
             .parameters(["ka", "ke", "v"])
             .states(["gut", "central"])
             .outputs(["cp"])
             .routes([
-                equation::Route::bolus("load")
+                backends::Route::bolus("load")
                     .to_state("central")
                     .expect_explicit_input(),
-                equation::Route::bolus("oral")
+                backends::Route::bolus("oral")
                     .to_state("gut")
                     .expect_explicit_input(),
-                equation::Route::infusion("iv")
+                backends::Route::infusion("iv")
                     .to_state("central")
                     .expect_explicit_input(),
             ]),
@@ -313,8 +313,8 @@ fn two_compartment_subject() -> Subject {
     builder.build()
 }
 
-fn two_compartment_models() -> (equation::Analytical, equation::ODE) {
-    let analytical = equation::Analytical::new(
+fn two_compartment_models() -> (backends::Analytical, backends::ODE) {
+    let analytical = backends::Analytical::new(
         two_compartments,
         |_p, _t, _cov| {},
         |_p, _t, _cov| lag! {},
@@ -329,20 +329,20 @@ fn two_compartment_models() -> (equation::Analytical, equation::ODE) {
     .with_ndrugs(1)
     .with_nout(1)
     .with_metadata(
-        equation::metadata::new("two_comp_reference")
-            .kind(equation::ModelKind::Analytical)
+        pharmsol::metadata::new("two_comp_reference")
+            .kind(backends::ModelKind::Analytical)
             .parameters(["ke", "kcp", "kpc", "v"])
             .states(["central", "peripheral"])
             .outputs(["cp"])
             .routes([
-                equation::Route::bolus("load").to_state("central"),
-                equation::Route::infusion("iv").to_state("central"),
+                backends::Route::bolus("load").to_state("central"),
+                backends::Route::infusion("iv").to_state("central"),
             ])
-            .analytical_kernel(equation::AnalyticalKernel::TwoCompartments),
+            .analytical_kernel(backends::AnalyticalKernel::TwoCompartments),
     )
     .expect("two-compartment analytical metadata should validate");
 
-    let ode = equation::ODE::new(
+    let ode = backends::ODE::new(
         |x, p, _t, dx, b, rateiv, _cov| {
             fetch_params!(p, ke, kcp, kpc, _v);
             dx[0] = rateiv[0] - ke * x[0] - kcp * x[0] + kpc * x[1] + b[0];
@@ -360,18 +360,18 @@ fn two_compartment_models() -> (equation::Analytical, equation::ODE) {
     .with_ndrugs(2)
     .with_nout(1)
     .with_metadata(
-        equation::metadata::new("two_comp_reference")
+        pharmsol::metadata::new("two_comp_reference")
             .parameters(["ke", "kcp", "kpc", "v"])
             .states(["central", "peripheral"])
             .outputs(["cp"])
             .routes([
-                equation::Route::bolus("load")
+                backends::Route::bolus("load")
                     .to_state("central")
                     .expect_explicit_input(),
-                equation::Route::bolus("peripheral_load")
+                backends::Route::bolus("peripheral_load")
                     .to_state("peripheral")
                     .expect_explicit_input(),
-                equation::Route::infusion("iv")
+                backends::Route::infusion("iv")
                     .to_state("central")
                     .expect_explicit_input(),
             ]),

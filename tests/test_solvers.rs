@@ -18,8 +18,8 @@ fn subject() -> Subject {
         .build()
 }
 
-fn one_cpt(solver: OdeSolver) -> equation::ODE {
-    equation::ODE::new(
+fn one_cpt(solver: OdeSolver) -> backends::ODE {
+    backends::ODE::new(
         |x, p, _t, dx, b, rateiv, _cov| {
             fetch_params!(p, ke, _v);
             dx[0] = -ke * x[0] + rateiv[0] + b[0];
@@ -37,15 +37,15 @@ fn one_cpt(solver: OdeSolver) -> equation::ODE {
     .with_nout(1)
     .with_solver(solver)
     .with_metadata(
-        equation::metadata::new("solver_selection_one_cpt")
+        pharmsol::metadata::new("solver_selection_one_cpt")
             .parameters(["ke", "v"])
             .states(["central"])
             .outputs(["cp"])
             .routes([
-                equation::Route::bolus("iv_bolus")
+                backends::Route::bolus("iv_bolus")
                     .to_state("central")
                     .expect_explicit_input(),
-                equation::Route::infusion("iv")
+                backends::Route::infusion("iv")
                     .to_state("central")
                     .expect_explicit_input(),
             ]),

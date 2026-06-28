@@ -1332,11 +1332,12 @@ pub fn compile_sde_model_to_jit(model: &ExecutionModel) -> Result<JitSdeModel, J
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::equation::ode::{ExplicitRkTableau, OdeSolver};
-    use crate::simulator::equation::analytical::one_compartment_with_absorption;
-    use crate::simulator::equation::{Equation, Predictions as PredictionTrait};
+    use crate::core::Predictions as PredictionTrait;
+    use crate::core::Simulate;
+    use crate::simulator::backends::analytical::one_compartment_with_absorption;
+    use crate::simulator::backends::ode::{ExplicitRkTableau, OdeSolver};
     use crate::test_fixtures::STRUCTURED_BLOCK_CORPUS;
-    use crate::{equation, Parameters, Subject, SubjectBuilderExt, ODE, SDE};
+    use crate::{Parameters, Subject, SubjectBuilderExt, ODE, SDE};
     use approx::assert_relative_eq;
     use diffsol::Vector;
     use pharmsol_dsl::execution::DenseBufferLayout;
@@ -1736,7 +1737,7 @@ out(cp) = central / v ~ continuous()
             .estimate_predictions(&jit_subject, &support)
             .expect("jit analytical predictions");
 
-        let reference = equation::Analytical::new(
+        let reference = crate::simulator::backends::Analytical::new(
             one_compartment_with_absorption,
             |_p, _t, _cov| {},
             |_p, _t, _cov| std::collections::HashMap::new(),
@@ -1815,7 +1816,7 @@ model analytical_mixed {
             .estimate_predictions(&jit_subject, &jit_support)
             .expect("jit analytical predictions");
 
-        let reference = equation::Analytical::new(
+        let reference = crate::simulator::backends::Analytical::new(
             one_compartment_with_absorption,
             |_p, _t, _cov| {},
             |_p, _t, _cov| std::collections::HashMap::new(),

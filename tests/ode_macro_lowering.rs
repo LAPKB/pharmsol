@@ -50,7 +50,7 @@ fn subject_for_numeric_bolus_route(input: impl ToString, outeq: impl ToString) -
         .build()
 }
 
-fn injected_macro_ode() -> equation::ODE {
+fn injected_macro_ode() -> backends::ODE {
     ode! {
         name: "injected_one_cpt",
         params: [ke, v],
@@ -68,8 +68,8 @@ fn injected_macro_ode() -> equation::ODE {
     }
 }
 
-fn injected_handwritten_ode() -> equation::ODE {
-    equation::ODE::new(
+fn injected_handwritten_ode() -> backends::ODE {
+    backends::ODE::new(
         |x, p, _t, dx, _bolus, rateiv, _cov| {
             fetch_params!(p, ke, _v);
             dx[0] = rateiv[0] - ke * x[0];
@@ -86,12 +86,12 @@ fn injected_handwritten_ode() -> equation::ODE {
     .with_ndrugs(1)
     .with_nout(1)
     .with_metadata(
-        equation::metadata::new("injected_one_cpt")
+        pharmsol::metadata::new("injected_one_cpt")
             .parameters(["ke", "v"])
             .states(["central"])
             .outputs(["cp"])
             .route(
-                equation::Route::infusion("iv")
+                backends::Route::infusion("iv")
                     .to_state("central")
                     .inject_input_to_destination(),
             ),
@@ -99,7 +99,7 @@ fn injected_handwritten_ode() -> equation::ODE {
     .expect("handwritten injected metadata should validate")
 }
 
-fn numeric_label_macro_ode() -> equation::ODE {
+fn numeric_label_macro_ode() -> backends::ODE {
     ode! {
         name: "numeric_label_one_cpt",
         params: [ke, v],
@@ -117,8 +117,8 @@ fn numeric_label_macro_ode() -> equation::ODE {
     }
 }
 
-fn numeric_label_handwritten_ode() -> equation::ODE {
-    equation::ODE::new(
+fn numeric_label_handwritten_ode() -> backends::ODE {
+    backends::ODE::new(
         |x, p, _t, dx, _bolus, rateiv, _cov| {
             fetch_params!(p, ke, _v);
             dx[0] = rateiv[0] - ke * x[0];
@@ -135,12 +135,12 @@ fn numeric_label_handwritten_ode() -> equation::ODE {
     .with_ndrugs(1)
     .with_nout(1)
     .with_metadata(
-        equation::metadata::new("numeric_label_one_cpt")
+        pharmsol::metadata::new("numeric_label_one_cpt")
             .parameters(["ke", "v"])
             .states(["central"])
             .outputs(["outeq_1"])
             .route(
-                equation::Route::infusion("input_1")
+                backends::Route::infusion("input_1")
                     .to_state("central")
                     .inject_input_to_destination(),
             ),
@@ -148,7 +148,7 @@ fn numeric_label_handwritten_ode() -> equation::ODE {
     .expect("handwritten numeric-label metadata should validate")
 }
 
-fn shared_input_macro_ode() -> equation::ODE {
+fn shared_input_macro_ode() -> backends::ODE {
     ode! {
         name: "shared_input_one_cpt",
         params: [ka, ke, v, tlag, f_oral],
@@ -174,8 +174,8 @@ fn shared_input_macro_ode() -> equation::ODE {
     }
 }
 
-fn shared_input_handwritten_ode() -> equation::ODE {
-    equation::ODE::new(
+fn shared_input_handwritten_ode() -> backends::ODE {
+    backends::ODE::new(
         |x, p, _t, dx, bolus, rateiv, _cov| {
             fetch_params!(p, ka, ke, _v, _tlag, _f_oral);
             dx[0] = bolus[0] - ka * x[0];
@@ -199,17 +199,17 @@ fn shared_input_handwritten_ode() -> equation::ODE {
     .with_ndrugs(1)
     .with_nout(1)
     .with_metadata(
-        equation::metadata::new("shared_input_one_cpt")
+        pharmsol::metadata::new("shared_input_one_cpt")
             .parameters(["ka", "ke", "v", "tlag", "f_oral"])
             .states(["depot", "central"])
             .outputs(["cp"])
             .routes([
-                equation::Route::bolus("oral")
+                backends::Route::bolus("oral")
                     .to_state("depot")
                     .with_lag()
                     .with_bioavailability()
                     .inject_input_to_destination(),
-                equation::Route::infusion("iv")
+                backends::Route::infusion("iv")
                     .to_state("central")
                     .inject_input_to_destination(),
             ]),
@@ -217,7 +217,7 @@ fn shared_input_handwritten_ode() -> equation::ODE {
     .expect("handwritten shared-input metadata should validate")
 }
 
-fn numeric_route_property_macro_ode() -> equation::ODE {
+fn numeric_route_property_macro_ode() -> backends::ODE {
     ode! {
         name: "numeric_route_property_one_cpt",
         params: [ka, ke, v, tlag, f_oral],
@@ -242,8 +242,8 @@ fn numeric_route_property_macro_ode() -> equation::ODE {
     }
 }
 
-fn numeric_route_property_handwritten_ode() -> equation::ODE {
-    equation::ODE::new(
+fn numeric_route_property_handwritten_ode() -> backends::ODE {
+    backends::ODE::new(
         |x, p, _t, dx, bolus, _rateiv, _cov| {
             fetch_params!(p, ka, ke, _v, _tlag, _f_oral);
             dx[0] = bolus[0] - ka * x[0];
@@ -267,12 +267,12 @@ fn numeric_route_property_handwritten_ode() -> equation::ODE {
     .with_ndrugs(1)
     .with_nout(1)
     .with_metadata(
-        equation::metadata::new("numeric_route_property_one_cpt")
+        pharmsol::metadata::new("numeric_route_property_one_cpt")
             .parameters(["ka", "ke", "v", "tlag", "f_oral"])
             .states(["depot", "central"])
             .outputs(["outeq_1"])
             .route(
-                equation::Route::bolus("input_1")
+                backends::Route::bolus("input_1")
                     .to_state("depot")
                     .with_lag()
                     .with_bioavailability()
@@ -282,7 +282,7 @@ fn numeric_route_property_handwritten_ode() -> equation::ODE {
     .expect("handwritten numeric route-property metadata should validate")
 }
 
-fn mixed_output_labels_macro_ode() -> equation::ODE {
+fn mixed_output_labels_macro_ode() -> backends::ODE {
     ode! {
         name: "mixed_output_labels_one_cpt",
         params: [ke, v],
@@ -302,8 +302,8 @@ fn mixed_output_labels_macro_ode() -> equation::ODE {
     }
 }
 
-fn mixed_output_labels_handwritten_ode() -> equation::ODE {
-    equation::ODE::new(
+fn mixed_output_labels_handwritten_ode() -> backends::ODE {
+    backends::ODE::new(
         |x, p, _t, dx, _bolus, rateiv, _cov| {
             fetch_params!(p, ke, _v);
             dx[0] = rateiv[0] - ke * x[0];
@@ -322,12 +322,12 @@ fn mixed_output_labels_handwritten_ode() -> equation::ODE {
     .with_ndrugs(1)
     .with_nout(3)
     .with_metadata(
-        equation::metadata::new("mixed_output_labels_one_cpt")
+        pharmsol::metadata::new("mixed_output_labels_one_cpt")
             .parameters(["ke", "v"])
             .states(["central"])
             .outputs(["cp", "outeq_0", "outeq_1"])
             .route(
-                equation::Route::infusion("iv")
+                backends::Route::infusion("iv")
                     .to_state("central")
                     .inject_input_to_destination(),
             ),
@@ -335,7 +335,7 @@ fn mixed_output_labels_handwritten_ode() -> equation::ODE {
     .expect("handwritten mixed-output metadata should validate")
 }
 
-fn covariate_macro_ode() -> equation::ODE {
+fn covariate_macro_ode() -> backends::ODE {
     ode! {
         name: "covariate_one_cpt",
         params: [ka, ke, v],
@@ -356,8 +356,8 @@ fn covariate_macro_ode() -> equation::ODE {
     }
 }
 
-fn covariate_handwritten_ode() -> equation::ODE {
-    equation::ODE::new(
+fn covariate_handwritten_ode() -> backends::ODE {
+    backends::ODE::new(
         |x, p, t, dx, bolus, _rateiv, cov| {
             fetch_cov!(cov, t, wt);
             fetch_params!(p, ka, ke, _v);
@@ -377,13 +377,13 @@ fn covariate_handwritten_ode() -> equation::ODE {
     .with_ndrugs(1)
     .with_nout(1)
     .with_metadata(
-        equation::metadata::new("covariate_one_cpt")
+        pharmsol::metadata::new("covariate_one_cpt")
             .parameters(["ka", "ke", "v"])
-            .covariates([equation::Covariate::continuous("wt")])
+            .covariates([backends::Covariate::continuous("wt")])
             .states(["gut", "central"])
             .outputs(["cp"])
             .route(
-                equation::Route::bolus("oral")
+                backends::Route::bolus("oral")
                     .to_state("gut")
                     .inject_input_to_destination(),
             ),

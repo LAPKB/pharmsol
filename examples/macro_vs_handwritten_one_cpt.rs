@@ -6,7 +6,7 @@
 
 use pharmsol::{prelude::*, Parameters};
 
-fn macro_model() -> equation::ODE {
+fn macro_model() -> backends::ODE {
     ode! {
         name: "one_cpt_macro_parity",
         params: [ke, v],
@@ -24,8 +24,8 @@ fn macro_model() -> equation::ODE {
     }
 }
 
-fn handwritten_model() -> equation::ODE {
-    equation::ODE::new(
+fn handwritten_model() -> backends::ODE {
+    backends::ODE::new(
         |x, p, _t, dx, _bolus, rateiv, _cov| {
             fetch_params!(p, ke, _v);
             dx[0] = rateiv[0] - ke * x[0];
@@ -42,12 +42,12 @@ fn handwritten_model() -> equation::ODE {
     .with_ndrugs(1)
     .with_nout(1)
     .with_metadata(
-        equation::metadata::new("one_cpt_macro_parity")
+        pharmsol::metadata::new("one_cpt_macro_parity")
             .parameters(["ke", "v"])
             .states(["central"])
             .outputs(["cp"])
             .route(
-                equation::Route::infusion("iv")
+                backends::Route::infusion("iv")
                     .to_state("central")
                     .inject_input_to_destination(),
             ),

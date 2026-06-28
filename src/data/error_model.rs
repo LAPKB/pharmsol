@@ -233,13 +233,6 @@ impl AssayErrorModels {
         Err(ErrorModelError::IncompatibleOutputContext { expected, found })
     }
 
-    pub(crate) fn bind_to(
-        &self,
-        context: &impl crate::Equation,
-    ) -> Result<BoundAssayErrorModels<'_>, ErrorModelError> {
-        self.bind_output_names(context.assay_error_models().bound_output_names())
-    }
-
     pub(crate) fn bind_output_names<I, S>(
         &self,
         outputs: I,
