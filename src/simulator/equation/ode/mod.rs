@@ -233,7 +233,7 @@ fn validate_metadata_dimensions(
 }
 
 impl super::Cache for ODE {
-    fn with_cache_capacity(mut self, size: u64) -> Self {
+    fn with_cache_capacity(mut self, size: usize) -> Self {
         self.cache = Some(PredictionCache::new(size));
         self.error_model_cache = Some(BoundErrorModelCache::new(
             DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
