@@ -332,7 +332,7 @@ fn validate_metadata_dimensions(
 }
 
 impl super::Cache for SDE {
-    fn with_cache_capacity(mut self, size: u64) -> Self {
+    fn with_cache_capacity(mut self, size: usize) -> Self {
         self.cache = Some(SdeLikelihoodCache::new(size));
         self.error_model_cache = Some(BoundErrorModelCache::new(
             DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,

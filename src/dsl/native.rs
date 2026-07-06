@@ -1413,7 +1413,7 @@ fn runtime_ode_predictions(
 }
 
 impl crate::simulator::equation::Cache for NativeOdeModel {
-    fn with_cache_capacity(mut self, size: u64) -> Self {
+    fn with_cache_capacity(mut self, size: usize) -> Self {
         self.cache = Some(PredictionCache::new(size));
         self.error_model_cache = Some(BoundErrorModelCache::new(
             DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
@@ -1818,7 +1818,7 @@ fn runtime_analytical_predictions(
 }
 
 impl crate::simulator::equation::Cache for NativeAnalyticalModel {
-    fn with_cache_capacity(mut self, size: u64) -> Self {
+    fn with_cache_capacity(mut self, size: usize) -> Self {
         self.cache = Some(PredictionCache::new(size));
         self
     }
@@ -2308,7 +2308,7 @@ fn runtime_sde_log_likelihood(
 }
 
 impl crate::simulator::equation::Cache for NativeSdeModel {
-    fn with_cache_capacity(mut self, size: u64) -> Self {
+    fn with_cache_capacity(mut self, size: usize) -> Self {
         self.cache = Some(SdeLikelihoodCache::new(size));
         self
     }
