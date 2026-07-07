@@ -1,3 +1,9 @@
+//! Maximum-effect (`E2`) optimization for dual-site pharmacodynamic models.
+//!
+//! The central entry point is [`get_e2`], which computes the maximum achievable
+//! effect for a model with two binding sites via Nelder‑Mead optimization in
+//! log‑space.
+
 use argmin::{
     core::{CostFunction, Executor, TerminationReason, TerminationStatus},
     solver::neldermead::NelderMead,
