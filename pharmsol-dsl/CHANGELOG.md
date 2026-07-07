@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.2](https://github.com/LAPKB/pharmsol/compare/pharmsol-dsl-v0.27.1...pharmsol-dsl-v0.27.2) - 2026-07-07
+
+### Fixed
+
+- DSL tests ([#271](https://github.com/LAPKB/pharmsol/pull/271))
+
 ## [0.27.1](https://github.com/LAPKB/pharmsol/compare/pharmsol-dsl-v0.27.0...pharmsol-dsl-v0.27.1) - 2026-05-14
 
 ### Added

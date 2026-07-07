@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.2](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.27.1...pharmsol-v0.27.2) - 2026-07-07
+
+### Added
+
+- Use quick_cache for caching ([#280](https://github.com/LAPKB/pharmsol/pull/280))
+
+### Other
+
+- Improve documentation for macros ([#276](https://github.com/LAPKB/pharmsol/pull/276))
+- Adding explanations to the examples #272 ([#275](https://github.com/LAPKB/pharmsol/pull/275))
+- Bump actions/setup-node from 5 to 6 ([#255](https://github.com/LAPKB/pharmsol/pull/255))
+- Bump actions/cache from 5 to 6 ([#281](https://github.com/LAPKB/pharmsol/pull/281))
+- Bump actions/checkout from 6 to 7 ([#279](https://github.com/LAPKB/pharmsol/pull/279))
+
 ## [0.27.1](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.27.0...pharmsol-v0.27.1) - 2026-05-14
 
 ### Added
