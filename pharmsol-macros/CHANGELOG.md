@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.0](https://github.com/LAPKB/pharmsol/compare/pharmsol-macros-v0.27.1...pharmsol-macros-v0.27.2) - 2026-07-07
+
+### Fixed
+
+- DSL tests ([#271](https://github.com/LAPKB/pharmsol/pull/271))
+
+### Other
+
+- Improve documentation for macros ([#276](https://github.com/LAPKB/pharmsol/pull/276))
+
 ## [0.27.0](https://github.com/LAPKB/pharmsol/compare/pharmsol-macros-v0.1.0...pharmsol-macros-v0.27.0) - 2026-05-14
 
 ### Added
