@@ -1,3 +1,10 @@
+//! Demonstrates JIT compilation of an analytical model from DSL source text,
+//! compared against the equivalent `analytical!` macro.
+//!
+//! A one-compartment oral model with weight-based covariate scaling is defined
+//! both as a DSL string (compiled at runtime) and as a declarative macro.
+//! Predictions from both paths are printed side by side to verify parity.
+//!
 //! Run with:
 //! cargo run --example dsl_jit_analytical_covariates --features dsl-jit
 

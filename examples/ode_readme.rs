@@ -1,3 +1,8 @@
+//! Shows the minimal ODE workflow with the `ode!` macro.
+//!
+//! Defines a one-compartment IV infusion model, creates a subject with
+//! missing observations, sets named parameters, and estimates predictions.
+
 fn main() -> Result<(), pharmsol::PharmsolError> {
     use pharmsol::prelude::*;
 
