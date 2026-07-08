@@ -1236,7 +1236,6 @@ impl NativeOdeModel {
                     )?
                 },
                 NalgebraContext::new(),
-
             );
             let support_point_vec = support_point.to_vec();
             let problem = OdeBuilder::<M>::new()
@@ -2619,7 +2618,6 @@ fn project_analytical_parameters(
                 })
                 .collect(),
             NalgebraContext::new(),
-
         ),
     }
 }

@@ -63,7 +63,6 @@ pub(crate) fn compact_public_vector(vector: &V) -> V {
     V::from_vec(
         vector.as_slice().get(1..).unwrap_or(&[]).to_vec(),
         NalgebraContext::new(),
-
     )
 }
 
