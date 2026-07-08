@@ -1583,4 +1583,58 @@ mod tests {
             .build();
         assert_eq!(a.hash(), b.hash());
     }
+
+    #[test]
+    fn expand_grid_reaches_last_dose_plus_tad() {
+        // Single occasion: last dose at t=0, tad extends the grid to t=3 inclusive
+        let subject = Subject::builder("s1")
+            .bolus(0.0, 100.0, 0)
+            .observation(0.0, 5.0, 0)
+            .build();
+        let data = Data::from(subject);
+
+        let expanded = data.expand(1.0, 3.0);
+        let occasion = &expanded.subjects()[0].occasions()[0];
+
+        let mut obs_times: Vec<f64> = occasion
+            .events()
+            .iter()
+            .filter_map(|e| match e {
+                Event::Observation(o) => Some(o.time()),
+                _ => None,
+            })
+            .collect();
+        obs_times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+        // Grid at 0,1,2,3 (last dose 0 + tad 3), endpoint included
+        assert_eq!(obs_times, vec![0.0, 1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn expand_last_time_is_per_occasion() {
+        // Occasion 0 dosed at t=0, occasion 1 dosed at t=10
+        let subject = Subject::builder("s1")
+            .bolus(0.0, 100.0, 0)
+            .observation(0.0, 5.0, 0)
+            .reset()
+            .bolus(10.0, 100.0, 0)
+            .observation(10.0, 5.0, 0)
+            .build();
+        let data = Data::from(subject);
+
+        let expanded = data.expand(5.0, 0.0);
+        let subject = &expanded.subjects()[0];
+
+        let count_obs = |occ: &Occasion| {
+            occ.events()
+                .iter()
+                .filter(|e| matches!(e, Event::Observation(_)))
+                .count()
+        };
+
+        // Occasion 0: last dose = 0, grid only at t=0 (already present) -> 1 observation
+        assert_eq!(count_obs(&subject.occasions()[0]), 1);
+        // Occasion 1: last dose = 10, grid at 0,5,10 -> 2 generated + 1 real = 3
+        assert_eq!(count_obs(&subject.occasions()[1]), 3);
+    }
 }
