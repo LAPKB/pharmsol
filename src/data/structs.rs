@@ -144,7 +144,7 @@ impl Data {
     /// # Arguments
     ///
     /// * `idelta` - Time interval between added observations
-    /// * `tad` - Additional time to add after the last observation
+    /// * `tad` - Additional time to add after the last dose (time after dose)
     ///
     /// # Returns
     ///
@@ -154,21 +154,6 @@ impl Data {
             return self.clone();
         }
 
-        // Determine the last time across all subjects and occasions
-        let last_time = self
-            .subjects
-            .iter()
-            .flat_map(|subject| &subject.occasions)
-            .flat_map(|occasion| &occasion.events)
-            .filter_map(|event| match event {
-                Event::Observation(observation) => Some(observation.time()),
-                Event::Infusion(infusion) => Some(infusion.time() + infusion.duration()),
-                _ => None,
-            })
-            .max_by(|a, b| a.partial_cmp(b).unwrap())
-            .unwrap_or(0.0)
-            + tad;
-
         // Collect unique output equations more efficiently
         let outeq_values = self.get_output_equations();
 
@@ -177,6 +162,20 @@ impl Data {
             .subjects
             .iter()
             .map(|subject| {
+                // Determine the last dose time for this subject across its occasions
+                let last_time = subject
+                    .occasions
+                    .iter()
+                    .flat_map(|occasion| &occasion.events)
+                    .filter_map(|event| match event {
+                        Event::Bolus(bolus) => Some(bolus.time()),
+                        Event::Infusion(infusion) => Some(infusion.time() + infusion.duration()),
+                        _ => None,
+                    })
+                    .max_by(|a, b| a.partial_cmp(b).unwrap())
+                    .unwrap_or(0.0)
+                    + tad;
+
                 let new_occasions = subject
                     .occasions
                     .iter()
@@ -200,7 +199,7 @@ impl Data {
                         // Generate new observation times
                         let mut new_events = Vec::new();
                         let mut time = 0.0;
-                        while time < last_time {
+                        while time <= last_time {
                             let time_key = (time * 1e6).round() as u64;
 
                             for outeq in &outeq_values {
