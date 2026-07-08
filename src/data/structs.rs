@@ -162,25 +162,26 @@ impl Data {
             .subjects
             .iter()
             .map(|subject| {
-                // Determine the last dose time for this subject across its occasions
-                let last_time = subject
-                    .occasions
-                    .iter()
-                    .flat_map(|occasion| &occasion.events)
-                    .filter_map(|event| match event {
-                        Event::Bolus(bolus) => Some(bolus.time()),
-                        Event::Infusion(infusion) => Some(infusion.time() + infusion.duration()),
-                        _ => None,
-                    })
-                    .max_by(|a, b| a.partial_cmp(b).unwrap())
-                    .unwrap_or(0.0)
-                    + tad;
-
                 let new_occasions = subject
                     .occasions
                     .iter()
                     .map(|occasion| {
-                        let old_events = occasion.process_events(None, true);
+                        let old_events = occasion.process_events(None);
+
+                        // Determine the last dose time for this occasion
+                        let last_time = occasion
+                            .events
+                            .iter()
+                            .filter_map(|event| match event {
+                                Event::Bolus(bolus) => Some(bolus.time()),
+                                Event::Infusion(infusion) => {
+                                    Some(infusion.time() + infusion.duration())
+                                }
+                                _ => None,
+                            })
+                            .max_by(|a, b| a.partial_cmp(b).unwrap())
+                            .unwrap_or(0.0)
+                            + tad;
 
                         // Create a set of existing (time, outeq) pairs for fast lookup
                         let existing_obs: std::collections::HashSet<(u64, OutputLabel)> =
@@ -671,7 +672,6 @@ impl Occasion {
     pub(crate) fn process_events(
         &self,
         reorder: Option<(&Fa, &Lag, &[f64], &Covariates)>,
-        _ignore: bool,
     ) -> Vec<Event> {
         let mut occ = self.clone();
         occ.add_lagtime(reorder);
@@ -1141,7 +1141,7 @@ mod tests {
         occasion.add_observation(2.0, 1.0, 1, None, Censor::None);
         occasion.add_bolus(1.0, 100.0, 1);
         occasion.sort();
-        let events = occasion.process_events(None, false);
+        let events = occasion.process_events(None);
         match &events[0] {
             Event::Bolus(b) => assert_eq!(b.time(), 1.0),
             _ => panic!("First event should be a Bolus (earlier time)"),
@@ -1158,7 +1158,7 @@ mod tests {
         occasion.add_bolus(1.0, 100.0, 1);
         occasion.add_observation(1.0, 5.0, 1, None, Censor::None);
         occasion.sort();
-        let events = occasion.process_events(None, false);
+        let events = occasion.process_events(None);
         assert_eq!(events.len(), 2);
         match &events[0] {
             Event::Observation(o) => assert_eq!(o.time(), 1.0),
@@ -1176,7 +1176,7 @@ mod tests {
         occasion.add_infusion(1.0, 100.0, 1, 0.5);
         occasion.add_observation(1.0, 5.0, 1, None, Censor::None);
         occasion.sort();
-        let events = occasion.process_events(None, false);
+        let events = occasion.process_events(None);
         assert_eq!(events.len(), 2);
         match &events[0] {
             Event::Observation(o) => assert_eq!(o.time(), 1.0),
@@ -1196,7 +1196,7 @@ mod tests {
         occasion.add_bolus(0.0, 100.0, 1);
         occasion.add_observation(0.0, 0.0, 1, None, Censor::None);
         occasion.sort();
-        let events = occasion.process_events(None, false);
+        let events = occasion.process_events(None);
         assert_eq!(events.len(), 3);
         assert!(
             matches!(&events[0], Event::Observation(_)),
@@ -1224,7 +1224,7 @@ mod tests {
         occasion.add_observation(2.0, 3.0, 1, None, Censor::None);
         occasion.add_bolus(2.0, 100.0, 1);
         occasion.sort();
-        let events = occasion.process_events(None, false);
+        let events = occasion.process_events(None);
         assert_eq!(events.len(), 5);
         // t=0: observation before bolus
         assert!(matches!(&events[0], Event::Observation(o) if o.time() == 0.0));

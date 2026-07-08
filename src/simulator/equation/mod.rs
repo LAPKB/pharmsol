@@ -274,7 +274,7 @@ pub(crate) trait EquationPriv: EquationTypes {
             }
         }
 
-        Ok(resolved.process_events(Some((self.fa(), self.lag(), parameters, covariates)), true))
+        Ok(resolved.process_events(Some((self.fa(), self.lag(), parameters, covariates))))
     }
     #[allow(dead_code)]
     fn is_sde(&self) -> bool {
