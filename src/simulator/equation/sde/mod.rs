@@ -114,7 +114,7 @@ fn simulate_sde_event(
         return x;
     }
 
-    let parameters_v = V::from_vec(parameters.to_vec(), NalgebraContext);
+    let parameters_v = V::from_vec(parameters.to_vec(), NalgebraContext::new());
     let covariates = cov.clone();
     let infusion_events = infusions.to_vec();
     let drift_fn = *drift;
@@ -122,7 +122,7 @@ fn simulate_sde_event(
 
     let parameters_for_drift = parameters_v.clone();
     let drift_closure = move |time: f64, state: &DVector<f64>, out: &mut DVector<f64>| {
-        let mut rateiv = V::zeros(ndrugs, NalgebraContext);
+        let mut rateiv = V::zeros(ndrugs, NalgebraContext::new());
         for infusion in &infusion_events {
             if time >= infusion.time() && time <= infusion.duration() + infusion.time() {
                 let input = infusion
@@ -133,7 +133,7 @@ fn simulate_sde_event(
         }
 
         let state_v: V = state.clone().into();
-        let mut out_v = V::zeros(state.len(), NalgebraContext);
+        let mut out_v = V::zeros(state.len(), NalgebraContext::new());
         drift_fn(
             &state_v,
             &parameters_for_drift,
@@ -146,7 +146,7 @@ fn simulate_sde_event(
     };
 
     let diffusion_closure = move |_time: f64, _state: &DVector<f64>, out: &mut DVector<f64>| {
-        let mut out_v = V::zeros(out.len(), NalgebraContext);
+        let mut out_v = V::zeros(out.len(), NalgebraContext::new());
         diffusion_fn(&parameters_v, &mut out_v);
         out.copy_from(out_v.inner());
     };
@@ -537,10 +537,10 @@ impl EquationPriv for SDE {
         let mut pred = vec![Prediction::default(); self.nparticles];
 
         pred.par_iter_mut().enumerate().for_each(|(i, p)| {
-            let mut y = V::zeros(self.get_nouteqs(), NalgebraContext);
+            let mut y = V::zeros(self.get_nouteqs(), NalgebraContext::new());
             (self.out)(
                 &x[i].clone().into(),
-                &V::from_vec(parameters.to_vec(), NalgebraContext),
+                &V::from_vec(parameters.to_vec(), NalgebraContext::new()),
                 observation.time(),
                 covariates,
                 &mut y,
@@ -587,7 +587,7 @@ impl EquationPriv for SDE {
             let mut state: V = DVector::zeros(self.get_nstates()).into();
             if occasion_index == 0 {
                 (self.init)(
-                    &V::from_vec(parameters.to_vec(), NalgebraContext),
+                    &V::from_vec(parameters.to_vec(), NalgebraContext::new()),
                     0.0,
                     covariates,
                     &mut state,

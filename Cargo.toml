@@ -59,8 +59,8 @@ wasm-encoder = { version = "0.247.0", optional = true }
 [target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dependencies]
 ahash = "0.8.12"
 csv = "1.4.0"
-diffsol = "=0.12.4"
-nalgebra = "0.34.2"
+diffsol = "=0.15.1"
+nalgebra = "0.35.0"
 ndarray = { version = "0.17.2", features = ["rayon"] }
 rand = "0.10.1"
 rand_distr = "0.6.0"

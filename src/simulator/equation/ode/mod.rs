@@ -323,15 +323,15 @@ fn _simulate_subject_dense(
     let nstates = ode.get_nstates();
     let ndrugs = ode.get_ndrugs();
 
-    let mut state_with_bolus = V::zeros(nstates, NalgebraContext);
-    let mut state_without_bolus = V::zeros(nstates, NalgebraContext);
-    let zero_bolus = V::zeros(ndrugs, NalgebraContext);
-    let zero_rateiv = V::zeros(ndrugs, NalgebraContext);
-    let mut bolus_v = V::zeros(ndrugs, NalgebraContext);
+    let mut state_with_bolus = V::zeros(nstates, NalgebraContext::new());
+    let mut state_without_bolus = V::zeros(nstates, NalgebraContext::new());
+    let zero_bolus = V::zeros(ndrugs, NalgebraContext::new());
+    let zero_rateiv = V::zeros(ndrugs, NalgebraContext::new());
+    let mut bolus_v = V::zeros(ndrugs, NalgebraContext::new());
     let parameters_vec = parameters.to_vec();
     let parameters_v: V = DVector::from_vec(parameters_vec.clone()).into();
 
-    let mut y_out = V::zeros(ode.get_nouteqs(), NalgebraContext);
+    let mut y_out = V::zeros(ode.get_nouteqs(), NalgebraContext::new());
 
     for occasion in subject.occasions() {
         let covariates = occasion.covariates();
@@ -522,7 +522,7 @@ impl EquationPriv for ODE {
         occasion_index: usize,
     ) -> V {
         let init = &self.init;
-        let mut x = V::zeros(self.get_nstates(), NalgebraContext);
+        let mut x = V::zeros(self.get_nstates(), NalgebraContext::new());
         if occasion_index == 0 {
             let parameters = DVector::from_vec(parameters.to_vec());
             (init)(&parameters.into(), 0.0, covariates, &mut x);
