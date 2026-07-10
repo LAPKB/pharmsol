@@ -143,7 +143,10 @@ impl Data {
     ///
     /// # Arguments
     ///
-    /// * `idelta` - Time interval between added observations
+    /// * `idelta` - Time interval between added observations. Times are handled
+    ///   with microsecond resolution, so `idelta` must be at least `5e-7`
+    ///   (0.5 µs, which rounds up to 1 µs); any smaller positive value rounds
+    ///   to zero and the dataset is returned unchanged.
     /// * `tad` - Additional time to add after the last dose (time after dose)
     ///
     /// # Returns
@@ -151,6 +154,14 @@ impl Data {
     /// A new `Data` object with expanded observations
     pub fn expand(&self, idelta: f64, tad: f64) -> Data {
         if idelta <= 0.0 {
+            return self.clone();
+        }
+
+        // Work in integer microseconds so the grid always makes progress.
+        // A sub-microsecond `idelta` would otherwise round back to the previous
+        // time on every iteration and spin forever.
+        let step_us = (idelta * 1e6).round() as u64;
+        if step_us == 0 {
             return self.clone();
         }
 
@@ -197,11 +208,13 @@ impl Data {
                                 })
                                 .collect();
 
-                        // Generate new observation times
+                        // Generate new observation times, stepping in integer
+                        // microseconds to guarantee forward progress.
                         let mut new_events = Vec::new();
-                        let mut time = 0.0;
-                        while time <= last_time {
-                            let time_key = (time * 1e6).round() as u64;
+                        let last_time_us = (last_time * 1e6).round() as u64;
+                        let mut time_key = 0u64;
+                        while time_key <= last_time_us {
+                            let time = time_key as f64 / 1e6;
 
                             for outeq in &outeq_values {
                                 // Only add if this (time, outeq) combination doesn't exist
@@ -218,8 +231,7 @@ impl Data {
                                 }
                             }
 
-                            time += idelta;
-                            time = (time * 1e6).round() / 1e6;
+                            time_key += step_us;
                         }
 
                         // Add original events
