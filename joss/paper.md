@@ -45,7 +45,7 @@ Several tools exist for performing pharmacokinetic and pharmacodynamic modelling
 
 The choice to develop `pharmsol` as a new library rather than contribute to the existing solutions is motivated by several factors. First, Rust provides compile-time memory safety guarantees which are not available in Fortran or C++, without sacrificing performance. This is especially important for software used in healthcare settings. Second, existing alternatives are coupled to their parent frameworks, and may be difficult to integrate with new solutions or software. 
 
-The aim of `pharmsol` is to provide developers of higher-level software with a library for performing efficient and memory-safe pharmacokinetic modeling and simulation. Importantly, `pharmsol` is open-source with a permissive license, allowing developers to inspect, extend, and integrate the library into new or existing solutions.
+The aim of `pharmsol` is to provide developers of higher-level software with a library for performing efficient and memory-safe pharmacokinetic modeling and simulation. Importantly, `pharmsol` is open-source with under a GPL-3.0 license, allowing developers to inspect, extend, and integrate the library into new or existing solutions, given that derived works remain open-source.
 
 # Software design
 
