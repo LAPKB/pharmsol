@@ -1,0 +1,28 @@
+[workspace]
+# Keep all workspace crates lockstepped on the same version (set in
+# `[workspace.package]` of the root Cargo.toml). When any crate has a
+# release-worthy change, every crate is bumped and republished together.
+release_always = true
+
+# Always update path-with-version dependencies between workspace members so
+# the published crates depend on the matching versions, not stale ones.
+dependencies_update = true
+
+# Disable per-crate semver checks: lockstep releases mean a breaking change
+# in one crate forces a major bump for all, which semver-checks would flag
+# as false positives on the unaffected crates.
+semver_check = false
+
+# Per-crate overrides. Each member must opt in to release so release-plz
+# does not silently drop one of them when the workspace grows.
+[[package]]
+name = "pharmsol"
+release = true
+
+[[package]]
+name = "pharmsol-dsl"
+release = true
+
+[[package]]
+name = "pharmsol-macros"
+release = true

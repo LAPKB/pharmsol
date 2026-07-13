@@ -7,6 +7,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.0](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.27.1...pharmsol-v0.27.2) - 2026-07-07
+
+### Added
+
+- Use quick_cache for caching ([#280](https://github.com/LAPKB/pharmsol/pull/280))
+
+### Other
+
+- Improve documentation for macros ([#276](https://github.com/LAPKB/pharmsol/pull/276))
+- Adding explanations to the examples #272 ([#275](https://github.com/LAPKB/pharmsol/pull/275))
+- Bump actions/setup-node from 5 to 6 ([#255](https://github.com/LAPKB/pharmsol/pull/255))
+- Bump actions/cache from 5 to 6 ([#281](https://github.com/LAPKB/pharmsol/pull/281))
+- Bump actions/checkout from 6 to 7 ([#279](https://github.com/LAPKB/pharmsol/pull/279))
+
+## [0.27.1](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.27.0...pharmsol-v0.27.1) - 2026-05-14
+
+### Added
+
+- Metadata contract ([#262](https://github.com/LAPKB/pharmsol/pull/262))
+
+## [0.27.0](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.26.1...pharmsol-v0.27.0) - 2026-05-14
+
+### Added
+
+- Domain Specific Language (DSL) using JIT or AOT ([#252](https://github.com/LAPKB/pharmsol/pull/252))
+
+### Other
+
+- Rename support points to parameters ([#251](https://github.com/LAPKB/pharmsol/pull/251))
+- Refactor benchmarks ([#258](https://github.com/LAPKB/pharmsol/pull/258))
+- add missing macros ([#253](https://github.com/LAPKB/pharmsol/pull/253))
+- Bump actions/upload-pages-artifact from 4 to 5 ([#248](https://github.com/LAPKB/pharmsol/pull/248))
+
+## [0.26.1](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.26.0...pharmsol-v0.26.1) - 2026-04-20
+
+### Added
+
+- Add Pmetrics analytical compatibility wrappers ([#245](https://github.com/LAPKB/pharmsol/pull/245))
+
+### Other
+
+- Move ODE/analytical comparisons to examples ([#243](https://github.com/LAPKB/pharmsol/pull/243))
+
+## [0.26.0](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.25.0...pharmsol-v0.26.0) - 2026-04-10
+
+### Added
+
+- Update cache API ([#242](https://github.com/LAPKB/pharmsol/pull/242))
+
+## [0.25.0](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.24.1...pharmsol-v0.25.0) - 2026-04-09
+
+### Added
+
+- JSON model representation schema v2 ([#241](https://github.com/LAPKB/pharmsol/pull/241))
+- Use slices instead of vectors when possible ([#239](https://github.com/LAPKB/pharmsol/pull/239))
+- Improved cache performance and API ([#240](https://github.com/LAPKB/pharmsol/pull/240))
+
+### Other
+
+- Update diffsol requirement from =0.10.4 to =0.11.0 ([#237](https://github.com/LAPKB/pharmsol/pull/237))
+- Bump actions/configure-pages from 5 to 6 ([#236](https://github.com/LAPKB/pharmsol/pull/236))
+- Bump actions/deploy-pages from 4 to 5 ([#235](https://github.com/LAPKB/pharmsol/pull/235))
+
 ## [0.24.1](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.24.0...pharmsol-v0.24.1) - 2026-03-24
 
 ### Added
@@ -31,13 +94,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Remove LikelihoodMatrixOptions ([#222](https://github.com/LAPKB/pharmsol/pull/222))
 - Use a sized cache with new subject hashing ([#214](https://github.com/LAPKB/pharmsol/pull/214))
-- Normalized rows  ([#205](https://github.com/LAPKB/pharmsol/pull/205))
+- Normalized rows ([#205](https://github.com/LAPKB/pharmsol/pull/205))
 
 ### Fixed
 
 - Fix test and capture error to drop ([#220](https://github.com/LAPKB/pharmsol/pull/220))
 - Prevents creating a terminal on windows ([#179](https://github.com/LAPKB/pharmsol/pull/179))
-- *(exa)* invalidate compilation cache when pharmsol version changes ([#217](https://github.com/LAPKB/pharmsol/pull/217))
+- _(exa)_ invalidate compilation cache when pharmsol version changes ([#217](https://github.com/LAPKB/pharmsol/pull/217))
 - Update sort order of events ([#219](https://github.com/LAPKB/pharmsol/pull/219))
 
 ### Other

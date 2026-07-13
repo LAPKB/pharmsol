@@ -1,4 +1,4 @@
-//! Shows how to select different ODE solvers for the same model.
+//! Shows how to select different ODE solvers for the same declaration-first model.
 //!
 //! pharmsol wraps diffsol's solver families:
 //!
@@ -11,22 +11,29 @@
 
 use std::time::Instant;
 
-use pharmsol::prelude::*;
+use pharmsol::{prelude::*, Parameters};
 
 // ── Model ──────────────────────────────────────────────────────────
-// Two-compartment IV model.  The solver is the only thing that changes
-// between runs — the ODE, output equation and dimensions stay the same.
+// Two-compartment IV model. The solver is the only thing that changes
+// between runs; the declaration-first `ode!` surface and the generated
+// metadata stay the same.
 
 fn two_cpt(solver: OdeSolver) -> equation::ODE {
     ode! {
-        diffeq: |x, p, _t, dx, b, rateiv, _cov| {
-            fetch_params!(p, ke, kcp, kpc, _v);
-            dx[0] = rateiv[0] + b[0] - ke * x[0] - kcp * x[0] + kpc * x[1];
-            dx[1] = kcp * x[0] - kpc * x[1];
+        name: "two_cpt",
+        params: [ke, kcp, kpc, v],
+        states: [central, peripheral],
+        outputs: [cp],
+        routes: [
+            bolus(load) -> central,
+            infusion(iv) -> central,
+        ],
+        diffeq: |x, _p, _t, dx, _cov| {
+            dx[central] = -ke * x[central] - kcp * x[central] + kpc * x[peripheral];
+            dx[peripheral] = kcp * x[central] - kpc * x[peripheral];
         },
-        out: |x, p, _t, _cov, y| {
-            fetch_params!(p, _ke, _kcp, _kpc, v);
-            y[0] = x[0] / v;
+        out: |x, _p, _t, _cov, y| {
+            y[cp] = x[central] / v;
         },
     }
     .with_solver(solver)
@@ -35,29 +42,37 @@ fn two_cpt(solver: OdeSolver) -> equation::ODE {
 // ── Main ───────────────────────────────────────────────────────────
 
 fn main() {
-    let subject = Subject::builder("id1")
-        .bolus(0.0, 100.0, 0)
-        .infusion(12.0, 200.0, 0, 2.0)
-        .missing_observation(0.5, 0)
-        .missing_observation(1.0, 0)
-        .missing_observation(2.0, 0)
-        .missing_observation(4.0, 0)
-        .missing_observation(8.0, 0)
-        .missing_observation(12.0, 0)
-        .missing_observation(12.5, 0)
-        .missing_observation(13.0, 0)
-        .missing_observation(14.0, 0)
-        .missing_observation(16.0, 0)
-        .missing_observation(24.0, 0)
-        .build();
-
-    let spp = vec![0.1, 0.05, 0.03, 50.0]; // ke, kcp, kpc, V
-
     // Run each solver and collect predictions
     let bdf = two_cpt(OdeSolver::Bdf);
     let tsit45 = two_cpt(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45));
     let trbdf2 = two_cpt(OdeSolver::Sdirk(SdirkTableau::TrBdf2));
     let esdirk34 = two_cpt(OdeSolver::Sdirk(SdirkTableau::Esdirk34));
+
+    // Both declarations resolve to the same shared input, so subject
+    // authoring still uses one numeric index for the loading bolus and the
+    // maintenance infusion.
+
+    let subject = Subject::builder("id1")
+        .bolus(0.0, 100.0, "load")
+        .infusion(12.0, 200.0, "iv", 2.0)
+        .missing_observation(0.5, "cp")
+        .missing_observation(1.0, "cp")
+        .missing_observation(2.0, "cp")
+        .missing_observation(4.0, "cp")
+        .missing_observation(8.0, "cp")
+        .missing_observation(12.0, "cp")
+        .missing_observation(12.5, "cp")
+        .missing_observation(13.0, "cp")
+        .missing_observation(14.0, "cp")
+        .missing_observation(16.0, "cp")
+        .missing_observation(24.0, "cp")
+        .build();
+
+    let parameters = Parameters::with_model(
+        &bdf,
+        [("ke", 0.1), ("kcp", 0.05), ("kpc", 0.03), ("v", 50.0)],
+    )
+    .expect("valid named parameters");
 
     let results: Vec<(&str, equation::ODE)> = vec![
         ("Bdf", bdf),
@@ -69,7 +84,7 @@ fn main() {
     // ── Run all solvers and collect results ───────────────────────
     let mut rows: Vec<(&str, u128, Vec<f64>)> = Vec::new();
     for (name, ode) in &results {
-        let (preds, us) = timed(|| ode.estimate_predictions(&subject, &spp).unwrap());
+        let (preds, us) = timed(|| ode.estimate_predictions(&subject, &parameters).unwrap());
         let preds: Vec<f64> = preds.flat_predictions().to_vec();
         rows.push((name, us, preds));
     }
@@ -98,21 +113,21 @@ fn main() {
     let col_w = labels.iter().map(|l| l.len().max(8)).collect::<Vec<_>>();
 
     print!("  {:>6}", "t");
-    for (j, label) in labels.iter().enumerate() {
-        print!("  {:>w$}", label, w = col_w[j]);
+    for (label, width) in labels.iter().zip(&col_w) {
+        print!("  {:>w$}", label, w = *width);
     }
     println!();
 
     print!("  {:>6}", "──────");
-    for j in 0..labels.len() {
-        print!("  {:─>w$}", "", w = col_w[j]);
+    for width in &col_w {
+        print!("  {:─>w$}", "", w = *width);
     }
     println!();
 
     for (k, t) in obs_times.iter().enumerate() {
         print!("  {:>6.1}", t);
-        for (j, (_, _, preds)) in rows.iter().enumerate() {
-            print!("  {:>w$.4}", preds[k], w = col_w[j]);
+        for ((_, _, preds), width) in rows.iter().zip(&col_w) {
+            print!("  {:>w$.4}", preds[k], w = *width);
         }
         println!();
     }

@@ -2,6 +2,8 @@ use crate::{data::Covariates, simulator::*};
 use diffsol::VectorCommon;
 use nalgebra::{DVector, Matrix2, Vector2};
 
+use super::wrap_pmetrics_analytical;
+
 /// Analytical solution for two compartment model.
 ///
 /// # Assumptions
@@ -43,6 +45,10 @@ pub fn two_compartments(x: &V, p: &V, t: T, rateiv: &V, _cov: &Covariates) -> V 
 
     // Convert Vector2 to DVector
     DVector::from_vec(vec![result_vector[0], result_vector[1]]).into()
+}
+
+pub fn pm_two_compartments(x: &V, p: &V, t: T, rateiv: &V, cov: &Covariates) -> V {
+    wrap_pmetrics_analytical(x, p, t, rateiv, cov, two_compartments)
 }
 
 /// Analytical solution for two compartment model with first-order absorption.
@@ -105,6 +111,10 @@ pub fn two_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: &V, _cov: &C
     xout
 }
 
+pub fn pm_two_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: &V, cov: &Covariates) -> V {
+    wrap_pmetrics_analytical(x, p, t, rateiv, cov, two_compartments_with_absorption)
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::tests::SubjectInfo;
@@ -152,10 +162,10 @@ mod tests {
         .with_nout(1);
 
         let op_ode = ode
-            .estimate_predictions(&subject, &vec![0.1, 3.0, 1.0, 1.0])
+            .estimate_predictions(&subject, &crate::parameters::dense([0.1, 3.0, 1.0, 1.0]))
             .unwrap();
         let op_analytical = analytical
-            .estimate_predictions(&subject, &vec![0.1, 3.0, 1.0, 1.0])
+            .estimate_predictions(&subject, &crate::parameters::dense([0.1, 3.0, 1.0, 1.0]))
             .unwrap();
 
         let pred_ode = &op_ode.flat_predictions()[..];
@@ -210,10 +220,16 @@ mod tests {
         .with_nout(1);
 
         let op_ode = ode
-            .estimate_predictions(&subject, &vec![0.1, 1.0, 3.0, 1.0, 1.0])
+            .estimate_predictions(
+                &subject,
+                &crate::parameters::dense([0.1, 1.0, 3.0, 1.0, 1.0]),
+            )
             .unwrap();
         let op_analytical = analytical
-            .estimate_predictions(&subject, &vec![0.1, 1.0, 3.0, 1.0, 1.0])
+            .estimate_predictions(
+                &subject,
+                &crate::parameters::dense([0.1, 1.0, 3.0, 1.0, 1.0]),
+            )
             .unwrap();
 
         let pred_ode = &op_ode.flat_predictions()[..];

@@ -2,6 +2,8 @@ use crate::{data::Covariates, simulator::*};
 use diffsol::VectorCommon;
 use nalgebra::{DVector, Matrix3, Vector3};
 
+use super::wrap_pmetrics_analytical;
+
 ///
 /// Analytical for three compartments
 /// Assumptions:
@@ -31,8 +33,8 @@ pub fn three_compartments(x: &V, p: &V, t: T, rateiv: &V, _cov: &Covariates) -> 
         panic!("Imaginary solutions, program stopped!");
     }
 
-    let alpha = (-1.0 * q).sqrt();
-    let beta = -1.0 * n / 2.0;
+    let alpha = (-q).sqrt();
+    let beta = -n / 2.0;
     let gamma = (beta.powi(2) + alpha.powi(2)).sqrt();
     let theta = alpha.atan2(beta);
 
@@ -42,9 +44,9 @@ pub fn three_compartments(x: &V, p: &V, t: T, rateiv: &V, _cov: &Covariates) -> 
         + gamma.powf(1.0 / 3.0) * ((theta / 3.0).cos() - 3.0_f64.sqrt() * (theta / 3.0).sin());
     let l3 = a / 3.0 - (2.0 * gamma.powf(1.0 / 3.0) * (theta / 3.0).cos());
 
-    let exp_l1_t = (-l1 * t).exp();
-    let exp_l2_t = (-l2 * t).exp();
-    let exp_l3_t = (-l3 * t).exp();
+    let exp_l1_t = (-(l1 * t)).exp();
+    let exp_l2_t = (-(l2 * t)).exp();
+    let exp_l3_t = (-(l3 * t)).exp();
 
     let c1 = (k21 - l1) * (k31 - l1) / ((l2 - l1) * (l3 - l1));
     let c2 = (k21 - l2) * (k31 - l2) / ((l1 - l2) * (l3 - l2));
@@ -106,6 +108,10 @@ pub fn three_compartments(x: &V, p: &V, t: T, rateiv: &V, _cov: &Covariates) -> 
     DVector::from_vec(vec![result_vector[0], result_vector[1], result_vector[2]]).into()
 }
 
+pub fn pm_three_compartments(x: &V, p: &V, t: T, rateiv: &V, cov: &Covariates) -> V {
+    wrap_pmetrics_analytical(x, p, t, rateiv, cov, three_compartments)
+}
+
 ///
 /// Analytical solution for three compartment model with first-order absorption.
 /// Assumptions:
@@ -138,8 +144,8 @@ pub fn three_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: &V, _cov: 
         panic!("Imaginary solutions, program stopped!");
     }
 
-    let alpha = (-1.0 * q).sqrt();
-    let beta = -1.0 * n / 2.0;
+    let alpha = (-q).sqrt();
+    let beta = -n / 2.0;
     let gamma = (beta.powi(2) + alpha.powi(2)).sqrt();
     let theta = alpha.atan2(beta);
 
@@ -149,9 +155,9 @@ pub fn three_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: &V, _cov: 
         + gamma.powf(1.0 / 3.0) * ((theta / 3.0).cos() - 3.0_f64.sqrt() * (theta / 3.0).sin());
     let l3 = a / 3.0 - (2.0 * gamma.powf(1.0 / 3.0) * (theta / 3.0).cos());
 
-    let exp_l1_t = (-l1 * t).exp();
-    let exp_l2_t = (-l2 * t).exp();
-    let exp_l3_t = (-l3 * t).exp();
+    let exp_l1_t = (-(l1 * t)).exp();
+    let exp_l2_t = (-(l2 * t)).exp();
+    let exp_l3_t = (-(l3 * t)).exp();
 
     let c1 = (k21 - l1) * (k31 - l1) / ((l2 - l1) * (l3 - l1));
     let c2 = (k21 - l2) * (k31 - l2) / ((l1 - l2) * (l3 - l2));
@@ -233,6 +239,16 @@ pub fn three_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: &V, _cov: 
     xout
 }
 
+pub fn pm_three_compartments_with_absorption(
+    x: &V,
+    p: &V,
+    t: T,
+    rateiv: &V,
+    cov: &Covariates,
+) -> V {
+    wrap_pmetrics_analytical(x, p, t, rateiv, cov, three_compartments_with_absorption)
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::tests::SubjectInfo;
@@ -281,12 +297,18 @@ mod tests {
         .with_nout(1);
 
         let op_ode = ode
-            .estimate_predictions(&subject, &vec![0.1, 3.0, 2.0, 1.0, 0.5, 1.0])
+            .estimate_predictions(
+                &subject,
+                &crate::parameters::dense([0.1, 3.0, 2.0, 1.0, 0.5, 1.0]),
+            )
             .unwrap();
         let pred_ode = &op_ode.flat_predictions()[..];
 
         let op_analytical = analytical
-            .estimate_predictions(&subject, &vec![0.1, 3.0, 2.0, 1.0, 0.5, 1.0])
+            .estimate_predictions(
+                &subject,
+                &crate::parameters::dense([0.1, 3.0, 2.0, 1.0, 0.5, 1.0]),
+            )
             .unwrap();
         let pred_analytical = &op_analytical.flat_predictions()[..];
 
@@ -344,10 +366,16 @@ mod tests {
         .with_nout(1);
 
         let op_ode = ode
-            .estimate_predictions(&subject, &vec![1.0, 0.1, 3.0, 2.0, 1.0, 0.5, 1.0])
+            .estimate_predictions(
+                &subject,
+                &crate::parameters::dense([1.0, 0.1, 3.0, 2.0, 1.0, 0.5, 1.0]),
+            )
             .unwrap();
         let op_analytical = analytical
-            .estimate_predictions(&subject, &vec![1.0, 0.1, 3.0, 2.0, 1.0, 0.5, 1.0])
+            .estimate_predictions(
+                &subject,
+                &crate::parameters::dense([1.0, 0.1, 3.0, 2.0, 1.0, 0.5, 1.0]),
+            )
             .unwrap();
 
         let pred_ode = &op_ode.flat_predictions()[..];

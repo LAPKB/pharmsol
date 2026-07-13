@@ -2,6 +2,7 @@ use crate::{data::Covariates, simulator::*};
 use diffsol::{NalgebraContext, Vector};
 
 use super::three_compartment_models::{three_compartments, three_compartments_with_absorption};
+use super::wrap_pmetrics_analytical;
 
 /// Analytical solution for three compartment model parameterized by clearances.
 ///
@@ -26,6 +27,10 @@ pub fn three_compartments_cl(x: &V, p: &V, t: T, rateiv: &V, cov: &Covariates) -
     let k31 = q3 / v3;
     let p_ke = V::from_vec(vec![k10, k12, k13, k21, k31], NalgebraContext);
     three_compartments(x, &p_ke, t, rateiv, cov)
+}
+
+pub fn pm_three_compartments_cl(x: &V, p: &V, t: T, rateiv: &V, cov: &Covariates) -> V {
+    wrap_pmetrics_analytical(x, p, t, rateiv, cov, three_compartments_cl)
 }
 
 /// Analytical solution for three compartment model with first-order absorption,
@@ -59,6 +64,16 @@ pub fn three_compartments_cl_with_absorption(
     let k31 = q3 / v3;
     let p_ke = V::from_vec(vec![ka, k10, k12, k13, k21, k31], NalgebraContext);
     three_compartments_with_absorption(x, &p_ke, t, rateiv, cov)
+}
+
+pub fn pm_three_compartments_cl_with_absorption(
+    x: &V,
+    p: &V,
+    t: T,
+    rateiv: &V,
+    cov: &Covariates,
+) -> V {
+    wrap_pmetrics_analytical(x, p, t, rateiv, cov, three_compartments_cl_with_absorption)
 }
 
 #[cfg(test)]
@@ -117,10 +132,16 @@ mod tests {
         .with_ndrugs(3);
 
         let op_ode = ode
-            .estimate_predictions(&subject, &vec![0.1, 3.0, 2.0, 1.0, 3.0, 4.0])
+            .estimate_predictions(
+                &subject,
+                &crate::parameters::dense([0.1, 3.0, 2.0, 1.0, 3.0, 4.0]),
+            )
             .unwrap();
         let op_analytical = analytical
-            .estimate_predictions(&subject, &vec![0.1, 3.0, 2.0, 1.0, 3.0, 4.0])
+            .estimate_predictions(
+                &subject,
+                &crate::parameters::dense([0.1, 3.0, 2.0, 1.0, 3.0, 4.0]),
+            )
             .unwrap();
 
         let pred_ode = &op_ode.flat_predictions()[..];
@@ -179,10 +200,16 @@ mod tests {
         );
 
         let op_ode = ode
-            .estimate_predictions(&subject, &vec![1.0, 0.1, 3.0, 2.0, 1.0, 3.0, 4.0])
+            .estimate_predictions(
+                &subject,
+                &crate::parameters::dense([1.0, 0.1, 3.0, 2.0, 1.0, 3.0, 4.0]),
+            )
             .unwrap();
         let op_analytical = analytical
-            .estimate_predictions(&subject, &vec![1.0, 0.1, 3.0, 2.0, 1.0, 3.0, 4.0])
+            .estimate_predictions(
+                &subject,
+                &crate::parameters::dense([1.0, 0.1, 3.0, 2.0, 1.0, 3.0, 4.0]),
+            )
             .unwrap();
 
         let pred_ode = &op_ode.flat_predictions()[..];
