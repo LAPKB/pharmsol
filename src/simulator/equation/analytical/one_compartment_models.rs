@@ -1,5 +1,7 @@
 use crate::{data::Covariates, simulator::*};
 
+use super::wrap_pmetrics_analytical;
+
 /// Analytical solution for one compartment model.
 ///
 /// # Assumptions
@@ -14,6 +16,10 @@ pub fn one_compartment(x: &V, p: &V, t: T, rateiv: &V, _cov: &Covariates) -> V {
     xout[0] = x[0] * (-ke * t).exp() + rateiv[0] / ke * (1.0 - (-ke * t).exp());
     // dbg!(t, &rateiv, x, &xout);
     xout
+}
+
+pub fn pm_one_compartment(x: &V, p: &V, t: T, rateiv: &V, cov: &Covariates) -> V {
+    wrap_pmetrics_analytical(x, p, t, rateiv, cov, one_compartment)
 }
 
 /// Analytical solution for one compartment model with first-order absorption.
@@ -35,6 +41,10 @@ pub fn one_compartment_with_absorption(x: &V, p: &V, t: T, rateiv: &V, _cov: &Co
         + ((ka * x[0]) / (ka - ke)) * ((-ke * t).exp() - (-ka * t).exp());
 
     xout
+}
+
+pub fn pm_one_compartment_with_absorption(x: &V, p: &V, t: T, rateiv: &V, cov: &Covariates) -> V {
+    wrap_pmetrics_analytical(x, p, t, rateiv, cov, one_compartment_with_absorption)
 }
 
 #[cfg(test)]
@@ -82,9 +92,11 @@ mod tests {
         .with_ndrugs(1)
         .with_nout(1);
 
-        let op_ode = ode.estimate_predictions(&subject, &vec![0.1, 1.0]).unwrap();
+        let op_ode = ode
+            .estimate_predictions(&subject, &crate::parameters::dense([0.1, 1.0]))
+            .unwrap();
         let op_analytical = analytical
-            .estimate_predictions(&subject, &vec![0.1, 1.0])
+            .estimate_predictions(&subject, &crate::parameters::dense([0.1, 1.0]))
             .unwrap();
 
         let pred_ode = &op_ode.flat_predictions()[..];
@@ -138,10 +150,10 @@ mod tests {
         .with_nout(1);
 
         let op_ode = ode
-            .estimate_predictions(&subject, &vec![1.0, 0.1, 1.0])
+            .estimate_predictions(&subject, &crate::parameters::dense([1.0, 0.1, 1.0]))
             .unwrap();
         let op_analytical = analytical
-            .estimate_predictions(&subject, &vec![1.0, 0.1, 1.0])
+            .estimate_predictions(&subject, &crate::parameters::dense([1.0, 0.1, 1.0]))
             .unwrap();
 
         let pred_ode = &op_ode.flat_predictions()[..];

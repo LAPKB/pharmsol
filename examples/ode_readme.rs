@@ -1,43 +1,44 @@
-fn main() {
+//! Shows the minimal ODE workflow with the `ode!` macro.
+//!
+//! Defines a one-compartment IV infusion model, creates a subject with
+//! missing observations, sets named parameters, and estimates predictions.
+
+fn main() -> Result<(), pharmsol::PharmsolError> {
     use pharmsol::prelude::*;
 
-    let subject = Subject::builder("id1")
-        .bolus(0.0, 100.0, 0)
-        .repeat(2, 0.5)
-        .observation(0.5, 0.1, 0)
-        .observation(1.0, 0.4, 0)
-        .observation(2.0, 1.0, 0)
-        .observation(2.5, 1.1, 0)
-        .covariate("wt", 0.0, 80.0)
-        .covariate("wt", 1.0, 83.0)
-        .covariate("age", 0.0, 25.0)
-        .build();
-    println!("{subject}");
-    let ode = equation::ODE::new(
-        |x, p, _t, dx, b, _rateiv, _cov| {
-            // fetch_cov!(cov, t,);
-            fetch_params!(p, ka, ke, _tlag, _v);
-            //Struct
-            dx[0] = -ka * x[0] + b[0];
-            dx[1] = ka * x[0] - ke * x[1];
+    let ode = ode! {
+        name: "one_cmt_iv",
+        params: [ke, v],
+        states: [central],
+        outputs: [cp],
+        routes: [
+            infusion(iv) -> central,
+        ],
+        diffeq: |x, _p, _t, dx, _cov| {
+            dx[central] = -ke * x[central];
         },
-        |p, _t, _cov| {
-            fetch_params!(p, _ka, _ke, tlag, _v);
-            lag! {0=>tlag}
+        out: |x, _p, _t, _cov, y| {
+            y[cp] = x[central] / v;
         },
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
-        |x, p, _t, _cov, y| {
-            fetch_params!(p, _ka, _ke, _tlag, v);
-            y[0] = x[1] / v;
-        },
-    )
-    .with_nstates(2)
-    .with_ndrugs(5)
-    .with_nout(1);
+    };
 
-    let op = ode
-        .estimate_predictions(&subject, &vec![0.3, 0.5, 0.1, 70.0])
-        .unwrap();
-    println!("{:#?}", op.flat_predictions());
+    let subject = Subject::builder("id1")
+        .infusion(0.0, 100.0, "iv", 0.5)
+        .missing_observation(0.5, "cp")
+        .missing_observation(1.0, "cp")
+        .missing_observation(2.0, "cp")
+        .missing_observation(4.0, "cp")
+        .build();
+
+    let parameters = Parameters::with_model(&ode, [("ke", 1.022), ("v", 194.0)])
+        .expect("valid named parameters");
+    let predictions = ode.estimate_predictions(&subject, &parameters)?;
+    println!(
+        "state central => {}",
+        ode.state_index("central").expect("central state exists")
+    );
+    println!("prediction times => {:?}", predictions.flat_times());
+    println!("predictions => {:?}", predictions.flat_predictions());
+
+    Ok(())
 }

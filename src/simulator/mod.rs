@@ -200,7 +200,7 @@ pub type Fa = fn(&V, T, &Covariates) -> HashMap<usize, T>;
 ///
 /// # Fields
 /// - `nstates`: Number of state variables (ODE compartments)
-/// - `ndrugs`: Number of drug input channels (size of bolus[] and rateiv[])
+/// - `ndrugs`: Number of drug inputs (size of bolus[] and rateiv[])
 /// - `nout`: Number of output equations
 ///
 /// # Defaults
@@ -218,7 +218,7 @@ pub type Fa = fn(&V, T, &Covariates) -> HashMap<usize, T>;
 pub struct Neqs {
     /// Number of state variables
     pub nstates: usize,
-    /// Number of drug input channels (bolus/rateiv size)
+    /// Number of drug inputs (bolus/rateiv size)
     pub ndrugs: usize,
     /// Number of output equations
     pub nout: usize,

@@ -21,8 +21,12 @@ impl ProgressTracker {
     pub fn inc(&self) {
         let current = self.counter.fetch_add(1, Ordering::Relaxed) + 1;
 
+        if self.total == 0 {
+            return;
+        }
+
         // Print progress every 5% or every 1000 iterations
-        if current % 1000 == 0 || (current * 20) % self.total == 0 {
+        if current.is_multiple_of(1000) || current.saturating_mul(20).is_multiple_of(self.total) {
             let percent = (current * 100) / self.total;
             let elapsed = self.start_time.elapsed();
 

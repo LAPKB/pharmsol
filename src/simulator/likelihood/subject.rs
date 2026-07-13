@@ -65,14 +65,16 @@ impl SubjectPredictions {
             return Ok(0.0);
         }
 
-        let log_liks: Result<Vec<f64>, _> = self
+        let mut total = 0.0;
+        for prediction in self
             .predictions
             .iter()
-            .filter(|p| p.observation().is_some())
-            .map(|p| p.log_likelihood(error_models))
-            .collect();
+            .filter(|prediction| prediction.observation().is_some())
+        {
+            total += prediction.log_likelihood(error_models)?;
+        }
 
-        log_liks.map(|lls| lls.iter().sum())
+        Ok(total)
     }
 
     /// Calculate the likelihood of all predictions.
@@ -169,7 +171,7 @@ mod tests {
     use crate::Censor;
 
     fn create_error_models() -> AssayErrorModels {
-        AssayErrorModels::new()
+        AssayErrorModels::empty()
             .add(
                 0,
                 AssayErrorModel::additive(ErrorPoly::new(0.0, 1.0, 0.0, 0.0), 0.0),
@@ -199,7 +201,7 @@ mod tests {
         preds.add_prediction(obs.to_prediction(1.0, vec![]));
 
         let error_model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 0.0);
-        let errors = AssayErrorModels::new().add(0, error_model).unwrap();
+        let errors = AssayErrorModels::empty().add(0, error_model).unwrap();
 
         let log_lik = preds.log_likelihood(&errors).unwrap();
         assert!(log_lik.is_finite());

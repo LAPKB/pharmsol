@@ -233,7 +233,7 @@ mod tests {
     }
 
     fn create_error_models() -> AssayErrorModels {
-        AssayErrorModels::new()
+        AssayErrorModels::empty()
             .add(
                 0,
                 AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 0.0),

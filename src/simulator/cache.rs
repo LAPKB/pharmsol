@@ -2,39 +2,45 @@
 //!
 //! This module provides lightweight cache wrappers that can be embedded
 //! directly in equation structs ([`ODE`], [`Analytical`], [`SDE`]).
-//! Each equation instance can optionally own a cache; cloning the equation
+//! Each equation instance owns a cache by default; cloning the equation
 //! produces a shallow clone that shares the same cache data.
 //!
 //! # Example
 //! ```ignore
 //! use pharmsol::*;
 //!
-//! // No caching (default):
+//! // Caching is enabled by default (100,000 entries):
 //! let ode = ODE::new(diffeq, lag, fa, init, out);
 //!
-//! // Enable caching with default size:
-//! let ode = ODE::new(diffeq, lag, fa, init, out).with_default_cache();
+//! // Custom cache capacity:
+//! let ode = ODE::new(diffeq, lag, fa, init, out).with_cache_capacity(50_000);
 //!
-//! // Enable caching with custom size:
-//! let ode = ODE::new(diffeq, lag, fa, init, out).with_cache(50_000);
+//! // Disable caching:
+//! let ode = ODE::new(diffeq, lag, fa, init, out).disable_cache();
 //! ```
 
-use std::fmt;
+use std::{fmt, sync::Arc};
 
-use moka::sync::Cache;
+use quick_cache::sync::Cache;
 
-use crate::simulator::likelihood::SubjectPredictions;
+use crate::{data::error_model::AssayErrorModels, simulator::likelihood::SubjectPredictions};
 
 /// Default maximum number of entries per cache.
-pub const DEFAULT_CACHE_SIZE: u64 = 100_000;
+pub const DEFAULT_CACHE_SIZE: usize = 100_000;
 
-/// Cache key: (subject_hash, support_point_hash)
+/// Default maximum number of cached bound assay-error contexts per equation.
+pub const DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE: usize = 32;
+
+/// Cache key: (subject_hash, parameters_hash)
 pub(crate) type PredictionKey = (u64, u64);
 
-/// Cache key for SDE: (subject_hash, support_point_hash, error_model_hash)
+/// Cache key for SDE: (subject_hash, parameters_hash, error_model_hash)
 pub(crate) type SdeKey = (u64, u64, u64);
 
-/// Thread-safe LRU cache for subject predictions.
+/// Cache key for bound assay error models.
+pub(crate) type BoundErrorModelKey = u64;
+
+/// Thread-safe bounded cache for subject predictions.
 ///
 /// Used by [`ODE`](crate::ODE) and [`Analytical`](crate::simulator::equation::Analytical)
 /// to avoid recomputing predictions for the same (subject, parameters) pair.
@@ -42,12 +48,12 @@ pub(crate) type SdeKey = (u64, u64, u64);
 /// `Clone` produces a shallow clone that shares the same underlying cache data,
 /// so cloned equations share cache hits.
 #[derive(Clone)]
-pub struct PredictionCache(Cache<PredictionKey, SubjectPredictions>);
+pub struct PredictionCache(Arc<Cache<PredictionKey, SubjectPredictions>>);
 
 impl PredictionCache {
     /// Create a new prediction cache with a given maximum number of entries.
-    pub fn new(size: u64) -> Self {
-        Self(Cache::new(size))
+    pub fn new(size: usize) -> Self {
+        Self(Arc::new(Cache::new(size)))
     }
 
     /// Look up a cached prediction.
@@ -64,19 +70,58 @@ impl PredictionCache {
 
     /// Remove all entries from the cache.
     pub fn invalidate_all(&self) {
-        self.0.invalidate_all();
+        self.0.clear();
     }
 
     /// Return the number of entries currently in the cache.
-    pub fn entry_count(&self) -> u64 {
-        self.0.entry_count()
+    pub fn entry_count(&self) -> usize {
+        self.0.len()
     }
 }
 
 impl fmt::Debug for PredictionCache {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PredictionCache")
-            .field("entry_count", &self.0.entry_count())
+            .field("entry_count", &self.entry_count())
+            .finish()
+    }
+}
+
+/// Cache for equation-bound assay error models.
+///
+/// Entries are keyed by the public error-model definition hash and hold the
+/// dense, equation-specific binding that likelihood evaluation needs.
+#[derive(Clone)]
+pub struct BoundErrorModelCache(Arc<Cache<BoundErrorModelKey, Arc<AssayErrorModels>>>);
+
+impl BoundErrorModelCache {
+    pub fn new(size: usize) -> Self {
+        Self(Arc::new(Cache::new(size)))
+    }
+
+    #[inline]
+    pub fn get(&self, key: &BoundErrorModelKey) -> Option<Arc<AssayErrorModels>> {
+        self.0.get(key)
+    }
+
+    #[inline]
+    pub fn insert(&self, key: BoundErrorModelKey, value: Arc<AssayErrorModels>) {
+        self.0.insert(key, value);
+    }
+
+    pub fn invalidate_all(&self) {
+        self.0.clear();
+    }
+
+    pub fn entry_count(&self) -> usize {
+        self.0.len()
+    }
+}
+
+impl fmt::Debug for BoundErrorModelCache {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BoundErrorModelCache")
+            .field("entry_count", &self.entry_count())
             .finish()
     }
 }
@@ -92,12 +137,12 @@ impl fmt::Debug for PredictionCache {
 ///
 /// `Clone` produces a shallow clone that shares the same underlying cache data.
 #[derive(Clone)]
-pub struct SdeLikelihoodCache(Cache<SdeKey, f64>);
+pub struct SdeLikelihoodCache(Arc<Cache<SdeKey, f64>>);
 
 impl SdeLikelihoodCache {
     /// Create a new SDE likelihood cache with the given maximum number of entries.
-    pub fn new(size: u64) -> Self {
-        Self(Cache::new(size))
+    pub fn new(size: usize) -> Self {
+        Self(Arc::new(Cache::new(size)))
     }
 
     /// Look up a cached likelihood value.
@@ -114,19 +159,19 @@ impl SdeLikelihoodCache {
 
     /// Remove all entries from the cache.
     pub fn invalidate_all(&self) {
-        self.0.invalidate_all();
+        self.0.clear();
     }
 
     /// Return the number of entries currently in the cache.
-    pub fn entry_count(&self) -> u64 {
-        self.0.entry_count()
+    pub fn entry_count(&self) -> usize {
+        self.0.len()
     }
 }
 
 impl fmt::Debug for SdeLikelihoodCache {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SdeLikelihoodCache")
-            .field("entry_count", &self.0.entry_count())
+            .field("entry_count", &self.entry_count())
             .finish()
     }
 }
@@ -156,8 +201,6 @@ mod tests {
         assert_eq!(cache.entry_count(), 0);
         cache.insert((1, 1), SubjectPredictions::default());
         cache.insert((2, 2), SubjectPredictions::default());
-        // moka may need a short sync before entry_count updates
-        cache.0.run_pending_tasks();
         assert_eq!(cache.entry_count(), 2);
     }
 
@@ -166,11 +209,9 @@ mod tests {
         let cache = PredictionCache::new(10);
         cache.insert((1, 1), SubjectPredictions::default());
         cache.insert((2, 2), SubjectPredictions::default());
-        cache.0.run_pending_tasks();
         assert_eq!(cache.entry_count(), 2);
 
         cache.invalidate_all();
-        cache.0.run_pending_tasks();
         assert_eq!(cache.entry_count(), 0);
         assert!(cache.get(&(1, 1)).is_none());
     }
@@ -181,7 +222,6 @@ mod tests {
         let key: PredictionKey = (1, 1);
         cache.insert(key, SubjectPredictions::default());
         cache.insert(key, SubjectPredictions::default());
-        cache.0.run_pending_tasks();
         assert_eq!(cache.entry_count(), 1);
     }
 
@@ -220,11 +260,21 @@ mod tests {
     }
 
     #[test]
+    fn bound_error_model_cache_clone_shares_data() {
+        let cache = BoundErrorModelCache::new(10);
+        let models = Arc::new(AssayErrorModels::empty());
+        cache.insert(7, Arc::clone(&models));
+
+        let clone = cache.clone();
+        assert!(clone.get(&7).is_some());
+        assert!(Arc::ptr_eq(&clone.get(&7).unwrap(), &models));
+    }
+
+    #[test]
     fn sde_cache_entry_count() {
         let cache = SdeLikelihoodCache::new(10);
         cache.insert((1, 1, 1), 0.0);
         cache.insert((2, 2, 2), 1.0);
-        cache.0.run_pending_tasks();
         assert_eq!(cache.entry_count(), 2);
     }
 
@@ -233,11 +283,9 @@ mod tests {
         let cache = SdeLikelihoodCache::new(10);
         cache.insert((1, 1, 1), 0.0);
         cache.insert((2, 2, 2), 1.0);
-        cache.0.run_pending_tasks();
         assert_eq!(cache.entry_count(), 2);
 
         cache.invalidate_all();
-        cache.0.run_pending_tasks();
         assert_eq!(cache.entry_count(), 0);
         assert!(cache.get(&(1, 1, 1)).is_none());
     }
@@ -248,7 +296,6 @@ mod tests {
         let key: SdeKey = (1, 1, 1);
         cache.insert(key, 1.0);
         cache.insert(key, 2.0);
-        cache.0.run_pending_tasks();
         assert_eq!(cache.entry_count(), 1);
         assert_eq!(cache.get(&key), Some(2.0));
     }
