@@ -746,7 +746,7 @@ impl SharedNativeModel {
     }
 
     fn resolve_events(&self, occasion: &Occasion) -> Result<Vec<Event>, PharmsolError> {
-        let mut events = occasion.process_events(None, true);
+        let mut events = occasion.process_events(None);
 
         for event in events.iter_mut() {
             match event {
