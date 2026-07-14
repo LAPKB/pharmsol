@@ -23,8 +23,8 @@ use crate::{Analytical, ODE, SDE};
 pub enum ParameterError {
     #[error("named parameter ingress requires parameter metadata")]
     MissingMetadata,
-    #[error("unknown parameter `{name}`")]
-    UnknownParameter { name: String },
+    #[error("unknown parameter `{name}` (available: {available})")]
+    UnknownParameter { name: String, available: String },
     #[error("duplicate parameter `{name}`")]
     DuplicateParameter { name: String },
     #[error("missing required parameter(s): {names}")]
@@ -37,7 +37,10 @@ impl From<ParameterOrderError> for ParameterError {
     fn from(value: ParameterOrderError) -> Self {
         match value {
             ParameterOrderError::MissingMetadata => Self::MissingMetadata,
-            ParameterOrderError::UnknownParameter { name } => Self::UnknownParameter { name },
+            ParameterOrderError::UnknownParameter { name, available } => Self::UnknownParameter {
+                name,
+                available: available.join(", "),
+            },
             ParameterOrderError::DuplicateParameter { name } => Self::DuplicateParameter { name },
             ParameterOrderError::MissingParameters { names } => Self::MissingParameters {
                 names: names.join(", "),
