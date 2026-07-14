@@ -571,12 +571,13 @@ impl ODE {
 
             match event {
                 Event::Bolus(bolus) => {
-                    let input =
-                        bolus
-                            .input_index()
-                            .ok_or_else(|| PharmsolError::UnknownInputLabel {
-                                label: bolus.input().to_string(),
-                            })?;
+                    let input = bolus.input_index().ok_or_else(|| {
+                        let available = self
+                            .metadata()
+                            .map(|m| m.route_labels())
+                            .unwrap_or_default();
+                        PharmsolError::unknown_input_label(bolus.input(), &available)
+                    })?;
 
                     if input >= bolus_v.len() {
                         return Err(PharmsolError::InputOutOfRange {
@@ -626,9 +627,11 @@ impl ODE {
                         y_out,
                     );
                     let outeq = observation.outeq_index().ok_or_else(|| {
-                        PharmsolError::UnknownOutputLabel {
-                            label: observation.outeq().to_string(),
-                        }
+                        let available = self
+                            .metadata()
+                            .map(|m| m.output_labels())
+                            .unwrap_or_default();
+                        PharmsolError::unknown_output_label(observation.outeq(), &available)
                     })?;
                     let pred = y_out[outeq];
                     let pred =

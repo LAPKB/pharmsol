@@ -42,10 +42,10 @@ pub enum PharmsolError {
     ZeroLikelihood,
     #[error("Missing observation in prediction")]
     MissingObservation,
-    #[error("Input label `{label}` could not be resolved to a route input")]
-    UnknownInputLabel { label: String },
-    #[error("Output label `{label}` could not be resolved to an output")]
-    UnknownOutputLabel { label: String },
+    #[error("Input label `{label}` could not be resolved to a route input{available}")]
+    UnknownInputLabel { label: String, available: String },
+    #[error("Output label `{label}` could not be resolved to an output{available}")]
+    UnknownOutputLabel { label: String, available: String },
     #[error("Input index {input} does not support route kind {kind:?}")]
     UnsupportedInputRouteKind { input: usize, kind: RouteKind },
     #[error("Input index {input} is out of range (ndrugs = {ndrugs})")]
@@ -104,6 +104,34 @@ impl PharmsolError {
             PharmsolError::OtherError(msg) => PharmsolError::OtherError(format!("{msg}{context}")),
             other => other,
         }
+    }
+
+    /// Build an [`UnknownInputLabel`](PharmsolError::UnknownInputLabel) error,
+    /// listing the valid route labels when they are known (empty otherwise).
+    pub fn unknown_input_label(label: impl std::fmt::Display, available: &[&str]) -> Self {
+        PharmsolError::UnknownInputLabel {
+            label: label.to_string(),
+            available: format_available(available),
+        }
+    }
+
+    /// Build an [`UnknownOutputLabel`](PharmsolError::UnknownOutputLabel) error,
+    /// listing the valid output labels when they are known (empty otherwise).
+    pub fn unknown_output_label(label: impl std::fmt::Display, available: &[&str]) -> Self {
+        PharmsolError::UnknownOutputLabel {
+            label: label.to_string(),
+            available: format_available(available),
+        }
+    }
+}
+
+/// Render a ` (available: a, b, c)` suffix, or an empty string when the list is
+/// empty (e.g. index-only models without named labels).
+fn format_available(labels: &[&str]) -> String {
+    if labels.is_empty() {
+        String::new()
+    } else {
+        format!(" (available: {})", labels.join(", "))
     }
 }
 

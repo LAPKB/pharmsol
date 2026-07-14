@@ -151,6 +151,11 @@ impl ValidatedModelMetadata {
         &self.routes
     }
 
+    /// Declared route (input) labels, e.g. for error messages.
+    pub fn route_labels(&self) -> Vec<&str> {
+        self.routes.iter().map(ValidatedRoute::name).collect()
+    }
+
     /// Get the number of dense execution input slots needed for routes.
     ///
     /// This is the maximum of the bolus-route count and infusion-route count.
@@ -160,6 +165,11 @@ impl ValidatedModelMetadata {
 
     pub fn outputs(&self) -> &[Output] {
         &self.outputs
+    }
+
+    /// Declared output labels, e.g. for error messages.
+    pub fn output_labels(&self) -> Vec<&str> {
+        self.outputs.iter().map(Output::name).collect()
     }
 
     pub fn particles(&self) -> Option<usize> {

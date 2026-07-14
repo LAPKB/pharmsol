@@ -731,8 +731,8 @@ impl SharedNativeModel {
     ) -> Result<usize, PharmsolError> {
         let input = self
             .metadata_route_index_for_label(label.as_str())
-            .ok_or_else(|| PharmsolError::UnknownInputLabel {
-                label: label.to_string(),
+            .ok_or_else(|| {
+                PharmsolError::unknown_input_label(label.as_str(), &self.metadata().route_labels())
             })?;
         self.validate_input_for_kind(input, kind)?;
         Ok(input)
@@ -740,8 +740,11 @@ impl SharedNativeModel {
 
     fn resolve_output_label(&self, label: &OutputLabel) -> Result<usize, PharmsolError> {
         self.metadata_output_index_for_label(label.as_str())
-            .ok_or_else(|| PharmsolError::UnknownOutputLabel {
-                label: label.to_string(),
+            .ok_or_else(|| {
+                PharmsolError::unknown_output_label(
+                    label.as_str(),
+                    &self.metadata().output_labels(),
+                )
             })
     }
 
@@ -911,12 +914,12 @@ impl SharedNativeModel {
 
         for event in events.iter_mut() {
             if let Event::Bolus(bolus) = event {
-                let input =
-                    bolus
-                        .input_index()
-                        .ok_or_else(|| PharmsolError::UnknownInputLabel {
-                            label: bolus.input().to_string(),
-                        })?;
+                let input = bolus.input_index().ok_or_else(|| {
+                    PharmsolError::unknown_input_label(
+                        bolus.input(),
+                        &self.metadata().route_labels(),
+                    )
+                })?;
                 self.validate_input_for_kind(input, RouteKind::Bolus)?;
 
                 if self.artifact.has_kernel(KernelRole::RouteLag) {
@@ -1035,11 +1038,12 @@ impl SharedNativeModel {
             &cov_buf,
             &mut outputs,
         )?;
-        let outeq = observation
-            .outeq_index()
-            .ok_or_else(|| PharmsolError::UnknownOutputLabel {
-                label: observation.outeq().to_string(),
-            })?;
+        let outeq = observation.outeq_index().ok_or_else(|| {
+            PharmsolError::unknown_output_label(
+                observation.outeq(),
+                &self.metadata().output_labels(),
+            )
+        })?;
         self.validate_output(outeq)?;
         Ok(observation.to_prediction(outputs[outeq], state.to_vec()))
     }
@@ -1308,12 +1312,12 @@ impl NativeOdeModel {
         for (index, event) in events.iter().enumerate() {
             match event {
                 Event::Bolus(bolus) => {
-                    let input =
-                        bolus
-                            .input_index()
-                            .ok_or_else(|| PharmsolError::UnknownInputLabel {
-                                label: bolus.input().to_string(),
-                            })?;
+                    let input = bolus.input_index().ok_or_else(|| {
+                        PharmsolError::unknown_input_label(
+                            bolus.input(),
+                            &self.shared.metadata().route_labels(),
+                        )
+                    })?;
                     self.shared.apply_bolus(
                         solver.state_mut().y.as_mut_slice(),
                         input,
@@ -1697,9 +1701,10 @@ impl NativeAnalyticalModel {
                 match event {
                     Event::Bolus(bolus) => {
                         let input = bolus.input_index().ok_or_else(|| {
-                            PharmsolError::UnknownInputLabel {
-                                label: bolus.input().to_string(),
-                            }
+                            PharmsolError::unknown_input_label(
+                                bolus.input(),
+                                &self.shared.metadata().route_labels(),
+                            )
                         })?;
                         self.shared.apply_bolus(&mut state, input, bolus.amount())?
                     }
@@ -2105,9 +2110,10 @@ impl NativeSdeModel {
                 match event {
                     Event::Bolus(bolus) => {
                         let input = bolus.input_index().ok_or_else(|| {
-                            PharmsolError::UnknownInputLabel {
-                                label: bolus.input().to_string(),
-                            }
+                            PharmsolError::unknown_input_label(
+                                bolus.input(),
+                                &self.shared.metadata().route_labels(),
+                            )
                         })?;
                         for particle in &mut particles {
                             self.shared.apply_bolus(
