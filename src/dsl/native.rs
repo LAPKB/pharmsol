@@ -1350,17 +1350,17 @@ impl NativeOdeModel {
                             }
                             Ok(OdeSolverStopReason::InternalTimestep) => continue,
                             Ok(OdeSolverStopReason::TstopReached) => break,
-                            Err(diffsol::error::DiffsolError::OdeSolverError(
-                                OdeSolverError::StepSizeTooSmall { time },
-                            )) => {
+                            Ok(OdeSolverStopReason::RootFound(_, _)) => {
                                 return Err(PharmsolError::OtherError(format!(
-                                    "ODE solver step size went to zero at t = {time:.4} (target t = {:.4}).",
+                                    "solver stopped at an unexpected root at t = {:.4} \
+                                     (root finding is not configured)",
                                     next_event.time()
                                 )));
                             }
-                            Err(_) | Ok(_) => {
-                                return Err(PharmsolError::OtherError(
-                                    "unexpected solver error".to_string(),
+                            Err(err) => {
+                                return Err(PharmsolError::from_solver_error(
+                                    err,
+                                    next_event.time(),
                                 ));
                             }
                         }
@@ -1368,10 +1368,8 @@ impl NativeOdeModel {
                     Err(diffsol::error::DiffsolError::OdeSolverError(
                         OdeSolverError::StopTimeAtCurrentTime,
                     )) => continue,
-                    Err(_) => {
-                        return Err(PharmsolError::OtherError(
-                            "unexpected solver error".to_string(),
-                        ));
+                    Err(err) => {
+                        return Err(PharmsolError::from_solver_error(err, next_event.time()));
                     }
                 }
             }
@@ -1395,6 +1393,13 @@ fn runtime_ode_predictions(
     subject: &Subject,
     support_point: &[f64],
 ) -> Result<SubjectPredictions, PharmsolError> {
+    let add_context = |e: PharmsolError| {
+        e.with_subject_context(
+            subject.id(),
+            support_point,
+            &model.metadata().parameter_names(),
+        )
+    };
     if let Some(cache) = &model.cache {
         let key = (
             subject.hash(),
@@ -1404,11 +1409,15 @@ fn runtime_ode_predictions(
             return Ok(cached);
         }
 
-        let result = model.estimate_predictions_dense(subject, support_point)?;
+        let result = model
+            .estimate_predictions_dense(subject, support_point)
+            .map_err(add_context)?;
         cache.insert(key, result.clone());
         Ok(result)
     } else {
-        model.estimate_predictions_dense(subject, support_point)
+        model
+            .estimate_predictions_dense(subject, support_point)
+            .map_err(add_context)
     }
 }
 
@@ -1800,6 +1809,13 @@ fn runtime_analytical_predictions(
     subject: &Subject,
     support_point: &[f64],
 ) -> Result<SubjectPredictions, PharmsolError> {
+    let add_context = |e: PharmsolError| {
+        e.with_subject_context(
+            subject.id(),
+            support_point,
+            &model.metadata().parameter_names(),
+        )
+    };
     if let Some(cache) = &model.cache {
         let key = (
             subject.hash(),
@@ -1809,11 +1825,15 @@ fn runtime_analytical_predictions(
             return Ok(cached);
         }
 
-        let result = model.estimate_predictions_dense(subject, support_point)?;
+        let result = model
+            .estimate_predictions_dense(subject, support_point)
+            .map_err(add_context)?;
         cache.insert(key, result.clone());
         Ok(result)
     } else {
-        model.estimate_predictions_dense(subject, support_point)
+        model
+            .estimate_predictions_dense(subject, support_point)
+            .map_err(add_context)
     }
 }
 

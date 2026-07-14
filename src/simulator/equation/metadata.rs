@@ -134,6 +134,11 @@ impl ValidatedModelMetadata {
         &self.parameters
     }
 
+    /// Ordered parameter names, matching the support-point vector layout.
+    pub fn parameter_names(&self) -> Vec<&str> {
+        self.parameters.iter().map(Parameter::name).collect()
+    }
+
     pub fn covariates(&self) -> &[Covariate] {
         &self.covariates
     }

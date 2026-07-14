@@ -59,6 +59,120 @@ pub enum PharmsolError {
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 impl From<diffsol::error::DiffsolError> for PharmsolError {
     fn from(error: diffsol::error::DiffsolError) -> Self {
-        PharmsolError::DiffsolError(error.to_string())
+        PharmsolError::DiffsolError(describe_diffsol_error(&error, None))
+    }
+}
+
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+impl PharmsolError {
+    /// Build a descriptive [`PharmsolError`] from a diffsol solver error,
+    /// adding the integration target time and the likely root cause.
+    pub fn from_solver_error(error: diffsol::error::DiffsolError, target_time: f64) -> Self {
+        PharmsolError::DiffsolError(describe_diffsol_error(&error, Some(target_time)))
+    }
+}
+
+impl PharmsolError {
+    /// Tag a simulation error with the failing subject ID and support point.
+    ///
+    /// If `parameter_names` matches `parameters` in length the support point is
+    /// rendered as `name=value` pairs, otherwise as a bare value list. Only
+    /// [`PharmsolError::DiffsolError`] and [`PharmsolError::OtherError`] are
+    /// augmented; other variants pass through unchanged.
+    pub fn with_subject_context(
+        self,
+        subject_id: &str,
+        parameters: &[f64],
+        parameter_names: &[&str],
+    ) -> Self {
+        let support_point = if parameter_names.len() == parameters.len() {
+            let pairs = parameter_names
+                .iter()
+                .zip(parameters)
+                .map(|(name, value)| format!("{name}={value:?}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{{{pairs}}}")
+        } else {
+            format!("{parameters:?}")
+        };
+        let context = format!(" [subject `{subject_id}`, support point {support_point}]");
+        match self {
+            PharmsolError::DiffsolError(msg) => {
+                PharmsolError::DiffsolError(format!("{msg}{context}"))
+            }
+            PharmsolError::OtherError(msg) => PharmsolError::OtherError(format!("{msg}{context}")),
+            other => other,
+        }
+    }
+}
+
+/// Build a concise diagnostic message from a [`diffsol::error::DiffsolError`].
+///
+/// When `target_time` is set it is appended to time-dependent failures to show
+/// how far the solver was advancing. Matched variants add the likely cause.
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+fn describe_diffsol_error(
+    error: &diffsol::error::DiffsolError,
+    target_time: Option<f64>,
+) -> String {
+    use diffsol::error::{DiffsolError, LinearSolverError, NonLinearSolverError, OdeSolverError};
+
+    // Suffix describing where the solver was headed, used for time-dependent failures.
+    let toward = match target_time {
+        Some(t) => format!(" while advancing toward t = {t:.4}"),
+        None => String::new(),
+    };
+
+    match error {
+        DiffsolError::OdeSolverError(ode) => match ode {
+            OdeSolverError::StepSizeTooSmall { time } => format!(
+                "step size collapsed to zero at t = {time:.4}{toward}; \
+                 a parameter is likely near zero, infinite, or NaN, or the system is too stiff."
+            ),
+            OdeSolverError::TooManyNonlinearSolverFailures { time, num_failures } => format!(
+                "Newton solver failed {num_failures} times at t = {time:.4}{toward}; \
+                 the system is likely stiff or ill-conditioned."
+            ),
+            OdeSolverError::TooManyErrorTestFailures { time, num_failures } => format!(
+                "error test failed {num_failures} times at t = {time:.4}{toward}; \
+                 tolerances may be too tight or the parameters implausible."
+            ),
+            OdeSolverError::StopTimeBeforeCurrentTime {
+                stop_time,
+                state_time,
+            } => format!(
+                "stop time t = {stop_time:.4} is before current time t = {state_time:.4}; \
+                 event times may be out of order."
+            ),
+            OdeSolverError::StateProblemMismatch => {
+                format!("initial state is inconsistent with the model equations{toward}.")
+            }
+            OdeSolverError::InvalidTableau(msg) => format!("invalid solver tableau: {msg}"),
+            OdeSolverError::BuilderError(msg) => format!("failed to build ODE problem: {msg}"),
+            other => format!("ODE solver error{toward}: {other}"),
+        },
+        DiffsolError::NonLinearSolverError(nl) => match nl {
+            NonLinearSolverError::NewtonDiverged => {
+                format!("Newton iteration diverged{toward}; the system may be unstable.")
+            }
+            NonLinearSolverError::NewtonMaxIterations => {
+                format!("Newton iteration did not converge{toward}; the system is likely stiff.")
+            }
+            NonLinearSolverError::InitialConditionDidNotConverge => {
+                format!("could not find consistent initial conditions{toward}.")
+            }
+            other => format!("nonlinear solver error{toward}: {other}"),
+        },
+        DiffsolError::LinearSolverError(lin) => match lin {
+            LinearSolverError::LuSolveFailed | LinearSolverError::LuNotInitialized => format!(
+                "linear (LU) solve failed{toward}; the Jacobian is singular or near-singular."
+            ),
+            other => format!("linear solver error{toward}: {other}"),
+        },
+        other => match target_time {
+            Some(_) => format!("solver error{toward}: {other}"),
+            None => other.to_string(),
+        },
     }
 }
