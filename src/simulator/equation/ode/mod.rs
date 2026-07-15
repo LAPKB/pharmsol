@@ -12,16 +12,13 @@ pub(crate) mod closure_helpers {
 
 use crate::{
     data::{Covariates, Infusion},
-    error_model::AssayErrorModels,
     prelude::simulator::SubjectPredictions,
     simulator::{DiffEq, Fa, Init, Lag, Neqs, Out, M, V},
     Event, Observation, Parameters, PharmsolError, Subject,
 };
 
 use super::parameters_hash;
-use crate::simulator::cache::{
-    BoundErrorModelCache, PredictionCache, DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE, DEFAULT_CACHE_SIZE,
-};
+use crate::simulator::cache::{PredictionCache, DEFAULT_CACHE_SIZE};
 use crate::simulator::equation::Predictions;
 use closure::PMProblem;
 use diffsol::{
@@ -108,7 +105,6 @@ pub struct ODE {
     atol: f64,
     metadata: Option<ValidatedModelMetadata>,
     cache: Option<PredictionCache>,
-    error_model_cache: Option<BoundErrorModelCache>,
 }
 
 impl ODE {
@@ -125,9 +121,6 @@ impl ODE {
             atol: ATOL,
             metadata: None,
             cache: Some(PredictionCache::new(DEFAULT_CACHE_SIZE)),
-            error_model_cache: Some(BoundErrorModelCache::new(
-                DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
-            )),
         }
     }
 
@@ -154,12 +147,14 @@ impl ODE {
 
     /// Set the ODE solver algorithm.
     pub fn with_solver(mut self, solver: OdeSolver) -> Self {
+        self.detach_cache();
         self.solver = solver;
         self
     }
 
     /// Set the relative and absolute tolerances for the ODE solver.
     pub fn with_tolerances(mut self, rtol: f64, atol: f64) -> Self {
+        self.detach_cache();
         self.rtol = rtol;
         self.atol = atol;
         self
@@ -169,10 +164,8 @@ impl ODE {
     pub fn with_metadata(mut self, metadata: ModelMetadata) -> Result<Self, OdeMetadataError> {
         let metadata = metadata.validate_for(ModelKind::Ode)?;
         validate_metadata_dimensions(&metadata, &self.neqs)?;
+        self.detach_cache();
         self.metadata = Some(metadata);
-        self.error_model_cache = Some(BoundErrorModelCache::new(
-            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
-        ));
         Ok(self)
     }
 
@@ -195,9 +188,11 @@ impl ODE {
 
     fn invalidate_metadata(&mut self) {
         self.metadata = None;
-        self.error_model_cache = Some(BoundErrorModelCache::new(
-            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
-        ));
+        self.detach_cache();
+    }
+
+    fn detach_cache(&mut self) {
+        self.cache = self.cache.as_ref().map(PredictionCache::detached);
     }
 }
 
@@ -235,17 +230,11 @@ fn validate_metadata_dimensions(
 impl super::Cache for ODE {
     fn with_cache_capacity(mut self, size: usize) -> Self {
         self.cache = Some(PredictionCache::new(size));
-        self.error_model_cache = Some(BoundErrorModelCache::new(
-            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
-        ));
         self
     }
 
     fn enable_cache(mut self) -> Self {
         self.cache = Some(PredictionCache::new(DEFAULT_CACHE_SIZE));
-        self.error_model_cache = Some(BoundErrorModelCache::new(
-            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
-        ));
         self
     }
 
@@ -253,14 +242,10 @@ impl super::Cache for ODE {
         if let Some(cache) = &self.cache {
             cache.invalidate_all();
         }
-        if let Some(cache) = &self.error_model_cache {
-            cache.invalidate_all();
-        }
     }
 
     fn disable_cache(mut self) -> Self {
         self.cache = None;
-        self.error_model_cache = None;
         self
     }
 }
@@ -270,17 +255,6 @@ impl State for V {
     fn add_bolus(&mut self, input: usize, amount: f64) {
         self[input] += amount;
     }
-}
-
-fn _estimate_likelihood(
-    ode: &ODE,
-    subject: &Subject,
-    parameters: &[f64],
-    error_models: &AssayErrorModels,
-) -> Result<f64, PharmsolError> {
-    let bound_error_models = ode.bind_error_models(error_models)?;
-    let ypred = _subject_predictions(ode, subject, parameters)?;
-    Ok(ypred.log_likelihood(&bound_error_models)?.exp())
 }
 
 #[inline(always)]
@@ -295,11 +269,11 @@ fn _subject_predictions(
             return Ok(cached);
         }
 
-        let result = _simulate_subject_dense(ode, subject, parameters, None)?.0;
+        let result = _simulate_subject_dense(ode, subject, parameters)?;
         cache.insert(key, result.clone());
         Ok(result)
     } else {
-        Ok(_simulate_subject_dense(ode, subject, parameters, None)?.0)
+        _simulate_subject_dense(ode, subject, parameters)
     }
 }
 
@@ -307,18 +281,8 @@ fn _simulate_subject_dense(
     ode: &ODE,
     subject: &Subject,
     parameters: &[f64],
-    error_models: Option<&AssayErrorModels>,
-) -> Result<(SubjectPredictions, Option<f64>), PharmsolError> {
-    let bound_error_models = match error_models {
-        Some(error_models) => Some(ode.bind_error_models(error_models)?),
-        None => None,
-    };
-    let bound_error_models = bound_error_models.as_ref().map(|models| &**models);
-
+) -> Result<SubjectPredictions, PharmsolError> {
     let mut output = SubjectPredictions::new(ode.nparticles());
-
-    let event_count: usize = subject.occasions().iter().map(|o| o.events().len()).sum();
-    let mut likelihood = Vec::with_capacity(event_count);
 
     let nstates = ode.get_nstates();
     let ndrugs = ode.get_ndrugs();
@@ -370,14 +334,12 @@ fn _simulate_subject_dense(
                         &events,
                         &parameters_v,
                         covariates,
-                        bound_error_models,
                         &mut bolus_v,
                         &zero_bolus,
                         &zero_rateiv,
                         &mut state_with_bolus,
                         &mut state_without_bolus,
                         &mut y_out,
-                        &mut likelihood,
                         &mut output,
                     )?;
                 }
@@ -389,14 +351,12 @@ fn _simulate_subject_dense(
                         &events,
                         &parameters_v,
                         covariates,
-                        bound_error_models,
                         &mut bolus_v,
                         &zero_bolus,
                         &zero_rateiv,
                         &mut state_with_bolus,
                         &mut state_without_bolus,
                         &mut y_out,
-                        &mut likelihood,
                         &mut output,
                     )?;
                 }
@@ -408,14 +368,12 @@ fn _simulate_subject_dense(
                         &events,
                         &parameters_v,
                         covariates,
-                        bound_error_models,
                         &mut bolus_v,
                         &zero_bolus,
                         &zero_rateiv,
                         &mut state_with_bolus,
                         &mut state_without_bolus,
                         &mut y_out,
-                        &mut likelihood,
                         &mut output,
                     )?;
                 }
@@ -427,14 +385,12 @@ fn _simulate_subject_dense(
                         &events,
                         &parameters_v,
                         covariates,
-                        bound_error_models,
                         &mut bolus_v,
                         &zero_bolus,
                         &zero_rateiv,
                         &mut state_with_bolus,
                         &mut state_without_bolus,
                         &mut y_out,
-                        &mut likelihood,
                         &mut output,
                     )?;
                 }
@@ -450,8 +406,7 @@ fn _simulate_subject_dense(
         })?;
     }
 
-    let ll = bound_error_models.map(|_| likelihood.iter().product::<f64>());
-    Ok((output, ll))
+    Ok(output)
 }
 
 impl EquationTypes for ODE {
@@ -516,11 +471,9 @@ impl EquationPriv for ODE {
         &self,
         _parameters: &[f64],
         _observation: &Observation,
-        _error_models: Option<&AssayErrorModels>,
         _time: f64,
         _covariates: &Covariates,
         _x: &mut Self::S,
-        _likelihood: &mut Vec<f64>,
         _output: &mut Self::P,
     ) -> Result<(), PharmsolError> {
         unimplemented!("process_observation not implemented for ODE");
@@ -552,14 +505,12 @@ impl ODE {
         events: &[Event],
         parameters_v: &V,
         covariates: &Covariates,
-        error_models: Option<&AssayErrorModels>,
         bolus_v: &mut V,
         zero_bolus: &V,
         zero_rateiv: &V,
         state_with_bolus: &mut V,
         state_without_bolus: &mut V,
         y_out: &mut V,
-        likelihood: &mut Vec<f64>,
         output: &mut SubjectPredictions,
     ) -> Result<(), PharmsolError>
     where
@@ -633,12 +584,18 @@ impl ODE {
                             .unwrap_or_default();
                         PharmsolError::unknown_output_label(observation.outeq(), &available)
                     })?;
-                    let pred = y_out[outeq];
-                    let pred =
-                        observation.to_prediction(pred, solver.state().y.as_slice().to_vec());
-                    if let Some(error_models) = error_models {
-                        likelihood.push(pred.log_likelihood(error_models)?.exp());
+                    if outeq >= y_out.len() {
+                        return Err(PharmsolError::OuteqOutOfRange {
+                            outeq,
+                            nout: y_out.len(),
+                        });
                     }
+                    let pred = y_out[outeq];
+                    let pred = observation.to_prediction_resolved(
+                        outeq,
+                        pred,
+                        solver.state().y.as_slice().to_vec(),
+                    );
                     output.add_prediction(pred);
                 }
             }
@@ -683,36 +640,12 @@ impl ODE {
 }
 
 impl Equation for ODE {
-    fn bound_error_model_cache(&self) -> Option<&BoundErrorModelCache> {
-        self.error_model_cache.as_ref()
-    }
-
-    fn estimate_likelihood(
-        &self,
-        subject: &Subject,
-        parameters: &Parameters,
-        error_models: &AssayErrorModels,
-    ) -> Result<f64, PharmsolError> {
-        _estimate_likelihood(self, subject, parameters.as_slice(), error_models)
-    }
-
     fn estimate_predictions(
         &self,
         subject: &Subject,
         parameters: &Parameters,
     ) -> Result<Self::P, PharmsolError> {
         _subject_predictions(self, subject, parameters.as_slice())
-    }
-
-    fn estimate_log_likelihood(
-        &self,
-        subject: &Subject,
-        parameters: &Parameters,
-        error_models: &AssayErrorModels,
-    ) -> Result<f64, PharmsolError> {
-        let bound_error_models = self.bind_error_models(error_models)?;
-        let ypred = _subject_predictions(self, subject, parameters.as_slice())?;
-        ypred.log_likelihood(&bound_error_models)
     }
 
     fn estimate_predictions_dense(
@@ -723,37 +656,16 @@ impl Equation for ODE {
         _subject_predictions(self, subject, parameters)
     }
 
-    fn estimate_log_likelihood_dense(
-        &self,
-        subject: &Subject,
-        parameters: &[f64],
-        error_models: &AssayErrorModels,
-    ) -> Result<f64, PharmsolError> {
-        let bound_error_models = self.bind_error_models(error_models)?;
-        let ypred = _subject_predictions(self, subject, parameters)?;
-        ypred.log_likelihood(&bound_error_models)
-    }
-
     fn simulate_subject_dense(
         &self,
         subject: &Subject,
         parameters: &[f64],
-        error_models: Option<&AssayErrorModels>,
-    ) -> Result<(Self::P, Option<f64>), PharmsolError> {
-        _simulate_subject_dense(self, subject, parameters, error_models)
+    ) -> Result<Self::P, PharmsolError> {
+        _subject_predictions(self, subject, parameters)
     }
 
     fn kind() -> EqnKind {
         EqnKind::ODE
-    }
-
-    fn simulate_subject(
-        &self,
-        subject: &Subject,
-        parameters: &Parameters,
-        error_models: Option<&AssayErrorModels>,
-    ) -> Result<(Self::P, Option<f64>), PharmsolError> {
-        _simulate_subject_dense(self, subject, parameters.as_slice(), error_models)
     }
 }
 
@@ -932,9 +844,8 @@ mod tests {
         .expect("metadata attachment should validate");
 
         let predictions = ode
-            .simulate_subject(&route_policy_subject(), &crate::parameters::dense([]), None)
-            .expect("simulation should succeed")
-            .0;
+            .simulate_subject(&route_policy_subject(), &crate::parameters::dense([]))
+            .expect("simulation should succeed");
         let metadata = ode.metadata().expect("metadata exists");
 
         assert_eq!(
@@ -980,9 +891,8 @@ mod tests {
         .expect("metadata attachment should validate");
 
         let predictions = ode
-            .simulate_subject(&route_policy_subject(), &crate::parameters::dense([]), None)
-            .expect("simulation should succeed")
-            .0;
+            .simulate_subject(&route_policy_subject(), &crate::parameters::dense([]))
+            .expect("simulation should succeed");
 
         assert_relative_eq!(
             predictions.predictions()[0].prediction(),
@@ -1021,13 +931,11 @@ mod tests {
             .build();
 
         let canonical_predictions = ode
-            .simulate_subject(&canonical, &crate::parameters::dense([]), None)
-            .expect("canonical labels should simulate")
-            .0;
+            .simulate_subject(&canonical, &crate::parameters::dense([]))
+            .expect("canonical labels should simulate");
         let aliased_predictions = ode
-            .simulate_subject(&aliased, &crate::parameters::dense([]), None)
-            .expect("raw numeric aliases should simulate")
-            .0;
+            .simulate_subject(&aliased, &crate::parameters::dense([]))
+            .expect("raw numeric aliases should simulate");
 
         assert_relative_eq!(
             canonical_predictions.predictions()[0].prediction(),
@@ -1077,5 +985,32 @@ mod tests {
 
         assert_eq!(first.predictions().len(), second.predictions().len());
         assert_eq!(first_calls, second_calls);
+    }
+
+    #[test]
+    fn handwritten_ode_rejects_out_of_range_numeric_event_labels() {
+        let model = simple_ode();
+        let parameters = crate::parameters::dense([]);
+        for subject in [
+            Subject::builder("bad-bolus").bolus(0.0, 1.0, 1).build(),
+            Subject::builder("bad-infusion")
+                .infusion(0.0, 1.0, 1, 1.0)
+                .build(),
+        ] {
+            assert!(matches!(
+                model.simulate_subject(&subject, &parameters),
+                Err(PharmsolError::InputOutOfRange {
+                    input: 1,
+                    ndrugs: 1
+                })
+            ));
+        }
+        let subject = Subject::builder("bad-output")
+            .observation(0.0, 0.0, 1)
+            .build();
+        assert!(matches!(
+            model.simulate_subject(&subject, &parameters),
+            Err(PharmsolError::OuteqOutOfRange { outeq: 1, nout: 1 })
+        ));
     }
 }

@@ -24,8 +24,10 @@
 //! - [`Event`], [`Bolus`], [`Infusion`], and [`Observation`] for explicit
 //!   event-level control.
 //! - [`Covariate`] and [`Covariates`] for time-varying subject characteristics.
-//! - [`ErrorModel`], [`ResidualErrorModel`], and [`ObservationError`] for the
-//!   different error surfaces used by downstream workflows.
+//! - [`ErrorPoly`] for the transport-neutral Pmetrics C0-C3 values attached to
+//!   observations.
+//! - [`ObservationError`] for invalid or insufficient observation data during
+//!   profile construction and related preprocessing.
 //!
 //! # Choose A Data Input Path
 //!
@@ -52,16 +54,10 @@
 //! [`Occasion`] indices are different: they are integer period markers used to
 //! separate repeated dosing blocks within one subject.
 //!
-//! # Error Surfaces
+//! # Observation ErrorPoly Data
 //!
-//! This module exposes three related but different error families:
-//!
-//! - [`ErrorModel`] for assay or measurement error driven by the observation
-//!   value, commonly used in non-parametric workflows.
-//! - [`ResidualErrorModel`] for residual unexplained variability driven by the
-//!   prediction value, commonly used in parametric workflows.
-//! - [`ObservationError`] for invalid or insufficient observation data during
-//!   profile construction and related preprocessing.
+//! Observations can carry a transport-neutral [`ErrorPoly`] DTO (the Pmetrics
+//! C0-C3 columns). pharmsol stores and round-trips these values verbatim.
 //!
 //! # Example
 //!
@@ -83,17 +79,15 @@
 pub mod auc;
 pub mod builder;
 pub mod covariate;
-pub mod error_model;
+pub mod error_poly;
 pub mod event;
 pub mod observation_error;
 pub mod parser;
-pub mod residual_error;
 pub mod row;
 pub mod structs;
 pub use crate::nca::{MetricsError, ObservationMetrics};
 pub use covariate::*;
-pub use error_model::*;
+pub use error_poly::ErrorPoly;
 pub use event::*;
 pub use observation_error::ObservationError;
-pub use residual_error::*;
 pub use structs::{Data, Occasion, Subject};

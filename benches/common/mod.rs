@@ -1,4 +1,4 @@
-//! Shared bench fixtures (workloads, subjects, params, error models, model factories)
+//! Shared bench fixtures (workloads, subjects, parameters, and model factories)
 //! used by both `native_matrix.rs` and `dsl_matrix.rs`. Every backend measures the
 //! same model + subject + params so only the engine varies between cells.
 //!
@@ -11,14 +11,13 @@
 
 #![allow(dead_code)]
 
-use ndarray::Array2;
 use pharmsol::prelude::*;
 use pharmsol::simulator::equation::analytical::{
     one_compartment_with_absorption, two_compartments,
 };
 use pharmsol::{
     equation::{self, Route},
-    Analytical, ResidualErrorModel, ResidualErrorModels, ODE, SDE,
+    Analytical, ODE, SDE,
 };
 
 /// `ModelMetadata` for handwritten factories so route/output labels resolve like the macro/DSL paths.
@@ -106,7 +105,7 @@ impl SolverKind {
         }
     }
 
-    // SDE bench cells temporarily disabled — too slow for the current matrix.
+    // Stochastic workloads use the dedicated SDE benchmark target.
     pub fn all() -> [SolverKind; 2] {
         [SolverKind::Ode, SolverKind::Analytical]
     }
@@ -117,16 +116,9 @@ impl SolverKind {
 /// 9 sampling points for the short workload.
 const SHORT_TIMES: &[f64] = &[0.25, 0.5, 1.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0];
 
-/// Synthetic plasma concentrations — only need to exercise the likelihood path, not match any model.
-const SHORT_OBS: &[f64] = &[0.50, 0.90, 1.60, 2.40, 2.10, 1.50, 1.05, 0.72, 0.48];
-
 /// 14 sampling points for the repeat workload.
 const REPEAT_TIMES: &[f64] = &[
     0.5, 2.0, 6.0, 10.0, 14.0, 24.0, 36.0, 48.0, 60.0, 72.0, 84.0, 96.0, 108.0, 120.0,
-];
-
-const REPEAT_OBS: &[f64] = &[
-    1.80, 1.45, 1.10, 0.90, 1.30, 1.60, 1.55, 1.50, 1.48, 1.45, 1.43, 1.42, 1.41, 0.95,
 ];
 
 /// Subject with `missing_observation` slots — used for prediction benches.
@@ -153,60 +145,6 @@ pub fn subject_for_predictions(workload: Workload) -> Subject {
     builder.build()
 }
 
-/// Subject with real observations — used for log-likelihood / matrix benches.
-pub fn subject_for_likelihood(workload: Workload) -> Subject {
-    let id = format!("{}-lik", workload.label());
-    let mut builder = Subject::builder(id);
-    match workload {
-        Workload::Short => {
-            builder = builder.bolus(0.0, 100.0, "po");
-            for (&t, &y) in SHORT_TIMES.iter().zip(SHORT_OBS.iter()) {
-                builder = builder.observation(t, y, "plasma");
-            }
-        }
-        Workload::Repeat => {
-            for dose in 0..10 {
-                let t = dose as f64 * 12.0;
-                builder = builder.bolus(t, 100.0, "iv");
-            }
-            for (&t, &y) in REPEAT_TIMES.iter().zip(REPEAT_OBS.iter()) {
-                builder = builder.observation(t, y, "plasma");
-            }
-        }
-    }
-    builder.build()
-}
-
-/// Population dataset for `log_likelihood_matrix`: `n` subjects, same template with small obs perturbations.
-pub fn matrix_data(workload: Workload, n: usize) -> Data {
-    let subjects = (0..n)
-        .map(|i| {
-            let offset = i as f64 * 0.01;
-            let id = format!("{}-{i:03}", workload.label());
-            let mut builder = Subject::builder(id);
-            match workload {
-                Workload::Short => {
-                    builder = builder.bolus(0.0, 100.0, "po");
-                    for (&t, &y) in SHORT_TIMES.iter().zip(SHORT_OBS.iter()) {
-                        builder = builder.observation(t, y + offset, "plasma");
-                    }
-                }
-                Workload::Repeat => {
-                    for dose in 0..10 {
-                        let t = dose as f64 * 12.0;
-                        builder = builder.bolus(t, 100.0, "iv");
-                    }
-                    for (&t, &y) in REPEAT_TIMES.iter().zip(REPEAT_OBS.iter()) {
-                        builder = builder.observation(t, y + offset, "plasma");
-                    }
-                }
-            }
-            builder.build()
-        })
-        .collect();
-    Data::new(subjects)
-}
-
 // ───────────────────────────── Parameters ────────────────────────────
 
 /// Reference named parameters per `(workload, kind)` in the source order shared by bench fixtures.
@@ -229,45 +167,6 @@ pub fn named_params(workload: Workload, kind: SolverKind) -> Vec<(&'static str, 
             ("sigma_ke", 0.01),
         ],
     }
-}
-
-/// Reference parameter vector per `(workload, kind)`:
-/// Short ODE/Analytical `[ka, ke, v]`, Short SDE adds `sigma_ke`;
-/// Repeat ODE/Analytical `[ke, kcp, kpc, v]`, Repeat SDE adds `sigma_ke`.
-pub fn params(workload: Workload, kind: SolverKind) -> Vec<f64> {
-    named_params(workload, kind)
-        .into_iter()
-        .map(|(_, value)| value)
-        .collect()
-}
-
-/// Support-point grid for `log_likelihood_matrix`, shape `(n, nparams)`.
-/// Rows are small perturbations of [`params`].
-pub fn support_points(workload: Workload, kind: SolverKind, n: usize) -> Array2<f64> {
-    let base = params(workload, kind);
-    let nparams = base.len();
-    Array2::from_shape_fn((n, nparams), |(row, col)| {
-        let p = base[col];
-        let perturbation = (row as f64) * 0.001 * p.abs().max(1e-3);
-        p + perturbation
-    })
-}
-
-// ───────────────────────────── Error models ──────────────────────────
-
-/// Assay error model for `estimate_log_likelihood` / `log_likelihood_matrix`.
-pub fn assay_error_models() -> AssayErrorModels {
-    AssayErrorModels::new()
-        .add(
-            "plasma",
-            AssayErrorModel::additive(ErrorPoly::new(0.1, 0.1, 0.0, 0.0), 0.0),
-        )
-        .expect("plasma assay error model")
-}
-
-/// Residual error model. Indexes outputs by dense `usize` — assumes a single output at index 0.
-pub fn residual_error_models() -> ResidualErrorModels {
-    ResidualErrorModels::new().add(0, ResidualErrorModel::constant(0.2))
 }
 
 // ───────────────────────────── Handwritten factories ─────────────────

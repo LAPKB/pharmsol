@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Add a caller-controlled, simulation-neutral SDE particle session that pauses
+  at observation boundaries and can resume with retained or replaced states.
+- Add focused Criterion coverage for standard SDE prediction and particle-session
+  retain/select paths.
+
+### Removed
+
+- Remove equation-level and prediction-container observation evaluation APIs;
+  downstream fitting crates now generate predictions with pharmsol and evaluate
+  observations themselves.
+- Remove residual-distribution declarations, estimator caches, and parameter
+  optimization helpers from pharmsol's public API.
+
+### Changed
+
+- Relocate the existing data-only `ErrorPoly` DTO while preserving its public
+  path and unchanged C0-C3 transport through observations and predictions.
+  As before, incomplete C0-C3 rows do not create an `ErrorPoly` value.
+- Keep analytical, ODE, and SDE execution focused exclusively on simulation and
+  prediction generation, including simulation-only examples and benchmarks.
+- Run the source-scoped simulation ownership check in CI, including untracked
+  source files during local use.
+
 ## [0.28.2](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.28.1...pharmsol-v0.28.2) - 2026-07-20
 
 ### Other
@@ -95,7 +120,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Handle missing observations in log-likelihood ([#230](https://github.com/LAPKB/pharmsol/pull/230))
+- Handle missing observations during observation evaluation ([#230](https://github.com/LAPKB/pharmsol/pull/230))
 
 ## [0.24.0](https://github.com/LAPKB/pharmsol/compare/v0.23.0...v0.24.0) - 2026-03-23
 
@@ -108,7 +133,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Remove LikelihoodMatrixOptions ([#222](https://github.com/LAPKB/pharmsol/pull/222))
+- Remove obsolete matrix configuration options ([#222](https://github.com/LAPKB/pharmsol/pull/222))
 - Use a sized cache with new subject hashing ([#214](https://github.com/LAPKB/pharmsol/pull/214))
 - Normalized rows ([#205](https://github.com/LAPKB/pharmsol/pull/205))
 
@@ -208,7 +233,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Exhaustive match instead of if-else block
 - Add setters
 - Make cens column optional
-- Censoring likelihood calculation
+- Add censored-observation evaluation
 - Update argmin requirement from 0.10.0 to 0.11.0 ([#135](https://github.com/LAPKB/pharmsol/pull/135))
 
 ## [0.17.2](https://github.com/LAPKB/pharmsol/compare/v0.17.1...v0.17.2) - 2025-09-30

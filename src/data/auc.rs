@@ -1,7 +1,7 @@
 //! Trapezoidal AUC/AUMC calculation on `&[f64]` slices.
 //!
-//! Building blocks for [`ObservationProfile`](crate::data::observation::ObservationProfile)
-//! and NCA analysis. Supports linear, lin-up/log-down, and lin-log methods.
+//! Building blocks for internal `ObservationProfile` processing and NCA analysis.
+//! Supports linear, lin-up/log-down, and lin-log methods.
 //!
 //! ```rust
 //! use pharmsol::data::auc::{auc, auc_interval, aumc, interpolate_linear};

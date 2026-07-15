@@ -15,15 +15,13 @@ pub use three_compartment_models::*;
 pub use two_compartment_cl_models::*;
 pub use two_compartment_models::*;
 
-use super::parameters_hash;
-
 use super::{
-    EqnKind, Equation, EquationPriv, EquationTypes, ModelMetadata, ModelMetadataError,
-    ValidatedModelMetadata,
+    parameters_hash, EqnKind, Equation, EquationPriv, EquationTypes, ModelMetadata,
+    ModelMetadataError, ValidatedModelMetadata,
 };
-use crate::data::error_model::AssayErrorModels;
-use crate::simulator::cache::{
-    BoundErrorModelCache, PredictionCache, DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE, DEFAULT_CACHE_SIZE,
+use crate::simulator::{
+    cache::{PredictionCache, DEFAULT_CACHE_SIZE},
+    prediction::SubjectPredictions,
 };
 use crate::PharmsolError;
 use crate::{data::Covariates, simulator::*, Observation, Parameters, Subject};
@@ -55,7 +53,6 @@ pub struct Analytical {
     neqs: Neqs,
     metadata: Option<ValidatedModelMetadata>,
     cache: Option<PredictionCache>,
-    error_model_cache: Option<BoundErrorModelCache>,
 }
 
 #[inline(always)]
@@ -110,9 +107,6 @@ impl Analytical {
             neqs: Neqs::default(),
             metadata: None,
             cache: Some(PredictionCache::new(DEFAULT_CACHE_SIZE)),
-            error_model_cache: Some(BoundErrorModelCache::new(
-                DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
-            )),
         }
     }
 
@@ -144,10 +138,8 @@ impl Analytical {
     ) -> Result<Self, AnalyticalMetadataError> {
         let metadata = metadata.validate_for(ModelKind::Analytical)?;
         validate_metadata_dimensions(&metadata, &self.neqs)?;
+        self.detach_cache();
         self.metadata = Some(metadata);
-        self.error_model_cache = Some(BoundErrorModelCache::new(
-            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
-        ));
         Ok(self)
     }
 
@@ -170,9 +162,11 @@ impl Analytical {
 
     fn invalidate_metadata(&mut self) {
         self.metadata = None;
-        self.error_model_cache = Some(BoundErrorModelCache::new(
-            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
-        ));
+        self.detach_cache();
+    }
+
+    fn detach_cache(&mut self) {
+        self.cache = self.cache.as_ref().map(PredictionCache::detached);
     }
 }
 
@@ -210,17 +204,11 @@ fn validate_metadata_dimensions(
 impl super::Cache for Analytical {
     fn with_cache_capacity(mut self, size: usize) -> Self {
         self.cache = Some(PredictionCache::new(size));
-        self.error_model_cache = Some(BoundErrorModelCache::new(
-            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
-        ));
         self
     }
 
     fn enable_cache(mut self) -> Self {
         self.cache = Some(PredictionCache::new(DEFAULT_CACHE_SIZE));
-        self.error_model_cache = Some(BoundErrorModelCache::new(
-            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
-        ));
         self
     }
 
@@ -228,14 +216,10 @@ impl super::Cache for Analytical {
         if let Some(cache) = &self.cache {
             cache.invalidate_all();
         }
-        if let Some(cache) = &self.error_model_cache {
-            cache.invalidate_all();
-        }
     }
 
     fn disable_cache(mut self) -> Self {
         self.cache = None;
-        self.error_model_cache = None;
         self
     }
 }
@@ -374,11 +358,9 @@ impl EquationPriv for Analytical {
         &self,
         parameters: &[f64],
         observation: &Observation,
-        error_models: Option<&AssayErrorModels>,
         _time: f64,
         covariates: &Covariates,
         x: &mut Self::S,
-        likelihood: &mut Vec<f64>,
         output: &mut Self::P,
     ) -> Result<(), PharmsolError> {
         let mut y = V::zeros(self.get_nouteqs(), NalgebraContext::new());
@@ -398,10 +380,7 @@ impl EquationPriv for Analytical {
             PharmsolError::unknown_output_label(observation.outeq(), &available)
         })?;
         let pred = y[outeq];
-        let pred = observation.to_prediction(pred, x.as_slice().to_vec());
-        if let Some(error_models) = error_models {
-            likelihood.push(pred.log_likelihood(error_models)?.exp());
-        }
+        let pred = observation.to_prediction_resolved(outeq, pred, x.as_slice().to_vec());
         output.add_prediction(pred);
         Ok(())
     }
@@ -430,11 +409,19 @@ impl EquationPriv for Analytical {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::SubjectBuilderExt;
+    use crate::{Subject, SubjectBuilderExt};
     use approx::assert_relative_eq;
     use diffsol::Vector;
     use pharmsol_dsl::AnalyticalKernel;
     use std::collections::HashMap;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static ANALYTICAL_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+    fn counting_analytical(x: &V, _p: &V, _dt: f64, _rateiv: &V, _cov: &Covariates) -> V {
+        ANALYTICAL_CALLS.fetch_add(1, Ordering::SeqCst);
+        x.clone()
+    }
 
     pub(crate) enum SubjectInfo {
         InfusionDosing,
@@ -575,6 +562,30 @@ pub(crate) mod tests {
             .with_nstates(1)
             .with_ndrugs(1)
             .with_nout(1)
+    }
+
+    #[test]
+    fn handwritten_analytical_prediction_entrypoints_use_cache() {
+        ANALYTICAL_CALLS.store(0, Ordering::SeqCst);
+        let mut model = simple_analytical();
+        model.eq = counting_analytical;
+        let subject = Subject::builder("analytical-cache")
+            .bolus(0.0, 1.0, 0)
+            .observation(1.0, 0.0, 0)
+            .build();
+        let parameters = crate::parameters::dense([]);
+
+        model.estimate_predictions(&subject, &parameters).unwrap();
+        let after_first = ANALYTICAL_CALLS.load(Ordering::SeqCst);
+        assert!(after_first > 0);
+        model.simulate_subject(&subject, &parameters).unwrap();
+        assert_eq!(ANALYTICAL_CALLS.load(Ordering::SeqCst), after_first);
+
+        let configured = model.clone().with_nstates(1);
+        configured
+            .estimate_predictions(&subject, &parameters)
+            .unwrap();
+        assert!(ANALYTICAL_CALLS.load(Ordering::SeqCst) > after_first);
     }
 
     #[test]
@@ -888,68 +899,95 @@ pub(crate) mod tests {
             vec![2.0],
         );
     }
+
+    #[test]
+    fn handwritten_analytical_rejects_out_of_range_numeric_event_labels() {
+        let model = simple_analytical();
+        let parameters = crate::parameters::dense([]);
+        for subject in [
+            Subject::builder("bad-bolus").bolus(0.0, 1.0, 1).build(),
+            Subject::builder("bad-infusion")
+                .infusion(0.0, 1.0, 1, 1.0)
+                .build(),
+        ] {
+            assert!(matches!(
+                model.simulate_subject(&subject, &parameters),
+                Err(PharmsolError::InputOutOfRange {
+                    input: 1,
+                    ndrugs: 1
+                })
+            ));
+        }
+        let subject = Subject::builder("bad-output")
+            .observation(0.0, 0.0, 1)
+            .build();
+        assert!(matches!(
+            model.simulate_subject(&subject, &parameters),
+            Err(PharmsolError::OuteqOutOfRange { outeq: 1, nout: 1 })
+        ));
+    }
 }
+fn analytical_subject_predictions(
+    model: &Analytical,
+    subject: &Subject,
+    parameters: &[f64],
+) -> Result<SubjectPredictions, PharmsolError> {
+    let key = (subject.hash(), parameters_hash(parameters));
+    if let Some(cached) = model.cache.as_ref().and_then(|cache| cache.get(&key)) {
+        return Ok(cached);
+    }
+
+    let mut output = SubjectPredictions::default();
+    for occasion in subject.occasions() {
+        let covariates = occasion.covariates();
+        let mut state = model.initial_state(parameters, covariates, occasion.index());
+        let mut infusions = Vec::new();
+        let events = model.resolve_occasion_events(occasion, parameters, covariates)?;
+        for (index, event) in events.iter().enumerate() {
+            model.simulate_event(
+                parameters,
+                event,
+                events.get(index + 1),
+                covariates,
+                &mut state,
+                &mut infusions,
+                &mut output,
+            )?;
+        }
+    }
+
+    if let Some(cache) = &model.cache {
+        cache.insert(key, output.clone());
+    }
+    Ok(output)
+}
+
 impl Equation for Analytical {
-    fn bound_error_model_cache(&self) -> Option<&BoundErrorModelCache> {
-        self.error_model_cache.as_ref()
-    }
-
-    fn estimate_likelihood(
+    fn estimate_predictions(
         &self,
         subject: &Subject,
         parameters: &Parameters,
-        error_models: &AssayErrorModels,
-    ) -> Result<f64, PharmsolError> {
-        _estimate_likelihood(self, subject, parameters.as_slice(), error_models)
+    ) -> Result<Self::P, PharmsolError> {
+        analytical_subject_predictions(self, subject, parameters.as_slice())
     }
 
-    fn estimate_log_likelihood(
+    fn estimate_predictions_dense(
         &self,
         subject: &Subject,
-        parameters: &Parameters,
-        error_models: &AssayErrorModels,
-    ) -> Result<f64, PharmsolError> {
-        let bound_error_models = self.bind_error_models(error_models)?;
-        let ypred = _subject_predictions(self, subject, parameters.as_slice())?;
-        ypred.log_likelihood(&bound_error_models)
+        parameters: &[f64],
+    ) -> Result<Self::P, PharmsolError> {
+        analytical_subject_predictions(self, subject, parameters)
+    }
+
+    fn simulate_subject_dense(
+        &self,
+        subject: &Subject,
+        parameters: &[f64],
+    ) -> Result<Self::P, PharmsolError> {
+        analytical_subject_predictions(self, subject, parameters)
     }
 
     fn kind() -> EqnKind {
         EqnKind::Analytical
     }
-}
-
-#[inline(always)]
-fn _subject_predictions(
-    analytical: &Analytical,
-    subject: &Subject,
-    parameters: &[f64],
-) -> Result<SubjectPredictions, PharmsolError> {
-    if let Some(cache) = &analytical.cache {
-        let key = (subject.hash(), parameters_hash(parameters));
-        if let Some(cached) = cache.get(&key) {
-            return Ok(cached);
-        }
-
-        let result = analytical
-            .simulate_subject_dense(subject, parameters, None)?
-            .0;
-        cache.insert(key, result.clone());
-        Ok(result)
-    } else {
-        Ok(analytical
-            .simulate_subject_dense(subject, parameters, None)?
-            .0)
-    }
-}
-
-fn _estimate_likelihood(
-    ode: &Analytical,
-    subject: &Subject,
-    parameters: &[f64],
-    error_models: &AssayErrorModels,
-) -> Result<f64, PharmsolError> {
-    let bound_error_models = ode.bind_error_models(error_models)?;
-    let ypred = _subject_predictions(ode, subject, parameters)?;
-    Ok(ypred.log_likelihood(&bound_error_models)?.exp())
 }

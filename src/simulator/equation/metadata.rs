@@ -103,8 +103,7 @@ impl fmt::Display for NameDomain {
 /// Route lookups expose two different indices:
 /// - [`ValidatedModelMetadata::route_declaration_index`] is the route position in
 ///   declaration order.
-/// - [`ValidatedModelMetadata::route_index`] is the dense execution input index
-///   for that route kind.
+/// - `route_index` is the dense execution input index for that route kind.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidatedModelMetadata {
     name: String,

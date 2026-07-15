@@ -2,10 +2,8 @@
 //! Mirrors `native_matrix.rs` but compiles models from DSL source.
 //!
 //! IDs:
-//! - `dsl/compile`           → `{workload}/{kind}/{backend}`
-//! - `dsl/predictions`       → `{workload}/{kind}/{backend}/{cache}`
-//! - `dsl/log-likelihood`    → `{workload}/{kind}/{backend}/{cache}`
-//! - `dsl/likelihood-matrix` → `{workload}/{kind}/{backend}`
+//! - `dsl/compile` → `{workload}/{kind}/{backend}`
+//! - `dsl/predictions` → `{workload}/{kind}/{backend}/{cache}`
 
 use std::hint::black_box;
 use std::path::PathBuf;
@@ -16,22 +14,17 @@ use tempfile::TempDir;
 
 use pharmsol::dsl::{
     compile_module_source_to_runtime, CompiledRuntimeModel, NativeAnalyticalModel,
-    NativeAotCompileOptions, NativeOdeModel, NativeSdeModel, RuntimeCompilationTarget,
+    NativeAotCompileOptions, NativeOdeModel, RuntimeCompilationTarget,
 };
-use pharmsol::prelude::*;
 use pharmsol::{Cache, Parameters};
 
 mod common;
 use common::{
-    assay_error_models, dsl_model_name, dsl_source, matrix_data, named_params,
-    subject_for_likelihood, subject_for_predictions, support_points, SolverKind, Workload,
+    dsl_model_name, dsl_source, named_params, subject_for_predictions, SolverKind, Workload,
 };
 
-const MATRIX_N_SUBJECTS: usize = 32;
-const MATRIX_N_SUPPORT: usize = 64;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // Aot/Wasm temporarily disabled in `Backend::all`
+#[allow(dead_code)] // Retained for opt-in backend profiling outside the default matrix.
 enum Backend {
     Jit,
     Aot,
@@ -47,7 +40,7 @@ impl Backend {
         }
     }
 
-    // AoT and WASM backends temporarily disabled — too slow for the current matrix.
+    // The default matrix bounds runtime to JIT; AoT and WASM remain opt-in.
     fn all() -> [Backend; 1] {
         [Backend::Jit]
     }
@@ -143,17 +136,6 @@ fn compile_analytical(
     }
 }
 
-fn compile_sde(workload: Workload, backend: Backend, aot: &AotWorkspace) -> NativeSdeModel {
-    match compile_runtime(workload, SolverKind::Sde, backend, aot) {
-        CompiledRuntimeModel::Sde(model) => model,
-        other => panic!(
-            "expected Sde model for {}, got {:?}",
-            workload.label(),
-            other.backend()
-        ),
-    }
-}
-
 fn ode_parameters(model: &NativeOdeModel, workload: Workload) -> Parameters {
     Parameters::with_model(model, named_params(workload, SolverKind::Ode))
         .expect("DSL ODE bench parameters should validate")
@@ -162,11 +144,6 @@ fn ode_parameters(model: &NativeOdeModel, workload: Workload) -> Parameters {
 fn analytical_parameters(model: &NativeAnalyticalModel, workload: Workload) -> Parameters {
     Parameters::with_model(model, named_params(workload, SolverKind::Analytical))
         .expect("DSL analytical bench parameters should validate")
-}
-
-fn sde_parameters(model: &NativeSdeModel, workload: Workload) -> Parameters {
-    Parameters::with_model(model, named_params(workload, SolverKind::Sde))
-        .expect("DSL SDE bench parameters should validate")
 }
 
 // ───────────────────────────── compile group ─────────────────────────
@@ -199,7 +176,7 @@ fn compile_group(c: &mut Criterion) {
                 ));
                 group.bench_function(bench_id, |b| {
                     b.iter_custom(|iters| {
-                        let actual = iters.min(MAX_ITERS_PER_BATCH).max(1);
+                        let actual = iters.clamp(1, MAX_ITERS_PER_BATCH);
                         let start = Instant::now();
                         for _ in 0..actual {
                             black_box(compile_runtime(
@@ -283,27 +260,7 @@ fn predictions_group(c: &mut Criterion) {
                                 });
                             });
                         }
-                        SolverKind::Sde => {
-                            let model = match cache {
-                                CacheState::Hot => compile_sde(workload, backend, &aot),
-                                CacheState::Cold => {
-                                    compile_sde(workload, backend, &aot).disable_cache()
-                                }
-                            };
-                            let theta = sde_parameters(&model, workload);
-                            group.bench_function(bench_id, |b| {
-                                b.iter(|| {
-                                    black_box(
-                                        model
-                                            .estimate_predictions(
-                                                black_box(&subject),
-                                                black_box(&theta),
-                                            )
-                                            .unwrap(),
-                                    )
-                                });
-                            });
-                        }
+                        SolverKind::Sde => unreachable!("SDE has a dedicated benchmark"),
                     }
                 }
             }
@@ -313,192 +270,5 @@ fn predictions_group(c: &mut Criterion) {
     group.finish();
 }
 
-// ───────────────────────────── log-likelihood group ──────────────────
-
-fn log_likelihood_group(c: &mut Criterion) {
-    let mut group = c.benchmark_group("dsl/log-likelihood");
-    group.sampling_mode(SamplingMode::Flat);
-
-    let aot = AotWorkspace::new();
-    let error_models = assay_error_models();
-
-    for workload in Workload::all() {
-        let subject = subject_for_likelihood(workload);
-        for kind in SolverKind::all() {
-            for backend in Backend::all() {
-                for cache in CacheState::all() {
-                    let bench_id = BenchmarkId::from_parameter(format!(
-                        "{}/{}/{}/{}",
-                        workload.label(),
-                        kind.label(),
-                        backend.label(),
-                        cache.label()
-                    ));
-                    match kind {
-                        SolverKind::Ode => {
-                            let model = match cache {
-                                CacheState::Hot => compile_ode(workload, backend, &aot),
-                                CacheState::Cold => {
-                                    compile_ode(workload, backend, &aot).disable_cache()
-                                }
-                            };
-                            let theta = ode_parameters(&model, workload);
-                            group.bench_function(bench_id, |b| {
-                                b.iter(|| {
-                                    black_box(
-                                        model
-                                            .estimate_log_likelihood(
-                                                black_box(&subject),
-                                                black_box(&theta),
-                                                black_box(&error_models),
-                                            )
-                                            .unwrap(),
-                                    )
-                                });
-                            });
-                        }
-                        SolverKind::Analytical => {
-                            let model = match cache {
-                                CacheState::Hot => compile_analytical(workload, backend, &aot),
-                                CacheState::Cold => {
-                                    compile_analytical(workload, backend, &aot).disable_cache()
-                                }
-                            };
-                            let theta = analytical_parameters(&model, workload);
-                            group.bench_function(bench_id, |b| {
-                                b.iter(|| {
-                                    black_box(
-                                        model
-                                            .estimate_log_likelihood(
-                                                black_box(&subject),
-                                                black_box(&theta),
-                                                black_box(&error_models),
-                                            )
-                                            .unwrap(),
-                                    )
-                                });
-                            });
-                        }
-                        SolverKind::Sde => {
-                            let model = match cache {
-                                CacheState::Hot => compile_sde(workload, backend, &aot),
-                                CacheState::Cold => {
-                                    compile_sde(workload, backend, &aot).disable_cache()
-                                }
-                            };
-                            let theta = sde_parameters(&model, workload);
-                            group.bench_function(bench_id, |b| {
-                                b.iter(|| {
-                                    black_box(
-                                        model
-                                            .estimate_log_likelihood(
-                                                black_box(&subject),
-                                                black_box(&theta),
-                                                black_box(&error_models),
-                                            )
-                                            .unwrap(),
-                                    )
-                                });
-                            });
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    group.finish();
-}
-
-// ───────────────────────────── likelihood-matrix group ───────────────
-
-fn likelihood_matrix_group(c: &mut Criterion) {
-    use pharmsol::prelude::simulator::log_likelihood_matrix;
-
-    let mut group = c.benchmark_group("dsl/likelihood-matrix");
-    group.sampling_mode(SamplingMode::Flat);
-    group.sample_size(10);
-    group.measurement_time(Duration::from_secs(20));
-
-    let aot = AotWorkspace::new();
-    let error_models = assay_error_models();
-
-    for workload in Workload::all() {
-        let data = matrix_data(workload, MATRIX_N_SUBJECTS);
-        for kind in SolverKind::all() {
-            let theta = support_points(workload, kind, MATRIX_N_SUPPORT);
-            for backend in Backend::all() {
-                let bench_id = BenchmarkId::from_parameter(format!(
-                    "{}/{}/{}",
-                    workload.label(),
-                    kind.label(),
-                    backend.label()
-                ));
-                match kind {
-                    SolverKind::Ode => {
-                        let model = compile_ode(workload, backend, &aot);
-                        group.bench_function(bench_id, |b| {
-                            b.iter(|| {
-                                black_box(
-                                    log_likelihood_matrix(
-                                        black_box(&model),
-                                        black_box(&data),
-                                        black_box(&theta),
-                                        black_box(&error_models),
-                                        false,
-                                    )
-                                    .unwrap(),
-                                )
-                            });
-                        });
-                    }
-                    SolverKind::Analytical => {
-                        let model = compile_analytical(workload, backend, &aot);
-                        group.bench_function(bench_id, |b| {
-                            b.iter(|| {
-                                black_box(
-                                    log_likelihood_matrix(
-                                        black_box(&model),
-                                        black_box(&data),
-                                        black_box(&theta),
-                                        black_box(&error_models),
-                                        false,
-                                    )
-                                    .unwrap(),
-                                )
-                            });
-                        });
-                    }
-                    SolverKind::Sde => {
-                        let model = compile_sde(workload, backend, &aot);
-                        group.bench_function(bench_id, |b| {
-                            b.iter(|| {
-                                black_box(
-                                    log_likelihood_matrix(
-                                        black_box(&model),
-                                        black_box(&data),
-                                        black_box(&theta),
-                                        black_box(&error_models),
-                                        false,
-                                    )
-                                    .unwrap(),
-                                )
-                            });
-                        });
-                    }
-                }
-            }
-        }
-    }
-
-    group.finish();
-}
-
-criterion_group!(
-    dsl_matrix,
-    compile_group,
-    predictions_group,
-    log_likelihood_group,
-    likelihood_matrix_group
-);
+criterion_group!(dsl_matrix, compile_group, predictions_group);
 criterion_main!(dsl_matrix);

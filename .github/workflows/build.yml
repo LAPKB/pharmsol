@@ -69,6 +69,10 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+      - name: Check simulation ownership boundary
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        run: bash scripts/check-ownership-boundary.sh
+
       - name: Build (no features)
         run: cargo build --verbose --no-default-features
 

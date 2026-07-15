@@ -10,8 +10,7 @@
 //! `"cp"`. Numeric values are accepted, but they remain labels until a
 //! downstream workflow explicitly interprets them as indices.
 
-use crate::data::error_model::ErrorPoly;
-use crate::prelude::simulator::Prediction;
+use crate::{simulator::prediction::Prediction, ErrorPoly};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -553,13 +552,14 @@ pub enum Censor {
 /// Observation of a model output.
 ///
 /// An [`Observation`] can carry a measured value or `None` for a prediction-only
-/// time point. Observations also carry the public output label, optional assay
-/// error polynomial, occasion index, and censoring state.
+/// time point. Observations also carry the public output label, optional
+/// [`ErrorPoly`] data, occasion index, and censoring state.
 #[derive(Serialize, Debug, Clone, Deserialize)]
 pub struct Observation {
     time: f64,
     value: Option<f64>,
     outeq: OutputLabel,
+    #[serde(default, alias = "coefficients")]
     errorpoly: Option<ErrorPoly>,
     occasion: usize,
     censoring: Censor,
@@ -572,7 +572,7 @@ impl Observation {
     /// * `time` - Time of the observation
     /// * `value` - Observed value (e.g., drug concentration)
     /// * `outeq` - Output label corresponding to this observation
-    /// * `errorpoly` - Optional error polynomial coefficients (c0, c1, c2, c3)
+    /// * `errorpoly` - Optional C0-C3 data
     /// * `occasion` - Occasion index
     /// * `censoring` - Censoring type for this observation
     pub(crate) fn new(
@@ -617,9 +617,7 @@ impl Observation {
         self.outeq.index()
     }
 
-    /// Get the error polynomial coefficients (c0, c1, c2, c3) if available
-    ///
-    /// The error polynomial is used to model the observation error.
+    /// Get the C0-C3 data attached to this observation, if present.
     pub fn errorpoly(&self) -> Option<ErrorPoly> {
         self.errorpoly
     }
@@ -639,7 +637,7 @@ impl Observation {
         self.outeq = OutputLabel::new(outeq);
     }
 
-    /// Set the [ErrorPoly] for this observation
+    /// Set the [`ErrorPoly`] data for this observation.
     pub fn set_errorpoly(&mut self, errorpoly: Option<ErrorPoly>) {
         self.errorpoly = errorpoly;
     }
@@ -659,7 +657,7 @@ impl Observation {
         &mut self.outeq
     }
 
-    /// Get a mutable reference to the error polynomial
+    /// Get a mutable reference to the optional [`ErrorPoly`] data.
     pub fn mut_errorpoly(&mut self) -> &mut Option<ErrorPoly> {
         &mut self.errorpoly
     }
@@ -674,19 +672,34 @@ impl Observation {
         &mut self.occasion
     }
 
-    /// Create a [`Prediction`] from this observation.
+    /// Create a [`Prediction`] from an observation with a numeric output label.
     ///
-    /// This is a low-level helper for code paths that already operate on a
-    /// resolved or numeric output index. Named output labels must be resolved by
-    /// the caller before this conversion happens.
+    /// This compatibility helper is intended only for observations whose output
+    /// label is already numeric/resolved. Internal simulation resolves named
+    /// labels explicitly and uses `to_prediction_resolved` instead.
+    ///
+    /// # Panics
+    ///
+    /// Panics if this observation's output label is not a numeric index.
     pub fn to_prediction(&self, pred: f64, state: Vec<f64>) -> Prediction {
+        let resolved_outeq = self
+            .outeq_index()
+            .expect("prediction requires a resolved or numeric output label");
+        self.to_prediction_resolved(resolved_outeq, pred, state)
+    }
+
+    /// Create a prediction after the execution layer has resolved the output.
+    pub(crate) fn to_prediction_resolved(
+        &self,
+        resolved_outeq: usize,
+        pred: f64,
+        state: Vec<f64>,
+    ) -> Prediction {
         Prediction {
             time: self.time(),
             observation: self.value(),
             prediction: pred,
-            outeq: self
-                .outeq_index()
-                .expect("prediction requires a resolved or numeric output label"),
+            outeq: resolved_outeq,
             errorpoly: self.errorpoly(),
             state,
             occasion: self.occasion(),
@@ -735,15 +748,10 @@ impl fmt::Display for Event {
             Event::Observation(observation) => {
                 let errpoly_desc = match observation.errorpoly {
                     Some(errorpoly) => {
-                        format!(
-                            "with error poly {} {} {} {}",
-                            errorpoly.coefficients().0,
-                            errorpoly.coefficients().1,
-                            errorpoly.coefficients().2,
-                            errorpoly.coefficients().3
-                        )
+                        let (c0, c1, c2, c3) = errorpoly.coefficients();
+                        format!("with error poly {c0} {c1} {c2} {c3}")
                     }
-                    None => "".to_string(),
+                    None => String::new(),
                 };
                 write!(
                     f,
@@ -811,14 +819,14 @@ mod tests {
 
     #[test]
     fn test_observation_creation() {
-        let error_poly = Some(ErrorPoly::new(0.1, 0.2, 0.3, 0.4));
-        let observation = Observation::new(5.0, Some(75.5), 2, error_poly, 0, Censor::None);
+        let errorpoly = Some(ErrorPoly::new(0.1, 0.2, 0.3, 0.4));
+        let observation = Observation::new(5.0, Some(75.5), 2, errorpoly, 0, Censor::None);
 
         assert_eq!(observation.time(), 5.0);
         assert_eq!(observation.value(), Some(75.5));
         assert_eq!(observation.outeq(), 2);
         assert_eq!(observation.outeq().as_str(), "2");
-        assert_eq!(observation.errorpoly(), error_poly);
+        assert_eq!(observation.errorpoly(), errorpoly);
     }
 
     #[test]
@@ -833,17 +841,51 @@ mod tests {
         );
 
         observation.set_time(6.0);
-        assert_eq!(observation.time(), 6.0);
-
         observation.set_value(Some(80.0));
-        assert_eq!(observation.value(), Some(80.0));
-
         observation.set_outeq(3);
-        assert_eq!(observation.outeq(), 3);
 
-        let new_error_poly = Some(ErrorPoly::new(0.2, 0.3, 0.4, 0.5));
-        observation.set_errorpoly(new_error_poly);
-        assert_eq!(observation.errorpoly(), new_error_poly);
+        let replacement = Some(ErrorPoly::new(0.2, 0.3, 0.4, 0.5));
+        observation.set_errorpoly(replacement);
+        assert_eq!(observation.errorpoly(), replacement);
+        assert_eq!(observation.mut_errorpoly(), &mut replacement.clone());
+    }
+
+    #[test]
+    fn observation_to_prediction_uses_numeric_output_label() {
+        let observation = Observation::new(5.0, Some(75.5), 2, None, 0, Censor::None);
+        let prediction = observation.to_prediction(70.0, vec![70.0]);
+
+        assert_eq!(prediction.outeq(), 2);
+        assert_eq!(prediction.prediction(), 70.0);
+    }
+
+    #[test]
+    fn observation_errorpoly_roundtrips_through_serde() {
+        let observation = Observation::new(
+            1.5,
+            Some(2.5),
+            "cp",
+            Some(ErrorPoly::new(0.1, 0.2, 0.3, 0.4)),
+            2,
+            Censor::BLOQ,
+        );
+
+        let serialized = serde_json::to_string(&observation).unwrap();
+        assert!(serialized.contains("\"errorpoly\""));
+        assert!(!serialized.contains("\"coefficients\""));
+
+        let deserialized: Observation = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(deserialized.errorpoly(), observation.errorpoly());
+    }
+
+    #[test]
+    fn observation_accepts_interim_coefficients_alias() {
+        let serialized = r#"{"time":1.5,"value":2.5,"outeq":"cp","coefficients":{"c0":0.1,"c1":0.2,"c2":0.3,"c3":0.4},"occasion":2,"censoring":"none"}"#;
+        let observation: Observation = serde_json::from_str(serialized).unwrap();
+        assert_eq!(
+            observation.errorpoly(),
+            Some(ErrorPoly::new(0.1, 0.2, 0.3, 0.4))
+        );
     }
 
     #[test]

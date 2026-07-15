@@ -52,7 +52,7 @@ impl From<ParameterOrderError> for ParameterError {
     }
 }
 
-/// Thin owned dense parameter storage for one support point.
+/// Thin owned storage for one dense model-order parameter vector.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Parameters(Vec<f64>);
 
@@ -120,14 +120,14 @@ impl ParameterOrder {
         Ok(Self { plan })
     }
 
-    /// Reorder one dense support point from source order into model order.
+    /// Reorder one dense parameter vector from source order into model order.
     pub fn values(&self, source_values: &[f64]) -> Result<Vec<f64>, ParameterError> {
         self.plan
             .reorder_values(source_values)
             .map_err(ParameterError::from)
     }
 
-    /// Reorder a dense support-point matrix whose rows are support points.
+    /// Reorder a dense parameter matrix whose rows are parameter vectors.
     #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     pub fn matrix(&self, source_values: Array2<f64>) -> Result<Array2<f64>, ParameterError> {
         if source_values.ncols() != self.width() {

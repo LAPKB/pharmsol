@@ -59,10 +59,6 @@ impl Data {
         self.subjects.iter().collect()
     }
 
-    pub(crate) fn subjects_slice(&self) -> &[Subject] {
-        &self.subjects
-    }
-
     /// Add a subject to the dataset
     ///
     /// # Arguments
@@ -504,10 +500,35 @@ impl Subject {
                     crate::data::event::Event::Observation(obs) => {
                         2u8.hash(&mut hasher);
                         obs.time().to_bits().hash(&mut hasher);
-                        if let Some(v) = obs.value() {
-                            v.to_bits().hash(&mut hasher);
+                        match obs.value() {
+                            Some(value) => {
+                                1u8.hash(&mut hasher);
+                                value.to_bits().hash(&mut hasher);
+                            }
+                            None => 0u8.hash(&mut hasher),
                         }
                         obs.outeq().hash(&mut hasher);
+                        match obs.errorpoly() {
+                            Some(errorpoly) => {
+                                1u8.hash(&mut hasher);
+                                for coefficient in [
+                                    errorpoly.c0(),
+                                    errorpoly.c1(),
+                                    errorpoly.c2(),
+                                    errorpoly.c3(),
+                                ] {
+                                    coefficient.to_bits().hash(&mut hasher);
+                                }
+                            }
+                            None => 0u8.hash(&mut hasher),
+                        }
+                        obs.occasion().hash(&mut hasher);
+                        match obs.censoring() {
+                            Censor::None => 0u8,
+                            Censor::BLOQ => 1u8,
+                            Censor::ALOQ => 2u8,
+                        }
+                        .hash(&mut hasher);
                     }
                 }
             }
@@ -759,9 +780,7 @@ impl Occasion {
         self.add_event(Event::Observation(observation));
     }
 
-    /// Add a missing [Observation] with a custom [ErrorPoly] to the [Occasion]
-    ///
-    /// This is useful if you want a different weight for the observation
+    /// Add an [`Observation`] with custom [`ErrorPoly`] data.
     pub fn add_observation_with_error(
         &mut self,
         time: f64,
@@ -1701,6 +1720,62 @@ mod tests {
             .observation(1.0, 5.0, 0)
             .build();
         assert_ne!(a.hash(), b.hash());
+    }
+
+    #[test]
+    fn hash_covers_errorpoly_option_and_bits() {
+        let baseline = Subject::builder("hash-metadata")
+            .missing_observation(1.0, "cp")
+            .build();
+        let with_value = Subject::builder("hash-metadata")
+            .observation(1.0, 0.0, "cp")
+            .build();
+        let with_coefficients = Subject::builder("hash-metadata")
+            .observation_with_error(
+                1.0,
+                0.0,
+                "cp",
+                ErrorPoly::new(0.0, 0.0, 0.0, 0.0),
+                Censor::None,
+            )
+            .build();
+        let censored = Subject::builder("hash-metadata")
+            .censored_observation(1.0, 0.0, "cp", Censor::BLOQ)
+            .build();
+
+        assert_ne!(baseline.hash(), with_value.hash());
+        assert_ne!(with_value.hash(), with_coefficients.hash());
+        assert_ne!(with_value.hash(), censored.hash());
+
+        let base_coefficients = [0.1, 0.2, 0.3, 0.4];
+        let base = Subject::builder("hash-coefficients")
+            .observation_with_error(
+                1.0,
+                5.0,
+                "cp",
+                ErrorPoly::new(
+                    base_coefficients[0],
+                    base_coefficients[1],
+                    base_coefficients[2],
+                    base_coefficients[3],
+                ),
+                Censor::None,
+            )
+            .build();
+        for index in 0..4 {
+            let mut changed = base_coefficients;
+            changed[index] += 1.0;
+            let subject = Subject::builder("hash-coefficients")
+                .observation_with_error(
+                    1.0,
+                    5.0,
+                    "cp",
+                    ErrorPoly::new(changed[0], changed[1], changed[2], changed[3]),
+                    Censor::None,
+                )
+                .build();
+            assert_ne!(base.hash(), subject.hash(), "coefficient C{index}");
+        }
     }
 
     #[test]
