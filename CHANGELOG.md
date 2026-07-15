@@ -29,8 +29,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   As before, incomplete C0-C3 rows do not create an `ErrorPoly` value.
 - Keep analytical, ODE, and SDE execution focused exclusively on simulation and
   prediction generation, including simulation-only examples and benchmarks.
-- Run the source-scoped simulation ownership check in CI, including untracked
-  source files during local use.
 
 ## [0.28.2](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.28.1...pharmsol-v0.28.2) - 2026-07-20
 
