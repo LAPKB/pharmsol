@@ -1239,7 +1239,7 @@ impl NativeOdeModel {
                         occasion.index(),
                     )?
                 },
-                NalgebraContext,
+                NalgebraContext::new(),
             );
             let support_point_vec = support_point.to_vec();
             let problem = OdeBuilder::<M>::new()
@@ -1520,7 +1520,7 @@ impl EquationPriv for NativeOdeModel {
         _covariates: &Covariates,
         _occasion_index: usize,
     ) -> Self::S {
-        V::zeros(self.shared.info.state_len, NalgebraContext)
+        V::zeros(self.shared.info.state_len, NalgebraContext::new())
     }
 }
 
@@ -1927,7 +1927,7 @@ impl EquationPriv for NativeAnalyticalModel {
         _covariates: &Covariates,
         _occasion_index: usize,
     ) -> Self::S {
-        V::zeros(self.shared.info.state_len, NalgebraContext)
+        V::zeros(self.shared.info.state_len, NalgebraContext::new())
     }
 }
 
@@ -2623,7 +2623,7 @@ fn project_analytical_parameters(
             } else {
                 indices.iter().map(|&index| support_point[index]).collect()
             };
-            V::from_vec(values, NalgebraContext)
+            V::from_vec(values, NalgebraContext::new())
         }
         AnalyticalStructureInputKind::AllDerived { indices, identity } => {
             let values = if *identity {
@@ -2631,7 +2631,7 @@ fn project_analytical_parameters(
             } else {
                 indices.iter().map(|&index| derived[index]).collect()
             };
-            V::from_vec(values, NalgebraContext)
+            V::from_vec(values, NalgebraContext::new())
         }
         AnalyticalStructureInputKind::Mixed { bindings } => V::from_vec(
             bindings
@@ -2643,7 +2643,7 @@ fn project_analytical_parameters(
                     pharmsol_dsl::AnalyticalStructureInputSource::Derived => derived[binding.index],
                 })
                 .collect(),
-            NalgebraContext,
+            NalgebraContext::new(),
         ),
     }
 }
@@ -2656,8 +2656,8 @@ fn apply_analytical_kernel(
     route_inputs: &[f64],
     covariates: &Covariates,
 ) -> V {
-    let state = V::from_vec(state.to_vec(), NalgebraContext);
-    let route_inputs = V::from_vec(route_inputs.to_vec(), NalgebraContext);
+    let state = V::from_vec(state.to_vec(), NalgebraContext::new());
+    let route_inputs = V::from_vec(route_inputs.to_vec(), NalgebraContext::new());
     match kernel {
         AnalyticalKernel::OneCompartment => {
             crate::simulator::equation::analytical::one_compartment(

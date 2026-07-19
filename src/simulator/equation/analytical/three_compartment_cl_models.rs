@@ -25,7 +25,7 @@ pub fn three_compartments_cl(x: &V, p: &V, t: T, rateiv: &V, cov: &Covariates) -
     let k13 = q3 / vc;
     let k21 = q2 / v2;
     let k31 = q3 / v3;
-    let p_ke = V::from_vec(vec![k10, k12, k13, k21, k31], NalgebraContext);
+    let p_ke = V::from_vec(vec![k10, k12, k13, k21, k31], NalgebraContext::new());
     three_compartments(x, &p_ke, t, rateiv, cov)
 }
 
@@ -62,7 +62,7 @@ pub fn three_compartments_cl_with_absorption(
     let k13 = q3 / vc;
     let k21 = q2 / v2;
     let k31 = q3 / v3;
-    let p_ke = V::from_vec(vec![ka, k10, k12, k13, k21, k31], NalgebraContext);
+    let p_ke = V::from_vec(vec![ka, k10, k12, k13, k21, k31], NalgebraContext::new());
     three_compartments_with_absorption(x, &p_ke, t, rateiv, cov)
 }
 
