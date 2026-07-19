@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.1](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.28.0...pharmsol-v0.28.1) - 2026-07-13
+
+### Fixed
+
+- Fix data expansion ([#282](https://github.com/LAPKB/pharmsol/pull/282))
+
 ## [0.28.0](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.27.1...pharmsol-v0.27.2) - 2026-07-07
 
 ### Added
