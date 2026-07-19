@@ -22,8 +22,8 @@ use crate::simulator::cache::{PredictionCache, DEFAULT_CACHE_SIZE};
 use crate::simulator::equation::Predictions;
 use closure::PMProblem;
 use diffsol::{
-    error::OdeSolverError, ode_solver::method::OdeSolverMethod, NalgebraContext, OdeBuilder,
-    OdeSolverStopReason, Vector, VectorHost,
+    error::OdeSolverError, ode_solver::method::OdeSolverMethod, NalgebraContext, NonLinearOp,
+    OdeBuilder, OdeEquations, OdeSolverStopReason, Vector, VectorHost,
 };
 use nalgebra::DVector;
 use pharmsol_dsl::ModelKind;
@@ -564,6 +564,13 @@ impl ODE {
 
                     state_with_bolus.axpy(-1.0, state_without_bolus, 1.0);
                     solver.state_mut().y.axpy(1.0, state_with_bolus, 1.0);
+
+                    solver.problem().eqn.rhs().call_inplace(
+                        solver.state().y,
+                        event.time(),
+                        state_without_bolus,
+                    );
+                    solver.state_mut().dy.copy_from(state_without_bolus);
                 }
                 Event::Infusion(_) => {
                     // Infusions are handled within the ODE function itself
