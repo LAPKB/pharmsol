@@ -17,7 +17,7 @@ pub fn one_compartment_cl(x: &V, p: &V, t: T, rateiv: &V, cov: &Covariates) -> V
     let cl = p[0];
     let v = p[1];
     let ke = cl / v;
-    let p_ke = V::from_vec(vec![ke], NalgebraContext);
+    let p_ke = V::from_vec(vec![ke], NalgebraContext::new());
     one_compartment(x, &p_ke, t, rateiv, cov)
 }
 
@@ -40,7 +40,7 @@ pub fn one_compartment_cl_with_absorption(x: &V, p: &V, t: T, rateiv: &V, cov: &
     let cl = p[1];
     let v = p[2];
     let ke = cl / v;
-    let p_ke = V::from_vec(vec![ka, ke], NalgebraContext);
+    let p_ke = V::from_vec(vec![ka, ke], NalgebraContext::new());
     one_compartment_with_absorption(x, &p_ke, t, rateiv, cov)
 }
 

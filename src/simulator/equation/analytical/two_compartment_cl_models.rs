@@ -21,7 +21,7 @@ pub fn two_compartments_cl(x: &V, p: &V, t: T, rateiv: &V, cov: &Covariates) -> 
     let ke = cl / vc;
     let kcp = q / vc;
     let kpc = q / vp;
-    let p_ke = V::from_vec(vec![ke, kcp, kpc], NalgebraContext);
+    let p_ke = V::from_vec(vec![ke, kcp, kpc], NalgebraContext::new());
     two_compartments(x, &p_ke, t, rateiv, cov)
 }
 
@@ -48,7 +48,7 @@ pub fn two_compartments_cl_with_absorption(x: &V, p: &V, t: T, rateiv: &V, cov: 
     let ke = cl / vc;
     let kcp = q / vc;
     let kpc = q / vp;
-    let p_ke = V::from_vec(vec![ke, ka, kcp, kpc], NalgebraContext);
+    let p_ke = V::from_vec(vec![ke, ka, kcp, kpc], NalgebraContext::new());
     two_compartments_with_absorption(x, &p_ke, t, rateiv, cov)
 }
 
