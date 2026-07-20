@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.2](https://github.com/LAPKB/pharmsol/compare/pharmsol-macros-v0.28.1...pharmsol-macros-v0.28.2) - 2026-07-20
+
+### Other
+
+- Update syn requirement from 2.0.117 to 3.0.2 ([#296](https://github.com/LAPKB/pharmsol/pull/296))
+
 ## [0.28.0](https://github.com/LAPKB/pharmsol/compare/pharmsol-macros-v0.27.1...pharmsol-macros-v0.27.2) - 2026-07-07
 
 ### Fixed
