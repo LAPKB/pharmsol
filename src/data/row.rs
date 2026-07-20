@@ -759,6 +759,141 @@ mod tests {
         }
     }
 
+    /// After `build_data` assembles an occasion, the expanded dose events must be
+    /// in strictly non-decreasing time order regardless of the ADDL direction.
+    fn assert_dose_times_sorted(subject: &crate::Subject) {
+        for occasion in subject.occasions() {
+            let times: Vec<f64> = occasion.events().iter().map(|e| e.time()).collect();
+            for pair in times.windows(2) {
+                assert!(
+                    pair[0] <= pair[1],
+                    "events out of order: {:?} then {:?} in full list {times:?}",
+                    pair[0],
+                    pair[1]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_build_data_positive_addl_is_sorted() {
+        let rows = vec![DataRow::builder("pt1", 0.0)
+            .evid(1)
+            .dose(100.0)
+            .input("iv")
+            .addl(24)
+            .ii(120.0)
+            .build()];
+
+        let data = build_data(rows).unwrap();
+        let subject = data.get_subject("pt1").unwrap();
+        assert_dose_times_sorted(subject);
+
+        let times: Vec<f64> = subject.occasions()[0]
+            .events()
+            .iter()
+            .map(|e| e.time())
+            .collect();
+        // Base dose at 0, then 24 additional doses spaced by 120.
+        assert_eq!(times.len(), 25);
+        assert_eq!(times.first(), Some(&0.0));
+        assert_eq!(times.last(), Some(&2880.0));
+    }
+
+    #[test]
+    fn test_build_data_negative_addl_is_sorted() {
+        let rows = vec![DataRow::builder("pt1", 0.0)
+            .evid(1)
+            .dose(500.0)
+            .dur(0.5)
+            .input("iv")
+            .addl(-1)
+            .ii(48.0)
+            .build()];
+
+        let data = build_data(rows).unwrap();
+        let subject = data.get_subject("pt1").unwrap();
+        assert_dose_times_sorted(subject);
+
+        let times: Vec<f64> = subject.occasions()[0]
+            .events()
+            .iter()
+            .map(|e| e.time())
+            .collect();
+        // Negative ADDL places the extra dose *before* the base dose.
+        assert_eq!(times, vec![-48.0, 0.0]);
+    }
+
+    #[test]
+    fn test_build_data_mixed_regimen_from_issue_is_sorted() {
+        // Mirrors the regimen from issue #292: a negative-ADDL infusion, a block
+        // of observations, then a long positive-ADDL infusion regimen.
+        let mut rows = vec![DataRow::builder("51", 0.0)
+            .evid(1)
+            .dose(500.0)
+            .dur(0.5)
+            .input("iv")
+            .addl(-1)
+            .ii(48.0)
+            .build()];
+
+        for t in [0.5, 1.0, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0, 18.0, 24.0] {
+            rows.push(
+                DataRow::builder("51", t)
+                    .evid(0)
+                    .out(1.0)
+                    .outeq("cp")
+                    .build(),
+            );
+        }
+
+        rows.push(
+            DataRow::builder("51", 25.0)
+                .evid(1)
+                .dose(20000.0)
+                .dur(0.0001)
+                .input("iv")
+                .addl(24)
+                .ii(120.0)
+                .build(),
+        );
+
+        let data = build_data(rows).unwrap();
+        let subject = data.get_subject("51").unwrap();
+        assert_dose_times_sorted(subject);
+
+        // The last infusion of the long regimen lands at 25 + 24 * 120 = 2905.
+        let last_time = subject.occasions()[0]
+            .events()
+            .iter()
+            .map(|e| e.time())
+            .fold(f64::NEG_INFINITY, f64::max);
+        assert_eq!(last_time, 2905.0);
+    }
+
+    #[test]
+    fn test_addl_expansion_uses_exact_multiples() {
+        // Repeated addition during expansion must not drift for integer intervals.
+        let rows = vec![DataRow::builder("pt1", 25.0)
+            .evid(1)
+            .dose(100.0)
+            .input("iv")
+            .addl(24)
+            .ii(120.0)
+            .build()];
+
+        let data = build_data(rows).unwrap();
+        let subject = data.get_subject("pt1").unwrap();
+        let times: Vec<f64> = subject.occasions()[0]
+            .events()
+            .iter()
+            .map(|e| e.time())
+            .collect();
+
+        let expected: Vec<f64> = (0..=24).map(|k| 25.0 + 120.0 * k as f64).collect();
+        assert_eq!(times, expected);
+    }
+
     #[test]
     fn test_covariates() {
         let row = DataRow::builder("pt1", 0.0)
