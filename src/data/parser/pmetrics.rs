@@ -316,7 +316,7 @@ impl Data {
 
         for subject in self.subjects() {
             for occasion in subject.occasions() {
-                for event in occasion.process_events(None, false) {
+                for event in occasion.process_events(None) {
                     match event {
                         Event::Observation(obs) => {
                             let time = obs.time().to_string();

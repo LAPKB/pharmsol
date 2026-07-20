@@ -1,3 +1,11 @@
+//! Nelder‑Mead parameter refinement for pharmacometric models.
+//!
+//! This module provides a [`ParameterOptimizer`] that refines a single parameter
+//! Given an [`Equation`], observed [`Data`], and [`AssayErrorModels`] via
+//! Nelder‑Mead optimization in log‑space. The optimizer finds the parameter vector
+//! that minimizes the negative log-likelihood of the model predictions against the data,
+//! as measured by the provided error models.
+
 use argmin::{
     core::{CostFunction, Error, Executor},
     solver::neldermead::NelderMead,
@@ -7,6 +15,7 @@ use ndarray::{Array1, Axis};
 
 use crate::{prelude::simulator::log_likelihood_matrix, AssayErrorModels, Data, Equation};
 
+/// Optimizer that refines a single parameter vector against observed data.
 pub struct ParameterOptimizer<'a, E: Equation> {
     equation: &'a E,
     data: &'a Data,
@@ -44,6 +53,12 @@ impl<E: Equation> CostFunction for ParameterOptimizer<'_, E> {
 }
 
 impl<'a, E: Equation> ParameterOptimizer<'a, E> {
+    /// Create a new optimizer.
+    ///
+    /// * `equation` — the model to evaluate.
+    /// * `data` — observed subject data.
+    /// * `sig` — assay error models per output.
+    /// * `pyl` — reference (target) likelihood vector.
     pub fn new(
         equation: &'a E,
         data: &'a Data,
@@ -57,6 +72,8 @@ impl<'a, E: Equation> ParameterOptimizer<'a, E> {
             pyl,
         }
     }
+
+    /// Optimize the parameters to minimize the negative log-likelihood against the data.
 
     pub fn optimize_point(self, parameters: Array1<f64>) -> Result<Array1<f64>, Error> {
         let simplex = create_initial_simplex(&parameters.to_vec());

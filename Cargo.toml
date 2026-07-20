@@ -3,15 +3,15 @@ members = [".", "pharmsol-dsl", "pharmsol-macros"]
 resolver = "2"
 
 [workspace.package]
-version = "0.27.1"
+version = "0.28.1"
 edition = "2021"
 license = "GPL-3.0"
 authors = ["Julián D. Otálvaro <juliandavid347@gmail.com>", "Markus Hovd"]
 repository = "https://github.com/LAPKB/pharmsol"
 
 [workspace.dependencies]
-pharmsol-dsl = { path = "pharmsol-dsl", version = "0.27.1" }
-pharmsol-macros = { path = "pharmsol-macros", version = "0.27.1" }
+pharmsol-dsl = { path = "pharmsol-dsl", version = "0.28.1" }
+pharmsol-macros = { path = "pharmsol-macros", version = "0.28.1" }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 
@@ -59,8 +59,8 @@ wasm-encoder = { version = "0.247.0", optional = true }
 [target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dependencies]
 ahash = "0.8.12"
 csv = "1.4.0"
-diffsol = "=0.12.4"
-nalgebra = "0.34.2"
+diffsol = "=0.15.1"
+nalgebra = "0.35.0"
 ndarray = { version = "0.17.2", features = ["rayon"] }
 rand = "0.10.1"
 rand_distr = "0.6.0"
@@ -68,7 +68,7 @@ rayon = "1.12.0"
 statrs = "0.18.0"
 argmin = "0.11.0"
 argmin-math = "0.5.1"
-moka = { version = "0.12.15", features = ["sync"] }
+quick_cache = "0.7.0"
 wasmtime = { version = "44.0.0", optional = true }
 
 [dev-dependencies]

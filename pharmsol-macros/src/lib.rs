@@ -3208,6 +3208,45 @@ fn expand_sde_out(
 // Proc macros
 // ---------------------------------------------------------------------------
 
+/// Define an ODE (ordinary differential equation) model.
+///
+/// This is the primary entry point for building pharmacometric ODE models.
+/// The macro generates and validates an `ODE` model and automatically generates its metadata
+/// (parameter names, state labels, output labels, route declarations).
+///
+/// # Fields
+///
+/// | Field | Required | Description |
+/// |-------|----------|-------------|
+/// | `name` | yes | Model name (`"my_model"`) |
+/// | `params` | yes | Parameter identifiers `[ka, ke, v]` |
+/// | `covariates` | no | Covariate identifiers `[wt, age]` |
+/// | `states` | yes | State identifiers `[gut, central]` |
+/// | `outputs` | yes | Output identifiers `[cp]` |
+/// | `routes` | no | Route declarations `[bolus(oral) -> gut, infusion(iv) -> central]` |
+/// | `diffeq` | yes | Closure `\|x, p, t, dx, cov\| { … }` writing derivatives into `dx` |
+/// | `lag` | no | Closure returning route‑specific lag times via `lag! { route => expr }` |
+/// | `fa` | no | Closure returning bioavailability fractions |
+/// | `init` | no | Closure setting initial state values |
+/// | `out` | yes | Closure `\|x, p, t, cov, y\| { … }` mapping states to outputs |
+///
+/// # Example
+///
+/// ```ignore
+/// let model = ode! {
+///     name: "one_cmt_iv",
+///     params: [ke, v],
+///     states: [central],
+///     outputs: [cp],
+///     routes: [infusion(iv) -> central],
+///     diffeq: |x, _p, _t, dx, _cov| {
+///         dx[central] = -ke * x[central];
+///     },
+///     out: |x, _p, _t, _cov, y| {
+///         y[cp] = x[central] / v;
+///     },
+/// };
+/// ```
 #[proc_macro]
 pub fn ode(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as OdeInput);
@@ -3365,6 +3404,45 @@ pub fn ode(input: TokenStream) -> TokenStream {
     .into()
 }
 
+/// Define an analytical (closed‑form) PK model.
+///
+/// Builds a model that uses a built‑in analytical solution. The macro validates that the declared parameters
+/// match the chosen analytical solution's requirements and generates an `Analytical` value
+/// with full metadata.
+///
+/// # Fields
+///
+/// | Field | Required | Description |
+/// |-------|----------|-------------|
+/// | `name` | yes | Model name |
+/// | `params` | yes | Parameter identifiers |
+/// | `derived` | no | Derived parameter identifiers (computed in `derive`) |
+/// | `covariates` | no | Covariate identifiers |
+/// | `states` | yes | State identifiers |
+/// | `outputs` | yes | Output identifiers |
+/// | `routes` | no | Route declarations |
+/// | `structure` | yes | Built‑in kernel name, e.g. `one_compartment` or `one_compartment_with_absorption` |
+/// | `derive` | no | Closure `\|t\| { … }` computing derived parameters from primaries and covariates |
+/// | `lag` | no | Lag‑time closure |
+/// | `fa` | no | Bioavailability closure |
+/// | `init` | no | Initial‑state closure |
+/// | `out` | yes | Output mapping closure |
+///
+/// # Example
+///
+/// ```ignore
+/// let model = analytical! {
+///     name: "one_cmt_oral",
+///     params: [ka, ke, v],
+///     states: [gut, central],
+///     outputs: [cp],
+///     routes: [bolus(oral) -> gut],
+///     structure: one_compartment_with_absorption,
+///     out: |x, _t, y| {
+///         y[cp] = x[central] / v;
+///     },
+/// };
+/// ```
 #[proc_macro]
 pub fn analytical(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as AnalyticalInput);
@@ -3506,7 +3584,6 @@ pub fn analytical(input: TokenStream) -> TokenStream {
     let nstates = input.states.len();
     let ndrugs = dense_index_len(&route_bindings);
     let nout = input.outputs.len();
-
     let name = &input.name;
     let params = &input.params;
     let covariates = &input.covariates;
@@ -3550,6 +3627,51 @@ pub fn analytical(input: TokenStream) -> TokenStream {
     .into()
 }
 
+/// Define an SDE (stochastic differential equation) model.
+///
+/// Builds a particle‑based stochastic model with a drift term, a diffusion
+/// term, and a configurable number of particles. The macro generates an `SDE`
+/// value with full metadata.
+///
+/// # Fields
+///
+/// | Field | Required | Description |
+/// |-------|----------|-------------|
+/// | `name` | yes | Model name |
+/// | `params` | yes | Parameter identifiers |
+/// | `covariates` | no | Covariate identifiers |
+/// | `states` | yes | State identifiers |
+/// | `outputs` | yes | Output identifiers |
+/// | `particles` | yes | Number of particles for the simulation |
+/// | `routes` | no | Route declarations |
+/// | `drift` | yes | Closure `\|x, p, t, dx, cov\| { … }` for the deterministic drift |
+/// | `diffusion` | yes | Closure `\|p, sigma\| { … }` setting per‑state diffusion coefficients |
+/// | `lag` | no | Lag‑time closure |
+/// | `fa` | no | Bioavailability closure |
+/// | `init` | no | Initial‑state closure |
+/// | `out` | yes | Output mapping closure |
+///
+/// # Example
+///
+/// ```ignore
+/// let model = sde! {
+///     name: "one_cmt_sde",
+///     params: [ke, sigma_ke, v],
+///     states: [central],
+///     outputs: [cp],
+///     particles: 16,
+///     routes: [infusion(iv) -> central],
+///     drift: |x, _p, _t, dx, _cov| {
+///         dx[central] = -ke * x[central];
+///     },
+///     diffusion: |_p, sigma| {
+///         sigma[central] = sigma_ke;
+///     },
+///     out: |x, _p, _t, _cov, y| {
+///         y[cp] = x[central] / v;
+///     },
+/// };
+/// ```
 #[proc_macro]
 pub fn sde(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as SdeInput);

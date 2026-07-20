@@ -1,3 +1,9 @@
+//! Demonstrates time-varying covariates that scale parameters in an ODE model.
+//!
+//! This example defines a one-compartment oral absorption model where the
+//! elimination rate `ke` is dynamically scaled by creatinine and age covariates.
+//! It also shows lag-time handling and repeated dosing via the `ode!` macro.
+
 fn main() {
     use pharmsol::{prelude::*, Parameters};
 

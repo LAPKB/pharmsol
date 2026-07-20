@@ -143,7 +143,7 @@ pub trait Cache: Sized {
     ///
     /// If caching is already enabled, this **replaces** the cache with a new, empty
     /// one of the given size — all previously cached entries are discarded.
-    fn with_cache_capacity(self, size: u64) -> Self;
+    fn with_cache_capacity(self, size: usize) -> Self;
 
     /// Enable caching with the default size (100,000 entries).
     ///
@@ -274,7 +274,7 @@ pub(crate) trait EquationPriv: EquationTypes {
             }
         }
 
-        Ok(resolved.process_events(Some((self.fa(), self.lag(), parameters, covariates)), true))
+        Ok(resolved.process_events(Some((self.fa(), self.lag(), parameters, covariates))))
     }
     #[allow(dead_code)]
     fn is_sde(&self) -> bool {

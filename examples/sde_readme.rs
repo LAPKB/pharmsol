@@ -1,3 +1,9 @@
+//! Shows the minimal SDE workflow with the `sde!` macro.
+//!
+//! Defines a one-compartment IV infusion model with diffusion noise on the
+//! central compartment, creates a subject, sets named parameters, and
+//! estimates predictions using particle-based simulation.
+
 fn main() -> Result<(), pharmsol::PharmsolError> {
     use pharmsol::{prelude::*, Parameters};
 

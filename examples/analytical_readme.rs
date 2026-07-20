@@ -1,3 +1,6 @@
+//! This example showcases the use of the `analytical!` macro to define a simple one-compartment model with first-order absorption,
+//! and the basic workflow of creating a subject, defining parameters, and estimating predictions.
+
 fn main() -> Result<(), pharmsol::PharmsolError> {
     use pharmsol::{prelude::*, Parameters};
 
