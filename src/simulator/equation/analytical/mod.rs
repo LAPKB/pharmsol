@@ -338,11 +338,13 @@ impl EquationPriv for Analytical {
                 let s = inf.time();
                 let e = s + inf.duration();
                 if current_t >= s && next_t <= e {
-                    let input =
-                        inf.input_index()
-                            .ok_or_else(|| PharmsolError::UnknownInputLabel {
-                                label: inf.input().to_string(),
-                            })?;
+                    let input = inf.input_index().ok_or_else(|| {
+                        let available = self
+                            .metadata()
+                            .map(|m| m.route_labels())
+                            .unwrap_or_default();
+                        PharmsolError::unknown_input_label(inf.input(), &available)
+                    })?;
 
                     if input >= self.get_ndrugs() {
                         return Err(PharmsolError::InputOutOfRange {
@@ -388,11 +390,13 @@ impl EquationPriv for Analytical {
             covariates,
             &mut y,
         );
-        let outeq = observation
-            .outeq_index()
-            .ok_or_else(|| PharmsolError::UnknownOutputLabel {
-                label: observation.outeq().to_string(),
-            })?;
+        let outeq = observation.outeq_index().ok_or_else(|| {
+            let available = self
+                .metadata()
+                .map(|m| m.output_labels())
+                .unwrap_or_default();
+            PharmsolError::unknown_output_label(observation.outeq(), &available)
+        })?;
         let pred = y[outeq];
         let pred = observation.to_prediction(pred, x.as_slice().to_vec());
         if let Some(error_models) = error_models {

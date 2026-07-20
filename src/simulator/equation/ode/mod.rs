@@ -334,108 +334,120 @@ fn _simulate_subject_dense(
     let mut y_out = V::zeros(ode.get_nouteqs(), NalgebraContext::new());
 
     for occasion in subject.occasions() {
-        let covariates = occasion.covariates();
-        let events = ode.resolve_occasion_events(occasion, parameters, covariates)?;
+        // Run one occasion in a closure so any error can be tagged with the
+        // subject and support point in a single place below.
+        let occasion_result: Result<(), PharmsolError> = (|| {
+            let covariates = occasion.covariates();
+            let events = ode.resolve_occasion_events(occasion, parameters, covariates)?;
 
-        let problem = OdeBuilder::<M>::new()
-            .atol(vec![ode.atol])
-            .rtol(ode.rtol)
-            .t0(occasion.initial_time())
-            .h0(1e-3)
-            .p(parameters_vec.clone())
-            .build_from_eqn(PMProblem::with_params_v(
-                move |x, p, t, dx, bolus, rateiv, cov| {
-                    (ode.diffeq)(x, p, t, dx, bolus, rateiv, cov);
-                },
-                nstates,
-                ndrugs,
-                parameters_v.clone(),
-                covariates,
-                events.iter().filter_map(|event| match event {
-                    Event::Infusion(infusion) => Some(infusion),
-                    _ => None,
-                }),
-                ode.initial_state(parameters, covariates, occasion.index()),
-            )?)?;
+            let problem = OdeBuilder::<M>::new()
+                .atol(vec![ode.atol])
+                .rtol(ode.rtol)
+                .t0(occasion.initial_time())
+                .h0(1e-3)
+                .p(parameters_vec.clone())
+                .build_from_eqn(PMProblem::with_params_v(
+                    move |x, p, t, dx, bolus, rateiv, cov| {
+                        (ode.diffeq)(x, p, t, dx, bolus, rateiv, cov);
+                    },
+                    nstates,
+                    ndrugs,
+                    parameters_v.clone(),
+                    covariates,
+                    events.iter().filter_map(|event| match event {
+                        Event::Infusion(infusion) => Some(infusion),
+                        _ => None,
+                    }),
+                    ode.initial_state(parameters, covariates, occasion.index()),
+                )?)?;
 
-        match &ode.solver {
-            OdeSolver::Bdf => {
-                let mut solver = problem.bdf::<diffsol::NalgebraLU<f64>>()?;
-                ODE::run_events(
-                    ode,
-                    &mut solver,
-                    &events,
-                    &parameters_v,
-                    covariates,
-                    bound_error_models,
-                    &mut bolus_v,
-                    &zero_bolus,
-                    &zero_rateiv,
-                    &mut state_with_bolus,
-                    &mut state_without_bolus,
-                    &mut y_out,
-                    &mut likelihood,
-                    &mut output,
-                )?;
+            match &ode.solver {
+                OdeSolver::Bdf => {
+                    let mut solver = problem.bdf::<diffsol::NalgebraLU<f64>>()?;
+                    ODE::run_events(
+                        ode,
+                        &mut solver,
+                        &events,
+                        &parameters_v,
+                        covariates,
+                        bound_error_models,
+                        &mut bolus_v,
+                        &zero_bolus,
+                        &zero_rateiv,
+                        &mut state_with_bolus,
+                        &mut state_without_bolus,
+                        &mut y_out,
+                        &mut likelihood,
+                        &mut output,
+                    )?;
+                }
+                OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45) => {
+                    let mut solver = problem.tsit45()?;
+                    ODE::run_events(
+                        ode,
+                        &mut solver,
+                        &events,
+                        &parameters_v,
+                        covariates,
+                        bound_error_models,
+                        &mut bolus_v,
+                        &zero_bolus,
+                        &zero_rateiv,
+                        &mut state_with_bolus,
+                        &mut state_without_bolus,
+                        &mut y_out,
+                        &mut likelihood,
+                        &mut output,
+                    )?;
+                }
+                OdeSolver::Sdirk(SdirkTableau::TrBdf2) => {
+                    let mut solver = problem.tr_bdf2::<diffsol::NalgebraLU<f64>>()?;
+                    ODE::run_events(
+                        ode,
+                        &mut solver,
+                        &events,
+                        &parameters_v,
+                        covariates,
+                        bound_error_models,
+                        &mut bolus_v,
+                        &zero_bolus,
+                        &zero_rateiv,
+                        &mut state_with_bolus,
+                        &mut state_without_bolus,
+                        &mut y_out,
+                        &mut likelihood,
+                        &mut output,
+                    )?;
+                }
+                OdeSolver::Sdirk(SdirkTableau::Esdirk34) => {
+                    let mut solver = problem.esdirk34::<diffsol::NalgebraLU<f64>>()?;
+                    ODE::run_events(
+                        ode,
+                        &mut solver,
+                        &events,
+                        &parameters_v,
+                        covariates,
+                        bound_error_models,
+                        &mut bolus_v,
+                        &zero_bolus,
+                        &zero_rateiv,
+                        &mut state_with_bolus,
+                        &mut state_without_bolus,
+                        &mut y_out,
+                        &mut likelihood,
+                        &mut output,
+                    )?;
+                }
             }
-            OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45) => {
-                let mut solver = problem.tsit45()?;
-                ODE::run_events(
-                    ode,
-                    &mut solver,
-                    &events,
-                    &parameters_v,
-                    covariates,
-                    bound_error_models,
-                    &mut bolus_v,
-                    &zero_bolus,
-                    &zero_rateiv,
-                    &mut state_with_bolus,
-                    &mut state_without_bolus,
-                    &mut y_out,
-                    &mut likelihood,
-                    &mut output,
-                )?;
-            }
-            OdeSolver::Sdirk(SdirkTableau::TrBdf2) => {
-                let mut solver = problem.tr_bdf2::<diffsol::NalgebraLU<f64>>()?;
-                ODE::run_events(
-                    ode,
-                    &mut solver,
-                    &events,
-                    &parameters_v,
-                    covariates,
-                    bound_error_models,
-                    &mut bolus_v,
-                    &zero_bolus,
-                    &zero_rateiv,
-                    &mut state_with_bolus,
-                    &mut state_without_bolus,
-                    &mut y_out,
-                    &mut likelihood,
-                    &mut output,
-                )?;
-            }
-            OdeSolver::Sdirk(SdirkTableau::Esdirk34) => {
-                let mut solver = problem.esdirk34::<diffsol::NalgebraLU<f64>>()?;
-                ODE::run_events(
-                    ode,
-                    &mut solver,
-                    &events,
-                    &parameters_v,
-                    covariates,
-                    bound_error_models,
-                    &mut bolus_v,
-                    &zero_bolus,
-                    &zero_rateiv,
-                    &mut state_with_bolus,
-                    &mut state_without_bolus,
-                    &mut y_out,
-                    &mut likelihood,
-                    &mut output,
-                )?;
-            }
-        }
+            Ok(())
+        })();
+        occasion_result.map_err(|e| {
+            let names = ode
+                .metadata()
+                .map(|m| m.parameter_names())
+                .unwrap_or_default();
+            e.with_subject_context(subject.id(), parameters, &names)
+        })?;
     }
 
     let ll = bound_error_models.map(|_| likelihood.iter().product::<f64>());
@@ -559,12 +571,13 @@ impl ODE {
 
             match event {
                 Event::Bolus(bolus) => {
-                    let input =
-                        bolus
-                            .input_index()
-                            .ok_or_else(|| PharmsolError::UnknownInputLabel {
-                                label: bolus.input().to_string(),
-                            })?;
+                    let input = bolus.input_index().ok_or_else(|| {
+                        let available = self
+                            .metadata()
+                            .map(|m| m.route_labels())
+                            .unwrap_or_default();
+                        PharmsolError::unknown_input_label(bolus.input(), &available)
+                    })?;
 
                     if input >= bolus_v.len() {
                         return Err(PharmsolError::InputOutOfRange {
@@ -614,9 +627,11 @@ impl ODE {
                         y_out,
                     );
                     let outeq = observation.outeq_index().ok_or_else(|| {
-                        PharmsolError::UnknownOutputLabel {
-                            label: observation.outeq().to_string(),
-                        }
+                        let available = self
+                            .metadata()
+                            .map(|m| m.output_labels())
+                            .unwrap_or_default();
+                        PharmsolError::unknown_output_label(observation.outeq(), &available)
                     })?;
                     let pred = y_out[outeq];
                     let pred =
@@ -636,18 +651,17 @@ impl ODE {
                             match solver.step() {
                                 Ok(OdeSolverStopReason::InternalTimestep) => continue,
                                 Ok(OdeSolverStopReason::TstopReached) => break,
-                                Err(diffsol::error::DiffsolError::OdeSolverError(
-                                    OdeSolverError::StepSizeTooSmall { time },
-                                )) => {
+                                Ok(OdeSolverStopReason::RootFound(_, _)) => {
                                     return Err(PharmsolError::OtherError(format!(
-                                        "ODE solver step size went to zero at t = {time:.4} (target t = {:.4}). \
-                                         A parameter is likely near 0 or infinite.",
+                                        "solver stopped at an unexpected root at t = {:.4} \
+                                         (root finding is not configured)",
                                         next_event.time()
                                     )));
                                 }
-                                Err(_) | Ok(_) => {
-                                    return Err(PharmsolError::OtherError(
-                                        "Unexpected solver error".to_string(),
+                                Err(err) => {
+                                    return Err(PharmsolError::from_solver_error(
+                                        err,
+                                        next_event.time(),
                                     ));
                                 }
                             }
@@ -657,10 +671,8 @@ impl ODE {
                         )) => {
                             continue;
                         }
-                        Err(_) => {
-                            return Err(PharmsolError::OtherError(
-                                "Unexpected solver error".to_string(),
-                            ));
+                        Err(err) => {
+                            return Err(PharmsolError::from_solver_error(err, next_event.time()));
                         }
                     }
                 }

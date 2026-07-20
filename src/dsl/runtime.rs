@@ -737,7 +737,7 @@ out(cp) = central / v ~ continuous()
 
         assert!(matches!(
             error,
-            RuntimeError::Runtime(PharmsolError::UnknownOutputLabel { label }) if label == expected_label
+            RuntimeError::Runtime(PharmsolError::UnknownOutputLabel { label, .. }) if label == expected_label
         ));
     }
 
@@ -753,7 +753,7 @@ out(cp) = central / v ~ continuous()
 
         assert!(matches!(
             error,
-            RuntimeError::Runtime(PharmsolError::UnknownInputLabel { label }) if label == expected_label
+            RuntimeError::Runtime(PharmsolError::UnknownInputLabel { label, .. }) if label == expected_label
         ));
     }
 
