@@ -205,8 +205,8 @@ pub(crate) trait EquationPriv: EquationTypes {
                     canonical_numeric_alias(label.as_str(), NUMERIC_ROUTE_PREFIX)
                         .and_then(|alias| metadata.route(alias.as_str()))
                 })
-                .ok_or_else(|| PharmsolError::UnknownInputLabel {
-                    label: label.to_string(),
+                .ok_or_else(|| {
+                    PharmsolError::unknown_input_label(label.as_str(), &metadata.route_labels())
                 })?;
 
             if route.kind() != expected_kind {
@@ -224,9 +224,7 @@ pub(crate) trait EquationPriv: EquationTypes {
 
         label
             .index()
-            .ok_or_else(|| PharmsolError::UnknownInputLabel {
-                label: label.to_string(),
-            })
+            .ok_or_else(|| PharmsolError::unknown_input_label(label.as_str(), &[]))
     }
 
     fn resolve_output_label(&self, label: &OutputLabel) -> Result<usize, PharmsolError> {
@@ -237,16 +235,14 @@ pub(crate) trait EquationPriv: EquationTypes {
                     canonical_numeric_alias(label.as_str(), NUMERIC_OUTPUT_PREFIX)
                         .and_then(|alias| metadata.output_index(alias.as_str()))
                 })
-                .ok_or_else(|| PharmsolError::UnknownOutputLabel {
-                    label: label.to_string(),
+                .ok_or_else(|| {
+                    PharmsolError::unknown_output_label(label.as_str(), &metadata.output_labels())
                 });
         }
 
         label
             .index()
-            .ok_or_else(|| PharmsolError::UnknownOutputLabel {
-                label: label.to_string(),
-            })
+            .ok_or_else(|| PharmsolError::unknown_output_label(label.as_str(), &[]))
     }
 
     fn resolve_occasion_events(
@@ -316,12 +312,13 @@ pub(crate) trait EquationPriv: EquationTypes {
     ) -> Result<(), PharmsolError> {
         match event {
             Event::Bolus(bolus) => {
-                let input =
-                    bolus
-                        .input_index()
-                        .ok_or_else(|| PharmsolError::UnknownInputLabel {
-                            label: bolus.input().to_string(),
-                        })?;
+                let input = bolus.input_index().ok_or_else(|| {
+                    let available = self
+                        .metadata()
+                        .map(|m| m.route_labels())
+                        .unwrap_or_default();
+                    PharmsolError::unknown_input_label(bolus.input(), &available)
+                })?;
 
                 if input >= self.get_ndrugs() {
                     return Err(PharmsolError::InputOutOfRange {

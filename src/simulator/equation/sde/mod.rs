@@ -612,12 +612,13 @@ impl EquationPriv for SDE {
     ) -> Result<(), PharmsolError> {
         match event {
             crate::Event::Bolus(bolus) => {
-                let input =
-                    bolus
-                        .input_index()
-                        .ok_or_else(|| PharmsolError::UnknownInputLabel {
-                            label: bolus.input().to_string(),
-                        })?;
+                let input = bolus.input_index().ok_or_else(|| {
+                    let available = self
+                        .metadata()
+                        .map(|m| m.route_labels())
+                        .unwrap_or_default();
+                    PharmsolError::unknown_input_label(bolus.input(), &available)
+                })?;
 
                 if input >= self.get_ndrugs() {
                     return Err(PharmsolError::InputOutOfRange {
