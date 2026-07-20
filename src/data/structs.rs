@@ -1,6 +1,6 @@
 use crate::{
     data::*,
-    simulator::{Fa, Lag},
+    simulator::{Fa, Lag, V},
     Censor,
 };
 use serde::{Deserialize, Serialize};
@@ -609,37 +609,58 @@ impl Occasion {
     }
 
     fn add_lagtime(&mut self, reorder: Option<(&Fa, &Lag, &[f64], &Covariates)>) {
-        if let Some((_, fn_lag, parameters, covariates)) = reorder {
-            let parameters = nalgebra::DVector::from_vec(parameters.to_vec());
-            for event in self.events.iter_mut() {
-                let time = event.time();
-                if let Event::Bolus(bolus) = event {
-                    let lagtime = fn_lag(&parameters.clone().into(), time, covariates);
-                    if let Some(input) = bolus.input_index() {
-                        if let Some(l) = lagtime.get(&input) {
-                            *bolus.mut_time() += l;
-                        }
-                    }
+        let Some((_, fn_lag, parameters, covariates)) = reorder else {
+            // No model context: events are already time-sorted from construction.
+            return;
+        };
+
+        // Build the parameter vector once and reuse it for every dose.
+        let parameters: V = nalgebra::DVector::from_vec(parameters.to_vec()).into();
+        let mut shifted = false;
+
+        for event in self.events.iter_mut() {
+            // Lag time delays boluses only; infusions are never lagged.
+            let Event::Bolus(bolus) = event else {
+                continue;
+            };
+            let Some(input) = bolus.input_index() else {
+                continue;
+            };
+            let lagtime = fn_lag(&parameters, bolus.time(), covariates);
+            if let Some(&l) = lagtime.get(&input) {
+                if l != 0.0 {
+                    *bolus.mut_time() += l;
+                    shifted = true;
                 }
             }
         }
-        self.sort();
+
+        // Re-sort only when a lag actually moved an event; the events were
+        // already sorted at construction time, so an unchanged pass stays sorted.
+        if shifted {
+            self.sort();
+        }
     }
 
     fn add_bioavailability(&mut self, reorder: Option<(&Fa, &Lag, &[f64], &Covariates)>) {
-        // If lagtime is empty, return early
-        if let Some((fn_fa, _, parameters, covariates)) = reorder {
-            let parameters = nalgebra::DVector::from_vec(parameters.to_vec());
-            for event in self.events.iter_mut() {
-                let time = event.time();
-                if let Event::Bolus(bolus) = event {
-                    let fa = fn_fa(&parameters.clone().into(), time, covariates);
-                    if let Some(input) = bolus.input_index() {
-                        if let Some(f) = fa.get(&input) {
-                            bolus.set_amount(bolus.amount() * f);
-                        }
-                    }
-                }
+        let Some((fn_fa, _, parameters, covariates)) = reorder else {
+            return;
+        };
+
+        // Build the parameter vector once and reuse it for every dose.
+        let parameters: V = nalgebra::DVector::from_vec(parameters.to_vec()).into();
+
+        for event in self.events.iter_mut() {
+            // Bioavailability scales bolus amounts only.
+            let Event::Bolus(bolus) = event else {
+                continue;
+            };
+            let Some(input) = bolus.input_index() else {
+                continue;
+            };
+            let fa = fn_fa(&parameters, bolus.time(), covariates);
+            if let Some(&f) = fa.get(&input) {
+                bolus.set_amount(bolus.amount() * f);
             }
         }
     }
@@ -1246,6 +1267,109 @@ mod tests {
         // t=2: observation before bolus
         assert!(matches!(&events[3], Event::Observation(o) if o.time() == 2.0));
         assert!(matches!(&events[4], Event::Bolus(b) if b.time() == 2.0));
+    }
+
+    fn lag_input0(_p: &V, _t: f64, _cov: &Covariates) -> std::collections::HashMap<usize, f64> {
+        let mut m = std::collections::HashMap::new();
+        m.insert(0usize, 5.0);
+        m
+    }
+
+    fn fa_input0(_p: &V, _t: f64, _cov: &Covariates) -> std::collections::HashMap<usize, f64> {
+        let mut m = std::collections::HashMap::new();
+        m.insert(0usize, 0.5);
+        m
+    }
+
+    fn no_adjustment(_p: &V, _t: f64, _cov: &Covariates) -> std::collections::HashMap<usize, f64> {
+        std::collections::HashMap::new()
+    }
+
+    #[test]
+    fn test_lagtime_delays_bolus_but_not_infusion() {
+        let lag: Lag = lag_input0;
+        let fa: Fa = no_adjustment;
+        let params = [1.0_f64];
+        let cov = Covariates::new();
+
+        let mut occasion = Occasion::new(0);
+        occasion.add_bolus(1.0, 100.0, 0);
+        occasion.add_infusion(1.0, 200.0, 0, 0.5);
+        occasion.sort();
+
+        let events = occasion.process_events(Some((&fa, &lag, &params, &cov)));
+
+        let bolus = events
+            .iter()
+            .find(|e| matches!(e, Event::Bolus(_)))
+            .expect("bolus present");
+        let infusion = events
+            .iter()
+            .find(|e| matches!(e, Event::Infusion(_)))
+            .expect("infusion present");
+
+        // Bolus is delayed by the lag; the infusion is never lagged.
+        assert_eq!(bolus.time(), 6.0);
+        assert_eq!(infusion.time(), 1.0);
+    }
+
+    #[test]
+    fn test_lagtime_reorders_events() {
+        let lag: Lag = lag_input0;
+        let fa: Fa = no_adjustment;
+        let params = [1.0_f64];
+        let cov = Covariates::new();
+
+        let mut occasion = Occasion::new(0);
+        occasion.add_bolus(1.0, 100.0, 0);
+        occasion.add_observation(3.0, 10.0, 1, None, Censor::None);
+        occasion.sort();
+
+        let events = occasion.process_events(Some((&fa, &lag, &params, &cov)));
+
+        // Bolus moves from t=1 to t=6, so it must now come *after* the t=3 observation.
+        assert!(matches!(&events[0], Event::Observation(o) if o.time() == 3.0));
+        assert!(matches!(&events[1], Event::Bolus(b) if b.time() == 6.0));
+    }
+
+    #[test]
+    fn test_bioavailability_scales_bolus_not_infusion() {
+        let lag: Lag = no_adjustment;
+        let fa: Fa = fa_input0;
+        let params = [1.0_f64];
+        let cov = Covariates::new();
+
+        let mut occasion = Occasion::new(0);
+        occasion.add_bolus(1.0, 100.0, 0);
+        occasion.add_infusion(2.0, 200.0, 0, 0.5);
+        occasion.sort();
+
+        let events = occasion.process_events(Some((&fa, &lag, &params, &cov)));
+
+        let bolus_amount = events.iter().find_map(|e| match e {
+            Event::Bolus(b) => Some(b.amount()),
+            _ => None,
+        });
+        let infusion_amount = events.iter().find_map(|e| match e {
+            Event::Infusion(i) => Some(i.amount()),
+            _ => None,
+        });
+
+        // Bioavailability scales the bolus amount; the infusion is untouched.
+        assert_eq!(bolus_amount, Some(50.0));
+        assert_eq!(infusion_amount, Some(200.0));
+    }
+
+    #[test]
+    fn test_process_events_none_preserves_order_and_values() {
+        let mut occasion = Occasion::new(0);
+        occasion.add_bolus(1.0, 100.0, 0);
+        occasion.add_observation(2.0, 10.0, 1, None, Censor::None);
+        occasion.sort();
+
+        let events = occasion.process_events(None);
+        assert!(matches!(&events[0], Event::Bolus(b) if b.time() == 1.0 && b.amount() == 100.0));
+        assert!(matches!(&events[1], Event::Observation(o) if o.time() == 2.0));
     }
 
     #[test]
