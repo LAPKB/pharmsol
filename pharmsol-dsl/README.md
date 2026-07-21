@@ -1,13 +1,13 @@
 # pharmsol-dsl
 
-`pharmsol-dsl` is the backend-neutral frontend crate for the pharmsol DSL.
+`pharmsol-dsl` compiles pharmsol DSL model source into a ready-to-run form.
 
 Use this crate when you need to work with model source as data:
 
 - parse DSL text into syntax nodes
 - inspect spans and diagnostics
-- analyze names and types into typed IR
-- lower validated models into the execution model used by runtime backends
+- analyze names and types into a checked model
+- compile validated models into the ready-to-run form used by runtime backends
 
 Do not use this crate for JIT compilation, native AoT export or load, WASM runtime loading, or `Subject`-based prediction helpers. Those workflows stay in `pharmsol::dsl` in the main `pharmsol` crate.
 
@@ -40,18 +40,18 @@ assert_eq!(execution.metadata.routes.len(), 1);
 assert_eq!(execution.metadata.outputs.len(), 1);
 ```
 
-The staged pipeline is available when you need the intermediaterepresentations:
+The staged pipeline is available when you need the intermediate representations:
 
 1. `parse_model` or `parse_module`
 2. `analyze_model` or `analyze_module`
-3. `lower_typed_model` or `lower_typed_module`
+3. `compile_analyzed_model` or `compile_analyzed_module`
 
 The main public modules are:
 
-- `ast` for syntax-level nodes
+- `syntax` for the syntax tree
 - `diagnostic` for spans, codes, and rendered reports
-- `ir` for the typed intermediate representation
-- `execution` for the lowered execution model shared by JIT, AoT, and WASM backends
+- `analysis` for the analyzed, fully checked model
+- `execution` for the ready-to-run model shared by JIT, AoT, and WASM backends
 
 The parser accepts both canonical `model { ... }` source and the authoring
 shorthand used by the `pharmsol` examples.
@@ -75,8 +75,8 @@ a JSON-serializable report for editors and tooling.
 
 ## Boundary With `pharmsol`
 
-`pharmsol-dsl` owns the frontend pipeline and its data structures.
+`pharmsol-dsl` owns the source-to-execution compiler and its data structures.
 
-`pharmsol::dsl` re-exports that frontend surface and adds the runtime-facing APIs for backend selection, artifact loading, and prediction execution.
+`pharmsol::dsl` re-exports that compiler surface and adds the runtime-facing APIs for backend selection, artifact loading, and prediction execution.
 
 Use `pharmsol-dsl` when you are building tooling, validation, migration, or your own backend. Use `pharmsol::dsl` when you want a complete source-to-runtime workflow.

@@ -1,19 +1,30 @@
+//! Ready-to-run model compiled from an analyzed model.
+//!
+//! An [`ExecutionModel`] carries everything a simulation backend needs:
+//! resolved symbols, dense buffer layouts, and the model functions
+//! (dynamics, outputs, init, and friends) as straight-line programs.
+
 use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
 
 use crate::{
-    AnalyticalKernel, ConstValue, CovariateInterpolation, Diagnostic, DiagnosticPhase,
-    DiagnosticReport, MathIntrinsic, ModelKind, RouteKind, RoutePropertyKind, Span, Symbol,
-    SymbolId, SymbolKind, SymbolType, TypedAssignTargetKind, TypedBinaryOp, TypedCall, TypedExpr,
-    TypedExprKind, TypedModel, TypedModule, TypedRangeExpr, TypedStatePlace, TypedStatementBlock,
-    TypedStmt, TypedStmtKind, TypedUnaryOp, ValueType, DSL_LOWERING_GENERIC,
+    AnalyticalKernel, AnalyzedAssignTargetKind, AnalyzedBinaryOp, AnalyzedCall, AnalyzedExpr,
+    AnalyzedExprKind, AnalyzedModel, AnalyzedModule, AnalyzedRangeExpr, AnalyzedStatePlace,
+    AnalyzedStatementBlock, AnalyzedStmt, AnalyzedStmtKind, AnalyzedUnaryOp, ConstValue,
+    CovariateInterpolation, Diagnostic, DiagnosticPhase, DiagnosticReport, MathFunction, ModelKind,
+    RouteKind, RoutePropertyKind, Span, Symbol, SymbolId, SymbolKind, SymbolType, ValueType,
+    DSL_COMPILE_GENERIC,
 };
 
-pub fn lower_typed_module(module: &TypedModule) -> Result<ExecutionModule, LoweringError> {
+/// Compiles every model in an analyzed module into its ready-to-run form.
+///
+/// This is the final pipeline stage after [`parse_module`](crate::parse_module)
+/// and [`analyze_module`](crate::analyze_module).
+pub fn compile_analyzed_module(module: &AnalyzedModule) -> Result<ExecutionModule, CompileError> {
     let mut models = Vec::with_capacity(module.models.len());
     for model in &module.models {
-        models.push(lower_typed_model(model)?);
+        models.push(compile_analyzed_model(model)?);
     }
     Ok(ExecutionModule {
         models,
@@ -21,8 +32,12 @@ pub fn lower_typed_module(module: &TypedModule) -> Result<ExecutionModule, Lower
     })
 }
 
-pub fn lower_typed_model(model: &TypedModel) -> Result<ExecutionModel, LoweringError> {
-    ExecutionLowerer::new(model)?.lower()
+/// Compiles an analyzed model into its ready-to-run [`ExecutionModel`].
+///
+/// This is the final pipeline stage after [`parse_model`](crate::parse_model)
+/// and [`analyze_model`](crate::analyze_model).
+pub fn compile_analyzed_model(model: &AnalyzedModel) -> Result<ExecutionModel, CompileError> {
+    ModelCompiler::new(model)?.compile()
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -36,14 +51,14 @@ pub struct ExecutionModel {
     pub name: String,
     pub kind: ModelKind,
     pub metadata: ExecutionMetadata,
-    pub abi: ExecutionAbi,
-    pub kernels: Vec<ExecutionKernel>,
+    pub layout: ExecutionLayout,
+    pub functions: Vec<ModelFunction>,
     pub span: Span,
 }
 
 impl ExecutionModel {
-    pub fn kernel(&self, role: KernelRole) -> Option<&ExecutionKernel> {
-        self.kernels.iter().find(|kernel| kernel.role == role)
+    pub fn function(&self, kind: ModelFunctionKind) -> Option<&ModelFunction> {
+        self.functions.iter().find(|function| function.kind == kind)
     }
 }
 
@@ -116,29 +131,23 @@ pub struct RouteDestination {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExecutionAbi {
-    pub scalar: ScalarAbi,
-    pub calling_convention: CallingConvention,
-    pub parameter_buffer: DenseBufferLayout,
-    pub covariate_buffer: DenseBufferLayout,
-    pub state_buffer: DenseBufferLayout,
-    pub derived_buffer: DenseBufferLayout,
-    pub output_buffer: DenseBufferLayout,
-    pub route_buffer: DenseBufferLayout,
+pub struct ExecutionLayout {
+    pub scalar: ScalarType,
+    pub parameter_buffer: BufferLayout,
+    pub covariate_buffer: BufferLayout,
+    pub state_buffer: BufferLayout,
+    pub derived_buffer: BufferLayout,
+    pub output_buffer: BufferLayout,
+    pub route_buffer: BufferLayout,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ScalarAbi {
+pub enum ScalarType {
     F64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CallingConvention {
-    DenseF64Buffers,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DenseBufferLayout {
+pub struct BufferLayout {
     pub kind: BufferKind,
     pub len: usize,
     pub slots: Vec<BufferSlot>,
@@ -162,15 +171,15 @@ pub struct BufferSlot {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ExecutionKernel {
-    pub role: KernelRole,
-    pub signature: KernelSignature,
-    pub implementation: KernelImplementation,
+pub struct ModelFunction {
+    pub kind: ModelFunctionKind,
+    pub signature: FunctionSignature,
+    pub body: FunctionBody,
     pub span: Span,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum KernelRole {
+pub enum ModelFunctionKind {
     Derive,
     Dynamics,
     Outputs,
@@ -183,18 +192,18 @@ pub enum KernelRole {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct KernelSignature {
-    pub args: Vec<KernelArgument>,
+pub struct FunctionSignature {
+    pub args: Vec<FunctionArgument>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct KernelArgument {
-    pub kind: KernelArgumentKind,
-    pub access: KernelAccess,
+pub struct FunctionArgument {
+    pub kind: FunctionArgumentKind,
+    pub access: Access,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum KernelArgumentKind {
+pub enum FunctionArgumentKind {
     Time,
     Parameters,
     Covariates,
@@ -211,13 +220,13 @@ pub enum KernelArgumentKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum KernelAccess {
+pub enum Access {
     Input,
     Output,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum KernelImplementation {
+pub enum FunctionBody {
     Statements(ExecutionProgram),
     AnalyticalBuiltin(AnalyticalKernel),
 }
@@ -330,11 +339,11 @@ pub enum ExecutionExprKind {
     Literal(ConstValue),
     Load(ExecutionLoad),
     Unary {
-        op: TypedUnaryOp,
+        op: AnalyzedUnaryOp,
         expr: Box<ExecutionExpr>,
     },
     Binary {
-        op: TypedBinaryOp,
+        op: AnalyzedBinaryOp,
         lhs: Box<ExecutionExpr>,
         rhs: Box<ExecutionExpr>,
     },
@@ -356,21 +365,21 @@ pub enum ExecutionLoad {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExecutionCall {
-    Math(MathIntrinsic),
+    Math(MathFunction),
 }
 
 #[derive(Clone, PartialEq, Eq)]
-pub struct LoweringError {
+pub struct CompileError {
     diagnostic: Box<Diagnostic>,
     source: Option<Arc<str>>,
 }
 
-impl LoweringError {
+impl CompileError {
     fn new(message: impl Into<String>, span: Span) -> Self {
         Self {
             diagnostic: Box::new(Diagnostic::error(
-                DSL_LOWERING_GENERIC,
-                DiagnosticPhase::Lowering,
+                DSL_COMPILE_GENERIC,
+                DiagnosticPhase::Compile,
                 message,
                 span,
             )),
@@ -413,13 +422,13 @@ impl LoweringError {
     }
 }
 
-impl fmt::Debug for LoweringError {
+impl fmt::Debug for CompileError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(self, f)
     }
 }
 
-impl fmt::Display for LoweringError {
+impl fmt::Display for CompileError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if let Some(source) = self.source() {
             return f.write_str(&self.render(source));
@@ -433,10 +442,10 @@ impl fmt::Display for LoweringError {
     }
 }
 
-impl std::error::Error for LoweringError {}
+impl std::error::Error for CompileError {}
 
-struct ExecutionLowerer<'a> {
-    model: &'a TypedModel,
+struct ModelCompiler<'a> {
+    model: &'a AnalyzedModel,
     metadata: ExecutionMetadata,
     symbol_map: BTreeMap<SymbolId, &'a Symbol>,
     parameter_slots: BTreeMap<SymbolId, usize>,
@@ -453,8 +462,8 @@ struct StateLayout {
     len: usize,
 }
 
-impl<'a> ExecutionLowerer<'a> {
-    fn new(model: &'a TypedModel) -> Result<Self, LoweringError> {
+impl<'a> ModelCompiler<'a> {
+    fn new(model: &'a AnalyzedModel) -> Result<Self, CompileError> {
         let symbol_map: BTreeMap<SymbolId, &Symbol> = model
             .symbols
             .iter()
@@ -473,7 +482,7 @@ impl<'a> ExecutionLowerer<'a> {
                     span: constant.span,
                 })
             })
-            .collect::<Result<Vec<_>, LoweringError>>()?;
+            .collect::<Result<Vec<_>, CompileError>>()?;
 
         let mut parameter_slots = BTreeMap::new();
         let parameters = model
@@ -490,7 +499,7 @@ impl<'a> ExecutionLowerer<'a> {
                     span: symbol.span,
                 })
             })
-            .collect::<Result<Vec<_>, LoweringError>>()?;
+            .collect::<Result<Vec<_>, CompileError>>()?;
 
         let mut covariate_slots = BTreeMap::new();
         let covariates = model
@@ -508,7 +517,7 @@ impl<'a> ExecutionLowerer<'a> {
                     span: covariate.span,
                 })
             })
-            .collect::<Result<Vec<_>, LoweringError>>()?;
+            .collect::<Result<Vec<_>, CompileError>>()?;
 
         let mut state_slots = BTreeMap::new();
         let mut states = Vec::with_capacity(model.states.len());
@@ -531,7 +540,7 @@ impl<'a> ExecutionLowerer<'a> {
                 span: state.span,
             });
             next_state_offset = next_state_offset.checked_add(len).ok_or_else(|| {
-                LoweringError::new(
+                CompileError::new(
                     "combined state sizes exceed the supported state space",
                     state.span,
                 )
@@ -552,7 +561,7 @@ impl<'a> ExecutionLowerer<'a> {
                         RoutePropertyKind::Lag => "lag",
                         RoutePropertyKind::Bioavailability => "bioavailability",
                     };
-                    return Err(LoweringError::new(
+                    return Err(CompileError::new(
                         format!(
                             "DSL authoring does not allow `{label}` on infusion route `{}`",
                             symbol.name
@@ -580,7 +589,7 @@ impl<'a> ExecutionLowerer<'a> {
             };
             route_slots.insert(route.symbol, index);
             let destination =
-                lower_route_destination(&symbol_map, &state_slots, &route.destination)?;
+                compile_route_destination(&symbol_map, &state_slots, &route.destination)?;
             routes.push(ExecutionRoute {
                 symbol: route.symbol,
                 name: symbol.name.clone(),
@@ -615,7 +624,7 @@ impl<'a> ExecutionLowerer<'a> {
                     span: symbol.span,
                 })
             })
-            .collect::<Result<Vec<_>, LoweringError>>()?;
+            .collect::<Result<Vec<_>, CompileError>>()?;
 
         let mut output_slots = BTreeMap::new();
         let outputs = model
@@ -632,7 +641,7 @@ impl<'a> ExecutionLowerer<'a> {
                     span: symbol.span,
                 })
             })
-            .collect::<Result<Vec<_>, LoweringError>>()?;
+            .collect::<Result<Vec<_>, CompileError>>()?;
 
         Ok(Self {
             model,
@@ -660,61 +669,62 @@ impl<'a> ExecutionLowerer<'a> {
         })
     }
 
-    fn lower(self) -> Result<ExecutionModel, LoweringError> {
-        let abi = self.build_abi();
-        let mut kernels = Vec::new();
+    fn compile(self) -> Result<ExecutionModel, CompileError> {
+        let layout = self.build_layout();
+        let mut functions = Vec::new();
 
         if let Some(block) = &self.model.derive {
-            kernels.push(self.lower_statement_kernel(KernelRole::Derive, block)?);
+            functions.push(self.compile_statement_function(ModelFunctionKind::Derive, block)?);
         }
         if let Some(block) = &self.model.init {
-            kernels.push(self.lower_init_kernel(block)?);
+            functions.push(self.compile_init_function(block)?);
         }
         if let Some(block) = &self.model.dynamics {
-            kernels.push(self.lower_statement_kernel(KernelRole::Dynamics, block)?);
+            functions.push(self.compile_statement_function(ModelFunctionKind::Dynamics, block)?);
         }
         if let Some(block) = &self.model.drift {
-            kernels.push(self.lower_statement_kernel(KernelRole::Drift, block)?);
+            functions.push(self.compile_statement_function(ModelFunctionKind::Drift, block)?);
         }
         if let Some(block) = &self.model.diffusion {
-            kernels.push(self.lower_statement_kernel(KernelRole::Diffusion, block)?);
+            functions.push(self.compile_statement_function(ModelFunctionKind::Diffusion, block)?);
         }
-        if let Some(kernel) =
-            self.lower_route_property_kernel(RoutePropertyKind::Lag, KernelRole::RouteLag)?
+        if let Some(function) = self
+            .compile_route_property_function(RoutePropertyKind::Lag, ModelFunctionKind::RouteLag)?
         {
-            kernels.push(kernel);
+            functions.push(function);
         }
-        if let Some(kernel) = self.lower_route_property_kernel(
+        if let Some(function) = self.compile_route_property_function(
             RoutePropertyKind::Bioavailability,
-            KernelRole::RouteBioavailability,
+            ModelFunctionKind::RouteBioavailability,
         )? {
-            kernels.push(kernel);
+            functions.push(function);
         }
         if let Some(analytical) = &self.model.analytical {
-            kernels.push(ExecutionKernel {
-                role: KernelRole::Analytical,
-                signature: signature_for(KernelRole::Analytical),
-                implementation: KernelImplementation::AnalyticalBuiltin(analytical.structure),
+            functions.push(ModelFunction {
+                kind: ModelFunctionKind::Analytical,
+                signature: signature_for(ModelFunctionKind::Analytical),
+                body: FunctionBody::AnalyticalBuiltin(analytical.structure),
                 span: analytical.span,
             });
         }
-        kernels.push(self.lower_statement_kernel(KernelRole::Outputs, &self.model.outputs_block)?);
+        functions.push(
+            self.compile_statement_function(ModelFunctionKind::Outputs, &self.model.outputs_block)?,
+        );
 
         Ok(ExecutionModel {
             name: self.model.name.clone(),
             kind: self.model.kind,
             metadata: self.metadata,
-            abi,
-            kernels,
+            layout,
+            functions,
             span: self.model.span,
         })
     }
 
-    fn build_abi(&self) -> ExecutionAbi {
-        ExecutionAbi {
-            scalar: ScalarAbi::F64,
-            calling_convention: CallingConvention::DenseF64Buffers,
-            parameter_buffer: DenseBufferLayout {
+    fn build_layout(&self) -> ExecutionLayout {
+        ExecutionLayout {
+            scalar: ScalarType::F64,
+            parameter_buffer: BufferLayout {
                 kind: BufferKind::Parameters,
                 len: self.metadata.parameters.len(),
                 slots: self
@@ -728,7 +738,7 @@ impl<'a> ExecutionLowerer<'a> {
                     })
                     .collect(),
             },
-            covariate_buffer: DenseBufferLayout {
+            covariate_buffer: BufferLayout {
                 kind: BufferKind::Covariates,
                 len: self.metadata.covariates.len(),
                 slots: self
@@ -742,7 +752,7 @@ impl<'a> ExecutionLowerer<'a> {
                     })
                     .collect(),
             },
-            state_buffer: DenseBufferLayout {
+            state_buffer: BufferLayout {
                 kind: BufferKind::States,
                 len: self.metadata.states.iter().map(|state| state.len).sum(),
                 slots: self
@@ -756,7 +766,7 @@ impl<'a> ExecutionLowerer<'a> {
                     })
                     .collect(),
             },
-            derived_buffer: DenseBufferLayout {
+            derived_buffer: BufferLayout {
                 kind: BufferKind::Derived,
                 len: self.metadata.derived.len(),
                 slots: self
@@ -770,7 +780,7 @@ impl<'a> ExecutionLowerer<'a> {
                     })
                     .collect(),
             },
-            output_buffer: DenseBufferLayout {
+            output_buffer: BufferLayout {
                 kind: BufferKind::Outputs,
                 len: self.metadata.outputs.len(),
                 slots: self
@@ -784,7 +794,7 @@ impl<'a> ExecutionLowerer<'a> {
                     })
                     .collect(),
             },
-            route_buffer: DenseBufferLayout {
+            route_buffer: BufferLayout {
                 kind: BufferKind::Routes,
                 len: self
                     .metadata
@@ -807,22 +817,22 @@ impl<'a> ExecutionLowerer<'a> {
         }
     }
 
-    fn lower_statement_kernel(
+    fn compile_statement_function(
         &self,
-        role: KernelRole,
-        block: &TypedStatementBlock,
-    ) -> Result<ExecutionKernel, LoweringError> {
-        let mut locals = LocalLowering::default();
+        kind: ModelFunctionKind,
+        block: &AnalyzedStatementBlock,
+    ) -> Result<ModelFunction, CompileError> {
+        let mut locals = CompileLocals::default();
         let statements = block
             .statements
             .iter()
-            .map(|stmt| self.lower_stmt(stmt, &mut locals))
-            .collect::<Result<Vec<_>, LoweringError>>()?;
+            .map(|stmt| self.compile_stmt(stmt, &mut locals))
+            .collect::<Result<Vec<_>, CompileError>>()?;
 
-        Ok(ExecutionKernel {
-            role,
-            signature: signature_for(role),
-            implementation: KernelImplementation::Statements(ExecutionProgram {
+        Ok(ModelFunction {
+            kind,
+            signature: signature_for(kind),
+            body: FunctionBody::Statements(ExecutionProgram {
                 locals: locals.locals,
                 body: ExecutionBlock {
                     statements,
@@ -833,11 +843,11 @@ impl<'a> ExecutionLowerer<'a> {
         })
     }
 
-    fn lower_init_kernel(
+    fn compile_init_function(
         &self,
-        block: &TypedStatementBlock,
-    ) -> Result<ExecutionKernel, LoweringError> {
-        let mut locals = LocalLowering::default();
+        block: &AnalyzedStatementBlock,
+    ) -> Result<ModelFunction, CompileError> {
+        let mut locals = CompileLocals::default();
         let mut statements = self
             .metadata
             .states
@@ -871,14 +881,14 @@ impl<'a> ExecutionLowerer<'a> {
             block
                 .statements
                 .iter()
-                .map(|stmt| self.lower_stmt(stmt, &mut locals))
-                .collect::<Result<Vec<_>, LoweringError>>()?,
+                .map(|stmt| self.compile_stmt(stmt, &mut locals))
+                .collect::<Result<Vec<_>, CompileError>>()?,
         );
 
-        Ok(ExecutionKernel {
-            role: KernelRole::Init,
-            signature: signature_for(KernelRole::Init),
-            implementation: KernelImplementation::Statements(ExecutionProgram {
+        Ok(ModelFunction {
+            kind: ModelFunctionKind::Init,
+            signature: signature_for(ModelFunctionKind::Init),
+            body: FunctionBody::Statements(ExecutionProgram {
                 locals: locals.locals,
                 body: ExecutionBlock {
                     statements,
@@ -889,11 +899,11 @@ impl<'a> ExecutionLowerer<'a> {
         })
     }
 
-    fn lower_route_property_kernel(
+    fn compile_route_property_function(
         &self,
         property_kind: RoutePropertyKind,
-        role: KernelRole,
-    ) -> Result<Option<ExecutionKernel>, LoweringError> {
+        kind: ModelFunctionKind,
+    ) -> Result<Option<ModelFunction>, CompileError> {
         if !self.model.routes.iter().any(|route| {
             route
                 .properties
@@ -904,7 +914,7 @@ impl<'a> ExecutionLowerer<'a> {
         }
 
         let mut statements = Vec::with_capacity(self.model.routes.len());
-        let mut locals = LocalLowering::default();
+        let mut locals = CompileLocals::default();
         let default_value = match property_kind {
             RoutePropertyKind::Lag => literal_real(0.0, self.model.span),
             RoutePropertyKind::Bioavailability => literal_real(1.0, self.model.span),
@@ -940,7 +950,7 @@ impl<'a> ExecutionLowerer<'a> {
             }
             let route_name = self.symbol_name(route.symbol)?.to_string();
             let route_index = *self.route_slots.get(&route.symbol).ok_or_else(|| {
-                LoweringError::new(
+                CompileError::new(
                     format!("route `{}` has no execution slot", route_name),
                     route.span,
                 )
@@ -950,7 +960,7 @@ impl<'a> ExecutionLowerer<'a> {
                 .iter()
                 .find(|property| property.kind == property_kind)
             {
-                Some(property) => self.lower_expr(&property.value, &mut locals)?,
+                Some(property) => self.compile_expr(&property.value, &mut locals)?,
                 None => continue,
             };
             let target_kind = match property_kind {
@@ -971,10 +981,10 @@ impl<'a> ExecutionLowerer<'a> {
             });
         }
 
-        Ok(Some(ExecutionKernel {
-            role,
-            signature: signature_for(role),
-            implementation: KernelImplementation::Statements(ExecutionProgram {
+        Ok(Some(ModelFunction {
+            kind,
+            signature: signature_for(kind),
+            body: FunctionBody::Statements(ExecutionProgram {
                 locals: locals.locals,
                 body: ExecutionBlock {
                     statements,
@@ -985,29 +995,29 @@ impl<'a> ExecutionLowerer<'a> {
         }))
     }
 
-    fn lower_stmt(
+    fn compile_stmt(
         &self,
-        stmt: &TypedStmt,
-        locals: &mut LocalLowering,
-    ) -> Result<ExecutionStmt, LoweringError> {
+        stmt: &AnalyzedStmt,
+        locals: &mut CompileLocals,
+    ) -> Result<ExecutionStmt, CompileError> {
         let kind = match &stmt.kind {
-            TypedStmtKind::Let(let_stmt) => {
+            AnalyzedStmtKind::Let(let_stmt) => {
                 let local = locals.local_slot(let_stmt.symbol, self)?;
                 ExecutionStmtKind::Let(ExecutionLetStmt {
                     local,
-                    value: self.lower_expr(&let_stmt.value, locals)?,
+                    value: self.compile_expr(&let_stmt.value, locals)?,
                 })
             }
-            TypedStmtKind::Assign(assign) => ExecutionStmtKind::Assign(ExecutionAssignStmt {
-                target: self.lower_target(&assign.target.kind, assign.target.span, locals)?,
-                value: self.lower_expr(&assign.value, locals)?,
+            AnalyzedStmtKind::Assign(assign) => ExecutionStmtKind::Assign(ExecutionAssignStmt {
+                target: self.compile_target(&assign.target.kind, assign.target.span, locals)?,
+                value: self.compile_expr(&assign.value, locals)?,
             }),
-            TypedStmtKind::If(if_stmt) => ExecutionStmtKind::If(ExecutionIfStmt {
-                condition: self.lower_expr(&if_stmt.condition, locals)?,
+            AnalyzedStmtKind::If(if_stmt) => ExecutionStmtKind::If(ExecutionIfStmt {
+                condition: self.compile_expr(&if_stmt.condition, locals)?,
                 then_branch: if_stmt
                     .then_branch
                     .iter()
-                    .map(|stmt| self.lower_stmt(stmt, locals))
+                    .map(|stmt| self.compile_stmt(stmt, locals))
                     .collect::<Result<Vec<_>, _>>()?,
                 else_branch: if_stmt
                     .else_branch
@@ -1015,20 +1025,20 @@ impl<'a> ExecutionLowerer<'a> {
                     .map(|branch| {
                         branch
                             .iter()
-                            .map(|stmt| self.lower_stmt(stmt, locals))
-                            .collect::<Result<Vec<_>, LoweringError>>()
+                            .map(|stmt| self.compile_stmt(stmt, locals))
+                            .collect::<Result<Vec<_>, CompileError>>()
                     })
                     .transpose()?,
             }),
-            TypedStmtKind::For(for_stmt) => {
+            AnalyzedStmtKind::For(for_stmt) => {
                 let local = locals.local_slot(for_stmt.binding, self)?;
                 ExecutionStmtKind::For(ExecutionForStmt {
                     local,
-                    range: self.lower_range(&for_stmt.range, locals)?,
+                    range: self.compile_range(&for_stmt.range, locals)?,
                     body: for_stmt
                         .body
                         .iter()
-                        .map(|stmt| self.lower_stmt(stmt, locals))
+                        .map(|stmt| self.compile_stmt(stmt, locals))
                         .collect::<Result<Vec<_>, _>>()?,
                 })
             }
@@ -1040,49 +1050,49 @@ impl<'a> ExecutionLowerer<'a> {
         })
     }
 
-    fn lower_range(
+    fn compile_range(
         &self,
-        range: &TypedRangeExpr,
-        locals: &mut LocalLowering,
-    ) -> Result<ExecutionRange, LoweringError> {
+        range: &AnalyzedRangeExpr,
+        locals: &mut CompileLocals,
+    ) -> Result<ExecutionRange, CompileError> {
         Ok(ExecutionRange {
-            start: self.lower_expr(&range.start, locals)?,
-            end: self.lower_expr(&range.end, locals)?,
+            start: self.compile_expr(&range.start, locals)?,
+            end: self.compile_expr(&range.end, locals)?,
             span: range.span,
         })
     }
 
-    fn lower_target(
+    fn compile_target(
         &self,
-        target: &TypedAssignTargetKind,
+        target: &AnalyzedAssignTargetKind,
         span: Span,
-        locals: &mut LocalLowering,
-    ) -> Result<ExecutionTarget, LoweringError> {
+        locals: &mut CompileLocals,
+    ) -> Result<ExecutionTarget, CompileError> {
         let kind = match target {
-            TypedAssignTargetKind::Derived(symbol) => {
+            AnalyzedAssignTargetKind::Derived(symbol) => {
                 ExecutionTargetKind::Derived(self.slot_for_derived(*symbol, span)?)
             }
-            TypedAssignTargetKind::Output(symbol) => {
+            AnalyzedAssignTargetKind::Output(symbol) => {
                 ExecutionTargetKind::Output(self.slot_for_output(*symbol, span)?)
             }
-            TypedAssignTargetKind::StateInit(place) => {
-                ExecutionTargetKind::StateInit(self.lower_state_ref(place, locals)?)
+            AnalyzedAssignTargetKind::StateInit(place) => {
+                ExecutionTargetKind::StateInit(self.compile_state_ref(place, locals)?)
             }
-            TypedAssignTargetKind::Derivative(place) => {
-                ExecutionTargetKind::StateDerivative(self.lower_state_ref(place, locals)?)
+            AnalyzedAssignTargetKind::Derivative(place) => {
+                ExecutionTargetKind::StateDerivative(self.compile_state_ref(place, locals)?)
             }
-            TypedAssignTargetKind::Noise(place) => {
-                ExecutionTargetKind::StateNoise(self.lower_state_ref(place, locals)?)
+            AnalyzedAssignTargetKind::Noise(place) => {
+                ExecutionTargetKind::StateNoise(self.compile_state_ref(place, locals)?)
             }
         };
         Ok(ExecutionTarget { kind, span })
     }
 
-    fn lower_expr(
+    fn compile_expr(
         &self,
-        expr: &TypedExpr,
-        locals: &mut LocalLowering,
-    ) -> Result<ExecutionExpr, LoweringError> {
+        expr: &AnalyzedExpr,
+        locals: &mut CompileLocals,
+    ) -> Result<ExecutionExpr, CompileError> {
         if let Some(constant) = &expr.constant {
             return Ok(ExecutionExpr {
                 kind: ExecutionExprKind::Literal(constant.clone()),
@@ -1093,8 +1103,8 @@ impl<'a> ExecutionLowerer<'a> {
         }
 
         let kind = match &expr.kind {
-            TypedExprKind::Literal(constant) => ExecutionExprKind::Literal(constant.clone()),
-            TypedExprKind::Symbol(symbol) => {
+            AnalyzedExprKind::Literal(constant) => ExecutionExprKind::Literal(constant.clone()),
+            AnalyzedExprKind::Symbol(symbol) => {
                 let symbol_info = lookup_symbol(&self.symbol_map, *symbol, expr.span)?;
                 match symbol_info.kind {
                     SymbolKind::Parameter => ExecutionExprKind::Load(ExecutionLoad::Parameter(
@@ -1110,37 +1120,37 @@ impl<'a> ExecutionLowerer<'a> {
                         ExecutionLoad::Local(locals.local_slot(*symbol, self)?),
                     ),
                     SymbolKind::Constant => {
-                        return Err(LoweringError::new(
+                        return Err(CompileError::new(
                             format!(
-                                "constant `{}` should have been folded before execution lowering",
+                                "constant `{}` should have been folded before execution compilation",
                                 symbol_info.name
                             ),
                             expr.span,
                         ));
                     }
                     SymbolKind::State => {
-                        return Err(LoweringError::new(
+                        return Err(CompileError::new(
                             format!(
-                                "state `{}` should lower through a state reference",
+                                "state `{}` should compile through a state reference",
                                 symbol_info.name
                             ),
                             expr.span,
                         ));
                     }
                     SymbolKind::Route => {
-                        return Err(LoweringError::new(
+                        return Err(CompileError::new(
                             format!(
                                 "route `{}` is not a scalar execution input",
                                 symbol_info.name
                             ),
                             expr.span,
                         )
-                        .with_note("routes must lower through `rate(route)` or route metadata"));
+                        .with_note("routes must compile through `rate(route)` or route metadata"));
                     }
                     SymbolKind::Output => {
-                        return Err(LoweringError::new(
+                        return Err(CompileError::new(
                             format!(
-                                "output `{}` cannot be read inside execution kernels",
+                                "output `{}` cannot be read inside execution functions",
                                 symbol_info.name
                             ),
                             expr.span,
@@ -1148,30 +1158,30 @@ impl<'a> ExecutionLowerer<'a> {
                     }
                 }
             }
-            TypedExprKind::StateValue(place) => {
-                ExecutionExprKind::Load(ExecutionLoad::State(self.lower_state_ref(place, locals)?))
-            }
-            TypedExprKind::Unary { op, expr } => ExecutionExprKind::Unary {
+            AnalyzedExprKind::StateValue(place) => ExecutionExprKind::Load(ExecutionLoad::State(
+                self.compile_state_ref(place, locals)?,
+            )),
+            AnalyzedExprKind::Unary { op, expr } => ExecutionExprKind::Unary {
                 op: *op,
-                expr: Box::new(self.lower_expr(expr, locals)?),
+                expr: Box::new(self.compile_expr(expr, locals)?),
             },
-            TypedExprKind::Binary { op, lhs, rhs } => ExecutionExprKind::Binary {
+            AnalyzedExprKind::Binary { op, lhs, rhs } => ExecutionExprKind::Binary {
                 op: *op,
-                lhs: Box::new(self.lower_expr(lhs, locals)?),
-                rhs: Box::new(self.lower_expr(rhs, locals)?),
+                lhs: Box::new(self.compile_expr(lhs, locals)?),
+                rhs: Box::new(self.compile_expr(rhs, locals)?),
             },
-            TypedExprKind::Call { callee, args } => match callee {
-                TypedCall::Math(intrinsic) => ExecutionExprKind::Call {
+            AnalyzedExprKind::Call { callee, args } => match callee {
+                AnalyzedCall::Math(intrinsic) => ExecutionExprKind::Call {
                     callee: ExecutionCall::Math(*intrinsic),
                     args: args
                         .iter()
-                        .map(|arg| self.lower_expr(arg, locals))
+                        .map(|arg| self.compile_expr(arg, locals))
                         .collect::<Result<Vec<_>, _>>()?,
                 },
-                TypedCall::Rate(route) => {
+                AnalyzedCall::Rate(route) => {
                     let route_name = self.symbol_name(*route)?.to_string();
                     let route_index = *self.route_slots.get(route).ok_or_else(|| {
-                        LoweringError::new(
+                        CompileError::new(
                             format!("route `{}` has no execution slot", route_name),
                             expr.span,
                         )
@@ -1192,14 +1202,14 @@ impl<'a> ExecutionLowerer<'a> {
         })
     }
 
-    fn lower_state_ref(
+    fn compile_state_ref(
         &self,
-        place: &TypedStatePlace,
-        locals: &mut LocalLowering,
-    ) -> Result<ExecutionStateRef, LoweringError> {
+        place: &AnalyzedStatePlace,
+        locals: &mut CompileLocals,
+    ) -> Result<ExecutionStateRef, CompileError> {
         let state_name = self.symbol_name(place.state)?.to_string();
         let layout = self.state_slots.get(&place.state).copied().ok_or_else(|| {
-            LoweringError::new(
+            CompileError::new(
                 format!("state `{}` has no execution layout", state_name),
                 place.span,
             )
@@ -1207,7 +1217,7 @@ impl<'a> ExecutionLowerer<'a> {
         let index = place
             .index
             .as_ref()
-            .map(|index| self.lower_expr(index, locals))
+            .map(|index| self.compile_expr(index, locals))
             .transpose()?
             .map(Box::new);
         Ok(ExecutionStateRef {
@@ -1219,9 +1229,9 @@ impl<'a> ExecutionLowerer<'a> {
         })
     }
 
-    fn slot_for_parameter(&self, symbol: SymbolId, span: Span) -> Result<usize, LoweringError> {
+    fn slot_for_parameter(&self, symbol: SymbolId, span: Span) -> Result<usize, CompileError> {
         self.parameter_slots.get(&symbol).copied().ok_or_else(|| {
-            LoweringError::new(
+            CompileError::new(
                 format!(
                     "parameter `{}` has no ABI slot",
                     self.symbol_name(symbol).unwrap_or("<unknown>")
@@ -1231,9 +1241,9 @@ impl<'a> ExecutionLowerer<'a> {
         })
     }
 
-    fn slot_for_covariate(&self, symbol: SymbolId, span: Span) -> Result<usize, LoweringError> {
+    fn slot_for_covariate(&self, symbol: SymbolId, span: Span) -> Result<usize, CompileError> {
         self.covariate_slots.get(&symbol).copied().ok_or_else(|| {
-            LoweringError::new(
+            CompileError::new(
                 format!(
                     "covariate `{}` has no ABI slot",
                     self.symbol_name(symbol).unwrap_or("<unknown>")
@@ -1243,9 +1253,9 @@ impl<'a> ExecutionLowerer<'a> {
         })
     }
 
-    fn slot_for_derived(&self, symbol: SymbolId, span: Span) -> Result<usize, LoweringError> {
+    fn slot_for_derived(&self, symbol: SymbolId, span: Span) -> Result<usize, CompileError> {
         self.derived_slots.get(&symbol).copied().ok_or_else(|| {
-            LoweringError::new(
+            CompileError::new(
                 format!(
                     "derived value `{}` has no ABI slot",
                     self.symbol_name(symbol).unwrap_or("<unknown>")
@@ -1255,9 +1265,9 @@ impl<'a> ExecutionLowerer<'a> {
         })
     }
 
-    fn slot_for_output(&self, symbol: SymbolId, span: Span) -> Result<usize, LoweringError> {
+    fn slot_for_output(&self, symbol: SymbolId, span: Span) -> Result<usize, CompileError> {
         self.output_slots.get(&symbol).copied().ok_or_else(|| {
-            LoweringError::new(
+            CompileError::new(
                 format!(
                     "output `{}` has no ABI slot",
                     self.symbol_name(symbol).unwrap_or("<unknown>")
@@ -1267,37 +1277,37 @@ impl<'a> ExecutionLowerer<'a> {
         })
     }
 
-    fn symbol_name(&self, symbol: SymbolId) -> Result<&str, LoweringError> {
+    fn symbol_name(&self, symbol: SymbolId) -> Result<&str, CompileError> {
         Ok(&lookup_symbol(&self.symbol_map, symbol, self.model.span)?.name)
     }
 }
 
 #[derive(Default)]
-struct LocalLowering {
+struct CompileLocals {
     locals: Vec<ExecutionLocal>,
     slots: BTreeMap<SymbolId, usize>,
 }
 
-impl LocalLowering {
+impl CompileLocals {
     fn local_slot(
         &mut self,
         symbol: SymbolId,
-        lowerer: &ExecutionLowerer<'_>,
-    ) -> Result<usize, LoweringError> {
+        compiler: &ModelCompiler<'_>,
+    ) -> Result<usize, CompileError> {
         if let Some(slot) = self.slots.get(&symbol).copied() {
             return Ok(slot);
         }
-        let symbol_info = lookup_symbol(&lowerer.symbol_map, symbol, lowerer.model.span)?;
+        let symbol_info = lookup_symbol(&compiler.symbol_map, symbol, compiler.model.span)?;
         let ty = match symbol_info.ty {
             SymbolType::Scalar(ty) => ty,
             SymbolType::Array { .. } => {
-                return Err(LoweringError::new(
+                return Err(CompileError::new(
                     format!("local `{}` must be scalar", symbol_info.name),
                     symbol_info.span,
                 ));
             }
             SymbolType::Route => {
-                return Err(LoweringError::new(
+                return Err(CompileError::new(
                     format!("local `{}` cannot be a route handle", symbol_info.name),
                     symbol_info.span,
                 ));
@@ -1317,120 +1327,117 @@ impl LocalLowering {
     }
 }
 
-fn signature_for(role: KernelRole) -> KernelSignature {
-    let args = match role {
-        KernelRole::Derive => vec![
-            arg(KernelArgumentKind::Time, KernelAccess::Input),
-            arg(KernelArgumentKind::Parameters, KernelAccess::Input),
-            arg(KernelArgumentKind::Covariates, KernelAccess::Input),
-            arg(KernelArgumentKind::RouteInputs, KernelAccess::Input),
-            arg(KernelArgumentKind::States, KernelAccess::Input),
-            arg(KernelArgumentKind::Derived, KernelAccess::Output),
+fn signature_for(kind: ModelFunctionKind) -> FunctionSignature {
+    let args = match kind {
+        ModelFunctionKind::Derive => vec![
+            arg(FunctionArgumentKind::Time, Access::Input),
+            arg(FunctionArgumentKind::Parameters, Access::Input),
+            arg(FunctionArgumentKind::Covariates, Access::Input),
+            arg(FunctionArgumentKind::RouteInputs, Access::Input),
+            arg(FunctionArgumentKind::States, Access::Input),
+            arg(FunctionArgumentKind::Derived, Access::Output),
         ],
-        KernelRole::Dynamics => vec![
-            arg(KernelArgumentKind::Time, KernelAccess::Input),
-            arg(KernelArgumentKind::States, KernelAccess::Input),
-            arg(KernelArgumentKind::Parameters, KernelAccess::Input),
-            arg(KernelArgumentKind::Covariates, KernelAccess::Input),
-            arg(KernelArgumentKind::RouteInputs, KernelAccess::Input),
-            arg(KernelArgumentKind::Derived, KernelAccess::Input),
-            arg(KernelArgumentKind::StateDerivatives, KernelAccess::Output),
+        ModelFunctionKind::Dynamics => vec![
+            arg(FunctionArgumentKind::Time, Access::Input),
+            arg(FunctionArgumentKind::States, Access::Input),
+            arg(FunctionArgumentKind::Parameters, Access::Input),
+            arg(FunctionArgumentKind::Covariates, Access::Input),
+            arg(FunctionArgumentKind::RouteInputs, Access::Input),
+            arg(FunctionArgumentKind::Derived, Access::Input),
+            arg(FunctionArgumentKind::StateDerivatives, Access::Output),
         ],
-        KernelRole::Outputs => vec![
-            arg(KernelArgumentKind::Time, KernelAccess::Input),
-            arg(KernelArgumentKind::States, KernelAccess::Input),
-            arg(KernelArgumentKind::Parameters, KernelAccess::Input),
-            arg(KernelArgumentKind::Covariates, KernelAccess::Input),
-            arg(KernelArgumentKind::RouteInputs, KernelAccess::Input),
-            arg(KernelArgumentKind::Derived, KernelAccess::Input),
-            arg(KernelArgumentKind::Outputs, KernelAccess::Output),
+        ModelFunctionKind::Outputs => vec![
+            arg(FunctionArgumentKind::Time, Access::Input),
+            arg(FunctionArgumentKind::States, Access::Input),
+            arg(FunctionArgumentKind::Parameters, Access::Input),
+            arg(FunctionArgumentKind::Covariates, Access::Input),
+            arg(FunctionArgumentKind::RouteInputs, Access::Input),
+            arg(FunctionArgumentKind::Derived, Access::Input),
+            arg(FunctionArgumentKind::Outputs, Access::Output),
         ],
-        KernelRole::Init => vec![
-            arg(KernelArgumentKind::Time, KernelAccess::Input),
-            arg(KernelArgumentKind::Parameters, KernelAccess::Input),
-            arg(KernelArgumentKind::Covariates, KernelAccess::Input),
-            arg(KernelArgumentKind::RouteInputs, KernelAccess::Input),
-            arg(KernelArgumentKind::Derived, KernelAccess::Input),
-            arg(KernelArgumentKind::InitialState, KernelAccess::Output),
+        ModelFunctionKind::Init => vec![
+            arg(FunctionArgumentKind::Time, Access::Input),
+            arg(FunctionArgumentKind::Parameters, Access::Input),
+            arg(FunctionArgumentKind::Covariates, Access::Input),
+            arg(FunctionArgumentKind::RouteInputs, Access::Input),
+            arg(FunctionArgumentKind::Derived, Access::Input),
+            arg(FunctionArgumentKind::InitialState, Access::Output),
         ],
-        KernelRole::Drift => vec![
-            arg(KernelArgumentKind::Time, KernelAccess::Input),
-            arg(KernelArgumentKind::States, KernelAccess::Input),
-            arg(KernelArgumentKind::Parameters, KernelAccess::Input),
-            arg(KernelArgumentKind::Covariates, KernelAccess::Input),
-            arg(KernelArgumentKind::RouteInputs, KernelAccess::Input),
-            arg(KernelArgumentKind::Derived, KernelAccess::Input),
-            arg(KernelArgumentKind::StateDerivatives, KernelAccess::Output),
+        ModelFunctionKind::Drift => vec![
+            arg(FunctionArgumentKind::Time, Access::Input),
+            arg(FunctionArgumentKind::States, Access::Input),
+            arg(FunctionArgumentKind::Parameters, Access::Input),
+            arg(FunctionArgumentKind::Covariates, Access::Input),
+            arg(FunctionArgumentKind::RouteInputs, Access::Input),
+            arg(FunctionArgumentKind::Derived, Access::Input),
+            arg(FunctionArgumentKind::StateDerivatives, Access::Output),
         ],
-        KernelRole::Diffusion => vec![
-            arg(KernelArgumentKind::Time, KernelAccess::Input),
-            arg(KernelArgumentKind::States, KernelAccess::Input),
-            arg(KernelArgumentKind::Parameters, KernelAccess::Input),
-            arg(KernelArgumentKind::Covariates, KernelAccess::Input),
-            arg(KernelArgumentKind::RouteInputs, KernelAccess::Input),
-            arg(KernelArgumentKind::Derived, KernelAccess::Input),
-            arg(KernelArgumentKind::StateNoise, KernelAccess::Output),
+        ModelFunctionKind::Diffusion => vec![
+            arg(FunctionArgumentKind::Time, Access::Input),
+            arg(FunctionArgumentKind::States, Access::Input),
+            arg(FunctionArgumentKind::Parameters, Access::Input),
+            arg(FunctionArgumentKind::Covariates, Access::Input),
+            arg(FunctionArgumentKind::RouteInputs, Access::Input),
+            arg(FunctionArgumentKind::Derived, Access::Input),
+            arg(FunctionArgumentKind::StateNoise, Access::Output),
         ],
-        KernelRole::RouteLag => vec![
-            arg(KernelArgumentKind::Time, KernelAccess::Input),
-            arg(KernelArgumentKind::Parameters, KernelAccess::Input),
-            arg(KernelArgumentKind::Covariates, KernelAccess::Input),
-            arg(KernelArgumentKind::RouteInputs, KernelAccess::Input),
-            arg(KernelArgumentKind::Derived, KernelAccess::Input),
-            arg(KernelArgumentKind::RouteLag, KernelAccess::Output),
+        ModelFunctionKind::RouteLag => vec![
+            arg(FunctionArgumentKind::Time, Access::Input),
+            arg(FunctionArgumentKind::Parameters, Access::Input),
+            arg(FunctionArgumentKind::Covariates, Access::Input),
+            arg(FunctionArgumentKind::RouteInputs, Access::Input),
+            arg(FunctionArgumentKind::Derived, Access::Input),
+            arg(FunctionArgumentKind::RouteLag, Access::Output),
         ],
-        KernelRole::RouteBioavailability => vec![
-            arg(KernelArgumentKind::Time, KernelAccess::Input),
-            arg(KernelArgumentKind::Parameters, KernelAccess::Input),
-            arg(KernelArgumentKind::Covariates, KernelAccess::Input),
-            arg(KernelArgumentKind::RouteInputs, KernelAccess::Input),
-            arg(KernelArgumentKind::Derived, KernelAccess::Input),
-            arg(
-                KernelArgumentKind::RouteBioavailability,
-                KernelAccess::Output,
-            ),
+        ModelFunctionKind::RouteBioavailability => vec![
+            arg(FunctionArgumentKind::Time, Access::Input),
+            arg(FunctionArgumentKind::Parameters, Access::Input),
+            arg(FunctionArgumentKind::Covariates, Access::Input),
+            arg(FunctionArgumentKind::RouteInputs, Access::Input),
+            arg(FunctionArgumentKind::Derived, Access::Input),
+            arg(FunctionArgumentKind::RouteBioavailability, Access::Output),
         ],
-        KernelRole::Analytical => vec![
-            arg(KernelArgumentKind::Time, KernelAccess::Input),
-            arg(KernelArgumentKind::States, KernelAccess::Input),
-            arg(KernelArgumentKind::Parameters, KernelAccess::Input),
-            arg(KernelArgumentKind::Covariates, KernelAccess::Input),
-            arg(KernelArgumentKind::RouteInputs, KernelAccess::Input),
-            arg(KernelArgumentKind::Derived, KernelAccess::Input),
-            arg(KernelArgumentKind::AnalyticalState, KernelAccess::Output),
+        ModelFunctionKind::Analytical => vec![
+            arg(FunctionArgumentKind::Time, Access::Input),
+            arg(FunctionArgumentKind::States, Access::Input),
+            arg(FunctionArgumentKind::Parameters, Access::Input),
+            arg(FunctionArgumentKind::Covariates, Access::Input),
+            arg(FunctionArgumentKind::RouteInputs, Access::Input),
+            arg(FunctionArgumentKind::Derived, Access::Input),
+            arg(FunctionArgumentKind::AnalyticalState, Access::Output),
         ],
     };
-    KernelSignature { args }
+    FunctionSignature { args }
 }
 
-fn arg(kind: KernelArgumentKind, access: KernelAccess) -> KernelArgument {
-    KernelArgument { kind, access }
+fn arg(kind: FunctionArgumentKind, access: Access) -> FunctionArgument {
+    FunctionArgument { kind, access }
 }
 
 fn lookup_symbol<'a>(
     symbols: &'a BTreeMap<SymbolId, &'a Symbol>,
     symbol: SymbolId,
     span: Span,
-) -> Result<&'a Symbol, LoweringError> {
+) -> Result<&'a Symbol, CompileError> {
     symbols.get(&symbol).copied().ok_or_else(|| {
-        LoweringError::new(
-            format!("symbol id {symbol} is missing from the typed model symbol table"),
+        CompileError::new(
+            format!("symbol id {symbol} is missing from the analyzed model symbol table"),
             span,
         )
     })
 }
 
-fn lower_route_destination(
+fn compile_route_destination(
     symbols: &BTreeMap<SymbolId, &Symbol>,
     state_slots: &BTreeMap<SymbolId, StateLayout>,
-    destination: &TypedStatePlace,
-) -> Result<RouteDestination, LoweringError> {
+    destination: &AnalyzedStatePlace,
+) -> Result<RouteDestination, CompileError> {
     let symbol = lookup_symbol(symbols, destination.state, destination.span)?;
     let layout = state_slots
         .get(&destination.state)
         .copied()
         .ok_or_else(|| {
-            LoweringError::new(
+            CompileError::new(
                 format!("state `{}` has no execution layout", symbol.name),
                 destination.span,
             )
@@ -1440,7 +1447,7 @@ fn lower_route_destination(
         Some(index) => constant_index(index, destination.span)?,
     };
     if element >= layout.len {
-        return Err(LoweringError::new(
+        return Err(CompileError::new(
             format!(
                 "route destination for `{}` indexes element {}, but state length is {}",
                 symbol.name, element, layout.len
@@ -1456,14 +1463,14 @@ fn lower_route_destination(
     })
 }
 
-fn constant_index(expr: &TypedExpr, span: Span) -> Result<usize, LoweringError> {
+fn constant_index(expr: &AnalyzedExpr, span: Span) -> Result<usize, CompileError> {
     let value = expr
         .constant
         .as_ref()
         .and_then(ConstValue::as_i64)
-        .ok_or_else(|| LoweringError::new("expected a compile-time integer index", span))?;
+        .ok_or_else(|| CompileError::new("expected a compile-time integer index", span))?;
     if value < 0 {
-        return Err(LoweringError::new(
+        return Err(CompileError::new(
             "expected a non-negative compile-time index",
             span,
         ));
@@ -1496,26 +1503,26 @@ mod tests {
     use crate::{analyze_module, parse_module};
 
     #[test]
-    fn lowers_structured_block_corpus_into_execution_models() {
+    fn compiles_structured_block_corpus_into_execution_models() {
         let execution = structured_block_execution();
         assert_eq!(execution.models.len(), 4);
 
         let ode = find_model(&execution, "one_cmt_oral_iv");
-        assert_eq!(ode.abi.parameter_buffer.len, 5);
-        assert_eq!(ode.abi.covariate_buffer.len, 1);
-        assert_eq!(ode.abi.state_buffer.len, 2);
-        assert_eq!(ode.abi.derived_buffer.len, 3);
-        assert_eq!(ode.abi.output_buffer.len, 1);
-        assert_eq!(ode.abi.route_buffer.len, 2);
+        assert_eq!(ode.layout.parameter_buffer.len, 5);
+        assert_eq!(ode.layout.covariate_buffer.len, 1);
+        assert_eq!(ode.layout.state_buffer.len, 2);
+        assert_eq!(ode.layout.derived_buffer.len, 3);
+        assert_eq!(ode.layout.output_buffer.len, 1);
+        assert_eq!(ode.layout.route_buffer.len, 2);
         assert_eq!(ode.metadata.routes[0].destination.state_offset, 0);
         assert_eq!(
-            kernel_roles(ode),
+            function_kinds(ode),
             vec![
-                KernelRole::Derive,
-                KernelRole::Dynamics,
-                KernelRole::RouteLag,
-                KernelRole::RouteBioavailability,
-                KernelRole::Outputs,
+                ModelFunctionKind::Derive,
+                ModelFunctionKind::Dynamics,
+                ModelFunctionKind::RouteLag,
+                ModelFunctionKind::RouteBioavailability,
+                ModelFunctionKind::Outputs,
             ]
         );
     }
@@ -1541,21 +1548,21 @@ out(cp) = central / v ~ continuous()
 "#;
 
         let model = crate::parse_model(src).expect("authoring model parses");
-        let typed = crate::analyze_model(&model).expect("authoring model analyzes");
-        let lowered = crate::lower_typed_model(&typed).expect("authoring model lowers");
+        let analyzed = crate::analyze_model(&model).expect("authoring model analyzes");
+        let compiled = crate::compile_analyzed_model(&analyzed).expect("authoring model compiles");
 
-        assert_eq!(lowered.abi.route_buffer.len, 1);
-        assert_eq!(lowered.metadata.routes.len(), 2);
-        assert_eq!(lowered.metadata.routes[0].kind, Some(RouteKind::Bolus));
-        assert_eq!(lowered.metadata.routes[1].kind, Some(RouteKind::Infusion));
-        assert_eq!(lowered.metadata.routes[0].declaration_index, 0);
-        assert_eq!(lowered.metadata.routes[1].declaration_index, 1);
-        assert_eq!(lowered.metadata.routes[0].index, 0);
-        assert_eq!(lowered.metadata.routes[1].index, 0);
-        assert!(lowered.metadata.routes[0].has_lag);
-        assert!(lowered.metadata.routes[0].has_bioavailability);
-        assert!(!lowered.metadata.routes[1].has_lag);
-        assert!(!lowered.metadata.routes[1].has_bioavailability);
+        assert_eq!(compiled.layout.route_buffer.len, 1);
+        assert_eq!(compiled.metadata.routes.len(), 2);
+        assert_eq!(compiled.metadata.routes[0].kind, Some(RouteKind::Bolus));
+        assert_eq!(compiled.metadata.routes[1].kind, Some(RouteKind::Infusion));
+        assert_eq!(compiled.metadata.routes[0].declaration_index, 0);
+        assert_eq!(compiled.metadata.routes[1].declaration_index, 1);
+        assert_eq!(compiled.metadata.routes[0].index, 0);
+        assert_eq!(compiled.metadata.routes[1].index, 0);
+        assert!(compiled.metadata.routes[0].has_lag);
+        assert!(compiled.metadata.routes[0].has_bioavailability);
+        assert!(!compiled.metadata.routes[1].has_lag);
+        assert!(!compiled.metadata.routes[1].has_bioavailability);
     }
 
     #[test]
@@ -1578,11 +1585,11 @@ out(outeq_2) = depot / v
 "#;
 
         let model = crate::parse_model(src).expect("authoring model parses");
-        let typed = crate::analyze_model(&model).expect("authoring model analyzes");
-        let lowered = crate::lower_typed_model(&typed).expect("authoring model lowers");
+        let analyzed = crate::analyze_model(&model).expect("authoring model analyzes");
+        let compiled = crate::compile_analyzed_model(&analyzed).expect("authoring model compiles");
 
         assert_eq!(
-            lowered
+            compiled
                 .metadata
                 .routes
                 .iter()
@@ -1591,7 +1598,7 @@ out(outeq_2) = depot / v
             vec!["input_10", "iv"]
         );
         assert_eq!(
-            lowered
+            compiled
                 .metadata
                 .outputs
                 .iter()
@@ -1600,8 +1607,8 @@ out(outeq_2) = depot / v
             vec!["cp", "outeq_2"]
         );
         assert_eq!(
-            lowered
-                .abi
+            compiled
+                .layout
                 .route_buffer
                 .slots
                 .iter()
@@ -1610,8 +1617,8 @@ out(outeq_2) = depot / v
             vec!["input_10", "iv"]
         );
         assert_eq!(
-            lowered
-                .abi
+            compiled
+                .layout
                 .output_buffer
                 .slots
                 .iter()
@@ -1639,9 +1646,9 @@ out(cp) = central / v ~ continuous()
 "#;
 
         let model = crate::parse_model(src).expect("authoring model parses");
-        let typed = crate::analyze_model(&model).expect("authoring model analyzes");
-        let error =
-            crate::lower_typed_model(&typed).expect_err("infusion lag should fail during lowering");
+        let analyzed = crate::analyze_model(&model).expect("authoring model analyzes");
+        let error = crate::compile_analyzed_model(&analyzed)
+            .expect_err("infusion lag should fail during compilation");
 
         assert!(error
             .to_string()
@@ -1666,9 +1673,9 @@ out(cp) = central / v ~ continuous()
 "#;
 
         let model = crate::parse_model(src).expect("authoring model parses");
-        let typed = crate::analyze_model(&model).expect("authoring model analyzes");
-        let error = crate::lower_typed_model(&typed)
-            .expect_err("infusion bioavailability should fail during lowering");
+        let analyzed = crate::analyze_model(&model).expect("authoring model analyzes");
+        let error = crate::compile_analyzed_model(&analyzed)
+            .expect_err("infusion bioavailability should fail during compilation");
 
         assert!(error
             .to_string()
@@ -1679,20 +1686,22 @@ out(cp) = central / v ~ continuous()
     fn flattens_array_states_and_preserves_loop_structure() {
         let execution = structured_block_execution();
         let transit = find_model(&execution, "transit_absorption");
-        assert_eq!(transit.abi.state_buffer.len, 5);
+        assert_eq!(transit.layout.state_buffer.len, 5);
         assert_eq!(transit.metadata.states[0].name, "transit");
         assert_eq!(transit.metadata.states[0].offset, 0);
         assert_eq!(transit.metadata.states[0].len, 4);
         assert_eq!(transit.metadata.states[1].name, "central");
         assert_eq!(transit.metadata.states[1].offset, 4);
-        assert!(transit.kernel(KernelRole::RouteLag).is_none());
-        assert!(transit.kernel(KernelRole::RouteBioavailability).is_none());
+        assert!(transit.function(ModelFunctionKind::RouteLag).is_none());
+        assert!(transit
+            .function(ModelFunctionKind::RouteBioavailability)
+            .is_none());
 
         let dynamics = transit
-            .kernel(KernelRole::Dynamics)
-            .expect("dynamics kernel");
-        let KernelImplementation::Statements(program) = &dynamics.implementation else {
-            panic!("expected statement-based dynamics kernel");
+            .function(ModelFunctionKind::Dynamics)
+            .expect("dynamics function");
+        let FunctionBody::Statements(program) = &dynamics.body else {
+            panic!("expected statement-based dynamics function");
         };
         assert!(program
             .body
@@ -1702,48 +1711,50 @@ out(cp) = central / v ~ continuous()
     }
 
     #[test]
-    fn analytical_models_lower_to_builtin_execution_kernels() {
+    fn analytical_models_compile_to_builtin_execution_functions() {
         let execution = structured_block_execution();
         let analytical = find_model(&execution, "one_cmt_abs");
-        let kernel = analytical
-            .kernel(KernelRole::Analytical)
-            .expect("analytical kernel");
+        let function = analytical
+            .function(ModelFunctionKind::Analytical)
+            .expect("analytical function");
         assert_eq!(
-            kernel.signature.args,
+            function.signature.args,
             vec![
-                arg(KernelArgumentKind::Time, KernelAccess::Input),
-                arg(KernelArgumentKind::States, KernelAccess::Input),
-                arg(KernelArgumentKind::Parameters, KernelAccess::Input),
-                arg(KernelArgumentKind::Covariates, KernelAccess::Input),
-                arg(KernelArgumentKind::RouteInputs, KernelAccess::Input),
-                arg(KernelArgumentKind::Derived, KernelAccess::Input),
-                arg(KernelArgumentKind::AnalyticalState, KernelAccess::Output),
+                arg(FunctionArgumentKind::Time, Access::Input),
+                arg(FunctionArgumentKind::States, Access::Input),
+                arg(FunctionArgumentKind::Parameters, Access::Input),
+                arg(FunctionArgumentKind::Covariates, Access::Input),
+                arg(FunctionArgumentKind::RouteInputs, Access::Input),
+                arg(FunctionArgumentKind::Derived, Access::Input),
+                arg(FunctionArgumentKind::AnalyticalState, Access::Output),
             ]
         );
         assert!(matches!(
-            kernel.implementation,
-            KernelImplementation::AnalyticalBuiltin(AnalyticalKernel::OneCompartmentWithAbsorption)
+            function.body,
+            FunctionBody::AnalyticalBuiltin(AnalyticalKernel::OneCompartmentWithAbsorption)
         ));
     }
 
     #[test]
-    fn sde_models_emit_runtime_kernels_and_zero_filled_init() {
+    fn sde_models_emit_runtime_functions_and_zero_filled_init() {
         let execution = structured_block_execution();
         let sde = find_model(&execution, "vanco_sde");
         assert_eq!(sde.metadata.particles, Some(1000));
         assert_eq!(
-            kernel_roles(sde),
+            function_kinds(sde),
             vec![
-                KernelRole::Init,
-                KernelRole::Drift,
-                KernelRole::Diffusion,
-                KernelRole::Outputs,
+                ModelFunctionKind::Init,
+                ModelFunctionKind::Drift,
+                ModelFunctionKind::Diffusion,
+                ModelFunctionKind::Outputs,
             ]
         );
 
-        let init = sde.kernel(KernelRole::Init).expect("init kernel");
-        let KernelImplementation::Statements(program) = &init.implementation else {
-            panic!("expected statement init kernel");
+        let init = sde
+            .function(ModelFunctionKind::Init)
+            .expect("init function");
+        let FunctionBody::Statements(program) = &init.body else {
+            panic!("expected statement init function");
         };
         assert!(program.body.statements.len() > sde.metadata.states.len());
         assert!(matches!(
@@ -1759,19 +1770,21 @@ out(cp) = central / v ~ continuous()
     }
 
     #[test]
-    fn route_property_kernels_fill_defaults_for_unconfigured_routes() {
+    fn route_property_functions_fill_defaults_for_unconfigured_routes() {
         let execution = structured_block_execution();
         let ode = find_model(&execution, "one_cmt_oral_iv");
-        let lag = ode.kernel(KernelRole::RouteLag).expect("lag kernel");
+        let lag = ode
+            .function(ModelFunctionKind::RouteLag)
+            .expect("lag function");
         let bio = ode
-            .kernel(KernelRole::RouteBioavailability)
-            .expect("bioavailability kernel");
+            .function(ModelFunctionKind::RouteBioavailability)
+            .expect("bioavailability function");
 
-        let KernelImplementation::Statements(lag_program) = &lag.implementation else {
-            panic!("expected statement lag kernel");
+        let FunctionBody::Statements(lag_program) = &lag.body else {
+            panic!("expected statement lag function");
         };
-        let KernelImplementation::Statements(bio_program) = &bio.implementation else {
-            panic!("expected statement bioavailability kernel");
+        let FunctionBody::Statements(bio_program) = &bio.body else {
+            panic!("expected statement bioavailability function");
         };
 
         assert_eq!(lag_program.body.statements.len(), 3);
@@ -1801,8 +1814,8 @@ out(cp) = central / v ~ continuous()
     fn structured_block_execution() -> ExecutionModule {
         let src = STRUCTURED_BLOCK_CORPUS;
         let module = parse_module(src).expect("structured-block fixture parses");
-        let typed = analyze_module(&module).expect("structured-block fixture analyzes");
-        lower_typed_module(&typed).expect("execution lowering succeeds")
+        let analyzed = analyze_module(&module).expect("structured-block fixture analyzes");
+        compile_analyzed_module(&analyzed).expect("execution compilation succeeds")
     }
 
     fn find_model<'a>(module: &'a ExecutionModule, name: &str) -> &'a ExecutionModel {
@@ -1813,7 +1826,11 @@ out(cp) = central / v ~ continuous()
             .unwrap_or_else(|| panic!("missing model {name}"))
     }
 
-    fn kernel_roles(model: &ExecutionModel) -> Vec<KernelRole> {
-        model.kernels.iter().map(|kernel| kernel.role).collect()
+    fn function_kinds(model: &ExecutionModel) -> Vec<ModelFunctionKind> {
+        model
+            .functions
+            .iter()
+            .map(|function| function.kind)
+            .collect()
     }
 }

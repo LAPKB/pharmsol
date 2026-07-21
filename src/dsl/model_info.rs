@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use pharmsol_dsl::execution::{
     ExecutionExpr, ExecutionExprKind, ExecutionLoad, ExecutionModel, ExecutionStmt,
-    ExecutionStmtKind, KernelImplementation, KernelRole,
+    ExecutionStmtKind, FunctionBody, ModelFunctionKind,
 };
 use pharmsol_dsl::{AnalyticalKernel, CovariateInterpolation, ModelKind, RouteKind};
 
@@ -12,7 +12,7 @@ use pharmsol_dsl::{AnalyticalKernel, CovariateInterpolation, ModelKind, RouteKin
 ///
 /// This is the shared inspection surface returned by the native AoT, WASM, and
 /// runtime loaders. It keeps public labels and buffer sizes available without
-/// exposing backend-specific kernel details.
+/// exposing backend-specific function details.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NativeModelInfo {
     /// Public model name.
@@ -40,7 +40,7 @@ pub struct NativeModelInfo {
     pub output_len: usize,
     /// Length of the dense route-input buffer used during execution.
     pub route_len: usize,
-    /// Analytical kernel metadata when the compiled model is analytical.
+    /// Analytical function metadata when the compiled model is analytical.
     pub analytical: Option<AnalyticalKernel>,
     /// Particle count when the compiled model is stochastic.
     pub particles: Option<usize>,
@@ -77,7 +77,7 @@ pub struct NativeRouteInfo {
     pub index: usize,
     /// Coarse route kind when declared in metadata.
     pub kind: Option<RouteKind>,
-    /// Dense destination state offset used by compiled kernels.
+    /// Dense destination state offset used by compiled functions.
     pub destination_offset: usize,
     /// Public destination state name.
     pub destination_name: String,
@@ -101,7 +101,7 @@ pub struct NativeOutputInfo {
 }
 
 impl NativeModelInfo {
-    /// Build public compiled-model metadata from a lowered execution model.
+    /// Build public compiled-model metadata from a compiled execution model.
     pub fn from_execution_model(model: &ExecutionModel) -> Self {
         let explicit_route_input_usage = explicit_route_input_usage(model);
         Self {
@@ -166,10 +166,10 @@ impl NativeModelInfo {
                     index: output.index,
                 })
                 .collect(),
-            state_len: model.abi.state_buffer.len,
-            derived_len: model.abi.derived_buffer.len,
-            output_len: model.abi.output_buffer.len,
-            route_len: model.abi.route_buffer.len,
+            state_len: model.layout.state_buffer.len,
+            derived_len: model.layout.derived_buffer.len,
+            output_len: model.layout.output_buffer.len,
+            route_len: model.layout.route_buffer.len,
             analytical: model.metadata.analytical,
             particles: model.metadata.particles,
         }
@@ -183,16 +183,16 @@ fn explicit_route_input_usage(model: &ExecutionModel) -> Vec<bool> {
         .iter()
         .map(|route| (route.symbol, route.declaration_index))
         .collect::<BTreeMap<_, _>>();
-    let Some(kernel) = (match model.kind {
-        ModelKind::Ode => model.kernel(KernelRole::Dynamics),
-        ModelKind::Sde => model.kernel(KernelRole::Drift),
+    let Some(function) = (match model.kind {
+        ModelKind::Ode => model.function(ModelFunctionKind::Dynamics),
+        ModelKind::Sde => model.function(ModelFunctionKind::Drift),
         ModelKind::Analytical => None,
     }) else {
         return vec![false; model.metadata.routes.len()];
     };
 
     let mut usage = vec![false; model.metadata.routes.len()];
-    if let KernelImplementation::Statements(program) = &kernel.implementation {
+    if let FunctionBody::Statements(program) = &function.body {
         mark_route_inputs_in_statements(&program.body.statements, &declaration_slots, &mut usage);
     }
     usage
@@ -261,13 +261,13 @@ fn mark_route_inputs_in_expr(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pharmsol_dsl::{analyze_model, lower_typed_model, parse_model};
+    use pharmsol_dsl::{analyze_model, compile_analyzed_model, parse_model};
 
     fn load_model_info(src: &str) -> NativeModelInfo {
         let model = parse_model(src).expect("model parses");
-        let typed = analyze_model(&model).expect("model analyzes");
-        let lowered = lower_typed_model(&typed).expect("model lowers");
-        NativeModelInfo::from_execution_model(&lowered)
+        let analyzed = analyze_model(&model).expect("model analyzes");
+        let compiled = compile_analyzed_model(&analyzed).expect("model lowers");
+        NativeModelInfo::from_execution_model(&compiled)
     }
 
     #[test]

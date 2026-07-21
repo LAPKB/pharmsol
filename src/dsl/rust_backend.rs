@@ -1,15 +1,15 @@
 use std::fmt::Write;
 
 use super::compiled_backend_abi::{
-    compiled_kernel_symbol, encode_compiled_model_info, API_VERSION_SYMBOL,
+    compiled_function_symbol, encode_compiled_model_info, API_VERSION_SYMBOL,
     MODEL_INFO_JSON_LEN_SYMBOL, MODEL_INFO_JSON_PTR_SYMBOL,
 };
 use pharmsol_dsl::execution::{
     ExecutionBlock, ExecutionCall, ExecutionExpr, ExecutionExprKind, ExecutionLoad, ExecutionModel,
     ExecutionProgram, ExecutionStateRef, ExecutionStmt, ExecutionStmtKind, ExecutionTargetKind,
-    KernelImplementation,
+    FunctionBody,
 };
-use pharmsol_dsl::{MathIntrinsic, TypedBinaryOp, TypedUnaryOp, ValueType};
+use pharmsol_dsl::{AnalyzedBinaryOp, AnalyzedUnaryOp, MathFunction, ValueType};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RustBackendFlavor {
@@ -76,10 +76,10 @@ pub fn emit_rust_backend_source(
     .unwrap();
     writeln!(source).unwrap();
 
-    for kernel in &model.kernels {
-        if let Some(symbol) = compiled_kernel_symbol(kernel.role) {
-            if let KernelImplementation::Statements(program) = &kernel.implementation {
-                emit_statement_kernel(&mut source, program, symbol)?;
+    for function in &model.functions {
+        if let Some(symbol) = compiled_function_symbol(function.kind) {
+            if let FunctionBody::Statements(program) = &function.body {
+                emit_statement_function(&mut source, program, symbol)?;
                 writeln!(source).unwrap();
             }
         }
@@ -87,7 +87,7 @@ pub fn emit_rust_backend_source(
 
     Ok(source)
 }
-fn emit_statement_kernel(
+fn emit_statement_function(
     source: &mut String,
     program: &ExecutionProgram,
     symbol: &'static str,
@@ -231,8 +231,8 @@ fn emit_expr(expr: &ExecutionExpr) -> Result<RenderedExpr, String> {
         ExecutionExprKind::Unary { op, expr: inner } => {
             let inner = emit_expr(inner)?;
             match op {
-                TypedUnaryOp::Plus => cast_expr(inner.rendered, inner.ty, expr.ty),
-                TypedUnaryOp::Minus => match expr.ty {
+                AnalyzedUnaryOp::Plus => cast_expr(inner.rendered, inner.ty, expr.ty),
+                AnalyzedUnaryOp::Minus => match expr.ty {
                     ValueType::Real | ValueType::Int => {
                         format!("-({})", cast_expr(inner.rendered, inner.ty, expr.ty))
                     }
@@ -240,7 +240,7 @@ fn emit_expr(expr: &ExecutionExpr) -> Result<RenderedExpr, String> {
                         return Err("cannot emit unary minus for boolean expressions".to_string())
                     }
                 },
-                TypedUnaryOp::Not => {
+                AnalyzedUnaryOp::Not => {
                     format!(
                         "!({})",
                         cast_expr(inner.rendered, inner.ty, ValueType::Bool)
@@ -274,7 +274,7 @@ fn emit_load(load: &ExecutionLoad, ty: ValueType) -> Result<String, String> {
 }
 
 fn emit_binary_expr(
-    op: TypedBinaryOp,
+    op: AnalyzedBinaryOp,
     lhs: &ExecutionExpr,
     rhs: &ExecutionExpr,
     result_ty: ValueType,
@@ -282,17 +282,17 @@ fn emit_binary_expr(
     let lhs = emit_expr(lhs)?;
     let rhs = emit_expr(rhs)?;
     Ok(match op {
-        TypedBinaryOp::Or => format!(
+        AnalyzedBinaryOp::Or => format!(
             "({}) || ({})",
             cast_expr(lhs.rendered, lhs.ty, ValueType::Bool),
             cast_expr(rhs.rendered, rhs.ty, ValueType::Bool)
         ),
-        TypedBinaryOp::And => format!(
+        AnalyzedBinaryOp::And => format!(
             "({}) && ({})",
             cast_expr(lhs.rendered, lhs.ty, ValueType::Bool),
             cast_expr(rhs.rendered, rhs.ty, ValueType::Bool)
         ),
-        TypedBinaryOp::Eq | TypedBinaryOp::NotEq => {
+        AnalyzedBinaryOp::Eq | AnalyzedBinaryOp::NotEq => {
             let operand_ty = if lhs.ty == ValueType::Real || rhs.ty == ValueType::Real {
                 ValueType::Real
             } else if lhs.ty == ValueType::Bool && rhs.ty == ValueType::Bool {
@@ -300,24 +300,31 @@ fn emit_binary_expr(
             } else {
                 ValueType::Int
             };
-            let operator = if op == TypedBinaryOp::Eq { "==" } else { "!=" };
+            let operator = if op == AnalyzedBinaryOp::Eq {
+                "=="
+            } else {
+                "!="
+            };
             format!(
                 "({}) {operator} ({})",
                 cast_expr(lhs.rendered, lhs.ty, operand_ty),
                 cast_expr(rhs.rendered, rhs.ty, operand_ty)
             )
         }
-        TypedBinaryOp::Lt | TypedBinaryOp::LtEq | TypedBinaryOp::Gt | TypedBinaryOp::GtEq => {
+        AnalyzedBinaryOp::Lt
+        | AnalyzedBinaryOp::LtEq
+        | AnalyzedBinaryOp::Gt
+        | AnalyzedBinaryOp::GtEq => {
             let operand_ty = if lhs.ty == ValueType::Real || rhs.ty == ValueType::Real {
                 ValueType::Real
             } else {
                 ValueType::Int
             };
             let operator = match op {
-                TypedBinaryOp::Lt => "<",
-                TypedBinaryOp::LtEq => "<=",
-                TypedBinaryOp::Gt => ">",
-                TypedBinaryOp::GtEq => ">=",
+                AnalyzedBinaryOp::Lt => "<",
+                AnalyzedBinaryOp::LtEq => "<=",
+                AnalyzedBinaryOp::Gt => ">",
+                AnalyzedBinaryOp::GtEq => ">=",
                 _ => unreachable!(),
             };
             format!(
@@ -326,11 +333,11 @@ fn emit_binary_expr(
                 cast_expr(rhs.rendered, rhs.ty, operand_ty)
             )
         }
-        TypedBinaryOp::Add | TypedBinaryOp::Sub | TypedBinaryOp::Mul => {
+        AnalyzedBinaryOp::Add | AnalyzedBinaryOp::Sub | AnalyzedBinaryOp::Mul => {
             let operator = match op {
-                TypedBinaryOp::Add => "+",
-                TypedBinaryOp::Sub => "-",
-                TypedBinaryOp::Mul => "*",
+                AnalyzedBinaryOp::Add => "+",
+                AnalyzedBinaryOp::Sub => "-",
+                AnalyzedBinaryOp::Mul => "*",
                 _ => unreachable!(),
             };
             format!(
@@ -339,12 +346,12 @@ fn emit_binary_expr(
                 cast_expr(rhs.rendered, rhs.ty, result_ty)
             )
         }
-        TypedBinaryOp::Div => format!(
+        AnalyzedBinaryOp::Div => format!(
             "({}) / ({})",
             cast_expr(lhs.rendered, lhs.ty, ValueType::Real),
             cast_expr(rhs.rendered, rhs.ty, ValueType::Real)
         ),
-        TypedBinaryOp::Pow => {
+        AnalyzedBinaryOp::Pow => {
             let lhs = cast_expr(lhs.rendered, lhs.ty, ValueType::Real);
             let rhs = cast_expr(rhs.rendered, rhs.ty, ValueType::Real);
             cast_expr(format!("({lhs}).powf({rhs})"), ValueType::Real, result_ty)
@@ -363,13 +370,13 @@ fn emit_call_expr(
 }
 
 fn emit_math_call(
-    intrinsic: MathIntrinsic,
+    intrinsic: MathFunction,
     args: &[ExecutionExpr],
     result_ty: ValueType,
 ) -> Result<String, String> {
     let args = args.iter().map(emit_expr).collect::<Result<Vec<_>, _>>()?;
     Ok(match intrinsic {
-        MathIntrinsic::Max | MathIntrinsic::Min => {
+        MathFunction::Max | MathFunction::Min => {
             if args.len() != 2 {
                 return Err(format!("{intrinsic:?} expects 2 arguments"));
             }
@@ -377,7 +384,7 @@ fn emit_math_call(
                 ValueType::Real => {
                     let lhs = cast_expr(args[0].rendered.clone(), args[0].ty, ValueType::Real);
                     let rhs = cast_expr(args[1].rendered.clone(), args[1].ty, ValueType::Real);
-                    let method = if intrinsic == MathIntrinsic::Max {
+                    let method = if intrinsic == MathFunction::Max {
                         "max"
                     } else {
                         "min"
@@ -387,7 +394,7 @@ fn emit_math_call(
                 ValueType::Int => {
                     let lhs = cast_expr(args[0].rendered.clone(), args[0].ty, ValueType::Int);
                     let rhs = cast_expr(args[1].rendered.clone(), args[1].ty, ValueType::Int);
-                    let function = if intrinsic == MathIntrinsic::Max {
+                    let function = if intrinsic == MathFunction::Max {
                         "std::cmp::max"
                     } else {
                         "std::cmp::min"
@@ -399,20 +406,20 @@ fn emit_math_call(
                 }
             }
         }
-        MathIntrinsic::Abs if result_ty == ValueType::Int => {
+        MathFunction::Abs if result_ty == ValueType::Int => {
             let value = cast_expr(args[0].rendered.clone(), args[0].ty, ValueType::Int);
             format!("({value}).abs()")
         }
         _ => {
             let function = match intrinsic {
-                MathIntrinsic::Abs => "abs",
-                MathIntrinsic::Ceil => "ceil",
-                MathIntrinsic::Exp => "exp",
-                MathIntrinsic::Floor => "floor",
-                MathIntrinsic::Ln | MathIntrinsic::Log => "ln",
-                MathIntrinsic::Log10 => "log10",
-                MathIntrinsic::Log2 => "log2",
-                MathIntrinsic::Pow => {
+                MathFunction::Abs => "abs",
+                MathFunction::Ceil => "ceil",
+                MathFunction::Exp => "exp",
+                MathFunction::Floor => "floor",
+                MathFunction::Ln | MathFunction::Log => "ln",
+                MathFunction::Log10 => "log10",
+                MathFunction::Log2 => "log2",
+                MathFunction::Pow => {
                     if args.len() != 2 {
                         return Err("pow expects 2 arguments".to_string());
                     }
@@ -424,12 +431,12 @@ fn emit_math_call(
                         result_ty,
                     ));
                 }
-                MathIntrinsic::Round => "round",
-                MathIntrinsic::Sin => "sin",
-                MathIntrinsic::Cos => "cos",
-                MathIntrinsic::Tan => "tan",
-                MathIntrinsic::Sqrt => "sqrt",
-                MathIntrinsic::Max | MathIntrinsic::Min => unreachable!(),
+                MathFunction::Round => "round",
+                MathFunction::Sin => "sin",
+                MathFunction::Cos => "cos",
+                MathFunction::Tan => "tan",
+                MathFunction::Sqrt => "sqrt",
+                MathFunction::Max | MathFunction::Min => unreachable!(),
             };
             let value = cast_expr(args[0].rendered.clone(), args[0].ty, ValueType::Real);
             cast_expr(

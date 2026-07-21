@@ -16,7 +16,7 @@
 //! - [`optimize`] for optimizer-oriented workflows
 //!
 //! The DSL runtime surface is feature-gated. When you enable `dsl-core`, the
-//! `pharmsol::dsl` module adds parsing, analysis, lowering, compile, and runtime
+//! `pharmsol::dsl` module adds parsing, analysis, compilation, and runtime
 //! entrypoints for models written as DSL source text.
 //!
 //! ## Quick Start
@@ -78,7 +78,7 @@
 //!
 //! DSL work is feature-gated:
 //!
-//! - `dsl-core`: exposes the `pharmsol::dsl` facade and frontend types
+//! - `dsl-core`: exposes the `pharmsol::dsl` facade and DSL compiler types
 //! - `dsl-jit`: adds in-process JIT compilation
 //! - `dsl-aot`: adds native ahead-of-time artifact compilation
 //! - `dsl-aot-load`: adds native artifact loading

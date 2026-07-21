@@ -70,7 +70,7 @@ pub enum ModelMetadataError {
         "metadata declares {declared} particle(s) but validation provided {fallback} fallback particle(s)"
     )]
     ParticleCountConflict { declared: usize, fallback: usize },
-    #[error("{kind:?} metadata cannot declare an analytical kernel")]
+    #[error("{kind:?} metadata cannot declare an analytical function")]
     AnalyticalKernelNotAllowed { kind: ModelKind },
 }
 
@@ -106,7 +106,7 @@ impl fmt::Display for NameDomain {
 /// Route lookups expose two different indices:
 /// - [`ValidatedModelMetadata::route_declaration_index`] is the route position in
 ///   declaration order.
-/// - [`ValidatedModelMetadata::route_index`] is the dense execution input index
+/// - [`ValidatedRoute::input_index`] is the dense execution input index
 ///   for that route kind.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidatedModelMetadata {
@@ -214,8 +214,10 @@ impl ValidatedModelMetadata {
     /// Resolution order:
     /// 1. exact route name,
     /// 2. canonical numeric alias (`input_<n>`) for a bare numeric label,
-    /// 3. 1-based declaration ordinal: a bare numeric label `n` selects the
-    ///    n-th declared route, matching Pmetrics `INPUT` numbering.
+    ///    matching Pmetrics `INPUT` numbering.
+    ///
+    /// A bare numeric label never falls back to a declaration position, so
+    /// `"10"` does not resolve unless an `input_10` route is declared.
     ///
     /// Use [`ValidatedRoute::input_index`] on the result for the dense
     /// execution input slot.
@@ -225,27 +227,20 @@ impl ValidatedModelMetadata {
                 return None;
             }
             self.route(&format!("{NUMERIC_ROUTE_PREFIX}{label}"))
-                .or_else(|| self.routes.get(bare_numeric_ordinal(label)? - 1))
         })
     }
 
     /// Resolve a public output label from data to its dense output index.
     ///
     /// Uses the same resolution order as [`Self::route_for_label`]: exact
-    /// output name, `outeq_<n>` alias, then the 1-based declaration ordinal
-    /// matching Pmetrics `OUTEQ` numbering.
+    /// output name, then the `outeq_<n>` alias matching Pmetrics `OUTEQ`
+    /// numbering, with no positional fallback.
     pub fn output_for_label(&self, label: &str) -> Option<usize> {
         self.output_index(label).or_else(|| {
             if !is_bare_numeric_label(label) {
                 return None;
             }
             self.output_index(&format!("{NUMERIC_OUTPUT_PREFIX}{label}"))
-                .or_else(|| {
-                    let ordinal = bare_numeric_ordinal(label)?;
-                    ordinal
-                        .checked_sub(1)
-                        .filter(|index| *index < self.outputs.len())
-                })
         })
     }
 
@@ -435,7 +430,7 @@ impl ModelMetadata {
         self
     }
 
-    /// Set the analytical kernel identity for built-in analytical models.
+    /// Set the analytical function identity for built-in analytical models.
     pub fn analytical_kernel(mut self, analytical: AnalyticalKernel) -> Self {
         self.analytical = Some(analytical);
         self
@@ -481,7 +476,7 @@ impl ModelMetadata {
         self.particles
     }
 
-    /// Get the declared analytical kernel identity.
+    /// Get the declared analytical function identity.
     pub fn analytical_kernel_decl(&self) -> Option<AnalyticalKernel> {
         self.analytical
     }
@@ -781,17 +776,6 @@ fn is_bare_numeric_label(label: &str) -> bool {
     !label.is_empty() && label.chars().all(|ch| ch.is_ascii_digit())
 }
 
-/// Parse a bare numeric label as a 1-based ordinal.
-///
-/// Returns `None` for non-numeric labels and for `0`, which is not a valid
-/// Pmetrics `INPUT`/`OUTEQ` number.
-fn bare_numeric_ordinal(label: &str) -> Option<usize> {
-    if !is_bare_numeric_label(label) {
-        return None;
-    }
-    label.parse::<usize>().ok().filter(|ordinal| *ordinal >= 1)
-}
-
 fn resolve_kind(
     declared_kind: Option<ModelKind>,
     requested_kind: Option<ModelKind>,
@@ -1078,7 +1062,7 @@ mod tests {
     }
 
     #[test]
-    fn numeric_labels_resolve_via_alias_before_ordinal() {
+    fn numeric_labels_resolve_via_canonical_alias_only() {
         let metadata = new("mixed_labels")
             .kind(ModelKind::Ode)
             .parameters(["ke", "v"])
@@ -1098,9 +1082,10 @@ mod tests {
             Some(0)
         );
 
-        // `0` is not a valid 1-based ordinal, but the `outeq_0`/`input_0`
-        // aliases must still be consulted.
+        // Bare numeric labels resolve through the `outeq_<n>`/`input_<n>`
+        // aliases, including `0`.
         assert_eq!(metadata.output_for_label("0"), Some(1));
+        assert_eq!(metadata.output_for_label("1"), Some(2));
         assert_eq!(
             metadata
                 .route_for_label("0")
@@ -1108,29 +1093,13 @@ mod tests {
             Some(1)
         );
 
-        // An existing alias wins over the 1-based ordinal.
-        assert_eq!(metadata.output_for_label("1"), Some(2));
-
-        // Without an alias, the 1-based declaration ordinal applies.
-        assert_eq!(metadata.output_for_label("2"), Some(1));
-        assert_eq!(metadata.output_for_label("3"), Some(2));
-        assert_eq!(
-            metadata
-                .route_for_label("1")
-                .map(|route| route.declaration_index()),
-            Some(0)
-        );
-        assert_eq!(
-            metadata
-                .route_for_label("2")
-                .map(|route| route.declaration_index()),
-            Some(1)
-        );
-
-        // Out-of-range ordinals and unknown labels do not resolve.
-        assert_eq!(metadata.output_for_label("4"), None);
+        // Without a declared alias, a bare numeric label never falls back to
+        // a declaration position.
+        assert_eq!(metadata.output_for_label("2"), None);
+        assert_eq!(metadata.output_for_label("3"), None);
+        assert!(metadata.route_for_label("1").is_none());
+        assert!(metadata.route_for_label("2").is_none());
         assert_eq!(metadata.output_for_label("missing"), None);
-        assert!(metadata.route_for_label("3").is_none());
         assert!(metadata.route_for_label("missing").is_none());
     }
 
@@ -1347,7 +1316,7 @@ mod tests {
 
     #[test]
     fn analytical_kernel_is_limited_to_analytical_models() {
-        let error = new("ode_kernel")
+        let error = new("ode_function")
             .kind(ModelKind::Ode)
             .parameters(["ke"])
             .states(["central"])
@@ -1355,7 +1324,7 @@ mod tests {
             .route(Route::infusion("iv").to_state("central"))
             .analytical_kernel(AnalyticalKernel::OneCompartment)
             .validate()
-            .expect_err("ODE metadata cannot declare an analytical kernel");
+            .expect_err("ODE metadata cannot declare an analytical function");
 
         assert_eq!(
             error,

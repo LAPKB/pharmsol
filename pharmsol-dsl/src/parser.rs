@@ -1,8 +1,11 @@
-use super::ast::*;
 use super::authoring;
 use super::diagnostic::{ParseError, Span};
 use super::lexer::{lex, Token, TokenKind};
+use super::syntax::*;
 
+/// Parses DSL source text into a syntax tree of one or more models.
+///
+/// Accepts both canonical `model { ... }` source and the authoring shorthand.
 pub fn parse_module(src: &str) -> Result<Module, ParseError> {
     let parsed = (|| {
         let leading = strip_leading_layout(src);
@@ -23,6 +26,10 @@ pub fn parse_module(src: &str) -> Result<Module, ParseError> {
     parsed.map_err(|error| error.with_source(src))
 }
 
+/// Parses DSL source text into a syntax tree of exactly one model.
+///
+/// Like [`parse_module`], but fails if the source does not contain exactly
+/// one model.
 pub fn parse_model(src: &str) -> Result<Model, ParseError> {
     let module = parse_module(src)?;
     match module.models.len() {
@@ -1777,7 +1784,7 @@ out(cp) = central
     }
 
     #[test]
-    fn authoring_dx_and_ddt_lower_equivalently() {
+    fn authoring_dx_and_ddt_compile_equivalently() {
         let dx_src = r#"
 name = derivative_alias
 kind = ode

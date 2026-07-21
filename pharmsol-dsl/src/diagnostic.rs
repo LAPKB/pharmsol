@@ -1,3 +1,5 @@
+//! Spans, diagnostic codes, and rendered error reports for the DSL pipeline.
+
 use std::fmt;
 use std::sync::Arc;
 
@@ -58,8 +60,8 @@ impl fmt::Display for DiagnosticCode {
 }
 
 pub const DSL_PARSE_GENERIC: DiagnosticCode = DiagnosticCode::new("DSL1000");
-pub const DSL_SEMANTIC_GENERIC: DiagnosticCode = DiagnosticCode::new("DSL2000");
-pub const DSL_LOWERING_GENERIC: DiagnosticCode = DiagnosticCode::new("DSL3000");
+pub const DSL_ANALYSIS_GENERIC: DiagnosticCode = DiagnosticCode::new("DSL2000");
+pub const DSL_COMPILE_GENERIC: DiagnosticCode = DiagnosticCode::new("DSL3000");
 pub const DSL_BACKEND_GENERIC: DiagnosticCode = DiagnosticCode::new("DSL4000");
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,8 +72,8 @@ pub enum DiagnosticSeverity {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiagnosticPhase {
     Parse,
-    Semantic,
-    Lowering,
+    Analysis,
+    Compile,
     Backend,
 }
 
@@ -451,8 +453,8 @@ impl DiagnosticPhase {
     fn as_str(self) -> &'static str {
         match self {
             Self::Parse => "parse",
-            Self::Semantic => "semantic",
-            Self::Lowering => "lowering",
+            Self::Analysis => "analysis",
+            Self::Compile => "compile",
             Self::Backend => "backend",
         }
     }

@@ -1,30 +1,37 @@
-//! Backend-neutral frontend crate for the pharmsol DSL.
+//! Compiles pharmsol DSL model source into a ready-to-run form.
 //!
-//! Use this crate when you need the DSL frontend as an engineering API: parse
-//! model source, inspect diagnostics, analyze names and types, and lower a
-//! validated model into the execution representation that backends consume.
+//! This crate reads model source text written in the pharmsol DSL and turns
+//! it into an [`ExecutionModel`]: a fully checked, ready-to-run model that the
+//! simulation backends in the main `pharmsol` crate execute directly.
 //!
-//! Do not use this crate when you already know you want JIT compilation,
-//! native AoT artifacts, WASM artifacts, or `Subject`-based prediction
-//! helpers. Those runtime-facing workflows stay in the main `pharmsol` crate
-//! under `pharmsol::dsl`.
+//! Use this crate when you need to work with model source as data:
+//!
+//! - parse DSL text into a syntax tree
+//! - inspect spans and diagnostics
+//! - check names, types, and model structure
+//! - compile a validated model into its execution form
+//!
+//! Do not use this crate for JIT compilation, native ahead-of-time export or
+//! load, WASM runtime loading, or `Subject`-based prediction helpers. Those
+//! workflows stay in `pharmsol::dsl` in the main `pharmsol` crate.
 //!
 //! Main entrypoints:
 //!
-//! - [`compile_model`] and [`compile_module`] for the one-shot
-//!   source-to-execution pipeline, failing with the unified [`DslError`].
-//! - [`parse_model`] and [`parse_module`] for turning DSL source text into the
-//!   syntax tree in [`ast`].
-//! - [`analyze_model`] and [`analyze_module`] for semantic validation and the
-//!   typed IR in [`ir`].
-//! - [`lower_typed_model`] and [`lower_typed_module`] for lowering typed models
-//!   into the execution representation in [`execution`].
+//! - [`compile_model`] and [`compile_module`] run the whole pipeline in one
+//!   call, failing with the unified [`DslError`].
+//! - [`parse_model`] and [`parse_module`] turn DSL source text into the
+//!   syntax tree in [`syntax`].
+//! - [`analyze_model`] and [`analyze_module`] check names, types, and model
+//!   structure, producing the analyzed model in [`analysis`].
+//! - [`compile_analyzed_model`] and [`compile_analyzed_module`] compile an
+//!   analyzed model into the ready-to-run form in [`execution`].
 //!
-//! The frontend pipeline is intentionally simple:
+//! The pipeline is intentionally simple:
 //!
 //! 1. Parse source text into syntax.
-//! 2. Analyze the syntax into a typed model.
-//! 3. Lower the typed model into an [`ExecutionModel`] or [`ExecutionModule`].
+//! 2. Analyze the syntax into a checked model.
+//! 3. Compile the checked model into an [`ExecutionModel`] or
+//!    [`ExecutionModule`].
 //!
 //! This crate accepts both canonical `model { ... }` source and the authoring
 //! shorthand used by the `pharmsol` examples. The returned diagnostics carry
@@ -32,10 +39,10 @@
 //!
 //! Main modules:
 //!
-//! - [`ast`] for syntax-level nodes.
+//! - [`syntax`] for the syntax tree.
+//! - [`analysis`] for the analyzed, fully checked model.
 //! - [`diagnostic`] for spans, diagnostic codes, and rendered reports.
-//! - [`ir`] for the typed intermediate representation.
-//! - [`execution`] for the lowered execution model shared by JIT, AoT, and
+//! - [`execution`] for the ready-to-run model shared by the JIT, AoT, and
 //!   WASM backends.
 //!
 //! Smallest one-shot example:
@@ -68,12 +75,12 @@
 //! representations:
 //!
 //! ```rust
-//! use pharmsol_dsl::{analyze_model, lower_typed_model, parse_model};
+//! use pharmsol_dsl::{analyze_model, compile_analyzed_model, parse_model};
 //!
 //! # let source = "name = m\nkind = ode\nstates = central\nddt(central) = 0\nout(cp) = central";
-//! let syntax = parse_model(source).expect("model parses");
-//! let typed = analyze_model(&syntax).expect("model analyzes");
-//! let execution = lower_typed_model(&typed).expect("model lowers");
+//! let syntax = parse_model(source).expect("source parses");
+//! let analyzed = analyze_model(&syntax).expect("model is valid");
+//! let execution = compile_analyzed_model(&analyzed).expect("model compiles");
 //! # assert_eq!(execution.name, "m");
 //! ```
 //!
@@ -93,16 +100,16 @@
 //! stay in this crate. If you want a complete source-to-runtime workflow,
 //! switch to `pharmsol::dsl` in the main crate.
 
-pub mod ast;
+pub mod analysis;
+mod analyze;
 mod authoring;
 pub mod diagnostic;
 pub mod execution;
-pub mod ir;
 mod lexer;
 mod name_match;
 mod parser;
 mod pipeline;
-mod semantic;
+pub mod syntax;
 #[cfg(test)]
 mod test_fixtures;
 
@@ -111,17 +118,17 @@ pub const NUMERIC_ROUTE_PREFIX: &str = "input_";
 /// Canonical prefix for numeric output labels such as `outeq_1`.
 pub const NUMERIC_OUTPUT_PREFIX: &str = "outeq_";
 /// Upper bound for compile-time-resolved sizes: state array sizes, route
-/// destination indices, and particle counts. Keeps lowered models within a
+/// destination indices, and particle counts. Keeps compiled models within a
 /// comfortably allocatable state space.
 pub const MAX_CONST_USIZE: usize = 1_048_576;
 pub(crate) const RATE_FUNCTION_NAME: &str = "rate";
 
-pub use ast::*;
+pub use analysis::*;
+pub use analyze::{analyze_model, analyze_module, AnalysisError};
 pub use diagnostic::*;
 pub use execution::{
-    lower_typed_model, lower_typed_module, ExecutionModel, ExecutionModule, LoweringError,
+    compile_analyzed_model, compile_analyzed_module, CompileError, ExecutionModel, ExecutionModule,
 };
-pub use ir::*;
 pub use parser::{parse_model, parse_module, MAX_NESTING_DEPTH};
 pub use pipeline::{compile_model, compile_module, DslError};
-pub use semantic::{analyze_model, analyze_module, SemanticError};
+pub use syntax::*;

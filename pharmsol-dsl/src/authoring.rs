@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::ast::*;
 use super::diagnostic::{Applicability, DiagnosticSuggestion, ParseError, Span, TextEdit};
 use super::parser::{parse_expr_fragment, parse_place_fragment};
+use super::syntax::*;
 use crate::name_match::{
     common_prefix_len, edit_distance, is_high_confidence_match, is_single_adjacent_transposition,
 };
@@ -421,9 +421,9 @@ impl<'a> AuthoringParser<'a> {
             return Ok(());
         }
 
-        if lhs_trimmed == "kernel" {
+        if lhs_trimmed == "function" {
             return Err(ParseError::new(
-                "`kernel = ...` has been renamed to `structure = ...`",
+                "`function = ...` has been renamed to `structure = ...`",
                 span,
             ));
         }

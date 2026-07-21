@@ -2,9 +2,9 @@
 //! inputs, constant evaluation edges, and the unified pipeline surface.
 
 use pharmsol_dsl::{
-    analyze_model, compile_model, compile_module, lower_typed_model, parse_model, ConstValue,
-    Diagnostic, DiagnosticCode, DiagnosticPhase, DiagnosticReport, DslError, ParseError,
-    SemanticError, Span, DSL_PARSE_GENERIC, DSL_SEMANTIC_GENERIC, MAX_CONST_USIZE,
+    analyze_model, compile_analyzed_model, compile_model, compile_module, parse_model,
+    AnalysisError, ConstValue, Diagnostic, DiagnosticCode, DiagnosticPhase, DiagnosticReport,
+    DslError, ParseError, Span, DSL_ANALYSIS_GENERIC, DSL_PARSE_GENERIC, MAX_CONST_USIZE,
     MAX_NESTING_DEPTH,
 };
 
@@ -42,9 +42,9 @@ fn rejects_number_literals_that_overflow_to_infinity() {
 fn accepts_large_but_finite_number_literals() {
     let src = ode_skeleton("ddt(central) = 1e308");
     let model = parse_model(&src).expect("finite literal parses");
-    let typed = analyze_model(&model).expect("finite literal analyzes");
+    let analyzed = analyze_model(&model).expect("finite literal analyzes");
     assert!(matches!(
-        typed.constants.as_slice(),
+        analyzed.constants.as_slice(),
         [] // no constants; the literal lives in the dynamics block
     ));
 }
@@ -151,12 +151,12 @@ fn moderate_nesting_still_parses() {
 
 fn analyzed_constant(src: &str, name: &str) -> ConstValue {
     let model = parse_model(src).expect("model parses");
-    let typed = analyze_model(&model).expect("model analyzes");
-    typed
+    let analyzed = analyze_model(&model).expect("model analyzes");
+    analyzed
         .constants
         .iter()
         .find(|constant| {
-            typed
+            analyzed
                 .symbols
                 .iter()
                 .any(|symbol| symbol.id == constant.symbol && symbol.name == name)
@@ -288,7 +288,7 @@ out(cp) = central / v
 
 #[test]
 fn compile_model_matches_the_staged_pipeline() {
-    let staged = lower_typed_model(
+    let staged = compile_analyzed_model(
         &analyze_model(&parse_model(VALID_MODEL).expect("parses")).expect("analyzes"),
     )
     .expect("lowers");
@@ -318,15 +318,15 @@ fn dsl_error_reports_phase_and_renders_source() {
 
     let src = ode_skeleton("ddt(central) = mystery");
     let err = compile_model(&src).unwrap_err();
-    assert!(matches!(err, DslError::Semantic(_)));
-    assert_eq!(err.phase(), DiagnosticPhase::Semantic);
+    assert!(matches!(err, DslError::Analysis(_)));
+    assert_eq!(err.phase(), DiagnosticPhase::Analysis);
     assert!(err.to_string().contains("error[DSL2000]"));
     assert!(err.to_string().contains("unknown identifier `mystery`"));
 
     let src = "name = m\nkind = ode\nstates = central\ninfusion(iv) -> central\nlag(iv) = 0.5\nddt(central) = 0\nout(cp) = central\n";
     let err = compile_model(src).unwrap_err();
-    assert!(matches!(err, DslError::Lowering(_)));
-    assert_eq!(err.phase(), DiagnosticPhase::Lowering);
+    assert!(matches!(err, DslError::Compile(_)));
+    assert_eq!(err.phase(), DiagnosticPhase::Compile);
     let rendered = err.to_string();
     assert!(
         rendered.contains("does not allow `lag` on infusion route `iv`"),
@@ -388,7 +388,7 @@ fn display_without_source_is_compact_and_coded() {
         "error[DSL1000]: first problem (at bytes 0..1) (+1 more error)"
     );
 
-    let err = SemanticError::new("unknown identifier `ke`", Span::new(10, 12));
+    let err = AnalysisError::new("unknown identifier `ke`", Span::new(10, 12));
     assert_eq!(
         err.to_string(),
         "error[DSL2000]: unknown identifier `ke` (at bytes 10..12)"
@@ -443,7 +443,7 @@ fn malformed_inputs_fail_with_errors_not_panics() {
 fn route_destination_index_is_bounds_checked() {
     let src = "model m { kind ode states { transit[4], central } routes { oral -> transit[9] } dynamics { ddt(transit[0]) = 0, ddt(central) = 0 } outputs { cp = central } }";
     let err = compile_model(src).unwrap_err();
-    assert!(matches!(err, DslError::Lowering(_)));
+    assert!(matches!(err, DslError::Compile(_)));
     let rendered = err.render(src);
     assert!(
         rendered.contains("indexes element 9, but state length is 4"),
@@ -455,7 +455,7 @@ fn route_destination_index_is_bounds_checked() {
 #[test]
 fn diagnostic_codes_are_stable_and_documented() {
     assert_eq!(DSL_PARSE_GENERIC, DiagnosticCode::new("DSL1000"));
-    assert_eq!(DSL_SEMANTIC_GENERIC, DiagnosticCode::new("DSL2000"));
+    assert_eq!(DSL_ANALYSIS_GENERIC, DiagnosticCode::new("DSL2000"));
 
     let src = ode_skeleton(&format!("ddt(central) = {}", nested_expr("(", ")", 1_000)));
     let err = parse_model(&src).expect_err("deep nesting must fail");
