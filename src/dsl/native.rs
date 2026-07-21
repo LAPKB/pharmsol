@@ -731,8 +731,8 @@ impl SharedNativeModel {
     ) -> Result<usize, PharmsolError> {
         let input = self
             .metadata_route_index_for_label(label.as_str())
-            .ok_or_else(|| PharmsolError::UnknownInputLabel {
-                label: label.to_string(),
+            .ok_or_else(|| {
+                PharmsolError::unknown_input_label(label.as_str(), &self.metadata().route_labels())
             })?;
         self.validate_input_for_kind(input, kind)?;
         Ok(input)
@@ -740,13 +740,16 @@ impl SharedNativeModel {
 
     fn resolve_output_label(&self, label: &OutputLabel) -> Result<usize, PharmsolError> {
         self.metadata_output_index_for_label(label.as_str())
-            .ok_or_else(|| PharmsolError::UnknownOutputLabel {
-                label: label.to_string(),
+            .ok_or_else(|| {
+                PharmsolError::unknown_output_label(
+                    label.as_str(),
+                    &self.metadata().output_labels(),
+                )
             })
     }
 
     fn resolve_events(&self, occasion: &Occasion) -> Result<Vec<Event>, PharmsolError> {
-        let mut events = occasion.process_events(None, true);
+        let mut events = occasion.process_events(None);
 
         for event in events.iter_mut() {
             match event {
@@ -911,12 +914,12 @@ impl SharedNativeModel {
 
         for event in events.iter_mut() {
             if let Event::Bolus(bolus) = event {
-                let input =
-                    bolus
-                        .input_index()
-                        .ok_or_else(|| PharmsolError::UnknownInputLabel {
-                            label: bolus.input().to_string(),
-                        })?;
+                let input = bolus.input_index().ok_or_else(|| {
+                    PharmsolError::unknown_input_label(
+                        bolus.input(),
+                        &self.metadata().route_labels(),
+                    )
+                })?;
                 self.validate_input_for_kind(input, RouteKind::Bolus)?;
 
                 if self.artifact.has_kernel(KernelRole::RouteLag) {
@@ -1035,11 +1038,12 @@ impl SharedNativeModel {
             &cov_buf,
             &mut outputs,
         )?;
-        let outeq = observation
-            .outeq_index()
-            .ok_or_else(|| PharmsolError::UnknownOutputLabel {
-                label: observation.outeq().to_string(),
-            })?;
+        let outeq = observation.outeq_index().ok_or_else(|| {
+            PharmsolError::unknown_output_label(
+                observation.outeq(),
+                &self.metadata().output_labels(),
+            )
+        })?;
         self.validate_output(outeq)?;
         Ok(observation.to_prediction(outputs[outeq], state.to_vec()))
     }
@@ -1235,7 +1239,7 @@ impl NativeOdeModel {
                         occasion.index(),
                     )?
                 },
-                NalgebraContext,
+                NalgebraContext::new(),
             );
             let support_point_vec = support_point.to_vec();
             let problem = OdeBuilder::<M>::new()
@@ -1308,12 +1312,12 @@ impl NativeOdeModel {
         for (index, event) in events.iter().enumerate() {
             match event {
                 Event::Bolus(bolus) => {
-                    let input =
-                        bolus
-                            .input_index()
-                            .ok_or_else(|| PharmsolError::UnknownInputLabel {
-                                label: bolus.input().to_string(),
-                            })?;
+                    let input = bolus.input_index().ok_or_else(|| {
+                        PharmsolError::unknown_input_label(
+                            bolus.input(),
+                            &self.shared.metadata().route_labels(),
+                        )
+                    })?;
                     self.shared.apply_bolus(
                         solver.state_mut().y.as_mut_slice(),
                         input,
@@ -1350,17 +1354,17 @@ impl NativeOdeModel {
                             }
                             Ok(OdeSolverStopReason::InternalTimestep) => continue,
                             Ok(OdeSolverStopReason::TstopReached) => break,
-                            Err(diffsol::error::DiffsolError::OdeSolverError(
-                                OdeSolverError::StepSizeTooSmall { time },
-                            )) => {
+                            Ok(OdeSolverStopReason::RootFound(_, _)) => {
                                 return Err(PharmsolError::OtherError(format!(
-                                    "ODE solver step size went to zero at t = {time:.4} (target t = {:.4}).",
+                                    "solver stopped at an unexpected root at t = {:.4} \
+                                     (root finding is not configured)",
                                     next_event.time()
                                 )));
                             }
-                            Err(_) | Ok(_) => {
-                                return Err(PharmsolError::OtherError(
-                                    "unexpected solver error".to_string(),
+                            Err(err) => {
+                                return Err(PharmsolError::from_solver_error(
+                                    err,
+                                    next_event.time(),
                                 ));
                             }
                         }
@@ -1368,10 +1372,8 @@ impl NativeOdeModel {
                     Err(diffsol::error::DiffsolError::OdeSolverError(
                         OdeSolverError::StopTimeAtCurrentTime,
                     )) => continue,
-                    Err(_) => {
-                        return Err(PharmsolError::OtherError(
-                            "unexpected solver error".to_string(),
-                        ));
+                    Err(err) => {
+                        return Err(PharmsolError::from_solver_error(err, next_event.time()));
                     }
                 }
             }
@@ -1395,6 +1397,13 @@ fn runtime_ode_predictions(
     subject: &Subject,
     support_point: &[f64],
 ) -> Result<SubjectPredictions, PharmsolError> {
+    let add_context = |e: PharmsolError| {
+        e.with_subject_context(
+            subject.id(),
+            support_point,
+            &model.metadata().parameter_names(),
+        )
+    };
     if let Some(cache) = &model.cache {
         let key = (
             subject.hash(),
@@ -1404,11 +1413,15 @@ fn runtime_ode_predictions(
             return Ok(cached);
         }
 
-        let result = model.estimate_predictions_dense(subject, support_point)?;
+        let result = model
+            .estimate_predictions_dense(subject, support_point)
+            .map_err(add_context)?;
         cache.insert(key, result.clone());
         Ok(result)
     } else {
-        model.estimate_predictions_dense(subject, support_point)
+        model
+            .estimate_predictions_dense(subject, support_point)
+            .map_err(add_context)
     }
 }
 
@@ -1507,7 +1520,7 @@ impl EquationPriv for NativeOdeModel {
         _covariates: &Covariates,
         _occasion_index: usize,
     ) -> Self::S {
-        V::zeros(self.shared.info.state_len, NalgebraContext)
+        V::zeros(self.shared.info.state_len, NalgebraContext::new())
     }
 }
 
@@ -1688,9 +1701,10 @@ impl NativeAnalyticalModel {
                 match event {
                     Event::Bolus(bolus) => {
                         let input = bolus.input_index().ok_or_else(|| {
-                            PharmsolError::UnknownInputLabel {
-                                label: bolus.input().to_string(),
-                            }
+                            PharmsolError::unknown_input_label(
+                                bolus.input(),
+                                &self.shared.metadata().route_labels(),
+                            )
                         })?;
                         self.shared.apply_bolus(&mut state, input, bolus.amount())?
                     }
@@ -1800,6 +1814,13 @@ fn runtime_analytical_predictions(
     subject: &Subject,
     support_point: &[f64],
 ) -> Result<SubjectPredictions, PharmsolError> {
+    let add_context = |e: PharmsolError| {
+        e.with_subject_context(
+            subject.id(),
+            support_point,
+            &model.metadata().parameter_names(),
+        )
+    };
     if let Some(cache) = &model.cache {
         let key = (
             subject.hash(),
@@ -1809,11 +1830,15 @@ fn runtime_analytical_predictions(
             return Ok(cached);
         }
 
-        let result = model.estimate_predictions_dense(subject, support_point)?;
+        let result = model
+            .estimate_predictions_dense(subject, support_point)
+            .map_err(add_context)?;
         cache.insert(key, result.clone());
         Ok(result)
     } else {
-        model.estimate_predictions_dense(subject, support_point)
+        model
+            .estimate_predictions_dense(subject, support_point)
+            .map_err(add_context)
     }
 }
 
@@ -1902,7 +1927,7 @@ impl EquationPriv for NativeAnalyticalModel {
         _covariates: &Covariates,
         _occasion_index: usize,
     ) -> Self::S {
-        V::zeros(self.shared.info.state_len, NalgebraContext)
+        V::zeros(self.shared.info.state_len, NalgebraContext::new())
     }
 }
 
@@ -2085,9 +2110,10 @@ impl NativeSdeModel {
                 match event {
                     Event::Bolus(bolus) => {
                         let input = bolus.input_index().ok_or_else(|| {
-                            PharmsolError::UnknownInputLabel {
-                                label: bolus.input().to_string(),
-                            }
+                            PharmsolError::unknown_input_label(
+                                bolus.input(),
+                                &self.shared.metadata().route_labels(),
+                            )
                         })?;
                         for particle in &mut particles {
                             self.shared.apply_bolus(
@@ -2597,7 +2623,7 @@ fn project_analytical_parameters(
             } else {
                 indices.iter().map(|&index| support_point[index]).collect()
             };
-            V::from_vec(values, NalgebraContext)
+            V::from_vec(values, NalgebraContext::new())
         }
         AnalyticalStructureInputKind::AllDerived { indices, identity } => {
             let values = if *identity {
@@ -2605,7 +2631,7 @@ fn project_analytical_parameters(
             } else {
                 indices.iter().map(|&index| derived[index]).collect()
             };
-            V::from_vec(values, NalgebraContext)
+            V::from_vec(values, NalgebraContext::new())
         }
         AnalyticalStructureInputKind::Mixed { bindings } => V::from_vec(
             bindings
@@ -2617,7 +2643,7 @@ fn project_analytical_parameters(
                     pharmsol_dsl::AnalyticalStructureInputSource::Derived => derived[binding.index],
                 })
                 .collect(),
-            NalgebraContext,
+            NalgebraContext::new(),
         ),
     }
 }
@@ -2630,8 +2656,8 @@ fn apply_analytical_kernel(
     route_inputs: &[f64],
     covariates: &Covariates,
 ) -> V {
-    let state = V::from_vec(state.to_vec(), NalgebraContext);
-    let route_inputs = V::from_vec(route_inputs.to_vec(), NalgebraContext);
+    let state = V::from_vec(state.to_vec(), NalgebraContext::new());
+    let route_inputs = V::from_vec(route_inputs.to_vec(), NalgebraContext::new());
     match kernel {
         AnalyticalKernel::OneCompartment => {
             crate::simulator::equation::analytical::one_compartment(

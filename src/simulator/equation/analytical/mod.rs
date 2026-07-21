@@ -62,7 +62,7 @@ pub struct Analytical {
 pub(crate) fn compact_public_vector(vector: &V) -> V {
     V::from_vec(
         vector.as_slice().get(1..).unwrap_or(&[]).to_vec(),
-        NalgebraContext,
+        NalgebraContext::new(),
     )
 }
 
@@ -71,7 +71,7 @@ pub(crate) fn pad_public_vector(vector: &V) -> V {
     let mut padded = Vec::with_capacity(vector.len() + 1);
     padded.push(0.0);
     padded.extend(vector.as_slice().iter().copied());
-    V::from_vec(padded, NalgebraContext)
+    V::from_vec(padded, NalgebraContext::new())
 }
 
 #[inline(always)]
@@ -328,8 +328,8 @@ impl EquationPriv for Analytical {
 
         // 2) March over each sub-interval
         let mut current_t = ts[0];
-        let mut parameters_v = V::from_vec(parameters.to_vec(), NalgebraContext);
-        let mut rateiv = V::zeros(self.get_ndrugs(), NalgebraContext);
+        let mut parameters_v = V::from_vec(parameters.to_vec(), NalgebraContext::new());
+        let mut rateiv = V::zeros(self.get_ndrugs(), NalgebraContext::new());
 
         for &next_t in &ts[1..] {
             // prepare parameters and infusion rate for [current_t .. next_t]
@@ -338,11 +338,13 @@ impl EquationPriv for Analytical {
                 let s = inf.time();
                 let e = s + inf.duration();
                 if current_t >= s && next_t <= e {
-                    let input =
-                        inf.input_index()
-                            .ok_or_else(|| PharmsolError::UnknownInputLabel {
-                                label: inf.input().to_string(),
-                            })?;
+                    let input = inf.input_index().ok_or_else(|| {
+                        let available = self
+                            .metadata()
+                            .map(|m| m.route_labels())
+                            .unwrap_or_default();
+                        PharmsolError::unknown_input_label(inf.input(), &available)
+                    })?;
 
                     if input >= self.get_ndrugs() {
                         return Err(PharmsolError::InputOutOfRange {
@@ -379,20 +381,22 @@ impl EquationPriv for Analytical {
         likelihood: &mut Vec<f64>,
         output: &mut Self::P,
     ) -> Result<(), PharmsolError> {
-        let mut y = V::zeros(self.get_nouteqs(), NalgebraContext);
+        let mut y = V::zeros(self.get_nouteqs(), NalgebraContext::new());
         let out = &self.out;
         (out)(
             x,
-            &V::from_vec(parameters.to_vec(), NalgebraContext),
+            &V::from_vec(parameters.to_vec(), NalgebraContext::new()),
             observation.time(),
             covariates,
             &mut y,
         );
-        let outeq = observation
-            .outeq_index()
-            .ok_or_else(|| PharmsolError::UnknownOutputLabel {
-                label: observation.outeq().to_string(),
-            })?;
+        let outeq = observation.outeq_index().ok_or_else(|| {
+            let available = self
+                .metadata()
+                .map(|m| m.output_labels())
+                .unwrap_or_default();
+            PharmsolError::unknown_output_label(observation.outeq(), &available)
+        })?;
         let pred = y[outeq];
         let pred = observation.to_prediction(pred, x.as_slice().to_vec());
         if let Some(error_models) = error_models {
@@ -409,10 +413,10 @@ impl EquationPriv for Analytical {
         occasion_index: usize,
     ) -> V {
         let init = &self.init;
-        let mut x = V::zeros(self.get_nstates(), NalgebraContext);
+        let mut x = V::zeros(self.get_nstates(), NalgebraContext::new());
         if occasion_index == 0 {
             (init)(
-                &V::from_vec(parameters.to_vec(), NalgebraContext),
+                &V::from_vec(parameters.to_vec(), NalgebraContext::new()),
                 0.0,
                 covariates,
                 &mut x,
@@ -769,17 +773,17 @@ pub(crate) mod tests {
         compact_rateiv: Vec<f64>,
     ) {
         let covariates = Covariates::new();
-        let compact_x = V::from_vec(compact_x, NalgebraContext);
-        let params = V::from_vec(params, NalgebraContext);
-        let compact_rateiv = V::from_vec(compact_rateiv, NalgebraContext);
+        let compact_x = V::from_vec(compact_x, NalgebraContext::new());
+        let params = V::from_vec(params, NalgebraContext::new());
+        let compact_rateiv = V::from_vec(compact_rateiv, NalgebraContext::new());
 
         let mut padded_x = vec![1234.0];
         padded_x.extend(compact_x.as_slice().iter().copied());
-        let padded_x = V::from_vec(padded_x, NalgebraContext);
+        let padded_x = V::from_vec(padded_x, NalgebraContext::new());
 
         let mut padded_rateiv = vec![5678.0];
         padded_rateiv.extend(compact_rateiv.as_slice().iter().copied());
-        let padded_rateiv = V::from_vec(padded_rateiv, NalgebraContext);
+        let padded_rateiv = V::from_vec(padded_rateiv, NalgebraContext::new());
 
         let native_output = native(&compact_x, &params, 1.5, &compact_rateiv, &covariates);
         let wrapped_output = wrapper(&padded_x, &params, 1.5, &padded_rateiv, &covariates);

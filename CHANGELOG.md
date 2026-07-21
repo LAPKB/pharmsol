@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.2](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.28.1...pharmsol-v0.28.2) - 2026-07-20
+
+### Other
+
+- Optimize event processing ([#294](https://github.com/LAPKB/pharmsol/pull/294))
+- Update syn requirement from 2.0.117 to 3.0.2 ([#296](https://github.com/LAPKB/pharmsol/pull/296))
+- Bump actions/setup-node from 6 to 7 ([#295](https://github.com/LAPKB/pharmsol/pull/295))
+- Add more informative error messages ([#290](https://github.com/LAPKB/pharmsol/pull/290))
+- Use diffsol 0.15.1 ([#283](https://github.com/LAPKB/pharmsol/pull/283))
+
+## [0.28.1](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.28.0...pharmsol-v0.28.1) - 2026-07-13
+
+### Fixed
+
+- Fix data expansion ([#282](https://github.com/LAPKB/pharmsol/pull/282))
+
 ## [0.28.0](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.27.1...pharmsol-v0.27.2) - 2026-07-07
 
 ### Added

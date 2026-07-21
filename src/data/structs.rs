@@ -1,6 +1,6 @@
 use crate::{
     data::*,
-    simulator::{Fa, Lag},
+    simulator::{Fa, Lag, V},
     Censor,
 };
 use serde::{Deserialize, Serialize};
@@ -143,8 +143,11 @@ impl Data {
     ///
     /// # Arguments
     ///
-    /// * `idelta` - Time interval between added observations
-    /// * `tad` - Additional time to add after the last observation
+    /// * `idelta` - Time interval between added observations. Times are handled
+    ///   with microsecond resolution, so `idelta` must be at least `5e-7`
+    ///   (0.5 µs, which rounds up to 1 µs); any smaller positive value rounds
+    ///   to zero and the dataset is returned unchanged.
+    /// * `tad` - Additional time to add after the last dose (time after dose)
     ///
     /// # Returns
     ///
@@ -154,20 +157,13 @@ impl Data {
             return self.clone();
         }
 
-        // Determine the last time across all subjects and occasions
-        let last_time = self
-            .subjects
-            .iter()
-            .flat_map(|subject| &subject.occasions)
-            .flat_map(|occasion| &occasion.events)
-            .filter_map(|event| match event {
-                Event::Observation(observation) => Some(observation.time()),
-                Event::Infusion(infusion) => Some(infusion.time() + infusion.duration()),
-                _ => None,
-            })
-            .max_by(|a, b| a.partial_cmp(b).unwrap())
-            .unwrap_or(0.0)
-            + tad;
+        // Work in integer microseconds so the grid always makes progress.
+        // A sub-microsecond `idelta` would otherwise round back to the previous
+        // time on every iteration and spin forever.
+        let step_us = (idelta * 1e6).round() as u64;
+        if step_us == 0 {
+            return self.clone();
+        }
 
         // Collect unique output equations more efficiently
         let outeq_values = self.get_output_equations();
@@ -181,7 +177,22 @@ impl Data {
                     .occasions
                     .iter()
                     .map(|occasion| {
-                        let old_events = occasion.process_events(None, true);
+                        let old_events = occasion.process_events(None);
+
+                        // Determine the last dose time for this occasion
+                        let last_time = occasion
+                            .events
+                            .iter()
+                            .filter_map(|event| match event {
+                                Event::Bolus(bolus) => Some(bolus.time()),
+                                Event::Infusion(infusion) => {
+                                    Some(infusion.time() + infusion.duration())
+                                }
+                                _ => None,
+                            })
+                            .max_by(|a, b| a.partial_cmp(b).unwrap())
+                            .unwrap_or(0.0)
+                            + tad;
 
                         // Create a set of existing (time, outeq) pairs for fast lookup
                         let existing_obs: std::collections::HashSet<(u64, OutputLabel)> =
@@ -197,11 +208,13 @@ impl Data {
                                 })
                                 .collect();
 
-                        // Generate new observation times
+                        // Generate new observation times, stepping in integer
+                        // microseconds to guarantee forward progress.
                         let mut new_events = Vec::new();
-                        let mut time = 0.0;
-                        while time < last_time {
-                            let time_key = (time * 1e6).round() as u64;
+                        let last_time_us = (last_time * 1e6).round() as u64;
+                        let mut time_key = 0u64;
+                        while time_key <= last_time_us {
+                            let time = time_key as f64 / 1e6;
 
                             for outeq in &outeq_values {
                                 // Only add if this (time, outeq) combination doesn't exist
@@ -218,8 +231,7 @@ impl Data {
                                 }
                             }
 
-                            time += idelta;
-                            time = (time * 1e6).round() / 1e6;
+                            time_key += step_us;
                         }
 
                         // Add original events
@@ -597,37 +609,58 @@ impl Occasion {
     }
 
     fn add_lagtime(&mut self, reorder: Option<(&Fa, &Lag, &[f64], &Covariates)>) {
-        if let Some((_, fn_lag, parameters, covariates)) = reorder {
-            let parameters = nalgebra::DVector::from_vec(parameters.to_vec());
-            for event in self.events.iter_mut() {
-                let time = event.time();
-                if let Event::Bolus(bolus) = event {
-                    let lagtime = fn_lag(&parameters.clone().into(), time, covariates);
-                    if let Some(input) = bolus.input_index() {
-                        if let Some(l) = lagtime.get(&input) {
-                            *bolus.mut_time() += l;
-                        }
-                    }
+        let Some((_, fn_lag, parameters, covariates)) = reorder else {
+            // No model context: events are already time-sorted from construction.
+            return;
+        };
+
+        // Build the parameter vector once and reuse it for every dose.
+        let parameters: V = nalgebra::DVector::from_vec(parameters.to_vec()).into();
+        let mut shifted = false;
+
+        for event in self.events.iter_mut() {
+            // Lag time delays boluses only; infusions are never lagged.
+            let Event::Bolus(bolus) = event else {
+                continue;
+            };
+            let Some(input) = bolus.input_index() else {
+                continue;
+            };
+            let lagtime = fn_lag(&parameters, bolus.time(), covariates);
+            if let Some(&l) = lagtime.get(&input) {
+                if l != 0.0 {
+                    *bolus.mut_time() += l;
+                    shifted = true;
                 }
             }
         }
-        self.sort();
+
+        // Re-sort only when a lag actually moved an event; the events were
+        // already sorted at construction time, so an unchanged pass stays sorted.
+        if shifted {
+            self.sort();
+        }
     }
 
     fn add_bioavailability(&mut self, reorder: Option<(&Fa, &Lag, &[f64], &Covariates)>) {
-        // If lagtime is empty, return early
-        if let Some((fn_fa, _, parameters, covariates)) = reorder {
-            let parameters = nalgebra::DVector::from_vec(parameters.to_vec());
-            for event in self.events.iter_mut() {
-                let time = event.time();
-                if let Event::Bolus(bolus) = event {
-                    let fa = fn_fa(&parameters.clone().into(), time, covariates);
-                    if let Some(input) = bolus.input_index() {
-                        if let Some(f) = fa.get(&input) {
-                            bolus.set_amount(bolus.amount() * f);
-                        }
-                    }
-                }
+        let Some((fn_fa, _, parameters, covariates)) = reorder else {
+            return;
+        };
+
+        // Build the parameter vector once and reuse it for every dose.
+        let parameters: V = nalgebra::DVector::from_vec(parameters.to_vec()).into();
+
+        for event in self.events.iter_mut() {
+            // Bioavailability scales bolus amounts only.
+            let Event::Bolus(bolus) = event else {
+                continue;
+            };
+            let Some(input) = bolus.input_index() else {
+                continue;
+            };
+            let fa = fn_fa(&parameters, bolus.time(), covariates);
+            if let Some(&f) = fa.get(&input) {
+                bolus.set_amount(bolus.amount() * f);
             }
         }
     }
@@ -672,7 +705,6 @@ impl Occasion {
     pub(crate) fn process_events(
         &self,
         reorder: Option<(&Fa, &Lag, &[f64], &Covariates)>,
-        _ignore: bool,
     ) -> Vec<Event> {
         let mut occ = self.clone();
         occ.add_lagtime(reorder);
@@ -1142,7 +1174,7 @@ mod tests {
         occasion.add_observation(2.0, 1.0, 1, None, Censor::None);
         occasion.add_bolus(1.0, 100.0, 1);
         occasion.sort();
-        let events = occasion.process_events(None, false);
+        let events = occasion.process_events(None);
         match &events[0] {
             Event::Bolus(b) => assert_eq!(b.time(), 1.0),
             _ => panic!("First event should be a Bolus (earlier time)"),
@@ -1159,7 +1191,7 @@ mod tests {
         occasion.add_bolus(1.0, 100.0, 1);
         occasion.add_observation(1.0, 5.0, 1, None, Censor::None);
         occasion.sort();
-        let events = occasion.process_events(None, false);
+        let events = occasion.process_events(None);
         assert_eq!(events.len(), 2);
         match &events[0] {
             Event::Observation(o) => assert_eq!(o.time(), 1.0),
@@ -1177,7 +1209,7 @@ mod tests {
         occasion.add_infusion(1.0, 100.0, 1, 0.5);
         occasion.add_observation(1.0, 5.0, 1, None, Censor::None);
         occasion.sort();
-        let events = occasion.process_events(None, false);
+        let events = occasion.process_events(None);
         assert_eq!(events.len(), 2);
         match &events[0] {
             Event::Observation(o) => assert_eq!(o.time(), 1.0),
@@ -1197,7 +1229,7 @@ mod tests {
         occasion.add_bolus(0.0, 100.0, 1);
         occasion.add_observation(0.0, 0.0, 1, None, Censor::None);
         occasion.sort();
-        let events = occasion.process_events(None, false);
+        let events = occasion.process_events(None);
         assert_eq!(events.len(), 3);
         assert!(
             matches!(&events[0], Event::Observation(_)),
@@ -1225,7 +1257,7 @@ mod tests {
         occasion.add_observation(2.0, 3.0, 1, None, Censor::None);
         occasion.add_bolus(2.0, 100.0, 1);
         occasion.sort();
-        let events = occasion.process_events(None, false);
+        let events = occasion.process_events(None);
         assert_eq!(events.len(), 5);
         // t=0: observation before bolus
         assert!(matches!(&events[0], Event::Observation(o) if o.time() == 0.0));
@@ -1235,6 +1267,109 @@ mod tests {
         // t=2: observation before bolus
         assert!(matches!(&events[3], Event::Observation(o) if o.time() == 2.0));
         assert!(matches!(&events[4], Event::Bolus(b) if b.time() == 2.0));
+    }
+
+    fn lag_input0(_p: &V, _t: f64, _cov: &Covariates) -> std::collections::HashMap<usize, f64> {
+        let mut m = std::collections::HashMap::new();
+        m.insert(0usize, 5.0);
+        m
+    }
+
+    fn fa_input0(_p: &V, _t: f64, _cov: &Covariates) -> std::collections::HashMap<usize, f64> {
+        let mut m = std::collections::HashMap::new();
+        m.insert(0usize, 0.5);
+        m
+    }
+
+    fn no_adjustment(_p: &V, _t: f64, _cov: &Covariates) -> std::collections::HashMap<usize, f64> {
+        std::collections::HashMap::new()
+    }
+
+    #[test]
+    fn test_lagtime_delays_bolus_but_not_infusion() {
+        let lag: Lag = lag_input0;
+        let fa: Fa = no_adjustment;
+        let params = [1.0_f64];
+        let cov = Covariates::new();
+
+        let mut occasion = Occasion::new(0);
+        occasion.add_bolus(1.0, 100.0, 0);
+        occasion.add_infusion(1.0, 200.0, 0, 0.5);
+        occasion.sort();
+
+        let events = occasion.process_events(Some((&fa, &lag, &params, &cov)));
+
+        let bolus = events
+            .iter()
+            .find(|e| matches!(e, Event::Bolus(_)))
+            .expect("bolus present");
+        let infusion = events
+            .iter()
+            .find(|e| matches!(e, Event::Infusion(_)))
+            .expect("infusion present");
+
+        // Bolus is delayed by the lag; the infusion is never lagged.
+        assert_eq!(bolus.time(), 6.0);
+        assert_eq!(infusion.time(), 1.0);
+    }
+
+    #[test]
+    fn test_lagtime_reorders_events() {
+        let lag: Lag = lag_input0;
+        let fa: Fa = no_adjustment;
+        let params = [1.0_f64];
+        let cov = Covariates::new();
+
+        let mut occasion = Occasion::new(0);
+        occasion.add_bolus(1.0, 100.0, 0);
+        occasion.add_observation(3.0, 10.0, 1, None, Censor::None);
+        occasion.sort();
+
+        let events = occasion.process_events(Some((&fa, &lag, &params, &cov)));
+
+        // Bolus moves from t=1 to t=6, so it must now come *after* the t=3 observation.
+        assert!(matches!(&events[0], Event::Observation(o) if o.time() == 3.0));
+        assert!(matches!(&events[1], Event::Bolus(b) if b.time() == 6.0));
+    }
+
+    #[test]
+    fn test_bioavailability_scales_bolus_not_infusion() {
+        let lag: Lag = no_adjustment;
+        let fa: Fa = fa_input0;
+        let params = [1.0_f64];
+        let cov = Covariates::new();
+
+        let mut occasion = Occasion::new(0);
+        occasion.add_bolus(1.0, 100.0, 0);
+        occasion.add_infusion(2.0, 200.0, 0, 0.5);
+        occasion.sort();
+
+        let events = occasion.process_events(Some((&fa, &lag, &params, &cov)));
+
+        let bolus_amount = events.iter().find_map(|e| match e {
+            Event::Bolus(b) => Some(b.amount()),
+            _ => None,
+        });
+        let infusion_amount = events.iter().find_map(|e| match e {
+            Event::Infusion(i) => Some(i.amount()),
+            _ => None,
+        });
+
+        // Bioavailability scales the bolus amount; the infusion is untouched.
+        assert_eq!(bolus_amount, Some(50.0));
+        assert_eq!(infusion_amount, Some(200.0));
+    }
+
+    #[test]
+    fn test_process_events_none_preserves_order_and_values() {
+        let mut occasion = Occasion::new(0);
+        occasion.add_bolus(1.0, 100.0, 0);
+        occasion.add_observation(2.0, 10.0, 1, None, Censor::None);
+        occasion.sort();
+
+        let events = occasion.process_events(None);
+        assert!(matches!(&events[0], Event::Bolus(b) if b.time() == 1.0 && b.amount() == 100.0));
+        assert!(matches!(&events[1], Event::Observation(o) if o.time() == 2.0));
     }
 
     #[test]
@@ -1583,5 +1718,59 @@ mod tests {
             .observation(2.0, 5.0, 0)
             .build();
         assert_eq!(a.hash(), b.hash());
+    }
+
+    #[test]
+    fn expand_grid_reaches_last_dose_plus_tad() {
+        // Single occasion: last dose at t=0, tad extends the grid to t=3 inclusive
+        let subject = Subject::builder("s1")
+            .bolus(0.0, 100.0, 0)
+            .observation(0.0, 5.0, 0)
+            .build();
+        let data = Data::from(subject);
+
+        let expanded = data.expand(1.0, 3.0);
+        let occasion = &expanded.subjects()[0].occasions()[0];
+
+        let mut obs_times: Vec<f64> = occasion
+            .events()
+            .iter()
+            .filter_map(|e| match e {
+                Event::Observation(o) => Some(o.time()),
+                _ => None,
+            })
+            .collect();
+        obs_times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+        // Grid at 0,1,2,3 (last dose 0 + tad 3), endpoint included
+        assert_eq!(obs_times, vec![0.0, 1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn expand_last_time_is_per_occasion() {
+        // Occasion 0 dosed at t=0, occasion 1 dosed at t=10
+        let subject = Subject::builder("s1")
+            .bolus(0.0, 100.0, 0)
+            .observation(0.0, 5.0, 0)
+            .reset()
+            .bolus(10.0, 100.0, 0)
+            .observation(10.0, 5.0, 0)
+            .build();
+        let data = Data::from(subject);
+
+        let expanded = data.expand(5.0, 0.0);
+        let subject = &expanded.subjects()[0];
+
+        let count_obs = |occ: &Occasion| {
+            occ.events()
+                .iter()
+                .filter(|e| matches!(e, Event::Observation(_)))
+                .count()
+        };
+
+        // Occasion 0: last dose = 0, grid only at t=0 (already present) -> 1 observation
+        assert_eq!(count_obs(&subject.occasions()[0]), 1);
+        // Occasion 1: last dose = 10, grid at 0,5,10 -> 2 generated + 1 real = 3
+        assert_eq!(count_obs(&subject.occasions()[1]), 3);
     }
 }

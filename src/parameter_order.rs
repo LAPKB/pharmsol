@@ -44,6 +44,7 @@ impl ParameterOrderPlan {
             let Some(&model_index) = model_index_by_name.get(source_name) else {
                 return Err(ParameterOrderError::UnknownParameter {
                     name: source_name.to_string(),
+                    available: model_names.clone(),
                 });
             };
 
@@ -156,10 +157,20 @@ impl ParameterOrderPlan {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ParameterOrderError {
     MissingMetadata,
-    UnknownParameter { name: String },
-    DuplicateParameter { name: String },
-    MissingParameters { names: Vec<String> },
-    WidthMismatch { expected: usize, got: usize },
+    UnknownParameter {
+        name: String,
+        available: Vec<String>,
+    },
+    DuplicateParameter {
+        name: String,
+    },
+    MissingParameters {
+        names: Vec<String>,
+    },
+    WidthMismatch {
+        expected: usize,
+        got: usize,
+    },
 }
 
 impl fmt::Display for ParameterOrderError {
@@ -168,7 +179,13 @@ impl fmt::Display for ParameterOrderError {
             Self::MissingMetadata => {
                 f.write_str("named parameter ingress requires parameter metadata")
             }
-            Self::UnknownParameter { name } => write!(f, "unknown parameter `{name}`"),
+            Self::UnknownParameter { name, available } => {
+                write!(
+                    f,
+                    "unknown parameter `{name}` (available: {})",
+                    available.join(", ")
+                )
+            }
             Self::DuplicateParameter { name } => write!(f, "duplicate parameter `{name}`"),
             Self::MissingParameters { names } => {
                 write!(f, "missing required parameter(s): {}", names.join(", "))
@@ -221,9 +238,13 @@ mod tests {
             error,
             ParameterOrderError::UnknownParameter {
                 name: "kel".to_string(),
+                available: vec!["ka".to_string(), "ke".to_string()],
             }
         );
-        assert_eq!(error.to_string(), "unknown parameter `kel`");
+        assert_eq!(
+            error.to_string(),
+            "unknown parameter `kel` (available: ka, ke)"
+        );
     }
 
     #[test]

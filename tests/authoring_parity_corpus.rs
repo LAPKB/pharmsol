@@ -1769,7 +1769,7 @@ fn ode_runtime_jit_rejects_undeclared_numeric_output_labels_even_when_dense_inde
 
     assert!(matches!(
         error,
-        dsl::RuntimeError::Runtime(PharmsolError::UnknownOutputLabel { label }) if label == "10"
+        dsl::RuntimeError::Runtime(PharmsolError::UnknownOutputLabel { label, .. }) if label == "10"
     ));
 }
 
@@ -1794,6 +1794,6 @@ fn ode_runtime_jit_rejects_undeclared_numeric_input_labels_even_when_dense_index
 
     assert!(matches!(
         error,
-        dsl::RuntimeError::Runtime(PharmsolError::UnknownInputLabel { label }) if label == "10"
+        dsl::RuntimeError::Runtime(PharmsolError::UnknownInputLabel { label, .. }) if label == "10"
     ));
 }

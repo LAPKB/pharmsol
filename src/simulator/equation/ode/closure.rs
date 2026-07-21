@@ -84,9 +84,7 @@ impl InfusionSchedule {
 
             let input = infusion
                 .input_index()
-                .ok_or_else(|| PharmsolError::UnknownInputLabel {
-                    label: infusion.input().to_string(),
-                })?;
+                .ok_or_else(|| PharmsolError::unknown_input_label(infusion.input(), &[]))?;
             if input >= ndrugs {
                 return Err(PharmsolError::InputOutOfRange { input, ndrugs });
             }
@@ -158,7 +156,7 @@ where
         self.nparams
     }
     fn context(&self) -> &Self::C {
-        &NalgebraContext
+        &NalgebraContext {}
     }
 }
 
@@ -183,7 +181,7 @@ impl Op for PmMass {
         self.nparams
     }
     fn context(&self) -> &Self::C {
-        &NalgebraContext
+        &NalgebraContext {}
     }
 }
 
@@ -209,7 +207,7 @@ impl Op for PmInit<'_> {
         self.nparams
     }
     fn context(&self) -> &Self::C {
-        &NalgebraContext
+        &NalgebraContext {}
     }
 }
 
@@ -240,7 +238,7 @@ impl Op for PmRoot {
         self.nparams
     }
     fn context(&self) -> &Self::C {
-        &NalgebraContext
+        &NalgebraContext {}
     }
 }
 
@@ -265,7 +263,7 @@ impl Op for PmOut {
         self.nparams
     }
     fn context(&self) -> &Self::C {
-        &NalgebraContext
+        &NalgebraContext {}
     }
 }
 
@@ -354,10 +352,10 @@ where
         I: IntoIterator<Item = &'b Infusion>,
     {
         let nparams = p_as_v.len();
-        let rateiv_buffer = RefCell::new(V::zeros(ndrugs, NalgebraContext));
+        let rateiv_buffer = RefCell::new(V::zeros(ndrugs, NalgebraContext::new()));
         let infusion_schedule = InfusionSchedule::new(ndrugs, infusions)?;
         // Pre-allocate zero bolus vector
-        let zero_bolus = V::zeros(ndrugs, NalgebraContext);
+        let zero_bolus = V::zeros(ndrugs, NalgebraContext::new());
 
         Ok(Self {
             func,
@@ -391,7 +389,7 @@ where
         self.nparams
     }
     fn context(&self) -> &Self::C {
-        &NalgebraContext
+        &NalgebraContext {}
     }
 }
 
