@@ -155,7 +155,7 @@ async function main() {
       JSON.stringify(invalid),
     );
     assert.equal(invalid.diagnosticReport.source.name, "inline.dsl");
-    assert.equal(invalid.diagnosticReport.diagnostics[0].phase, "semantic");
+    assert.equal(invalid.diagnosticReport.diagnostics[0].phase, "analysis");
     assert.equal(invalid.diagnosticReport.diagnostics[0].code, "DSL2000");
     assert.equal(invalid.cacheEntries, 1, JSON.stringify(invalid));
     assert.ok(
