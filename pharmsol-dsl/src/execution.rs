@@ -427,8 +427,8 @@ impl fmt::Display for LoweringError {
         let span = self.diagnostic.primary_span();
         write!(
             f,
-            "{} at bytes {}..{}",
-            self.diagnostic.message, span.start, span.end
+            "error[{}]: {} (at bytes {}..{})",
+            self.diagnostic.code, self.diagnostic.message, span.start, span.end
         )
     }
 }
@@ -530,7 +530,12 @@ impl<'a> ExecutionLowerer<'a> {
                 len,
                 span: state.span,
             });
-            next_state_offset += len;
+            next_state_offset = next_state_offset.checked_add(len).ok_or_else(|| {
+                LoweringError::new(
+                    "combined state sizes exceed the supported state space",
+                    state.span,
+                )
+            })?;
         }
 
         let uses_authoring_route_kinds =
@@ -557,21 +562,21 @@ impl<'a> ExecutionLowerer<'a> {
                     .with_note("lag and bioavailability are bolus-only route properties"));
                 }
             }
-            let index = if uses_authoring_route_kinds {
-                match route.kind.expect("authoring routes must preserve kind") {
-                    RouteKind::Bolus => {
-                        let index = next_bolus_index;
-                        next_bolus_index += 1;
-                        index
-                    }
-                    RouteKind::Infusion => {
-                        let index = next_infusion_index;
-                        next_infusion_index += 1;
-                        index
-                    }
+            // Authoring source always records a kind per route; canonical
+            // `model {}` source never does. Mixed models fall back to
+            // declaration order.
+            let index = match (uses_authoring_route_kinds, route.kind) {
+                (true, Some(RouteKind::Bolus)) => {
+                    let index = next_bolus_index;
+                    next_bolus_index += 1;
+                    index
                 }
-            } else {
-                declaration_index
+                (true, Some(RouteKind::Infusion)) => {
+                    let index = next_infusion_index;
+                    next_infusion_index += 1;
+                    index
+                }
+                _ => declaration_index,
             };
             route_slots.insert(route.symbol, index);
             let destination =
@@ -1635,9 +1640,8 @@ out(cp) = central / v ~ continuous()
 
         let model = crate::parse_model(src).expect("authoring model parses");
         let typed = crate::analyze_model(&model).expect("authoring model analyzes");
-        let error = crate::lower_typed_model(&typed)
-            .err()
-            .expect("infusion lag should fail during lowering");
+        let error =
+            crate::lower_typed_model(&typed).expect_err("infusion lag should fail during lowering");
 
         assert!(error
             .to_string()
@@ -1664,8 +1668,7 @@ out(cp) = central / v ~ continuous()
         let model = crate::parse_model(src).expect("authoring model parses");
         let typed = crate::analyze_model(&model).expect("authoring model analyzes");
         let error = crate::lower_typed_model(&typed)
-            .err()
-            .expect("infusion bioavailability should fail during lowering");
+            .expect_err("infusion bioavailability should fail during lowering");
 
         assert!(error
             .to_string()

@@ -1,6 +1,3 @@
-use std::error::Error;
-use std::fmt;
-
 use serde::{Deserialize, Serialize};
 
 use crate::name_match::{
@@ -105,6 +102,9 @@ impl ConstValue {
         }
     }
 
+    /// Converts to `i64` when the value is finite, integral, and exactly
+    /// representable; the 2^63 upper bound is exclusive because
+    /// `i64::MAX as f64` rounds up to it and would saturate the cast.
     pub fn as_i64(&self) -> Option<i64> {
         match self {
             ConstValue::Int(value) => Some(*value),
@@ -112,7 +112,7 @@ impl ConstValue {
                 if value.is_finite()
                     && value.fract() == 0.0
                     && *value >= i64::MIN as f64
-                    && *value <= i64::MAX as f64 =>
+                    && *value < -(i64::MIN as f64) =>
             {
                 Some(*value as i64)
             }
@@ -414,17 +414,18 @@ impl AnalyticalStructureInputPlan {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AnalyticalStructureInputError {
-    DuplicatePrimary {
-        name: String,
-    },
-    DuplicateDerived {
-        name: String,
-    },
-    ConflictingName {
-        name: String,
-    },
+    #[error("duplicate primary parameter `{name}`")]
+    DuplicatePrimary { name: String },
+    #[error("duplicate derived parameter `{name}`")]
+    DuplicateDerived { name: String },
+    #[error("`{name}` is declared in both `params` and `derived`")]
+    ConflictingName { name: String },
+    #[error(
+        "analytical structure `{structure}` requires `{name}`; {}declare it in `params` or `derived`",
+        suggestion_note(.name, .suggestion)
+    )]
     MissingRequiredName {
         structure: &'static str,
         name: String,
@@ -432,30 +433,12 @@ pub enum AnalyticalStructureInputError {
     },
 }
 
-impl fmt::Display for AnalyticalStructureInputError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::DuplicatePrimary { name } => write!(f, "duplicate primary parameter `{name}`"),
-            Self::DuplicateDerived { name } => write!(f, "duplicate derived parameter `{name}`"),
-            Self::ConflictingName { name } => {
-                write!(f, "`{name}` is declared in both `params` and `derived`")
-            }
-            Self::MissingRequiredName {
-                structure,
-                name,
-                suggestion,
-            } => {
-                write!(f, "analytical structure `{structure}` requires `{name}`; ")?;
-                if let Some(candidate) = suggestion {
-                    write!(f, "did you mean `{name}` instead of `{candidate}`? ")?;
-                }
-                f.write_str("declare it in `params` or `derived`")
-            }
-        }
+fn suggestion_note(name: &str, suggestion: &Option<String>) -> String {
+    match suggestion {
+        Some(candidate) => format!("did you mean `{name}` instead of `{candidate}`? "),
+        None => String::new(),
     }
 }
-
-impl Error for AnalyticalStructureInputError {}
 
 fn best_similar_candidate<'a, I>(needle: &str, candidates: I) -> Option<String>
 where

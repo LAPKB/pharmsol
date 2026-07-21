@@ -17,7 +17,7 @@ use libloading::Library;
 use pharmsol_dsl::execution::KernelRole;
 use pharmsol_dsl::{
     AnalyticalKernel, AnalyticalStructureInputKind, AnalyticalStructureInputPlan, ModelKind,
-    RouteKind, NUMERIC_OUTPUT_PREFIX, NUMERIC_ROUTE_PREFIX,
+    RouteKind,
 };
 
 pub use super::model_info::{
@@ -32,6 +32,7 @@ use crate::{
             DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE, DEFAULT_CACHE_SIZE,
         },
         equation::{
+            metadata::ValidatedRoute,
             ode::{closure_helpers::PMProblem, ExplicitRkTableau, OdeSolver, SdirkTableau},
             sde::simulate_sde_event_with,
             EqnKind, Equation, EquationPriv, EquationTypes, Predictions,
@@ -653,34 +654,14 @@ impl SharedNativeModel {
         self.metadata.as_ref()
     }
 
-    fn route_index(&self, name: &str) -> Option<usize> {
-        self.info
-            .routes
-            .iter()
-            .find(|route| route.name == name)
-            .map(|route| route.index)
-    }
-
-    fn output_index(&self, name: &str) -> Option<usize> {
-        self.info
-            .outputs
-            .iter()
-            .find(|output| output.name == name)
-            .map(|output| output.index)
-    }
-
     fn metadata_route_index_for_label(&self, label: &str) -> Option<usize> {
-        self.route_index(label).or_else(|| {
-            canonical_numeric_alias(label, NUMERIC_ROUTE_PREFIX)
-                .and_then(|alias| self.route_index(alias.as_str()))
-        })
+        self.metadata()
+            .route_for_label(label)
+            .map(ValidatedRoute::input_index)
     }
 
     fn metadata_output_index_for_label(&self, label: &str) -> Option<usize> {
-        self.output_index(label).or_else(|| {
-            canonical_numeric_alias(label, NUMERIC_OUTPUT_PREFIX)
-                .and_then(|alias| self.output_index(alias.as_str()))
-        })
+        self.metadata().output_for_label(label)
     }
 
     fn validate_support_point(&self, support_point: &[f64]) -> Result<(), PharmsolError> {
@@ -2572,13 +2553,6 @@ fn sort_events(events: &mut [Event]) {
     });
 }
 
-fn canonical_numeric_alias(label: &str, prefix: &str) -> Option<String> {
-    if label.is_empty() || !label.chars().all(|ch| ch.is_ascii_digit()) {
-        return None;
-    }
-    Some(format!("{prefix}{label}"))
-}
-
 fn build_analytical_parameter_projection(
     info: &NativeModelInfo,
 ) -> Result<AnalyticalStructureInputKind, PharmsolError> {
@@ -2773,11 +2747,10 @@ fn apply_analytical_kernel(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_analytical_parameter_projection, canonical_numeric_alias,
-        project_analytical_parameters, KernelSession, NativeAnalyticalModel, NativeCovariateInfo,
-        NativeModelInfo, NativeOdeModel, NativeOutputInfo, NativeRouteInfo, NativeSdeModel,
-        NativeStateInfo, RuntimeArtifact, RuntimeBackend, SharedNativeModel, NUMERIC_OUTPUT_PREFIX,
-        NUMERIC_ROUTE_PREFIX,
+        build_analytical_parameter_projection, project_analytical_parameters, KernelSession,
+        NativeAnalyticalModel, NativeCovariateInfo, NativeModelInfo, NativeOdeModel,
+        NativeOutputInfo, NativeRouteInfo, NativeSdeModel, NativeStateInfo, RuntimeArtifact,
+        RuntimeBackend, SharedNativeModel,
     };
     #[cfg(any(
         feature = "dsl-jit",
@@ -3158,31 +3131,6 @@ mod tests {
             .bolus(0.0, 100.0, "oral")
             .missing_observation(0.5, "cp")
             .build()
-    }
-
-    #[test]
-    fn canonical_numeric_alias_maps_bare_numeric_labels_to_contextual_prefixes() {
-        assert_eq!(
-            canonical_numeric_alias("1", NUMERIC_ROUTE_PREFIX),
-            Some("input_1".to_string())
-        );
-        assert_eq!(
-            canonical_numeric_alias("10", NUMERIC_OUTPUT_PREFIX),
-            Some("outeq_10".to_string())
-        );
-    }
-
-    #[test]
-    fn canonical_numeric_alias_ignores_symbolic_and_prefixed_labels() {
-        assert_eq!(canonical_numeric_alias("iv", NUMERIC_ROUTE_PREFIX), None);
-        assert_eq!(
-            canonical_numeric_alias("input_1", NUMERIC_ROUTE_PREFIX),
-            None
-        );
-        assert_eq!(
-            canonical_numeric_alias("outeq_2", NUMERIC_OUTPUT_PREFIX),
-            None
-        );
     }
 
     #[test]

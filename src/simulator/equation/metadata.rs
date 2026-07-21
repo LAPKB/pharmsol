@@ -30,7 +30,10 @@
 //! assert!(metadata.output("cp").is_some());
 //! ```
 
-use pharmsol_dsl::{AnalyticalKernel, CovariateInterpolation, ModelKind};
+use pharmsol_dsl::{
+    AnalyticalKernel, CovariateInterpolation, ModelKind, NUMERIC_OUTPUT_PREFIX,
+    NUMERIC_ROUTE_PREFIX,
+};
 use std::fmt;
 use thiserror::Error;
 
@@ -204,6 +207,46 @@ impl ValidatedModelMetadata {
     /// Look up an output by public name and return its dense output index.
     pub(crate) fn output_index(&self, name: &str) -> Option<usize> {
         self.outputs.iter().position(|output| output.name() == name)
+    }
+
+    /// Resolve a public route label from data to a declared route.
+    ///
+    /// Resolution order:
+    /// 1. exact route name,
+    /// 2. canonical numeric alias (`input_<n>`) for a bare numeric label,
+    /// 3. 1-based declaration ordinal: a bare numeric label `n` selects the
+    ///    n-th declared route, matching Pmetrics `INPUT` numbering.
+    ///
+    /// Use [`ValidatedRoute::input_index`] on the result for the dense
+    /// execution input slot.
+    pub fn route_for_label(&self, label: &str) -> Option<&ValidatedRoute> {
+        self.route(label).or_else(|| {
+            if !is_bare_numeric_label(label) {
+                return None;
+            }
+            self.route(&format!("{NUMERIC_ROUTE_PREFIX}{label}"))
+                .or_else(|| self.routes.get(bare_numeric_ordinal(label)? - 1))
+        })
+    }
+
+    /// Resolve a public output label from data to its dense output index.
+    ///
+    /// Uses the same resolution order as [`Self::route_for_label`]: exact
+    /// output name, `outeq_<n>` alias, then the 1-based declaration ordinal
+    /// matching Pmetrics `OUTEQ` numbering.
+    pub fn output_for_label(&self, label: &str) -> Option<usize> {
+        self.output_index(label).or_else(|| {
+            if !is_bare_numeric_label(label) {
+                return None;
+            }
+            self.output_index(&format!("{NUMERIC_OUTPUT_PREFIX}{label}"))
+                .or_else(|| {
+                    let ordinal = bare_numeric_ordinal(label)?;
+                    ordinal
+                        .checked_sub(1)
+                        .filter(|index| *index < self.outputs.len())
+                })
+        })
     }
 
     pub fn parameter(&self, name: &str) -> Option<&Parameter> {
@@ -733,6 +776,22 @@ impl Route {
     }
 }
 
+/// Returns `true` for labels consisting only of ASCII digits (`"0"`, `"12"`).
+fn is_bare_numeric_label(label: &str) -> bool {
+    !label.is_empty() && label.chars().all(|ch| ch.is_ascii_digit())
+}
+
+/// Parse a bare numeric label as a 1-based ordinal.
+///
+/// Returns `None` for non-numeric labels and for `0`, which is not a valid
+/// Pmetrics `INPUT`/`OUTEQ` number.
+fn bare_numeric_ordinal(label: &str) -> Option<usize> {
+    if !is_bare_numeric_label(label) {
+        return None;
+    }
+    label.parse::<usize>().ok().filter(|ordinal| *ordinal >= 1)
+}
+
 fn resolve_kind(
     declared_kind: Option<ModelKind>,
     requested_kind: Option<ModelKind>,
@@ -1016,6 +1075,63 @@ mod tests {
                 .destination_index(),
             0
         );
+    }
+
+    #[test]
+    fn numeric_labels_resolve_via_alias_before_ordinal() {
+        let metadata = new("mixed_labels")
+            .kind(ModelKind::Ode)
+            .parameters(["ke", "v"])
+            .states(["gut", "central"])
+            .outputs(["cp", "outeq_0", "outeq_1"])
+            .route(Route::infusion("iv").to_state("central"))
+            .route(Route::bolus("input_0").to_state("gut"))
+            .validate()
+            .expect("metadata should validate");
+
+        // Exact names resolve first.
+        assert_eq!(metadata.output_for_label("cp"), Some(0));
+        assert_eq!(
+            metadata
+                .route_for_label("iv")
+                .map(|route| route.declaration_index()),
+            Some(0)
+        );
+
+        // `0` is not a valid 1-based ordinal, but the `outeq_0`/`input_0`
+        // aliases must still be consulted.
+        assert_eq!(metadata.output_for_label("0"), Some(1));
+        assert_eq!(
+            metadata
+                .route_for_label("0")
+                .map(|route| route.declaration_index()),
+            Some(1)
+        );
+
+        // An existing alias wins over the 1-based ordinal.
+        assert_eq!(metadata.output_for_label("1"), Some(2));
+
+        // Without an alias, the 1-based declaration ordinal applies.
+        assert_eq!(metadata.output_for_label("2"), Some(1));
+        assert_eq!(metadata.output_for_label("3"), Some(2));
+        assert_eq!(
+            metadata
+                .route_for_label("1")
+                .map(|route| route.declaration_index()),
+            Some(0)
+        );
+        assert_eq!(
+            metadata
+                .route_for_label("2")
+                .map(|route| route.declaration_index()),
+            Some(1)
+        );
+
+        // Out-of-range ordinals and unknown labels do not resolve.
+        assert_eq!(metadata.output_for_label("4"), None);
+        assert_eq!(metadata.output_for_label("missing"), None);
+        assert!(metadata.route_for_label("3").is_none());
+        assert!(metadata.route_for_label("missing").is_none());
     }
 
     #[test]

@@ -11,7 +11,9 @@ use crate::ir::*;
 use crate::name_match::{
     common_prefix_len, edit_distance, is_high_confidence_match, is_single_adjacent_transposition,
 };
-use crate::{ModelKind, NUMERIC_OUTPUT_PREFIX, NUMERIC_ROUTE_PREFIX, RATE_FUNCTION_NAME};
+use crate::{
+    ModelKind, MAX_CONST_USIZE, NUMERIC_OUTPUT_PREFIX, NUMERIC_ROUTE_PREFIX, RATE_FUNCTION_NAME,
+};
 
 const RESERVED_NAMES: &[&str] = &[
     "abs",
@@ -211,8 +213,8 @@ impl fmt::Display for SemanticError {
         let span = self.diagnostic.primary_span();
         write!(
             f,
-            "{} at bytes {}..{}",
-            self.diagnostic.message, span.start, span.end
+            "error[{}]: {} (at bytes {}..{})",
+            self.diagnostic.code, self.diagnostic.message, span.start, span.end
         )
     }
 }
@@ -1552,6 +1554,12 @@ impl<'a> Analyzer<'a> {
                 expr.span,
             ));
         }
+        if value as u64 > MAX_CONST_USIZE as u64 {
+            return Err(SemanticError::new(
+                format!("{context} exceeds the maximum supported value of {MAX_CONST_USIZE}"),
+                expr.span,
+            ));
+        }
         Ok(value as usize)
     }
 
@@ -1618,6 +1626,20 @@ impl<'a> Analyzer<'a> {
                         callee.span,
                     )
                 })?;
+                match intrinsic.arity() {
+                    IntrinsicArity::Exact(expected) if expected != args.len() => {
+                        return Err(SemanticError::new(
+                            format!(
+                                "function `{}` expects {} argument(s), got {}",
+                                callee.text,
+                                expected,
+                                args.len()
+                            ),
+                            callee.span,
+                        ));
+                    }
+                    _ => {}
+                }
                 let mut values = Vec::with_capacity(args.len());
                 for arg in args {
                     values.push(self.evaluate_const_expr(arg, bindings, visiting)?);
@@ -2351,7 +2373,9 @@ fn canonical_numeric_suffix<'a>(src: &'a str, prefix: &str) -> Option<&'a str> {
 }
 
 fn numeric_label_literal_suffix(value: f64) -> Option<String> {
-    (value.is_finite() && value >= 0.0 && value.fract() == 0.0 && value <= usize::MAX as f64)
+    // `usize::MAX as f64` rounds up to 2^64; keep the bound exclusive so the
+    // cast below never saturates.
+    (value.is_finite() && value >= 0.0 && value.fract() == 0.0 && value < usize::MAX as f64)
         .then(|| (value as usize).to_string())
 }
 
@@ -2647,10 +2671,12 @@ fn collect_bare_assignment_names(
 }
 
 fn number_to_const(value: f64) -> ConstValue {
+    // `i64::MIN as f64` is exactly -2^63, but `i64::MAX as f64` rounds up to
+    // 2^63, so the upper bound must be exclusive to keep the cast lossless.
     if value.is_finite()
         && value.fract() == 0.0
         && value >= i64::MIN as f64
-        && value <= i64::MAX as f64
+        && value < -(i64::MIN as f64)
     {
         ConstValue::Int(value as i64)
     } else {
@@ -2716,7 +2742,10 @@ fn fold_unary(op: TypedUnaryOp, value: &ConstValue) -> Option<ConstValue> {
     match (op, value) {
         (TypedUnaryOp::Plus, ConstValue::Int(value)) => Some(ConstValue::Int(*value)),
         (TypedUnaryOp::Plus, ConstValue::Real(value)) => Some(ConstValue::Real(*value)),
-        (TypedUnaryOp::Minus, ConstValue::Int(value)) => Some(ConstValue::Int(-value)),
+        (TypedUnaryOp::Minus, ConstValue::Int(value)) => Some(match value.checked_neg() {
+            Some(negated) => ConstValue::Int(negated),
+            None => ConstValue::Real(-(*value as f64)),
+        }),
         (TypedUnaryOp::Minus, ConstValue::Real(value)) => Some(ConstValue::Real(-value)),
         (TypedUnaryOp::Not, ConstValue::Bool(value)) => Some(ConstValue::Bool(!value)),
         _ => None,
@@ -2737,24 +2766,9 @@ fn fold_binary(op: TypedBinaryOp, lhs: &ConstValue, rhs: &ConstValue) -> Option<
         TypedBinaryOp::LtEq => Some(ConstValue::Bool(lhs.as_f64()? <= rhs.as_f64()?)),
         TypedBinaryOp::Gt => Some(ConstValue::Bool(lhs.as_f64()? > rhs.as_f64()?)),
         TypedBinaryOp::GtEq => Some(ConstValue::Bool(lhs.as_f64()? >= rhs.as_f64()?)),
-        TypedBinaryOp::Add => fold_numeric(
-            lhs,
-            rhs,
-            |left, right| left + right,
-            |left, right| left + right,
-        ),
-        TypedBinaryOp::Sub => fold_numeric(
-            lhs,
-            rhs,
-            |left, right| left - right,
-            |left, right| left - right,
-        ),
-        TypedBinaryOp::Mul => fold_numeric(
-            lhs,
-            rhs,
-            |left, right| left * right,
-            |left, right| left * right,
-        ),
+        TypedBinaryOp::Add => fold_numeric(lhs, rhs, i64::checked_add, |left, right| left + right),
+        TypedBinaryOp::Sub => fold_numeric(lhs, rhs, i64::checked_sub, |left, right| left - right),
+        TypedBinaryOp::Mul => fold_numeric(lhs, rhs, i64::checked_mul, |left, right| left * right),
         TypedBinaryOp::Div => Some(ConstValue::Real(lhs.as_f64()? / rhs.as_f64()?)),
         TypedBinaryOp::Pow => Some(ConstValue::Real(lhs.as_f64()?.powf(rhs.as_f64()?))),
     }
@@ -2763,11 +2777,16 @@ fn fold_binary(op: TypedBinaryOp, lhs: &ConstValue, rhs: &ConstValue) -> Option<
 fn fold_numeric(
     lhs: &ConstValue,
     rhs: &ConstValue,
-    int_op: impl FnOnce(i64, i64) -> i64,
+    int_op: impl FnOnce(i64, i64) -> Option<i64>,
     real_op: impl FnOnce(f64, f64) -> f64,
 ) -> Option<ConstValue> {
     match (lhs, rhs) {
-        (ConstValue::Int(lhs), ConstValue::Int(rhs)) => Some(ConstValue::Int(int_op(*lhs, *rhs))),
+        (ConstValue::Int(lhs), ConstValue::Int(rhs)) => Some(match int_op(*lhs, *rhs) {
+            Some(value) => ConstValue::Int(value),
+            // Overflowing integer arithmetic degrades to `Real`, matching the
+            // f64 arithmetic the backends perform at runtime.
+            None => ConstValue::Real(real_op(*lhs as f64, *rhs as f64)),
+        }),
         _ => Some(ConstValue::Real(real_op(lhs.as_f64()?, rhs.as_f64()?))),
     }
 }

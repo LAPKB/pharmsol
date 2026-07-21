@@ -55,7 +55,6 @@ pub use analytical::*;
 pub use metadata::*;
 pub use ode::*;
 pub use pharmsol_dsl::{AnalyticalKernel, ModelKind};
-use pharmsol_dsl::{NUMERIC_OUTPUT_PREFIX, NUMERIC_ROUTE_PREFIX};
 pub use sde::*;
 
 use crate::{
@@ -199,15 +198,9 @@ pub(crate) trait EquationPriv: EquationTypes {
         expected_kind: RouteKind,
     ) -> Result<usize, PharmsolError> {
         if let Some(metadata) = self.metadata() {
-            let route = metadata
-                .route(label.as_str())
-                .or_else(|| {
-                    canonical_numeric_alias(label.as_str(), NUMERIC_ROUTE_PREFIX)
-                        .and_then(|alias| metadata.route(alias.as_str()))
-                })
-                .ok_or_else(|| {
-                    PharmsolError::unknown_input_label(label.as_str(), &metadata.route_labels())
-                })?;
+            let route = metadata.route_for_label(label.as_str()).ok_or_else(|| {
+                PharmsolError::unknown_input_label(label.as_str(), &metadata.route_labels())
+            })?;
 
             if route.kind() != expected_kind {
                 return Err(PharmsolError::UnsupportedInputRouteKind {
@@ -229,15 +222,9 @@ pub(crate) trait EquationPriv: EquationTypes {
 
     fn resolve_output_label(&self, label: &OutputLabel) -> Result<usize, PharmsolError> {
         if let Some(metadata) = self.metadata() {
-            return metadata
-                .output_index(label.as_str())
-                .or_else(|| {
-                    canonical_numeric_alias(label.as_str(), NUMERIC_OUTPUT_PREFIX)
-                        .and_then(|alias| metadata.output_index(alias.as_str()))
-                })
-                .ok_or_else(|| {
-                    PharmsolError::unknown_output_label(label.as_str(), &metadata.output_labels())
-                });
+            return metadata.output_for_label(label.as_str()).ok_or_else(|| {
+                PharmsolError::unknown_output_label(label.as_str(), &metadata.output_labels())
+            });
         }
 
         label
@@ -357,13 +344,6 @@ pub(crate) trait EquationPriv: EquationTypes {
         }
         Ok(())
     }
-}
-
-fn canonical_numeric_alias(label: &str, prefix: &str) -> Option<String> {
-    if label.is_empty() || !label.chars().all(|ch| ch.is_ascii_digit()) {
-        return None;
-    }
-    Some(format!("{prefix}{label}"))
 }
 
 /// Trait for handwritten model equations that can be simulated.

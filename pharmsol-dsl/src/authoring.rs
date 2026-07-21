@@ -310,8 +310,8 @@ impl<'a> AuthoringParser<'a> {
         let span = Span::new(line_offset + leading, line_offset + trailing);
         self.note_span(span);
 
-        if find_top_level_arrow(trimmed).is_some() {
-            return self.parse_route_line(trimmed, span.start, span);
+        if let Some(arrow) = find_top_level_arrow(trimmed) {
+            return self.parse_route_line(trimmed, arrow, span.start, span);
         }
 
         let eq_index = find_top_level_assignment(trimmed).ok_or_else(|| {
@@ -435,7 +435,7 @@ impl<'a> AuthoringParser<'a> {
         }
 
         if let Some(name_segment) = lhs_trimmed.strip_prefix("const ") {
-            let name_abs = span.start + (lhs.find("const").unwrap() + "const ".len());
+            let name_abs = span.start + (lhs.len() - lhs_trimmed.len()) + "const ".len();
             let name = parse_ident_segment(name_segment, name_abs)?;
             let value = parse_expr_at(rhs, rhs_abs)?;
             self.constants.push(Binding {
@@ -484,10 +484,10 @@ impl<'a> AuthoringParser<'a> {
     fn parse_route_line(
         &mut self,
         trimmed: &str,
+        arrow: usize,
         line_start: usize,
         span: Span,
     ) -> Result<(), ParseError> {
-        let arrow = find_top_level_arrow(trimmed).unwrap();
         let lhs = &trimmed[..arrow];
         let rhs = &trimmed[arrow + 2..];
         let call = parse_call_head(lhs, line_start)?
@@ -1168,15 +1168,32 @@ fn parse_expr_at(src: &str, abs_start: usize) -> Result<Expr, ParseError> {
 }
 
 fn parse_surface_rhs(src: &str, abs_start: usize) -> Result<SurfaceRhs, ParseError> {
+    parse_surface_rhs_at(src, abs_start, 0)
+}
+
+fn parse_surface_rhs_at(
+    src: &str,
+    abs_start: usize,
+    depth: usize,
+) -> Result<SurfaceRhs, ParseError> {
     let trimmed = src.trim_start();
     let leading = src.len() - trimmed.len();
     if starts_with_keyword(trimmed, "if") {
-        return parse_if_rhs(trimmed, abs_start + leading);
+        return parse_if_rhs(trimmed, abs_start + leading, depth);
     }
     Ok(SurfaceRhs::Expr(parse_expr_at(src, abs_start)?))
 }
 
-fn parse_if_rhs(src: &str, abs_start: usize) -> Result<SurfaceRhs, ParseError> {
+fn parse_if_rhs(src: &str, abs_start: usize, depth: usize) -> Result<SurfaceRhs, ParseError> {
+    if depth >= crate::parser::MAX_NESTING_DEPTH {
+        return Err(ParseError::new(
+            format!(
+                "conditional expression is nested too deeply (maximum nesting depth is {})",
+                crate::parser::MAX_NESTING_DEPTH
+            ),
+            Span::new(abs_start, abs_start + src.len().min(2)),
+        ));
+    }
     let rest = &src[2..];
     let rest_leading = rest.len() - rest.trim_start().len();
     let rest = &rest[rest_leading..];
@@ -1206,9 +1223,12 @@ fn parse_if_rhs(src: &str, abs_start: usize) -> Result<SurfaceRhs, ParseError> {
     })?;
 
     let condition = parse_expr_at(condition_src, rest_abs + 1)?;
-    let then_branch = parse_surface_rhs(&remaining[..else_index], remaining_abs)?;
-    let else_branch =
-        parse_surface_rhs(&remaining[else_index + 4..], remaining_abs + else_index + 4)?;
+    let then_branch = parse_surface_rhs_at(&remaining[..else_index], remaining_abs, depth + 1)?;
+    let else_branch = parse_surface_rhs_at(
+        &remaining[else_index + 4..],
+        remaining_abs + else_index + 4,
+        depth + 1,
+    )?;
     let span = Span::new(abs_start, remaining_abs + remaining.len());
 
     Ok(SurfaceRhs::If {

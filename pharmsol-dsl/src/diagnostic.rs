@@ -237,8 +237,19 @@ impl Diagnostic {
                 .to_string()
                 .len();
             rendered.push_str(&format!("{:>width$} |\n", "", width = gutter));
+            let mut last_line = None;
             for label in &self.labels {
-                rendered.push_str(&render_label(src, label, &self.message, gutter));
+                let label_line = line_info(src, label.span.start.min(src.len())).0;
+                // Repeat the source text only when the label moves to a new line.
+                let show_source = last_line != Some(label_line);
+                rendered.push_str(&render_label(
+                    src,
+                    label,
+                    &self.message,
+                    gutter,
+                    show_source,
+                ));
+                last_line = Some(label_line);
             }
         }
         for note in &self.notes {
@@ -500,6 +511,15 @@ impl ParseError {
         }
     }
 
+    /// Marker propagated after a fatal parse error was recorded; carries no
+    /// diagnostics of its own and is always merged into a non-empty error.
+    pub(crate) fn aborted() -> Self {
+        Self {
+            diagnostics: Vec::new(),
+            source: None,
+        }
+    }
+
     pub fn with_note(mut self, note: impl Into<String>) -> Self {
         self.diagnostics[0].notes.push(note.into());
         self
@@ -580,14 +600,22 @@ impl fmt::Display for ParseError {
         if let Some(source) = self.source() {
             return f.write_str(&self.render(source));
         }
-        let span = self.diagnostic().primary_span();
+        let diagnostic = self.diagnostic();
+        let span = diagnostic.primary_span();
         write!(
             f,
-            "{} at bytes {}..{}",
-            self.diagnostic().message,
-            span.start,
-            span.end
-        )
+            "error[{}]: {} (at bytes {}..{})",
+            diagnostic.code, diagnostic.message, span.start, span.end
+        )?;
+        let remaining = self.diagnostics.len() - 1;
+        if remaining > 0 {
+            write!(
+                f,
+                " (+{remaining} more error{})",
+                if remaining == 1 { "" } else { "s" }
+            )?;
+        }
+        Ok(())
     }
 }
 
@@ -606,10 +634,10 @@ fn render_label(
     label: &DiagnosticLabel,
     fallback_message: &str,
     gutter: usize,
+    show_source: bool,
 ) -> String {
     let offset = label.span.start.min(src.len());
     let (line, _, line_start, line_end) = line_info(src, offset);
-    let line_text = &src[line_start..line_end];
     let marker_start = src[line_start..offset].chars().count();
     let highlight_end = label.span.end.min(line_end).max(offset);
     let marker_len = src[offset..highlight_end].chars().count().max(1);
@@ -624,12 +652,14 @@ fn render_label(
     });
 
     let mut rendered = String::new();
-    rendered.push_str(&format!(
-        "{:>width$} | {}\n",
-        line,
-        line_text,
-        width = gutter
-    ));
+    if show_source {
+        rendered.push_str(&format!(
+            "{:>width$} | {}\n",
+            line,
+            &src[line_start..line_end],
+            width = gutter
+        ));
+    }
     rendered.push_str(&format!(
         "{:>width$} | {}{}",
         "",

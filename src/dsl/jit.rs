@@ -141,8 +141,8 @@ impl std::fmt::Display for JitCompileError {
         let span = self.diagnostic.primary_span();
         write!(
             f,
-            "{} at bytes {}..{}",
-            self.diagnostic.message, span.start, span.end
+            "error[{}]: {} (at bytes {}..{})",
+            self.diagnostic.code, self.diagnostic.message, span.start, span.end
         )
     }
 }

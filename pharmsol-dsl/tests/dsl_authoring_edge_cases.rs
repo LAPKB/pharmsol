@@ -181,7 +181,7 @@ out(outeq_1) = 3 * central / v
         .models
         .first()
         .expect("authoring DSL should produce one model");
-    let typed = analyze_model(&model).expect("mixed output labels should analyze");
+    let typed = analyze_model(model).expect("mixed output labels should analyze");
     let lowered = lower_typed_model(&typed).expect("mixed output labels should lower");
 
     assert_eq!(
