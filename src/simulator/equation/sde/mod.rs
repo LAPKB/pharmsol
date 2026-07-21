@@ -406,7 +406,7 @@ impl SDE {
             let mut state: V = DVector::zeros(self.get_nstates()).into();
             if occasion_index == 0 {
                 (self.init)(
-                    &V::from_vec(parameters.to_vec(), NalgebraContext),
+                    &V::from_vec(parameters.to_vec(), NalgebraContext::new()),
                     0.0,
                     covariates,
                     &mut state,
@@ -432,7 +432,7 @@ impl SDE {
         if ti == tf {
             return state;
         }
-        let parameter_values = V::from_vec(parameters.to_vec(), NalgebraContext);
+        let parameter_values = V::from_vec(parameters.to_vec(), NalgebraContext::new());
         let infusion_events = infusions.to_vec();
         let ndrugs = self.get_ndrugs();
         let drift = self.drift;
@@ -441,7 +441,7 @@ impl SDE {
         let covariates = covariates.clone();
 
         let drift_closure = move |time: f64, state: &DVector<f64>, out: &mut DVector<f64>| {
-            let mut rateiv = V::zeros(ndrugs, NalgebraContext);
+            let mut rateiv = V::zeros(ndrugs, NalgebraContext::new());
             for infusion in &infusion_events {
                 if time >= infusion.time() && time < infusion.duration() + infusion.time() {
                     let input = infusion
@@ -450,7 +450,7 @@ impl SDE {
                     rateiv[input] += infusion.amount() / infusion.duration();
                 }
             }
-            let mut out_v = V::zeros(state.len(), NalgebraContext);
+            let mut out_v = V::zeros(state.len(), NalgebraContext::new());
             drift(
                 &state.clone().into(),
                 &drift_parameters,
@@ -462,7 +462,7 @@ impl SDE {
             out.copy_from(out_v.inner());
         };
         let diffusion_closure = move |_time: f64, _state: &DVector<f64>, out: &mut DVector<f64>| {
-            let mut out_v = V::zeros(out.len(), NalgebraContext);
+            let mut out_v = V::zeros(out.len(), NalgebraContext::new());
             diffusion(&parameter_values, &mut out_v);
             out.copy_from(out_v.inner());
         };
@@ -604,12 +604,14 @@ impl<R: Rng + ?Sized> SdeParticleSession<'_, R> {
             let event = self.events[self.occasion][self.event].clone();
             match &event {
                 Event::Bolus(bolus) => {
-                    let input =
-                        bolus
-                            .input_index()
-                            .ok_or_else(|| PharmsolError::UnknownInputLabel {
-                                label: bolus.input().to_string(),
-                            })?;
+                    let input = bolus.input_index().ok_or_else(|| {
+                        let available = self
+                            .model
+                            .metadata()
+                            .map(|metadata| metadata.route_labels())
+                            .unwrap_or_default();
+                        PharmsolError::unknown_input_label(bolus.input(), &available)
+                    })?;
                     if input >= self.model.get_ndrugs() {
                         return Err(PharmsolError::InputOutOfRange {
                             input,
@@ -637,9 +639,10 @@ impl<R: Rng + ?Sized> SdeParticleSession<'_, R> {
                     let output_index = observation
                         .outeq_index()
                         .expect("session observations are resolved");
-                    let parameter_values = V::from_vec(self.parameters.to_vec(), NalgebraContext);
+                    let parameter_values =
+                        V::from_vec(self.parameters.to_vec(), NalgebraContext::new());
                     for state in &self.states {
-                        let mut output = V::zeros(self.model.get_nouteqs(), NalgebraContext);
+                        let mut output = V::zeros(self.model.get_nouteqs(), NalgebraContext::new());
                         (self.model.out)(
                             &state.clone().into(),
                             &parameter_values,
