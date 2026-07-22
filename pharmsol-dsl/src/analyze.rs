@@ -2,16 +2,18 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::Arc;
 
-use crate::ast as syntax;
+use crate::analysis::*;
 use crate::diagnostic::{
     Applicability, Diagnostic, DiagnosticPhase, DiagnosticReport, DiagnosticSuggestion, Span,
-    TextEdit, DSL_SEMANTIC_GENERIC,
+    TextEdit, DSL_ANALYSIS_GENERIC,
 };
-use crate::ir::*;
 use crate::name_match::{
     common_prefix_len, edit_distance, is_high_confidence_match, is_single_adjacent_transposition,
 };
-use crate::{ModelKind, NUMERIC_OUTPUT_PREFIX, NUMERIC_ROUTE_PREFIX, RATE_FUNCTION_NAME};
+use crate::syntax;
+use crate::{
+    ModelKind, MAX_CONST_USIZE, NUMERIC_OUTPUT_PREFIX, NUMERIC_ROUTE_PREFIX, RATE_FUNCTION_NAME,
+};
 
 const RESERVED_NAMES: &[&str] = &[
     "abs",
@@ -41,14 +43,14 @@ const RESERVED_NAMES: &[&str] = &[
 ];
 
 #[derive(Default)]
-struct SemanticAssist {
+struct AnalysisAssist {
     context_labels: Vec<(Span, String)>,
     secondary_labels: Vec<(Span, String)>,
     helps: Vec<String>,
     suggestions: Vec<DiagnosticSuggestion>,
 }
 
-impl SemanticAssist {
+impl AnalysisAssist {
     fn context_label(mut self, span: Span, message: impl Into<String>) -> Self {
         self.context_labels.push((span, message.into()));
         self
@@ -77,7 +79,7 @@ impl SemanticAssist {
         self
     }
 
-    fn apply(self, mut error: SemanticError) -> SemanticError {
+    fn apply(self, mut error: AnalysisError) -> AnalysisError {
         for (span, message) in self.context_labels {
             error = error.with_context_label(span, message);
         }
@@ -96,11 +98,11 @@ impl SemanticAssist {
 
 struct SimilarNameCandidate {
     lookup_name: String,
-    assist: SemanticAssist,
+    assist: AnalysisAssist,
 }
 
 impl SimilarNameCandidate {
-    fn new(lookup_name: impl Into<String>, assist: SemanticAssist) -> Self {
+    fn new(lookup_name: impl Into<String>, assist: AnalysisAssist) -> Self {
         Self {
             lookup_name: lookup_name.into(),
             assist,
@@ -108,33 +110,41 @@ impl SimilarNameCandidate {
     }
 }
 
-pub fn analyze_module(module: &syntax::Module) -> Result<TypedModule, SemanticError> {
+/// Checks every model in a parsed module and resolves all names and types.
+///
+/// This is the middle pipeline stage: after [`parse_module`](crate::parse_module),
+/// before [`compile_analyzed_module`](crate::compile_analyzed_module).
+pub fn analyze_module(module: &syntax::Module) -> Result<AnalyzedModule, AnalysisError> {
     let mut models = Vec::with_capacity(module.models.len());
     for model in &module.models {
         models.push(analyze_model(model)?);
     }
-    Ok(TypedModule {
+    Ok(AnalyzedModule {
         models,
         span: module.span,
     })
 }
 
-pub fn analyze_model(model: &syntax::Model) -> Result<TypedModel, SemanticError> {
+/// Checks a parsed model and resolves all names and types.
+///
+/// This is the middle pipeline stage: after [`parse_model`](crate::parse_model),
+/// before [`compile_analyzed_model`](crate::compile_analyzed_model).
+pub fn analyze_model(model: &syntax::Model) -> Result<AnalyzedModel, AnalysisError> {
     Analyzer::new(model).analyze()
 }
 
 #[derive(Clone, PartialEq, Eq)]
-pub struct SemanticError {
+pub struct AnalysisError {
     diagnostic: Box<Diagnostic>,
     source: Option<Arc<str>>,
 }
 
-impl SemanticError {
+impl AnalysisError {
     pub fn new(message: impl Into<String>, span: Span) -> Self {
         Self {
             diagnostic: Box::new(Diagnostic::error(
-                DSL_SEMANTIC_GENERIC,
-                DiagnosticPhase::Semantic,
+                DSL_ANALYSIS_GENERIC,
+                DiagnosticPhase::Analysis,
                 message,
                 span,
             )),
@@ -197,13 +207,13 @@ impl SemanticError {
     }
 }
 
-impl fmt::Debug for SemanticError {
+impl fmt::Debug for AnalysisError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(self, f)
     }
 }
 
-impl fmt::Display for SemanticError {
+impl fmt::Display for AnalysisError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if let Some(source) = self.source() {
             return f.write_str(&self.render(source));
@@ -211,13 +221,13 @@ impl fmt::Display for SemanticError {
         let span = self.diagnostic.primary_span();
         write!(
             f,
-            "{} at bytes {}..{}",
-            self.diagnostic.message, span.start, span.end
+            "error[{}]: {} (at bytes {}..{})",
+            self.diagnostic.code, self.diagnostic.message, span.start, span.end
         )
     }
 }
 
-impl std::error::Error for SemanticError {}
+impl std::error::Error for AnalysisError {}
 
 struct Analyzer<'a> {
     model: &'a syntax::Model,
@@ -234,7 +244,7 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    fn analyze(mut self) -> Result<TypedModel, SemanticError> {
+    fn analyze(mut self) -> Result<AnalyzedModel, AnalysisError> {
         let sections = ModelSections::from_model(self.model)?;
 
         let parameters = self.register_parameters(sections.parameters)?;
@@ -252,7 +262,7 @@ impl<'a> Analyzer<'a> {
                 &sections
                     .outputs
                     .ok_or_else(|| {
-                        SemanticError::new(
+                        AnalysisError::new(
                             format!(
                                 "model `{}` is missing an `outputs` block",
                                 self.model.name.text
@@ -348,7 +358,7 @@ impl<'a> Analyzer<'a> {
         let analytical = if let Some(block) = sections.analytical {
             let structure =
                 AnalyticalKernel::from_name(&block.structure.text).ok_or_else(|| {
-                    SemanticError::new(
+                    AnalysisError::new(
                         format!("unknown analytical structure `{}`", block.structure.text),
                         block.structure.span,
                     )
@@ -358,7 +368,7 @@ impl<'a> Analyzer<'a> {
                 .map(|state| state.size.unwrap_or(1))
                 .sum::<usize>();
             if state_components != structure.state_count() {
-                return Err(SemanticError::new(
+                return Err(AnalysisError::new(
                     format!(
                         "analytical structure `{}` expects {} state value(s), but model declares {}",
                         block.structure.text,
@@ -375,7 +385,7 @@ impl<'a> Analyzer<'a> {
                 &derived,
                 derive_result.as_ref(),
             )?;
-            Some(TypedAnalytical {
+            Some(AnalyticalSpec {
                 structure,
                 span: block.span,
             })
@@ -387,7 +397,7 @@ impl<'a> Analyzer<'a> {
         let model_kind = self.model.kind;
         let model_span = self.model.span;
         let symbols = self.finalize_symbols()?;
-        Ok(TypedModel {
+        Ok(AnalyzedModel {
             name: model_name,
             kind: model_kind,
             symbols,
@@ -413,7 +423,7 @@ impl<'a> Analyzer<'a> {
     fn register_parameters(
         &mut self,
         block: Option<&syntax::ParametersBlock>,
-    ) -> Result<Vec<SymbolId>, SemanticError> {
+    ) -> Result<Vec<SymbolId>, AnalysisError> {
         let mut parameters = Vec::new();
         if let Some(block) = block {
             for ident in &block.items {
@@ -433,7 +443,7 @@ impl<'a> Analyzer<'a> {
     fn resolve_and_register_constants(
         &mut self,
         block: Option<&syntax::ConstantsBlock>,
-    ) -> Result<Vec<TypedConstant>, SemanticError> {
+    ) -> Result<Vec<AnalyzedConstant>, AnalysisError> {
         let Some(block) = block else {
             return Ok(Vec::new());
         };
@@ -441,7 +451,7 @@ impl<'a> Analyzer<'a> {
         let mut bindings = BTreeMap::new();
         for binding in &block.items {
             if let Some(existing) = bindings.insert(binding.name.text.clone(), binding) {
-                return Err(SemanticAssist::default()
+                return Err(AnalysisAssist::default()
                     .context_label(
                         existing.name.span,
                         format!("constant `{}` first declared here", binding.name.text),
@@ -456,7 +466,7 @@ impl<'a> Analyzer<'a> {
                         format!("rename this constant to `{}_2`", binding.name.text),
                         Applicability::MaybeIncorrect,
                     )
-                    .apply(SemanticError::new(
+                    .apply(AnalysisError::new(
                         format!("duplicate constant `{}`", binding.name.text),
                         binding.name.span,
                     )));
@@ -464,7 +474,7 @@ impl<'a> Analyzer<'a> {
         }
 
         let mut visiting = BTreeSet::new();
-        let mut typed = Vec::new();
+        let mut analyzed = Vec::new();
         for binding in &block.items {
             let value = self.evaluate_const_expr(&binding.value, &bindings, &mut visiting)?;
             let id = self.insert_global_symbol(
@@ -477,19 +487,19 @@ impl<'a> Analyzer<'a> {
             self.globals
                 .constant_values
                 .insert(binding.name.text.clone(), value.clone());
-            typed.push(TypedConstant {
+            analyzed.push(AnalyzedConstant {
                 symbol: id,
                 value,
                 span: binding.span,
             });
         }
-        Ok(typed)
+        Ok(analyzed)
     }
 
     fn register_covariates(
         &mut self,
         block: Option<&syntax::CovariatesBlock>,
-    ) -> Result<Vec<TypedCovariate>, SemanticError> {
+    ) -> Result<Vec<AnalyzedCovariate>, AnalysisError> {
         let mut covariates = Vec::new();
         if let Some(block) = block {
             for covariate in &block.items {
@@ -502,7 +512,7 @@ impl<'a> Analyzer<'a> {
                     Some("linear") => Some(CovariateInterpolation::Linear),
                     Some("locf") | Some("carry_forward") => Some(CovariateInterpolation::Locf),
                     Some(other) => {
-                        return Err(SemanticError::new(
+                        return Err(AnalysisError::new(
                             format!("unknown covariate interpolation `{other}`"),
                             covariate.interpolation.as_ref().unwrap().span,
                         )
@@ -518,7 +528,7 @@ impl<'a> Analyzer<'a> {
                 self.globals
                     .covariates
                     .insert(covariate.name.text.clone(), id);
-                covariates.push(TypedCovariate {
+                covariates.push(AnalyzedCovariate {
                     symbol: id,
                     interpolation,
                     span: covariate.span,
@@ -531,9 +541,9 @@ impl<'a> Analyzer<'a> {
     fn register_states(
         &mut self,
         block: Option<&syntax::StatesBlock>,
-    ) -> Result<Vec<TypedState>, SemanticError> {
+    ) -> Result<Vec<AnalyzedState>, AnalysisError> {
         let Some(block) = block else {
-            return Err(SemanticError::new(
+            return Err(AnalysisError::new(
                 format!(
                     "model `{}` is missing a `states` block",
                     self.model.name.text
@@ -564,7 +574,7 @@ impl<'a> Analyzer<'a> {
             self.globals
                 .states
                 .insert(state.name.text.clone(), StateEntry { symbol: id, size });
-            states.push(TypedState {
+            states.push(AnalyzedState {
                 symbol: id,
                 size,
                 span: state.span,
@@ -576,7 +586,7 @@ impl<'a> Analyzer<'a> {
     fn register_routes(
         &mut self,
         block: Option<&syntax::RoutesBlock>,
-    ) -> Result<Vec<TypedRoute>, SemanticError> {
+    ) -> Result<Vec<AnalyzedRoute>, AnalysisError> {
         let mut routes = Vec::new();
         if let Some(block) = block {
             for route in &block.routes {
@@ -596,7 +606,7 @@ impl<'a> Analyzer<'a> {
                         "lag" => RoutePropertyKind::Lag,
                         "bioavailability" => RoutePropertyKind::Bioavailability,
                         other => {
-                            return Err(SemanticError::new(
+                            return Err(AnalysisError::new(
                                 format!("unknown route property `{other}`"),
                                 property.name.span,
                             )
@@ -606,7 +616,7 @@ impl<'a> Analyzer<'a> {
                         }
                     };
                     if let Some(existing_span) = seen_props.insert(kind, property.name.span) {
-                        return Err(SemanticAssist::default()
+                        return Err(AnalysisAssist::default()
                             .context_label(
                                 existing_span,
                                 format!(
@@ -618,7 +628,7 @@ impl<'a> Analyzer<'a> {
                                 "each route can declare `{}` at most once",
                                 property.name.text
                             ))
-                            .apply(SemanticError::new(
+                            .apply(AnalysisError::new(
                                 format!("duplicate route property `{}`", property.name.text),
                                 property.name.span,
                             )));
@@ -626,13 +636,13 @@ impl<'a> Analyzer<'a> {
                     let env = BlockEnv::new(BTreeSet::new());
                     let value = self.analyze_expr(&property.value, &env)?;
                     self.expect_numeric(&value, "route property", property.value.span)?;
-                    properties.push(TypedRouteProperty {
+                    properties.push(AnalyzedRouteProperty {
                         kind,
                         value,
                         span: property.span,
                     });
                 }
-                routes.push(TypedRoute {
+                routes.push(AnalyzedRoute {
                     symbol: id,
                     kind: route.kind,
                     destination,
@@ -648,7 +658,7 @@ impl<'a> Analyzer<'a> {
         &mut self,
         statements: Option<&[syntax::Stmt]>,
         kind: SymbolKind,
-    ) -> Result<Vec<SymbolId>, SemanticError> {
+    ) -> Result<Vec<SymbolId>, AnalysisError> {
         let mut collected_idents = Vec::new();
         let Some(statements) = statements else {
             return Ok(Vec::new());
@@ -663,7 +673,7 @@ impl<'a> Analyzer<'a> {
             }
             if matches!(kind, SymbolKind::Derived) {
                 if let Some(parameter) = self.globals.parameters.get(&ident.text).copied() {
-                    return Err(SemanticAssist::default()
+                    return Err(AnalysisAssist::default()
                         .context_label(
                             self.symbol_span(parameter),
                             self.symbol_declared_here(parameter),
@@ -677,7 +687,7 @@ impl<'a> Analyzer<'a> {
                             format!("rename this derive target to `{}_derived`", ident.text),
                             Applicability::MaybeIncorrect,
                         )
-                        .apply(SemanticError::new(
+                        .apply(AnalysisError::new(
                             format!(
                                 "derived name `{}` collides with primary parameter `{}`",
                                 ident.text, ident.text
@@ -711,12 +721,12 @@ impl<'a> Analyzer<'a> {
         block: &syntax::StatementBlock,
         context: BlockContext,
         available_derived: BTreeSet<SymbolId>,
-    ) -> Result<BlockAnalysis, SemanticError> {
+    ) -> Result<BlockAnalysis, AnalysisError> {
         let env = BlockEnv::new(available_derived);
         let (statements, env, touched_states) =
             self.analyze_stmt_list(&block.statements, context, env)?;
         Ok(BlockAnalysis {
-            block: TypedStatementBlock {
+            block: AnalyzedStatementBlock {
                 context,
                 statements,
                 span: block.span,
@@ -732,8 +742,8 @@ impl<'a> Analyzer<'a> {
         statements: &[syntax::Stmt],
         context: BlockContext,
         mut env: BlockEnv,
-    ) -> Result<(Vec<TypedStmt>, BlockEnv, BTreeSet<SymbolId>), SemanticError> {
-        let mut typed = Vec::with_capacity(statements.len());
+    ) -> Result<(Vec<AnalyzedStmt>, BlockEnv, BTreeSet<SymbolId>), AnalysisError> {
+        let mut analyzed = Vec::with_capacity(statements.len());
         let mut touched_states = BTreeSet::new();
 
         for stmt in statements {
@@ -746,8 +756,8 @@ impl<'a> Analyzer<'a> {
                         value.ty,
                         SymbolKind::Local,
                     )?;
-                    typed.push(TypedStmt {
-                        kind: TypedStmtKind::Let(TypedLetStmt { symbol, value }),
+                    analyzed.push(AnalyzedStmt {
+                        kind: AnalyzedStmtKind::Let(AnalyzedLetStmt { symbol, value }),
                         span: stmt.span,
                     });
                 }
@@ -756,23 +766,23 @@ impl<'a> Analyzer<'a> {
                     let value = self.analyze_expr(&assign.value, &env)?;
                     self.expect_numeric(&value, "assignment value", assign.value.span)?;
                     match &target.kind {
-                        TypedAssignTargetKind::Derived(symbol) => {
+                        AnalyzedAssignTargetKind::Derived(symbol) => {
                             self.merge_symbol_type(*symbol, value.ty, assign.value.span)?;
                             env.available_derived.insert(*symbol);
                             env.definite_targets.insert(*symbol);
                         }
-                        TypedAssignTargetKind::Output(symbol) => {
+                        AnalyzedAssignTargetKind::Output(symbol) => {
                             self.merge_symbol_type(*symbol, value.ty, assign.value.span)?;
                             env.definite_targets.insert(*symbol);
                         }
-                        TypedAssignTargetKind::StateInit(place)
-                        | TypedAssignTargetKind::Derivative(place)
-                        | TypedAssignTargetKind::Noise(place) => {
+                        AnalyzedAssignTargetKind::StateInit(place)
+                        | AnalyzedAssignTargetKind::Derivative(place)
+                        | AnalyzedAssignTargetKind::Noise(place) => {
                             touched_states.insert(place.state);
                         }
                     }
-                    typed.push(TypedStmt {
-                        kind: TypedStmtKind::Assign(TypedAssignStmt { target, value }),
+                    analyzed.push(AnalyzedStmt {
+                        kind: AnalyzedStmtKind::Assign(AnalyzedAssignStmt { target, value }),
                         span: stmt.span,
                     });
                 }
@@ -816,8 +826,8 @@ impl<'a> Analyzer<'a> {
                     env.available_derived = next_available;
                     env.definite_targets = next_targets;
                     touched_states.extend(branch_states);
-                    typed.push(TypedStmt {
-                        kind: TypedStmtKind::If(TypedIfStmt {
+                    analyzed.push(AnalyzedStmt {
+                        kind: AnalyzedStmtKind::If(AnalyzedIfStmt {
                             condition,
                             then_branch,
                             else_branch,
@@ -841,10 +851,10 @@ impl<'a> Analyzer<'a> {
                     let (body, _loop_env, body_states) =
                         self.analyze_stmt_list(&for_stmt.body, context, loop_env)?;
                     touched_states.extend(body_states);
-                    typed.push(TypedStmt {
-                        kind: TypedStmtKind::For(TypedForStmt {
+                    analyzed.push(AnalyzedStmt {
+                        kind: AnalyzedStmtKind::For(AnalyzedForStmt {
                             binding,
-                            range: TypedRangeExpr {
+                            range: AnalyzedRangeExpr {
                                 start,
                                 end,
                                 span: for_stmt.range.span,
@@ -857,7 +867,7 @@ impl<'a> Analyzer<'a> {
             }
         }
 
-        Ok((typed, env, touched_states))
+        Ok((analyzed, env, touched_states))
     }
 
     fn analyze_assign_target(
@@ -865,20 +875,20 @@ impl<'a> Analyzer<'a> {
         target: &syntax::AssignTarget,
         context: BlockContext,
         env: &BlockEnv,
-    ) -> Result<TypedAssignTarget, SemanticError> {
+    ) -> Result<AnalyzedAssignTarget, AnalysisError> {
         let kind = match context {
             BlockContext::Derive => match &target.kind {
                 syntax::AssignTargetKind::Name(name) => {
                     let Some(symbol) = self.globals.derived.get(&name.text).copied() else {
-                        return Err(SemanticError::new(
+                        return Err(AnalysisError::new(
                             format!("`{}` is not a valid derive target", name.text),
                             name.span,
                         ));
                     };
-                    TypedAssignTargetKind::Derived(symbol)
+                    AnalyzedAssignTargetKind::Derived(symbol)
                 }
                 _ => {
-                    return Err(SemanticError::new(
+                    return Err(AnalysisError::new(
                         "derive assignments must target a bare identifier",
                         target.span,
                     ))
@@ -887,35 +897,35 @@ impl<'a> Analyzer<'a> {
             BlockContext::Outputs => match &target.kind {
                 syntax::AssignTargetKind::Name(name) => {
                     let Some(symbol) = self.globals.outputs.get(&name.text).copied() else {
-                        return Err(SemanticError::new(
+                        return Err(AnalysisError::new(
                             format!("`{}` is not a valid output target", name.text),
                             name.span,
                         ));
                     };
-                    TypedAssignTargetKind::Output(symbol)
+                    AnalyzedAssignTargetKind::Output(symbol)
                 }
                 _ => {
-                    return Err(SemanticError::new(
+                    return Err(AnalysisError::new(
                         "outputs assignments must target a bare identifier",
                         target.span,
                     ))
                 }
             },
             BlockContext::Init => {
-                TypedAssignTargetKind::StateInit(self.analyze_runtime_state_place(target, env)?)
+                AnalyzedAssignTargetKind::StateInit(self.analyze_runtime_state_place(target, env)?)
             }
             BlockContext::Dynamics | BlockContext::Drift => {
                 let place = self.expect_call_state_target(target, "ddt")?;
-                TypedAssignTargetKind::Derivative(
+                AnalyzedAssignTargetKind::Derivative(
                     self.analyze_runtime_state_place_expr(&place, env)?,
                 )
             }
             BlockContext::Diffusion => {
                 let place = self.expect_call_state_target(target, "noise")?;
-                TypedAssignTargetKind::Noise(self.analyze_runtime_state_place_expr(&place, env)?)
+                AnalyzedAssignTargetKind::Noise(self.analyze_runtime_state_place_expr(&place, env)?)
             }
         };
-        Ok(TypedAssignTarget {
+        Ok(AnalyzedAssignTarget {
             kind,
             span: target.span,
         })
@@ -925,28 +935,28 @@ impl<'a> Analyzer<'a> {
         &self,
         target: &syntax::AssignTarget,
         expected: &str,
-    ) -> Result<syntax::Place, SemanticError> {
+    ) -> Result<syntax::Place, AnalysisError> {
         match &target.kind {
             syntax::AssignTargetKind::Call { callee, args }
                 if callee.text == expected && args.len() == 1 =>
             {
                 self.place_from_expr(&args[0])
             }
-            syntax::AssignTargetKind::Call { callee, .. } => Err(SemanticError::new(
+            syntax::AssignTargetKind::Call { callee, .. } => Err(AnalysisError::new(
                 format!(
                     "expected `{expected}(...)` assignment target, found `{}`",
                     callee.text
                 ),
                 target.span,
             )),
-            _ => Err(SemanticError::new(
+            _ => Err(AnalysisError::new(
                 format!("expected `{expected}(...)` assignment target"),
                 target.span,
             )),
         }
     }
 
-    fn place_from_expr(&self, expr: &syntax::Expr) -> Result<syntax::Place, SemanticError> {
+    fn place_from_expr(&self, expr: &syntax::Expr) -> Result<syntax::Place, AnalysisError> {
         match &expr.kind {
             syntax::ExprKind::Name(name) => Ok(syntax::Place {
                 name: name.clone(),
@@ -959,12 +969,12 @@ impl<'a> Analyzer<'a> {
                     index: Some((**index).clone()),
                     span: expr.span,
                 }),
-                _ => Err(SemanticError::new(
+                _ => Err(AnalysisError::new(
                     "indexed assignment targets must index a state identifier",
                     expr.span,
                 )),
             },
-            _ => Err(SemanticError::new(
+            _ => Err(AnalysisError::new(
                 "expected a state reference in assignment target",
                 expr.span,
             )),
@@ -975,7 +985,7 @@ impl<'a> Analyzer<'a> {
         &self,
         target: &syntax::AssignTarget,
         env: &BlockEnv,
-    ) -> Result<TypedStatePlace, SemanticError> {
+    ) -> Result<AnalyzedStatePlace, AnalysisError> {
         let place = match &target.kind {
             syntax::AssignTargetKind::Name(name) => syntax::Place {
                 name: name.clone(),
@@ -988,7 +998,7 @@ impl<'a> Analyzer<'a> {
                 span: target.span,
             },
             syntax::AssignTargetKind::Call { .. } => {
-                return Err(SemanticError::new(
+                return Err(AnalysisError::new(
                     "unexpected call target in runtime state assignment",
                     target.span,
                 ))
@@ -1001,9 +1011,9 @@ impl<'a> Analyzer<'a> {
         &self,
         place: &syntax::Place,
         env: &BlockEnv,
-    ) -> Result<TypedStatePlace, SemanticError> {
+    ) -> Result<AnalyzedStatePlace, AnalysisError> {
         let state = self.globals.states.get(&place.name.text).ok_or_else(|| {
-            let error = SemanticError::new(
+            let error = AnalysisError::new(
                 format!("unknown state `{}`", place.name.text),
                 place.name.span,
             );
@@ -1019,13 +1029,13 @@ impl<'a> Analyzer<'a> {
                 Some(Box::new(index))
             }
             (Some(_), None) => {
-                return Err(SemanticError::new(
+                return Err(AnalysisError::new(
                     format!("state array `{}` requires an index", place.name.text),
                     place.span,
                 ))
             }
             (None, Some(_)) => {
-                return Err(SemanticError::new(
+                return Err(AnalysisError::new(
                     format!(
                         "state `{}` is scalar and cannot be indexed",
                         place.name.text
@@ -1035,7 +1045,7 @@ impl<'a> Analyzer<'a> {
             }
             (None, None) => None,
         };
-        Ok(TypedStatePlace {
+        Ok(AnalyzedStatePlace {
             state: state.symbol,
             index,
             span: place.span,
@@ -1045,9 +1055,9 @@ impl<'a> Analyzer<'a> {
     fn analyze_state_place_const(
         &self,
         place: &syntax::Place,
-    ) -> Result<TypedStatePlace, SemanticError> {
+    ) -> Result<AnalyzedStatePlace, AnalysisError> {
         let state = self.globals.states.get(&place.name.text).ok_or_else(|| {
-            let error = SemanticError::new(
+            let error = AnalysisError::new(
                 format!("unknown state `{}`", place.name.text),
                 place.name.span,
             );
@@ -1059,21 +1069,21 @@ impl<'a> Analyzer<'a> {
         let index = match (&state.size, &place.index) {
             (Some(_), Some(index)) => {
                 let value = self.expect_const_usize(index, "route destination index", false)?;
-                Some(Box::new(TypedExpr {
-                    kind: TypedExprKind::Literal(ConstValue::Int(value as i64)),
+                Some(Box::new(AnalyzedExpr {
+                    kind: AnalyzedExprKind::Literal(ConstValue::Int(value as i64)),
                     ty: ValueType::Int,
                     constant: Some(ConstValue::Int(value as i64)),
                     span: index.span,
                 }))
             }
             (Some(_), None) => {
-                return Err(SemanticError::new(
+                return Err(AnalysisError::new(
                     format!("state array `{}` requires an index", place.name.text),
                     place.span,
                 ))
             }
             (None, Some(_)) => {
-                return Err(SemanticError::new(
+                return Err(AnalysisError::new(
                     format!(
                         "state `{}` is scalar and cannot be indexed",
                         place.name.text
@@ -1083,7 +1093,7 @@ impl<'a> Analyzer<'a> {
             }
             (None, None) => None,
         };
-        Ok(TypedStatePlace {
+        Ok(AnalyzedStatePlace {
             state: state.symbol,
             index,
             span: place.span,
@@ -1094,12 +1104,12 @@ impl<'a> Analyzer<'a> {
         &self,
         expr: &syntax::Expr,
         env: &BlockEnv,
-    ) -> Result<TypedExpr, SemanticError> {
+    ) -> Result<AnalyzedExpr, AnalysisError> {
         match &expr.kind {
             syntax::ExprKind::Number(value) => {
                 let constant = number_to_const(*value);
-                Ok(TypedExpr {
-                    kind: TypedExprKind::Literal(constant.clone()),
+                Ok(AnalyzedExpr {
+                    kind: AnalyzedExprKind::Literal(constant.clone()),
                     ty: constant.value_type(),
                     constant: Some(constant),
                     span: expr.span,
@@ -1107,8 +1117,8 @@ impl<'a> Analyzer<'a> {
             }
             syntax::ExprKind::Bool(value) => {
                 let constant = ConstValue::Bool(*value);
-                Ok(TypedExpr {
-                    kind: TypedExprKind::Literal(constant.clone()),
+                Ok(AnalyzedExpr {
+                    kind: AnalyzedExprKind::Literal(constant.clone()),
                     ty: ValueType::Bool,
                     constant: Some(constant),
                     span: expr.span,
@@ -1128,16 +1138,16 @@ impl<'a> Analyzer<'a> {
                     }
                 };
                 let op = match op {
-                    syntax::UnaryOp::Plus => TypedUnaryOp::Plus,
-                    syntax::UnaryOp::Minus => TypedUnaryOp::Minus,
-                    syntax::UnaryOp::Not => TypedUnaryOp::Not,
+                    syntax::UnaryOp::Plus => AnalyzedUnaryOp::Plus,
+                    syntax::UnaryOp::Minus => AnalyzedUnaryOp::Minus,
+                    syntax::UnaryOp::Not => AnalyzedUnaryOp::Not,
                 };
                 let constant = inner
                     .constant
                     .as_ref()
                     .and_then(|value| fold_unary(op, value));
-                Ok(TypedExpr {
-                    kind: TypedExprKind::Unary {
+                Ok(AnalyzedExpr {
+                    kind: AnalyzedExprKind::Unary {
                         op,
                         expr: Box::new(inner),
                     },
@@ -1155,8 +1165,8 @@ impl<'a> Analyzer<'a> {
                     (Some(lhs), Some(rhs)) => fold_binary(op, lhs, rhs),
                     _ => None,
                 };
-                Ok(TypedExpr {
-                    kind: TypedExprKind::Binary {
+                Ok(AnalyzedExpr {
+                    kind: AnalyzedExprKind::Binary {
                         op,
                         lhs: Box::new(lhs),
                         rhs: Box::new(rhs),
@@ -1175,7 +1185,7 @@ impl<'a> Analyzer<'a> {
                 match &target.kind {
                     syntax::ExprKind::Name(name) => {
                         let state = self.globals.states.get(&name.text).ok_or_else(|| {
-                            SemanticError::new(
+                            AnalysisError::new(
                                 format!(
                                     "only state arrays can be indexed; `{}` is not a state",
                                     name.text
@@ -1184,13 +1194,13 @@ impl<'a> Analyzer<'a> {
                             )
                         })?;
                         if state.size.is_none() {
-                            return Err(SemanticError::new(
+                            return Err(AnalysisError::new(
                                 format!("state `{}` is scalar and cannot be indexed", name.text),
                                 expr.span,
                             ));
                         }
-                        Ok(TypedExpr {
-                            kind: TypedExprKind::StateValue(TypedStatePlace {
+                        Ok(AnalyzedExpr {
+                            kind: AnalyzedExprKind::StateValue(AnalyzedStatePlace {
                                 state: state.symbol,
                                 index: Some(Box::new(index)),
                                 span: expr.span,
@@ -1200,7 +1210,7 @@ impl<'a> Analyzer<'a> {
                             span: expr.span,
                         })
                     }
-                    _ => Err(SemanticError::new(
+                    _ => Err(AnalysisError::new(
                         "only state arrays can be indexed",
                         expr.span,
                     )),
@@ -1214,16 +1224,16 @@ impl<'a> Analyzer<'a> {
         name: &syntax::Ident,
         span: Span,
         env: &BlockEnv,
-    ) -> Result<TypedExpr, SemanticError> {
+    ) -> Result<AnalyzedExpr, AnalysisError> {
         if let Some(symbol) = env.lookup_local(&name.text) {
             let ty = self.scalar_symbol_type(symbol).ok_or_else(|| {
-                SemanticError::new(
+                AnalysisError::new(
                     format!("local `{}` does not resolve to a scalar value", name.text),
                     span,
                 )
             })?;
-            return Ok(TypedExpr {
-                kind: TypedExprKind::Symbol(symbol),
+            return Ok(AnalyzedExpr {
+                kind: AnalyzedExprKind::Symbol(symbol),
                 ty,
                 constant: None,
                 span,
@@ -1231,8 +1241,8 @@ impl<'a> Analyzer<'a> {
         }
 
         if let Some(symbol) = self.globals.parameters.get(&name.text).copied() {
-            return Ok(TypedExpr {
-                kind: TypedExprKind::Symbol(symbol),
+            return Ok(AnalyzedExpr {
+                kind: AnalyzedExprKind::Symbol(symbol),
                 ty: ValueType::Real,
                 constant: None,
                 span,
@@ -1244,8 +1254,8 @@ impl<'a> Analyzer<'a> {
             let ty = self
                 .scalar_symbol_type(symbol)
                 .expect("constant type must be known");
-            return Ok(TypedExpr {
-                kind: TypedExprKind::Symbol(symbol),
+            return Ok(AnalyzedExpr {
+                kind: AnalyzedExprKind::Symbol(symbol),
                 ty,
                 constant,
                 span,
@@ -1253,8 +1263,8 @@ impl<'a> Analyzer<'a> {
         }
 
         if let Some(symbol) = self.globals.covariates.get(&name.text).copied() {
-            return Ok(TypedExpr {
-                kind: TypedExprKind::Symbol(symbol),
+            return Ok(AnalyzedExpr {
+                kind: AnalyzedExprKind::Symbol(symbol),
                 ty: ValueType::Real,
                 constant: None,
                 span,
@@ -1263,18 +1273,18 @@ impl<'a> Analyzer<'a> {
 
         if let Some(state) = self.globals.states.get(&name.text) {
             if state.size.is_some() {
-                return Err(SemanticError::new(
+                return Err(AnalysisError::new(
                     format!("state array `{}` requires an index", name.text),
                     span,
                 ));
             }
-            let place = TypedStatePlace {
+            let place = AnalyzedStatePlace {
                 state: state.symbol,
                 index: None,
                 span,
             };
-            return Ok(TypedExpr {
-                kind: TypedExprKind::StateValue(place),
+            return Ok(AnalyzedExpr {
+                kind: AnalyzedExprKind::StateValue(place),
                 ty: ValueType::Real,
                 constant: None,
                 span,
@@ -1283,7 +1293,7 @@ impl<'a> Analyzer<'a> {
 
         if let Some(symbol) = self.globals.derived.get(&name.text).copied() {
             if !env.available_derived.contains(&symbol) {
-                return Err(SemanticError::new(
+                return Err(AnalysisError::new(
                     format!(
                         "derived value `{}` is not definitely assigned at this point",
                         name.text
@@ -1292,7 +1302,7 @@ impl<'a> Analyzer<'a> {
                 ));
             }
             let ty = self.scalar_symbol_type(symbol).ok_or_else(|| {
-                SemanticError::new(
+                AnalysisError::new(
                     format!(
                         "derived value `{}` does not have a resolved type yet",
                         name.text
@@ -1300,8 +1310,8 @@ impl<'a> Analyzer<'a> {
                     span,
                 )
             })?;
-            return Ok(TypedExpr {
-                kind: TypedExprKind::Symbol(symbol),
+            return Ok(AnalyzedExpr {
+                kind: AnalyzedExprKind::Symbol(symbol),
                 ty,
                 constant: None,
                 span,
@@ -1312,7 +1322,7 @@ impl<'a> Analyzer<'a> {
             let route = self.globals.routes[&name.text];
             return Err(self
                 .assist_for_route_scalar(route, span)
-                .apply(SemanticError::new(
+                .apply(AnalysisError::new(
                     format!(
                         "route `{}` cannot be used as a scalar value; use `rate({})`",
                         name.text, name.text
@@ -1325,13 +1335,13 @@ impl<'a> Analyzer<'a> {
             let output = self.globals.outputs[&name.text];
             return Err(self
                 .assist_for_output_scope(output)
-                .apply(SemanticError::new(
+                .apply(AnalysisError::new(
                     format!("output `{}` is not in expression scope", name.text),
                     span,
                 )));
         }
 
-        let error = SemanticError::new(format!("unknown identifier `{}`", name.text), span);
+        let error = AnalysisError::new(format!("unknown identifier `{}`", name.text), span);
         Err(match self.assist_for_unknown_identifier(name, span, env) {
             Some(assist) => assist.apply(error),
             None => error,
@@ -1344,10 +1354,10 @@ impl<'a> Analyzer<'a> {
         args: &[syntax::Expr],
         span: Span,
         env: &BlockEnv,
-    ) -> Result<TypedExpr, SemanticError> {
+    ) -> Result<AnalyzedExpr, AnalysisError> {
         if callee.text == RATE_FUNCTION_NAME {
             if args.len() != 1 {
-                return Err(SemanticError::new(
+                return Err(AnalysisError::new(
                     format!(
                         "`rate` expects exactly one route argument, got {}",
                         args.len()
@@ -1361,7 +1371,7 @@ impl<'a> Analyzer<'a> {
                 }
             }
             let syntax::ExprKind::Name(route_name) = &args[0].kind else {
-                return Err(SemanticError::new(
+                return Err(AnalysisError::new(
                     "`rate` expects a route identifier argument",
                     args[0].span,
                 ));
@@ -1373,7 +1383,7 @@ impl<'a> Analyzer<'a> {
                 .get(&route_name.text)
                 .copied()
                 .ok_or_else(|| {
-                    let error = SemanticError::new(
+                    let error = AnalysisError::new(
                         format!("unknown route `{}` in `rate(...)`", route_name.text),
                         route_name.span,
                     );
@@ -1382,9 +1392,9 @@ impl<'a> Analyzer<'a> {
                         None => error,
                     }
                 })?;
-            return Ok(TypedExpr {
-                kind: TypedExprKind::Call {
-                    callee: TypedCall::Rate(route),
+            return Ok(AnalyzedExpr {
+                kind: AnalyzedExprKind::Call {
+                    callee: AnalyzedCall::Rate(route),
                     args: Vec::new(),
                 },
                 ty: ValueType::Real,
@@ -1393,18 +1403,18 @@ impl<'a> Analyzer<'a> {
             });
         }
 
-        let intrinsic = MathIntrinsic::from_name(&callee.text).ok_or_else(|| {
+        let intrinsic = MathFunction::from_name(&callee.text).ok_or_else(|| {
             let error =
-                SemanticError::new(format!("unknown function `{}`", callee.text), callee.span);
+                AnalysisError::new(format!("unknown function `{}`", callee.text), callee.span);
             match self.assist_for_unknown_function(callee) {
                 Some(assist) => assist.apply(error),
                 None => error,
             }
         })?;
-        let expected_arity = intrinsic.arity();
+        let expected_arity = intrinsic.argument_count();
         match expected_arity {
-            IntrinsicArity::Exact(expected) if expected != args.len() => {
-                return Err(SemanticError::new(
+            ArgumentCount::Exact(expected) if expected != args.len() => {
+                return Err(AnalysisError::new(
                     format!(
                         "function `{}` expects {} argument(s), got {}",
                         callee.text,
@@ -1419,9 +1429,9 @@ impl<'a> Analyzer<'a> {
 
         let mut typed_args = Vec::with_capacity(args.len());
         for arg in args {
-            let typed = self.analyze_expr(arg, env)?;
-            self.expect_numeric(&typed, &format!("`{}` argument", callee.text), arg.span)?;
-            typed_args.push(typed);
+            let analyzed = self.analyze_expr(arg, env)?;
+            self.expect_numeric(&analyzed, &format!("`{}` argument", callee.text), arg.span)?;
+            typed_args.push(analyzed);
         }
         let ty = call_result_type(intrinsic, &typed_args);
         let constant = typed_args
@@ -1429,9 +1439,9 @@ impl<'a> Analyzer<'a> {
             .map(|arg| arg.constant.clone())
             .collect::<Option<Vec<_>>>()
             .and_then(|values| fold_call(intrinsic, &values));
-        Ok(TypedExpr {
-            kind: TypedExprKind::Call {
-                callee: TypedCall::Math(intrinsic),
+        Ok(AnalyzedExpr {
+            kind: AnalyzedExprKind::Call {
+                callee: AnalyzedCall::Math(intrinsic),
                 args: typed_args,
             },
             ty,
@@ -1442,20 +1452,20 @@ impl<'a> Analyzer<'a> {
 
     fn binary_result_type(
         &self,
-        op: TypedBinaryOp,
-        lhs: &TypedExpr,
-        rhs: &TypedExpr,
+        op: AnalyzedBinaryOp,
+        lhs: &AnalyzedExpr,
+        rhs: &AnalyzedExpr,
         span: Span,
-    ) -> Result<ValueType, SemanticError> {
+    ) -> Result<ValueType, AnalysisError> {
         match op {
-            TypedBinaryOp::Or | TypedBinaryOp::And => {
+            AnalyzedBinaryOp::Or | AnalyzedBinaryOp::And => {
                 self.expect_bool(lhs, "logical operand", lhs.span)?;
                 self.expect_bool(rhs, "logical operand", rhs.span)?;
                 Ok(ValueType::Bool)
             }
-            TypedBinaryOp::Eq | TypedBinaryOp::NotEq => {
+            AnalyzedBinaryOp::Eq | AnalyzedBinaryOp::NotEq => {
                 if lhs.ty != rhs.ty {
-                    return Err(SemanticError::new(
+                    return Err(AnalysisError::new(
                         format!(
                             "equality comparison requires matching operand types, found {:?} and {:?}",
                             lhs.ty, rhs.ty
@@ -1465,17 +1475,20 @@ impl<'a> Analyzer<'a> {
                 }
                 Ok(ValueType::Bool)
             }
-            TypedBinaryOp::Lt | TypedBinaryOp::LtEq | TypedBinaryOp::Gt | TypedBinaryOp::GtEq => {
+            AnalyzedBinaryOp::Lt
+            | AnalyzedBinaryOp::LtEq
+            | AnalyzedBinaryOp::Gt
+            | AnalyzedBinaryOp::GtEq => {
                 self.expect_numeric(lhs, "comparison operand", lhs.span)?;
                 self.expect_numeric(rhs, "comparison operand", rhs.span)?;
                 Ok(ValueType::Bool)
             }
-            TypedBinaryOp::Add | TypedBinaryOp::Sub | TypedBinaryOp::Mul => {
+            AnalyzedBinaryOp::Add | AnalyzedBinaryOp::Sub | AnalyzedBinaryOp::Mul => {
                 self.expect_numeric(lhs, "arithmetic operand", lhs.span)?;
                 self.expect_numeric(rhs, "arithmetic operand", rhs.span)?;
                 Ok(promote_numeric(lhs.ty, rhs.ty))
             }
-            TypedBinaryOp::Div | TypedBinaryOp::Pow => {
+            AnalyzedBinaryOp::Div | AnalyzedBinaryOp::Pow => {
                 self.expect_numeric(lhs, "arithmetic operand", lhs.span)?;
                 self.expect_numeric(rhs, "arithmetic operand", rhs.span)?;
                 Ok(ValueType::Real)
@@ -1485,14 +1498,14 @@ impl<'a> Analyzer<'a> {
 
     fn expect_numeric(
         &self,
-        expr: &TypedExpr,
+        expr: &AnalyzedExpr,
         context: &str,
         span: Span,
-    ) -> Result<(), SemanticError> {
+    ) -> Result<(), AnalysisError> {
         if expr.ty.is_numeric() {
             Ok(())
         } else {
-            Err(SemanticError::new(
+            Err(AnalysisError::new(
                 format!("{context} must be numeric, found {:?}", expr.ty),
                 span,
             ))
@@ -1501,25 +1514,30 @@ impl<'a> Analyzer<'a> {
 
     fn expect_bool(
         &self,
-        expr: &TypedExpr,
+        expr: &AnalyzedExpr,
         context: &str,
         span: Span,
-    ) -> Result<(), SemanticError> {
+    ) -> Result<(), AnalysisError> {
         if expr.ty == ValueType::Bool {
             Ok(())
         } else {
-            Err(SemanticError::new(
+            Err(AnalysisError::new(
                 format!("{context} must be boolean, found {:?}", expr.ty),
                 span,
             ))
         }
     }
 
-    fn expect_int(&self, expr: &TypedExpr, context: &str, span: Span) -> Result<(), SemanticError> {
+    fn expect_int(
+        &self,
+        expr: &AnalyzedExpr,
+        context: &str,
+        span: Span,
+    ) -> Result<(), AnalysisError> {
         if expr.ty == ValueType::Int {
             Ok(())
         } else {
-            Err(SemanticError::new(
+            Err(AnalysisError::new(
                 format!("{context} must be integer-valued, found {:?}", expr.ty),
                 span,
             ))
@@ -1531,16 +1549,16 @@ impl<'a> Analyzer<'a> {
         expr: &syntax::Expr,
         context: &str,
         strictly_positive: bool,
-    ) -> Result<usize, SemanticError> {
+    ) -> Result<usize, AnalysisError> {
         let value = self.evaluate_const_expr(expr, &BTreeMap::new(), &mut BTreeSet::new())?;
         let Some(value) = value.as_i64() else {
-            return Err(SemanticError::new(
+            return Err(AnalysisError::new(
                 format!("{context} must be an integer constant"),
                 expr.span,
             ));
         };
         if value < 0 || (strictly_positive && value == 0) {
-            return Err(SemanticError::new(
+            return Err(AnalysisError::new(
                 format!(
                     "{context} must be {}",
                     if strictly_positive {
@@ -1552,6 +1570,12 @@ impl<'a> Analyzer<'a> {
                 expr.span,
             ));
         }
+        if value as u64 > MAX_CONST_USIZE as u64 {
+            return Err(AnalysisError::new(
+                format!("{context} exceeds the maximum supported value of {MAX_CONST_USIZE}"),
+                expr.span,
+            ));
+        }
         Ok(value as usize)
     }
 
@@ -1560,7 +1584,7 @@ impl<'a> Analyzer<'a> {
         expr: &syntax::Expr,
         bindings: &BTreeMap<String, &syntax::Binding>,
         visiting: &mut BTreeSet<String>,
-    ) -> Result<ConstValue, SemanticError> {
+    ) -> Result<ConstValue, AnalysisError> {
         match &expr.kind {
             syntax::ExprKind::Number(value) => Ok(number_to_const(*value)),
             syntax::ExprKind::Bool(value) => Ok(ConstValue::Bool(*value)),
@@ -1569,7 +1593,7 @@ impl<'a> Analyzer<'a> {
                     return Ok(value.clone());
                 }
                 let binding = bindings.get(&name.text).ok_or_else(|| {
-                    SemanticError::new(
+                    AnalysisError::new(
                         format!(
                             "unknown constant `{}` in compile-time expression",
                             name.text
@@ -1578,7 +1602,7 @@ impl<'a> Analyzer<'a> {
                     )
                 })?;
                 if !visiting.insert(name.text.clone()) {
-                    return Err(SemanticError::new(
+                    return Err(AnalysisError::new(
                         format!("constant `{}` forms a dependency cycle", name.text),
                         name.span,
                     ));
@@ -1590,46 +1614,60 @@ impl<'a> Analyzer<'a> {
             syntax::ExprKind::Unary { op, expr } => {
                 let value = self.evaluate_const_expr(expr, bindings, visiting)?;
                 let op = match op {
-                    syntax::UnaryOp::Plus => TypedUnaryOp::Plus,
-                    syntax::UnaryOp::Minus => TypedUnaryOp::Minus,
-                    syntax::UnaryOp::Not => TypedUnaryOp::Not,
+                    syntax::UnaryOp::Plus => AnalyzedUnaryOp::Plus,
+                    syntax::UnaryOp::Minus => AnalyzedUnaryOp::Minus,
+                    syntax::UnaryOp::Not => AnalyzedUnaryOp::Not,
                 };
                 fold_unary(op, &value).ok_or_else(|| {
-                    SemanticError::new("invalid constant unary operation", expr.span)
+                    AnalysisError::new("invalid constant unary operation", expr.span)
                 })
             }
             syntax::ExprKind::Binary { op, lhs, rhs } => {
                 let lhs = self.evaluate_const_expr(lhs, bindings, visiting)?;
                 let rhs = self.evaluate_const_expr(rhs, bindings, visiting)?;
                 fold_binary(map_binary_op(*op), &lhs, &rhs).ok_or_else(|| {
-                    SemanticError::new("invalid constant binary operation", expr.span)
+                    AnalysisError::new("invalid constant binary operation", expr.span)
                 })
             }
             syntax::ExprKind::Call { callee, args } => {
                 if callee.text == RATE_FUNCTION_NAME {
-                    return Err(SemanticError::new(
+                    return Err(AnalysisError::new(
                         "`rate(...)` cannot appear in a compile-time expression",
                         callee.span,
                     ));
                 }
-                let intrinsic = MathIntrinsic::from_name(&callee.text).ok_or_else(|| {
-                    SemanticError::new(
+                let intrinsic = MathFunction::from_name(&callee.text).ok_or_else(|| {
+                    AnalysisError::new(
                         format!("unknown compile-time function `{}`", callee.text),
                         callee.span,
                     )
                 })?;
+                match intrinsic.argument_count() {
+                    ArgumentCount::Exact(expected) if expected != args.len() => {
+                        return Err(AnalysisError::new(
+                            format!(
+                                "function `{}` expects {} argument(s), got {}",
+                                callee.text,
+                                expected,
+                                args.len()
+                            ),
+                            callee.span,
+                        ));
+                    }
+                    _ => {}
+                }
                 let mut values = Vec::with_capacity(args.len());
                 for arg in args {
                     values.push(self.evaluate_const_expr(arg, bindings, visiting)?);
                 }
                 fold_call(intrinsic, &values).ok_or_else(|| {
-                    SemanticError::new(
+                    AnalysisError::new(
                         format!("invalid compile-time call to `{}`", callee.text),
                         expr.span,
                     )
                 })
             }
-            syntax::ExprKind::Index { .. } => Err(SemanticError::new(
+            syntax::ExprKind::Index { .. } => Err(AnalysisError::new(
                 "indexing is not allowed in compile-time expressions",
                 expr.span,
             )),
@@ -1642,9 +1680,9 @@ impl<'a> Analyzer<'a> {
         kind: SymbolKind,
         ty: PendingSymbolType,
         span: Span,
-    ) -> Result<SymbolId, SemanticError> {
+    ) -> Result<SymbolId, AnalysisError> {
         if RESERVED_NAMES.contains(&name) {
-            return Err(SemanticAssist::default()
+            return Err(AnalysisAssist::default()
                 .help(format!(
                     "rename `{name}` to a non-reserved identifier such as `{}_value`",
                     name
@@ -1655,7 +1693,7 @@ impl<'a> Analyzer<'a> {
                     format!("rename `{name}` to `{}_value`", name),
                     Applicability::MaybeIncorrect,
                 )
-                .apply(SemanticError::new(
+                .apply(AnalysisError::new(
                     format!("`{name}` is reserved by the DSL and cannot be used as a symbol name"),
                     span,
                 )));
@@ -1663,7 +1701,7 @@ impl<'a> Analyzer<'a> {
         if let Some(existing) = self.globals.all_names.get(name).copied() {
             let existing_kind = self.symbols.get(existing).expect("valid symbol id").kind;
             if !allows_route_output_name_overlap(existing_kind, kind) {
-                return Err(SemanticAssist::default()
+                return Err(AnalysisAssist::default()
                     .context_label(
                         self.symbol_span(existing),
                         self.symbol_declared_here(existing),
@@ -1678,7 +1716,7 @@ impl<'a> Analyzer<'a> {
                         format!("rename this declaration to `{}_2`", name),
                         Applicability::MaybeIncorrect,
                     )
-                    .apply(SemanticError::new(
+                    .apply(AnalysisError::new(
                         format!(
                             "symbol name `{name}` collides with existing `{}`",
                             self.symbol_name(existing)
@@ -1699,7 +1737,7 @@ impl<'a> Analyzer<'a> {
         Ok(id)
     }
 
-    fn validate_route_label_name(&self, label: &syntax::Ident) -> Result<(), SemanticError> {
+    fn validate_route_label_name(&self, label: &syntax::Ident) -> Result<(), AnalysisError> {
         if let Some(suffix) = bare_numeric_label(&label.text) {
             return Err(self.bare_numeric_route_error(label.span, suffix));
         }
@@ -1709,7 +1747,7 @@ impl<'a> Analyzer<'a> {
         Ok(())
     }
 
-    fn validate_output_label_name(&self, label: &syntax::Ident) -> Result<(), SemanticError> {
+    fn validate_output_label_name(&self, label: &syntax::Ident) -> Result<(), AnalysisError> {
         if let Some(suffix) = bare_numeric_label(&label.text) {
             return Err(self.bare_numeric_output_error(label.span, suffix));
         }
@@ -1719,9 +1757,9 @@ impl<'a> Analyzer<'a> {
         Ok(())
     }
 
-    fn bare_numeric_route_error(&self, span: Span, suffix: &str) -> SemanticError {
+    fn bare_numeric_route_error(&self, span: Span, suffix: &str) -> AnalysisError {
         let replacement = format!("{NUMERIC_ROUTE_PREFIX}{suffix}");
-        SemanticAssist::default()
+        AnalysisAssist::default()
             .help("numeric route labels must use the `input_<n>` form in authored DSL")
             .replacement_suggestion(
                 span,
@@ -1729,7 +1767,7 @@ impl<'a> Analyzer<'a> {
                 format!("use `{replacement}`"),
                 Applicability::Always,
             )
-            .apply(SemanticError::new(
+            .apply(AnalysisError::new(
                 format!(
                     "bare numeric route labels are not allowed in the DSL; use `{replacement}` instead"
                 ),
@@ -1737,9 +1775,9 @@ impl<'a> Analyzer<'a> {
             ))
     }
 
-    fn bare_numeric_output_error(&self, span: Span, suffix: &str) -> SemanticError {
+    fn bare_numeric_output_error(&self, span: Span, suffix: &str) -> AnalysisError {
         let replacement = format!("{NUMERIC_OUTPUT_PREFIX}{suffix}");
-        SemanticAssist::default()
+        AnalysisAssist::default()
             .help("numeric output labels must use the `outeq_<n>` form in authored DSL")
             .replacement_suggestion(
                 span,
@@ -1747,7 +1785,7 @@ impl<'a> Analyzer<'a> {
                 format!("use `{replacement}`"),
                 Applicability::Always,
             )
-            .apply(SemanticError::new(
+            .apply(AnalysisError::new(
                 format!(
                     "bare numeric output labels are not allowed in the DSL; use `{replacement}` instead"
                 ),
@@ -1755,9 +1793,9 @@ impl<'a> Analyzer<'a> {
             ))
     }
 
-    fn wrong_prefix_route_error(&self, label: &syntax::Ident, suffix: &str) -> SemanticError {
+    fn wrong_prefix_route_error(&self, label: &syntax::Ident, suffix: &str) -> AnalysisError {
         let replacement = format!("{NUMERIC_ROUTE_PREFIX}{suffix}");
-        SemanticAssist::default()
+        AnalysisAssist::default()
             .help("numeric route labels use the `input_<n>` prefix")
             .replacement_suggestion(
                 label.span,
@@ -1765,7 +1803,7 @@ impl<'a> Analyzer<'a> {
                 format!("use `{replacement}`"),
                 Applicability::Always,
             )
-            .apply(SemanticError::new(
+            .apply(AnalysisError::new(
                 format!(
                     "`{}` is an output label and cannot be used as a route; use `{replacement}` here",
                     label.text
@@ -1774,9 +1812,9 @@ impl<'a> Analyzer<'a> {
             ))
     }
 
-    fn wrong_prefix_output_error(&self, label: &syntax::Ident, suffix: &str) -> SemanticError {
+    fn wrong_prefix_output_error(&self, label: &syntax::Ident, suffix: &str) -> AnalysisError {
         let replacement = format!("{NUMERIC_OUTPUT_PREFIX}{suffix}");
-        SemanticAssist::default()
+        AnalysisAssist::default()
             .help("numeric output labels use the `outeq_<n>` prefix")
             .replacement_suggestion(
                 label.span,
@@ -1784,7 +1822,7 @@ impl<'a> Analyzer<'a> {
                 format!("use `{replacement}`"),
                 Applicability::Always,
             )
-            .apply(SemanticError::new(
+            .apply(AnalysisError::new(
                 format!(
                     "`{}` is a route label and cannot be used as an output target; use `{replacement}` here",
                     label.text
@@ -1799,12 +1837,12 @@ impl<'a> Analyzer<'a> {
         ident: &syntax::Ident,
         ty: ValueType,
         kind: SymbolKind,
-    ) -> Result<SymbolId, SemanticError> {
+    ) -> Result<SymbolId, AnalysisError> {
         if let Some(existing) = env
             .lookup_local(&ident.text)
             .or_else(|| self.globals.all_names.get(&ident.text).copied())
         {
-            return Err(SemanticAssist::default()
+            return Err(AnalysisAssist::default()
                 .context_label(
                     self.symbol_span(existing),
                     self.symbol_declared_here(existing),
@@ -1819,7 +1857,7 @@ impl<'a> Analyzer<'a> {
                     format!("rename this local binding to `{}_local`", ident.text),
                     Applicability::MaybeIncorrect,
                 )
-                .apply(SemanticError::new(
+                .apply(AnalysisError::new(
                     format!(
                         "local symbol `{}` would shadow an existing symbol",
                         ident.text
@@ -1844,7 +1882,7 @@ impl<'a> Analyzer<'a> {
         symbol: SymbolId,
         ty: ValueType,
         span: Span,
-    ) -> Result<(), SemanticError> {
+    ) -> Result<(), AnalysisError> {
         let entry = self.symbols.get_mut(symbol).expect("valid symbol id");
         match &mut entry.ty {
             PendingSymbolType::Scalar(slot) => match slot {
@@ -1854,7 +1892,7 @@ impl<'a> Analyzer<'a> {
                     *slot = Some(promote_numeric(*existing, ty));
                 }
                 Some(existing) => {
-                    return Err(SemanticError::new(
+                    return Err(AnalysisError::new(
                         format!(
                             "symbol `{}` is assigned incompatible types {:?} and {:?}",
                             entry.name, existing, ty
@@ -1864,7 +1902,7 @@ impl<'a> Analyzer<'a> {
                 }
             },
             PendingSymbolType::Array { .. } | PendingSymbolType::Route => {
-                return Err(SemanticError::new(
+                return Err(AnalysisError::new(
                     format!(
                         "symbol `{}` is not assignable as a scalar target",
                         entry.name
@@ -1914,9 +1952,9 @@ impl<'a> Analyzer<'a> {
         )
     }
 
-    fn assist_for_symbol_replacement(&self, symbol: SymbolId, span: Span) -> SemanticAssist {
+    fn assist_for_symbol_replacement(&self, symbol: SymbolId, span: Span) -> AnalysisAssist {
         let name = self.symbol_name(symbol).to_string();
-        SemanticAssist::default()
+        AnalysisAssist::default()
             .context_label(self.symbol_span(symbol), self.symbol_declared_here(symbol))
             .replacement_suggestion(
                 span,
@@ -1926,9 +1964,9 @@ impl<'a> Analyzer<'a> {
             )
     }
 
-    fn assist_for_route_scalar(&self, route: SymbolId, span: Span) -> SemanticAssist {
+    fn assist_for_route_scalar(&self, route: SymbolId, span: Span) -> AnalysisAssist {
         let name = self.symbol_name(route).to_string();
-        SemanticAssist::default()
+        AnalysisAssist::default()
             .context_label(self.symbol_span(route), self.symbol_declared_here(route))
             .help(format!("route inputs are read through `rate({name})`"))
             .replacement_suggestion(
@@ -1939,8 +1977,8 @@ impl<'a> Analyzer<'a> {
             )
     }
 
-    fn assist_for_output_scope(&self, output: SymbolId) -> SemanticAssist {
-        SemanticAssist::default()
+    fn assist_for_output_scope(&self, output: SymbolId) -> AnalysisAssist {
+        AnalysisAssist::default()
             .context_label(self.symbol_span(output), self.symbol_declared_here(output))
             .help(
                 "outputs are assignment targets inside the `outputs` block and are not available as expression values",
@@ -1952,7 +1990,7 @@ impl<'a> Analyzer<'a> {
         name: &syntax::Ident,
         span: Span,
         env: &BlockEnv,
-    ) -> Option<SemanticAssist> {
+    ) -> Option<AnalysisAssist> {
         let mut seen = BTreeSet::new();
         let mut candidates = Vec::new();
 
@@ -2013,7 +2051,7 @@ impl<'a> Analyzer<'a> {
         best_similar_name_assist(&name.text, candidates)
     }
 
-    fn assist_for_unknown_state(&self, state_name: &syntax::Ident) -> Option<SemanticAssist> {
+    fn assist_for_unknown_state(&self, state_name: &syntax::Ident) -> Option<AnalysisAssist> {
         let candidates = self
             .globals
             .states
@@ -2028,7 +2066,7 @@ impl<'a> Analyzer<'a> {
         best_similar_name_assist(&state_name.text, candidates)
     }
 
-    fn assist_for_unknown_route(&self, route_name: &syntax::Ident) -> Option<SemanticAssist> {
+    fn assist_for_unknown_route(&self, route_name: &syntax::Ident) -> Option<AnalysisAssist> {
         let candidates = self
             .globals
             .routes
@@ -2037,7 +2075,7 @@ impl<'a> Analyzer<'a> {
                 let name = self.symbol_name(*symbol).to_string();
                 SimilarNameCandidate::new(
                     name.clone(),
-                    SemanticAssist::default()
+                    AnalysisAssist::default()
                         .context_label(
                             self.symbol_span(*symbol),
                             self.symbol_declared_here(*symbol),
@@ -2054,14 +2092,14 @@ impl<'a> Analyzer<'a> {
         best_similar_name_assist(&route_name.text, candidates)
     }
 
-    fn assist_for_unknown_function(&self, callee: &syntax::Ident) -> Option<SemanticAssist> {
-        let mut candidates = MathIntrinsic::ALL
+    fn assist_for_unknown_function(&self, callee: &syntax::Ident) -> Option<AnalysisAssist> {
+        let mut candidates = MathFunction::ALL
             .iter()
             .map(|intrinsic| {
                 let name = intrinsic.name().to_string();
                 SimilarNameCandidate::new(
                     name.clone(),
-                    SemanticAssist::default().replacement_suggestion(
+                    AnalysisAssist::default().replacement_suggestion(
                         callee.span,
                         name.clone(),
                         format!("did you mean `{name}`?"),
@@ -2072,7 +2110,7 @@ impl<'a> Analyzer<'a> {
             .collect::<Vec<_>>();
         candidates.push(SimilarNameCandidate::new(
             RATE_FUNCTION_NAME,
-            SemanticAssist::default()
+            AnalysisAssist::default()
                 .help("`rate` reads route inputs as `rate(route)`")
                 .replacement_suggestion(
                     callee.span,
@@ -2084,14 +2122,14 @@ impl<'a> Analyzer<'a> {
         best_similar_name_assist(&callee.text, candidates)
     }
 
-    fn finalize_symbols(self) -> Result<Vec<Symbol>, SemanticError> {
+    fn finalize_symbols(self) -> Result<Vec<Symbol>, AnalysisError> {
         self.symbols
             .into_iter()
             .map(|symbol| {
                 let ty = match symbol.ty {
                     PendingSymbolType::Scalar(Some(ty)) => SymbolType::Scalar(ty),
                     PendingSymbolType::Scalar(None) => {
-                        return Err(SemanticError::new(
+                        return Err(AnalysisError::new(
                             format!(
                                 "symbol `{}` does not have a resolved scalar type",
                                 symbol.name
@@ -2118,10 +2156,10 @@ impl<'a> Analyzer<'a> {
     fn validate_kind_requirements(
         &self,
         sections: &ModelSections<'_>,
-        states: &[TypedState],
-    ) -> Result<(), SemanticError> {
+        states: &[AnalyzedState],
+    ) -> Result<(), AnalysisError> {
         if states.is_empty() {
-            return Err(SemanticError::new(
+            return Err(AnalysisError::new(
                 format!(
                     "model `{}` must declare at least one state",
                     self.model.name.text
@@ -2130,7 +2168,7 @@ impl<'a> Analyzer<'a> {
             ));
         }
         if sections.outputs.is_none() {
-            return Err(SemanticError::new(
+            return Err(AnalysisError::new(
                 format!(
                     "model `{}` is missing an `outputs` block",
                     self.model.name.text
@@ -2145,30 +2183,30 @@ impl<'a> Analyzer<'a> {
         &self,
         kind: ModelKind,
         blocks: ModelKindBlocks<'_>,
-        states: &[TypedState],
-    ) -> Result<(), SemanticError> {
+        states: &[AnalyzedState],
+    ) -> Result<(), AnalysisError> {
         match kind {
             ModelKind::Ode => {
                 if blocks.dynamics.is_none() {
-                    return Err(SemanticError::new(
+                    return Err(AnalysisError::new(
                         "ODE models require a `dynamics` block",
                         self.model.span,
                     ));
                 }
                 if blocks.drift.is_some() || blocks.diffusion.is_some() {
-                    return Err(SemanticError::new(
+                    return Err(AnalysisError::new(
                         "ODE models cannot declare `drift` or `diffusion` blocks",
                         self.model.span,
                     ));
                 }
                 if blocks.analytical.is_some() {
-                    return Err(SemanticError::new(
+                    return Err(AnalysisError::new(
                         "ODE models cannot declare an `analytical` block",
                         self.model.span,
                     ));
                 }
                 if let Some(particles_decl) = blocks.particles {
-                    return Err(SemanticError::new(
+                    return Err(AnalysisError::new(
                         "ODE models cannot declare `particles`",
                         particles_decl.span,
                     ));
@@ -2176,20 +2214,20 @@ impl<'a> Analyzer<'a> {
             }
             ModelKind::Analytical => {
                 if blocks.analytical.is_none() {
-                    return Err(SemanticError::new(
+                    return Err(AnalysisError::new(
                         "analytical models require an `analytical` block",
                         self.model.span,
                     ));
                 }
                 if blocks.dynamics.is_some() || blocks.drift.is_some() || blocks.diffusion.is_some()
                 {
-                    return Err(SemanticError::new(
+                    return Err(AnalysisError::new(
                         "analytical models cannot declare `dynamics`, `drift`, or `diffusion` blocks",
                         self.model.span,
                     ));
                 }
                 if let Some(particles_decl) = blocks.particles {
-                    return Err(SemanticError::new(
+                    return Err(AnalysisError::new(
                         "analytical models cannot declare `particles`",
                         particles_decl.span,
                     ));
@@ -2197,25 +2235,25 @@ impl<'a> Analyzer<'a> {
             }
             ModelKind::Sde => {
                 if blocks.drift.is_none() || blocks.diffusion.is_none() {
-                    return Err(SemanticError::new(
+                    return Err(AnalysisError::new(
                         "SDE models require both `drift` and `diffusion` blocks",
                         self.model.span,
                     ));
                 }
                 if blocks.dynamics.is_some() {
-                    return Err(SemanticError::new(
+                    return Err(AnalysisError::new(
                         "SDE models cannot declare a `dynamics` block",
                         self.model.span,
                     ));
                 }
                 if blocks.analytical.is_some() {
-                    return Err(SemanticError::new(
+                    return Err(AnalysisError::new(
                         "SDE models cannot declare an `analytical` block",
                         self.model.span,
                     ));
                 }
                 if blocks.particles.is_none() {
-                    return Err(SemanticError::new(
+                    return Err(AnalysisError::new(
                         "SDE models require `particles`",
                         self.model.span,
                     ));
@@ -2224,8 +2262,8 @@ impl<'a> Analyzer<'a> {
         }
 
         if states.is_empty() {
-            return Err(SemanticError::new(
-                "typed model validation requires at least one state",
+            return Err(AnalysisError::new(
+                "analyzed model validation requires at least one state",
                 self.model.span,
             ));
         }
@@ -2236,10 +2274,10 @@ impl<'a> Analyzer<'a> {
         &self,
         outputs: &[SymbolId],
         block: &BlockAnalysis,
-    ) -> Result<(), SemanticError> {
+    ) -> Result<(), AnalysisError> {
         for output in outputs {
             if !block.definite_targets.contains(output) {
-                return Err(SemanticError::new(
+                return Err(AnalysisError::new(
                     format!(
                         "output `{}` is not definitely assigned on all control-flow paths",
                         self.symbol_name(*output)
@@ -2258,13 +2296,13 @@ impl<'a> Analyzer<'a> {
         parameters: &[SymbolId],
         derived: &[SymbolId],
         derive_result: Option<&BlockAnalysis>,
-    ) -> Result<(), SemanticError> {
+    ) -> Result<(), AnalysisError> {
         let plan = AnalyticalStructureInputPlan::for_kernel(
             structure,
             parameters.iter().map(|symbol| self.symbol_name(*symbol)),
             derived.iter().map(|symbol| self.symbol_name(*symbol)),
         )
-        .map_err(|error| SemanticError::new(error.to_string(), structure_span))?;
+        .map_err(|error| AnalysisError::new(error.to_string(), structure_span))?;
 
         let Some(derive_result) = derive_result else {
             return Ok(());
@@ -2297,7 +2335,7 @@ impl<'a> Analyzer<'a> {
 
         for (required_name, symbol) in required_derived_symbols {
             if !derive_result.available_derived.contains(&symbol) {
-                return Err(SemanticError::new(
+                return Err(AnalysisError::new(
                     format!(
                         "derived value `{required_name}` is not definitely assigned on all control-flow paths before analytical structure `{}` uses it",
                         structure.name()
@@ -2316,12 +2354,12 @@ impl<'a> Analyzer<'a> {
     fn validate_state_coverage(
         &self,
         block: &BlockAnalysis,
-        states: &[TypedState],
+        states: &[AnalyzedState],
         block_name: &str,
-    ) -> Result<(), SemanticError> {
+    ) -> Result<(), AnalysisError> {
         for state in states {
             if !block.touched_states.contains(&state.symbol) {
-                return Err(SemanticError::new(
+                return Err(AnalysisError::new(
                     format!(
                         "{block_name} block does not assign `{}`",
                         self.symbol_name(state.symbol)
@@ -2351,7 +2389,9 @@ fn canonical_numeric_suffix<'a>(src: &'a str, prefix: &str) -> Option<&'a str> {
 }
 
 fn numeric_label_literal_suffix(value: f64) -> Option<String> {
-    (value.is_finite() && value >= 0.0 && value.fract() == 0.0 && value <= usize::MAX as f64)
+    // `usize::MAX as f64` rounds up to 2^64; keep the bound exclusive so the
+    // cast below never saturates.
+    (value.is_finite() && value >= 0.0 && value.fract() == 0.0 && value < usize::MAX as f64)
         .then(|| (value as usize).to_string())
 }
 
@@ -2412,7 +2452,7 @@ impl BlockEnv {
 }
 
 struct BlockAnalysis {
-    block: TypedStatementBlock,
+    block: AnalyzedStatementBlock,
     available_derived: BTreeSet<SymbolId>,
     definite_targets: BTreeSet<SymbolId>,
     touched_states: BTreeSet<SymbolId>,
@@ -2459,7 +2499,7 @@ struct ModelSections<'a> {
 }
 
 impl<'a> ModelSections<'a> {
-    fn from_model(model: &'a syntax::Model) -> Result<Self, SemanticError> {
+    fn from_model(model: &'a syntax::Model) -> Result<Self, AnalysisError> {
         let mut sections = Self::default();
         for item in &model.items {
             match item {
@@ -2504,18 +2544,18 @@ impl<'a> ModelSections<'a> {
     }
 }
 
-fn set_once<'a, T>(slot: &mut Option<&'a T>, value: &'a T, name: &str) -> Result<(), SemanticError>
+fn set_once<'a, T>(slot: &mut Option<&'a T>, value: &'a T, name: &str) -> Result<(), AnalysisError>
 where
     T: HasSpan,
 {
     if let Some(existing) = *slot {
-        return Err(SemanticAssist::default()
+        return Err(AnalysisAssist::default()
             .context_label(
                 existing.span(),
                 format!("`{name}` section first declared here"),
             )
             .help(format!("each model can declare `{name}` at most once"))
-            .apply(SemanticError::new(
+            .apply(AnalysisError::new(
                 format!("duplicate `{name}` section in model body"),
                 value.span(),
             )));
@@ -2527,10 +2567,10 @@ where
 fn best_similar_name_assist(
     needle: &str,
     candidates: Vec<SimilarNameCandidate>,
-) -> Option<SemanticAssist> {
+) -> Option<AnalysisAssist> {
     let original_needle = needle;
     let needle = needle.to_ascii_lowercase();
-    let mut best: Option<((usize, usize, usize), SemanticAssist)> = None;
+    let mut best: Option<((usize, usize, usize), AnalysisAssist)> = None;
     let mut tied = false;
 
     for candidate in candidates {
@@ -2647,10 +2687,12 @@ fn collect_bare_assignment_names(
 }
 
 fn number_to_const(value: f64) -> ConstValue {
+    // `i64::MIN as f64` is exactly -2^63, but `i64::MAX as f64` rounds up to
+    // 2^63, so the upper bound must be exclusive to keep the cast lossless.
     if value.is_finite()
         && value.fract() == 0.0
         && value >= i64::MIN as f64
-        && value <= i64::MAX as f64
+        && value < -(i64::MIN as f64)
     {
         ConstValue::Int(value as i64)
     } else {
@@ -2670,137 +2712,136 @@ fn intersect_sets(set_a: &BTreeSet<SymbolId>, set_b: &BTreeSet<SymbolId>) -> BTr
     set_a.intersection(set_b).copied().collect()
 }
 
-fn map_binary_op(op: syntax::BinaryOp) -> TypedBinaryOp {
+fn map_binary_op(op: syntax::BinaryOp) -> AnalyzedBinaryOp {
     match op {
-        syntax::BinaryOp::Or => TypedBinaryOp::Or,
-        syntax::BinaryOp::And => TypedBinaryOp::And,
-        syntax::BinaryOp::Eq => TypedBinaryOp::Eq,
-        syntax::BinaryOp::NotEq => TypedBinaryOp::NotEq,
-        syntax::BinaryOp::Lt => TypedBinaryOp::Lt,
-        syntax::BinaryOp::LtEq => TypedBinaryOp::LtEq,
-        syntax::BinaryOp::Gt => TypedBinaryOp::Gt,
-        syntax::BinaryOp::GtEq => TypedBinaryOp::GtEq,
-        syntax::BinaryOp::Add => TypedBinaryOp::Add,
-        syntax::BinaryOp::Sub => TypedBinaryOp::Sub,
-        syntax::BinaryOp::Mul => TypedBinaryOp::Mul,
-        syntax::BinaryOp::Div => TypedBinaryOp::Div,
-        syntax::BinaryOp::Pow => TypedBinaryOp::Pow,
+        syntax::BinaryOp::Or => AnalyzedBinaryOp::Or,
+        syntax::BinaryOp::And => AnalyzedBinaryOp::And,
+        syntax::BinaryOp::Eq => AnalyzedBinaryOp::Eq,
+        syntax::BinaryOp::NotEq => AnalyzedBinaryOp::NotEq,
+        syntax::BinaryOp::Lt => AnalyzedBinaryOp::Lt,
+        syntax::BinaryOp::LtEq => AnalyzedBinaryOp::LtEq,
+        syntax::BinaryOp::Gt => AnalyzedBinaryOp::Gt,
+        syntax::BinaryOp::GtEq => AnalyzedBinaryOp::GtEq,
+        syntax::BinaryOp::Add => AnalyzedBinaryOp::Add,
+        syntax::BinaryOp::Sub => AnalyzedBinaryOp::Sub,
+        syntax::BinaryOp::Mul => AnalyzedBinaryOp::Mul,
+        syntax::BinaryOp::Div => AnalyzedBinaryOp::Div,
+        syntax::BinaryOp::Pow => AnalyzedBinaryOp::Pow,
     }
 }
 
-fn call_result_type(intrinsic: MathIntrinsic, args: &[TypedExpr]) -> ValueType {
+fn call_result_type(intrinsic: MathFunction, args: &[AnalyzedExpr]) -> ValueType {
     match intrinsic {
-        MathIntrinsic::Abs => args.first().map_or(ValueType::Real, |arg| arg.ty),
-        MathIntrinsic::Min | MathIntrinsic::Max => args
+        MathFunction::Abs => args.first().map_or(ValueType::Real, |arg| arg.ty),
+        MathFunction::Min | MathFunction::Max => args
             .iter()
             .map(|arg| arg.ty)
             .reduce(promote_numeric)
             .unwrap_or(ValueType::Real),
-        MathIntrinsic::Floor
-        | MathIntrinsic::Ceil
-        | MathIntrinsic::Exp
-        | MathIntrinsic::Ln
-        | MathIntrinsic::Log
-        | MathIntrinsic::Log10
-        | MathIntrinsic::Log2
-        | MathIntrinsic::Pow
-        | MathIntrinsic::Round
-        | MathIntrinsic::Sin
-        | MathIntrinsic::Cos
-        | MathIntrinsic::Tan
-        | MathIntrinsic::Sqrt => ValueType::Real,
+        MathFunction::Floor
+        | MathFunction::Ceil
+        | MathFunction::Exp
+        | MathFunction::Ln
+        | MathFunction::Log
+        | MathFunction::Log10
+        | MathFunction::Log2
+        | MathFunction::Pow
+        | MathFunction::Round
+        | MathFunction::Sin
+        | MathFunction::Cos
+        | MathFunction::Tan
+        | MathFunction::Sqrt => ValueType::Real,
     }
 }
 
-fn fold_unary(op: TypedUnaryOp, value: &ConstValue) -> Option<ConstValue> {
+fn fold_unary(op: AnalyzedUnaryOp, value: &ConstValue) -> Option<ConstValue> {
     match (op, value) {
-        (TypedUnaryOp::Plus, ConstValue::Int(value)) => Some(ConstValue::Int(*value)),
-        (TypedUnaryOp::Plus, ConstValue::Real(value)) => Some(ConstValue::Real(*value)),
-        (TypedUnaryOp::Minus, ConstValue::Int(value)) => Some(ConstValue::Int(-value)),
-        (TypedUnaryOp::Minus, ConstValue::Real(value)) => Some(ConstValue::Real(-value)),
-        (TypedUnaryOp::Not, ConstValue::Bool(value)) => Some(ConstValue::Bool(!value)),
+        (AnalyzedUnaryOp::Plus, ConstValue::Int(value)) => Some(ConstValue::Int(*value)),
+        (AnalyzedUnaryOp::Plus, ConstValue::Real(value)) => Some(ConstValue::Real(*value)),
+        (AnalyzedUnaryOp::Minus, ConstValue::Int(value)) => Some(match value.checked_neg() {
+            Some(negated) => ConstValue::Int(negated),
+            None => ConstValue::Real(-(*value as f64)),
+        }),
+        (AnalyzedUnaryOp::Minus, ConstValue::Real(value)) => Some(ConstValue::Real(-value)),
+        (AnalyzedUnaryOp::Not, ConstValue::Bool(value)) => Some(ConstValue::Bool(!value)),
         _ => None,
     }
 }
 
-fn fold_binary(op: TypedBinaryOp, lhs: &ConstValue, rhs: &ConstValue) -> Option<ConstValue> {
+fn fold_binary(op: AnalyzedBinaryOp, lhs: &ConstValue, rhs: &ConstValue) -> Option<ConstValue> {
     match op {
-        TypedBinaryOp::Or => Some(ConstValue::Bool(
+        AnalyzedBinaryOp::Or => Some(ConstValue::Bool(
             matches!(lhs, ConstValue::Bool(true)) || matches!(rhs, ConstValue::Bool(true)),
         )),
-        TypedBinaryOp::And => Some(ConstValue::Bool(
+        AnalyzedBinaryOp::And => Some(ConstValue::Bool(
             matches!(lhs, ConstValue::Bool(true)) && matches!(rhs, ConstValue::Bool(true)),
         )),
-        TypedBinaryOp::Eq => Some(ConstValue::Bool(lhs == rhs)),
-        TypedBinaryOp::NotEq => Some(ConstValue::Bool(lhs != rhs)),
-        TypedBinaryOp::Lt => Some(ConstValue::Bool(lhs.as_f64()? < rhs.as_f64()?)),
-        TypedBinaryOp::LtEq => Some(ConstValue::Bool(lhs.as_f64()? <= rhs.as_f64()?)),
-        TypedBinaryOp::Gt => Some(ConstValue::Bool(lhs.as_f64()? > rhs.as_f64()?)),
-        TypedBinaryOp::GtEq => Some(ConstValue::Bool(lhs.as_f64()? >= rhs.as_f64()?)),
-        TypedBinaryOp::Add => fold_numeric(
-            lhs,
-            rhs,
-            |left, right| left + right,
-            |left, right| left + right,
-        ),
-        TypedBinaryOp::Sub => fold_numeric(
-            lhs,
-            rhs,
-            |left, right| left - right,
-            |left, right| left - right,
-        ),
-        TypedBinaryOp::Mul => fold_numeric(
-            lhs,
-            rhs,
-            |left, right| left * right,
-            |left, right| left * right,
-        ),
-        TypedBinaryOp::Div => Some(ConstValue::Real(lhs.as_f64()? / rhs.as_f64()?)),
-        TypedBinaryOp::Pow => Some(ConstValue::Real(lhs.as_f64()?.powf(rhs.as_f64()?))),
+        AnalyzedBinaryOp::Eq => Some(ConstValue::Bool(lhs == rhs)),
+        AnalyzedBinaryOp::NotEq => Some(ConstValue::Bool(lhs != rhs)),
+        AnalyzedBinaryOp::Lt => Some(ConstValue::Bool(lhs.as_f64()? < rhs.as_f64()?)),
+        AnalyzedBinaryOp::LtEq => Some(ConstValue::Bool(lhs.as_f64()? <= rhs.as_f64()?)),
+        AnalyzedBinaryOp::Gt => Some(ConstValue::Bool(lhs.as_f64()? > rhs.as_f64()?)),
+        AnalyzedBinaryOp::GtEq => Some(ConstValue::Bool(lhs.as_f64()? >= rhs.as_f64()?)),
+        AnalyzedBinaryOp::Add => {
+            fold_numeric(lhs, rhs, i64::checked_add, |left, right| left + right)
+        }
+        AnalyzedBinaryOp::Sub => {
+            fold_numeric(lhs, rhs, i64::checked_sub, |left, right| left - right)
+        }
+        AnalyzedBinaryOp::Mul => {
+            fold_numeric(lhs, rhs, i64::checked_mul, |left, right| left * right)
+        }
+        AnalyzedBinaryOp::Div => Some(ConstValue::Real(lhs.as_f64()? / rhs.as_f64()?)),
+        AnalyzedBinaryOp::Pow => Some(ConstValue::Real(lhs.as_f64()?.powf(rhs.as_f64()?))),
     }
 }
 
 fn fold_numeric(
     lhs: &ConstValue,
     rhs: &ConstValue,
-    int_op: impl FnOnce(i64, i64) -> i64,
+    int_op: impl FnOnce(i64, i64) -> Option<i64>,
     real_op: impl FnOnce(f64, f64) -> f64,
 ) -> Option<ConstValue> {
     match (lhs, rhs) {
-        (ConstValue::Int(lhs), ConstValue::Int(rhs)) => Some(ConstValue::Int(int_op(*lhs, *rhs))),
+        (ConstValue::Int(lhs), ConstValue::Int(rhs)) => Some(match int_op(*lhs, *rhs) {
+            Some(value) => ConstValue::Int(value),
+            // Overflowing integer arithmetic degrades to `Real`, matching the
+            // f64 arithmetic the backends perform at runtime.
+            None => ConstValue::Real(real_op(*lhs as f64, *rhs as f64)),
+        }),
         _ => Some(ConstValue::Real(real_op(lhs.as_f64()?, rhs.as_f64()?))),
     }
 }
 
-fn fold_call(intrinsic: MathIntrinsic, values: &[ConstValue]) -> Option<ConstValue> {
+fn fold_call(intrinsic: MathFunction, values: &[ConstValue]) -> Option<ConstValue> {
     match intrinsic {
-        MathIntrinsic::Abs => match values.first()? {
+        MathFunction::Abs => match values.first()? {
             ConstValue::Int(value) => Some(ConstValue::Int(value.abs())),
             ConstValue::Real(value) => Some(ConstValue::Real(value.abs())),
             ConstValue::Bool(_) => None,
         },
-        MathIntrinsic::Ceil => Some(ConstValue::Real(values.first()?.as_f64()?.ceil())),
-        MathIntrinsic::Exp => Some(ConstValue::Real(values.first()?.as_f64()?.exp())),
-        MathIntrinsic::Floor => Some(ConstValue::Real(values.first()?.as_f64()?.floor())),
-        MathIntrinsic::Ln | MathIntrinsic::Log => {
+        MathFunction::Ceil => Some(ConstValue::Real(values.first()?.as_f64()?.ceil())),
+        MathFunction::Exp => Some(ConstValue::Real(values.first()?.as_f64()?.exp())),
+        MathFunction::Floor => Some(ConstValue::Real(values.first()?.as_f64()?.floor())),
+        MathFunction::Ln | MathFunction::Log => {
             Some(ConstValue::Real(values.first()?.as_f64()?.ln()))
         }
-        MathIntrinsic::Log10 => Some(ConstValue::Real(values.first()?.as_f64()?.log10())),
-        MathIntrinsic::Log2 => Some(ConstValue::Real(values.first()?.as_f64()?.log2())),
-        MathIntrinsic::Max => Some(ConstValue::Real(
+        MathFunction::Log10 => Some(ConstValue::Real(values.first()?.as_f64()?.log10())),
+        MathFunction::Log2 => Some(ConstValue::Real(values.first()?.as_f64()?.log2())),
+        MathFunction::Max => Some(ConstValue::Real(
             values.first()?.as_f64()?.max(values.get(1)?.as_f64()?),
         )),
-        MathIntrinsic::Min => Some(ConstValue::Real(
+        MathFunction::Min => Some(ConstValue::Real(
             values.first()?.as_f64()?.min(values.get(1)?.as_f64()?),
         )),
-        MathIntrinsic::Pow => Some(ConstValue::Real(
+        MathFunction::Pow => Some(ConstValue::Real(
             values.first()?.as_f64()?.powf(values.get(1)?.as_f64()?),
         )),
-        MathIntrinsic::Round => Some(ConstValue::Real(values.first()?.as_f64()?.round())),
-        MathIntrinsic::Sin => Some(ConstValue::Real(values.first()?.as_f64()?.sin())),
-        MathIntrinsic::Cos => Some(ConstValue::Real(values.first()?.as_f64()?.cos())),
-        MathIntrinsic::Tan => Some(ConstValue::Real(values.first()?.as_f64()?.tan())),
-        MathIntrinsic::Sqrt => Some(ConstValue::Real(values.first()?.as_f64()?.sqrt())),
+        MathFunction::Round => Some(ConstValue::Real(values.first()?.as_f64()?.round())),
+        MathFunction::Sin => Some(ConstValue::Real(values.first()?.as_f64()?.sin())),
+        MathFunction::Cos => Some(ConstValue::Real(values.first()?.as_f64()?.cos())),
+        MathFunction::Tan => Some(ConstValue::Real(values.first()?.as_f64()?.tan())),
+        MathFunction::Sqrt => Some(ConstValue::Real(values.first()?.as_f64()?.sqrt())),
     }
 }
 
@@ -2817,21 +2858,21 @@ mod tests {
     fn analyzes_structured_block_corpus() {
         let src = STRUCTURED_BLOCK_CORPUS;
         let module = parse_module(src).expect("structured-block fixture parses");
-        let typed = analyze_module(&module).expect("structured-block fixture analyzes");
+        let analyzed = analyze_module(&module).expect("structured-block fixture analyzes");
 
-        assert_eq!(typed.models.len(), 4);
-        let transit = &typed.models[1];
+        assert_eq!(analyzed.models.len(), 4);
+        let transit = &analyzed.models[1];
         assert_eq!(transit.kind, ModelKind::Ode);
         assert_eq!(transit.states[0].size, Some(4));
         assert!(transit.dynamics.is_some());
 
-        let analytical = &typed.models[2];
+        let analytical = &analyzed.models[2];
         assert!(matches!(
             analytical.analytical.as_ref().map(|value| value.structure),
             Some(AnalyticalKernel::OneCompartmentWithAbsorption)
         ));
 
-        let sde = &typed.models[3];
+        let sde = &analyzed.models[3];
         assert_eq!(sde.particles, Some(1000));
         assert!(sde.drift.is_some());
         assert!(sde.diffusion.is_some());
@@ -2841,8 +2882,8 @@ mod tests {
     fn derives_values_across_if_branches() {
         let src = STRUCTURED_BLOCK_CORPUS;
         let model = parse_model(src.split("\n\n\n").next().unwrap()).expect("single model parses");
-        let typed = analyze_model(&model).expect("single model analyzes");
-        let ke_symbol = typed
+        let analyzed = analyze_model(&model).expect("single model analyzes");
+        let ke_symbol = analyzed
             .symbols
             .iter()
             .find(|symbol| symbol.name == "ke")
@@ -2871,9 +2912,9 @@ model analytical_ok {
 "#;
 
         let model = parse_model(src).expect("model parses");
-        let typed = analyze_model(&model).expect("model analyzes");
+        let analyzed = analyze_model(&model).expect("model analyzes");
         assert!(matches!(
-            typed.analytical.as_ref().map(|value| value.structure),
+            analyzed.analytical.as_ref().map(|value| value.structure),
             Some(AnalyticalKernel::OneCompartmentWithAbsorption)
         ));
     }
@@ -3422,7 +3463,7 @@ model broken {
             .contains("state array size must be an integer constant"));
     }
 
-    fn typed_model_signature(model: &TypedModel) -> String {
+    fn typed_model_signature(model: &AnalyzedModel) -> String {
         let mut lines = Vec::new();
         lines.push(format!("kind:{:?}", model.kind));
         lines.push(format!(
@@ -3487,14 +3528,14 @@ model broken {
         lines.join("\n")
     }
 
-    fn join_names(model: &TypedModel, ids: &[SymbolId]) -> String {
+    fn join_names(model: &AnalyzedModel, ids: &[SymbolId]) -> String {
         ids.iter()
             .map(|id| symbol_name(model, *id))
             .collect::<Vec<_>>()
             .join(",")
     }
 
-    fn join_constants(model: &TypedModel) -> String {
+    fn join_constants(model: &AnalyzedModel) -> String {
         model
             .constants
             .iter()
@@ -3509,7 +3550,7 @@ model broken {
             .join(",")
     }
 
-    fn join_covariates(model: &TypedModel) -> String {
+    fn join_covariates(model: &AnalyzedModel) -> String {
         model
             .covariates
             .iter()
@@ -3524,7 +3565,7 @@ model broken {
             .join(",")
     }
 
-    fn join_states(model: &TypedModel) -> String {
+    fn join_states(model: &AnalyzedModel) -> String {
         model
             .states
             .iter()
@@ -3533,7 +3574,7 @@ model broken {
             .join(",")
     }
 
-    fn join_routes(model: &TypedModel) -> String {
+    fn join_routes(model: &AnalyzedModel) -> String {
         model
             .routes
             .iter()
@@ -3562,7 +3603,7 @@ model broken {
             .join(",")
     }
 
-    fn block_signature(model: &TypedModel, block: &TypedStatementBlock) -> String {
+    fn block_signature(model: &AnalyzedModel, block: &AnalyzedStatementBlock) -> String {
         block
             .statements
             .iter()
@@ -3571,19 +3612,19 @@ model broken {
             .join(";")
     }
 
-    fn stmt_signature(model: &TypedModel, stmt: &TypedStmt) -> String {
+    fn stmt_signature(model: &AnalyzedModel, stmt: &AnalyzedStmt) -> String {
         match &stmt.kind {
-            TypedStmtKind::Let(value) => format!(
+            AnalyzedStmtKind::Let(value) => format!(
                 "let({}:{})",
                 symbol_name(model, value.symbol),
                 expr_signature(model, &value.value)
             ),
-            TypedStmtKind::Assign(value) => format!(
+            AnalyzedStmtKind::Assign(value) => format!(
                 "assign({}={})",
                 assign_target_signature(model, &value.target),
                 expr_signature(model, &value.value)
             ),
-            TypedStmtKind::If(value) => format!(
+            AnalyzedStmtKind::If(value) => format!(
                 "if({}){{{}}}else{{{}}}",
                 expr_signature(model, &value.condition),
                 value
@@ -3602,7 +3643,7 @@ model broken {
                         .join(";"))
                     .unwrap_or_default()
             ),
-            TypedStmtKind::For(value) => format!(
+            AnalyzedStmtKind::For(value) => format!(
                 "for({}:{}..{}){{{}}}",
                 symbol_name(model, value.binding),
                 expr_signature(model, &value.range.start),
@@ -3617,27 +3658,27 @@ model broken {
         }
     }
 
-    fn assign_target_signature(model: &TypedModel, target: &TypedAssignTarget) -> String {
+    fn assign_target_signature(model: &AnalyzedModel, target: &AnalyzedAssignTarget) -> String {
         match &target.kind {
-            TypedAssignTargetKind::Derived(symbol) => {
+            AnalyzedAssignTargetKind::Derived(symbol) => {
                 format!("derived:{}", symbol_name(model, *symbol))
             }
-            TypedAssignTargetKind::Output(symbol) => {
+            AnalyzedAssignTargetKind::Output(symbol) => {
                 format!("output:{}", symbol_name(model, *symbol))
             }
-            TypedAssignTargetKind::StateInit(place) => {
+            AnalyzedAssignTargetKind::StateInit(place) => {
                 format!("init:{}", state_place_signature(model, place))
             }
-            TypedAssignTargetKind::Derivative(place) => {
+            AnalyzedAssignTargetKind::Derivative(place) => {
                 format!("ddt:{}", state_place_signature(model, place))
             }
-            TypedAssignTargetKind::Noise(place) => {
+            AnalyzedAssignTargetKind::Noise(place) => {
                 format!("noise:{}", state_place_signature(model, place))
             }
         }
     }
 
-    fn state_place_signature(model: &TypedModel, place: &TypedStatePlace) -> String {
+    fn state_place_signature(model: &AnalyzedModel, place: &AnalyzedStatePlace) -> String {
         let name = symbol_name(model, place.state);
         match &place.index {
             Some(index) => format!("{}[{}]", name, expr_signature(model, index)),
@@ -3645,31 +3686,31 @@ model broken {
         }
     }
 
-    fn expr_signature(model: &TypedModel, expr: &TypedExpr) -> String {
+    fn expr_signature(model: &AnalyzedModel, expr: &AnalyzedExpr) -> String {
         match &expr.kind {
-            TypedExprKind::Literal(value) => format!("lit:{value:?}:{:?}", expr.ty),
-            TypedExprKind::Symbol(symbol) => {
+            AnalyzedExprKind::Literal(value) => format!("lit:{value:?}:{:?}", expr.ty),
+            AnalyzedExprKind::Symbol(symbol) => {
                 format!("sym:{}:{:?}", symbol_name(model, *symbol), expr.ty)
             }
-            TypedExprKind::StateValue(place) => format!(
+            AnalyzedExprKind::StateValue(place) => format!(
                 "state:{}:{:?}",
                 state_place_signature(model, place),
                 expr.ty
             ),
-            TypedExprKind::Unary { op, expr: inner } => {
+            AnalyzedExprKind::Unary { op, expr: inner } => {
                 format!("un:{op:?}:{}", expr_signature(model, inner))
             }
-            TypedExprKind::Binary { op, lhs, rhs } => format!(
+            AnalyzedExprKind::Binary { op, lhs, rhs } => format!(
                 "bin:{op:?}:{}:{}:{:?}",
                 expr_signature(model, lhs),
                 expr_signature(model, rhs),
                 expr.ty
             ),
-            TypedExprKind::Call { callee, args } => format!(
+            AnalyzedExprKind::Call { callee, args } => format!(
                 "call:{}({})",
                 match callee {
-                    TypedCall::Math(intrinsic) => format!("math:{intrinsic:?}"),
-                    TypedCall::Rate(symbol) => format!("rate:{}", symbol_name(model, *symbol)),
+                    AnalyzedCall::Math(intrinsic) => format!("math:{intrinsic:?}"),
+                    AnalyzedCall::Rate(symbol) => format!("rate:{}", symbol_name(model, *symbol)),
                 },
                 args.iter()
                     .map(|arg| expr_signature(model, arg))
@@ -3679,7 +3720,7 @@ model broken {
         }
     }
 
-    fn symbol_name(model: &TypedModel, symbol: SymbolId) -> String {
+    fn symbol_name(model: &AnalyzedModel, symbol: SymbolId) -> String {
         model
             .symbols
             .iter()

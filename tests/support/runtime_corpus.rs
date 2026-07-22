@@ -485,13 +485,13 @@ pub fn compile_wasm_runtime_from_bytes(
     case: CorpusCase,
 ) -> Result<CompiledRuntimeModel, Box<dyn Error>> {
     let parsed = dsl::parse_module(case.source())?;
-    let typed = dsl::analyze_module(&parsed)?;
-    let model = typed
+    let analyzed = dsl::analyze_module(&parsed)?;
+    let model = analyzed
         .models
         .iter()
         .find(|model| model.name == case.model_name())
         .ok_or_else(|| io::Error::other(format!("{}: missing model in source", case.label())))?;
-    let execution = dsl::lower_typed_model(model)?;
+    let execution = dsl::compile_analyzed_model(model)?;
     let bytes = dsl::compile_execution_model_to_wasm_bytes(&execution)?;
     Ok(adjust_runtime_model(
         case,

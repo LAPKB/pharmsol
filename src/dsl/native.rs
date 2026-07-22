@@ -14,10 +14,10 @@ use rayon::prelude::*;
 use cranelift_jit::JITModule;
 #[cfg(feature = "dsl-aot-load")]
 use libloading::Library;
-use pharmsol_dsl::execution::KernelRole;
+use pharmsol_dsl::execution::ModelFunctionKind;
 use pharmsol_dsl::{
     AnalyticalKernel, AnalyticalStructureInputKind, AnalyticalStructureInputPlan, ModelKind,
-    RouteKind, NUMERIC_OUTPUT_PREFIX, NUMERIC_ROUTE_PREFIX,
+    RouteKind,
 };
 
 pub use super::model_info::{
@@ -32,6 +32,7 @@ use crate::{
             DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE, DEFAULT_CACHE_SIZE,
         },
         equation::{
+            metadata::ValidatedRoute,
             ode::{closure_helpers::PMProblem, ExplicitRkTableau, OdeSolver, SdirkTableau},
             sde::simulate_sde_event_with,
             EqnKind, Equation, EquationPriv, EquationTypes, Predictions,
@@ -42,7 +43,7 @@ use crate::{
     Event, Observation, Occasion, Parameters, PharmsolError, Subject, ValidatedModelMetadata,
 };
 
-pub type DenseKernelFn = unsafe extern "C" fn(
+pub type CompiledModelFunction = unsafe extern "C" fn(
     t: f64,
     states: *const f64,
     params: *const f64,
@@ -65,11 +66,11 @@ pub enum RuntimeBackend {
     Wasm,
 }
 
-pub(crate) trait KernelSession {
+pub(crate) trait FunctionSession {
     #[allow(clippy::too_many_arguments)]
     unsafe fn invoke_raw(
         &mut self,
-        role: KernelRole,
+        role: ModelFunctionKind,
         time: f64,
         states: *const f64,
         params: *const f64,
@@ -82,8 +83,8 @@ pub(crate) trait KernelSession {
 
 pub(crate) trait RuntimeArtifact: Send + Sync + std::fmt::Debug {
     fn backend(&self) -> RuntimeBackend;
-    fn has_kernel(&self, role: KernelRole) -> bool;
-    fn start_session(&self) -> Result<Box<dyn KernelSession + '_>, PharmsolError>;
+    fn has_function(&self, role: ModelFunctionKind) -> bool;
+    fn start_session(&self) -> Result<Box<dyn FunctionSession + '_>, PharmsolError>;
 }
 
 #[allow(dead_code)]
@@ -111,14 +112,14 @@ impl std::fmt::Debug for NativeArtifactOwner {
 
 pub struct NativeExecutionArtifact {
     pub model_name: String,
-    pub derive: Option<DenseKernelFn>,
-    pub dynamics: Option<DenseKernelFn>,
-    pub outputs: DenseKernelFn,
-    pub init: Option<DenseKernelFn>,
-    pub drift: Option<DenseKernelFn>,
-    pub diffusion: Option<DenseKernelFn>,
-    pub route_lag: Option<DenseKernelFn>,
-    pub route_bioavailability: Option<DenseKernelFn>,
+    pub derive: Option<CompiledModelFunction>,
+    pub dynamics: Option<CompiledModelFunction>,
+    pub outputs: CompiledModelFunction,
+    pub init: Option<CompiledModelFunction>,
+    pub drift: Option<CompiledModelFunction>,
+    pub diffusion: Option<CompiledModelFunction>,
+    pub route_lag: Option<CompiledModelFunction>,
+    pub route_bioavailability: Option<CompiledModelFunction>,
     _owner: Option<NativeArtifactOwner>,
 }
 
@@ -149,14 +150,14 @@ impl NativeExecutionArtifact {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn from_jit_module(
         model_name: String,
-        derive: Option<DenseKernelFn>,
-        dynamics: Option<DenseKernelFn>,
-        outputs: DenseKernelFn,
-        init: Option<DenseKernelFn>,
-        drift: Option<DenseKernelFn>,
-        diffusion: Option<DenseKernelFn>,
-        route_lag: Option<DenseKernelFn>,
-        route_bioavailability: Option<DenseKernelFn>,
+        derive: Option<CompiledModelFunction>,
+        dynamics: Option<CompiledModelFunction>,
+        outputs: CompiledModelFunction,
+        init: Option<CompiledModelFunction>,
+        drift: Option<CompiledModelFunction>,
+        diffusion: Option<CompiledModelFunction>,
+        route_lag: Option<CompiledModelFunction>,
+        route_bioavailability: Option<CompiledModelFunction>,
         module: JITModule,
     ) -> Self {
         Self {
@@ -177,14 +178,14 @@ impl NativeExecutionArtifact {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn from_library(
         model_name: String,
-        derive: Option<DenseKernelFn>,
-        dynamics: Option<DenseKernelFn>,
-        outputs: DenseKernelFn,
-        init: Option<DenseKernelFn>,
-        drift: Option<DenseKernelFn>,
-        diffusion: Option<DenseKernelFn>,
-        route_lag: Option<DenseKernelFn>,
-        route_bioavailability: Option<DenseKernelFn>,
+        derive: Option<CompiledModelFunction>,
+        dynamics: Option<CompiledModelFunction>,
+        outputs: CompiledModelFunction,
+        init: Option<CompiledModelFunction>,
+        drift: Option<CompiledModelFunction>,
+        diffusion: Option<CompiledModelFunction>,
+        route_lag: Option<CompiledModelFunction>,
+        route_bioavailability: Option<CompiledModelFunction>,
         library: Library,
     ) -> Self {
         Self {
@@ -202,14 +203,14 @@ impl NativeExecutionArtifact {
     }
 }
 
-struct NativeKernelSession<'a> {
+struct NativeFunctionSession<'a> {
     artifact: &'a NativeExecutionArtifact,
 }
 
-impl KernelSession for NativeKernelSession<'_> {
+impl FunctionSession for NativeFunctionSession<'_> {
     unsafe fn invoke_raw(
         &mut self,
-        role: KernelRole,
+        role: ModelFunctionKind,
         time: f64,
         states: *const f64,
         params: *const f64,
@@ -218,25 +219,25 @@ impl KernelSession for NativeKernelSession<'_> {
         derived: *const f64,
         out: *mut f64,
     ) -> Result<(), PharmsolError> {
-        let kernel = match role {
-            KernelRole::Derive => self.artifact.derive,
-            KernelRole::Dynamics => self.artifact.dynamics,
-            KernelRole::Outputs => Some(self.artifact.outputs),
-            KernelRole::Init => self.artifact.init,
-            KernelRole::Drift => self.artifact.drift,
-            KernelRole::Diffusion => self.artifact.diffusion,
-            KernelRole::RouteLag => self.artifact.route_lag,
-            KernelRole::RouteBioavailability => self.artifact.route_bioavailability,
-            KernelRole::Analytical => None,
+        let function = match role {
+            ModelFunctionKind::Derive => self.artifact.derive,
+            ModelFunctionKind::Dynamics => self.artifact.dynamics,
+            ModelFunctionKind::Outputs => Some(self.artifact.outputs),
+            ModelFunctionKind::Init => self.artifact.init,
+            ModelFunctionKind::Drift => self.artifact.drift,
+            ModelFunctionKind::Diffusion => self.artifact.diffusion,
+            ModelFunctionKind::RouteLag => self.artifact.route_lag,
+            ModelFunctionKind::RouteBioavailability => self.artifact.route_bioavailability,
+            ModelFunctionKind::Analytical => None,
         }
         .ok_or_else(|| {
             PharmsolError::OtherError(format!(
-                "model `{}` does not provide a {:?} kernel",
+                "model `{}` does not provide a {:?} function",
                 self.artifact.model_name, role
             ))
         })?;
 
-        kernel(time, states, params, covariates, routes, derived, out);
+        function(time, states, params, covariates, routes, derived, out);
         Ok(())
     }
 }
@@ -252,22 +253,22 @@ impl RuntimeArtifact for NativeExecutionArtifact {
         }
     }
 
-    fn has_kernel(&self, role: KernelRole) -> bool {
+    fn has_function(&self, role: ModelFunctionKind) -> bool {
         match role {
-            KernelRole::Derive => self.derive.is_some(),
-            KernelRole::Dynamics => self.dynamics.is_some(),
-            KernelRole::Outputs => true,
-            KernelRole::Init => self.init.is_some(),
-            KernelRole::Drift => self.drift.is_some(),
-            KernelRole::Diffusion => self.diffusion.is_some(),
-            KernelRole::RouteLag => self.route_lag.is_some(),
-            KernelRole::RouteBioavailability => self.route_bioavailability.is_some(),
-            KernelRole::Analytical => false,
+            ModelFunctionKind::Derive => self.derive.is_some(),
+            ModelFunctionKind::Dynamics => self.dynamics.is_some(),
+            ModelFunctionKind::Outputs => true,
+            ModelFunctionKind::Init => self.init.is_some(),
+            ModelFunctionKind::Drift => self.drift.is_some(),
+            ModelFunctionKind::Diffusion => self.diffusion.is_some(),
+            ModelFunctionKind::RouteLag => self.route_lag.is_some(),
+            ModelFunctionKind::RouteBioavailability => self.route_bioavailability.is_some(),
+            ModelFunctionKind::Analytical => false,
         }
     }
 
-    fn start_session(&self) -> Result<Box<dyn KernelSession + '_>, PharmsolError> {
-        Ok(Box::new(NativeKernelSession { artifact: self }))
+    fn start_session(&self) -> Result<Box<dyn FunctionSession + '_>, PharmsolError> {
+        Ok(Box::new(NativeFunctionSession { artifact: self }))
     }
 }
 
@@ -450,8 +451,8 @@ fn runtime_model_metadata(info: &NativeModelInfo) -> Result<ValidatedModelMetada
         .states(state_names.iter().cloned())
         .outputs(outputs.into_iter().map(|output| output.name.clone()));
 
-    if let Some(kernel) = info.analytical {
-        metadata = metadata.analytical_kernel(kernel);
+    if let Some(function) = info.analytical {
+        metadata = metadata.analytical_kernel(function);
     }
 
     if let Some(particles) = info.particles {
@@ -653,34 +654,14 @@ impl SharedNativeModel {
         self.metadata.as_ref()
     }
 
-    fn route_index(&self, name: &str) -> Option<usize> {
-        self.info
-            .routes
-            .iter()
-            .find(|route| route.name == name)
-            .map(|route| route.index)
-    }
-
-    fn output_index(&self, name: &str) -> Option<usize> {
-        self.info
-            .outputs
-            .iter()
-            .find(|output| output.name == name)
-            .map(|output| output.index)
-    }
-
     fn metadata_route_index_for_label(&self, label: &str) -> Option<usize> {
-        self.route_index(label).or_else(|| {
-            canonical_numeric_alias(label, NUMERIC_ROUTE_PREFIX)
-                .and_then(|alias| self.route_index(alias.as_str()))
-        })
+        self.metadata()
+            .route_for_label(label)
+            .map(ValidatedRoute::input_index)
     }
 
     fn metadata_output_index_for_label(&self, label: &str) -> Option<usize> {
-        self.output_index(label).or_else(|| {
-            canonical_numeric_alias(label, NUMERIC_OUTPUT_PREFIX)
-                .and_then(|alias| self.output_index(alias.as_str()))
-        })
+        self.metadata().output_for_label(label)
     }
 
     fn validate_support_point(&self, support_point: &[f64]) -> Result<(), PharmsolError> {
@@ -796,7 +777,7 @@ impl SharedNativeModel {
     #[allow(clippy::too_many_arguments)]
     fn refresh_derived(
         &self,
-        session: &mut dyn KernelSession,
+        session: &mut dyn FunctionSession,
         time: f64,
         state: &[f64],
         support_point: &[f64],
@@ -806,10 +787,10 @@ impl SharedNativeModel {
         cov_buf: &mut [f64],
     ) -> Result<(), PharmsolError> {
         self.fill_cov_buffer(covariates, time, cov_buf);
-        if self.artifact.has_kernel(KernelRole::Derive) {
+        if self.artifact.has_function(ModelFunctionKind::Derive) {
             unsafe {
                 session.invoke_raw(
-                    KernelRole::Derive,
+                    ModelFunctionKind::Derive,
                     time,
                     state.as_ptr(),
                     support_point.as_ptr(),
@@ -828,7 +809,7 @@ impl SharedNativeModel {
     #[allow(clippy::too_many_arguments)]
     fn write_outputs(
         &self,
-        session: &mut dyn KernelSession,
+        session: &mut dyn FunctionSession,
         time: f64,
         state: &[f64],
         support_point: &[f64],
@@ -839,7 +820,7 @@ impl SharedNativeModel {
     ) -> Result<(), PharmsolError> {
         unsafe {
             session.invoke_raw(
-                KernelRole::Outputs,
+                ModelFunctionKind::Outputs,
                 time,
                 state.as_ptr(),
                 support_point.as_ptr(),
@@ -854,7 +835,7 @@ impl SharedNativeModel {
 
     fn initial_state(
         &self,
-        session: &mut dyn KernelSession,
+        session: &mut dyn FunctionSession,
         support_point: &[f64],
         covariates: &Covariates,
         occasion_index: usize,
@@ -874,10 +855,10 @@ impl SharedNativeModel {
                 &mut derived,
                 &mut cov_buf,
             )?;
-            if self.artifact.has_kernel(KernelRole::Init) {
+            if self.artifact.has_function(ModelFunctionKind::Init) {
                 unsafe {
                     session.invoke_raw(
-                        KernelRole::Init,
+                        ModelFunctionKind::Init,
                         0.0,
                         state.as_ptr(),
                         support_point.as_ptr(),
@@ -894,13 +875,15 @@ impl SharedNativeModel {
 
     fn apply_route_properties(
         &self,
-        session: &mut dyn KernelSession,
+        session: &mut dyn FunctionSession,
         events: &mut [Event],
         covariates: &Covariates,
         support_point: &[f64],
     ) -> Result<(), PharmsolError> {
-        if !self.artifact.has_kernel(KernelRole::RouteLag)
-            && !self.artifact.has_kernel(KernelRole::RouteBioavailability)
+        if !self.artifact.has_function(ModelFunctionKind::RouteLag)
+            && !self
+                .artifact
+                .has_function(ModelFunctionKind::RouteBioavailability)
         {
             return Ok(());
         }
@@ -922,7 +905,7 @@ impl SharedNativeModel {
                 })?;
                 self.validate_input_for_kind(input, RouteKind::Bolus)?;
 
-                if self.artifact.has_kernel(KernelRole::RouteLag) {
+                if self.artifact.has_function(ModelFunctionKind::RouteLag) {
                     lag_values.fill(0.0);
                     self.refresh_derived(
                         session,
@@ -936,7 +919,7 @@ impl SharedNativeModel {
                     )?;
                     unsafe {
                         session.invoke_raw(
-                            KernelRole::RouteLag,
+                            ModelFunctionKind::RouteLag,
                             bolus.time(),
                             zero_state.as_ptr(),
                             support_point.as_ptr(),
@@ -952,7 +935,10 @@ impl SharedNativeModel {
                     }
                 }
 
-                if self.artifact.has_kernel(KernelRole::RouteBioavailability) {
+                if self
+                    .artifact
+                    .has_function(ModelFunctionKind::RouteBioavailability)
+                {
                     fa_values.fill(1.0);
                     self.refresh_derived(
                         session,
@@ -966,7 +952,7 @@ impl SharedNativeModel {
                     )?;
                     unsafe {
                         session.invoke_raw(
-                            KernelRole::RouteBioavailability,
+                            ModelFunctionKind::RouteBioavailability,
                             bolus.time(),
                             zero_state.as_ptr(),
                             support_point.as_ptr(),
@@ -1007,7 +993,7 @@ impl SharedNativeModel {
 
     fn observation_prediction(
         &self,
-        session: &mut dyn KernelSession,
+        session: &mut dyn FunctionSession,
         observation: &Observation,
         state: &[f64],
         support_point: &[f64],
@@ -1170,16 +1156,16 @@ impl NativeOdeModel {
             let cov_buf = RefCell::new(vec![0.0; self.shared.info.covariates.len()]);
             let derived_buf = RefCell::new(vec![0.0; self.shared.info.derived_len]);
             let shared = Arc::clone(&self.shared);
-            if !shared.artifact.has_kernel(KernelRole::Dynamics) {
+            if !shared.artifact.has_function(ModelFunctionKind::Dynamics) {
                 return Err(PharmsolError::OtherError(format!(
-                    "model `{}` does not have a dynamics kernel",
+                    "model `{}` does not have a dynamics function",
                     shared.info.name
                 )));
             }
-            let kernel_error = RefCell::new(None::<PharmsolError>);
+            let function_error = RefCell::new(None::<PharmsolError>);
 
             let diffeq_session = &session;
-            let diffeq_error = &kernel_error;
+            let diffeq_error = &function_error;
             let diffeq = move |x: &V,
                                p: &V,
                                t: f64,
@@ -1212,7 +1198,7 @@ impl NativeOdeModel {
 
                 if let Err(error) = unsafe {
                     session.invoke_raw(
-                        KernelRole::Dynamics,
+                        ModelFunctionKind::Dynamics,
                         t,
                         x.as_slice().as_ptr(),
                         p.as_slice().as_ptr(),
@@ -1269,7 +1255,7 @@ impl NativeOdeModel {
                         infusions.as_slice(),
                         &mut output,
                         &session,
-                        &kernel_error,
+                        &function_error,
                     )?;
                 }};
             }
@@ -1285,7 +1271,7 @@ impl NativeOdeModel {
                 }
             }
 
-            if let Some(error) = kernel_error.into_inner() {
+            if let Some(error) = function_error.into_inner() {
                 return Err(error);
             }
         }
@@ -1302,8 +1288,8 @@ impl NativeOdeModel {
         covariates: &Covariates,
         infusions: &[Infusion],
         output: &mut SubjectPredictions,
-        session: &RefCell<Box<dyn KernelSession + '_>>,
-        kernel_error: &RefCell<Option<PharmsolError>>,
+        session: &RefCell<Box<dyn FunctionSession + '_>>,
+        function_error: &RefCell<Option<PharmsolError>>,
     ) -> Result<(), PharmsolError>
     where
         F: Fn(&V, &V, f64, &mut V, &V, &V, &Covariates) + 'a,
@@ -1326,8 +1312,8 @@ impl NativeOdeModel {
                 }
                 Event::Infusion(_) => {}
                 Event::Observation(observation) => {
-                    if kernel_error.borrow().is_some() {
-                        return Err(kernel_error.borrow_mut().take().unwrap());
+                    if function_error.borrow().is_some() {
+                        return Err(function_error.borrow_mut().take().unwrap());
                     }
                     let prediction = self.shared.observation_prediction(
                         &mut **session.borrow_mut(),
@@ -1349,8 +1335,8 @@ impl NativeOdeModel {
                 match solver.set_stop_time(next_event.time()) {
                     Ok(_) => loop {
                         match solver.step() {
-                            Ok(_) if kernel_error.borrow().is_some() => {
-                                return Err(kernel_error.borrow_mut().take().unwrap());
+                            Ok(_) if function_error.borrow().is_some() => {
+                                return Err(function_error.borrow_mut().take().unwrap());
                             }
                             Ok(OdeSolverStopReason::InternalTimestep) => continue,
                             Ok(OdeSolverStopReason::TstopReached) => break,
@@ -1741,7 +1727,7 @@ impl NativeAnalyticalModel {
     #[allow(clippy::too_many_arguments)]
     fn solve_interval(
         &self,
-        session: &mut dyn KernelSession,
+        session: &mut dyn FunctionSession,
         state: &mut [f64],
         support_point: &[f64],
         covariates: &Covariates,
@@ -1790,7 +1776,7 @@ impl NativeAnalyticalModel {
             let next_state = apply_analytical_kernel(
                 self.shared.info.analytical.ok_or_else(|| {
                     PharmsolError::OtherError(format!(
-                        "model `{}` does not declare an analytical kernel",
+                        "model `{}` does not declare an analytical function",
                         self.shared.info.name
                     ))
                 })?,
@@ -2174,15 +2160,15 @@ impl NativeSdeModel {
         let support = Arc::new(support_point.to_vec());
         let infusion_events = Arc::new(infusions.to_vec());
         let covariates = covariates.clone();
-        if !shared.artifact.has_kernel(KernelRole::Drift) {
+        if !shared.artifact.has_function(ModelFunctionKind::Drift) {
             return Err(PharmsolError::OtherError(format!(
-                "model `{}` does not have a drift kernel",
+                "model `{}` does not have a drift function",
                 shared.info.name
             )));
         }
-        if !shared.artifact.has_kernel(KernelRole::Diffusion) {
+        if !shared.artifact.has_function(ModelFunctionKind::Diffusion) {
             return Err(PharmsolError::OtherError(format!(
-                "model `{}` does not have a diffusion kernel",
+                "model `{}` does not have a diffusion function",
                 shared.info.name
             )));
         }
@@ -2204,11 +2190,11 @@ impl NativeSdeModel {
                 let drift_state = particle.clone();
                 let artifact = Arc::clone(&shared.artifact);
                 let session = RefCell::new(artifact.start_session()?);
-                let kernel_error = RefCell::new(None::<PharmsolError>);
+                let function_error = RefCell::new(None::<PharmsolError>);
                 let drift_session = &session;
                 let diffusion_session = &session;
-                let drift_error = &kernel_error;
-                let diffusion_error = &kernel_error;
+                let drift_error = &function_error;
+                let diffusion_error = &function_error;
                 let next = simulate_sde_event_with(
                     move |time, state, out| {
                         if drift_error.borrow().is_some() {
@@ -2235,7 +2221,7 @@ impl NativeSdeModel {
                         }
                         if let Err(error) = unsafe {
                             session.invoke_raw(
-                                KernelRole::Drift,
+                                ModelFunctionKind::Drift,
                                 time,
                                 state.as_ptr(),
                                 support.as_ptr(),
@@ -2277,7 +2263,7 @@ impl NativeSdeModel {
                         }
                         if let Err(error) = unsafe {
                             session.invoke_raw(
-                                KernelRole::Diffusion,
+                                ModelFunctionKind::Diffusion,
                                 time,
                                 state.as_ptr(),
                                 support_for_diffusion.as_ptr(),
@@ -2295,7 +2281,7 @@ impl NativeSdeModel {
                     start_time,
                     end_time,
                 );
-                if let Some(error) = kernel_error.into_inner() {
+                if let Some(error) = function_error.into_inner() {
                     return Err(error);
                 }
                 *particle = next;
@@ -2572,19 +2558,12 @@ fn sort_events(events: &mut [Event]) {
     });
 }
 
-fn canonical_numeric_alias(label: &str, prefix: &str) -> Option<String> {
-    if label.is_empty() || !label.chars().all(|ch| ch.is_ascii_digit()) {
-        return None;
-    }
-    Some(format!("{prefix}{label}"))
-}
-
 fn build_analytical_parameter_projection(
     info: &NativeModelInfo,
 ) -> Result<AnalyticalStructureInputKind, PharmsolError> {
-    let kernel = info.analytical.ok_or_else(|| {
+    let function = info.analytical.ok_or_else(|| {
         PharmsolError::OtherError(format!(
-            "model `{}` does not declare an analytical kernel",
+            "model `{}` does not declare an analytical function",
             info.name
         ))
     })?;
@@ -2598,7 +2577,7 @@ fn build_analytical_parameter_projection(
     }
 
     AnalyticalStructureInputPlan::for_kernel(
-        kernel,
+        function,
         info.parameters.iter().map(String::as_str),
         info.derived.iter().map(String::as_str),
     )
@@ -2649,7 +2628,7 @@ fn project_analytical_parameters(
 }
 
 fn apply_analytical_kernel(
-    kernel: AnalyticalKernel,
+    function: AnalyticalKernel,
     state: &[f64],
     params: &V,
     dt: f64,
@@ -2658,7 +2637,7 @@ fn apply_analytical_kernel(
 ) -> V {
     let state = V::from_vec(state.to_vec(), NalgebraContext::new());
     let route_inputs = V::from_vec(route_inputs.to_vec(), NalgebraContext::new());
-    match kernel {
+    match function {
         AnalyticalKernel::OneCompartment => {
             crate::simulator::equation::analytical::one_compartment(
                 &state,
@@ -2773,11 +2752,10 @@ fn apply_analytical_kernel(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_analytical_parameter_projection, canonical_numeric_alias,
-        project_analytical_parameters, KernelSession, NativeAnalyticalModel, NativeCovariateInfo,
-        NativeModelInfo, NativeOdeModel, NativeOutputInfo, NativeRouteInfo, NativeSdeModel,
-        NativeStateInfo, RuntimeArtifact, RuntimeBackend, SharedNativeModel, NUMERIC_OUTPUT_PREFIX,
-        NUMERIC_ROUTE_PREFIX,
+        build_analytical_parameter_projection, project_analytical_parameters, FunctionSession,
+        NativeAnalyticalModel, NativeCovariateInfo, NativeModelInfo, NativeOdeModel,
+        NativeOutputInfo, NativeRouteInfo, NativeSdeModel, NativeStateInfo, RuntimeArtifact,
+        RuntimeBackend, SharedNativeModel,
     };
     #[cfg(any(
         feature = "dsl-jit",
@@ -2807,7 +2785,7 @@ mod tests {
         Parameters, Subject,
     };
     use diffsol::VectorHost;
-    use pharmsol_dsl::execution::KernelRole;
+    use pharmsol_dsl::execution::ModelFunctionKind;
     use pharmsol_dsl::{
         AnalyticalKernel, AnalyticalStructureInputKind, CovariateInterpolation, ModelKind,
         RouteKind,
@@ -2830,11 +2808,11 @@ mod tests {
             panic!("dummy artifact backend should not be used in tests")
         }
 
-        fn has_kernel(&self, _role: KernelRole) -> bool {
+        fn has_function(&self, _role: ModelFunctionKind) -> bool {
             false
         }
 
-        fn start_session(&self) -> Result<Box<dyn KernelSession + '_>, PharmsolError> {
+        fn start_session(&self) -> Result<Box<dyn FunctionSession + '_>, PharmsolError> {
             panic!("dummy artifact sessions should not be used in tests")
         }
     }
@@ -2881,7 +2859,7 @@ mod tests {
     fn analytical_model_info(
         parameters: &[&str],
         derived: &[&str],
-        kernel: AnalyticalKernel,
+        function: AnalyticalKernel,
     ) -> NativeModelInfo {
         NativeModelInfo {
             name: "analytical_projection".to_string(),
@@ -2889,7 +2867,7 @@ mod tests {
             parameters: parameters.iter().map(|name| (*name).to_string()).collect(),
             derived: derived.iter().map(|name| (*name).to_string()).collect(),
             covariates: Vec::new(),
-            states: (0..kernel.state_count())
+            states: (0..function.state_count())
                 .map(|offset| NativeStateInfo {
                     name: format!("state_{offset}"),
                     offset,
@@ -2897,11 +2875,11 @@ mod tests {
                 .collect(),
             routes: Vec::new(),
             outputs: Vec::new(),
-            state_len: kernel.state_count(),
+            state_len: function.state_count(),
             derived_len: derived.len(),
             output_len: 0,
             route_len: 0,
-            analytical: Some(kernel),
+            analytical: Some(function),
             particles: None,
         }
     }
@@ -3158,31 +3136,6 @@ mod tests {
             .bolus(0.0, 100.0, "oral")
             .missing_observation(0.5, "cp")
             .build()
-    }
-
-    #[test]
-    fn canonical_numeric_alias_maps_bare_numeric_labels_to_contextual_prefixes() {
-        assert_eq!(
-            canonical_numeric_alias("1", NUMERIC_ROUTE_PREFIX),
-            Some("input_1".to_string())
-        );
-        assert_eq!(
-            canonical_numeric_alias("10", NUMERIC_OUTPUT_PREFIX),
-            Some("outeq_10".to_string())
-        );
-    }
-
-    #[test]
-    fn canonical_numeric_alias_ignores_symbolic_and_prefixed_labels() {
-        assert_eq!(canonical_numeric_alias("iv", NUMERIC_ROUTE_PREFIX), None);
-        assert_eq!(
-            canonical_numeric_alias("input_1", NUMERIC_ROUTE_PREFIX),
-            None
-        );
-        assert_eq!(
-            canonical_numeric_alias("outeq_2", NUMERIC_OUTPUT_PREFIX),
-            None
-        );
     }
 
     #[test]

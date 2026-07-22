@@ -2,21 +2,21 @@
 //!
 //! Use this module when you want to work with pharmsol models as source text
 //! and stay inside the main crate for the full workflow: parse DSL source,
-//! inspect diagnostics, lower to the execution model, compile to a runtime
+//! inspect diagnostics, compile to the execution model and then to a runtime
 //! backend, load saved artifacts, and run predictions.
 //!
-//! Use the `pharmsol-dsl` crate directly only when you need the backend-neutral
-//! frontend as an engineering API. That crate owns parsing, diagnostics,
-//! semantic analysis, and lowering. This module re-exports that stable
-//! frontend surface and adds the backend-specific entrypoints that stay owned
-//! by `pharmsol`.
+//! Use the `pharmsol-dsl` crate directly only when you need the source-to-execution
+//! compiler as an engineering API. That crate owns parsing, diagnostics,
+//! analysis, and compilation to the execution model. This module re-exports
+//! that stable compiler surface and adds the backend-specific entrypoints
+//! that stay owned by `pharmsol`.
 //!
 //! Main entrypoints:
 //!
 //! - [`parse_model`], [`parse_module`], [`analyze_model`], and
-//!   [`analyze_module`] for frontend-only validation and inspection.
-//! - [`lower_typed_model`] and [`lower_typed_module`] for lowering typed models
-//!   into the execution representation used by the runtime backends.
+//!   [`analyze_module`] for source-level validation and inspection.
+//! - [`compile_analyzed_model`] and [`compile_analyzed_module`] for compiling
+//!   analyzed models into the ready-to-run form used by the runtime backends.
 //! - [`compile_module_source_to_runtime`] and [`compile_execution_model_to_runtime`]
 //!   for the one-stop compile-and-run path.
 //! - [`load_runtime_artifact`], [`load_aot_model`], and
@@ -25,8 +25,8 @@
 //!
 //! Common workflow choices:
 //!
-//! - Frontend only: parse, analyze, and lower when you need diagnostics,
-//!   authoring tools, or your own backend.
+//! - Compiler only: parse, analyze, and compile to the execution model when
+//!   you need diagnostics, authoring tools, or your own backend.
 //! - In-process execution: compile straight to [`RuntimeCompilationTarget`] and
 //!   keep everything inside the current process.
 //! - Native artifact shipping: export a native AoT artifact, then load it later
@@ -36,7 +36,7 @@
 //!
 //! Feature map:
 //!
-//! - `dsl-core`: enables this facade and the frontend re-exports from
+//! - `dsl-core`: enables this facade and the compiler re-exports from
 //!   `pharmsol-dsl`.
 //! - `dsl-jit`: enables in-process JIT compilation through
 //!   [`compile_module_source_to_runtime`] with
@@ -86,7 +86,7 @@
 //! # Ok::<(), pharmsol::dsl::RuntimeError>(())
 //! ```
 //!
-//! For a lower-level frontend pipeline without backend selection, use
+//! For just the source-to-execution compiler without backend selection, use
 //! `pharmsol-dsl`. For a complete runtime path inside the main crate, stay in
 //! [`pharmsol::dsl`](self).
 
@@ -135,7 +135,7 @@ pub use aot::{
 pub use aot::{load_aot_model, read_aot_model_info};
 #[cfg(all(not(feature = "dsl-aot"), feature = "dsl-aot-load"))]
 pub use aot::{AotError, AOT_API_VERSION};
-pub use compiled_backend_abi::{CompiledKernelAvailability, CompiledModelInfoEnvelope};
+pub use compiled_backend_abi::{CompiledFunctionAvailability, CompiledModelInfoEnvelope};
 #[cfg(feature = "dsl-jit")]
 pub use jit::{
     compile_analytical_model_to_jit, compile_execution_artifact, compile_execution_model_to_jit,
@@ -152,7 +152,7 @@ pub use model_info::{NativeCovariateInfo, NativeModelInfo, NativeOutputInfo, Nat
     )
 ))]
 pub use native::{
-    CompiledNativeModel, DenseKernelFn, NativeAnalyticalModel, NativeExecutionArtifact,
+    CompiledModelFunction, CompiledNativeModel, NativeAnalyticalModel, NativeExecutionArtifact,
     NativeOdeModel, NativeSdeModel, RuntimeBackend,
 };
 pub use pharmsol_dsl::*;

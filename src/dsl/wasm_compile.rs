@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use super::compiled_backend_abi::{
-    compiled_model_info_envelope, CompiledKernelAvailability, CompiledModelInfoEnvelope,
+    compiled_model_info_envelope, CompiledFunctionAvailability, CompiledModelInfoEnvelope,
     ALLOC_F64_BUFFER_SYMBOL, API_VERSION_SYMBOL, FREE_F64_BUFFER_SYMBOL, JS_KERNEL_EXPORTS,
     MODEL_INFO_JSON_LEN_SYMBOL, MODEL_INFO_JSON_PTR_SYMBOL,
 };
@@ -15,8 +15,8 @@ use super::wasm_direct_emitter::{
     DIRECT_WASM_BINARY_MATH_IMPORTS, DIRECT_WASM_IMPORT_MODULE, DIRECT_WASM_UNARY_MATH_IMPORTS,
 };
 use pharmsol_dsl::{
-    analyze_module, lower_typed_model, parse_module, Diagnostic, DiagnosticReport, ExecutionModel,
-    LoweringError, ParseError, SemanticError,
+    analyze_module, compile_analyzed_model, parse_module, AnalysisError, CompileError, Diagnostic,
+    DiagnosticReport, ExecutionModel, ParseError,
 };
 
 /// ABI version for compiled WASM artifacts produced by this crate.
@@ -34,7 +34,7 @@ static BROWSER_LOADER_SOURCE: OnceLock<String> = OnceLock::new();
 pub struct CompiledWasmModule {
     /// Raw compiled WASM bytes.
     pub wasm_bytes: Vec<u8>,
-    /// Serialized model metadata and kernel availability.
+    /// Serialized model metadata and function availability.
     pub metadata: CompiledModelInfoEnvelope,
     /// JavaScript loader source for browser-side instantiation.
     pub browser_loader_source: String,
@@ -173,9 +173,9 @@ pub enum WasmError {
     #[error("failed to parse DSL source: {0}")]
     Parse(#[source] ParseError),
     #[error("failed to analyze DSL source: {0}")]
-    Semantic(#[source] SemanticError),
+    Semantic(#[source] AnalysisError),
     #[error("failed to lower DSL model: {0}")]
-    Lowering(#[source] LoweringError),
+    Lowering(#[source] CompileError),
     #[error("{0}")]
     ModelSelection(String),
     #[error("failed to emit WASM module source: {0}")]
@@ -185,12 +185,12 @@ pub enum WasmError {
     #[error("WASM artifact API version mismatch: expected {expected}, found {found}")]
     ApiVersionMismatch { expected: u32, found: u32 },
     #[error(
-        "WASM kernel metadata mismatch for model `{model}`: expected {expected:?}, found {found:?}"
+        "WASM function metadata mismatch for model `{model}`: expected {expected:?}, found {found:?}"
     )]
-    KernelMetadataMismatch {
+    FunctionMetadataMismatch {
         model: String,
-        expected: CompiledKernelAvailability,
-        found: CompiledKernelAvailability,
+        expected: CompiledFunctionAvailability,
+        found: CompiledFunctionAvailability,
     },
     #[error("missing required WASM export `{0}`")]
     MissingExport(&'static str),
@@ -243,12 +243,12 @@ impl fmt::Debug for WasmError {
     }
 }
 
-/// Compile a lowered execution model to raw WASM bytes.
+/// Compile a compiled execution model to raw WASM bytes.
 pub fn compile_execution_model_to_wasm_bytes(model: &ExecutionModel) -> Result<Vec<u8>, WasmError> {
     emit_execution_model_to_wasm_bytes(model, WASM_API_VERSION)
 }
 
-/// Compile a lowered execution model to a portable WASM bundle.
+/// Compile a compiled execution model to a portable WASM bundle.
 pub fn compile_execution_model_to_wasm_module(
     model: &ExecutionModel,
 ) -> Result<CompiledWasmModule, WasmError> {
@@ -309,18 +309,18 @@ fn compile_module_source_to_wasm_module_uncached(
 ) -> Result<CompiledWasmModule, WasmError> {
     let parsed =
         parse_module(source).map_err(|error| WasmError::Parse(error.with_source(source)))?;
-    let typed =
+    let analyzed =
         analyze_module(&parsed).map_err(|error| WasmError::Semantic(error.with_source(source)))?;
 
     let model = match model_name {
-        Some(name) => typed
+        Some(name) => analyzed
             .models
             .iter()
             .find(|model| model.name == name)
             .ok_or_else(|| {
                 WasmError::ModelSelection(format!("model `{name}` not found in module"))
             })?,
-        None if typed.models.len() == 1 => &typed.models[0],
+        None if analyzed.models.len() == 1 => &analyzed.models[0],
         None => {
             return Err(WasmError::ModelSelection(
                 "module contains multiple models; pass an explicit model name".to_string(),
@@ -328,8 +328,8 @@ fn compile_module_source_to_wasm_module_uncached(
         }
     };
 
-    let execution =
-        lower_typed_model(model).map_err(|error| WasmError::Lowering(error.with_source(source)))?;
+    let execution = compile_analyzed_model(model)
+        .map_err(|error| WasmError::Lowering(error.with_source(source)))?;
     compile_execution_model_to_wasm_module(&execution)
 }
 
@@ -344,7 +344,7 @@ pub fn browser_loader_source() -> String {
 }
 
 fn build_browser_loader_source() -> String {
-    let kernel_symbol_entries = JS_KERNEL_EXPORTS
+    let function_symbol_entries = JS_KERNEL_EXPORTS
         .iter()
         .map(|(name, symbol)| format!("  {name}: \"{symbol}\""))
         .collect::<Vec<_>>()
@@ -362,7 +362,7 @@ const FREE_F64_BUFFER_SYMBOL = "{free_f64_buffer_symbol}";
 {direct_wasm_import_object}
 
 const KERNEL_SYMBOLS = Object.freeze({{
-{kernel_symbol_entries}
+{function_symbol_entries}
 }});
 
 {runtime_wrapper_source}
@@ -425,14 +425,14 @@ export function createPharmsolDslWasmModel(instance) {{
     throw new Error(`Expected pharmsol DSL WASM metadata version ${{API_VERSION}}, got ${{infoEnvelope.abi_version}}`);
   }}
 
-  const kernels = Object.fromEntries(
+  const functions = Object.fromEntries(
     Object.entries(KERNEL_SYMBOLS)
       .filter(([, symbol]) => typeof exports[symbol] === "function")
       .map(([name, symbol]) => [name, exports[symbol].bind(exports)])
   );
 
-  for (const [name, available] of Object.entries(infoEnvelope.kernels)) {{
-    if (Boolean(available) !== Object.prototype.hasOwnProperty.call(kernels, name)) {{
+  for (const [name, available] of Object.entries(infoEnvelope.functions)) {{
+    if (Boolean(available) !== Object.prototype.hasOwnProperty.call(functions, name)) {{
       throw new Error(`Kernel metadata mismatch for ${{name}}`);
     }}
   }}
@@ -441,7 +441,7 @@ export function createPharmsolDslWasmModel(instance) {{
     info: infoEnvelope.model,
     instance,
     memory,
-    kernels,
+    functions,
     createF64Buffer(length) {{
       return createBufferHandle(exports, memory, length);
     }},
@@ -457,7 +457,7 @@ export function createPharmsolDslWasmModel(instance) {{
         alloc_f64_buffer_symbol = ALLOC_F64_BUFFER_SYMBOL,
         free_f64_buffer_symbol = FREE_F64_BUFFER_SYMBOL,
         direct_wasm_import_object = direct_wasm_import_object,
-        kernel_symbol_entries = kernel_symbol_entries,
+        function_symbol_entries = function_symbol_entries,
         runtime_wrapper_source = runtime_wrapper_source,
     )
 }
@@ -506,13 +506,13 @@ function createParameterIndexResolver(parameters) {
 
 function normalizeKernelName(name) {
     if (!KNOWN_KERNELS.includes(name)) {
-        throw new Error(`Unknown kernel \`${name}\``);
+        throw new Error(`Unknown function \`${name}\``);
     }
     return name;
 }
 
 function hasKernel(model, name) {
-    return KNOWN_KERNELS.includes(name) && typeof model.kernels[name] === "function";
+    return KNOWN_KERNELS.includes(name) && typeof model.functions[name] === "function";
 }
 
 function normalizeTime(time) {
@@ -600,12 +600,12 @@ function kernelOutputTarget(handles, views, info, kernelName) {
 }
 
 /**
- * High-level reusable browser session layered on top of the raw kernel exports.
+ * High-level reusable browser session layered on top of the raw function exports.
  * Use this for repeated evaluations. It keeps stable typed-array views alive and
  * exposes a zero-copy fast path via `invokeKernelView(...)` and `evaluateOutputsView(...)`.
  *
  * If you need custom output aliasing, hand-managed buffer lifetimes, or direct
- * access to the raw kernel ABI, use `model.kernels` plus `model.createF64Buffer(...)` directly.
+ * access to the raw function ABI, use `model.functions` plus `model.createF64Buffer(...)` directly.
  */
 export function createPharmsolDslWasmSession(model) {
     const info = model.info;
@@ -668,7 +668,7 @@ export function createPharmsolDslWasmSession(model) {
     function ensureReady(kind, label) {
         if (!initialized[kind]) {
             throw new Error(
-                `Missing ${label} for model \`${info.name}\`; set it on the session or pass it in the kernel inputs.`
+                `Missing ${label} for model \`${info.name}\`; set it on the session or pass it in the function inputs.`
             );
         }
     }
@@ -702,9 +702,9 @@ export function createPharmsolDslWasmSession(model) {
     function invokeKernelInternal(kernelName, inputs = {}, options = {}) {
         assertOpen();
         const normalizedKernelName = normalizeKernelName(kernelName);
-        const kernel = model.kernels[normalizedKernelName];
-        if (typeof kernel !== "function") {
-            throw new Error(`Model \`${info.name}\` does not expose kernel \`${normalizedKernelName}\``);
+        const modelFunction = model.functions[normalizedKernelName];
+        if (typeof modelFunction !== "function") {
+            throw new Error(`Model \`${info.name}\` does not expose function \`${normalizedKernelName}\``);
         }
 
         prepareBaseInputs(inputs);
@@ -721,7 +721,7 @@ export function createPharmsolDslWasmSession(model) {
         if (target.zeroBeforeCall) {
             target.view.fill(0);
         }
-        kernel(
+        modelFunction(
             time,
             handles.states.ptr,
             handles.params.ptr,
@@ -793,7 +793,7 @@ export function createPharmsolDslWasmSession(model) {
  * `model.evaluateOutputs(...)` for simple one-off output evaluation.
  *
  * The raw low-level surface remains available on the returned object via
- * `model.kernels`, `model.memory`, `model.instance`, and `model.createF64Buffer(...)`.
+ * `model.functions`, `model.memory`, `model.instance`, and `model.createF64Buffer(...)`.
  */
 function createHighLevelPharmsolDslWasmModelApi(lowLevelModel) {
     const routeIndex = createNamedIndexResolver(lowLevelModel.info.routes, "route");
@@ -899,7 +899,7 @@ fn direct_wasm_browser_import_object_source() -> String {
 mod tests {
     use super::*;
     use pharmsol_dsl::{
-        DiagnosticPhase, DSL_LOWERING_GENERIC, DSL_PARSE_GENERIC, DSL_SEMANTIC_GENERIC,
+        DiagnosticPhase, DSL_ANALYSIS_GENERIC, DSL_COMPILE_GENERIC, DSL_PARSE_GENERIC,
     };
 
     const SIMPLE_SOURCE: &str = r#"
@@ -925,7 +925,7 @@ out(cp) = central / v ~ continuous()
         assert!(!compiled.wasm_bytes.is_empty());
         assert_eq!(compiled.metadata.model.name, "example_ode");
         assert_eq!(compiled.metadata.abi_version, WASM_API_VERSION);
-        assert!(compiled.metadata.kernels.outputs);
+        assert!(compiled.metadata.functions.outputs);
     }
 
     #[test]
@@ -1002,7 +1002,7 @@ out(cp) = central / v ~ continuous()
     }
 
     #[test]
-    fn compile_module_source_to_wasm_module_preserves_semantic_diagnostic_structure() {
+    fn compile_module_source_to_wasm_module_preserves_analysis_diagnostic_structure() {
         let source = r#"
 name = broken
 kind = ode
@@ -1017,11 +1017,11 @@ dx(central) = rate(orla)
 out(cp) = central ~ continuous()
 "#;
         let error = compile_module_source_to_wasm_module(source, None)
-            .expect_err("invalid semantic route reference should fail before wasm emission");
+            .expect_err("invalid route reference should fail analysis before wasm emission");
 
         let diagnostic = error.diagnostic().expect("wasm should expose diagnostic");
-        assert_eq!(diagnostic.phase, DiagnosticPhase::Semantic);
-        assert_eq!(diagnostic.code, DSL_SEMANTIC_GENERIC);
+        assert_eq!(diagnostic.phase, DiagnosticPhase::Analysis);
+        assert_eq!(diagnostic.code, DSL_ANALYSIS_GENERIC);
         assert!(diagnostic.message.contains("unknown route `orla`"));
         assert!(diagnostic
             .suggestions
@@ -1043,12 +1043,12 @@ out(cp) = central ~ continuous()
             .diagnostic_report("inline.dsl")
             .expect("diagnostic report");
         assert_eq!(report.diagnostics[0].code, "DSL2000");
-        assert_eq!(report.diagnostics[0].phase, "semantic");
+        assert_eq!(report.diagnostics[0].phase, "analysis");
         assert!(!report.diagnostics[0].suggestions.is_empty());
     }
 
     #[test]
-    fn compile_module_source_to_wasm_module_preserves_lowering_diagnostic_structure() {
+    fn compile_module_source_to_wasm_module_preserves_compile_diagnostic_structure() {
         let source = r#"
 name = broken
 kind = ode
@@ -1067,11 +1067,11 @@ dx(central) = transit[3] - central
 out(cp) = central ~ continuous()
 "#;
         let error = compile_module_source_to_wasm_module(source, None)
-            .expect_err("out-of-bounds route destination should fail during lowering");
+            .expect_err("out-of-bounds route destination should fail during compilation");
 
         let diagnostic = error.diagnostic().expect("wasm should expose diagnostic");
-        assert_eq!(diagnostic.phase, DiagnosticPhase::Lowering);
-        assert_eq!(diagnostic.code, DSL_LOWERING_GENERIC);
+        assert_eq!(diagnostic.phase, DiagnosticPhase::Compile);
+        assert_eq!(diagnostic.code, DSL_COMPILE_GENERIC);
         assert!(diagnostic
             .message
             .contains("route destination for `transit` indexes element 4"));
@@ -1090,7 +1090,7 @@ out(cp) = central ~ continuous()
             .diagnostic_report("inline.dsl")
             .expect("diagnostic report");
         assert_eq!(report.diagnostics[0].code, "DSL3000");
-        assert_eq!(report.diagnostics[0].phase, "lowering");
+        assert_eq!(report.diagnostics[0].phase, "compile");
         assert_eq!(report.source.name, "inline.dsl");
     }
 

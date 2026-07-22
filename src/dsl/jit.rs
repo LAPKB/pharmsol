@@ -7,20 +7,20 @@ use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{Linkage, Module};
 
-pub use super::native::DenseKernelFn;
+pub use super::native::CompiledModelFunction;
 use super::native::{
     CompiledNativeModel, NativeAnalyticalModel, NativeExecutionArtifact, NativeModelInfo,
     NativeOdeModel, NativeSdeModel,
 };
 use pharmsol_dsl::execution::{
     ExecutionBlock, ExecutionCall, ExecutionExpr, ExecutionExprKind, ExecutionForStmt,
-    ExecutionIfStmt, ExecutionKernel, ExecutionLoad, ExecutionModel, ExecutionProgram,
-    ExecutionStateRef, ExecutionStmt, ExecutionStmtKind, ExecutionTarget, ExecutionTargetKind,
-    KernelImplementation, KernelRole,
+    ExecutionIfStmt, ExecutionLoad, ExecutionModel, ExecutionProgram, ExecutionStateRef,
+    ExecutionStmt, ExecutionStmtKind, ExecutionTarget, ExecutionTargetKind, FunctionBody,
+    ModelFunction, ModelFunctionKind,
 };
 use pharmsol_dsl::{
-    ConstValue, Diagnostic, DiagnosticPhase, DiagnosticReport, MathIntrinsic, ModelKind, Span,
-    TypedBinaryOp, TypedUnaryOp, ValueType, DSL_BACKEND_GENERIC,
+    AnalyzedBinaryOp, AnalyzedUnaryOp, ConstValue, Diagnostic, DiagnosticPhase, DiagnosticReport,
+    MathFunction, ModelKind, Span, ValueType, DSL_BACKEND_GENERIC,
 };
 
 mod externs {
@@ -141,8 +141,8 @@ impl std::fmt::Display for JitCompileError {
         let span = self.diagnostic.primary_span();
         write!(
             f,
-            "{} at bytes {}..{}",
-            self.diagnostic.message, span.start, span.end
+            "error[{}]: {} (at bytes {}..{})",
+            self.diagnostic.code, self.diagnostic.message, span.start, span.end
         )
     }
 }
@@ -190,7 +190,7 @@ struct ExternRefs {
 }
 
 #[derive(Clone, Copy)]
-struct KernelArgs {
+struct FunctionArgs {
     _time: Value,
     states: Value,
     params: Value,
@@ -208,7 +208,7 @@ struct LocalBinding {
 
 struct EmitEnv<'a> {
     _ptr_ty: Type,
-    args: KernelArgs,
+    args: FunctionArgs,
     externs: ExternRefs,
     locals: &'a BTreeMap<usize, LocalBinding>,
 }
@@ -219,9 +219,9 @@ struct LoweredValue {
     ty: ValueType,
 }
 
-/// Compile one lowered execution model into a reusable JIT kernel artifact.
+/// Compile one compiled execution model into a reusable JIT function artifact.
 ///
-/// This builds the raw Cranelift-compiled kernel bundle for all roles present in
+/// This builds the raw Cranelift-compiled function bundle for all roles present in
 /// the model. Most callers should use [`compile_execution_model_to_jit`] instead.
 pub fn compile_execution_artifact(
     model: &ExecutionModel,
@@ -261,78 +261,78 @@ pub fn compile_execution_artifact(
     let mut ctx = module.make_context();
     let mut builder_context = FunctionBuilderContext::new();
 
-    let derive = compile_role_kernel(
+    let derive = compile_role_function(
         &mut module,
         &mut ctx,
         &mut builder_context,
         ptr_ty,
         externs,
         model,
-        KernelRole::Derive,
+        ModelFunctionKind::Derive,
     )?;
-    let dynamics = compile_role_kernel(
+    let dynamics = compile_role_function(
         &mut module,
         &mut ctx,
         &mut builder_context,
         ptr_ty,
         externs,
         model,
-        KernelRole::Dynamics,
+        ModelFunctionKind::Dynamics,
     )?;
-    let outputs = compile_role_kernel(
+    let outputs = compile_role_function(
         &mut module,
         &mut ctx,
         &mut builder_context,
         ptr_ty,
         externs,
         model,
-        KernelRole::Outputs,
+        ModelFunctionKind::Outputs,
     )?
-    .ok_or_else(|| JitCompileError::new("missing outputs kernel", Some(model.span)))?;
-    let init = compile_role_kernel(
+    .ok_or_else(|| JitCompileError::new("missing outputs function", Some(model.span)))?;
+    let init = compile_role_function(
         &mut module,
         &mut ctx,
         &mut builder_context,
         ptr_ty,
         externs,
         model,
-        KernelRole::Init,
+        ModelFunctionKind::Init,
     )?;
-    let drift = compile_role_kernel(
+    let drift = compile_role_function(
         &mut module,
         &mut ctx,
         &mut builder_context,
         ptr_ty,
         externs,
         model,
-        KernelRole::Drift,
+        ModelFunctionKind::Drift,
     )?;
-    let diffusion = compile_role_kernel(
+    let diffusion = compile_role_function(
         &mut module,
         &mut ctx,
         &mut builder_context,
         ptr_ty,
         externs,
         model,
-        KernelRole::Diffusion,
+        ModelFunctionKind::Diffusion,
     )?;
-    let route_lag = compile_role_kernel(
+    let route_lag = compile_role_function(
         &mut module,
         &mut ctx,
         &mut builder_context,
         ptr_ty,
         externs,
         model,
-        KernelRole::RouteLag,
+        ModelFunctionKind::RouteLag,
     )?;
-    let route_bioavailability = compile_role_kernel(
+    let route_bioavailability = compile_role_function(
         &mut module,
         &mut ctx,
         &mut builder_context,
         ptr_ty,
         externs,
         model,
-        KernelRole::RouteBioavailability,
+        ModelFunctionKind::RouteBioavailability,
     )?;
 
     module
@@ -389,52 +389,52 @@ fn declare_externs(module: &mut JITModule, span: Span) -> Result<ExternIds, JitC
     })
 }
 
-fn compile_role_kernel(
+fn compile_role_function(
     module: &mut JITModule,
     ctx: &mut cranelift::codegen::Context,
     builder_context: &mut FunctionBuilderContext,
     ptr_ty: Type,
     externs: ExternIds,
     model: &ExecutionModel,
-    role: KernelRole,
+    role: ModelFunctionKind,
 ) -> Result<Option<cranelift_module::FuncId>, JitCompileError> {
-    let Some(kernel) = model.kernel(role) else {
+    let Some(function) = model.function(role) else {
         return Ok(None);
     };
-    let KernelImplementation::Statements(program) = &kernel.implementation else {
+    let FunctionBody::Statements(program) = &function.body else {
         return Ok(None);
     };
 
-    let function_name = format!("{}_{}", model.name, kernel_role_name(role));
-    let function_id = emit_statement_kernel(
+    let function_name = format!("{}_{}", model.name, function_kind_name(role));
+    let function_id = emit_statement_function(
         module,
         ctx,
         builder_context,
         ptr_ty,
         externs,
         &function_name,
-        kernel,
+        function,
         program,
     )?;
     Ok(Some(function_id))
 }
 
 #[allow(clippy::too_many_arguments)]
-fn emit_statement_kernel(
+fn emit_statement_function(
     module: &mut JITModule,
     ctx: &mut cranelift::codegen::Context,
     builder_context: &mut FunctionBuilderContext,
     ptr_ty: Type,
     externs: ExternIds,
     function_name: &str,
-    kernel: &ExecutionKernel,
+    function: &ModelFunction,
     program: &ExecutionProgram,
 ) -> Result<cranelift_module::FuncId, JitCompileError> {
-    ctx.func.signature = dense_kernel_signature(module);
+    ctx.func.signature = dense_function_signature(module);
 
     let function_id = module
         .declare_function(function_name, Linkage::Local, &ctx.func.signature)
-        .map_err(|error| JitCompileError::new(error.to_string(), Some(kernel.span)))?;
+        .map_err(|error| JitCompileError::new(error.to_string(), Some(function.span)))?;
 
     let mut builder = FunctionBuilder::new(&mut ctx.func, builder_context);
     let entry = builder.create_block();
@@ -443,7 +443,7 @@ fn emit_statement_kernel(
     builder.seal_block(entry);
 
     let params = builder.block_params(entry);
-    let args = KernelArgs {
+    let args = FunctionArgs {
         _time: params[0],
         states: params[1],
         params: params[2],
@@ -495,12 +495,12 @@ fn emit_statement_kernel(
 
     module
         .define_function(function_id, ctx)
-        .map_err(|error| JitCompileError::new(error.to_string(), Some(kernel.span)))?;
+        .map_err(|error| JitCompileError::new(error.to_string(), Some(function.span)))?;
     module.clear_context(ctx);
     Ok(function_id)
 }
 
-fn dense_kernel_signature(module: &mut JITModule) -> cranelift::codegen::ir::Signature {
+fn dense_function_signature(module: &mut JITModule) -> cranelift::codegen::ir::Signature {
     let mut signature = module.make_signature();
     let ptr_ty = module.target_config().pointer_type();
     signature.params.push(AbiParam::new(types::F64));
@@ -513,21 +513,21 @@ fn dense_kernel_signature(module: &mut JITModule) -> cranelift::codegen::ir::Sig
 fn function_pointer(
     module: &mut JITModule,
     function_id: cranelift_module::FuncId,
-) -> DenseKernelFn {
+) -> CompiledModelFunction {
     unsafe { mem::transmute(module.get_finalized_function(function_id)) }
 }
 
-fn kernel_role_name(role: KernelRole) -> &'static str {
+fn function_kind_name(role: ModelFunctionKind) -> &'static str {
     match role {
-        KernelRole::Derive => "derive",
-        KernelRole::Dynamics => "dynamics",
-        KernelRole::Outputs => "outputs",
-        KernelRole::Init => "init",
-        KernelRole::Drift => "drift",
-        KernelRole::Diffusion => "diffusion",
-        KernelRole::RouteLag => "route_lag",
-        KernelRole::RouteBioavailability => "route_bioavailability",
-        KernelRole::Analytical => "analytical",
+        ModelFunctionKind::Derive => "derive",
+        ModelFunctionKind::Dynamics => "dynamics",
+        ModelFunctionKind::Outputs => "outputs",
+        ModelFunctionKind::Init => "init",
+        ModelFunctionKind::Drift => "drift",
+        ModelFunctionKind::Diffusion => "diffusion",
+        ModelFunctionKind::RouteLag => "route_lag",
+        ModelFunctionKind::RouteBioavailability => "route_bioavailability",
+        ModelFunctionKind::Analytical => "analytical",
     }
 }
 
@@ -703,11 +703,11 @@ fn lower_expr(
             lower_binary(builder, env, *op, lhs, rhs, expr.ty, expr.span)
         }
         ExecutionExprKind::Call { callee, args } => {
-            let lowered = args
+            let compiled = args
                 .iter()
                 .map(|arg| lower_expr(builder, env, arg))
                 .collect::<Result<Vec<_>, _>>()?;
-            lower_call(builder, env, callee, &lowered, expr.ty, expr.span)
+            lower_call(builder, env, callee, &compiled, expr.ty, expr.span)
         }
     }
 }
@@ -758,16 +758,16 @@ fn lower_load(
 fn lower_unary(
     builder: &mut FunctionBuilder<'_>,
     _env: &EmitEnv<'_>,
-    op: TypedUnaryOp,
+    op: AnalyzedUnaryOp,
     value: LoweredValue,
     target_ty: ValueType,
     span: Span,
 ) -> Result<LoweredValue, JitCompileError> {
     match op {
-        TypedUnaryOp::Plus => cast_value(builder, value, target_ty, span),
-        TypedUnaryOp::Minus => {
+        AnalyzedUnaryOp::Plus => cast_value(builder, value, target_ty, span),
+        AnalyzedUnaryOp::Minus => {
             let value = cast_value(builder, value, target_ty, span)?;
-            let lowered = match target_ty {
+            let compiled = match target_ty {
                 ValueType::Real => builder.ins().fneg(value.value),
                 ValueType::Int => builder.ins().ineg(value.value),
                 ValueType::Bool => {
@@ -778,17 +778,17 @@ fn lower_unary(
                 }
             };
             Ok(LoweredValue {
-                value: lowered,
+                value: compiled,
                 ty: target_ty,
             })
         }
-        TypedUnaryOp::Not => {
+        AnalyzedUnaryOp::Not => {
             let condition = as_bool(builder, value, span)?;
             let condition_i64 = bool_to_i64(builder, condition);
             let is_zero = builder.ins().icmp_imm(IntCC::Equal, condition_i64, 0);
-            let lowered = bool_to_i64(builder, is_zero);
+            let compiled = bool_to_i64(builder, is_zero);
             Ok(LoweredValue {
-                value: lowered,
+                value: compiled,
                 ty: ValueType::Bool,
             })
         }
@@ -798,14 +798,14 @@ fn lower_unary(
 fn lower_binary(
     builder: &mut FunctionBuilder<'_>,
     env: &EmitEnv<'_>,
-    op: TypedBinaryOp,
+    op: AnalyzedBinaryOp,
     lhs: LoweredValue,
     rhs: LoweredValue,
     target_ty: ValueType,
     span: Span,
 ) -> Result<LoweredValue, JitCompileError> {
     match op {
-        TypedBinaryOp::Or => {
+        AnalyzedBinaryOp::Or => {
             let lhs = as_i64_bool(builder, lhs, span)?;
             let rhs = as_i64_bool(builder, rhs, span)?;
             Ok(LoweredValue {
@@ -813,7 +813,7 @@ fn lower_binary(
                 ty: ValueType::Bool,
             })
         }
-        TypedBinaryOp::And => {
+        AnalyzedBinaryOp::And => {
             let lhs = as_i64_bool(builder, lhs, span)?;
             let rhs = as_i64_bool(builder, rhs, span)?;
             Ok(LoweredValue {
@@ -821,30 +821,39 @@ fn lower_binary(
                 ty: ValueType::Bool,
             })
         }
-        TypedBinaryOp::Eq | TypedBinaryOp::NotEq => {
+        AnalyzedBinaryOp::Eq | AnalyzedBinaryOp::NotEq => {
             let value = lower_equality(builder, lhs, rhs, target_ty, op, span)?;
             Ok(LoweredValue {
                 value,
                 ty: ValueType::Bool,
             })
         }
-        TypedBinaryOp::Lt | TypedBinaryOp::LtEq | TypedBinaryOp::Gt | TypedBinaryOp::GtEq => {
+        AnalyzedBinaryOp::Lt
+        | AnalyzedBinaryOp::LtEq
+        | AnalyzedBinaryOp::Gt
+        | AnalyzedBinaryOp::GtEq => {
             let value = lower_comparison(builder, lhs, rhs, span, op)?;
             Ok(LoweredValue {
                 value,
                 ty: ValueType::Bool,
             })
         }
-        TypedBinaryOp::Add | TypedBinaryOp::Sub | TypedBinaryOp::Mul => {
+        AnalyzedBinaryOp::Add | AnalyzedBinaryOp::Sub | AnalyzedBinaryOp::Mul => {
             let lhs = cast_value(builder, lhs, target_ty, span)?;
             let rhs = cast_value(builder, rhs, target_ty, span)?;
             let value = match (op, target_ty) {
-                (TypedBinaryOp::Add, ValueType::Real) => builder.ins().fadd(lhs.value, rhs.value),
-                (TypedBinaryOp::Sub, ValueType::Real) => builder.ins().fsub(lhs.value, rhs.value),
-                (TypedBinaryOp::Mul, ValueType::Real) => builder.ins().fmul(lhs.value, rhs.value),
-                (TypedBinaryOp::Add, ValueType::Int) => builder.ins().iadd(lhs.value, rhs.value),
-                (TypedBinaryOp::Sub, ValueType::Int) => builder.ins().isub(lhs.value, rhs.value),
-                (TypedBinaryOp::Mul, ValueType::Int) => builder.ins().imul(lhs.value, rhs.value),
+                (AnalyzedBinaryOp::Add, ValueType::Real) => {
+                    builder.ins().fadd(lhs.value, rhs.value)
+                }
+                (AnalyzedBinaryOp::Sub, ValueType::Real) => {
+                    builder.ins().fsub(lhs.value, rhs.value)
+                }
+                (AnalyzedBinaryOp::Mul, ValueType::Real) => {
+                    builder.ins().fmul(lhs.value, rhs.value)
+                }
+                (AnalyzedBinaryOp::Add, ValueType::Int) => builder.ins().iadd(lhs.value, rhs.value),
+                (AnalyzedBinaryOp::Sub, ValueType::Int) => builder.ins().isub(lhs.value, rhs.value),
+                (AnalyzedBinaryOp::Mul, ValueType::Int) => builder.ins().imul(lhs.value, rhs.value),
                 _ => {
                     return Err(JitCompileError::new(
                         "invalid arithmetic operand types",
@@ -857,7 +866,7 @@ fn lower_binary(
                 ty: target_ty,
             })
         }
-        TypedBinaryOp::Div => {
+        AnalyzedBinaryOp::Div => {
             let lhs = cast_value(builder, lhs, ValueType::Real, span)?;
             let rhs = cast_value(builder, rhs, ValueType::Real, span)?;
             Ok(LoweredValue {
@@ -865,10 +874,10 @@ fn lower_binary(
                 ty: ValueType::Real,
             })
         }
-        TypedBinaryOp::Pow => lower_call(
+        AnalyzedBinaryOp::Pow => lower_call(
             builder,
             env,
-            &ExecutionCall::Math(MathIntrinsic::Pow),
+            &ExecutionCall::Math(MathFunction::Pow),
             &[lhs, rhs],
             target_ty,
             span,
@@ -894,13 +903,13 @@ fn lower_call(
 fn lower_math_call(
     builder: &mut FunctionBuilder<'_>,
     env: &EmitEnv<'_>,
-    intrinsic: MathIntrinsic,
+    intrinsic: MathFunction,
     args: &[LoweredValue],
     target_ty: ValueType,
     span: Span,
 ) -> Result<LoweredValue, JitCompileError> {
     match intrinsic {
-        MathIntrinsic::Max | MathIntrinsic::Min => {
+        MathFunction::Max | MathFunction::Min => {
             if args.len() != 2 {
                 return Err(JitCompileError::new(
                     format!("{:?} expects 2 arguments", intrinsic),
@@ -912,7 +921,7 @@ fn lower_math_call(
             let value = match target_ty {
                 ValueType::Real => {
                     let compare = builder.ins().fcmp(
-                        if intrinsic == MathIntrinsic::Max {
+                        if intrinsic == MathFunction::Max {
                             FloatCC::GreaterThan
                         } else {
                             FloatCC::LessThan
@@ -924,7 +933,7 @@ fn lower_math_call(
                 }
                 ValueType::Int => {
                     let compare = builder.ins().icmp(
-                        if intrinsic == MathIntrinsic::Max {
+                        if intrinsic == MathFunction::Max {
                             IntCC::SignedGreaterThan
                         } else {
                             IntCC::SignedLessThan
@@ -946,7 +955,7 @@ fn lower_math_call(
                 ty: target_ty,
             })
         }
-        MathIntrinsic::Abs if target_ty == ValueType::Int => {
+        MathFunction::Abs if target_ty == ValueType::Int => {
             let value = cast_value(builder, args[0], ValueType::Int, span)?;
             let is_negative = builder
                 .ins()
@@ -959,20 +968,20 @@ fn lower_math_call(
         }
         _ => {
             let function = match intrinsic {
-                MathIntrinsic::Abs => env.externs.abs,
-                MathIntrinsic::Ceil => env.externs.ceil,
-                MathIntrinsic::Exp => env.externs.exp,
-                MathIntrinsic::Floor => env.externs.floor,
-                MathIntrinsic::Ln | MathIntrinsic::Log => env.externs.ln,
-                MathIntrinsic::Log10 => env.externs.log10,
-                MathIntrinsic::Log2 => env.externs.log2,
-                MathIntrinsic::Pow => env.externs.pow,
-                MathIntrinsic::Round => env.externs.round,
-                MathIntrinsic::Sin => env.externs.sin,
-                MathIntrinsic::Cos => env.externs.cos,
-                MathIntrinsic::Tan => env.externs.tan,
-                MathIntrinsic::Sqrt => env.externs.sqrt,
-                MathIntrinsic::Max | MathIntrinsic::Min => unreachable!(),
+                MathFunction::Abs => env.externs.abs,
+                MathFunction::Ceil => env.externs.ceil,
+                MathFunction::Exp => env.externs.exp,
+                MathFunction::Floor => env.externs.floor,
+                MathFunction::Ln | MathFunction::Log => env.externs.ln,
+                MathFunction::Log10 => env.externs.log10,
+                MathFunction::Log2 => env.externs.log2,
+                MathFunction::Pow => env.externs.pow,
+                MathFunction::Round => env.externs.round,
+                MathFunction::Sin => env.externs.sin,
+                MathFunction::Cos => env.externs.cos,
+                MathFunction::Tan => env.externs.tan,
+                MathFunction::Sqrt => env.externs.sqrt,
+                MathFunction::Max | MathFunction::Min => unreachable!(),
             };
 
             let mut call_args = Vec::with_capacity(args.len());
@@ -1000,12 +1009,12 @@ fn lower_equality(
     lhs: LoweredValue,
     rhs: LoweredValue,
     target_ty: ValueType,
-    op: TypedBinaryOp,
+    op: AnalyzedBinaryOp,
     span: Span,
 ) -> Result<Value, JitCompileError> {
     let predicate = match op {
-        TypedBinaryOp::Eq => true,
-        TypedBinaryOp::NotEq => false,
+        AnalyzedBinaryOp::Eq => true,
+        AnalyzedBinaryOp::NotEq => false,
         _ => unreachable!(),
     };
 
@@ -1046,17 +1055,17 @@ fn lower_comparison(
     lhs: LoweredValue,
     rhs: LoweredValue,
     span: Span,
-    op: TypedBinaryOp,
+    op: AnalyzedBinaryOp,
 ) -> Result<Value, JitCompileError> {
     let comparison = if lhs.ty == ValueType::Real || rhs.ty == ValueType::Real {
         let lhs = cast_value(builder, lhs, ValueType::Real, span)?;
         let rhs = cast_value(builder, rhs, ValueType::Real, span)?;
         builder.ins().fcmp(
             match op {
-                TypedBinaryOp::Lt => FloatCC::LessThan,
-                TypedBinaryOp::LtEq => FloatCC::LessThanOrEqual,
-                TypedBinaryOp::Gt => FloatCC::GreaterThan,
-                TypedBinaryOp::GtEq => FloatCC::GreaterThanOrEqual,
+                AnalyzedBinaryOp::Lt => FloatCC::LessThan,
+                AnalyzedBinaryOp::LtEq => FloatCC::LessThanOrEqual,
+                AnalyzedBinaryOp::Gt => FloatCC::GreaterThan,
+                AnalyzedBinaryOp::GtEq => FloatCC::GreaterThanOrEqual,
                 _ => unreachable!(),
             },
             lhs.value,
@@ -1067,10 +1076,10 @@ fn lower_comparison(
         let rhs = cast_value(builder, rhs, ValueType::Int, span)?;
         builder.ins().icmp(
             match op {
-                TypedBinaryOp::Lt => IntCC::SignedLessThan,
-                TypedBinaryOp::LtEq => IntCC::SignedLessThanOrEqual,
-                TypedBinaryOp::Gt => IntCC::SignedGreaterThan,
-                TypedBinaryOp::GtEq => IntCC::SignedGreaterThanOrEqual,
+                AnalyzedBinaryOp::Lt => IntCC::SignedLessThan,
+                AnalyzedBinaryOp::LtEq => IntCC::SignedLessThanOrEqual,
+                AnalyzedBinaryOp::Gt => IntCC::SignedGreaterThan,
+                AnalyzedBinaryOp::GtEq => IntCC::SignedGreaterThanOrEqual,
                 _ => unreachable!(),
             },
             lhs.value,
@@ -1090,7 +1099,7 @@ fn cast_value(
         return Ok(value);
     }
 
-    let lowered = match (value.ty, target_ty) {
+    let compiled = match (value.ty, target_ty) {
         (ValueType::Int, ValueType::Real) => builder.ins().fcvt_from_sint(types::F64, value.value),
         (ValueType::Bool, ValueType::Real) => {
             let condition = as_bool(builder, value, span)?;
@@ -1113,7 +1122,7 @@ fn cast_value(
     };
 
     Ok(LoweredValue {
-        value: lowered,
+        value: compiled,
         ty: target_ty,
     })
 }
@@ -1237,7 +1246,7 @@ fn state_address(
 ///
 /// ```rust,no_run
 /// use pharmsol::dsl::{
-///     analyze_model, compile_execution_model_to_jit, lower_typed_model, parse_model,
+///     analyze_model, compile_execution_model_to_jit, compile_analyzed_model, parse_model,
 /// };
 ///
 /// let parsed = parse_model(
@@ -1255,8 +1264,8 @@ fn state_address(
 /// }
 /// "#,
 /// )?;
-/// let typed = analyze_model(&parsed)?;
-/// let execution = lower_typed_model(&typed)?;
+/// let analyzed = analyze_model(&parsed)?;
+/// let execution = compile_analyzed_model(&analyzed)?;
 /// let compiled = compile_execution_model_to_jit(&execution)?;
 /// # let _ = compiled;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -1339,18 +1348,18 @@ mod tests {
     use crate::{equation, Parameters, Subject, SubjectBuilderExt, ODE, SDE};
     use approx::assert_relative_eq;
     use diffsol::Vector;
-    use pharmsol_dsl::execution::DenseBufferLayout;
+    use pharmsol_dsl::execution::BufferLayout;
 
     fn load_corpus_model(name: &str) -> ExecutionModel {
         let source = STRUCTURED_BLOCK_CORPUS;
         let parsed = pharmsol_dsl::parse_module(source).expect("parse corpus module");
-        let typed = pharmsol_dsl::analyze_module(&parsed).expect("analyze corpus module");
-        let model = typed
+        let analyzed = pharmsol_dsl::analyze_module(&parsed).expect("analyze corpus module");
+        let model = analyzed
             .models
             .iter()
             .find(|model| model.name == name)
             .expect("model present in corpus module");
-        pharmsol_dsl::lower_typed_model(model).expect("lower corpus model")
+        pharmsol_dsl::compile_analyzed_model(model).expect("lower corpus model")
     }
 
     #[test]
@@ -1399,8 +1408,9 @@ dx(central) = ka * depot - ke * central
 out(cp) = central / v ~ continuous()
 "#;
         let parsed = pharmsol_dsl::parse_model(source).expect("authoring model parses");
-        let typed = pharmsol_dsl::analyze_model(&parsed).expect("authoring model analyzes");
-        let model = pharmsol_dsl::lower_typed_model(&typed).expect("authoring model lowers");
+        let analyzed = pharmsol_dsl::analyze_model(&parsed).expect("authoring model analyzes");
+        let model =
+            pharmsol_dsl::compile_analyzed_model(&analyzed).expect("authoring model lowers");
         let jit = compile_ode_model_to_jit(&model)
             .expect("compile jit ode model")
             .with_solver(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45));
@@ -1497,7 +1507,7 @@ out(cp) = central / v ~ continuous()
         }
     }
 
-    fn slot_index(layout: &DenseBufferLayout, name: &str) -> usize {
+    fn slot_index(layout: &BufferLayout, name: &str) -> usize {
         layout
             .slots
             .iter()
@@ -1507,19 +1517,19 @@ out(cp) = central / v ~ continuous()
     }
 
     #[test]
-    fn compiles_dense_execution_kernels_for_ode_models() {
+    fn compiles_dense_execution_functions_for_ode_models() {
         let model = load_corpus_model("one_cmt_oral_iv");
         let artifact = compile_execution_artifact(&model).expect("compile execution artifact");
 
-        let mut derived = vec![0.0; model.abi.derived_buffer.len];
-        let mut dx = vec![0.0; model.abi.state_buffer.len];
-        let mut out = vec![0.0; model.abi.output_buffer.len];
+        let mut derived = vec![0.0; model.layout.derived_buffer.len];
+        let mut dx = vec![0.0; model.layout.state_buffer.len];
+        let mut out = vec![0.0; model.layout.output_buffer.len];
         let states = [100.0, 0.0];
         let params = [1.0, 5.0, 50.0, 1.5, 0.8];
         let covariates = [70.0];
         let routes = [0.0, 0.0];
 
-        let derive = artifact.derive.expect("derive kernel present");
+        let derive = artifact.derive.expect("derive function present");
         unsafe {
             derive(
                 0.0,
@@ -1530,7 +1540,7 @@ out(cp) = central / v ~ continuous()
                 derived.as_ptr(),
                 derived.as_mut_ptr(),
             );
-            artifact.dynamics.expect("dynamics kernel present")(
+            artifact.dynamics.expect("dynamics function present")(
                 0.0,
                 states.as_ptr(),
                 params.as_ptr(),
@@ -1550,16 +1560,16 @@ out(cp) = central / v ~ continuous()
             );
         }
 
-        let derived_layout = &model.abi.derived_buffer;
+        let derived_layout = &model.layout.derived_buffer;
         assert!((derived[slot_index(derived_layout, "cl_i")] - 5.0).abs() < 1e-12);
         assert!((derived[slot_index(derived_layout, "v_i")] - 50.0).abs() < 1e-12);
         assert!((derived[slot_index(derived_layout, "ke")] - 0.1).abs() < 1e-12);
 
-        let state_layout = &model.abi.state_buffer;
+        let state_layout = &model.layout.state_buffer;
         assert!((dx[slot_index(state_layout, "depot")] + 100.0).abs() < 1e-12);
         assert!((dx[slot_index(state_layout, "central")] - 100.0).abs() < 1e-12);
 
-        let output_layout = &model.abi.output_buffer;
+        let output_layout = &model.layout.output_buffer;
         assert_eq!(out[slot_index(output_layout, "cp")], 0.0);
     }
 
@@ -1787,8 +1797,9 @@ model analytical_mixed {
 }
 "#;
         let parsed = pharmsol_dsl::parse_model(source).expect("analytical model parses");
-        let typed = pharmsol_dsl::analyze_model(&parsed).expect("analytical model analyzes");
-        let model = pharmsol_dsl::lower_typed_model(&typed).expect("analytical model lowers");
+        let analyzed = pharmsol_dsl::analyze_model(&parsed).expect("analytical model analyzes");
+        let model =
+            pharmsol_dsl::compile_analyzed_model(&analyzed).expect("analytical model lowers");
         let jit = compile_analytical_model_to_jit(&model).expect("compile jit analytical model");
 
         assert_eq!(jit.info().derived, vec!["ke".to_string()]);
