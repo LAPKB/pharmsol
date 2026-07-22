@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.3](https://github.com/LAPKB/pharmsol/compare/pharmsol-dsl-v0.28.2...pharmsol-dsl-v0.28.3) - 2026-07-22
+
+### Added
+
+- Rename DSL types and add additional safeguards ([#302](https://github.com/LAPKB/pharmsol/pull/302))
+
 ## [0.28.0](https://github.com/LAPKB/pharmsol/compare/pharmsol-dsl-v0.27.1...pharmsol-dsl-v0.27.2) - 2026-07-07
 
 ### Fixed
