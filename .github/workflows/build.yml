@@ -14,6 +14,9 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   PHARMSOL_LOCAL_EXA: "1"
+  # Incremental compilation only bloats the cache in CI (each build is a fresh
+  # checkout), so disable it to shrink target/ and speed up cold builds.
+  CARGO_INCREMENTAL: "0"
 
 jobs:
   test:
@@ -58,33 +61,42 @@ jobs:
           cache-dependency-path: tests/browser-e2e/package-lock.json
 
       - name: Setup cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Cache is only written from the default branch so the shared 10 GB
+          # budget stays lean and stable; PRs still restore from it. rust-cache
+          # caches only dependency artifacts (not the workspace crates), keys on
+          # the rustc version, and falls back to the previous Cargo.lock, so a
+          # routine version bump no longer forces a full cold rebuild.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Cache Playwright browsers
+        if: ${{ matrix.os == 'ubuntu-latest' }}
         uses: actions/cache@v6
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('tests/browser-e2e/package-lock.json') }}
 
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-      - name: Build (no features)
-        run: cargo build --verbose --no-default-features
+      # Compile-only check for the no-default-features build (nothing else
+      # exercises this configuration). `cargo check` skips codegen, so it is
+      # much faster than the previous `cargo build` while still catching
+      # compile errors.
+      - name: Check (no default features)
+        run: cargo check --no-default-features
 
-      - name: Build (default features)
-        run: cargo build --verbose
-
-      - name: Build (all features)
-        run: cargo build --verbose --all-features
-
+      # `cargo test` builds every configuration it runs (the non-test library is
+      # compiled for doc tests too), so the standalone `cargo build` steps that
+      # used to precede these were pure duplicate compilation and were removed.
       - name: Run tests (default features)
-        run: cargo test --verbose
+        run: cargo test
 
       - name: Run tests (all features)
         env:
           PHARMSOL_NATIVE_AOT_SMOKE_TARGET: ${{ matrix.native_aot_smoke_target }}
-        run: cargo test --verbose --all-features
+        run: cargo test --all-features
 
       - name: Run doc tests
         run: cargo test --doc --all-features

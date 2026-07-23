@@ -706,7 +706,7 @@ mod tests {
             .build()
     }
 
-    fn explicit_route_kernel(
+    fn explicit_route_function(
         _x: &V,
         _p: &V,
         _t: f64,
@@ -718,7 +718,7 @@ mod tests {
         dx[0] = b[0] + rateiv[0];
     }
 
-    fn injected_route_kernel(
+    fn injected_route_function(
         _x: &V,
         _p: &V,
         _t: f64,
@@ -744,7 +744,7 @@ mod tests {
         y[0] = x[0];
     }
 
-    fn counting_kernel(
+    fn counting_function(
         _x: &V,
         _p: &V,
         _t: f64,
@@ -830,7 +830,7 @@ mod tests {
     #[test]
     fn handwritten_ode_defaults_to_explicit_route_vectors() {
         let ode = ODE::new(
-            explicit_route_kernel,
+            explicit_route_function,
             zero_lag,
             unit_fa,
             zero_init,
@@ -873,7 +873,7 @@ mod tests {
     #[test]
     fn handwritten_ode_metadata_input_policy_is_descriptive_only() {
         let ode = ODE::new(
-            injected_route_kernel,
+            injected_route_function,
             zero_lag,
             unit_fa,
             zero_init,
@@ -911,7 +911,7 @@ mod tests {
     #[test]
     fn handwritten_ode_metadata_resolves_raw_numeric_aliases_against_canonical_labels() {
         let ode = ODE::new(
-            explicit_route_kernel,
+            explicit_route_function,
             zero_lag,
             unit_fa,
             zero_init,
@@ -970,10 +970,16 @@ mod tests {
     fn handwritten_ode_estimate_predictions_uses_prediction_cache() {
         PREDICTION_CACHE_DIFFEQ_CALLS.store(0, Ordering::SeqCst);
 
-        let ode = ODE::new(counting_kernel, zero_lag, unit_fa, zero_init, state_output)
-            .with_nstates(1)
-            .with_ndrugs(1)
-            .with_nout(1);
+        let ode = ODE::new(
+            counting_function,
+            zero_lag,
+            unit_fa,
+            zero_init,
+            state_output,
+        )
+        .with_nstates(1)
+        .with_ndrugs(1)
+        .with_nout(1);
         let subject = Subject::builder("cached_predictions")
             .bolus(0.0, 100.0, 0)
             .observation(1.0, 0.0, 0)

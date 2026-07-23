@@ -1,4 +1,4 @@
-use pharmsol_dsl::{analyze_model, lower_typed_model, parse_model, parse_module};
+use pharmsol_dsl::{analyze_model, compile_analyzed_model, parse_model, parse_module};
 
 #[test]
 fn output_annotation_is_optional() {
@@ -24,7 +24,7 @@ out(cp) = central
 }
 
 #[test]
-fn dx_and_ddt_lower_equivalently() {
+fn dx_and_ddt_compile_equivalently() {
     let dx_src = r#"
 name = derivative_alias
 kind = ode
@@ -162,7 +162,7 @@ out(cp) = central ~ continous()
 }
 
 #[test]
-fn mixed_named_and_prefixed_numeric_output_labels_lower_and_round_trip() {
+fn mixed_named_and_prefixed_numeric_output_labels_compile_and_round_trip() {
     let src = r#"
 name = mixed_output_labels
 kind = ode
@@ -181,11 +181,11 @@ out(outeq_1) = 3 * central / v
         .models
         .first()
         .expect("authoring DSL should produce one model");
-    let typed = analyze_model(&model).expect("mixed output labels should analyze");
-    let lowered = lower_typed_model(&typed).expect("mixed output labels should lower");
+    let analyzed = analyze_model(model).expect("mixed output labels should analyze");
+    let compiled = compile_analyzed_model(&analyzed).expect("mixed output labels should compile");
 
     assert_eq!(
-        lowered
+        compiled
             .metadata
             .outputs
             .iter()
@@ -194,7 +194,7 @@ out(outeq_1) = 3 * central / v
         vec!["cp", "outeq_0", "outeq_1"]
     );
     assert_eq!(
-        lowered
+        compiled
             .metadata
             .outputs
             .iter()
@@ -210,7 +210,7 @@ out(outeq_1) = 3 * central / v
 }
 
 #[test]
-fn prefixed_numeric_route_and_output_labels_lower_and_round_trip() {
+fn prefixed_numeric_route_and_output_labels_compile_and_round_trip() {
     let src = r#"
 name = prefixed_numeric_route_output_labels
 kind = ode
@@ -227,12 +227,13 @@ out(outeq_1) = central / v
         .models
         .first()
         .expect("authoring DSL should produce one model");
-    let typed = analyze_model(model).expect("prefixed numeric route/output labels should analyze");
-    let lowered =
-        lower_typed_model(&typed).expect("prefixed numeric route/output labels should lower");
+    let analyzed =
+        analyze_model(model).expect("prefixed numeric route/output labels should analyze");
+    let compiled = compile_analyzed_model(&analyzed)
+        .expect("prefixed numeric route/output labels should compile");
 
     assert_eq!(
-        lowered
+        compiled
             .metadata
             .routes
             .iter()
@@ -241,7 +242,7 @@ out(outeq_1) = central / v
         vec!["input_1"]
     );
     assert_eq!(
-        lowered
+        compiled
             .metadata
             .outputs
             .iter()

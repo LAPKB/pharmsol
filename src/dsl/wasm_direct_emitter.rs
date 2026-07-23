@@ -7,18 +7,20 @@ use wasm_encoder::{
 };
 
 use super::compiled_backend_abi::{
-    compiled_kernel_symbol, encode_compiled_model_info, ALLOC_F64_BUFFER_SYMBOL,
+    compiled_function_symbol, encode_compiled_model_info, ALLOC_F64_BUFFER_SYMBOL,
     API_VERSION_SYMBOL, FREE_F64_BUFFER_SYMBOL, MODEL_INFO_JSON_LEN_SYMBOL,
     MODEL_INFO_JSON_PTR_SYMBOL,
 };
 use crate::dsl::WasmError;
 use pharmsol_dsl::execution::{
     ExecutionAssignStmt, ExecutionCall, ExecutionExpr, ExecutionExprKind, ExecutionForStmt,
-    ExecutionIfStmt, ExecutionKernel, ExecutionLoad, ExecutionModel, ExecutionProgram,
-    ExecutionStateRef, ExecutionStmt, ExecutionStmtKind, ExecutionTargetKind, KernelImplementation,
-    KernelRole,
+    ExecutionIfStmt, ExecutionLoad, ExecutionModel, ExecutionProgram, ExecutionStateRef,
+    ExecutionStmt, ExecutionStmtKind, ExecutionTargetKind, FunctionBody, ModelFunction,
+    ModelFunctionKind,
 };
-use pharmsol_dsl::{ConstValue, MathIntrinsic, ModelKind, TypedBinaryOp, TypedUnaryOp, ValueType};
+use pharmsol_dsl::{
+    AnalyzedBinaryOp, AnalyzedUnaryOp, ConstValue, MathFunction, ModelKind, ValueType,
+};
 
 const PAGE_SIZE: usize = 65_536;
 const ABI_PTR_ALIGNMENT: usize = std::mem::size_of::<f64>();
@@ -27,7 +29,7 @@ const MODEL_INFO_PTR: i32 = 0;
 const API_VERSION_TYPE: u32 = 0;
 const ALLOC_TYPE: u32 = 1;
 const FREE_TYPE: u32 = 2;
-const KERNEL_TYPE: u32 = 3;
+const MODEL_FUNCTION_TYPE: u32 = 3;
 const UNARY_REAL_IMPORT_TYPE: u32 = 4;
 const BINARY_REAL_IMPORT_TYPE: u32 = 5;
 
@@ -46,65 +48,65 @@ pub(crate) const DIRECT_WASM_IMPORT_MODULE: &str = "pharmsol_dsl_host_math";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct DirectUnaryMathImport {
     pub name: &'static str,
-    pub intrinsic: MathIntrinsic,
+    pub intrinsic: MathFunction,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct DirectBinaryMathImport {
     pub name: &'static str,
-    pub intrinsic: MathIntrinsic,
+    pub intrinsic: MathFunction,
 }
 
 pub(crate) const DIRECT_WASM_UNARY_MATH_IMPORTS: [DirectUnaryMathImport; 8] = [
     DirectUnaryMathImport {
         name: "exp",
-        intrinsic: MathIntrinsic::Exp,
+        intrinsic: MathFunction::Exp,
     },
     DirectUnaryMathImport {
         name: "ln",
-        intrinsic: MathIntrinsic::Ln,
+        intrinsic: MathFunction::Ln,
     },
     DirectUnaryMathImport {
         name: "log10",
-        intrinsic: MathIntrinsic::Log10,
+        intrinsic: MathFunction::Log10,
     },
     DirectUnaryMathImport {
         name: "log2",
-        intrinsic: MathIntrinsic::Log2,
+        intrinsic: MathFunction::Log2,
     },
     DirectUnaryMathImport {
         name: "round",
-        intrinsic: MathIntrinsic::Round,
+        intrinsic: MathFunction::Round,
     },
     DirectUnaryMathImport {
         name: "sin",
-        intrinsic: MathIntrinsic::Sin,
+        intrinsic: MathFunction::Sin,
     },
     DirectUnaryMathImport {
         name: "cos",
-        intrinsic: MathIntrinsic::Cos,
+        intrinsic: MathFunction::Cos,
     },
     DirectUnaryMathImport {
         name: "tan",
-        intrinsic: MathIntrinsic::Tan,
+        intrinsic: MathFunction::Tan,
     },
 ];
 
 pub(crate) const DIRECT_WASM_BINARY_MATH_IMPORTS: [DirectBinaryMathImport; 1] =
     [DirectBinaryMathImport {
         name: "pow",
-        intrinsic: MathIntrinsic::Pow,
+        intrinsic: MathFunction::Pow,
     }];
 
-const DIRECT_SUPPORTED_STATEMENT_KERNEL_ROLES: [KernelRole; 8] = [
-    KernelRole::Derive,
-    KernelRole::Dynamics,
-    KernelRole::Outputs,
-    KernelRole::Init,
-    KernelRole::Drift,
-    KernelRole::Diffusion,
-    KernelRole::RouteLag,
-    KernelRole::RouteBioavailability,
+const DIRECT_SUPPORTED_STATEMENT_KERNEL_ROLES: [ModelFunctionKind; 8] = [
+    ModelFunctionKind::Derive,
+    ModelFunctionKind::Dynamics,
+    ModelFunctionKind::Outputs,
+    ModelFunctionKind::Init,
+    ModelFunctionKind::Drift,
+    ModelFunctionKind::Diffusion,
+    ModelFunctionKind::RouteLag,
+    ModelFunctionKind::RouteBioavailability,
 ];
 
 #[derive(Debug, Clone, Copy)]
@@ -113,7 +115,7 @@ struct WasmLocalBinding {
     ty: ValueType,
 }
 
-struct KernelEmitState<'a> {
+struct FunctionEmitState<'a> {
     model_name: &'a str,
     locals: BTreeMap<usize, WasmLocalBinding>,
     next_hidden_i64_local: u32,
@@ -123,7 +125,7 @@ pub(crate) fn compile_execution_model_to_wasm_bytes(
     model: &ExecutionModel,
     api_version: u32,
 ) -> Result<Vec<u8>, WasmError> {
-    let kernels = collect_direct_statement_kernels(model)?;
+    let model_functions = collect_direct_statement_functions(model)?;
     let metadata = encode_compiled_model_info(model, api_version)?;
     let metadata_bytes = metadata.into_bytes();
     let aligned_heap_start = align_to_f64_boundary(metadata_bytes.len())?;
@@ -175,8 +177,8 @@ pub(crate) fn compile_execution_model_to_wasm_bytes(
     functions.function(API_VERSION_TYPE);
     functions.function(ALLOC_TYPE);
     functions.function(FREE_TYPE);
-    for _ in &kernels {
-        functions.function(KERNEL_TYPE);
+    for _ in &model_functions {
+        functions.function(MODEL_FUNCTION_TYPE);
     }
     module.section(&functions);
 
@@ -234,17 +236,20 @@ pub(crate) fn compile_execution_model_to_wasm_bytes(
         ExportKind::Func,
         first_defined_function_index + 4,
     );
-    for (kernel_index, kernel) in kernels.iter().enumerate() {
-        let symbol = compiled_kernel_symbol(kernel.role).ok_or_else(|| {
+    for (function_index, function) in model_functions.iter().enumerate() {
+        let symbol = compiled_function_symbol(function.kind).ok_or_else(|| {
             WasmError::DirectBackendUnsupported {
                 model: model.name.clone(),
-                reason: format!("missing compiled kernel symbol for role {:?}", kernel.role),
+                reason: format!(
+                    "missing compiled function symbol for role {:?}",
+                    function.kind
+                ),
             }
         })?;
         exports.export(
             symbol,
             ExportKind::Func,
-            first_defined_function_index + 5 + kernel_index as u32,
+            first_defined_function_index + 5 + function_index as u32,
         );
     }
     module.section(&exports);
@@ -262,8 +267,8 @@ pub(crate) fn compile_execution_model_to_wasm_bytes(
     ));
     code.function(&alloc_function());
     code.function(&free_function());
-    for kernel in &kernels {
-        code.function(&emit_statement_kernel(model, kernel)?);
+    for function in &model_functions {
+        code.function(&emit_statement_function(model, function)?);
     }
     module.section(&code);
 
@@ -274,9 +279,9 @@ pub(crate) fn compile_execution_model_to_wasm_bytes(
     Ok(module.finish())
 }
 
-fn collect_direct_statement_kernels(
+fn collect_direct_statement_functions(
     model: &ExecutionModel,
-) -> Result<Vec<&ExecutionKernel>, WasmError> {
+) -> Result<Vec<&ModelFunction>, WasmError> {
     if !matches!(
         model.kind,
         ModelKind::Ode | ModelKind::Analytical | ModelKind::Sde
@@ -291,38 +296,38 @@ fn collect_direct_statement_kernels(
     }
 
     let unsupported_roles = model
-        .kernels
+        .functions
         .iter()
-        .filter(|kernel| {
-            kernel.role != KernelRole::Analytical
-                && !DIRECT_SUPPORTED_STATEMENT_KERNEL_ROLES.contains(&kernel.role)
+        .filter(|function| {
+            function.kind != ModelFunctionKind::Analytical
+                && !DIRECT_SUPPORTED_STATEMENT_KERNEL_ROLES.contains(&function.kind)
         })
-        .map(|kernel| format!("{:?}", kernel.role))
+        .map(|function| format!("{:?}", function.kind))
         .collect::<Vec<_>>();
     if !unsupported_roles.is_empty() {
         return Err(WasmError::DirectBackendUnsupported {
             model: model.name.clone(),
             reason: format!(
-                "direct emission supports only metadata-only analytical kernels plus statement kernels {:?}; found {}",
+                "direct emission supports only metadata-only analytical functions plus statement functions {:?}; found {}",
                 DIRECT_SUPPORTED_STATEMENT_KERNEL_ROLES,
                 unsupported_roles.join(", ")
             ),
         });
     }
 
-    if model.kernel(KernelRole::Outputs).is_none() {
+    if model.function(ModelFunctionKind::Outputs).is_none() {
         return Err(WasmError::DirectBackendUnsupported {
             model: model.name.clone(),
-            reason: "direct emitter requires an outputs kernel".to_string(),
+            reason: "direct emitter requires an outputs function".to_string(),
         });
     }
 
-    let mut kernels = Vec::new();
+    let mut functions = Vec::new();
     for role in DIRECT_SUPPORTED_STATEMENT_KERNEL_ROLES {
-        if let Some(kernel) = model.kernel(role) {
-            match kernel.implementation {
-                KernelImplementation::Statements(_) => kernels.push(kernel),
-                KernelImplementation::AnalyticalBuiltin(_) => {
+        if let Some(function) = model.function(role) {
+            match function.body {
+                FunctionBody::Statements(_) => functions.push(function),
+                FunctionBody::AnalyticalBuiltin(_) => {
                     return Err(WasmError::DirectBackendUnsupported {
                         model: model.name.clone(),
                         reason: format!(
@@ -335,11 +340,8 @@ fn collect_direct_statement_kernels(
         }
     }
 
-    if let Some(kernel) = model.kernel(KernelRole::Analytical) {
-        if !matches!(
-            kernel.implementation,
-            KernelImplementation::AnalyticalBuiltin(_)
-        ) {
+    if let Some(function) = model.function(ModelFunctionKind::Analytical) {
+        if !matches!(function.body, FunctionBody::AnalyticalBuiltin(_)) {
             return Err(WasmError::DirectBackendUnsupported {
                 model: model.name.clone(),
                 reason: "direct emitter expects analytical execution to remain metadata-driven"
@@ -348,13 +350,13 @@ fn collect_direct_statement_kernels(
         }
         if model.metadata.analytical.is_none() {
             return Err(WasmError::Emit(format!(
-                "analytical model `{}` lowered an analytical kernel without analytical metadata",
+                "analytical model `{}` compiled an analytical function without analytical metadata",
                 model.name
             )));
         }
     }
 
-    Ok(kernels)
+    Ok(functions)
 }
 
 fn const_i32_function(value: i32) -> Function {
@@ -422,18 +424,18 @@ fn free_function() -> Function {
     function
 }
 
-fn emit_statement_kernel(
+fn emit_statement_function(
     model: &ExecutionModel,
-    kernel: &ExecutionKernel,
+    function: &ModelFunction,
 ) -> Result<Function, WasmError> {
-    let program = match &kernel.implementation {
-        KernelImplementation::Statements(program) => program,
-        KernelImplementation::AnalyticalBuiltin(_) => {
+    let program = match &function.body {
+        FunctionBody::Statements(program) => program,
+        FunctionBody::AnalyticalBuiltin(_) => {
             return Err(WasmError::DirectBackendUnsupported {
                 model: model.name.clone(),
                 reason: format!(
                     "direct W04 emitter does not support analytical builtins for {:?}",
-                    kernel.role
+                    function.kind
                 ),
             })
         }
@@ -460,7 +462,7 @@ fn emit_statement_kernel(
     }
 
     let mut function = Function::new(locals);
-    let mut state = KernelEmitState {
+    let mut state = FunctionEmitState {
         model_name: &model.name,
         locals: local_bindings,
         next_hidden_i64_local: next_local_index,
@@ -471,7 +473,7 @@ fn emit_statement_kernel(
 }
 
 fn emit_program(
-    state: &mut KernelEmitState<'_>,
+    state: &mut FunctionEmitState<'_>,
     program: &ExecutionProgram,
     function: &mut Function,
 ) -> Result<(), WasmError> {
@@ -482,7 +484,7 @@ fn emit_program(
 }
 
 fn emit_statement(
-    state: &mut KernelEmitState<'_>,
+    state: &mut FunctionEmitState<'_>,
     statement: &ExecutionStmt,
     function: &mut Function,
 ) -> Result<(), WasmError> {
@@ -501,7 +503,7 @@ fn emit_statement(
 }
 
 fn emit_assignment(
-    state: &mut KernelEmitState<'_>,
+    state: &mut FunctionEmitState<'_>,
     assign: &ExecutionAssignStmt,
     function: &mut Function,
 ) -> Result<(), WasmError> {
@@ -515,7 +517,7 @@ fn emit_assignment(
 }
 
 fn emit_if(
-    state: &mut KernelEmitState<'_>,
+    state: &mut FunctionEmitState<'_>,
     if_stmt: &ExecutionIfStmt,
     function: &mut Function,
 ) -> Result<(), WasmError> {
@@ -541,7 +543,7 @@ fn emit_if(
 }
 
 fn emit_for(
-    state: &mut KernelEmitState<'_>,
+    state: &mut FunctionEmitState<'_>,
     for_stmt: &ExecutionForStmt,
     function: &mut Function,
 ) -> Result<(), WasmError> {
@@ -594,7 +596,7 @@ fn emit_for(
 }
 
 fn emit_expr(
-    state: &mut KernelEmitState<'_>,
+    state: &mut FunctionEmitState<'_>,
     expr: &ExecutionExpr,
     function: &mut Function,
 ) -> Result<(), WasmError> {
@@ -605,8 +607,8 @@ fn emit_expr(
             emit_expr(state, inner, function)?;
             emit_cast_stack(inner.ty, expr.ty, function, state.model_name)?;
             match op {
-                TypedUnaryOp::Plus => Ok(()),
-                TypedUnaryOp::Minus => match expr.ty {
+                AnalyzedUnaryOp::Plus => Ok(()),
+                AnalyzedUnaryOp::Minus => match expr.ty {
                     ValueType::Real => {
                         function.instruction(&Instruction::F64Neg);
                         Ok(())
@@ -621,7 +623,7 @@ fn emit_expr(
                         reason: "cannot apply unary minus to a boolean expression".to_string(),
                     }),
                 },
-                TypedUnaryOp::Not => {
+                AnalyzedUnaryOp::Not => {
                     emit_cast_stack(expr.ty, ValueType::Bool, function, state.model_name)?;
                     function.instruction(&Instruction::I32Eqz);
                     Ok(())
@@ -642,29 +644,29 @@ fn emit_expr(
 }
 
 fn emit_binary(
-    state: &mut KernelEmitState<'_>,
-    op: TypedBinaryOp,
+    state: &mut FunctionEmitState<'_>,
+    op: AnalyzedBinaryOp,
     lhs: &ExecutionExpr,
     rhs: &ExecutionExpr,
     result_ty: ValueType,
     function: &mut Function,
 ) -> Result<(), WasmError> {
     match op {
-        TypedBinaryOp::Or => {
+        AnalyzedBinaryOp::Or => {
             emit_expr(state, lhs, function)?;
             emit_cast_stack(lhs.ty, ValueType::Bool, function, state.model_name)?;
             emit_expr(state, rhs, function)?;
             emit_cast_stack(rhs.ty, ValueType::Bool, function, state.model_name)?;
             function.instruction(&Instruction::I32Or);
         }
-        TypedBinaryOp::And => {
+        AnalyzedBinaryOp::And => {
             emit_expr(state, lhs, function)?;
             emit_cast_stack(lhs.ty, ValueType::Bool, function, state.model_name)?;
             emit_expr(state, rhs, function)?;
             emit_cast_stack(rhs.ty, ValueType::Bool, function, state.model_name)?;
             function.instruction(&Instruction::I32And);
         }
-        TypedBinaryOp::Eq | TypedBinaryOp::NotEq => {
+        AnalyzedBinaryOp::Eq | AnalyzedBinaryOp::NotEq => {
             let operand_ty = if lhs.ty == ValueType::Real || rhs.ty == ValueType::Real {
                 ValueType::Real
             } else if lhs.ty == ValueType::Bool && rhs.ty == ValueType::Bool {
@@ -677,20 +679,29 @@ fn emit_binary(
             emit_expr(state, rhs, function)?;
             emit_cast_stack(rhs.ty, operand_ty, function, state.model_name)?;
             match (operand_ty, op) {
-                (ValueType::Real, TypedBinaryOp::Eq) => function.instruction(&Instruction::F64Eq),
-                (ValueType::Real, TypedBinaryOp::NotEq) => {
+                (ValueType::Real, AnalyzedBinaryOp::Eq) => {
+                    function.instruction(&Instruction::F64Eq)
+                }
+                (ValueType::Real, AnalyzedBinaryOp::NotEq) => {
                     function.instruction(&Instruction::F64Ne)
                 }
-                (ValueType::Int, TypedBinaryOp::Eq) => function.instruction(&Instruction::I64Eq),
-                (ValueType::Int, TypedBinaryOp::NotEq) => function.instruction(&Instruction::I64Ne),
-                (ValueType::Bool, TypedBinaryOp::Eq) => function.instruction(&Instruction::I32Eq),
-                (ValueType::Bool, TypedBinaryOp::NotEq) => {
+                (ValueType::Int, AnalyzedBinaryOp::Eq) => function.instruction(&Instruction::I64Eq),
+                (ValueType::Int, AnalyzedBinaryOp::NotEq) => {
+                    function.instruction(&Instruction::I64Ne)
+                }
+                (ValueType::Bool, AnalyzedBinaryOp::Eq) => {
+                    function.instruction(&Instruction::I32Eq)
+                }
+                (ValueType::Bool, AnalyzedBinaryOp::NotEq) => {
                     function.instruction(&Instruction::I32Ne)
                 }
                 _ => unreachable!(),
             };
         }
-        TypedBinaryOp::Lt | TypedBinaryOp::LtEq | TypedBinaryOp::Gt | TypedBinaryOp::GtEq => {
+        AnalyzedBinaryOp::Lt
+        | AnalyzedBinaryOp::LtEq
+        | AnalyzedBinaryOp::Gt
+        | AnalyzedBinaryOp::GtEq => {
             let operand_ty = if lhs.ty == ValueType::Real || rhs.ty == ValueType::Real {
                 ValueType::Real
             } else {
@@ -701,29 +712,57 @@ fn emit_binary(
             emit_expr(state, rhs, function)?;
             emit_cast_stack(rhs.ty, operand_ty, function, state.model_name)?;
             match (operand_ty, op) {
-                (ValueType::Real, TypedBinaryOp::Lt) => function.instruction(&Instruction::F64Lt),
-                (ValueType::Real, TypedBinaryOp::LtEq) => function.instruction(&Instruction::F64Le),
-                (ValueType::Real, TypedBinaryOp::Gt) => function.instruction(&Instruction::F64Gt),
-                (ValueType::Real, TypedBinaryOp::GtEq) => function.instruction(&Instruction::F64Ge),
-                (ValueType::Int, TypedBinaryOp::Lt) => function.instruction(&Instruction::I64LtS),
-                (ValueType::Int, TypedBinaryOp::LtEq) => function.instruction(&Instruction::I64LeS),
-                (ValueType::Int, TypedBinaryOp::Gt) => function.instruction(&Instruction::I64GtS),
-                (ValueType::Int, TypedBinaryOp::GtEq) => function.instruction(&Instruction::I64GeS),
+                (ValueType::Real, AnalyzedBinaryOp::Lt) => {
+                    function.instruction(&Instruction::F64Lt)
+                }
+                (ValueType::Real, AnalyzedBinaryOp::LtEq) => {
+                    function.instruction(&Instruction::F64Le)
+                }
+                (ValueType::Real, AnalyzedBinaryOp::Gt) => {
+                    function.instruction(&Instruction::F64Gt)
+                }
+                (ValueType::Real, AnalyzedBinaryOp::GtEq) => {
+                    function.instruction(&Instruction::F64Ge)
+                }
+                (ValueType::Int, AnalyzedBinaryOp::Lt) => {
+                    function.instruction(&Instruction::I64LtS)
+                }
+                (ValueType::Int, AnalyzedBinaryOp::LtEq) => {
+                    function.instruction(&Instruction::I64LeS)
+                }
+                (ValueType::Int, AnalyzedBinaryOp::Gt) => {
+                    function.instruction(&Instruction::I64GtS)
+                }
+                (ValueType::Int, AnalyzedBinaryOp::GtEq) => {
+                    function.instruction(&Instruction::I64GeS)
+                }
                 _ => unreachable!(),
             };
         }
-        TypedBinaryOp::Add | TypedBinaryOp::Sub | TypedBinaryOp::Mul => {
+        AnalyzedBinaryOp::Add | AnalyzedBinaryOp::Sub | AnalyzedBinaryOp::Mul => {
             emit_expr(state, lhs, function)?;
             emit_cast_stack(lhs.ty, result_ty, function, state.model_name)?;
             emit_expr(state, rhs, function)?;
             emit_cast_stack(rhs.ty, result_ty, function, state.model_name)?;
             match (result_ty, op) {
-                (ValueType::Real, TypedBinaryOp::Add) => function.instruction(&Instruction::F64Add),
-                (ValueType::Real, TypedBinaryOp::Sub) => function.instruction(&Instruction::F64Sub),
-                (ValueType::Real, TypedBinaryOp::Mul) => function.instruction(&Instruction::F64Mul),
-                (ValueType::Int, TypedBinaryOp::Add) => function.instruction(&Instruction::I64Add),
-                (ValueType::Int, TypedBinaryOp::Sub) => function.instruction(&Instruction::I64Sub),
-                (ValueType::Int, TypedBinaryOp::Mul) => function.instruction(&Instruction::I64Mul),
+                (ValueType::Real, AnalyzedBinaryOp::Add) => {
+                    function.instruction(&Instruction::F64Add)
+                }
+                (ValueType::Real, AnalyzedBinaryOp::Sub) => {
+                    function.instruction(&Instruction::F64Sub)
+                }
+                (ValueType::Real, AnalyzedBinaryOp::Mul) => {
+                    function.instruction(&Instruction::F64Mul)
+                }
+                (ValueType::Int, AnalyzedBinaryOp::Add) => {
+                    function.instruction(&Instruction::I64Add)
+                }
+                (ValueType::Int, AnalyzedBinaryOp::Sub) => {
+                    function.instruction(&Instruction::I64Sub)
+                }
+                (ValueType::Int, AnalyzedBinaryOp::Mul) => {
+                    function.instruction(&Instruction::I64Mul)
+                }
                 _ => {
                     return Err(WasmError::DirectBackendUnsupported {
                         model: state.model_name.to_string(),
@@ -735,29 +774,29 @@ fn emit_binary(
                 }
             };
         }
-        TypedBinaryOp::Div => {
+        AnalyzedBinaryOp::Div => {
             emit_expr(state, lhs, function)?;
             emit_cast_stack(lhs.ty, ValueType::Real, function, state.model_name)?;
             emit_expr(state, rhs, function)?;
             emit_cast_stack(rhs.ty, ValueType::Real, function, state.model_name)?;
             function.instruction(&Instruction::F64Div);
         }
-        TypedBinaryOp::Pow => {
-            emit_math_call(state, MathIntrinsic::Pow, &[lhs, rhs], result_ty, function)?
+        AnalyzedBinaryOp::Pow => {
+            emit_math_call(state, MathFunction::Pow, &[lhs, rhs], result_ty, function)?
         }
     }
     Ok(())
 }
 
 fn emit_math_call(
-    state: &mut KernelEmitState<'_>,
-    intrinsic: MathIntrinsic,
+    state: &mut FunctionEmitState<'_>,
+    intrinsic: MathFunction,
     args: &[&ExecutionExpr],
     result_ty: ValueType,
     function: &mut Function,
 ) -> Result<(), WasmError> {
     match intrinsic {
-        MathIntrinsic::Max | MathIntrinsic::Min => {
+        MathFunction::Max | MathFunction::Min => {
             if args.len() != 2 {
                 return Err(WasmError::DirectBackendUnsupported {
                     model: state.model_name.to_string(),
@@ -770,7 +809,7 @@ fn emit_math_call(
                     emit_cast_stack(args[0].ty, ValueType::Real, function, state.model_name)?;
                     emit_expr(state, args[1], function)?;
                     emit_cast_stack(args[1].ty, ValueType::Real, function, state.model_name)?;
-                    if intrinsic == MathIntrinsic::Max {
+                    if intrinsic == MathFunction::Max {
                         function.instruction(&Instruction::F64Max);
                     } else {
                         function.instruction(&Instruction::F64Min);
@@ -789,7 +828,7 @@ fn emit_math_call(
                     function.instruction(&Instruction::LocalGet(rhs_local));
                     function.instruction(&Instruction::LocalGet(lhs_local));
                     function.instruction(&Instruction::LocalGet(rhs_local));
-                    if intrinsic == MathIntrinsic::Max {
+                    if intrinsic == MathFunction::Max {
                         function.instruction(&Instruction::I64GtS);
                     } else {
                         function.instruction(&Instruction::I64LtS);
@@ -804,7 +843,7 @@ fn emit_math_call(
                 }
             }
         }
-        MathIntrinsic::Abs if result_ty == ValueType::Int => {
+        MathFunction::Abs if result_ty == ValueType::Int => {
             if args.len() != 1 {
                 return Err(WasmError::DirectBackendUnsupported {
                     model: state.model_name.to_string(),
@@ -825,11 +864,7 @@ fn emit_math_call(
             function.instruction(&Instruction::Select);
         }
         _ => {
-            let expected_arity = if intrinsic == MathIntrinsic::Pow {
-                2
-            } else {
-                1
-            };
+            let expected_arity = if intrinsic == MathFunction::Pow { 2 } else { 1 };
             if args.len() != expected_arity {
                 return Err(WasmError::DirectBackendUnsupported {
                     model: state.model_name.to_string(),
@@ -841,38 +876,38 @@ fn emit_math_call(
                 emit_cast_stack(arg.ty, ValueType::Real, function, state.model_name)?;
             }
             match intrinsic {
-                MathIntrinsic::Abs => function.instruction(&Instruction::F64Abs),
-                MathIntrinsic::Ceil => function.instruction(&Instruction::F64Ceil),
-                MathIntrinsic::Exp => function.instruction(&Instruction::Call(
-                    unary_math_import_index(MathIntrinsic::Exp)?,
+                MathFunction::Abs => function.instruction(&Instruction::F64Abs),
+                MathFunction::Ceil => function.instruction(&Instruction::F64Ceil),
+                MathFunction::Exp => function.instruction(&Instruction::Call(
+                    unary_math_import_index(MathFunction::Exp)?,
                 )),
-                MathIntrinsic::Floor => function.instruction(&Instruction::F64Floor),
-                MathIntrinsic::Ln | MathIntrinsic::Log => function.instruction(&Instruction::Call(
-                    unary_math_import_index(MathIntrinsic::Ln)?,
+                MathFunction::Floor => function.instruction(&Instruction::F64Floor),
+                MathFunction::Ln | MathFunction::Log => function.instruction(&Instruction::Call(
+                    unary_math_import_index(MathFunction::Ln)?,
                 )),
-                MathIntrinsic::Log10 => function.instruction(&Instruction::Call(
-                    unary_math_import_index(MathIntrinsic::Log10)?,
+                MathFunction::Log10 => function.instruction(&Instruction::Call(
+                    unary_math_import_index(MathFunction::Log10)?,
                 )),
-                MathIntrinsic::Log2 => function.instruction(&Instruction::Call(
-                    unary_math_import_index(MathIntrinsic::Log2)?,
+                MathFunction::Log2 => function.instruction(&Instruction::Call(
+                    unary_math_import_index(MathFunction::Log2)?,
                 )),
-                MathIntrinsic::Pow => function.instruction(&Instruction::Call(
-                    binary_math_import_index(MathIntrinsic::Pow)?,
+                MathFunction::Pow => function.instruction(&Instruction::Call(
+                    binary_math_import_index(MathFunction::Pow)?,
                 )),
-                MathIntrinsic::Round => function.instruction(&Instruction::Call(
-                    unary_math_import_index(MathIntrinsic::Round)?,
+                MathFunction::Round => function.instruction(&Instruction::Call(
+                    unary_math_import_index(MathFunction::Round)?,
                 )),
-                MathIntrinsic::Sin => function.instruction(&Instruction::Call(
-                    unary_math_import_index(MathIntrinsic::Sin)?,
+                MathFunction::Sin => function.instruction(&Instruction::Call(
+                    unary_math_import_index(MathFunction::Sin)?,
                 )),
-                MathIntrinsic::Cos => function.instruction(&Instruction::Call(
-                    unary_math_import_index(MathIntrinsic::Cos)?,
+                MathFunction::Cos => function.instruction(&Instruction::Call(
+                    unary_math_import_index(MathFunction::Cos)?,
                 )),
-                MathIntrinsic::Tan => function.instruction(&Instruction::Call(
-                    unary_math_import_index(MathIntrinsic::Tan)?,
+                MathFunction::Tan => function.instruction(&Instruction::Call(
+                    unary_math_import_index(MathFunction::Tan)?,
                 )),
-                MathIntrinsic::Sqrt => function.instruction(&Instruction::F64Sqrt),
-                MathIntrinsic::Max | MathIntrinsic::Min => unreachable!(),
+                MathFunction::Sqrt => function.instruction(&Instruction::F64Sqrt),
+                MathFunction::Max | MathFunction::Min => unreachable!(),
             };
             emit_cast_stack(ValueType::Real, result_ty, function, state.model_name)?;
         }
@@ -890,7 +925,7 @@ fn emit_literal(value: &ConstValue, function: &mut Function) -> Result<(), WasmE
 }
 
 fn emit_load(
-    state: &mut KernelEmitState<'_>,
+    state: &mut FunctionEmitState<'_>,
     load: &ExecutionLoad,
     target_ty: ValueType,
     function: &mut Function,
@@ -950,7 +985,7 @@ fn emit_dense_load(
 }
 
 fn emit_state_load(
-    state: &mut KernelEmitState<'_>,
+    state: &mut FunctionEmitState<'_>,
     base_ptr_local: u32,
     state_ref: &ExecutionStateRef,
     target_ty: ValueType,
@@ -964,7 +999,7 @@ fn emit_state_load(
 }
 
 fn emit_target_byte_offset(
-    state: &mut KernelEmitState<'_>,
+    state: &mut FunctionEmitState<'_>,
     target: &ExecutionTargetKind,
     function: &mut Function,
 ) -> Result<(), WasmError> {
@@ -985,7 +1020,7 @@ fn emit_target_byte_offset(
 }
 
 fn emit_state_ref_byte_offset(
-    state: &mut KernelEmitState<'_>,
+    state: &mut FunctionEmitState<'_>,
     state_ref: &ExecutionStateRef,
     function: &mut Function,
 ) -> Result<(), WasmError> {
@@ -1103,12 +1138,12 @@ fn count_hidden_i64_locals_in_expr(expr: &ExecutionExpr) -> usize {
                 .map(count_hidden_i64_locals_in_expr)
                 .sum::<usize>();
             let local_cost = match callee {
-                ExecutionCall::Math(MathIntrinsic::Max | MathIntrinsic::Min)
+                ExecutionCall::Math(MathFunction::Max | MathFunction::Min)
                     if expr.ty == ValueType::Int =>
                 {
                     2
                 }
-                ExecutionCall::Math(MathIntrinsic::Abs) if expr.ty == ValueType::Int => 1,
+                ExecutionCall::Math(MathFunction::Abs) if expr.ty == ValueType::Int => 1,
                 _ => 0,
             };
             arg_cost + local_cost
@@ -1120,7 +1155,7 @@ fn direct_wasm_import_count() -> usize {
     DIRECT_WASM_UNARY_MATH_IMPORTS.len() + DIRECT_WASM_BINARY_MATH_IMPORTS.len()
 }
 
-fn unary_math_import_index(intrinsic: MathIntrinsic) -> Result<u32, WasmError> {
+fn unary_math_import_index(intrinsic: MathFunction) -> Result<u32, WasmError> {
     DIRECT_WASM_UNARY_MATH_IMPORTS
         .iter()
         .position(|import| import.intrinsic == intrinsic)
@@ -1132,7 +1167,7 @@ fn unary_math_import_index(intrinsic: MathIntrinsic) -> Result<u32, WasmError> {
         })
 }
 
-fn binary_math_import_index(intrinsic: MathIntrinsic) -> Result<u32, WasmError> {
+fn binary_math_import_index(intrinsic: MathFunction) -> Result<u32, WasmError> {
     DIRECT_WASM_BINARY_MATH_IMPORTS
         .iter()
         .position(|import| import.intrinsic == intrinsic)
@@ -1166,7 +1201,7 @@ fn f64_memarg() -> MemArg {
     }
 }
 
-impl KernelEmitState<'_> {
+impl FunctionEmitState<'_> {
     fn local(&self, index: usize) -> Result<WasmLocalBinding, WasmError> {
         self.locals
             .get(&index)
@@ -1185,10 +1220,9 @@ impl KernelEmitState<'_> {
 pub(crate) fn w03_minimal_outputs_execution_model() -> ExecutionModel {
     use super::Span;
     use pharmsol_dsl::execution::{
-        BufferKind, BufferSlot, CallingConvention, DenseBufferLayout, ExecutionAbi, ExecutionBlock,
+        Access, BufferKind, BufferLayout, BufferSlot, ExecutionBlock, ExecutionLayout,
         ExecutionMetadata, ExecutionProgram, ExecutionSlot, ExecutionState, ExecutionStateRef,
-        ExecutionTarget, KernelAccess, KernelArgument, KernelArgumentKind, KernelSignature,
-        ScalarAbi,
+        ExecutionTarget, FunctionArgument, FunctionArgumentKind, FunctionSignature, ScalarType,
     };
 
     let span = Span::empty(0);
@@ -1234,10 +1268,9 @@ pub(crate) fn w03_minimal_outputs_execution_model() -> ExecutionModel {
             particles: None,
             analytical: None,
         },
-        abi: ExecutionAbi {
-            scalar: ScalarAbi::F64,
-            calling_convention: CallingConvention::DenseF64Buffers,
-            parameter_buffer: DenseBufferLayout {
+        layout: ExecutionLayout {
+            scalar: ScalarType::F64,
+            parameter_buffer: BufferLayout {
                 kind: BufferKind::Parameters,
                 len: 2,
                 slots: vec![
@@ -1253,12 +1286,12 @@ pub(crate) fn w03_minimal_outputs_execution_model() -> ExecutionModel {
                     },
                 ],
             },
-            covariate_buffer: DenseBufferLayout {
+            covariate_buffer: BufferLayout {
                 kind: BufferKind::Covariates,
                 len: 0,
                 slots: vec![],
             },
-            state_buffer: DenseBufferLayout {
+            state_buffer: BufferLayout {
                 kind: BufferKind::States,
                 len: 1,
                 slots: vec![BufferSlot {
@@ -1267,12 +1300,12 @@ pub(crate) fn w03_minimal_outputs_execution_model() -> ExecutionModel {
                     len: 1,
                 }],
             },
-            derived_buffer: DenseBufferLayout {
+            derived_buffer: BufferLayout {
                 kind: BufferKind::Derived,
                 len: 0,
                 slots: vec![],
             },
-            output_buffer: DenseBufferLayout {
+            output_buffer: BufferLayout {
                 kind: BufferKind::Outputs,
                 len: 1,
                 slots: vec![BufferSlot {
@@ -1281,47 +1314,47 @@ pub(crate) fn w03_minimal_outputs_execution_model() -> ExecutionModel {
                     len: 1,
                 }],
             },
-            route_buffer: DenseBufferLayout {
+            route_buffer: BufferLayout {
                 kind: BufferKind::Routes,
                 len: 0,
                 slots: vec![],
             },
         },
-        kernels: vec![ExecutionKernel {
-            role: KernelRole::Outputs,
-            signature: KernelSignature {
+        functions: vec![ModelFunction {
+            kind: ModelFunctionKind::Outputs,
+            signature: FunctionSignature {
                 args: vec![
-                    KernelArgument {
-                        kind: KernelArgumentKind::Time,
-                        access: KernelAccess::Input,
+                    FunctionArgument {
+                        kind: FunctionArgumentKind::Time,
+                        access: Access::Input,
                     },
-                    KernelArgument {
-                        kind: KernelArgumentKind::States,
-                        access: KernelAccess::Input,
+                    FunctionArgument {
+                        kind: FunctionArgumentKind::States,
+                        access: Access::Input,
                     },
-                    KernelArgument {
-                        kind: KernelArgumentKind::Parameters,
-                        access: KernelAccess::Input,
+                    FunctionArgument {
+                        kind: FunctionArgumentKind::Parameters,
+                        access: Access::Input,
                     },
-                    KernelArgument {
-                        kind: KernelArgumentKind::Covariates,
-                        access: KernelAccess::Input,
+                    FunctionArgument {
+                        kind: FunctionArgumentKind::Covariates,
+                        access: Access::Input,
                     },
-                    KernelArgument {
-                        kind: KernelArgumentKind::RouteInputs,
-                        access: KernelAccess::Input,
+                    FunctionArgument {
+                        kind: FunctionArgumentKind::RouteInputs,
+                        access: Access::Input,
                     },
-                    KernelArgument {
-                        kind: KernelArgumentKind::Derived,
-                        access: KernelAccess::Input,
+                    FunctionArgument {
+                        kind: FunctionArgumentKind::Derived,
+                        access: Access::Input,
                     },
-                    KernelArgument {
-                        kind: KernelArgumentKind::Outputs,
-                        access: KernelAccess::Output,
+                    FunctionArgument {
+                        kind: FunctionArgumentKind::Outputs,
+                        access: Access::Output,
                     },
                 ],
             },
-            implementation: KernelImplementation::Statements(ExecutionProgram {
+            body: FunctionBody::Statements(ExecutionProgram {
                 locals: vec![],
                 body: ExecutionBlock {
                     statements: vec![ExecutionStmt {
@@ -1332,7 +1365,7 @@ pub(crate) fn w03_minimal_outputs_execution_model() -> ExecutionModel {
                             },
                             value: ExecutionExpr {
                                 kind: ExecutionExprKind::Binary {
-                                    op: TypedBinaryOp::Add,
+                                    op: AnalyzedBinaryOp::Add,
                                     lhs: Box::new(ExecutionExpr {
                                         kind: ExecutionExprKind::Load(ExecutionLoad::State(
                                             ExecutionStateRef {
@@ -1349,10 +1382,10 @@ pub(crate) fn w03_minimal_outputs_execution_model() -> ExecutionModel {
                                     }),
                                     rhs: Box::new(ExecutionExpr {
                                         kind: ExecutionExprKind::Binary {
-                                            op: TypedBinaryOp::Div,
+                                            op: AnalyzedBinaryOp::Div,
                                             lhs: Box::new(ExecutionExpr {
                                                 kind: ExecutionExprKind::Binary {
-                                                    op: TypedBinaryOp::Add,
+                                                    op: AnalyzedBinaryOp::Add,
                                                     lhs: Box::new(ExecutionExpr {
                                                         kind: ExecutionExprKind::Load(
                                                             ExecutionLoad::Parameter(0),
@@ -1434,13 +1467,13 @@ mod tests {
     fn direct_emitter_compiles_real_ode_corpus_model() {
         let source = STRUCTURED_BLOCK_CORPUS;
         let parsed = pharmsol_dsl::parse_module(source).expect("parse corpus source");
-        let typed = pharmsol_dsl::analyze_module(&parsed).expect("analyze corpus source");
-        let model = typed
+        let analyzed = pharmsol_dsl::analyze_module(&parsed).expect("analyze corpus source");
+        let model = analyzed
             .models
             .iter()
             .find(|model| model.name == "one_cmt_oral_iv")
             .expect("ode corpus model");
-        let execution = pharmsol_dsl::lower_typed_model(model).expect("lower corpus model");
+        let execution = pharmsol_dsl::compile_analyzed_model(model).expect("lower corpus model");
 
         let bytes = compile_execution_model_to_wasm_bytes(&execution, 1)
             .expect("emit direct ode wasm bytes");

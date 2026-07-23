@@ -1,5 +1,9 @@
-use std::error::Error;
-use std::fmt;
+//! The analyzed model: a syntax tree with names, types, and structure
+//! checked and resolved.
+//!
+//! Produced by [`analyze_model`](crate::analyze_model) or
+//! [`analyze_module`](crate::analyze_module), and compiled into a
+//! ready-to-run form by [`compile_analyzed_model`](crate::compile_analyzed_model).
 
 use serde::{Deserialize, Serialize};
 
@@ -11,31 +15,31 @@ use crate::{ModelKind, RouteKind, Span};
 pub type SymbolId = usize;
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct TypedModule {
-    pub models: Vec<TypedModel>,
+pub struct AnalyzedModule {
+    pub models: Vec<AnalyzedModel>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct TypedModel {
+pub struct AnalyzedModel {
     pub name: String,
     pub kind: ModelKind,
     pub symbols: Vec<Symbol>,
     pub parameters: Vec<SymbolId>,
-    pub constants: Vec<TypedConstant>,
-    pub covariates: Vec<TypedCovariate>,
-    pub states: Vec<TypedState>,
-    pub routes: Vec<TypedRoute>,
+    pub constants: Vec<AnalyzedConstant>,
+    pub covariates: Vec<AnalyzedCovariate>,
+    pub states: Vec<AnalyzedState>,
+    pub routes: Vec<AnalyzedRoute>,
     pub derived: Vec<SymbolId>,
     pub outputs: Vec<SymbolId>,
     pub particles: Option<usize>,
-    pub analytical: Option<TypedAnalytical>,
-    pub derive: Option<TypedStatementBlock>,
-    pub dynamics: Option<TypedStatementBlock>,
-    pub outputs_block: TypedStatementBlock,
-    pub init: Option<TypedStatementBlock>,
-    pub drift: Option<TypedStatementBlock>,
-    pub diffusion: Option<TypedStatementBlock>,
+    pub analytical: Option<AnalyticalSpec>,
+    pub derive: Option<AnalyzedStatementBlock>,
+    pub dynamics: Option<AnalyzedStatementBlock>,
+    pub outputs_block: AnalyzedStatementBlock,
+    pub init: Option<AnalyzedStatementBlock>,
+    pub drift: Option<AnalyzedStatementBlock>,
+    pub diffusion: Option<AnalyzedStatementBlock>,
     pub span: Span,
 }
 
@@ -105,6 +109,9 @@ impl ConstValue {
         }
     }
 
+    /// Converts to `i64` when the value is finite, integral, and exactly
+    /// representable; the 2^63 upper bound is exclusive because
+    /// `i64::MAX as f64` rounds up to it and would saturate the cast.
     pub fn as_i64(&self) -> Option<i64> {
         match self {
             ConstValue::Int(value) => Some(*value),
@@ -112,7 +119,7 @@ impl ConstValue {
                 if value.is_finite()
                     && value.fract() == 0.0
                     && *value >= i64::MIN as f64
-                    && *value <= i64::MAX as f64 =>
+                    && *value < -(i64::MIN as f64) =>
             {
                 Some(*value as i64)
             }
@@ -122,7 +129,7 @@ impl ConstValue {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct TypedConstant {
+pub struct AnalyzedConstant {
     pub symbol: SymbolId,
     pub value: ConstValue,
     pub span: Span,
@@ -135,32 +142,32 @@ pub enum CovariateInterpolation {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct TypedCovariate {
+pub struct AnalyzedCovariate {
     pub symbol: SymbolId,
     pub interpolation: Option<CovariateInterpolation>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct TypedState {
+pub struct AnalyzedState {
     pub symbol: SymbolId,
     pub size: Option<usize>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct TypedRoute {
+pub struct AnalyzedRoute {
     pub symbol: SymbolId,
     pub kind: Option<RouteKind>,
-    pub destination: TypedStatePlace,
-    pub properties: Vec<TypedRouteProperty>,
+    pub destination: AnalyzedStatePlace,
+    pub properties: Vec<AnalyzedRouteProperty>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct TypedRouteProperty {
+pub struct AnalyzedRouteProperty {
     pub kind: RoutePropertyKind,
-    pub value: TypedExpr,
+    pub value: AnalyzedExpr,
     pub span: Span,
 }
 
@@ -171,7 +178,7 @@ pub enum RoutePropertyKind {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct TypedAnalytical {
+pub struct AnalyticalSpec {
     pub structure: AnalyticalKernel,
     pub span: Span,
 }
@@ -297,7 +304,7 @@ pub struct AnalyticalStructureInputPlan {
 
 impl AnalyticalStructureInputPlan {
     pub fn for_kernel<P, D>(
-        kernel: AnalyticalKernel,
+        function: AnalyticalKernel,
         primary_names: P,
         derived_names: D,
     ) -> Result<Self, AnalyticalStructureInputError>
@@ -335,8 +342,8 @@ impl AnalyticalStructureInputPlan {
             }
         }
 
-        let mut bindings = Vec::with_capacity(kernel.required_parameter_count());
-        for required_name in kernel.required_parameter_names() {
+        let mut bindings = Vec::with_capacity(function.required_parameter_count());
+        for required_name in function.required_parameter_names() {
             match (
                 primary_index_by_name.get(required_name).copied(),
                 derived_index_by_name.get(required_name).copied(),
@@ -351,7 +358,7 @@ impl AnalyticalStructureInputPlan {
                 }),
                 (None, None) => {
                     return Err(AnalyticalStructureInputError::MissingRequiredName {
-                        structure: kernel.name(),
+                        structure: function.name(),
                         name: (*required_name).to_string(),
                         suggestion: best_similar_candidate(
                             required_name,
@@ -414,17 +421,18 @@ impl AnalyticalStructureInputPlan {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AnalyticalStructureInputError {
-    DuplicatePrimary {
-        name: String,
-    },
-    DuplicateDerived {
-        name: String,
-    },
-    ConflictingName {
-        name: String,
-    },
+    #[error("duplicate primary parameter `{name}`")]
+    DuplicatePrimary { name: String },
+    #[error("duplicate derived parameter `{name}`")]
+    DuplicateDerived { name: String },
+    #[error("`{name}` is declared in both `params` and `derived`")]
+    ConflictingName { name: String },
+    #[error(
+        "analytical structure `{structure}` requires `{name}`; {}declare it in `params` or `derived`",
+        suggestion_note(.name, .suggestion)
+    )]
     MissingRequiredName {
         structure: &'static str,
         name: String,
@@ -432,30 +440,12 @@ pub enum AnalyticalStructureInputError {
     },
 }
 
-impl fmt::Display for AnalyticalStructureInputError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::DuplicatePrimary { name } => write!(f, "duplicate primary parameter `{name}`"),
-            Self::DuplicateDerived { name } => write!(f, "duplicate derived parameter `{name}`"),
-            Self::ConflictingName { name } => {
-                write!(f, "`{name}` is declared in both `params` and `derived`")
-            }
-            Self::MissingRequiredName {
-                structure,
-                name,
-                suggestion,
-            } => {
-                write!(f, "analytical structure `{structure}` requires `{name}`; ")?;
-                if let Some(candidate) = suggestion {
-                    write!(f, "did you mean `{name}` instead of `{candidate}`? ")?;
-                }
-                f.write_str("declare it in `params` or `derived`")
-            }
-        }
+fn suggestion_note(name: &str, suggestion: &Option<String>) -> String {
+    match suggestion {
+        Some(candidate) => format!("did you mean `{name}` instead of `{candidate}`? "),
+        None => String::new(),
     }
 }
-
-impl Error for AnalyticalStructureInputError {}
 
 fn best_similar_candidate<'a, I>(needle: &str, candidates: I) -> Option<String>
 where
@@ -534,118 +524,118 @@ pub enum BlockContext {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct TypedStatementBlock {
+pub struct AnalyzedStatementBlock {
     pub context: BlockContext,
-    pub statements: Vec<TypedStmt>,
+    pub statements: Vec<AnalyzedStmt>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct TypedStmt {
-    pub kind: TypedStmtKind,
+pub struct AnalyzedStmt {
+    pub kind: AnalyzedStmtKind,
     pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum TypedStmtKind {
-    Let(TypedLetStmt),
-    Assign(TypedAssignStmt),
-    If(TypedIfStmt),
-    For(TypedForStmt),
+pub enum AnalyzedStmtKind {
+    Let(AnalyzedLetStmt),
+    Assign(AnalyzedAssignStmt),
+    If(AnalyzedIfStmt),
+    For(AnalyzedForStmt),
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct TypedLetStmt {
+pub struct AnalyzedLetStmt {
     pub symbol: SymbolId,
-    pub value: TypedExpr,
+    pub value: AnalyzedExpr,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct TypedAssignStmt {
-    pub target: TypedAssignTarget,
-    pub value: TypedExpr,
+pub struct AnalyzedAssignStmt {
+    pub target: AnalyzedAssignTarget,
+    pub value: AnalyzedExpr,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct TypedIfStmt {
-    pub condition: TypedExpr,
-    pub then_branch: Vec<TypedStmt>,
-    pub else_branch: Option<Vec<TypedStmt>>,
+pub struct AnalyzedIfStmt {
+    pub condition: AnalyzedExpr,
+    pub then_branch: Vec<AnalyzedStmt>,
+    pub else_branch: Option<Vec<AnalyzedStmt>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct TypedForStmt {
+pub struct AnalyzedForStmt {
     pub binding: SymbolId,
-    pub range: TypedRangeExpr,
-    pub body: Vec<TypedStmt>,
+    pub range: AnalyzedRangeExpr,
+    pub body: Vec<AnalyzedStmt>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct TypedRangeExpr {
-    pub start: TypedExpr,
-    pub end: TypedExpr,
+pub struct AnalyzedRangeExpr {
+    pub start: AnalyzedExpr,
+    pub end: AnalyzedExpr,
     pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct TypedAssignTarget {
-    pub kind: TypedAssignTargetKind,
+pub struct AnalyzedAssignTarget {
+    pub kind: AnalyzedAssignTargetKind,
     pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum TypedAssignTargetKind {
+pub enum AnalyzedAssignTargetKind {
     Derived(SymbolId),
     Output(SymbolId),
-    StateInit(TypedStatePlace),
-    Derivative(TypedStatePlace),
-    Noise(TypedStatePlace),
+    StateInit(AnalyzedStatePlace),
+    Derivative(AnalyzedStatePlace),
+    Noise(AnalyzedStatePlace),
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct TypedStatePlace {
+pub struct AnalyzedStatePlace {
     pub state: SymbolId,
-    pub index: Option<Box<TypedExpr>>,
+    pub index: Option<Box<AnalyzedExpr>>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct TypedExpr {
-    pub kind: TypedExprKind,
+pub struct AnalyzedExpr {
+    pub kind: AnalyzedExprKind,
     pub ty: ValueType,
     pub constant: Option<ConstValue>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum TypedExprKind {
+pub enum AnalyzedExprKind {
     Literal(ConstValue),
     Symbol(SymbolId),
-    StateValue(TypedStatePlace),
+    StateValue(AnalyzedStatePlace),
     Unary {
-        op: TypedUnaryOp,
-        expr: Box<TypedExpr>,
+        op: AnalyzedUnaryOp,
+        expr: Box<AnalyzedExpr>,
     },
     Binary {
-        op: TypedBinaryOp,
-        lhs: Box<TypedExpr>,
-        rhs: Box<TypedExpr>,
+        op: AnalyzedBinaryOp,
+        lhs: Box<AnalyzedExpr>,
+        rhs: Box<AnalyzedExpr>,
     },
     Call {
-        callee: TypedCall,
-        args: Vec<TypedExpr>,
+        callee: AnalyzedCall,
+        args: Vec<AnalyzedExpr>,
     },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TypedUnaryOp {
+pub enum AnalyzedUnaryOp {
     Plus,
     Minus,
     Not,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TypedBinaryOp {
+pub enum AnalyzedBinaryOp {
     Or,
     And,
     Eq,
@@ -662,13 +652,13 @@ pub enum TypedBinaryOp {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum TypedCall {
-    Math(MathIntrinsic),
+pub enum AnalyzedCall {
+    Math(MathFunction),
     Rate(SymbolId),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MathIntrinsic {
+pub enum MathFunction {
     Abs,
     Ceil,
     Exp,
@@ -687,7 +677,7 @@ pub enum MathIntrinsic {
     Sqrt,
 }
 
-impl MathIntrinsic {
+impl MathFunction {
     pub const ALL: [Self; 16] = [
         Self::Abs,
         Self::Ceil,
@@ -750,16 +740,16 @@ impl MathIntrinsic {
         }
     }
 
-    pub fn arity(self) -> IntrinsicArity {
+    pub fn argument_count(self) -> ArgumentCount {
         match self {
-            Self::Max | Self::Min | Self::Pow => IntrinsicArity::Exact(2),
-            _ => IntrinsicArity::Exact(1),
+            Self::Max | Self::Min | Self::Pow => ArgumentCount::Exact(2),
+            _ => ArgumentCount::Exact(1),
         }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IntrinsicArity {
+pub enum ArgumentCount {
     Exact(usize),
 }
 
@@ -814,10 +804,10 @@ mod tests {
             ),
         ];
 
-        for (kernel, expected) in cases {
-            assert_eq!(kernel.required_parameter_names(), expected);
-            assert_eq!(kernel.required_parameter_count(), expected.len());
-            assert_eq!(AnalyticalKernel::from_name(kernel.name()), Some(kernel));
+        for (function, expected) in cases {
+            assert_eq!(function.required_parameter_names(), expected);
+            assert_eq!(function.required_parameter_count(), expected.len());
+            assert_eq!(AnalyticalKernel::from_name(function.name()), Some(function));
         }
     }
 

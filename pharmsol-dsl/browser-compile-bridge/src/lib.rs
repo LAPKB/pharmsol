@@ -110,7 +110,7 @@ pub unsafe extern "C" fn compile_model(
                 "metadata": {
                     "abiVersion": compiled.metadata.abi_version,
                     "model": compiled.metadata.model,
-                    "kernels": compiled.metadata.kernels,
+                    "functions": compiled.metadata.functions,
                 }
             }));
             0

@@ -30,7 +30,10 @@
 //! assert!(metadata.output("cp").is_some());
 //! ```
 
-use pharmsol_dsl::{AnalyticalKernel, CovariateInterpolation, ModelKind};
+use pharmsol_dsl::{
+    AnalyticalKernel, CovariateInterpolation, ModelKind, NUMERIC_OUTPUT_PREFIX,
+    NUMERIC_ROUTE_PREFIX,
+};
 use std::fmt;
 use thiserror::Error;
 
@@ -67,7 +70,7 @@ pub enum ModelMetadataError {
         "metadata declares {declared} particle(s) but validation provided {fallback} fallback particle(s)"
     )]
     ParticleCountConflict { declared: usize, fallback: usize },
-    #[error("{kind:?} metadata cannot declare an analytical kernel")]
+    #[error("{kind:?} metadata cannot declare an analytical function")]
     AnalyticalKernelNotAllowed { kind: ModelKind },
 }
 
@@ -103,7 +106,8 @@ impl fmt::Display for NameDomain {
 /// Route lookups expose two different indices:
 /// - [`ValidatedModelMetadata::route_declaration_index`] is the route position in
 ///   declaration order.
-/// - `route_index` is the dense execution input index for that route kind.
+/// - [`ValidatedRoute::input_index`] is the dense execution input index
+///   for that route kind.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidatedModelMetadata {
     name: String,
@@ -203,6 +207,41 @@ impl ValidatedModelMetadata {
     /// Look up an output by public name and return its dense output index.
     pub(crate) fn output_index(&self, name: &str) -> Option<usize> {
         self.outputs.iter().position(|output| output.name() == name)
+    }
+
+    /// Resolve a public route label from data to a declared route.
+    ///
+    /// Resolution order:
+    /// 1. exact route name,
+    /// 2. canonical numeric alias (`input_<n>`) for a bare numeric label,
+    ///    matching Pmetrics `INPUT` numbering.
+    ///
+    /// A bare numeric label never falls back to a declaration position, so
+    /// `"10"` does not resolve unless an `input_10` route is declared.
+    ///
+    /// Use [`ValidatedRoute::input_index`] on the result for the dense
+    /// execution input slot.
+    pub fn route_for_label(&self, label: &str) -> Option<&ValidatedRoute> {
+        self.route(label).or_else(|| {
+            if !is_bare_numeric_label(label) {
+                return None;
+            }
+            self.route(&format!("{NUMERIC_ROUTE_PREFIX}{label}"))
+        })
+    }
+
+    /// Resolve a public output label from data to its dense output index.
+    ///
+    /// Uses the same resolution order as [`Self::route_for_label`]: exact
+    /// output name, then the `outeq_<n>` alias matching Pmetrics `OUTEQ`
+    /// numbering, with no positional fallback.
+    pub fn output_for_label(&self, label: &str) -> Option<usize> {
+        self.output_index(label).or_else(|| {
+            if !is_bare_numeric_label(label) {
+                return None;
+            }
+            self.output_index(&format!("{NUMERIC_OUTPUT_PREFIX}{label}"))
+        })
     }
 
     pub fn parameter(&self, name: &str) -> Option<&Parameter> {
@@ -391,7 +430,7 @@ impl ModelMetadata {
         self
     }
 
-    /// Set the analytical kernel identity for built-in analytical models.
+    /// Set the analytical function identity for built-in analytical models.
     pub fn analytical_kernel(mut self, analytical: AnalyticalKernel) -> Self {
         self.analytical = Some(analytical);
         self
@@ -437,7 +476,7 @@ impl ModelMetadata {
         self.particles
     }
 
-    /// Get the declared analytical kernel identity.
+    /// Get the declared analytical function identity.
     pub fn analytical_kernel_decl(&self) -> Option<AnalyticalKernel> {
         self.analytical
     }
@@ -732,6 +771,11 @@ impl Route {
     }
 }
 
+/// Returns `true` for labels consisting only of ASCII digits (`"0"`, `"12"`).
+fn is_bare_numeric_label(label: &str) -> bool {
+    !label.is_empty() && label.chars().all(|ch| ch.is_ascii_digit())
+}
+
 fn resolve_kind(
     declared_kind: Option<ModelKind>,
     requested_kind: Option<ModelKind>,
@@ -1018,6 +1062,48 @@ mod tests {
     }
 
     #[test]
+    fn numeric_labels_resolve_via_canonical_alias_only() {
+        let metadata = new("mixed_labels")
+            .kind(ModelKind::Ode)
+            .parameters(["ke", "v"])
+            .states(["gut", "central"])
+            .outputs(["cp", "outeq_0", "outeq_1"])
+            .route(Route::infusion("iv").to_state("central"))
+            .route(Route::bolus("input_0").to_state("gut"))
+            .validate()
+            .expect("metadata should validate");
+
+        // Exact names resolve first.
+        assert_eq!(metadata.output_for_label("cp"), Some(0));
+        assert_eq!(
+            metadata
+                .route_for_label("iv")
+                .map(|route| route.declaration_index()),
+            Some(0)
+        );
+
+        // Bare numeric labels resolve through the `outeq_<n>`/`input_<n>`
+        // aliases, including `0`.
+        assert_eq!(metadata.output_for_label("0"), Some(1));
+        assert_eq!(metadata.output_for_label("1"), Some(2));
+        assert_eq!(
+            metadata
+                .route_for_label("0")
+                .map(|route| route.declaration_index()),
+            Some(1)
+        );
+
+        // Without a declared alias, a bare numeric label never falls back to
+        // a declaration position.
+        assert_eq!(metadata.output_for_label("2"), None);
+        assert_eq!(metadata.output_for_label("3"), None);
+        assert!(metadata.route_for_label("1").is_none());
+        assert!(metadata.route_for_label("2").is_none());
+        assert_eq!(metadata.output_for_label("missing"), None);
+        assert!(metadata.route_for_label("missing").is_none());
+    }
+
+    #[test]
     fn duplicate_names_fail_validation() {
         let error = new("dup_params")
             .kind(ModelKind::Ode)
@@ -1230,7 +1316,7 @@ mod tests {
 
     #[test]
     fn analytical_kernel_is_limited_to_analytical_models() {
-        let error = new("ode_kernel")
+        let error = new("ode_function")
             .kind(ModelKind::Ode)
             .parameters(["ke"])
             .states(["central"])
@@ -1238,7 +1324,7 @@ mod tests {
             .route(Route::infusion("iv").to_state("central"))
             .analytical_kernel(AnalyticalKernel::OneCompartment)
             .validate()
-            .expect_err("ODE metadata cannot declare an analytical kernel");
+            .expect_err("ODE metadata cannot declare an analytical function");
 
         assert_eq!(
             error,

@@ -1,3 +1,9 @@
+//! Syntax tree produced by parsing pharmsol DSL source text.
+//!
+//! These types mirror what the author wrote, before any name or type
+//! checking. Use [`parse_model`](crate::parse_model) or
+//! [`parse_module`](crate::parse_module) to build them.
+
 use std::fmt::{self, Write};
 
 use serde::{Deserialize, Serialize};

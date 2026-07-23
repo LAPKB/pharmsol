@@ -83,9 +83,9 @@ enum OdeRouteKind {
 }
 
 struct AnalyticalKernelSpec {
-    kernel: ResolverAnalyticalKernel,
+    function: ResolverAnalyticalKernel,
     runtime_path: TokenStream2,
-    metadata_kernel: TokenStream2,
+    metadata_function: TokenStream2,
     state_count: usize,
 }
 
@@ -419,15 +419,20 @@ impl Parse for AnalyticalInput {
         validate_unique_symbolic_indices("output", &outputs, "analytical!")?;
         validate_routes(&routes, &states, "analytical!")?;
 
-        let kernel_spec = resolve_analytical_structure(&structure)?;
-        validate_analytical_structure_inputs(&structure, kernel_spec.kernel, &params, &derived)?;
-        if states.len() != kernel_spec.state_count {
+        let function_spec = resolve_analytical_structure(&structure)?;
+        validate_analytical_structure_inputs(
+            &structure,
+            function_spec.function,
+            &params,
+            &derived,
+        )?;
+        if states.len() != function_spec.state_count {
             return Err(syn::Error::new_spanned(
                 &structure,
                 format!(
                     "analytical structure `{}` expects {} state value(s), but `states` declares {}",
                     structure,
-                    kernel_spec.state_count,
+                    function_spec.state_count,
                     states.len()
                 ),
             ));
@@ -454,7 +459,7 @@ impl Parse for AnalyticalInput {
         )?;
 
         validate_analytical_derive_contract(
-            kernel_spec.kernel,
+            function_spec.function,
             &params,
             &derived,
             &covariates,
@@ -1084,13 +1089,13 @@ fn analytical_error_span<'a>(names: &'a [Ident], target: &str) -> Option<&'a Ide
 
 fn validate_analytical_structure_inputs(
     structure: &Ident,
-    kernel: ResolverAnalyticalKernel,
+    function: ResolverAnalyticalKernel,
     params: &[Ident],
     derived: &[Ident],
 ) -> syn::Result<AnalyticalStructureInputPlan> {
     let primary_names = params.iter().map(Ident::to_string).collect::<Vec<_>>();
     let derived_names = derived.iter().map(Ident::to_string).collect::<Vec<_>>();
-    AnalyticalStructureInputPlan::for_kernel(kernel, &primary_names, &derived_names).map_err(
+    AnalyticalStructureInputPlan::for_kernel(function, &primary_names, &derived_names).map_err(
         |error| match error {
             pharmsol_dsl::AnalyticalStructureInputError::DuplicatePrimary { name } => {
                 let span = analytical_error_span(params, &name).unwrap_or(structure);
@@ -1300,7 +1305,7 @@ fn analyze_derive_expr(
 }
 
 fn validate_analytical_derive_contract(
-    kernel: ResolverAnalyticalKernel,
+    function: ResolverAnalyticalKernel,
     params: &[Ident],
     derived: &[Ident],
     covariates: &[Ident],
@@ -1344,8 +1349,8 @@ fn validate_analytical_derive_contract(
     };
 
     let required_derived = match validate_analytical_structure_inputs(
-        &Ident::new(kernel.name(), Span::call_site()),
-        kernel,
+        &Ident::new(function.name(), Span::call_site()),
+        function,
         params,
         derived,
     ) {
@@ -1374,7 +1379,7 @@ fn validate_analytical_derive_contract(
             let message = if required_derived.contains(&name) {
                 format!(
                     "derived parameter `{name}` is not definitely assigned on every path before analytical structure `{}` uses it",
-                    kernel.name()
+                    function.name()
                 )
             } else {
                 format!(
@@ -2545,7 +2550,7 @@ fn expand_diffeq(
 
 fn resolve_analytical_structure(structure: &Ident) -> syn::Result<AnalyticalKernelSpec> {
     let structure_name = structure.to_string();
-    let (kernel, runtime_path, metadata_kernel, state_count) = match structure_name.as_str() {
+    let (function, runtime_path, metadata_function, state_count) = match structure_name.as_str() {
         "one_compartment" => (
             ResolverAnalyticalKernel::OneCompartment,
             quote! { ::pharmsol::equation::one_compartment },
@@ -2627,9 +2632,9 @@ fn resolve_analytical_structure(structure: &Ident) -> syn::Result<AnalyticalKern
     };
 
     Ok(AnalyticalKernelSpec {
-        kernel,
+        function,
         runtime_path,
-        metadata_kernel,
+        metadata_function,
         state_count,
     })
 }
@@ -3421,7 +3426,7 @@ pub fn ode(input: TokenStream) -> TokenStream {
 /// | `states` | yes | State identifiers |
 /// | `outputs` | yes | Output identifiers |
 /// | `routes` | no | Route declarations |
-/// | `structure` | yes | Built‑in kernel name, e.g. `one_compartment` or `one_compartment_with_absorption` |
+/// | `structure` | yes | Built‑in function name, e.g. `one_compartment` or `one_compartment_with_absorption` |
 /// | `derive` | no | Closure `\|t\| { … }` computing derived parameters from primaries and covariates |
 /// | `lag` | no | Lag‑time closure |
 /// | `fa` | no | Bioavailability closure |
@@ -3448,13 +3453,13 @@ pub fn analytical(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as AnalyticalInput);
     let route_bindings = ode_route_input_bindings(&input.routes);
 
-    let kernel_spec = match resolve_analytical_structure(&input.structure) {
+    let function_spec = match resolve_analytical_structure(&input.structure) {
         Ok(spec) => spec,
         Err(error) => return error.to_compile_error().into(),
     };
     let projection = match validate_analytical_structure_inputs(
         &input.structure,
-        kernel_spec.kernel,
+        function_spec.function,
         &input.params,
         &input.derived,
     ) {
@@ -3517,7 +3522,7 @@ pub fn analytical(input: TokenStream) -> TokenStream {
         Ok(derive) => derive,
         Err(error) => return error.to_compile_error().into(),
     };
-    let eq = expand_analytical_runtime(&kernel_spec.runtime_path, projection.kind());
+    let eq = expand_analytical_runtime(&function_spec.runtime_path, projection.kind());
 
     let out = match expand_analytical_out(
         &input.out,
@@ -3590,7 +3595,7 @@ pub fn analytical(input: TokenStream) -> TokenStream {
     let states = &input.states;
     let outputs = &input.outputs;
     let routes = expand_analytical_route_metadata(&input.routes, &lag_routes, &fa_routes);
-    let metadata_kernel = kernel_spec.metadata_kernel;
+    let metadata_function = function_spec.metadata_function;
     let covariate_metadata = if covariates.is_empty() {
         quote! {}
     } else {
@@ -3608,7 +3613,7 @@ pub fn analytical(input: TokenStream) -> TokenStream {
             .states([#(stringify!(#states)),*])
             .outputs([#(stringify!(#outputs)),*])
             #(.route(#routes))*
-            .analytical_kernel(#metadata_kernel);
+            .analytical_kernel(#metadata_function);
 
         ::pharmsol::equation::Analytical::new(
             #eq,

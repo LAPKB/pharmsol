@@ -7,21 +7,21 @@ use crate::dsl::model_info;
 use wasmtime::{Engine, Instance, Linker, Memory, Module, Store, TypedFunc};
 
 use super::compiled_backend_abi::{
-    decode_compiled_model_info, CompiledKernelAvailability, ALLOC_F64_BUFFER_SYMBOL,
+    decode_compiled_model_info, CompiledFunctionAvailability, ALLOC_F64_BUFFER_SYMBOL,
     API_VERSION_SYMBOL, DERIVE_SYMBOL, DIFFUSION_SYMBOL, DRIFT_SYMBOL, DYNAMICS_SYMBOL,
     FREE_F64_BUFFER_SYMBOL, INIT_SYMBOL, MODEL_INFO_JSON_LEN_SYMBOL, MODEL_INFO_JSON_PTR_SYMBOL,
     OUTPUTS_SYMBOL, ROUTE_BIOAVAILABILITY_SYMBOL, ROUTE_LAG_SYMBOL,
 };
-use super::native::{KernelSession, NativeModelInfo, RuntimeArtifact, RuntimeBackend};
+use super::native::{FunctionSession, NativeModelInfo, RuntimeArtifact, RuntimeBackend};
 use super::wasm_compile::{WasmError, WASM_API_VERSION};
 use super::wasm_direct_emitter::{
     DIRECT_WASM_BINARY_MATH_IMPORTS, DIRECT_WASM_IMPORT_MODULE, DIRECT_WASM_UNARY_MATH_IMPORTS,
 };
 use crate::PharmsolError;
-use pharmsol_dsl::execution::KernelRole;
+use pharmsol_dsl::execution::ModelFunctionKind;
 
 #[derive(Clone, Copy, Debug, Default)]
-struct WasmKernelAvailability {
+struct WasmFunctionAvailability {
     derive: bool,
     dynamics: bool,
     outputs: bool,
@@ -32,23 +32,23 @@ struct WasmKernelAvailability {
     route_bioavailability: bool,
 }
 
-impl WasmKernelAvailability {
-    fn has(self, role: KernelRole) -> bool {
+impl WasmFunctionAvailability {
+    fn has(self, role: ModelFunctionKind) -> bool {
         match role {
-            KernelRole::Derive => self.derive,
-            KernelRole::Dynamics => self.dynamics,
-            KernelRole::Outputs => self.outputs,
-            KernelRole::Init => self.init,
-            KernelRole::Drift => self.drift,
-            KernelRole::Diffusion => self.diffusion,
-            KernelRole::RouteLag => self.route_lag,
-            KernelRole::RouteBioavailability => self.route_bioavailability,
-            KernelRole::Analytical => false,
+            ModelFunctionKind::Derive => self.derive,
+            ModelFunctionKind::Dynamics => self.dynamics,
+            ModelFunctionKind::Outputs => self.outputs,
+            ModelFunctionKind::Init => self.init,
+            ModelFunctionKind::Drift => self.drift,
+            ModelFunctionKind::Diffusion => self.diffusion,
+            ModelFunctionKind::RouteLag => self.route_lag,
+            ModelFunctionKind::RouteBioavailability => self.route_bioavailability,
+            ModelFunctionKind::Analytical => false,
         }
     }
 
-    fn compiled(self) -> CompiledKernelAvailability {
-        CompiledKernelAvailability {
+    fn compiled(self) -> CompiledFunctionAvailability {
+        CompiledFunctionAvailability {
             derive: self.derive,
             dynamics: self.dynamics,
             outputs: self.outputs,
@@ -65,8 +65,8 @@ pub(crate) struct WasmExecutionArtifact {
     info: NativeModelInfo,
     engine: Engine,
     module: Module,
-    kernels: WasmKernelAvailability,
-    session_pool: Mutex<Vec<WasmKernelSession>>,
+    functions: WasmFunctionAvailability,
+    session_pool: Mutex<Vec<WasmFunctionSession>>,
 }
 
 impl std::fmt::Debug for WasmExecutionArtifact {
@@ -74,7 +74,7 @@ impl std::fmt::Debug for WasmExecutionArtifact {
         f.debug_struct("WasmExecutionArtifact")
             .field("model", &self.info.name)
             .field("kind", &self.info.kind)
-            .field("kernels", &self.kernels)
+            .field("functions", &self.functions)
             .finish()
     }
 }
@@ -85,23 +85,23 @@ struct WasmBuffer {
     len: usize,
 }
 
-type WasmKernelParams = (f64, i32, i32, i32, i32, i32, i32);
-type WasmKernelFunc = TypedFunc<WasmKernelParams, ()>;
-type WasmSessionPool = Mutex<Vec<WasmKernelSession>>;
+type WasmFunctionParams = (f64, i32, i32, i32, i32, i32, i32);
+type WasmModelFunction = TypedFunc<WasmFunctionParams, ()>;
+type WasmSessionPool = Mutex<Vec<WasmFunctionSession>>;
 
-struct WasmKernelSession {
+struct WasmFunctionSession {
     info: NativeModelInfo,
     store: Store<()>,
     memory: Memory,
     free: TypedFunc<(i32, i32), ()>,
-    derive: Option<WasmKernelFunc>,
-    dynamics: Option<WasmKernelFunc>,
-    outputs: WasmKernelFunc,
-    init: Option<WasmKernelFunc>,
-    drift: Option<WasmKernelFunc>,
-    diffusion: Option<WasmKernelFunc>,
-    route_lag: Option<WasmKernelFunc>,
-    route_bioavailability: Option<WasmKernelFunc>,
+    derive: Option<WasmModelFunction>,
+    dynamics: Option<WasmModelFunction>,
+    outputs: WasmModelFunction,
+    init: Option<WasmModelFunction>,
+    drift: Option<WasmModelFunction>,
+    diffusion: Option<WasmModelFunction>,
+    route_lag: Option<WasmModelFunction>,
+    route_bioavailability: Option<WasmModelFunction>,
     states: WasmBuffer,
     params: WasmBuffer,
     covariates: WasmBuffer,
@@ -110,17 +110,17 @@ struct WasmKernelSession {
     out: WasmBuffer,
 }
 
-struct PooledWasmKernelSession<'a> {
-    session: Option<WasmKernelSession>,
+struct PooledWasmFunctionSession<'a> {
+    session: Option<WasmFunctionSession>,
     pool: &'a WasmSessionPool,
 }
 
-impl WasmKernelSession {
+impl WasmFunctionSession {
     fn new(
         info: &NativeModelInfo,
         engine: &Engine,
         module: &Module,
-        kernels: WasmKernelAvailability,
+        functions: WasmFunctionAvailability,
     ) -> Result<Self, WasmError> {
         let mut store = Store::new(engine, ());
         let linker = configured_wasm_linker(engine)?;
@@ -147,38 +147,38 @@ impl WasmKernelSession {
                 .max(info.route_len),
         )?;
 
-        let derive = if kernels.derive {
+        let derive = if functions.derive {
             optional_typed_func(&instance, &mut store, DERIVE_SYMBOL)?
         } else {
             None
         };
-        let dynamics = if kernels.dynamics {
+        let dynamics = if functions.dynamics {
             optional_typed_func(&instance, &mut store, DYNAMICS_SYMBOL)?
         } else {
             None
         };
         let outputs = typed_func(&instance, &mut store, OUTPUTS_SYMBOL)?;
-        let init = if kernels.init {
+        let init = if functions.init {
             optional_typed_func(&instance, &mut store, INIT_SYMBOL)?
         } else {
             None
         };
-        let drift = if kernels.drift {
+        let drift = if functions.drift {
             optional_typed_func(&instance, &mut store, DRIFT_SYMBOL)?
         } else {
             None
         };
-        let diffusion = if kernels.diffusion {
+        let diffusion = if functions.diffusion {
             optional_typed_func(&instance, &mut store, DIFFUSION_SYMBOL)?
         } else {
             None
         };
-        let route_lag = if kernels.route_lag {
+        let route_lag = if functions.route_lag {
             optional_typed_func(&instance, &mut store, ROUTE_LAG_SYMBOL)?
         } else {
             None
         };
-        let route_bioavailability = if kernels.route_bioavailability {
+        let route_bioavailability = if functions.route_bioavailability {
             optional_typed_func(&instance, &mut store, ROUTE_BIOAVAILABILITY_SYMBOL)?
         } else {
             None
@@ -206,28 +206,28 @@ impl WasmKernelSession {
         })
     }
 
-    fn kernel(&self, role: KernelRole) -> Result<WasmKernelFunc, PharmsolError> {
+    fn function(&self, role: ModelFunctionKind) -> Result<WasmModelFunction, PharmsolError> {
         match role {
-            KernelRole::Derive => self.derive.clone(),
-            KernelRole::Dynamics => self.dynamics.clone(),
-            KernelRole::Outputs => Some(self.outputs.clone()),
-            KernelRole::Init => self.init.clone(),
-            KernelRole::Drift => self.drift.clone(),
-            KernelRole::Diffusion => self.diffusion.clone(),
-            KernelRole::RouteLag => self.route_lag.clone(),
-            KernelRole::RouteBioavailability => self.route_bioavailability.clone(),
-            KernelRole::Analytical => None,
+            ModelFunctionKind::Derive => self.derive.clone(),
+            ModelFunctionKind::Dynamics => self.dynamics.clone(),
+            ModelFunctionKind::Outputs => Some(self.outputs.clone()),
+            ModelFunctionKind::Init => self.init.clone(),
+            ModelFunctionKind::Drift => self.drift.clone(),
+            ModelFunctionKind::Diffusion => self.diffusion.clone(),
+            ModelFunctionKind::RouteLag => self.route_lag.clone(),
+            ModelFunctionKind::RouteBioavailability => self.route_bioavailability.clone(),
+            ModelFunctionKind::Analytical => None,
         }
         .ok_or_else(|| {
             PharmsolError::OtherError(format!(
-                "model `{}` does not provide a {:?} kernel",
+                "model `{}` does not provide a {:?} function",
                 self.info.name, role
             ))
         })
     }
 }
 
-impl Drop for WasmKernelSession {
+impl Drop for WasmFunctionSession {
     fn drop(&mut self) {
         for buffer in [
             &self.states,
@@ -246,10 +246,10 @@ impl Drop for WasmKernelSession {
     }
 }
 
-impl KernelSession for WasmKernelSession {
+impl FunctionSession for WasmFunctionSession {
     unsafe fn invoke_raw(
         &mut self,
-        role: KernelRole,
+        role: ModelFunctionKind,
         time: f64,
         states: *const f64,
         params: *const f64,
@@ -307,12 +307,12 @@ impl KernelSession for WasmKernelSession {
         } else {
             self.out.ptr
         };
-        let out_len = kernel_output_len(&self.info, role);
+        let out_len = function_output_len(&self.info, role);
         if out_ptr == self.out.ptr {
             zero_f64s(&self.memory, &mut self.store, out_ptr, out_len).map_err(map_memory_error)?;
         }
 
-        self.kernel(role)?
+        self.function(role)?
             .call(
                 &mut self.store,
                 (
@@ -327,7 +327,7 @@ impl KernelSession for WasmKernelSession {
             )
             .map_err(|error| {
                 PharmsolError::OtherError(format!(
-                    "WASM kernel {:?} trap for model `{}`: {error}",
+                    "WASM function {:?} trap for model `{}`: {error}",
                     role, self.info.name
                 ))
             })?;
@@ -343,10 +343,10 @@ impl KernelSession for WasmKernelSession {
     }
 }
 
-impl KernelSession for PooledWasmKernelSession<'_> {
+impl FunctionSession for PooledWasmFunctionSession<'_> {
     unsafe fn invoke_raw(
         &mut self,
-        role: KernelRole,
+        role: ModelFunctionKind,
         time: f64,
         states: *const f64,
         params: *const f64,
@@ -362,7 +362,7 @@ impl KernelSession for PooledWasmKernelSession<'_> {
     }
 }
 
-impl Drop for PooledWasmKernelSession<'_> {
+impl Drop for PooledWasmFunctionSession<'_> {
     fn drop(&mut self) {
         if let Some(session) = self.session.take() {
             self.pool
@@ -378,11 +378,11 @@ impl RuntimeArtifact for WasmExecutionArtifact {
         RuntimeBackend::Wasm
     }
 
-    fn has_kernel(&self, role: KernelRole) -> bool {
-        self.kernels.has(role)
+    fn has_function(&self, role: ModelFunctionKind) -> bool {
+        self.functions.has(role)
     }
 
-    fn start_session(&self) -> Result<Box<dyn KernelSession + '_>, PharmsolError> {
+    fn start_session(&self) -> Result<Box<dyn FunctionSession + '_>, PharmsolError> {
         let session = self
             .session_pool
             .lock()
@@ -391,19 +391,21 @@ impl RuntimeArtifact for WasmExecutionArtifact {
 
         let session = match session {
             Some(session) => session,
-            None => WasmKernelSession::new(&self.info, &self.engine, &self.module, self.kernels)
-                .map_err(|error| {
-                    PharmsolError::OtherError(format!(
-                        "failed to instantiate WASM runtime for model `{}`: {error}",
-                        self.info.name
-                    ))
-                })?,
+            None => {
+                WasmFunctionSession::new(&self.info, &self.engine, &self.module, self.functions)
+                    .map_err(|error| {
+                        PharmsolError::OtherError(format!(
+                            "failed to instantiate WASM runtime for model `{}`: {error}",
+                            self.info.name
+                        ))
+                    })?
+            }
         };
 
-        Ok(Box::new(PooledWasmKernelSession {
+        Ok(Box::new(PooledWasmFunctionSession {
             session: Some(session),
             pool: &self.session_pool,
-        }) as Box<dyn KernelSession>)
+        }) as Box<dyn FunctionSession>)
     }
 }
 
@@ -484,8 +486,8 @@ fn load_wasm_artifact_from_module(
     let memory = instance
         .get_memory(&mut store, "memory")
         .ok_or(WasmError::MissingExport("memory"))?;
-    let (info, expected_kernels) = read_model_info_envelope(&instance, &mut store, &memory)?;
-    let kernels = WasmKernelAvailability {
+    let (info, expected_functions) = read_model_info_envelope(&instance, &mut store, &memory)?;
+    let functions = WasmFunctionAvailability {
         derive: instance.get_func(&mut store, DERIVE_SYMBOL).is_some(),
         dynamics: instance.get_func(&mut store, DYNAMICS_SYMBOL).is_some(),
         outputs: instance.get_func(&mut store, OUTPUTS_SYMBOL).is_some(),
@@ -497,12 +499,12 @@ fn load_wasm_artifact_from_module(
             .get_func(&mut store, ROUTE_BIOAVAILABILITY_SYMBOL)
             .is_some(),
     };
-    let found_kernels = kernels.compiled();
-    if found_kernels != expected_kernels {
-        return Err(WasmError::KernelMetadataMismatch {
+    let found_functions = functions.compiled();
+    if found_functions != expected_functions {
+        return Err(WasmError::FunctionMetadataMismatch {
             model: info.name.clone(),
-            expected: expected_kernels,
-            found: found_kernels,
+            expected: expected_functions,
+            found: found_functions,
         });
     }
 
@@ -512,7 +514,7 @@ fn load_wasm_artifact_from_module(
             info,
             engine,
             module,
-            kernels,
+            functions,
             session_pool: Mutex::new(Vec::new()),
         },
     ))
@@ -571,15 +573,16 @@ fn alloc_buffer(
     Ok(WasmBuffer { ptr, len })
 }
 
-fn kernel_output_len(info: &NativeModelInfo, role: KernelRole) -> usize {
+fn function_output_len(info: &NativeModelInfo, role: ModelFunctionKind) -> usize {
     match role {
-        KernelRole::Derive => info.derived_len,
-        KernelRole::Dynamics | KernelRole::Init | KernelRole::Drift | KernelRole::Diffusion => {
-            info.state_len
-        }
-        KernelRole::Outputs => info.output_len,
-        KernelRole::RouteLag | KernelRole::RouteBioavailability => info.route_len,
-        KernelRole::Analytical => 0,
+        ModelFunctionKind::Derive => info.derived_len,
+        ModelFunctionKind::Dynamics
+        | ModelFunctionKind::Init
+        | ModelFunctionKind::Drift
+        | ModelFunctionKind::Diffusion => info.state_len,
+        ModelFunctionKind::Outputs => info.output_len,
+        ModelFunctionKind::RouteLag | ModelFunctionKind::RouteBioavailability => info.route_len,
+        ModelFunctionKind::Analytical => 0,
     }
 }
 
@@ -632,7 +635,7 @@ fn read_model_info_envelope(
     instance: &Instance,
     store: &mut Store<()>,
     memory: &Memory,
-) -> Result<(NativeModelInfo, CompiledKernelAvailability), WasmError> {
+) -> Result<(NativeModelInfo, CompiledFunctionAvailability), WasmError> {
     let ptr = typed_func::<(), i32>(instance, store, MODEL_INFO_JSON_PTR_SYMBOL)?
         .call(&mut *store, ())
         .map_err(|error| WasmError::Load(error.to_string()))?;
@@ -655,7 +658,7 @@ fn read_model_info_envelope(
             found: envelope.abi_version,
         });
     }
-    Ok((envelope.model, envelope.kernels))
+    Ok((envelope.model, envelope.functions))
 }
 
 fn write_f64s(
@@ -767,13 +770,13 @@ fn byte_range(
 mod tests {
     use super::*;
     use crate::dsl::{
-        compile_execution_artifact, CompiledKernelAvailability, CompiledModelInfoEnvelope,
+        compile_execution_artifact, CompiledFunctionAvailability, CompiledModelInfoEnvelope,
         NativeModelInfo, NativeOutputInfo, NativeRouteInfo,
     };
     use crate::test_fixtures::STRUCTURED_BLOCK_CORPUS;
     use approx::assert_relative_eq;
     use pharmsol_dsl::{
-        analyze_module, lower_typed_model, parse_module, ExecutionModel, ModelKind, RouteKind,
+        analyze_module, compile_analyzed_model, parse_module, ExecutionModel, ModelKind, RouteKind,
     };
     use std::path::{Path, PathBuf};
     use tempfile::tempdir;
@@ -786,13 +789,13 @@ mod tests {
     fn load_corpus_model(name: &str) -> ExecutionModel {
         let source = STRUCTURED_BLOCK_CORPUS;
         let parsed = parse_module(source).expect("parse corpus module");
-        let typed = analyze_module(&parsed).expect("analyze corpus module");
-        let model = typed
+        let analyzed = analyze_module(&parsed).expect("analyze corpus module");
+        let model = analyzed
             .models
             .iter()
             .find(|model| model.name == name)
             .expect("model in corpus module");
-        lower_typed_model(model).expect("lower corpus model")
+        compile_analyzed_model(model).expect("lower corpus model")
     }
 
     fn loader_test_model_info(name: &str) -> NativeModelInfo {
@@ -929,9 +932,9 @@ mod tests {
         let metadata = serde_json::to_vec(&CompiledModelInfoEnvelope {
             abi_version: WASM_API_VERSION,
             model: model_info,
-            kernels: CompiledKernelAvailability {
+            functions: CompiledFunctionAvailability {
                 outputs: true,
-                ..CompiledKernelAvailability::default()
+                ..CompiledFunctionAvailability::default()
             },
         })
         .expect("metadata json");
@@ -958,9 +961,9 @@ mod tests {
         let metadata = serde_json::to_vec(&CompiledModelInfoEnvelope {
             abi_version: WASM_API_VERSION + 1,
             model: model_info,
-            kernels: CompiledKernelAvailability {
+            functions: CompiledFunctionAvailability {
                 outputs: true,
-                ..CompiledKernelAvailability::default()
+                ..CompiledFunctionAvailability::default()
             },
         })
         .expect("metadata json");
@@ -979,14 +982,14 @@ mod tests {
     }
 
     #[test]
-    fn rejects_kernel_metadata_mismatch_from_compiled_envelope() {
-        let model_info = loader_test_model_info("kernel_metadata_mismatch");
+    fn rejects_function_metadata_mismatch_from_compiled_envelope() {
+        let model_info = loader_test_model_info("function_metadata_mismatch");
         let metadata = serde_json::to_vec(&CompiledModelInfoEnvelope {
             abi_version: WASM_API_VERSION,
             model: model_info,
-            kernels: CompiledKernelAvailability {
+            functions: CompiledFunctionAvailability {
                 outputs: true,
-                ..CompiledKernelAvailability::default()
+                ..CompiledFunctionAvailability::default()
             },
         })
         .expect("metadata json");
@@ -1000,11 +1003,11 @@ mod tests {
 
         assert!(matches!(
             error,
-            WasmError::KernelMetadataMismatch {
+            WasmError::FunctionMetadataMismatch {
                 ref model,
                 expected,
                 found,
-            } if model == "kernel_metadata_mismatch"
+            } if model == "function_metadata_mismatch"
                 && expected.outputs
                 && !found.outputs
         ));
@@ -1048,7 +1051,7 @@ mod tests {
     }
 
     #[test]
-    fn wasm_ode_artifact_exports_browser_bundle_and_matches_jit_kernels() {
+    fn wasm_ode_artifact_exports_browser_bundle_and_matches_jit_functions() {
         let model = load_corpus_model("one_cmt_oral_iv");
         let work_dir = tempdir().expect("tempdir");
         let output_path = work_dir.path().join("one_cmt_oral_iv.wasm");
@@ -1067,7 +1070,7 @@ mod tests {
         assert!(loader.contains(ROUTE_LAG_SYMBOL));
         assert!(loader.contains(ROUTE_BIOAVAILABILITY_SYMBOL));
 
-        let jit = compile_execution_artifact(&model).expect("compile jit kernels");
+        let jit = compile_execution_artifact(&model).expect("compile jit functions");
         let (mut store, instance, memory) = instantiate_module(&output_path);
 
         let api_version = typed_func::<(), u32>(&instance, &mut store, API_VERSION_SYMBOL);
@@ -1235,7 +1238,7 @@ mod tests {
     }
 
     #[test]
-    fn reuses_wasm_kernel_sessions_across_start_session_calls() {
+    fn reuses_wasm_function_sessions_across_start_session_calls() {
         let model = load_corpus_model("one_cmt_oral_iv");
         let work_dir = tempdir().expect("tempdir");
         let output_path = work_dir.path().join("one_cmt_oral_iv_reuse.wasm");
@@ -1256,9 +1259,9 @@ mod tests {
     }
 
     #[test]
-    fn wasm_runtime_preserves_state_aliasing_for_dynamics_kernel() {
+    fn wasm_runtime_preserves_state_aliasing_for_dynamics_function() {
         let model = load_corpus_model("one_cmt_oral_iv");
-        let jit = compile_execution_artifact(&model).expect("compile jit kernels");
+        let jit = compile_execution_artifact(&model).expect("compile jit functions");
         let bytes = super::super::wasm_compile::compile_execution_model_to_wasm_bytes(&model)
             .expect("emit direct wasm bytes");
         let (info, artifact) = load_wasm_artifact_bytes(&bytes).expect("load direct wasm");
@@ -1292,7 +1295,7 @@ mod tests {
             );
             session
                 .invoke_raw(
-                    KernelRole::Dynamics,
+                    ModelFunctionKind::Dynamics,
                     0.0,
                     actual.as_ptr(),
                     params.as_ptr(),
@@ -1301,7 +1304,7 @@ mod tests {
                     derived.as_ptr(),
                     actual.as_mut_ptr(),
                 )
-                .expect("invoke aliased dynamics kernel");
+                .expect("invoke aliased dynamics function");
         }
 
         for (actual, expected) in actual.iter().zip(expected.iter()) {
@@ -1312,7 +1315,7 @@ mod tests {
     #[test]
     fn wasm_runtime_zeroes_non_aliased_diffusion_outputs() {
         let model = load_corpus_model("vanco_sde");
-        let jit = compile_execution_artifact(&model).expect("compile jit kernels");
+        let jit = compile_execution_artifact(&model).expect("compile jit functions");
         let bytes = super::super::wasm_compile::compile_execution_model_to_wasm_bytes(&model)
             .expect("emit direct wasm bytes");
         let (info, artifact) = load_wasm_artifact_bytes(&bytes).expect("load direct wasm");
@@ -1338,7 +1341,7 @@ mod tests {
             );
             session
                 .invoke_raw(
-                    KernelRole::Diffusion,
+                    ModelFunctionKind::Diffusion,
                     0.0,
                     states.as_ptr(),
                     params.as_ptr(),
@@ -1347,7 +1350,7 @@ mod tests {
                     derived.as_ptr(),
                     actual.as_mut_ptr(),
                 )
-                .expect("invoke diffusion kernel");
+                .expect("invoke diffusion function");
         }
 
         for (actual, expected) in actual.iter().zip(expected.iter()) {
@@ -1357,9 +1360,9 @@ mod tests {
     }
 
     #[test]
-    fn wasm_runtime_matches_jit_route_property_kernels() {
+    fn wasm_runtime_matches_jit_route_property_functions() {
         let model = load_corpus_model("one_cmt_oral_iv");
-        let jit = compile_execution_artifact(&model).expect("compile jit kernels");
+        let jit = compile_execution_artifact(&model).expect("compile jit functions");
         let bytes = super::super::wasm_compile::compile_execution_model_to_wasm_bytes(&model)
             .expect("emit direct wasm bytes");
         let (info, artifact) = load_wasm_artifact_bytes(&bytes).expect("load direct wasm");
@@ -1397,7 +1400,7 @@ mod tests {
             );
             session
                 .invoke_raw(
-                    KernelRole::RouteLag,
+                    ModelFunctionKind::RouteLag,
                     0.0,
                     states.as_ptr(),
                     params.as_ptr(),
@@ -1406,10 +1409,10 @@ mod tests {
                     derived.as_ptr(),
                     actual_lag.as_mut_ptr(),
                 )
-                .expect("invoke route lag kernel");
+                .expect("invoke route lag function");
             session
                 .invoke_raw(
-                    KernelRole::RouteBioavailability,
+                    ModelFunctionKind::RouteBioavailability,
                     0.0,
                     states.as_ptr(),
                     params.as_ptr(),
@@ -1418,7 +1421,7 @@ mod tests {
                     derived.as_ptr(),
                     actual_bioavailability.as_mut_ptr(),
                 )
-                .expect("invoke route bioavailability kernel");
+                .expect("invoke route bioavailability function");
         }
 
         for (actual, expected) in actual_lag.iter().zip(expected_lag.iter()) {

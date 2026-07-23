@@ -1,8 +1,11 @@
-use super::ast::*;
 use super::authoring;
 use super::diagnostic::{ParseError, Span};
 use super::lexer::{lex, Token, TokenKind};
+use super::syntax::*;
 
+/// Parses DSL source text into a syntax tree of one or more models.
+///
+/// Accepts both canonical `model { ... }` source and the authoring shorthand.
 pub fn parse_module(src: &str) -> Result<Module, ParseError> {
     let parsed = (|| {
         let leading = strip_leading_layout(src);
@@ -23,6 +26,10 @@ pub fn parse_module(src: &str) -> Result<Module, ParseError> {
     parsed.map_err(|error| error.with_source(src))
 }
 
+/// Parses DSL source text into a syntax tree of exactly one model.
+///
+/// Like [`parse_module`], but fails if the source does not contain exactly
+/// one model.
 pub fn parse_model(src: &str) -> Result<Model, ParseError> {
     let module = parse_module(src)?;
     match module.models.len() {
@@ -96,11 +103,19 @@ pub(crate) fn parse_place_fragment(src: &str) -> Result<Place, ParseError> {
     parsed.map_err(|error| error.with_source(src))
 }
 
+/// Maximum nesting depth for expressions and statements.
+///
+/// Guards against stack exhaustion from pathologically nested input such as
+/// `((((...))))`; the limit is far beyond any realistic model.
+pub const MAX_NESTING_DEPTH: usize = 256;
+
 struct Parser {
     tokens: Vec<Token>,
     index: usize,
     src_len: usize,
     layout_boundaries: Vec<LayoutBoundary>,
+    depth: usize,
+    fatal: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -129,7 +144,37 @@ impl Parser {
             index: 0,
             src_len,
             layout_boundaries: Vec::new(),
+            depth: 0,
+            fatal: false,
         }
+    }
+
+    /// Runs `parse` with one recursion slot; errors once nesting exceeds
+    /// [`MAX_NESTING_DEPTH`] instead of overflowing the call stack. The depth
+    /// error is fatal: recovery loops stop so the diagnostic surfaces once
+    /// instead of cascading per enclosing block.
+    fn with_depth<T>(
+        &mut self,
+        construct: &str,
+        parse: impl FnOnce(&mut Self) -> Result<T, ParseError>,
+    ) -> Result<T, ParseError> {
+        if self.depth >= MAX_NESTING_DEPTH {
+            self.fatal = true;
+            let span = self
+                .peek_span()
+                .unwrap_or_else(|| Span::empty(self.src_len));
+            return Err(ParseError::new(
+                format!(
+                    "{construct} is nested too deeply (maximum nesting depth is {MAX_NESTING_DEPTH})"
+                ),
+                span,
+            )
+            .with_help("split the model into simpler expressions or statements"));
+        }
+        self.depth += 1;
+        let result = parse(self);
+        self.depth -= 1;
+        result
     }
 
     fn parse_module(&mut self) -> Result<Module, ParseError> {
@@ -716,12 +761,12 @@ impl Parser {
     }
 
     fn parse_stmt(&mut self) -> Result<Stmt, ParseError> {
-        match self.peek_kind() {
-            Some(TokenKind::If) => self.parse_if_stmt(),
-            Some(TokenKind::For) => self.parse_for_stmt(),
-            Some(TokenKind::Let) => self.parse_let_stmt(),
-            _ => self.parse_assign_stmt(),
-        }
+        self.with_depth("statement", |parser| match parser.peek_kind() {
+            Some(TokenKind::If) => parser.parse_if_stmt(),
+            Some(TokenKind::For) => parser.parse_for_stmt(),
+            Some(TokenKind::Let) => parser.parse_let_stmt(),
+            _ => parser.parse_assign_stmt(),
+        })
     }
 
     fn parse_if_stmt(&mut self) -> Result<Stmt, ParseError> {
@@ -734,7 +779,7 @@ impl Parser {
             .is_some()
         {
             if self.at(|kind| matches!(kind, TokenKind::If)) {
-                let nested = self.parse_if_stmt()?;
+                let nested = self.with_depth("statement", |parser| parser.parse_if_stmt())?;
                 end_span = nested.span;
                 Some(vec![nested])
             } else {
@@ -911,11 +956,13 @@ impl Parser {
         })?;
         match token.kind {
             TokenKind::Ident(name) => Ok(Ident::new(name, token.span)),
+            // `usize::MAX as f64` rounds up to 2^64; keep the bound exclusive
+            // so the cast never saturates.
             TokenKind::Number(value)
                 if value.is_finite()
                     && value >= 0.0
                     && value.fract() == 0.0
-                    && value <= usize::MAX as f64 =>
+                    && value < usize::MAX as f64 =>
             {
                 Ok(Ident::new((value as usize).to_string(), token.span))
             }
@@ -943,6 +990,12 @@ impl Parser {
     }
 
     fn parse_expr(&mut self, min_precedence: u8) -> Result<Expr, ParseError> {
+        self.with_depth("expression", |parser| {
+            parser.parse_expr_inner(min_precedence)
+        })
+    }
+
+    fn parse_expr_inner(&mut self, min_precedence: u8) -> Result<Expr, ParseError> {
         let mut lhs = self.parse_prefix_expr()?;
         while let Some((op, precedence, right_assoc)) = self.peek_binary_op() {
             if precedence < min_precedence {
@@ -976,6 +1029,10 @@ impl Parser {
     }
 
     fn parse_prefix_expr(&mut self) -> Result<Expr, ParseError> {
+        self.with_depth("expression", |parser| parser.parse_prefix_expr_inner())
+    }
+
+    fn parse_prefix_expr_inner(&mut self) -> Result<Expr, ParseError> {
         match self.peek_kind() {
             Some(TokenKind::Plus) => {
                 let operator = self.bump().unwrap();
@@ -1221,6 +1278,9 @@ impl Parser {
     where
         F: FnOnce(&TokenKind) -> bool,
     {
+        if self.fatal {
+            return Err(ParseError::aborted());
+        }
         let context = context.into();
         let token = self.bump().ok_or_else(|| {
             ParseError::new(
@@ -1589,7 +1649,7 @@ impl Parser {
     }
 
     fn is_eof(&self) -> bool {
-        self.index >= self.tokens.len()
+        self.fatal || self.index >= self.tokens.len()
     }
 
     fn peek(&self) -> Option<&Token> {
@@ -1724,7 +1784,7 @@ out(cp) = central
     }
 
     #[test]
-    fn authoring_dx_and_ddt_lower_equivalently() {
+    fn authoring_dx_and_ddt_compile_equivalently() {
         let dx_src = r#"
 name = derivative_alias
 kind = ode
