@@ -62,7 +62,7 @@ use thiserror::Error;
 /// let obs = DataRow::builder("pt1", 1.0)
 ///     .evid(0)
 ///     .out(25.5)
-///     .outeq("cp")
+///     .output("cp")
 ///     .build();
 ///
 /// let dose = DataRow::builder("pt1", 0.0)
@@ -74,7 +74,7 @@ use thiserror::Error;
 ///     .build();
 ///
 /// let events = dose.into_events().unwrap();
-/// assert_eq!(obs.outeq.as_ref().map(|label| label.as_str()), Some("cp"));
+/// assert_eq!(obs.output.as_ref().map(|label| label.as_str()), Some("cp"));
 /// assert_eq!(events.len(), 11);
 /// ```
 #[derive(Debug, Clone, Default)]
@@ -98,16 +98,16 @@ pub struct DataRow {
     /// Observed value (for EVID=0)
     pub out: Option<f64>,
     /// Output label
-    pub outeq: Option<OutputLabel>,
+    pub output: Option<OutputLabel>,
     /// Censoring indicator
     pub cens: Option<Censor>,
-    /// Error polynomial coefficients
+    /// Pmetrics C0 transport coefficient
     pub c0: Option<f64>,
-    /// Error polynomial coefficients
+    /// Pmetrics C1 transport coefficient
     pub c1: Option<f64>,
-    /// Error polynomial coefficients
+    /// Pmetrics C2 transport coefficient
     pub c2: Option<f64>,
-    /// Error polynomial coefficients
+    /// Pmetrics C3 transport coefficient
     pub c3: Option<f64>,
     /// Covariate values at this time point
     pub covariates: HashMap<String, f64>,
@@ -136,7 +136,7 @@ impl DataRow {
         DataRowBuilder::new(id, time)
     }
 
-    /// Get error polynomial if all coefficients are present
+    /// Get ErrorPoly data if all four coefficients are present.
     fn get_errorpoly(&self) -> Option<ErrorPoly> {
         match (self.c0, self.c1, self.c2, self.c3) {
             (Some(c0), Some(c1), Some(c2), Some(c3)) => Some(ErrorPoly::new(c0, c1, c2, c3)),
@@ -150,7 +150,7 @@ impl DataRow {
     /// - EVID interpretation (0=observation, 1=dose, 4=reset)
     /// - ADDL/II expansion (both positive and negative directions)
     /// - Infusion vs bolus detection based on DUR
-    /// - Censoring and error polynomial handling
+    /// - Censoring and C0–C3 coefficient preservation
     /// - Preservation of public input and output labels
     ///
     /// # ADDL Expansion
@@ -197,7 +197,7 @@ impl DataRow {
             0 => {
                 // Observation event
                 let outeq =
-                    self.outeq
+                    self.output
                         .clone()
                         .ok_or_else(|| DataError::MissingObservationOuteq {
                             id: self.id.clone(),
@@ -318,7 +318,7 @@ impl DataRow {
 /// let row = DataRow::builder("patient_001", 1.5)
 ///     .evid(0)
 ///     .out(25.5)
-///     .outeq("cp")
+///     .output("cp")
 ///     .cens(Censor::None)
 ///     .covariate("weight", 70.0)
 ///     .covariate("age", 45.0)
@@ -416,8 +416,8 @@ impl DataRowBuilder {
     /// Required for EVID=0 observation rows.
     /// The provided value is preserved as the public label until downstream
     /// model resolution.
-    pub fn outeq(mut self, outeq: impl ToString) -> Self {
-        self.row.outeq = Some(OutputLabel::new(outeq));
+    pub fn output(mut self, outeq: impl ToString) -> Self {
+        self.row.output = Some(OutputLabel::new(outeq));
         self
     }
 
@@ -427,10 +427,7 @@ impl DataRowBuilder {
         self
     }
 
-    /// Set error polynomial coefficients
-    ///
-    /// The error polynomial models observation error as:
-    /// SD = c0 + c1*Y + c2*Y² + c3*Y³
+    /// Set ErrorPoly C0-C3 data.
     pub fn error_poly(mut self, c0: f64, c1: f64, c2: f64, c3: f64) -> Self {
         self.row.c0 = Some(c0);
         self.row.c1 = Some(c1);
@@ -480,11 +477,11 @@ impl DataRowBuilder {
 ///     DataRow::builder("pt1", 0.0)
 ///         .evid(1).dose(100.0).input("iv").build(),
 ///     DataRow::builder("pt1", 1.0)
-///         .evid(0).out(50.0).outeq("cp").build(),
+///         .evid(0).out(50.0).output("cp").build(),
 ///     DataRow::builder("pt1", 24.0)
 ///         .evid(4).dose(100.0).input("iv").build(),
 ///     DataRow::builder("pt1", 25.0)
-///         .evid(0).out(48.0).outeq("cp").build(),
+///         .evid(0).out(48.0).output("cp").build(),
 ///     DataRow::builder("pt2", 0.0)
 ///         .evid(1).dose(50.0).input("iv").build(),
 /// ];
@@ -616,7 +613,7 @@ mod tests {
         let row = DataRow::builder("pt1", 1.0)
             .evid(0)
             .out(25.5)
-            .outeq(1)
+            .output(1)
             .build();
 
         let events = row.into_events().unwrap();
@@ -626,7 +623,7 @@ mod tests {
             Event::Observation(obs) => {
                 assert_eq!(obs.time(), 1.0);
                 assert_eq!(obs.value(), Some(25.5));
-                assert_eq!(obs.outeq(), 1); // Kept as 1-indexed
+                assert_eq!(obs.output(), 1); // Kept as 1-indexed
             }
             _ => panic!("Expected observation event"),
         }
@@ -842,7 +839,7 @@ mod tests {
                 DataRow::builder("51", t)
                     .evid(0)
                     .out(1.0)
-                    .outeq("cp")
+                    .output("cp")
                     .build(),
             );
         }
@@ -899,7 +896,7 @@ mod tests {
         let row = DataRow::builder("pt1", 0.0)
             .evid(0)
             .out(25.0)
-            .outeq(1)
+            .output(1)
             .covariate("weight", 70.0)
             .covariate("age", 45.0)
             .build();
@@ -914,18 +911,37 @@ mod tests {
         let row = DataRow::builder("pt1", 1.0)
             .evid(0)
             .out(25.0)
-            .outeq(1)
+            .output(1)
             .error_poly(0.1, 0.2, 0.0, 0.0)
             .build();
 
         let events = row.into_events().unwrap();
         match &events[0] {
             Event::Observation(obs) => {
-                let ep = obs.errorpoly().unwrap();
-                assert_eq!(ep.coefficients(), (0.1, 0.2, 0.0, 0.0));
+                let errorpoly = obs.errorpoly().unwrap();
+                assert_eq!(errorpoly.coefficients(), (0.1, 0.2, 0.0, 0.0));
+
+                let prediction = obs.to_prediction(obs.output().clone(), 24.5);
+                assert_eq!(prediction.errorpoly(), Some(errorpoly));
             }
             _ => panic!("Expected observation"),
         }
+    }
+
+    #[test]
+    fn partial_error_poly_is_ignored() {
+        let mut row = DataRow::builder("partial", 1.0)
+            .evid(0)
+            .out(25.0)
+            .output(1)
+            .build();
+        row.c0 = Some(0.1);
+
+        let events = row.into_events().unwrap();
+        let Event::Observation(observation) = &events[0] else {
+            panic!("expected observation")
+        };
+        assert_eq!(observation.errorpoly(), None);
     }
 
     #[test]
@@ -933,7 +949,7 @@ mod tests {
         let row = DataRow::builder("pt1", 1.0)
             .evid(0)
             .out(0.5)
-            .outeq(1)
+            .output(1)
             .cens(Censor::BLOQ)
             .build();
 

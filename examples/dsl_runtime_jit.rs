@@ -2,7 +2,7 @@
 //!
 //! A simple one-compartment IV infusion model is defined as a DSL string,
 //! compiled at runtime via `compile_module_source_to_runtime`, and then used
-//! to estimate predictions — no recompilation of the host binary needed.
+//! to generate predictions — no recompilation of the host binary needed.
 //!
 //! Run with:
 //! cargo run --example dsl_runtime_jit --features dsl-jit
@@ -47,7 +47,7 @@ out(cp) = central / v
         pharmsol::dsl::RuntimeCompilationTarget::Jit,
         on_compile_event,
     )?;
-    let support_point = Parameters::with_model(&model, [("ke", 1.2), ("v", 50.0)])?;
+    let parameters = Parameters::with_model(&model, [("ke", 1.2), ("v", 50.0)])?;
 
     // 3. Define the subject data.
     let subject = Subject::builder("bimodal_ke")
@@ -61,9 +61,9 @@ out(cp) = central / v
         .missing_observation(8.0, "cp")
         .build();
 
-    // 4. Estimate predictions for one support point.
+    // 4. Generate predictions for one parameter vector.
     let predictions = model
-        .estimate_predictions(&subject, &support_point)?
+        .estimate_predictions(&subject, &parameters)?
         .into_subject()
         .ok_or_else(|| io::Error::other("expected subject predictions"))?;
 

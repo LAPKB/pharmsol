@@ -3,8 +3,6 @@ use thiserror::Error;
 use pharmsol_dsl::RouteKind;
 
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-use crate::data::error_model::ErrorModelError;
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 use crate::data::row::DataError;
 
 use crate::parameters::ParameterError;
@@ -19,9 +17,6 @@ pub enum PharmsolError {
     #[error("Parameter error: {0}")]
     ParameterError(#[from] ParameterError),
     #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-    #[error("Error in the error model: {0}")]
-    ErrorModelError(#[from] ErrorModelError),
-    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     #[error("Covariate error: {0}")]
     CovariateError(#[from] CovariateError),
     #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
@@ -34,14 +29,6 @@ pub enum PharmsolError {
     DiffsolError(String),
     #[error("Other error: {0}")]
     OtherError(String),
-    #[error("Error setting up progress bar: {0}")]
-    ProgressBarError(String),
-    #[error("Likelihood is not finite: {0}")]
-    NonFiniteLikelihood(f64),
-    #[error("The calculated likelihood is zero")]
-    ZeroLikelihood,
-    #[error("Missing observation in prediction")]
-    MissingObservation,
     #[error("Input label `{label}` could not be resolved to a route input{available}")]
     UnknownInputLabel { label: String, available: String },
     #[error("Output label `{label}` could not be resolved to an output{available}")]
@@ -52,6 +39,8 @@ pub enum PharmsolError {
     InputOutOfRange { input: usize, ndrugs: usize },
     #[error("Output equation {outeq} is out of range (nout = {nout})")]
     OuteqOutOfRange { outeq: usize, nout: usize },
+    #[error("model has no metadata; input and output labels require a model authored with the ode!/analytical!/sde! macros or the DSL")]
+    MissingMetadata,
     #[error("Compiled model `{model}` has invalid runtime metadata: {detail}")]
     InvalidMetadata { model: String, detail: String },
 }

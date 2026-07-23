@@ -1,7 +1,7 @@
 //! Metadata builders and validated metadata views for handwritten models.
 //!
-//! Use this module when a handwritten [`crate::ODE`], [`crate::Analytical`], or
-//! [`crate::SDE`] model should expose the same public names that appear in data
+//! Use this module when a handwritten [`crate::equation::ODE`], [`crate::equation::Analytical`], or
+//! [`crate::equation::SDE`] model should expose the same public names that appear in data
 //! rows, subject builders, or parsed files.
 //!
 //! Metadata gives names to parameters, covariates, states, routes, and outputs.
@@ -333,8 +333,8 @@ impl ValidatedRoute {
 ///
 /// Use [`ModelMetadata`] to declare the public names that should be attached to
 /// a handwritten equation. After validation, the resulting metadata can be
-/// attached to handwritten [`crate::ODE`], [`crate::Analytical`], and
-/// [`crate::SDE`] models through their `with_metadata(...)` methods.
+/// attached to handwritten [`crate::equation::ODE`], [`crate::equation::Analytical`], and
+/// [`crate::equation::SDE`] models through their `with_metadata(...)` methods.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelMetadata {
     name: String,

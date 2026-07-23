@@ -31,11 +31,11 @@ documentation = "https://lapkb.github.io/pharmsol/"
 default = []
 dsl-core = []
 dsl-jit = [
-    "dsl-core",
-    "dep:cranelift",
-    "dep:cranelift-jit",
-    "dep:cranelift-module",
-    "dep:cranelift-native",
+  "dsl-core",
+  "dep:cranelift",
+  "dep:cranelift-jit",
+  "dep:cranelift-module",
+  "dep:cranelift-native",
 ]
 dsl-aot = ["dsl-core"]
 dsl-aot-load = ["dsl-core", "dep:libloading"]
@@ -84,6 +84,10 @@ bench = false
 
 [[bench]]
 name = "native_matrix"
+harness = false
+
+[[bench]]
+name = "sde_sessions"
 harness = false
 
 [[bench]]

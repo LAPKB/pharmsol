@@ -114,7 +114,16 @@ mod tests {
         )
         .with_nstates(3)
         .with_nout(1)
-        .with_ndrugs(3);
+        .with_ndrugs(3)
+        .with_metadata(super::super::tests::infusion_metadata(
+            "three_compartments_cl",
+            &["cl", "q2", "q3", "vc", "v2", "v3"],
+            &["central", "p1", "p2"],
+            3,
+            1,
+            true,
+        ))
+        .expect("metadata should validate");
 
         let analytical = equation::Analytical::new(
             three_compartments_cl,
@@ -129,7 +138,16 @@ mod tests {
         )
         .with_nstates(3)
         .with_nout(1)
-        .with_ndrugs(3);
+        .with_ndrugs(3)
+        .with_metadata(super::super::tests::infusion_metadata(
+            "three_compartments_cl",
+            &["cl", "q2", "q3", "vc", "v2", "v3"],
+            &["central", "p1", "p2"],
+            3,
+            1,
+            false,
+        ))
+        .expect("metadata should validate");
 
         let op_ode = ode
             .estimate_predictions(
@@ -185,7 +203,16 @@ mod tests {
                 fetch_params!(p, _ka, _cl, _q2, _q3, vc, _v2, _v3);
                 y[0] = x[1] / vc;
             },
-        );
+        )
+        .with_metadata(super::super::tests::oral_metadata(
+            "three_compartments_cl_abs",
+            &["ka", "cl", "q2", "q3", "vc", "v2", "v3"],
+            &["gut", "central", "p1", "p2", "s4"],
+            5,
+            5,
+            true,
+        ))
+        .expect("metadata should validate");
 
         let analytical = equation::Analytical::new(
             three_compartments_cl_with_absorption,
@@ -197,7 +224,16 @@ mod tests {
                 fetch_params!(p, _ka, _cl, _q2, _q3, vc, _v2, _v3);
                 y[0] = x[1] / vc;
             },
-        );
+        )
+        .with_metadata(super::super::tests::oral_metadata(
+            "three_compartments_cl_abs",
+            &["ka", "cl", "q2", "q3", "vc", "v2", "v3"],
+            &["gut", "central", "p1", "p2", "s4"],
+            5,
+            5,
+            false,
+        ))
+        .expect("metadata should validate");
 
         let op_ode = ode
             .estimate_predictions(

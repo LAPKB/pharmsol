@@ -1,5 +1,7 @@
 use nalgebra::DVector;
+#[cfg(test)]
 use rand::rng;
+use rand::Rng;
 use rand_distr::{Distribution, Normal};
 
 /// Implementation of the Euler-Maruyama method for solving stochastic differential equations.
@@ -88,9 +90,11 @@ where
     ///
     /// The adjusted step size for the next iteration.
     fn compute_new_step(&self, dt: f64, error: f64, safety: f64) -> f64 {
-        let mut new_dt = dt * safety * (1.0 / error).powf(0.5);
-        new_dt = new_dt.clamp(self.min_step, self.max_step);
-        new_dt
+        if error == 0.0 {
+            return self.max_step;
+        }
+        let new_dt = dt * safety * (1.0 / error).powf(0.5);
+        new_dt.clamp(self.min_step, self.max_step)
     }
 
     /// Performs a single Euler-Maruyama integration step.
@@ -100,7 +104,18 @@ where
     /// * `time` - Current simulation time
     /// * `dt` - Step size
     /// * `state` - Current state of the system (modified in-place)
-    fn euler_maruyama_step(&self, time: f64, dt: f64, state: &mut DVector<f64>) {
+    fn sample_brownian_increment<R: Rng + ?Sized>(&self, dt: f64, rng: &mut R) -> DVector<f64> {
+        let normal_dist = Normal::new(0.0, dt.sqrt()).expect("positive integration step");
+        DVector::from_fn(self.state.len(), |_, _| normal_dist.sample(rng))
+    }
+
+    fn euler_maruyama_step(
+        &self,
+        time: f64,
+        dt: f64,
+        state: &mut DVector<f64>,
+        brownian_increment: &DVector<f64>,
+    ) {
         let n = state.len();
         let mut drift_term = DVector::zeros(n);
         (self.drift)(time, state, &mut drift_term);
@@ -108,12 +123,8 @@ where
         let mut diffusion_term = DVector::zeros(n);
         (self.diffusion)(time, state, &mut diffusion_term);
 
-        let mut rng = rng();
-        let normal_dist = Normal::new(0.0, 1.0).unwrap();
-
         for i in 0..n {
-            state[i] +=
-                drift_term[i] * dt + diffusion_term[i] * normal_dist.sample(&mut rng) * dt.sqrt();
+            state[i] += drift_term[i] * dt + diffusion_term[i] * brownian_increment[i];
         }
     }
 
@@ -131,7 +142,28 @@ where
     /// A tuple containing:
     /// * Vector of time points where solutions were computed
     /// * Vector of state vectors corresponding to each time point
+    #[cfg(test)]
     pub fn solve(&mut self, t0: f64, tf: f64) -> (Vec<f64>, Vec<DVector<f64>>) {
+        let mut rng = rng();
+        self.solve_impl(t0, tf, &mut rng)
+    }
+
+    /// Solve using only random draws from the supplied generator.
+    pub fn solve_with_rng<R: Rng + ?Sized>(
+        &mut self,
+        t0: f64,
+        tf: f64,
+        rng: &mut R,
+    ) -> (Vec<f64>, Vec<DVector<f64>>) {
+        self.solve_impl(t0, tf, rng)
+    }
+
+    fn solve_impl<R: Rng + ?Sized>(
+        &mut self,
+        t0: f64,
+        tf: f64,
+        rng: &mut R,
+    ) -> (Vec<f64>, Vec<DVector<f64>>) {
         let mut t = t0;
         let mut dt = self.max_step;
         let safety = 0.9;
@@ -139,30 +171,92 @@ where
         let mut solution = vec![self.state.clone()];
 
         while t < tf {
+            dt = dt.min(tf - t);
             let mut y1 = self.state.clone();
             let mut y2 = self.state.clone();
 
-            // Single step
-            self.euler_maruyama_step(t, dt, &mut y1);
+            let first_half_increment = self.sample_brownian_increment(dt / 2.0, rng);
+            let second_half_increment = self.sample_brownian_increment(dt / 2.0, rng);
+            let full_increment = &first_half_increment + &second_half_increment;
 
-            // Two half steps
-            self.euler_maruyama_step(t, dt / 2.0, &mut y2);
-            self.euler_maruyama_step(t + dt / 2.0, dt / 2.0, &mut y2);
+            self.euler_maruyama_step(t, dt, &mut y1, &full_increment);
+            self.euler_maruyama_step(t, dt / 2.0, &mut y2, &first_half_increment);
+            self.euler_maruyama_step(t + dt / 2.0, dt / 2.0, &mut y2, &second_half_increment);
 
             let error = self.calculate_error(&y1, &y2);
-
             if error <= 1.0 {
                 t += dt;
-                self.state = y2; // Use more accurate solution
+                self.state = y2;
                 times.push(t);
                 solution.push(self.state.clone());
                 dt = self.compute_new_step(dt, error, safety);
-                dt = dt.min(tf - t); // Don't step beyond tf
             } else {
                 dt = self.compute_new_step(dt, error, safety);
             }
         }
 
         (times, solution)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rand::rngs::StdRng;
+    use rand::SeedableRng;
+
+    type TestFn = fn(f64, &DVector<f64>, &mut DVector<f64>);
+
+    fn test_drift(_time: f64, state: &DVector<f64>, out: &mut DVector<f64>) {
+        out[0] = 0.25 * state[0];
+    }
+
+    fn test_diffusion(_time: f64, state: &DVector<f64>, out: &mut DVector<f64>) {
+        out[0] = 0.5 + 0.1 * state[0];
+    }
+
+    fn solver(initial_state: DVector<f64>) -> EM<TestFn, TestFn> {
+        EM::new(test_drift, test_diffusion, initial_state, 1e-2, 1e-2)
+    }
+
+    #[test]
+    fn full_step_increment_is_sum_of_seeded_half_step_increments() {
+        let solver = solver(DVector::from_vec(vec![2.0]));
+        let mut rng = StdRng::seed_from_u64(7);
+        let first = solver.sample_brownian_increment(0.05, &mut rng);
+        let second = solver.sample_brownian_increment(0.05, &mut rng);
+        let full = &first + &second;
+
+        let mut full_state = DVector::from_vec(vec![2.0]);
+        solver.euler_maruyama_step(0.0, 0.1, &mut full_state, &full);
+        let expected = 2.0 + 0.25 * 2.0 * 0.1 + (0.5 + 0.1 * 2.0) * (first[0] + second[0]);
+        assert_eq!(full[0].to_bits(), (first[0] + second[0]).to_bits());
+        assert!((full_state[0] - expected).abs() <= f64::EPSILON);
+    }
+
+    #[test]
+    fn unseeded_solve_clamps_a_short_interval() {
+        let drift = |_time: f64, _state: &DVector<f64>, out: &mut DVector<f64>| out[0] = 1.0;
+        let diffusion = |_time: f64, _state: &DVector<f64>, out: &mut DVector<f64>| out[0] = 0.0;
+        let mut solver = EM::new(drift, diffusion, DVector::from_vec(vec![0.0]), 1e-2, 1e-2);
+
+        let (times, states) = solver.solve(0.0, 0.025);
+
+        assert_eq!(times, vec![0.0, 0.025]);
+        assert!((states.last().unwrap()[0] - 0.025).abs() < 1e-15);
+    }
+
+    #[test]
+    fn seeded_adaptive_transition_is_reproducible() {
+        let mut first = solver(DVector::from_vec(vec![2.0]));
+        let mut second = solver(DVector::from_vec(vec![2.0]));
+        let mut first_rng = StdRng::seed_from_u64(19);
+        let mut second_rng = StdRng::seed_from_u64(19);
+
+        let first_transition = first.solve_with_rng(0.0, 0.25, &mut first_rng);
+        let second_transition = second.solve_with_rng(0.0, 0.25, &mut second_rng);
+
+        assert_eq!(first_transition, second_transition);
+        assert_eq!(first_transition.0.last(), Some(&0.25));
     }
 }

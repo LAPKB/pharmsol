@@ -53,7 +53,7 @@ use std::str::FromStr;
 /// # Expected columns
 ///
 /// The canonical columns are `ID`, `TIME`, `EVID`, `DOSE`, `DUR`, `ADDL`,
-/// `II`, `INPUT`, `OUT`, `OUTEQ`, `CENS`, and optional `C0..C3` error
+/// `II`, `INPUT`, `OUT`, `OUTEQ`, `CENS`, and optional `C0..C3` observation
 /// coefficients.
 ///
 /// All other numeric columns are treated as covariates.
@@ -134,16 +134,16 @@ struct Row {
     /// Censoring output
     #[serde(default, deserialize_with = "deserialize_option_censor")]
     cens: Option<Censor>,
-    /// First element of the error polynomial
+    /// C0 observation coefficient
     #[serde(deserialize_with = "deserialize_option_f64")]
     c0: Option<f64>,
-    /// Second element of the error polynomial
+    /// C1 observation coefficient
     #[serde(deserialize_with = "deserialize_option_f64")]
     c1: Option<f64>,
-    /// Third element of the error polynomial
+    /// C2 observation coefficient
     #[serde(deserialize_with = "deserialize_option_f64")]
     c2: Option<f64>,
-    /// Fourth element of the error polynomial
+    /// C3 observation coefficient
     #[serde(deserialize_with = "deserialize_option_f64")]
     c3: Option<f64>,
     /// All other columns are covariates
@@ -167,7 +167,7 @@ impl Row {
             out: self
                 .out
                 .and_then(|v| if v == -99.0 { None } else { Some(v) }),
-            outeq: self.outeq.clone(),
+            output: self.outeq.clone(),
             cens: self.cens,
             c0: self.c0,
             c1: self.c1,
@@ -323,7 +323,7 @@ impl Data {
                             let value = obs
                                 .value()
                                 .map_or_else(|| ".".to_string(), |v| v.to_string());
-                            let outeq = obs.outeq().to_string();
+                            let outeq = obs.output().to_string();
                             let censor = match obs.censoring() {
                                 Censor::None => "0".to_string(),
                                 Censor::BLOQ => "1".to_string(),
@@ -331,8 +331,8 @@ impl Data {
                             };
                             let (c0, c1, c2, c3) = obs
                                 .errorpoly()
-                                .map(|poly| {
-                                    let (c0, c1, c2, c3) = poly.coefficients();
+                                .map(|errorpoly| {
+                                    let (c0, c1, c2, c3) = errorpoly.coefficients();
                                     (
                                         c0.to_string(),
                                         c1.to_string(),
@@ -540,6 +540,68 @@ mod tests {
     }
 
     #[test]
+    fn pmetrics_roundtrip_preserves_exact_observation_metadata() {
+        let subject = Subject::builder("roundtrip")
+            .observation_with_error(
+                0.25,
+                2.5,
+                "cp",
+                ErrorPoly::new(0.1, 0.2, 0.3, 0.4),
+                Censor::BLOQ,
+            )
+            .censored_observation(1.5, 3.5, "effect", Censor::ALOQ)
+            .build();
+        let data = Data::new(vec![subject]);
+        let file = NamedTempFile::new().unwrap();
+        data.write_pmetrics(file.as_file()).unwrap();
+
+        let reparsed = read_pmetrics(file.path().display().to_string()).unwrap();
+        let events = reparsed.subjects()[0].occasions()[0].events();
+        let observations: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event {
+                Event::Observation(observation) => Some(observation),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(observations.len(), 2);
+        assert_eq!(observations[0].time(), 0.25);
+        assert_eq!(observations[0].value(), Some(2.5));
+        assert_eq!(observations[0].output().as_str(), "cp");
+        assert_eq!(observations[0].censoring(), Censor::BLOQ);
+        assert_eq!(
+            observations[0].errorpoly().unwrap().coefficients(),
+            (0.1, 0.2, 0.3, 0.4)
+        );
+        assert_eq!(observations[1].time(), 1.5);
+        assert_eq!(observations[1].value(), Some(3.5));
+        assert_eq!(observations[1].output().as_str(), "effect");
+        assert_eq!(observations[1].censoring(), Censor::ALOQ);
+        assert_eq!(observations[1].errorpoly(), None);
+    }
+
+    #[test]
+    fn pmetrics_errorpoly_flows_from_observation_to_prediction() {
+        let file = NamedTempFile::new().unwrap();
+        std::fs::write(
+            file.path(),
+            "ID,EVID,TIME,DUR,DOSE,ADDL,II,INPUT,OUT,OUTEQ,CENS,C0,C1,C2,C3\npt1,0,1,.,.,.,.,.,42,0,0,0.1,0.2,0.3,0.4\n",
+        )
+        .unwrap();
+
+        let data = read_pmetrics(file.path().display().to_string()).unwrap();
+        let Event::Observation(observation) = &data.subjects()[0].occasions()[0].events()[0] else {
+            panic!("expected observation")
+        };
+        let errorpoly = ErrorPoly::new(0.1, 0.2, 0.3, 0.4);
+        assert_eq!(observation.errorpoly(), Some(errorpoly));
+
+        let prediction = observation.to_prediction(observation.output().clone(), 40.0);
+        assert_eq!(prediction.errorpoly(), Some(errorpoly));
+    }
+
+    #[test]
     fn read_pmetrics_preserves_named_route_and_output_labels() {
         let file = NamedTempFile::new().unwrap();
         std::fs::write(
@@ -557,7 +619,7 @@ mod tests {
         }
 
         match &events[1] {
-            Event::Observation(observation) => assert_eq!(observation.outeq().as_str(), "cp"),
+            Event::Observation(observation) => assert_eq!(observation.output().as_str(), "cp"),
             _ => panic!("expected observation event"),
         }
     }
@@ -580,7 +642,7 @@ mod tests {
         }
 
         match &events[1] {
-            Event::Observation(observation) => assert_eq!(observation.outeq().as_str(), "1"),
+            Event::Observation(observation) => assert_eq!(observation.output().as_str(), "1"),
             _ => panic!("expected observation event"),
         }
     }

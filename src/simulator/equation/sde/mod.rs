@@ -4,22 +4,15 @@ use diffsol::{NalgebraContext, Vector};
 use nalgebra::DVector;
 use ndarray::{concatenate, Array2, Axis};
 use pharmsol_dsl::ModelKind;
-use rand::{rng, RngExt};
+use rand::Rng;
 use rayon::prelude::*;
 use thiserror::Error;
 
 use crate::{
     data::{Covariates, Infusion},
-    error_model::AssayErrorModels,
     prelude::simulator::Prediction,
     simulator::{Diffusion, Drift, Fa, Init, Lag, Neqs, Out, V},
-    Parameters, Subject,
-};
-
-use super::parameters_hash;
-use crate::simulator::cache::{
-    BoundErrorModelCache, SdeLikelihoodCache, DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
-    DEFAULT_CACHE_SIZE,
+    Event, Observation, Parameters, Subject,
 };
 
 use diffsol::VectorCommon;
@@ -109,6 +102,7 @@ fn simulate_sde_event(
     ndrugs: usize,
     ti: f64,
     tf: f64,
+    discontinuities: &[f64],
 ) -> V {
     if ti == tf {
         return x;
@@ -124,7 +118,7 @@ fn simulate_sde_event(
     let drift_closure = move |time: f64, state: &DVector<f64>, out: &mut DVector<f64>| {
         let mut rateiv = V::zeros(ndrugs, NalgebraContext::new());
         for infusion in &infusion_events {
-            if time >= infusion.time() && time <= infusion.duration() + infusion.time() {
+            if time >= infusion.time() && time < infusion.duration() + infusion.time() {
                 let input = infusion
                     .input_index()
                     .expect("resolved infusions should use numeric input labels");
@@ -151,7 +145,26 @@ fn simulate_sde_event(
         out.copy_from(out_v.inner());
     };
 
-    simulate_sde_event_with(drift_closure, diffusion_closure, x.inner().clone(), ti, tf).into()
+    simulate_sde_event_with(
+        drift_closure,
+        diffusion_closure,
+        x.inner().clone(),
+        ti,
+        tf,
+        discontinuities,
+    )
+    .into()
+}
+
+pub(crate) fn infusion_discontinuities(infusions: &[Infusion], ti: f64, tf: f64) -> Vec<f64> {
+    let mut discontinuities = infusions
+        .iter()
+        .flat_map(|infusion| [infusion.time(), infusion.time() + infusion.duration()])
+        .filter(|&time| time > ti && time < tf)
+        .collect::<Vec<_>>();
+    discontinuities.sort_by(f64::total_cmp);
+    discontinuities.dedup_by(|left, right| left.total_cmp(right).is_eq());
+    discontinuities
 }
 
 pub(crate) fn simulate_sde_event_with<D, G>(
@@ -160,6 +173,7 @@ pub(crate) fn simulate_sde_event_with<D, G>(
     initial_state: DVector<f64>,
     ti: f64,
     tf: f64,
+    discontinuities: &[f64],
 ) -> DVector<f64>
 where
     D: Fn(f64, &DVector<f64>, &mut DVector<f64>),
@@ -169,18 +183,56 @@ where
         return initial_state;
     }
 
-    let mut sde = em::EM::new(drift, diffusion, initial_state, 1e-2, 1e-2);
-    let (_time, solution) = sde.solve(ti, tf);
-    solution.last().unwrap().clone()
+    let mut rng = rand::rng();
+    solve_sde_event_with_rng(
+        drift,
+        diffusion,
+        initial_state,
+        ti,
+        tf,
+        discontinuities,
+        &mut rng,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn solve_sde_event_with_rng<D, G, R>(
+    drift: D,
+    diffusion: G,
+    initial_state: DVector<f64>,
+    ti: f64,
+    tf: f64,
+    discontinuities: &[f64],
+    rng: &mut R,
+) -> DVector<f64>
+where
+    D: Fn(f64, &DVector<f64>, &mut DVector<f64>),
+    G: Fn(f64, &DVector<f64>, &mut DVector<f64>),
+    R: Rng + ?Sized,
+{
+    let mut sde = em::EM::new(drift, diffusion, initial_state.clone(), 1e-2, 1e-2);
+    let mut segment_start = ti;
+    let mut final_state = initial_state;
+    for segment_end in discontinuities.iter().copied().chain(std::iter::once(tf)) {
+        let (_times, mut solution) = sde.solve_with_rng(segment_start, segment_end, rng);
+        final_state = solution.pop().unwrap();
+        segment_start = segment_end;
+    }
+    final_state
 }
 
 /// Stochastic Differential Equation solver for pharmacometric models.
 ///
 /// This struct represents a stochastic differential equation system and provides
-/// methods to simulate particles and estimate likelihood for PKPD modeling.
+/// methods to generate structural predictions from multiple particles.
 ///
 /// SDE models introduce stochasticity into the system dynamics, allowing for more
 /// realistic modeling of biological variability and uncertainty.
+///
+/// This low-level constructor is an internal building block for the `sde!`
+/// macro and is not part of the supported public API. Author models with the
+/// [`sde!`](crate::sde) macro or the DSL instead.
+#[doc(hidden)]
 #[derive(Clone, Debug)]
 pub struct SDE {
     drift: Drift,
@@ -193,8 +245,6 @@ pub struct SDE {
     nparticles: usize,
     metadata: Option<ValidatedModelMetadata>,
     injected_bolus_mappings: InjectedBolusMappings,
-    cache: Option<SdeLikelihoodCache>,
-    error_model_cache: Option<BoundErrorModelCache>,
 }
 
 impl SDE {
@@ -227,10 +277,6 @@ impl SDE {
             nparticles,
             metadata: None,
             injected_bolus_mappings: InjectedBolusMappings::default(),
-            cache: Some(SdeLikelihoodCache::new(DEFAULT_CACHE_SIZE)),
-            error_model_cache: Some(BoundErrorModelCache::new(
-                DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
-            )),
         }
     }
 
@@ -260,9 +306,6 @@ impl SDE {
         let metadata = metadata.validate_for_with_particles(ModelKind::Sde, self.nparticles)?;
         validate_metadata_dimensions(&metadata, &self.neqs)?;
         self.metadata = Some(metadata);
-        self.error_model_cache = Some(BoundErrorModelCache::new(
-            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
-        ));
         Ok(self)
     }
 
@@ -292,11 +335,415 @@ impl SDE {
 
     fn invalidate_metadata(&mut self) {
         self.metadata = None;
-        self.error_model_cache = Some(BoundErrorModelCache::new(
-            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
-        ));
         self.injected_bolus_mappings
             .invalidate_for_ndrugs(self.neqs.ndrugs);
+    }
+
+    /// Start a stateful particle simulation controlled by the supplied generator.
+    ///
+    /// The session stops at every observation. The caller must explicitly keep
+    /// the cloud or select ancestors before asking for the next observation.
+    pub fn particle_session<'a, R: Rng + ?Sized>(
+        &'a self,
+        subject: &Subject,
+        parameters: &'a Parameters,
+        particle_count: usize,
+        rng: &'a mut R,
+    ) -> Result<SdeParticleSession<'a, R>, SdeSessionError> {
+        if particle_count == 0 {
+            return Err(SdeSessionError::EmptyCloud);
+        }
+
+        let mut events = Vec::with_capacity(subject.occasions().len());
+        let mut covariates = Vec::with_capacity(subject.occasions().len());
+        for occasion in subject.occasions() {
+            covariates.push(occasion.covariates().clone());
+            events.push(self.resolve_occasion_events(
+                occasion,
+                parameters.as_slice(),
+                occasion.covariates(),
+            )?);
+        }
+
+        let states = if let Some(occasion) = subject.occasions().first() {
+            self.initial_particles(
+                parameters.as_slice(),
+                occasion.covariates(),
+                occasion.index(),
+                particle_count,
+            )
+        } else {
+            Vec::new()
+        };
+
+        Ok(SdeParticleSession {
+            model: self,
+            parameters: parameters.as_slice(),
+            events,
+            covariates,
+            occasion_indices: subject
+                .occasions()
+                .iter()
+                .map(|occasion| occasion.index())
+                .collect(),
+            occasion: 0,
+            event: 0,
+            states,
+            spare: Vec::with_capacity(particle_count),
+            infusions: Vec::new(),
+            predictions: Vec::with_capacity(particle_count),
+            observation: None,
+            waiting: false,
+            rng,
+            particle_count,
+        })
+    }
+
+    fn initial_particles(
+        &self,
+        parameters: &[f64],
+        covariates: &Covariates,
+        occasion_index: usize,
+        particle_count: usize,
+    ) -> Vec<DVector<f64>> {
+        let mut particles = Vec::with_capacity(particle_count);
+        for _ in 0..particle_count {
+            let mut state: V = DVector::zeros(self.get_nstates()).into();
+            if occasion_index == 0 {
+                (self.init)(
+                    &V::from_vec(parameters.to_vec(), NalgebraContext::new()),
+                    0.0,
+                    covariates,
+                    &mut state,
+                );
+            }
+            particles.push(state.inner().clone());
+        }
+        particles
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn advance_particle<R: Rng + ?Sized>(
+        &self,
+        state: DVector<f64>,
+        parameters: &[f64],
+        covariates: &Covariates,
+        infusions: &[Infusion],
+        ti: f64,
+        tf: f64,
+        discontinuities: &[f64],
+        rng: &mut R,
+    ) -> DVector<f64> {
+        if ti == tf {
+            return state;
+        }
+        let parameter_values = V::from_vec(parameters.to_vec(), NalgebraContext::new());
+        let infusion_events = infusions.to_vec();
+        let ndrugs = self.get_ndrugs();
+        let drift = self.drift;
+        let diffusion = self.diffusion;
+        let drift_parameters = parameter_values.clone();
+        let covariates = covariates.clone();
+
+        let drift_closure = move |time: f64, state: &DVector<f64>, out: &mut DVector<f64>| {
+            let mut rateiv = V::zeros(ndrugs, NalgebraContext::new());
+            for infusion in &infusion_events {
+                if time >= infusion.time() && time < infusion.duration() + infusion.time() {
+                    let input = infusion
+                        .input_index()
+                        .expect("resolved infusions should use numeric input labels");
+                    rateiv[input] += infusion.amount() / infusion.duration();
+                }
+            }
+            let mut out_v = V::zeros(state.len(), NalgebraContext::new());
+            drift(
+                &state.clone().into(),
+                &drift_parameters,
+                time,
+                &mut out_v,
+                &rateiv,
+                &covariates,
+            );
+            out.copy_from(out_v.inner());
+        };
+        let diffusion_closure = move |_time: f64, _state: &DVector<f64>, out: &mut DVector<f64>| {
+            let mut out_v = V::zeros(out.len(), NalgebraContext::new());
+            diffusion(&parameter_values, &mut out_v);
+            out.copy_from(out_v.inner());
+        };
+        solve_sde_event_with_rng(
+            drift_closure,
+            diffusion_closure,
+            state,
+            ti,
+            tf,
+            discontinuities,
+            rng,
+        )
+    }
+}
+
+/// Errors raised by caller-controlled SDE particle sessions.
+#[derive(Debug, Error)]
+pub enum SdeSessionError {
+    /// The underlying simulation rejected the subject, labels, or parameters.
+    #[error(transparent)]
+    Simulation(#[from] PharmsolError),
+    /// A session was requested with zero particles.
+    #[error("a particle session requires at least one particle")]
+    EmptyCloud,
+    /// The caller requested another observation before choosing how to resume.
+    #[error("choose how to resume from the current observation boundary before advancing")]
+    BoundaryPending,
+    /// A resume operation was requested when no observation is pending.
+    #[error("no observation boundary is currently pending")]
+    NoBoundary,
+    /// The replacement ancestor list does not contain one index per particle.
+    #[error("expected {expected} ancestor indices, received {actual}")]
+    AncestorCount {
+        /// Required number of indices.
+        expected: usize,
+        /// Number supplied by the caller.
+        actual: usize,
+    },
+    /// An ancestor index does not identify a particle in the current cloud.
+    #[error("ancestor index {index} is outside the particle cloud of size {particle_count}")]
+    AncestorOutOfRange {
+        /// Invalid ancestor index.
+        index: usize,
+        /// Number of particles in the current cloud.
+        particle_count: usize,
+    },
+}
+
+/// Borrowed data exposed while a session is stopped at an observation.
+#[derive(Debug)]
+pub struct SdeParticleObservation<'a> {
+    observation: &'a Observation,
+    predictions: &'a [Prediction],
+    states: &'a [DVector<f64>],
+}
+
+impl<'a> SdeParticleObservation<'a> {
+    /// Borrow the source observation at this boundary.
+    pub fn observation(&self) -> &'a Observation {
+        self.observation
+    }
+
+    /// Borrow one noiseless model prediction per particle.
+    pub fn predictions(&self) -> &'a [Prediction] {
+        self.predictions
+    }
+
+    /// Borrow the full particle states at this boundary.
+    pub fn states(&self) -> &'a [DVector<f64>] {
+        self.states
+    }
+
+    /// Return the observation time.
+    pub fn time(&self) -> f64 {
+        self.observation.time()
+    }
+
+    /// Return the resolved dense output index.
+    pub fn output_index(&self) -> usize {
+        self.observation
+            .outeq_index()
+            .expect("session observations are resolved")
+    }
+}
+
+/// Stateful particle simulation that pauses at each observation boundary.
+pub struct SdeParticleSession<'a, R: Rng + ?Sized> {
+    model: &'a SDE,
+    parameters: &'a [f64],
+    events: Vec<Vec<Event>>,
+    covariates: Vec<Covariates>,
+    occasion_indices: Vec<usize>,
+    occasion: usize,
+    event: usize,
+    states: Vec<DVector<f64>>,
+    spare: Vec<DVector<f64>>,
+    infusions: Vec<Infusion>,
+    predictions: Vec<Prediction>,
+    observation: Option<Observation>,
+    waiting: bool,
+    rng: &'a mut R,
+    particle_count: usize,
+}
+
+impl<R: Rng + ?Sized> SdeParticleSession<'_, R> {
+    /// Return the fixed number of particles in this session.
+    pub fn particle_count(&self) -> usize {
+        self.particle_count
+    }
+
+    /// Advance to the next observation, or return `None` when the schedule ends.
+    pub fn next_observation(
+        &mut self,
+    ) -> Result<Option<SdeParticleObservation<'_>>, SdeSessionError> {
+        if self.waiting {
+            return Err(SdeSessionError::BoundaryPending);
+        }
+
+        loop {
+            if self.occasion >= self.events.len() {
+                return Ok(None);
+            }
+            if self.event >= self.events[self.occasion].len() {
+                self.occasion += 1;
+                self.event = 0;
+                self.infusions.clear();
+                if self.occasion >= self.events.len() {
+                    return Ok(None);
+                }
+                self.states = self.model.initial_particles(
+                    self.parameters,
+                    &self.covariates[self.occasion],
+                    self.occasion_indices[self.occasion],
+                    self.particle_count,
+                );
+                continue;
+            }
+
+            let event = self.events[self.occasion][self.event].clone();
+            match &event {
+                Event::Bolus(bolus) => {
+                    let input = bolus.input_index().ok_or_else(|| {
+                        let available = self
+                            .model
+                            .metadata()
+                            .map(|metadata| metadata.route_labels())
+                            .unwrap_or_default();
+                        PharmsolError::unknown_input_label(bolus.input(), &available)
+                    })?;
+                    if input >= self.model.get_ndrugs() {
+                        return Err(PharmsolError::InputOutOfRange {
+                            input,
+                            ndrugs: self.model.get_ndrugs(),
+                        }
+                        .into());
+                    }
+                    if !self.model.injected_bolus_mappings.apply(
+                        &mut self.states,
+                        input,
+                        bolus.amount(),
+                    ) {
+                        self.states.add_bolus(input, bolus.amount());
+                    }
+                    self.event += 1;
+                    self.advance_after(event.time());
+                }
+                Event::Infusion(infusion) => {
+                    self.infusions.push(infusion.clone());
+                    self.event += 1;
+                    self.advance_after(event.time());
+                }
+                Event::Observation(observation) => {
+                    self.predictions.clear();
+                    let output_index = observation
+                        .outeq_index()
+                        .expect("session observations are resolved");
+                    let output_label = self.model.output_label(output_index);
+                    let parameter_values =
+                        V::from_vec(self.parameters.to_vec(), NalgebraContext::new());
+                    for state in &self.states {
+                        let mut output = V::zeros(self.model.get_nouteqs(), NalgebraContext::new());
+                        (self.model.out)(
+                            &state.clone().into(),
+                            &parameter_values,
+                            observation.time(),
+                            &self.covariates[self.occasion],
+                            &mut output,
+                        );
+                        self.predictions.push(
+                            observation.to_prediction(output_label.clone(), output[output_index]),
+                        );
+                    }
+                    self.observation = Some(observation.clone());
+                    self.event += 1;
+                    self.waiting = true;
+                    return Ok(Some(SdeParticleObservation {
+                        observation: self.observation.as_ref().unwrap(),
+                        predictions: &self.predictions,
+                        states: &self.states,
+                    }));
+                }
+            }
+        }
+    }
+
+    /// Resume after the current boundary without changing particle states.
+    pub fn retain_particles(&mut self) -> Result<(), SdeSessionError> {
+        if !self.waiting {
+            return Err(SdeSessionError::NoBoundary);
+        }
+        let time = self.observation.as_ref().unwrap().time();
+        self.waiting = false;
+        self.advance_after(time);
+        Ok(())
+    }
+
+    /// Replace particle states from `ancestors`, then resume after the boundary.
+    ///
+    /// The slice must contain exactly one in-range ancestor index for each
+    /// particle in the session. Indices may repeat.
+    pub fn select_ancestors(&mut self, ancestors: &[usize]) -> Result<(), SdeSessionError> {
+        if !self.waiting {
+            return Err(SdeSessionError::NoBoundary);
+        }
+        if ancestors.len() != self.particle_count {
+            return Err(SdeSessionError::AncestorCount {
+                expected: self.particle_count,
+                actual: ancestors.len(),
+            });
+        }
+        if let Some(&index) = ancestors
+            .iter()
+            .find(|&&index| index >= self.particle_count)
+        {
+            return Err(SdeSessionError::AncestorOutOfRange {
+                index,
+                particle_count: self.particle_count,
+            });
+        }
+
+        self.spare.clear();
+        self.spare.reserve(self.particle_count);
+        self.spare
+            .extend(ancestors.iter().map(|&index| self.states[index].clone()));
+        std::mem::swap(&mut self.states, &mut self.spare);
+        let time = self.observation.as_ref().unwrap().time();
+        self.waiting = false;
+        self.advance_after(time);
+        Ok(())
+    }
+
+    fn advance_after(&mut self, time: f64) {
+        let Some(next) = self.events[self.occasion].get(self.event) else {
+            return;
+        };
+        let end = next.time();
+        if time == end {
+            return;
+        }
+        let discontinuities = infusion_discontinuities(&self.infusions, time, end);
+        let old_states = std::mem::take(&mut self.states);
+        self.states = old_states
+            .into_iter()
+            .map(|state| {
+                self.model.advance_particle(
+                    state,
+                    self.parameters,
+                    &self.covariates[self.occasion],
+                    &self.infusions,
+                    time,
+                    end,
+                    &discontinuities,
+                    self.rng,
+                )
+            })
+            .collect();
     }
 }
 
@@ -331,39 +778,6 @@ fn validate_metadata_dimensions(
     Ok(())
 }
 
-impl super::Cache for SDE {
-    fn with_cache_capacity(mut self, size: usize) -> Self {
-        self.cache = Some(SdeLikelihoodCache::new(size));
-        self.error_model_cache = Some(BoundErrorModelCache::new(
-            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
-        ));
-        self
-    }
-
-    fn enable_cache(mut self) -> Self {
-        self.cache = Some(SdeLikelihoodCache::new(DEFAULT_CACHE_SIZE));
-        self.error_model_cache = Some(BoundErrorModelCache::new(
-            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
-        ));
-        self
-    }
-
-    fn clear_cache(&self) {
-        if let Some(cache) = &self.cache {
-            cache.invalidate_all();
-        }
-        if let Some(cache) = &self.error_model_cache {
-            cache.invalidate_all();
-        }
-    }
-
-    fn disable_cache(mut self) -> Self {
-        self.cache = None;
-        self.error_model_cache = None;
-        self
-    }
-}
-
 /// State trait implementation for particle-based SDE simulation.
 ///
 /// This implementation allows adding bolus doses to all particles in the system.
@@ -388,9 +802,6 @@ impl Predictions for Array2<Prediction> {
     fn new(nparticles: usize) -> Self {
         Array2::from_shape_fn((nparticles, 0), |_| Prediction::default())
     }
-    fn squared_error(&self) -> f64 {
-        unimplemented!();
-    }
     fn get_predictions(&self) -> Vec<Prediction> {
         // Make this return the mean prediction across all particles
         if self.is_empty() || self.ncols() == 0 {
@@ -414,21 +825,6 @@ impl Predictions for Array2<Prediction> {
         }
 
         result
-    }
-    fn log_likelihood(&self, error_models: &AssayErrorModels) -> Result<f64, crate::PharmsolError> {
-        // For SDE, compute log-likelihood using mean predictions across particles
-        let predictions = self.get_predictions();
-        if predictions.is_empty() {
-            return Ok(0.0);
-        }
-
-        let log_liks: Result<Vec<f64>, _> = predictions
-            .iter()
-            .filter(|p| p.observation().is_some())
-            .map(|p| p.log_likelihood(error_models))
-            .collect();
-
-        log_liks.map(|lls| lls.iter().sum())
     }
 }
 
@@ -498,6 +894,7 @@ impl EquationPriv for SDE {
         tf: f64,
     ) -> Result<(), PharmsolError> {
         let ndrugs = self.get_ndrugs();
+        let discontinuities = infusion_discontinuities(infusions, ti, tf);
         state.par_iter_mut().for_each(|particle| {
             *particle = simulate_sde_event(
                 &self.drift,
@@ -509,6 +906,7 @@ impl EquationPriv for SDE {
                 ndrugs,
                 ti,
                 tf,
+                &discontinuities,
             )
             .inner()
             .clone();
@@ -519,23 +917,28 @@ impl EquationPriv for SDE {
         self.nparticles
     }
 
-    fn is_sde(&self) -> bool {
-        true
-    }
     #[inline(always)]
     fn process_observation(
         &self,
         parameters: &[f64],
         observation: &crate::Observation,
-        error_models: Option<&AssayErrorModels>,
         _time: f64,
         covariates: &Covariates,
         x: &mut Self::S,
-        likelihood: &mut Vec<f64>,
         output: &mut Self::P,
     ) -> Result<(), PharmsolError> {
         let mut pred = vec![Prediction::default(); self.nparticles];
 
+        let outeq = observation
+            .outeq_index()
+            .expect("resolved observations should use numeric output labels");
+        if outeq >= self.get_nouteqs() {
+            return Err(PharmsolError::OuteqOutOfRange {
+                outeq,
+                nout: self.get_nouteqs(),
+            });
+        }
+        let output_label = self.output_label(outeq);
         pred.par_iter_mut().enumerate().for_each(|(i, p)| {
             let mut y = V::zeros(self.get_nouteqs(), NalgebraContext::new());
             (self.out)(
@@ -545,34 +948,10 @@ impl EquationPriv for SDE {
                 covariates,
                 &mut y,
             );
-            let outeq = observation
-                .outeq_index()
-                .expect("resolved observations should use numeric output labels");
-            *p = observation.to_prediction(y[outeq], x[i].as_slice().to_vec());
+            *p = observation.to_prediction(output_label.clone(), y[outeq]);
         });
-        let out = Array2::from_shape_vec((self.nparticles, 1), pred.clone())?;
+        let out = Array2::from_shape_vec((self.nparticles, 1), pred)?;
         *output = concatenate(Axis(1), &[output.view(), out.view()]).unwrap();
-        //e = y[t] .- x[:,1]
-        // q = pdf.(Distributions.Normal(0, 0.5), e)
-        if let Some(em) = error_models {
-            let mut q: Vec<f64> = Vec::with_capacity(self.nparticles);
-
-            pred.iter().for_each(|p| {
-                let lik = p.log_likelihood(em).map(f64::exp);
-                match lik {
-                    Ok(l) => q.push(l),
-                    Err(e) => panic!("Error in likelihood calculation: {:?}", e),
-                }
-            });
-            let sum_q: f64 = q.iter().sum();
-            let w: Vec<f64> = q.iter().map(|qi| qi / sum_q).collect();
-            let i = sysresample(&w);
-            let a: Vec<DVector<f64>> = i.iter().map(|&i| x[i].clone()).collect();
-            *x = a;
-            likelihood.push(sum_q / self.nparticles as f64);
-            // let qq: Vec<f64> = i.iter().map(|&i| q[i]).collect();
-            // likelihood.push(qq.iter().sum::<f64>() / self.nparticles as f64);
-        }
         Ok(())
     }
     #[inline(always)]
@@ -603,11 +982,9 @@ impl EquationPriv for SDE {
         parameters: &[f64],
         event: &crate::Event,
         next_event: Option<&crate::Event>,
-        error_models: Option<&AssayErrorModels>,
         covariates: &Covariates,
         x: &mut Self::S,
         infusions: &mut Vec<Infusion>,
-        likelihood: &mut Vec<f64>,
         output: &mut Self::P,
     ) -> Result<(), PharmsolError> {
         match event {
@@ -637,11 +1014,9 @@ impl EquationPriv for SDE {
                 self.process_observation(
                     parameters,
                     observation,
-                    error_models,
                     event.time(),
                     covariates,
                     x,
-                    likelihood,
                     output,
                 )?;
             }
@@ -662,116 +1037,19 @@ impl EquationPriv for SDE {
 }
 
 impl Equation for SDE {
-    fn bound_error_model_cache(&self) -> Option<&BoundErrorModelCache> {
-        self.error_model_cache.as_ref()
-    }
-
-    /// Estimates the likelihood of observed data given a model and parameters.
-    ///
-    /// # Arguments
-    ///
-    /// * `subject` - Subject data containing observations
-    /// * `parameters` - Parameter vector for the model
-    /// * `error_model` - Error model to use for likelihood calculations
-    ///
-    /// # Returns
-    ///
-    /// The log-likelihood of the observed data given the model and parameters.
-    fn estimate_likelihood(
-        &self,
-        subject: &Subject,
-        parameters: &Parameters,
-        error_models: &AssayErrorModels,
-    ) -> Result<f64, PharmsolError> {
-        _estimate_likelihood(self, subject, parameters.as_slice(), error_models)
-    }
-
-    fn estimate_log_likelihood(
-        &self,
-        subject: &Subject,
-        parameters: &Parameters,
-        error_models: &AssayErrorModels,
-    ) -> Result<f64, PharmsolError> {
-        // For SDE, the particle filter computes likelihood in regular space.
-        // We compute it directly and then take the log.
-        let lik = _estimate_likelihood(self, subject, parameters.as_slice(), error_models)?;
-
-        if lik > 0.0 {
-            Ok(lik.ln())
-        } else {
-            Ok(f64::NEG_INFINITY)
-        }
-    }
-
     fn kind() -> EqnKind {
         EqnKind::SDE
     }
-}
-
-#[inline(always)]
-fn _estimate_likelihood(
-    sde: &SDE,
-    subject: &Subject,
-    parameters: &[f64],
-    error_models: &AssayErrorModels,
-) -> Result<f64, PharmsolError> {
-    if let Some(cache) = &sde.cache {
-        let key = (
-            subject.hash(),
-            parameters_hash(parameters),
-            error_models.hash(),
-        );
-        if let Some(cached) = cache.get(&key) {
-            return Ok(cached);
-        }
-
-        let ypred = sde.simulate_subject_dense(subject, parameters, Some(error_models))?;
-        let result = ypred.1.unwrap();
-        cache.insert(key, result);
-        Ok(result)
-    } else {
-        let ypred = sde.simulate_subject_dense(subject, parameters, Some(error_models))?;
-        Ok(ypred.1.unwrap())
-    }
-}
-
-/// Performs systematic resampling of particles based on weights.
-///
-/// # Arguments
-///
-/// * `q` - Vector of particle weights
-///
-/// # Returns
-///
-/// Vector of indices to use for resampling.
-fn sysresample(q: &[f64]) -> Vec<usize> {
-    let mut qc = vec![0.0; q.len()];
-    qc[0] = q[0];
-    for i in 1..q.len() {
-        qc[i] = qc[i - 1] + q[i];
-    }
-    let m = q.len();
-    let mut rng = rng();
-    let u: Vec<f64> = (0..m)
-        .map(|i| (i as f64 + rng.random::<f64>()) / m as f64)
-        .collect();
-    let mut i = vec![0; m];
-    let mut k = 0;
-    for j in 0..m {
-        while qc[k] < u[j] {
-            k += 1;
-        }
-        i[j] = k;
-    }
-    i
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::simulator::equation::{self, Covariate, Route};
-    use crate::SubjectBuilderExt;
     use crate::{fa, fetch_params, lag};
+    use crate::{Subject, SubjectBuilderExt};
+    use rand::rngs::StdRng;
+    use rand::SeedableRng;
 
     fn simple_sde() -> SDE {
         let drift = |x: &V, _p: &V, _t: f64, dx: &mut V, rateiv: &V, _cov: &Covariates| {
@@ -813,6 +1091,21 @@ mod tests {
             .with_nstates(2)
             .with_ndrugs(1)
             .with_nout(1)
+    }
+
+    /// Metadata for `route_policy_sde` models that dose via infusion `iv`
+    /// (input index 0) and observe `cp` (output index 0).
+    fn route_policy_infusion_metadata() -> equation::ModelMetadata {
+        equation::metadata::new("route_policy_infusion")
+            .parameters(["theta"])
+            .states(["depot", "central"])
+            .outputs(["cp"])
+            .route(
+                Route::infusion("iv")
+                    .to_state("central")
+                    .expect_explicit_input(),
+            )
+            .particles(16)
     }
 
     #[test]
@@ -1064,7 +1357,240 @@ mod tests {
     }
 
     #[test]
-    fn clearing_sde_metadata_preserves_raw_bolus_behavior() {
+    fn standard_sde_short_infusion_stops_at_boundary() {
+        let rateiv_drift = |_x: &V, _p: &V, _t: f64, dx: &mut V, rateiv: &V, _cov: &Covariates| {
+            dx.fill(0.0);
+            dx[1] = rateiv[0];
+        };
+        let sde = route_policy_sde(rateiv_drift)
+            .with_metadata(route_policy_infusion_metadata())
+            .expect("metadata should validate");
+        let subject = Subject::builder("short-infusion")
+            .infusion(0.0, 2.5, "iv", 0.025)
+            .missing_observation(0.025, "cp")
+            .missing_observation(0.05, "cp")
+            .build();
+
+        let predictions = sde
+            .estimate_predictions(&subject, &crate::parameters::dense([0.0]))
+            .unwrap();
+
+        assert!((predictions[[0, 0]].prediction() - 2.5).abs() < 1e-12);
+        assert!((predictions[[1, 0]].prediction() - 2.5).abs() < 1e-12);
+    }
+
+    #[test]
+    fn standard_sde_segments_at_infusion_end_between_events() {
+        let rateiv_drift = |_x: &V, _p: &V, _t: f64, dx: &mut V, rateiv: &V, _cov: &Covariates| {
+            dx.fill(0.0);
+            dx[1] = rateiv[0];
+        };
+        let sde = route_policy_sde(rateiv_drift)
+            .with_metadata(route_policy_infusion_metadata())
+            .expect("metadata should validate");
+        let subject = Subject::builder("segmented-standard")
+            .infusion(0.0, 3.0, "iv", 0.075)
+            .missing_observation(0.1, "cp")
+            .build();
+
+        let predictions = sde
+            .estimate_predictions(&subject, &crate::parameters::dense([0.0]))
+            .unwrap();
+
+        assert!((predictions[[0, 0]].prediction() - 3.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn standard_sde_infusion_is_inactive_at_end_and_after() {
+        let rateiv_drift = |_x: &V, _p: &V, _t: f64, dx: &mut V, rateiv: &V, _cov: &Covariates| {
+            dx.fill(0.0);
+            dx[1] = rateiv[0];
+        };
+        let sde = route_policy_sde(rateiv_drift)
+            .with_metadata(route_policy_infusion_metadata())
+            .expect("metadata should validate");
+        let subject = Subject::builder("half-open-standard")
+            .infusion(0.0, 100.0, "iv", 1.0)
+            .missing_observation(1.0, "cp")
+            .missing_observation(1.2, "cp")
+            .build();
+
+        let predictions = sde
+            .estimate_predictions(&subject, &crate::parameters::dense([0.0]))
+            .unwrap();
+
+        assert!((predictions[[0, 0]].prediction() - 100.0).abs() < 1e-10);
+        assert!((predictions[[1, 0]].prediction() - 100.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn stateful_sde_infusion_is_inactive_at_end_and_after() {
+        let rateiv_drift = |_x: &V, _p: &V, _t: f64, dx: &mut V, rateiv: &V, _cov: &Covariates| {
+            dx.fill(0.0);
+            dx[1] = rateiv[0];
+        };
+        let sde = route_policy_sde(rateiv_drift)
+            .with_metadata(route_policy_infusion_metadata())
+            .expect("metadata should validate");
+        let subject = Subject::builder("half-open-session")
+            .infusion(0.0, 100.0, "iv", 1.0)
+            .missing_observation(1.0, "cp")
+            .missing_observation(1.2, "cp")
+            .build();
+        let parameters = crate::parameters::dense([0.0]);
+        let mut rng = StdRng::seed_from_u64(41);
+        let mut session = sde
+            .particle_session(&subject, &parameters, 4, &mut rng)
+            .unwrap();
+
+        {
+            let boundary = session.next_observation().unwrap().unwrap();
+            assert_eq!(boundary.time(), 1.0);
+            assert!(boundary
+                .predictions()
+                .iter()
+                .all(|prediction| (prediction.prediction() - 100.0).abs() < 1e-10));
+        }
+        session.retain_particles().unwrap();
+        {
+            let boundary = session.next_observation().unwrap().unwrap();
+            assert_eq!(boundary.time(), 1.2);
+            assert!(boundary
+                .predictions()
+                .iter()
+                .all(|prediction| (prediction.prediction() - 100.0).abs() < 1e-10));
+        }
+    }
+
+    #[test]
+    fn stateful_sde_segments_at_infusion_end_between_events() {
+        let rateiv_drift = |_x: &V, _p: &V, _t: f64, dx: &mut V, rateiv: &V, _cov: &Covariates| {
+            dx.fill(0.0);
+            dx[1] = rateiv[0];
+        };
+        let sde = route_policy_sde(rateiv_drift)
+            .with_metadata(route_policy_infusion_metadata())
+            .expect("metadata should validate");
+        let subject = Subject::builder("segmented-session")
+            .infusion(0.0, 3.0, "iv", 0.075)
+            .missing_observation(0.1, "cp")
+            .build();
+        let parameters = crate::parameters::dense([0.0]);
+        let mut rng = StdRng::seed_from_u64(42);
+        let mut session = sde
+            .particle_session(&subject, &parameters, 4, &mut rng)
+            .unwrap();
+
+        let boundary = session.next_observation().unwrap().unwrap();
+        assert_eq!(boundary.time(), 0.1);
+        assert!(boundary
+            .predictions()
+            .iter()
+            .all(|prediction| (prediction.prediction() - 3.0).abs() < 1e-12));
+    }
+
+    #[test]
+    fn handwritten_sde_rejects_out_of_range_numeric_event_labels() {
+        let model = simple_sde()
+            .with_metadata(
+                equation::metadata::new("reject")
+                    .states(["central"])
+                    .outputs(["cp"])
+                    .routes([
+                        Route::bolus("iv_bolus")
+                            .to_state("central")
+                            .expect_explicit_input(),
+                        Route::infusion("iv")
+                            .to_state("central")
+                            .expect_explicit_input(),
+                    ])
+                    .particles(128),
+            )
+            .expect("metadata attachment should validate");
+        let parameters = crate::parameters::dense([0.0, 1.0]);
+        for subject in [
+            Subject::builder("bad-bolus").bolus(0.0, 1.0, 1).build(),
+            Subject::builder("bad-infusion")
+                .infusion(0.0, 1.0, 1, 1.0)
+                .build(),
+        ] {
+            assert!(matches!(
+                model.simulate_subject(&subject, &parameters),
+                Err(PharmsolError::UnknownInputLabel { .. })
+            ));
+        }
+        let subject = Subject::builder("bad-output")
+            .observation(0.0, 0.0, 1)
+            .build();
+        assert!(matches!(
+            model.simulate_subject(&subject, &parameters),
+            Err(PharmsolError::UnknownOutputLabel { .. })
+        ));
+    }
+
+    #[test]
+    fn particle_session_validates_boundaries_and_ancestor_selection() {
+        let model = simple_sde()
+            .with_metadata(
+                equation::metadata::new("session-validation")
+                    .states(["central"])
+                    .outputs(["cp"])
+                    .route(
+                        Route::infusion("iv")
+                            .to_state("central")
+                            .expect_explicit_input(),
+                    )
+                    .particles(128),
+            )
+            .expect("metadata attachment should validate");
+        let subject = Subject::builder("session-validation")
+            .missing_observation(1.0, "cp")
+            .missing_observation(1.0, "cp")
+            .build();
+        let parameters = crate::parameters::dense([0.0, 1.0]);
+        let mut rng = StdRng::seed_from_u64(99);
+        let mut session = model
+            .particle_session(&subject, &parameters, 4, &mut rng)
+            .unwrap();
+
+        assert!(matches!(
+            session.retain_particles(),
+            Err(SdeSessionError::NoBoundary)
+        ));
+        let original = session
+            .next_observation()
+            .unwrap()
+            .unwrap()
+            .states()
+            .to_vec();
+        assert!(matches!(
+            session.next_observation(),
+            Err(SdeSessionError::BoundaryPending)
+        ));
+        assert!(matches!(
+            session.select_ancestors(&[0, 1]),
+            Err(SdeSessionError::AncestorCount {
+                expected: 4,
+                actual: 2
+            })
+        ));
+        assert!(matches!(
+            session.select_ancestors(&[0, 1, 2, 4]),
+            Err(SdeSessionError::AncestorOutOfRange {
+                index: 4,
+                particle_count: 4
+            })
+        ));
+
+        session.select_ancestors(&[3, 2, 1, 0]).unwrap();
+        let selected = session.next_observation().unwrap().unwrap();
+        for (actual, expected) in selected.states().iter().zip(original.iter().rev()) {
+            assert_eq!(actual, expected);
+        }
+    }
+
+    #[test]
+    fn clearing_sde_metadata_makes_label_resolution_fail() {
         let zero_drift = |_x: &V, _p: &V, _t: f64, dx: &mut V, _rateiv: &V, _cov: &Covariates| {
             dx.fill(0.0);
         };
@@ -1086,15 +1612,17 @@ mod tests {
             .with_nout(1);
 
         let subject = Subject::builder("bolus_route")
-            .bolus(0.0, 100.0, 0)
-            .missing_observation(0.1, 0)
+            .bolus(0.0, 100.0, "oral")
+            .missing_observation(0.1, "cp")
             .build();
 
-        let predictions = sde
-            .estimate_predictions(&subject, &crate::parameters::dense([0.0]))
-            .unwrap();
-
+        // Changing dimensions clears metadata, and without metadata there is no
+        // longer a raw numeric fallback: resolution now fails with
+        // `MissingMetadata` instead of silently simulating.
         assert!(sde.metadata().is_none());
-        assert_eq!(predictions[[0, 0]].prediction(), 0.0);
+        assert!(matches!(
+            sde.estimate_predictions(&subject, &crate::parameters::dense([0.0])),
+            Err(PharmsolError::MissingMetadata)
+        ));
     }
 }

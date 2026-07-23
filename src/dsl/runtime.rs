@@ -105,7 +105,7 @@ use super::wasm_compile::{
     compile_execution_model_to_wasm_bytes, compile_module_source_to_wasm_bytes, WasmError,
 };
 use crate::{
-    simulator::likelihood::{Prediction, SubjectPredictions},
+    simulator::prediction::{Prediction, SubjectPredictions},
     Parameters, PharmsolError, Subject, ValidatedModelMetadata,
 };
 use pharmsol_dsl::{
