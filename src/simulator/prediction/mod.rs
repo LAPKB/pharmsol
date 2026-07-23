@@ -43,7 +43,7 @@ impl Prediction {
     }
 
     /// Get the output label associated with this prediction.
-    pub fn outeq(&self) -> &OutputLabel {
+    pub fn output(&self) -> &OutputLabel {
         &self.outeq
     }
 
@@ -104,7 +104,7 @@ mod tests {
         assert_eq!(prediction.time(), 1.0);
         assert_eq!(prediction.observation(), Some(10.0));
         assert_eq!(prediction.prediction(), 12.0);
-        assert_eq!(prediction.outeq().as_str(), "cp");
+        assert_eq!(prediction.output().as_str(), "cp");
         assert_eq!(prediction.errorpoly(), errorpoly);
     }
 }

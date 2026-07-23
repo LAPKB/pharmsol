@@ -16,7 +16,7 @@ use crate::parameter_order::{ParameterOrderError, ParameterOrderPlan};
 ))]
 use crate::dsl::{CompiledRuntimeModel, RuntimeAnalyticalModel, RuntimeOdeModel, RuntimeSdeModel};
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-use crate::{Analytical, ODE, SDE};
+use crate::equation::{Analytical, ODE, SDE};
 
 /// Errors produced while validating named parameter input against model order.
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
@@ -315,7 +315,8 @@ mod tests {
     use ndarray::array;
 
     #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-    use crate::{fa, lag, metadata, Equation, ModelKind, Subject, SubjectBuilderExt, ODE};
+    use crate::equation::ODE;
+    use crate::{fa, lag, metadata, Equation, ModelKind, Subject, SubjectBuilderExt};
 
     #[cfg(feature = "dsl-jit")]
     use crate::dsl::{compile_module_source_to_runtime, RuntimeCompilationTarget};

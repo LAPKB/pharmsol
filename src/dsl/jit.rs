@@ -1345,7 +1345,8 @@ mod tests {
     use crate::simulator::equation::analytical::one_compartment_with_absorption;
     use crate::simulator::equation::{Equation, Predictions as PredictionTrait};
     use crate::test_fixtures::STRUCTURED_BLOCK_CORPUS;
-    use crate::{equation, Parameters, Subject, SubjectBuilderExt, ODE, SDE};
+    use crate::equation::{ODE, SDE};
+    use crate::{equation, Parameters, Subject, SubjectBuilderExt};
     use approx::assert_relative_eq;
     use diffsol::Vector;
     use pharmsol_dsl::execution::BufferLayout;

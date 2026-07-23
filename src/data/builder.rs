@@ -475,10 +475,10 @@ mod tests {
 
         for event in events {
             if let Event::Observation(obs) = event {
-                if obs.outeq() == 0 {
+                if obs.output() == 0 {
                     outeq_0_count += 1;
                     times_outeq_0.push(obs.time());
-                } else if obs.outeq() == 1 {
+                } else if obs.output() == 1 {
                     outeq_1_count += 1;
                     times_outeq_1.push(obs.time());
                 }

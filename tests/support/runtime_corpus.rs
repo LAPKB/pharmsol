@@ -16,7 +16,8 @@ use pharmsol::prelude::{
     one_compartment_with_absorption, Equation, Prediction, SubjectPredictions,
 };
 use pharmsol::{
-    equation, fa, fetch_cov, fetch_params, lag, Parameters, Subject, SubjectBuilderExt, SDE,
+    equation, equation::SDE, fa, fetch_cov, fetch_params, lag, Parameters, Subject,
+    SubjectBuilderExt,
 };
 use tempfile::{tempdir, TempDir};
 

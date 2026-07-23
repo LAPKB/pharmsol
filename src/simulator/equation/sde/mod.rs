@@ -228,6 +228,11 @@ where
 ///
 /// SDE models introduce stochasticity into the system dynamics, allowing for more
 /// realistic modeling of biological variability and uncertainty.
+///
+/// This low-level constructor is an internal building block for the `sde!`
+/// macro and is not part of the supported public API. Author models with the
+/// [`sde!`](crate::sde) macro or the DSL instead.
+#[doc(hidden)]
 #[derive(Clone, Debug)]
 pub struct SDE {
     drift: Drift,
@@ -652,8 +657,7 @@ impl<R: Rng + ?Sized> SdeParticleSession<'_, R> {
                             &mut output,
                         );
                         self.predictions.push(
-                            observation
-                                .to_prediction(output_label.clone(), output[output_index]),
+                            observation.to_prediction(output_label.clone(), output[output_index]),
                         );
                     }
                     self.observation = Some(observation.clone());
@@ -1089,6 +1093,21 @@ mod tests {
             .with_nout(1)
     }
 
+    /// Metadata for `route_policy_sde` models that dose via infusion `iv`
+    /// (input index 0) and observe `cp` (output index 0).
+    fn route_policy_infusion_metadata() -> equation::ModelMetadata {
+        equation::metadata::new("route_policy_infusion")
+            .parameters(["theta"])
+            .states(["depot", "central"])
+            .outputs(["cp"])
+            .route(
+                Route::infusion("iv")
+                    .to_state("central")
+                    .expect_explicit_input(),
+            )
+            .particles(16)
+    }
+
     #[test]
     fn handwritten_sde_metadata_exposes_name_lookup_and_particles() {
         let sde = simple_sde()
@@ -1343,11 +1362,13 @@ mod tests {
             dx.fill(0.0);
             dx[1] = rateiv[0];
         };
-        let sde = route_policy_sde(rateiv_drift);
+        let sde = route_policy_sde(rateiv_drift)
+            .with_metadata(route_policy_infusion_metadata())
+            .expect("metadata should validate");
         let subject = Subject::builder("short-infusion")
-            .infusion(0.0, 2.5, 0, 0.025)
-            .missing_observation(0.025, 0)
-            .missing_observation(0.05, 0)
+            .infusion(0.0, 2.5, "iv", 0.025)
+            .missing_observation(0.025, "cp")
+            .missing_observation(0.05, "cp")
             .build();
 
         let predictions = sde
@@ -1364,10 +1385,12 @@ mod tests {
             dx.fill(0.0);
             dx[1] = rateiv[0];
         };
-        let sde = route_policy_sde(rateiv_drift);
+        let sde = route_policy_sde(rateiv_drift)
+            .with_metadata(route_policy_infusion_metadata())
+            .expect("metadata should validate");
         let subject = Subject::builder("segmented-standard")
-            .infusion(0.0, 3.0, 0, 0.075)
-            .missing_observation(0.1, 0)
+            .infusion(0.0, 3.0, "iv", 0.075)
+            .missing_observation(0.1, "cp")
             .build();
 
         let predictions = sde
@@ -1383,11 +1406,13 @@ mod tests {
             dx.fill(0.0);
             dx[1] = rateiv[0];
         };
-        let sde = route_policy_sde(rateiv_drift);
+        let sde = route_policy_sde(rateiv_drift)
+            .with_metadata(route_policy_infusion_metadata())
+            .expect("metadata should validate");
         let subject = Subject::builder("half-open-standard")
-            .infusion(0.0, 100.0, 0, 1.0)
-            .missing_observation(1.0, 0)
-            .missing_observation(1.2, 0)
+            .infusion(0.0, 100.0, "iv", 1.0)
+            .missing_observation(1.0, "cp")
+            .missing_observation(1.2, "cp")
             .build();
 
         let predictions = sde
@@ -1404,11 +1429,13 @@ mod tests {
             dx.fill(0.0);
             dx[1] = rateiv[0];
         };
-        let sde = route_policy_sde(rateiv_drift);
+        let sde = route_policy_sde(rateiv_drift)
+            .with_metadata(route_policy_infusion_metadata())
+            .expect("metadata should validate");
         let subject = Subject::builder("half-open-session")
-            .infusion(0.0, 100.0, 0, 1.0)
-            .missing_observation(1.0, 0)
-            .missing_observation(1.2, 0)
+            .infusion(0.0, 100.0, "iv", 1.0)
+            .missing_observation(1.0, "cp")
+            .missing_observation(1.2, "cp")
             .build();
         let parameters = crate::parameters::dense([0.0]);
         let mut rng = StdRng::seed_from_u64(41);
@@ -1441,10 +1468,12 @@ mod tests {
             dx.fill(0.0);
             dx[1] = rateiv[0];
         };
-        let sde = route_policy_sde(rateiv_drift);
+        let sde = route_policy_sde(rateiv_drift)
+            .with_metadata(route_policy_infusion_metadata())
+            .expect("metadata should validate");
         let subject = Subject::builder("segmented-session")
-            .infusion(0.0, 3.0, 0, 0.075)
-            .missing_observation(0.1, 0)
+            .infusion(0.0, 3.0, "iv", 0.075)
+            .missing_observation(0.1, "cp")
             .build();
         let parameters = crate::parameters::dense([0.0]);
         let mut rng = StdRng::seed_from_u64(42);
@@ -1462,7 +1491,22 @@ mod tests {
 
     #[test]
     fn handwritten_sde_rejects_out_of_range_numeric_event_labels() {
-        let model = simple_sde();
+        let model = simple_sde()
+            .with_metadata(
+                equation::metadata::new("reject")
+                    .states(["central"])
+                    .outputs(["cp"])
+                    .routes([
+                        Route::bolus("iv_bolus")
+                            .to_state("central")
+                            .expect_explicit_input(),
+                        Route::infusion("iv")
+                            .to_state("central")
+                            .expect_explicit_input(),
+                    ])
+                    .particles(128),
+            )
+            .expect("metadata attachment should validate");
         let parameters = crate::parameters::dense([0.0, 1.0]);
         for subject in [
             Subject::builder("bad-bolus").bolus(0.0, 1.0, 1).build(),
@@ -1472,10 +1516,7 @@ mod tests {
         ] {
             assert!(matches!(
                 model.simulate_subject(&subject, &parameters),
-                Err(PharmsolError::InputOutOfRange {
-                    input: 1,
-                    ndrugs: 1
-                })
+                Err(PharmsolError::UnknownInputLabel { .. })
             ));
         }
         let subject = Subject::builder("bad-output")
@@ -1483,16 +1524,28 @@ mod tests {
             .build();
         assert!(matches!(
             model.simulate_subject(&subject, &parameters),
-            Err(PharmsolError::OuteqOutOfRange { outeq: 1, nout: 1 })
+            Err(PharmsolError::UnknownOutputLabel { .. })
         ));
     }
 
     #[test]
     fn particle_session_validates_boundaries_and_ancestor_selection() {
-        let model = simple_sde();
+        let model = simple_sde()
+            .with_metadata(
+                equation::metadata::new("session-validation")
+                    .states(["central"])
+                    .outputs(["cp"])
+                    .route(
+                        Route::infusion("iv")
+                            .to_state("central")
+                            .expect_explicit_input(),
+                    )
+                    .particles(128),
+            )
+            .expect("metadata attachment should validate");
         let subject = Subject::builder("session-validation")
-            .missing_observation(1.0, 0)
-            .missing_observation(1.0, 0)
+            .missing_observation(1.0, "cp")
+            .missing_observation(1.0, "cp")
             .build();
         let parameters = crate::parameters::dense([0.0, 1.0]);
         let mut rng = StdRng::seed_from_u64(99);
@@ -1559,15 +1612,17 @@ mod tests {
             .with_nout(1);
 
         let subject = Subject::builder("bolus_route")
-            .bolus(0.0, 100.0, 0)
-            .missing_observation(0.1, 0)
+            .bolus(0.0, 100.0, "oral")
+            .missing_observation(0.1, "cp")
             .build();
 
-        let predictions = sde
-            .estimate_predictions(&subject, &crate::parameters::dense([0.0]))
-            .unwrap();
-
+        // Changing dimensions clears metadata, and without metadata there is no
+        // longer a raw numeric fallback: resolution now fails with
+        // `MissingMetadata` instead of silently simulating.
         assert!(sde.metadata().is_none());
-        assert_eq!(predictions[[0, 0]].prediction(), 0.0);
+        assert!(matches!(
+            sde.estimate_predictions(&subject, &crate::parameters::dense([0.0])),
+            Err(PharmsolError::MissingMetadata)
+        ));
     }
 }

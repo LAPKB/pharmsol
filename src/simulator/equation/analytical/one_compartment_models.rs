@@ -75,7 +75,16 @@ mod tests {
         )
         .with_nstates(1)
         .with_ndrugs(1)
-        .with_nout(1);
+        .with_nout(1)
+        .with_metadata(super::super::tests::infusion_metadata(
+            "one_compartment",
+            &["ke", "v"],
+            &["central"],
+            1,
+            1,
+            true,
+        ))
+        .expect("metadata should validate");
 
         let analytical = equation::Analytical::new(
             one_compartment,
@@ -90,7 +99,16 @@ mod tests {
         )
         .with_nstates(1)
         .with_ndrugs(1)
-        .with_nout(1);
+        .with_nout(1)
+        .with_metadata(super::super::tests::infusion_metadata(
+            "one_compartment",
+            &["ke", "v"],
+            &["central"],
+            1,
+            1,
+            false,
+        ))
+        .expect("metadata should validate");
 
         let op_ode = ode
             .estimate_predictions(&subject, &crate::parameters::dense([0.1, 1.0]))
@@ -132,7 +150,16 @@ mod tests {
         )
         .with_nstates(2)
         .with_ndrugs(2)
-        .with_nout(1);
+        .with_nout(1)
+        .with_metadata(super::super::tests::oral_metadata(
+            "one_compartment_abs",
+            &["ka", "ke", "v"],
+            &["gut", "central"],
+            2,
+            1,
+            true,
+        ))
+        .expect("metadata should validate");
 
         let analytical = equation::Analytical::new(
             one_compartment_with_absorption,
@@ -147,7 +174,16 @@ mod tests {
         )
         .with_nstates(2)
         .with_ndrugs(2)
-        .with_nout(1);
+        .with_nout(1)
+        .with_metadata(super::super::tests::oral_metadata(
+            "one_compartment_abs",
+            &["ka", "ke", "v"],
+            &["gut", "central"],
+            2,
+            1,
+            false,
+        ))
+        .expect("metadata should validate");
 
         let op_ode = ode
             .estimate_predictions(&subject, &crate::parameters::dense([1.0, 0.1, 1.0]))

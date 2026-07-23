@@ -7,8 +7,9 @@
 use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, SamplingMode};
+use pharmsol::equation::{Analytical, ODE};
 use pharmsol::prelude::*;
-use pharmsol::{Analytical, Cache, Parameters, ODE};
+use pharmsol::{Cache, Parameters};
 
 mod common;
 use common::{

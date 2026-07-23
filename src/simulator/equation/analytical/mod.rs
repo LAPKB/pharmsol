@@ -42,6 +42,11 @@ pub enum AnalyticalMetadataError {
 ///
 /// This implementation uses closed-form analytical solutions for the model
 /// equations rather than numerical integration.
+///
+/// This low-level constructor is an internal building block for the
+/// `analytical!` macro and is not part of the supported public API. Author
+/// models with the [`analytical!`](crate::analytical) macro or the DSL instead.
+#[doc(hidden)]
 #[derive(Clone, Debug)]
 pub struct Analytical {
     eq: AnalyticalEq,
@@ -377,7 +382,7 @@ impl EquationPriv for Analytical {
                 .metadata()
                 .map(|m| m.output_labels())
                 .unwrap_or_default();
-            PharmsolError::unknown_output_label(observation.outeq(), &available)
+            PharmsolError::unknown_output_label(observation.output(), &available)
         })?;
         if outeq >= y.len() {
             return Err(PharmsolError::OuteqOutOfRange {
@@ -437,49 +442,130 @@ pub(crate) mod tests {
         pub(crate) fn get_subject(&self) -> Subject {
             match self {
                 SubjectInfo::InfusionDosing => Subject::builder("id1")
-                    .bolus(0.0, 100.0, 0)
-                    .infusion(24.0, 150.0, 0, 3.0)
-                    .missing_observation(0.0, 0)
-                    .missing_observation(1.0, 0)
-                    .missing_observation(2.0, 0)
-                    .missing_observation(4.0, 0)
-                    .missing_observation(8.0, 0)
-                    .missing_observation(12.0, 0)
-                    .missing_observation(24.0, 0)
-                    .missing_observation(25.0, 0)
-                    .missing_observation(26.0, 0)
-                    .missing_observation(27.0, 0)
-                    .missing_observation(28.0, 0)
-                    .missing_observation(32.0, 0)
-                    .missing_observation(36.0, 0)
+                    .bolus(0.0, 100.0, "iv_bolus")
+                    .infusion(24.0, 150.0, "iv", 3.0)
+                    .missing_observation(0.0, "cp")
+                    .missing_observation(1.0, "cp")
+                    .missing_observation(2.0, "cp")
+                    .missing_observation(4.0, "cp")
+                    .missing_observation(8.0, "cp")
+                    .missing_observation(12.0, "cp")
+                    .missing_observation(24.0, "cp")
+                    .missing_observation(25.0, "cp")
+                    .missing_observation(26.0, "cp")
+                    .missing_observation(27.0, "cp")
+                    .missing_observation(28.0, "cp")
+                    .missing_observation(32.0, "cp")
+                    .missing_observation(36.0, "cp")
                     .build(),
 
                 SubjectInfo::OralInfusionDosage => Subject::builder("id1")
-                    .bolus(0.0, 100.0, 1)
-                    .infusion(24.0, 150.0, 0, 3.0)
-                    .bolus(48.0, 100.0, 0)
-                    .missing_observation(0.0, 0)
-                    .missing_observation(1.0, 0)
-                    .missing_observation(2.0, 0)
-                    .missing_observation(4.0, 0)
-                    .missing_observation(8.0, 0)
-                    .missing_observation(12.0, 0)
-                    .missing_observation(24.0, 0)
-                    .missing_observation(25.0, 0)
-                    .missing_observation(26.0, 0)
-                    .missing_observation(27.0, 0)
-                    .missing_observation(28.0, 0)
-                    .missing_observation(32.0, 0)
-                    .missing_observation(36.0, 0)
-                    .missing_observation(48.0, 0)
-                    .missing_observation(49.0, 0)
-                    .missing_observation(50.0, 0)
-                    .missing_observation(52.0, 0)
-                    .missing_observation(56.0, 0)
-                    .missing_observation(60.0, 0)
+                    .bolus(0.0, 100.0, "oral")
+                    .infusion(24.0, 150.0, "iv", 3.0)
+                    .bolus(48.0, 100.0, "iv_bolus")
+                    .missing_observation(0.0, "cp")
+                    .missing_observation(1.0, "cp")
+                    .missing_observation(2.0, "cp")
+                    .missing_observation(4.0, "cp")
+                    .missing_observation(8.0, "cp")
+                    .missing_observation(12.0, "cp")
+                    .missing_observation(24.0, "cp")
+                    .missing_observation(25.0, "cp")
+                    .missing_observation(26.0, "cp")
+                    .missing_observation(27.0, "cp")
+                    .missing_observation(28.0, "cp")
+                    .missing_observation(32.0, "cp")
+                    .missing_observation(36.0, "cp")
+                    .missing_observation(48.0, "cp")
+                    .missing_observation(49.0, "cp")
+                    .missing_observation(50.0, "cp")
+                    .missing_observation(52.0, "cp")
+                    .missing_observation(56.0, "cp")
+                    .missing_observation(60.0, "cp")
                     .build(),
             }
         }
+    }
+
+    /// Build metadata for the non-absorption infusion-dosing analytical tests.
+    ///
+    /// Declares a single bolus route (`iv_bolus`, input index 0) and an
+    /// infusion route (`iv`, input index 0), padding extra infusion routes so
+    /// `route_input_count == ndrugs`. The `cp` output is index 0, padded up to
+    /// `nout`. Pass `explicit = true` for ODE/SDE models (explicit input
+    /// vector) and `false` for analytical models.
+    pub(crate) fn infusion_metadata(
+        name: &str,
+        params: &[&str],
+        states: &[&str],
+        ndrugs: usize,
+        nout: usize,
+        explicit: bool,
+    ) -> super::super::ModelMetadata {
+        let mut routes = vec![
+            super::super::Route::bolus("iv_bolus").to_state(states[0]),
+            super::super::Route::infusion("iv").to_state(states[0]),
+        ];
+        for i in 1..ndrugs {
+            routes.push(super::super::Route::infusion(format!("iv_pad_{i}")).to_state(states[0]));
+        }
+        build_handwritten_metadata(name, params, states, routes, nout, explicit)
+    }
+
+    /// Build metadata for the absorption oral-infusion-dosing analytical tests.
+    ///
+    /// Declares bolus routes in order `iv_bolus` (input index 0) then `oral`
+    /// (input index 1), plus infusion route `iv` (input index 0). Extra
+    /// infusion routes are padded so `route_input_count == ndrugs`. The `cp`
+    /// output is index 0, padded up to `nout`. Pass `explicit = true` for
+    /// ODE/SDE models and `false` for analytical models.
+    pub(crate) fn oral_metadata(
+        name: &str,
+        params: &[&str],
+        states: &[&str],
+        ndrugs: usize,
+        nout: usize,
+        explicit: bool,
+    ) -> super::super::ModelMetadata {
+        let mut routes = vec![
+            super::super::Route::bolus("iv_bolus").to_state(states[0]),
+            super::super::Route::bolus("oral")
+                .to_state(states.get(1).copied().unwrap_or(states[0])),
+            super::super::Route::infusion("iv").to_state(states[0]),
+        ];
+        for i in 1..ndrugs {
+            routes.push(super::super::Route::infusion(format!("iv_pad_{i}")).to_state(states[0]));
+        }
+        build_handwritten_metadata(name, params, states, routes, nout, explicit)
+    }
+
+    fn build_handwritten_metadata(
+        name: &str,
+        params: &[&str],
+        states: &[&str],
+        routes: Vec<super::super::Route>,
+        nout: usize,
+        explicit: bool,
+    ) -> super::super::ModelMetadata {
+        let routes = routes
+            .into_iter()
+            .map(|route| {
+                if explicit {
+                    route.expect_explicit_input()
+                } else {
+                    route
+                }
+            })
+            .collect::<Vec<_>>();
+        let mut outputs = vec!["cp".to_string()];
+        for i in 1..nout {
+            outputs.push(format!("out_{i}"));
+        }
+        super::super::metadata::new(name)
+            .parameters(params.iter().copied())
+            .states(states.iter().copied())
+            .outputs(outputs)
+            .routes(routes)
     }
 
     #[test]
@@ -504,11 +590,13 @@ pub(crate) mod tests {
         let analytical = Analytical::new(eq, seq_eq, lag, fa, init, out)
             .with_nstates(1)
             .with_ndrugs(1)
-            .with_nout(1);
+            .with_nout(1)
+            .with_metadata(infusion_metadata("seq", &["p"], &["central"], 1, 1, false))
+            .expect("metadata should validate");
         let subject = Subject::builder("seq")
-            .bolus(0.0, 0.0, 0)
-            .infusion(0.25, 1.0, 0, 0.25)
-            .observation(1.0, 0.0, 0)
+            .bolus(0.0, 0.0, "iv_bolus")
+            .infusion(0.25, 1.0, "iv", 0.25)
+            .observation(1.0, 0.0, "cp")
             .build();
 
         let predictions = analytical
@@ -539,10 +627,22 @@ pub(crate) mod tests {
         let analytical = Analytical::new(eq, seq_eq, lag, fa, init, out)
             .with_nstates(4)
             .with_ndrugs(4)
-            .with_nout(1);
+            .with_nout(1)
+            .with_metadata(
+                super::super::metadata::new("inf")
+                    .states(["central", "c1", "c2", "c3"])
+                    .outputs(["cp"])
+                    .routes([
+                        super::super::Route::infusion("in0").to_state("central"),
+                        super::super::Route::infusion("in1").to_state("c1"),
+                        super::super::Route::infusion("in2").to_state("c2"),
+                        super::super::Route::infusion("iv").to_state("c3"),
+                    ]),
+            )
+            .expect("metadata should validate");
         let subject = Subject::builder("inf")
-            .infusion(0.0, 4.0, 3, 1.0)
-            .observation(1.0, 0.0, 0)
+            .infusion(0.0, 4.0, "iv", 1.0)
+            .observation(1.0, 0.0, "cp")
             .build();
 
         let predictions = analytical
@@ -575,9 +675,19 @@ pub(crate) mod tests {
         ANALYTICAL_CALLS.store(0, Ordering::SeqCst);
         let mut model = simple_analytical();
         model.eq = counting_analytical;
+        let model = model
+            .with_metadata(infusion_metadata(
+                "analytical-cache",
+                &["ke"],
+                &["central"],
+                1,
+                1,
+                false,
+            ))
+            .expect("metadata should validate");
         let subject = Subject::builder("analytical-cache")
-            .bolus(0.0, 1.0, 0)
-            .observation(1.0, 0.0, 0)
+            .bolus(0.0, 1.0, "iv_bolus")
+            .observation(1.0, 0.0, "cp")
             .build();
         let parameters = crate::parameters::dense([]);
 
@@ -587,7 +697,18 @@ pub(crate) mod tests {
         model.simulate_subject(&subject, &parameters).unwrap();
         assert_eq!(ANALYTICAL_CALLS.load(Ordering::SeqCst), after_first);
 
-        let configured = model.clone().with_nstates(1);
+        let configured = model
+            .clone()
+            .with_nstates(1)
+            .with_metadata(infusion_metadata(
+                "analytical-cache",
+                &["ke"],
+                &["central"],
+                1,
+                1,
+                false,
+            ))
+            .expect("metadata should validate");
         configured
             .estimate_predictions(&subject, &parameters)
             .unwrap();
@@ -908,7 +1029,16 @@ pub(crate) mod tests {
 
     #[test]
     fn handwritten_analytical_rejects_out_of_range_numeric_event_labels() {
-        let model = simple_analytical();
+        let model = simple_analytical()
+            .with_metadata(infusion_metadata(
+                "reject",
+                &["ke"],
+                &["central"],
+                1,
+                1,
+                false,
+            ))
+            .expect("metadata should validate");
         let parameters = crate::parameters::dense([]);
         for subject in [
             Subject::builder("bad-bolus").bolus(0.0, 1.0, 1).build(),
@@ -918,10 +1048,7 @@ pub(crate) mod tests {
         ] {
             assert!(matches!(
                 model.simulate_subject(&subject, &parameters),
-                Err(PharmsolError::InputOutOfRange {
-                    input: 1,
-                    ndrugs: 1
-                })
+                Err(PharmsolError::UnknownInputLabel { .. })
             ));
         }
         let subject = Subject::builder("bad-output")
@@ -929,7 +1056,7 @@ pub(crate) mod tests {
             .build();
         assert!(matches!(
             model.simulate_subject(&subject, &parameters),
-            Err(PharmsolError::OuteqOutOfRange { outeq: 1, nout: 1 })
+            Err(PharmsolError::UnknownOutputLabel { .. })
         ));
     }
 }

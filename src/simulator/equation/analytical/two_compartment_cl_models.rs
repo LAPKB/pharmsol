@@ -95,7 +95,16 @@ mod tests {
         )
         .with_nstates(2)
         .with_nout(1)
-        .with_ndrugs(2);
+        .with_ndrugs(2)
+        .with_metadata(super::super::tests::infusion_metadata(
+            "two_compartments_cl",
+            &["cl", "q", "vc", "vp"],
+            &["central", "peripheral"],
+            2,
+            1,
+            true,
+        ))
+        .expect("metadata should validate");
 
         let analytical = equation::Analytical::new(
             two_compartments_cl,
@@ -110,7 +119,16 @@ mod tests {
         )
         .with_nstates(2)
         .with_nout(1)
-        .with_ndrugs(2);
+        .with_ndrugs(2)
+        .with_metadata(super::super::tests::infusion_metadata(
+            "two_compartments_cl",
+            &["cl", "q", "vc", "vp"],
+            &["central", "peripheral"],
+            2,
+            1,
+            false,
+        ))
+        .expect("metadata should validate");
 
         let op_ode = ode
             .estimate_predictions(&subject, &crate::parameters::dense([0.1, 3.0, 1.0, 3.0]))
@@ -154,7 +172,16 @@ mod tests {
         )
         .with_nstates(3)
         .with_nout(1)
-        .with_ndrugs(3);
+        .with_ndrugs(3)
+        .with_metadata(super::super::tests::oral_metadata(
+            "two_compartments_cl_abs",
+            &["ka", "cl", "q", "vc", "vp"],
+            &["gut", "central", "peripheral"],
+            3,
+            1,
+            true,
+        ))
+        .expect("metadata should validate");
 
         let analytical = equation::Analytical::new(
             two_compartments_cl_with_absorption,
@@ -169,7 +196,16 @@ mod tests {
         )
         .with_nstates(3)
         .with_nout(1)
-        .with_ndrugs(3);
+        .with_ndrugs(3)
+        .with_metadata(super::super::tests::oral_metadata(
+            "two_compartments_cl_abs",
+            &["ka", "cl", "q", "vc", "vp"],
+            &["gut", "central", "peripheral"],
+            3,
+            1,
+            false,
+        ))
+        .expect("metadata should validate");
 
         let op_ode = ode
             .estimate_predictions(

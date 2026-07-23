@@ -218,16 +218,7 @@ pub(crate) trait EquationPriv: EquationTypes {
             return Ok(input);
         }
 
-        let input = label
-            .index()
-            .ok_or_else(|| PharmsolError::unknown_input_label(label.as_str(), &[]))?;
-        if input >= self.get_ndrugs() {
-            return Err(PharmsolError::InputOutOfRange {
-                input,
-                ndrugs: self.get_ndrugs(),
-            });
-        }
-        Ok(input)
+        Err(PharmsolError::MissingMetadata)
     }
 
     fn resolve_output_label(&self, label: &OutputLabel) -> Result<usize, PharmsolError> {
@@ -237,15 +228,12 @@ pub(crate) trait EquationPriv: EquationTypes {
             });
         }
 
-        label
-            .index()
-            .ok_or_else(|| PharmsolError::unknown_output_label(label.as_str(), &[]))
+        Err(PharmsolError::MissingMetadata)
     }
 
     /// Resolve the public output label for a dense output index.
     ///
-    /// When metadata is attached, this returns the declared output name. Without
-    /// metadata, it falls back to the numeric index as a label.
+    /// Resolution requires metadata, so this returns the declared output name.
     fn output_label(&self, index: usize) -> OutputLabel {
         self.metadata()
             .and_then(|metadata| metadata.output_labels().get(index).map(OutputLabel::new))
@@ -271,8 +259,8 @@ pub(crate) trait EquationPriv: EquationTypes {
                     infusion.set_input(input);
                 }
                 Event::Observation(observation) => {
-                    let outeq = self.resolve_output_label(observation.outeq())?;
-                    observation.set_outeq(outeq);
+                    let outeq = self.resolve_output_label(observation.output())?;
+                    observation.set_output(outeq);
                 }
             }
         }

@@ -156,8 +156,8 @@ pub use crate::simulator::equation::metadata;
 pub use crate::simulator::equation::{
     self,
     ode::{ExplicitRkTableau, OdeSolver, SdirkTableau},
-    Analytical, AnalyticalKernel, Cache, Equation, ModelKind, ModelMetadata, ModelMetadataError,
-    NameDomain, Predictions, RouteInputPolicy, RouteKind, State, ValidatedModelMetadata, ODE, SDE,
+    AnalyticalKernel, Cache, Equation, ModelKind, ModelMetadata, ModelMetadataError, NameDomain,
+    Predictions, RouteInputPolicy, RouteKind, State, ValidatedModelMetadata,
 };
 pub use error::PharmsolError;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]

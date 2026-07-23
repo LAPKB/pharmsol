@@ -11,13 +11,10 @@
 
 #![allow(dead_code)]
 
+use pharmsol::equation::{self, Analytical, Route, ODE, SDE};
 use pharmsol::prelude::*;
 use pharmsol::simulator::equation::analytical::{
     one_compartment_with_absorption, two_compartments,
-};
-use pharmsol::{
-    equation::{self, Route},
-    Analytical, ODE, SDE,
 };
 
 /// `ModelMetadata` for handwritten factories so route/output labels resolve like the macro/DSL paths.

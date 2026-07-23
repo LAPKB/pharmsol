@@ -167,7 +167,7 @@ impl Row {
             out: self
                 .out
                 .and_then(|v| if v == -99.0 { None } else { Some(v) }),
-            outeq: self.outeq.clone(),
+            output: self.outeq.clone(),
             cens: self.cens,
             c0: self.c0,
             c1: self.c1,
@@ -323,7 +323,7 @@ impl Data {
                             let value = obs
                                 .value()
                                 .map_or_else(|| ".".to_string(), |v| v.to_string());
-                            let outeq = obs.outeq().to_string();
+                            let outeq = obs.output().to_string();
                             let censor = match obs.censoring() {
                                 Censor::None => "0".to_string(),
                                 Censor::BLOQ => "1".to_string(),
@@ -568,7 +568,7 @@ mod tests {
         assert_eq!(observations.len(), 2);
         assert_eq!(observations[0].time(), 0.25);
         assert_eq!(observations[0].value(), Some(2.5));
-        assert_eq!(observations[0].outeq().as_str(), "cp");
+        assert_eq!(observations[0].output().as_str(), "cp");
         assert_eq!(observations[0].censoring(), Censor::BLOQ);
         assert_eq!(
             observations[0].errorpoly().unwrap().coefficients(),
@@ -576,7 +576,7 @@ mod tests {
         );
         assert_eq!(observations[1].time(), 1.5);
         assert_eq!(observations[1].value(), Some(3.5));
-        assert_eq!(observations[1].outeq().as_str(), "effect");
+        assert_eq!(observations[1].output().as_str(), "effect");
         assert_eq!(observations[1].censoring(), Censor::ALOQ);
         assert_eq!(observations[1].errorpoly(), None);
     }
@@ -597,7 +597,7 @@ mod tests {
         let errorpoly = ErrorPoly::new(0.1, 0.2, 0.3, 0.4);
         assert_eq!(observation.errorpoly(), Some(errorpoly));
 
-        let prediction = observation.to_prediction(observation.outeq().clone(), 40.0);
+        let prediction = observation.to_prediction(observation.output().clone(), 40.0);
         assert_eq!(prediction.errorpoly(), Some(errorpoly));
     }
 
@@ -619,7 +619,7 @@ mod tests {
         }
 
         match &events[1] {
-            Event::Observation(observation) => assert_eq!(observation.outeq().as_str(), "cp"),
+            Event::Observation(observation) => assert_eq!(observation.output().as_str(), "cp"),
             _ => panic!("expected observation event"),
         }
     }
@@ -642,7 +642,7 @@ mod tests {
         }
 
         match &events[1] {
-            Event::Observation(observation) => assert_eq!(observation.outeq().as_str(), "1"),
+            Event::Observation(observation) => assert_eq!(observation.output().as_str(), "1"),
             _ => panic!("expected observation event"),
         }
     }

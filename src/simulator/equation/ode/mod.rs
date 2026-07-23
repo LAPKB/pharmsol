@@ -92,6 +92,12 @@ pub enum OdeMetadataError {
     OutputCountMismatch { expected: usize, declared: usize },
 }
 
+/// Handwritten ODE model.
+///
+/// This low-level constructor is an internal building block for the `ode!`
+/// macro and is not part of the supported public API. Author models with the
+/// [`ode!`](crate::ode) macro or the DSL instead.
+#[doc(hidden)]
 #[derive(Clone, Debug)]
 pub struct ODE {
     diffeq: DiffEq,
@@ -589,7 +595,7 @@ impl ODE {
                             .metadata()
                             .map(|m| m.output_labels())
                             .unwrap_or_default();
-                        PharmsolError::unknown_output_label(observation.outeq(), &available)
+                        PharmsolError::unknown_output_label(observation.output(), &available)
                     })?;
                     if outeq >= y_out.len() {
                         return Err(PharmsolError::OuteqOutOfRange {
@@ -975,10 +981,21 @@ mod tests {
         )
         .with_nstates(1)
         .with_ndrugs(1)
-        .with_nout(1);
+        .with_nout(1)
+        .with_metadata(
+            super::super::metadata::new("cached_predictions")
+                .states(["central"])
+                .outputs(["cp"])
+                .route(
+                    super::super::Route::bolus("iv_bolus")
+                        .to_state("central")
+                        .expect_explicit_input(),
+                ),
+        )
+        .expect("metadata attachment should validate");
         let subject = Subject::builder("cached_predictions")
-            .bolus(0.0, 100.0, 0)
-            .observation(1.0, 0.0, 0)
+            .bolus(0.0, 100.0, "iv_bolus")
+            .observation(1.0, 0.0, "cp")
             .build();
 
         let first = ode
@@ -998,7 +1015,21 @@ mod tests {
 
     #[test]
     fn handwritten_ode_rejects_out_of_range_numeric_event_labels() {
-        let model = simple_ode();
+        let model = simple_ode()
+            .with_metadata(
+                super::super::metadata::new("reject")
+                    .states(["central"])
+                    .outputs(["cp"])
+                    .routes([
+                        super::super::Route::bolus("iv_bolus")
+                            .to_state("central")
+                            .expect_explicit_input(),
+                        super::super::Route::infusion("iv")
+                            .to_state("central")
+                            .expect_explicit_input(),
+                    ]),
+            )
+            .expect("metadata attachment should validate");
         let parameters = crate::parameters::dense([]);
         for subject in [
             Subject::builder("bad-bolus").bolus(0.0, 1.0, 1).build(),
@@ -1008,10 +1039,7 @@ mod tests {
         ] {
             assert!(matches!(
                 model.simulate_subject(&subject, &parameters),
-                Err(PharmsolError::InputOutOfRange {
-                    input: 1,
-                    ndrugs: 1
-                })
+                Err(PharmsolError::UnknownInputLabel { .. })
             ));
         }
         let subject = Subject::builder("bad-output")
@@ -1019,7 +1047,7 @@ mod tests {
             .build();
         assert!(matches!(
             model.simulate_subject(&subject, &parameters),
-            Err(PharmsolError::OuteqOutOfRange { outeq: 1, nout: 1 })
+            Err(PharmsolError::UnknownOutputLabel { .. })
         ));
     }
 }

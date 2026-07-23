@@ -1,7 +1,7 @@
 //! Cache mechanisms for deterministic [`Equation`](crate::Equation) models.
 //!
 //! This module provides lightweight cache wrappers that can be embedded
-//! directly in [`ODE`](crate::ODE) and
+//! directly in [`ODE`](crate::equation::ODE) and
 //! [`Analytical`](crate::simulator::equation::Analytical) models.
 //! Each deterministic equation instance owns a cache by default; cloning the equation
 //! produces a shallow clone that shares the same cache data.
@@ -34,7 +34,7 @@ pub(crate) type PredictionKey = (u64, u64);
 
 /// Thread-safe bounded cache for subject predictions.
 ///
-/// Used by [`ODE`](crate::ODE) and [`Analytical`](crate::simulator::equation::Analytical)
+/// Used by [`ODE`](crate::equation::ODE) and [`Analytical`](crate::simulator::equation::Analytical)
 /// to avoid recomputing predictions for the same (subject, parameters) pair.
 ///
 /// `Clone` produces a shallow clone that shares the same underlying cache data,

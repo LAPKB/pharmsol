@@ -39,6 +39,8 @@ pub enum PharmsolError {
     InputOutOfRange { input: usize, ndrugs: usize },
     #[error("Output equation {outeq} is out of range (nout = {nout})")]
     OuteqOutOfRange { outeq: usize, nout: usize },
+    #[error("model has no metadata; input and output labels require a model authored with the ode!/analytical!/sde! macros or the DSL")]
+    MissingMetadata,
     #[error("Compiled model `{model}` has invalid runtime metadata: {detail}")]
     InvalidMetadata { model: String, detail: String },
 }

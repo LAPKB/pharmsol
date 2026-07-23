@@ -134,9 +134,9 @@ impl InputLabel {
 
     /// Try to interpret the label as a numeric index.
     ///
-    /// This is mainly a compatibility helper for lower-level paths that still
-    /// operate on dense indices after label resolution.
-    pub fn index(&self) -> Option<usize> {
+    /// Internal helper for lower-level paths that resolve a label to a dense
+    /// index after metadata resolution.
+    pub(crate) fn index(&self) -> Option<usize> {
         self.0.parse::<usize>().ok()
     }
 }
@@ -216,9 +216,9 @@ impl OutputLabel {
 
     /// Try to interpret the label as a numeric index.
     ///
-    /// This is mainly a compatibility helper for lower-level paths that still
-    /// operate on dense indices after label resolution.
-    pub fn index(&self) -> Option<usize> {
+    /// Internal helper for lower-level paths that resolve a label to a dense
+    /// index after metadata resolution.
+    pub(crate) fn index(&self) -> Option<usize> {
         self.0.parse::<usize>().ok()
     }
 }
@@ -367,10 +367,11 @@ impl Bolus {
         &self.input
     }
 
-    /// Try to interpret the input label as a numeric index.
+    /// Resolve the input label to a dense execution index, if it is numeric.
     ///
-    /// Prefer [`Bolus::input`] when working with the public label itself.
-    pub fn input_index(&self) -> Option<usize> {
+    /// Internal helper for the execution layer. Public code works with the
+    /// [`InputLabel`] returned by [`Bolus::input`].
+    pub(crate) fn input_index(&self) -> Option<usize> {
         self.input.index()
     }
 
@@ -467,10 +468,11 @@ impl Infusion {
         &self.input
     }
 
-    /// Try to interpret the input label as a numeric index.
+    /// Resolve the input label to a dense execution index, if it is numeric.
     ///
-    /// Prefer [`Infusion::input`] when working with the public label itself.
-    pub fn input_index(&self) -> Option<usize> {
+    /// Internal helper for the execution layer. Public code works with the
+    /// [`InputLabel`] returned by [`Infusion::input`].
+    pub(crate) fn input_index(&self) -> Option<usize> {
         self.input.index()
     }
 
@@ -606,14 +608,15 @@ impl Observation {
     }
 
     /// Get the output label corresponding to this observation
-    pub fn outeq(&self) -> &OutputLabel {
+    pub fn output(&self) -> &OutputLabel {
         &self.outeq
     }
 
-    /// Try to interpret the output label as a numeric index.
+    /// Resolve the output label to a dense execution index, if it is numeric.
     ///
-    /// Prefer [`Observation::outeq`] when working with the public label itself.
-    pub fn outeq_index(&self) -> Option<usize> {
+    /// Internal helper for the execution layer. Public code works with the
+    /// [`OutputLabel`] returned by [`Observation::output`].
+    pub(crate) fn outeq_index(&self) -> Option<usize> {
         self.outeq.index()
     }
 
@@ -633,7 +636,7 @@ impl Observation {
     }
 
     /// Set the output label corresponding to this observation
-    pub fn set_outeq(&mut self, outeq: impl ToString) {
+    pub fn set_output(&mut self, outeq: impl ToString) {
         self.outeq = OutputLabel::new(outeq);
     }
 
@@ -653,7 +656,7 @@ impl Observation {
     }
 
     /// Get a mutable reference to the output label
-    pub fn mut_outeq(&mut self) -> &mut OutputLabel {
+    pub fn mut_output(&mut self) -> &mut OutputLabel {
         &mut self.outeq
     }
 
@@ -801,8 +804,8 @@ mod tests {
 
         assert_eq!(observation.time(), 5.0);
         assert_eq!(observation.value(), Some(75.5));
-        assert_eq!(observation.outeq(), 2);
-        assert_eq!(observation.outeq().as_str(), "2");
+        assert_eq!(observation.output(), 2);
+        assert_eq!(observation.output().as_str(), "2");
         assert_eq!(observation.errorpoly(), errorpoly);
     }
 
@@ -819,7 +822,7 @@ mod tests {
 
         observation.set_time(6.0);
         observation.set_value(Some(80.0));
-        observation.set_outeq(3);
+        observation.set_output(3);
 
         let replacement = Some(ErrorPoly::new(0.2, 0.3, 0.4, 0.5));
         observation.set_errorpoly(replacement);
@@ -832,7 +835,7 @@ mod tests {
         let observation = Observation::new(5.0, Some(75.5), 2, None, 0, Censor::None);
         let prediction = observation.to_prediction(OutputLabel::new("cp"), 70.0);
 
-        assert_eq!(prediction.outeq().as_str(), "cp");
+        assert_eq!(prediction.output().as_str(), "cp");
         assert_eq!(prediction.prediction(), 70.0);
     }
 

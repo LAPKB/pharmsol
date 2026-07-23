@@ -198,7 +198,7 @@ impl Data {
                                     Event::Observation(obs) => {
                                         // Convert to microseconds for consistent comparison
                                         let time_key = (obs.time() * 1e6).round() as u64;
-                                        Some((time_key, obs.outeq().clone()))
+                                        Some((time_key, obs.output().clone()))
                                     }
                                     _ => None,
                                 })
@@ -416,7 +416,7 @@ impl Subject {
             .iter()
             .flat_map(|occasion| {
                 occasion.events.iter().filter_map(|event| match event {
-                    Event::Observation(obs) => Some(obs.outeq().clone()),
+                    Event::Observation(obs) => Some(obs.output().clone()),
                     _ => None,
                 })
             })
@@ -507,7 +507,7 @@ impl Subject {
                             }
                             None => 0u8.hash(&mut hasher),
                         }
-                        obs.outeq().hash(&mut hasher);
+                        obs.output().hash(&mut hasher);
                         match obs.errorpoly() {
                             Some(errorpoly) => {
                                 1u8.hash(&mut hasher);
@@ -1593,7 +1593,7 @@ mod tests {
                 assert_eq!(event.time(), 1.0); // Observation time from sample data
                 if let Event::Observation(observation) = event {
                     assert_eq!(observation.value(), Some(10.0)); // Value from sample data
-                    assert_eq!(observation.outeq(), 1); // Output equation 1
+                    assert_eq!(observation.output(), 1); // Output equation 1
                 }
             }
         }
@@ -1673,7 +1673,7 @@ mod tests {
         {
             assert_eq!(obs.time(), 12.0);
             assert_eq!(obs.value(), None);
-            assert_eq!(obs.outeq(), 1);
+            assert_eq!(obs.output(), 1);
         } else {
             panic!("Observation at time 12 not found");
         }
