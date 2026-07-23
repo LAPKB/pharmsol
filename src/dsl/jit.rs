@@ -1453,14 +1453,14 @@ out(cp) = central / v ~ continuous()
             .build();
 
         let reference_subject = Subject::builder("ode")
-            .bolus(0.0, 120.0, 0)
-            .infusion(6.0, 60.0, 0, 2.0)
-            .observation(0.5, 0.0, 0)
-            .observation(1.0, 0.0, 0)
-            .observation(2.0, 0.0, 0)
-            .observation(6.0, 0.0, 0)
-            .observation(7.0, 0.0, 0)
-            .observation(9.0, 0.0, 0)
+            .bolus(0.0, 120.0, "oral")
+            .infusion(6.0, 60.0, "iv", 2.0)
+            .observation(0.5, 0.0, "cp")
+            .observation(1.0, 0.0, "cp")
+            .observation(2.0, 0.0, "cp")
+            .observation(6.0, 0.0, "cp")
+            .observation(7.0, 0.0, "cp")
+            .observation(9.0, 0.0, "cp")
             .build();
 
         let support = Parameters::with_model(
@@ -1489,7 +1489,22 @@ out(cp) = central / v ~ continuous()
         .with_nstates(2)
         .with_ndrugs(1)
         .with_nout(1)
-        .with_solver(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45));
+        .with_solver(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45))
+        .with_metadata(
+            equation::metadata::new("shared_authoring")
+                .parameters(["ka", "ke", "v"])
+                .states(["depot", "central"])
+                .outputs(["cp"])
+                .routes([
+                    equation::Route::bolus("oral")
+                        .to_state("depot")
+                        .expect_explicit_input(),
+                    equation::Route::infusion("iv")
+                        .to_state("central")
+                        .expect_explicit_input(),
+                ]),
+        )
+        .expect("reference ode metadata should validate");
 
         let reference_predictions = reference
             .estimate_predictions(&reference_subject, &support)
@@ -1620,14 +1635,14 @@ out(cp) = central / v ~ continuous()
 
         let reference_subject = Subject::builder("ode")
             .covariate("wt", 0.0, 70.0)
-            .bolus(0.0, 120.0, 0)
-            .infusion(6.0, 60.0, 1, 2.0)
-            .missing_observation(0.5, 0)
-            .missing_observation(1.0, 0)
-            .missing_observation(2.0, 0)
-            .missing_observation(6.0, 0)
-            .missing_observation(7.0, 0)
-            .missing_observation(9.0, 0)
+            .bolus(0.0, 120.0, "oral")
+            .infusion(6.0, 60.0, "iv", 2.0)
+            .missing_observation(0.5, "cp")
+            .missing_observation(1.0, "cp")
+            .missing_observation(2.0, "cp")
+            .missing_observation(6.0, "cp")
+            .missing_observation(7.0, "cp")
+            .missing_observation(9.0, "cp")
             .build();
 
         let support = Parameters::with_model(
@@ -1684,7 +1699,25 @@ out(cp) = central / v ~ continuous()
         .with_nstates(2)
         .with_ndrugs(2)
         .with_nout(1)
-        .with_solver(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45));
+        .with_solver(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45))
+        .with_metadata(
+            equation::metadata::new("one_cmt_oral_iv")
+                .parameters(["ka", "cl", "v", "tlag", "f_oral"])
+                .states(["depot", "central"])
+                .outputs(["cp"])
+                .routes([
+                    equation::Route::bolus("oral")
+                        .to_state("depot")
+                        .expect_explicit_input(),
+                    equation::Route::infusion("iv_pad")
+                        .to_state("central")
+                        .expect_explicit_input(),
+                    equation::Route::infusion("iv")
+                        .to_state("central")
+                        .expect_explicit_input(),
+                ]),
+        )
+        .expect("reference ode metadata should validate");
 
         let reference_predictions = reference
             .estimate_predictions(&reference_subject, &support)
@@ -1734,11 +1767,11 @@ out(cp) = central / v ~ continuous()
             .build();
 
         let reference_subject = Subject::builder("analytical")
-            .bolus(0.0, 100.0, 0)
-            .missing_observation(0.5, 0)
-            .missing_observation(1.0, 0)
-            .missing_observation(2.0, 0)
-            .missing_observation(4.0, 0)
+            .bolus(0.0, 100.0, "oral")
+            .missing_observation(0.5, "cp")
+            .missing_observation(1.0, "cp")
+            .missing_observation(2.0, "cp")
+            .missing_observation(4.0, "cp")
             .build();
 
         let support = Parameters::with_model(&jit, [("ka", 1.0), ("ke", 0.15), ("v", 25.0)])
@@ -1759,7 +1792,17 @@ out(cp) = central / v ~ continuous()
         )
         .with_nstates(2)
         .with_ndrugs(1)
-        .with_nout(1);
+        .with_nout(1)
+        .with_metadata(
+            equation::metadata::new("one_cmt_abs")
+                .kind(equation::ModelKind::Analytical)
+                .parameters(["ka", "ke", "v"])
+                .states(["depot", "central"])
+                .outputs(["cp"])
+                .route(equation::Route::bolus("oral").to_state("depot"))
+                .analytical_kernel(equation::AnalyticalKernel::OneCompartmentWithAbsorption),
+        )
+        .expect("reference analytical metadata should validate");
 
         let reference_predictions = reference
             .estimate_predictions(&reference_subject, &support)
@@ -1814,11 +1857,11 @@ model analytical_mixed {
             .build();
 
         let reference_subject = Subject::builder("analytical")
-            .bolus(0.0, 100.0, 0)
-            .missing_observation(0.5, 0)
-            .missing_observation(1.0, 0)
-            .missing_observation(2.0, 0)
-            .missing_observation(4.0, 0)
+            .bolus(0.0, 100.0, "oral")
+            .missing_observation(0.5, "cp")
+            .missing_observation(1.0, "cp")
+            .missing_observation(2.0, "cp")
+            .missing_observation(4.0, "cp")
             .build();
 
         let jit_support = Parameters::with_model(&jit, [("ka", 1.0), ("v", 25.0), ("ke0", 0.15)])
@@ -1839,7 +1882,17 @@ model analytical_mixed {
         )
         .with_nstates(2)
         .with_ndrugs(1)
-        .with_nout(1);
+        .with_nout(1)
+        .with_metadata(
+            equation::metadata::new("analytical_mixed")
+                .kind(equation::ModelKind::Analytical)
+                .parameters(["ka", "v", "ke0"])
+                .states(["depot", "central"])
+                .outputs(["cp"])
+                .route(equation::Route::bolus("oral").to_state("depot"))
+                .analytical_kernel(equation::AnalyticalKernel::OneCompartmentWithAbsorption),
+        )
+        .expect("reference analytical metadata should validate");
 
         let reference_support = crate::parameters::dense(vec![1.0, 0.15, 25.0]);
         let reference_predictions = reference
@@ -1894,11 +1947,11 @@ model analytical_mixed {
 
         let reference_subject = Subject::builder("sde")
             .covariate("wt", 0.0, 70.0)
-            .bolus(0.0, 80.0, 0)
-            .missing_observation(0.5, 0)
-            .missing_observation(1.0, 0)
-            .missing_observation(2.0, 0)
-            .missing_observation(4.0, 0)
+            .bolus(0.0, 80.0, "oral")
+            .missing_observation(0.5, "cp")
+            .missing_observation(1.0, "cp")
+            .missing_observation(2.0, "cp")
+            .missing_observation(4.0, "cp")
             .build();
 
         let support = Parameters::with_model(
@@ -1948,7 +2001,20 @@ model analytical_mixed {
         )
         .with_nstates(4)
         .with_ndrugs(1)
-        .with_nout(1);
+        .with_nout(1)
+        .with_metadata(
+            equation::metadata::new("vanco_sde")
+                .parameters(["ka", "ke0", "kcp", "kpc", "vol", "ske"])
+                .states(["depot", "central", "peripheral", "ke"])
+                .outputs(["cp"])
+                .route(
+                    equation::Route::bolus("oral")
+                        .to_state("depot")
+                        .expect_explicit_input(),
+                )
+                .particles(64),
+        )
+        .expect("reference sde metadata should validate");
 
         let reference_predictions = reference
             .estimate_predictions(&reference_subject, &support)

@@ -1590,7 +1590,7 @@ mod tests {
     }
 
     #[test]
-    fn clearing_sde_metadata_preserves_raw_bolus_behavior() {
+    fn clearing_sde_metadata_makes_label_resolution_fail() {
         let zero_drift = |_x: &V, _p: &V, _t: f64, dx: &mut V, _rateiv: &V, _cov: &Covariates| {
             dx.fill(0.0);
         };
