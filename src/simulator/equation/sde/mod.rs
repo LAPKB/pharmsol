@@ -639,6 +639,7 @@ impl<R: Rng + ?Sized> SdeParticleSession<'_, R> {
                     let output_index = observation
                         .outeq_index()
                         .expect("session observations are resolved");
+                    let output_label = self.model.output_label(output_index);
                     let parameter_values =
                         V::from_vec(self.parameters.to_vec(), NalgebraContext::new());
                     for state in &self.states {
@@ -650,11 +651,10 @@ impl<R: Rng + ?Sized> SdeParticleSession<'_, R> {
                             &self.covariates[self.occasion],
                             &mut output,
                         );
-                        self.predictions.push(observation.to_prediction_resolved(
-                            output_index,
-                            output[output_index],
-                            state.as_slice().to_vec(),
-                        ));
+                        self.predictions.push(
+                            observation
+                                .to_prediction(output_label.clone(), output[output_index]),
+                        );
                     }
                     self.observation = Some(observation.clone());
                     self.event += 1;
@@ -925,6 +925,16 @@ impl EquationPriv for SDE {
     ) -> Result<(), PharmsolError> {
         let mut pred = vec![Prediction::default(); self.nparticles];
 
+        let outeq = observation
+            .outeq_index()
+            .expect("resolved observations should use numeric output labels");
+        if outeq >= self.get_nouteqs() {
+            return Err(PharmsolError::OuteqOutOfRange {
+                outeq,
+                nout: self.get_nouteqs(),
+            });
+        }
+        let output_label = self.output_label(outeq);
         pred.par_iter_mut().enumerate().for_each(|(i, p)| {
             let mut y = V::zeros(self.get_nouteqs(), NalgebraContext::new());
             (self.out)(
@@ -934,10 +944,7 @@ impl EquationPriv for SDE {
                 covariates,
                 &mut y,
             );
-            let outeq = observation
-                .outeq_index()
-                .expect("resolved observations should use numeric output labels");
-            *p = observation.to_prediction_resolved(outeq, y[outeq], x[i].as_slice().to_vec());
+            *p = observation.to_prediction(output_label.clone(), y[outeq]);
         });
         let out = Array2::from_shape_vec((self.nparticles, 1), pred)?;
         *output = concatenate(Axis(1), &[output.view(), out.view()]).unwrap();

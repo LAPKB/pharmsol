@@ -672,37 +672,14 @@ impl Observation {
         &mut self.occasion
     }
 
-    /// Create a [`Prediction`] from an observation with a numeric output label.
-    ///
-    /// This compatibility helper is intended only for observations whose output
-    /// label is already numeric/resolved. Internal simulation resolves named
-    /// labels explicitly and uses `to_prediction_resolved` instead.
-    ///
-    /// # Panics
-    ///
-    /// Panics if this observation's output label is not a numeric index.
-    pub fn to_prediction(&self, pred: f64, state: Vec<f64>) -> Prediction {
-        let resolved_outeq = self
-            .outeq_index()
-            .expect("prediction requires a resolved or numeric output label");
-        self.to_prediction_resolved(resolved_outeq, pred, state)
-    }
-
-    /// Create a prediction after the execution layer has resolved the output.
-    pub(crate) fn to_prediction_resolved(
-        &self,
-        resolved_outeq: usize,
-        pred: f64,
-        state: Vec<f64>,
-    ) -> Prediction {
+    /// Create a [`Prediction`] from this observation using a resolved output label.
+    pub(crate) fn to_prediction(&self, outeq: OutputLabel, prediction: f64) -> Prediction {
         Prediction {
             time: self.time(),
             observation: self.value(),
-            prediction: pred,
-            outeq: resolved_outeq,
+            prediction,
+            outeq,
             errorpoly: self.errorpoly(),
-            state,
-            occasion: self.occasion(),
             censoring: self.censoring(),
         }
     }
@@ -851,11 +828,11 @@ mod tests {
     }
 
     #[test]
-    fn observation_to_prediction_uses_numeric_output_label() {
+    fn observation_to_prediction_carries_output_label() {
         let observation = Observation::new(5.0, Some(75.5), 2, None, 0, Censor::None);
-        let prediction = observation.to_prediction(70.0, vec![70.0]);
+        let prediction = observation.to_prediction(OutputLabel::new("cp"), 70.0);
 
-        assert_eq!(prediction.outeq(), 2);
+        assert_eq!(prediction.outeq().as_str(), "cp");
         assert_eq!(prediction.prediction(), 70.0);
     }
 

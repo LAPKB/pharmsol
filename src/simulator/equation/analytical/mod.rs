@@ -379,9 +379,15 @@ impl EquationPriv for Analytical {
                 .unwrap_or_default();
             PharmsolError::unknown_output_label(observation.outeq(), &available)
         })?;
+        if outeq >= y.len() {
+            return Err(PharmsolError::OuteqOutOfRange {
+                outeq,
+                nout: y.len(),
+            });
+        }
         let pred = y[outeq];
-        let pred = observation.to_prediction_resolved(outeq, pred, x.as_slice().to_vec());
-        output.add_prediction(pred);
+        let pred = observation.to_prediction(self.output_label(outeq), pred);
+        output.add_prediction(pred, observation.occasion());
         Ok(())
     }
     #[inline(always)]

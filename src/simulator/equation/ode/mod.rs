@@ -23,7 +23,7 @@ use crate::simulator::equation::Predictions;
 use closure::PMProblem;
 use diffsol::{
     error::OdeSolverError, ode_solver::method::OdeSolverMethod, NalgebraContext, NonLinearOp,
-    OdeBuilder, OdeEquations, OdeSolverStopReason, Vector, VectorHost,
+    OdeBuilder, OdeEquations, OdeSolverStopReason, Vector,
 };
 use nalgebra::DVector;
 use pharmsol_dsl::ModelKind;
@@ -598,12 +598,8 @@ impl ODE {
                         });
                     }
                     let pred = y_out[outeq];
-                    let pred = observation.to_prediction_resolved(
-                        outeq,
-                        pred,
-                        solver.state().y.as_slice().to_vec(),
-                    );
-                    output.add_prediction(pred);
+                    let pred = observation.to_prediction(self.output_label(outeq), pred);
+                    output.add_prediction(pred, observation.occasion());
                 }
             }
 

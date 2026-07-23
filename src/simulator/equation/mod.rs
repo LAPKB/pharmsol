@@ -101,6 +101,12 @@ pub trait Predictions: Default {
             f(prediction);
         }
     }
+
+    /// Record the subject identifier these predictions belong to.
+    ///
+    /// The default implementation is a no-op for containers that do not carry a
+    /// subject identifier (for example the particle grid used by SDE models).
+    fn set_subject_id(&mut self, _id: &str) {}
 }
 
 /// Trait for prediction caching on deterministic ODE and analytical equations.
@@ -234,6 +240,16 @@ pub(crate) trait EquationPriv: EquationTypes {
         label
             .index()
             .ok_or_else(|| PharmsolError::unknown_output_label(label.as_str(), &[]))
+    }
+
+    /// Resolve the public output label for a dense output index.
+    ///
+    /// When metadata is attached, this returns the declared output name. Without
+    /// metadata, it falls back to the numeric index as a label.
+    fn output_label(&self, index: usize) -> OutputLabel {
+        self.metadata()
+            .and_then(|metadata| metadata.output_labels().get(index).map(OutputLabel::new))
+            .unwrap_or_else(|| OutputLabel::from(index))
     }
 
     fn resolve_occasion_events(
@@ -373,6 +389,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
         parameters: &[f64],
     ) -> Result<Self::P, PharmsolError> {
         let mut output = Self::P::new(self.nparticles());
+        output.set_subject_id(subject.id());
         for occasion in subject.occasions() {
             let covariates = occasion.covariates();
 

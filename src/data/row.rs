@@ -921,7 +921,7 @@ mod tests {
                 let errorpoly = obs.errorpoly().unwrap();
                 assert_eq!(errorpoly.coefficients(), (0.1, 0.2, 0.0, 0.0));
 
-                let prediction = obs.to_prediction_resolved(1, 24.5, vec![24.5]);
+                let prediction = obs.to_prediction(obs.outeq().clone(), 24.5);
                 assert_eq!(prediction.errorpoly(), Some(errorpoly));
             }
             _ => panic!("Expected observation"),

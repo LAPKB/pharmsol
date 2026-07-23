@@ -1025,7 +1025,8 @@ impl SharedNativeModel {
             )
         })?;
         self.validate_output(outeq)?;
-        Ok(observation.to_prediction_resolved(outeq, outputs[outeq], state.to_vec()))
+        let label = OutputLabel::new(self.metadata().output_labels()[outeq]);
+        Ok(observation.to_prediction(label, outputs[outeq]))
     }
 }
 
@@ -1123,6 +1124,7 @@ impl NativeOdeModel {
     ) -> Result<SubjectPredictions, PharmsolError> {
         self.shared.validate_support_point(support_point)?;
         let mut output = SubjectPredictions::default();
+        output.set_id(subject.id());
         let support_vector: V = DVector::from_vec(support_point.to_vec()).into();
 
         for occasion in subject.occasions() {
@@ -1314,7 +1316,7 @@ impl NativeOdeModel {
                         covariates,
                         infusions,
                     )?;
-                    output.add_prediction(prediction);
+                    output.add_prediction(prediction, observation.occasion());
                 }
             }
 
@@ -1560,6 +1562,7 @@ impl NativeAnalyticalModel {
     ) -> Result<SubjectPredictions, PharmsolError> {
         self.shared.validate_support_point(support_point)?;
         let mut output = SubjectPredictions::default();
+        output.set_id(subject.id());
 
         for occasion in subject.occasions() {
             let mut events = self.shared.resolve_events(occasion)?;
@@ -1598,14 +1601,17 @@ impl NativeAnalyticalModel {
                     }
                     Event::Infusion(_) => {}
                     Event::Observation(observation) => {
-                        output.add_prediction(self.shared.observation_prediction(
-                            &mut *session,
-                            observation,
-                            &state,
-                            support_point,
-                            occasion.covariates(),
-                            infusions.as_slice(),
-                        )?);
+                        output.add_prediction(
+                            self.shared.observation_prediction(
+                                &mut *session,
+                                observation,
+                                &state,
+                                support_point,
+                                occasion.covariates(),
+                                infusions.as_slice(),
+                            )?,
+                            observation.occasion(),
+                        );
                     }
                 }
 

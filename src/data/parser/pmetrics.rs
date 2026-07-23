@@ -597,7 +597,7 @@ mod tests {
         let errorpoly = ErrorPoly::new(0.1, 0.2, 0.3, 0.4);
         assert_eq!(observation.errorpoly(), Some(errorpoly));
 
-        let prediction = observation.to_prediction_resolved(0, 40.0, vec![40.0]);
+        let prediction = observation.to_prediction(observation.outeq().clone(), 40.0);
         assert_eq!(prediction.errorpoly(), Some(errorpoly));
     }
 
