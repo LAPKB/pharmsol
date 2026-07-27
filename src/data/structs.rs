@@ -131,11 +131,44 @@ impl Data {
             .collect();
         Data::new(subjects)
     }
+    /// Convenience wrapper around [`Data::expand`] that retrieves the declared
+    /// output labels from the model metadata and expands the dataset accordingly.
+    ///
+    /// The dataset is expanded for every output equation already present in the
+    /// data as well as for every output declared by `model`, so simulations have
+    /// a dense grid for all model outputs even if some were never observed.
+    ///
+    /// # Arguments
+    ///
+    /// * `idelta` - Time interval between added observations. See [`Data::expand`].
+    /// * `tad` - Additional time to add after the last dose (time after dose).
+    /// * `model` - The model whose declared outputs are added to the grid.
+    ///
+    /// # Returns
+    ///
+    /// A new `Data` object with expanded observations
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+    pub fn expand_with_model<E>(&self, idelta: f64, tad: f64, model: &E) -> Data
+    where
+        E: crate::simulator::equation::Equation,
+    {
+        let outputs: Vec<OutputLabel> = model
+            .metadata()
+            .map(|metadata| {
+                metadata
+                    .output_labels()
+                    .into_iter()
+                    .map(OutputLabel::new)
+                    .collect()
+            })
+            .unwrap_or_default();
+        self.expand(idelta, tad, &outputs)
+    }
 
-    /// Expand the dataset by adding observations at regular time intervals
+    /// Expand the dataset by adding observations at regular time intervals for given output labels.
     ///
     /// This is useful for creating a dense grid of time points for simulations.
-    /// Observations are only added if they don't already exist at that time/outeq combination.
+    /// Observations are only added if they don't already exist at combination of time and `OutputLabel`].
     ///
     /// # Arguments
     ///
@@ -144,11 +177,12 @@ impl Data {
     ///   (0.5 µs, which rounds up to 1 µs); any smaller positive value rounds
     ///   to zero and the dataset is returned unchanged.
     /// * `tad` - Additional time to add after the last dose (time after dose)
+    /// * `outputs` - Additional output labels for which to add observations. If empty, only output labels in the dataset are used.
     ///
     /// # Returns
     ///
     /// A new `Data` object with expanded observations
-    pub fn expand(&self, idelta: f64, tad: f64) -> Data {
+    pub fn expand(&self, idelta: f64, tad: f64, outputs: &[OutputLabel]) -> Data {
         if idelta <= 0.0 {
             return self.clone();
         }
@@ -161,8 +195,12 @@ impl Data {
             return self.clone();
         }
 
-        // Collect unique output equations more efficiently
-        let outeq_values = self.get_output_equations();
+        // Expand for every output equation already present in the dataset, plus
+        // any additional output labels the caller explicitly requested.
+        let mut outeq_values = self.get_output_equations();
+        outeq_values.extend(outputs.iter().cloned());
+        outeq_values.sort();
+        outeq_values.dedup();
 
         // Create new data structure with expanded observations
         let new_subjects = self
@@ -1804,7 +1842,7 @@ mod tests {
             .build();
         let data = Data::from(subject);
 
-        let expanded = data.expand(1.0, 3.0);
+        let expanded = data.expand(1.0, 3.0, &[]);
         let occasion = &expanded.subjects()[0].occasions()[0];
 
         let mut obs_times: Vec<f64> = occasion
@@ -1833,7 +1871,7 @@ mod tests {
             .build();
         let data = Data::from(subject);
 
-        let expanded = data.expand(5.0, 0.0);
+        let expanded = data.expand(5.0, 0.0, &[]);
         let subject = &expanded.subjects()[0];
 
         let count_obs = |occ: &Occasion| {
