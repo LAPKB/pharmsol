@@ -612,6 +612,8 @@ pub enum AnalyzedExprKind {
     Literal(ConstValue),
     Symbol(SymbolId),
     StateValue(AnalyzedStatePlace),
+    /// The current independent variable (time), referenced in source as `t`.
+    Time,
     Unary {
         op: AnalyzedUnaryOp,
         expr: Box<AnalyzedExpr>,

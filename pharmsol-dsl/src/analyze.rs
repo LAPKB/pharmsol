@@ -40,6 +40,8 @@ const RESERVED_NAMES: &[&str] = &[
     "cos",
     "tan",
     "sqrt",
+    "t",
+    "time",
 ];
 
 #[derive(Default)]
@@ -1235,6 +1237,15 @@ impl<'a> Analyzer<'a> {
             return Ok(AnalyzedExpr {
                 kind: AnalyzedExprKind::Symbol(symbol),
                 ty,
+                constant: None,
+                span,
+            });
+        }
+
+        if name.text == "t" || name.text == "time" {
+            return Ok(AnalyzedExpr {
+                kind: AnalyzedExprKind::Time,
+                ty: ValueType::Real,
                 constant: None,
                 span,
             });
@@ -3392,6 +3403,234 @@ model broken {
     }
 
     #[test]
+    fn t_resolves_to_the_time_expression() {
+        let src = r#"
+model uses_time {
+    kind ode
+    parameters { ke }
+    states { central }
+    dynamics {
+        ddt(central) = -ke * central * t
+    }
+    outputs {
+        cp = central * t
+    }
+}
+"#;
+        let model = parse_model(src).expect("model parses");
+        let analyzed = analyze_model(&model).expect("model using `t` analyzes");
+
+        let dynamics = analyzed.dynamics.as_ref().expect("dynamics block exists");
+        let assign = &dynamics.statements[0];
+        let AnalyzedStmtKind::Assign(assign) = &assign.kind else {
+            panic!("expected an assignment statement");
+        };
+        assert!(expr_contains_time(&assign.value));
+    }
+
+    #[test]
+    fn time_is_an_alias_for_t() {
+        let src = r#"
+model uses_time_alias {
+    kind ode
+    parameters { ke }
+    states { central }
+    dynamics {
+        ddt(central) = -ke * central * time
+    }
+    outputs {
+        cp = central * time
+    }
+}
+"#;
+        let model = parse_model(src).expect("model parses");
+        let analyzed = analyze_model(&model).expect("model using `time` analyzes");
+
+        let dynamics = analyzed.dynamics.as_ref().expect("dynamics block exists");
+        let assign = &dynamics.statements[0];
+        let AnalyzedStmtKind::Assign(assign) = &assign.kind else {
+            panic!("expected an assignment statement");
+        };
+        assert!(expr_contains_time(&assign.value));
+    }
+
+    #[test]
+    fn t_can_be_used_in_a_derived_variable_consumed_by_dynamics() {
+        let src = r#"
+model uses_time_via_derive {
+    kind ode
+    parameters { ke }
+    states { central }
+    derive {
+        ke_t = ke + 0.0 * t
+    }
+    dynamics {
+        ddt(central) = -ke_t * central
+    }
+    outputs {
+        cp = central
+    }
+}
+"#;
+        let model = parse_model(src).expect("model parses");
+        let analyzed = analyze_model(&model).expect("model using `t` in a derive block analyzes");
+
+        // `t` does not appear directly in the dynamics equation...
+        let dynamics = analyzed.dynamics.as_ref().expect("dynamics block exists");
+        let AnalyzedStmtKind::Assign(dynamics_assign) = &dynamics.statements[0].kind else {
+            panic!("expected an assignment statement");
+        };
+        assert!(!expr_contains_time(&dynamics_assign.value));
+
+        // ...it is used one level removed, inside the `derive` block's secondary equation.
+        let derive = analyzed.derive.as_ref().expect("derive block exists");
+        let AnalyzedStmtKind::Assign(derive_assign) = &derive.statements[0].kind else {
+            panic!("expected an assignment statement");
+        };
+        assert!(expr_contains_time(&derive_assign.value));
+    }
+
+    #[test]
+    fn time_can_be_used_in_a_derived_variable_consumed_by_outputs() {
+        let src = r#"
+model uses_time_alias_via_derive {
+    kind ode
+    parameters { ke }
+    states { central }
+    derive {
+        elapsed_penalty = 1.0 + 0.0 * time
+    }
+    dynamics {
+        ddt(central) = -ke * central
+    }
+    outputs {
+        cp = central * elapsed_penalty
+    }
+}
+"#;
+        let model = parse_model(src).expect("model parses");
+        let analyzed =
+            analyze_model(&model).expect("model using `time` in a derive block analyzes");
+
+        // `time` does not appear directly in the outputs equation...
+        let outputs = &analyzed.outputs_block;
+        let AnalyzedStmtKind::Assign(outputs_assign) = &outputs.statements[0].kind else {
+            panic!("expected an assignment statement");
+        };
+        assert!(!expr_contains_time(&outputs_assign.value));
+
+        // ...it is used one level removed, inside the `derive` block's secondary equation.
+        let derive = analyzed.derive.as_ref().expect("derive block exists");
+        let AnalyzedStmtKind::Assign(derive_assign) = &derive.statements[0].kind else {
+            panic!("expected an assignment statement");
+        };
+        assert!(expr_contains_time(&derive_assign.value));
+    }
+
+    fn expr_contains_time(expr: &AnalyzedExpr) -> bool {
+        match &expr.kind {
+            AnalyzedExprKind::Time => true,
+            AnalyzedExprKind::Unary { expr, .. } => expr_contains_time(expr),
+            AnalyzedExprKind::Binary { lhs, rhs, .. } => {
+                expr_contains_time(lhs) || expr_contains_time(rhs)
+            }
+            AnalyzedExprKind::Call { args, .. } => args.iter().any(expr_contains_time),
+            _ => false,
+        }
+    }
+
+    #[test]
+    fn t_cannot_be_used_as_a_declared_symbol_name() {
+        let src = r#"
+model broken {
+    kind ode
+    parameters { t }
+    states { central }
+    dynamics {
+        ddt(central) = 0
+    }
+    outputs {
+        cp = central
+    }
+}
+"#;
+        let model = parse_model(src).expect("model parses");
+        let err = analyze_model(&model).expect_err("reserved name `t` must fail");
+
+        assert!(err
+            .render(src)
+            .contains("`t` is reserved by the DSL and cannot be used as a symbol name"));
+    }
+
+    #[test]
+    fn time_cannot_be_used_as_a_declared_symbol_name() {
+        let src = r#"
+model broken {
+    kind ode
+    parameters { time }
+    states { central }
+    dynamics {
+        ddt(central) = 0
+    }
+    outputs {
+        cp = central
+    }
+}
+"#;
+        let model = parse_model(src).expect("model parses");
+        let err = analyze_model(&model).expect_err("reserved name `time` must fail");
+
+        assert!(err
+            .render(src)
+            .contains("`time` is reserved by the DSL and cannot be used as a symbol name"));
+    }
+
+    #[test]
+    fn t_cannot_be_used_as_a_declared_state_name() {
+        let src = r#"
+model broken {
+    kind ode
+    states { t }
+    dynamics {
+        ddt(t) = 0
+    }
+    outputs {
+        cp = t
+    }
+}
+"#;
+        let model = parse_model(src).expect("model parses");
+        let err = analyze_model(&model).expect_err("reserved name `t` must fail as a state name");
+
+        assert!(err
+            .render(src)
+            .contains("`t` is reserved by the DSL and cannot be used as a symbol name"));
+    }
+
+    #[test]
+    fn time_cannot_be_used_as_a_declared_state_name() {
+        let src = r#"
+model broken {
+    kind ode
+    states { time }
+    dynamics {
+        ddt(time) = 0
+    }
+    outputs {
+        cp = time
+    }
+}
+"#;
+        let model = parse_model(src).expect("model parses");
+        let err =
+            analyze_model(&model).expect_err("reserved name `time` must fail as a state name");
+
+        assert!(err
+            .render(src)
+            .contains("`time` is reserved by the DSL and cannot be used as a symbol name"));
+    }
+
+    #[test]
     fn duplicate_constant_points_to_first_declaration() {
         let src = r#"
 model broken {
@@ -3697,6 +3936,7 @@ model broken {
                 state_place_signature(model, place),
                 expr.ty
             ),
+            AnalyzedExprKind::Time => format!("time:{:?}", expr.ty),
             AnalyzedExprKind::Unary { op, expr: inner } => {
                 format!("un:{op:?}:{}", expr_signature(model, inner))
             }

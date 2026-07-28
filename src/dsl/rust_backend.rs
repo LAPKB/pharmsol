@@ -260,6 +260,7 @@ fn emit_expr(expr: &ExecutionExpr) -> Result<RenderedExpr, String> {
 
 fn emit_load(load: &ExecutionLoad, ty: ValueType) -> Result<String, String> {
     let raw = match load {
+        ExecutionLoad::Time => "t".to_string(),
         ExecutionLoad::Parameter(index) => format!("load_f64(params, {index})"),
         ExecutionLoad::Covariate(index) => format!("load_f64(covariates, {index})"),
         ExecutionLoad::Derived(index) => format!("load_f64(derived, {index})"),
