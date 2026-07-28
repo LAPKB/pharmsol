@@ -3454,6 +3454,79 @@ model uses_time_alias {
         assert!(expr_contains_time(&assign.value));
     }
 
+    #[test]
+    fn t_can_be_used_in_a_derived_variable_consumed_by_dynamics() {
+        let src = r#"
+model uses_time_via_derive {
+    kind ode
+    parameters { ke }
+    states { central }
+    derive {
+        ke_t = ke + 0.0 * t
+    }
+    dynamics {
+        ddt(central) = -ke_t * central
+    }
+    outputs {
+        cp = central
+    }
+}
+"#;
+        let model = parse_model(src).expect("model parses");
+        let analyzed = analyze_model(&model).expect("model using `t` in a derive block analyzes");
+
+        // `t` does not appear directly in the dynamics equation...
+        let dynamics = analyzed.dynamics.as_ref().expect("dynamics block exists");
+        let AnalyzedStmtKind::Assign(dynamics_assign) = &dynamics.statements[0].kind else {
+            panic!("expected an assignment statement");
+        };
+        assert!(!expr_contains_time(&dynamics_assign.value));
+
+        // ...it is used one level removed, inside the `derive` block's secondary equation.
+        let derive = analyzed.derive.as_ref().expect("derive block exists");
+        let AnalyzedStmtKind::Assign(derive_assign) = &derive.statements[0].kind else {
+            panic!("expected an assignment statement");
+        };
+        assert!(expr_contains_time(&derive_assign.value));
+    }
+
+    #[test]
+    fn time_can_be_used_in_a_derived_variable_consumed_by_outputs() {
+        let src = r#"
+model uses_time_alias_via_derive {
+    kind ode
+    parameters { ke }
+    states { central }
+    derive {
+        elapsed_penalty = 1.0 + 0.0 * time
+    }
+    dynamics {
+        ddt(central) = -ke * central
+    }
+    outputs {
+        cp = central * elapsed_penalty
+    }
+}
+"#;
+        let model = parse_model(src).expect("model parses");
+        let analyzed =
+            analyze_model(&model).expect("model using `time` in a derive block analyzes");
+
+        // `time` does not appear directly in the outputs equation...
+        let outputs = &analyzed.outputs_block;
+        let AnalyzedStmtKind::Assign(outputs_assign) = &outputs.statements[0].kind else {
+            panic!("expected an assignment statement");
+        };
+        assert!(!expr_contains_time(&outputs_assign.value));
+
+        // ...it is used one level removed, inside the `derive` block's secondary equation.
+        let derive = analyzed.derive.as_ref().expect("derive block exists");
+        let AnalyzedStmtKind::Assign(derive_assign) = &derive.statements[0].kind else {
+            panic!("expected an assignment statement");
+        };
+        assert!(expr_contains_time(&derive_assign.value));
+    }
+
     fn expr_contains_time(expr: &AnalyzedExpr) -> bool {
         match &expr.kind {
             AnalyzedExprKind::Time => true,
