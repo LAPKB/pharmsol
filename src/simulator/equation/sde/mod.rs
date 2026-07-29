@@ -1,5 +1,7 @@
 mod em;
 
+pub use em::SdeStepSize;
+
 use diffsol::{NalgebraContext, Vector};
 use nalgebra::DVector;
 use ndarray::{concatenate, Array2, Axis};
@@ -109,6 +111,7 @@ fn simulate_sde_event(
     ndrugs: usize,
     ti: f64,
     tf: f64,
+    step_size: SdeStepSize,
 ) -> V {
     if ti == tf {
         return x;
@@ -151,7 +154,15 @@ fn simulate_sde_event(
         out.copy_from(out_v.inner());
     };
 
-    simulate_sde_event_with(drift_closure, diffusion_closure, x.inner().clone(), ti, tf).into()
+    simulate_sde_event_with(
+        drift_closure,
+        diffusion_closure,
+        x.inner().clone(),
+        ti,
+        tf,
+        step_size,
+    )
+    .into()
 }
 
 pub(crate) fn simulate_sde_event_with<D, G>(
@@ -160,6 +171,7 @@ pub(crate) fn simulate_sde_event_with<D, G>(
     initial_state: DVector<f64>,
     ti: f64,
     tf: f64,
+    step_size: SdeStepSize,
 ) -> DVector<f64>
 where
     D: Fn(f64, &DVector<f64>, &mut DVector<f64>),
@@ -169,7 +181,7 @@ where
         return initial_state;
     }
 
-    let mut sde = em::EM::new(drift, diffusion, initial_state, 1e-2, 1e-2);
+    let mut sde = em::EM::new(drift, diffusion, initial_state, step_size);
     let (_time, solution) = sde.solve(ti, tf);
     solution.last().unwrap().clone()
 }
@@ -195,6 +207,7 @@ pub struct SDE {
     injected_bolus_mappings: InjectedBolusMappings,
     cache: Option<SdeLikelihoodCache>,
     error_model_cache: Option<BoundErrorModelCache>,
+    step_size: SdeStepSize,
 }
 
 impl SDE {
@@ -231,6 +244,7 @@ impl SDE {
             error_model_cache: Some(BoundErrorModelCache::new(
                 DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
             )),
+            step_size: SdeStepSize::default(),
         }
     }
 
@@ -252,6 +266,35 @@ impl SDE {
     pub fn with_nout(mut self, nout: usize) -> Self {
         self.neqs.nout = nout;
         self.invalidate_metadata();
+        self
+    }
+
+    /// Configure the solver's step size strategy: either a fixed step size or
+    /// adaptive step size control (see [`SdeStepSize`]).
+    pub fn with_step_size(mut self, step_size: SdeStepSize) -> Self {
+        self.step_size = step_size;
+        self
+    }
+
+    /// Use a fixed step size `dt` for every integration step, disabling
+    /// adaptive error control.
+    pub fn with_fixed_step_size(mut self, dt: f64) -> Self {
+        self.step_size = SdeStepSize::Fixed(dt);
+        self
+    }
+
+    /// Divide every interval between consecutive bolus/observation events
+    /// into exactly `n` equal steps (infusions are applied continuously
+    /// within the drift function and don't create extra intervals).
+    pub fn with_event_steps(mut self, n: usize) -> Self {
+        self.step_size = SdeStepSize::EventSteps(n);
+        self
+    }
+
+    /// Use adaptive step size control, targeting the given relative (`rtol`)
+    /// and absolute (`atol`) tolerances.
+    pub fn with_adaptive_step_size(mut self, rtol: f64, atol: f64) -> Self {
+        self.step_size = SdeStepSize::adaptive(rtol, atol);
         self
     }
 
@@ -509,6 +552,7 @@ impl EquationPriv for SDE {
                 ndrugs,
                 ti,
                 tf,
+                self.step_size,
             )
             .inner()
             .clone();
