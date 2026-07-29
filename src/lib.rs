@@ -15,13 +15,8 @@
 //! - [`nca`] to calculate NCA metrics from the same data structures
 //! - [`optimize`] for optimizer-oriented workflows
 //!
-//! ## Estimation Boundary
-//!
-//! pharmsol owns model execution, simulation, prediction generation, prediction
-//! metadata, and NCA. Estimation crates own scoring, objectives, priors,
-//! algorithms, diagnostics, covariance, and fit semantics.
-//!
-//! Estimation code generates predictions here and evaluates them elsewhere.
+//! pharmsol provides model execution and prediction generation; scoring and
+//! estimation are handled by downstream estimation crates.
 //!
 //! The DSL runtime surface is feature-gated. When you enable `dsl-core`, the
 //! `pharmsol::dsl` module adds parsing, analysis, compilation, and runtime

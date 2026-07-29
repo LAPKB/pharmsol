@@ -595,7 +595,7 @@ impl ODE {
                             .metadata()
                             .map(|m| m.output_labels())
                             .unwrap_or_default();
-                        PharmsolError::unknown_output_label(observation.output(), &available)
+                        PharmsolError::unknown_output_label(observation.outeq(), &available)
                     })?;
                     if outeq >= y_out.len() {
                         return Err(PharmsolError::OuteqOutOfRange {

@@ -26,8 +26,9 @@
 //! - [`Covariate`] and [`Covariates`] for time-varying subject characteristics.
 //! - [`ErrorPoly`] for the transport-neutral Pmetrics C0-C3 values attached to
 //!   observations.
-//! - [`ObservationError`] for invalid or insufficient observation data during
-//!   profile construction and related preprocessing.
+//! - [`ObservationError`] for failures while extracting and validating
+//!   concentration-time observations, including insufficient data, invalid time
+//!   ordering, and missing observations for a requested output.
 //!
 //! # Choose A Data Input Path
 //!
@@ -56,8 +57,8 @@
 //!
 //! # Observation ErrorPoly Data
 //!
-//! Observations can carry a transport-neutral [`ErrorPoly`] DTO (the Pmetrics
-//! C0-C3 columns). pharmsol stores and round-trips these values verbatim.
+//! Observations can carry Pmetrics C0-C3 values in [`ErrorPoly`]. pharmsol
+//! stores and round-trips these values verbatim.
 //!
 //! # Example
 //!

@@ -737,8 +737,8 @@ impl SharedNativeModel {
                     infusion.set_input(input);
                 }
                 Event::Observation(observation) => {
-                    let outeq = self.resolve_output_label(observation.output())?;
-                    observation.set_output(outeq);
+                    let outeq = self.resolve_output_label(observation.outeq())?;
+                    observation.set_outeq(outeq);
                 }
             }
         }
@@ -1020,7 +1020,7 @@ impl SharedNativeModel {
         )?;
         let outeq = observation.outeq_index().ok_or_else(|| {
             PharmsolError::unknown_output_label(
-                observation.output(),
+                observation.outeq(),
                 &self.metadata().output_labels(),
             )
         })?;

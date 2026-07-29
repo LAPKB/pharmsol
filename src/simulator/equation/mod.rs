@@ -8,7 +8,7 @@
 //! - choose between deterministic ODE, analytical, and stochastic SDE models
 //! - attach metadata so dataset labels such as `"iv"` and `"cp"` resolve by
 //!   name instead of by dense numeric index
-//! - generate noiseless predictions across equation families
+//! - generate predictions across equation families
 //!
 //! # Equation Families
 //!
@@ -259,8 +259,8 @@ pub(crate) trait EquationPriv: EquationTypes {
                     infusion.set_input(input);
                 }
                 Event::Observation(observation) => {
-                    let outeq = self.resolve_output_label(observation.output())?;
-                    observation.set_output(outeq);
+                    let outeq = self.resolve_output_label(observation.outeq())?;
+                    observation.set_outeq(outeq);
                 }
             }
         }

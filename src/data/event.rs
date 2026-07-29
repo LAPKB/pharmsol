@@ -574,7 +574,7 @@ impl Observation {
     /// * `time` - Time of the observation
     /// * `value` - Observed value (e.g., drug concentration)
     /// * `outeq` - Output label corresponding to this observation
-    /// * `errorpoly` - Optional C0-C3 data
+    /// * `errorpoly` - Optional error polynomial coefficients (c0, c1, c2, c3)
     /// * `occasion` - Occasion index
     /// * `censoring` - Censoring type for this observation
     pub(crate) fn new(
@@ -608,14 +608,14 @@ impl Observation {
     }
 
     /// Get the output label corresponding to this observation
-    pub fn output(&self) -> &OutputLabel {
+    pub fn outeq(&self) -> &OutputLabel {
         &self.outeq
     }
 
     /// Resolve the output label to a dense execution index, if it is numeric.
     ///
     /// Internal helper for the execution layer. Public code works with the
-    /// [`OutputLabel`] returned by [`Observation::output`].
+    /// [`OutputLabel`] returned by [`Observation::outeq`].
     pub(crate) fn outeq_index(&self) -> Option<usize> {
         self.outeq.index()
     }
@@ -636,11 +636,11 @@ impl Observation {
     }
 
     /// Set the output label corresponding to this observation
-    pub fn set_output(&mut self, outeq: impl ToString) {
+    pub fn set_outeq(&mut self, outeq: impl ToString) {
         self.outeq = OutputLabel::new(outeq);
     }
 
-    /// Set the [`ErrorPoly`] data for this observation.
+    /// Set the [`ErrorPoly`] coefficients for this observation.
     pub fn set_errorpoly(&mut self, errorpoly: Option<ErrorPoly>) {
         self.errorpoly = errorpoly;
     }
@@ -656,11 +656,11 @@ impl Observation {
     }
 
     /// Get a mutable reference to the output label
-    pub fn mut_output(&mut self) -> &mut OutputLabel {
+    pub fn mut_outeq(&mut self) -> &mut OutputLabel {
         &mut self.outeq
     }
 
-    /// Get a mutable reference to the optional [`ErrorPoly`] data.
+    /// Get a mutable reference to the optional [`ErrorPoly`] coefficients.
     pub fn mut_errorpoly(&mut self) -> &mut Option<ErrorPoly> {
         &mut self.errorpoly
     }
@@ -804,8 +804,8 @@ mod tests {
 
         assert_eq!(observation.time(), 5.0);
         assert_eq!(observation.value(), Some(75.5));
-        assert_eq!(observation.output(), 2);
-        assert_eq!(observation.output().as_str(), "2");
+        assert_eq!(observation.outeq(), 2);
+        assert_eq!(observation.outeq().as_str(), "2");
         assert_eq!(observation.errorpoly(), errorpoly);
     }
 
@@ -822,7 +822,7 @@ mod tests {
 
         observation.set_time(6.0);
         observation.set_value(Some(80.0));
-        observation.set_output(3);
+        observation.set_outeq(3);
 
         let replacement = Some(ErrorPoly::new(0.2, 0.3, 0.4, 0.5));
         observation.set_errorpoly(replacement);
