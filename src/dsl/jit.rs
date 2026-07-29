@@ -1595,7 +1595,8 @@ out(cp) = central / v ~ continuous()
         let model = load_corpus_model("one_cmt_oral_iv");
         let jit = compile_ode_model_to_jit(&model)
             .expect("compile jit ode model")
-            .with_solver(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45));
+            .with_solver(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45))
+            .with_tolerances(1e-8, 1e-8);
 
         let oral = jit
             .info()
@@ -1701,6 +1702,7 @@ out(cp) = central / v ~ continuous()
         .with_ndrugs(2)
         .with_nout(1)
         .with_solver(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45))
+        .with_tolerances(1e-8, 1e-8)
         .with_metadata(
             equation::metadata::new("one_cmt_oral_iv")
                 .parameters(["ka", "cl", "v", "tlag", "f_oral"])

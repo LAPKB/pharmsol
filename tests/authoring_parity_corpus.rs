@@ -1410,9 +1410,14 @@ fn invalid_dsl_infusion_route_properties_fail_explicitly() {
 #[test]
 fn ode_runtime_jit_macro_and_handwritten_predictions_agree_on_shared_input_shape() {
     let runtime_model =
-        compile_runtime_jit_model(ODE_RUNTIME_SHARED_INPUT_DSL, "shared_input_one_cpt");
-    let macro_model = runtime_shared_input_macro_ode();
-    let handwritten_model = runtime_shared_input_handwritten_ode();
+        match compile_runtime_jit_model(ODE_RUNTIME_SHARED_INPUT_DSL, "shared_input_one_cpt") {
+            dsl::CompiledRuntimeModel::Ode(model) => {
+                dsl::CompiledRuntimeModel::Ode(model.with_tolerances(1e-8, 1e-8))
+            }
+            _ => panic!("shared-input ODE fixture should compile as an ODE model"),
+        };
+    let macro_model = runtime_shared_input_macro_ode().with_tolerances(1e-8, 1e-8);
+    let handwritten_model = runtime_shared_input_handwritten_ode().with_tolerances(1e-8, 1e-8);
     let macro_metadata = macro_model.metadata().expect("macro ODE metadata exists");
     let handwritten_metadata = handwritten_model
         .metadata()
