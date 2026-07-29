@@ -191,7 +191,7 @@ struct ExternRefs {
 
 #[derive(Clone, Copy)]
 struct FunctionArgs {
-    _time: Value,
+    time: Value,
     states: Value,
     params: Value,
     covariates: Value,
@@ -444,7 +444,7 @@ fn emit_statement_function(
 
     let params = builder.block_params(entry);
     let args = FunctionArgs {
-        _time: params[0],
+        time: params[0],
         states: params[1],
         params: params[2],
         covariates: params[3],
@@ -737,6 +737,7 @@ fn lower_load(
     span: Span,
 ) -> Result<LoweredValue, JitCompileError> {
     let value = match load {
+        ExecutionLoad::Time => env.args.time,
         ExecutionLoad::Parameter(index) => load_fixed(builder, env.args.params, *index, ty),
         ExecutionLoad::Covariate(index) => load_fixed(builder, env.args.covariates, *index, ty),
         ExecutionLoad::Derived(index) => load_fixed(builder, env.args.derived, *index, ty),

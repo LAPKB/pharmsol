@@ -35,6 +35,7 @@ const BINARY_REAL_IMPORT_TYPE: u32 = 5;
 
 const HEAP_PTR_GLOBAL: u32 = 0;
 
+const KERNEL_PARAM_TIME: u32 = 0;
 const KERNEL_PARAM_STATES: u32 = 1;
 const KERNEL_PARAM_PARAMS: u32 = 2;
 const KERNEL_PARAM_COVARIATES: u32 = 3;
@@ -931,6 +932,10 @@ fn emit_load(
     function: &mut Function,
 ) -> Result<(), WasmError> {
     match load {
+        ExecutionLoad::Time => {
+            function.instruction(&Instruction::LocalGet(KERNEL_PARAM_TIME));
+            emit_cast_stack(ValueType::Real, target_ty, function, state.model_name)
+        }
         ExecutionLoad::Parameter(index) => emit_dense_load(
             function,
             KERNEL_PARAM_PARAMS,

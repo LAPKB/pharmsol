@@ -355,6 +355,7 @@ pub enum ExecutionExprKind {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExecutionLoad {
+    Time,
     Parameter(usize),
     Covariate(usize),
     State(ExecutionStateRef),
@@ -1161,6 +1162,7 @@ impl<'a> ModelCompiler<'a> {
             AnalyzedExprKind::StateValue(place) => ExecutionExprKind::Load(ExecutionLoad::State(
                 self.compile_state_ref(place, locals)?,
             )),
+            AnalyzedExprKind::Time => ExecutionExprKind::Load(ExecutionLoad::Time),
             AnalyzedExprKind::Unary { op, expr } => ExecutionExprKind::Unary {
                 op: *op,
                 expr: Box::new(self.compile_expr(expr, locals)?),
