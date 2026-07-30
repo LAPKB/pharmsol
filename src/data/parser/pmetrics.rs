@@ -8,16 +8,21 @@
 //! numeric values such as `1` are preserved as numeric-looking labels.
 
 use crate::{data::*, PharmsolError};
-use csv::WriterBuilder;
+use csv::{ReaderBuilder, StringRecord, Terminator, WriterBuilder};
 use serde::de::{MapAccess, Visitor};
 use serde::{de, Deserialize, Deserializer, Serialize};
-use std::collections::HashMap;
-
-use crate::data::row::build_data;
-use crate::data::row::DataError;
-use crate::data::row::DataRow;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
+use std::fs::File;
+use std::io::{Cursor, Read, Write};
 use std::str::FromStr;
+
+use crate::data::row::{build_data, DataError, DataRow};
+
+const CORE_HEADERS: [&str; 15] = [
+    "ID", "EVID", "TIME", "DUR", "DOSE", "ADDL", "II", "INPUT", "OUT", "OUTEQ", "CENS", "C0", "C1",
+    "C2", "C3",
+];
 
 /// Read a Pmetrics CSV file into [`Data`].
 ///
@@ -73,31 +78,158 @@ use std::str::FromStr;
 /// For specific column definitions, see the `Row` struct.
 #[allow(dead_code)]
 pub fn read_pmetrics(path: impl Into<String>) -> Result<Data, DataError> {
-    let path = path.into();
+    let file = File::open(path.into()).map_err(|error| DataError::CSVError(error.to_string()))?;
+    read_pmetrics_reader(file, false)
+}
 
-    let mut reader = csv::ReaderBuilder::new()
-        .comment(Some(b'#'))
-        .has_headers(true)
-        .from_path(&path)
-        .map_err(|e| DataError::CSVError(e.to_string()))?;
-    // Convert headers to lowercase
-    let headers = reader
-        .headers()
-        .map_err(|e| DataError::CSVError(e.to_string()))?
-        .iter()
-        .map(|h| h.to_lowercase())
-        .collect::<Vec<_>>();
-    reader.set_headers(csv::StringRecord::from(headers));
+/// Read canonical `pmetrics-csv.v1` bytes from a stream.
+pub fn read_pmetrics_csv_v1<R: Read>(mut reader: R) -> Result<Data, DataError> {
+    let mut bytes = Vec::new();
+    reader
+        .read_to_end(&mut bytes)
+        .map_err(|error| DataError::CSVError(error.to_string()))?;
 
-    // Parse CSV rows and convert to DataRows
-    let mut data_rows: Vec<DataRow> = Vec::new();
-    for row_result in reader.deserialize() {
-        let row: Row = row_result.map_err(|e| DataError::CSVError(e.to_string()))?;
-        data_rows.push(row.to_datarow());
+    if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        return Err(DataError::InvalidCanonicalFormat(
+            "UTF-8 BOM is not permitted".to_string(),
+        ));
+    }
+    std::str::from_utf8(&bytes).map_err(|error| {
+        DataError::InvalidCanonicalFormat(format!("input is not UTF-8: {error}"))
+    })?;
+    if bytes.contains(&b'\r') {
+        return Err(DataError::InvalidCanonicalFormat(
+            "line endings must be LF".to_string(),
+        ));
+    }
+    if !bytes.ends_with(b"\n") {
+        return Err(DataError::InvalidCanonicalFormat(
+            "input must end with LF".to_string(),
+        ));
     }
 
-    // Use the shared build_data logic
+    read_pmetrics_reader(Cursor::new(bytes), true)
+}
+
+fn read_pmetrics_reader<R: Read>(reader: R, canonical: bool) -> Result<Data, DataError> {
+    let mut builder = ReaderBuilder::new();
+    builder.has_headers(true);
+    if !canonical {
+        builder.comment(Some(b'#'));
+    }
+    let mut reader = builder.from_reader(reader);
+    let original_headers = reader
+        .headers()
+        .map_err(|error| DataError::CSVError(error.to_string()))?
+        .clone();
+    if canonical {
+        validate_canonical_headers(&original_headers)?;
+    }
+
+    let headers = original_headers
+        .iter()
+        .enumerate()
+        .map(|(index, header)| {
+            if canonical && index >= CORE_HEADERS.len() {
+                header.to_string()
+            } else {
+                header.to_lowercase()
+            }
+        })
+        .collect::<Vec<_>>();
+    reader.set_headers(StringRecord::from(headers));
+
+    let canonical_covariates = if canonical {
+        {
+            original_headers
+                .iter()
+                .skip(CORE_HEADERS.len())
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        }
+    } else {
+        Default::default()
+    };
+    let mut seen_covariates = HashSet::new();
+    let mut data_rows = Vec::new();
+    let mut canonical_state = canonical.then(CanonicalReadState::default);
+    for row_result in reader.deserialize() {
+        let row: Row = row_result.map_err(|error| DataError::CSVError(error.to_string()))?;
+        if let Some(state) = canonical_state.as_mut() {
+            row.validate_canonical()?;
+            state.observe(&row)?;
+            seen_covariates.extend(
+                row.covs
+                    .iter()
+                    .filter(|(_, value)| value.is_some())
+                    .map(|(name, _)| name.clone()),
+            );
+        }
+        data_rows.push(row.to_datarow(canonical));
+    }
+    if let Some(state) = canonical_state {
+        state.finish()?;
+    }
+    for covariate in canonical_covariates {
+        if !seen_covariates.contains(&covariate) {
+            return Err(DataError::InvalidCanonicalFormat(format!(
+                "covariate column `{covariate}` has no observations"
+            )));
+        }
+    }
     build_data(data_rows)
+}
+
+fn validate_canonical_headers(headers: &StringRecord) -> Result<(), DataError> {
+    if headers.len() < CORE_HEADERS.len() {
+        return Err(DataError::InvalidCanonicalFormat(format!(
+            "expected at least {} columns, found {}",
+            CORE_HEADERS.len(),
+            headers.len()
+        )));
+    }
+    for (actual, expected) in headers.iter().zip(CORE_HEADERS) {
+        if actual != expected {
+            return Err(DataError::InvalidCanonicalFormat(format!(
+                "expected core column `{expected}`, found `{actual}`"
+            )));
+        }
+    }
+
+    let mut previous: Option<&str> = None;
+    let mut folded = HashSet::new();
+    for header in headers.iter().skip(CORE_HEADERS.len()) {
+        validate_covariate_header(header)?;
+        if previous.is_some_and(|name| name >= header) {
+            return Err(DataError::InvalidCanonicalFormat(
+                "covariate columns must be unique and lexically sorted".to_string(),
+            ));
+        }
+        let base = header.strip_suffix('!').unwrap_or(header);
+        if !folded.insert(base.to_lowercase()) {
+            return Err(DataError::InvalidCanonicalFormat(format!(
+                "ambiguous covariate column `{header}`"
+            )));
+        }
+        previous = Some(header);
+    }
+    Ok(())
+}
+
+fn validate_covariate_header(header: &str) -> Result<(), DataError> {
+    let base = header.strip_suffix('!').unwrap_or(header);
+    if base.is_empty()
+        || base.ends_with('!')
+        || base.contains(['\r', '\n', '\0'])
+        || CORE_HEADERS
+            .iter()
+            .any(|core| core.eq_ignore_ascii_case(base))
+    {
+        return Err(DataError::InvalidCanonicalFormat(format!(
+            "reserved or ambiguous covariate column `{header}`"
+        )));
+    }
+    Ok(())
 }
 
 /// One row from a Pmetrics file after serde deserialization.
@@ -107,7 +239,7 @@ struct Row {
     /// Subject ID
     id: String,
     /// Event type
-    evid: isize,
+    evid: i64,
     /// Event time
     time: f64,
     /// Infusion duration
@@ -151,9 +283,177 @@ struct Row {
     covs: HashMap<String, Option<f64>>,
 }
 
+#[derive(Default)]
+struct CanonicalReadState {
+    subject_id: Option<String>,
+    boundary_time: Option<f64>,
+    first_row_time: Option<f64>,
+    last_row_key: Option<(f64, u8)>,
+}
+
+impl CanonicalReadState {
+    fn observe(&mut self, row: &Row) -> Result<(), DataError> {
+        if self.subject_id.as_deref() != Some(row.id.as_str()) {
+            if let Some(previous_id) = self.subject_id.as_deref() {
+                self.finish_occasion()?;
+                if previous_id >= row.id.as_str() {
+                    return Err(DataError::InvalidCanonicalFormat(format!(
+                        "subject `{}` is not after `{previous_id}` in lexical order",
+                        row.id
+                    )));
+                }
+            }
+            if row.evid != 4 {
+                return Err(DataError::InvalidCanonicalFormat(format!(
+                    "subject `{}` does not start with an EVID=4 boundary",
+                    row.id
+                )));
+            }
+            self.subject_id = Some(row.id.clone());
+            self.start_occasion(row.time);
+            return Ok(());
+        }
+
+        if row.evid == 4 {
+            self.finish_occasion()?;
+            self.start_occasion(row.time);
+            return Ok(());
+        }
+
+        let rank = match row.evid {
+            0 => 1,
+            1 if row.dur.is_some_and(|duration| duration > 0.0) => 3,
+            1 => 2,
+            2 => 4,
+            _ => unreachable!("canonical EVID was validated before ordering"),
+        };
+        if self.first_row_time.is_none() {
+            self.first_row_time = Some(row.time);
+        }
+        if let Some((previous_time, previous_rank)) = self.last_row_key {
+            let order = previous_time
+                .total_cmp(&row.time)
+                .then_with(|| previous_rank.cmp(&rank));
+            if order.is_gt() || (order.is_eq() && rank == 4) {
+                return Err(DataError::InvalidCanonicalFormat(format!(
+                    "rows for subject `{}` are not in canonical occasion order",
+                    row.id
+                )));
+            }
+        }
+        self.last_row_key = Some((row.time, rank));
+        Ok(())
+    }
+
+    fn start_occasion(&mut self, boundary_time: f64) {
+        self.boundary_time = Some(boundary_time);
+        self.first_row_time = None;
+        self.last_row_key = None;
+    }
+
+    fn finish_occasion(&self) -> Result<(), DataError> {
+        let Some(boundary_time) = self.boundary_time else {
+            return Ok(());
+        };
+        let expected_time = self.first_row_time.unwrap_or(0.0);
+        if boundary_time.to_bits() != expected_time.to_bits() {
+            return Err(DataError::InvalidCanonicalFormat(format!(
+                "occasion boundary for `{}` has time {boundary_time}, expected {expected_time}",
+                self.subject_id.as_deref().unwrap_or_default()
+            )));
+        }
+        Ok(())
+    }
+
+    fn finish(self) -> Result<(), DataError> {
+        self.finish_occasion()
+    }
+}
+
 impl Row {
+    fn validate_canonical(&self) -> Result<(), DataError> {
+        ensure_finite(self.time, "TIME", &self.id)?;
+        for (field, value) in [
+            ("DUR", self.dur),
+            ("DOSE", self.dose),
+            ("II", self.ii),
+            ("OUT", self.out),
+            ("C0", self.c0),
+            ("C1", self.c1),
+            ("C2", self.c2),
+            ("C3", self.c3),
+        ] {
+            if let Some(value) = value {
+                ensure_finite(value, field, &self.id)?;
+            }
+        }
+        for (name, value) in &self.covs {
+            if let Some(value) = value {
+                ensure_finite(*value, name, &self.id)?;
+            }
+        }
+        let coefficients = [self.c0, self.c1, self.c2, self.c3];
+        let present = coefficients.iter().filter(|value| value.is_some()).count();
+        if present != 0 && present != coefficients.len() {
+            return Err(DataError::InvalidCanonicalFormat(format!(
+                "partial error polynomial for {} at time {}",
+                self.id, self.time
+            )));
+        }
+
+        let has_dose_fields = self.dur.is_some()
+            || self.dose.is_some()
+            || self.addl.is_some()
+            || self.ii.is_some()
+            || self.input.is_some();
+        let has_observation_fields =
+            self.out.is_some() || self.outeq.is_some() || self.cens.is_some() || present != 0;
+        let has_covariates = self.covs.values().any(Option::is_some);
+
+        match self.evid {
+            0 if has_dose_fields || has_covariates => {
+                return Err(DataError::InvalidCanonicalFormat(format!(
+                    "observation row for {} at time {} contains dose or covariate fields",
+                    self.id, self.time
+                )));
+            }
+            1 if has_observation_fields
+                || has_covariates
+                || self.addl.is_some()
+                || self.ii.is_some()
+                || self.dur.is_none()
+                || self.dur.is_some_and(|duration| duration < 0.0) =>
+            {
+                return Err(DataError::InvalidCanonicalFormat(format!(
+                    "dose row for {} at time {} is not explicit",
+                    self.id, self.time
+                )));
+            }
+            2 if has_dose_fields || has_observation_fields || !has_covariates => {
+                return Err(DataError::MalformedCovariateRow {
+                    id: self.id.clone(),
+                    time: self.time,
+                });
+            }
+            4 if has_dose_fields || has_observation_fields || has_covariates => {
+                return Err(DataError::MalformedBoundaryRow {
+                    id: self.id.clone(),
+                    time: self.time,
+                });
+            }
+            0 | 1 | 2 | 4 => {}
+            unsupported => {
+                return Err(DataError::InvalidCanonicalFormat(format!(
+                    "unsupported EVID={unsupported} for {} at time {}",
+                    self.id, self.time
+                )));
+            }
+        }
+        Ok(())
+    }
+
     /// Convert this Row to a DataRow for parsing
-    fn to_datarow(&self) -> DataRow {
+    fn to_datarow(&self, canonical: bool) -> DataRow {
         DataRow {
             id: self.id.clone(),
             time: self.time,
@@ -163,10 +463,12 @@ impl Row {
             addl: self.addl.map(|a| a as i64),
             ii: self.ii,
             input: self.input.clone(),
-            // Treat -99 as missing value (Pmetrics convention)
-            out: self
-                .out
-                .and_then(|v| if v == -99.0 { None } else { Some(v) }),
+            // Treat -99 as missing only in the legacy Pmetrics dialect.
+            out: if canonical {
+                self.out
+            } else {
+                self.out.filter(|&value| value != -99.0)
+            },
             outeq: self.outeq.clone(),
             cens: self.cens,
             c0: self.c0,
@@ -269,7 +571,7 @@ where
                 let opt_value = match value {
                     serde_json::Value::String(s) => match s.as_str() {
                         "" => None,
-                        "." => None,
+                        "." | "NA" => None,
                         _ => match s.parse::<f64>() {
                             Ok(val) => Some(val),
                             Err(_) => {
@@ -279,7 +581,11 @@ where
                             }
                         },
                     },
-                    serde_json::Value::Number(n) => Some(n.as_f64().unwrap()),
+                    serde_json::Value::Number(number) => {
+                        Some(number.as_f64().ok_or_else(|| {
+                            de::Error::custom("expected a finite floating-point number")
+                        })?)
+                    }
                     _ => return Err(de::Error::custom("expected a string or number")),
                 };
                 covs.insert(key, opt_value);
@@ -291,132 +597,327 @@ where
     deserializer.deserialize_map(CovsVisitor)
 }
 
-impl Data {
-    /// Write the dataset to a file in Pmetrics format.
-    ///
-    /// `INPUT` and `OUTEQ` are written using their stored public labels. Named
-    /// labels such as `iv` and `cp` remain named labels, and numeric-looking
-    /// labels are written back exactly as stored.
-    ///
-    /// Missing optional fields are emitted as `.` placeholders to match the
-    /// usual Pmetrics text convention.
-    ///
-    /// # Arguments
-    ///
-    /// * `file` - The file to write to
-    pub fn write_pmetrics(&self, file: &std::fs::File) -> Result<(), PharmsolError> {
-        let mut writer = WriterBuilder::new().has_headers(true).from_writer(file);
+#[derive(Debug)]
+struct CanonicalCovariate {
+    name: String,
+    header: String,
+}
 
-        writer
-            .write_record([
-                "ID", "EVID", "TIME", "DUR", "DOSE", "ADDL", "II", "INPUT", "OUT", "OUTEQ", "CENS",
-                "C0", "C1", "C2", "C3",
-            ])
-            .map_err(|e| PharmsolError::OtherError(e.to_string()))?;
+#[derive(Debug)]
+struct CanonicalRow {
+    time: f64,
+    rank: u8,
+    sequence: usize,
+    fields: Vec<String>,
+}
 
-        for subject in self.subjects() {
-            for occasion in subject.occasions() {
-                for event in occasion.process_events(None) {
-                    match event {
-                        Event::Observation(obs) => {
-                            let time = obs.time().to_string();
-                            let value = obs
-                                .value()
-                                .map_or_else(|| ".".to_string(), |v| v.to_string());
-                            let outeq = obs.outeq().to_string();
-                            let censor = match obs.censoring() {
-                                Censor::None => "0".to_string(),
-                                Censor::BLOQ => "1".to_string(),
-                                Censor::ALOQ => "-1".to_string(),
-                            };
-                            let (c0, c1, c2, c3) = obs
-                                .errorpoly()
-                                .map(|poly| {
-                                    let (c0, c1, c2, c3) = poly.coefficients();
-                                    (
-                                        c0.to_string(),
-                                        c1.to_string(),
-                                        c2.to_string(),
-                                        c3.to_string(),
-                                    )
-                                })
-                                .unwrap_or_else(|| {
-                                    (
-                                        ".".to_string(),
-                                        ".".to_string(),
-                                        ".".to_string(),
-                                        ".".to_string(),
-                                    )
-                                });
+fn ensure_finite(value: f64, field: &str, id: &str) -> Result<(), DataError> {
+    if value.is_finite() {
+        Ok(())
+    } else {
+        Err(DataError::NonFiniteValue {
+            field: field.to_string(),
+            id: id.to_string(),
+        })
+    }
+}
 
-                            // Write each field individually
-                            writer
-                                .write_record([
-                                    subject.id(),
-                                    &"0".to_string(),
-                                    &time,
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &value,
-                                    &outeq,
-                                    &censor,
-                                    &c0,
-                                    &c1,
-                                    &c2,
-                                    &c3,
-                                ])
-                                .map_err(|e| PharmsolError::OtherError(e.to_string()))?;
-                        }
-                        Event::Infusion(inf) => {
-                            writer
-                                .write_record([
-                                    subject.id(),
-                                    &"1".to_string(),
-                                    &inf.time().to_string(),
-                                    &inf.duration().to_string(),
-                                    &inf.amount().to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &inf.input().to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                ])
-                                .map_err(|e| PharmsolError::OtherError(e.to_string()))?;
-                        }
-                        Event::Bolus(bol) => {
-                            writer
-                                .write_record([
-                                    subject.id(),
-                                    &"1".to_string(),
-                                    &bol.time().to_string(),
-                                    &"0".to_string(),
-                                    &bol.amount().to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &bol.input().to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                ])
-                                .map_err(|e| PharmsolError::OtherError(e.to_string()))?;
-                        }
+fn ensure_label(label: &str, field: &str, id: &str) -> Result<(), DataError> {
+    if label.is_empty() || label == "." || label == "NA" || label.contains('\r') {
+        Err(DataError::InvalidCanonicalFormat(format!(
+            "{field} label `{label}` for {id} is reserved as missing"
+        )))
+    } else {
+        Ok(())
+    }
+}
+
+fn collect_covariate_schema(data: &Data) -> Result<Vec<CanonicalCovariate>, DataError> {
+    let mut fixed_by_name = BTreeMap::<String, bool>::new();
+    let mut folded_names = HashMap::<String, String>::new();
+
+    for subject in data.subjects() {
+        for occasion in subject.occasions() {
+            for (key, covariate) in occasion.covariates().covariates() {
+                if key != covariate.name() {
+                    return Err(DataError::InvalidCanonicalFormat(format!(
+                        "covariate key `{key}` does not match name `{}`",
+                        covariate.name()
+                    )));
+                }
+                validate_covariate_header(&key)?;
+                if key.ends_with('!') {
+                    return Err(DataError::InvalidCanonicalFormat(format!(
+                        "covariate name `{key}` reserves trailing ! for fixed covariates"
+                    )));
+                }
+                let folded = key.to_lowercase();
+                if let Some(existing) = folded_names.insert(folded, key.clone()) {
+                    if existing != key {
+                        return Err(DataError::InvalidCanonicalFormat(format!(
+                            "covariate names `{existing}` and `{key}` are ambiguous"
+                        )));
+                    }
+                }
+                if covariate.observations().is_empty() {
+                    return Err(DataError::InvalidCanonicalFormat(format!(
+                        "covariate `{key}` for subject `{}` occasion {} has no observations",
+                        subject.id(),
+                        occasion.index()
+                    )));
+                }
+                if let Some(existing) = fixed_by_name.insert(key.clone(), covariate.fixed()) {
+                    if existing != covariate.fixed() {
+                        return Err(DataError::InvalidCanonicalFormat(format!(
+                            "covariate `{key}` has inconsistent fixed semantics"
+                        )));
                     }
                 }
             }
         }
-        Ok(())
+    }
+
+    let mut schema = fixed_by_name
+        .into_iter()
+        .map(|(name, fixed)| CanonicalCovariate {
+            header: if fixed {
+                format!("{name}!")
+            } else {
+                name.clone()
+            },
+            name,
+        })
+        .collect::<Vec<_>>();
+    schema.sort_by(|left, right| left.header.cmp(&right.header));
+    Ok(schema)
+}
+
+fn empty_row(id: &str, evid: i32, time: f64, covariate_count: usize) -> Vec<String> {
+    let mut fields = vec![".".to_string(); CORE_HEADERS.len() + covariate_count];
+    fields[0] = id.to_string();
+    fields[1] = evid.to_string();
+    fields[2] = time.to_string();
+    fields
+}
+
+fn event_rank(event: &Event) -> u8 {
+    match event {
+        Event::Observation(_) => 1,
+        Event::Bolus(_) => 2,
+        Event::Infusion(_) => 3,
+    }
+}
+
+fn event_row(id: &str, event: &Event, covariate_count: usize) -> Result<Vec<String>, DataError> {
+    ensure_finite(event.time(), "TIME", id)?;
+    let mut fields = empty_row(
+        id,
+        match event {
+            Event::Observation(_) => 0,
+            Event::Bolus(_) | Event::Infusion(_) => 1,
+        },
+        event.time(),
+        covariate_count,
+    );
+
+    match event {
+        Event::Observation(observation) => {
+            if let Some(value) = observation.value() {
+                ensure_finite(value, "OUT", id)?;
+                fields[8] = value.to_string();
+            }
+            let outeq = observation.outeq().to_string();
+            ensure_label(&outeq, "OUTEQ", id)?;
+            fields[9] = outeq;
+            fields[10] = match observation.censoring() {
+                Censor::None => "0",
+                Censor::BLOQ => "1",
+                Censor::ALOQ => "-1",
+            }
+            .to_string();
+            if let Some(error) = observation.errorpoly() {
+                let coefficients = error.coefficients();
+                for (offset, value) in [
+                    coefficients.0,
+                    coefficients.1,
+                    coefficients.2,
+                    coefficients.3,
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    ensure_finite(value, &format!("C{offset}"), id)?;
+                    fields[11 + offset] = value.to_string();
+                }
+            }
+        }
+        Event::Bolus(bolus) => {
+            ensure_finite(bolus.amount(), "DOSE", id)?;
+            let input = bolus.input().to_string();
+            ensure_label(&input, "INPUT", id)?;
+            fields[3] = "0".to_string();
+            fields[4] = bolus.amount().to_string();
+            fields[7] = input;
+        }
+        Event::Infusion(infusion) => {
+            ensure_finite(infusion.duration(), "DUR", id)?;
+            ensure_finite(infusion.amount(), "DOSE", id)?;
+            if infusion.duration() <= 0.0 {
+                return Err(DataError::InvalidCanonicalFormat(format!(
+                    "infusion duration for {id} must be greater than zero"
+                )));
+            }
+            let input = infusion.input().to_string();
+            ensure_label(&input, "INPUT", id)?;
+            fields[3] = infusion.duration().to_string();
+            fields[4] = infusion.amount().to_string();
+            fields[7] = input;
+        }
+    }
+    Ok(fields)
+}
+
+impl Data {
+    /// Write canonical `pmetrics-csv.v1` bytes to a stream.
+    pub fn write_pmetrics_csv_v1<W: Write>(&self, writer: W) -> Result<(), DataError> {
+        let schema = collect_covariate_schema(self)?;
+        let mut headers = CORE_HEADERS
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        headers.extend(schema.iter().map(|covariate| covariate.header.clone()));
+
+        let mut csv = WriterBuilder::new()
+            .has_headers(false)
+            .terminator(Terminator::Any(b'\n'))
+            .from_writer(writer);
+        csv.write_record(&headers)
+            .map_err(|error| DataError::CSVError(error.to_string()))?;
+
+        let mut subjects = self.subjects();
+        subjects.sort_by(|left, right| left.id().cmp(right.id()));
+        for pair in subjects.windows(2) {
+            if pair[0].id() == pair[1].id() {
+                return Err(DataError::InvalidCanonicalFormat(format!(
+                    "duplicate subject ID `{}`",
+                    pair[0].id()
+                )));
+            }
+        }
+
+        for subject in subjects {
+            if subject.id().contains('\r') {
+                return Err(DataError::InvalidCanonicalFormat(format!(
+                    "subject ID `{}` contains a carriage return",
+                    subject.id()
+                )));
+            }
+            if subject.occasions().is_empty() {
+                return Err(DataError::InvalidCanonicalFormat(format!(
+                    "subject `{}` has no occasions",
+                    subject.id()
+                )));
+            }
+            for (occasion_index, occasion) in subject.occasions().iter().enumerate() {
+                if occasion.index() != occasion_index {
+                    return Err(DataError::InvalidCanonicalFormat(format!(
+                        "subject `{}` has nonsequential occasion index {}",
+                        subject.id(),
+                        occasion.index()
+                    )));
+                }
+
+                let events = occasion.events();
+                for event in events {
+                    if event.occasion() != occasion_index {
+                        return Err(DataError::InvalidCanonicalFormat(format!(
+                            "subject `{}` has an event assigned to occasion {} inside occasion {}",
+                            subject.id(),
+                            event.occasion(),
+                            occasion_index
+                        )));
+                    }
+                }
+                for pair in events.windows(2) {
+                    let order = pair[0]
+                        .time()
+                        .total_cmp(&pair[1].time())
+                        .then_with(|| event_rank(&pair[0]).cmp(&event_rank(&pair[1])));
+                    if order.is_gt() {
+                        return Err(DataError::InvalidCanonicalFormat(format!(
+                            "events for subject `{}` occasion {} are not in canonical order",
+                            subject.id(),
+                            occasion_index
+                        )));
+                    }
+                }
+
+                let mut rows = Vec::new();
+                for (sequence, event) in events.iter().enumerate() {
+                    rows.push(CanonicalRow {
+                        time: event.time(),
+                        rank: event_rank(event),
+                        sequence,
+                        fields: event_row(subject.id(), event, schema.len())?,
+                    });
+                }
+
+                let covariates = occasion.covariates().covariates();
+                let mut covariate_rows = HashMap::<u64, CanonicalRow>::new();
+                for (column, canonical) in schema.iter().enumerate() {
+                    let Some(covariate) = covariates.get(&canonical.name) else {
+                        continue;
+                    };
+                    for (time, value) in covariate.observations() {
+                        ensure_finite(time, &format!("{} time", canonical.name), subject.id())?;
+                        ensure_finite(value, &canonical.name, subject.id())?;
+                        let next_sequence = rows.len() + covariate_rows.len();
+                        let row =
+                            covariate_rows
+                                .entry(time.to_bits())
+                                .or_insert_with(|| CanonicalRow {
+                                    time,
+                                    rank: 4,
+                                    sequence: next_sequence,
+                                    fields: empty_row(subject.id(), 2, time, schema.len()),
+                                });
+                        row.fields[CORE_HEADERS.len() + column] = value.to_string();
+                    }
+                }
+                rows.extend(covariate_rows.into_values());
+                rows.sort_by(|left, right| {
+                    left.time
+                        .total_cmp(&right.time)
+                        .then_with(|| left.rank.cmp(&right.rank))
+                        .then_with(|| left.sequence.cmp(&right.sequence))
+                });
+
+                let boundary_time = rows.first().map_or(0.0, |row| row.time);
+                ensure_finite(boundary_time, "TIME", subject.id())?;
+                csv.write_record(empty_row(subject.id(), 4, boundary_time, schema.len()))
+                    .map_err(|error| DataError::CSVError(error.to_string()))?;
+                for row in rows {
+                    csv.write_record(row.fields)
+                        .map_err(|error| DataError::CSVError(error.to_string()))?;
+                }
+            }
+        }
+
+        csv.flush()
+            .map_err(|error| DataError::CSVError(error.to_string()))
+    }
+
+    /// Return canonical `pmetrics-csv.v1` bytes.
+    pub fn to_pmetrics_csv_v1(&self) -> Result<Vec<u8>, DataError> {
+        let mut bytes = Vec::new();
+        self.write_pmetrics_csv_v1(&mut bytes)?;
+        Ok(bytes)
+    }
+
+    /// Write the dataset to a file in canonical Pmetrics format.
+    pub fn write_pmetrics(&self, file: &File) -> Result<(), PharmsolError> {
+        self.write_pmetrics_csv_v1(file)
+            .map_err(PharmsolError::from)
     }
 }
 
@@ -490,7 +991,7 @@ mod tests {
         let infusion_row = reader
             .records()
             .filter_map(Result::ok)
-            .find(|record| record.get(3) != Some("0"))
+            .find(|record| record.get(1) == Some("1") && record.get(3) != Some("0"))
             .expect("infusion row missing");
 
         assert_eq!(infusion_row.get(7), Some("3")); // Written as-is (1-indexed)

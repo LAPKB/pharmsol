@@ -31,6 +31,9 @@ struct CovariateSegment {
     from: f64,
     to: Option<f64>,
     method: Interpolation,
+    /// Exact source value. Older serde payloads reconstruct it from `method`.
+    #[serde(default)]
+    observation: Option<f64>,
 }
 
 impl CovariateSegment {
@@ -41,8 +44,13 @@ impl CovariateSegment {
     /// * `from` - Start time of the segment
     /// * `to` - End time of the segment (None for unbounded)
     /// * `method` - Interpolation method to use within this segment
-    pub(crate) fn new(from: f64, to: Option<f64>, method: Interpolation) -> Self {
-        CovariateSegment { from, to, method }
+    pub(crate) fn new(from: f64, to: Option<f64>, method: Interpolation, observation: f64) -> Self {
+        CovariateSegment {
+            from,
+            to,
+            method,
+            observation: Some(observation),
+        }
     }
 
     /// Get the original observation time (same as 'from' for observation-based segments)
@@ -52,10 +60,10 @@ impl CovariateSegment {
 
     /// Get the original observation value
     fn value(&self) -> f64 {
-        match self.method {
+        self.observation.unwrap_or(match self.method {
             Interpolation::Linear { slope, intercept } => slope * self.from + intercept,
             Interpolation::CarryForward { value } => value,
-        }
+        })
     }
 
     /// Interpolate the covariate value at a specific time within this segment
@@ -118,7 +126,7 @@ impl Covariate {
             .collect();
 
         // Remove duplicates and sort by time
-        observations.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        observations.sort_by(|a, b| a.0.total_cmp(&b.0));
         observations.dedup_by(|a, b| a.0 == b.0);
         observations
     }
@@ -131,7 +139,9 @@ impl Covariate {
         if let Some(existing_segment) = self.segments.iter_mut().find(|seg| seg.time() == time) {
             // Update the existing observation's value
             existing_segment.method = Interpolation::CarryForward { value };
+            existing_segment.observation = Some(value);
             self.build_segments();
+            return;
         }
 
         // Add a temporary segment to store the new observation
@@ -139,6 +149,7 @@ impl Covariate {
             time,
             Some(time),
             Interpolation::CarryForward { value },
+            value,
         ));
 
         // Rebuild all segments
@@ -197,6 +208,7 @@ impl Covariate {
                     Interpolation::CarryForward {
                         value: current_obs.1,
                     },
+                    current_obs.1,
                 ));
             } else if let Some(next) = next_obs {
                 let slope = (next.1 - current_obs.1) / (next.0 - current_obs.0);
@@ -207,6 +219,7 @@ impl Covariate {
                         slope,
                         intercept: current_obs.1 - slope * current_obs.0,
                     },
+                    current_obs.1,
                 ));
             } else {
                 // Single observation, not fixed - create a CarryForward segment to infinity
@@ -216,6 +229,7 @@ impl Covariate {
                     Interpolation::CarryForward {
                         value: current_obs.1,
                     },
+                    current_obs.1,
                 ));
             }
         }
@@ -512,6 +526,7 @@ mod tests {
                 slope: 1.0,
                 intercept: 0.0,
             },
+            observation: Some(0.0),
         };
 
         assert_eq!(segment.interpolate(0.0), Some(0.0));
@@ -526,6 +541,7 @@ mod tests {
             from: 0.0,
             to: Some(10.0),
             method: Interpolation::CarryForward { value: 5.0 },
+            observation: Some(5.0),
         };
 
         assert_eq!(segment.interpolate(0.0), Some(5.0));

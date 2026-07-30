@@ -12,5 +12,8 @@
 
 pub mod pmetrics;
 
+#[cfg(test)]
+mod pmetrics_csv_v1_tests;
+
 pub use crate::data::row::{build_data, DataError, DataRow, DataRowBuilder};
 pub use pmetrics::*;
