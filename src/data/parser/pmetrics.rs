@@ -11,7 +11,7 @@ use crate::data::*;
 use csv::{ReaderBuilder, StringRecord};
 use serde::de::{MapAccess, Visitor};
 use serde::{de, Deserialize, Deserializer, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::str::FromStr;
 
@@ -33,7 +33,14 @@ pub(super) const CORE_HEADERS: [&str; 15] = [
 /// ingestion path, and groups rows into occasions using `EVID=4`.
 ///
 /// All columns not claimed by the core Pmetrics schema are treated as
-/// covariates.
+/// covariates. Column names are read without regard to capitalization. A
+/// covariate header ending in `!` selects carry-forward behavior; otherwise its
+/// values are interpolated. The same covariate cannot be declared in both
+/// forms.
+///
+/// `ADDL`/`II` doses are expanded while reading and may later be written as
+/// individual dose rows. `OUT=-99` represents a missing observation, so `-99`
+/// cannot be preserved as a real observed value.
 ///
 /// # Arguments
 ///
@@ -88,12 +95,43 @@ impl Data {
             .comment(Some(b'#'))
             .has_headers(true)
             .from_reader(bytes);
-        let headers = reader
+        let original_headers = reader
             .headers()
             .map_err(|error| DataError::CSVError(error.to_string()))?
-            .iter()
-            .map(str::to_lowercase)
-            .collect::<Vec<_>>();
+            .clone();
+        let mut core_names = HashSet::new();
+        let mut covariate_forms = HashMap::<String, bool>::new();
+        let mut headers = Vec::with_capacity(original_headers.len());
+
+        for header in &original_headers {
+            if let Some(core) = CORE_HEADERS
+                .iter()
+                .find(|core| core.eq_ignore_ascii_case(header))
+            {
+                let name = core.to_ascii_lowercase();
+                if !core_names.insert(name.clone()) {
+                    return Err(DataError::InvalidPmetricsData(format!(
+                        "duplicate core column `{name}`"
+                    )));
+                }
+                headers.push(name);
+                continue;
+            }
+
+            validate_covariate_header(header)?;
+            let fixed = header.ends_with('!');
+            let base = header.strip_suffix('!').unwrap_or(header);
+            let name = base.to_lowercase();
+            if let Some(previous_fixed) = covariate_forms.insert(name.clone(), fixed) {
+                let message = if previous_fixed == fixed {
+                    format!("duplicate covariate column `{name}`")
+                } else {
+                    format!("covariate `{name}` is declared both with and without trailing !")
+                };
+                return Err(DataError::InvalidPmetricsData(message));
+            }
+            headers.push(if fixed { format!("{name}!") } else { name });
+        }
         reader.set_headers(StringRecord::from(headers));
 
         let mut data_rows = Vec::new();
@@ -109,8 +147,8 @@ impl Data {
 pub(super) fn validate_covariate_header(header: &str) -> Result<(), DataError> {
     let base = header.strip_suffix('!').unwrap_or(header);
     if base.is_empty()
-        || base.ends_with('!')
-        || base.contains(['\r', '\n', '\0'])
+        || base.contains('!')
+        || base.chars().any(char::is_control)
         || CORE_HEADERS
             .iter()
             .any(|core| core.eq_ignore_ascii_case(base))

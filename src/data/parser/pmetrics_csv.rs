@@ -201,8 +201,14 @@ impl Data {
     /// Return the dataset as Pmetrics CSV bytes.
     ///
     /// Every occasion must contain real events. Each occasion after the first
-    /// must begin with a dose, and every covariate observation must share a time
-    /// with a dose or observation row.
+    /// must begin with an unambiguous dose at time zero, and every covariate
+    /// observation must share a time with a dose or observation row. Doses
+    /// expanded from `ADDL`/`II` input are written as individual rows.
+    ///
+    /// Missing observations are written as `OUT=-99`; a real value of `-99`
+    /// cannot be represented. Old bincode covariates remain readable, but a
+    /// linear covariate without its exact source points returns
+    /// [`DataError::LegacyLinearCovariate`] instead of guessing values.
     pub fn as_bytes(&self) -> Result<Vec<u8>, DataError> {
         let schema = collect_covariate_schema(self)?;
         let mut headers = CORE_HEADERS
@@ -284,14 +290,16 @@ impl Data {
                         )));
                     }
                 }
-                if occasion_index > 0
-                    && !matches!(events.first(), Some(Event::Bolus(_) | Event::Infusion(_)))
-                {
-                    return Err(DataError::InvalidPmetricsData(format!(
-                        "subject `{}` occasion {} must begin with a dose for Pmetrics export",
-                        subject.id(),
-                        occasion_index
-                    )));
+                if occasion_index > 0 {
+                    let first = events.first().expect("nonempty occasion checked above");
+                    if !matches!(first, Event::Bolus(_) | Event::Infusion(_)) || first.time() != 0.0
+                    {
+                        return Err(DataError::InvalidPmetricsData(format!(
+                            "subject `{}` occasion {} must begin with a dose at time 0 for Pmetrics export",
+                            subject.id(),
+                            occasion_index
+                        )));
+                    }
                 }
 
                 let mut rows = Vec::with_capacity(events.len());

@@ -193,6 +193,42 @@ fn existing_pmetrics_files_remain_readable() {
 }
 
 #[test]
+fn duplicate_and_conflicting_headers_are_rejected() {
+    let core = CORE_HEADER.trim_end();
+    let invalid_headers = [
+        format!("{core},WT,wt\n"),
+        format!("{core},WT!,wt!\n"),
+        format!("{core},WT,wt!\n"),
+        format!("id,{core}\n"),
+        format!("{core},wt!!\n"),
+        format!("{core},wt!x\n"),
+    ];
+
+    for header in invalid_headers {
+        assert!(matches!(
+            Data::from_bytes(header.as_bytes()),
+            Err(DataError::InvalidPmetricsData(_))
+        ));
+    }
+}
+
+#[test]
+fn valid_mixed_case_covariate_headers_are_normalized() {
+    let input = concat!(
+        "ID,EVID,TIME,DUR,DOSE,ADDL,II,INPUT,OUT,OUTEQ,CENS,C0,C1,C2,C3,WT!,Ka\n",
+        "s,1,0,0,1,.,.,iv,.,.,.,.,.,.,.,70,0.5\n"
+    );
+    let data = Data::from_bytes(input.as_bytes()).unwrap();
+    let covariates = data.subjects()[0].occasions()[0].covariates();
+    let wt = covariates.get_covariate("wt").unwrap();
+    assert_eq!(wt.name(), "wt");
+    assert!(wt.fixed());
+    let ka = covariates.get_covariate("ka").unwrap();
+    assert_eq!(ka.name(), "ka");
+    assert!(!ka.fixed());
+}
+
+#[test]
 fn standalone_covariate_time_is_not_exportable() {
     let data = Data::new(vec![Subject::builder("s")
         .bolus(0.0, 1.0, "iv")
@@ -247,6 +283,61 @@ fn later_occasion_without_an_initial_dose_is_not_exportable() {
         data.as_bytes(),
         Err(DataError::InvalidPmetricsData(message)) if message.contains("must begin with a dose")
     ));
+}
+
+#[test]
+fn observation_at_reset_time_makes_later_occasion_unsafe_to_export() {
+    let input = concat!(
+        "ID,EVID,TIME,DUR,DOSE,ADDL,II,INPUT,OUT,OUTEQ,CENS,C0,C1,C2,C3\n",
+        "s,1,0,0,1,.,.,iv,.,.,.,.,.,.,.\n",
+        "s,4,0,0,2,.,.,iv,.,.,.,.,.,.,.\n",
+        "s,0,0,.,.,.,.,.,3,cp,0,.,.,.,.\n"
+    );
+    let data = Data::from_bytes(input.as_bytes()).unwrap();
+    assert!(matches!(
+        data.as_bytes(),
+        Err(DataError::InvalidPmetricsData(message))
+            if message.contains("must begin with a dose at time 0")
+    ));
+}
+
+#[test]
+fn negative_addl_reset_is_unsafe_to_export() {
+    let input = concat!(
+        "ID,EVID,TIME,DUR,DOSE,ADDL,II,INPUT,OUT,OUTEQ,CENS,C0,C1,C2,C3\n",
+        "s,1,0,0,1,.,.,iv,.,.,.,.,.,.,.\n",
+        "s,4,0,0,2,-2,1,iv,.,.,.,.,.,.,.\n"
+    );
+    let data = Data::from_bytes(input.as_bytes()).unwrap();
+    assert_eq!(data.subjects()[0].occasions()[1].events()[0].time(), -2.0);
+    assert!(matches!(
+        data.as_bytes(),
+        Err(DataError::InvalidPmetricsData(message))
+            if message.contains("must begin with a dose at time 0")
+    ));
+}
+
+#[test]
+fn positive_addl_reset_round_trips_as_individual_doses() {
+    let input = concat!(
+        "ID,EVID,TIME,DUR,DOSE,ADDL,II,INPUT,OUT,OUTEQ,CENS,C0,C1,C2,C3\n",
+        "s,1,0,0,1,.,.,iv,.,.,.,.,.,.,.\n",
+        "s,4,0,0,2,2,1,iv,.,.,.,.,.,.,.\n"
+    );
+    let data = Data::from_bytes(input.as_bytes()).unwrap();
+    let bytes = data.as_bytes().unwrap();
+    let rows = records(&bytes);
+    assert_eq!(rows.len(), 4);
+    assert_eq!(rows[1].get(1), Some("4"));
+    assert_eq!(rows[1].get(2), Some("0"));
+    assert_eq!(rows[2].get(1), Some("1"));
+    assert_eq!(rows[2].get(2), Some("1"));
+    assert_eq!(rows[3].get(1), Some("1"));
+    assert_eq!(rows[3].get(2), Some("2"));
+    assert!(rows[1..].iter().all(|row| row.get(5) == Some(".")));
+
+    let reparsed = Data::from_bytes(&bytes).unwrap();
+    assert_data_equivalent(&data, &reparsed);
 }
 
 #[test]
