@@ -1,5 +1,5 @@
 use super::{read_pmetrics, DataError};
-use crate::{Censor, Data, ErrorPoly, Event, Subject, SubjectBuilderExt};
+use crate::{Censor, Covariate, Data, ErrorPoly, Event, Subject, SubjectBuilderExt};
 use csv::StringRecord;
 use std::collections::BTreeMap;
 use tempfile::NamedTempFile;
@@ -302,18 +302,30 @@ fn observation_at_reset_time_makes_later_occasion_unsafe_to_export() {
 }
 
 #[test]
-fn negative_addl_reset_is_unsafe_to_export() {
+fn negative_addl_reset_is_rejected_while_reading() {
     let input = concat!(
         "ID,EVID,TIME,DUR,DOSE,ADDL,II,INPUT,OUT,OUTEQ,CENS,C0,C1,C2,C3\n",
         "s,1,0,0,1,.,.,iv,.,.,.,.,.,.,.\n",
         "s,4,0,0,2,-2,1,iv,.,.,.,.,.,.,.\n"
     );
-    let data = Data::from_bytes(input.as_bytes()).unwrap();
-    assert_eq!(data.subjects()[0].occasions()[1].events()[0].time(), -2.0);
     assert!(matches!(
-        data.as_bytes(),
+        Data::from_bytes(input.as_bytes()),
         Err(DataError::InvalidPmetricsData(message))
-            if message.contains("must begin with a dose at time 0")
+            if message.contains("cannot use negative ADDL with positive II")
+    ));
+}
+
+#[test]
+fn negative_addl_reset_at_later_time_is_rejected_before_expansion() {
+    let input = concat!(
+        "ID,EVID,TIME,DUR,DOSE,ADDL,II,INPUT,OUT,OUTEQ,CENS,C0,C1,C2,C3\n",
+        "s,1,0,0,1,.,.,iv,.,.,.,.,.,.,.\n",
+        "s,4,2,0,2,-2,1,iv,.,.,.,.,.,.,.\n"
+    );
+    assert!(matches!(
+        Data::from_bytes(input.as_bytes()),
+        Err(DataError::InvalidPmetricsData(message))
+            if message.contains("cannot use negative ADDL with positive II")
     ));
 }
 
@@ -433,14 +445,107 @@ fn empty_reset_rows_are_rejected() {
 }
 
 #[test]
-fn programmatic_covariate_names_must_already_be_lowercase() {
+fn programmatic_covariate_name_is_lowercased_for_export() {
     let data = Data::new(vec![Subject::builder("s")
         .bolus(0.0, 1.0, "iv")
         .covariate("WT", 0.0, 70.0)
         .build()]);
+    let bytes = data.as_bytes().unwrap();
+    let mut reader = csv::Reader::from_reader(bytes.as_slice());
+    assert_eq!(reader.headers().unwrap().iter().last(), Some("wt"));
+
+    let parsed = Data::from_bytes(&bytes).unwrap();
+    let weight = parsed.subjects()[0].occasions()[0]
+        .covariates()
+        .get_covariate("wt")
+        .unwrap();
+    assert_eq!(weight.observations(), [(0.0, 70.0)]);
+}
+
+#[test]
+fn covariate_key_and_name_may_differ_by_ascii_case() {
+    let mut subject = Subject::builder("s").bolus(0.0, 1.0, "iv").build();
+    let mut weight = Covariate::new("WT".to_string(), false);
+    weight.add_observation(0.0, 70.0);
+    subject.occasions_mut()[0]
+        .covariates_mut()
+        .add_covariate("wt".to_string(), weight);
+
+    let bytes = Data::new(vec![subject]).as_bytes().unwrap();
+    let mut reader = csv::Reader::from_reader(bytes.as_slice());
+    assert_eq!(reader.headers().unwrap().iter().last(), Some("wt"));
+}
+
+#[test]
+fn same_occasion_covariate_case_variants_are_rejected() {
+    let data = Data::new(vec![Subject::builder("s")
+        .bolus(0.0, 1.0, "iv")
+        .covariate("WT", 0.0, 70.0)
+        .covariate("wt", 0.0, 71.0)
+        .build()]);
     assert!(matches!(
         data.as_bytes(),
-        Err(DataError::InvalidPmetricsData(message)) if message.contains("must be lowercase")
+        Err(DataError::InvalidPmetricsData(message)) if message.contains("both map to `wt`")
+    ));
+}
+
+#[test]
+fn covariate_case_variants_across_occasions_share_one_column() {
+    let data = Data::new(vec![Subject::builder("s")
+        .bolus(0.0, 1.0, "iv")
+        .covariate("WT", 0.0, 70.0)
+        .reset()
+        .bolus(0.0, 2.0, "iv")
+        .covariate("wt", 0.0, 71.0)
+        .build()]);
+    let bytes = data.as_bytes().unwrap();
+    let mut reader = csv::Reader::from_reader(bytes.as_slice());
+    assert_eq!(
+        reader
+            .headers()
+            .unwrap()
+            .iter()
+            .filter(|header| *header == "wt")
+            .count(),
+        1
+    );
+
+    let parsed = Data::from_bytes(&bytes).unwrap();
+    assert_eq!(
+        parsed.subjects()[0].occasions()[0]
+            .covariates()
+            .get_covariate("wt")
+            .unwrap()
+            .observations(),
+        [(0.0, 70.0)]
+    );
+    assert_eq!(
+        parsed.subjects()[0].occasions()[1]
+            .covariates()
+            .get_covariate("wt")
+            .unwrap()
+            .observations(),
+        [(0.0, 71.0)]
+    );
+}
+
+#[test]
+fn covariate_case_variants_with_different_behavior_are_rejected() {
+    let mut subject = Subject::builder("s")
+        .bolus(0.0, 1.0, "iv")
+        .covariate("WT", 0.0, 70.0)
+        .reset()
+        .bolus(0.0, 2.0, "iv")
+        .covariate("wt", 0.0, 71.0)
+        .build();
+    assert!(subject.occasions_mut()[0]
+        .covariates_mut()
+        .set_covariate_fixed("WT", true));
+
+    assert!(matches!(
+        Data::new(vec![subject]).as_bytes(),
+        Err(DataError::InvalidPmetricsData(message))
+            if message.contains("inconsistent fixed settings")
     ));
 }
 

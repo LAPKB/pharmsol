@@ -47,8 +47,9 @@ fn collect_covariate_schema(data: &Data) -> Result<Vec<CsvCovariate>, DataError>
 
     for subject in data.subjects() {
         for occasion in subject.occasions() {
+            let mut keys_by_name = BTreeMap::<String, String>::new();
             for (key, covariate) in occasion.covariates().covariates() {
-                if key != covariate.name() {
+                if !key.eq_ignore_ascii_case(covariate.name()) {
                     return Err(DataError::InvalidPmetricsData(format!(
                         "covariate key `{key}` does not match name `{}`",
                         covariate.name()
@@ -60,9 +61,13 @@ fn collect_covariate_schema(data: &Data) -> Result<Vec<CsvCovariate>, DataError>
                         "covariate name `{key}` reserves trailing ! for fixed covariates"
                     )));
                 }
-                if key != key.to_lowercase() {
+
+                let name = key.to_ascii_lowercase();
+                if let Some(existing) = keys_by_name.insert(name.clone(), key.clone()) {
                     return Err(DataError::InvalidPmetricsData(format!(
-                        "covariate name `{key}` must be lowercase for Pmetrics export"
+                        "covariates `{existing}` and `{key}` for subject `{}` occasion {} both map to `{name}`",
+                        subject.id(),
+                        occasion.index()
                     )));
                 }
                 if covariate.has_legacy_unmarked_linear_segments() {
@@ -79,10 +84,10 @@ fn collect_covariate_schema(data: &Data) -> Result<Vec<CsvCovariate>, DataError>
                         occasion.index()
                     )));
                 }
-                if let Some(existing) = fixed_by_name.insert(key.clone(), covariate.fixed()) {
+                if let Some(existing) = fixed_by_name.insert(name.clone(), covariate.fixed()) {
                     if existing != covariate.fixed() {
                         return Err(DataError::InvalidPmetricsData(format!(
-                            "covariate `{key}` has inconsistent fixed settings"
+                            "covariate `{name}` has inconsistent fixed settings"
                         )));
                     }
                 }
@@ -316,7 +321,10 @@ impl Data {
 
                 let covariates = occasion.covariates().covariates();
                 for (column, csv_covariate) in schema.iter().enumerate() {
-                    let Some(covariate) = covariates.get(&csv_covariate.name) else {
+                    let Some(covariate) = covariates.iter().find_map(|(key, covariate)| {
+                        key.eq_ignore_ascii_case(&csv_covariate.name)
+                            .then_some(*covariate)
+                    }) else {
                         continue;
                     };
                     for (time, value) in covariate.observations() {

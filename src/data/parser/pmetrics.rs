@@ -39,8 +39,10 @@ pub(super) const CORE_HEADERS: [&str; 15] = [
 /// forms.
 ///
 /// `ADDL`/`II` doses are expanded while reading and may later be written as
-/// individual dose rows. `OUT=-99` represents a missing observation, so `-99`
-/// cannot be preserved as a real observed value.
+/// individual dose rows. Negative `ADDL` remains supported for `EVID=1`, but
+/// not for an `EVID=4` reset whose identity would be lost during expansion.
+/// `OUT=-99` represents a missing observation, so `-99` cannot be preserved as
+/// a real observed value.
 ///
 /// # Arguments
 ///
@@ -250,6 +252,16 @@ impl Row {
         if present != 0 && present != coefficients.len() {
             return Err(DataError::InvalidPmetricsData(format!(
                 "partial error polynomial for {} at time {}",
+                self.id, self.time
+            )));
+        }
+
+        if self.evid == 4
+            && self.addl.is_some_and(|addl| addl < 0)
+            && self.ii.is_some_and(|ii| ii > 0.0)
+        {
+            return Err(DataError::InvalidPmetricsData(format!(
+                "EVID=4 row for {} at time {} cannot use negative ADDL with positive II",
                 self.id, self.time
             )));
         }
