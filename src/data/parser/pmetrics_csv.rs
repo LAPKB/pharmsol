@@ -1,20 +1,19 @@
-//! Canonical `pmetrics-csv.v1` writer implementation.
+//! Pmetrics CSV byte encoder.
 
 use super::pmetrics::{validate_covariate_header, CORE_HEADERS};
 use crate::data::row::DataError;
 use crate::data::{Censor, Data, Event};
 use csv::{Terminator, WriterBuilder};
 use std::collections::{BTreeMap, HashMap};
-use std::io::Write;
 
 #[derive(Debug)]
-struct CanonicalCovariate {
+struct CsvCovariate {
     name: String,
     header: String,
 }
 
 #[derive(Debug)]
-struct CanonicalRow {
+struct CsvRow {
     time: f64,
     rank: u8,
     sequence: usize,
@@ -34,7 +33,7 @@ fn ensure_finite(value: f64, field: &str, id: &str) -> Result<(), DataError> {
 
 fn ensure_label(label: &str, field: &str, id: &str) -> Result<(), DataError> {
     if label.is_empty() || label == "." || label == "NA" || label.contains('\r') {
-        Err(DataError::InvalidCanonicalFormat(format!(
+        Err(DataError::InvalidPmetricsData(format!(
             "{field} label `{label}` for {id} is reserved as missing"
         )))
     } else {
@@ -42,7 +41,7 @@ fn ensure_label(label: &str, field: &str, id: &str) -> Result<(), DataError> {
     }
 }
 
-fn collect_covariate_schema(data: &Data) -> Result<Vec<CanonicalCovariate>, DataError> {
+fn collect_covariate_schema(data: &Data) -> Result<Vec<CsvCovariate>, DataError> {
     let mut fixed_by_name = BTreeMap::<String, bool>::new();
     let mut folded_names = HashMap::<String, String>::new();
 
@@ -50,21 +49,21 @@ fn collect_covariate_schema(data: &Data) -> Result<Vec<CanonicalCovariate>, Data
         for occasion in subject.occasions() {
             for (key, covariate) in occasion.covariates().covariates() {
                 if key != covariate.name() {
-                    return Err(DataError::InvalidCanonicalFormat(format!(
+                    return Err(DataError::InvalidPmetricsData(format!(
                         "covariate key `{key}` does not match name `{}`",
                         covariate.name()
                     )));
                 }
                 validate_covariate_header(&key)?;
                 if key.ends_with('!') {
-                    return Err(DataError::InvalidCanonicalFormat(format!(
+                    return Err(DataError::InvalidPmetricsData(format!(
                         "covariate name `{key}` reserves trailing ! for fixed covariates"
                     )));
                 }
                 let folded = key.to_lowercase();
                 if let Some(existing) = folded_names.insert(folded, key.clone()) {
                     if existing != key {
-                        return Err(DataError::InvalidCanonicalFormat(format!(
+                        return Err(DataError::InvalidPmetricsData(format!(
                             "covariate names `{existing}` and `{key}` are ambiguous"
                         )));
                     }
@@ -77,7 +76,7 @@ fn collect_covariate_schema(data: &Data) -> Result<Vec<CanonicalCovariate>, Data
                     });
                 }
                 if covariate.observations().is_empty() {
-                    return Err(DataError::InvalidCanonicalFormat(format!(
+                    return Err(DataError::InvalidPmetricsData(format!(
                         "covariate `{key}` for subject `{}` occasion {} has no observations",
                         subject.id(),
                         occasion.index()
@@ -85,8 +84,8 @@ fn collect_covariate_schema(data: &Data) -> Result<Vec<CanonicalCovariate>, Data
                 }
                 if let Some(existing) = fixed_by_name.insert(key.clone(), covariate.fixed()) {
                     if existing != covariate.fixed() {
-                        return Err(DataError::InvalidCanonicalFormat(format!(
-                            "covariate `{key}` has inconsistent fixed semantics"
+                        return Err(DataError::InvalidPmetricsData(format!(
+                            "covariate `{key}` has inconsistent fixed settings"
                         )));
                     }
                 }
@@ -96,7 +95,7 @@ fn collect_covariate_schema(data: &Data) -> Result<Vec<CanonicalCovariate>, Data
 
     let mut schema = fixed_by_name
         .into_iter()
-        .map(|(name, fixed)| CanonicalCovariate {
+        .map(|(name, fixed)| CsvCovariate {
             header: if fixed {
                 format!("{name}!")
             } else {
@@ -180,7 +179,7 @@ fn event_row(id: &str, event: &Event, covariate_count: usize) -> Result<Vec<Stri
             ensure_finite(infusion.duration(), "DUR", id)?;
             ensure_finite(infusion.amount(), "DOSE", id)?;
             if infusion.duration() <= 0.0 {
-                return Err(DataError::InvalidCanonicalFormat(format!(
+                return Err(DataError::InvalidPmetricsData(format!(
                     "infusion duration for {id} must be greater than zero"
                 )));
             }
@@ -195,8 +194,8 @@ fn event_row(id: &str, event: &Event, covariate_count: usize) -> Result<Vec<Stri
 }
 
 impl Data {
-    /// Write canonical `pmetrics-csv.v1` bytes to a stream.
-    pub fn write_pmetrics_csv_v1<W: Write>(&self, writer: W) -> Result<(), DataError> {
+    /// Return the complete dataset as deterministic Pmetrics CSV bytes.
+    pub fn as_bytes(&self) -> Result<Vec<u8>, DataError> {
         let schema = collect_covariate_schema(self)?;
         let mut headers = CORE_HEADERS
             .iter()
@@ -204,10 +203,11 @@ impl Data {
             .collect::<Vec<_>>();
         headers.extend(schema.iter().map(|covariate| covariate.header.clone()));
 
+        let mut bytes = Vec::new();
         let mut csv = WriterBuilder::new()
             .has_headers(false)
             .terminator(Terminator::Any(b'\n'))
-            .from_writer(writer);
+            .from_writer(&mut bytes);
         csv.write_record(&headers)
             .map_err(|error| DataError::CSVError(error.to_string()))?;
 
@@ -215,7 +215,7 @@ impl Data {
         subjects.sort_by(|left, right| left.id().cmp(right.id()));
         for pair in subjects.windows(2) {
             if pair[0].id() == pair[1].id() {
-                return Err(DataError::InvalidCanonicalFormat(format!(
+                return Err(DataError::InvalidPmetricsData(format!(
                     "duplicate subject ID `{}`",
                     pair[0].id()
                 )));
@@ -224,20 +224,20 @@ impl Data {
 
         for subject in subjects {
             if subject.id().contains('\r') {
-                return Err(DataError::InvalidCanonicalFormat(format!(
+                return Err(DataError::InvalidPmetricsData(format!(
                     "subject ID `{}` contains a carriage return",
                     subject.id()
                 )));
             }
             if subject.occasions().is_empty() {
-                return Err(DataError::InvalidCanonicalFormat(format!(
+                return Err(DataError::InvalidPmetricsData(format!(
                     "subject `{}` has no occasions",
                     subject.id()
                 )));
             }
             for (occasion_index, occasion) in subject.occasions().iter().enumerate() {
                 if occasion.index() != occasion_index {
-                    return Err(DataError::InvalidCanonicalFormat(format!(
+                    return Err(DataError::InvalidPmetricsData(format!(
                         "subject `{}` has nonsequential occasion index {}",
                         subject.id(),
                         occasion.index()
@@ -247,7 +247,7 @@ impl Data {
                 let events = occasion.events();
                 for event in events {
                     if event.occasion() != occasion_index {
-                        return Err(DataError::InvalidCanonicalFormat(format!(
+                        return Err(DataError::InvalidPmetricsData(format!(
                             "subject `{}` has an event assigned to occasion {} inside occasion {}",
                             subject.id(),
                             event.occasion(),
@@ -261,8 +261,8 @@ impl Data {
                         .total_cmp(&pair[1].time())
                         .then_with(|| event_rank(&pair[0]).cmp(&event_rank(&pair[1])));
                     if order.is_gt() {
-                        return Err(DataError::InvalidCanonicalFormat(format!(
-                            "events for subject `{}` occasion {} are not in canonical order",
+                        return Err(DataError::InvalidPmetricsData(format!(
+                            "events for subject `{}` occasion {} are not in Pmetrics order",
                             subject.id(),
                             occasion_index
                         )));
@@ -271,7 +271,7 @@ impl Data {
 
                 let mut rows = Vec::new();
                 for (sequence, event) in events.iter().enumerate() {
-                    rows.push(CanonicalRow {
+                    rows.push(CsvRow {
                         time: event.time(),
                         rank: event_rank(event),
                         sequence,
@@ -280,24 +280,23 @@ impl Data {
                 }
 
                 let covariates = occasion.covariates().covariates();
-                let mut covariate_rows = HashMap::<u64, CanonicalRow>::new();
-                for (column, canonical) in schema.iter().enumerate() {
-                    let Some(covariate) = covariates.get(&canonical.name) else {
+                let mut covariate_rows = HashMap::<u64, CsvRow>::new();
+                for (column, csv_covariate) in schema.iter().enumerate() {
+                    let Some(covariate) = covariates.get(&csv_covariate.name) else {
                         continue;
                     };
                     for (time, value) in covariate.observations() {
-                        ensure_finite(time, &format!("{} time", canonical.name), subject.id())?;
-                        ensure_finite(value, &canonical.name, subject.id())?;
+                        ensure_finite(time, &format!("{} time", csv_covariate.name), subject.id())?;
+                        ensure_finite(value, &csv_covariate.name, subject.id())?;
                         let next_sequence = rows.len() + covariate_rows.len();
-                        let row =
-                            covariate_rows
-                                .entry(time.to_bits())
-                                .or_insert_with(|| CanonicalRow {
-                                    time,
-                                    rank: 4,
-                                    sequence: next_sequence,
-                                    fields: empty_row(subject.id(), 2, time, schema.len()),
-                                });
+                        let row = covariate_rows
+                            .entry(time.to_bits())
+                            .or_insert_with(|| CsvRow {
+                                time,
+                                rank: 4,
+                                sequence: next_sequence,
+                                fields: empty_row(subject.id(), 2, time, schema.len()),
+                            });
                         row.fields[CORE_HEADERS.len() + column] = value.to_string();
                     }
                 }
@@ -321,13 +320,8 @@ impl Data {
         }
 
         csv.flush()
-            .map_err(|error| DataError::CSVError(error.to_string()))
-    }
-
-    /// Return canonical `pmetrics-csv.v1` bytes.
-    pub fn to_pmetrics_csv_v1(&self) -> Result<Vec<u8>, DataError> {
-        let mut bytes = Vec::new();
-        self.write_pmetrics_csv_v1(&mut bytes)?;
+            .map_err(|error| DataError::CSVError(error.to_string()))?;
+        drop(csv);
         Ok(bytes)
     }
 }

@@ -38,7 +38,7 @@ use thiserror::Error;
 
 /// A format-agnostic representation of one input row.
 ///
-/// [`DataRow`] collects the canonical fields needed to turn one external row
+/// [`DataRow`] collects the common fields needed to turn one external row
 /// into one or more [`Event`] values.
 ///
 /// Build this type from your own column mapping or external schema, then call
@@ -659,21 +659,21 @@ pub enum DataError {
     /// An EVID=2 row was empty or contained event fields
     #[error("Malformed covariate-only row for {id} at time {time}")]
     MalformedCovariateRow { id: String, time: f64 },
-    /// A canonical value was not finite
+    /// A Pmetrics value was not finite
     #[error("Nonfinite value in {field} for {id}")]
     NonFiniteValue { field: String, id: String },
     /// A legacy linear covariate lacks exact source-observation markers
     #[error(
-        "Legacy linear covariate `{name}` for {id} occasion {occasion} must be reimported or rebuilt before canonical export"
+        "Legacy linear covariate `{name}` for {id} occasion {occasion} must be reimported or rebuilt before Pmetrics export"
     )]
     LegacyLinearCovariate {
         name: String,
         id: String,
         occasion: usize,
     },
-    /// The canonical CSV structure was invalid
-    #[error("Invalid pmetrics-csv.v1 data: {0}")]
-    InvalidCanonicalFormat(String),
+    /// The Pmetrics data was invalid
+    #[error("Invalid Pmetrics data: {0}")]
+    InvalidPmetricsData(String),
 }
 
 #[cfg(test)]

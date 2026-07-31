@@ -800,7 +800,7 @@ mod tests {
 
         // Verify that WT covariate exists
         let wt_cov = covariates
-            .get_covariate("wt")
+            .get_covariate("WT")
             .expect("WT covariate should exist");
 
         // Test interpolation at observation times
@@ -845,7 +845,7 @@ mod tests {
         let subject2 = binding.get(1).expect("Should have a second subject");
         let covariates2 = subject2.occasions().first().unwrap().covariates();
         let wt_cov2 = covariates2
-            .get_covariate("wt")
+            .get_covariate("WT")
             .expect("WT covariate should exist for subject 2");
 
         // Test subject 2 weight interpolation

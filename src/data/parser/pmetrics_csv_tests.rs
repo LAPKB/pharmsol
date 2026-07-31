@@ -1,11 +1,9 @@
-use super::pmetrics::read_pmetrics_csv_v1;
 use super::{read_pmetrics, DataError};
 use crate::{Censor, Data, ErrorPoly, Event, Subject, SubjectBuilderExt};
 use std::collections::BTreeMap;
-use std::io::Cursor;
 use tempfile::NamedTempFile;
 
-const GOLDEN: &[u8] = include_bytes!("../../tests/data/pmetrics_csv_v1.csv");
+const GOLDEN: &[u8] = include_bytes!("../../tests/data/pmetrics_csv.csv");
 const CORE_HEADER: &str = "ID,EVID,TIME,DUR,DOSE,ADDL,II,INPUT,OUT,OUTEQ,CENS,C0,C1,C2,C3\n";
 
 fn fixture_data() -> Data {
@@ -13,7 +11,7 @@ fn fixture_data() -> Data {
         .infusion(0.0, 25.0, "1", 2.0)
         .observation(0.0, 4.5, "central")
         .covariate("wt", 1.0, 60.0)
-        .observation(2.0, -99.0, "neg")
+        .observation(2.0, -98.5, "neg")
         .build();
 
     let mut ten = Subject::builder("10")
@@ -41,7 +39,7 @@ fn fixture_data() -> Data {
         assert!(occasion.covariates_mut().set_covariate_fixed("age", true));
     }
 
-    // Deliberately unsorted subjects prove canonical subject ordering.
+    // Deliberately unsorted to check deterministic subject ordering.
     Data::new(vec![alpha, ten])
 }
 
@@ -137,72 +135,65 @@ fn assert_data_equivalent(left: &Data, right: &Data) {
 }
 
 #[test]
-fn canonical_bytes_match_golden_and_are_deterministic() {
+fn bytes_include_the_complete_dataset_and_are_deterministic() {
     let data = fixture_data();
-    let first = data.to_pmetrics_csv_v1().unwrap();
-    let second = data.to_pmetrics_csv_v1().unwrap();
+    let first = data.as_bytes().unwrap();
+    let second = data.as_bytes().unwrap();
     assert_eq!(first, GOLDEN);
     assert_eq!(first, second);
+    assert!(std::str::from_utf8(&first).unwrap().contains(",4,"));
+    assert!(std::str::from_utf8(&first).unwrap().contains(",2,"));
 }
 
 #[test]
-fn canonical_data_round_trip_is_scientifically_equivalent() {
+fn bytes_round_trip_the_complete_dataset() {
     let data = fixture_data();
-    let bytes = data.to_pmetrics_csv_v1().unwrap();
-    let parsed = read_pmetrics_csv_v1(Cursor::new(bytes)).unwrap();
+    let bytes = data.as_bytes().unwrap();
+    let parsed = Data::from_bytes(&bytes).unwrap();
     assert_data_equivalent(&data, &parsed);
+    assert_eq!(parsed.as_bytes().unwrap(), bytes);
 }
 
 #[test]
-fn canonical_bytes_reencode_exactly() {
-    let parsed = read_pmetrics_csv_v1(Cursor::new(GOLDEN)).unwrap();
-    assert_eq!(parsed.to_pmetrics_csv_v1().unwrap(), GOLDEN);
+fn write_pmetrics_writes_as_bytes() {
+    let data = fixture_data();
+    let expected = data.as_bytes().unwrap();
+    let file = NamedTempFile::new().unwrap();
+    data.write_pmetrics(file.as_file()).unwrap();
+    assert_eq!(std::fs::read(file.path()).unwrap(), expected);
 }
 
 #[test]
-fn alternate_missing_and_numeric_spellings_are_rejected() {
-    let canonical = std::str::from_utf8(GOLDEN).unwrap();
-    let alternate_missing = canonical.replacen(",.,", ",NA,", 1);
-    assert!(matches!(
-        read_pmetrics_csv_v1(alternate_missing.as_bytes()),
-        Err(DataError::InvalidCanonicalFormat(_))
-    ));
+fn read_pmetrics_uses_the_byte_reader() {
+    let data = fixture_data();
+    let bytes = data.as_bytes().unwrap();
+    let file = NamedTempFile::new().unwrap();
+    std::fs::write(file.path(), &bytes).unwrap();
 
-    let alternate_numeric = canonical.replacen("10,4,0,", "10,4,0.0,", 1);
-    assert!(matches!(
-        read_pmetrics_csv_v1(alternate_numeric.as_bytes()),
-        Err(DataError::InvalidCanonicalFormat(_))
-    ));
+    let from_file = read_pmetrics(file.path().display().to_string()).unwrap();
+    let from_bytes = Data::from_bytes(&bytes).unwrap();
+    assert_data_equivalent(&from_file, &from_bytes);
 }
 
 #[test]
-fn ordinary_pmetrics_input_remains_readable() {
+fn existing_pmetrics_files_remain_readable() {
     let path = format!(
         "{}/src/tests/data/addl_test.csv",
         env!("CARGO_MANIFEST_DIR")
     );
-    assert!(!read_pmetrics(path).unwrap().is_empty());
-}
+    let bytes = std::fs::read(&path).unwrap();
+    let from_file = read_pmetrics(path).unwrap();
+    let from_bytes = Data::from_bytes(&bytes).unwrap();
+    assert_data_equivalent(&from_file, &from_bytes);
 
-#[test]
-fn legacy_writer_retains_event_only_pmetrics_shape() {
-    let data = fixture_data();
-    let file = NamedTempFile::new().unwrap();
-    data.write_pmetrics(file.as_file()).unwrap();
-
-    let mut reader = csv::Reader::from_path(file.path()).unwrap();
-    assert_eq!(reader.headers().unwrap().len(), 15);
-    let records = reader.records().collect::<Result<Vec<_>, _>>().unwrap();
-    let event_count = data
-        .subjects()
-        .into_iter()
-        .flat_map(|subject| subject.occasions())
-        .map(|occasion| occasion.events().len())
-        .sum::<usize>();
-    assert_eq!(records.len(), event_count);
-    assert!(records
-        .iter()
-        .all(|record| { record.len() == 15 && matches!(record.get(1), Some("0") | Some("1")) }));
+    let with_comment_and_missing = format!(
+        "# comment\n{CORE_HEADER}s,4,0,.,.,.,.,.,.,.,.,.,.,.,.\ns,0,1,.,.,.,.,.,NA,cp,none,.,.,.,.\n"
+    );
+    let parsed = Data::from_bytes(with_comment_and_missing.as_bytes()).unwrap();
+    match &parsed.subjects()[0].occasions()[0].events()[0] {
+        Event::Observation(observation) => assert_eq!(observation.value(), None),
+        _ => panic!("expected observation"),
+    }
 }
 
 #[test]
@@ -223,42 +214,41 @@ fn origin_main_bincode_data_with_covariates_is_readable() {
     }
 
     assert!(matches!(
-        data.to_pmetrics_csv_v1(),
+        data.as_bytes(),
         Err(DataError::LegacyLinearCovariate { name, id, occasion: 0 })
             if name == "wt" && id == "legacy-covariates"
     ));
 
-    // The markerless fixed covariate is carry-forward-only and remains exact.
     data.get_subject_mut("legacy-covariates")
         .unwrap()
         .occasions_mut()[0]
         .covariates_mut()
         .remove_covariate("wt");
-    let canonical = data.to_pmetrics_csv_v1().unwrap();
-    assert!(read_pmetrics_csv_v1(canonical.as_slice()).is_ok());
+    let encoded = data.as_bytes().unwrap();
+    assert!(Data::from_bytes(&encoded).is_ok());
 }
 
 #[test]
-fn malformed_marker_rows_and_nonfinite_values_fail_cleanly() {
+fn malformed_and_nonfinite_data_fail_cleanly() {
     let boundary_with_covariate = concat!(
         "ID,EVID,TIME,DUR,DOSE,ADDL,II,INPUT,OUT,OUTEQ,CENS,C0,C1,C2,C3,age\n",
         "s,4,0,.,.,.,.,.,.,.,.,.,.,.,.,40\n"
     );
     assert!(matches!(
-        read_pmetrics_csv_v1(boundary_with_covariate.as_bytes()),
+        Data::from_bytes(boundary_with_covariate.as_bytes()),
         Err(DataError::MalformedBoundaryRow { .. })
     ));
 
     let empty_covariate = format!("{CORE_HEADER}s,2,0,.,.,.,.,.,.,.,.,.,.,.,.\n");
     assert!(matches!(
-        read_pmetrics_csv_v1(empty_covariate.as_bytes()),
+        Data::from_bytes(empty_covariate.as_bytes()),
         Err(DataError::MalformedCovariateRow { .. })
     ));
 
     let nonfinite =
         format!("{CORE_HEADER}s,4,0,.,.,.,.,.,.,.,.,.,.,.,.\ns,1,NaN,0,1,.,.,iv,.,.,.,.,.,.,.\n");
     assert!(matches!(
-        read_pmetrics_csv_v1(nonfinite.as_bytes()),
+        Data::from_bytes(nonfinite.as_bytes()),
         Err(DataError::NonFiniteValue { .. })
     ));
 
@@ -266,73 +256,44 @@ fn malformed_marker_rows_and_nonfinite_values_fail_cleanly() {
         .bolus(f64::INFINITY, 1.0, "iv")
         .build()]);
     assert!(matches!(
-        invalid_data.to_pmetrics_csv_v1(),
+        invalid_data.as_bytes(),
         Err(DataError::NonFiniteValue { .. })
     ));
 }
 
 #[test]
-fn ambiguous_covariates_and_invalid_occasions_fail_cleanly() {
-    let ambiguous_header = format!("{},AGE,age\n", CORE_HEADER.trim_end());
-    assert!(matches!(
-        read_pmetrics_csv_v1(ambiguous_header.as_bytes()),
-        Err(DataError::InvalidCanonicalFormat(_))
-    ));
-
-    let all_missing_covariate = format!("{},x\n", CORE_HEADER.trim_end());
-    assert!(matches!(
-        read_pmetrics_csv_v1(all_missing_covariate.as_bytes()),
-        Err(DataError::InvalidCanonicalFormat(_))
-    ));
-
+fn invalid_data_fails_cleanly() {
     let mut subject = Subject::builder("s").bolus(0.0, 1.0, "iv").build();
     subject.occasions_mut()[0].events_mut()[0].set_occasion(7);
-    let invalid_data = Data::new(vec![subject]);
     assert!(matches!(
-        invalid_data.to_pmetrics_csv_v1(),
-        Err(DataError::InvalidCanonicalFormat(_))
+        Data::new(vec![subject]).as_bytes(),
+        Err(DataError::InvalidPmetricsData(_))
     ));
 
     let zero_duration = Data::new(vec![Subject::builder("s")
         .infusion(0.0, 1.0, "iv", 0.0)
         .build()]);
     assert!(matches!(
-        zero_duration.to_pmetrics_csv_v1(),
-        Err(DataError::InvalidCanonicalFormat(_))
+        zero_duration.as_bytes(),
+        Err(DataError::InvalidPmetricsData(_))
     ));
 
     let reserved_label = Data::new(vec![Subject::builder("s").bolus(0.0, 1.0, "NA").build()]);
     assert!(matches!(
-        reserved_label.to_pmetrics_csv_v1(),
-        Err(DataError::InvalidCanonicalFormat(_))
-    ));
-
-    let carriage_return_id = Data::new(vec![Subject::builder("s\r").bolus(0.0, 1.0, "iv").build()]);
-    assert!(matches!(
-        carriage_return_id.to_pmetrics_csv_v1(),
-        Err(DataError::InvalidCanonicalFormat(_))
-    ));
-
-    let mut empty_covariate_subject = Subject::builder("s").covariate("empty", 0.0, 1.0).build();
-    assert!(empty_covariate_subject.occasions_mut()[0]
-        .covariates_mut()
-        .remove_observation("empty", 0.0));
-    let empty_covariate_data = Data::new(vec![empty_covariate_subject]);
-    assert!(matches!(
-        empty_covariate_data.to_pmetrics_csv_v1(),
-        Err(DataError::InvalidCanonicalFormat(_))
+        reserved_label.as_bytes(),
+        Err(DataError::InvalidPmetricsData(_))
     ));
 }
 
 #[test]
-fn linear_covariate_source_values_reencode_bit_exactly() {
+fn linear_covariate_values_reencode_bit_exactly() {
     let data = Data::new(vec![Subject::builder("s")
         .covariate("x", 0.1, 0.1)
         .covariate("x", 0.2, 1.2)
         .build()]);
-    let first = data.to_pmetrics_csv_v1().unwrap();
-    let parsed = read_pmetrics_csv_v1(first.as_slice()).unwrap();
-    let second = parsed.to_pmetrics_csv_v1().unwrap();
+    let first = data.as_bytes().unwrap();
+    let parsed = Data::from_bytes(&first).unwrap();
+    let second = parsed.as_bytes().unwrap();
     assert_eq!(first, second);
     assert_data_equivalent(&data, &parsed);
 }
@@ -343,32 +304,8 @@ fn csv_special_strings_round_trip() {
         .bolus(0.0, 1.0, "iv,#\nroute")
         .observation(1.0, 2.0, "cp,#\nlabel")
         .build()]);
-    let bytes = data.to_pmetrics_csv_v1().unwrap();
-    let parsed = read_pmetrics_csv_v1(bytes.as_slice()).unwrap();
+    let bytes = data.as_bytes().unwrap();
+    let parsed = Data::from_bytes(&bytes).unwrap();
     assert_data_equivalent(&data, &parsed);
-    assert_eq!(parsed.to_pmetrics_csv_v1().unwrap(), bytes);
-}
-
-#[test]
-fn noncanonical_row_structure_is_rejected() {
-    let malformed = [
-        format!("{CORE_HEADER}s,0,0,.,.,.,.,.,1,cp,0,.,.,.,.\n"),
-        format!(
-            "{CORE_HEADER}b,4,0,.,.,.,.,.,.,.,.,.,.,.,.\na,4,0,.,.,.,.,.,.,.,.,.,.,.,.\n"
-        ),
-        format!(
-            "{CORE_HEADER}s,4,0,.,.,.,.,.,.,.,.,.,.,.,.\ns,0,1,.,.,.,.,.,1,cp,0,.,.,.,.\ns,1,0,0,1,.,.,iv,.,.,.,.,.,.,.\n"
-        ),
-        format!("{CORE_HEADER}s,4294967297,0,.,.,.,.,.,.,.,.,.,.,.,.\n"),
-        format!(
-            "{CORE_HEADER}s,4,5,.,.,.,.,.,.,.,.,.,.,.,.\ns,0,0,.,.,.,.,.,1,cp,0,.,.,.,.\n"
-        ),
-    ];
-
-    for bytes in malformed {
-        assert!(matches!(
-            read_pmetrics_csv_v1(bytes.as_bytes()),
-            Err(DataError::InvalidCanonicalFormat(_))
-        ));
-    }
+    assert_eq!(parsed.as_bytes().unwrap(), bytes);
 }

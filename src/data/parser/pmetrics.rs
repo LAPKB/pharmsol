@@ -8,13 +8,13 @@
 //! numeric values such as `1` are preserved as numeric-looking labels.
 
 use crate::{data::*, PharmsolError};
-use csv::{ReaderBuilder, StringRecord, WriterBuilder};
+use csv::{ReaderBuilder, StringRecord};
 use serde::de::{MapAccess, Visitor};
 use serde::{de, Deserialize, Deserializer, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fmt;
 use std::fs::File;
-use std::io::{Cursor, Read};
+use std::io::Write;
 use std::str::FromStr;
 
 use crate::data::row::{build_data, DataError, DataRow};
@@ -57,7 +57,7 @@ pub(super) const CORE_HEADERS: [&str; 15] = [
 ///
 /// # Expected columns
 ///
-/// The canonical columns are `ID`, `TIME`, `EVID`, `DOSE`, `DUR`, `ADDL`,
+/// The core columns are `ID`, `TIME`, `EVID`, `DOSE`, `DUR`, `ADDL`,
 /// `II`, `INPUT`, `OUT`, `OUTEQ`, `CENS`, and optional `C0..C3` error
 /// coefficients.
 ///
@@ -78,149 +78,41 @@ pub(super) const CORE_HEADERS: [&str; 15] = [
 /// For specific column definitions, see the `Row` struct.
 #[allow(dead_code)]
 pub fn read_pmetrics(path: impl Into<String>) -> Result<Data, DataError> {
-    let file = File::open(path.into()).map_err(|error| DataError::CSVError(error.to_string()))?;
-    read_pmetrics_reader(file, false)
+    let bytes =
+        std::fs::read(path.into()).map_err(|error| DataError::CSVError(error.to_string()))?;
+    Data::from_bytes(&bytes)
 }
 
-/// Read canonical `pmetrics-csv.v1` bytes from a stream.
-pub fn read_pmetrics_csv_v1<R: Read>(mut reader: R) -> Result<Data, DataError> {
-    let mut bytes = Vec::new();
-    reader
-        .read_to_end(&mut bytes)
-        .map_err(|error| DataError::CSVError(error.to_string()))?;
-
-    if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
-        return Err(DataError::InvalidCanonicalFormat(
-            "UTF-8 BOM is not permitted".to_string(),
-        ));
-    }
-    std::str::from_utf8(&bytes).map_err(|error| {
-        DataError::InvalidCanonicalFormat(format!("input is not UTF-8: {error}"))
-    })?;
-    if bytes.contains(&b'\r') {
-        return Err(DataError::InvalidCanonicalFormat(
-            "line endings must be LF".to_string(),
-        ));
-    }
-    if !bytes.ends_with(b"\n") {
-        return Err(DataError::InvalidCanonicalFormat(
-            "input must end with LF".to_string(),
-        ));
-    }
-
-    let data = read_pmetrics_reader(Cursor::new(bytes.as_slice()), true)?;
-    let canonical = data.to_pmetrics_csv_v1()?;
-    if canonical != bytes {
-        return Err(DataError::InvalidCanonicalFormat(
-            "input bytes are not canonical pmetrics-csv.v1".to_string(),
-        ));
-    }
-    Ok(data)
-}
-
-fn read_pmetrics_reader<R: Read>(reader: R, canonical: bool) -> Result<Data, DataError> {
-    let mut builder = ReaderBuilder::new();
-    builder.has_headers(true);
-    if !canonical {
-        builder.comment(Some(b'#'));
-    }
-    let mut reader = builder.from_reader(reader);
-    let original_headers = reader
-        .headers()
-        .map_err(|error| DataError::CSVError(error.to_string()))?
-        .clone();
-    if canonical {
-        validate_canonical_headers(&original_headers)?;
-    }
-
-    let headers = original_headers
-        .iter()
-        .enumerate()
-        .map(|(index, header)| {
-            if canonical && index >= CORE_HEADERS.len() {
-                header.to_string()
-            } else {
-                header.to_lowercase()
-            }
-        })
-        .collect::<Vec<_>>();
-    reader.set_headers(StringRecord::from(headers));
-
-    let canonical_covariates = if canonical {
-        {
-            original_headers
-                .iter()
-                .skip(CORE_HEADERS.len())
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-        }
-    } else {
-        Default::default()
-    };
-    let mut seen_covariates = HashSet::new();
-    let mut data_rows = Vec::new();
-    let mut canonical_state = canonical.then(CanonicalReadState::default);
-    for row_result in reader.deserialize() {
-        let row: Row = row_result.map_err(|error| DataError::CSVError(error.to_string()))?;
-        if let Some(state) = canonical_state.as_mut() {
-            row.validate_canonical()?;
-            state.observe(&row)?;
-            seen_covariates.extend(
-                row.covs
+impl Data {
+    /// Read Pmetrics CSV bytes into a dataset.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Data, DataError> {
+        let mut reader = ReaderBuilder::new()
+            .comment(Some(b'#'))
+            .has_headers(true)
+            .from_reader(bytes);
+        let original_headers = reader
+            .headers()
+            .map_err(|error| DataError::CSVError(error.to_string()))?
+            .clone();
+        let headers = original_headers
+            .iter()
+            .map(|header| {
+                CORE_HEADERS
                     .iter()
-                    .filter(|(_, value)| value.is_some())
-                    .map(|(name, _)| name.clone()),
-            );
-        }
-        data_rows.push(row.to_datarow(canonical));
-    }
-    if let Some(state) = canonical_state {
-        state.finish()?;
-    }
-    for covariate in canonical_covariates {
-        if !seen_covariates.contains(&covariate) {
-            return Err(DataError::InvalidCanonicalFormat(format!(
-                "covariate column `{covariate}` has no observations"
-            )));
-        }
-    }
-    build_data(data_rows)
-}
+                    .find(|core| core.eq_ignore_ascii_case(header))
+                    .map_or_else(|| header.to_string(), |core| core.to_ascii_lowercase())
+            })
+            .collect::<Vec<_>>();
+        reader.set_headers(StringRecord::from(headers));
 
-fn validate_canonical_headers(headers: &StringRecord) -> Result<(), DataError> {
-    if headers.len() < CORE_HEADERS.len() {
-        return Err(DataError::InvalidCanonicalFormat(format!(
-            "expected at least {} columns, found {}",
-            CORE_HEADERS.len(),
-            headers.len()
-        )));
-    }
-    for (actual, expected) in headers.iter().zip(CORE_HEADERS) {
-        if actual != expected {
-            return Err(DataError::InvalidCanonicalFormat(format!(
-                "expected core column `{expected}`, found `{actual}`"
-            )));
+        let mut data_rows = Vec::new();
+        for row_result in reader.deserialize() {
+            let row: Row = row_result.map_err(|error| DataError::CSVError(error.to_string()))?;
+            row.validate()?;
+            data_rows.push(row.to_datarow());
         }
+        build_data(data_rows)
     }
-
-    let mut previous: Option<&str> = None;
-    let mut folded = HashSet::new();
-    for header in headers.iter().skip(CORE_HEADERS.len()) {
-        validate_covariate_header(header)?;
-        if previous.is_some_and(|name| name >= header) {
-            return Err(DataError::InvalidCanonicalFormat(
-                "covariate columns must be unique and lexically sorted".to_string(),
-            ));
-        }
-        let base = header.strip_suffix('!').unwrap_or(header);
-        if !folded.insert(base.to_lowercase()) {
-            return Err(DataError::InvalidCanonicalFormat(format!(
-                "ambiguous covariate column `{header}`"
-            )));
-        }
-        previous = Some(header);
-    }
-    Ok(())
 }
 
 pub(super) fn validate_covariate_header(header: &str) -> Result<(), DataError> {
@@ -232,7 +124,7 @@ pub(super) fn validate_covariate_header(header: &str) -> Result<(), DataError> {
             .iter()
             .any(|core| core.eq_ignore_ascii_case(base))
     {
-        return Err(DataError::InvalidCanonicalFormat(format!(
+        return Err(DataError::InvalidPmetricsData(format!(
             "reserved or ambiguous covariate column `{header}`"
         )));
     }
@@ -301,95 +193,8 @@ struct Row {
     covs: HashMap<String, Option<f64>>,
 }
 
-#[derive(Default)]
-struct CanonicalReadState {
-    subject_id: Option<String>,
-    boundary_time: Option<f64>,
-    first_row_time: Option<f64>,
-    last_row_key: Option<(f64, u8)>,
-}
-
-impl CanonicalReadState {
-    fn observe(&mut self, row: &Row) -> Result<(), DataError> {
-        if self.subject_id.as_deref() != Some(row.id.as_str()) {
-            if let Some(previous_id) = self.subject_id.as_deref() {
-                self.finish_occasion()?;
-                if previous_id >= row.id.as_str() {
-                    return Err(DataError::InvalidCanonicalFormat(format!(
-                        "subject `{}` is not after `{previous_id}` in lexical order",
-                        row.id
-                    )));
-                }
-            }
-            if row.evid != 4 {
-                return Err(DataError::InvalidCanonicalFormat(format!(
-                    "subject `{}` does not start with an EVID=4 boundary",
-                    row.id
-                )));
-            }
-            self.subject_id = Some(row.id.clone());
-            self.start_occasion(row.time);
-            return Ok(());
-        }
-
-        if row.evid == 4 {
-            self.finish_occasion()?;
-            self.start_occasion(row.time);
-            return Ok(());
-        }
-
-        let rank = match row.evid {
-            0 => 1,
-            1 if row.dur.is_some_and(|duration| duration > 0.0) => 3,
-            1 => 2,
-            2 => 4,
-            _ => unreachable!("canonical EVID was validated before ordering"),
-        };
-        if self.first_row_time.is_none() {
-            self.first_row_time = Some(row.time);
-        }
-        if let Some((previous_time, previous_rank)) = self.last_row_key {
-            let order = previous_time
-                .total_cmp(&row.time)
-                .then_with(|| previous_rank.cmp(&rank));
-            if order.is_gt() || (order.is_eq() && rank == 4) {
-                return Err(DataError::InvalidCanonicalFormat(format!(
-                    "rows for subject `{}` are not in canonical occasion order",
-                    row.id
-                )));
-            }
-        }
-        self.last_row_key = Some((row.time, rank));
-        Ok(())
-    }
-
-    fn start_occasion(&mut self, boundary_time: f64) {
-        self.boundary_time = Some(boundary_time);
-        self.first_row_time = None;
-        self.last_row_key = None;
-    }
-
-    fn finish_occasion(&self) -> Result<(), DataError> {
-        let Some(boundary_time) = self.boundary_time else {
-            return Ok(());
-        };
-        let expected_time = self.first_row_time.unwrap_or(0.0);
-        if boundary_time.to_bits() != expected_time.to_bits() {
-            return Err(DataError::InvalidCanonicalFormat(format!(
-                "occasion boundary for `{}` has time {boundary_time}, expected {expected_time}",
-                self.subject_id.as_deref().unwrap_or_default()
-            )));
-        }
-        Ok(())
-    }
-
-    fn finish(self) -> Result<(), DataError> {
-        self.finish_occasion()
-    }
-}
-
 impl Row {
-    fn validate_canonical(&self) -> Result<(), DataError> {
+    fn validate(&self) -> Result<(), DataError> {
         ensure_finite(self.time, "TIME", &self.id)?;
         for (field, value) in [
             ("DUR", self.dur),
@@ -410,10 +215,11 @@ impl Row {
                 ensure_finite(*value, name, &self.id)?;
             }
         }
+
         let coefficients = [self.c0, self.c1, self.c2, self.c3];
         let present = coefficients.iter().filter(|value| value.is_some()).count();
         if present != 0 && present != coefficients.len() {
-            return Err(DataError::InvalidCanonicalFormat(format!(
+            return Err(DataError::InvalidPmetricsData(format!(
                 "partial error polynomial for {} at time {}",
                 self.id, self.time
             )));
@@ -429,21 +235,15 @@ impl Row {
         let has_covariates = self.covs.values().any(Option::is_some);
 
         match self.evid {
-            0 if has_dose_fields || has_covariates => {
-                return Err(DataError::InvalidCanonicalFormat(format!(
-                    "observation row for {} at time {} contains dose or covariate fields",
+            0 if has_dose_fields => {
+                return Err(DataError::InvalidPmetricsData(format!(
+                    "observation row for {} at time {} contains dose fields",
                     self.id, self.time
                 )));
             }
-            1 if has_observation_fields
-                || has_covariates
-                || self.addl.is_some()
-                || self.ii.is_some()
-                || self.dur.is_none()
-                || self.dur.is_some_and(|duration| duration < 0.0) =>
-            {
-                return Err(DataError::InvalidCanonicalFormat(format!(
-                    "dose row for {} at time {} is not explicit",
+            1 if has_observation_fields || self.dur.is_some_and(|duration| duration < 0.0) => {
+                return Err(DataError::InvalidPmetricsData(format!(
+                    "dose row for {} at time {} contains observation fields or a negative duration",
                     self.id, self.time
                 )));
             }
@@ -453,7 +253,7 @@ impl Row {
                     time: self.time,
                 });
             }
-            4 if has_dose_fields || has_observation_fields || has_covariates => {
+            4 if has_observation_fields || (!has_dose_fields && has_covariates) => {
                 return Err(DataError::MalformedBoundaryRow {
                     id: self.id.clone(),
                     time: self.time,
@@ -461,7 +261,7 @@ impl Row {
             }
             0 | 1 | 2 | 4 => {}
             unsupported => {
-                return Err(DataError::InvalidCanonicalFormat(format!(
+                return Err(DataError::InvalidPmetricsData(format!(
                     "unsupported EVID={unsupported} for {} at time {}",
                     self.id, self.time
                 )));
@@ -470,8 +270,7 @@ impl Row {
         Ok(())
     }
 
-    /// Convert this Row to a DataRow for parsing
-    fn to_datarow(&self, canonical: bool) -> DataRow {
+    fn to_datarow(&self) -> DataRow {
         DataRow {
             id: self.id.clone(),
             time: self.time,
@@ -481,12 +280,8 @@ impl Row {
             addl: self.addl.map(|a| a as i64),
             ii: self.ii,
             input: self.input.clone(),
-            // Treat -99 as missing only in the legacy Pmetrics dialect.
-            out: if canonical {
-                self.out
-            } else {
-                self.out.filter(|&value| value != -99.0)
-            },
+            // Treat -99 as missing, matching the common Pmetrics convention.
+            out: self.out.filter(|&value| value != -99.0),
             outeq: self.outeq.clone(),
             cens: self.cens,
             c0: self.c0,
@@ -496,7 +291,7 @@ impl Row {
             covariates: self
                 .covs
                 .iter()
-                .filter_map(|(k, v)| v.map(|val| (k.clone(), val)))
+                .filter_map(|(key, value)| value.map(|value| (key.clone(), value)))
                 .collect(),
         }
     }
@@ -616,123 +411,13 @@ where
 }
 
 impl Data {
-    /// Write the dataset to a file in ordinary Pmetrics format.
-    ///
-    /// `INPUT` and `OUTEQ` are written using their stored public labels. Named
-    /// labels such as `iv` and `cp` remain named labels, and numeric-looking
-    /// labels are written back exactly as stored.
-    ///
-    /// Missing optional fields are emitted as `.` placeholders to match the
-    /// usual Pmetrics text convention.
+    /// Write the complete dataset to a Pmetrics CSV file.
     pub fn write_pmetrics(&self, file: &File) -> Result<(), PharmsolError> {
-        let mut writer = WriterBuilder::new().has_headers(true).from_writer(file);
-
-        writer
-            .write_record(CORE_HEADERS)
-            .map_err(|error| PharmsolError::OtherError(error.to_string()))?;
-
-        for subject in self.subjects() {
-            for occasion in subject.occasions() {
-                for event in occasion.process_events(None) {
-                    match event {
-                        Event::Observation(observation) => {
-                            let time = observation.time().to_string();
-                            let value = observation
-                                .value()
-                                .map_or_else(|| ".".to_string(), |value| value.to_string());
-                            let outeq = observation.outeq().to_string();
-                            let censor = match observation.censoring() {
-                                Censor::None => "0".to_string(),
-                                Censor::BLOQ => "1".to_string(),
-                                Censor::ALOQ => "-1".to_string(),
-                            };
-                            let (c0, c1, c2, c3) = observation
-                                .errorpoly()
-                                .map(|poly| {
-                                    let (c0, c1, c2, c3) = poly.coefficients();
-                                    (
-                                        c0.to_string(),
-                                        c1.to_string(),
-                                        c2.to_string(),
-                                        c3.to_string(),
-                                    )
-                                })
-                                .unwrap_or_else(|| {
-                                    (
-                                        ".".to_string(),
-                                        ".".to_string(),
-                                        ".".to_string(),
-                                        ".".to_string(),
-                                    )
-                                });
-
-                            writer
-                                .write_record([
-                                    subject.id(),
-                                    "0",
-                                    &time,
-                                    ".",
-                                    ".",
-                                    ".",
-                                    ".",
-                                    ".",
-                                    &value,
-                                    &outeq,
-                                    &censor,
-                                    &c0,
-                                    &c1,
-                                    &c2,
-                                    &c3,
-                                ])
-                                .map_err(|error| PharmsolError::OtherError(error.to_string()))?;
-                        }
-                        Event::Infusion(infusion) => {
-                            writer
-                                .write_record([
-                                    subject.id(),
-                                    "1",
-                                    &infusion.time().to_string(),
-                                    &infusion.duration().to_string(),
-                                    &infusion.amount().to_string(),
-                                    ".",
-                                    ".",
-                                    infusion.input().as_ref(),
-                                    ".",
-                                    ".",
-                                    ".",
-                                    ".",
-                                    ".",
-                                    ".",
-                                    ".",
-                                ])
-                                .map_err(|error| PharmsolError::OtherError(error.to_string()))?;
-                        }
-                        Event::Bolus(bolus) => {
-                            writer
-                                .write_record([
-                                    subject.id(),
-                                    "1",
-                                    &bolus.time().to_string(),
-                                    "0",
-                                    &bolus.amount().to_string(),
-                                    ".",
-                                    ".",
-                                    bolus.input().as_ref(),
-                                    ".",
-                                    ".",
-                                    ".",
-                                    ".",
-                                    ".",
-                                    ".",
-                                    ".",
-                                ])
-                                .map_err(|error| PharmsolError::OtherError(error.to_string()))?;
-                        }
-                    }
-                }
-            }
-        }
-        Ok(())
+        let bytes = self.as_bytes().map_err(PharmsolError::from)?;
+        let mut output = file;
+        output
+            .write_all(&bytes)
+            .map_err(|error| PharmsolError::OtherError(error.to_string()))
     }
 }
 
@@ -806,7 +491,7 @@ mod tests {
         let infusion_row = reader
             .records()
             .filter_map(Result::ok)
-            .find(|record| record.get(3) != Some("0"))
+            .find(|record| record.get(1) == Some("1") && record.get(3) != Some("0"))
             .expect("infusion row missing");
 
         assert_eq!(infusion_row.get(7), Some("3")); // Written as-is (1-indexed)
