@@ -31,9 +31,6 @@ struct CovariateSegment {
     from: f64,
     to: Option<f64>,
     method: Interpolation,
-    /// Exact source value. Older serde payloads reconstruct it from `method`.
-    #[serde(default)]
-    observation: Option<f64>,
 }
 
 impl CovariateSegment {
@@ -44,13 +41,8 @@ impl CovariateSegment {
     /// * `from` - Start time of the segment
     /// * `to` - End time of the segment (None for unbounded)
     /// * `method` - Interpolation method to use within this segment
-    pub(crate) fn new(from: f64, to: Option<f64>, method: Interpolation, observation: f64) -> Self {
-        CovariateSegment {
-            from,
-            to,
-            method,
-            observation: Some(observation),
-        }
+    pub(crate) fn new(from: f64, to: Option<f64>, method: Interpolation) -> Self {
+        CovariateSegment { from, to, method }
     }
 
     /// Get the original observation time (same as 'from' for observation-based segments)
@@ -58,12 +50,19 @@ impl CovariateSegment {
         self.from
     }
 
+    /// Whether this zero-width segment retains an exact source observation.
+    fn is_observation_marker(&self) -> bool {
+        self.to
+            .is_some_and(|to| to.to_bits() == self.from.to_bits())
+            && matches!(self.method, Interpolation::CarryForward { .. })
+    }
+
     /// Get the original observation value
     fn value(&self) -> f64 {
-        self.observation.unwrap_or(match self.method {
+        match self.method {
             Interpolation::Linear { slope, intercept } => slope * self.from + intercept,
             Interpolation::CarryForward { value } => value,
-        })
+        }
     }
 
     /// Interpolate the covariate value at a specific time within this segment
@@ -122,10 +121,20 @@ impl Covariate {
         let mut observations: Vec<(f64, f64)> = self
             .segments
             .iter()
+            .filter(|segment| segment.is_observation_marker())
             .map(|segment| (segment.time(), segment.value()))
             .collect();
 
-        // Remove duplicates and sort by time
+        // Older serialized covariates have no marker segments. Reconstruct their
+        // observations from the existing interpolation representation.
+        if observations.is_empty() {
+            observations = self
+                .segments
+                .iter()
+                .map(|segment| (segment.time(), segment.value()))
+                .collect();
+        }
+
         observations.sort_by(|a, b| a.0.total_cmp(&b.0));
         observations.dedup_by(|a, b| a.0 == b.0);
         observations
@@ -139,7 +148,6 @@ impl Covariate {
         if let Some(existing_segment) = self.segments.iter_mut().find(|seg| seg.time() == time) {
             // Update the existing observation's value
             existing_segment.method = Interpolation::CarryForward { value };
-            existing_segment.observation = Some(value);
             self.build_segments();
             return;
         }
@@ -149,7 +157,6 @@ impl Covariate {
             time,
             Some(time),
             Interpolation::CarryForward { value },
-            value,
         ));
 
         // Rebuild all segments
@@ -200,6 +207,16 @@ impl Covariate {
             let next_obs = observations.get(i + 1);
             let to_time = next_obs.map(|next| next.0);
 
+            // Retain the exact source pair without changing the serialized
+            // CovariateSegment layout. Zero-width markers never interpolate.
+            self.segments.push(CovariateSegment::new(
+                current_obs.0,
+                Some(current_obs.0),
+                Interpolation::CarryForward {
+                    value: current_obs.1,
+                },
+            ));
+
             if self.fixed {
                 // Use CarryForward for fixed covariates
                 self.segments.push(CovariateSegment::new(
@@ -208,7 +225,6 @@ impl Covariate {
                     Interpolation::CarryForward {
                         value: current_obs.1,
                     },
-                    current_obs.1,
                 ));
             } else if let Some(next) = next_obs {
                 let slope = (next.1 - current_obs.1) / (next.0 - current_obs.0);
@@ -219,7 +235,6 @@ impl Covariate {
                         slope,
                         intercept: current_obs.1 - slope * current_obs.0,
                     },
-                    current_obs.1,
                 ));
             } else {
                 // Single observation, not fixed - create a CarryForward segment to infinity
@@ -229,7 +244,6 @@ impl Covariate {
                     Interpolation::CarryForward {
                         value: current_obs.1,
                     },
-                    current_obs.1,
                 ));
             }
         }
@@ -302,7 +316,12 @@ impl Covariate {
 impl fmt::Display for Covariate {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "Covariate '{}':", self.name)?;
-        for (index, segment) in self.segments.iter().enumerate() {
+        for (index, segment) in self
+            .segments
+            .iter()
+            .filter(|segment| !segment.is_observation_marker())
+            .enumerate()
+        {
             let to_str = segment.to.map_or("∞".to_string(), |t| format!("{:.2}", t));
             write!(
                 f,
@@ -396,6 +415,7 @@ impl Covariates {
         let mut hasher = ahash::AHasher::default();
         for (name, cov) in &self.covariates {
             name.hash(&mut hasher);
+            cov.fixed.hash(&mut hasher);
             for seg in &cov.segments {
                 seg.from.to_bits().hash(&mut hasher);
                 seg.to.map(|t| t.to_bits()).hash(&mut hasher);
@@ -526,7 +546,6 @@ mod tests {
                 slope: 1.0,
                 intercept: 0.0,
             },
-            observation: Some(0.0),
         };
 
         assert_eq!(segment.interpolate(0.0), Some(0.0));
@@ -541,7 +560,6 @@ mod tests {
             from: 0.0,
             to: Some(10.0),
             method: Interpolation::CarryForward { value: 5.0 },
-            observation: Some(5.0),
         };
 
         assert_eq!(segment.interpolate(0.0), Some(5.0));
@@ -826,5 +844,20 @@ mod tests {
         covs_b.add_covariate("ht".into(), cov_b);
 
         assert_ne!(covs_a.hash(), covs_b.hash());
+    }
+
+    #[test]
+    fn covariates_hash_includes_fixed_semantics() {
+        let mut linear = Covariates::new();
+        let mut linear_covariate = Covariate::new("age".into(), false);
+        linear_covariate.add_observation(0.0, 40.0);
+        linear.add_covariate("age".into(), linear_covariate);
+
+        let mut fixed = Covariates::new();
+        let mut fixed_covariate = Covariate::new("age".into(), true);
+        fixed_covariate.add_observation(0.0, 40.0);
+        fixed.add_covariate("age".into(), fixed_covariate);
+
+        assert_ne!(linear.hash(), fixed.hash());
     }
 }

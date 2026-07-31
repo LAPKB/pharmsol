@@ -11,6 +11,7 @@
 //!   convention.
 
 pub mod pmetrics;
+mod pmetrics_csv_v1;
 
 #[cfg(test)]
 mod pmetrics_csv_v1_tests;

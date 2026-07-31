@@ -3,6 +3,7 @@ use super::{read_pmetrics, DataError};
 use crate::{Censor, Data, ErrorPoly, Event, Subject, SubjectBuilderExt};
 use std::collections::BTreeMap;
 use std::io::Cursor;
+use tempfile::NamedTempFile;
 
 const GOLDEN: &[u8] = include_bytes!("../../tests/data/pmetrics_csv_v1.csv");
 const CORE_HEADER: &str = "ID,EVID,TIME,DUR,DOSE,ADDL,II,INPUT,OUT,OUTEQ,CENS,C0,C1,C2,C3\n";
@@ -159,12 +160,66 @@ fn canonical_bytes_reencode_exactly() {
 }
 
 #[test]
+fn alternate_missing_and_numeric_spellings_are_rejected() {
+    let canonical = std::str::from_utf8(GOLDEN).unwrap();
+    let alternate_missing = canonical.replacen(",.,", ",NA,", 1);
+    assert!(matches!(
+        read_pmetrics_csv_v1(alternate_missing.as_bytes()),
+        Err(DataError::InvalidCanonicalFormat(_))
+    ));
+
+    let alternate_numeric = canonical.replacen("10,4,0,", "10,4,0.0,", 1);
+    assert!(matches!(
+        read_pmetrics_csv_v1(alternate_numeric.as_bytes()),
+        Err(DataError::InvalidCanonicalFormat(_))
+    ));
+}
+
+#[test]
 fn ordinary_pmetrics_input_remains_readable() {
     let path = format!(
         "{}/src/tests/data/addl_test.csv",
         env!("CARGO_MANIFEST_DIR")
     );
     assert!(!read_pmetrics(path).unwrap().is_empty());
+}
+
+#[test]
+fn legacy_writer_retains_event_only_pmetrics_shape() {
+    let data = fixture_data();
+    let file = NamedTempFile::new().unwrap();
+    data.write_pmetrics(file.as_file()).unwrap();
+
+    let mut reader = csv::Reader::from_path(file.path()).unwrap();
+    assert_eq!(reader.headers().unwrap().len(), 15);
+    let records = reader.records().collect::<Result<Vec<_>, _>>().unwrap();
+    let event_count = data
+        .subjects()
+        .into_iter()
+        .flat_map(|subject| subject.occasions())
+        .map(|occasion| occasion.events().len())
+        .sum::<usize>();
+    assert_eq!(records.len(), event_count);
+    assert!(records
+        .iter()
+        .all(|record| { record.len() == 15 && matches!(record.get(1), Some("0") | Some("1")) }));
+}
+
+#[test]
+fn origin_main_bincode_data_with_covariates_is_readable() {
+    let bytes = include_bytes!("../../tests/data/pmetrics_data_origin_main.bincode");
+    let data: Data = bincode::deserialize(bytes).unwrap();
+    let subject = data.subjects().into_iter().next().unwrap();
+    assert_eq!(subject.id(), "legacy-covariates");
+    let covariates = subject.occasions()[0].covariates();
+    assert_eq!(
+        covariates.get_covariate("wt").unwrap().observations().len(),
+        2
+    );
+    assert!(covariates.get_covariate("age").unwrap().fixed());
+
+    let canonical = data.to_pmetrics_csv_v1().unwrap();
+    assert!(read_pmetrics_csv_v1(canonical.as_slice()).is_ok());
 }
 
 #[test]
