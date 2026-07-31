@@ -305,6 +305,20 @@ impl Data {
                             occasion_index
                         )));
                     }
+
+                    let has_bolus = events
+                        .iter()
+                        .any(|event| event.time() == 0.0 && matches!(event, Event::Bolus(_)));
+                    let has_infusion = events
+                        .iter()
+                        .any(|event| event.time() == 0.0 && matches!(event, Event::Infusion(_)));
+                    if has_bolus && has_infusion {
+                        return Err(DataError::InvalidPmetricsData(format!(
+                            "subject `{}` occasion {} has both bolus and infusion doses at time 0, so the reset dose is ambiguous",
+                            subject.id(),
+                            occasion_index
+                        )));
+                    }
                 }
 
                 let mut rows = Vec::with_capacity(events.len());

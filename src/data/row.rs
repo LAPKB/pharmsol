@@ -540,10 +540,19 @@ pub fn build_data(rows: impl IntoIterator<Item = DataRow>) -> Result<Data, DataE
 
                 // Collect covariates
                 for (name, value) in &row.covariates {
-                    observed_covariates
-                        .entry(name.clone())
-                        .or_default()
-                        .push((row.time, Some(*value)));
+                    let observations = observed_covariates.entry(name.clone()).or_default();
+                    if let Some((_, existing)) =
+                        observations.iter().find(|(time, _)| *time == row.time)
+                    {
+                        if existing != &Some(*value) {
+                            return Err(DataError::InvalidPmetricsData(format!(
+                                "conflicting covariate `{name}` values for subject `{id}` occasion {block_index} at time {}",
+                                row.time
+                            )));
+                        }
+                    } else {
+                        observations.push((row.time, Some(*value)));
+                    }
                 }
             }
 

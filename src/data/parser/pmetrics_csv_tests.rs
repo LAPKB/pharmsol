@@ -273,6 +273,66 @@ fn later_occasion_starts_with_a_real_reset_dose() {
 }
 
 #[test]
+fn mixed_dose_types_at_reset_time_are_not_exportable() {
+    let input = concat!(
+        "ID,EVID,TIME,DUR,DOSE,ADDL,II,INPUT,OUT,OUTEQ,CENS,C0,C1,C2,C3\n",
+        "s,1,0,0,1,.,.,iv,.,.,.,.,.,.,.\n",
+        "s,4,0,2,2,.,.,iv,.,.,.,.,.,.,.\n",
+        "s,1,0,0,3,.,.,oral,.,.,.,.,.,.,.\n"
+    );
+    let data = Data::from_bytes(input.as_bytes()).unwrap();
+    assert!(matches!(
+        data.as_bytes(),
+        Err(DataError::InvalidPmetricsData(message))
+            if message.contains("both bolus and infusion doses at time 0")
+    ));
+}
+
+#[test]
+fn same_time_bolus_doses_keep_the_reset_order() {
+    let input = concat!(
+        "ID,EVID,TIME,DUR,DOSE,ADDL,II,INPUT,OUT,OUTEQ,CENS,C0,C1,C2,C3\n",
+        "s,1,0,0,1,.,.,iv,.,.,.,.,.,.,.\n",
+        "s,4,0,0,2,.,.,iv,.,.,.,.,.,.,.\n",
+        "s,1,0,0,3,.,.,oral,.,.,.,.,.,.,.\n"
+    );
+    let rows = records(
+        &Data::from_bytes(input.as_bytes())
+            .unwrap()
+            .as_bytes()
+            .unwrap(),
+    );
+    assert_eq!(rows[1].get(1), Some("4"));
+    assert_eq!(rows[1].get(4), Some("2"));
+    assert_eq!(rows[1].get(7), Some("iv"));
+    assert_eq!(rows[2].get(1), Some("1"));
+    assert_eq!(rows[2].get(4), Some("3"));
+    assert_eq!(rows[2].get(7), Some("oral"));
+}
+
+#[test]
+fn same_time_infusion_doses_keep_the_reset_order() {
+    let input = concat!(
+        "ID,EVID,TIME,DUR,DOSE,ADDL,II,INPUT,OUT,OUTEQ,CENS,C0,C1,C2,C3\n",
+        "s,1,0,0,1,.,.,iv,.,.,.,.,.,.,.\n",
+        "s,4,0,2,2,.,.,iv,.,.,.,.,.,.,.\n",
+        "s,1,0,3,3,.,.,peripheral,.,.,.,.,.,.,.\n"
+    );
+    let rows = records(
+        &Data::from_bytes(input.as_bytes())
+            .unwrap()
+            .as_bytes()
+            .unwrap(),
+    );
+    assert_eq!(rows[1].get(1), Some("4"));
+    assert_eq!(rows[1].get(3), Some("2"));
+    assert_eq!(rows[1].get(7), Some("iv"));
+    assert_eq!(rows[2].get(1), Some("1"));
+    assert_eq!(rows[2].get(3), Some("3"));
+    assert_eq!(rows[2].get(7), Some("peripheral"));
+}
+
+#[test]
 fn later_occasion_without_an_initial_dose_is_not_exportable() {
     let data = Data::new(vec![Subject::builder("s")
         .bolus(0.0, 1.0, "iv")
@@ -350,6 +410,56 @@ fn positive_addl_reset_round_trips_as_individual_doses() {
 
     let reparsed = Data::from_bytes(&bytes).unwrap();
     assert_data_equivalent(&data, &reparsed);
+}
+
+#[test]
+fn identical_covariate_values_at_one_time_are_deduplicated() {
+    let input = concat!(
+        "ID,EVID,TIME,DUR,DOSE,ADDL,II,INPUT,OUT,OUTEQ,CENS,C0,C1,C2,C3,wt\n",
+        "s,1,0,0,1,.,.,iv,.,.,.,.,.,.,.,70\n",
+        "s,0,0,.,.,.,.,.,1,cp,0,.,.,.,.,70\n"
+    );
+    let data = Data::from_bytes(input.as_bytes()).unwrap();
+    assert_eq!(
+        data.subjects()[0].occasions()[0]
+            .covariates()
+            .get_covariate("wt")
+            .unwrap()
+            .observations(),
+        [(0.0, 70.0)]
+    );
+}
+
+#[test]
+fn conflicting_covariate_values_at_one_time_are_rejected() {
+    let input = concat!(
+        "ID,EVID,TIME,DUR,DOSE,ADDL,II,INPUT,OUT,OUTEQ,CENS,C0,C1,C2,C3,wt\n",
+        "s,1,0,0,1,.,.,iv,.,.,.,.,.,.,.,70\n",
+        "s,0,0,.,.,.,.,.,1,cp,0,.,.,.,.,71\n"
+    );
+    assert!(matches!(
+        Data::from_bytes(input.as_bytes()),
+        Err(DataError::InvalidPmetricsData(message))
+            if message.contains("conflicting covariate `wt` values")
+                && message.contains("subject `s` occasion 0")
+                && message.contains("time 0")
+    ));
+}
+
+#[test]
+fn covariate_values_at_different_times_still_interpolate() {
+    let input = concat!(
+        "ID,EVID,TIME,DUR,DOSE,ADDL,II,INPUT,OUT,OUTEQ,CENS,C0,C1,C2,C3,wt\n",
+        "s,1,0,0,1,.,.,iv,.,.,.,.,.,.,.,70\n",
+        "s,0,24,.,.,.,.,.,1,cp,0,.,.,.,.,72\n"
+    );
+    let data = Data::from_bytes(input.as_bytes()).unwrap();
+    let weight = data.subjects()[0].occasions()[0]
+        .covariates()
+        .get_covariate("wt")
+        .unwrap();
+    assert_eq!(weight.observations(), [(0.0, 70.0), (24.0, 72.0)]);
+    assert_eq!(weight.interpolate(12.0).unwrap(), 71.0);
 }
 
 #[test]
