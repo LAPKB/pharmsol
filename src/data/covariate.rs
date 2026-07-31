@@ -163,48 +163,44 @@ impl Covariate {
         observations
     }
 
-    /// Add an observation to this covariate
+    /// Add an observation to this covariate.
     ///
-    /// If an observation already exists at this time, it will update that value instead of adding a new one.
+    /// If an observation already exists at this time, its value is updated.
     pub fn add_observation(&mut self, time: f64, value: f64) {
-        // If an observation already exists at this time, update it instead of adding a new one
-        if let Some(existing_segment) = self.segments.iter_mut().find(|seg| seg.time() == time) {
-            // Update the existing observation's value
-            existing_segment.method = Interpolation::CarryForward { value };
-            self.build_segments();
-            return;
-        }
-
-        // Add a temporary segment to store the new observation
-        self.segments.push(CovariateSegment::new(
-            time,
-            Some(time),
-            Interpolation::CarryForward { value },
-        ));
-
-        // Rebuild all segments
-        self.build_segments();
-    }
-
-    /// Update an observation at a specific time
-    pub fn update_observation(&mut self, time: f64, new_value: f64) {
-        // Remove the old observation and add the new one
-        let removed = self.remove_observation(time);
-        if removed {
-            // Add the updated observation
-            self.add_observation(time, new_value)
-        }
-    }
-
-    /// Remove an observation at a specific time
-    pub fn remove_observation(&mut self, time: f64) -> bool {
-        let initial_len = self.segments.len();
-        self.segments.retain(|seg| seg.time() != time);
-        if self.segments.len() < initial_len {
-            self.build_segments();
-            true
+        let mut observations = self.get_observations();
+        if let Some(existing) = observations
+            .iter_mut()
+            .find(|observation| observation.0 == time)
+        {
+            existing.1 = value;
         } else {
+            observations.push((time, value));
+        }
+        self.rebuild_segments(observations);
+    }
+
+    /// Update an observation at a specific time.
+    pub fn update_observation(&mut self, time: f64, new_value: f64) {
+        let mut observations = self.get_observations();
+        if let Some(existing) = observations
+            .iter_mut()
+            .find(|observation| observation.0 == time)
+        {
+            existing.1 = new_value;
+            self.rebuild_segments(observations);
+        }
+    }
+
+    /// Remove an observation at a specific time.
+    pub fn remove_observation(&mut self, time: f64) -> bool {
+        let mut observations = self.get_observations();
+        let initial_len = observations.len();
+        observations.retain(|observation| observation.0 != time);
+        if observations.len() == initial_len {
             false
+        } else {
+            self.rebuild_segments(observations);
+            true
         }
     }
 
@@ -213,12 +209,14 @@ impl Covariate {
         self.get_observations()
     }
 
-    /// Build segments from raw observations
+    /// Build segments from the current observations.
     fn build_segments(&mut self) {
-        // Get observations from current segments
         let observations = self.get_observations();
+        self.rebuild_segments(observations);
+    }
 
-        // Clear segments and rebuild
+    fn rebuild_segments(&mut self, mut observations: Vec<(f64, f64)>) {
+        observations.sort_by(|left, right| left.0.total_cmp(&right.0));
         self.segments.clear();
 
         if observations.is_empty() {
@@ -798,10 +796,10 @@ mod tests {
         // Get the covariates for subject 1
         let covariates = subject1.occasions().first().unwrap().covariates();
 
-        // Verify that WT covariate exists
+        // Header names are normalized to lowercase.
         let wt_cov = covariates
-            .get_covariate("WT")
-            .expect("WT covariate should exist");
+            .get_covariate("wt")
+            .expect("wt covariate should exist");
 
         // Test interpolation at observation times
         assert_eq!(
@@ -845,8 +843,8 @@ mod tests {
         let subject2 = binding.get(1).expect("Should have a second subject");
         let covariates2 = subject2.occasions().first().unwrap().covariates();
         let wt_cov2 = covariates2
-            .get_covariate("WT")
-            .expect("WT covariate should exist for subject 2");
+            .get_covariate("wt")
+            .expect("wt covariate should exist for subject 2");
 
         // Test subject 2 weight interpolation
         assert_eq!(

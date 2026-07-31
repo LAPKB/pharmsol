@@ -212,56 +212,7 @@ impl DataRow {
                     self.cens.unwrap_or(Censor::None),
                 )));
             }
-            2 => {
-                let has_event_fields = self.dose.is_some()
-                    || self.dur.is_some()
-                    || self.addl.is_some()
-                    || self.ii.is_some()
-                    || self.input.is_some()
-                    || self.out.is_some()
-                    || self.outeq.is_some()
-                    || self.cens.is_some()
-                    || self.c0.is_some()
-                    || self.c1.is_some()
-                    || self.c2.is_some()
-                    || self.c3.is_some();
-                if has_event_fields || self.covariates.is_empty() {
-                    return Err(DataError::MalformedCovariateRow {
-                        id: self.id.clone(),
-                        time: self.time,
-                    });
-                }
-            }
             1 | 4 => {
-                let has_dose_fields = self.dose.is_some()
-                    || self.dur.is_some()
-                    || self.addl.is_some()
-                    || self.ii.is_some()
-                    || self.input.is_some();
-                let has_observation_fields = self.out.is_some()
-                    || self.outeq.is_some()
-                    || self.cens.is_some()
-                    || self.c0.is_some()
-                    || self.c1.is_some()
-                    || self.c2.is_some()
-                    || self.c3.is_some();
-
-                if self.evid == 4 && !has_dose_fields {
-                    if has_observation_fields || !self.covariates.is_empty() {
-                        return Err(DataError::MalformedBoundaryRow {
-                            id: self.id.clone(),
-                            time: self.time,
-                        });
-                    }
-                    return Ok(events);
-                }
-                if self.evid == 4 && has_observation_fields {
-                    return Err(DataError::MalformedBoundaryRow {
-                        id: self.id.clone(),
-                        time: self.time,
-                    });
-                }
-
                 // Dosing event (1) or reset with dose (4)
                 let input = self
                     .input
@@ -653,12 +604,6 @@ pub enum DataError {
     /// Required bolus input label (`INPUT`) is missing
     #[error("Bolus input label (INPUT) is missing for {id} at time {time}")]
     MissingBolusInput { id: String, time: f64 },
-    /// An EVID=4 boundary row also contained event or covariate data
-    #[error("Malformed occasion boundary for {id} at time {time}")]
-    MalformedBoundaryRow { id: String, time: f64 },
-    /// An EVID=2 row was empty or contained event fields
-    #[error("Malformed covariate-only row for {id} at time {time}")]
-    MalformedCovariateRow { id: String, time: f64 },
     /// A Pmetrics value was not finite
     #[error("Nonfinite value in {field} for {id}")]
     NonFiniteValue { field: String, id: String },

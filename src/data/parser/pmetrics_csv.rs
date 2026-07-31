@@ -3,8 +3,11 @@
 use super::pmetrics::{validate_covariate_header, CORE_HEADERS};
 use crate::data::row::DataError;
 use crate::data::{Censor, Data, Event};
+use crate::PharmsolError;
 use csv::{Terminator, WriterBuilder};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
+use std::fs::File;
+use std::io::Write;
 
 #[derive(Debug)]
 struct CsvCovariate {
@@ -15,8 +18,6 @@ struct CsvCovariate {
 #[derive(Debug)]
 struct CsvRow {
     time: f64,
-    rank: u8,
-    sequence: usize,
     fields: Vec<String>,
 }
 
@@ -43,7 +44,6 @@ fn ensure_label(label: &str, field: &str, id: &str) -> Result<(), DataError> {
 
 fn collect_covariate_schema(data: &Data) -> Result<Vec<CsvCovariate>, DataError> {
     let mut fixed_by_name = BTreeMap::<String, bool>::new();
-    let mut folded_names = HashMap::<String, String>::new();
 
     for subject in data.subjects() {
         for occasion in subject.occasions() {
@@ -60,13 +60,10 @@ fn collect_covariate_schema(data: &Data) -> Result<Vec<CsvCovariate>, DataError>
                         "covariate name `{key}` reserves trailing ! for fixed covariates"
                     )));
                 }
-                let folded = key.to_lowercase();
-                if let Some(existing) = folded_names.insert(folded, key.clone()) {
-                    if existing != key {
-                        return Err(DataError::InvalidPmetricsData(format!(
-                            "covariate names `{existing}` and `{key}` are ambiguous"
-                        )));
-                    }
+                if key != key.to_lowercase() {
+                    return Err(DataError::InvalidPmetricsData(format!(
+                        "covariate name `{key}` must be lowercase for Pmetrics export"
+                    )));
                 }
                 if covariate.has_legacy_unmarked_linear_segments() {
                     return Err(DataError::LegacyLinearCovariate {
@@ -93,7 +90,7 @@ fn collect_covariate_schema(data: &Data) -> Result<Vec<CsvCovariate>, DataError>
         }
     }
 
-    let mut schema = fixed_by_name
+    Ok(fixed_by_name
         .into_iter()
         .map(|(name, fixed)| CsvCovariate {
             header: if fixed {
@@ -103,9 +100,7 @@ fn collect_covariate_schema(data: &Data) -> Result<Vec<CsvCovariate>, DataError>
             },
             name,
         })
-        .collect::<Vec<_>>();
-    schema.sort_by(|left, right| left.header.cmp(&right.header));
-    Ok(schema)
+        .collect())
 }
 
 fn empty_row(id: &str, evid: i32, time: f64, covariate_count: usize) -> Vec<String> {
@@ -138,10 +133,19 @@ fn event_row(id: &str, event: &Event, covariate_count: usize) -> Result<Vec<Stri
 
     match event {
         Event::Observation(observation) => {
-            if let Some(value) = observation.value() {
-                ensure_finite(value, "OUT", id)?;
-                fields[8] = value.to_string();
-            }
+            fields[8] = match observation.value() {
+                Some(value) => {
+                    ensure_finite(value, "OUT", id)?;
+                    if value == -99.0 {
+                        return Err(DataError::InvalidPmetricsData(format!(
+                            "observation OUT=-99 for {id} at time {} is reserved for missing data",
+                            observation.time()
+                        )));
+                    }
+                    value.to_string()
+                }
+                None => "-99".to_string(),
+            };
             let outeq = observation.outeq().to_string();
             ensure_label(&outeq, "OUTEQ", id)?;
             fields[9] = outeq;
@@ -194,7 +198,11 @@ fn event_row(id: &str, event: &Event, covariate_count: usize) -> Result<Vec<Stri
 }
 
 impl Data {
-    /// Return the complete dataset as deterministic Pmetrics CSV bytes.
+    /// Return the dataset as Pmetrics CSV bytes.
+    ///
+    /// Every occasion must contain real events. Each occasion after the first
+    /// must begin with a dose, and every covariate observation must share a time
+    /// with a dose or observation row.
     pub fn as_bytes(&self) -> Result<Vec<u8>, DataError> {
         let schema = collect_covariate_schema(self)?;
         let mut headers = CORE_HEADERS
@@ -235,6 +243,7 @@ impl Data {
                     subject.id()
                 )));
             }
+
             for (occasion_index, occasion) in subject.occasions().iter().enumerate() {
                 if occasion.index() != occasion_index {
                     return Err(DataError::InvalidPmetricsData(format!(
@@ -245,6 +254,13 @@ impl Data {
                 }
 
                 let events = occasion.events();
+                if events.is_empty() {
+                    return Err(DataError::InvalidPmetricsData(format!(
+                        "subject `{}` occasion {} has no dose or observation rows",
+                        subject.id(),
+                        occasion_index
+                    )));
+                }
                 for event in events {
                     if event.occasion() != occasion_index {
                         return Err(DataError::InvalidPmetricsData(format!(
@@ -268,19 +284,29 @@ impl Data {
                         )));
                     }
                 }
+                if occasion_index > 0
+                    && !matches!(events.first(), Some(Event::Bolus(_) | Event::Infusion(_)))
+                {
+                    return Err(DataError::InvalidPmetricsData(format!(
+                        "subject `{}` occasion {} must begin with a dose for Pmetrics export",
+                        subject.id(),
+                        occasion_index
+                    )));
+                }
 
-                let mut rows = Vec::new();
+                let mut rows = Vec::with_capacity(events.len());
                 for (sequence, event) in events.iter().enumerate() {
+                    let mut fields = event_row(subject.id(), event, schema.len())?;
+                    if occasion_index > 0 && sequence == 0 {
+                        fields[1] = "4".to_string();
+                    }
                     rows.push(CsvRow {
                         time: event.time(),
-                        rank: event_rank(event),
-                        sequence,
-                        fields: event_row(subject.id(), event, schema.len())?,
+                        fields,
                     });
                 }
 
                 let covariates = occasion.covariates().covariates();
-                let mut covariate_rows = HashMap::<u64, CsvRow>::new();
                 for (column, csv_covariate) in schema.iter().enumerate() {
                     let Some(covariate) = covariates.get(&csv_covariate.name) else {
                         continue;
@@ -288,30 +314,25 @@ impl Data {
                     for (time, value) in covariate.observations() {
                         ensure_finite(time, &format!("{} time", csv_covariate.name), subject.id())?;
                         ensure_finite(value, &csv_covariate.name, subject.id())?;
-                        let next_sequence = rows.len() + covariate_rows.len();
-                        let row = covariate_rows
-                            .entry(time.to_bits())
-                            .or_insert_with(|| CsvRow {
-                                time,
-                                rank: 4,
-                                sequence: next_sequence,
-                                fields: empty_row(subject.id(), 2, time, schema.len()),
-                            });
-                        row.fields[CORE_HEADERS.len() + column] = value.to_string();
+                        let mut matched_event = false;
+                        for row in &mut rows {
+                            if row.time == time {
+                                row.fields[CORE_HEADERS.len() + column] = value.to_string();
+                                matched_event = true;
+                            }
+                        }
+                        if !matched_event {
+                            return Err(DataError::InvalidPmetricsData(format!(
+                                "covariate `{}` for subject `{}` occasion {} at time {} has no dose or observation row",
+                                csv_covariate.name,
+                                subject.id(),
+                                occasion_index,
+                                time
+                            )));
+                        }
                     }
                 }
-                rows.extend(covariate_rows.into_values());
-                rows.sort_by(|left, right| {
-                    left.time
-                        .total_cmp(&right.time)
-                        .then_with(|| left.rank.cmp(&right.rank))
-                        .then_with(|| left.sequence.cmp(&right.sequence))
-                });
 
-                let boundary_time = rows.first().map_or(0.0, |row| row.time);
-                ensure_finite(boundary_time, "TIME", subject.id())?;
-                csv.write_record(empty_row(subject.id(), 4, boundary_time, schema.len()))
-                    .map_err(|error| DataError::CSVError(error.to_string()))?;
                 for row in rows {
                     csv.write_record(row.fields)
                         .map_err(|error| DataError::CSVError(error.to_string()))?;
@@ -323,5 +344,14 @@ impl Data {
             .map_err(|error| DataError::CSVError(error.to_string()))?;
         drop(csv);
         Ok(bytes)
+    }
+
+    /// Write the same Pmetrics CSV bytes returned by [`Data::as_bytes`].
+    pub fn write_pmetrics(&self, file: &File) -> Result<(), PharmsolError> {
+        let bytes = self.as_bytes().map_err(PharmsolError::from)?;
+        let mut output = file;
+        output
+            .write_all(&bytes)
+            .map_err(|error| PharmsolError::OtherError(error.to_string()))
     }
 }

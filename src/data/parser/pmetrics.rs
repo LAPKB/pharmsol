@@ -7,14 +7,12 @@
 //! indices. Named values such as `iv` and `cp` are preserved exactly, and
 //! numeric values such as `1` are preserved as numeric-looking labels.
 
-use crate::{data::*, PharmsolError};
+use crate::data::*;
 use csv::{ReaderBuilder, StringRecord};
 use serde::de::{MapAccess, Visitor};
 use serde::{de, Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 use std::fmt;
-use std::fs::File;
-use std::io::Write;
 use std::str::FromStr;
 
 use crate::data::row::{build_data, DataError, DataRow};
@@ -90,18 +88,11 @@ impl Data {
             .comment(Some(b'#'))
             .has_headers(true)
             .from_reader(bytes);
-        let original_headers = reader
+        let headers = reader
             .headers()
             .map_err(|error| DataError::CSVError(error.to_string()))?
-            .clone();
-        let headers = original_headers
             .iter()
-            .map(|header| {
-                CORE_HEADERS
-                    .iter()
-                    .find(|core| core.eq_ignore_ascii_case(header))
-                    .map_or_else(|| header.to_string(), |core| core.to_ascii_lowercase())
-            })
+            .map(str::to_lowercase)
             .collect::<Vec<_>>();
         reader.set_headers(StringRecord::from(headers));
 
@@ -225,41 +216,20 @@ impl Row {
             )));
         }
 
-        let has_dose_fields = self.dur.is_some()
-            || self.dose.is_some()
-            || self.addl.is_some()
-            || self.ii.is_some()
-            || self.input.is_some();
-        let has_observation_fields =
-            self.out.is_some() || self.outeq.is_some() || self.cens.is_some() || present != 0;
-        let has_covariates = self.covs.values().any(Option::is_some);
-
         match self.evid {
-            0 if has_dose_fields => {
+            1 | 4 if self.dur.is_some_and(|duration| duration < 0.0) => {
                 return Err(DataError::InvalidPmetricsData(format!(
-                    "observation row for {} at time {} contains dose fields",
+                    "dose row for {} at time {} contains a negative duration",
                     self.id, self.time
                 )));
             }
-            1 if has_observation_fields || self.dur.is_some_and(|duration| duration < 0.0) => {
+            4 if self.dose.is_none() || self.input.is_none() => {
                 return Err(DataError::InvalidPmetricsData(format!(
-                    "dose row for {} at time {} contains observation fields or a negative duration",
+                    "EVID=4 row for {} at time {} must contain a dose and INPUT",
                     self.id, self.time
                 )));
             }
-            2 if has_dose_fields || has_observation_fields || !has_covariates => {
-                return Err(DataError::MalformedCovariateRow {
-                    id: self.id.clone(),
-                    time: self.time,
-                });
-            }
-            4 if has_observation_fields || (!has_dose_fields && has_covariates) => {
-                return Err(DataError::MalformedBoundaryRow {
-                    id: self.id.clone(),
-                    time: self.time,
-                });
-            }
-            0 | 1 | 2 | 4 => {}
+            0 | 1 | 4 => {}
             unsupported => {
                 return Err(DataError::InvalidPmetricsData(format!(
                     "unsupported EVID={unsupported} for {} at time {}",
@@ -408,17 +378,6 @@ where
     }
 
     deserializer.deserialize_map(CovsVisitor)
-}
-
-impl Data {
-    /// Write the complete dataset to a Pmetrics CSV file.
-    pub fn write_pmetrics(&self, file: &File) -> Result<(), PharmsolError> {
-        let bytes = self.as_bytes().map_err(PharmsolError::from)?;
-        let mut output = file;
-        output
-            .write_all(&bytes)
-            .map_err(|error| PharmsolError::OtherError(error.to_string()))
-    }
 }
 
 #[cfg(test)]

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `Data` can now produce and read complete Pmetrics CSV bytes when the dataset is representable in Pmetrics.
+
 ## [0.28.3](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.28.2...pharmsol-v0.28.3) - 2026-07-28
 
 ### Added
