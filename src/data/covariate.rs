@@ -116,6 +116,29 @@ impl Covariate {
         }
     }
 
+    fn uses_observation_marker_layout(&self) -> bool {
+        self.segments
+            .first()
+            .is_some_and(CovariateSegment::is_observation_marker)
+    }
+
+    fn has_exact_observation_markers(&self) -> bool {
+        let mut pairs = self.segments.chunks_exact(2);
+        !self.segments.is_empty()
+            && pairs
+                .by_ref()
+                .all(|pair| pair[0].is_observation_marker() && !pair[1].is_observation_marker())
+            && pairs.remainder().is_empty()
+    }
+
+    pub(crate) fn has_legacy_unmarked_linear_segments(&self) -> bool {
+        !self.has_exact_observation_markers()
+            && self
+                .segments
+                .iter()
+                .any(|segment| matches!(segment.method, Interpolation::Linear { .. }))
+    }
+
     /// Extract original observations from segments
     fn get_observations(&self) -> Vec<(f64, f64)> {
         let mut observations: Vec<(f64, f64)> = self
@@ -254,22 +277,27 @@ impl Covariate {
     /// Returns the interpolated value if the time falls within any segment's range,
     /// otherwise returns the last known observation value.
     ///
-    /// This method is optimized for sequential access patterns common in ODE solvers
-    /// by caching the last used segment index.
+    /// Marker-backed covariates skip their alternating zero-width source markers
+    /// and search only active interpolation segments. Legacy markerless covariates
+    /// retain the ordinary segment search.
     #[inline]
     pub fn interpolate(&self, time: f64) -> Result<f64, CovariateError> {
-        // If no segments are available, return error
         if self.segments.is_empty() {
             return Err(CovariateError::MissingSegments);
         }
 
-        // Search for the correct segment
-        if let Some(value) = self
-            .segments
-            .iter()
-            .find(|&segment| segment.in_interval(time))
-            .and_then(|segment| segment.interpolate(time))
-        {
+        let interpolated = if self.uses_observation_marker_layout() {
+            self.segments
+                .iter()
+                .skip(1)
+                .step_by(2)
+                .find_map(|segment| segment.interpolate(time))
+        } else {
+            self.segments
+                .iter()
+                .find_map(|segment| segment.interpolate(time))
+        };
+        if let Some(value) = interpolated {
             return Ok(value);
         }
 
@@ -566,6 +594,38 @@ mod tests {
         assert_eq!(segment.interpolate(5.0), Some(5.0));
         assert_eq!(segment.interpolate(10.0), None);
         assert_eq!(segment.interpolate(15.0), None);
+    }
+
+    #[test]
+    fn pmetrics_marker_backed_and_legacy_interpolation_match() {
+        let mut marker_backed = Covariate::new("wt".to_string(), false);
+        marker_backed.add_observation(0.0, 0.0);
+        marker_backed.add_observation(10.0, 10.0);
+
+        let legacy = Covariate {
+            name: "wt".to_string(),
+            segments: vec![
+                CovariateSegment::new(
+                    0.0,
+                    Some(10.0),
+                    Interpolation::Linear {
+                        slope: 1.0,
+                        intercept: 0.0,
+                    },
+                ),
+                CovariateSegment::new(10.0, None, Interpolation::CarryForward { value: 10.0 }),
+            ],
+            fixed: false,
+        };
+
+        assert!(!marker_backed.has_legacy_unmarked_linear_segments());
+        assert!(legacy.has_legacy_unmarked_linear_segments());
+        for time in [-1.0, 0.0, 5.0, 10.0, 20.0] {
+            assert_eq!(
+                marker_backed.interpolate(time).unwrap(),
+                legacy.interpolate(time).unwrap()
+            );
+        }
     }
 
     #[test]

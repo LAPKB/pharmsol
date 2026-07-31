@@ -208,16 +208,32 @@ fn legacy_writer_retains_event_only_pmetrics_shape() {
 #[test]
 fn origin_main_bincode_data_with_covariates_is_readable() {
     let bytes = include_bytes!("../../tests/data/pmetrics_data_origin_main.bincode");
-    let data: Data = bincode::deserialize(bytes).unwrap();
-    let subject = data.subjects().into_iter().next().unwrap();
-    assert_eq!(subject.id(), "legacy-covariates");
-    let covariates = subject.occasions()[0].covariates();
-    assert_eq!(
-        covariates.get_covariate("wt").unwrap().observations().len(),
-        2
-    );
-    assert!(covariates.get_covariate("age").unwrap().fixed());
+    let mut data: Data = bincode::deserialize(bytes).unwrap();
+    {
+        let subject = data.subjects().into_iter().next().unwrap();
+        assert_eq!(subject.id(), "legacy-covariates");
+        assert_eq!(subject.occasions()[0].events().len(), 2);
+        let covariates = subject.occasions()[0].covariates();
+        let weight = covariates.get_covariate("wt").unwrap();
+        assert_eq!(weight.observations().len(), 2);
+        assert!((weight.interpolate(0.15).unwrap() - 0.65).abs() < 1e-12);
+        let age = covariates.get_covariate("age").unwrap();
+        assert!(age.fixed());
+        assert_eq!(age.interpolate(10.0).unwrap(), 40.0);
+    }
 
+    assert!(matches!(
+        data.to_pmetrics_csv_v1(),
+        Err(DataError::LegacyLinearCovariate { name, id, occasion: 0 })
+            if name == "wt" && id == "legacy-covariates"
+    ));
+
+    // The markerless fixed covariate is carry-forward-only and remains exact.
+    data.get_subject_mut("legacy-covariates")
+        .unwrap()
+        .occasions_mut()[0]
+        .covariates_mut()
+        .remove_covariate("wt");
     let canonical = data.to_pmetrics_csv_v1().unwrap();
     assert!(read_pmetrics_csv_v1(canonical.as_slice()).is_ok());
 }

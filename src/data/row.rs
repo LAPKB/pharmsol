@@ -662,6 +662,15 @@ pub enum DataError {
     /// A canonical value was not finite
     #[error("Nonfinite value in {field} for {id}")]
     NonFiniteValue { field: String, id: String },
+    /// A legacy linear covariate lacks exact source-observation markers
+    #[error(
+        "Legacy linear covariate `{name}` for {id} occasion {occasion} must be reimported or rebuilt before canonical export"
+    )]
+    LegacyLinearCovariate {
+        name: String,
+        id: String,
+        occasion: usize,
+    },
     /// The canonical CSV structure was invalid
     #[error("Invalid pmetrics-csv.v1 data: {0}")]
     InvalidCanonicalFormat(String),

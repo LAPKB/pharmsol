@@ -24,6 +24,8 @@ The canonical pharmsol reader consumes the dialect's `EVID=2` covariate rows and
 
 Covariate observations are written at their exact stored times and source values rather than reconstructed from interpolation segments or sampled at event times. A covariate's fixed/nonfixed setting must be consistent wherever that covariate appears because the setting is encoded in its column header. Empty named covariates are rejected because an all-missing column cannot preserve per-occasion ownership.
 
+Older bincode-serialized `Data` remains readable. A legacy markerless covariate containing linear interpolation cannot prove its original binary64 source observations, so canonical export rejects it and requires reimport or rebuild instead of silently changing interpolation. Markerless carry-forward-only covariates remain exportable because their stored values are exact.
+
 ## Rust API
 
 ```rust

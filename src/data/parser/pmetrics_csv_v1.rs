@@ -69,6 +69,13 @@ fn collect_covariate_schema(data: &Data) -> Result<Vec<CanonicalCovariate>, Data
                         )));
                     }
                 }
+                if covariate.has_legacy_unmarked_linear_segments() {
+                    return Err(DataError::LegacyLinearCovariate {
+                        name: key.clone(),
+                        id: subject.id().clone(),
+                        occasion: occasion.index(),
+                    });
+                }
                 if covariate.observations().is_empty() {
                     return Err(DataError::InvalidCanonicalFormat(format!(
                         "covariate `{key}` for subject `{}` occasion {} has no observations",
