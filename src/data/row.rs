@@ -6,8 +6,9 @@
 //! Choose the ingestion path by source shape:
 //! - Use [`crate::data::builder::SubjectBuilder`] when you want to author a
 //!   schedule directly in Rust.
-//! - Use [`DataRow`] and [`build_data`] when your application already has
-//!   validated row records in memory.
+//! - Use [`DataRow`] and [`build_data`] when your application already has row
+//!   records in memory. The same row validation used by the Pmetrics reader is
+//!   applied here.
 //! - Use [`crate::data::parser::read_pmetrics`] when the source file already
 //!   follows the Pmetrics column convention.
 //!
@@ -36,7 +37,18 @@ use crate::data::*;
 use std::collections::HashMap;
 use thiserror::Error;
 
-/// A format-agnostic representation of one input row.
+fn ensure_finite(value: f64, field: &str, id: &str) -> Result<(), DataError> {
+    if value.is_finite() {
+        Ok(())
+    } else {
+        Err(DataError::NonFiniteValue {
+            field: field.to_string(),
+            id: id.to_string(),
+        })
+    }
+}
+
+/// A common representation of one row-shaped event record.
 ///
 /// [`DataRow`] collects the common fields needed to turn one external row
 /// into one or more [`Event`] values.
@@ -53,6 +65,7 @@ use thiserror::Error;
 /// - `input` and `outeq` preserve the route and output labels from the source data
 /// - `evid`: 0=observation, 1=dose, 4=reset/new occasion
 /// - `addl`: positive=forward in time, negative=backward in time
+/// - a covariate name ending in `!` selects fixed carry-forward interpolation
 ///
 /// # Example
 ///
@@ -136,6 +149,83 @@ impl DataRow {
         DataRowBuilder::new(id, time)
     }
 
+    fn validate(&self) -> Result<(), DataError> {
+        if self.id.is_empty() {
+            return Err(DataError::InvalidDataRow(
+                "subject ID cannot be empty".to_string(),
+            ));
+        }
+        ensure_finite(self.time, "TIME", &self.id)?;
+        for (field, value) in [
+            ("DUR", self.dur),
+            ("DOSE", self.dose),
+            ("II", self.ii),
+            ("OUT", self.out),
+            ("C0", self.c0),
+            ("C1", self.c1),
+            ("C2", self.c2),
+            ("C3", self.c3),
+        ] {
+            if let Some(value) = value {
+                ensure_finite(value, field, &self.id)?;
+            }
+        }
+        for (name, value) in &self.covariates {
+            ensure_finite(*value, name, &self.id)?;
+        }
+
+        let coefficients = [self.c0, self.c1, self.c2, self.c3];
+        let present = coefficients.iter().filter(|value| value.is_some()).count();
+        if present != 0 && present != coefficients.len() {
+            return Err(DataError::InvalidDataRow(format!(
+                "partial error polynomial for {} at time {}",
+                self.id, self.time
+            )));
+        }
+
+        if let Some(addl) = self.addl.filter(|&addl| addl != 0) {
+            if !matches!(self.evid, 1 | 4) {
+                return Err(DataError::InvalidDataRow(format!(
+                    "nonzero ADDL for {} at time {} requires a dose row",
+                    self.id, self.time
+                )));
+            }
+            if !self.ii.is_some_and(|ii| ii > 0.0) {
+                return Err(DataError::InvalidDataRow(format!(
+                    "nonzero ADDL for {} at time {} requires a positive II",
+                    self.id, self.time
+                )));
+            }
+            if self.evid == 4 && addl < 0 {
+                return Err(DataError::InvalidDataRow(format!(
+                    "EVID=4 row for {} at time {} cannot use negative ADDL",
+                    self.id, self.time
+                )));
+            }
+        }
+
+        if self.evid == 4 && (self.dose.is_none() || self.input.is_none()) {
+            return Err(DataError::InvalidDataRow(format!(
+                "EVID=4 row for {} at time {} must contain a dose and INPUT",
+                self.id, self.time
+            )));
+        }
+        if matches!(self.evid, 1 | 4) && self.dur.is_some_and(|duration| duration < 0.0) {
+            return Err(DataError::InvalidDataRow(format!(
+                "dose row for {} at time {} contains a negative duration",
+                self.id, self.time
+            )));
+        }
+        if !matches!(self.evid, 0 | 1 | 4) {
+            return Err(DataError::UnknownEvid {
+                evid: self.evid as isize,
+                id: self.id.clone(),
+                time: self.time,
+            });
+        }
+        Ok(())
+    }
+
     /// Get error polynomial if all coefficients are present
     fn get_errorpoly(&self) -> Option<ErrorPoly> {
         match (self.c0, self.c1, self.c2, self.c3) {
@@ -191,6 +281,7 @@ impl DataRow {
     /// assert_eq!(times, vec![24.0, 48.0, 0.0]);
     /// ```
     pub fn into_events(self) -> Result<Vec<Event>, DataError> {
+        self.validate()?;
         let mut events: Vec<Event> = Vec::new();
 
         match self.evid {
@@ -252,18 +343,18 @@ impl DataRow {
 
                 // Handle ADDL/II expansion
                 if let (Some(addl), Some(ii)) = (self.addl, self.ii) {
-                    if addl != 0 && ii > 0.0 {
+                    if addl != 0 {
                         let repetitions = addl
                             .checked_abs()
                             .and_then(|count| usize::try_from(count).ok())
                             .ok_or_else(|| {
-                                DataError::InvalidPmetricsData(format!(
+                                DataError::InvalidDataRow(format!(
                                     "ADDL for {} at time {} is too large to expand",
                                     self.id, self.time
                                 ))
                             })?;
                         events.try_reserve(repetitions).map_err(|_| {
-                            DataError::InvalidPmetricsData(format!(
+                            DataError::InvalidDataRow(format!(
                                 "ADDL for {} at time {} is too large to expand",
                                 self.id, self.time
                             ))
@@ -549,10 +640,8 @@ pub fn build_data(rows: impl IntoIterator<Item = DataRow>) -> Result<Data, DataE
             let mut events: Vec<Event> = Vec::new();
 
             // Collect covariate observations for this block
-            let mut observed_covariates: std::collections::HashMap<
-                String,
-                Vec<(f64, Option<f64>)>,
-            > = std::collections::HashMap::new();
+            let mut observed_covariates: std::collections::HashMap<String, Vec<(f64, f64)>> =
+                std::collections::HashMap::new();
 
             for row in *block {
                 // Parse events
@@ -565,14 +654,14 @@ pub fn build_data(rows: impl IntoIterator<Item = DataRow>) -> Result<Data, DataE
                     if let Some((_, existing)) =
                         observations.iter().find(|(time, _)| *time == row.time)
                     {
-                        if existing != &Some(*value) {
-                            return Err(DataError::InvalidPmetricsData(format!(
+                        if existing != value {
+                            return Err(DataError::InvalidDataRow(format!(
                                 "conflicting covariate `{name}` values for subject `{id}` occasion {block_index} at time {}",
                                 row.time
                             )));
                         }
                     } else {
-                        observations.push((row.time, Some(*value)));
+                        observations.push((row.time, *value));
                     }
                 }
             }
@@ -581,7 +670,7 @@ pub fn build_data(rows: impl IntoIterator<Item = DataRow>) -> Result<Data, DataE
             events.iter_mut().for_each(|e| e.set_occasion(block_index));
 
             // Build covariates
-            let covariates = Covariates::from_pmetrics_observations(&observed_covariates);
+            let covariates = Covariates::from_row_observations(&observed_covariates);
 
             // Create occasion
             let mut occasion = Occasion::new(block_index);
@@ -600,31 +689,21 @@ pub fn build_data(rows: impl IntoIterator<Item = DataRow>) -> Result<Data, DataE
     Ok(Data::new(subjects))
 }
 
-/// Custom error type for the module
-#[allow(private_interfaces)]
+/// Errors returned while ingesting or exporting row-shaped data.
 #[derive(Error, Debug, Clone)]
 pub enum DataError {
-    /// Error encountered when reading CSV data
+    /// Error encountered when reading or writing CSV data
     #[error("CSV error: {0}")]
     CSVError(String),
-    /// Error during data deserialization
-    #[error("Parse error: {0}")]
-    SerdeError(String),
-    /// Encountered an unknown EVID value
-    #[error("Unknown EVID: {evid} for ID {id} at time {time}")]
+    /// Encountered an unsupported EVID value
+    #[error("Unsupported EVID={evid} for subject {id} at time {time}")]
     UnknownEvid { evid: isize, id: String, time: f64 },
-    /// Required observation value (OUT) is missing
-    #[error("Observation OUT is missing for {id} at time {time}")]
-    MissingObservationOut { id: String, time: f64 },
     /// Required observation output label (`OUTEQ`) is missing
     #[error("Observation OUTEQ is missing for {id} at time {time}")]
     MissingObservationOuteq { id: String, time: f64 },
     /// Required infusion dose amount is missing
     #[error("Infusion amount (DOSE) is missing for {id} at time {time}")]
     MissingInfusionDose { id: String, time: f64 },
-    /// Required infusion input label (`INPUT`) is missing
-    #[error("Infusion input label (INPUT) is missing for {id} at time {time}")]
-    MissingInfusionInput { id: String, time: f64 },
     /// Required infusion duration is missing
     #[error("Infusion duration (DUR) is missing for {id} at time {time}")]
     MissingInfusionDur { id: String, time: f64 },
@@ -634,9 +713,12 @@ pub enum DataError {
     /// Required bolus input label (`INPUT`) is missing
     #[error("Bolus input label (INPUT) is missing for {id} at time {time}")]
     MissingBolusInput { id: String, time: f64 },
-    /// A Pmetrics value was not finite
+    /// A row or exported value was not finite
     #[error("Nonfinite value in {field} for {id}")]
     NonFiniteValue { field: String, id: String },
+    /// A row violated an ingestion invariant
+    #[error("Invalid data row: {0}")]
+    InvalidDataRow(String),
     /// Data cannot be represented by the current Pmetrics CSV format
     #[error("Data cannot be represented as Pmetrics CSV: {0}")]
     UnrepresentablePmetricsData(String),
@@ -1051,17 +1133,42 @@ mod tests {
     }
 
     #[test]
-    fn test_addl_without_ii_has_no_effect() {
+    fn test_addl_without_ii_is_rejected() {
         let row = DataRow::builder("pt1", 0.0)
             .evid(1)
             .dose(100.0)
             .input(1)
             .addl(5)
-            // Missing ii
             .build();
 
-        let events = row.into_events().unwrap();
-        assert_eq!(events.len(), 1); // Only original dose
+        assert!(matches!(
+            row.into_events(),
+            Err(DataError::InvalidDataRow(message))
+                if message.contains("requires a positive II")
+        ));
+    }
+
+    #[test]
+    fn direct_rows_use_the_shared_validation() {
+        let negative_duration = DataRow::builder("pt1", 0.0)
+            .evid(1)
+            .dose(100.0)
+            .input("iv")
+            .dur(-1.0)
+            .build();
+        assert!(matches!(
+            negative_duration.into_events(),
+            Err(DataError::InvalidDataRow(message))
+                if message.contains("negative duration")
+        ));
+
+        let mut partial_error = DataRow::builder("pt1", 1.0).evid(0).outeq("cp").build();
+        partial_error.c0 = Some(0.1);
+        assert!(matches!(
+            partial_error.into_events(),
+            Err(DataError::InvalidDataRow(message))
+                if message.contains("partial error polynomial")
+        ));
     }
 
     #[test]

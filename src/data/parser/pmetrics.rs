@@ -10,17 +10,88 @@
 use crate::data::*;
 use csv::{ReaderBuilder, StringRecord};
 use serde::de::{MapAccess, Visitor};
-use serde::{de, Deserialize, Deserializer, Serialize};
+use serde::{de, Deserialize, Deserializer};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::str::FromStr;
 
 use crate::data::row::{build_data, DataError, DataRow};
 
-pub(super) const CORE_HEADERS: [&str; 15] = [
-    "ID", "EVID", "TIME", "DUR", "DOSE", "ADDL", "II", "INPUT", "OUT", "OUTEQ", "CENS", "C0", "C1",
-    "C2", "C3",
-];
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[repr(usize)]
+pub(super) enum CoreColumn {
+    Id,
+    Evid,
+    Time,
+    Dur,
+    Dose,
+    Addl,
+    Ii,
+    Input,
+    Out,
+    Outeq,
+    Cens,
+    C0,
+    C1,
+    C2,
+    C3,
+}
+
+impl CoreColumn {
+    pub(super) const ALL: [Self; 15] = [
+        Self::Id,
+        Self::Evid,
+        Self::Time,
+        Self::Dur,
+        Self::Dose,
+        Self::Addl,
+        Self::Ii,
+        Self::Input,
+        Self::Out,
+        Self::Outeq,
+        Self::Cens,
+        Self::C0,
+        Self::C1,
+        Self::C2,
+        Self::C3,
+    ];
+    const REQUIRED: [Self; 3] = [Self::Id, Self::Evid, Self::Time];
+    pub(super) const COUNT: usize = Self::ALL.len();
+
+    pub(super) const fn index(self) -> usize {
+        self as usize
+    }
+
+    pub(super) const fn header(self) -> &'static str {
+        match self {
+            Self::Id => "ID",
+            Self::Evid => "EVID",
+            Self::Time => "TIME",
+            Self::Dur => "DUR",
+            Self::Dose => "DOSE",
+            Self::Addl => "ADDL",
+            Self::Ii => "II",
+            Self::Input => "INPUT",
+            Self::Out => "OUT",
+            Self::Outeq => "OUTEQ",
+            Self::Cens => "CENS",
+            Self::C0 => "C0",
+            Self::C1 => "C1",
+            Self::C2 => "C2",
+            Self::C3 => "C3",
+        }
+    }
+
+    fn from_header(header: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|column| column.header().eq_ignore_ascii_case(header))
+    }
+}
+
+pub(super) fn core_headers() -> impl ExactSizeIterator<Item = &'static str> {
+    CoreColumn::ALL.into_iter().map(CoreColumn::header)
+}
 
 /// Read a Pmetrics CSV file into [`Data`].
 ///
@@ -64,9 +135,9 @@ pub(super) const CORE_HEADERS: [&str; 15] = [
 ///
 /// # Expected columns
 ///
-/// The core columns are `ID`, `TIME`, `EVID`, `DOSE`, `DUR`, `ADDL`,
-/// `II`, `INPUT`, `OUT`, `OUTEQ`, `CENS`, and optional `C0..C3` error
-/// coefficients.
+/// `ID`, `EVID`, and `TIME` are required. The remaining core columns are
+/// `DOSE`, `DUR`, `ADDL`, `II`, `INPUT`, `OUT`, `OUTEQ`, `CENS`, and optional
+/// `C0..C3` error coefficients.
 ///
 /// All other numeric columns are treated as covariates.
 ///
@@ -83,7 +154,6 @@ pub(super) const CORE_HEADERS: [&str; 15] = [
 ///   Pmetrics convention
 ///
 /// For specific column definitions, see the `Row` struct.
-#[allow(dead_code)]
 pub fn read_pmetrics(path: impl Into<String>) -> Result<Data, DataError> {
     let bytes =
         std::fs::read(path.into()).map_err(|error| DataError::CSVError(error.to_string()))?;
@@ -101,17 +171,14 @@ impl Data {
             .headers()
             .map_err(|error| DataError::CSVError(error.to_string()))?
             .clone();
-        let mut core_names = HashSet::new();
+        let mut core_columns = HashSet::new();
         let mut covariate_forms = HashMap::<String, bool>::new();
         let mut headers = Vec::with_capacity(original_headers.len());
 
         for header in &original_headers {
-            if let Some(core) = CORE_HEADERS
-                .iter()
-                .find(|core| core.eq_ignore_ascii_case(header))
-            {
-                let name = core.to_ascii_lowercase();
-                if !core_names.insert(name.clone()) {
+            if let Some(column) = CoreColumn::from_header(header) {
+                let name = column.header().to_ascii_lowercase();
+                if !core_columns.insert(column) {
                     return Err(DataError::InvalidPmetricsData(format!(
                         "duplicate core header `{name}`"
                     )));
@@ -134,13 +201,20 @@ impl Data {
             }
             headers.push(if fixed { format!("{name}!") } else { name });
         }
+        for required in CoreColumn::REQUIRED {
+            if !core_columns.contains(&required) {
+                return Err(DataError::InvalidPmetricsData(format!(
+                    "missing required core header `{}`",
+                    required.header()
+                )));
+            }
+        }
         reader.set_headers(StringRecord::from(headers));
 
         let mut data_rows = Vec::new();
         for row_result in reader.deserialize() {
             let row: Row = row_result.map_err(|error| DataError::CSVError(error.to_string()))?;
-            row.validate()?;
-            data_rows.push(row.to_datarow());
+            data_rows.push(row.into_datarow());
         }
         build_data(data_rows)
     }
@@ -155,9 +229,7 @@ pub(super) fn validate_covariate_header(header: &str) -> Result<(), DataError> {
     if base.is_empty()
         || base.contains('!')
         || base.chars().any(char::is_control)
-        || CORE_HEADERS
-            .iter()
-            .any(|core| core.eq_ignore_ascii_case(base))
+        || CoreColumn::from_header(base).is_some()
     {
         return Err(DataError::InvalidPmetricsData(format!(
             "reserved or ambiguous covariate column `{header}`"
@@ -166,62 +238,51 @@ pub(super) fn validate_covariate_header(header: &str) -> Result<(), DataError> {
     Ok(())
 }
 
-fn ensure_finite(value: f64, field: &str, id: &str) -> Result<(), DataError> {
-    if value.is_finite() {
-        Ok(())
-    } else {
-        Err(DataError::NonFiniteValue {
-            field: field.to_string(),
-            id: id.to_string(),
-        })
-    }
-}
-
 /// One row from a Pmetrics file after serde deserialization.
-#[derive(Deserialize, Debug, Serialize, Default, Clone)]
+#[derive(Deserialize)]
 #[serde(rename_all = "lowercase")]
 struct Row {
     /// Subject ID
     id: String,
     /// Event type
-    evid: i64,
+    evid: i32,
     /// Event time
     time: f64,
     /// Infusion duration
-    #[serde(deserialize_with = "deserialize_option_f64")]
+    #[serde(default, deserialize_with = "deserialize_option_f64")]
     dur: Option<f64>,
     /// Dose amount
-    #[serde(deserialize_with = "deserialize_option_f64")]
+    #[serde(default, deserialize_with = "deserialize_option_f64")]
     dose: Option<f64>,
     /// Additional doses
-    #[serde(deserialize_with = "deserialize_option_isize")]
-    addl: Option<isize>,
+    #[serde(default, deserialize_with = "deserialize_option_i64")]
+    addl: Option<i64>,
     /// Dosing interval
-    #[serde(deserialize_with = "deserialize_option_f64")]
+    #[serde(default, deserialize_with = "deserialize_option_f64")]
     ii: Option<f64>,
     /// Input label from the `INPUT` column
-    #[serde(deserialize_with = "deserialize_option_route_label")]
+    #[serde(default, deserialize_with = "deserialize_option_route_label")]
     input: Option<InputLabel>,
     /// Observed value
-    #[serde(deserialize_with = "deserialize_option_f64")]
+    #[serde(default, deserialize_with = "deserialize_option_f64")]
     out: Option<f64>,
     /// Output label from the `OUTEQ` column
-    #[serde(deserialize_with = "deserialize_option_output_label")]
+    #[serde(default, deserialize_with = "deserialize_option_output_label")]
     outeq: Option<OutputLabel>,
     /// Censoring output
     #[serde(default, deserialize_with = "deserialize_option_censor")]
     cens: Option<Censor>,
     /// First element of the error polynomial
-    #[serde(deserialize_with = "deserialize_option_f64")]
+    #[serde(default, deserialize_with = "deserialize_option_f64")]
     c0: Option<f64>,
     /// Second element of the error polynomial
-    #[serde(deserialize_with = "deserialize_option_f64")]
+    #[serde(default, deserialize_with = "deserialize_option_f64")]
     c1: Option<f64>,
     /// Third element of the error polynomial
-    #[serde(deserialize_with = "deserialize_option_f64")]
+    #[serde(default, deserialize_with = "deserialize_option_f64")]
     c2: Option<f64>,
     /// Fourth element of the error polynomial
-    #[serde(deserialize_with = "deserialize_option_f64")]
+    #[serde(default, deserialize_with = "deserialize_option_f64")]
     c3: Option<f64>,
     /// All other columns are covariates
     #[serde(deserialize_with = "deserialize_covs", flatten)]
@@ -229,87 +290,19 @@ struct Row {
 }
 
 impl Row {
-    fn validate(&self) -> Result<(), DataError> {
-        ensure_finite(self.time, "TIME", &self.id)?;
-        for (field, value) in [
-            ("DUR", self.dur),
-            ("DOSE", self.dose),
-            ("II", self.ii),
-            ("OUT", self.out),
-            ("C0", self.c0),
-            ("C1", self.c1),
-            ("C2", self.c2),
-            ("C3", self.c3),
-        ] {
-            if let Some(value) = value {
-                ensure_finite(value, field, &self.id)?;
-            }
-        }
-        for (name, value) in &self.covs {
-            if let Some(value) = value {
-                ensure_finite(*value, name, &self.id)?;
-            }
-        }
-
-        let coefficients = [self.c0, self.c1, self.c2, self.c3];
-        let present = coefficients.iter().filter(|value| value.is_some()).count();
-        if present != 0 && present != coefficients.len() {
-            return Err(DataError::InvalidPmetricsData(format!(
-                "partial error polynomial for {} at time {}",
-                self.id, self.time
-            )));
-        }
-
-        if self.addl.is_some_and(|addl| addl != 0) && !self.ii.is_some_and(|ii| ii > 0.0) {
-            return Err(DataError::InvalidPmetricsData(format!(
-                "nonzero ADDL for {} at time {} requires a positive II",
-                self.id, self.time
-            )));
-        }
-        if self.evid == 4 && self.addl.is_some_and(|addl| addl < 0) {
-            return Err(DataError::InvalidPmetricsData(format!(
-                "EVID=4 row for {} at time {} cannot use negative ADDL",
-                self.id, self.time
-            )));
-        }
-
-        match self.evid {
-            1 | 4 if self.dur.is_some_and(|duration| duration < 0.0) => {
-                return Err(DataError::InvalidPmetricsData(format!(
-                    "dose row for {} at time {} contains a negative duration",
-                    self.id, self.time
-                )));
-            }
-            4 if self.dose.is_none() || self.input.is_none() => {
-                return Err(DataError::InvalidPmetricsData(format!(
-                    "EVID=4 row for {} at time {} must contain a dose and INPUT",
-                    self.id, self.time
-                )));
-            }
-            0 | 1 | 4 => {}
-            unsupported => {
-                return Err(DataError::InvalidPmetricsData(format!(
-                    "unsupported EVID={unsupported} for subject {} at time {}",
-                    self.id, self.time
-                )));
-            }
-        }
-        Ok(())
-    }
-
-    fn to_datarow(&self) -> DataRow {
+    fn into_datarow(self) -> DataRow {
         DataRow {
-            id: self.id.clone(),
+            id: self.id,
             time: self.time,
-            evid: self.evid as i32,
+            evid: self.evid,
             dose: self.dose,
             dur: self.dur,
-            addl: self.addl.map(|a| a as i64),
+            addl: self.addl,
             ii: self.ii,
-            input: self.input.clone(),
+            input: self.input,
             // Treat -99 as missing, matching the common Pmetrics convention.
             out: self.out.filter(|&value| value != -99.0),
-            outeq: self.outeq.clone(),
+            outeq: self.outeq,
             cens: self.cens,
             c0: self.c0,
             c1: self.c1,
@@ -317,8 +310,8 @@ impl Row {
             c3: self.c3,
             covariates: self
                 .covs
-                .iter()
-                .filter_map(|(key, value)| value.map(|value| (key.clone(), value)))
+                .into_iter()
+                .filter_map(|(key, value)| value.map(|value| (key, value)))
                 .collect(),
         }
     }
@@ -380,11 +373,11 @@ where
     deserialize_option::<String, D>(deserializer).map(|value| value.map(OutputLabel::from))
 }
 
-fn deserialize_option_isize<'de, D>(deserializer: D) -> Result<Option<isize>, D::Error>
+fn deserialize_option_i64<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
 where
     D: Deserializer<'de>,
 {
-    deserialize_option::<isize, D>(deserializer)
+    deserialize_option::<i64, D>(deserializer)
 }
 
 fn deserialize_covs<'de, D>(deserializer: D) -> Result<HashMap<String, Option<f64>>, D::Error>
@@ -441,9 +434,6 @@ where
 mod tests {
 
     use super::*;
-    use crate::{Censor, ErrorPoly, SubjectBuilderExt};
-    use csv::ReaderBuilder;
-    use std::io::Cursor;
     use tempfile::NamedTempFile;
 
     #[test]
@@ -486,74 +476,6 @@ mod tests {
             s2_times,
             vec![0.0, 9.0, 12.0, 24.0, 36.0, 48.0, 60.0, 72.0, 84.0, 96.0, 108.0, 120.0]
         );
-    }
-
-    #[test]
-    fn write_pmetrics_preserves_infusion_input() {
-        let subject = Subject::builder("writer")
-            .infusion(0.0, 200.0, 3, 1.0) // input=3 (1-indexed)
-            .observation(1.0, 0.0, 1) // outeq=1 (1-indexed)
-            .build();
-        let data = Data::new(vec![subject]);
-
-        let file = NamedTempFile::new().unwrap();
-        data.write_pmetrics(file.as_file()).unwrap();
-
-        let contents = std::fs::read_to_string(file.path()).unwrap();
-        let mut reader = ReaderBuilder::new()
-            .has_headers(true)
-            .from_reader(Cursor::new(contents));
-
-        let infusion_row = reader
-            .records()
-            .filter_map(Result::ok)
-            .find(|record| record.get(1) == Some("1") && record.get(3) != Some("0"))
-            .expect("infusion row missing");
-
-        assert_eq!(infusion_row.get(7), Some("3")); // Written as-is (1-indexed)
-    }
-
-    #[test]
-    fn write_pmetrics_preserves_censoring_and_errorpoly() {
-        let subject = Subject::builder("writer")
-            .observation_with_error(
-                0.0,
-                2.5,
-                0,
-                ErrorPoly::new(0.1, 0.2, 0.3, 0.4),
-                Censor::BLOQ,
-            )
-            .censored_observation(1.0, 3.5, 1, Censor::ALOQ)
-            .build();
-        let data = Data::new(vec![subject]);
-
-        let file = NamedTempFile::new().unwrap();
-        data.write_pmetrics(file.as_file()).unwrap();
-
-        let contents = std::fs::read_to_string(file.path()).unwrap();
-        let mut reader = ReaderBuilder::new()
-            .has_headers(true)
-            .from_reader(Cursor::new(contents));
-
-        let mut observations: Vec<_> = reader
-            .records()
-            .filter_map(Result::ok)
-            .filter(|record| record.get(1) == Some("0"))
-            .collect();
-
-        assert_eq!(observations.len(), 2, "expected two observation rows");
-
-        let first = observations.remove(0);
-        assert_eq!(first.get(10), Some("1"));
-        assert_eq!(first.get(11), Some("0.1"));
-        assert_eq!(first.get(12), Some("0.2"));
-        assert_eq!(first.get(13), Some("0.3"));
-        assert_eq!(first.get(14), Some("0.4"));
-
-        let second = observations.remove(0);
-        assert_eq!(second.get(10), Some("-1"));
-        assert_eq!(second.get(11), Some("."));
-        assert_eq!(second.get(14), Some("."));
     }
 
     #[test]

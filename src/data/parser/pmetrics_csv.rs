@@ -1,26 +1,15 @@
 //! Pmetrics CSV byte encoder.
 
-use super::pmetrics::{normalize_covariate_name, validate_covariate_header, CORE_HEADERS};
+use super::pmetrics::{
+    core_headers, normalize_covariate_name, validate_covariate_header, CoreColumn,
+};
 use crate::data::row::DataError;
 use crate::data::{Censor, Data, Event, Occasion, Subject};
 use crate::PharmsolError;
 use csv::{Terminator, WriterBuilder};
 use std::collections::BTreeMap;
 use std::fs::File;
-use std::io::Write;
-
-mod column {
-    pub const ID: usize = 0;
-    pub const EVID: usize = 1;
-    pub const TIME: usize = 2;
-    pub const DUR: usize = 3;
-    pub const DOSE: usize = 4;
-    pub const INPUT: usize = 7;
-    pub const OUT: usize = 8;
-    pub const OUTEQ: usize = 9;
-    pub const CENS: usize = 10;
-    pub const C0: usize = 11;
-}
+use std::io::{Seek, SeekFrom, Write};
 
 #[derive(Clone, Copy)]
 enum PmetricsEvid {
@@ -139,10 +128,10 @@ fn collect_covariate_schema(data: &Data) -> Result<Vec<PmetricsCovariateColumn>,
 }
 
 fn empty_row(id: &str, evid: PmetricsEvid, time: f64, covariate_count: usize) -> Vec<String> {
-    let mut fields = vec![".".to_string(); CORE_HEADERS.len() + covariate_count];
-    fields[column::ID] = id.to_string();
-    fields[column::EVID] = evid.as_str().to_string();
-    fields[column::TIME] = time.to_string();
+    let mut fields = vec![".".to_string(); CoreColumn::COUNT + covariate_count];
+    fields[CoreColumn::Id.index()] = id.to_string();
+    fields[CoreColumn::Evid.index()] = evid.as_str().to_string();
+    fields[CoreColumn::Time.index()] = time.to_string();
     fields
 }
 
@@ -156,7 +145,7 @@ fn event_row(id: &str, event: &Event, covariate_count: usize) -> Result<Vec<Stri
 
     match event {
         Event::Observation(observation) => {
-            fields[column::OUT] = match observation.value() {
+            fields[CoreColumn::Out.index()] = match observation.value() {
                 Some(value) => {
                     ensure_finite(value, "OUT", id)?;
                     if value == -99.0 {
@@ -171,8 +160,8 @@ fn event_row(id: &str, event: &Event, covariate_count: usize) -> Result<Vec<Stri
             };
             let outeq = observation.outeq().to_string();
             ensure_label(&outeq, "OUTEQ", id)?;
-            fields[column::OUTEQ] = outeq;
-            fields[column::CENS] = match observation.censoring() {
+            fields[CoreColumn::Outeq.index()] = outeq;
+            fields[CoreColumn::Cens.index()] = match observation.censoring() {
                 Censor::None => "0",
                 Censor::BLOQ => "1",
                 Censor::ALOQ => "-1",
@@ -190,7 +179,7 @@ fn event_row(id: &str, event: &Event, covariate_count: usize) -> Result<Vec<Stri
                 .enumerate()
                 {
                     ensure_finite(value, &format!("C{offset}"), id)?;
-                    fields[column::C0 + offset] = value.to_string();
+                    fields[CoreColumn::C0.index() + offset] = value.to_string();
                 }
             }
         }
@@ -198,9 +187,9 @@ fn event_row(id: &str, event: &Event, covariate_count: usize) -> Result<Vec<Stri
             ensure_finite(bolus.amount(), "DOSE", id)?;
             let input = bolus.input().to_string();
             ensure_label(&input, "INPUT", id)?;
-            fields[column::DUR] = "0".to_string();
-            fields[column::DOSE] = bolus.amount().to_string();
-            fields[column::INPUT] = input;
+            fields[CoreColumn::Dur.index()] = "0".to_string();
+            fields[CoreColumn::Dose.index()] = bolus.amount().to_string();
+            fields[CoreColumn::Input.index()] = input;
         }
         Event::Infusion(infusion) => {
             ensure_finite(infusion.duration(), "DUR", id)?;
@@ -212,15 +201,18 @@ fn event_row(id: &str, event: &Event, covariate_count: usize) -> Result<Vec<Stri
             }
             let input = infusion.input().to_string();
             ensure_label(&input, "INPUT", id)?;
-            fields[column::DUR] = infusion.duration().to_string();
-            fields[column::DOSE] = infusion.amount().to_string();
-            fields[column::INPUT] = input;
+            fields[CoreColumn::Dur.index()] = infusion.duration().to_string();
+            fields[CoreColumn::Dose.index()] = infusion.amount().to_string();
+            fields[CoreColumn::Input.index()] = input;
         }
     }
     Ok(fields)
 }
 
 fn validate_subject(subject: &Subject) -> Result<(), DataError> {
+    if subject.id().is_empty() {
+        return Err(unrepresentable("subject ID cannot be empty"));
+    }
     if subject.id().starts_with('#') {
         return Err(unrepresentable(format!(
             "subject ID `{}` cannot start with #",
@@ -256,12 +248,12 @@ fn validate_occasion(
     }
 
     let events = occasion.events();
-    if events.is_empty() {
+    let Some(first) = events.first() else {
         return Err(unrepresentable(format!(
             "subject `{}` occasion {occasion_index} has no dose or observation rows",
             subject.id()
         )));
-    }
+    };
     for event in events {
         if event.occasion() != occasion_index {
             return Err(unrepresentable(format!(
@@ -276,7 +268,7 @@ fn validate_occasion(
         .any(|pair| pair[0].cmp_time_then_type(&pair[1]).is_gt())
     {
         return Err(unrepresentable(format!(
-            "events for subject `{}` occasion {occasion_index} must have nondecreasing times, with observations before doses at equal times",
+            "events for subject `{}` occasion {occasion_index} must have nondecreasing times, with observations before doses and boluses before infusions at equal times",
             subject.id()
         )));
     }
@@ -285,7 +277,6 @@ fn validate_occasion(
         return Ok(());
     }
 
-    let first = events.first().expect("nonempty occasion checked above");
     if !matches!(first, Event::Bolus(_) | Event::Infusion(_)) || first.time() != 0.0 {
         return Err(unrepresentable(format!(
             "subject `{}` occasion {occasion_index} cannot be represented: later occasions must begin with a dose at time 0",
@@ -320,7 +311,7 @@ fn encode_occasion(
     for (sequence, event) in occasion.events().iter().enumerate() {
         let mut fields = event_row(subject.id(), event, schema.len())?;
         if occasion_index > 0 && sequence == 0 {
-            fields[column::EVID] = PmetricsEvid::ResetDose.as_str().to_string();
+            fields[CoreColumn::Evid.index()] = PmetricsEvid::ResetDose.as_str().to_string();
         }
         rows.push(PmetricsCsvRow {
             time: event.time(),
@@ -341,7 +332,7 @@ fn encode_occasion(
             let mut matched_event = false;
             for row in &mut rows {
                 if row.time == time {
-                    row.fields[CORE_HEADERS.len() + column_index] = value.to_string();
+                    row.fields[CoreColumn::COUNT + column_index] = value.to_string();
                     matched_event = true;
                 }
             }
@@ -370,10 +361,7 @@ impl Data {
     /// cannot be represented.
     pub fn to_pmetrics_csv_bytes(&self) -> Result<Vec<u8>, DataError> {
         let schema = collect_covariate_schema(self)?;
-        let mut headers = CORE_HEADERS
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>();
+        let mut headers = core_headers().map(ToString::to_string).collect::<Vec<_>>();
         headers.extend(schema.iter().map(|covariate| covariate.header.clone()));
 
         let mut bytes = Vec::new();
@@ -411,12 +399,15 @@ impl Data {
         Ok(bytes)
     }
 
-    /// Write the same bytes returned by [`Data::to_pmetrics_csv_bytes`].
+    /// Replace the file contents with the bytes from [`Data::to_pmetrics_csv_bytes`].
     pub fn write_pmetrics(&self, file: &File) -> Result<(), PharmsolError> {
         let bytes = self.to_pmetrics_csv_bytes().map_err(PharmsolError::from)?;
+        file.set_len(0)
+            .map_err(|error| PharmsolError::OtherError(error.to_string()))?;
         let mut output = file;
         output
-            .write_all(&bytes)
+            .seek(SeekFrom::Start(0))
+            .and_then(|_| output.write_all(&bytes))
             .map_err(|error| PharmsolError::OtherError(error.to_string()))
     }
 }

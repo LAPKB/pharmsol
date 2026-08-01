@@ -8,8 +8,6 @@ use thiserror::Error;
 /// Error type for covariate operations
 #[derive(Error, Debug, Clone, Serialize, Deserialize)]
 pub enum CovariateError {
-    #[error("Observation already exists at time {time}")]
-    ObservationExists { time: f64 },
     #[error("No segments available for interpolation")]
     MissingSegments,
 }
@@ -26,7 +24,7 @@ pub enum Interpolation {
 /// A segment of a piecewise interpolation function for a covariate
 ///
 /// Each segment defines how to interpolate values within its time range.
-#[derive(Serialize, Clone, Debug, Deserialize)]
+#[derive(Clone, Debug)]
 struct CovariateSegment {
     from: f64,
     to: Option<f64>,
@@ -85,6 +83,7 @@ pub struct Covariate {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct CovariateData {
     name: String,
     observations: Vec<(f64, f64)>,
@@ -97,9 +96,25 @@ impl<'de> Deserialize<'de> for Covariate {
         D: Deserializer<'de>,
     {
         let data = CovariateData::deserialize(deserializer)?;
+        let mut observations = data.observations;
+        for (time, value) in &observations {
+            if !time.is_finite() || !value.is_finite() {
+                return Err(serde::de::Error::custom(
+                    "covariate observations must contain finite times and values",
+                ));
+            }
+        }
+        observations.sort_by(|left, right| left.0.total_cmp(&right.0));
+        if let Some(duplicate) = observations.windows(2).find(|pair| pair[0].0 == pair[1].0) {
+            return Err(serde::de::Error::custom(format!(
+                "duplicate covariate observation at time {}",
+                duplicate[0].0
+            )));
+        }
+
         let mut covariate = Self {
             name: data.name,
-            observations: data.observations,
+            observations,
             segments: Vec::new(),
             fixed: data.fixed,
         };
@@ -298,29 +313,20 @@ impl Covariates {
     }
 
     /// Create covariates from Pmetrics raw observations
-    pub(crate) fn from_pmetrics_observations(
-        raw_observations: &HashMap<String, Vec<(f64, Option<f64>)>>,
+    pub(crate) fn from_row_observations(
+        raw_observations: &HashMap<String, Vec<(f64, f64)>>,
     ) -> Self {
         let mut covariates = Covariates::new();
 
-        for (key, occurrences) in raw_observations {
-            let is_fixed = key.ends_with('!');
-            let name = if is_fixed {
-                key.trim_end_matches('!').to_string()
-            } else {
-                key.clone()
-            };
-
-            let mut covariate = Covariate::new(name.clone(), is_fixed);
-            for &(time, value_opt) in occurrences {
-                if let Some(value) = value_opt {
-                    covariate.add_observation(time, value);
-                }
+        for (key, observations) in raw_observations {
+            let (name, fixed) = key
+                .strip_suffix('!')
+                .map_or_else(|| (key.as_str(), false), |name| (name, true));
+            let mut covariate = Covariate::new(name.to_string(), fixed);
+            for &(time, value) in observations {
+                covariate.add_observation(time, value);
             }
-
-            if !covariate.observations.is_empty() {
-                covariates.add_covariate(name, covariate);
-            }
+            covariates.add_covariate(name.to_string(), covariate);
         }
 
         covariates
@@ -561,7 +567,6 @@ mod tests {
         let json = r#"{
             "name": "wt",
             "observations": [[10.0, 10.0], [0.0, 0.0]],
-            "segments": [],
             "fixed": false
         }"#;
         let covariate: Covariate = serde_json::from_str(json).unwrap();
@@ -572,6 +577,37 @@ mod tests {
         assert!(!serialized.contains("segments"));
         let round_tripped: Covariate = serde_json::from_str(&serialized).unwrap();
         assert_eq!(round_tripped.interpolate(5.0).unwrap(), 5.0);
+    }
+
+    #[test]
+    fn covariate_deserialization_rejects_invalid_observations() {
+        let duplicate = r#"{
+            "name": "wt",
+            "observations": [[0.0, 70.0], [0.0, 71.0]],
+            "fixed": false
+        }"#;
+        assert!(serde_json::from_str::<Covariate>(duplicate)
+            .unwrap_err()
+            .to_string()
+            .contains("duplicate covariate observation"));
+
+        let derived_segments = r#"{
+            "name": "wt",
+            "observations": [[0.0, 70.0]],
+            "segments": [],
+            "fixed": false
+        }"#;
+        assert!(serde_json::from_str::<Covariate>(derived_segments)
+            .unwrap_err()
+            .to_string()
+            .contains("unknown field `segments`"));
+
+        let nonfinite = r#"{
+            "name": "wt",
+            "observations": [[1e400, 70.0]],
+            "fixed": false
+        }"#;
+        assert!(serde_json::from_str::<Covariate>(nonfinite).is_err());
     }
 
     #[test]
@@ -629,16 +665,12 @@ mod tests {
     }
 
     #[test]
-    fn test_pmetrics_format_parsing() {
-        // Test parsing from Pmetrics-style format with "!" for fixed covariates
-        let mut raw_observations: HashMap<String, Vec<(f64, Option<f64>)>> = HashMap::new();
-        raw_observations.insert(
-            "weight".to_string(),
-            vec![(0.0, Some(70.0)), (12.0, Some(72.0))],
-        );
-        raw_observations.insert("age!".to_string(), vec![(0.0, Some(35.0))]); // Fixed covariate
+    fn test_row_observation_parsing() {
+        let mut raw_observations: HashMap<String, Vec<(f64, f64)>> = HashMap::new();
+        raw_observations.insert("weight".to_string(), vec![(0.0, 70.0), (12.0, 72.0)]);
+        raw_observations.insert("age!".to_string(), vec![(0.0, 35.0)]);
 
-        let covariates = Covariates::from_pmetrics_observations(&raw_observations);
+        let covariates = Covariates::from_row_observations(&raw_observations);
 
         // Weight should use linear interpolation
         let weight_cov = covariates.get_covariate("weight").unwrap();
