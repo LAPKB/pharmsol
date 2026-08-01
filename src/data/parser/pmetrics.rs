@@ -38,9 +38,9 @@ pub(super) const CORE_HEADERS: [&str; 15] = [
 /// values are interpolated. The same covariate cannot be declared in both
 /// forms.
 ///
-/// `ADDL`/`II` doses are expanded while reading and may later be written as
-/// individual dose rows. Negative `ADDL` remains supported for `EVID=1`, but
-/// not for an `EVID=4` reset whose identity would be lost during expansion.
+/// `ADDL`/`II` doses are expanded while reading. Export writes the expanded
+/// doses as individual rows. Negative `ADDL` remains supported for `EVID=1`,
+/// but not for an `EVID=4` reset whose identity would be lost during expansion.
 /// `OUT=-99` represents a missing observation, so `-99` cannot be preserved as
 /// a real observed value.
 ///
@@ -87,12 +87,12 @@ pub(super) const CORE_HEADERS: [&str; 15] = [
 pub fn read_pmetrics(path: impl Into<String>) -> Result<Data, DataError> {
     let bytes =
         std::fs::read(path.into()).map_err(|error| DataError::CSVError(error.to_string()))?;
-    Data::from_bytes(&bytes)
+    Data::from_pmetrics_csv_bytes(&bytes)
 }
 
 impl Data {
     /// Read Pmetrics CSV bytes into a dataset.
-    pub fn from_bytes(bytes: &[u8]) -> Result<Data, DataError> {
+    pub fn from_pmetrics_csv_bytes(bytes: &[u8]) -> Result<Data, DataError> {
         let mut reader = ReaderBuilder::new()
             .comment(Some(b'#'))
             .has_headers(true)
@@ -113,7 +113,7 @@ impl Data {
                 let name = core.to_ascii_lowercase();
                 if !core_names.insert(name.clone()) {
                     return Err(DataError::InvalidPmetricsData(format!(
-                        "duplicate core column `{name}`"
+                        "duplicate core header `{name}`"
                     )));
                 }
                 headers.push(name);
@@ -123,7 +123,7 @@ impl Data {
             validate_covariate_header(header)?;
             let fixed = header.ends_with('!');
             let base = header.strip_suffix('!').unwrap_or(header);
-            let name = base.to_lowercase();
+            let name = normalize_covariate_name(base);
             if let Some(previous_fixed) = covariate_forms.insert(name.clone(), fixed) {
                 let message = if previous_fixed == fixed {
                     format!("duplicate covariate column `{name}`")
@@ -144,6 +144,10 @@ impl Data {
         }
         build_data(data_rows)
     }
+}
+
+pub(super) fn normalize_covariate_name(name: &str) -> String {
+    name.to_lowercase()
 }
 
 pub(super) fn validate_covariate_header(header: &str) -> Result<(), DataError> {
@@ -256,12 +260,15 @@ impl Row {
             )));
         }
 
-        if self.evid == 4
-            && self.addl.is_some_and(|addl| addl < 0)
-            && self.ii.is_some_and(|ii| ii > 0.0)
-        {
+        if self.addl.is_some_and(|addl| addl != 0) && !self.ii.is_some_and(|ii| ii > 0.0) {
             return Err(DataError::InvalidPmetricsData(format!(
-                "EVID=4 row for {} at time {} cannot use negative ADDL with positive II",
+                "nonzero ADDL for {} at time {} requires a positive II",
+                self.id, self.time
+            )));
+        }
+        if self.evid == 4 && self.addl.is_some_and(|addl| addl < 0) {
+            return Err(DataError::InvalidPmetricsData(format!(
+                "EVID=4 row for {} at time {} cannot use negative ADDL",
                 self.id, self.time
             )));
         }
@@ -282,7 +289,7 @@ impl Row {
             0 | 1 | 4 => {}
             unsupported => {
                 return Err(DataError::InvalidPmetricsData(format!(
-                    "unsupported EVID={unsupported} for {} at time {}",
+                    "unsupported EVID={unsupported} for subject {} at time {}",
                     self.id, self.time
                 )));
             }

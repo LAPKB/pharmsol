@@ -253,14 +253,35 @@ impl DataRow {
                 // Handle ADDL/II expansion
                 if let (Some(addl), Some(ii)) = (self.addl, self.ii) {
                     if addl != 0 && ii > 0.0 {
-                        let mut ev = event.clone();
+                        let repetitions = addl
+                            .checked_abs()
+                            .and_then(|count| usize::try_from(count).ok())
+                            .ok_or_else(|| {
+                                DataError::InvalidPmetricsData(format!(
+                                    "ADDL for {} at time {} is too large to expand",
+                                    self.id, self.time
+                                ))
+                            })?;
+                        events.try_reserve(repetitions).map_err(|_| {
+                            DataError::InvalidPmetricsData(format!(
+                                "ADDL for {} at time {} is too large to expand",
+                                self.id, self.time
+                            ))
+                        })?;
                         let interval = ii.abs();
-                        let repetitions = addl.abs();
                         let direction = addl.signum() as f64;
 
-                        for _ in 0..repetitions {
-                            ev.inc_time(direction * interval);
-                            events.push(ev.clone());
+                        for repetition in 1..=repetitions {
+                            let offset = direction * interval * repetition as f64;
+                            if !(event.time() + offset).is_finite() {
+                                return Err(DataError::NonFiniteValue {
+                                    field: "expanded TIME".to_string(),
+                                    id: self.id.clone(),
+                                });
+                            }
+                            let mut repeated = event.clone();
+                            repeated.inc_time(offset);
+                            events.push(repeated);
                         }
                     }
                 }
@@ -616,15 +637,9 @@ pub enum DataError {
     /// A Pmetrics value was not finite
     #[error("Nonfinite value in {field} for {id}")]
     NonFiniteValue { field: String, id: String },
-    /// A legacy linear covariate lacks exact source-observation markers
-    #[error(
-        "Legacy linear covariate `{name}` for {id} occasion {occasion} must be reimported or rebuilt before Pmetrics export"
-    )]
-    LegacyLinearCovariate {
-        name: String,
-        id: String,
-        occasion: usize,
-    },
+    /// Data cannot be represented by the current Pmetrics CSV format
+    #[error("Data cannot be represented as Pmetrics CSV: {0}")]
+    UnrepresentablePmetricsData(String),
     /// The Pmetrics data was invalid
     #[error("Invalid Pmetrics data: {0}")]
     InvalidPmetricsData(String),
@@ -896,13 +911,12 @@ mod tests {
 
     #[test]
     fn test_addl_expansion_uses_exact_multiples() {
-        // Repeated addition during expansion must not drift for integer intervals.
         let rows = vec![DataRow::builder("pt1", 25.0)
             .evid(1)
             .dose(100.0)
             .input("iv")
             .addl(24)
-            .ii(120.0)
+            .ii(0.1)
             .build()];
 
         let data = build_data(rows).unwrap();
@@ -913,7 +927,7 @@ mod tests {
             .map(|e| e.time())
             .collect();
 
-        let expected: Vec<f64> = (0..=24).map(|k| 25.0 + 120.0 * k as f64).collect();
+        let expected: Vec<f64> = (0..=24).map(|k| 25.0 + 0.1 * k as f64).collect();
         assert_eq!(times, expected);
     }
 

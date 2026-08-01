@@ -1,11 +1,27 @@
+use super::pmetrics::CORE_HEADERS;
 use super::{read_pmetrics, DataError};
 use crate::{Censor, Covariate, Data, ErrorPoly, Event, Subject, SubjectBuilderExt};
 use csv::StringRecord;
 use std::collections::BTreeMap;
 use tempfile::NamedTempFile;
 
-const GOLDEN: &[u8] = include_bytes!("../../tests/data/pmetrics_csv.csv");
-const CORE_HEADER: &str = "ID,EVID,TIME,DUR,DOSE,ADDL,II,INPUT,OUT,OUTEQ,CENS,C0,C1,C2,C3\n";
+const GOLDEN: &[u8] = concat!(
+    "ID,EVID,TIME,DUR,DOSE,ADDL,II,INPUT,OUT,OUTEQ,CENS,C0,C1,C2,C3,age!,crcl,wt\n",
+    "10,0,0,.,.,.,.,.,1.25,cp,1,0.1,0.2,0.3,0.4,40,.,70\n",
+    "10,1,0,0,100,.,.,iv,.,.,.,.,.,.,.,40,.,70\n",
+    "10,0,1,.,.,.,.,.,-99,2,0,.,.,.,.,.,.,.\n",
+    "10,1,2,4,50,.,.,1,.,.,.,.,.,.,.,41,.,72\n",
+    "10,4,0,0,80,.,.,oral,.,.,.,.,.,.,.,42,.,.\n",
+    "10,0,3,.,.,.,.,.,9,1,-1,.,.,.,.,.,80,.\n",
+    "alpha,0,0,.,.,.,.,.,4.5,central,0,.,.,.,.,.,.,60\n",
+    "alpha,1,0,2,25,.,.,1,.,.,.,.,.,.,.,.,.,60\n",
+    "alpha,0,2,.,.,.,.,.,-98.5,neg,0,.,.,.,.,.,.,.\n",
+)
+.as_bytes();
+
+fn core_header() -> String {
+    format!("{}\n", CORE_HEADERS.join(","))
+}
 
 fn fixture_data() -> Data {
     let alpha = Subject::builder("alpha")
@@ -144,20 +160,20 @@ fn assert_data_equivalent(left: &Data, right: &Data) {
 #[test]
 fn representable_data_round_trips_with_exact_covariate_values() {
     let data = fixture_data();
-    let first = data.as_bytes().unwrap();
-    let second = data.as_bytes().unwrap();
+    let first = data.to_pmetrics_csv_bytes().unwrap();
+    let second = data.to_pmetrics_csv_bytes().unwrap();
     assert_eq!(first, GOLDEN);
     assert_eq!(first, second);
 
-    let parsed = Data::from_bytes(&first).unwrap();
+    let parsed = Data::from_pmetrics_csv_bytes(&first).unwrap();
     assert_data_equivalent(&data, &parsed);
-    assert_eq!(parsed.as_bytes().unwrap(), first);
+    assert_eq!(parsed.to_pmetrics_csv_bytes().unwrap(), first);
 }
 
 #[test]
 fn write_pmetrics_writes_as_bytes() {
     let data = fixture_data();
-    let expected = data.as_bytes().unwrap();
+    let expected = data.to_pmetrics_csv_bytes().unwrap();
     let file = NamedTempFile::new().unwrap();
     data.write_pmetrics(file.as_file()).unwrap();
     assert_eq!(std::fs::read(file.path()).unwrap(), expected);
@@ -171,14 +187,14 @@ fn existing_pmetrics_files_remain_readable() {
     );
     let bytes = std::fs::read(&path).unwrap();
     let from_file = read_pmetrics(path).unwrap();
-    let from_bytes = Data::from_bytes(&bytes).unwrap();
+    let from_bytes = Data::from_pmetrics_csv_bytes(&bytes).unwrap();
     assert_data_equivalent(&from_file, &from_bytes);
 
     let uppercase_covariate = concat!(
         "ID,EVID,TIME,DUR,DOSE,ADDL,II,INPUT,OUT,OUTEQ,CENS,C0,C1,C2,C3,WT\n",
         "s,1,0,0,1,.,.,iv,.,.,.,.,.,.,.,70\n"
     );
-    let parsed = Data::from_bytes(uppercase_covariate.as_bytes()).unwrap();
+    let parsed = Data::from_pmetrics_csv_bytes(uppercase_covariate.as_bytes()).unwrap();
     assert!(parsed.subjects()[0].occasions()[0]
         .covariates()
         .get_covariate("wt")
@@ -189,12 +205,12 @@ fn existing_pmetrics_files_remain_readable() {
         "s,0,0,0,0,0,0,unused,1,cp,0,0,0,0,0\n",
         "s,1,1,0,1,0,0,iv,-99,unused,0,0,0,0,0\n"
     );
-    assert!(Data::from_bytes(populated_unused_fields.as_bytes()).is_ok());
+    assert!(Data::from_pmetrics_csv_bytes(populated_unused_fields.as_bytes()).is_ok());
 }
 
 #[test]
 fn duplicate_and_conflicting_headers_are_rejected() {
-    let core = CORE_HEADER.trim_end();
+    let core = CORE_HEADERS.join(",");
     let invalid_headers = [
         format!("{core},WT,wt\n"),
         format!("{core},WT!,wt!\n"),
@@ -206,7 +222,7 @@ fn duplicate_and_conflicting_headers_are_rejected() {
 
     for header in invalid_headers {
         assert!(matches!(
-            Data::from_bytes(header.as_bytes()),
+            Data::from_pmetrics_csv_bytes(header.as_bytes()),
             Err(DataError::InvalidPmetricsData(_))
         ));
     }
@@ -218,7 +234,7 @@ fn valid_mixed_case_covariate_headers_are_normalized() {
         "ID,EVID,TIME,DUR,DOSE,ADDL,II,INPUT,OUT,OUTEQ,CENS,C0,C1,C2,C3,WT!,Ka\n",
         "s,1,0,0,1,.,.,iv,.,.,.,.,.,.,.,70,0.5\n"
     );
-    let data = Data::from_bytes(input.as_bytes()).unwrap();
+    let data = Data::from_pmetrics_csv_bytes(input.as_bytes()).unwrap();
     let covariates = data.subjects()[0].occasions()[0].covariates();
     let wt = covariates.get_covariate("wt").unwrap();
     assert_eq!(wt.name(), "wt");
@@ -235,8 +251,8 @@ fn standalone_covariate_time_is_not_exportable() {
         .covariate("wt", 1.0, 70.0)
         .build()]);
     assert!(matches!(
-        data.as_bytes(),
-        Err(DataError::InvalidPmetricsData(message))
+        data.to_pmetrics_csv_bytes(),
+        Err(DataError::UnrepresentablePmetricsData(message))
             if message.contains("has no dose or observation row")
     ));
 }
@@ -247,7 +263,7 @@ fn first_occasion_has_no_invented_reset_row() {
         .bolus(0.0, 1.0, "iv")
         .observation(1.0, 2.0, "cp")
         .build()]);
-    let rows = records(&data.as_bytes().unwrap());
+    let rows = records(&data.to_pmetrics_csv_bytes().unwrap());
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0].get(1), Some("1"));
     assert_eq!(rows[1].get(1), Some("0"));
@@ -261,7 +277,7 @@ fn later_occasion_starts_with_a_real_reset_dose() {
         .bolus(0.0, 2.0, "oral")
         .observation(1.0, 3.0, "cp")
         .build()]);
-    let rows = records(&data.as_bytes().unwrap());
+    let rows = records(&data.to_pmetrics_csv_bytes().unwrap());
     assert_eq!(
         rows.iter()
             .map(|row| row.get(1).unwrap())
@@ -280,10 +296,10 @@ fn mixed_dose_types_at_reset_time_are_not_exportable() {
         "s,4,0,2,2,.,.,iv,.,.,.,.,.,.,.\n",
         "s,1,0,0,3,.,.,oral,.,.,.,.,.,.,.\n"
     );
-    let data = Data::from_bytes(input.as_bytes()).unwrap();
+    let data = Data::from_pmetrics_csv_bytes(input.as_bytes()).unwrap();
     assert!(matches!(
-        data.as_bytes(),
-        Err(DataError::InvalidPmetricsData(message))
+        data.to_pmetrics_csv_bytes(),
+        Err(DataError::UnrepresentablePmetricsData(message))
             if message.contains("both bolus and infusion doses at time 0")
     ));
 }
@@ -297,9 +313,9 @@ fn same_time_bolus_doses_keep_the_reset_order() {
         "s,1,0,0,3,.,.,oral,.,.,.,.,.,.,.\n"
     );
     let rows = records(
-        &Data::from_bytes(input.as_bytes())
+        &Data::from_pmetrics_csv_bytes(input.as_bytes())
             .unwrap()
-            .as_bytes()
+            .to_pmetrics_csv_bytes()
             .unwrap(),
     );
     assert_eq!(rows[1].get(1), Some("4"));
@@ -319,9 +335,9 @@ fn same_time_infusion_doses_keep_the_reset_order() {
         "s,1,0,3,3,.,.,peripheral,.,.,.,.,.,.,.\n"
     );
     let rows = records(
-        &Data::from_bytes(input.as_bytes())
+        &Data::from_pmetrics_csv_bytes(input.as_bytes())
             .unwrap()
-            .as_bytes()
+            .to_pmetrics_csv_bytes()
             .unwrap(),
     );
     assert_eq!(rows[1].get(1), Some("4"));
@@ -340,8 +356,9 @@ fn later_occasion_without_an_initial_dose_is_not_exportable() {
         .observation(0.0, 3.0, "cp")
         .build()]);
     assert!(matches!(
-        data.as_bytes(),
-        Err(DataError::InvalidPmetricsData(message)) if message.contains("must begin with a dose")
+        data.to_pmetrics_csv_bytes(),
+        Err(DataError::UnrepresentablePmetricsData(message))
+            if message.contains("later occasions must begin with a dose at time 0")
     ));
 }
 
@@ -353,11 +370,11 @@ fn observation_at_reset_time_makes_later_occasion_unsafe_to_export() {
         "s,4,0,0,2,.,.,iv,.,.,.,.,.,.,.\n",
         "s,0,0,.,.,.,.,.,3,cp,0,.,.,.,.\n"
     );
-    let data = Data::from_bytes(input.as_bytes()).unwrap();
+    let data = Data::from_pmetrics_csv_bytes(input.as_bytes()).unwrap();
     assert!(matches!(
-        data.as_bytes(),
-        Err(DataError::InvalidPmetricsData(message))
-            if message.contains("must begin with a dose at time 0")
+        data.to_pmetrics_csv_bytes(),
+        Err(DataError::UnrepresentablePmetricsData(message))
+            if message.contains("later occasions must begin with a dose at time 0")
     ));
 }
 
@@ -369,9 +386,9 @@ fn negative_addl_reset_is_rejected_while_reading() {
         "s,4,0,0,2,-2,1,iv,.,.,.,.,.,.,.\n"
     );
     assert!(matches!(
-        Data::from_bytes(input.as_bytes()),
+        Data::from_pmetrics_csv_bytes(input.as_bytes()),
         Err(DataError::InvalidPmetricsData(message))
-            if message.contains("cannot use negative ADDL with positive II")
+            if message.contains("cannot use negative ADDL")
     ));
 }
 
@@ -383,9 +400,44 @@ fn negative_addl_reset_at_later_time_is_rejected_before_expansion() {
         "s,4,2,0,2,-2,1,iv,.,.,.,.,.,.,.\n"
     );
     assert!(matches!(
-        Data::from_bytes(input.as_bytes()),
+        Data::from_pmetrics_csv_bytes(input.as_bytes()),
         Err(DataError::InvalidPmetricsData(message))
-            if message.contains("cannot use negative ADDL with positive II")
+            if message.contains("cannot use negative ADDL")
+    ));
+}
+
+#[test]
+fn nonzero_addl_requires_positive_ii() {
+    for ii in [".", "0", "-1"] {
+        let input = format!("{}s,1,0,0,1,2,{ii},iv,.,.,.,.,.,.,.\n", core_header());
+        assert!(matches!(
+            Data::from_pmetrics_csv_bytes(input.as_bytes()),
+            Err(DataError::InvalidPmetricsData(message))
+                if message.contains("requires a positive II")
+        ));
+    }
+}
+
+#[test]
+fn minimum_addl_fails_without_panicking() {
+    let input = format!(
+        "{}s,1,0,0,1,{},1,iv,.,.,.,.,.,.,.\n",
+        core_header(),
+        isize::MIN
+    );
+    assert!(matches!(
+        Data::from_pmetrics_csv_bytes(input.as_bytes()),
+        Err(DataError::InvalidPmetricsData(message))
+            if message.contains("too large to expand")
+    ));
+}
+
+#[test]
+fn additional_dose_time_overflow_is_rejected() {
+    let input = format!("{}s,1,0,0,1,2,1e308,iv,.,.,.,.,.,.,.\n", core_header());
+    assert!(matches!(
+        Data::from_pmetrics_csv_bytes(input.as_bytes()),
+        Err(DataError::NonFiniteValue { field, .. }) if field == "expanded TIME"
     ));
 }
 
@@ -396,8 +448,8 @@ fn positive_addl_reset_round_trips_as_individual_doses() {
         "s,1,0,0,1,.,.,iv,.,.,.,.,.,.,.\n",
         "s,4,0,0,2,2,1,iv,.,.,.,.,.,.,.\n"
     );
-    let data = Data::from_bytes(input.as_bytes()).unwrap();
-    let bytes = data.as_bytes().unwrap();
+    let data = Data::from_pmetrics_csv_bytes(input.as_bytes()).unwrap();
+    let bytes = data.to_pmetrics_csv_bytes().unwrap();
     let rows = records(&bytes);
     assert_eq!(rows.len(), 4);
     assert_eq!(rows[1].get(1), Some("4"));
@@ -408,7 +460,7 @@ fn positive_addl_reset_round_trips_as_individual_doses() {
     assert_eq!(rows[3].get(2), Some("2"));
     assert!(rows[1..].iter().all(|row| row.get(5) == Some(".")));
 
-    let reparsed = Data::from_bytes(&bytes).unwrap();
+    let reparsed = Data::from_pmetrics_csv_bytes(&bytes).unwrap();
     assert_data_equivalent(&data, &reparsed);
 }
 
@@ -419,7 +471,7 @@ fn identical_covariate_values_at_one_time_are_deduplicated() {
         "s,1,0,0,1,.,.,iv,.,.,.,.,.,.,.,70\n",
         "s,0,0,.,.,.,.,.,1,cp,0,.,.,.,.,70\n"
     );
-    let data = Data::from_bytes(input.as_bytes()).unwrap();
+    let data = Data::from_pmetrics_csv_bytes(input.as_bytes()).unwrap();
     assert_eq!(
         data.subjects()[0].occasions()[0]
             .covariates()
@@ -438,7 +490,7 @@ fn conflicting_covariate_values_at_one_time_are_rejected() {
         "s,0,0,.,.,.,.,.,1,cp,0,.,.,.,.,71\n"
     );
     assert!(matches!(
-        Data::from_bytes(input.as_bytes()),
+        Data::from_pmetrics_csv_bytes(input.as_bytes()),
         Err(DataError::InvalidPmetricsData(message))
             if message.contains("conflicting covariate `wt` values")
                 && message.contains("subject `s` occasion 0")
@@ -453,7 +505,7 @@ fn covariate_values_at_different_times_still_interpolate() {
         "s,1,0,0,1,.,.,iv,.,.,.,.,.,.,.,70\n",
         "s,0,24,.,.,.,.,.,1,cp,0,.,.,.,.,72\n"
     );
-    let data = Data::from_bytes(input.as_bytes()).unwrap();
+    let data = Data::from_pmetrics_csv_bytes(input.as_bytes()).unwrap();
     let weight = data.subjects()[0].occasions()[0]
         .covariates()
         .get_covariate("wt")
@@ -467,20 +519,21 @@ fn missing_observations_use_minus_99() {
     let data = Data::new(vec![Subject::builder("s")
         .missing_observation(0.0, "cp")
         .build()]);
-    let bytes = data.as_bytes().unwrap();
+    let bytes = data.to_pmetrics_csv_bytes().unwrap();
     let rows = records(&bytes);
     assert_eq!(rows[0].get(8), Some("-99"));
 
-    let parsed = Data::from_bytes(&bytes).unwrap();
+    let parsed = Data::from_pmetrics_csv_bytes(&bytes).unwrap();
     match &parsed.subjects()[0].occasions()[0].events()[0] {
         Event::Observation(observation) => assert_eq!(observation.value(), None),
         _ => panic!("expected observation"),
     }
 
     let placeholders = format!(
-        "{CORE_HEADER}s,0,0,.,.,.,.,.,.,cp,0,.,.,.,.\ns,0,1,.,.,.,.,.,NA,cp,0,.,.,.,.\ns,0,2,.,.,.,.,.,,cp,0,.,.,.,.\n"
+        "{}s,0,0,.,.,.,.,.,.,cp,0,.,.,.,.\ns,0,1,.,.,.,.,.,NA,cp,0,.,.,.,.\ns,0,2,.,.,.,.,.,,cp,0,.,.,.,.\n",
+        core_header()
     );
-    assert!(Data::from_bytes(placeholders.as_bytes()).is_ok());
+    assert!(Data::from_pmetrics_csv_bytes(placeholders.as_bytes()).is_ok());
 }
 
 #[test]
@@ -489,50 +542,15 @@ fn actual_minus_99_observation_is_not_exportable() {
         .observation(0.0, -99.0, "cp")
         .build()]);
     assert!(matches!(
-        data.as_bytes(),
-        Err(DataError::InvalidPmetricsData(message)) if message.contains("reserved for missing")
+        data.to_pmetrics_csv_bytes(),
+        Err(DataError::UnrepresentablePmetricsData(message))
+            if message.contains("reserved for missing")
     ));
 }
 
 #[test]
-fn old_bincode_data_retains_interpolation_behavior() {
-    let bytes = include_bytes!("../../tests/data/pmetrics_data_origin_main.bincode");
-    let mut data: Data = bincode::deserialize(bytes).unwrap();
-    let subject = data.subjects().into_iter().next().unwrap();
-    assert_eq!(subject.id(), "legacy-covariates");
-    assert_eq!(subject.occasions()[0].events().len(), 2);
-    let covariates = subject.occasions()[0].covariates();
-    let weight = covariates.get_covariate("wt").unwrap();
-    let original = weight.observations();
-    assert_eq!(original.len(), 2);
-    let midpoint = (original[0].0 + original[1].0) / 2.0;
-    let original_midpoint_value = weight.interpolate(midpoint).unwrap();
-    assert!((original_midpoint_value - 0.65).abs() < 1e-12);
-    let age = covariates.get_covariate("age").unwrap();
-    assert!(age.fixed());
-    assert_eq!(age.interpolate(10.0).unwrap(), 40.0);
-
-    let added = (original[1].0 + 0.1, original[1].1 + 1.0);
-    let updated = (original[1].0, original[1].1 + 0.25);
-    let weight = data
-        .get_subject_mut("legacy-covariates")
-        .unwrap()
-        .occasions_mut()[0]
-        .covariates_mut()
-        .get_covariate_mut("wt")
-        .unwrap();
-    weight.add_observation(added.0, added.1);
-    assert_eq!(weight.observations(), [original[0], original[1], added]);
-    assert!((weight.interpolate(midpoint).unwrap() - original_midpoint_value).abs() < 1e-12);
-
-    weight.update_observation(updated.0, updated.1);
-    assert_eq!(weight.observations(), [original[0], updated, added]);
-    assert_eq!(weight.interpolate(updated.0).unwrap(), updated.1);
-}
-
-#[test]
 fn evid_2_is_neither_written_nor_read() {
-    let bytes = fixture_data().as_bytes().unwrap();
+    let bytes = fixture_data().to_pmetrics_csv_bytes().unwrap();
     assert!(records(&bytes).iter().all(|row| row.get(1) != Some("2")));
 
     let unsupported = concat!(
@@ -540,16 +558,17 @@ fn evid_2_is_neither_written_nor_read() {
         "s,2,0,.,.,.,.,.,.,.,.,.,.,.,.,70\n"
     );
     assert!(matches!(
-        Data::from_bytes(unsupported.as_bytes()),
-        Err(DataError::InvalidPmetricsData(message)) if message.contains("unsupported EVID=2")
+        Data::from_pmetrics_csv_bytes(unsupported.as_bytes()),
+        Err(DataError::InvalidPmetricsData(message))
+            if message.contains("unsupported EVID=2 for subject s")
     ));
 }
 
 #[test]
 fn empty_reset_rows_are_rejected() {
-    let empty_reset = format!("{CORE_HEADER}s,4,0,.,.,.,.,.,.,.,.,.,.,.,.\n");
+    let empty_reset = format!("{}s,4,0,.,.,.,.,.,.,.,.,.,.,.,.\n", core_header());
     assert!(matches!(
-        Data::from_bytes(empty_reset.as_bytes()),
+        Data::from_pmetrics_csv_bytes(empty_reset.as_bytes()),
         Err(DataError::InvalidPmetricsData(message)) if message.contains("must contain a dose")
     ));
 }
@@ -560,11 +579,11 @@ fn programmatic_covariate_name_is_lowercased_for_export() {
         .bolus(0.0, 1.0, "iv")
         .covariate("WT", 0.0, 70.0)
         .build()]);
-    let bytes = data.as_bytes().unwrap();
+    let bytes = data.to_pmetrics_csv_bytes().unwrap();
     let mut reader = csv::Reader::from_reader(bytes.as_slice());
     assert_eq!(reader.headers().unwrap().iter().last(), Some("wt"));
 
-    let parsed = Data::from_bytes(&bytes).unwrap();
+    let parsed = Data::from_pmetrics_csv_bytes(&bytes).unwrap();
     let weight = parsed.subjects()[0].occasions()[0]
         .covariates()
         .get_covariate("wt")
@@ -581,7 +600,7 @@ fn covariate_key_and_name_may_differ_by_ascii_case() {
         .covariates_mut()
         .add_covariate("wt".to_string(), weight);
 
-    let bytes = Data::new(vec![subject]).as_bytes().unwrap();
+    let bytes = Data::new(vec![subject]).to_pmetrics_csv_bytes().unwrap();
     let mut reader = csv::Reader::from_reader(bytes.as_slice());
     assert_eq!(reader.headers().unwrap().iter().last(), Some("wt"));
 }
@@ -594,8 +613,9 @@ fn same_occasion_covariate_case_variants_are_rejected() {
         .covariate("wt", 0.0, 71.0)
         .build()]);
     assert!(matches!(
-        data.as_bytes(),
-        Err(DataError::InvalidPmetricsData(message)) if message.contains("both map to `wt`")
+        data.to_pmetrics_csv_bytes(),
+        Err(DataError::UnrepresentablePmetricsData(message))
+            if message.contains("both map to `wt`")
     ));
 }
 
@@ -608,7 +628,7 @@ fn covariate_case_variants_across_occasions_share_one_column() {
         .bolus(0.0, 2.0, "iv")
         .covariate("wt", 0.0, 71.0)
         .build()]);
-    let bytes = data.as_bytes().unwrap();
+    let bytes = data.to_pmetrics_csv_bytes().unwrap();
     let mut reader = csv::Reader::from_reader(bytes.as_slice());
     assert_eq!(
         reader
@@ -620,7 +640,7 @@ fn covariate_case_variants_across_occasions_share_one_column() {
         1
     );
 
-    let parsed = Data::from_bytes(&bytes).unwrap();
+    let parsed = Data::from_pmetrics_csv_bytes(&bytes).unwrap();
     assert_eq!(
         parsed.subjects()[0].occasions()[0]
             .covariates()
@@ -653,9 +673,49 @@ fn covariate_case_variants_with_different_behavior_are_rejected() {
         .set_covariate_fixed("WT", true));
 
     assert!(matches!(
-        Data::new(vec![subject]).as_bytes(),
-        Err(DataError::InvalidPmetricsData(message))
+        Data::new(vec![subject]).to_pmetrics_csv_bytes(),
+        Err(DataError::UnrepresentablePmetricsData(message))
             if message.contains("inconsistent fixed settings")
+    ));
+}
+
+#[test]
+fn subject_id_starting_with_comment_marker_is_rejected() {
+    let data = Data::new(vec![Subject::builder("#subject")
+        .bolus(0.0, 1.0, "iv")
+        .build()]);
+    assert!(matches!(
+        data.to_pmetrics_csv_bytes(),
+        Err(DataError::UnrepresentablePmetricsData(message))
+            if message.contains("cannot start with #")
+    ));
+}
+
+#[test]
+fn unicode_covariate_names_round_trip_with_one_normalization() {
+    let data = Data::new(vec![Subject::builder("s")
+        .bolus(0.0, 1.0, "iv")
+        .covariate("Ä", 0.0, 70.0)
+        .build()]);
+    let bytes = data.to_pmetrics_csv_bytes().unwrap();
+    let parsed = Data::from_pmetrics_csv_bytes(&bytes).unwrap();
+    assert!(parsed.subjects()[0].occasions()[0]
+        .covariates()
+        .get_covariate("ä")
+        .is_some());
+}
+
+#[test]
+fn unicode_covariate_name_collisions_are_rejected() {
+    let data = Data::new(vec![Subject::builder("s")
+        .bolus(0.0, 1.0, "iv")
+        .covariate("Ä", 0.0, 70.0)
+        .covariate("ä", 0.0, 71.0)
+        .build()]);
+    assert!(matches!(
+        data.to_pmetrics_csv_bytes(),
+        Err(DataError::UnrepresentablePmetricsData(message))
+            if message.contains("both map to `ä`")
     ));
 }
 
@@ -667,23 +727,23 @@ fn exact_linear_covariate_values_round_trip() {
         .covariate("x", 0.1, 0.1)
         .covariate("x", 0.2, 1.2)
         .build()]);
-    let first = data.as_bytes().unwrap();
-    let parsed = Data::from_bytes(&first).unwrap();
-    assert_eq!(parsed.as_bytes().unwrap(), first);
+    let first = data.to_pmetrics_csv_bytes().unwrap();
+    let parsed = Data::from_pmetrics_csv_bytes(&first).unwrap();
+    assert_eq!(parsed.to_pmetrics_csv_bytes().unwrap(), first);
     assert_data_equivalent(&data, &parsed);
 }
 
 #[test]
 fn malformed_and_nonfinite_values_fail_cleanly() {
-    let partial_error = format!("{CORE_HEADER}s,0,0,.,.,.,.,.,1,cp,0,0.1,.,.,.\n");
+    let partial_error = format!("{}s,0,0,.,.,.,.,.,1,cp,0,0.1,.,.,.\n", core_header());
     assert!(matches!(
-        Data::from_bytes(partial_error.as_bytes()),
+        Data::from_pmetrics_csv_bytes(partial_error.as_bytes()),
         Err(DataError::InvalidPmetricsData(_))
     ));
 
-    let nonfinite = format!("{CORE_HEADER}s,1,NaN,0,1,.,.,iv,.,.,.,.,.,.,.\n");
+    let nonfinite = format!("{}s,1,NaN,0,1,.,.,iv,.,.,.,.,.,.,.\n", core_header());
     assert!(matches!(
-        Data::from_bytes(nonfinite.as_bytes()),
+        Data::from_pmetrics_csv_bytes(nonfinite.as_bytes()),
         Err(DataError::NonFiniteValue { .. })
     ));
 
@@ -691,7 +751,7 @@ fn malformed_and_nonfinite_values_fail_cleanly() {
         .bolus(f64::INFINITY, 1.0, "iv")
         .build()]);
     assert!(matches!(
-        invalid_data.as_bytes(),
+        invalid_data.to_pmetrics_csv_bytes(),
         Err(DataError::NonFiniteValue { .. })
     ));
 }
