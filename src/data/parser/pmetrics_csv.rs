@@ -277,23 +277,24 @@ fn validate_occasion(
         return Ok(());
     }
 
-    if !matches!(first, Event::Bolus(_) | Event::Infusion(_)) || first.time() != 0.0 {
+    if !matches!(first, Event::Bolus(_) | Event::Infusion(_)) {
         return Err(unrepresentable(format!(
-            "subject `{}` occasion {occasion_index} cannot be represented: later occasions must begin with a dose at time 0",
+            "subject `{}` occasion {occasion_index} cannot be represented: later occasions must begin with a dose",
             subject.id()
         )));
     }
 
+    let reset_time = first.time();
     let has_bolus = events
         .iter()
-        .any(|event| event.time() == 0.0 && matches!(event, Event::Bolus(_)));
+        .any(|event| event.time() == reset_time && matches!(event, Event::Bolus(_)));
     let has_infusion = events
         .iter()
-        .any(|event| event.time() == 0.0 && matches!(event, Event::Infusion(_)));
+        .any(|event| event.time() == reset_time && matches!(event, Event::Infusion(_)));
     if has_bolus && has_infusion {
         return Err(unrepresentable(format!(
-            "subject `{}` occasion {occasion_index} has both bolus and infusion doses at time 0, so the reset dose is ambiguous",
-            subject.id()
+            "subject `{}` occasion {occasion_index} has both bolus and infusion doses at reset time {reset_time}, so the reset dose is ambiguous",
+            subject.id(),
         )));
     }
     Ok(())
@@ -353,9 +354,9 @@ impl Data {
     /// Return the dataset as Pmetrics CSV bytes.
     ///
     /// Every occasion must contain real events. Each occasion after the first
-    /// must begin with an unambiguous dose at time zero, and every covariate
-    /// observation must share a time with a dose or observation row. Doses
-    /// expanded from `ADDL`/`II` input are written as individual rows.
+    /// must begin with an unambiguous dose, and every covariate observation must
+    /// share a time with a dose or observation row. Doses expanded from
+    /// `ADDL`/`II` input are written as individual rows.
     ///
     /// Missing observations are written as `OUT=-99`; a real value of `-99`
     /// cannot be represented.

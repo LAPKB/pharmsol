@@ -312,8 +312,8 @@ fn later_occasion_starts_with_a_real_reset_dose() {
     let data = Data::new(vec![Subject::builder("s")
         .bolus(0.0, 1.0, "iv")
         .reset()
-        .bolus(0.0, 2.0, "oral")
-        .observation(1.0, 3.0, "cp")
+        .bolus(24.0, 2.0, "oral")
+        .observation(25.0, 3.0, "cp")
         .build()]);
     let rows = records(&data.to_pmetrics_csv_bytes().unwrap());
     assert_eq!(
@@ -322,6 +322,7 @@ fn later_occasion_starts_with_a_real_reset_dose() {
             .collect::<Vec<_>>(),
         ["1", "4", "0"]
     );
+    assert_eq!(rows[1].get(2), Some("24"));
     assert_eq!(rows[1].get(4), Some("2"));
     assert_eq!(rows[1].get(7), Some("oral"));
 }
@@ -332,15 +333,15 @@ fn mixed_dose_types_at_reset_time_are_not_exportable() {
         &[],
         concat!(
             "s,1,0,0,1,.,.,iv,.,.,.,.,.,.,.\n",
-            "s,4,0,2,2,.,.,iv,.,.,.,.,.,.,.\n",
-            "s,1,0,0,3,.,.,oral,.,.,.,.,.,.,.\n"
+            "s,4,24,2,2,.,.,iv,.,.,.,.,.,.,.\n",
+            "s,1,24,0,3,.,.,oral,.,.,.,.,.,.,.\n"
         ),
     );
     let data = Data::from_pmetrics_csv_bytes(input.as_bytes()).unwrap();
     assert!(matches!(
         data.to_pmetrics_csv_bytes(),
         Err(DataError::UnrepresentablePmetricsData(message))
-            if message.contains("both bolus and infusion doses at time 0")
+            if message.contains("both bolus and infusion doses at reset time 24")
     ));
 }
 
@@ -417,7 +418,7 @@ fn later_occasion_without_an_initial_dose_is_not_exportable() {
     assert!(matches!(
         data.to_pmetrics_csv_bytes(),
         Err(DataError::UnrepresentablePmetricsData(message))
-            if message.contains("later occasions must begin with a dose at time 0")
+            if message.contains("later occasions must begin with a dose")
     ));
 }
 
@@ -435,7 +436,7 @@ fn observation_at_reset_time_makes_later_occasion_unsafe_to_export() {
     assert!(matches!(
         data.to_pmetrics_csv_bytes(),
         Err(DataError::UnrepresentablePmetricsData(message))
-            if message.contains("later occasions must begin with a dose at time 0")
+            if message.contains("later occasions must begin with a dose")
     ));
 }
 
