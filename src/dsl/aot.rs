@@ -21,7 +21,9 @@ use super::compiled_backend_abi::{
     OUTPUTS_SYMBOL, ROUTE_BIOAVAILABILITY_SYMBOL, ROUTE_LAG_SYMBOL,
 };
 #[cfg(feature = "dsl-aot-load")]
-use super::native::{CompiledNativeModel, DenseKernelFn, NativeExecutionArtifact, NativeModelInfo};
+use super::native::{
+    CompiledModelFunction, CompiledNativeModel, NativeExecutionArtifact, NativeModelInfo,
+};
 #[cfg(feature = "dsl-aot")]
 use super::rust_backend::{emit_rust_backend_source, RustBackendFlavor};
 #[cfg(feature = "dsl-aot")]
@@ -34,8 +36,8 @@ use crate::build_support::{rustc_host_target, rustup_installed_targets};
 #[cfg(feature = "dsl-aot-load")]
 use pharmsol_dsl::ModelKind;
 #[cfg(feature = "dsl-aot")]
-use pharmsol_dsl::{analyze_module, lower_typed_model, parse_module, ExecutionModel};
-use pharmsol_dsl::{Diagnostic, DiagnosticReport, LoweringError, ParseError, SemanticError};
+use pharmsol_dsl::{analyze_module, compile_analyzed_model, parse_module, ExecutionModel};
+use pharmsol_dsl::{AnalysisError, CompileError, Diagnostic, DiagnosticReport, ParseError};
 
 /// ABI version for native AoT artifacts produced by this crate.
 pub const AOT_API_VERSION: u32 = 2;
@@ -116,9 +118,9 @@ pub enum AotError {
     #[error("failed to parse DSL source: {0}")]
     Parse(#[source] ParseError),
     #[error("failed to analyze DSL source: {0}")]
-    Semantic(#[source] SemanticError),
-    #[error("failed to lower DSL model: {0}")]
-    Lowering(#[source] LoweringError),
+    Analysis(#[source] AnalysisError),
+    #[error("failed to compile DSL model: {0}")]
+    Compile(#[source] CompileError),
     #[error("{0}")]
     ModelSelection(String),
     #[error("AoT artifact API version mismatch: expected {expected}, found {found}")]
@@ -135,8 +137,8 @@ impl AotError {
     pub fn diagnostic(&self) -> Option<&Diagnostic> {
         match self {
             Self::Parse(error) => Some(error.diagnostic()),
-            Self::Semantic(error) => Some(error.diagnostic()),
-            Self::Lowering(error) => Some(error.diagnostic()),
+            Self::Analysis(error) => Some(error.diagnostic()),
+            Self::Compile(error) => Some(error.diagnostic()),
             _ => None,
         }
     }
@@ -149,8 +151,8 @@ impl AotError {
         let source_name = source_name.into();
         match self {
             Self::Parse(error) => Some(error.diagnostic_report(source_name)),
-            Self::Semantic(error) => Some(error.diagnostic_report(source_name)),
-            Self::Lowering(error) => Some(error.diagnostic_report(source_name)),
+            Self::Analysis(error) => Some(error.diagnostic_report(source_name)),
+            Self::Compile(error) => Some(error.diagnostic_report(source_name)),
             _ => None,
         }
     }
@@ -160,8 +162,8 @@ impl fmt::Debug for AotError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Parse(error) => fmt::Display::fmt(error, f),
-            Self::Semantic(error) => fmt::Display::fmt(error, f),
-            Self::Lowering(error) => fmt::Display::fmt(error, f),
+            Self::Analysis(error) => fmt::Display::fmt(error, f),
+            Self::Compile(error) => fmt::Display::fmt(error, f),
             _ => fmt::Display::fmt(self, f),
         }
     }
@@ -213,18 +215,18 @@ pub fn compile_module_source_to_aot(
 ) -> Result<PathBuf, AotError> {
     let parsed =
         parse_module(source).map_err(|error| AotError::Parse(error.with_source(source)))?;
-    let typed =
-        analyze_module(&parsed).map_err(|error| AotError::Semantic(error.with_source(source)))?;
+    let analyzed =
+        analyze_module(&parsed).map_err(|error| AotError::Analysis(error.with_source(source)))?;
 
     let model = match model_name {
-        Some(name) => typed
+        Some(name) => analyzed
             .models
             .iter()
             .find(|model| model.name == name)
             .ok_or_else(|| {
                 AotError::ModelSelection(format!("model `{name}` not found in module"))
             })?,
-        None if typed.models.len() == 1 => &typed.models[0],
+        None if analyzed.models.len() == 1 => &analyzed.models[0],
         None => {
             return Err(AotError::ModelSelection(
                 "module contains multiple models; pass an explicit model name".to_string(),
@@ -232,13 +234,13 @@ pub fn compile_module_source_to_aot(
         }
     };
 
-    let execution =
-        lower_typed_model(model).map_err(|error| AotError::Lowering(error.with_source(source)))?;
+    let execution = compile_analyzed_model(model)
+        .map_err(|error| AotError::Compile(error.with_source(source)))?;
     export_execution_model_to_aot(&execution, options, event_callback)
 }
 
 #[cfg(feature = "dsl-aot")]
-/// Export a lowered execution model as a native AoT artifact.
+/// Export a compiled execution model as a native AoT artifact.
 ///
 /// Use this lower-level entrypoint when you already own the frontend pipeline
 /// and only need artifact generation.
@@ -301,7 +303,7 @@ pub fn export_execution_model_to_aot(
 /// Read only the metadata from a native AoT artifact.
 ///
 /// This is useful when you need to inspect model identity, routes, outputs, or
-/// buffer sizes without loading the executable kernels.
+/// buffer sizes without loading the executable functions.
 pub fn read_aot_model_info(path: impl AsRef<Path>) -> Result<NativeModelInfo, AotError> {
     let library = unsafe { Library::new(path.as_ref()) }
         .map_err(|error| AotError::Load(error.to_string()))?;
@@ -322,14 +324,14 @@ pub fn load_aot_model(path: impl AsRef<Path>) -> Result<CompiledNativeModel, Aot
     let artifact = unsafe {
         NativeExecutionArtifact::from_library(
             model_name,
-            load_optional_kernel(&library, DERIVE_SYMBOL),
-            load_optional_kernel(&library, DYNAMICS_SYMBOL),
-            load_required_kernel(&library, OUTPUTS_SYMBOL)?,
-            load_optional_kernel(&library, INIT_SYMBOL),
-            load_optional_kernel(&library, DRIFT_SYMBOL),
-            load_optional_kernel(&library, DIFFUSION_SYMBOL),
-            load_optional_kernel(&library, ROUTE_LAG_SYMBOL),
-            load_optional_kernel(&library, ROUTE_BIOAVAILABILITY_SYMBOL),
+            load_optional_function(&library, DERIVE_SYMBOL),
+            load_optional_function(&library, DYNAMICS_SYMBOL),
+            load_required_function(&library, OUTPUTS_SYMBOL)?,
+            load_optional_function(&library, INIT_SYMBOL),
+            load_optional_function(&library, DRIFT_SYMBOL),
+            load_optional_function(&library, DIFFUSION_SYMBOL),
+            load_optional_function(&library, ROUTE_LAG_SYMBOL),
+            load_optional_function(&library, ROUTE_BIOAVAILABILITY_SYMBOL),
             library,
         )
     };
@@ -436,20 +438,23 @@ unsafe fn read_model_info_from_library(library: &Library) -> Result<NativeModelI
 }
 
 #[cfg(feature = "dsl-aot-load")]
-unsafe fn load_required_kernel(
+unsafe fn load_required_function(
     library: &Library,
     name: &'static str,
-) -> Result<DenseKernelFn, AotError> {
-    let symbol: Symbol<DenseKernelFn> = library
+) -> Result<CompiledModelFunction, AotError> {
+    let symbol: Symbol<CompiledModelFunction> = library
         .get(name.as_bytes())
         .map_err(|_| AotError::MissingSymbol(name))?;
     Ok(*symbol)
 }
 
 #[cfg(feature = "dsl-aot-load")]
-unsafe fn load_optional_kernel(library: &Library, name: &'static str) -> Option<DenseKernelFn> {
+unsafe fn load_optional_function(
+    library: &Library,
+    name: &'static str,
+) -> Option<CompiledModelFunction> {
     library
-        .get::<DenseKernelFn>(name.as_bytes())
+        .get::<CompiledModelFunction>(name.as_bytes())
         .ok()
         .map(|symbol| *symbol)
 }
@@ -466,7 +471,7 @@ mod tests {
     use crate::test_fixtures::STRUCTURED_BLOCK_CORPUS;
     use crate::{Parameters, SubjectBuilderExt};
     use approx::assert_relative_eq;
-    use pharmsol_dsl::{DiagnosticPhase, DSL_SEMANTIC_GENERIC};
+    use pharmsol_dsl::{DiagnosticPhase, DSL_ANALYSIS_GENERIC};
     use std::sync::{Arc, Mutex};
     use tempfile::tempdir;
 
@@ -480,13 +485,13 @@ mod tests {
     fn load_corpus_model(name: &str) -> ExecutionModel {
         let source = STRUCTURED_BLOCK_CORPUS;
         let parsed = pharmsol_dsl::parse_module(source).expect("parse corpus module");
-        let typed = pharmsol_dsl::analyze_module(&parsed).expect("analyze corpus module");
-        let model = typed
+        let analyzed = pharmsol_dsl::analyze_module(&parsed).expect("analyze corpus module");
+        let model = analyzed
             .models
             .iter()
             .find(|model| model.name == name)
             .expect("model in corpus module");
-        pharmsol_dsl::lower_typed_model(model).expect("lower corpus model")
+        pharmsol_dsl::compile_analyzed_model(model).expect("lower corpus model")
     }
 
     fn resolve_cross_target_smoke_target() -> Result<CrossTargetSmokeDecision, String> {
@@ -783,7 +788,7 @@ mod tests {
     }
 
     #[test]
-    fn aot_compile_preserves_semantic_diagnostic_structure() {
+    fn aot_compile_preserves_analysis_diagnostic_structure() {
         let source = r#"
 model broken {
   kind ode
@@ -806,8 +811,8 @@ model broken {
         .expect_err("invalid DSL should fail before AoT compilation");
 
         let diagnostic = error.diagnostic().expect("AoT should expose diagnostic");
-        assert_eq!(diagnostic.phase, DiagnosticPhase::Semantic);
-        assert_eq!(diagnostic.code, DSL_SEMANTIC_GENERIC);
+        assert_eq!(diagnostic.phase, DiagnosticPhase::Analysis);
+        assert_eq!(diagnostic.code, DSL_ANALYSIS_GENERIC);
         assert!(diagnostic.message.contains("unknown route `oral`"));
         let rendered = error
             .render_diagnostic(source)
@@ -826,7 +831,7 @@ model broken {
     }
 
     #[test]
-    fn aot_compile_preserves_semantic_suggestions() {
+    fn aot_compile_preserves_analysis_suggestions() {
         let source = r#"
 model broken {
     kind ode

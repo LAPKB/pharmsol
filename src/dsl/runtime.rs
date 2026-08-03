@@ -109,8 +109,8 @@ use crate::{
     Parameters, PharmsolError, Subject, ValidatedModelMetadata,
 };
 use pharmsol_dsl::{
-    analyze_module, lower_typed_model, parse_module, Diagnostic, DiagnosticReport, ExecutionModel,
-    LoweringError, ModelKind, ParseError, SemanticError,
+    analyze_module, compile_analyzed_model, parse_module, AnalysisError, CompileError, Diagnostic,
+    DiagnosticReport, ExecutionModel, ModelKind, ParseError,
 };
 
 pub type RuntimeModelInfo = NativeModelInfo;
@@ -267,9 +267,9 @@ pub enum RuntimeError {
     #[error("failed to parse DSL source: {0}")]
     Parse(#[source] ParseError),
     #[error("failed to analyze DSL source: {0}")]
-    Semantic(#[source] SemanticError),
+    Semantic(#[source] AnalysisError),
     #[error("failed to lower DSL model: {0}")]
-    Lowering(#[source] LoweringError),
+    Lowering(#[source] CompileError),
     #[error("{0}")]
     ModelSelection(String),
     #[cfg(feature = "dsl-jit")]
@@ -339,18 +339,18 @@ pub fn compile_module_source_to_runtime(
 ) -> Result<CompiledRuntimeModel, RuntimeError> {
     let parsed =
         parse_module(source).map_err(|error| RuntimeError::Parse(error.with_source(source)))?;
-    let typed = analyze_module(&parsed)
+    let analyzed = analyze_module(&parsed)
         .map_err(|error| RuntimeError::Semantic(error.with_source(source)))?;
 
     let model = match model_name {
-        Some(name) => typed
+        Some(name) => analyzed
             .models
             .iter()
             .find(|model| model.name == name)
             .ok_or_else(|| {
                 RuntimeError::ModelSelection(format!("model `{name}` not found in module"))
             })?,
-        None if typed.models.len() == 1 => &typed.models[0],
+        None if analyzed.models.len() == 1 => &analyzed.models[0],
         None => {
             return Err(RuntimeError::ModelSelection(
                 "module contains multiple models; pass an explicit model name".to_string(),
@@ -358,7 +358,7 @@ pub fn compile_module_source_to_runtime(
         }
     };
 
-    let execution = lower_typed_model(model)
+    let execution = compile_analyzed_model(model)
         .map_err(|error| RuntimeError::Lowering(error.with_source(source)))?;
     compile_execution_model_to_runtime(&execution, target, event_callback).map_err(|error| {
         #[cfg(feature = "dsl-jit")]
@@ -369,7 +369,7 @@ pub fn compile_module_source_to_runtime(
     })
 }
 
-/// Compile a lowered execution model to a selected runtime backend.
+/// Compile a compiled execution model to a selected runtime backend.
 ///
 /// Use this when you already own the frontend pipeline and only need the final
 /// backend step.
@@ -445,7 +445,7 @@ pub fn compile_module_source_to_runtime_wasm(
 }
 
 #[cfg(feature = "dsl-wasm")]
-/// Compile a lowered execution model straight to a host-side runtime model via
+/// Compile a compiled execution model straight to a host-side runtime model via
 /// the WASM path.
 pub fn compile_execution_model_to_runtime_wasm(
     model: &ExecutionModel,
@@ -596,13 +596,13 @@ out(cp) = central / v ~ continuous()
 
     fn corpus_model(name: &str) -> ExecutionModel {
         let parsed = pharmsol_dsl::parse_module(corpus_source()).expect("parse corpus module");
-        let typed = pharmsol_dsl::analyze_module(&parsed).expect("analyze corpus module");
-        let model = typed
+        let analyzed = pharmsol_dsl::analyze_module(&parsed).expect("analyze corpus module");
+        let model = analyzed
             .models
             .iter()
             .find(|model| model.name == name)
             .expect("model present in corpus module");
-        pharmsol_dsl::lower_typed_model(model).expect("lower corpus model")
+        pharmsol_dsl::compile_analyzed_model(model).expect("lower corpus model")
     }
 
     fn ode_subject() -> Subject {

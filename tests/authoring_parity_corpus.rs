@@ -11,7 +11,7 @@ use pharmsol::prelude::*;
 #[cfg(feature = "dsl-jit")]
 use pharmsol::Predictions;
 use pharmsol_dsl::{
-    analyze_model, lower_typed_model, parse_model, CovariateInterpolation, ExecutionModel,
+    analyze_model, compile_analyzed_model, parse_model, CovariateInterpolation, ExecutionModel,
     ModelKind, RouteKind as DslRouteKind,
 };
 
@@ -376,8 +376,8 @@ impl RouteKindParity {
 
 fn load_execution_model(src: &str) -> ExecutionModel {
     let parsed = parse_model(src).expect("DSL model should parse");
-    let typed = analyze_model(&parsed).expect("DSL model should analyze");
-    lower_typed_model(&typed).expect("DSL model should lower")
+    let analyzed = analyze_model(&parsed).expect("DSL model should analyze");
+    compile_analyzed_model(&analyzed).expect("DSL model should compile")
 }
 
 #[cfg(feature = "dsl-jit")]
@@ -487,7 +487,7 @@ fn dsl_metadata_view(src: &str) -> MetadataParityView {
         parameters,
         covariates,
         states,
-        route_input_count: model.abi.route_buffer.len,
+        route_input_count: model.layout.route_buffer.len,
         routes,
         outputs,
         analytical_kernel: model.metadata.analytical,
@@ -1397,8 +1397,9 @@ fn route_input_policy_mismatches_are_detected_explicitly() {
 fn invalid_dsl_infusion_route_properties_fail_explicitly() {
     let model =
         parse_model(ODE_INVALID_INFUSION_LAG_DSL).expect("invalid DSL fixture should parse");
-    let typed = analyze_model(&model).expect("invalid DSL fixture should analyze");
-    let error = lower_typed_model(&typed).expect_err("infusion lag should fail during lowering");
+    let analyzed = analyze_model(&model).expect("invalid DSL fixture should analyze");
+    let error =
+        compile_analyzed_model(&analyzed).expect_err("infusion lag should fail during lowering");
 
     assert!(error
         .to_string()
