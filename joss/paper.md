@@ -45,11 +45,11 @@ Several tools exist for performing pharmacokinetic and pharmacodynamic modelling
 
 The choice to develop `pharmsol` as a new library rather than contribute to the existing solutions is motivated by several factors. First, Rust provides compile-time memory safety guarantees which are not available in Fortran or C++, without sacrificing performance. This is especially important for software used in healthcare settings. Second, existing alternatives are coupled to their parent frameworks, and may be difficult to integrate with new solutions or software. 
 
-The aim of `pharmsol` is to provide developers of higher-level software with a library for performing efficient and memory-safe pharmacokinetic modeling and simulation. Importantly, `pharmsol` is open-source with under a GPL-3.0 license, allowing developers to inspect, extend, and integrate the library into new or existing solutions, given that derived works remain open-source.
+The aim of `pharmsol` is to provide developers of higher-level software with a library for performing efficient and memory-safe pharmacokinetic modeling and simulation. Importantly, `pharmsol` is open-source released under a GPL-3.0 license, allowing developers to inspect, extend, and integrate the library into new or existing solutions, given that derived works remain open-source.
 
 # Software design
 
-To the authors' knowledge, `pharmsol` is the first software written in Rust for pharmacokinetic modeling and simulation. The design principle of `pharmsol` is to provide researchers and pharmacometricians a flexible and efficient library for solving pharmacokinetic problems.
+To the authors' knowledge, `pharmsol` is the first software written in Rust for pharmacokinetic modeling and simulation. The design principle of `pharmsol` is to provide researchers and pharmacometricians with a flexible and efficient library for solving pharmacokinetic problems.
 
 These problems are defined by two key aspects: the pharmacokinetic data, and the structural model. While the data structure is explained in detail below, the structural model is more complex. In `pharmsol`, models are defined using a set of closures, providing methods to define the set of equations that describe the mass transfer of drug, as well as initial conditions and output equations, i.e. detailing the initial and observed states of the system. Bioavailability terms and lag-time of absorption are also supported. Covariates may be applied on both parameters and state values. Importantly, `pharmsol` provides both linear interpolation and carry-forward for covariates, both common in population pharmacokinetic models.
 
