@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::model_info::NativeModelInfo;
-use pharmsol_dsl::execution::{ExecutionModel, KernelRole};
+use pharmsol_dsl::execution::{ExecutionModel, ModelFunctionKind};
 
 #[cfg(any(
     test,
@@ -121,7 +121,7 @@ pub const JS_KERNEL_EXPORTS: [(&str, &str); 8] = [
 ];
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CompiledKernelAvailability {
+pub struct CompiledFunctionAvailability {
     pub derive: bool,
     pub dynamics: bool,
     pub outputs: bool,
@@ -132,36 +132,38 @@ pub struct CompiledKernelAvailability {
     pub route_bioavailability: bool,
 }
 
-impl CompiledKernelAvailability {
+impl CompiledFunctionAvailability {
     pub fn from_execution_model(model: &ExecutionModel) -> Self {
         let mut availability = Self::default();
-        for kernel in &model.kernels {
-            match kernel.role {
-                KernelRole::Derive => availability.derive = true,
-                KernelRole::Dynamics => availability.dynamics = true,
-                KernelRole::Outputs => availability.outputs = true,
-                KernelRole::Init => availability.init = true,
-                KernelRole::Drift => availability.drift = true,
-                KernelRole::Diffusion => availability.diffusion = true,
-                KernelRole::RouteLag => availability.route_lag = true,
-                KernelRole::RouteBioavailability => availability.route_bioavailability = true,
-                KernelRole::Analytical => {}
+        for function in &model.functions {
+            match function.kind {
+                ModelFunctionKind::Derive => availability.derive = true,
+                ModelFunctionKind::Dynamics => availability.dynamics = true,
+                ModelFunctionKind::Outputs => availability.outputs = true,
+                ModelFunctionKind::Init => availability.init = true,
+                ModelFunctionKind::Drift => availability.drift = true,
+                ModelFunctionKind::Diffusion => availability.diffusion = true,
+                ModelFunctionKind::RouteLag => availability.route_lag = true,
+                ModelFunctionKind::RouteBioavailability => {
+                    availability.route_bioavailability = true
+                }
+                ModelFunctionKind::Analytical => {}
             }
         }
         availability
     }
 
-    pub fn has(self, role: KernelRole) -> bool {
+    pub fn has(self, role: ModelFunctionKind) -> bool {
         match role {
-            KernelRole::Derive => self.derive,
-            KernelRole::Dynamics => self.dynamics,
-            KernelRole::Outputs => self.outputs,
-            KernelRole::Init => self.init,
-            KernelRole::Drift => self.drift,
-            KernelRole::Diffusion => self.diffusion,
-            KernelRole::RouteLag => self.route_lag,
-            KernelRole::RouteBioavailability => self.route_bioavailability,
-            KernelRole::Analytical => false,
+            ModelFunctionKind::Derive => self.derive,
+            ModelFunctionKind::Dynamics => self.dynamics,
+            ModelFunctionKind::Outputs => self.outputs,
+            ModelFunctionKind::Init => self.init,
+            ModelFunctionKind::Drift => self.drift,
+            ModelFunctionKind::Diffusion => self.diffusion,
+            ModelFunctionKind::RouteLag => self.route_lag,
+            ModelFunctionKind::RouteBioavailability => self.route_bioavailability,
+            ModelFunctionKind::Analytical => false,
         }
     }
 }
@@ -170,7 +172,7 @@ impl CompiledKernelAvailability {
 pub struct CompiledModelInfoEnvelope {
     pub abi_version: u32,
     pub model: NativeModelInfo,
-    pub kernels: CompiledKernelAvailability,
+    pub functions: CompiledFunctionAvailability,
 }
 
 #[cfg(any(feature = "dsl-aot", feature = "dsl-wasm-compile"))]
@@ -181,7 +183,7 @@ pub fn compiled_model_info_envelope(
     CompiledModelInfoEnvelope {
         abi_version,
         model: NativeModelInfo::from_execution_model(model),
-        kernels: CompiledKernelAvailability::from_execution_model(model),
+        functions: CompiledFunctionAvailability::from_execution_model(model),
     }
 }
 
@@ -208,17 +210,17 @@ pub fn decode_compiled_model_info(
 }
 
 #[cfg(any(feature = "dsl-aot", feature = "dsl-wasm-compile"))]
-pub fn compiled_kernel_symbol(role: KernelRole) -> Option<&'static str> {
+pub fn compiled_function_symbol(role: ModelFunctionKind) -> Option<&'static str> {
     match role {
-        KernelRole::Derive => Some(DERIVE_SYMBOL),
-        KernelRole::Dynamics => Some(DYNAMICS_SYMBOL),
-        KernelRole::Outputs => Some(OUTPUTS_SYMBOL),
-        KernelRole::Init => Some(INIT_SYMBOL),
-        KernelRole::Drift => Some(DRIFT_SYMBOL),
-        KernelRole::Diffusion => Some(DIFFUSION_SYMBOL),
-        KernelRole::RouteLag => Some(ROUTE_LAG_SYMBOL),
-        KernelRole::RouteBioavailability => Some(ROUTE_BIOAVAILABILITY_SYMBOL),
-        KernelRole::Analytical => None,
+        ModelFunctionKind::Derive => Some(DERIVE_SYMBOL),
+        ModelFunctionKind::Dynamics => Some(DYNAMICS_SYMBOL),
+        ModelFunctionKind::Outputs => Some(OUTPUTS_SYMBOL),
+        ModelFunctionKind::Init => Some(INIT_SYMBOL),
+        ModelFunctionKind::Drift => Some(DRIFT_SYMBOL),
+        ModelFunctionKind::Diffusion => Some(DIFFUSION_SYMBOL),
+        ModelFunctionKind::RouteLag => Some(ROUTE_LAG_SYMBOL),
+        ModelFunctionKind::RouteBioavailability => Some(ROUTE_BIOAVAILABILITY_SYMBOL),
+        ModelFunctionKind::Analytical => None,
     }
 }
 
@@ -241,7 +243,7 @@ pub struct OutputBufferPlan {
 #[cfg(test)]
 pub fn output_buffer_plan(
     info: &NativeModelInfo,
-    role: KernelRole,
+    role: ModelFunctionKind,
     aliases_states: bool,
     aliases_derived: bool,
 ) -> OutputBufferPlan {
@@ -255,21 +257,22 @@ pub fn output_buffer_plan(
 
     OutputBufferPlan {
         binding,
-        len: kernel_output_len(info, role),
+        len: function_output_len(info, role),
         zero_before_call: matches!(binding, OutputBufferBinding::Scratch),
     }
 }
 
 #[cfg(test)]
-fn kernel_output_len(info: &NativeModelInfo, role: KernelRole) -> usize {
+fn function_output_len(info: &NativeModelInfo, role: ModelFunctionKind) -> usize {
     match role {
-        KernelRole::Derive => info.derived_len,
-        KernelRole::Dynamics | KernelRole::Init | KernelRole::Drift | KernelRole::Diffusion => {
-            info.state_len
-        }
-        KernelRole::Outputs => info.output_len,
-        KernelRole::RouteLag | KernelRole::RouteBioavailability => info.route_len,
-        KernelRole::Analytical => 0,
+        ModelFunctionKind::Derive => info.derived_len,
+        ModelFunctionKind::Dynamics
+        | ModelFunctionKind::Init
+        | ModelFunctionKind::Drift
+        | ModelFunctionKind::Diffusion => info.state_len,
+        ModelFunctionKind::Outputs => info.output_len,
+        ModelFunctionKind::RouteLag | ModelFunctionKind::RouteBioavailability => info.route_len,
+        ModelFunctionKind::Analytical => 0,
     }
 }
 
@@ -313,7 +316,7 @@ mod tests {
     }
 
     #[test]
-    fn compiled_model_info_round_trips_kernel_availability_and_dimensions() {
+    fn compiled_model_info_round_trips_function_availability_and_dimensions() {
         let envelope = CompiledModelInfoEnvelope {
             abi_version: 7,
             model: NativeModelInfo {
@@ -358,7 +361,7 @@ mod tests {
                 analytical: None,
                 particles: Some(32),
             },
-            kernels: CompiledKernelAvailability {
+            functions: CompiledFunctionAvailability {
                 derive: true,
                 dynamics: true,
                 outputs: true,
@@ -394,17 +397,17 @@ mod tests {
             particles: None,
         };
 
-        let scratch = output_buffer_plan(&info, KernelRole::Diffusion, false, false);
+        let scratch = output_buffer_plan(&info, ModelFunctionKind::Diffusion, false, false);
         assert_eq!(scratch.binding, OutputBufferBinding::Scratch);
         assert_eq!(scratch.len, 2);
         assert!(scratch.zero_before_call);
 
-        let states = output_buffer_plan(&info, KernelRole::Dynamics, true, false);
+        let states = output_buffer_plan(&info, ModelFunctionKind::Dynamics, true, false);
         assert_eq!(states.binding, OutputBufferBinding::States);
         assert_eq!(states.len, 2);
         assert!(!states.zero_before_call);
 
-        let derived = output_buffer_plan(&info, KernelRole::Derive, false, true);
+        let derived = output_buffer_plan(&info, ModelFunctionKind::Derive, false, true);
         assert_eq!(derived.binding, OutputBufferBinding::Derived);
         assert_eq!(derived.len, 3);
         assert!(!derived.zero_before_call);

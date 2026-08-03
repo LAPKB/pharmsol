@@ -402,6 +402,13 @@ impl<'a> Lexer<'a> {
                 Span::new(start, self.pos),
             )
         })?;
+        if !value.is_finite() {
+            return Err(ParseError::new(
+                format!("number literal `{raw}` is too large and overflows to infinity"),
+                Span::new(start, self.pos),
+            )
+            .with_help("use a smaller magnitude, such as `1e308`"));
+        }
         Ok(TokenKind::Number(value))
     }
 
