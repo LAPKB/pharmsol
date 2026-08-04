@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::mem;
 use std::sync::Arc;
 
+use cranelift::codegen::ir::MemFlagsData;
 use cranelift::codegen::settings;
 use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
@@ -491,7 +492,7 @@ fn emit_statement_function(
     };
     emit_block(&mut builder, &env, &program.body)?;
     builder.ins().return_(&[]);
-    builder.finalize();
+    builder.finalize(module.target_config());
 
     module
         .define_function(function_id, ctx)
@@ -639,7 +640,7 @@ fn emit_for(
     builder.switch_to_block(loop_body);
     emit_stmt_list(builder, env, &for_stmt.body)?;
     let current = builder.use_var(binding.variable);
-    let next = builder.ins().iadd_imm(current, 1);
+    let next = builder.ins().iadd_imm_s(current, 1);
     builder.def_var(binding.variable, next);
     builder.ins().jump(loop_header, &[]);
     builder.seal_block(loop_body);
@@ -786,7 +787,7 @@ fn lower_unary(
         AnalyzedUnaryOp::Not => {
             let condition = as_bool(builder, value, span)?;
             let condition_i64 = bool_to_i64(builder, condition);
-            let is_zero = builder.ins().icmp_imm(IntCC::Equal, condition_i64, 0);
+            let is_zero = builder.ins().icmp_imm_s(IntCC::Equal, condition_i64, 0);
             let compiled = bool_to_i64(builder, is_zero);
             Ok(LoweredValue {
                 value: compiled,
@@ -960,7 +961,7 @@ fn lower_math_call(
             let value = cast_value(builder, args[0], ValueType::Int, span)?;
             let is_negative = builder
                 .ins()
-                .icmp_imm(IntCC::SignedLessThan, value.value, 0);
+                .icmp_imm_s(IntCC::SignedLessThan, value.value, 0);
             let negated = builder.ins().ineg(value.value);
             Ok(LoweredValue {
                 value: builder.ins().select(is_negative, negated, value.value),
@@ -1135,7 +1136,7 @@ fn as_bool(
 ) -> Result<Value, JitCompileError> {
     match value.ty {
         ValueType::Bool | ValueType::Int => {
-            Ok(builder.ins().icmp_imm(IntCC::NotEqual, value.value, 0))
+            Ok(builder.ins().icmp_imm_s(IntCC::NotEqual, value.value, 0))
         }
         ValueType::Real => {
             let zero = builder.ins().f64const(0.0);
@@ -1181,13 +1182,13 @@ fn load_fixed(
 ) -> Value {
     builder
         .ins()
-        .load(clif_type(ty), MemFlags::new(), base, (index * 8) as i32)
+        .load(clif_type(ty), MemFlagsData::new(), base, (index * 8) as i32)
 }
 
 fn store_fixed(builder: &mut FunctionBuilder<'_>, base: Value, index: usize, value: Value) {
     builder
         .ins()
-        .store(MemFlags::new(), value, base, (index * 8) as i32);
+        .store(MemFlagsData::new(), value, base, (index * 8) as i32);
 }
 
 fn load_state_ref(
@@ -1200,7 +1201,7 @@ fn load_state_ref(
     let address = state_address(builder, env, base, state_ref)?;
     Ok(builder
         .ins()
-        .load(clif_type(ty), MemFlags::new(), address, 0))
+        .load(clif_type(ty), MemFlagsData::new(), address, 0))
 }
 
 fn store_state_ref(
@@ -1211,7 +1212,7 @@ fn store_state_ref(
     value: Value,
 ) -> Result<(), JitCompileError> {
     let address = state_address(builder, env, base, state_ref)?;
-    builder.ins().store(MemFlags::new(), value, address, 0);
+    builder.ins().store(MemFlagsData::new(), value, address, 0);
     Ok(())
 }
 
@@ -1226,13 +1227,13 @@ fn state_address(
         let index = cast_value(builder, index_expr, ValueType::Int, state_ref.span)?;
         builder
             .ins()
-            .iadd_imm(index.value, state_ref.base_offset as i64)
+            .iadd_imm_s(index.value, state_ref.base_offset as i64)
     } else {
         builder
             .ins()
             .iconst(types::I64, state_ref.base_offset as i64)
     };
-    let byte_offset = builder.ins().imul_imm(element_index, 8);
+    let byte_offset = builder.ins().imul_imm_s(element_index, 8);
     Ok(builder.ins().iadd(base, byte_offset))
 }
 
