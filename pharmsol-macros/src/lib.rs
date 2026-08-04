@@ -8,17 +8,160 @@ use pharmsol_dsl::{
     AnalyticalStructureInputPlan, AnalyticalStructureInputSource,
 };
 use proc_macro::TokenStream;
-use proc_macro2::{Span, TokenStream as TokenStream2};
+use proc_macro2::{Group, Spacing, Span, TokenStream as TokenStream2, TokenTree};
+use proc_macro_crate::{crate_name, FoundCrate};
 use quote::{quote, ToTokens};
 use std::collections::{HashMap, HashSet};
 use syn::{
+    ext::IdentExt,
     parse::{Parse, ParseStream, Parser},
     punctuated::Punctuated,
     token,
     visit::Visit,
     visit_mut::VisitMut,
-    Expr, ExprClosure, Ident, Lit, LitInt, LitStr, Pat, Stmt, Token,
+    Expr, ExprClosure, Ident, Lit, LitInt, LitStr, Pat, Path, PathArguments, Stmt, Token,
 };
+
+// ---------------------------------------------------------------------------
+// Crate path resolution
+// ---------------------------------------------------------------------------
+//
+// Every `quote!` block in this file emits the placeholder path `::pharmsol`.
+// Just before a macro returns, `rewrite_crate_paths` replaces that placeholder
+// with the path resolved for the current invocation, so nested macro calls
+// (`::pharmsol::fetch_cov!`) are rewritten alongside plain type paths.
+//
+// A leading `::` only resolves against the extern prelude, which is populated
+// from direct dependencies, so it breaks for crates that receive `pharmsol`
+// transitively. The `macro_rules!` wrappers in `pharmsol` therefore forward
+// `$crate` through the `@pharmsol_crate(...)` marker below, which resolves
+// correctly no matter how the caller reached the crate.
+
+mod kw {
+    syn::custom_keyword!(pharmsol_crate);
+}
+
+/// Consumes the `@pharmsol_crate($crate)` prefix injected by the `macro_rules!`
+/// wrappers in `pharmsol`.
+fn parse_crate_marker(input: ParseStream) -> syn::Result<Option<TokenStream2>> {
+    if !(input.peek(Token![@]) && input.peek2(kw::pharmsol_crate)) {
+        return Ok(None);
+    }
+
+    input.parse::<Token![@]>()?;
+    input.parse::<kw::pharmsol_crate>()?;
+    let marker;
+    syn::parenthesized!(marker in input);
+    let path = marker.parse::<TokenStream2>()?;
+    if input.peek(Token![,]) {
+        input.parse::<Token![,]>()?;
+    }
+
+    Ok(Some(path))
+}
+
+/// Resolves the crate path for one macro invocation.
+///
+/// An explicit `crate: "..."` key wins, then the `$crate` forwarded by the
+/// wrapper macros, then detection from the caller's `Cargo.toml`.
+fn resolve_crate_path(
+    explicit: Option<LitStr>,
+    forwarded: Option<TokenStream2>,
+) -> syn::Result<TokenStream2> {
+    if let Some(literal) = explicit {
+        let path: Path = literal.parse()?;
+        if let Some(segment) = path
+            .segments
+            .iter()
+            .find(|segment| !matches!(segment.arguments, PathArguments::None))
+        {
+            return Err(syn::Error::new_spanned(
+                segment,
+                "`crate` must be a plain module path without generic arguments",
+            ));
+        }
+        return Ok(absolute_crate_path(path));
+    }
+
+    Ok(forwarded.unwrap_or_else(detect_crate_path))
+}
+
+/// Anchors a user-supplied path so it resolves the same way from any module.
+///
+/// `pmcore::pharmsol` becomes `::pmcore::pharmsol`, while `crate::…`,
+/// `self::…`, `super::…`, and already-absolute paths are left untouched.
+fn absolute_crate_path(path: Path) -> TokenStream2 {
+    let anchored = path.leading_colon.is_some()
+        || path.segments.first().is_some_and(|segment| {
+            let first = segment.ident.to_string();
+            matches!(first.as_str(), "crate" | "self" | "super")
+        });
+
+    if anchored {
+        quote! { #path }
+    } else {
+        quote! { ::#path }
+    }
+}
+
+/// Detects how the downstream crate refers to `pharmsol`, honouring renamed
+/// dependencies (`pharmsol = { package = "…" }`).
+fn detect_crate_path() -> TokenStream2 {
+    match crate_name("pharmsol") {
+        Ok(FoundCrate::Name(name)) => {
+            let ident = Ident::new(&name, Span::call_site());
+            quote! { ::#ident }
+        }
+        // `Itself` covers pharmsol's own tests, examples, benches, and doctests,
+        // which all link the library through the extern prelude. `pharmsol`
+        // itself declares `extern crate self as pharmsol;` so the same path also
+        // resolves from inside the library.
+        Ok(FoundCrate::Itself) | Err(_) => quote! { ::pharmsol },
+    }
+}
+
+/// Replaces every `::pharmsol` placeholder prefix in `tokens` with `krate`.
+fn rewrite_crate_paths(tokens: TokenStream2, krate: &TokenStream2) -> TokenStream2 {
+    let trees: Vec<TokenTree> = tokens.into_iter().collect();
+    let mut out = TokenStream2::new();
+    let mut index = 0;
+
+    while index < trees.len() {
+        if is_crate_placeholder(&trees[index..]) {
+            out.extend(krate.clone());
+            index += 3;
+            continue;
+        }
+
+        match &trees[index] {
+            TokenTree::Group(group) => {
+                let mut rewritten = Group::new(
+                    group.delimiter(),
+                    rewrite_crate_paths(group.stream(), krate),
+                );
+                rewritten.set_span(group.span());
+                out.extend([TokenTree::Group(rewritten)]);
+            }
+            other => out.extend([other.clone()]),
+        }
+
+        index += 1;
+    }
+
+    out
+}
+
+fn is_crate_placeholder(trees: &[TokenTree]) -> bool {
+    let [TokenTree::Punct(first), TokenTree::Punct(second), TokenTree::Ident(ident), ..] = trees
+    else {
+        return false;
+    };
+
+    first.as_char() == ':'
+        && first.spacing() == Spacing::Joint
+        && second.as_char() == ':'
+        && ident == "pharmsol"
+}
 
 // ---------------------------------------------------------------------------
 // Macro input parsing
@@ -26,6 +169,7 @@ use syn::{
 
 struct OdeInput {
     name: LitStr,
+    krate: TokenStream2,
     params: Vec<Ident>,
     covariates: Vec<Ident>,
     states: Vec<Ident>,
@@ -40,6 +184,7 @@ struct OdeInput {
 
 struct AnalyticalInput {
     name: LitStr,
+    krate: TokenStream2,
     params: Vec<Ident>,
     derived: Vec<Ident>,
     covariates: Vec<Ident>,
@@ -56,6 +201,7 @@ struct AnalyticalInput {
 
 struct SdeInput {
     name: LitStr,
+    krate: TokenStream2,
     params: Vec<Ident>,
     covariates: Vec<Ident>,
     states: Vec<Ident>,
@@ -207,7 +353,9 @@ impl Parse for OdeRouteDecl {
 
 impl Parse for OdeInput {
     fn parse(input: ParseStream) -> syn::Result<Self> {
+        let forwarded_krate = parse_crate_marker(input)?;
         let mut name = None;
+        let mut krate = None;
         let mut params = None;
         let mut covariates = None;
         let mut states = None;
@@ -220,11 +368,12 @@ impl Parse for OdeInput {
         let mut out = None;
 
         while !input.is_empty() {
-            let key: Ident = input.parse()?;
+            let key: Ident = input.call(Ident::parse_any)?;
             input.parse::<Token![:]>()?;
 
             match key.to_string().as_str() {
                 "name" => set_once_ode(&mut name, input.parse()?, &key, "name")?,
+                "crate" => set_once_ode(&mut krate, input.parse::<LitStr>()?, &key, "crate")?,
                 "params" => set_once_ode(&mut params, parse_ident_list(input)?, &key, "params")?,
                 "covariates" => set_once_ode(
                     &mut covariates,
@@ -249,7 +398,7 @@ impl Parse for OdeInput {
                     return Err(syn::Error::new_spanned(
                         &key,
                         format!(
-                            "unknown field `{other}`, expected one of: name, params, covariates, states, outputs, routes, diffeq, lag, fa, init, out"
+                            "unknown field `{other}`, expected one of: name, crate, params, covariates, states, outputs, routes, diffeq, lag, fa, init, out"
                         ),
                     ));
                 }
@@ -266,6 +415,7 @@ impl Parse for OdeInput {
                 "declaration-first `ode!` requires `name`, `params`, `states`, `outputs`, and `routes`; the old inferred-dimensions form has been removed",
             )
         })?;
+        let krate = resolve_crate_path(krate, forwarded_krate)?;
         let params = params.ok_or_else(|| missing_required_ode_field("params"))?;
         let covariates = covariates.unwrap_or_default();
         let states = states.ok_or_else(|| missing_required_ode_field("states"))?;
@@ -304,6 +454,7 @@ impl Parse for OdeInput {
 
         Ok(Self {
             name,
+            krate,
             params,
             covariates,
             states,
@@ -329,7 +480,9 @@ impl Parse for RoutePropertyEntry {
 
 impl Parse for AnalyticalInput {
     fn parse(input: ParseStream) -> syn::Result<Self> {
+        let forwarded_krate = parse_crate_marker(input)?;
         let mut name = None;
+        let mut krate = None;
         let mut params = None;
         let mut derived = None;
         let mut covariates = None;
@@ -344,11 +497,14 @@ impl Parse for AnalyticalInput {
         let mut out = None;
 
         while !input.is_empty() {
-            let key: Ident = input.parse()?;
+            let key: Ident = input.call(Ident::parse_any)?;
             input.parse::<Token![:]>()?;
 
             match key.to_string().as_str() {
                 "name" => set_once_analytical(&mut name, input.parse()?, &key, "name")?,
+                "crate" => {
+                    set_once_analytical(&mut krate, input.parse::<LitStr>()?, &key, "crate")?
+                }
                 "params" => {
                     set_once_analytical(&mut params, parse_ident_list(input)?, &key, "params")?
                 }
@@ -391,7 +547,7 @@ impl Parse for AnalyticalInput {
                     return Err(syn::Error::new_spanned(
                         &key,
                         format!(
-                            "unknown field `{other}`, expected one of: name, params, derived, covariates, states, outputs, routes, structure, derive, lag, fa, init, out"
+                            "unknown field `{other}`, expected one of: name, crate, params, derived, covariates, states, outputs, routes, structure, derive, lag, fa, init, out"
                         ),
                     ));
                 }
@@ -403,6 +559,7 @@ impl Parse for AnalyticalInput {
         }
 
         let name = name.ok_or_else(|| missing_required_analytical_field("name"))?;
+        let krate = resolve_crate_path(krate, forwarded_krate)?;
         let params = params.ok_or_else(|| missing_required_analytical_field("params"))?;
         let derived = derived.unwrap_or_default();
         let covariates = covariates.unwrap_or_default();
@@ -480,6 +637,7 @@ impl Parse for AnalyticalInput {
 
         Ok(Self {
             name,
+            krate,
             params,
             derived,
             covariates,
@@ -498,7 +656,9 @@ impl Parse for AnalyticalInput {
 
 impl Parse for SdeInput {
     fn parse(input: ParseStream) -> syn::Result<Self> {
+        let forwarded_krate = parse_crate_marker(input)?;
         let mut name = None;
+        let mut krate = None;
         let mut params = None;
         let mut covariates = None;
         let mut states = None;
@@ -513,11 +673,12 @@ impl Parse for SdeInput {
         let mut out = None;
 
         while !input.is_empty() {
-            let key: Ident = input.parse()?;
+            let key: Ident = input.call(Ident::parse_any)?;
             input.parse::<Token![:]>()?;
 
             match key.to_string().as_str() {
                 "name" => set_once_sde(&mut name, input.parse()?, &key, "name")?,
+                "crate" => set_once_sde(&mut krate, input.parse::<LitStr>()?, &key, "crate")?,
                 "params" => set_once_sde(&mut params, parse_ident_list(input)?, &key, "params")?,
                 "covariates" => set_once_sde(
                     &mut covariates,
@@ -544,7 +705,7 @@ impl Parse for SdeInput {
                     return Err(syn::Error::new_spanned(
                         &key,
                         format!(
-                            "unknown field `{other}`, expected one of: name, params, covariates, states, outputs, routes, particles, drift, diffusion, lag, fa, init, out"
+                            "unknown field `{other}`, expected one of: name, crate, params, covariates, states, outputs, routes, particles, drift, diffusion, lag, fa, init, out"
                         ),
                     ));
                 }
@@ -556,6 +717,7 @@ impl Parse for SdeInput {
         }
 
         let name = name.ok_or_else(|| missing_required_sde_field("name"))?;
+        let krate = resolve_crate_path(krate, forwarded_krate)?;
         let params = params.ok_or_else(|| missing_required_sde_field("params"))?;
         let covariates = covariates.unwrap_or_default();
         let states = states.ok_or_else(|| missing_required_sde_field("states"))?;
@@ -608,6 +770,7 @@ impl Parse for SdeInput {
 
         Ok(Self {
             name,
+            krate,
             params,
             covariates,
             states,
@@ -3213,45 +3376,9 @@ fn expand_sde_out(
 // Proc macros
 // ---------------------------------------------------------------------------
 
-/// Define an ODE (ordinary differential equation) model.
-///
-/// This is the primary entry point for building pharmacometric ODE models.
-/// The macro generates and validates an `ODE` model and automatically generates its metadata
-/// (parameter names, state labels, output labels, route declarations).
-///
-/// # Fields
-///
-/// | Field | Required | Description |
-/// |-------|----------|-------------|
-/// | `name` | yes | Model name (`"my_model"`) |
-/// | `params` | yes | Parameter identifiers `[ka, ke, v]` |
-/// | `covariates` | no | Covariate identifiers `[wt, age]` |
-/// | `states` | yes | State identifiers `[gut, central]` |
-/// | `outputs` | yes | Output identifiers `[cp]` |
-/// | `routes` | no | Route declarations `[bolus(oral) -> gut, infusion(iv) -> central]` |
-/// | `diffeq` | yes | Closure `\|x, p, t, dx, cov\| { … }` writing derivatives into `dx` |
-/// | `lag` | no | Closure returning route‑specific lag times via `lag! { route => expr }` |
-/// | `fa` | no | Closure returning bioavailability fractions |
-/// | `init` | no | Closure setting initial state values |
-/// | `out` | yes | Closure `\|x, p, t, cov, y\| { … }` mapping states to outputs |
-///
-/// # Example
-///
-/// ```ignore
-/// let model = ode! {
-///     name: "one_cmt_iv",
-///     params: [ke, v],
-///     states: [central],
-///     outputs: [cp],
-///     routes: [infusion(iv) -> central],
-///     diffeq: |x, _p, _t, dx, _cov| {
-///         dx[central] = -ke * x[central];
-///     },
-///     out: |x, _p, _t, _cov, y| {
-///         y[cp] = x[central] / v;
-///     },
-/// };
-/// ```
+/// Implementation macro behind `pharmsol::ode!`. Call that instead: it forwards
+/// `$crate` so the expansion resolves from any crate.
+#[doc(hidden)]
 #[proc_macro]
 pub fn ode(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as OdeInput);
@@ -3385,7 +3512,7 @@ pub fn ode(input: TokenStream) -> TokenStream {
         None => quote! { |_, _, _, _| {} },
     };
 
-    quote! {{
+    let expanded = quote! {{
         let __pharmsol_metadata = ::pharmsol::equation::metadata::new(#name)
             .parameters([#(stringify!(#params)),*])
             #covariate_metadata
@@ -3405,49 +3532,14 @@ pub fn ode(input: TokenStream) -> TokenStream {
         .with_nout(#nout)
         .with_metadata(__pharmsol_metadata)
         .expect("declaration-first `ode!` generated invalid metadata")
-    }}
-    .into()
+    }};
+
+    rewrite_crate_paths(expanded, &input.krate).into()
 }
 
-/// Define an analytical (closed‑form) PK model.
-///
-/// Builds a model that uses a built‑in analytical solution. The macro validates that the declared parameters
-/// match the chosen analytical solution's requirements and generates an `Analytical` value
-/// with full metadata.
-///
-/// # Fields
-///
-/// | Field | Required | Description |
-/// |-------|----------|-------------|
-/// | `name` | yes | Model name |
-/// | `params` | yes | Parameter identifiers |
-/// | `derived` | no | Derived parameter identifiers (computed in `derive`) |
-/// | `covariates` | no | Covariate identifiers |
-/// | `states` | yes | State identifiers |
-/// | `outputs` | yes | Output identifiers |
-/// | `routes` | no | Route declarations |
-/// | `structure` | yes | Built‑in function name, e.g. `one_compartment` or `one_compartment_with_absorption` |
-/// | `derive` | no | Closure `\|t\| { … }` computing derived parameters from primaries and covariates |
-/// | `lag` | no | Lag‑time closure |
-/// | `fa` | no | Bioavailability closure |
-/// | `init` | no | Initial‑state closure |
-/// | `out` | yes | Output mapping closure |
-///
-/// # Example
-///
-/// ```ignore
-/// let model = analytical! {
-///     name: "one_cmt_oral",
-///     params: [ka, ke, v],
-///     states: [gut, central],
-///     outputs: [cp],
-///     routes: [bolus(oral) -> gut],
-///     structure: one_compartment_with_absorption,
-///     out: |x, _t, y| {
-///         y[cp] = x[central] / v;
-///     },
-/// };
-/// ```
+/// Implementation macro behind `pharmsol::analytical!`. Call that instead: it
+/// forwards `$crate` so the expansion resolves from any crate.
+#[doc(hidden)]
 #[proc_macro]
 pub fn analytical(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as AnalyticalInput);
@@ -3604,7 +3696,7 @@ pub fn analytical(input: TokenStream) -> TokenStream {
         }
     };
 
-    quote! {{
+    let expanded = quote! {{
         #derive
         let __pharmsol_metadata = ::pharmsol::equation::metadata::new(#name)
             .kind(::pharmsol::equation::ModelKind::Analytical)
@@ -3628,55 +3720,14 @@ pub fn analytical(input: TokenStream) -> TokenStream {
         .with_nout(#nout)
         .with_metadata(__pharmsol_metadata)
         .expect("built-in `analytical!` generated invalid metadata")
-    }}
-    .into()
+    }};
+
+    rewrite_crate_paths(expanded, &input.krate).into()
 }
 
-/// Define an SDE (stochastic differential equation) model.
-///
-/// Builds a particle‑based stochastic model with a drift term, a diffusion
-/// term, and a configurable number of particles. The macro generates an `SDE`
-/// value with full metadata.
-///
-/// # Fields
-///
-/// | Field | Required | Description |
-/// |-------|----------|-------------|
-/// | `name` | yes | Model name |
-/// | `params` | yes | Parameter identifiers |
-/// | `covariates` | no | Covariate identifiers |
-/// | `states` | yes | State identifiers |
-/// | `outputs` | yes | Output identifiers |
-/// | `particles` | yes | Number of particles for the simulation |
-/// | `routes` | no | Route declarations |
-/// | `drift` | yes | Closure `\|x, p, t, dx, cov\| { … }` for the deterministic drift |
-/// | `diffusion` | yes | Closure `\|p, sigma\| { … }` setting per‑state diffusion coefficients |
-/// | `lag` | no | Lag‑time closure |
-/// | `fa` | no | Bioavailability closure |
-/// | `init` | no | Initial‑state closure |
-/// | `out` | yes | Output mapping closure |
-///
-/// # Example
-///
-/// ```ignore
-/// let model = sde! {
-///     name: "one_cmt_sde",
-///     params: [ke, sigma_ke, v],
-///     states: [central],
-///     outputs: [cp],
-///     particles: 16,
-///     routes: [infusion(iv) -> central],
-///     drift: |x, _p, _t, dx, _cov| {
-///         dx[central] = -ke * x[central];
-///     },
-///     diffusion: |_p, sigma| {
-///         sigma[central] = sigma_ke;
-///     },
-///     out: |x, _p, _t, _cov, y| {
-///         y[cp] = x[central] / v;
-///     },
-/// };
-/// ```
+/// Implementation macro behind `pharmsol::sde!`. Call that instead: it forwards
+/// `$crate` so the expansion resolves from any crate.
+#[doc(hidden)]
 #[proc_macro]
 pub fn sde(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as SdeInput);
@@ -3817,7 +3868,7 @@ pub fn sde(input: TokenStream) -> TokenStream {
         }
     };
 
-    quote! {{
+    let expanded = quote! {{
         let __pharmsol_particles: usize = #particles;
         let __pharmsol_metadata = ::pharmsol::equation::metadata::new(#name)
             .kind(::pharmsol::equation::ModelKind::Sde)
@@ -3843,13 +3894,97 @@ pub fn sde(input: TokenStream) -> TokenStream {
         #bolus_mappings
         .with_metadata(__pharmsol_metadata)
         .expect("declaration-first `sde!` generated invalid metadata")
-    }}
-    .into()
+    }};
+
+    rewrite_crate_paths(expanded, &input.krate).into()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rewrites_crate_placeholder_including_nested_macro_calls() {
+        let krate = quote! { ::pmcore::pharmsol };
+        let tokens = quote! {
+            {
+                ::pharmsol::fetch_cov!(cov, t, wt);
+                let x: &::pharmsol::simulator::V = ::pharmsol::equation::Route::bolus("oral");
+            }
+        };
+
+        let rewritten = rewrite_crate_paths(tokens, &krate).to_string();
+
+        assert!(rewritten.contains(":: pmcore :: pharmsol :: fetch_cov !"));
+        assert!(rewritten.contains(":: pmcore :: pharmsol :: simulator :: V"));
+        assert!(rewritten.contains(":: pmcore :: pharmsol :: equation :: Route"));
+    }
+
+    #[test]
+    fn rewrites_crate_placeholder_for_renamed_dependencies() {
+        let krate = quote! { ::ps };
+        let tokens = quote! { ::pharmsol::simulator::V };
+
+        assert_eq!(
+            rewrite_crate_paths(tokens, &krate).to_string(),
+            ":: ps :: simulator :: V"
+        );
+    }
+
+    #[test]
+    fn crate_key_overrides_the_emitted_path() {
+        let input = syn::parse_str::<OdeInput>(
+            "name: \"demo\", crate: \"pmcore::pharmsol\", params: [ke], covariates: [wt], states: [central], outputs: [cp], routes: [infusion(iv) -> central], diffeq: |x, p, t, dx, cov| { dx[central] = -ke * x[central] * wt; }, out: |x, p, t, cov, y| { y[cp] = x[central]; }",
+        )
+        .expect("`crate` key must parse");
+
+        assert_eq!(input.krate.to_string(), ":: pmcore :: pharmsol");
+    }
+
+    #[test]
+    fn forwarded_marker_sets_the_emitted_path() {
+        let input = syn::parse_str::<OdeInput>(
+            "@pharmsol_crate(::reexporter::pharmsol) name: \"demo\", params: [ke], states: [central], outputs: [cp], routes: [infusion(iv) -> central], diffeq: |x, p, t, dx, cov| {}, out: |x, p, t, cov, y| {}",
+        )
+        .expect("forwarded marker must parse");
+
+        assert_eq!(input.krate.to_string(), ":: reexporter :: pharmsol");
+    }
+
+    #[test]
+    fn crate_key_wins_over_the_forwarded_marker() {
+        let input = syn::parse_str::<OdeInput>(
+            "@pharmsol_crate(::reexporter::pharmsol) name: \"demo\", crate: \"my_vendor::pharmsol\", params: [ke], states: [central], outputs: [cp], routes: [infusion(iv) -> central], diffeq: |x, p, t, dx, cov| {}, out: |x, p, t, cov, y| {}",
+        )
+        .expect("both crate sources must parse");
+
+        assert_eq!(input.krate.to_string(), ":: my_vendor :: pharmsol");
+    }
+
+    #[test]
+    fn crate_key_leaves_relative_anchors_untouched() {
+        for (written, expected) in [
+            ("crate::vendored::pharmsol", "crate :: vendored :: pharmsol"),
+            ("::pharmsol", ":: pharmsol"),
+            ("self::reexports::pharmsol", "self :: reexports :: pharmsol"),
+        ] {
+            let path = syn::parse_str::<Path>(written).expect("valid path");
+            assert_eq!(absolute_crate_path(path).to_string(), expected);
+        }
+    }
+
+    #[test]
+    fn crate_key_rejects_generic_arguments() {
+        let error = syn::parse_str::<OdeInput>(
+            "name: \"demo\", crate: \"pmcore::pharmsol<T>\", params: [ke], states: [central], outputs: [cp], routes: [infusion(iv) -> central], diffeq: |x, p, t, dx, cov| {}, out: |x, p, t, cov, y| {}",
+        )
+        .err()
+        .expect("generic arguments must fail");
+
+        assert!(error
+            .to_string()
+            .contains("plain module path without generic arguments"));
+    }
 
     #[test]
     fn rejects_removed_legacy_form() {
