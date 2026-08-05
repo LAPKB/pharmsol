@@ -588,6 +588,7 @@ impl ODE {
         F: Fn(&V, &V, f64, &mut V, &V, &V, &Covariates) + 'a,
         S: OdeSolverMethod<'a, PMProblem<'a, F>>,
     {
+        const STOP_TIME_EPS: f64 = 1e-12;
         let infusion_stop_times = Self::infusion_end_times(events);
         let mut index = 0usize;
         while index < events.len() {
@@ -670,10 +671,13 @@ impl ODE {
 
             // Advance to the next event time if it exists
             if let Some(next_event) = next_event {
-                while solver.state().t < next_event.time() {
+                while (next_event.time() - solver.state().t) > STOP_TIME_EPS {
                     let mut stop_time = next_event.time();
+                    let current_t = solver.state().t;
                     for stop in &infusion_stop_times {
-                        if stop > &solver.state().t && stop < &stop_time {
+                        if stop > &(current_t + STOP_TIME_EPS)
+                            && stop < &(stop_time - STOP_TIME_EPS)
+                        {
                             stop_time = *stop;
                             break;
                         }
@@ -683,7 +687,9 @@ impl ODE {
                         Ok(_) => loop {
                             match solver.step() {
                                 Ok(OdeSolverStopReason::InternalTimestep) => continue,
-                                Ok(OdeSolverStopReason::TstopReached) => break,
+                                Ok(OdeSolverStopReason::TstopReached) => {
+                                    break;
+                                }
                                 Ok(OdeSolverStopReason::RootFound(_, _)) => {
                                     return Err(PharmsolError::OtherError(format!(
                                         "solver stopped at an unexpected root at t = {:.4} \
@@ -699,7 +705,25 @@ impl ODE {
                         Err(diffsol::error::DiffsolError::OdeSolverError(
                             OdeSolverError::StopTimeAtCurrentTime,
                         )) => {
-                            break;
+                            if (stop_time - solver.state().t).abs() <= STOP_TIME_EPS {
+                                {
+                                    let state = solver.state_mut();
+                                    if (stop_time - *state.t).abs() > STOP_TIME_EPS {
+                                        *state.t = stop_time;
+                                    }
+                                }
+
+                                if (next_event.time() - stop_time).abs() <= STOP_TIME_EPS {
+                                    break;
+                                }
+                                continue;
+                            }
+                            return Err(PharmsolError::from_solver_error(
+                                diffsol::error::DiffsolError::OdeSolverError(
+                                    OdeSolverError::StopTimeAtCurrentTime,
+                                ),
+                                stop_time,
+                            ));
                         }
                         Err(err) => {
                             return Err(PharmsolError::from_solver_error(err, stop_time));
