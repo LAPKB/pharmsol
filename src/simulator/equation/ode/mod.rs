@@ -584,7 +584,7 @@ impl ODE {
         likelihood: &mut Vec<f64>,
         output: &mut SubjectPredictions,
     ) -> Result<(), PharmsolError>
-        where
+    where
         F: Fn(&V, &V, f64, &mut V, &V, &V, &Covariates) + 'a,
         S: OdeSolverMethod<'a, PMProblem<'a, F>>,
     {
@@ -692,9 +692,7 @@ impl ODE {
                                     )));
                                 }
                                 Err(err) => {
-                                    return Err(PharmsolError::from_solver_error(
-                                        err, stop_time,
-                                    ));
+                                    return Err(PharmsolError::from_solver_error(err, stop_time));
                                 }
                             }
                         },
