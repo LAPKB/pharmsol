@@ -1449,6 +1449,7 @@ out(cp) = central / v ~ continuous()
             .observation(2.0, 0.0, "cp")
             .observation(6.0, 0.0, "cp")
             .observation(7.0, 0.0, "cp")
+            .observation(8.0, 0.0, "cp")
             .observation(9.0, 0.0, "cp")
             .build();
 
@@ -1460,6 +1461,7 @@ out(cp) = central / v ~ continuous()
             .observation(2.0, 0.0, 0)
             .observation(6.0, 0.0, 0)
             .observation(7.0, 0.0, 0)
+            .observation(8.0, 0.0, 0)
             .observation(9.0, 0.0, 0)
             .build();
 

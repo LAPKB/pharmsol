@@ -561,7 +561,11 @@ impl EquationPriv for ODE {
 ///   dynamics instead of the pre-boundary ones;
 /// - `state_mut` marks the state as modified so the next step restarts the
 ///   multi-step method at first order.
-fn reinitialize_at_boundary<'a, F, S>(solver: &mut S, dy_scratch: &mut V)
+///
+/// Shared with the DSL/JIT ODE path ([`crate::dsl::native::NativeOdeModel`]),
+/// which must apply the same discontinuity semantics as the closure-based
+/// [`ODE`] event loop.
+pub(crate) fn reinitialize_at_boundary<'a, F, S>(solver: &mut S, dy_scratch: &mut V)
 where
     F: Fn(&V, &V, f64, &mut V, &V, &V, &Covariates) + 'a,
     S: OdeSolverMethod<'a, PMProblem<'a, F>>,
