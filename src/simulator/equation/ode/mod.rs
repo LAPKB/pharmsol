@@ -544,28 +544,6 @@ impl EquationPriv for ODE {
 }
 
 impl ODE {
-    fn infusion_end_times(events: &[Event]) -> Vec<f64> {
-        let mut stops: Vec<f64> = events
-            .iter()
-            .filter_map(|event| {
-                let infusion = match event {
-                    Event::Infusion(infusion) => infusion,
-                    _ => return None,
-                };
-                let start = infusion.time();
-                let end = start + infusion.duration();
-                if end.is_finite() && end > start {
-                    Some(end)
-                } else {
-                    None
-                }
-            })
-            .collect();
-        stops.sort_by(|a, b| a.total_cmp(b));
-        stops.dedup_by(|a, b| a == b);
-        stops
-    }
-
     /// Generic event-loop runner, parameterized over the concrete solver type.
     #[allow(clippy::too_many_arguments)]
     fn run_events<'a, F, S>(
@@ -588,8 +566,8 @@ impl ODE {
         F: Fn(&V, &V, f64, &mut V, &V, &V, &Covariates) + 'a,
         S: OdeSolverMethod<'a, PMProblem<'a, F>>,
     {
-        const STOP_TIME_EPS: f64 = 1e-12;
-        let infusion_stop_times = Self::infusion_end_times(events);
+        let infusion_end_times = solver.problem().eqn.infusion_end_times();
+        let mut infusion_end_cursor = 0usize;
         let mut index = 0usize;
         while index < events.len() {
             let event = &events[index];
@@ -671,23 +649,44 @@ impl ODE {
 
             // Advance to the next event time if it exists
             if let Some(next_event) = next_event {
-                while (next_event.time() - solver.state().t) > STOP_TIME_EPS {
-                    let mut stop_time = next_event.time();
-                    let current_t = solver.state().t;
-                    for stop in &infusion_stop_times {
-                        if stop > &(current_t + STOP_TIME_EPS)
-                            && stop < &(stop_time - STOP_TIME_EPS)
-                        {
-                            stop_time = *stop;
-                            break;
-                        }
+                let next_event_time = next_event.time();
+                while next_event_time > solver.state().t {
+                    while infusion_end_cursor < infusion_end_times.len()
+                        && infusion_end_times[infusion_end_cursor] <= solver.state().t
+                    {
+                        infusion_end_cursor += 1;
                     }
+
+                    let (stop_time, is_infusion_end) =
+                        if let Some(stop_time) = infusion_end_times.get(infusion_end_cursor) {
+                            if *stop_time <= next_event_time {
+                                infusion_end_cursor += 1;
+                                (*stop_time, true)
+                            } else {
+                                (next_event_time, false)
+                            }
+                        } else {
+                            (next_event_time, false)
+                        };
+
+                    solver
+                        .problem()
+                        .eqn
+                        .set_left_continuity_time(if is_infusion_end {
+                            Some(stop_time)
+                        } else {
+                            None
+                        });
 
                     match solver.set_stop_time(stop_time) {
                         Ok(_) => loop {
                             match solver.step() {
                                 Ok(OdeSolverStopReason::InternalTimestep) => continue,
                                 Ok(OdeSolverStopReason::TstopReached) => {
+                                    solver.problem().eqn.set_left_continuity_time(None);
+                                    if is_infusion_end {
+                                        let _ = solver.state_mut();
+                                    }
                                     break;
                                 }
                                 Ok(OdeSolverStopReason::RootFound(_, _)) => {
@@ -705,18 +704,17 @@ impl ODE {
                         Err(diffsol::error::DiffsolError::OdeSolverError(
                             OdeSolverError::StopTimeAtCurrentTime,
                         )) => {
-                            if (stop_time - solver.state().t).abs() <= STOP_TIME_EPS {
-                                {
-                                    let state = solver.state_mut();
-                                    if (stop_time - *state.t).abs() > STOP_TIME_EPS {
-                                        *state.t = stop_time;
-                                    }
-                                }
+                            solver.problem().eqn.set_left_continuity_time(None);
+                            let state_t = solver.state().t;
+                            let stop_reached = stop_time == state_t
+                                || stop_time == state_t.next_up()
+                                || stop_time == state_t.next_down();
 
-                                if (next_event.time() - stop_time).abs() <= STOP_TIME_EPS {
-                                    break;
+                            if stop_reached {
+                                if is_infusion_end && next_event_time != stop_time {
+                                    continue;
                                 }
-                                continue;
+                                break;
                             }
                             return Err(PharmsolError::from_solver_error(
                                 diffsol::error::DiffsolError::OdeSolverError(
@@ -726,6 +724,7 @@ impl ODE {
                             ));
                         }
                         Err(err) => {
+                            solver.problem().eqn.set_left_continuity_time(None);
                             return Err(PharmsolError::from_solver_error(err, stop_time));
                         }
                     }
@@ -878,6 +877,50 @@ mod tests {
 
     fn state_output(x: &V, _p: &V, _t: f64, _cov: &Covariates, y: &mut V) {
         y[0] = x[0];
+    }
+
+    fn infusion_rate_function(
+        _x: &V,
+        _p: &V,
+        _t: f64,
+        dx: &mut V,
+        _b: &V,
+        rateiv: &V,
+        _cov: &Covariates,
+    ) {
+        dx[0] = rateiv[0];
+    }
+
+    fn run_infusions(subject: &Subject, solver: OdeSolver) -> Vec<f64> {
+        let ode = ODE::new(
+            infusion_rate_function,
+            zero_lag,
+            unit_fa,
+            zero_init,
+            state_output,
+        )
+        .with_nstates(1)
+        .with_ndrugs(1)
+        .with_nout(1)
+        .with_solver(solver)
+        .with_metadata(
+            super::super::metadata::new("infusion_rate_ode")
+                .states(["central"])
+                .outputs(["cp"])
+                .route(super::super::Route::infusion("iv").to_state("central")),
+        )
+        .expect("metadata should validate");
+
+        let predictions = ode
+            .simulate_subject(subject, &crate::parameters::dense([]), None)
+            .expect("infusion simulation should succeed")
+            .0;
+
+        predictions
+            .predictions()
+            .iter()
+            .map(|p| p.prediction())
+            .collect()
     }
 
     fn counting_function(
@@ -1138,5 +1181,64 @@ mod tests {
 
         assert_eq!(first.predictions().len(), second.predictions().len());
         assert_eq!(first_calls, second_calls);
+    }
+
+    #[test]
+    fn ode_infusions_short_dose_conserved_after_infusion() {
+        let subject = Subject::builder("short_infusion")
+            .infusion(0.0, 100.0, "iv", 0.1)
+            .observation(0.5, 0.0, "cp")
+            .build();
+
+        let predictions = run_infusions(&subject, OdeSolver::Bdf);
+
+        assert_relative_eq!(predictions[0], 100.0, max_relative = 1e-4);
+    }
+
+    #[test]
+    fn ode_infusions_observation_at_infusion_end_uses_active_left_rate() {
+        let subject = Subject::builder("infusion_end_observation")
+            .infusion(0.0, 100.0, "iv", 0.1)
+            .observation(0.1, 0.0, "cp")
+            .observation(0.5, 0.0, "cp")
+            .build();
+
+        let predictions = run_infusions(&subject, OdeSolver::Bdf);
+
+        assert_relative_eq!(predictions[0], 100.0, max_relative = 1e-4);
+        assert_relative_eq!(predictions[1], 100.0, max_relative = 1e-4);
+    }
+
+    #[test]
+    fn ode_infusions_dose_conservation_with_multiple_solvers() {
+        let subject = Subject::builder("short_infusion_multi_solver")
+            .infusion(0.0, 100.0, "iv", 0.1)
+            .observation(0.5, 0.0, "cp")
+            .build();
+
+        let solvers = [
+            OdeSolver::Bdf,
+            OdeSolver::Sdirk(SdirkTableau::TrBdf2),
+            OdeSolver::Sdirk(SdirkTableau::Esdirk34),
+            OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45),
+        ];
+
+        for solver in solvers {
+            let predictions = run_infusions(&subject, solver);
+            assert_relative_eq!(predictions[0], 100.0, max_relative = 1e-2);
+        }
+    }
+
+    #[test]
+    fn ode_infusions_back_to_back_discontinuities_conserve_dose() {
+        let subject = Subject::builder("back_to_back_infusions")
+            .infusion(0.0, 100.0, "iv", 0.5)
+            .infusion(0.5, 100.0, "iv", 0.5)
+            .observation(1.0, 0.0, "cp")
+            .build();
+
+        let predictions = run_infusions(&subject, OdeSolver::Bdf);
+
+        assert_relative_eq!(predictions[0], 200.0, max_relative = 1e-4);
     }
 }
