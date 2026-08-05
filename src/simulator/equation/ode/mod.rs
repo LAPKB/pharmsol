@@ -328,6 +328,8 @@ fn _simulate_subject_dense(
     let zero_bolus = V::zeros(ndrugs, NalgebraContext::new());
     let zero_rateiv = V::zeros(ndrugs, NalgebraContext::new());
     let mut bolus_v = V::zeros(ndrugs, NalgebraContext::new());
+    // Scratch for refreshing the solver's derivative at infusion boundaries.
+    let mut dy_scratch = V::zeros(nstates, NalgebraContext::new());
     let parameters_vec = parameters.to_vec();
     let parameters_v: V = DVector::from_vec(parameters_vec.clone()).into();
 
@@ -376,6 +378,7 @@ fn _simulate_subject_dense(
                         &zero_rateiv,
                         &mut state_with_bolus,
                         &mut state_without_bolus,
+                        &mut dy_scratch,
                         &mut y_out,
                         &mut likelihood,
                         &mut output,
@@ -395,6 +398,7 @@ fn _simulate_subject_dense(
                         &zero_rateiv,
                         &mut state_with_bolus,
                         &mut state_without_bolus,
+                        &mut dy_scratch,
                         &mut y_out,
                         &mut likelihood,
                         &mut output,
@@ -414,6 +418,7 @@ fn _simulate_subject_dense(
                         &zero_rateiv,
                         &mut state_with_bolus,
                         &mut state_without_bolus,
+                        &mut dy_scratch,
                         &mut y_out,
                         &mut likelihood,
                         &mut output,
@@ -433,6 +438,7 @@ fn _simulate_subject_dense(
                         &zero_rateiv,
                         &mut state_with_bolus,
                         &mut state_without_bolus,
+                        &mut dy_scratch,
                         &mut y_out,
                         &mut likelihood,
                         &mut output,
@@ -543,6 +549,46 @@ impl EquationPriv for ODE {
     }
 }
 
+/// Restart the solver after an infusion boundary (a RHS discontinuity).
+///
+/// The multi-step history and the internal Jacobian were built for the
+/// pre-boundary RHS, so the first step into the new segment must not reuse
+/// them as-is:
+/// - `set_state` forces diffsol to recompute its BDF coefficients and
+///   reinitialize the internal Jacobian for the current state;
+/// - the stored derivative is refreshed against the post-boundary
+///   (right-continuous) RHS so a first-order restart predicts with the new
+///   dynamics instead of the pre-boundary ones;
+/// - `state_mut` marks the state as modified so the next step restarts the
+///   multi-step method at first order.
+///
+/// The first step is additionally capped just below `next_stop_time` (the
+/// stop the next segment is integrating toward): a restart step landing
+/// exactly on the next discontinuity inherits a Jacobian built for the
+/// pre-boundary order and can make the nonlinear solve oscillate, while a
+/// step that ends just before it converges cleanly (the error controller
+/// takes over from there).
+fn reinitialize_at_boundary<'a, F, S>(solver: &mut S, dy_scratch: &mut V, next_stop_time: f64)
+where
+    F: Fn(&V, &V, f64, &mut V, &V, &V, &Covariates) + 'a,
+    S: OdeSolverMethod<'a, PMProblem<'a, F>>,
+{
+    let state = solver.state_clone();
+    solver.set_state(state);
+
+    let t = solver.state().t;
+    {
+        let y = solver.state().y;
+        solver
+            .problem()
+            .eqn
+            .refresh_state_derivative(t, y, dy_scratch);
+    }
+    let state = solver.state_mut();
+    state.dy.copy_from(dy_scratch);
+    *state.h = (*state.h).min(0.9 * (next_stop_time - t).max(0.0));
+}
+
 impl ODE {
     /// Generic event-loop runner, parameterized over the concrete solver type.
     #[allow(clippy::too_many_arguments)]
@@ -558,6 +604,7 @@ impl ODE {
         zero_rateiv: &V,
         state_with_bolus: &mut V,
         state_without_bolus: &mut V,
+        dy_scratch: &mut V,
         y_out: &mut V,
         likelihood: &mut Vec<f64>,
         output: &mut SubjectPredictions,
@@ -566,9 +613,14 @@ impl ODE {
         F: Fn(&V, &V, f64, &mut V, &V, &V, &Covariates) + 'a,
         S: OdeSolverMethod<'a, PMProblem<'a, F>>,
     {
-        let infusion_end_times = solver.problem().eqn.infusion_end_times();
-        let mut infusion_end_cursor = 0usize;
+        let infusion_boundary_times = solver.problem().eqn.infusion_boundary_times();
+        let mut infusion_boundary_cursor = 0usize;
         let mut index = 0usize;
+        // Set when the previous stop was an infusion boundary: the solver must
+        // be restarted before the first step of the next segment (the RHS is
+        // discontinuous at the boundary). Deferred until the next stop time is
+        // known so the first step can be capped below it.
+        let mut pending_reinit = false;
         while index < events.len() {
             let event = &events[index];
             let next_event = events.get(index + 1);
@@ -651,28 +703,34 @@ impl ODE {
             if let Some(next_event) = next_event {
                 let next_event_time = next_event.time();
                 while next_event_time > solver.state().t {
-                    while infusion_end_cursor < infusion_end_times.len()
-                        && infusion_end_times[infusion_end_cursor] <= solver.state().t
+                    while infusion_boundary_cursor < infusion_boundary_times.len()
+                        && infusion_boundary_times[infusion_boundary_cursor] <= solver.state().t
                     {
-                        infusion_end_cursor += 1;
+                        infusion_boundary_cursor += 1;
                     }
 
-                    let (stop_time, is_infusion_end) =
-                        if let Some(stop_time) = infusion_end_times.get(infusion_end_cursor) {
-                            if *stop_time <= next_event_time {
-                                infusion_end_cursor += 1;
-                                (*stop_time, true)
-                            } else {
-                                (next_event_time, false)
-                            }
+                    let (stop_time, is_infusion_boundary) = if let Some(stop_time) =
+                        infusion_boundary_times.get(infusion_boundary_cursor)
+                    {
+                        if *stop_time <= next_event_time {
+                            infusion_boundary_cursor += 1;
+                            (*stop_time, true)
                         } else {
                             (next_event_time, false)
-                        };
+                        }
+                    } else {
+                        (next_event_time, false)
+                    };
+
+                    if pending_reinit {
+                        reinitialize_at_boundary(solver, dy_scratch, stop_time);
+                        pending_reinit = false;
+                    }
 
                     solver
                         .problem()
                         .eqn
-                        .set_left_continuity_time(if is_infusion_end {
+                        .set_left_continuity_time(if is_infusion_boundary {
                             Some(stop_time)
                         } else {
                             None
@@ -684,8 +742,8 @@ impl ODE {
                                 Ok(OdeSolverStopReason::InternalTimestep) => continue,
                                 Ok(OdeSolverStopReason::TstopReached) => {
                                     solver.problem().eqn.set_left_continuity_time(None);
-                                    if is_infusion_end {
-                                        let _ = solver.state_mut();
+                                    if is_infusion_boundary {
+                                        pending_reinit = true;
                                     }
                                     break;
                                 }
@@ -711,8 +769,8 @@ impl ODE {
                                 || stop_time == state_t.next_down();
 
                             if stop_reached {
-                                if is_infusion_end && next_event_time != stop_time {
-                                    continue;
+                                if is_infusion_boundary {
+                                    pending_reinit = true;
                                 }
                                 break;
                             }
@@ -1211,22 +1269,37 @@ mod tests {
 
     #[test]
     fn ode_infusions_dose_conservation_with_multiple_solvers() {
+        // Genuinely short infusion (0.01 h), representative of the reported
+        // failures; the dose must be fully conserved across all solver types.
         let subject = Subject::builder("short_infusion_multi_solver")
-            .infusion(0.0, 100.0, "iv", 0.1)
-            .observation(0.5, 0.0, "cp")
+            .infusion(0.0, 100.0, "iv", 0.01)
+            .observation(0.01, 0.0, "cp")
             .build();
 
         let solvers = [
-            OdeSolver::Bdf,
-            OdeSolver::Sdirk(SdirkTableau::TrBdf2),
-            OdeSolver::Sdirk(SdirkTableau::Esdirk34),
-            OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45),
+            (OdeSolver::Bdf, "Bdf"),
+            (OdeSolver::Sdirk(SdirkTableau::TrBdf2), "TrBdf2"),
+            (OdeSolver::Sdirk(SdirkTableau::Esdirk34), "Esdirk34"),
+            (OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45), "Tsit45"),
         ];
 
-        for solver in solvers {
+        for (solver, _label) in solvers {
             let predictions = run_infusions(&subject, solver);
-            assert_relative_eq!(predictions[0], 100.0, max_relative = 1e-2);
+            assert_relative_eq!(predictions[0], 100.0, max_relative = 1e-4);
         }
+    }
+
+    #[test]
+    fn ode_infusions_delayed_short_dose_with_bdf() {
+        let subject = Subject::builder("short_infusion_delayed_start_bdf")
+            .observation(0.0, 0.0, "cp")
+            .infusion(0.5, 100.0, "iv", 0.01)
+            .observation(0.52, 0.0, "cp")
+            .build();
+
+        let predictions = run_infusions(&subject, OdeSolver::Bdf);
+
+        assert_relative_eq!(predictions[1], 100.0, max_relative = 1e-4);
     }
 
     #[test]

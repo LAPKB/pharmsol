@@ -102,7 +102,7 @@ impl InfusionTrack {
 #[derive(Debug, Clone, Default)]
 struct InfusionSchedule {
     tracks: Vec<InfusionTrack>,
-    discontinuity_times: Vec<f64>,
+    boundary_times: Vec<f64>,
     left_continuity_time: Cell<Option<f64>>,
 }
 
@@ -114,14 +114,14 @@ impl InfusionSchedule {
         if ndrugs == 0 {
             return Ok(Self {
                 tracks: Vec::new(),
-                discontinuity_times: Vec::new(),
+                boundary_times: Vec::new(),
                 left_continuity_time: Cell::new(None),
             });
         }
 
         let mut per_input: Vec<Vec<(f64, f64)>> = vec![Vec::new(); ndrugs];
         let mut saw_infusion = false;
-        let mut discontinuity_times = Vec::new();
+        let mut boundary_times = Vec::new();
         for infusion in infusions {
             saw_infusion = true;
             if infusion.duration() <= 0.0 {
@@ -140,16 +140,17 @@ impl InfusionSchedule {
 
             per_input[input].push((infusion.time(), rate));
             per_input[input].push((end, -rate));
-            discontinuity_times.push(end);
+            boundary_times.push(infusion.time());
+            boundary_times.push(end);
         }
 
-        discontinuity_times.sort_by(|a, b| a.total_cmp(b));
-        discontinuity_times.dedup_by(|a, b| a == b);
+        boundary_times.sort_by(|a, b| a.total_cmp(b));
+        boundary_times.dedup();
 
         if !saw_infusion {
             return Ok(Self {
                 tracks: Vec::new(),
-                discontinuity_times,
+                boundary_times,
                 left_continuity_time: Cell::new(None),
             });
         }
@@ -168,7 +169,7 @@ impl InfusionSchedule {
 
         Ok(Self {
             tracks,
-            discontinuity_times,
+            boundary_times,
             left_continuity_time: Cell::new(None),
         })
     }
@@ -177,8 +178,8 @@ impl InfusionSchedule {
         self.left_continuity_time.set(time);
     }
 
-    fn infusion_end_times(&self) -> &[f64] {
-        &self.discontinuity_times
+    fn infusion_boundary_times(&self) -> &[f64] {
+        &self.boundary_times
     }
 
     fn fill_rate_vector(&self, time: f64, rateiv: &mut V) {
@@ -409,8 +410,28 @@ where
         self.infusion_schedule.set_left_continuity_time(time);
     }
 
-    pub(crate) fn infusion_end_times(&self) -> &[f64] {
-        self.infusion_schedule.infusion_end_times()
+    pub(crate) fn infusion_boundary_times(&self) -> &[f64] {
+        self.infusion_schedule.infusion_boundary_times()
+    }
+
+    /// Evaluate the full RHS (including the currently scheduled infusion
+    /// rates) at time `t` into `dx`.
+    ///
+    /// Used at infusion boundaries to refresh the solver's stored derivative
+    /// against the post-boundary (right-continuous) RHS, so a solver restart
+    /// predicts with the new dynamics instead of the pre-boundary ones.
+    pub(crate) fn refresh_state_derivative(&self, t: f64, x: &V, dx: &mut V) {
+        let mut rateiv = self.rateiv_buffer.borrow_mut();
+        self.infusion_schedule.fill_rate_vector(t, &mut rateiv);
+        (self.func)(
+            x,
+            &self.p_as_v,
+            t,
+            dx,
+            &self.zero_bolus,
+            &rateiv,
+            self.covariates,
+        );
     }
 
     /// Creates a new PMProblem with a pre-converted parameter vector.
