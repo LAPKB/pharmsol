@@ -561,14 +561,7 @@ impl EquationPriv for ODE {
 ///   dynamics instead of the pre-boundary ones;
 /// - `state_mut` marks the state as modified so the next step restarts the
 ///   multi-step method at first order.
-///
-/// The first step is additionally capped just below `next_stop_time` (the
-/// stop the next segment is integrating toward): a restart step landing
-/// exactly on the next discontinuity inherits a Jacobian built for the
-/// pre-boundary order and can make the nonlinear solve oscillate, while a
-/// step that ends just before it converges cleanly (the error controller
-/// takes over from there).
-fn reinitialize_at_boundary<'a, F, S>(solver: &mut S, dy_scratch: &mut V, next_stop_time: f64)
+fn reinitialize_at_boundary<'a, F, S>(solver: &mut S, dy_scratch: &mut V)
 where
     F: Fn(&V, &V, f64, &mut V, &V, &V, &Covariates) + 'a,
     S: OdeSolverMethod<'a, PMProblem<'a, F>>,
@@ -586,7 +579,6 @@ where
     }
     let state = solver.state_mut();
     state.dy.copy_from(dy_scratch);
-    *state.h = (*state.h).min(0.9 * (next_stop_time - t).max(0.0));
 }
 
 impl ODE {
@@ -618,8 +610,9 @@ impl ODE {
         let mut index = 0usize;
         // Set when the previous stop was an infusion boundary: the solver must
         // be restarted before the first step of the next segment (the RHS is
-        // discontinuous at the boundary). Deferred until the next stop time is
-        // known so the first step can be capped below it.
+        // discontinuous at the boundary). Deferred until `set_stop_time`
+        // succeeds so a stop that is already reached does not trigger a
+        // restart for a zero-length segment.
         let mut pending_reinit = false;
         while index < events.len() {
             let event = &events[index];
@@ -722,11 +715,6 @@ impl ODE {
                         (next_event_time, false)
                     };
 
-                    if pending_reinit {
-                        reinitialize_at_boundary(solver, dy_scratch, stop_time);
-                        pending_reinit = false;
-                    }
-
                     solver
                         .problem()
                         .eqn
@@ -737,28 +725,36 @@ impl ODE {
                         });
 
                     match solver.set_stop_time(stop_time) {
-                        Ok(_) => loop {
-                            match solver.step() {
-                                Ok(OdeSolverStopReason::InternalTimestep) => continue,
-                                Ok(OdeSolverStopReason::TstopReached) => {
-                                    solver.problem().eqn.set_left_continuity_time(None);
-                                    if is_infusion_boundary {
-                                        pending_reinit = true;
+                        Ok(_) => {
+                            if pending_reinit {
+                                reinitialize_at_boundary(solver, dy_scratch);
+                                pending_reinit = false;
+                            }
+                            loop {
+                                match solver.step() {
+                                    Ok(OdeSolverStopReason::InternalTimestep) => continue,
+                                    Ok(OdeSolverStopReason::TstopReached) => {
+                                        solver.problem().eqn.set_left_continuity_time(None);
+                                        if is_infusion_boundary {
+                                            pending_reinit = true;
+                                        }
+                                        break;
                                     }
-                                    break;
-                                }
-                                Ok(OdeSolverStopReason::RootFound(_, _)) => {
-                                    return Err(PharmsolError::OtherError(format!(
-                                        "solver stopped at an unexpected root at t = {:.4} \
-                                         (root finding is not configured)",
-                                        stop_time
-                                    )));
-                                }
-                                Err(err) => {
-                                    return Err(PharmsolError::from_solver_error(err, stop_time));
+                                    Ok(OdeSolverStopReason::RootFound(_, _)) => {
+                                        return Err(PharmsolError::OtherError(format!(
+                                            "solver stopped at an unexpected root at t = {:.4} \
+                                             (root finding is not configured)",
+                                            stop_time
+                                        )));
+                                    }
+                                    Err(err) => {
+                                        return Err(PharmsolError::from_solver_error(
+                                            err, stop_time,
+                                        ));
+                                    }
                                 }
                             }
-                        },
+                        }
                         Err(diffsol::error::DiffsolError::OdeSolverError(
                             OdeSolverError::StopTimeAtCurrentTime,
                         )) => {
@@ -771,6 +767,17 @@ impl ODE {
                             if stop_reached {
                                 if is_infusion_boundary {
                                     pending_reinit = true;
+                                }
+                                // The requested stop is the current time (within
+                                // one ULP). If it is an infusion boundary before
+                                // the next subject event, keep integrating toward
+                                // the event; break only when the reached stop is
+                                // the event time itself. Breaking early would skip
+                                // the remaining interval and leave the solver
+                                // state at the boundary when the observation is
+                                // evaluated.
+                                if stop_time < next_event_time {
+                                    continue;
                                 }
                                 break;
                             }
@@ -1313,5 +1320,305 @@ mod tests {
         let predictions = run_infusions(&subject, OdeSolver::Bdf);
 
         assert_relative_eq!(predictions[0], 200.0, max_relative = 1e-4);
+    }
+
+    #[test]
+    fn ode_infusions_accepted_stop_before_event_keeps_integrating() {
+        // The infusion ends exactly one ULP after the observation at t = 10.
+        // After landing on the observation stop the solver is already within
+        // diffsol's round-off of the end boundary, so `set_stop_time` reports
+        // `StopTimeAtCurrentTime` and the loop accepts it through the
+        // same-ULP check. The reached boundary is *before* the observation at
+        // t = 20, so the event loop must keep integrating toward it; breaking
+        // early would evaluate the observation with the state frozen at the
+        // boundary and miss the exponential decay.
+        let subject = Subject::builder("accepted_stop_before_event")
+            .infusion(5.0, 100.0, "iv", 10.0_f64.next_up() - 5.0)
+            .observation(10.0, 0.0, "cp")
+            .observation(20.0, 0.0, "cp")
+            .build();
+
+        let ode = ODE::new(
+            |x: &V, _p: &V, _t: f64, dx: &mut V, _b: &V, rateiv: &V, _cov: &Covariates| {
+                dx[0] = rateiv[0] - 0.5 * x[0];
+            },
+            zero_lag,
+            unit_fa,
+            zero_init,
+            state_output,
+        )
+        .with_nstates(1)
+        .with_ndrugs(1)
+        .with_nout(1)
+        .with_solver(OdeSolver::Bdf)
+        .with_metadata(
+            super::super::metadata::new("accepted_stop_ode")
+                .states(["central"])
+                .outputs(["cp"])
+                .route(super::super::Route::infusion("iv").to_state("central")),
+        )
+        .expect("metadata should validate");
+
+        let predictions = ode
+            .simulate_subject(&subject, &crate::parameters::dense([]), None)
+            .expect("infusion simulation should succeed")
+            .0;
+
+        // Dose delivered over [5, 10], then exponential decay for 10 h:
+        // (100 * (1 - exp(-0.5 * 5)) / (0.5 * 5)) * exp(-0.5 * 10).
+        let delivered = 100.0 * (1.0 - (-2.5_f64).exp()) / 2.5;
+        let expected = delivered * (-5.0_f64).exp();
+        let pred = predictions.predictions()[1].prediction();
+        assert_relative_eq!(pred, expected, max_relative = 1e-3);
+    }
+
+    // debug/script.R hybrid phage model (subject `1` of dat.csv), with the
+    // parameters hardcoded. A large infusion rate (1e9 over 1.25e-3 h) makes
+    // the first Newton solve after every infusion boundary fail once with
+    // diffsol's convergence heuristics and then recover via step-size
+    // reduction; over a long horizon those individually recovered failures
+    // accumulate in diffsol's absolute `number_of_nonlinear_solver_fails`
+    // counter and blow up the run unless the boundary restart avoids them.
+    fn hybrid_phage_diffeq(
+        x: &V,
+        _p: &V,
+        _t: f64,
+        dx: &mut V,
+        _b: &V,
+        rateiv: &V,
+        _cov: &Covariates,
+    ) {
+        let eps = 1.0e-12_f64;
+        let soft = |v: f64| 0.5 * (v + (v * v + eps * eps).sqrt());
+
+        let kep = 20.799022436141968;
+        let k12 = 3.611151695251465;
+        let k21 = 0.20569434165954592;
+        let kdep = 3.674600839614868;
+        let kcl_air = 98.17452669143677;
+        let kgr = 2.072104573249817;
+        let kinf = 1.909232258796692e-6;
+        let c50 = 427933.12072753906;
+        let klysis = 0.8622971177101135;
+        let burst = 1.591451644897461;
+        let ksp = 4.387639760971069;
+        let kdp = 0.0917521107196808;
+        let kn = 1.147785520553589;
+        let va = 12.829959392547607;
+
+        let phage_air = soft(x[2]);
+        let bacc_pos = soft(x[3]);
+        let binf_pos = soft(x[4]);
+        let bprot_pos = soft(x[5]);
+        let tb = bacc_pos + binf_pos + bprot_pos;
+        let bmax = 10_f64.powi(10);
+        let cair = phage_air / va;
+        let inf_eff = kinf * cair / (1.0 + cair / c50);
+
+        dx[0] = -(kep + k12 + kdep) * x[0] + k21 * x[1] + rateiv[0];
+        dx[1] = k12 * x[0] - k21 * x[1];
+        dx[2] = kdep * x[0] - kcl_air * x[2] - inf_eff * bacc_pos + burst * klysis * binf_pos;
+        dx[3] = kgr * bacc_pos * (1.0 - tb / bmax) - inf_eff * bacc_pos - ksp * x[3] + kdp * x[5]
+            - kn * x[3];
+        dx[4] = inf_eff * bacc_pos - klysis * x[4];
+        dx[5] = ksp * x[3] - kdp * x[5];
+    }
+
+    fn hybrid_phage_init(_p: &V, _t: f64, _cov: &Covariates, x: &mut V) {
+        x[3] = 3.0 * 10_f64.powf(5.5);
+    }
+
+    fn run_hybrid_phage_infusions(subject: &Subject) -> Vec<f64> {
+        let ode = ODE::new(
+            hybrid_phage_diffeq,
+            zero_lag,
+            unit_fa,
+            hybrid_phage_init,
+            state_output,
+        )
+        .with_nstates(6)
+        .with_ndrugs(1)
+        .with_nout(1)
+        .with_solver(OdeSolver::Bdf)
+        .with_metadata(
+            super::super::metadata::new("hybrid_phage_infusions")
+                .states(["plasma", "peripheral", "airway", "bacc", "binf", "bprot"])
+                .outputs(["cp"])
+                .route(super::super::Route::infusion("iv").to_state("plasma")),
+        )
+        .expect("metadata should validate");
+
+        let predictions = ode
+            .simulate_subject(subject, &crate::parameters::dense([]), None)
+            .expect("hybrid phage simulation should succeed")
+            .0;
+
+        predictions
+            .predictions()
+            .iter()
+            .map(|p| p.prediction())
+            .collect()
+    }
+
+    #[test]
+    fn ode_infusions_long_horizon_boundary_failures_do_not_accumulate() {
+        // The dosing and observation schedule of debug/dat.csv subject `1`
+        // (103 short infusions): enough boundaries that, without the boundary
+        // restart handling, the individually-recovered Newton failures would
+        // accumulate past diffsol's 50-failure limit and abort the run.
+        let mut builder = Subject::builder("long_horizon_short_infusions");
+        builder = builder.infusion(0.0, 1e+09, "iv", 0.00125);
+        builder = builder.missing_observation(0.005, "cp");
+        builder = builder.missing_observation(0.01791667, "cp");
+        builder = builder.missing_observation(0.02208333, "cp");
+        builder = builder.missing_observation(0.02208333, "cp");
+        builder = builder.missing_observation(0.03458333, "cp");
+        builder = builder.missing_observation(0.03833333, "cp");
+        builder = builder.missing_observation(0.03833333, "cp");
+        builder = builder.missing_observation(0.08458333, "cp");
+        builder = builder.missing_observation(0.18625, "cp");
+        builder = builder.infusion(0.5, 1e+09, "iv", 0.00125);
+        builder = builder.infusion(1.0, 1e+09, "iv", 0.00125);
+        builder = builder.infusion(1.5, 1e+09, "iv", 0.00125);
+        builder = builder.infusion(2.0, 1e+09, "iv", 0.00125);
+        builder = builder.infusion(2.5, 1e+09, "iv", 0.00125);
+        builder = builder.infusion(3.0, 1e+09, "iv", 0.00125);
+        builder = builder.infusion(3.5, 1e+09, "iv", 0.00125);
+        builder = builder.infusion(4.0, 1e+09, "iv", 0.00125);
+        builder = builder.infusion(4.5, 1e+09, "iv", 0.00125);
+        builder = builder.infusion(5.0, 1e+09, "iv", 0.00125);
+        builder = builder.infusion(5.5, 1e+09, "iv", 0.00125);
+        builder = builder.infusion(6.0, 1e+09, "iv", 0.00125);
+        builder = builder.infusion(6.5, 1e+09, "iv", 0.00125);
+        builder = builder.infusion(7.0, 1e+09, "iv", 0.00125);
+        builder = builder.infusion(7.5, 1e+09, "iv", 0.00125);
+        builder = builder.infusion(8.490833, 1e+09, "iv", 0.00125);
+        builder = builder.missing_observation(8.991667, "cp");
+        builder = builder.infusion(8.992917, 1e+09, "iv", 0.00125);
+        builder = builder.missing_observation(8.995833, "cp");
+        builder = builder.missing_observation(9.010417, "cp");
+        builder = builder.missing_observation(9.074167, "cp");
+        builder = builder.missing_observation(9.166667, "cp");
+        builder = builder.infusion(9.492917, 1e+09, "iv", 0.00125);
+        builder = builder.infusion(9.992917, 1e+09, "iv", 0.00125);
+        builder = builder.infusion(10.49292, 1e+09, "iv", 0.00125);
+        builder = builder.infusion(10.99292, 1e+09, "iv", 0.00125);
+        builder = builder.infusion(11.49292, 1e+09, "iv", 0.00125);
+        builder = builder.infusion(12.01458, 3e+09, "iv", 0.00125);
+        builder = builder.missing_observation(12.03958, "cp");
+        builder = builder.missing_observation(12.03958, "cp");
+        builder = builder.missing_observation(13.01375, "cp");
+        builder = builder.infusion(13.01542, 3e+09, "iv", 0.00125);
+        builder = builder.missing_observation(13.01792, "cp");
+        builder = builder.missing_observation(13.1925, "cp");
+        builder = builder.missing_observation(13.1925, "cp");
+        builder = builder.missing_observation(13.1925, "cp");
+        builder = builder.missing_observation(13.26875, "cp");
+        builder = builder.infusion(14.01542, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(15.01542, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(16.01542, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(17.01542, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(18.01542, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(19.01542, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(20.04917, 3e+09, "iv", 0.00125);
+        builder = builder.missing_observation(21.03333, "cp");
+        builder = builder.infusion(21.04917, 3e+09, "iv", 0.00125);
+        builder = builder.missing_observation(21.055, "cp");
+        builder = builder.missing_observation(21.06792, "cp");
+        builder = builder.infusion(22.04917, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(23.04917, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(26.05125, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(27.05125, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(28.05125, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(29.05125, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(30.05125, 3e+09, "iv", 0.00125);
+        builder = builder.missing_observation(33.05333, "cp");
+        builder = builder.infusion(33.06042, 3e+09, "iv", 0.00125);
+        builder = builder.missing_observation(33.06375, "cp");
+        builder = builder.missing_observation(34.0375, "cp");
+        builder = builder.missing_observation(34.0375, "cp");
+        builder = builder.infusion(34.06042, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(35.06042, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(36.06042, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(37.06042, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(40.06042, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(41.06042, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(42.06042, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(43.06042, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(44.06042, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(47.06042, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(48.06042, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(49.06042, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(50.06042, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(51.06042, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(54.03667, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(55.03667, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(56.17417, 3e+09, "iv", 0.00125);
+        builder = builder.missing_observation(56.21667, "cp");
+        builder = builder.missing_observation(56.21667, "cp");
+        builder = builder.infusion(57.17417, 3e+09, "iv", 0.00125);
+        builder = builder.missing_observation(58.01542, "cp");
+        builder = builder.missing_observation(58.01542, "cp");
+        builder = builder.infusion(58.17417, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(61.17583, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(62.17583, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(63.17583, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(64.17583, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(65.17583, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(68.17583, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(69.17583, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(70.17583, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(71.17583, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(72.17583, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(75.17583, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(76.17583, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(77.17583, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(78.17583, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(79.17583, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(82.17583, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(83.17583, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(84.17583, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(85.17583, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(86.17583, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(89.17583, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(90.17583, 3e+09, "iv", 0.00125);
+        builder = builder.missing_observation(91.05958, "cp");
+        builder = builder.infusion(91.17583, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(92.17583, 3e+09, "iv", 0.00125);
+        builder = builder.missing_observation(93.07417, "cp");
+        builder = builder.missing_observation(93.07417, "cp");
+        builder = builder.infusion(93.17583, 3e+09, "iv", 0.00125);
+        builder = builder.infusion(96.02792, 4.5e+09, "iv", 0.00125);
+        builder = builder.infusion(97.02792, 4.5e+09, "iv", 0.00125);
+        builder = builder.infusion(98.02792, 4.5e+09, "iv", 0.00125);
+        builder = builder.infusion(99.02792, 4.5e+09, "iv", 0.00125);
+        builder = builder.infusion(100.0279, 4.5e+09, "iv", 0.00125);
+        builder = builder.infusion(103.0279, 4.5e+09, "iv", 0.00125);
+        builder = builder.infusion(104.0279, 4.5e+09, "iv", 0.00125);
+        builder = builder.infusion(105.0279, 4.5e+09, "iv", 0.00125);
+        builder = builder.infusion(106.0279, 4.5e+09, "iv", 0.00125);
+        builder = builder.infusion(107.0279, 4.5e+09, "iv", 0.00125);
+        builder = builder.infusion(110.0279, 4.5e+09, "iv", 0.00125);
+        builder = builder.infusion(111.0279, 4.5e+09, "iv", 0.00125);
+        builder = builder.missing_observation(112.0271, "cp");
+        builder = builder.missing_observation(112.0271, "cp");
+        builder = builder.infusion(112.0279, 4.5e+09, "iv", 0.00125);
+        builder = builder.missing_observation(112.0742, "cp");
+        builder = builder.missing_observation(112.0742, "cp");
+        builder = builder.infusion(113.0279, 4.5e+09, "iv", 0.00125);
+        builder = builder.infusion(114.0279, 4.5e+09, "iv", 0.00125);
+        builder = builder.missing_observation(114.1333, "cp");
+        builder = builder.missing_observation(114.1333, "cp");
+        builder = builder.infusion(117.05, 4.5e+09, "iv", 0.00125);
+        builder = builder.infusion(118.05, 4.5e+09, "iv", 0.00125);
+        builder = builder.infusion(119.05, 4.5e+09, "iv", 0.00125);
+        let subject = builder.build();
+
+        let predictions = run_hybrid_phage_infusions(&subject);
+
+        // The simulation must complete and produce a finite, positive plasma
+        // prediction (the crash is the regression this guards against).
+        assert!(predictions[0].is_finite());
+        assert!(predictions[0] > 0.0);
     }
 }
