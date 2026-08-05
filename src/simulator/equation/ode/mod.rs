@@ -544,6 +544,28 @@ impl EquationPriv for ODE {
 }
 
 impl ODE {
+    fn infusion_end_times(events: &[Event]) -> Vec<f64> {
+        let mut stops: Vec<f64> = events
+            .iter()
+            .filter_map(|event| {
+                let infusion = match event {
+                    Event::Infusion(infusion) => infusion,
+                    _ => return None,
+                };
+                let start = infusion.time();
+                let end = start + infusion.duration();
+                if end.is_finite() && end > start {
+                    Some(end)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        stops.sort_by(|a, b| a.total_cmp(b));
+        stops.dedup_by(|a, b| a == b);
+        stops
+    }
+
     /// Generic event-loop runner, parameterized over the concrete solver type.
     #[allow(clippy::too_many_arguments)]
     fn run_events<'a, F, S>(
@@ -562,11 +584,14 @@ impl ODE {
         likelihood: &mut Vec<f64>,
         output: &mut SubjectPredictions,
     ) -> Result<(), PharmsolError>
-    where
+        where
         F: Fn(&V, &V, f64, &mut V, &V, &V, &Covariates) + 'a,
         S: OdeSolverMethod<'a, PMProblem<'a, F>>,
     {
-        for (index, event) in events.iter().enumerate() {
+        let infusion_stop_times = Self::infusion_end_times(events);
+        let mut index = 0usize;
+        while index < events.len() {
+            let event = &events[index];
             let next_event = events.get(index + 1);
 
             match event {
@@ -645,8 +670,16 @@ impl ODE {
 
             // Advance to the next event time if it exists
             if let Some(next_event) = next_event {
-                if !event.time().eq(&next_event.time()) {
-                    match solver.set_stop_time(next_event.time()) {
+                while solver.state().t < next_event.time() {
+                    let mut stop_time = next_event.time();
+                    for stop in &infusion_stop_times {
+                        if stop > &solver.state().t && stop < &stop_time {
+                            stop_time = *stop;
+                            break;
+                        }
+                    }
+
+                    match solver.set_stop_time(stop_time) {
                         Ok(_) => loop {
                             match solver.step() {
                                 Ok(OdeSolverStopReason::InternalTimestep) => continue,
@@ -655,13 +688,12 @@ impl ODE {
                                     return Err(PharmsolError::OtherError(format!(
                                         "solver stopped at an unexpected root at t = {:.4} \
                                          (root finding is not configured)",
-                                        next_event.time()
+                                        stop_time
                                     )));
                                 }
                                 Err(err) => {
                                     return Err(PharmsolError::from_solver_error(
-                                        err,
-                                        next_event.time(),
+                                        err, stop_time,
                                     ));
                                 }
                             }
@@ -669,14 +701,15 @@ impl ODE {
                         Err(diffsol::error::DiffsolError::OdeSolverError(
                             OdeSolverError::StopTimeAtCurrentTime,
                         )) => {
-                            continue;
+                            break;
                         }
                         Err(err) => {
-                            return Err(PharmsolError::from_solver_error(err, next_event.time()));
+                            return Err(PharmsolError::from_solver_error(err, stop_time));
                         }
                     }
                 }
             }
+            index += 1;
         }
         Ok(())
     }
