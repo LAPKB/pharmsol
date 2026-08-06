@@ -1474,19 +1474,21 @@ impl NativeOdeModel {
                         )) => {
                             solver.problem().eqn.set_left_continuity_time(None);
                             let state_t = solver.state().t;
-                            let stop_reached = stop_time == state_t
-                                || stop_time == state_t.next_up()
-                                || stop_time == state_t.next_down();
+                            let stop_reached =
+                                crate::simulator::equation::ode::stop_time_reached(
+                                    stop_time, state_t,
+                                );
 
                             if stop_reached {
                                 if is_infusion_boundary {
                                     pending_reinit = true;
                                 }
-                                // The requested stop is the current time (within
-                                // one ULP). If it is an infusion boundary before
-                                // the next subject event, keep integrating toward
-                                // the event; break only when the reached stop is
-                                // the event time itself.
+                                // The requested stop is the current time within
+                                // a small relative tolerance. If it is an
+                                // infusion boundary before the next subject
+                                // event, keep integrating toward the event;
+                                // break only when the reached stop is the
+                                // event time itself.
                                 if stop_time < next_event_time {
                                     continue;
                                 }

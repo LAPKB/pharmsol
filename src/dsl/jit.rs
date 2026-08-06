@@ -1955,6 +1955,54 @@ out(cp) = central / v ~ continuous()
         );
     }
 
+    #[test]
+    fn jit_dense_observations_a_few_ulps_from_event_time_do_not_error() {
+        // Mirror of the closure-ODE regression test: dense observation times a
+        // few ULPs away from a bolus event must not trip the
+        // `StopTimeAtCurrentTime` hard error in the native/JIT event loop.
+        let source = r#"
+name = dense_grid_near_event
+kind = ode
+
+params = ke, v
+states = central
+outputs = cp
+
+bolus(input_0) -> central
+
+ddt(central) = -ke * central
+
+out(cp) = central / v ~ continuous()
+"#;
+        let parsed = pharmsol_dsl::parse_model(source).expect("authoring model parses");
+        let analyzed = pharmsol_dsl::analyze_model(&parsed).expect("authoring model analyzes");
+        let model =
+            pharmsol_dsl::compile_analyzed_model(&analyzed).expect("authoring model lowers");
+        let jit = compile_ode_model_to_jit(&model)
+            .expect("compile jit ode model")
+            .with_solver(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45));
+
+        let ulp = 12.0f64.next_up() - 12.0;
+        let subject = Subject::builder("dense_grid_near_event")
+            .bolus(0.0, 200.0, "input_0")
+            .bolus(12.0, 100.0, "input_0")
+            .missing_observation(0.0, "cp")
+            .missing_observation(12.0 - 16.0 * ulp, "cp")
+            .missing_observation(12.0 + 16.0 * ulp, "cp")
+            .missing_observation(24.0, "cp")
+            .build();
+        let support = Parameters::with_model(
+            &crate::dsl::CompiledRuntimeModel::Ode(jit.clone()),
+            [("ke", 0.3), ("v", 50.0)],
+        )
+        .expect("valid named parameters");
+
+        let predictions = jit
+            .estimate_predictions(&subject, &support)
+            .expect("jit dense grid near event should simulate");
+        assert_eq!(predictions.predictions().len(), 4);
+    }
+
     fn slot_index(layout: &BufferLayout, name: &str) -> usize {
         layout
             .slots

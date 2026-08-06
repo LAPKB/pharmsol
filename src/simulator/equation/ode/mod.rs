@@ -585,6 +585,24 @@ where
     state.dy.copy_from(dy_scratch);
 }
 
+/// Whether a requested solver stop is effectively at the current state time.
+///
+/// diffsol reports `StopTimeAtCurrentTime` not only for a stop exactly at the
+/// current time, but also when its internal state time has landed a few ULPs
+/// past the requested stop (adaptive steps may end slightly beyond a stop).
+/// Dense output grids built with floating-point arithmetic routinely place
+/// requested times a few ULPs away from event times (e.g. a `t += dt`
+/// accumulation puts a point ~16 ULPs after a bolus at `t = 12`), so accept a
+/// stop within a small relative tolerance of the current time instead of
+/// erroring. The tolerance stays far below any meaningful time difference:
+/// ~64-128 ULPs of the current time, i.e. at most ~1e-13 at `t = 12`.
+///
+/// Shared with the DSL/JIT ODE path ([`crate::dsl::native::NativeOdeModel`]).
+pub(crate) fn stop_time_reached(stop_time: f64, state_t: f64) -> bool {
+    let tolerance = f64::EPSILON * state_t.abs().max(1.0) * 64.0;
+    (stop_time - state_t).abs() <= tolerance
+}
+
 impl ODE {
     /// Generic event-loop runner, parameterized over the concrete solver type.
     #[allow(clippy::too_many_arguments)]
@@ -764,19 +782,18 @@ impl ODE {
                         )) => {
                             solver.problem().eqn.set_left_continuity_time(None);
                             let state_t = solver.state().t;
-                            let stop_reached = stop_time == state_t
-                                || stop_time == state_t.next_up()
-                                || stop_time == state_t.next_down();
+                            let stop_reached = stop_time_reached(stop_time, state_t);
 
                             if stop_reached {
                                 if is_infusion_boundary {
                                     pending_reinit = true;
                                 }
-                                // The requested stop is the current time (within
-                                // one ULP). If it is an infusion boundary before
-                                // the next subject event, keep integrating toward
-                                // the event; break only when the reached stop is
-                                // the event time itself. Breaking early would skip
+                                // The requested stop is the current time within
+                                // a small relative tolerance. If it is an
+                                // infusion boundary before the next subject
+                                // event, keep integrating toward the event;
+                                // break only when the reached stop is the
+                                // event time itself. Breaking early would skip
                                 // the remaining interval and leave the solver
                                 // state at the boundary when the observation is
                                 // evaluated.
@@ -1374,6 +1391,61 @@ mod tests {
         let expected = delivered * (-5.0_f64).exp();
         let pred = predictions.predictions()[1].prediction();
         assert_relative_eq!(pred, expected, max_relative = 1e-3);
+    }
+
+    #[test]
+    fn dense_observations_a_few_ulps_from_event_time_do_not_error() {
+        // Regression test for the 0.28.5 event loop: dense prediction grids
+        // built with floating-point accumulation (e.g. a `t += 0.05` grid over
+        // 0..24) place requested times a few ULPs away from event times. Here
+        // the bolus at t = 12 meets observations ~16 ULPs on either side;
+        // `set_stop_time` reports `StopTimeAtCurrentTime` for those stops and
+        // the loop must treat them as reached instead of erroring.
+        let ulp = 12.0f64.next_up() - 12.0;
+        let subject = Subject::builder("dense_grid_near_event")
+            .bolus(0.0, 200.0, 0)
+            .bolus(12.0, 100.0, 0)
+            .missing_observation(0.0, "cp")
+            .missing_observation(12.0 - 16.0 * ulp, "cp")
+            .missing_observation(12.0 + 16.0 * ulp, "cp")
+            .missing_observation(24.0, "cp")
+            .build();
+
+        let solvers = [
+            (OdeSolver::Bdf, "Bdf"),
+            (OdeSolver::Sdirk(SdirkTableau::TrBdf2), "TrBdf2"),
+            (OdeSolver::Sdirk(SdirkTableau::Esdirk34), "Esdirk34"),
+            (OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45), "Tsit45"),
+        ];
+
+        for (solver, label) in solvers {
+            let ode = ODE::new(
+                |x: &V, _p: &V, _t: f64, dx: &mut V, _b: &V, _rateiv: &V, _cov: &Covariates| {
+                    dx[0] = -0.3 * x[0];
+                },
+                zero_lag,
+                unit_fa,
+                zero_init,
+                state_output,
+            )
+            .with_nstates(1)
+            .with_ndrugs(1)
+            .with_nout(1)
+            .with_solver(solver)
+            .with_metadata(
+                super::super::metadata::new("dense_grid_near_event_ode")
+                    .states(["central"])
+                    .outputs(["cp"])
+                    .route(super::super::Route::bolus("input_0").to_state("central")),
+            )
+            .expect("metadata should validate");
+
+            let predictions = ode
+                .simulate_subject_dense(&subject, &crate::parameters::dense([]), None)
+                .unwrap_or_else(|error| panic!("{label}: dense grid near event failed: {error}"))
+                .0;
+            assert_eq!(predictions.predictions().len(), 4);
+        }
     }
 
     // debug/script.R hybrid phage model (subject `1` of dat.csv), with the
