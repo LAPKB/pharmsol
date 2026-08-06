@@ -517,6 +517,104 @@ model dup_routes {
 }
 
 #[test]
+fn canonical_shared_label_routes_compile_with_per_kind_slots() {
+    let src = r#"
+model dosing {
+    kind ode
+    parameters { ke, v }
+    states { central }
+    routes {
+        bolus input_1 -> central,
+        infusion input_1 -> central
+    }
+    dynamics {
+        ddt(central) = -ke * central
+    }
+    outputs {
+        cp = central / v
+    }
+}
+"#;
+
+    let module = parse_module(src).expect("canonical shared-label model parses");
+    let model = module.models.first().expect("one model");
+    let analyzed = analyze_model(model).expect("canonical shared-label model analyzes");
+    let compiled =
+        compile_analyzed_model(&analyzed).expect("canonical shared-label model compiles");
+
+    let routes = &compiled.metadata.routes;
+    assert_eq!(routes.len(), 2);
+    assert!(routes.iter().all(|route| route.name == "input_1"));
+    let bolus = routes
+        .iter()
+        .find(|route| route.kind == Some(pharmsol_dsl::RouteKind::Bolus))
+        .expect("bolus route");
+    let infusion = routes
+        .iter()
+        .find(|route| route.kind == Some(pharmsol_dsl::RouteKind::Infusion))
+        .expect("infusion route");
+    assert_eq!(bolus.index, 0);
+    assert_eq!(infusion.index, 0);
+
+    // Rendering preserves route kinds and reparses identically.
+    let rendered = module.to_string();
+    assert!(rendered.contains("bolus input_1 -> central"), "{rendered}");
+    assert!(
+        rendered.contains("infusion input_1 -> central"),
+        "{rendered}"
+    );
+    let reparsed = parse_module(&rendered).expect("rendered canonical model reparses");
+    assert_eq!(rendered, reparsed.to_string());
+}
+
+#[test]
+fn canonical_route_kind_keyword_is_optional_and_unambiguous() {
+    // `bolus -> gut` is a kind-less route whose label is `bolus`.
+    let src = r#"
+model kind_label {
+    kind ode
+    states { gut }
+    routes { bolus -> gut }
+    dynamics { ddt(gut) = 0 }
+    outputs { cp = gut }
+}
+"#;
+
+    let model = parse_model(src).expect("kind-looking label parses");
+    let analyzed = analyze_model(&model).expect("kind-looking label analyzes");
+    let compiled = compile_analyzed_model(&analyzed).expect("kind-looking label compiles");
+
+    let route = &compiled.metadata.routes[0];
+    assert_eq!(route.name, "bolus");
+    assert_eq!(route.kind, None);
+    assert_eq!(route.index, 0);
+}
+
+#[test]
+fn rejects_mixed_kind_less_and_kinded_duplicate_route_names() {
+    let src = r#"
+model mixed_kind {
+    kind ode
+    states { central }
+    routes {
+        input_1 -> central,
+        bolus input_1 -> central
+    }
+    dynamics { ddt(central) = 0 }
+    outputs { cp = central }
+}
+"#;
+
+    let model = parse_model(src).expect("mixed-kind model parses");
+    let err = analyze_model(&model).expect_err("kind-less and kinded duplicates must fail");
+    assert!(
+        err.render(src).contains("duplicate route `input_1`"),
+        "{}",
+        err.render(src)
+    );
+}
+
+#[test]
 fn rejects_rate_numeric_literals_with_prefixed_guidance() {
     let src = r#"
 model numeric_rate_arg {

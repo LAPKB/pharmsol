@@ -1616,6 +1616,101 @@ out(cp) = central / v ~ continuous()
         }
     }
 
+    #[test]
+    fn canonical_and_authoring_shared_labels_are_equivalent() {
+        let authoring_source = r#"
+name = shared_label_authoring
+kind = ode
+
+params = ke, v, tlag
+states = central
+outputs = cp
+
+bolus(input_1) -> central
+infusion(input_1) -> central
+lag(input_1) = tlag
+
+dx(central) = -ke * central
+
+out(cp) = central / v ~ continuous()
+"#;
+        // The canonical form spells out what the authoring surface injects:
+        // the infusion rate appears explicitly in the dynamics.
+        let canonical_source = r#"
+model shared_label_canonical {
+    kind ode
+    parameters { ke, v, tlag }
+    states { central }
+    routes {
+        bolus input_1 -> central { lag = tlag },
+        infusion input_1 -> central
+    }
+    dynamics {
+        ddt(central) = -ke * central + rate(input_1)
+    }
+    outputs {
+        cp = central / v
+    }
+}
+"#;
+
+        let authoring_model =
+            pharmsol_dsl::parse_model(authoring_source).expect("authoring model parses");
+        let authoring_jit = compile_ode_model_to_jit(
+            &pharmsol_dsl::compile_analyzed_model(
+                &pharmsol_dsl::analyze_model(&authoring_model).expect("authoring model analyzes"),
+            )
+            .expect("authoring model lowers"),
+        )
+        .expect("compile authoring jit ode model")
+        .with_solver(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45));
+
+        let canonical_model =
+            pharmsol_dsl::parse_model(canonical_source).expect("canonical model parses");
+        let canonical_jit = compile_ode_model_to_jit(
+            &pharmsol_dsl::compile_analyzed_model(
+                &pharmsol_dsl::analyze_model(&canonical_model).expect("canonical model analyzes"),
+            )
+            .expect("canonical model lowers"),
+        )
+        .expect("compile canonical jit ode model")
+        .with_solver(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45));
+
+        let subject = Subject::builder("ode")
+            .bolus(0.0, 500.0, "input_1")
+            .infusion(1.0, 100.0, "input_1", 2.0)
+            .observation(0.5, 0.0, "cp")
+            .observation(1.0, 0.0, "cp")
+            .observation(2.0, 0.0, "cp")
+            .observation(3.0, 0.0, "cp")
+            .observation(4.0, 0.0, "cp")
+            .build();
+        let support = Parameters::with_model(
+            &crate::dsl::CompiledRuntimeModel::Ode(authoring_jit.clone()),
+            [("ke", 0.2), ("v", 10.0), ("tlag", 0.25)],
+        )
+        .expect("valid named parameters");
+
+        let authoring_predictions = authoring_jit
+            .estimate_predictions(&subject, &support)
+            .expect("authoring jit predictions");
+        let canonical_predictions = canonical_jit
+            .estimate_predictions(&subject, &support)
+            .expect("canonical jit predictions");
+
+        for (authoring_pred, canonical_pred) in authoring_predictions
+            .predictions()
+            .iter()
+            .zip(canonical_predictions.predictions())
+        {
+            assert_relative_eq!(
+                authoring_pred.prediction(),
+                canonical_pred.prediction(),
+                max_relative = 1e-6
+            );
+        }
+    }
+
     fn slot_index(layout: &BufferLayout, name: &str) -> usize {
         layout
             .slots

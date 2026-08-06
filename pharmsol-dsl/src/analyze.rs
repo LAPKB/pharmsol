@@ -3255,7 +3255,7 @@ model analytical_broken {
             typed_model_signature(&canonical_typed)
         );
         assert_eq!(authoring_typed.routes[0].kind, Some(RouteKind::Bolus));
-        assert_eq!(canonical_typed.routes[0].kind, None);
+        assert_eq!(canonical_typed.routes[0].kind, Some(RouteKind::Bolus));
     }
 
     #[test]
