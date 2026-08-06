@@ -615,6 +615,34 @@ model mixed_kind {
 }
 
 #[test]
+fn rejects_duplicate_kind_reappearing_after_shared_label() {
+    // `bolus, infusion, bolus` under one label must be rejected even though
+    // the parser's kind-keyed uniqueness cannot see it (the canonical parser
+    // has no duplicate check; the analyzer tracks every kind seen per label).
+    let src = r#"
+model triple {
+    kind ode
+    states { central }
+    routes {
+        bolus input_1 -> central,
+        infusion input_1 -> central,
+        bolus input_1 -> central
+    }
+    dynamics { ddt(central) = 0 }
+    outputs { cp = central }
+}
+"#;
+
+    let model = parse_model(src).expect("triple-route model parses");
+    let err = analyze_model(&model).expect_err("reappearing same-kind route must fail");
+    assert!(
+        err.render(src).contains("duplicate route `input_1`"),
+        "{}",
+        err.render(src)
+    );
+}
+
+#[test]
 fn rejects_rate_numeric_literals_with_prefixed_guidance() {
     let src = r#"
 model numeric_rate_arg {

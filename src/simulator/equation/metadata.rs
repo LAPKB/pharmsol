@@ -155,8 +155,15 @@ impl ValidatedModelMetadata {
     }
 
     /// Declared route (input) labels, e.g. for error messages.
+    ///
+    /// A label shared by a bolus and an infusion appears once.
     pub fn route_labels(&self) -> Vec<&str> {
-        self.routes.iter().map(ValidatedRoute::name).collect()
+        let mut seen = std::collections::HashSet::with_capacity(self.routes.len());
+        self.routes
+            .iter()
+            .filter(|route| seen.insert(route.name()))
+            .map(ValidatedRoute::name)
+            .collect()
     }
 
     /// Get the number of dense execution input slots needed for routes.
@@ -200,8 +207,20 @@ impl ValidatedModelMetadata {
     }
 
     /// Look up a route by public name and return its declaration-order index.
+    ///
+    /// Legacy name-only lookup: when a bolus and an infusion share a label,
+    /// this returns the first matching declaration. Prefer
+    /// [`Self::route_declaration_index_by_kind`] when the route kind is known.
     pub fn route_declaration_index(&self, name: &str) -> Option<usize> {
         self.routes.iter().position(|route| route.name() == name)
+    }
+
+    /// Look up a route by public name and kind, returning its
+    /// declaration-order index.
+    pub fn route_declaration_index_by_kind(&self, name: &str, kind: RouteKind) -> Option<usize> {
+        self.routes
+            .iter()
+            .position(|route| route.kind() == kind && route.name() == name)
     }
 
     /// Look up an output by public name and return its dense output index.
@@ -241,25 +260,6 @@ impl ValidatedModelMetadata {
             })
     }
 
-    /// Kind-agnostic route label lookup.
-    ///
-    /// Canonical `model {}` routes carry no kind and default to bolus
-    /// metadata, yet remain usable as either a bolus or an infusion input;
-    /// the runtime falls back to this lookup when no route of the requested
-    /// kind matches the label.
-    pub fn route_for_label_any_kind(&self, label: &str) -> Option<&ValidatedRoute> {
-        self.routes
-            .iter()
-            .find(|route| route.name() == label)
-            .or_else(|| {
-                if !is_bare_numeric_label(label) {
-                    return None;
-                }
-                let aliased = format!("{NUMERIC_ROUTE_PREFIX}{label}");
-                self.routes.iter().find(|route| route.name() == aliased)
-            })
-    }
-
     /// Resolve a public output label from data to its dense output index.
     ///
     /// Uses the same resolution order as [`Self::route_for_label`]: exact
@@ -288,8 +288,19 @@ impl ValidatedModelMetadata {
         self.state_index(name).map(|index| &self.states[index])
     }
 
+    /// Look up a route by public name.
+    ///
+    /// Legacy name-only lookup: when a bolus and an infusion share a label,
+    /// this returns the first matching declaration. Prefer [`Self::route_by_kind`]
+    /// when the route kind is known.
     pub fn route(&self, name: &str) -> Option<&ValidatedRoute> {
         self.route_declaration_index(name)
+            .map(|index| &self.routes[index])
+    }
+
+    /// Look up a route by public name and kind.
+    pub fn route_by_kind(&self, name: &str, kind: RouteKind) -> Option<&ValidatedRoute> {
+        self.route_declaration_index_by_kind(name, kind)
             .map(|index| &self.routes[index])
     }
 
@@ -802,7 +813,7 @@ impl Route {
 }
 
 /// Returns `true` for labels consisting only of ASCII digits (`"0"`, `"12"`).
-fn is_bare_numeric_label(label: &str) -> bool {
+pub(crate) fn is_bare_numeric_label(label: &str) -> bool {
     !label.is_empty() && label.chars().all(|ch| ch.is_ascii_digit())
 }
 
@@ -1314,6 +1325,74 @@ mod tests {
                 name: "input_1".to_string(),
             }
         );
+    }
+
+    #[test]
+    fn shared_label_mixed_order_resolves_per_kind_ordinals() {
+        let metadata = new("mixed_shared_label")
+            .kind(ModelKind::Ode)
+            .parameters(["ka", "kp", "ke", "v"])
+            .states(["gut", "peripheral", "central"])
+            .outputs(["cp"])
+            .routes([
+                Route::bolus("input_1").to_state("gut"),
+                Route::infusion("input_2").to_state("peripheral"),
+                Route::infusion("input_1").to_state("central"),
+            ])
+            .validate()
+            .expect("mixed-order shared-label metadata should validate");
+
+        // The `input_1` bolus is the first bolus: bolus ordinal 0, gut.
+        let bolus = metadata
+            .route_for_label("input_1", RouteKind::Bolus)
+            .expect("bolus route");
+        assert_eq!(bolus.input_index(), 0);
+        assert_eq!(bolus.destination(), "gut");
+        assert_eq!(
+            metadata.route_declaration_index_by_kind("input_1", RouteKind::Bolus),
+            Some(0)
+        );
+
+        // The `input_1` infusion is the second infusion: infusion ordinal 1,
+        // central. It must never resolve to the `input_2` infusion slot 0.
+        let infusion = metadata
+            .route_for_label("input_1", RouteKind::Infusion)
+            .expect("infusion route");
+        assert_eq!(infusion.input_index(), 1);
+        assert_eq!(infusion.destination(), "central");
+        assert_eq!(
+            metadata.route_declaration_index_by_kind("input_1", RouteKind::Infusion),
+            Some(2)
+        );
+        assert_eq!(
+            metadata
+                .route_by_kind("input_1", RouteKind::Infusion)
+                .expect("route")
+                .destination(),
+            "central"
+        );
+
+        // The `input_2` infusion keeps its own infusion ordinal 0.
+        let other = metadata
+            .route_for_label("input_2", RouteKind::Infusion)
+            .expect("input_2 route");
+        assert_eq!(other.input_index(), 0);
+        assert_eq!(other.destination(), "peripheral");
+
+        // Name-only lookups keep the documented first-match behavior for the
+        // shared label (the bolus declared first) and stay unambiguous for
+        // unique labels.
+        assert_eq!(
+            metadata
+                .route("input_1")
+                .expect("first-match route")
+                .declaration_index(),
+            0
+        );
+        assert_eq!(metadata.route_declaration_index("input_2"), Some(1));
+
+        // The shared label is listed once in the error-message label list.
+        assert_eq!(metadata.route_labels(), vec!["input_1", "input_2"]);
     }
 
     #[test]

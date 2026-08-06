@@ -3950,6 +3950,52 @@ mod tests {
     }
 
     #[test]
+    fn analytical_allows_shared_label_across_bolus_and_infusion_routes() {
+        let input = syn::parse_str::<AnalyticalInput>(
+            "name: \"demo\", params: [ka, ke, v], states: [gut, central], outputs: [cp], routes: [bolus(input_1) -> gut, infusion(input_1) -> central], structure: one_compartment_with_absorption, out: |x, p, t, cov, y| {}",
+        )
+        .expect("bolus and infusion sharing a label must parse");
+
+        assert_eq!(input.routes.len(), 2);
+    }
+
+    #[test]
+    fn analytical_rejects_shared_label_within_same_kind() {
+        let error = syn::parse_str::<AnalyticalInput>(
+            "name: \"demo\", params: [ka, ke, v], states: [gut, central], outputs: [cp], routes: [bolus(input_1) -> gut, bolus(input_1) -> central], structure: one_compartment_with_absorption, out: |x, p, t, cov, y| {}",
+        )
+        .err()
+        .expect("duplicate bolus routes must fail");
+
+        assert!(error
+            .to_string()
+            .contains("duplicate route `input_1` in declaration-first `analytical!`"));
+    }
+
+    #[test]
+    fn sde_allows_shared_label_across_bolus_and_infusion_routes() {
+        let input = syn::parse_str::<SdeInput>(
+            "name: \"demo\", params: [ke, v], states: [central], outputs: [cp], particles: 16, routes: [bolus(input_1) -> central, infusion(input_1) -> central], drift: |x, p, t, dx, cov| {}, diffusion: |p, sigma| {}, out: |x, p, t, cov, y| {}",
+        )
+        .expect("bolus and infusion sharing a label must parse");
+
+        assert_eq!(input.routes.len(), 2);
+    }
+
+    #[test]
+    fn sde_rejects_shared_label_within_same_kind() {
+        let error = syn::parse_str::<SdeInput>(
+            "name: \"demo\", params: [ke, v], states: [central], outputs: [cp], particles: 16, routes: [bolus(input_1) -> central, bolus(input_1) -> central], drift: |x, p, t, dx, cov| {}, diffusion: |p, sigma| {}, out: |x, p, t, cov, y| {}",
+        )
+        .err()
+        .expect("duplicate bolus routes must fail");
+
+        assert!(error
+            .to_string()
+            .contains("duplicate route `input_1` in declaration-first `sde!`"));
+    }
+
+    #[test]
     fn rejects_named_binding_collisions() {
         let error = syn::parse_str::<OdeInput>(
             "name: \"demo\", params: [central, v], states: [central], outputs: [cp], routes: [infusion(iv) -> central], diffeq: |x, p, t, dx, cov| {}, out: |x, p, t, cov, y| {}",

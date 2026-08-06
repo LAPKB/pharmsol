@@ -17,7 +17,7 @@ use libloading::Library;
 use pharmsol_dsl::execution::ModelFunctionKind;
 use pharmsol_dsl::{
     AnalyticalKernel, AnalyticalStructureInputKind, AnalyticalStructureInputPlan, ModelKind,
-    RouteKind,
+    RouteKind, NUMERIC_ROUTE_PREFIX,
 };
 
 pub use super::model_info::{
@@ -32,7 +32,6 @@ use crate::{
             DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE, DEFAULT_CACHE_SIZE,
         },
         equation::{
-            metadata::ValidatedRoute,
             ode::{closure_helpers::PMProblem, ExplicitRkTableau, OdeSolver, SdirkTableau},
             sde::simulate_sde_event_with,
             EqnKind, Equation, EquationPriv, EquationTypes, Predictions,
@@ -654,14 +653,34 @@ impl SharedNativeModel {
         self.metadata.as_ref()
     }
 
-    fn metadata_route_index_for_label(&self, label: &str, kind: RouteKind) -> Option<usize> {
-        let kind = match kind {
-            RouteKind::Bolus => crate::equation::RouteKind::Bolus,
-            RouteKind::Infusion => crate::equation::RouteKind::Infusion,
-        };
-        self.metadata()
-            .route_for_label(label, kind)
-            .map(ValidatedRoute::input_index)
+    /// Resolve a route by label and kind from the native model info, which
+    /// preserves the declared `Option<RouteKind>`. Validated metadata has
+    /// already collapsed kind-less routes to bolus, so it cannot tell a
+    /// genuinely kind-less route from an explicitly bolus one; the info
+    /// representation can.
+    ///
+    /// Bare numeric labels resolve through the `input_<n>` alias, matching
+    /// Pmetrics `INPUT` numbering, and never fall back to a declaration
+    /// position.
+    fn route_for_label_kind(
+        &self,
+        label: &str,
+        kind: Option<RouteKind>,
+    ) -> Option<&NativeRouteInfo> {
+        self.info
+            .routes
+            .iter()
+            .find(|route| route.kind == kind && route.name == label)
+            .or_else(|| {
+                if !crate::simulator::equation::metadata::is_bare_numeric_label(label) {
+                    return None;
+                }
+                let aliased = format!("{NUMERIC_ROUTE_PREFIX}{label}");
+                self.info
+                    .routes
+                    .iter()
+                    .find(|route| route.kind == kind && route.name == aliased)
+            })
     }
 
     fn metadata_output_index_for_label(&self, label: &str) -> Option<usize> {
@@ -714,19 +733,40 @@ impl SharedNativeModel {
         label: &InputLabel,
         kind: RouteKind,
     ) -> Result<usize, PharmsolError> {
-        let input = self
-            .metadata_route_index_for_label(label.as_str(), kind)
-            .or_else(|| {
-                // Kind-less canonical routes default to bolus metadata but
-                // remain usable as either input kind; fall back to a
-                // kind-agnostic name match so they keep resolving for both.
-                self.metadata()
-                    .route_for_label_any_kind(label.as_str())
-                    .map(ValidatedRoute::input_index)
-            })
-            .ok_or_else(|| {
-                PharmsolError::unknown_input_label(label.as_str(), &self.metadata().route_labels())
-            })?;
+        let name = label.as_str();
+        // Resolution order:
+        // 1. exact label with kind == requested kind,
+        // 2. exact label on a genuinely kind-less route (usable as either
+        //    input kind),
+        // 3. otherwise a wrong-kind or unknown-label error.
+        //
+        // An explicitly bolus or infusion route is never an any-kind
+        // fallback: bolus and infusion indices are separate ordinal spaces,
+        // so falling through to the other kind's route by a colliding
+        // numeric index would silently execute the wrong route.
+        let route = match self.route_for_label_kind(name, Some(kind)) {
+            Some(route) => Some(route),
+            None => self.route_for_label_kind(name, None),
+        };
+        let input = match route {
+            Some(route) => route.index,
+            None => {
+                let other_kind = match kind {
+                    RouteKind::Bolus => RouteKind::Infusion,
+                    RouteKind::Infusion => RouteKind::Bolus,
+                };
+                if let Some(other) = self.route_for_label_kind(name, Some(other_kind)) {
+                    return Err(PharmsolError::UnsupportedInputRouteKind {
+                        input: other.index,
+                        kind,
+                    });
+                }
+                return Err(PharmsolError::unknown_input_label(
+                    name,
+                    &self.metadata().route_labels(),
+                ));
+            }
+        };
         self.validate_input_for_kind(input, kind)?;
         Ok(input)
     }
