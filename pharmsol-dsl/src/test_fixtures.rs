@@ -159,7 +159,7 @@ pub(crate) const RECOMMENDED_STYLE_CANONICAL: &str = r#"model recommended_style 
     central,
   }
   routes {
-    oral -> depot
+    bolus oral -> depot
   }
   dynamics {
     ddt(depot) = -ka * depot

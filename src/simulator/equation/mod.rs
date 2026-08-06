@@ -198,19 +198,31 @@ pub(crate) trait EquationPriv: EquationTypes {
         expected_kind: RouteKind,
     ) -> Result<usize, PharmsolError> {
         if let Some(metadata) = self.metadata() {
-            let route = metadata.route_for_label(label.as_str()).ok_or_else(|| {
-                PharmsolError::unknown_input_label(label.as_str(), &metadata.route_labels())
-            })?;
-
-            if route.kind() != expected_kind {
-                return Err(PharmsolError::UnsupportedInputRouteKind {
-                    input: route.input_index(),
-                    kind: match expected_kind {
-                        RouteKind::Bolus => pharmsol_dsl::RouteKind::Bolus,
-                        RouteKind::Infusion => pharmsol_dsl::RouteKind::Infusion,
-                    },
-                });
-            }
+            // A bolus and an infusion may share a label, so resolution must
+            // match the kind as well: bolus events resolve bolus routes and
+            // infusion events resolve infusion routes.
+            let route = match metadata.route_for_label(label.as_str(), expected_kind) {
+                Some(route) => route,
+                None => {
+                    let other_kind = match expected_kind {
+                        RouteKind::Bolus => RouteKind::Infusion,
+                        RouteKind::Infusion => RouteKind::Bolus,
+                    };
+                    if let Some(other) = metadata.route_for_label(label.as_str(), other_kind) {
+                        return Err(PharmsolError::UnsupportedInputRouteKind {
+                            input: other.input_index(),
+                            kind: match expected_kind {
+                                RouteKind::Bolus => pharmsol_dsl::RouteKind::Bolus,
+                                RouteKind::Infusion => pharmsol_dsl::RouteKind::Infusion,
+                            },
+                        });
+                    }
+                    return Err(PharmsolError::unknown_input_label(
+                        label.as_str(),
+                        &metadata.route_labels(),
+                    ));
+                }
+            };
 
             return Ok(route.input_index());
         }

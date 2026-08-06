@@ -31,6 +31,18 @@ fn subject_for_shared_input() -> Subject {
         .build()
 }
 
+fn subject_for_shared_label() -> Subject {
+    Subject::builder("macro-shared-label")
+        .bolus(0.0, 500.0, "input_1")
+        .infusion(1.0, 100.0, "input_1", 2.0)
+        .missing_observation(0.5, "cp")
+        .missing_observation(1.0, "cp")
+        .missing_observation(2.0, "cp")
+        .missing_observation(3.0, "cp")
+        .missing_observation(4.0, "cp")
+        .build()
+}
+
 fn subject_for_covariates(input: impl ToString, outeq: impl ToString) -> Subject {
     Subject::builder("macro-covariates")
         .bolus(0.0, 100.0, input)
@@ -215,6 +227,66 @@ fn shared_input_handwritten_ode() -> equation::ODE {
             ]),
     )
     .expect("handwritten shared-input metadata should validate")
+}
+
+fn shared_label_macro_ode() -> equation::ODE {
+    ode! {
+        name: "shared_label_one_cpt",
+        params: [ke, v, tlag],
+        states: [central],
+        outputs: [cp],
+        routes: [
+            bolus(input_1) -> central,
+            infusion(input_1) -> central,
+        ],
+        diffeq: |x, _t, dx| {
+            dx[central] = -ke * x[central];
+        },
+        lag: |_t| {
+            lag! { input_1 => tlag }
+        },
+        out: |x, _t, y| {
+            y[cp] = x[central] / v;
+        },
+    }
+}
+
+fn shared_label_handwritten_ode() -> equation::ODE {
+    equation::ODE::new(
+        |x, p, _t, dx, bolus, rateiv, _cov| {
+            fetch_params!(p, ke, _v, _tlag);
+            dx[0] = bolus[0] + rateiv[0] - ke * x[0];
+        },
+        |p, _t, _cov| {
+            fetch_params!(p, _ke, _v, tlag);
+            lag! { 0 => tlag }
+        },
+        |_p, _t, _cov| fa! {},
+        |_p, _t, _cov, _x| {},
+        |x, p, _t, _cov, y| {
+            fetch_params!(p, _ke, v, _tlag);
+            y[0] = x[0] / v;
+        },
+    )
+    .with_nstates(1)
+    .with_ndrugs(1)
+    .with_nout(1)
+    .with_metadata(
+        equation::metadata::new("shared_label_one_cpt")
+            .parameters(["ke", "v", "tlag"])
+            .states(["central"])
+            .outputs(["cp"])
+            .routes([
+                equation::Route::bolus("input_1")
+                    .to_state("central")
+                    .with_lag()
+                    .inject_input_to_destination(),
+                equation::Route::infusion("input_1")
+                    .to_state("central")
+                    .inject_input_to_destination(),
+            ]),
+    )
+    .expect("handwritten shared-label metadata should validate")
 }
 
 fn numeric_route_property_macro_ode() -> equation::ODE {
@@ -493,6 +565,37 @@ fn macro_shared_input_lowering_matches_handwritten_metadata_and_predictions() {
     let handwritten_predictions = handwritten_ode
         .estimate_predictions(&subject, &support_point)
         .expect("handwritten shared-input model should simulate")
+        .flat_predictions()
+        .to_vec();
+
+    assert_prediction_match(&macro_predictions, &handwritten_predictions);
+}
+
+#[test]
+fn macro_shared_label_lowering_matches_handwritten_metadata_and_predictions() {
+    let macro_ode = shared_label_macro_ode();
+    let handwritten_ode = shared_label_handwritten_ode();
+    let subject = subject_for_shared_label();
+    let support_point =
+        pharmsol::Parameters::with_model(&macro_ode, [("ke", 0.2), ("v", 10.0), ("tlag", 0.25)])
+            .expect("valid named parameters");
+    let macro_metadata = macro_ode
+        .metadata()
+        .expect("macro shared-label model should carry metadata");
+
+    assert_eq!(macro_ode.metadata(), handwritten_ode.metadata());
+    assert!(macro_metadata.route("input_1").is_some());
+    assert!(macro_metadata.output("cp").is_some());
+    assert_eq!(macro_ode.state_index("central"), Some(0));
+
+    let macro_predictions = macro_ode
+        .estimate_predictions(&subject, &support_point)
+        .expect("macro shared-label model should simulate")
+        .flat_predictions()
+        .to_vec();
+    let handwritten_predictions = handwritten_ode
+        .estimate_predictions(&subject, &support_point)
+        .expect("handwritten shared-label model should simulate")
         .flat_predictions()
         .to_vec();
 
