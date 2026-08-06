@@ -1508,6 +1508,114 @@ out(cp) = central / v ~ continuous()
         }
     }
 
+    #[test]
+    fn authoring_runtime_shares_label_between_bolus_and_infusion_routes() {
+        let source = r#"
+name = shared_label_authoring
+kind = ode
+
+params = ke, v, tlag
+states = central
+outputs = cp
+
+bolus(input_1) -> central
+infusion(input_1) -> central
+lag(input_1) = tlag
+
+dx(central) = -ke * central
+
+out(cp) = central / v ~ continuous()
+"#;
+        let parsed = pharmsol_dsl::parse_model(source).expect("authoring model parses");
+        let analyzed = pharmsol_dsl::analyze_model(&parsed).expect("authoring model analyzes");
+        let model =
+            pharmsol_dsl::compile_analyzed_model(&analyzed).expect("authoring model lowers");
+        let jit = compile_ode_model_to_jit(&model)
+            .expect("compile jit ode model")
+            .with_solver(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45));
+
+        let bolus_route = jit
+            .info()
+            .routes
+            .iter()
+            .find(|route| {
+                route.name == "input_1" && route.kind == Some(pharmsol_dsl::RouteKind::Bolus)
+            })
+            .expect("bolus route");
+        let infusion_route = jit
+            .info()
+            .routes
+            .iter()
+            .find(|route| {
+                route.name == "input_1" && route.kind == Some(pharmsol_dsl::RouteKind::Infusion)
+            })
+            .expect("infusion route");
+        assert_eq!(bolus_route.index, 0);
+        assert_eq!(infusion_route.index, 0);
+        assert!(bolus_route.has_lag);
+
+        let jit_subject = Subject::builder("ode")
+            .bolus(0.0, 500.0, "input_1")
+            .infusion(1.0, 100.0, "input_1", 2.0)
+            .observation(0.5, 0.0, "cp")
+            .observation(1.0, 0.0, "cp")
+            .observation(2.0, 0.0, "cp")
+            .observation(3.0, 0.0, "cp")
+            .observation(4.0, 0.0, "cp")
+            .build();
+
+        let reference_subject = Subject::builder("ode")
+            .bolus(0.0, 500.0, 0)
+            .infusion(1.0, 100.0, 0, 2.0)
+            .observation(0.5, 0.0, 0)
+            .observation(1.0, 0.0, 0)
+            .observation(2.0, 0.0, 0)
+            .observation(3.0, 0.0, 0)
+            .observation(4.0, 0.0, 0)
+            .build();
+
+        let support = Parameters::with_model(
+            &crate::dsl::CompiledRuntimeModel::Ode(jit.clone()),
+            [("ke", 0.2), ("v", 10.0), ("tlag", 0.25)],
+        )
+        .expect("valid named parameters");
+        let jit_predictions = jit
+            .estimate_predictions(&jit_subject, &support)
+            .expect("jit predictions");
+
+        let reference = ODE::new(
+            |x, p, _t, dx, bolus, rateiv, _cov| {
+                dx[0] = -p[0] * x[0] + bolus[0] + rateiv[0];
+            },
+            |_p, _t, _cov| std::collections::HashMap::from([(0usize, 0.25)]),
+            |_p, _t, _cov| std::collections::HashMap::new(),
+            |_p, _t, _cov, _x| {},
+            |x, p, _t, _cov, y| {
+                y[0] = x[0] / p[1];
+            },
+        )
+        .with_nstates(1)
+        .with_ndrugs(1)
+        .with_nout(1)
+        .with_solver(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45));
+
+        let reference_predictions = reference
+            .estimate_predictions(&reference_subject, &support)
+            .expect("reference ode predictions");
+
+        for (jit_pred, reference_pred) in jit_predictions
+            .predictions()
+            .iter()
+            .zip(reference_predictions.predictions())
+        {
+            assert_relative_eq!(
+                jit_pred.prediction(),
+                reference_pred.prediction(),
+                max_relative = 1e-4
+            );
+        }
+    }
+
     fn slot_index(layout: &BufferLayout, name: &str) -> usize {
         layout
             .slots

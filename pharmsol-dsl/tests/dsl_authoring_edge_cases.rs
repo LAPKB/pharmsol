@@ -377,6 +377,145 @@ model numeric_route_label {
     );
 }
 
+fn collect_route_input_indices(
+    expr: &pharmsol_dsl::execution::ExecutionExpr,
+    indices: &mut Vec<usize>,
+) {
+    use pharmsol_dsl::execution::{ExecutionExprKind, ExecutionLoad};
+    match &expr.kind {
+        ExecutionExprKind::Load(ExecutionLoad::RouteInput { index, .. }) => indices.push(*index),
+        ExecutionExprKind::Unary { expr, .. } => collect_route_input_indices(expr, indices),
+        ExecutionExprKind::Binary { lhs, rhs, .. } => {
+            collect_route_input_indices(lhs, indices);
+            collect_route_input_indices(rhs, indices);
+        }
+        ExecutionExprKind::Call { args, .. } => {
+            for arg in args {
+                collect_route_input_indices(arg, indices);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_stmt_route_input_indices(
+    statements: &[pharmsol_dsl::execution::ExecutionStmt],
+    indices: &mut Vec<usize>,
+) {
+    use pharmsol_dsl::execution::ExecutionStmtKind;
+    for statement in statements {
+        match &statement.kind {
+            ExecutionStmtKind::Let(let_stmt) => {
+                collect_route_input_indices(&let_stmt.value, indices);
+            }
+            ExecutionStmtKind::Assign(assign_stmt) => {
+                collect_route_input_indices(&assign_stmt.value, indices);
+            }
+            ExecutionStmtKind::If(if_stmt) => {
+                collect_route_input_indices(&if_stmt.condition, indices);
+                collect_stmt_route_input_indices(&if_stmt.then_branch, indices);
+                if let Some(else_branch) = &if_stmt.else_branch {
+                    collect_stmt_route_input_indices(else_branch, indices);
+                }
+            }
+            ExecutionStmtKind::For(for_stmt) => {
+                collect_route_input_indices(&for_stmt.range.start, indices);
+                collect_route_input_indices(&for_stmt.range.end, indices);
+                collect_stmt_route_input_indices(&for_stmt.body, indices);
+            }
+        }
+    }
+}
+
+#[test]
+fn shared_label_bolus_and_infusion_compile_with_per_kind_slots() {
+    let src = r#"
+name = shared_label_authoring
+kind = ode
+params = ke, v, tlag
+states = central
+outputs = cp
+bolus(input_1) -> central
+infusion(input_1) -> central
+lag(input_1) = tlag
+ddt(central) = -ke * central
+out(cp) = central / v
+"#;
+
+    let model = parse_model(src).expect("shared-label authoring model parses");
+    let analyzed = analyze_model(&model).expect("shared-label authoring model analyzes");
+    let compiled =
+        compile_analyzed_model(&analyzed).expect("shared-label authoring model compiles");
+
+    let routes = &compiled.metadata.routes;
+    assert_eq!(routes.len(), 2);
+    assert!(routes.iter().all(|route| route.name == "input_1"));
+    let bolus = routes
+        .iter()
+        .find(|route| route.kind == Some(pharmsol_dsl::RouteKind::Bolus))
+        .expect("bolus route");
+    let infusion = routes
+        .iter()
+        .find(|route| route.kind == Some(pharmsol_dsl::RouteKind::Infusion))
+        .expect("infusion route");
+    assert_eq!(bolus.index, 0);
+    assert_eq!(infusion.index, 0);
+    assert!(bolus.has_lag);
+    assert!(!infusion.has_lag);
+
+    // The injected `rate(input_1)` term must read the infusion input slot.
+    let mut indices = Vec::new();
+    if let Some(function) = compiled.function(pharmsol_dsl::execution::ModelFunctionKind::Dynamics)
+    {
+        if let pharmsol_dsl::execution::FunctionBody::Statements(program) = &function.body {
+            collect_stmt_route_input_indices(&program.body.statements, &mut indices);
+        }
+    }
+    assert_eq!(indices, vec![0]);
+}
+
+#[test]
+fn rejects_shared_label_within_same_kind() {
+    let src = r#"
+name = duplicate_bolus
+kind = ode
+states = central
+outputs = cp
+bolus(input_1) -> central
+bolus(input_1) -> central
+ddt(central) = 0
+out(cp) = central
+"#;
+
+    let err = parse_model(src).expect_err("duplicate bolus routes must fail");
+    assert!(
+        err.render(src).contains("duplicate route `input_1`"),
+        "{}",
+        err.render(src)
+    );
+}
+
+#[test]
+fn rejects_duplicate_route_names_in_canonical_models() {
+    let src = r#"
+model dup_routes {
+    kind ode
+    states { central }
+    routes { input_1 -> central, input_1 -> central }
+    dynamics { ddt(central) = 0 }
+    outputs { cp = central }
+}
+"#;
+
+    let model = parse_model(src).expect("canonical model parses");
+    let err = analyze_model(&model).expect_err("duplicate canonical route names must fail");
+    assert!(
+        err.render(src).contains("duplicate route `input_1`"),
+        "{}",
+        err.render(src)
+    );
+}
+
 #[test]
 fn rejects_rate_numeric_literals_with_prefixed_guidance() {
     let src = r#"

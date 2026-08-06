@@ -716,6 +716,14 @@ impl SharedNativeModel {
     ) -> Result<usize, PharmsolError> {
         let input = self
             .metadata_route_index_for_label(label.as_str(), kind)
+            .or_else(|| {
+                // Kind-less canonical routes default to bolus metadata but
+                // remain usable as either input kind; fall back to a
+                // kind-agnostic name match so they keep resolving for both.
+                self.metadata()
+                    .route_for_label_any_kind(label.as_str())
+                    .map(ValidatedRoute::input_index)
+            })
             .ok_or_else(|| {
                 PharmsolError::unknown_input_label(label.as_str(), &self.metadata().route_labels())
             })?;

@@ -241,6 +241,25 @@ impl ValidatedModelMetadata {
             })
     }
 
+    /// Kind-agnostic route label lookup.
+    ///
+    /// Canonical `model {}` routes carry no kind and default to bolus
+    /// metadata, yet remain usable as either a bolus or an infusion input;
+    /// the runtime falls back to this lookup when no route of the requested
+    /// kind matches the label.
+    pub fn route_for_label_any_kind(&self, label: &str) -> Option<&ValidatedRoute> {
+        self.routes
+            .iter()
+            .find(|route| route.name() == label)
+            .or_else(|| {
+                if !is_bare_numeric_label(label) {
+                    return None;
+                }
+                let aliased = format!("{NUMERIC_ROUTE_PREFIX}{label}");
+                self.routes.iter().find(|route| route.name() == aliased)
+            })
+    }
+
     /// Resolve a public output label from data to its dense output index.
     ///
     /// Uses the same resolution order as [`Self::route_for_label`]: exact

@@ -12,7 +12,8 @@ use crate::name_match::{
 };
 use crate::syntax;
 use crate::{
-    ModelKind, MAX_CONST_USIZE, NUMERIC_OUTPUT_PREFIX, NUMERIC_ROUTE_PREFIX, RATE_FUNCTION_NAME,
+    ModelKind, RouteKind, MAX_CONST_USIZE, NUMERIC_OUTPUT_PREFIX, NUMERIC_ROUTE_PREFIX,
+    RATE_FUNCTION_NAME,
 };
 
 const RESERVED_NAMES: &[&str] = &[
@@ -590,16 +591,53 @@ impl<'a> Analyzer<'a> {
         block: Option<&syntax::RoutesBlock>,
     ) -> Result<Vec<AnalyzedRoute>, AnalysisError> {
         let mut routes = Vec::new();
+        // Route labels are unique per kind: a bolus and an infusion may share
+        // a label (one drug given by either route). Each route keeps its own
+        // symbol so per-kind input slots stay unambiguous in the execution
+        // layer; `globals.routes` keeps the symbol used by `rate(name)`,
+        // which reads the infusion input when a label is shared.
+        let mut route_kinds = BTreeMap::<String, Option<RouteKind>>::new();
         if let Some(block) = block {
             for route in &block.routes {
                 self.validate_route_label_name(&route.input)?;
-                let id = self.insert_global_symbol(
-                    &route.input.text,
-                    SymbolKind::Route,
-                    PendingSymbolType::Route,
-                    route.input.span,
-                )?;
-                self.globals.routes.insert(route.input.text.clone(), id);
+                let (id, prefer_for_rate) = match route_kinds.get(&route.input.text).copied() {
+                    Some(existing_kind) => {
+                        if existing_kind.is_none() || existing_kind == route.kind {
+                            let existing = self.globals.routes[&route.input.text];
+                            return Err(AnalysisAssist::default()
+                                .context_label(
+                                    self.symbol_span(existing),
+                                    self.symbol_declared_here(existing),
+                                )
+                                .apply(AnalysisError::new(
+                                    format!("duplicate route `{}`", route.input.text),
+                                    route.input.span,
+                                )));
+                        }
+                        let id = self.symbols.len();
+                        self.symbols.push(PendingSymbol {
+                            id,
+                            name: route.input.text.clone(),
+                            kind: SymbolKind::Route,
+                            ty: PendingSymbolType::Route,
+                            span: route.input.span,
+                        });
+                        (id, route.kind == Some(RouteKind::Infusion))
+                    }
+                    None => {
+                        let id = self.insert_global_symbol(
+                            &route.input.text,
+                            SymbolKind::Route,
+                            PendingSymbolType::Route,
+                            route.input.span,
+                        )?;
+                        (id, true)
+                    }
+                };
+                if prefer_for_rate {
+                    self.globals.routes.insert(route.input.text.clone(), id);
+                }
+                route_kinds.insert(route.input.text.clone(), route.kind);
                 let destination = self.analyze_state_place_const(&route.destination)?;
                 let mut seen_props = BTreeMap::new();
                 let mut properties = Vec::new();
