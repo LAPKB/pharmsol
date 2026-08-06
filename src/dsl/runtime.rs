@@ -857,6 +857,85 @@ out(cp) = central / v ~ continuous()
     }
 
     #[test]
+    fn runtime_backend_matrix_kindless_routes_accept_both_input_kinds() {
+        let work_dir = tempdir().expect("tempdir");
+        let (jit, aot, wasm) = compile_runtime_backend_matrix(
+            corpus_source(),
+            "one_cmt_oral_iv",
+            work_dir.path(),
+        );
+        let support = Parameters::with_model(
+            &jit,
+            [
+                ("ka", 1.2),
+                ("cl", 5.0),
+                ("v", 40.0),
+                ("tlag", 0.5),
+                ("f_oral", 0.8),
+            ],
+        )
+        .expect("valid named parameters");
+
+        // Canonical `model {}` routes carry no kind and keep their declaration
+        // ordinals. A future collapse of `None` to `Some(Bolus)` anywhere in
+        // the lowering pipeline must fail here, close to its source.
+        for model in [&jit, &aot, &wasm] {
+            let routes = &model.info().routes;
+            let oral = routes
+                .iter()
+                .find(|route| route.name == "oral")
+                .expect("oral route");
+            let iv = routes
+                .iter()
+                .find(|route| route.name == "iv")
+                .expect("iv route");
+            assert_eq!(oral.kind, None, "oral route kind collapsed");
+            assert_eq!(iv.kind, None, "iv route kind collapsed");
+            assert_eq!(oral.index, 0);
+            assert_eq!(iv.index, 1);
+        }
+
+        // A kindless route is usable as either input kind: bolus and infusion
+        // events both resolve through the same declaration, in both the
+        // natural and the cross-kind directions.
+        let natural_bolus = Subject::builder("ode")
+            .covariate("wt", 0.0, 70.0)
+            .bolus(0.0, 120.0, "oral")
+            .missing_observation(1.0, "cp")
+            .build();
+        let natural_infusion = Subject::builder("ode")
+            .covariate("wt", 0.0, 70.0)
+            .infusion(0.0, 60.0, "iv", 2.0)
+            .missing_observation(1.0, "cp")
+            .build();
+        let cross_bolus = Subject::builder("ode")
+            .covariate("wt", 0.0, 70.0)
+            .bolus(0.0, 120.0, "iv")
+            .missing_observation(1.0, "cp")
+            .build();
+        let cross_infusion = Subject::builder("ode")
+            .covariate("wt", 0.0, 70.0)
+            .infusion(0.0, 60.0, "oral", 2.0)
+            .missing_observation(1.0, "cp")
+            .build();
+
+        for model in [&jit, &aot, &wasm] {
+            model
+                .estimate_predictions(&natural_bolus, &support)
+                .expect("bolus oral resolves on kindless route");
+            model
+                .estimate_predictions(&natural_infusion, &support)
+                .expect("infusion iv resolves on kindless route");
+            model
+                .estimate_predictions(&cross_bolus, &support)
+                .expect("bolus iv resolves on kindless route");
+            model
+                .estimate_predictions(&cross_infusion, &support)
+                .expect("infusion oral resolves on kindless route");
+        }
+    }
+
+    #[test]
     fn runtime_jit_preserves_array_state_metadata() {
         let model = compile_module_source_to_runtime(
             corpus_source(),
