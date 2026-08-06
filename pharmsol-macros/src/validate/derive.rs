@@ -162,6 +162,10 @@ fn analyze_derive_expr(
 ) -> syn::Result<HashSet<String>> {
     match expr {
         Expr::Assign(assign) => {
+            // The right-hand side is evaluated before the target is written, so
+            // it must be analyzed first and its assignments carried forward.
+            let assigned =
+                analyze_derive_expr(&assign.right, context, &mut locals.clone(), assigned)?;
             if let Expr::Path(path) = assign.left.as_ref() {
                 if path.qself.is_none()
                     && path.path.leading_colon.is_none()
@@ -170,12 +174,12 @@ fn analyze_derive_expr(
                     let ident = &path.path.segments[0].ident;
                     let name = ident.to_string();
                     if context.derived.contains(&name) {
-                        let mut next = assigned.clone();
+                        let mut next = assigned;
                         next.insert(name);
                         return Ok(next);
                     }
                     if locals.contains(&name) {
-                        return Ok(assigned.clone());
+                        return Ok(assigned);
                     }
                     return Err(context.invalid_target_error(ident));
                 }
@@ -186,29 +190,38 @@ fn analyze_derive_expr(
             ))
         }
         Expr::If(expr_if) => {
+            // The condition always runs, so its assignments are visible to both branches.
+            let assigned =
+                analyze_derive_expr(&expr_if.cond, context, &mut locals.clone(), assigned)?;
+
             let mut then_locals = locals.clone();
             let then_assigned =
-                analyze_derive_block(&expr_if.then_branch, context, &mut then_locals, assigned)?;
+                analyze_derive_block(&expr_if.then_branch, context, &mut then_locals, &assigned)?;
 
             if let Some((_, else_branch)) = &expr_if.else_branch {
                 let mut else_locals = locals.clone();
                 let else_assigned =
-                    analyze_derive_expr(else_branch, context, &mut else_locals, assigned)?;
+                    analyze_derive_expr(else_branch, context, &mut else_locals, &assigned)?;
                 Ok(then_assigned
                     .intersection(&else_assigned)
                     .cloned()
                     .collect::<HashSet<_>>())
             } else {
-                Ok(assigned.clone())
+                Ok(assigned)
             }
         }
         Expr::ForLoop(expr_for) => {
+            // The iterator expression runs exactly once, before any loop bindings exist.
+            let assigned =
+                analyze_derive_expr(&expr_for.expr, context, &mut locals.clone(), assigned)?;
+
             let mut loop_locals = locals.clone();
             for name in bound_local_names(&expr_for.pat) {
                 loop_locals.insert(name);
             }
-            let _ = analyze_derive_block(&expr_for.body, context, &mut loop_locals, assigned)?;
-            Ok(assigned.clone())
+            // The body may run zero times, so its assignments are not definite.
+            let _ = analyze_derive_block(&expr_for.body, context, &mut loop_locals, &assigned)?;
+            Ok(assigned)
         }
         Expr::Block(expr_block) => {
             analyze_derive_block(&expr_block.block, context, locals, assigned)

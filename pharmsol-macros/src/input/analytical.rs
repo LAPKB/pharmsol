@@ -388,6 +388,53 @@ mod tests {
     }
 
     #[test]
+    fn analytical_rejects_invalid_derive_target_in_assignment_rhs() {
+        let error = syn::parse_str::<AnalyticalInput>(
+            "name: \"demo\", params: [ka, ke0, v], derived: [ke], states: [gut, central], outputs: [cp], routes: [bolus(oral) -> gut], structure: one_compartment_with_absorption, derive: |_t| { ke = { ke0 = 1.0; 0.1 }; }, out: |x, p, t, cov, y| {}",
+        )
+        .err()
+        .expect("invalid assignment in the right-hand side must fail");
+
+        assert!(error
+            .to_string()
+            .contains("`derive` cannot assign to `ke0`"));
+    }
+
+    #[test]
+    fn analytical_rejects_invalid_derive_target_in_if_condition() {
+        let error = syn::parse_str::<AnalyticalInput>(
+            "name: \"demo\", params: [ka, ke0, v], derived: [ke], states: [gut, central], outputs: [cp], routes: [bolus(oral) -> gut], structure: one_compartment_with_absorption, derive: |_t| { if { ke0 = 1.0; true } { ke = 0.1; } else { ke = 0.2; } }, out: |x, p, t, cov, y| {}",
+        )
+        .err()
+        .expect("invalid assignment in an `if` condition must fail");
+
+        assert!(error
+            .to_string()
+            .contains("`derive` cannot assign to `ke0`"));
+    }
+
+    #[test]
+    fn analytical_rejects_invalid_derive_target_in_for_iterator() {
+        let error = syn::parse_str::<AnalyticalInput>(
+            "name: \"demo\", params: [ka, ke0, v], derived: [ke], states: [gut, central], outputs: [cp], routes: [bolus(oral) -> gut], structure: one_compartment_with_absorption, derive: |_t| { ke = 0.1; for i in { ke0 = 1.0; 0..2 } { let _ = i; } }, out: |x, p, t, cov, y| {}",
+        )
+        .err()
+        .expect("invalid assignment in a `for` iterator must fail");
+
+        assert!(error
+            .to_string()
+            .contains("`derive` cannot assign to `ke0`"));
+    }
+
+    #[test]
+    fn analytical_accepts_derived_assignment_in_assignment_rhs() {
+        syn::parse_str::<AnalyticalInput>(
+            "name: \"demo\", params: [ka, ke0, v], derived: [ke, kb], states: [gut, central], outputs: [cp], routes: [bolus(oral) -> gut], structure: one_compartment_with_absorption, derive: |_t| { ke = { kb = ke0; kb * 2.0 }; }, out: |x, p, t, cov, y| {}",
+        )
+        .expect("assignments in the right-hand side should count as definite");
+    }
+
+    #[test]
     fn analytical_rejects_unknown_route_property_binding() {
         let error = syn::parse_str::<AnalyticalInput>(
             "name: \"demo\", params: [ka, ke, v], states: [gut, central], outputs: [cp], routes: [bolus(oral) -> gut], structure: one_compartment_with_absorption, lag: |_p, _t, _cov| { lag! { iv => 1.0 } }, out: |x, p, t, cov, y| {}",
