@@ -209,10 +209,15 @@ impl ValidatedModelMetadata {
         self.outputs.iter().position(|output| output.name() == name)
     }
 
-    /// Resolve a public route label from data to a declared route.
+    /// Resolve a public route label from data to a declared route of the
+    /// given kind.
+    ///
+    /// A bolus and an infusion may share a label (one drug given by either
+    /// route), so the kind is part of the match: bolus events resolve bolus
+    /// routes and infusion events resolve infusion routes.
     ///
     /// Resolution order:
-    /// 1. exact route name,
+    /// 1. exact route name of the given kind,
     /// 2. canonical numeric alias (`input_<n>`) for a bare numeric label,
     ///    matching Pmetrics `INPUT` numbering.
     ///
@@ -221,13 +226,19 @@ impl ValidatedModelMetadata {
     ///
     /// Use [`ValidatedRoute::input_index`] on the result for the dense
     /// execution input slot.
-    pub fn route_for_label(&self, label: &str) -> Option<&ValidatedRoute> {
-        self.route(label).or_else(|| {
-            if !is_bare_numeric_label(label) {
-                return None;
-            }
-            self.route(&format!("{NUMERIC_ROUTE_PREFIX}{label}"))
-        })
+    pub fn route_for_label(&self, label: &str, kind: RouteKind) -> Option<&ValidatedRoute> {
+        self.routes
+            .iter()
+            .find(|route| route.kind() == kind && route.name() == label)
+            .or_else(|| {
+                if !is_bare_numeric_label(label) {
+                    return None;
+                }
+                let aliased = format!("{NUMERIC_ROUTE_PREFIX}{label}");
+                self.routes
+                    .iter()
+                    .find(|route| route.kind() == kind && route.name() == aliased)
+            })
     }
 
     /// Resolve a public output label from data to its dense output index.
@@ -519,7 +530,7 @@ impl ModelMetadata {
         validate_unique_names(&self.parameters, NameDomain::Parameter, Parameter::name)?;
         validate_unique_names(&self.covariates, NameDomain::Covariate, Covariate::name)?;
         validate_unique_names(&self.states, NameDomain::State, State::name)?;
-        validate_unique_names(&self.routes, NameDomain::Route, Route::name)?;
+        validate_unique_route_names(&self.routes)?;
         validate_unique_names(&self.outputs, NameDomain::Output, Output::name)?;
 
         let particles = resolve_particles(kind, self.particles, fallback_particles)?;
@@ -862,6 +873,26 @@ fn validate_unique_names<T>(
     Ok(())
 }
 
+/// Route names are unique per kind: a bolus and an infusion may share a label
+/// (one drug given by either route), while two routes of the same kind may not.
+fn validate_unique_route_names(routes: &[Route]) -> Result<(), ModelMetadataError> {
+    let mut bolus_names = std::collections::HashSet::with_capacity(routes.len());
+    let mut infusion_names = std::collections::HashSet::with_capacity(routes.len());
+    for route in routes {
+        let names = match route.kind() {
+            RouteKind::Bolus => &mut bolus_names,
+            RouteKind::Infusion => &mut infusion_names,
+        };
+        if !names.insert(route.name()) {
+            return Err(ModelMetadataError::DuplicateName {
+                domain: NameDomain::Route,
+                name: route.name().to_string(),
+            });
+        }
+    }
+    Ok(())
+}
+
 fn validate_routes(
     routes: Vec<Route>,
     states: &[State],
@@ -1077,7 +1108,7 @@ mod tests {
         assert_eq!(metadata.output_for_label("cp"), Some(0));
         assert_eq!(
             metadata
-                .route_for_label("iv")
+                .route_for_label("iv", RouteKind::Infusion)
                 .map(|route| route.declaration_index()),
             Some(0)
         );
@@ -1088,7 +1119,7 @@ mod tests {
         assert_eq!(metadata.output_for_label("1"), Some(2));
         assert_eq!(
             metadata
-                .route_for_label("0")
+                .route_for_label("0", RouteKind::Bolus)
                 .map(|route| route.declaration_index()),
             Some(1)
         );
@@ -1097,10 +1128,12 @@ mod tests {
         // a declaration position.
         assert_eq!(metadata.output_for_label("2"), None);
         assert_eq!(metadata.output_for_label("3"), None);
-        assert!(metadata.route_for_label("1").is_none());
-        assert!(metadata.route_for_label("2").is_none());
+        assert!(metadata.route_for_label("1", RouteKind::Bolus).is_none());
+        assert!(metadata.route_for_label("2", RouteKind::Bolus).is_none());
         assert_eq!(metadata.output_for_label("missing"), None);
-        assert!(metadata.route_for_label("missing").is_none());
+        assert!(metadata
+            .route_for_label("missing", RouteKind::Bolus)
+            .is_none());
     }
 
     #[test]
@@ -1192,6 +1225,75 @@ mod tests {
         assert_eq!(
             metadata.route("iv").expect("iv route").declaration_index(),
             1
+        );
+    }
+
+    #[test]
+    fn shared_label_routes_resolve_by_kind() {
+        let metadata = new("shared_label")
+            .kind(ModelKind::Ode)
+            .parameters(["ke"])
+            .states(["central"])
+            .outputs(["cp"])
+            .routes([
+                Route::bolus("input_1").to_state("central"),
+                Route::infusion("input_1").to_state("central"),
+            ])
+            .validate()
+            .expect("bolus and infusion sharing a label must validate");
+
+        assert_eq!(metadata.routes().len(), 2);
+        assert_eq!(metadata.route_input_count(), 1);
+        assert_eq!(
+            metadata
+                .route_for_label("input_1", RouteKind::Bolus)
+                .expect("bolus route resolves by label")
+                .input_index(),
+            0
+        );
+        assert_eq!(
+            metadata
+                .route_for_label("input_1", RouteKind::Infusion)
+                .expect("infusion route resolves by label")
+                .input_index(),
+            0
+        );
+        assert_eq!(
+            metadata
+                .route_for_label("input_1", RouteKind::Bolus)
+                .expect("bolus route resolves by label")
+                .destination(),
+            "central"
+        );
+        assert_eq!(
+            metadata
+                .route_for_label("input_1", RouteKind::Infusion)
+                .expect("infusion route resolves by label")
+                .destination(),
+            "central"
+        );
+    }
+
+    #[test]
+    fn duplicate_route_names_within_kind_fail_validation() {
+        let error = new("dup_routes")
+            .kind(ModelKind::Ode)
+            .parameters(["ke"])
+            .states(["central"])
+            .outputs(["cp"])
+            .routes([
+                Route::bolus("input_1").to_state("central"),
+                Route::bolus("input_1").to_state("central"),
+            ])
+            .validate()
+            .expect_err("duplicate bolus routes must fail");
+
+        assert_eq!(
+            error,
+            ModelMetadataError::DuplicateName {
+                domain: NameDomain::Route,
+                name: "input_1".to_string(),
+            }
         );
     }
 

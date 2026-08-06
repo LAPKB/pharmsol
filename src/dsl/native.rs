@@ -654,9 +654,13 @@ impl SharedNativeModel {
         self.metadata.as_ref()
     }
 
-    fn metadata_route_index_for_label(&self, label: &str) -> Option<usize> {
+    fn metadata_route_index_for_label(&self, label: &str, kind: RouteKind) -> Option<usize> {
+        let kind = match kind {
+            RouteKind::Bolus => crate::equation::RouteKind::Bolus,
+            RouteKind::Infusion => crate::equation::RouteKind::Infusion,
+        };
         self.metadata()
-            .route_for_label(label)
+            .route_for_label(label, kind)
             .map(ValidatedRoute::input_index)
     }
 
@@ -711,7 +715,7 @@ impl SharedNativeModel {
         kind: RouteKind,
     ) -> Result<usize, PharmsolError> {
         let input = self
-            .metadata_route_index_for_label(label.as_str())
+            .metadata_route_index_for_label(label.as_str(), kind)
             .ok_or_else(|| {
                 PharmsolError::unknown_input_label(label.as_str(), &self.metadata().route_labels())
             })?;
