@@ -1474,10 +1474,9 @@ impl NativeOdeModel {
                         )) => {
                             solver.problem().eqn.set_left_continuity_time(None);
                             let state_t = solver.state().t;
-                            let stop_reached =
-                                crate::simulator::equation::ode::stop_time_reached(
-                                    stop_time, state_t,
-                                );
+                            let stop_reached = crate::simulator::equation::ode::stop_time_reached(
+                                stop_time, state_t,
+                            );
 
                             if stop_reached {
                                 if is_infusion_boundary {
