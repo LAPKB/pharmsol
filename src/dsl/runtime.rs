@@ -859,11 +859,8 @@ out(cp) = central / v ~ continuous()
     #[test]
     fn runtime_backend_matrix_kindless_routes_accept_both_input_kinds() {
         let work_dir = tempdir().expect("tempdir");
-        let (jit, aot, wasm) = compile_runtime_backend_matrix(
-            corpus_source(),
-            "one_cmt_oral_iv",
-            work_dir.path(),
-        );
+        let (jit, aot, wasm) =
+            compile_runtime_backend_matrix(corpus_source(), "one_cmt_oral_iv", work_dir.path());
         let support = Parameters::with_model(
             &jit,
             [
