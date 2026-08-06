@@ -17,7 +17,7 @@ use libloading::Library;
 use pharmsol_dsl::execution::ModelFunctionKind;
 use pharmsol_dsl::{
     AnalyticalKernel, AnalyticalStructureInputKind, AnalyticalStructureInputPlan, ModelKind,
-    RouteKind,
+    RouteKind, NUMERIC_ROUTE_PREFIX,
 };
 
 pub use super::model_info::{
@@ -28,7 +28,6 @@ use crate::{
     simulator::{
         cache::{PredictionCache, DEFAULT_CACHE_SIZE},
         equation::{
-            metadata::ValidatedRoute,
             ode::{closure_helpers::PMProblem, ExplicitRkTableau, OdeSolver, SdirkTableau},
             sde::{infusion_discontinuities, simulate_sde_event_with},
             EqnKind, Equation, EquationPriv, EquationTypes,
@@ -648,10 +647,34 @@ impl SharedNativeModel {
         self.metadata.as_ref()
     }
 
-    fn metadata_route_index_for_label(&self, label: &str) -> Option<usize> {
-        self.metadata()
-            .route_for_label(label)
-            .map(ValidatedRoute::input_index)
+    /// Resolve a route by label and kind from the native model info, which
+    /// preserves the declared `Option<RouteKind>`. Validated metadata has
+    /// already collapsed kind-less routes to bolus, so it cannot tell a
+    /// genuinely kind-less route from an explicitly bolus one; the info
+    /// representation can.
+    ///
+    /// Bare numeric labels resolve through the `input_<n>` alias, matching
+    /// Pmetrics `INPUT` numbering, and never fall back to a declaration
+    /// position.
+    fn route_for_label_kind(
+        &self,
+        label: &str,
+        kind: Option<RouteKind>,
+    ) -> Option<&NativeRouteInfo> {
+        self.info
+            .routes
+            .iter()
+            .find(|route| route.kind == kind && route.name == label)
+            .or_else(|| {
+                if !crate::simulator::equation::metadata::is_bare_numeric_label(label) {
+                    return None;
+                }
+                let aliased = format!("{NUMERIC_ROUTE_PREFIX}{label}");
+                self.info
+                    .routes
+                    .iter()
+                    .find(|route| route.kind == kind && route.name == aliased)
+            })
     }
 
     fn metadata_output_index_for_label(&self, label: &str) -> Option<usize> {
@@ -704,11 +727,40 @@ impl SharedNativeModel {
         label: &InputLabel,
         kind: RouteKind,
     ) -> Result<usize, PharmsolError> {
-        let input = self
-            .metadata_route_index_for_label(label.as_str())
-            .ok_or_else(|| {
-                PharmsolError::unknown_input_label(label.as_str(), &self.metadata().route_labels())
-            })?;
+        let name = label.as_str();
+        // Resolution order:
+        // 1. exact label with kind == requested kind,
+        // 2. exact label on a genuinely kind-less route (usable as either
+        //    input kind),
+        // 3. otherwise a wrong-kind or unknown-label error.
+        //
+        // An explicitly bolus or infusion route is never an any-kind
+        // fallback: bolus and infusion indices are separate ordinal spaces,
+        // so falling through to the other kind's route by a colliding
+        // numeric index would silently execute the wrong route.
+        let route = match self.route_for_label_kind(name, Some(kind)) {
+            Some(route) => Some(route),
+            None => self.route_for_label_kind(name, None),
+        };
+        let input = match route {
+            Some(route) => route.index,
+            None => {
+                let other_kind = match kind {
+                    RouteKind::Bolus => RouteKind::Infusion,
+                    RouteKind::Infusion => RouteKind::Bolus,
+                };
+                if let Some(other) = self.route_for_label_kind(name, Some(other_kind)) {
+                    return Err(PharmsolError::UnsupportedInputRouteKind {
+                        input: other.index,
+                        kind,
+                    });
+                }
+                return Err(PharmsolError::unknown_input_label(
+                    name,
+                    &self.metadata().route_labels(),
+                ));
+            }
+        };
         self.validate_input_for_kind(input, kind)?;
         Ok(input)
     }
@@ -1126,6 +1178,8 @@ impl NativeOdeModel {
         let mut output = SubjectPredictions::default();
         output.set_id(subject.id());
         let support_vector: V = DVector::from_vec(support_point.to_vec()).into();
+        // Scratch for refreshing the solver's derivative at infusion boundaries.
+        let mut dy_scratch = V::zeros(self.shared.info.state_len, NalgebraContext::new());
 
         for occasion in subject.occasions() {
             let mut events = self.shared.resolve_events(occasion)?;
@@ -1246,6 +1300,7 @@ impl NativeOdeModel {
                         support_point,
                         occasion.covariates(),
                         infusions.as_slice(),
+                        &mut dy_scratch,
                         &mut output,
                         &session,
                         &function_error,
@@ -1280,6 +1335,7 @@ impl NativeOdeModel {
         support_point: &[f64],
         covariates: &Covariates,
         infusions: &[Infusion],
+        dy_scratch: &mut V,
         output: &mut SubjectPredictions,
         session: &RefCell<Box<dyn FunctionSession + '_>>,
         function_error: &RefCell<Option<PharmsolError>>,
@@ -1288,7 +1344,25 @@ impl NativeOdeModel {
         F: Fn(&V, &V, f64, &mut V, &V, &V, &Covariates) + 'a,
         S: OdeSolverMethod<'a, PMProblem<'a, F>>,
     {
-        for (index, event) in events.iter().enumerate() {
+        // Mirror the closure-based ODE event loop: stop at every infusion
+        // start and end boundary in addition to subject events, using the
+        // left-continuous rate while integrating toward a boundary and the
+        // right-continuous rate after reaching it. This keeps the JIT
+        // implementation numerically consistent with the reference [`ODE`]
+        // path (see `ode::run_events`).
+        let infusion_boundary_times = solver.problem().eqn.infusion_boundary_times();
+        let mut infusion_boundary_cursor = 0usize;
+        let mut index = 0usize;
+        // Set when the previous stop was an infusion boundary: the solver must
+        // be restarted before the first step of the next segment (the RHS is
+        // discontinuous at the boundary). Deferred until `set_stop_time`
+        // succeeds so a stop that is already reached does not trigger a
+        // restart for a zero-length segment.
+        let mut pending_reinit = false;
+        while index < events.len() {
+            let event = &events[index];
+            let next_event = events.get(index + 1);
+
             match event {
                 Event::Bolus(bolus) => {
                     let input = bolus.input_index().ok_or_else(|| {
@@ -1320,44 +1394,113 @@ impl NativeOdeModel {
                 }
             }
 
-            if let Some(next_event) = events.get(index + 1) {
-                if event.time() == next_event.time() {
-                    continue;
-                }
+            // Advance to the next event time if it exists.
+            if let Some(next_event) = next_event {
+                let next_event_time = next_event.time();
+                while next_event_time > solver.state().t {
+                    while infusion_boundary_cursor < infusion_boundary_times.len()
+                        && infusion_boundary_times[infusion_boundary_cursor] <= solver.state().t
+                    {
+                        infusion_boundary_cursor += 1;
+                    }
 
-                match solver.set_stop_time(next_event.time()) {
-                    Ok(_) => loop {
-                        match solver.step() {
-                            Ok(_) if function_error.borrow().is_some() => {
-                                return Err(function_error.borrow_mut().take().unwrap());
+                    let (stop_time, is_infusion_boundary) = if let Some(stop_time) =
+                        infusion_boundary_times.get(infusion_boundary_cursor)
+                    {
+                        if *stop_time <= next_event_time {
+                            infusion_boundary_cursor += 1;
+                            (*stop_time, true)
+                        } else {
+                            (next_event_time, false)
+                        }
+                    } else {
+                        (next_event_time, false)
+                    };
+
+                    solver
+                        .problem()
+                        .eqn
+                        .set_left_continuity_time(if is_infusion_boundary {
+                            Some(stop_time)
+                        } else {
+                            None
+                        });
+
+                    match solver.set_stop_time(stop_time) {
+                        Ok(_) => {
+                            if pending_reinit {
+                                crate::simulator::equation::ode::reinitialize_at_boundary(
+                                    solver, dy_scratch,
+                                );
+                                pending_reinit = false;
                             }
-                            Ok(OdeSolverStopReason::InternalTimestep) => continue,
-                            Ok(OdeSolverStopReason::TstopReached) => break,
-                            Ok(OdeSolverStopReason::RootFound(_, _)) => {
-                                return Err(PharmsolError::OtherError(format!(
-                                    "solver stopped at an unexpected root at t = {:.4} \
-                                     (root finding is not configured)",
-                                    next_event.time()
-                                )));
-                            }
-                            Err(err) => {
-                                return Err(PharmsolError::from_solver_error(
-                                    err,
-                                    next_event.time(),
-                                ));
+                            loop {
+                                match solver.step() {
+                                    Ok(_) if function_error.borrow().is_some() => {
+                                        return Err(function_error.borrow_mut().take().unwrap());
+                                    }
+                                    Ok(OdeSolverStopReason::InternalTimestep) => continue,
+                                    Ok(OdeSolverStopReason::TstopReached) => {
+                                        solver.problem().eqn.set_left_continuity_time(None);
+                                        if is_infusion_boundary {
+                                            pending_reinit = true;
+                                        }
+                                        break;
+                                    }
+                                    Ok(OdeSolverStopReason::RootFound(_, _)) => {
+                                        return Err(PharmsolError::OtherError(format!(
+                                            "solver stopped at an unexpected root at t = {:.4} \
+                                             (root finding is not configured)",
+                                            stop_time
+                                        )));
+                                    }
+                                    Err(err) => {
+                                        return Err(PharmsolError::from_solver_error(
+                                            err, stop_time,
+                                        ));
+                                    }
+                                }
                             }
                         }
-                    },
-                    Err(diffsol::error::DiffsolError::OdeSolverError(
-                        OdeSolverError::StopTimeAtCurrentTime,
-                    )) => continue,
-                    Err(err) => {
-                        return Err(PharmsolError::from_solver_error(err, next_event.time()));
+                        Err(diffsol::error::DiffsolError::OdeSolverError(
+                            OdeSolverError::StopTimeAtCurrentTime,
+                        )) => {
+                            solver.problem().eqn.set_left_continuity_time(None);
+                            let state_t = solver.state().t;
+                            let stop_reached = stop_time == state_t
+                                || stop_time == state_t.next_up()
+                                || stop_time == state_t.next_down();
+
+                            if stop_reached {
+                                if is_infusion_boundary {
+                                    pending_reinit = true;
+                                }
+                                // The requested stop is the current time (within
+                                // one ULP). If it is an infusion boundary before
+                                // the next subject event, keep integrating toward
+                                // the event; break only when the reached stop is
+                                // the event time itself.
+                                if stop_time < next_event_time {
+                                    continue;
+                                }
+                                break;
+                            }
+                            return Err(PharmsolError::from_solver_error(
+                                diffsol::error::DiffsolError::OdeSolverError(
+                                    OdeSolverError::StopTimeAtCurrentTime,
+                                ),
+                                stop_time,
+                            ));
+                        }
+                        Err(err) => {
+                            solver.problem().eqn.set_left_continuity_time(None);
+                            return Err(PharmsolError::from_solver_error(err, stop_time));
+                        }
                     }
                 }
             }
+            index += 1;
         }
-
         Ok(())
     }
 }

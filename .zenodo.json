@@ -1,0 +1,38 @@
+{
+    "upload_type": "software",
+    "title": "pharmsol: A high-performance Rust library for pharmacokinetic and pharmacodynamic modeling and simulation",
+    "description": "pharmsol is a high-performance Rust library for pharmacokinetic and pharmacodynamic (PK/PD) modeling and simulation. It provides tools for defining, solving, and analyzing compartmental models, with support for differential equations, their analytical solutions, and experimental support for stochastic differential equations.",
+    "access_right": "open",
+    "license": "GPL-3.0-only",
+    "creators": [
+        {
+            "name": "Otálvaro, Julián D.",
+            "orcid": "0000-0001-5202-1645",
+            "affiliation": "Laboratory of Applied Pharmacokinetics and Bioinformatics, Children's Hospital of Los Angeles, Los Angeles, USA"
+        },
+        {
+            "name": "Hovd, Markus",
+            "orcid": "0000-0002-6077-0934",
+            "affiliation": "Department of Transplantation Medicine, Oslo University Hospital, Oslo, Norway"
+        },
+        {
+            "name": "Yamada, Walter M.",
+            "orcid": "0000-0003-3512-9202",
+            "affiliation": "Laboratory of Applied Pharmacokinetics and Bioinformatics, Children's Hospital of Los Angeles, Los Angeles, USA"
+        },
+        {
+            "name": "Neely, Michael",
+            "orcid": "0000-0002-1675-8276",
+            "affiliation": "Laboratory of Applied Pharmacokinetics and Bioinformatics, Children's Hospital of Los Angeles, Los Angeles, USA"
+        }
+    ],
+    "keywords": [
+        "Rust",
+        "pharmacokinetics",
+        "pharmacodynamics",
+        "pharmacometrics",
+        "modeling",
+        "simulation",
+        "compartmental models"
+    ]
+}
