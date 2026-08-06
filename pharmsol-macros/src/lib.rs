@@ -222,7 +222,7 @@ struct OdeRouteDecl {
     destination: Ident,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum OdeRouteKind {
     Bolus,
     Infusion,
@@ -1624,6 +1624,26 @@ fn ode_route_input_bindings(routes: &[OdeRouteDecl]) -> Vec<(SymbolicIndex, usiz
         .collect()
 }
 
+/// Bolus-route input bindings only, numbered in declaration order.
+///
+/// Lag and bioavailability are bolus-only route properties, so property
+/// closures resolve route names against bolus inputs. When a bolus and an
+/// infusion share a label (one drug given by both routes), this keeps the
+/// generated `const` bindings and numeric rewrites unambiguous.
+fn bolus_route_input_bindings(routes: &[OdeRouteDecl]) -> Vec<(SymbolicIndex, usize)> {
+    let mut next_bolus_index = 0usize;
+
+    routes
+        .iter()
+        .filter(|route| matches!(route.kind, OdeRouteKind::Bolus))
+        .map(|route| {
+            let index = next_bolus_index;
+            next_bolus_index += 1;
+            (route.input.clone(), index)
+        })
+        .collect()
+}
+
 fn dense_index_len(bindings: &[(SymbolicIndex, usize)]) -> usize {
     bindings
         .iter()
@@ -2282,6 +2302,10 @@ fn validate_route_property_kinds(
     for route in routes {
         if property_routes.contains(&route.input.name())
             && matches!(route.kind, OdeRouteKind::Infusion)
+            && !routes.iter().any(|other| {
+                matches!(other.kind, OdeRouteKind::Bolus)
+                    && other.input.name() == route.input.name()
+            })
         {
             return Err(syn::Error::new_spanned(
                 &route.input,
@@ -2403,12 +2427,15 @@ fn expand_route_metadata(
                     quote! { ::pharmsol::equation::Route::infusion(stringify!(#input)) }
                 }
             };
-            let lag_flag = if lag_routes.contains(&route_name) {
+            // Lag and bioavailability are bolus-only; when a bolus and an
+            // infusion share a label, the property binds to the bolus route.
+            let bolus_route = matches!(route.kind, OdeRouteKind::Bolus);
+            let lag_flag = if bolus_route && lag_routes.contains(&route_name) {
                 quote! { .with_lag() }
             } else {
                 quote! {}
             };
-            let fa_flag = if fa_routes.contains(&route_name) {
+            let fa_flag = if bolus_route && fa_routes.contains(&route_name) {
                 quote! { .with_bioavailability() }
             } else {
                 quote! {}
@@ -2444,12 +2471,15 @@ fn expand_analytical_route_metadata(
                     quote! { ::pharmsol::equation::Route::infusion(stringify!(#input)) }
                 }
             };
-            let lag_flag = if lag_routes.contains(&route_name) {
+            // Lag and bioavailability are bolus-only; when a bolus and an
+            // infusion share a label, the property binds to the bolus route.
+            let bolus_route = matches!(route.kind, OdeRouteKind::Bolus);
+            let lag_flag = if bolus_route && lag_routes.contains(&route_name) {
                 quote! { .with_lag() }
             } else {
                 quote! {}
             };
-            let fa_flag = if fa_routes.contains(&route_name) {
+            let fa_flag = if bolus_route && fa_routes.contains(&route_name) {
                 quote! { .with_bioavailability() }
             } else {
                 quote! {}
@@ -2484,12 +2514,15 @@ fn expand_sde_route_metadata(
                     quote! { ::pharmsol::equation::Route::infusion(stringify!(#input)) }
                 }
             };
-            let lag_flag = if lag_routes.contains(&route_name) {
+            // Lag and bioavailability are bolus-only; when a bolus and an
+            // infusion share a label, the property binds to the bolus route.
+            let bolus_route = matches!(route.kind, OdeRouteKind::Bolus);
+            let lag_flag = if bolus_route && lag_routes.contains(&route_name) {
                 quote! { .with_lag() }
             } else {
                 quote! {}
             };
-            let fa_flag = if fa_routes.contains(&route_name) {
+            let fa_flag = if bolus_route && fa_routes.contains(&route_name) {
                 quote! { .with_bioavailability() }
             } else {
                 quote! {}
@@ -2623,7 +2656,10 @@ fn validate_routes(routes: &[OdeRouteDecl], states: &[Ident], macro_name: &str) 
 
     for route in routes {
         let route_name = route.input.name();
-        if !seen_routes.insert(route_name.clone()) {
+        // Route labels are unique per kind: a bolus and an infusion may share
+        // a label (one drug given by either route) and resolve to separate
+        // per-kind input slots, but two routes of the same kind may not.
+        if !seen_routes.insert((route.kind, route_name.clone())) {
             return Err(syn::Error::new_spanned(
                 &route.input,
                 format!("duplicate route `{route_name}` in declaration-first `{macro_name}`"),
@@ -3384,6 +3420,7 @@ pub fn ode(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as OdeInput);
 
     let route_bindings = ode_route_input_bindings(&input.routes);
+    let bolus_route_bindings = bolus_route_input_bindings(&input.routes);
 
     let lag_routes = match input.lag.as_ref() {
         Some(closure) => match extract_route_property_routes(
@@ -3478,7 +3515,7 @@ pub fn ode(input: TokenStream) -> TokenStream {
             closure,
             &input.params,
             &input.covariates,
-            &route_bindings,
+            &bolus_route_bindings,
         ) {
             Ok(lag) => lag,
             Err(error) => return error.to_compile_error().into(),
@@ -3493,7 +3530,7 @@ pub fn ode(input: TokenStream) -> TokenStream {
                 closure,
                 &input.params,
                 &input.covariates,
-                &route_bindings,
+                &bolus_route_bindings,
             ) {
                 Ok(fa) => fa,
                 Err(error) => return error.to_compile_error().into(),
@@ -3544,6 +3581,7 @@ pub fn ode(input: TokenStream) -> TokenStream {
 pub fn analytical(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as AnalyticalInput);
     let route_bindings = ode_route_input_bindings(&input.routes);
+    let bolus_route_bindings = bolus_route_input_bindings(&input.routes);
 
     let function_spec = match resolve_analytical_structure(&input.structure) {
         Ok(spec) => spec,
@@ -3636,7 +3674,7 @@ pub fn analytical(input: TokenStream) -> TokenStream {
                 &input.params,
                 &input.derived,
                 &input.covariates,
-                &route_bindings,
+                &bolus_route_bindings,
             ) {
                 Ok(lag) => lag,
                 Err(error) => return error.to_compile_error().into(),
@@ -3653,7 +3691,7 @@ pub fn analytical(input: TokenStream) -> TokenStream {
                 &input.params,
                 &input.derived,
                 &input.covariates,
-                &route_bindings,
+                &bolus_route_bindings,
             ) {
                 Ok(fa) => fa,
                 Err(error) => return error.to_compile_error().into(),
@@ -3732,6 +3770,7 @@ pub fn analytical(input: TokenStream) -> TokenStream {
 pub fn sde(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as SdeInput);
     let route_bindings = ode_route_input_bindings(&input.routes);
+    let bolus_route_bindings = bolus_route_input_bindings(&input.routes);
 
     let lag_routes = match input.lag.as_ref() {
         Some(closure) => match extract_route_property_routes(
@@ -3802,7 +3841,7 @@ pub fn sde(input: TokenStream) -> TokenStream {
             closure,
             &input.params,
             &input.covariates,
-            &route_bindings,
+            &bolus_route_bindings,
         ) {
             Ok(lag) => lag,
             Err(error) => return error.to_compile_error().into(),
@@ -3817,7 +3856,7 @@ pub fn sde(input: TokenStream) -> TokenStream {
                 closure,
                 &input.params,
                 &input.covariates,
-                &route_bindings,
+                &bolus_route_bindings,
             ) {
                 Ok(fa) => fa,
                 Err(error) => return error.to_compile_error().into(),
@@ -4013,6 +4052,82 @@ mod tests {
         assert!(error
             .to_string()
             .contains("route destination `peripheral` is not declared in the `states` section"));
+    }
+
+    #[test]
+    fn ode_allows_shared_label_across_bolus_and_infusion_routes() {
+        let input = syn::parse_str::<OdeInput>(
+            "name: \"demo\", params: [ke, v], states: [central], outputs: [cp], routes: [bolus(input_1) -> central, infusion(input_1) -> central], diffeq: |x, p, t, dx, cov| {}, out: |x, p, t, cov, y| {}",
+        )
+        .expect("bolus and infusion sharing a label must parse");
+
+        assert_eq!(input.routes.len(), 2);
+
+        // Each kind keeps its own input ordinal, so both routes share input 0.
+        let bindings = ode_route_input_bindings(&input.routes);
+        assert_eq!(bindings[0].0.name(), "input_1");
+        assert_eq!(bindings[0].1, 0);
+        assert_eq!(bindings[1].0.name(), "input_1");
+        assert_eq!(bindings[1].1, 0);
+    }
+
+    #[test]
+    fn ode_rejects_shared_label_within_same_kind() {
+        let error = syn::parse_str::<OdeInput>(
+            "name: \"demo\", params: [ke, v], states: [central], outputs: [cp], routes: [bolus(input_1) -> central, bolus(input_1) -> central], diffeq: |x, p, t, dx, cov| {}, out: |x, p, t, cov, y| {}",
+        )
+        .err()
+        .expect("duplicate bolus routes must fail");
+
+        assert!(error
+            .to_string()
+            .contains("duplicate route `input_1` in declaration-first `ode!`"));
+    }
+
+    #[test]
+    fn analytical_allows_shared_label_across_bolus_and_infusion_routes() {
+        let input = syn::parse_str::<AnalyticalInput>(
+            "name: \"demo\", params: [ka, ke, v], states: [gut, central], outputs: [cp], routes: [bolus(input_1) -> gut, infusion(input_1) -> central], structure: one_compartment_with_absorption, out: |x, p, t, cov, y| {}",
+        )
+        .expect("bolus and infusion sharing a label must parse");
+
+        assert_eq!(input.routes.len(), 2);
+    }
+
+    #[test]
+    fn analytical_rejects_shared_label_within_same_kind() {
+        let error = syn::parse_str::<AnalyticalInput>(
+            "name: \"demo\", params: [ka, ke, v], states: [gut, central], outputs: [cp], routes: [bolus(input_1) -> gut, bolus(input_1) -> central], structure: one_compartment_with_absorption, out: |x, p, t, cov, y| {}",
+        )
+        .err()
+        .expect("duplicate bolus routes must fail");
+
+        assert!(error
+            .to_string()
+            .contains("duplicate route `input_1` in declaration-first `analytical!`"));
+    }
+
+    #[test]
+    fn sde_allows_shared_label_across_bolus_and_infusion_routes() {
+        let input = syn::parse_str::<SdeInput>(
+            "name: \"demo\", params: [ke, v], states: [central], outputs: [cp], particles: 16, routes: [bolus(input_1) -> central, infusion(input_1) -> central], drift: |x, p, t, dx, cov| {}, diffusion: |p, sigma| {}, out: |x, p, t, cov, y| {}",
+        )
+        .expect("bolus and infusion sharing a label must parse");
+
+        assert_eq!(input.routes.len(), 2);
+    }
+
+    #[test]
+    fn sde_rejects_shared_label_within_same_kind() {
+        let error = syn::parse_str::<SdeInput>(
+            "name: \"demo\", params: [ke, v], states: [central], outputs: [cp], particles: 16, routes: [bolus(input_1) -> central, bolus(input_1) -> central], drift: |x, p, t, dx, cov| {}, diffusion: |p, sigma| {}, out: |x, p, t, cov, y| {}",
+        )
+        .err()
+        .expect("duplicate bolus routes must fail");
+
+        assert!(error
+            .to_string()
+            .contains("duplicate route `input_1` in declaration-first `sde!`"));
     }
 
     #[test]
