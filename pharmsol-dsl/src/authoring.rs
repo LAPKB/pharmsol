@@ -28,8 +28,8 @@ struct AuthoringParser<'a> {
     explicit_outputs: BTreeMap<String, Span>,
     assigned_outputs: BTreeMap<String, Span>,
     declared_outputs_span: Option<Span>,
-    routes: BTreeMap<String, SurfaceRoute>,
-    route_order: Vec<String>,
+    routes: BTreeMap<(String, SurfaceRouteKind), SurfaceRoute>,
+    route_order: Vec<(String, SurfaceRouteKind)>,
     route_modifiers: BTreeMap<String, Vec<Binding>>,
     derive_statements: Vec<Stmt>,
     derivative_statements: Vec<Stmt>,
@@ -50,7 +50,7 @@ struct SurfaceRoute {
     span: Span,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum SurfaceRouteKind {
     Bolus,
     Infusion,
@@ -144,12 +144,22 @@ impl<'a> AuthoringParser<'a> {
         let route_order = std::mem::take(&mut self.route_order);
         let mut route_modifiers = std::mem::take(&mut self.route_modifiers);
         let mut routes = Vec::with_capacity(surface_routes.len());
-        for route_name in route_order {
-            let Some(route) = surface_routes.get(&route_name) else {
+        for (route_name, kind) in route_order {
+            let Some(route) = surface_routes.get(&(route_name.clone(), kind)) else {
                 continue;
             };
             let mut span = route.span;
-            let properties = route_modifiers.remove(&route_name).unwrap_or_default();
+            // Lag and bioavailability are bolus-only properties. When a bolus
+            // and an infusion share a label, the modifiers bind to the bolus
+            // route; the infusion route declares none.
+            let shared_label = surface_routes
+                .contains_key(&(route_name.clone(), SurfaceRouteKind::Bolus))
+                && surface_routes.contains_key(&(route_name.clone(), SurfaceRouteKind::Infusion));
+            let properties = if shared_label && kind == SurfaceRouteKind::Infusion {
+                Vec::new()
+            } else {
+                route_modifiers.remove(&route_name).unwrap_or_default()
+            };
             if !properties.is_empty() {
                 span = properties
                     .iter()
@@ -507,14 +517,17 @@ impl<'a> AuthoringParser<'a> {
         let input = parse_route_label_segment(call.argument, call.argument_start)?;
         let route_name = input.text.clone();
         let destination = parse_place_at(rhs, line_start + arrow + 2)?;
-        if self.routes.contains_key(&route_name) {
+        // Route labels are unique per kind: a bolus and an infusion may share
+        // a label (one drug given by either route), but two routes of the
+        // same kind may not.
+        if self.routes.contains_key(&(route_name.clone(), kind)) {
             return Err(ParseError::new(
                 format!("duplicate route `{}`", input.text),
                 input.span,
             ));
         }
         self.routes.insert(
-            route_name.clone(),
+            (route_name.clone(), kind),
             SurfaceRoute {
                 input,
                 destination,
@@ -522,7 +535,7 @@ impl<'a> AuthoringParser<'a> {
                 span,
             },
         );
-        self.route_order.push(route_name);
+        self.route_order.push((route_name, kind));
         Ok(())
     }
 
@@ -859,17 +872,18 @@ impl<'a> AuthoringParser<'a> {
 }
 
 fn inject_infusion_rates(
-    surface_routes: &BTreeMap<String, SurfaceRoute>,
+    surface_routes: &BTreeMap<(String, SurfaceRouteKind), SurfaceRoute>,
     routes: &[RouteDecl],
     derivative_statements: &mut Vec<Stmt>,
 ) {
     for route in routes {
-        let Some(surface_route) = surface_routes.get(&route.input.text) else {
+        let kind = match route.kind {
+            Some(RouteKind::Infusion) => SurfaceRouteKind::Infusion,
+            _ => continue,
+        };
+        let Some(surface_route) = surface_routes.get(&(route.input.text.clone(), kind)) else {
             continue;
         };
-        if surface_route.kind != SurfaceRouteKind::Infusion {
-            continue;
-        }
 
         let rate_expr = Expr {
             span: surface_route.span,

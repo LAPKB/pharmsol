@@ -66,7 +66,10 @@ pub(crate) fn validate_routes(
 
     for route in routes {
         let route_name = route.input.name();
-        if !seen_routes.insert(route_name.clone()) {
+        // Route labels are unique per kind: a bolus and an infusion may share
+        // a label (one drug given by either route) and resolve to separate
+        // per-kind input slots, but two routes of the same kind may not.
+        if !seen_routes.insert((route.kind, route_name.clone())) {
             return Err(syn::Error::new_spanned(
                 &route.input,
                 format!("duplicate route `{route_name}` in declaration-first `{macro_name}`"),

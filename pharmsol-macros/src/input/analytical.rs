@@ -273,6 +273,29 @@ mod tests {
     }
 
     #[test]
+    fn analytical_allows_shared_label_across_bolus_and_infusion_routes() {
+        let input = syn::parse_str::<AnalyticalInput>(
+            "name: \"demo\", params: [ka, ke, v], states: [gut, central], outputs: [cp], routes: [bolus(input_1) -> gut, infusion(input_1) -> central], structure: one_compartment_with_absorption, out: |x, p, t, cov, y| {}",
+        )
+        .expect("bolus and infusion sharing a label must parse");
+
+        assert_eq!(input.routes.len(), 2);
+    }
+
+    #[test]
+    fn analytical_rejects_shared_label_within_same_kind() {
+        let error = syn::parse_str::<AnalyticalInput>(
+            "name: \"demo\", params: [ka, ke, v], states: [gut, central], outputs: [cp], routes: [bolus(input_1) -> gut, bolus(input_1) -> central], structure: one_compartment_with_absorption, out: |x, p, t, cov, y| {}",
+        )
+        .err()
+        .expect("duplicate bolus routes must fail");
+
+        assert!(error
+            .to_string()
+            .contains("duplicate route `input_1` in declaration-first `analytical!`"));
+    }
+
+    #[test]
     fn analytical_rejects_unknown_structure() {
         let error = syn::parse_str::<AnalyticalInput>(
             "name: \"demo\", params: [ke], states: [central], outputs: [cp], routes: [infusion(iv) -> central], structure: mystery, out: |x, p, t, cov, y| {}",

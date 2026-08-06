@@ -1449,6 +1449,7 @@ out(cp) = central / v ~ continuous()
             .observation(2.0, 0.0, "cp")
             .observation(6.0, 0.0, "cp")
             .observation(7.0, 0.0, "cp")
+            .observation(8.0, 0.0, "cp")
             .observation(9.0, 0.0, "cp")
             .build();
 
@@ -1460,6 +1461,7 @@ out(cp) = central / v ~ continuous()
             .observation(2.0, 0.0, 0)
             .observation(6.0, 0.0, 0)
             .observation(7.0, 0.0, 0)
+            .observation(8.0, 0.0, 0)
             .observation(9.0, 0.0, 0)
             .build();
 
@@ -1506,6 +1508,451 @@ out(cp) = central / v ~ continuous()
                 max_relative = 1e-4
             );
         }
+    }
+
+    #[test]
+    fn authoring_runtime_shares_label_between_bolus_and_infusion_routes() {
+        let source = r#"
+name = shared_label_authoring
+kind = ode
+
+params = ke, v, tlag
+states = central
+outputs = cp
+
+bolus(input_1) -> central
+infusion(input_1) -> central
+lag(input_1) = tlag
+
+dx(central) = -ke * central
+
+out(cp) = central / v ~ continuous()
+"#;
+        let parsed = pharmsol_dsl::parse_model(source).expect("authoring model parses");
+        let analyzed = pharmsol_dsl::analyze_model(&parsed).expect("authoring model analyzes");
+        let model =
+            pharmsol_dsl::compile_analyzed_model(&analyzed).expect("authoring model lowers");
+        let jit = compile_ode_model_to_jit(&model)
+            .expect("compile jit ode model")
+            .with_solver(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45));
+
+        let bolus_route = jit
+            .info()
+            .routes
+            .iter()
+            .find(|route| {
+                route.name == "input_1" && route.kind == Some(pharmsol_dsl::RouteKind::Bolus)
+            })
+            .expect("bolus route");
+        let infusion_route = jit
+            .info()
+            .routes
+            .iter()
+            .find(|route| {
+                route.name == "input_1" && route.kind == Some(pharmsol_dsl::RouteKind::Infusion)
+            })
+            .expect("infusion route");
+        assert_eq!(bolus_route.index, 0);
+        assert_eq!(infusion_route.index, 0);
+        assert!(bolus_route.has_lag);
+
+        let jit_subject = Subject::builder("ode")
+            .bolus(0.0, 500.0, "input_1")
+            .infusion(1.0, 100.0, "input_1", 2.0)
+            .observation(0.5, 0.0, "cp")
+            .observation(1.0, 0.0, "cp")
+            .observation(2.0, 0.0, "cp")
+            .observation(3.0, 0.0, "cp")
+            .observation(4.0, 0.0, "cp")
+            .build();
+
+        let reference_subject = Subject::builder("ode")
+            .bolus(0.0, 500.0, 0)
+            .infusion(1.0, 100.0, 0, 2.0)
+            .observation(0.5, 0.0, 0)
+            .observation(1.0, 0.0, 0)
+            .observation(2.0, 0.0, 0)
+            .observation(3.0, 0.0, 0)
+            .observation(4.0, 0.0, 0)
+            .build();
+
+        let support = Parameters::with_model(
+            &crate::dsl::CompiledRuntimeModel::Ode(jit.clone()),
+            [("ke", 0.2), ("v", 10.0), ("tlag", 0.25)],
+        )
+        .expect("valid named parameters");
+        let jit_predictions = jit
+            .estimate_predictions(&jit_subject, &support)
+            .expect("jit predictions");
+
+        let reference = ODE::new(
+            |x, p, _t, dx, bolus, rateiv, _cov| {
+                dx[0] = -p[0] * x[0] + bolus[0] + rateiv[0];
+            },
+            |_p, _t, _cov| std::collections::HashMap::from([(0usize, 0.25)]),
+            |_p, _t, _cov| std::collections::HashMap::new(),
+            |_p, _t, _cov, _x| {},
+            |x, p, _t, _cov, y| {
+                y[0] = x[0] / p[1];
+            },
+        )
+        .with_nstates(1)
+        .with_ndrugs(1)
+        .with_nout(1)
+        .with_solver(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45));
+
+        let reference_predictions = reference
+            .estimate_predictions(&reference_subject, &support)
+            .expect("reference ode predictions");
+
+        for (jit_pred, reference_pred) in jit_predictions
+            .predictions()
+            .iter()
+            .zip(reference_predictions.predictions())
+        {
+            assert_relative_eq!(
+                jit_pred.prediction(),
+                reference_pred.prediction(),
+                max_relative = 1e-4
+            );
+        }
+    }
+
+    #[test]
+    fn canonical_and_authoring_shared_labels_are_equivalent() {
+        let authoring_source = r#"
+name = shared_label_authoring
+kind = ode
+
+params = ke, v, tlag
+states = central
+outputs = cp
+
+bolus(input_1) -> central
+infusion(input_1) -> central
+lag(input_1) = tlag
+
+dx(central) = -ke * central
+
+out(cp) = central / v ~ continuous()
+"#;
+        // The canonical form spells out what the authoring surface injects:
+        // the infusion rate appears explicitly in the dynamics.
+        let canonical_source = r#"
+model shared_label_canonical {
+    kind ode
+    parameters { ke, v, tlag }
+    states { central }
+    routes {
+        bolus input_1 -> central { lag = tlag },
+        infusion input_1 -> central
+    }
+    dynamics {
+        ddt(central) = -ke * central + rate(input_1)
+    }
+    outputs {
+        cp = central / v
+    }
+}
+"#;
+
+        let authoring_model =
+            pharmsol_dsl::parse_model(authoring_source).expect("authoring model parses");
+        let authoring_jit = compile_ode_model_to_jit(
+            &pharmsol_dsl::compile_analyzed_model(
+                &pharmsol_dsl::analyze_model(&authoring_model).expect("authoring model analyzes"),
+            )
+            .expect("authoring model lowers"),
+        )
+        .expect("compile authoring jit ode model")
+        .with_solver(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45));
+
+        let canonical_model =
+            pharmsol_dsl::parse_model(canonical_source).expect("canonical model parses");
+        let canonical_jit = compile_ode_model_to_jit(
+            &pharmsol_dsl::compile_analyzed_model(
+                &pharmsol_dsl::analyze_model(&canonical_model).expect("canonical model analyzes"),
+            )
+            .expect("canonical model lowers"),
+        )
+        .expect("compile canonical jit ode model")
+        .with_solver(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45));
+
+        let subject = Subject::builder("ode")
+            .bolus(0.0, 500.0, "input_1")
+            .infusion(1.0, 100.0, "input_1", 2.0)
+            .observation(0.5, 0.0, "cp")
+            .observation(1.0, 0.0, "cp")
+            .observation(2.0, 0.0, "cp")
+            .observation(3.0, 0.0, "cp")
+            .observation(4.0, 0.0, "cp")
+            .build();
+        let support = Parameters::with_model(
+            &crate::dsl::CompiledRuntimeModel::Ode(authoring_jit.clone()),
+            [("ke", 0.2), ("v", 10.0), ("tlag", 0.25)],
+        )
+        .expect("valid named parameters");
+
+        let authoring_predictions = authoring_jit
+            .estimate_predictions(&subject, &support)
+            .expect("authoring jit predictions");
+        let canonical_predictions = canonical_jit
+            .estimate_predictions(&subject, &support)
+            .expect("canonical jit predictions");
+
+        for (authoring_pred, canonical_pred) in authoring_predictions
+            .predictions()
+            .iter()
+            .zip(canonical_predictions.predictions())
+        {
+            assert_relative_eq!(
+                authoring_pred.prediction(),
+                canonical_pred.prediction(),
+                max_relative = 1e-6
+            );
+        }
+    }
+
+    #[test]
+    fn mixed_order_shared_label_infusion_targets_declared_destination() {
+        let source = r#"
+name = mixed_order
+kind = ode
+
+params = ka, kp, ke, v
+states = gut, peripheral, central
+outputs = cp
+
+bolus(input_1) -> gut
+infusion(input_2) -> peripheral
+infusion(input_1) -> central
+
+ddt(gut) = -ka * gut
+ddt(peripheral) = -kp * peripheral
+ddt(central) = -ke * central
+
+out(cp) = central / v ~ continuous()
+"#;
+        let parsed = pharmsol_dsl::parse_model(source).expect("authoring model parses");
+        let analyzed = pharmsol_dsl::analyze_model(&parsed).expect("authoring model analyzes");
+        let model =
+            pharmsol_dsl::compile_analyzed_model(&analyzed).expect("authoring model lowers");
+        let jit = compile_ode_model_to_jit(&model)
+            .expect("compile jit ode model")
+            .with_solver(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45));
+
+        let info = jit.info();
+        let bolus = info
+            .routes
+            .iter()
+            .find(|route| {
+                route.name == "input_1" && route.kind == Some(pharmsol_dsl::RouteKind::Bolus)
+            })
+            .expect("input_1 bolus route");
+        let infusion = info
+            .routes
+            .iter()
+            .find(|route| {
+                route.name == "input_1" && route.kind == Some(pharmsol_dsl::RouteKind::Infusion)
+            })
+            .expect("input_1 infusion route");
+        assert_eq!(bolus.index, 0);
+        assert_eq!(bolus.destination_name, "gut");
+        assert_eq!(infusion.index, 1);
+        assert_eq!(infusion.destination_name, "central");
+
+        let jit_subject = Subject::builder("ode")
+            .bolus(0.0, 500.0, "input_1")
+            .infusion(0.0, 100.0, "input_1", 2.0)
+            .observation(0.5, 0.0, "cp")
+            .observation(1.0, 0.0, "cp")
+            .observation(2.0, 0.0, "cp")
+            .observation(3.0, 0.0, "cp")
+            .observation(4.0, 0.0, "cp")
+            .build();
+
+        // The reference uses infusion ordinal 1 for `input_1` (its declared
+        // slot) and infusion ordinal 0 for `input_2`; if the runtime resolved
+        // the `input_1` infusion by a colliding numeric index it would land
+        // in `peripheral` (input_2's destination) and the predictions would
+        // diverge.
+        let reference_subject = Subject::builder("ode")
+            .bolus(0.0, 500.0, 0)
+            .infusion(0.0, 100.0, 1, 2.0)
+            .observation(0.5, 0.0, 0)
+            .observation(1.0, 0.0, 0)
+            .observation(2.0, 0.0, 0)
+            .observation(3.0, 0.0, 0)
+            .observation(4.0, 0.0, 0)
+            .build();
+
+        let support = Parameters::with_model(
+            &crate::dsl::CompiledRuntimeModel::Ode(jit.clone()),
+            [("ka", 1.2), ("kp", 0.4), ("ke", 0.2), ("v", 10.0)],
+        )
+        .expect("valid named parameters");
+        let jit_predictions = jit
+            .estimate_predictions(&jit_subject, &support)
+            .expect("jit predictions");
+
+        let reference = ODE::new(
+            |x, p, _t, dx, bolus, rateiv, _cov| {
+                dx[0] = -p[0] * x[0] + bolus[0];
+                dx[1] = -p[1] * x[1] + rateiv[0];
+                dx[2] = -p[2] * x[2] + rateiv[1];
+            },
+            |_p, _t, _cov| std::collections::HashMap::new(),
+            |_p, _t, _cov| std::collections::HashMap::new(),
+            |_p, _t, _cov, _x| {},
+            |x, p, _t, _cov, y| {
+                y[0] = x[2] / p[3];
+            },
+        )
+        .with_nstates(3)
+        .with_ndrugs(2)
+        .with_nout(1)
+        .with_solver(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45));
+
+        let reference_predictions = reference
+            .estimate_predictions(&reference_subject, &support)
+            .expect("reference ode predictions");
+
+        for (jit_pred, reference_pred) in jit_predictions
+            .predictions()
+            .iter()
+            .zip(reference_predictions.predictions())
+        {
+            assert_relative_eq!(
+                jit_pred.prediction(),
+                reference_pred.prediction(),
+                max_relative = 1e-4
+            );
+        }
+    }
+
+    #[test]
+    fn wrong_kind_events_fail_instead_of_colliding_indexes() {
+        let source = r#"
+name = wrong_kind
+kind = ode
+
+params = ka, ke, v
+states = gut, central
+outputs = cp
+
+bolus(oral) -> gut
+infusion(iv) -> central
+
+ddt(gut) = -ka * gut
+ddt(central) = -ke * central
+
+out(cp) = central / v ~ continuous()
+"#;
+        let parsed = pharmsol_dsl::parse_model(source).expect("authoring model parses");
+        let analyzed = pharmsol_dsl::analyze_model(&parsed).expect("authoring model analyzes");
+        let model =
+            pharmsol_dsl::compile_analyzed_model(&analyzed).expect("authoring model lowers");
+        let jit = compile_ode_model_to_jit(&model)
+            .expect("compile jit ode model")
+            .with_solver(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45));
+
+        let support = Parameters::with_model(
+            &crate::dsl::CompiledRuntimeModel::Ode(jit.clone()),
+            [("ka", 1.2), ("ke", 0.2), ("v", 10.0)],
+        )
+        .expect("valid named parameters");
+
+        // An infusion labelled `oral` is a bolus-only route; it must not fall
+        // through to the `iv` infusion just because both resolve to index 0
+        // in their separate ordinal spaces.
+        let wrong_infusion = Subject::builder("ode")
+            .infusion(0.0, 100.0, "oral", 2.0)
+            .observation(1.0, 0.0, "cp")
+            .build();
+        let err = jit
+            .estimate_predictions(&wrong_infusion, &support)
+            .expect_err("infusion of bolus-only label must fail");
+        assert!(
+            matches!(err, crate::PharmsolError::UnsupportedInputRouteKind { .. }),
+            "unexpected error: {err:?}"
+        );
+
+        // A bolus labelled `iv` is an infusion-only route.
+        let wrong_bolus = Subject::builder("ode")
+            .bolus(0.0, 100.0, "iv")
+            .observation(1.0, 0.0, "cp")
+            .build();
+        let err = jit
+            .estimate_predictions(&wrong_bolus, &support)
+            .expect_err("bolus of infusion-only label must fail");
+        assert!(
+            matches!(err, crate::PharmsolError::UnsupportedInputRouteKind { .. }),
+            "unexpected error: {err:?}"
+        );
+
+        // An entirely unknown label still reports UnknownInputLabel.
+        let unknown = Subject::builder("ode")
+            .infusion(0.0, 100.0, "missing", 2.0)
+            .observation(1.0, 0.0, "cp")
+            .build();
+        let err = jit
+            .estimate_predictions(&unknown, &support)
+            .expect_err("unknown label must fail");
+        assert!(
+            matches!(err, crate::PharmsolError::UnknownInputLabel { .. }),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn native_resolution_matches_bare_numeric_aliases() {
+        let source = r#"
+name = numeric_alias
+kind = ode
+
+params = ke, v
+states = central
+outputs = cp
+
+infusion(input_1) -> central
+
+ddt(central) = -ke * central
+
+out(cp) = central / v ~ continuous()
+"#;
+        let parsed = pharmsol_dsl::parse_model(source).expect("authoring model parses");
+        let analyzed = pharmsol_dsl::analyze_model(&parsed).expect("authoring model analyzes");
+        let model =
+            pharmsol_dsl::compile_analyzed_model(&analyzed).expect("authoring model lowers");
+        let jit = compile_ode_model_to_jit(&model)
+            .expect("compile jit ode model")
+            .with_solver(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45));
+        let support = Parameters::with_model(
+            &crate::dsl::CompiledRuntimeModel::Ode(jit.clone()),
+            [("ke", 0.2), ("v", 10.0)],
+        )
+        .expect("valid named parameters");
+
+        // A bare numeric label resolves through the `input_<n>` alias.
+        let numeric_subject = Subject::builder("ode")
+            .infusion(0.0, 100.0, 1, 2.0)
+            .observation(1.0, 0.0, "cp")
+            .build();
+        jit.estimate_predictions(&numeric_subject, &support)
+            .expect("bare numeric alias must resolve");
+
+        // A bare numeric label without a declared alias never resolves.
+        let missing_subject = Subject::builder("ode")
+            .infusion(0.0, 100.0, 9, 2.0)
+            .observation(1.0, 0.0, "cp")
+            .build();
+        let err = jit
+            .estimate_predictions(&missing_subject, &support)
+            .expect_err("undeclared numeric alias must fail");
+        assert!(
+            matches!(err, crate::PharmsolError::UnknownInputLabel { .. }),
+            "unexpected error: {err:?}"
+        );
     }
 
     fn slot_index(layout: &BufferLayout, name: &str) -> usize {

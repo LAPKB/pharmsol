@@ -232,4 +232,27 @@ mod tests {
             .to_string()
             .contains("declaration-first `sde!` does not allow `lag` on infusion route `iv`"));
     }
+
+    #[test]
+    fn sde_allows_shared_label_across_bolus_and_infusion_routes() {
+        let input = syn::parse_str::<SdeInput>(
+            "name: \"demo\", params: [ke, v], states: [central], outputs: [cp], particles: 16, routes: [bolus(input_1) -> central, infusion(input_1) -> central], drift: |x, p, t, dx, cov| {}, diffusion: |p, sigma| {}, out: |x, p, t, cov, y| {}",
+        )
+        .expect("bolus and infusion sharing a label must parse");
+
+        assert_eq!(input.routes.len(), 2);
+    }
+
+    #[test]
+    fn sde_rejects_shared_label_within_same_kind() {
+        let error = syn::parse_str::<SdeInput>(
+            "name: \"demo\", params: [ke, v], states: [central], outputs: [cp], particles: 16, routes: [bolus(input_1) -> central, bolus(input_1) -> central], drift: |x, p, t, dx, cov| {}, diffusion: |p, sigma| {}, out: |x, p, t, cov, y| {}",
+        )
+        .err()
+        .expect("duplicate bolus routes must fail");
+
+        assert!(error
+            .to_string()
+            .contains("duplicate route `input_1` in declaration-first `sde!`"));
+    }
 }

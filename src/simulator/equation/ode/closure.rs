@@ -3,7 +3,10 @@ use diffsol::{
     ConstantOp, LinearOp, MatrixCommon, NalgebraContext, NalgebraMat, NonLinearOp,
     NonLinearOpJacobian, OdeEquations, OdeEquationsRef, Op, UnitCallable, Vector,
 };
-use std::{cell::RefCell, cmp::Ordering};
+use std::{
+    cell::{Cell, RefCell},
+    cmp::Ordering,
+};
 type M = NalgebraMat<f64>;
 type V = <M as MatrixCommon>::V;
 type C = <M as MatrixCommon>::C;
@@ -37,7 +40,43 @@ impl InfusionTrack {
         }
     }
 
-    fn rate_at(&self, time: f64) -> f64 {
+    fn rate_at(&self, time: f64, left_continuity_time: Option<f64>) -> f64 {
+        if let Some(left_continuity_time) = left_continuity_time {
+            if left_continuity_time == time {
+                return self.rate_at_left(time);
+            }
+        }
+
+        self.rate_at_right(time)
+    }
+
+    fn rate_at_left(&self, time: f64) -> f64 {
+        if self.event_times.is_empty() {
+            return 0.0;
+        }
+
+        let event_search = self
+            .event_times
+            .binary_search_by(|probe| probe.partial_cmp(&time).unwrap_or(Ordering::Less));
+
+        match event_search {
+            Ok(mut idx) => {
+                while idx > 0 && self.event_times[idx - 1] == time {
+                    idx -= 1;
+                }
+
+                if idx == 0 {
+                    0.0
+                } else {
+                    self.cumulative_rates[idx - 1]
+                }
+            }
+            Err(0) => 0.0,
+            Err(idx) => self.cumulative_rates[idx - 1],
+        }
+    }
+
+    fn rate_at_right(&self, time: f64) -> f64 {
         if self.event_times.is_empty() {
             return 0.0;
         }
@@ -63,6 +102,8 @@ impl InfusionTrack {
 #[derive(Debug, Clone, Default)]
 struct InfusionSchedule {
     tracks: Vec<InfusionTrack>,
+    boundary_times: Vec<f64>,
+    left_continuity_time: Cell<Option<f64>>,
 }
 
 impl InfusionSchedule {
@@ -71,11 +112,16 @@ impl InfusionSchedule {
         I: IntoIterator<Item = &'a Infusion>,
     {
         if ndrugs == 0 {
-            return Ok(Self { tracks: Vec::new() });
+            return Ok(Self {
+                tracks: Vec::new(),
+                boundary_times: Vec::new(),
+                left_continuity_time: Cell::new(None),
+            });
         }
 
         let mut per_input: Vec<Vec<(f64, f64)>> = vec![Vec::new(); ndrugs];
         let mut saw_infusion = false;
+        let mut boundary_times = Vec::new();
         for infusion in infusions {
             saw_infusion = true;
             if infusion.duration() <= 0.0 {
@@ -90,12 +136,23 @@ impl InfusionSchedule {
             }
 
             let rate = infusion.amount() / infusion.duration();
+            let end = infusion.time() + infusion.duration();
+
             per_input[input].push((infusion.time(), rate));
-            per_input[input].push((infusion.time() + infusion.duration(), -rate));
+            per_input[input].push((end, -rate));
+            boundary_times.push(infusion.time());
+            boundary_times.push(end);
         }
 
+        boundary_times.sort_by(|a, b| a.total_cmp(b));
+        boundary_times.dedup();
+
         if !saw_infusion {
-            return Ok(Self { tracks: Vec::new() });
+            return Ok(Self {
+                tracks: Vec::new(),
+                boundary_times,
+                left_continuity_time: Cell::new(None),
+            });
         }
 
         let tracks = per_input
@@ -110,13 +167,26 @@ impl InfusionSchedule {
             })
             .collect();
 
-        Ok(Self { tracks })
+        Ok(Self {
+            tracks,
+            boundary_times,
+            left_continuity_time: Cell::new(None),
+        })
+    }
+
+    fn set_left_continuity_time(&self, time: Option<f64>) {
+        self.left_continuity_time.set(time);
+    }
+
+    fn infusion_boundary_times(&self) -> &[f64] {
+        &self.boundary_times
     }
 
     fn fill_rate_vector(&self, time: f64, rateiv: &mut V) {
+        let left_continuity_time = self.left_continuity_time.get();
         rateiv.fill(0.0);
         for track in &self.tracks {
-            let rate = track.rate_at(time);
+            let rate = track.rate_at(time, left_continuity_time);
             if rate != 0.0 {
                 rateiv[track.input] = rate;
             }
@@ -336,6 +406,34 @@ impl<'a, F> PMProblem<'a, F>
 where
     F: Fn(&V, &V, T, &mut V, &V, &V, &Covariates) + 'a,
 {
+    pub(crate) fn set_left_continuity_time(&self, time: Option<f64>) {
+        self.infusion_schedule.set_left_continuity_time(time);
+    }
+
+    pub(crate) fn infusion_boundary_times(&self) -> &[f64] {
+        self.infusion_schedule.infusion_boundary_times()
+    }
+
+    /// Evaluate the full RHS (including the currently scheduled infusion
+    /// rates) at time `t` into `dx`.
+    ///
+    /// Used at infusion boundaries to refresh the solver's stored derivative
+    /// against the post-boundary (right-continuous) RHS, so a solver restart
+    /// predicts with the new dynamics instead of the pre-boundary ones.
+    pub(crate) fn refresh_state_derivative(&self, t: f64, x: &V, dx: &mut V) {
+        let mut rateiv = self.rateiv_buffer.borrow_mut();
+        self.infusion_schedule.fill_rate_vector(t, &mut rateiv);
+        (self.func)(
+            x,
+            &self.p_as_v,
+            t,
+            dx,
+            &self.zero_bolus,
+            &rateiv,
+            self.covariates,
+        );
+    }
+
     /// Creates a new PMProblem with a pre-converted parameter vector.
     /// This avoids an allocation when the caller already has a V representation.
     #[allow(clippy::too_many_arguments)]

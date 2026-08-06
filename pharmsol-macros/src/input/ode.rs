@@ -282,6 +282,36 @@ mod tests {
     }
 
     #[test]
+    fn ode_allows_shared_label_across_bolus_and_infusion_routes() {
+        let input = syn::parse_str::<OdeInput>(
+            "name: \"demo\", params: [ke, v], states: [central], outputs: [cp], routes: [bolus(input_1) -> central, infusion(input_1) -> central], diffeq: |x, p, t, dx, cov| {}, out: |x, p, t, cov, y| {}",
+        )
+        .expect("bolus and infusion sharing a label must parse");
+
+        assert_eq!(input.routes.len(), 2);
+
+        // Each kind keeps its own input ordinal, so both routes share input 0.
+        let bindings = ode_route_input_bindings(&input.routes);
+        assert_eq!(bindings[0].0.name(), "input_1");
+        assert_eq!(bindings[0].1, 0);
+        assert_eq!(bindings[1].0.name(), "input_1");
+        assert_eq!(bindings[1].1, 0);
+    }
+
+    #[test]
+    fn ode_rejects_shared_label_within_same_kind() {
+        let error = syn::parse_str::<OdeInput>(
+            "name: \"demo\", params: [ke, v], states: [central], outputs: [cp], routes: [bolus(input_1) -> central, bolus(input_1) -> central], diffeq: |x, p, t, dx, cov| {}, out: |x, p, t, cov, y| {}",
+        )
+        .err()
+        .expect("duplicate bolus routes must fail");
+
+        assert!(error
+            .to_string()
+            .contains("duplicate route `input_1` in declaration-first `ode!`"));
+    }
+
+    #[test]
     fn rejects_braced_route_lists() {
         let error = syn::parse_str::<OdeInput>(
             "name: \"demo\", params: [ke], states: [central], outputs: [cp], routes: { infusion(iv) -> central }, diffeq: |x, p, t, dx, cov| {}, out: |x, p, t, cov, y| {}",

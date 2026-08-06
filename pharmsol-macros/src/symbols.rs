@@ -84,7 +84,7 @@ pub(crate) struct OdeRouteDecl {
     pub(crate) destination: Ident,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum OdeRouteKind {
     Bolus,
     Infusion,
@@ -205,6 +205,26 @@ pub(crate) fn ode_route_input_bindings(routes: &[OdeRouteDecl]) -> Vec<(Symbolic
                     index
                 }
             };
+            (route.input.clone(), index)
+        })
+        .collect()
+}
+
+/// Bolus-route input bindings only, numbered in declaration order.
+///
+/// Lag and bioavailability are bolus-only route properties, so property
+/// closures resolve route names against bolus inputs. When a bolus and an
+/// infusion share a label (one drug given by both routes), this keeps the
+/// generated `const` bindings and numeric rewrites unambiguous.
+pub(crate) fn bolus_route_input_bindings(routes: &[OdeRouteDecl]) -> Vec<(SymbolicIndex, usize)> {
+    let mut next_bolus_index = 0usize;
+
+    routes
+        .iter()
+        .filter(|route| matches!(route.kind, OdeRouteKind::Bolus))
+        .map(|route| {
+            let index = next_bolus_index;
+            next_bolus_index += 1;
             (route.input.clone(), index)
         })
         .collect()

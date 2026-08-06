@@ -103,6 +103,10 @@ pub(crate) fn validate_route_property_kinds(
     for route in routes {
         if property_routes.contains(&route.input.name())
             && matches!(route.kind, OdeRouteKind::Infusion)
+            && !routes.iter().any(|other| {
+                matches!(other.kind, OdeRouteKind::Bolus)
+                    && other.input.name() == route.input.name()
+            })
         {
             return Err(syn::Error::new_spanned(
                 &route.input,

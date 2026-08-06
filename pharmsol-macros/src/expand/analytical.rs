@@ -18,7 +18,7 @@ use crate::crate_path::rewrite_crate_paths;
 use crate::input::AnalyticalInput;
 use crate::kernel::resolve_analytical_structure;
 use crate::symbols::{
-    dense_index_len, ode_route_input_bindings, symbolic_index_bindings,
+    bolus_route_input_bindings, dense_index_len, ode_route_input_bindings, symbolic_index_bindings,
     symbolic_numeric_binding_map, OdeRouteDecl, OdeRouteKind, SymbolicIndex,
 };
 use crate::validate::{
@@ -30,6 +30,7 @@ const MACRO_LABEL: &str = "built-in `analytical!`";
 
 pub(crate) fn expand(input: AnalyticalInput) -> syn::Result<TokenStream2> {
     let route_bindings = ode_route_input_bindings(&input.routes);
+    let bolus_route_bindings = bolus_route_input_bindings(&input.routes);
     let function_spec = resolve_analytical_structure(&input.structure)?;
     let projection = validate_analytical_structure_inputs(
         &input.structure,
@@ -65,7 +66,7 @@ pub(crate) fn expand(input: AnalyticalInput) -> syn::Result<TokenStream2> {
             &input.params,
             &input.derived,
             &input.covariates,
-            &route_bindings,
+            &bolus_route_bindings,
         )?,
         None => empty_route_map(),
     };
@@ -77,7 +78,7 @@ pub(crate) fn expand(input: AnalyticalInput) -> syn::Result<TokenStream2> {
             &input.params,
             &input.derived,
             &input.covariates,
-            &route_bindings,
+            &bolus_route_bindings,
         )?,
         None => empty_route_map(),
     };
@@ -496,12 +497,15 @@ fn expand_route_metadata(
                     quote! { ::pharmsol::equation::Route::infusion(stringify!(#input)) }
                 }
             };
-            let lag_flag = if lag_routes.contains(&route_name) {
+            // Lag and bioavailability are bolus-only; when a bolus and an
+            // infusion share a label, the property binds to the bolus route.
+            let bolus_route = matches!(route.kind, OdeRouteKind::Bolus);
+            let lag_flag = if bolus_route && lag_routes.contains(&route_name) {
                 quote! { .with_lag() }
             } else {
                 quote! {}
             };
-            let fa_flag = if fa_routes.contains(&route_name) {
+            let fa_flag = if bolus_route && fa_routes.contains(&route_name) {
                 quote! { .with_bioavailability() }
             } else {
                 quote! {}
