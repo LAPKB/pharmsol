@@ -665,33 +665,9 @@ impl Occasion {
         }
     }
 
-    /// Sort events by time, then by [Event] type so that [Observation] comes before [Bolus] and [Infusion]
+    /// Sort by time, placing observations before doses at equal times.
     pub(crate) fn sort(&mut self) {
-        self.events.sort_by(|a, b| {
-            // Helper function to get event type order
-            // Observations come first so that at the same time point,
-            // the pre-dose state is observed before the dose is applied.
-            #[inline]
-            fn event_type_order(event: &Event) -> u8 {
-                match event {
-                    Event::Observation(_) => 1,
-                    Event::Bolus(_) => 2,
-                    Event::Infusion(_) => 3,
-                }
-            }
-
-            // Compare times first using the existing time() method
-            let time_cmp = a.time().partial_cmp(&b.time());
-
-            match time_cmp {
-                Some(std::cmp::Ordering::Equal) => {
-                    // If times are equal, sort by event type
-                    event_type_order(a).cmp(&event_type_order(b))
-                }
-                Some(ordering) => ordering,
-                None => std::cmp::Ordering::Equal, // Handle NaN cases
-            }
-        });
+        self.events.sort_by(Event::cmp_time_then_type);
     }
 
     /// Process the events with modifications for lag time, bioavailability and input remapping.

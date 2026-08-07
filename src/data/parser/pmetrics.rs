@@ -7,17 +7,91 @@
 //! indices. Named values such as `iv` and `cp` are preserved exactly, and
 //! numeric values such as `1` are preserved as numeric-looking labels.
 
-use crate::{data::*, PharmsolError};
-use csv::WriterBuilder;
+use crate::data::*;
+use csv::{ReaderBuilder, StringRecord};
 use serde::de::{MapAccess, Visitor};
-use serde::{de, Deserialize, Deserializer, Serialize};
-use std::collections::HashMap;
-
-use crate::data::row::build_data;
-use crate::data::row::DataError;
-use crate::data::row::DataRow;
+use serde::{de, Deserialize, Deserializer};
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::str::FromStr;
+
+use crate::data::row::{build_data, DataError, DataRow};
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[repr(usize)]
+pub(super) enum CoreColumn {
+    Id,
+    Evid,
+    Time,
+    Dur,
+    Dose,
+    Addl,
+    Ii,
+    Input,
+    Out,
+    Outeq,
+    Cens,
+    C0,
+    C1,
+    C2,
+    C3,
+}
+
+impl CoreColumn {
+    pub(super) const ALL: [Self; 15] = [
+        Self::Id,
+        Self::Evid,
+        Self::Time,
+        Self::Dur,
+        Self::Dose,
+        Self::Addl,
+        Self::Ii,
+        Self::Input,
+        Self::Out,
+        Self::Outeq,
+        Self::Cens,
+        Self::C0,
+        Self::C1,
+        Self::C2,
+        Self::C3,
+    ];
+    const REQUIRED: [Self; 3] = [Self::Id, Self::Evid, Self::Time];
+    pub(super) const COUNT: usize = Self::ALL.len();
+
+    pub(super) const fn index(self) -> usize {
+        self as usize
+    }
+
+    pub(super) const fn header(self) -> &'static str {
+        match self {
+            Self::Id => "ID",
+            Self::Evid => "EVID",
+            Self::Time => "TIME",
+            Self::Dur => "DUR",
+            Self::Dose => "DOSE",
+            Self::Addl => "ADDL",
+            Self::Ii => "II",
+            Self::Input => "INPUT",
+            Self::Out => "OUT",
+            Self::Outeq => "OUTEQ",
+            Self::Cens => "CENS",
+            Self::C0 => "C0",
+            Self::C1 => "C1",
+            Self::C2 => "C2",
+            Self::C3 => "C3",
+        }
+    }
+
+    fn from_header(header: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|column| column.header().eq_ignore_ascii_case(header))
+    }
+}
+
+pub(super) fn core_headers() -> impl ExactSizeIterator<Item = &'static str> {
+    CoreColumn::ALL.into_iter().map(CoreColumn::header)
+}
 
 /// Read a Pmetrics CSV file into [`Data`].
 ///
@@ -30,7 +104,16 @@ use std::str::FromStr;
 /// ingestion path, and groups rows into occasions using `EVID=4`.
 ///
 /// All columns not claimed by the core Pmetrics schema are treated as
-/// covariates.
+/// covariates. Column names are read without regard to capitalization. A
+/// covariate header ending in `!` selects carry-forward behavior; otherwise its
+/// values are interpolated. The same covariate cannot be declared in both
+/// forms.
+///
+/// `ADDL`/`II` doses are expanded while reading. Export writes the expanded
+/// doses as individual rows. Negative `ADDL` remains supported for `EVID=1`,
+/// but not for an `EVID=4` reset whose identity would be lost during expansion.
+/// `OUT=-99` represents a missing observation, so `-99` cannot be preserved as
+/// a real observed value.
 ///
 /// # Arguments
 ///
@@ -52,9 +135,9 @@ use std::str::FromStr;
 ///
 /// # Expected columns
 ///
-/// The canonical columns are `ID`, `TIME`, `EVID`, `DOSE`, `DUR`, `ADDL`,
-/// `II`, `INPUT`, `OUT`, `OUTEQ`, `CENS`, and optional `C0..C3` error
-/// coefficients.
+/// `ID`, `EVID`, and `TIME` are required. The remaining core columns are
+/// `DOSE`, `DUR`, `ADDL`, `II`, `INPUT`, `OUT`, `OUTEQ`, `CENS`, and optional
+/// `C0..C3` error coefficients.
 ///
 /// All other numeric columns are treated as covariates.
 ///
@@ -71,80 +154,135 @@ use std::str::FromStr;
 ///   Pmetrics convention
 ///
 /// For specific column definitions, see the `Row` struct.
-#[allow(dead_code)]
 pub fn read_pmetrics(path: impl Into<String>) -> Result<Data, DataError> {
-    let path = path.into();
+    let bytes =
+        std::fs::read(path.into()).map_err(|error| DataError::CSVError(error.to_string()))?;
+    Data::from_pmetrics_csv_bytes(&bytes)
+}
 
-    let mut reader = csv::ReaderBuilder::new()
-        .comment(Some(b'#'))
-        .has_headers(true)
-        .from_path(&path)
-        .map_err(|e| DataError::CSVError(e.to_string()))?;
-    // Convert headers to lowercase
-    let headers = reader
-        .headers()
-        .map_err(|e| DataError::CSVError(e.to_string()))?
-        .iter()
-        .map(|h| h.to_lowercase())
-        .collect::<Vec<_>>();
-    reader.set_headers(csv::StringRecord::from(headers));
+impl Data {
+    /// Read Pmetrics CSV bytes into a dataset.
+    pub fn from_pmetrics_csv_bytes(bytes: &[u8]) -> Result<Data, DataError> {
+        let mut reader = ReaderBuilder::new()
+            .comment(Some(b'#'))
+            .has_headers(true)
+            .from_reader(bytes);
+        let original_headers = reader
+            .headers()
+            .map_err(|error| DataError::CSVError(error.to_string()))?
+            .clone();
+        let mut core_columns = HashSet::new();
+        let mut covariate_forms = HashMap::<String, bool>::new();
+        let mut headers = Vec::with_capacity(original_headers.len());
 
-    // Parse CSV rows and convert to DataRows
-    let mut data_rows: Vec<DataRow> = Vec::new();
-    for row_result in reader.deserialize() {
-        let row: Row = row_result.map_err(|e| DataError::CSVError(e.to_string()))?;
-        data_rows.push(row.to_datarow());
+        for header in &original_headers {
+            if let Some(column) = CoreColumn::from_header(header) {
+                let name = column.header().to_ascii_lowercase();
+                if !core_columns.insert(column) {
+                    return Err(DataError::InvalidPmetricsData(format!(
+                        "duplicate core header `{name}`"
+                    )));
+                }
+                headers.push(name);
+                continue;
+            }
+
+            validate_covariate_header(header)?;
+            let fixed = header.ends_with('!');
+            let base = header.strip_suffix('!').unwrap_or(header);
+            let name = normalize_covariate_name(base);
+            if let Some(previous_fixed) = covariate_forms.insert(name.clone(), fixed) {
+                let message = if previous_fixed == fixed {
+                    format!("duplicate covariate column `{name}`")
+                } else {
+                    format!("covariate `{name}` is declared both with and without trailing !")
+                };
+                return Err(DataError::InvalidPmetricsData(message));
+            }
+            headers.push(if fixed { format!("{name}!") } else { name });
+        }
+        for required in CoreColumn::REQUIRED {
+            if !core_columns.contains(&required) {
+                return Err(DataError::InvalidPmetricsData(format!(
+                    "missing required core header `{}`",
+                    required.header()
+                )));
+            }
+        }
+        reader.set_headers(StringRecord::from(headers));
+
+        let mut data_rows = Vec::new();
+        for row_result in reader.deserialize() {
+            let row: Row = row_result.map_err(|error| DataError::CSVError(error.to_string()))?;
+            data_rows.push(row.into_datarow());
+        }
+        build_data(data_rows)
     }
+}
 
-    // Use the shared build_data logic
-    build_data(data_rows)
+pub(super) fn normalize_covariate_name(name: &str) -> String {
+    name.to_lowercase()
+}
+
+pub(super) fn validate_covariate_header(header: &str) -> Result<(), DataError> {
+    let base = header.strip_suffix('!').unwrap_or(header);
+    if base.is_empty()
+        || base.contains('!')
+        || base.chars().any(char::is_control)
+        || CoreColumn::from_header(base).is_some()
+    {
+        return Err(DataError::InvalidPmetricsData(format!(
+            "reserved or ambiguous covariate column `{header}`"
+        )));
+    }
+    Ok(())
 }
 
 /// One row from a Pmetrics file after serde deserialization.
-#[derive(Deserialize, Debug, Serialize, Default, Clone)]
+#[derive(Deserialize)]
 #[serde(rename_all = "lowercase")]
 struct Row {
     /// Subject ID
     id: String,
     /// Event type
-    evid: isize,
+    evid: i32,
     /// Event time
     time: f64,
     /// Infusion duration
-    #[serde(deserialize_with = "deserialize_option_f64")]
+    #[serde(default, deserialize_with = "deserialize_option_f64")]
     dur: Option<f64>,
     /// Dose amount
-    #[serde(deserialize_with = "deserialize_option_f64")]
+    #[serde(default, deserialize_with = "deserialize_option_f64")]
     dose: Option<f64>,
     /// Additional doses
-    #[serde(deserialize_with = "deserialize_option_isize")]
-    addl: Option<isize>,
+    #[serde(default, deserialize_with = "deserialize_option_i64")]
+    addl: Option<i64>,
     /// Dosing interval
-    #[serde(deserialize_with = "deserialize_option_f64")]
+    #[serde(default, deserialize_with = "deserialize_option_f64")]
     ii: Option<f64>,
     /// Input label from the `INPUT` column
-    #[serde(deserialize_with = "deserialize_option_route_label")]
+    #[serde(default, deserialize_with = "deserialize_option_route_label")]
     input: Option<InputLabel>,
     /// Observed value
-    #[serde(deserialize_with = "deserialize_option_f64")]
+    #[serde(default, deserialize_with = "deserialize_option_f64")]
     out: Option<f64>,
     /// Output label from the `OUTEQ` column
-    #[serde(deserialize_with = "deserialize_option_output_label")]
+    #[serde(default, deserialize_with = "deserialize_option_output_label")]
     outeq: Option<OutputLabel>,
     /// Censoring output
     #[serde(default, deserialize_with = "deserialize_option_censor")]
     cens: Option<Censor>,
     /// First element of the error polynomial
-    #[serde(deserialize_with = "deserialize_option_f64")]
+    #[serde(default, deserialize_with = "deserialize_option_f64")]
     c0: Option<f64>,
     /// Second element of the error polynomial
-    #[serde(deserialize_with = "deserialize_option_f64")]
+    #[serde(default, deserialize_with = "deserialize_option_f64")]
     c1: Option<f64>,
     /// Third element of the error polynomial
-    #[serde(deserialize_with = "deserialize_option_f64")]
+    #[serde(default, deserialize_with = "deserialize_option_f64")]
     c2: Option<f64>,
     /// Fourth element of the error polynomial
-    #[serde(deserialize_with = "deserialize_option_f64")]
+    #[serde(default, deserialize_with = "deserialize_option_f64")]
     c3: Option<f64>,
     /// All other columns are covariates
     #[serde(deserialize_with = "deserialize_covs", flatten)]
@@ -152,22 +290,19 @@ struct Row {
 }
 
 impl Row {
-    /// Convert this Row to a DataRow for parsing
-    fn to_datarow(&self) -> DataRow {
+    fn into_datarow(self) -> DataRow {
         DataRow {
-            id: self.id.clone(),
+            id: self.id,
             time: self.time,
-            evid: self.evid as i32,
+            evid: self.evid,
             dose: self.dose,
             dur: self.dur,
-            addl: self.addl.map(|a| a as i64),
+            addl: self.addl,
             ii: self.ii,
-            input: self.input.clone(),
-            // Treat -99 as missing value (Pmetrics convention)
-            out: self
-                .out
-                .and_then(|v| if v == -99.0 { None } else { Some(v) }),
-            outeq: self.outeq.clone(),
+            input: self.input,
+            // Treat -99 as missing, matching the common Pmetrics convention.
+            out: self.out.filter(|&value| value != -99.0),
+            outeq: self.outeq,
             cens: self.cens,
             c0: self.c0,
             c1: self.c1,
@@ -175,8 +310,8 @@ impl Row {
             c3: self.c3,
             covariates: self
                 .covs
-                .iter()
-                .filter_map(|(k, v)| v.map(|val| (k.clone(), val)))
+                .into_iter()
+                .filter_map(|(key, value)| value.map(|value| (key, value)))
                 .collect(),
         }
     }
@@ -238,11 +373,11 @@ where
     deserialize_option::<String, D>(deserializer).map(|value| value.map(OutputLabel::from))
 }
 
-fn deserialize_option_isize<'de, D>(deserializer: D) -> Result<Option<isize>, D::Error>
+fn deserialize_option_i64<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
 where
     D: Deserializer<'de>,
 {
-    deserialize_option::<isize, D>(deserializer)
+    deserialize_option::<i64, D>(deserializer)
 }
 
 fn deserialize_covs<'de, D>(deserializer: D) -> Result<HashMap<String, Option<f64>>, D::Error>
@@ -269,7 +404,7 @@ where
                 let opt_value = match value {
                     serde_json::Value::String(s) => match s.as_str() {
                         "" => None,
-                        "." => None,
+                        "." | "NA" => None,
                         _ => match s.parse::<f64>() {
                             Ok(val) => Some(val),
                             Err(_) => {
@@ -279,7 +414,11 @@ where
                             }
                         },
                     },
-                    serde_json::Value::Number(n) => Some(n.as_f64().unwrap()),
+                    serde_json::Value::Number(number) => {
+                        Some(number.as_f64().ok_or_else(|| {
+                            de::Error::custom("expected a finite floating-point number")
+                        })?)
+                    }
                     _ => return Err(de::Error::custom("expected a string or number")),
                 };
                 covs.insert(key, opt_value);
@@ -291,142 +430,10 @@ where
     deserializer.deserialize_map(CovsVisitor)
 }
 
-impl Data {
-    /// Write the dataset to a file in Pmetrics format.
-    ///
-    /// `INPUT` and `OUTEQ` are written using their stored public labels. Named
-    /// labels such as `iv` and `cp` remain named labels, and numeric-looking
-    /// labels are written back exactly as stored.
-    ///
-    /// Missing optional fields are emitted as `.` placeholders to match the
-    /// usual Pmetrics text convention.
-    ///
-    /// # Arguments
-    ///
-    /// * `file` - The file to write to
-    pub fn write_pmetrics(&self, file: &std::fs::File) -> Result<(), PharmsolError> {
-        let mut writer = WriterBuilder::new().has_headers(true).from_writer(file);
-
-        writer
-            .write_record([
-                "ID", "EVID", "TIME", "DUR", "DOSE", "ADDL", "II", "INPUT", "OUT", "OUTEQ", "CENS",
-                "C0", "C1", "C2", "C3",
-            ])
-            .map_err(|e| PharmsolError::OtherError(e.to_string()))?;
-
-        for subject in self.subjects() {
-            for occasion in subject.occasions() {
-                for event in occasion.process_events(None) {
-                    match event {
-                        Event::Observation(obs) => {
-                            let time = obs.time().to_string();
-                            let value = obs
-                                .value()
-                                .map_or_else(|| ".".to_string(), |v| v.to_string());
-                            let outeq = obs.outeq().to_string();
-                            let censor = match obs.censoring() {
-                                Censor::None => "0".to_string(),
-                                Censor::BLOQ => "1".to_string(),
-                                Censor::ALOQ => "-1".to_string(),
-                            };
-                            let (c0, c1, c2, c3) = obs
-                                .errorpoly()
-                                .map(|poly| {
-                                    let (c0, c1, c2, c3) = poly.coefficients();
-                                    (
-                                        c0.to_string(),
-                                        c1.to_string(),
-                                        c2.to_string(),
-                                        c3.to_string(),
-                                    )
-                                })
-                                .unwrap_or_else(|| {
-                                    (
-                                        ".".to_string(),
-                                        ".".to_string(),
-                                        ".".to_string(),
-                                        ".".to_string(),
-                                    )
-                                });
-
-                            // Write each field individually
-                            writer
-                                .write_record([
-                                    subject.id(),
-                                    &"0".to_string(),
-                                    &time,
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &value,
-                                    &outeq,
-                                    &censor,
-                                    &c0,
-                                    &c1,
-                                    &c2,
-                                    &c3,
-                                ])
-                                .map_err(|e| PharmsolError::OtherError(e.to_string()))?;
-                        }
-                        Event::Infusion(inf) => {
-                            writer
-                                .write_record([
-                                    subject.id(),
-                                    &"1".to_string(),
-                                    &inf.time().to_string(),
-                                    &inf.duration().to_string(),
-                                    &inf.amount().to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &inf.input().to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                ])
-                                .map_err(|e| PharmsolError::OtherError(e.to_string()))?;
-                        }
-                        Event::Bolus(bol) => {
-                            writer
-                                .write_record([
-                                    subject.id(),
-                                    &"1".to_string(),
-                                    &bol.time().to_string(),
-                                    &"0".to_string(),
-                                    &bol.amount().to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &bol.input().to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                    &".".to_string(),
-                                ])
-                                .map_err(|e| PharmsolError::OtherError(e.to_string()))?;
-                        }
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
 
     use super::*;
-    use crate::{Censor, ErrorPoly, SubjectBuilderExt};
-    use csv::ReaderBuilder;
-    use std::io::Cursor;
     use tempfile::NamedTempFile;
 
     #[test]
@@ -469,74 +476,6 @@ mod tests {
             s2_times,
             vec![0.0, 9.0, 12.0, 24.0, 36.0, 48.0, 60.0, 72.0, 84.0, 96.0, 108.0, 120.0]
         );
-    }
-
-    #[test]
-    fn write_pmetrics_preserves_infusion_input() {
-        let subject = Subject::builder("writer")
-            .infusion(0.0, 200.0, 3, 1.0) // input=3 (1-indexed)
-            .observation(1.0, 0.0, 1) // outeq=1 (1-indexed)
-            .build();
-        let data = Data::new(vec![subject]);
-
-        let file = NamedTempFile::new().unwrap();
-        data.write_pmetrics(file.as_file()).unwrap();
-
-        let contents = std::fs::read_to_string(file.path()).unwrap();
-        let mut reader = ReaderBuilder::new()
-            .has_headers(true)
-            .from_reader(Cursor::new(contents));
-
-        let infusion_row = reader
-            .records()
-            .filter_map(Result::ok)
-            .find(|record| record.get(3) != Some("0"))
-            .expect("infusion row missing");
-
-        assert_eq!(infusion_row.get(7), Some("3")); // Written as-is (1-indexed)
-    }
-
-    #[test]
-    fn write_pmetrics_preserves_censoring_and_errorpoly() {
-        let subject = Subject::builder("writer")
-            .observation_with_error(
-                0.0,
-                2.5,
-                0,
-                ErrorPoly::new(0.1, 0.2, 0.3, 0.4),
-                Censor::BLOQ,
-            )
-            .censored_observation(1.0, 3.5, 1, Censor::ALOQ)
-            .build();
-        let data = Data::new(vec![subject]);
-
-        let file = NamedTempFile::new().unwrap();
-        data.write_pmetrics(file.as_file()).unwrap();
-
-        let contents = std::fs::read_to_string(file.path()).unwrap();
-        let mut reader = ReaderBuilder::new()
-            .has_headers(true)
-            .from_reader(Cursor::new(contents));
-
-        let mut observations: Vec<_> = reader
-            .records()
-            .filter_map(Result::ok)
-            .filter(|record| record.get(1) == Some("0"))
-            .collect();
-
-        assert_eq!(observations.len(), 2, "expected two observation rows");
-
-        let first = observations.remove(0);
-        assert_eq!(first.get(10), Some("1"));
-        assert_eq!(first.get(11), Some("0.1"));
-        assert_eq!(first.get(12), Some("0.2"));
-        assert_eq!(first.get(13), Some("0.3"));
-        assert_eq!(first.get(14), Some("0.4"));
-
-        let second = observations.remove(0);
-        assert_eq!(second.get(10), Some("-1"));
-        assert_eq!(second.get(11), Some("."));
-        assert_eq!(second.get(14), Some("."));
     }
 
     #[test]

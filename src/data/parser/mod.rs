@@ -6,11 +6,15 @@
 //!
 //! Choose the entrypoint by source shape:
 //! - Use [`DataRow`] or [`build_data`] when you already mapped external data into
-//!   canonical row fields yourself.
+//!   Pmetrics row fields yourself.
 //! - Use [`read_pmetrics`] when the source file already follows the Pmetrics CSV
 //!   convention.
 
 pub mod pmetrics;
+mod pmetrics_csv;
+
+#[cfg(test)]
+mod pmetrics_csv_tests;
 
 pub use crate::data::row::{build_data, DataError, DataRow, DataRowBuilder};
 pub use pmetrics::*;
