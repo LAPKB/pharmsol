@@ -1438,3 +1438,66 @@ fn deeply_nested_statement_ifs_fail_cleanly() {
         rendered
     );
 }
+
+#[test]
+fn statement_if_multi_assignment_branches_feed_downstream_pk() {
+    let src = r#"
+name = conditional_pk
+kind = ode
+states = central
+params = cl, v, wt
+
+if (wt > 70) {
+    cl_eff = cl * 1.2
+    v_eff = v * 1.1
+} else {
+    cl_eff = cl
+    v_eff = v
+}
+
+ddt(central) = -(cl_eff / v_eff) * central
+out(cp) = central / v_eff
+"#;
+    let model = parse_model(src).expect("multi-assignment conditional PK parses");
+    let analyzed = analyze_model(&model).expect("multi-assignment conditional PK analyzes");
+    let compiled = compile_analyzed_model(&analyzed)
+        .expect("multi-assignment conditional PK compiles");
+
+    let mut shapes = Vec::new();
+    let function = compiled
+        .function(pharmsol_dsl::execution::ModelFunctionKind::Derive)
+        .expect("derive function");
+    if let pharmsol_dsl::execution::FunctionBody::Statements(program) = &function.body {
+        collect_if_branch_lens(&program.body.statements, &mut shapes);
+    }
+    assert_eq!(
+        shapes,
+        vec![(2, Some(2))],
+        "one if with exactly two assignments per branch"
+    );
+}
+
+#[test]
+fn statement_if_without_else_fails_definite_assignment_analysis() {
+    let src = r#"
+name = conditional_pk_missing_else
+kind = ode
+states = central
+params = cl, v, wt
+
+if (wt > 70) {
+    cl_eff = cl * 1.2
+}
+
+ddt(central) = -(cl_eff / v) * central
+out(cp) = central / v
+"#;
+    let model = parse_model(src).expect("if without else parses");
+    let err = analyze_model(&model).expect_err("conditionally assigned derived must fail analysis");
+    let rendered = err.render(src);
+    assert!(
+        rendered.contains("derived value `cl_eff` is not definitely assigned"),
+        "{}",
+        rendered
+    );
+}

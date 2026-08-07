@@ -141,12 +141,14 @@ impl<'a> AuthoringParser<'a> {
                     .iter()
                     .find(|next| {
                         let next_line = next.strip_suffix('\n').unwrap_or(next);
-                        let next_code = &next_line[..next_line.find('#').unwrap_or(next_line.len())];
+                        let next_code =
+                            &next_line[..next_line.find('#').unwrap_or(next_line.len())];
                         !next_code.trim().is_empty()
                     })
                     .is_some_and(|next| {
                         let next_line = next.strip_suffix('\n').unwrap_or(next);
-                        let next_code = &next_line[..next_line.find('#').unwrap_or(next_line.len())];
+                        let next_code =
+                            &next_line[..next_line.find('#').unwrap_or(next_line.len())];
                         starts_with_keyword(next_code.trim_start(), "else")
                     });
                 if !next_is_else {
@@ -614,11 +616,16 @@ impl<'a> AuthoringParser<'a> {
             let else_rest_abs = after_then_abs + 4 + else_rest_leading;
             let (stmts, else_consumed) = if starts_with_keyword(else_rest_trimmed, "if") {
                 let nested_span = Span::new(else_rest_abs, else_rest_abs + else_rest_trimmed.len());
-                let nested =
-                    self.parse_if_statement(else_rest_trimmed, else_rest_abs, nested_span, depth + 1)?;
+                let nested = self.parse_if_statement(
+                    else_rest_trimmed,
+                    else_rest_abs,
+                    nested_span,
+                    depth + 1,
+                )?;
                 (vec![nested], else_rest_trimmed.len())
             } else {
-                let (stmts, consumed) = self.parse_if_body(else_rest_trimmed, else_rest_abs, depth)?;
+                let (stmts, consumed) =
+                    self.parse_if_body(else_rest_trimmed, else_rest_abs, depth)?;
                 (stmts, consumed)
             };
             let trailing_src = &else_rest_trimmed[else_consumed..];
