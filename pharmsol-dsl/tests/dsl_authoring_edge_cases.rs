@@ -1310,3 +1310,67 @@ if (ke > 0.5) {
         rendered
     );
 }
+
+#[test]
+fn legacy_unbraced_if_expression_rhs_parses_and_lowers() {
+    // The unbraced `if (cond) a else b` conditional-expression form predates
+    // PR #330 and must keep working alongside the new braced form.
+    let src = r#"
+name = legacy_if_expression
+kind = ode
+states = central
+params = ke, v
+ddt(central) = -ke * central
+out(cp) = if (ke > 0.5) central / v else central / (2 * v)
+"#;
+    let model = parse_model(src).expect("legacy unbraced if-expression parses");
+    let analyzed = analyze_model(&model).expect("model analyzes");
+    let compiled = compile_analyzed_model(&analyzed).expect("model compiles");
+
+    use pharmsol_dsl::execution::{
+        ExecutionExprKind, ExecutionStmtKind, FunctionBody, ModelFunctionKind,
+    };
+    use pharmsol_dsl::AnalyzedBinaryOp;
+
+    let mut shapes = Vec::new();
+    let mut branch_values = Vec::new();
+    let function = compiled
+        .function(ModelFunctionKind::Outputs)
+        .expect("outputs function");
+    if let FunctionBody::Statements(program) = &function.body {
+        collect_if_branch_lens(&program.body.statements, &mut shapes);
+        for statement in &program.body.statements {
+            if let ExecutionStmtKind::If(if_stmt) = &statement.kind {
+                for branch in [&if_stmt.then_branch, if_stmt.else_branch.as_ref().unwrap()] {
+                    let value = match &branch[0].kind {
+                        ExecutionStmtKind::Assign(assign) => &assign.value,
+                        _ => panic!("branch statement is not an assignment"),
+                    };
+                    assert!(
+                        matches!(
+                            value.kind,
+                            ExecutionExprKind::Binary { op: AnalyzedBinaryOp::Div, .. }
+                        ),
+                        "branch value must be a division expression"
+                    );
+                    branch_values.push(value.clone());
+                }
+            }
+        }
+    }
+    assert_eq!(
+        shapes,
+        vec![(1, Some(1))],
+        "legacy form must lower to one if with one stmt per branch"
+    );
+    assert_eq!(
+        branch_values.len(),
+        2,
+        "conditional must have both a then and an else value"
+    );
+    assert_ne!(
+        branch_values[0], branch_values[1],
+        "then and else branches must carry the distinct conditional values \
+         (`central / v` vs `central / (2 * v)`)"
+    );
+}
