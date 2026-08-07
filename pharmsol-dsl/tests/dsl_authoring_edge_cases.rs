@@ -1081,3 +1081,232 @@ out(cp) = if (ke > 0.5) { 1 } else { 2 } + 3
         rendered
     );
 }
+
+#[test]
+fn else_on_own_line_or_after_trivia_lines_parses() {
+    let variants = [
+        "} else {",
+        "}\nelse {",
+        "}\n\nelse {",
+        "}\n# explanation\nelse {",
+    ];
+    for (i, variant) in variants.iter().enumerate() {
+        let src = format!(
+            r#"
+name = trivia_else_{i}
+kind = ode
+states = central
+params = ke
+ddt(central) = -ke * central
+if (ke > 0.5) {{
+    x = 1
+{variant}
+    x = 2
+}}
+"#
+        );
+        let model = parse_model(&src).unwrap_or_else(|err| {
+            panic!("variant {variant:?} failed: {}", err.render(&src))
+        });
+        let analyzed = analyze_model(&model).expect("model analyzes");
+        let compiled = compile_analyzed_model(&analyzed).expect("model compiles");
+
+        let mut shapes = Vec::new();
+        let function = compiled
+            .function(pharmsol_dsl::execution::ModelFunctionKind::Derive)
+            .expect("dynamics function");
+        if let pharmsol_dsl::execution::FunctionBody::Statements(program) = &function.body {
+            collect_if_branch_lens(&program.body.statements, &mut shapes);
+        }
+        assert_eq!(shapes, vec![(1, Some(1))], "variant {variant:?}");
+    }
+}
+
+#[test]
+fn else_if_chain_with_blank_and_comment_lines_parses() {
+    let src = r#"
+name = chain_with_trivia
+kind = ode
+states = central
+params = ke
+ddt(central) = -ke * central
+if (ke > 1) {
+    x = 1
+}
+
+else if (ke > 0.5) {
+    x = 2
+}
+
+# a comment sitting between the chain links
+else {
+    x = 3
+}
+"#;
+    let model = parse_model(src).expect("else-if chain with trivia parses");
+    let analyzed = analyze_model(&model).expect("model analyzes");
+    let compiled = compile_analyzed_model(&analyzed).expect("model compiles");
+
+    let mut shapes = Vec::new();
+    let function = compiled
+        .function(pharmsol_dsl::execution::ModelFunctionKind::Derive)
+        .expect("dynamics function");
+    if let pharmsol_dsl::execution::FunctionBody::Statements(program) = &function.body {
+        collect_if_branch_lens(&program.body.statements, &mut shapes);
+    }
+    assert_eq!(
+        shapes,
+        vec![(1, Some(1)), (1, Some(1))],
+        "outer if nests an inner if in its else branch"
+    );
+}
+
+#[test]
+fn nested_statement_if_else_across_lines_parses() {
+    let variants = [
+        "} else {",
+        "}\nelse {",
+        "}\n\nelse {",
+        "}\n    # explanation\n    else {",
+    ];
+    for (i, variant) in variants.iter().enumerate() {
+        let src = format!(
+            r#"
+name = nested_if_else_{i}
+kind = ode
+states = central
+params = ke
+ddt(central) = -ke * central
+if (ke > 0.5) {{
+    if (ke > 1) {{
+        x = 1
+    {variant}
+        x = 2
+    }}
+}}
+"#
+        );
+        let model = parse_model(&src).unwrap_or_else(|err| {
+            panic!("variant {variant:?} failed: {}", err.render(&src))
+        });
+        let analyzed = analyze_model(&model).expect("model analyzes");
+        let compiled = compile_analyzed_model(&analyzed).expect("model compiles");
+
+        let mut shapes = Vec::new();
+        let function = compiled
+            .function(pharmsol_dsl::execution::ModelFunctionKind::Derive)
+            .expect("dynamics function");
+        if let pharmsol_dsl::execution::FunctionBody::Statements(program) = &function.body {
+            collect_if_branch_lens(&program.body.statements, &mut shapes);
+        }
+        assert_eq!(
+            shapes,
+            vec![(1, None), (1, Some(1))],
+            "outer if holds the nested if; nested if has one stmt per branch (variant {variant:?})"
+        );
+    }
+}
+
+#[test]
+fn inline_comments_in_statement_if_branches_parse() {
+    let src = r#"
+name = inline_comments_if
+kind = ode
+states = central
+params = ke
+ddt(central) = -ke * central
+if (ke > 0.5) {
+    x = 1 # then-branch comment
+} else {
+    x = 2 # else-branch comment
+} # trailing comment after the closing brace
+"#;
+    let model = parse_model(src).expect("inline comments in if branches parse");
+    let analyzed = analyze_model(&model).expect("model analyzes");
+    let compiled = compile_analyzed_model(&analyzed).expect("model compiles");
+
+    let mut shapes = Vec::new();
+    let function = compiled
+        .function(pharmsol_dsl::execution::ModelFunctionKind::Derive)
+        .expect("dynamics function");
+    if let pharmsol_dsl::execution::FunctionBody::Statements(program) = &function.body {
+        collect_if_branch_lens(&program.body.statements, &mut shapes);
+    }
+    assert_eq!(shapes, vec![(1, Some(1))]);
+}
+
+#[test]
+fn trailing_tokens_after_statement_else_body_are_rejected() {
+    let src = r#"
+name = trailing_statement_else_tokens
+kind = ode
+states = central
+params = ke
+ddt(central) = -ke * central
+if (ke > 0.5) {
+    x = 1
+} else {
+    x = 2
+} garbage
+"#;
+    let err = parse_model(src).expect_err("trailing tokens after statement else body must fail");
+    let rendered = err.render(src);
+    assert!(
+        rendered.contains("unexpected tokens after `if`/`else` statement"),
+        "{}",
+        rendered
+    );
+}
+
+#[test]
+fn diagnostic_positions_survive_earlier_inline_comments() {
+    let src = r#"
+name = diag_positions
+kind = ode
+states = central
+params = ke
+ddt(central) = -ke * central
+if (ke > 0.5) {
+    x = 1 # a long inline comment that used to shift later spans: pad pad pad pad pad pad pad
+    y = 
+}
+"#;
+    let err = parse_model(src).expect_err("empty rhs inside if body must be rejected");
+    let rendered = err.render(src);
+    assert!(
+        rendered.contains("expected `name = <expression>`"),
+        "{}",
+        rendered
+    );
+    assert!(
+        rendered.contains("--> line 9, column 5"),
+        "diagnostic must point at the `y =` line, got:\n{}",
+        rendered
+    );
+}
+
+#[test]
+fn call_style_assignment_inside_statement_if_is_rejected() {
+    let src = r#"
+name = call_style_if_body
+kind = ode
+states = central
+params = ke
+ddt(central) = -ke * central
+if (ke > 0.5) {
+    ddt(central) = -2 * ke * central
+}
+"#;
+    let err = parse_model(src).expect_err("call-style assignment in if body must be rejected");
+    let rendered = err.render(src);
+    assert!(
+        rendered.contains("only plain-variable assignments"),
+        "{}",
+        rendered
+    );
+    assert!(
+        rendered.contains("ddt(central) = if (cond) <a> else <b>"),
+        "{}",
+        rendered
+    );
+}

@@ -106,8 +106,11 @@ impl<'a> AuthoringParser<'a> {
         let mut pending: Option<String> = None;
         let mut pending_start = 0;
         let mut brace_depth = 0i32;
-        let mut segments = self.src.split_inclusive('\n').peekable();
-        while let Some(segment) = segments.next() {
+        let segments: Vec<&str> = self.src.split_inclusive('\n').collect();
+        let mut index = 0;
+        while index < segments.len() {
+            let segment = segments[index];
+            index += 1;
             let line = segment.strip_suffix('\n').unwrap_or(segment);
             let code = &line[..line.find('#').unwrap_or(line.len())];
             let (opens, closes) = brace_counts(code);
@@ -128,17 +131,24 @@ impl<'a> AuthoringParser<'a> {
                 pending_start = offset;
             }
             if let Some(text) = &mut pending {
-                text.push_str(code);
+                text.push_str(&mask_comments(line));
                 text.push('\n');
             }
             brace_depth += opens - closes;
 
             if brace_depth <= 0 {
-                let next_is_else = segments.peek().is_some_and(|next| {
-                    let next_line = next.strip_suffix('\n').unwrap_or(next);
-                    let next_code = &next_line[..next_line.find('#').unwrap_or(next_line.len())];
-                    starts_with_keyword(next_code.trim_start(), "else")
-                });
+                let next_is_else = segments[index..]
+                    .iter()
+                    .find(|next| {
+                        let next_line = next.strip_suffix('\n').unwrap_or(next);
+                        let next_code = &next_line[..next_line.find('#').unwrap_or(next_line.len())];
+                        !next_code.trim().is_empty()
+                    })
+                    .is_some_and(|next| {
+                        let next_line = next.strip_suffix('\n').unwrap_or(next);
+                        let next_code = &next_line[..next_line.find('#').unwrap_or(next_line.len())];
+                        starts_with_keyword(next_code.trim_start(), "else")
+                    });
                 if !next_is_else {
                     let text = pending.take().unwrap();
                     self.parse_line(text.trim_end_matches('\n'), pending_start)?;
@@ -586,15 +596,26 @@ impl<'a> AuthoringParser<'a> {
             let else_rest_leading = else_rest.len() - else_rest.trim_start().len();
             let else_rest_trimmed = &else_rest[else_rest_leading..];
             let else_rest_abs = after_then_abs + 4 + else_rest_leading;
-            if starts_with_keyword(else_rest_trimmed, "if") {
+            let (stmts, else_consumed) = if starts_with_keyword(else_rest_trimmed, "if") {
                 let nested_span = Span::new(else_rest_abs, else_rest_abs + else_rest_trimmed.len());
                 let nested =
                     self.parse_if_statement(else_rest_trimmed, else_rest_abs, nested_span)?;
-                Some(vec![nested])
+                (vec![nested], else_rest_trimmed.len())
             } else {
-                let (stmts, _consumed) = self.parse_if_body(else_rest_trimmed, else_rest_abs)?;
-                Some(stmts)
+                let (stmts, consumed) = self.parse_if_body(else_rest_trimmed, else_rest_abs)?;
+                (stmts, consumed)
+            };
+            let trailing_src = &else_rest_trimmed[else_consumed..];
+            let trailing = trailing_src.trim_start();
+            let trailing_leading = trailing_src.len() - trailing.len();
+            let trailing_abs = else_rest_abs + else_consumed + trailing_leading;
+            if !trailing.is_empty() {
+                return Err(ParseError::new(
+                    "unexpected tokens after `if`/`else` statement",
+                    Span::new(trailing_abs, trailing_abs + trailing.len()),
+                ));
             }
+            Some(stmts)
         };
 
         Ok(Stmt {
@@ -678,7 +699,10 @@ impl<'a> AuthoringParser<'a> {
         }
         if lhs_trimmed.contains('(') {
             return Err(ParseError::new(
-                "unsupported call-style assignment in `if` body",
+                "an `if` statement body supports only plain-variable assignments \
+                 (`x = <expression>`); to make `ddt(...)`, `out(...)`, or `init(...)` \
+                 conditional, use a conditional equation instead, e.g. \
+                 `ddt(central) = if (cond) <a> else <b>`",
                 Span::new(lhs_abs, lhs_abs + lhs_trimmed.len()),
             ));
         }
@@ -1788,6 +1812,16 @@ fn find_top_level_keyword(src: &str, keyword: &str) -> Option<usize> {
     None
 }
 
+fn mask_comments(line: &str) -> String {
+    let cutoff = line.find('#').unwrap_or(line.len());
+    let mut out = String::with_capacity(line.len());
+    out.push_str(&line[..cutoff]);
+    for _ in cutoff..line.len() {
+        out.push(' ');
+    }
+    out
+}
+
 fn brace_counts(src: &str) -> (i32, i32) {
     let mut opens = 0i32;
     let mut closes = 0i32;
@@ -1826,8 +1860,17 @@ fn split_statement_chunks(src: &str) -> Vec<(usize, usize)> {
             b'{' => brace_depth += 1,
             b'}' => brace_depth -= 1,
             b';' | b'\n' if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 => {
-                chunks.push((start, index));
-                start = index + 1;
+                // `else` continues the preceding `if` statement, so a boundary
+                // before one (across whitespace and blank/comment-masked lines)
+                // must not split the chunk. Same logical rule as at module level.
+                let mut next = index + 1;
+                while next < src.len() && src.as_bytes()[next].is_ascii_whitespace() {
+                    next += 1;
+                }
+                if !starts_with_keyword(&src[next..], "else") {
+                    chunks.push((start, index));
+                    start = index + 1;
+                }
             }
             _ => {}
         }
