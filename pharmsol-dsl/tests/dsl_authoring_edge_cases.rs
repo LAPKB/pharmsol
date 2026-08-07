@@ -836,8 +836,7 @@ if (ke > 0.5) {
 "#;
     let model = parse_model(src).expect("braced if authoring model parses");
     let analyzed = analyze_model(&model).expect("braced if model analyzes");
-    let compiled =
-        compile_analyzed_model(&analyzed).expect("braced if model compiles");
+    let compiled = compile_analyzed_model(&analyzed).expect("braced if model compiles");
 
     let mut shapes = Vec::new();
     let function = compiled
@@ -846,7 +845,11 @@ if (ke > 0.5) {
     if let pharmsol_dsl::execution::FunctionBody::Statements(program) = &function.body {
         collect_if_branch_lens(&program.body.statements, &mut shapes);
     }
-    assert_eq!(shapes, vec![(1, Some(1))], "one if with one stmt per branch");
+    assert_eq!(
+        shapes,
+        vec![(1, Some(1))],
+        "one if with one stmt per branch"
+    );
 }
 
 #[test]
@@ -867,8 +870,7 @@ if (ke > 1) {
 "#;
     let model = parse_model(src).expect("else-if chain parses");
     let analyzed = analyze_model(&model).expect("else-if chain analyzes");
-    let compiled =
-        compile_analyzed_model(&analyzed).expect("else-if chain compiles");
+    let compiled = compile_analyzed_model(&analyzed).expect("else-if chain compiles");
 
     let mut shapes = Vec::new();
     let function = compiled
@@ -897,8 +899,7 @@ out(cp) = if (ke > 0.5) { central / v } else { central / (2 * v) }
 "#;
     let model = parse_model(src).expect("braced if-expression parses");
     let analyzed = analyze_model(&model).expect("braced if-expression analyzes");
-    let compiled =
-        compile_analyzed_model(&analyzed).expect("braced if-expression compiles");
+    let compiled = compile_analyzed_model(&analyzed).expect("braced if-expression compiles");
 
     let mut shapes = Vec::new();
     let function = compiled
@@ -962,8 +963,7 @@ if (ke > 0.5) { x = 1 } else { x = 2 }
 "#;
     let model = parse_model(src).expect("single-line statement if parses");
     let analyzed = analyze_model(&model).expect("single-line statement if analyzes");
-    let compiled =
-        compile_analyzed_model(&analyzed).expect("single-line statement if compiles");
+    let compiled = compile_analyzed_model(&analyzed).expect("single-line statement if compiles");
 
     let mut shapes = Vec::new();
     let function = compiled
@@ -991,8 +991,7 @@ out(cp) = if (ke > 0.5) {
 "#;
     let model = parse_model(src).expect("multi-line if-expression parses");
     let analyzed = analyze_model(&model).expect("multi-line if-expression analyzes");
-    let compiled =
-        compile_analyzed_model(&analyzed).expect("multi-line if-expression compiles");
+    let compiled = compile_analyzed_model(&analyzed).expect("multi-line if-expression compiles");
 
     let mut shapes = Vec::new();
     let function = compiled
@@ -1021,8 +1020,7 @@ if (ke > 0.5) {
 "#;
     let model = parse_model(src).expect("commented if block parses");
     let analyzed = analyze_model(&model).expect("commented if block analyzes");
-    let compiled =
-        compile_analyzed_model(&analyzed).expect("commented if block compiles");
+    let compiled = compile_analyzed_model(&analyzed).expect("commented if block compiles");
 
     let mut shapes = Vec::new();
     let function = compiled
@@ -1046,8 +1044,7 @@ out(cp) = if (ka > 1) { if (kb > 0.5) { 1 } else { 2 } } else { 3 }
 "#;
     let model = parse_model(src).expect("nested braced if-expression parses");
     let analyzed = analyze_model(&model).expect("nested braced if-expression analyzes");
-    let compiled = compile_analyzed_model(&analyzed)
-        .expect("nested braced if-expression compiles");
+    let compiled = compile_analyzed_model(&analyzed).expect("nested braced if-expression compiles");
 
     let mut shapes = Vec::new();
     let function = compiled
@@ -1105,9 +1102,8 @@ if (ke > 0.5) {{
 }}
 "#
         );
-        let model = parse_model(&src).unwrap_or_else(|err| {
-            panic!("variant {variant:?} failed: {}", err.render(&src))
-        });
+        let model = parse_model(&src)
+            .unwrap_or_else(|err| panic!("variant {variant:?} failed: {}", err.render(&src)));
         let analyzed = analyze_model(&model).expect("model analyzes");
         let compiled = compile_analyzed_model(&analyzed).expect("model compiles");
 
@@ -1186,9 +1182,8 @@ if (ke > 0.5) {{
 }}
 "#
         );
-        let model = parse_model(&src).unwrap_or_else(|err| {
-            panic!("variant {variant:?} failed: {}", err.render(&src))
-        });
+        let model = parse_model(&src)
+            .unwrap_or_else(|err| panic!("variant {variant:?} failed: {}", err.render(&src)));
         let analyzed = analyze_model(&model).expect("model analyzes");
         let compiled = compile_analyzed_model(&analyzed).expect("model compiles");
 
@@ -1349,7 +1344,10 @@ out(cp) = if (ke > 0.5) central / v else central / (2 * v)
                     assert!(
                         matches!(
                             value.kind,
-                            ExecutionExprKind::Binary { op: AnalyzedBinaryOp::Div, .. }
+                            ExecutionExprKind::Binary {
+                                op: AnalyzedBinaryOp::Div,
+                                ..
+                            }
                         ),
                         "branch value must be a division expression"
                     );
@@ -1432,11 +1430,7 @@ fn deeply_nested_statement_ifs_fail_cleanly() {
     }
     let err = parse_model(&src).expect_err("deeply nested statement ifs must fail cleanly");
     let rendered = err.render(&src);
-    assert!(
-        rendered.contains("nested too deeply"),
-        "{}",
-        rendered
-    );
+    assert!(rendered.contains("nested too deeply"), "{}", rendered);
 }
 
 #[test]
@@ -1460,8 +1454,8 @@ out(cp) = central / v_eff
 "#;
     let model = parse_model(src).expect("multi-assignment conditional PK parses");
     let analyzed = analyze_model(&model).expect("multi-assignment conditional PK analyzes");
-    let compiled = compile_analyzed_model(&analyzed)
-        .expect("multi-assignment conditional PK compiles");
+    let compiled =
+        compile_analyzed_model(&analyzed).expect("multi-assignment conditional PK compiles");
 
     let mut shapes = Vec::new();
     let function = compiled
