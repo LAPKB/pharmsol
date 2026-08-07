@@ -371,7 +371,7 @@ impl<'a> AuthoringParser<'a> {
         self.note_span(span);
 
         if starts_with_keyword(trimmed, "if") {
-            let stmt = self.parse_if_statement(trimmed, span.start, span)?;
+            let stmt = self.parse_if_statement(trimmed, span.start, span, 0)?;
             self.derive_statements.push(stmt);
             return Ok(());
         }
@@ -552,7 +552,23 @@ impl<'a> AuthoringParser<'a> {
         text: &str,
         abs_start: usize,
         span: Span,
+        depth: usize,
     ) -> Result<Stmt, ParseError> {
+        // Statement-level `if` nesting is capped at half of [`MAX_NESTING_DEPTH`]
+        // (which remains the limit for expressions): each statement level spans
+        // three parser frames (`parse_if_statement` -> `parse_if_body` ->
+        // `parse_authoring_statement`), and at the full limit the unoptimized
+        // stack usage (~9.5 KB/level) would exhaust a default 2 MiB thread
+        // stack before the guard could fire.
+        if depth >= crate::parser::MAX_NESTING_DEPTH / 2 {
+            return Err(ParseError::new(
+                format!(
+                    "statement `if` is nested too deeply (maximum nesting depth is {})",
+                    crate::parser::MAX_NESTING_DEPTH / 2
+                ),
+                Span::new(abs_start, abs_start + text.len().min(2)),
+            ));
+        }
         let rest = &text[2..];
         let rest_leading = rest.len() - rest.trim_start().len();
         let rest = &rest[rest_leading..];
@@ -573,7 +589,7 @@ impl<'a> AuthoringParser<'a> {
         let remaining = &rest[close + 1..];
         let remaining_abs = rest_abs + close + 1;
 
-        let (then_branch, then_consumed) = self.parse_if_body(remaining, remaining_abs)?;
+        let (then_branch, then_consumed) = self.parse_if_body(remaining, remaining_abs, depth)?;
 
         let after_then = &remaining[then_consumed..];
         let after_then_leading = after_then.len() - after_then.trim_start().len();
@@ -599,10 +615,10 @@ impl<'a> AuthoringParser<'a> {
             let (stmts, else_consumed) = if starts_with_keyword(else_rest_trimmed, "if") {
                 let nested_span = Span::new(else_rest_abs, else_rest_abs + else_rest_trimmed.len());
                 let nested =
-                    self.parse_if_statement(else_rest_trimmed, else_rest_abs, nested_span)?;
+                    self.parse_if_statement(else_rest_trimmed, else_rest_abs, nested_span, depth + 1)?;
                 (vec![nested], else_rest_trimmed.len())
             } else {
-                let (stmts, consumed) = self.parse_if_body(else_rest_trimmed, else_rest_abs)?;
+                let (stmts, consumed) = self.parse_if_body(else_rest_trimmed, else_rest_abs, depth)?;
                 (stmts, consumed)
             };
             let trailing_src = &else_rest_trimmed[else_consumed..];
@@ -632,6 +648,7 @@ impl<'a> AuthoringParser<'a> {
         &mut self,
         text: &str,
         abs_start: usize,
+        depth: usize,
     ) -> Result<(Vec<Stmt>, usize), ParseError> {
         let trimmed = text.trim_start();
         let leading = text.len() - trimmed.len();
@@ -653,7 +670,7 @@ impl<'a> AuthoringParser<'a> {
         let mut statements = Vec::new();
         for (start, end) in split_statement_chunks(inner) {
             let chunk = &inner[start..end];
-            let stmt = self.parse_authoring_statement(chunk, inner_abs + start)?;
+            let stmt = self.parse_authoring_statement(chunk, inner_abs + start, depth)?;
             statements.push(stmt);
         }
         Ok((statements, leading + close + 1))
@@ -663,6 +680,7 @@ impl<'a> AuthoringParser<'a> {
         &mut self,
         text: &str,
         abs_start: usize,
+        depth: usize,
     ) -> Result<Stmt, ParseError> {
         let trimmed = text.trim();
         let leading = text.len() - text.trim_start().len();
@@ -675,7 +693,7 @@ impl<'a> AuthoringParser<'a> {
         }
         if starts_with_keyword(trimmed, "if") {
             let span = Span::new(abs, abs + trimmed.len());
-            return self.parse_if_statement(trimmed, abs, span);
+            return self.parse_if_statement(trimmed, abs, span, depth + 1);
         }
         let eq = find_top_level_assignment(trimmed).ok_or_else(|| {
             ParseError::new(
@@ -1491,7 +1509,18 @@ fn parse_if_rhs(src: &str, abs_start: usize, depth: usize) -> Result<SurfaceRhs,
     })?;
 
     let condition = parse_expr_at(condition_src, rest_abs + 1)?;
-    let (then_branch, _) = parse_surface_rhs_body(&remaining[..else_index], remaining_abs, depth)?;
+    let then_src = &remaining[..else_index];
+    let (then_branch, then_consumed) = parse_surface_rhs_body(then_src, remaining_abs, depth)?;
+    let then_trailing_src = &then_src[then_consumed..];
+    let then_trailing = then_trailing_src.trim_start();
+    let then_trailing_leading = then_trailing_src.len() - then_trailing.len();
+    let then_trailing_pos = remaining_abs + then_consumed + then_trailing_leading;
+    if !then_trailing.is_empty() {
+        return Err(ParseError::new(
+            "unexpected tokens after `if`/`else` expression",
+            Span::new(then_trailing_pos, then_trailing_pos + then_trailing.len()),
+        ));
+    }
     let else_src = &remaining[else_index + 4..];
     let else_abs = remaining_abs + else_index + 4;
     let (else_branch, else_consumed) = parse_surface_rhs_body(else_src, else_abs, depth)?;

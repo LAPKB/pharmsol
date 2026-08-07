@@ -1374,3 +1374,67 @@ out(cp) = if (ke > 0.5) central / v else central / (2 * v)
          (`central / v` vs `central / (2 * v)`)"
     );
 }
+
+#[test]
+fn then_branch_trailing_tokens_are_rejected() {
+    let src = r#"
+name = then_trailing_tokens
+kind = ode
+states = central
+params = ke, v
+ddt(central) = -ke * central
+out(cp) = if (ke > 0.5) {
+    central / v
+} + 123 else {
+    central / (2 * v)
+}
+"#;
+    let err = parse_model(src).expect_err("tokens after the then body must be rejected");
+    let rendered = err.render(src);
+    assert!(
+        rendered.contains("unexpected tokens after `if`/`else` expression"),
+        "{}",
+        rendered
+    );
+}
+
+#[test]
+fn then_branch_garbage_before_else_is_rejected() {
+    let src = r#"
+name = then_garbage
+kind = ode
+states = central
+params = ke
+ddt(central) = -ke * central
+x = if (ke > 0.5) { 1 } garbage else { 2 }
+"#;
+    let err = parse_model(src).expect_err("garbage between then body and else must be rejected");
+    let rendered = err.render(src);
+    assert!(
+        rendered.contains("unexpected tokens after `if`/`else` expression"),
+        "{}",
+        rendered
+    );
+}
+
+#[test]
+fn deeply_nested_statement_ifs_fail_cleanly() {
+    let mut src = String::from(
+        "name = deep_statement_ifs\nkind = ode\nstates = central\nparams = ke\nddt(central) = -ke * central\n",
+    );
+    let nesting = pharmsol_dsl::MAX_NESTING_DEPTH + 2;
+    for _ in 0..nesting {
+        src.push_str("if (ke > 0.5) {\n");
+    }
+    src.push_str("x = 1\n");
+    for _ in 0..nesting {
+        src.push_str("}\n");
+    }
+    let err = parse_model(&src).expect_err("deeply nested statement ifs must fail cleanly");
+    let rendered = err.render(&src);
+    assert!(
+        rendered.contains("nested too deeply"),
+        "{}",
+        rendered
+    );
+}
