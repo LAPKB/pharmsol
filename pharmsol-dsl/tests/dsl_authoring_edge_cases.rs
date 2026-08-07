@@ -794,3 +794,290 @@ out(cp) = central / v ~ continuous()
         rendered
     );
 }
+
+fn collect_if_branch_lens(
+    statements: &[pharmsol_dsl::execution::ExecutionStmt],
+    out: &mut Vec<(usize, Option<usize>)>,
+) {
+    use pharmsol_dsl::execution::ExecutionStmtKind;
+    for statement in statements {
+        match &statement.kind {
+            ExecutionStmtKind::If(if_stmt) => {
+                out.push((
+                    if_stmt.then_branch.len(),
+                    if_stmt.else_branch.as_ref().map(|branch| branch.len()),
+                ));
+                collect_if_branch_lens(&if_stmt.then_branch, out);
+                if let Some(else_branch) = &if_stmt.else_branch {
+                    collect_if_branch_lens(else_branch, out);
+                }
+            }
+            ExecutionStmtKind::For(for_stmt) => {
+                collect_if_branch_lens(&for_stmt.body, out);
+            }
+            _ => {}
+        }
+    }
+}
+
+#[test]
+fn statement_level_if_with_braces_parses_and_lowers() {
+    let src = r#"
+name = braced_if_statement
+kind = ode
+states = central
+params = ke
+ddt(central) = -ke * central
+if (ke > 0.5) {
+    x = 1
+} else {
+    x = 2
+}
+"#;
+    let model = parse_model(src).expect("braced if authoring model parses");
+    let analyzed = analyze_model(&model).expect("braced if model analyzes");
+    let compiled =
+        compile_analyzed_model(&analyzed).expect("braced if model compiles");
+
+    let mut shapes = Vec::new();
+    let function = compiled
+        .function(pharmsol_dsl::execution::ModelFunctionKind::Derive)
+        .expect("dynamics function");
+    if let pharmsol_dsl::execution::FunctionBody::Statements(program) = &function.body {
+        collect_if_branch_lens(&program.body.statements, &mut shapes);
+    }
+    assert_eq!(shapes, vec![(1, Some(1))], "one if with one stmt per branch");
+}
+
+#[test]
+fn else_if_chain_lowers_to_nested_if() {
+    let src = r#"
+name = else_if_chain
+kind = ode
+states = central
+params = ke
+ddt(central) = -ke * central
+if (ke > 1) {
+    x = 1
+} else if (ke > 0.5) {
+    x = 2
+} else {
+    x = 3
+}
+"#;
+    let model = parse_model(src).expect("else-if chain parses");
+    let analyzed = analyze_model(&model).expect("else-if chain analyzes");
+    let compiled =
+        compile_analyzed_model(&analyzed).expect("else-if chain compiles");
+
+    let mut shapes = Vec::new();
+    let function = compiled
+        .function(pharmsol_dsl::execution::ModelFunctionKind::Derive)
+        .expect("dynamics function");
+    if let pharmsol_dsl::execution::FunctionBody::Statements(program) = &function.body {
+        collect_if_branch_lens(&program.body.statements, &mut shapes);
+    }
+    // outer if: then 1, else 1 (nested if); nested if: then 1, else 1
+    assert_eq!(
+        shapes,
+        vec![(1, Some(1)), (1, Some(1))],
+        "outer if nests an inner if in its else branch"
+    );
+}
+
+#[test]
+fn single_line_braced_if_expression_lowers() {
+    let src = r#"
+name = braced_if_expression
+kind = ode
+states = central
+params = ke, v
+ddt(central) = -ke * central
+out(cp) = if (ke > 0.5) { central / v } else { central / (2 * v) }
+"#;
+    let model = parse_model(src).expect("braced if-expression parses");
+    let analyzed = analyze_model(&model).expect("braced if-expression analyzes");
+    let compiled =
+        compile_analyzed_model(&analyzed).expect("braced if-expression compiles");
+
+    let mut shapes = Vec::new();
+    let function = compiled
+        .function(pharmsol_dsl::execution::ModelFunctionKind::Outputs)
+        .expect("outputs function");
+    if let pharmsol_dsl::execution::FunctionBody::Statements(program) = &function.body {
+        collect_if_branch_lens(&program.body.statements, &mut shapes);
+    }
+    assert_eq!(shapes, vec![(1, Some(1))], "if-expression lowers to if");
+}
+
+#[test]
+fn statement_level_if_requires_braces() {
+    let src = r#"
+name = unbraced_if
+kind = ode
+states = central
+params = ke
+ddt(central) = -ke * central
+if (ke > 0.5)
+    out(cp) = central
+"#;
+    let model = parse_model(src).expect_err("unbraced if must be rejected");
+    let rendered = model.render(src);
+    assert!(
+        rendered.contains("expected `{` to open `if`/`else` body"),
+        "{}",
+        rendered
+    );
+}
+
+#[test]
+fn unclosed_if_brace_is_rejected() {
+    let src = r#"
+name = unclosed_if
+kind = ode
+states = central
+params = ke
+ddt(central) = -ke * central
+if (ke > 0.5) {
+    out(cp) = central
+"#;
+    let model = parse_model(src).expect_err("unclosed brace must be rejected");
+    let rendered = model.render(src);
+    assert!(
+        rendered.contains("unclosed `{` in `if`/`else` body"),
+        "{}",
+        rendered
+    );
+}
+
+#[test]
+fn single_line_statement_level_if_parses() {
+    let src = r#"
+name = single_line_if
+kind = ode
+states = central
+params = ke
+ddt(central) = -ke * central
+if (ke > 0.5) { x = 1 } else { x = 2 }
+"#;
+    let model = parse_model(src).expect("single-line statement if parses");
+    let analyzed = analyze_model(&model).expect("single-line statement if analyzes");
+    let compiled =
+        compile_analyzed_model(&analyzed).expect("single-line statement if compiles");
+
+    let mut shapes = Vec::new();
+    let function = compiled
+        .function(pharmsol_dsl::execution::ModelFunctionKind::Derive)
+        .expect("derive function");
+    if let pharmsol_dsl::execution::FunctionBody::Statements(program) = &function.body {
+        collect_if_branch_lens(&program.body.statements, &mut shapes);
+    }
+    assert_eq!(shapes, vec![(1, Some(1))]);
+}
+
+#[test]
+fn multi_line_if_expression_in_assignment_lowers() {
+    let src = r#"
+name = multiline_if_expression
+kind = ode
+states = central
+params = ke, v
+ddt(central) = -ke * central
+out(cp) = if (ke > 0.5) {
+    central / v
+} else {
+    central / (2 * v)
+}
+"#;
+    let model = parse_model(src).expect("multi-line if-expression parses");
+    let analyzed = analyze_model(&model).expect("multi-line if-expression analyzes");
+    let compiled =
+        compile_analyzed_model(&analyzed).expect("multi-line if-expression compiles");
+
+    let mut shapes = Vec::new();
+    let function = compiled
+        .function(pharmsol_dsl::execution::ModelFunctionKind::Outputs)
+        .expect("outputs function");
+    if let pharmsol_dsl::execution::FunctionBody::Statements(program) = &function.body {
+        collect_if_branch_lens(&program.body.statements, &mut shapes);
+    }
+    assert_eq!(shapes, vec![(1, Some(1))]);
+}
+
+#[test]
+fn comment_line_inside_multiline_if_block_does_not_truncate() {
+    let src = r#"
+name = commented_if_block
+kind = ode
+states = central
+params = ke
+ddt(central) = -ke * central
+if (ke > 0.5) {
+    # keep this comment; it must not swallow the rest of the block
+    x = 1
+} else {
+    x = 2
+}
+"#;
+    let model = parse_model(src).expect("commented if block parses");
+    let analyzed = analyze_model(&model).expect("commented if block analyzes");
+    let compiled =
+        compile_analyzed_model(&analyzed).expect("commented if block compiles");
+
+    let mut shapes = Vec::new();
+    let function = compiled
+        .function(pharmsol_dsl::execution::ModelFunctionKind::Derive)
+        .expect("derive function");
+    if let pharmsol_dsl::execution::FunctionBody::Statements(program) = &function.body {
+        collect_if_branch_lens(&program.body.statements, &mut shapes);
+    }
+    assert_eq!(shapes, vec![(1, Some(1))]);
+}
+
+#[test]
+fn nested_braced_if_expression_associates_outer_else() {
+    let src = r#"
+name = nested_braced_if_expression
+kind = ode
+states = central
+params = ka, kb
+ddt(central) = -ka * central
+out(cp) = if (ka > 1) { if (kb > 0.5) { 1 } else { 2 } } else { 3 }
+"#;
+    let model = parse_model(src).expect("nested braced if-expression parses");
+    let analyzed = analyze_model(&model).expect("nested braced if-expression analyzes");
+    let compiled = compile_analyzed_model(&analyzed)
+        .expect("nested braced if-expression compiles");
+
+    let mut shapes = Vec::new();
+    let function = compiled
+        .function(pharmsol_dsl::execution::ModelFunctionKind::Outputs)
+        .expect("outputs function");
+    if let pharmsol_dsl::execution::FunctionBody::Statements(program) = &function.body {
+        collect_if_branch_lens(&program.body.statements, &mut shapes);
+    }
+    assert_eq!(
+        shapes,
+        vec![(1, Some(1)), (1, Some(1))],
+        "outer if wraps the inner if; both have one stmt per branch"
+    );
+}
+
+#[test]
+fn trailing_tokens_after_braced_else_body_are_rejected() {
+    let src = r#"
+name = trailing_else_tokens
+kind = ode
+states = central
+params = ke
+ddt(central) = -ke * central
+out(cp) = if (ke > 0.5) { 1 } else { 2 } + 3
+"#;
+    let err = parse_model(src).expect_err("trailing tokens after else body must fail");
+    let rendered = err.render(src);
+    assert!(
+        rendered.contains("unexpected tokens after `if`/`else` expression"),
+        "{}",
+        rendered
+    );
+}

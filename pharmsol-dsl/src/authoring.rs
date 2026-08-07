@@ -103,14 +103,54 @@ impl<'a> AuthoringParser<'a> {
 
     fn parse_module(mut self) -> Result<Module, ParseError> {
         let mut offset = 0;
-        for segment in self.src.split_inclusive('\n') {
+        let mut pending: Option<String> = None;
+        let mut pending_start = 0;
+        let mut brace_depth = 0i32;
+        let mut segments = self.src.split_inclusive('\n').peekable();
+        while let Some(segment) = segments.next() {
             let line = segment.strip_suffix('\n').unwrap_or(segment);
-            self.parse_line(line, offset)?;
+            let code = &line[..line.find('#').unwrap_or(line.len())];
+            let (opens, closes) = brace_counts(code);
+            let starts_with_else = starts_with_keyword(code.trim_start(), "else");
+            if pending.is_none()
+                && brace_depth == 0
+                && opens == 0
+                && closes == 0
+                && !starts_with_else
+            {
+                self.parse_line(line, offset)?;
+                offset += segment.len();
+                continue;
+            }
+
+            if pending.is_none() {
+                pending = Some(String::new());
+                pending_start = offset;
+            }
+            if let Some(text) = &mut pending {
+                text.push_str(code);
+                text.push('\n');
+            }
+            brace_depth += opens - closes;
+
+            if brace_depth <= 0 {
+                let next_is_else = segments.peek().is_some_and(|next| {
+                    let next_line = next.strip_suffix('\n').unwrap_or(next);
+                    let next_code = &next_line[..next_line.find('#').unwrap_or(next_line.len())];
+                    starts_with_keyword(next_code.trim_start(), "else")
+                });
+                if !next_is_else {
+                    let text = pending.take().unwrap();
+                    self.parse_line(text.trim_end_matches('\n'), pending_start)?;
+                    pending_start = 0;
+                    brace_depth = 0;
+                }
+            }
             offset += segment.len();
         }
 
-        if !self.src.is_empty() && !self.src.ends_with('\n') && offset < self.src.len() {
-            self.parse_line(&self.src[offset..], offset)?;
+        if let Some(text) = pending {
+            self.parse_line(text.trim_end_matches('\n'), pending_start)?;
         }
 
         self.validate_declared_outputs_assigned()?;
@@ -320,6 +360,12 @@ impl<'a> AuthoringParser<'a> {
         let span = Span::new(line_offset + leading, line_offset + trailing);
         self.note_span(span);
 
+        if starts_with_keyword(trimmed, "if") {
+            let stmt = self.parse_if_statement(trimmed, span.start, span)?;
+            self.derive_statements.push(stmt);
+            return Ok(());
+        }
+
         if let Some(arrow) = find_top_level_arrow(trimmed) {
             return self.parse_route_line(trimmed, arrow, span.start, span);
         }
@@ -489,6 +535,162 @@ impl<'a> AuthoringParser<'a> {
             self.derive_statements.push(stmt);
         }
         Ok(())
+    }
+
+    fn parse_if_statement(
+        &mut self,
+        text: &str,
+        abs_start: usize,
+        span: Span,
+    ) -> Result<Stmt, ParseError> {
+        let rest = &text[2..];
+        let rest_leading = rest.len() - rest.trim_start().len();
+        let rest = &rest[rest_leading..];
+        let rest_abs = abs_start + 2 + rest_leading;
+        if !rest.starts_with('(') {
+            return Err(ParseError::new(
+                "expected `(` after `if`",
+                Span::new(rest_abs, rest_abs + rest.len().min(1)),
+            ));
+        }
+        let close = find_matching_delimiter(rest, '(', ')').ok_or_else(|| {
+            ParseError::new(
+                "unclosed `(` in `if` condition",
+                Span::new(rest_abs, rest_abs + rest.len()),
+            )
+        })?;
+        let condition = parse_expr_at(&rest[1..close], rest_abs + 1)?;
+        let remaining = &rest[close + 1..];
+        let remaining_abs = rest_abs + close + 1;
+
+        let (then_branch, then_consumed) = self.parse_if_body(remaining, remaining_abs)?;
+
+        let after_then = &remaining[then_consumed..];
+        let after_then_leading = after_then.len() - after_then.trim_start().len();
+        let after_then_trimmed = &after_then[after_then_leading..];
+        let after_then_abs = remaining_abs + then_consumed + after_then_leading;
+
+        let else_branch = if after_then_trimmed.is_empty() {
+            None
+        } else {
+            if !starts_with_keyword(after_then_trimmed, "else") {
+                return Err(ParseError::new(
+                    "expected `else` or end of `if`",
+                    Span::new(
+                        after_then_abs,
+                        after_then_abs + after_then_trimmed.len().min(1),
+                    ),
+                ));
+            }
+            let else_rest = &after_then_trimmed[4..];
+            let else_rest_leading = else_rest.len() - else_rest.trim_start().len();
+            let else_rest_trimmed = &else_rest[else_rest_leading..];
+            let else_rest_abs = after_then_abs + 4 + else_rest_leading;
+            if starts_with_keyword(else_rest_trimmed, "if") {
+                let nested_span = Span::new(else_rest_abs, else_rest_abs + else_rest_trimmed.len());
+                let nested =
+                    self.parse_if_statement(else_rest_trimmed, else_rest_abs, nested_span)?;
+                Some(vec![nested])
+            } else {
+                let (stmts, _consumed) = self.parse_if_body(else_rest_trimmed, else_rest_abs)?;
+                Some(stmts)
+            }
+        };
+
+        Ok(Stmt {
+            span,
+            kind: StmtKind::If(IfStmt {
+                condition,
+                then_branch,
+                else_branch,
+            }),
+        })
+    }
+
+    fn parse_if_body(
+        &mut self,
+        text: &str,
+        abs_start: usize,
+    ) -> Result<(Vec<Stmt>, usize), ParseError> {
+        let trimmed = text.trim_start();
+        let leading = text.len() - trimmed.len();
+        let abs = abs_start + leading;
+        if !trimmed.starts_with('{') {
+            return Err(ParseError::new(
+                "expected `{` to open `if`/`else` body",
+                Span::new(abs, abs + trimmed.len().min(1)),
+            ));
+        }
+        let close = find_matching_delimiter(trimmed, '{', '}').ok_or_else(|| {
+            ParseError::new(
+                "unclosed `{` in `if`/`else` body",
+                Span::new(abs, abs + trimmed.len()),
+            )
+        })?;
+        let inner = &trimmed[1..close];
+        let inner_abs = abs + 1;
+        let mut statements = Vec::new();
+        for (start, end) in split_statement_chunks(inner) {
+            let chunk = &inner[start..end];
+            let stmt = self.parse_authoring_statement(chunk, inner_abs + start)?;
+            statements.push(stmt);
+        }
+        Ok((statements, leading + close + 1))
+    }
+
+    fn parse_authoring_statement(
+        &mut self,
+        text: &str,
+        abs_start: usize,
+    ) -> Result<Stmt, ParseError> {
+        let trimmed = text.trim();
+        let leading = text.len() - text.trim_start().len();
+        let abs = abs_start + leading;
+        if trimmed.is_empty() {
+            return Err(ParseError::new(
+                "empty statement in `if` body",
+                Span::new(abs, abs),
+            ));
+        }
+        if starts_with_keyword(trimmed, "if") {
+            let span = Span::new(abs, abs + trimmed.len());
+            return self.parse_if_statement(trimmed, abs, span);
+        }
+        let eq = find_top_level_assignment(trimmed).ok_or_else(|| {
+            ParseError::new(
+                "expected an assignment (`name = <expression>`) or `if` in `if` body",
+                Span::new(abs, abs + trimmed.len().min(1)),
+            )
+        })?;
+        let lhs = &trimmed[..eq];
+        let rhs = &trimmed[eq + 1..];
+        let lhs_trimmed = lhs.trim();
+        let lhs_leading = lhs.len() - lhs.trim_start().len();
+        let lhs_abs = abs + lhs_leading;
+        let rhs_trimmed = rhs.trim();
+        let rhs_leading = rhs.len() - rhs.trim_start().len();
+        let rhs_abs = abs + eq + 1 + rhs_leading;
+        if lhs_trimmed.is_empty() || rhs_trimmed.is_empty() {
+            return Err(ParseError::new(
+                "expected `name = <expression>`",
+                Span::new(abs, abs + trimmed.len().min(1)),
+            ));
+        }
+        if lhs_trimmed.contains('(') {
+            return Err(ParseError::new(
+                "unsupported call-style assignment in `if` body",
+                Span::new(lhs_abs, lhs_abs + lhs_trimmed.len()),
+            ));
+        }
+        let target = parse_ident_segment(lhs_trimmed, lhs_abs)?;
+        let rhs = parse_surface_rhs(rhs_trimmed, rhs_abs)?;
+        Ok(build_assignment_statement(
+            AssignTarget {
+                span: Span::new(lhs_abs, lhs_abs + lhs_trimmed.len()),
+                kind: AssignTargetKind::Name(target),
+            },
+            rhs,
+        ))
     }
 
     fn parse_route_line(
@@ -1198,6 +1400,34 @@ fn parse_surface_rhs_at(
     Ok(SurfaceRhs::Expr(parse_expr_at(src, abs_start)?))
 }
 
+fn parse_surface_rhs_body(
+    src: &str,
+    abs_start: usize,
+    depth: usize,
+) -> Result<(SurfaceRhs, usize), ParseError> {
+    let trimmed = src.trim_start();
+    let leading = src.len() - trimmed.len();
+    let abs = abs_start + leading;
+    if trimmed.starts_with('{') {
+        let close = find_matching_delimiter(trimmed, '{', '}').ok_or_else(|| {
+            ParseError::new(
+                "unclosed `{` in conditional expression",
+                Span::new(abs, abs + trimmed.len()),
+            )
+        })?;
+        let inner = &trimmed[1..close];
+        let inner_leading = inner.len() - inner.trim_start().len();
+        let inner_trimmed = &inner[inner_leading..];
+        let inner_trailing = inner_trimmed.trim_end().len();
+        let inner_trimmed = &inner_trimmed[..inner_trailing];
+        let inner_abs = abs + 1 + inner_leading;
+        let rhs = parse_surface_rhs_at(inner_trimmed, inner_abs, depth + 1)?;
+        return Ok((rhs, leading + close + 1));
+    }
+    let rhs = parse_surface_rhs_at(trimmed, abs, depth + 1)?;
+    Ok((rhs, leading + trimmed.len()))
+}
+
 fn parse_if_rhs(src: &str, abs_start: usize, depth: usize) -> Result<SurfaceRhs, ParseError> {
     if depth >= crate::parser::MAX_NESTING_DEPTH {
         return Err(ParseError::new(
@@ -1237,12 +1467,20 @@ fn parse_if_rhs(src: &str, abs_start: usize, depth: usize) -> Result<SurfaceRhs,
     })?;
 
     let condition = parse_expr_at(condition_src, rest_abs + 1)?;
-    let then_branch = parse_surface_rhs_at(&remaining[..else_index], remaining_abs, depth + 1)?;
-    let else_branch = parse_surface_rhs_at(
-        &remaining[else_index + 4..],
-        remaining_abs + else_index + 4,
-        depth + 1,
-    )?;
+    let (then_branch, _) = parse_surface_rhs_body(&remaining[..else_index], remaining_abs, depth)?;
+    let else_src = &remaining[else_index + 4..];
+    let else_abs = remaining_abs + else_index + 4;
+    let (else_branch, else_consumed) = parse_surface_rhs_body(else_src, else_abs, depth)?;
+    let trailing_src = &else_src[else_consumed..];
+    let trailing = trailing_src.trim_start();
+    let trailing_leading = trailing_src.len() - trailing.len();
+    let trailing_pos = else_abs + else_consumed + trailing_leading;
+    if !trailing.is_empty() {
+        return Err(ParseError::new(
+            "unexpected tokens after `if`/`else` expression",
+            Span::new(trailing_pos, trailing_pos + trailing.len()),
+        ));
+    }
     let span = Span::new(abs_start, remaining_abs + remaining.len());
 
     Ok(SurfaceRhs::If {
@@ -1506,21 +1744,35 @@ fn find_top_level_operator(src: &str, operator: &str) -> Option<usize> {
 }
 
 fn find_top_level_keyword(src: &str, keyword: &str) -> Option<usize> {
-    let mut paren_depth = 0;
-    let mut bracket_depth = 0;
+    let mut paren_depth = 0i32;
+    let mut bracket_depth = 0i32;
+    let mut brace_depth = 0i32;
+    let mut in_string = false;
     let bytes = src.as_bytes();
     let keyword_bytes = keyword.as_bytes();
     let mut index = 0;
     while index + keyword_bytes.len() <= bytes.len() {
-        match bytes[index] as char {
-            '(' => paren_depth += 1,
-            ')' => paren_depth -= 1,
-            '[' => bracket_depth += 1,
-            ']' => bracket_depth -= 1,
+        let byte = bytes[index];
+        if in_string {
+            if byte == b'"' {
+                in_string = false;
+            }
+            index += 1;
+            continue;
+        }
+        match byte {
+            b'"' => in_string = true,
+            b'(' => paren_depth += 1,
+            b')' => paren_depth -= 1,
+            b'[' => bracket_depth += 1,
+            b']' => bracket_depth -= 1,
+            b'{' => brace_depth += 1,
+            b'}' => brace_depth -= 1,
             _ => {}
         }
         if paren_depth == 0
             && bracket_depth == 0
+            && brace_depth == 0
             && &bytes[index..index + keyword_bytes.len()] == keyword_bytes
         {
             let prev = index.checked_sub(1).and_then(|idx| bytes.get(idx)).copied();
@@ -1536,10 +1788,81 @@ fn find_top_level_keyword(src: &str, keyword: &str) -> Option<usize> {
     None
 }
 
+fn brace_counts(src: &str) -> (i32, i32) {
+    let mut opens = 0i32;
+    let mut closes = 0i32;
+    let mut in_string = false;
+    let chars = src.chars().peekable();
+    for ch in chars {
+        if in_string {
+            if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_string = true,
+            '{' => opens += 1,
+            '}' => closes += 1,
+            _ => {}
+        }
+    }
+    (opens, closes)
+}
+
+fn split_statement_chunks(src: &str) -> Vec<(usize, usize)> {
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    let mut paren_depth = 0;
+    let mut bracket_depth = 0;
+    let mut brace_depth = 0;
+    let mut index = 0;
+    while index < src.len() {
+        match src.as_bytes()[index] {
+            b'(' => paren_depth += 1,
+            b')' => paren_depth -= 1,
+            b'[' => bracket_depth += 1,
+            b']' => bracket_depth -= 1,
+            b'{' => brace_depth += 1,
+            b'}' => brace_depth -= 1,
+            b';' | b'\n' if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 => {
+                chunks.push((start, index));
+                start = index + 1;
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    chunks.push((start, src.len()));
+
+    let mut result = Vec::new();
+    for (a, b) in chunks {
+        let text = &src[a..b];
+        let trimmed_start = text.trim_start();
+        let leading = text.len() - trimmed_start.len();
+        let trimmed_end = trimmed_start.trim_end();
+        let trailing = trimmed_start.len() - trimmed_end.len();
+        if trimmed_end.is_empty() {
+            continue;
+        }
+        result.push((a + leading, b - trailing));
+    }
+    result
+}
+
 fn find_matching_delimiter(src: &str, open: char, close: char) -> Option<usize> {
-    let mut depth = 0;
+    let mut depth = 0i32;
+    let mut in_string = false;
     for (index, ch) in src.char_indices() {
-        if ch == open {
+        if in_string {
+            if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        if ch == '"' {
+            in_string = true;
+        } else if ch == open {
             depth += 1;
         } else if ch == close {
             depth -= 1;
