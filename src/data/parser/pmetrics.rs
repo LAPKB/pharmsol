@@ -164,9 +164,7 @@ impl Row {
             ii: self.ii,
             input: self.input.clone(),
             // Treat -99 as missing value (Pmetrics convention)
-            out: self
-                .out
-                .and_then(|v| if v == -99.0 { None } else { Some(v) }),
+            out: self.out.filter(|&v| v != -99.0),
             outeq: self.outeq.clone(),
             cens: self.cens,
             c0: self.c0,

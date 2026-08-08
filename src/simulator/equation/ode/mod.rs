@@ -919,9 +919,8 @@ mod tests {
         .expect("metadata should validate");
 
         let predictions = ode
-            .simulate_subject(subject, &crate::parameters::dense([]), None)
-            .expect("infusion simulation should succeed")
-            .0;
+            .simulate_subject(subject, &crate::parameters::dense([]))
+            .expect("infusion simulation should succeed");
 
         predictions
             .predictions()
@@ -1309,9 +1308,8 @@ mod tests {
         .expect("metadata should validate");
 
         let predictions = ode
-            .simulate_subject(&subject, &crate::parameters::dense([]), None)
-            .expect("infusion simulation should succeed")
-            .0;
+            .simulate_subject(&subject, &crate::parameters::dense([]))
+            .expect("infusion simulation should succeed");
 
         // Dose delivered over [5, 10], then exponential decay for 10 h:
         // (100 * (1 - exp(-0.5 * 5)) / (0.5 * 5)) * exp(-0.5 * 10).
@@ -1369,9 +1367,8 @@ mod tests {
             .expect("metadata should validate");
 
             let predictions = ode
-                .simulate_subject_dense(&subject, &crate::parameters::dense([]), None)
-                .unwrap_or_else(|error| panic!("{label}: dense grid near event failed: {error}"))
-                .0;
+                .simulate_subject_dense(&subject, &crate::parameters::dense([]))
+                .unwrap_or_else(|error| panic!("{label}: dense grid near event failed: {error}"));
             assert_eq!(predictions.predictions().len(), 4);
         }
     }
@@ -1453,9 +1450,8 @@ mod tests {
         .expect("metadata should validate");
 
         let predictions = ode
-            .simulate_subject(subject, &crate::parameters::dense([]), None)
-            .expect("hybrid phage simulation should succeed")
-            .0;
+            .simulate_subject(subject, &crate::parameters::dense([]))
+            .expect("hybrid phage simulation should succeed");
 
         predictions
             .predictions()
