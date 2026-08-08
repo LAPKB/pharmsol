@@ -133,7 +133,8 @@ fn describe_diffsol_error(
     error: &diffsol::error::DiffsolError,
     target_time: Option<f64>,
 ) -> String {
-    use diffsol::error::{DiffsolError, LinearSolverError, NonLinearSolverError, OdeSolverError};
+    use diffsol::error::{DiffsolError, NonLinearSolverError, OdeSolverError};
+    use diffsol_la::error::{LaError, LinearSolverError};
 
     // Suffix describing where the solver was headed, used for time-dependent failures.
     let toward = match target_time {
@@ -181,12 +182,13 @@ fn describe_diffsol_error(
             }
             other => format!("nonlinear solver error{toward}: {other}"),
         },
-        DiffsolError::LinearSolverError(lin) => match lin {
+        DiffsolError::LaError(LaError::LinearSolverError(lin)) => match lin {
             LinearSolverError::LuSolveFailed | LinearSolverError::LuNotInitialized => format!(
                 "linear (LU) solve failed{toward}; the Jacobian is singular or near-singular."
             ),
             other => format!("linear solver error{toward}: {other}"),
         },
+        DiffsolError::LaError(la) => format!("linear algebra error{toward}: {la}"),
         other => match target_time {
             Some(_) => format!("solver error{toward}: {other}"),
             None => other.to_string(),
