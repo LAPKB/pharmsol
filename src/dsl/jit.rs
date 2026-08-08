@@ -1456,15 +1456,15 @@ out(cp) = central / v ~ continuous()
             .build();
 
         let reference_subject = Subject::builder("ode")
-            .bolus(0.0, 120.0, 0)
-            .infusion(6.0, 60.0, 0, 2.0)
-            .observation(0.5, 0.0, 0)
-            .observation(1.0, 0.0, 0)
-            .observation(2.0, 0.0, 0)
-            .observation(6.0, 0.0, 0)
-            .observation(7.0, 0.0, 0)
-            .observation(8.0, 0.0, 0)
-            .observation(9.0, 0.0, 0)
+            .bolus(0.0, 120.0, "oral")
+            .infusion(6.0, 60.0, "iv", 2.0)
+            .observation(0.5, 0.0, "cp")
+            .observation(1.0, 0.0, "cp")
+            .observation(2.0, 0.0, "cp")
+            .observation(6.0, 0.0, "cp")
+            .observation(7.0, 0.0, "cp")
+            .observation(8.0, 0.0, "cp")
+            .observation(9.0, 0.0, "cp")
             .build();
 
         let support = Parameters::with_model(
@@ -1584,13 +1584,13 @@ out(cp) = central / v ~ continuous()
             .build();
 
         let reference_subject = Subject::builder("ode")
-            .bolus(0.0, 500.0, 0)
-            .infusion(1.0, 100.0, 0, 2.0)
-            .observation(0.5, 0.0, 0)
-            .observation(1.0, 0.0, 0)
-            .observation(2.0, 0.0, 0)
-            .observation(3.0, 0.0, 0)
-            .observation(4.0, 0.0, 0)
+            .bolus(0.0, 500.0, "input_1")
+            .infusion(1.0, 100.0, "input_1", 2.0)
+            .observation(0.5, 0.0, "cp")
+            .observation(1.0, 0.0, "cp")
+            .observation(2.0, 0.0, "cp")
+            .observation(3.0, 0.0, "cp")
+            .observation(4.0, 0.0, "cp")
             .build();
 
         let support = Parameters::with_model(
@@ -1616,7 +1616,23 @@ out(cp) = central / v ~ continuous()
         .with_nstates(1)
         .with_ndrugs(1)
         .with_nout(1)
-        .with_solver(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45));
+        .with_solver(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45))
+        .with_metadata(
+            equation::metadata::new("shared_label_authoring")
+                .parameters(["ke", "v", "tlag"])
+                .states(["central"])
+                .outputs(["cp"])
+                .routes([
+                    equation::Route::bolus("input_1")
+                        .to_state("central")
+                        .with_lag()
+                        .expect_explicit_input(),
+                    equation::Route::infusion("input_1")
+                        .to_state("central")
+                        .expect_explicit_input(),
+                ]),
+        )
+        .expect("reference ode metadata should validate");
 
         let reference_predictions = reference
             .estimate_predictions(&reference_subject, &support)
@@ -1794,13 +1810,13 @@ out(cp) = central / v ~ continuous()
         // in `peripheral` (input_2's destination) and the predictions would
         // diverge.
         let reference_subject = Subject::builder("ode")
-            .bolus(0.0, 500.0, 0)
-            .infusion(0.0, 100.0, 1, 2.0)
-            .observation(0.5, 0.0, 0)
-            .observation(1.0, 0.0, 0)
-            .observation(2.0, 0.0, 0)
-            .observation(3.0, 0.0, 0)
-            .observation(4.0, 0.0, 0)
+            .bolus(0.0, 500.0, "input_1")
+            .infusion(0.0, 100.0, "input_1", 2.0)
+            .observation(0.5, 0.0, "cp")
+            .observation(1.0, 0.0, "cp")
+            .observation(2.0, 0.0, "cp")
+            .observation(3.0, 0.0, "cp")
+            .observation(4.0, 0.0, "cp")
             .build();
 
         let support = Parameters::with_model(
@@ -1828,7 +1844,25 @@ out(cp) = central / v ~ continuous()
         .with_nstates(3)
         .with_ndrugs(2)
         .with_nout(1)
-        .with_solver(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45));
+        .with_solver(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45))
+        .with_metadata(
+            equation::metadata::new("mixed_order")
+                .parameters(["ka", "kp", "ke", "v"])
+                .states(["gut", "peripheral", "central"])
+                .outputs(["cp"])
+                .routes([
+                    equation::Route::bolus("input_1")
+                        .to_state("gut")
+                        .expect_explicit_input(),
+                    equation::Route::infusion("input_2")
+                        .to_state("peripheral")
+                        .expect_explicit_input(),
+                    equation::Route::infusion("input_1")
+                        .to_state("central")
+                        .expect_explicit_input(),
+                ]),
+        )
+        .expect("reference ode metadata should validate");
 
         let reference_predictions = reference
             .estimate_predictions(&reference_subject, &support)
