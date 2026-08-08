@@ -16,7 +16,8 @@ use pharmsol::prelude::{
     one_compartment_with_absorption, Equation, Prediction, SubjectPredictions,
 };
 use pharmsol::{
-    equation, fa, fetch_cov, fetch_params, lag, Parameters, Subject, SubjectBuilderExt, SDE,
+    equation, equation::SDE, fa, fetch_cov, fetch_params, lag, Parameters, Subject,
+    SubjectBuilderExt,
 };
 use tempfile::{tempdir, TempDir};
 
@@ -421,6 +422,9 @@ enum ExpectedPredictions {
 
 fn adjust_runtime_model(case: CorpusCase, model: CompiledRuntimeModel) -> CompiledRuntimeModel {
     match (case, model) {
+        (CorpusCase::Ode | CorpusCase::OdeFull, CompiledRuntimeModel::Ode(model)) => {
+            CompiledRuntimeModel::Ode(model.with_tolerances(1e-8, 1e-8))
+        }
         (CorpusCase::Sde, CompiledRuntimeModel::Sde(model)) => {
             CompiledRuntimeModel::Sde(model.with_particles(SDE_PARTICLE_COUNT))
         }
@@ -804,6 +808,7 @@ fn reference_ode_predictions() -> Result<SubjectPredictions, Box<dyn Error>> {
     .with_nstates(2)
     .with_ndrugs(1)
     .with_nout(1)
+    .with_tolerances(1e-8, 1e-8)
     .with_metadata(
         equation::metadata::new(CorpusCase::Ode.label())
             .parameters(["ka", "cl", "v", "tlag", "f_oral"])
@@ -958,6 +963,7 @@ fn reference_ode_full_predictions() -> Result<SubjectPredictions, Box<dyn Error>
     .with_nstates(3)
     .with_ndrugs(2)
     .with_nout(1)
+    .with_tolerances(1e-8, 1e-8)
     .with_metadata(
         equation::metadata::new(CorpusCase::OdeFull.label())
             .parameters([

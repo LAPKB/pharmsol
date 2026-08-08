@@ -1,12 +1,9 @@
 pub mod cache;
 pub mod equation;
-pub(crate) mod likelihood;
+pub mod prediction;
 use diffsol::{NalgebraMat, NalgebraVec};
 
-use crate::{
-    data::{Covariates, Infusion},
-    simulator::likelihood::SubjectPredictions,
-};
+use crate::data::{Covariates, Infusion};
 
 use std::collections::HashMap;
 
@@ -235,4 +232,4 @@ impl Default for Neqs {
 }
 
 // Re-export cache types at the simulator level for convenience.
-pub use cache::{PredictionCache, SdeLikelihoodCache, DEFAULT_CACHE_SIZE};
+pub use cache::{PredictionCache, DEFAULT_CACHE_SIZE};

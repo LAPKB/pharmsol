@@ -199,15 +199,7 @@ impl SubjectBuilder {
         self.event(event)
     }
 
-    /// Add an observed value with an explicit assay error polynomial.
-    ///
-    /// # Arguments
-    ///
-    /// * `time` - Time of the observation
-    /// * `value` - Observed value (e.g., drug concentration)
-    /// * `outeq` - Public output label for this observation
-    /// * `errorpoly` - Error polynomial coefficients (c0, c1, c2, c3)
-    /// * `censored` - Censoring status for the observation value
+    /// Add an observed value with explicit C0-C3 data.
     pub fn observation_with_error(
         self,
         time: f64,
@@ -269,35 +261,9 @@ impl SubjectBuilder {
                     infusion.duration(),
                 ),
                 Event::Observation(observation) => {
-                    if observation.value().is_some() {
-                        if observation.errorpoly().is_some() {
-                            self.observation_with_error(
-                                observation.time() + delta * i as f64,
-                                observation.value().unwrap(),
-                                observation.outeq(),
-                                observation.errorpoly().unwrap(),
-                                observation.censoring(),
-                            )
-                        } else if observation.censored() {
-                            self.censored_observation(
-                                observation.time() + delta * i as f64,
-                                observation.value().unwrap(),
-                                observation.outeq(),
-                                observation.censoring(),
-                            )
-                        } else {
-                            self.observation(
-                                observation.time() + delta * i as f64,
-                                observation.value().unwrap(),
-                                observation.outeq(),
-                            )
-                        }
-                    } else {
-                        self.missing_observation(
-                            observation.time() + delta * i as f64,
-                            observation.outeq(),
-                        )
-                    }
+                    let mut repeated = observation.clone();
+                    repeated.set_time(observation.time() + delta * i as f64);
+                    self.event(Event::Observation(repeated))
                 }
             };
         }
@@ -418,6 +384,32 @@ mod tests {
 
         let second_occasion = &subject.occasions()[1];
         assert_eq!(second_occasion.events().len(), 3); // 1 bolus + 2 observations
+    }
+
+    #[test]
+    fn repeat_preserves_errorpoly_and_censoring() {
+        let errorpoly = ErrorPoly::new(0.1, 0.0, 0.0, 0.4);
+        let subject = Subject::builder("repeat_errorpoly")
+            .observation_with_error(1.0, 5.0, "cp", errorpoly, Censor::BLOQ)
+            .repeat(2, 1.0)
+            .build();
+
+        let observations: Vec<_> = subject.occasions()[0]
+            .events()
+            .iter()
+            .filter_map(|event| match event {
+                Event::Observation(observation) => Some(observation.clone()),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(observations.len(), 3);
+        for (index, observation) in observations.iter().enumerate() {
+            assert_eq!(observation.time(), 1.0 + index as f64);
+            assert_eq!(observation.value(), Some(5.0));
+            assert_eq!(observation.errorpoly(), Some(errorpoly));
+            assert_eq!(observation.censoring(), Censor::BLOQ);
+        }
     }
 
     #[test]

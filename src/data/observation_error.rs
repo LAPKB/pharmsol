@@ -12,8 +12,7 @@ use thiserror::Error;
 /// Errors arising from observation data processing
 ///
 /// These represent problems with the input data itself, not with NCA analysis.
-/// Used by [`ObservationProfile`](crate::nca::observation::ObservationProfile)
-/// construction methods.
+/// Used by internal `ObservationProfile` construction methods.
 #[derive(Error, Debug, Clone)]
 pub enum ObservationError {
     /// Insufficient data points for the requested operation

@@ -91,9 +91,7 @@ See [examples/analytical_readme.rs](examples/analytical_readme.rs),
 [examples/sde_readme.rs](examples/sde_readme.rs),
 [examples/dsl_jit_analytical_covariates.rs](examples/dsl_jit_analytical_covariates.rs),
 [examples/analytical_vs_ode.rs](examples/analytical_vs_ode.rs), and
-[examples/compare_solvers.rs](examples/compare_solvers.rs). For migration-oriented notes,
-see [docs/analytical-authoring-migration.md](docs/analytical-authoring-migration.md) and
-[docs/ode-authoring-migration.md](docs/ode-authoring-migration.md).
+[examples/compare_solvers.rs](examples/compare_solvers.rs).
 
 ### Built-In Analytical Kernels
 
