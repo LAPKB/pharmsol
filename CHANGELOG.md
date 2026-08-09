@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.6](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.28.5...pharmsol-v0.28.6) - 2026-08-07
+
+### Fixed
+
+- Stop time relative tolerance ([#328](https://github.com/LAPKB/pharmsol/pull/328))
+
+### Other
+
+- Bump dependencies ([#321](https://github.com/LAPKB/pharmsol/pull/321))
+
+## [0.28.5](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.28.4...pharmsol-v0.28.5) - 2026-08-06
+
+### Added
+
+- Allow macro use in transitive dependencies ([#322](https://github.com/LAPKB/pharmsol/pull/322))
+
+### Fixed
+
+- Force the solver to stop at the infusions end time ([#324](https://github.com/LAPKB/pharmsol/pull/324))
+- Allow boluses and infusions to go to the same comparment ([#326](https://github.com/LAPKB/pharmsol/pull/326))
+
+## [0.28.4](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.28.3...pharmsol-v0.28.4) - 2026-08-03
+
+### Other
+
+- Update paper with latest changes ([#204](https://github.com/LAPKB/pharmsol/pull/204))
+
 ## [0.28.3](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.28.2...pharmsol-v0.28.3) - 2026-07-28
 
 ### Added

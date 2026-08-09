@@ -608,6 +608,34 @@ impl Parser {
     }
 
     fn parse_route_decl(&mut self) -> Result<RouteDecl, ParseError> {
+        // Optional kind keyword: `bolus input_1 -> central`. A kind keyword
+        // is only recognized when a route label follows on the same line, so
+        // `bolus -> gut` still parses as a kind-less route whose label is
+        // `bolus`.
+        let (kind, kind_span) = match self.peek() {
+            Some(token) => match &token.kind {
+                TokenKind::Ident(name) if name == "bolus" || name == "infusion" => {
+                    let followed_by_label = self
+                        .next_same_line_index(self.index)
+                        .is_some_and(|next| matches!(self.tokens[next].kind, TokenKind::Ident(_)));
+                    if followed_by_label {
+                        let keyword = self.bump().expect("peeked kind keyword exists");
+                        let kind = match keyword.kind {
+                            TokenKind::Ident(ref name) if name == "bolus" => Some(RouteKind::Bolus),
+                            TokenKind::Ident(ref name) if name == "infusion" => {
+                                Some(RouteKind::Infusion)
+                            }
+                            _ => None,
+                        };
+                        (kind, Some(keyword.span))
+                    } else {
+                        (None, None)
+                    }
+                }
+                _ => (None, None),
+            },
+            None => (None, None),
+        };
         let input = self.parse_label_name("route label")?;
         let arrow = self.expect_simple(|kind| matches!(kind, TokenKind::Arrow), "`->`")?;
         self.ensure_not_layout_boundary(
@@ -658,9 +686,11 @@ impl Parser {
         Ok(RouteDecl {
             input: input.clone(),
             destination,
-            kind: None,
+            kind,
             properties,
-            span: input.span.join(end_span),
+            span: kind_span
+                .map(|kind_span| kind_span.join(end_span))
+                .unwrap_or_else(|| input.span.join(end_span)),
         })
     }
 
@@ -1448,12 +1478,20 @@ impl Parser {
     }
 
     fn line_starts_route_decl(&self, index: usize) -> bool {
-        matches!(
-            self.tokens.get(index).map(|token| &token.kind),
-            Some(TokenKind::Ident(_))
-        ) && self
-            .next_same_line_index(index)
-            .is_some_and(|next| matches!(self.tokens[next].kind, TokenKind::Arrow))
+        let Some(TokenKind::Ident(_)) = self.tokens.get(index).map(|token| &token.kind) else {
+            return false;
+        };
+        let Some(next) = self.next_same_line_index(index) else {
+            return false;
+        };
+        match self.tokens[next].kind {
+            TokenKind::Arrow => true,
+            // Kinded form: `bolus input_1 -> central`.
+            TokenKind::Ident(_) => self
+                .next_same_line_index(next)
+                .is_some_and(|after| matches!(self.tokens[after].kind, TokenKind::Arrow)),
+            _ => false,
+        }
     }
 
     fn line_starts_assignment_target(&self, index: usize) -> bool {
