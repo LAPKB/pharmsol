@@ -4,8 +4,5 @@
 //!
 //! - [`effect`] — Find the maximum effect (`E2`) for dual-site PD models
 //!   via Nelder‑Mead optimization in log‑space.
-//! - [`parameters`] — Nelder‑Mead parameter refinement for an [`Equation`]
-//!   against a [`Data`] set and [`AssayErrorModels`].
 
 pub mod effect;
-pub mod parameters;

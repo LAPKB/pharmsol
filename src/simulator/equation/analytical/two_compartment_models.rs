@@ -144,7 +144,16 @@ mod tests {
         )
         .with_nstates(2)
         .with_ndrugs(1)
-        .with_nout(1);
+        .with_nout(1)
+        .with_metadata(super::super::tests::infusion_metadata(
+            "two_compartments",
+            &["ke", "kcp", "kpc", "v"],
+            &["central", "peripheral"],
+            1,
+            1,
+            true,
+        ))
+        .expect("metadata should validate");
 
         let analytical = equation::Analytical::new(
             two_compartments,
@@ -159,7 +168,16 @@ mod tests {
         )
         .with_nstates(2)
         .with_ndrugs(1)
-        .with_nout(1);
+        .with_nout(1)
+        .with_metadata(super::super::tests::infusion_metadata(
+            "two_compartments",
+            &["ke", "kcp", "kpc", "v"],
+            &["central", "peripheral"],
+            1,
+            1,
+            false,
+        ))
+        .expect("metadata should validate");
 
         let op_ode = ode
             .estimate_predictions(&subject, &crate::parameters::dense([0.1, 3.0, 1.0, 1.0]))
@@ -202,7 +220,16 @@ mod tests {
         )
         .with_nstates(3)
         .with_ndrugs(2)
-        .with_nout(1);
+        .with_nout(1)
+        .with_metadata(super::super::tests::oral_metadata(
+            "two_compartments_abs",
+            &["ke", "ka", "kcp", "kpc", "v"],
+            &["gut", "central", "peripheral"],
+            2,
+            1,
+            true,
+        ))
+        .expect("metadata should validate");
 
         let analytical = equation::Analytical::new(
             two_compartments_with_absorption,
@@ -217,7 +244,16 @@ mod tests {
         )
         .with_nstates(3)
         .with_ndrugs(2)
-        .with_nout(1);
+        .with_nout(1)
+        .with_metadata(super::super::tests::oral_metadata(
+            "two_compartments_abs",
+            &["ke", "ka", "kcp", "kpc", "v"],
+            &["gut", "central", "peripheral"],
+            2,
+            1,
+            false,
+        ))
+        .expect("metadata should validate");
 
         let op_ode = ode
             .estimate_predictions(

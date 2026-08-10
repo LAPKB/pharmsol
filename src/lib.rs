@@ -15,6 +15,9 @@
 //! - [`nca`] to calculate NCA metrics from the same data structures
 //! - [`optimize`] for optimizer-oriented workflows
 //!
+//! pharmsol provides model execution and prediction generation; scoring and
+//! estimation are handled by downstream estimation crates.
+//!
 //! The DSL runtime surface is feature-gated. When you enable `dsl-core`, the
 //! `pharmsol::dsl` module adds parsing, analysis, compilation, and runtime
 //! entrypoints for models written as DSL source text.
@@ -144,8 +147,6 @@ pub use crate::data::*;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use crate::optimize::effect::get_e2;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-pub use crate::optimize::parameters::ParameterOptimizer;
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use crate::simulator::equation::analytical::*;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use crate::simulator::equation::metadata;
@@ -153,8 +154,8 @@ pub use crate::simulator::equation::metadata;
 pub use crate::simulator::equation::{
     self,
     ode::{ExplicitRkTableau, OdeSolver, SdirkTableau},
-    Analytical, AnalyticalKernel, Cache, Equation, ModelKind, ModelMetadata, ModelMetadataError,
-    NameDomain, Predictions, RouteInputPolicy, RouteKind, State, ValidatedModelMetadata, ODE, SDE,
+    AnalyticalKernel, Cache, Equation, ModelKind, ModelMetadata, ModelMetadataError, NameDomain,
+    Predictions, RouteInputPolicy, RouteKind, State, ValidatedModelMetadata,
 };
 pub use error::PharmsolError;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
@@ -356,19 +357,16 @@ pub mod prelude {
     // Data submodule for organized access and backward compatibility
     pub mod data {
         pub use crate::data::{
-            error_model::{AssayErrorModel, AssayErrorModels},
             parser::{read_pmetrics, DataRow, DataRowBuilder},
-            residual_error::{ResidualErrorModel, ResidualErrorModels},
-            Covariates, Data, Event, Occasion, Subject,
+            Covariates, Data, ErrorPoly, Event, Occasion, Subject,
         };
     }
 
     // Direct data re-exports for convenience
     pub use crate::data::{
         builder::SubjectBuilderExt,
-        error_model::{AssayErrorModel, AssayErrorModels, ErrorPoly},
         event::{AUCMethod, BLQRule, Route},
-        Covariates, Data, Event, Interpolation, Occasion, Subject,
+        Covariates, Data, ErrorPoly, Event, Interpolation, Occasion, Subject,
     };
 
     // NCA extension traits (provides .nca(), .nca_all(), etc. on data types)
@@ -379,29 +377,25 @@ pub mod prelude {
     // AUC primitives for direct use on raw arrays
     pub use crate::data::auc::{auc, auc_interval, aumc, interpolate_linear};
 
-    #[allow(deprecated)]
     // Simulator submodule for organized access to simulation types.
     pub mod simulator {
         pub use crate::simulator::{
-            cache::{self, PredictionCache, SdeLikelihoodCache, DEFAULT_CACHE_SIZE},
+            cache::{self, PredictionCache, DEFAULT_CACHE_SIZE},
             equation,
             equation::Equation,
-            likelihood::{
-                log_likelihood_batch, log_likelihood_matrix, log_likelihood_subject, log_psi, psi,
-                PopulationPredictions, Prediction, SubjectPredictions,
-            },
+            prediction::{Prediction, SubjectPredictions},
         };
     }
 
     // Direct simulator re-exports for convenience
     pub use crate::simulator::{
-        cache::{PredictionCache, SdeLikelihoodCache, DEFAULT_CACHE_SIZE},
+        cache::{PredictionCache, DEFAULT_CACHE_SIZE},
         equation::{
             self,
             ode::{ExplicitRkTableau, OdeSolver, SdirkTableau},
             Equation,
         },
-        likelihood::{Prediction, SubjectPredictions},
+        prediction::{Prediction, SubjectPredictions},
     };
 
     // Analytical model functions
