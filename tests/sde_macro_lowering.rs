@@ -53,7 +53,7 @@ fn covariate_subject(oral: impl ToString, iv: impl ToString, cp: impl ToString) 
 
 fn prediction_means(predictions: &ndarray::Array2<Prediction>) -> Vec<f64> {
     predictions
-        .get_predictions()
+        .predictions()
         .into_iter()
         .map(|prediction| prediction.prediction())
         .collect()

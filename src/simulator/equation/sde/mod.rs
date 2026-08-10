@@ -802,7 +802,7 @@ impl Predictions for Array2<Prediction> {
     fn new(nparticles: usize) -> Self {
         Array2::from_shape_fn((nparticles, 0), |_| Prediction::default())
     }
-    fn get_predictions(&self) -> Vec<Prediction> {
+    fn predictions(&self) -> Vec<Prediction> {
         // Make this return the mean prediction across all particles
         if self.is_empty() || self.ncols() == 0 {
             return Vec::new();

@@ -92,11 +92,11 @@ pub trait Predictions: Default {
     ///
     /// # Returns
     /// Vector of prediction objects
-    fn get_predictions(&self) -> Vec<Prediction>;
+    fn predictions(&self) -> Vec<Prediction>;
 
     /// Visit each effective prediction without requiring callers to own a `Vec`.
     fn for_each_prediction(&self, mut f: impl FnMut(&Prediction)) {
-        let predictions = self.get_predictions();
+        let predictions = self.predictions();
         for prediction in &predictions {
             f(prediction);
         }

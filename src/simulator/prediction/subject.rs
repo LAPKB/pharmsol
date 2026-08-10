@@ -3,7 +3,9 @@
 //! This module contains [`SubjectPredictions`] for holding all predictions
 //! for a single subject.
 
-use crate::{simulator::prediction::Prediction, Predictions};
+use crate::simulator::prediction::Prediction;
+use std::collections::BTreeMap;
+type OccasionIndex = usize;
 
 /// Container for predictions associated with a single subject.
 ///
@@ -15,23 +17,7 @@ use crate::{simulator::prediction::Prediction, Predictions};
 pub struct SubjectPredictions {
     id: String,
     predictions: Vec<Prediction>,
-    occasions: Vec<usize>,
-}
-
-impl Predictions for SubjectPredictions {
-    fn get_predictions(&self) -> Vec<Prediction> {
-        self.predictions.clone()
-    }
-
-    fn for_each_prediction(&self, mut f: impl FnMut(&Prediction)) {
-        for prediction in &self.predictions {
-            f(prediction);
-        }
-    }
-
-    fn set_subject_id(&mut self, id: &str) {
-        self.id = id.to_string();
-    }
+    occasions: Vec<OccasionIndex>,
 }
 
 impl SubjectPredictions {
@@ -45,6 +31,29 @@ impl SubjectPredictions {
         self.occasions.push(occasion);
     }
 
+    /// Create a new empty `SubjectPredictions` with a given subject identifier.
+    pub fn new(id: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            predictions: Vec::new(),
+            occasions: Vec::new(),
+        }
+    }
+
+    /// Returns a tuple vector with references to each prediction and occasion
+    pub fn predictions(&self) -> Vec<(&Prediction, &usize)> {
+        self.predictions.iter().zip(self.occasions.iter()).collect()
+    }
+
+    /// Return a BTreeMap of occasions to vectors of predictions for that occasion
+    pub fn predictions_map(&self) -> BTreeMap<usize, Vec<&Prediction>> {
+        let mut map: BTreeMap<usize, Vec<&Prediction>> = BTreeMap::new();
+        for (prediction, occasion) in self.predictions() {
+            map.entry(*occasion).or_default().push(prediction);
+        }
+        map
+    }
+
     /// Get the subject identifier these predictions belong to.
     pub fn id(&self) -> &str {
         &self.id
@@ -55,30 +64,20 @@ impl SubjectPredictions {
         self.id = id.into();
     }
 
-    /// Get a reference to the vector of predictions.
-    pub fn predictions(&self) -> &Vec<Prediction> {
-        &self.predictions
-    }
-
     /// Get the occasion index for each prediction, parallel to
     /// [`SubjectPredictions::predictions`].
-    pub fn occasions(&self) -> &Vec<usize> {
+    pub fn occasions(&self) -> &Vec<OccasionIndex> {
         &self.occasions
     }
 
-    /// Return a flat vector of prediction values.
-    pub fn flat_predictions(&self) -> Vec<f64> {
-        self.predictions.iter().map(|p| p.prediction()).collect()
+    /// Iterate over a reference to each prediction and its occasion index in parallel.
+    pub fn iter(&self) -> impl Iterator<Item = (&Prediction, &OccasionIndex)> {
+        self.predictions.iter().zip(self.occasions.iter())
     }
 
-    /// Return a flat vector of time points.
-    pub fn flat_times(&self) -> Vec<f64> {
-        self.predictions.iter().map(|p| p.time()).collect()
-    }
-
-    /// Return a flat vector of observations.
-    pub fn flat_observations(&self) -> Vec<Option<f64>> {
-        self.predictions.iter().map(|p| p.observation()).collect()
+    /// Iterate over a mutable reference to each prediction and its occasion index in parallel.
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&mut Prediction, &mut OccasionIndex)> {
+        self.predictions.iter_mut().zip(self.occasions.iter_mut())
     }
 }
 
@@ -90,6 +89,17 @@ impl From<Vec<Prediction>> for SubjectPredictions {
             predictions,
             occasions,
         }
+    }
+}
+
+/// Iterate over each subject prediction and its occasion index in parallel.
+impl IntoIterator for SubjectPredictions {
+    type Item = (Prediction, OccasionIndex);
+    type IntoIter =
+        std::iter::Zip<std::vec::IntoIter<Prediction>, std::vec::IntoIter<OccasionIndex>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.predictions.into_iter().zip(self.occasions.into_iter())
     }
 }
 
@@ -118,11 +128,7 @@ mod tests {
 
         let subject_predictions = SubjectPredictions::from(predictions);
 
-        assert_eq!(subject_predictions.flat_times(), vec![1.0, 2.0]);
-        assert_eq!(subject_predictions.flat_predictions(), vec![11.0, 9.0]);
-        assert_eq!(
-            subject_predictions.flat_observations(),
-            vec![Some(10.0), Some(8.0)]
-        );
+        assert_eq!(subject_predictions.predictions.len(), 2);
+        assert_eq!(subject_predictions.occasions.len(), 2);
     }
 }
