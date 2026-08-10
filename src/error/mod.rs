@@ -5,7 +5,7 @@ use pharmsol_dsl::RouteKind;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 use crate::data::error_model::ErrorModelError;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-use crate::data::row::DataError;
+use crate::data::parser::pmetrics::DataError;
 
 use crate::parameters::ParameterError;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]

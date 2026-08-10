@@ -1,8 +1,8 @@
 //! File-based parsers and parser-facing row utilities.
 //!
 //! Use this module when your source data starts as files or parser-shaped rows.
-//! It re-exports the row ingestion API from [`crate::data::row`] and provides
-//! format-specific loaders such as [`read_pmetrics`].
+//! It provides format-specific loaders such as [`read_pmetrics`] and keeps the
+//! existing Pmetrics row API available to callers.
 //!
 //! Choose the entrypoint by source shape:
 //! - Use [`DataRow`] or [`build_data`] when you already mapped external data into
@@ -11,10 +11,5 @@
 //!   convention.
 
 pub mod pmetrics;
-mod pmetrics_csv;
 
-#[cfg(test)]
-mod pmetrics_csv_tests;
-
-pub use crate::data::row::{build_data, DataError, DataRow, DataRowBuilder};
 pub use pmetrics::*;

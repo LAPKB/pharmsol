@@ -1,16 +1,8 @@
-//! Row-shaped data ingestion for [`Data`] and [`Subject`] assembly.
+//! Pmetrics-shaped row ingestion for [`Data`] and [`Subject`] assembly.
 //!
-//! Use this module when your source data already looks like rows from a table,
-//! CSV file, database export, or ETL pipeline.
-//!
-//! Choose the ingestion path by source shape:
-//! - Use [`crate::data::builder::SubjectBuilder`] when you want to author a
-//!   schedule directly in Rust.
-//! - Use [`DataRow`] and [`build_data`] when your application already has row
-//!   records in memory. The same row validation used by the Pmetrics reader is
-//!   applied here.
-//! - Use [`crate::data::parser::read_pmetrics`] when the source file already
-//!   follows the Pmetrics column convention.
+//! This module owns the Pmetrics row schema, validation, `ADDL` expansion, and
+//! occasion construction used by the Pmetrics parser. The public row names are
+//! re-exported through their existing paths for API compatibility.
 //!
 //! [`DataRow`] keeps public route and output labels as strings. Labels such as
 //! `"iv"`, `"depot"`, and `"cp"` are preserved through row parsing and later
@@ -183,7 +175,7 @@ impl DataRow {
             )));
         }
 
-        if let Some(addl) = self.addl.filter(|&addl| addl != 0) {
+        if self.addl.is_some_and(|addl| addl != 0) {
             if !matches!(self.evid, 1 | 4) {
                 return Err(DataError::InvalidDataRow(format!(
                     "nonzero ADDL for {} at time {} requires a dose row",
@@ -193,12 +185,6 @@ impl DataRow {
             if !self.ii.is_some_and(|ii| ii > 0.0) {
                 return Err(DataError::InvalidDataRow(format!(
                     "nonzero ADDL for {} at time {} requires a positive II",
-                    self.id, self.time
-                )));
-            }
-            if self.evid == 4 && addl < 0 {
-                return Err(DataError::InvalidDataRow(format!(
-                    "EVID=4 row for {} at time {} cannot use negative ADDL",
                     self.id, self.time
                 )));
             }

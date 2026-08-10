@@ -8,14 +8,21 @@
 //! numeric values such as `1` are preserved as numeric-looking labels.
 
 use crate::data::*;
-use csv::{ReaderBuilder, StringRecord};
+use ::csv::{ReaderBuilder, StringRecord};
 use serde::de::{MapAccess, Visitor};
 use serde::{de, Deserialize, Deserializer};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::str::FromStr;
 
-use crate::data::row::{build_data, DataError, DataRow};
+mod csv;
+mod row;
+
+#[cfg(test)]
+#[path = "tests.rs"]
+mod csv_tests;
+
+pub use row::{build_data, DataError, DataRow, DataRowBuilder};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[repr(usize)]
@@ -110,8 +117,8 @@ pub(super) fn core_headers() -> impl ExactSizeIterator<Item = &'static str> {
 /// forms.
 ///
 /// `ADDL`/`II` doses are expanded while reading. Export writes the expanded
-/// doses as individual rows. Negative `ADDL` remains supported for `EVID=1`,
-/// but not for an `EVID=4` reset whose identity would be lost during expansion.
+/// doses as individual rows. For `EVID=4`, positive `ADDL` resets at the base
+/// dose time and negative `ADDL` resets at the earliest expanded dose time.
 /// `OUT=-99` represents a missing observation, so `-99` cannot be preserved as
 /// a real observed value.
 ///

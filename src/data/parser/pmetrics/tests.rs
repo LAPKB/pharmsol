@@ -1,4 +1,4 @@
-use super::pmetrics::core_headers;
+use super::core_headers;
 use super::{read_pmetrics, DataError};
 use crate::{Censor, Covariate, Data, ErrorPoly, Event, Subject, SubjectBuilderExt};
 use csv::StringRecord;
@@ -67,7 +67,7 @@ fn fixture_data() -> Data {
 }
 
 fn records(bytes: &[u8]) -> Vec<StringRecord> {
-    csv::Reader::from_reader(bytes)
+    ::csv::Reader::from_reader(bytes)
         .records()
         .collect::<Result<Vec<_>, _>>()
         .unwrap()
@@ -441,7 +441,7 @@ fn observation_at_reset_time_makes_later_occasion_unsafe_to_export() {
 }
 
 #[test]
-fn negative_addl_reset_is_rejected_while_reading() {
+fn negative_addl_reset_is_accepted_and_resets_at_earliest_expanded_dose() {
     let input = pmetrics_input(
         &[],
         concat!(
@@ -449,15 +449,33 @@ fn negative_addl_reset_is_rejected_while_reading() {
             "s,4,0,0,2,-2,1,iv,.,.,.,.,.,.,.\n"
         ),
     );
-    assert!(matches!(
-        Data::from_pmetrics_csv_bytes(input.as_bytes()),
-        Err(DataError::InvalidDataRow(message))
-            if message.contains("cannot use negative ADDL")
-    ));
+    let data = Data::from_pmetrics_csv_bytes(input.as_bytes()).unwrap();
+    let occasion = &data.subjects()[0].occasions()[1];
+    assert_eq!(
+        occasion
+            .events()
+            .iter()
+            .map(|event| event.time())
+            .collect::<Vec<_>>(),
+        [-2.0, -1.0, 0.0]
+    );
+    assert!(occasion.events().iter().all(|event| event.occasion() == 1));
+
+    let bytes = data.to_pmetrics_csv_bytes().unwrap();
+    let rows = records(&bytes);
+    assert_eq!(rows[1].get(1), Some("4"));
+    assert_eq!(rows[1].get(2), Some("-2"));
+    assert_eq!(rows[2].get(1), Some("1"));
+    assert_eq!(rows[2].get(2), Some("-1"));
+    assert_eq!(rows[3].get(1), Some("1"));
+    assert_eq!(rows[3].get(2), Some("0"));
+
+    let reparsed = Data::from_pmetrics_csv_bytes(&bytes).unwrap();
+    assert_data_equivalent(&data, &reparsed);
 }
 
 #[test]
-fn negative_addl_reset_at_later_time_is_rejected_before_expansion() {
+fn negative_addl_reset_at_later_time_uses_the_first_expanded_dose() {
     let input = pmetrics_input(
         &[],
         concat!(
@@ -465,11 +483,24 @@ fn negative_addl_reset_at_later_time_is_rejected_before_expansion() {
             "s,4,2,0,2,-2,1,iv,.,.,.,.,.,.,.\n"
         ),
     );
-    assert!(matches!(
-        Data::from_pmetrics_csv_bytes(input.as_bytes()),
-        Err(DataError::InvalidDataRow(message))
-            if message.contains("cannot use negative ADDL")
-    ));
+    let data = Data::from_pmetrics_csv_bytes(input.as_bytes()).unwrap();
+    let occasion = &data.subjects()[0].occasions()[1];
+    assert_eq!(
+        occasion
+            .events()
+            .iter()
+            .map(|event| event.time())
+            .collect::<Vec<_>>(),
+        [0.0, 1.0, 2.0]
+    );
+
+    let bytes = data.to_pmetrics_csv_bytes().unwrap();
+    let rows = records(&bytes);
+    assert_eq!(rows[1].get(1), Some("4"));
+    assert_eq!(rows[1].get(2), Some("0"));
+
+    let reparsed = Data::from_pmetrics_csv_bytes(&bytes).unwrap();
+    assert_data_equivalent(&data, &reparsed);
 }
 
 #[test]
@@ -650,7 +681,7 @@ fn programmatic_covariate_name_is_lowercased_for_export() {
         .covariate("WT", 0.0, 70.0)
         .build()]);
     let bytes = data.to_pmetrics_csv_bytes().unwrap();
-    let mut reader = csv::Reader::from_reader(bytes.as_slice());
+    let mut reader = ::csv::Reader::from_reader(bytes.as_slice());
     assert_eq!(reader.headers().unwrap().iter().last(), Some("wt"));
 
     let parsed = Data::from_pmetrics_csv_bytes(&bytes).unwrap();
@@ -671,7 +702,7 @@ fn covariate_key_and_name_may_differ_by_ascii_case() {
         .add_covariate("wt".to_string(), weight);
 
     let bytes = Data::new(vec![subject]).to_pmetrics_csv_bytes().unwrap();
-    let mut reader = csv::Reader::from_reader(bytes.as_slice());
+    let mut reader = ::csv::Reader::from_reader(bytes.as_slice());
     assert_eq!(reader.headers().unwrap().iter().last(), Some("wt"));
 }
 
@@ -699,7 +730,7 @@ fn covariate_case_variants_across_occasions_share_one_column() {
         .covariate("wt", 0.0, 71.0)
         .build()]);
     let bytes = data.to_pmetrics_csv_bytes().unwrap();
-    let mut reader = csv::Reader::from_reader(bytes.as_slice());
+    let mut reader = ::csv::Reader::from_reader(bytes.as_slice());
     assert_eq!(
         reader
             .headers()

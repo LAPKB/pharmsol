@@ -1,9 +1,8 @@
 //! Pmetrics CSV byte encoder.
 
-use super::pmetrics::{
-    core_headers, normalize_covariate_name, validate_covariate_header, CoreColumn,
+use super::{
+    core_headers, normalize_covariate_name, validate_covariate_header, CoreColumn, DataError,
 };
-use crate::data::row::DataError;
 use crate::data::{Censor, Data, Event, Occasion, Subject};
 use crate::PharmsolError;
 use csv::{Terminator, WriterBuilder};
