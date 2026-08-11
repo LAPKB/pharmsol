@@ -252,7 +252,7 @@ struct Row {
     /// Subject ID
     id: String,
     /// Event type
-    evid: i32,
+    evid: i64,
     /// Event time
     time: f64,
     /// Infusion duration

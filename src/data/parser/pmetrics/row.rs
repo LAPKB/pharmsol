@@ -89,7 +89,7 @@ pub struct DataRow {
     /// Event time (required)
     pub time: f64,
     /// Event type: 0=observation, 1=dose, 4=reset/new occasion
-    pub evid: i32,
+    pub evid: i64,
     /// Dose amount (for EVID=1)
     pub dose: Option<f64>,
     /// Infusion duration (if > 0, dose is infusion; otherwise bolus)
@@ -449,7 +449,7 @@ impl DataRowBuilder {
     /// # Arguments
     ///
     /// * `evid` - Event ID: 0=observation, 1=dose, 4=reset/new occasion
-    pub fn evid(mut self, evid: i32) -> Self {
+    pub fn evid(mut self, evid: i64) -> Self {
         self.row.evid = evid;
         self
     }
