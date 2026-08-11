@@ -61,8 +61,6 @@ pub enum RuntimeBackend {
     Jit,
     #[cfg(feature = "dsl-aot-load")]
     NativeAot,
-    #[cfg(feature = "dsl-wasm")]
-    Wasm,
 }
 
 pub(crate) trait FunctionSession {
@@ -2903,11 +2901,7 @@ mod tests {
     };
     #[cfg(any(
         feature = "dsl-jit",
-        all(feature = "dsl-aot", feature = "dsl-aot-load"),
-        all(
-            feature = "dsl-wasm",
-            not(all(target_arch = "wasm32", target_os = "unknown"))
-        )
+        all(feature = "dsl-aot", feature = "dsl-aot-load")
     ))]
     use super::{
         runtime_ode_predictions, BoundErrorModelCache, PredictionCache,
@@ -2916,11 +2910,7 @@ mod tests {
     use crate::PharmsolError;
     #[cfg(any(
         feature = "dsl-jit",
-        all(feature = "dsl-aot", feature = "dsl-aot-load"),
-        all(
-            feature = "dsl-wasm",
-            not(all(target_arch = "wasm32", target_os = "unknown"))
-        )
+        all(feature = "dsl-aot", feature = "dsl-aot-load")
     ))]
     use crate::{
         data::builder::SubjectBuilderExt,
@@ -2936,11 +2926,7 @@ mod tests {
     };
     #[cfg(any(
         feature = "dsl-jit",
-        all(feature = "dsl-aot", feature = "dsl-aot-load"),
-        all(
-            feature = "dsl-wasm",
-            not(all(target_arch = "wasm32", target_os = "unknown"))
-        )
+        all(feature = "dsl-aot", feature = "dsl-aot-load")
     ))]
     use std::sync::Arc;
 
@@ -3248,11 +3234,7 @@ mod tests {
 
     #[cfg(any(
         feature = "dsl-jit",
-        all(feature = "dsl-aot", feature = "dsl-aot-load"),
-        all(
-            feature = "dsl-wasm",
-            not(all(target_arch = "wasm32", target_os = "unknown"))
-        )
+        all(feature = "dsl-aot", feature = "dsl-aot-load")
     ))]
     fn cached_runtime_ode_model() -> NativeOdeModel {
         NativeOdeModel {
@@ -3269,11 +3251,7 @@ mod tests {
 
     #[cfg(any(
         feature = "dsl-jit",
-        all(feature = "dsl-aot", feature = "dsl-aot-load"),
-        all(
-            feature = "dsl-wasm",
-            not(all(target_arch = "wasm32", target_os = "unknown"))
-        )
+        all(feature = "dsl-aot", feature = "dsl-aot-load")
     ))]
     fn cached_runtime_subject() -> Subject {
         Subject::builder("runtime_cached_prediction")
@@ -3425,11 +3403,7 @@ mod tests {
 
     #[cfg(any(
         feature = "dsl-jit",
-        all(feature = "dsl-aot", feature = "dsl-aot-load"),
-        all(
-            feature = "dsl-wasm",
-            not(all(target_arch = "wasm32", target_os = "unknown"))
-        )
+        all(feature = "dsl-aot", feature = "dsl-aot-load")
     ))]
     #[test]
     fn compiled_runtime_ode_predictions_use_prefilled_cache() {

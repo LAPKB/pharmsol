@@ -3,122 +3,32 @@ use serde::{Deserialize, Serialize};
 use super::model_info::NativeModelInfo;
 use pharmsol_dsl::execution::{ExecutionModel, ModelFunctionKind};
 
-#[cfg(any(
-    test,
-    feature = "dsl-aot",
-    feature = "dsl-aot-load",
-    feature = "dsl-wasm",
-    feature = "dsl-wasm-compile"
-))]
+#[cfg(any(test, feature = "dsl-aot", feature = "dsl-aot-load"))]
 pub const API_VERSION_SYMBOL: &str = "pharmsol_dsl_api_version";
-#[cfg(any(
-    test,
-    feature = "dsl-aot",
-    feature = "dsl-aot-load",
-    feature = "dsl-wasm",
-    feature = "dsl-wasm-compile"
-))]
+#[cfg(any(test, feature = "dsl-aot", feature = "dsl-aot-load"))]
 pub const MODEL_INFO_JSON_PTR_SYMBOL: &str = "pharmsol_dsl_model_info_json_ptr";
-#[cfg(any(
-    test,
-    feature = "dsl-aot",
-    feature = "dsl-aot-load",
-    feature = "dsl-wasm",
-    feature = "dsl-wasm-compile"
-))]
+#[cfg(any(test, feature = "dsl-aot", feature = "dsl-aot-load"))]
 pub const MODEL_INFO_JSON_LEN_SYMBOL: &str = "pharmsol_dsl_model_info_json_len";
-#[cfg(any(
-    test,
-    feature = "dsl-aot",
-    feature = "dsl-aot-load",
-    feature = "dsl-wasm",
-    feature = "dsl-wasm-compile"
-))]
+#[cfg(any(test, feature = "dsl-aot", feature = "dsl-aot-load"))]
 pub const DERIVE_SYMBOL: &str = "pharmsol_dsl_kernel_derive";
-#[cfg(any(
-    test,
-    feature = "dsl-aot",
-    feature = "dsl-aot-load",
-    feature = "dsl-wasm",
-    feature = "dsl-wasm-compile"
-))]
+#[cfg(any(test, feature = "dsl-aot", feature = "dsl-aot-load"))]
 pub const DYNAMICS_SYMBOL: &str = "pharmsol_dsl_kernel_dynamics";
-#[cfg(any(
-    test,
-    feature = "dsl-aot",
-    feature = "dsl-aot-load",
-    feature = "dsl-wasm",
-    feature = "dsl-wasm-compile"
-))]
+#[cfg(any(test, feature = "dsl-aot", feature = "dsl-aot-load"))]
 pub const OUTPUTS_SYMBOL: &str = "pharmsol_dsl_kernel_outputs";
-#[cfg(any(
-    test,
-    feature = "dsl-aot",
-    feature = "dsl-aot-load",
-    feature = "dsl-wasm",
-    feature = "dsl-wasm-compile"
-))]
+#[cfg(any(test, feature = "dsl-aot", feature = "dsl-aot-load"))]
 pub const INIT_SYMBOL: &str = "pharmsol_dsl_kernel_init";
-#[cfg(any(
-    test,
-    feature = "dsl-aot",
-    feature = "dsl-aot-load",
-    feature = "dsl-wasm",
-    feature = "dsl-wasm-compile"
-))]
+#[cfg(any(test, feature = "dsl-aot", feature = "dsl-aot-load"))]
 pub const DRIFT_SYMBOL: &str = "pharmsol_dsl_kernel_drift";
-#[cfg(any(
-    test,
-    feature = "dsl-aot",
-    feature = "dsl-aot-load",
-    feature = "dsl-wasm",
-    feature = "dsl-wasm-compile"
-))]
+#[cfg(any(test, feature = "dsl-aot", feature = "dsl-aot-load"))]
 pub const DIFFUSION_SYMBOL: &str = "pharmsol_dsl_kernel_diffusion";
-#[cfg(any(
-    test,
-    feature = "dsl-aot",
-    feature = "dsl-aot-load",
-    feature = "dsl-wasm",
-    feature = "dsl-wasm-compile"
-))]
+#[cfg(any(test, feature = "dsl-aot", feature = "dsl-aot-load"))]
 pub const ROUTE_LAG_SYMBOL: &str = "pharmsol_dsl_kernel_route_lag";
-#[cfg(any(
-    test,
-    feature = "dsl-aot",
-    feature = "dsl-aot-load",
-    feature = "dsl-wasm",
-    feature = "dsl-wasm-compile"
-))]
+#[cfg(any(test, feature = "dsl-aot", feature = "dsl-aot-load"))]
 pub const ROUTE_BIOAVAILABILITY_SYMBOL: &str = "pharmsol_dsl_kernel_route_bioavailability";
-#[cfg(any(
-    test,
-    feature = "dsl-aot",
-    feature = "dsl-aot-load",
-    feature = "dsl-wasm",
-    feature = "dsl-wasm-compile"
-))]
+#[cfg(any(test, feature = "dsl-aot", feature = "dsl-aot-load"))]
 pub const ALLOC_F64_BUFFER_SYMBOL: &str = "pharmsol_dsl_alloc_f64_buffer";
-#[cfg(any(
-    test,
-    feature = "dsl-aot",
-    feature = "dsl-aot-load",
-    feature = "dsl-wasm",
-    feature = "dsl-wasm-compile"
-))]
+#[cfg(any(test, feature = "dsl-aot", feature = "dsl-aot-load"))]
 pub const FREE_F64_BUFFER_SYMBOL: &str = "pharmsol_dsl_free_f64_buffer";
-
-#[cfg(any(test, feature = "dsl-wasm-compile"))]
-pub const JS_KERNEL_EXPORTS: [(&str, &str); 8] = [
-    ("derive", DERIVE_SYMBOL),
-    ("dynamics", DYNAMICS_SYMBOL),
-    ("outputs", OUTPUTS_SYMBOL),
-    ("init", INIT_SYMBOL),
-    ("drift", DRIFT_SYMBOL),
-    ("diffusion", DIFFUSION_SYMBOL),
-    ("route_lag", ROUTE_LAG_SYMBOL),
-    ("route_bioavailability", ROUTE_BIOAVAILABILITY_SYMBOL),
-];
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CompiledFunctionAvailability {
@@ -175,7 +85,7 @@ pub struct CompiledModelInfoEnvelope {
     pub functions: CompiledFunctionAvailability,
 }
 
-#[cfg(any(feature = "dsl-aot", feature = "dsl-wasm-compile"))]
+#[cfg(feature = "dsl-aot")]
 pub fn compiled_model_info_envelope(
     model: &ExecutionModel,
     abi_version: u32,
@@ -187,7 +97,7 @@ pub fn compiled_model_info_envelope(
     }
 }
 
-#[cfg(any(feature = "dsl-aot", feature = "dsl-wasm-compile"))]
+#[cfg(feature = "dsl-aot")]
 pub fn encode_compiled_model_info(
     model: &ExecutionModel,
     abi_version: u32,
@@ -195,21 +105,14 @@ pub fn encode_compiled_model_info(
     serde_json::to_string(&compiled_model_info_envelope(model, abi_version))
 }
 
-#[cfg(any(
-    test,
-    feature = "dsl-aot-load",
-    all(
-        feature = "dsl-wasm",
-        not(all(target_arch = "wasm32", target_os = "unknown"))
-    )
-))]
+#[cfg(any(test, feature = "dsl-aot-load"))]
 pub fn decode_compiled_model_info(
     bytes: &[u8],
 ) -> Result<CompiledModelInfoEnvelope, serde_json::Error> {
     serde_json::from_slice(bytes)
 }
 
-#[cfg(any(feature = "dsl-aot", feature = "dsl-wasm-compile"))]
+#[cfg(feature = "dsl-aot")]
 pub fn compiled_function_symbol(role: ModelFunctionKind) -> Option<&'static str> {
     match role {
         ModelFunctionKind::Derive => Some(DERIVE_SYMBOL),
@@ -308,11 +211,6 @@ mod tests {
         );
         assert_eq!(ALLOC_F64_BUFFER_SYMBOL, "pharmsol_dsl_alloc_f64_buffer");
         assert_eq!(FREE_F64_BUFFER_SYMBOL, "pharmsol_dsl_free_f64_buffer");
-        assert_eq!(JS_KERNEL_EXPORTS[0], ("derive", DERIVE_SYMBOL));
-        assert_eq!(
-            JS_KERNEL_EXPORTS[7],
-            ("route_bioavailability", ROUTE_BIOAVAILABILITY_SYMBOL)
-        );
     }
 
     #[test]

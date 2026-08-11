@@ -2,32 +2,24 @@ use thiserror::Error;
 
 use pharmsol_dsl::RouteKind;
 
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 use crate::data::error_model::ErrorModelError;
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 use crate::data::row::DataError;
 
 use crate::parameters::ParameterError;
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 use crate::CovariateError;
 
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 use ndarray::ShapeError;
 
 #[derive(Error, Debug, Clone)]
 pub enum PharmsolError {
     #[error("Parameter error: {0}")]
     ParameterError(#[from] ParameterError),
-    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     #[error("Error in the error model: {0}")]
     ErrorModelError(#[from] ErrorModelError),
-    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     #[error("Covariate error: {0}")]
     CovariateError(#[from] CovariateError),
-    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     #[error("Shape error: {0}")]
     NdarrayShapeError(#[from] ShapeError),
-    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     #[error("Error parsing data: {0}")]
     DataError(#[from] DataError),
     #[error("Diffsol error: {0}")]
@@ -56,14 +48,12 @@ pub enum PharmsolError {
     InvalidMetadata { model: String, detail: String },
 }
 
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 impl From<diffsol::error::DiffsolError> for PharmsolError {
     fn from(error: diffsol::error::DiffsolError) -> Self {
         PharmsolError::DiffsolError(describe_diffsol_error(&error, None))
     }
 }
 
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 impl PharmsolError {
     /// Build a descriptive [`PharmsolError`] from a diffsol solver error,
     /// adding the integration target time and the likely root cause.
@@ -139,7 +129,6 @@ fn format_available(labels: &[&str]) -> String {
 ///
 /// When `target_time` is set it is appended to time-dependent failures to show
 /// how far the solver was advancing. Matched variants add the likely cause.
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn describe_diffsol_error(
     error: &diffsol::error::DiffsolError,
     target_time: Option<f64>,

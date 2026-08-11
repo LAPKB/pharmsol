@@ -1,8 +1,7 @@
 #![allow(dead_code)]
 #![cfg(any(
     feature = "dsl-jit",
-    all(feature = "dsl-aot", feature = "dsl-aot-load"),
-    feature = "dsl-wasm"
+    all(feature = "dsl-aot", feature = "dsl-aot-load")
 ))]
 
 use std::error::Error;
@@ -405,10 +404,6 @@ impl ArtifactWorkspace {
         self.tempdir.path().join(format!("{stem}.pkm"))
     }
 
-    fn wasm_output(&self, stem: &str) -> PathBuf {
-        self.tempdir.path().join(format!("{stem}.wasm"))
-    }
-
     fn build_root(&self, stem: &str) -> PathBuf {
         self.tempdir.path().join(stem)
     }
@@ -460,51 +455,6 @@ pub fn compile_runtime_native_aot_model(
             |_, _| {},
         )?,
     ))
-}
-
-#[cfg(feature = "dsl-wasm")]
-pub fn compile_runtime_wasm_model(
-    case: CorpusCase,
-) -> Result<CompiledRuntimeModel, Box<dyn Error>> {
-    Ok(adjust_runtime_model(
-        case,
-        dsl::compile_module_source_to_runtime_wasm(case.source(), Some(case.model_name()))?,
-    ))
-}
-
-#[cfg(feature = "dsl-wasm")]
-pub fn compile_wasm_module(case: CorpusCase) -> Result<dsl::CompiledWasmModule, Box<dyn Error>> {
-    Ok(dsl::compile_module_source_to_wasm_module(
-        case.source(),
-        Some(case.model_name()),
-    )?)
-}
-
-#[cfg(feature = "dsl-wasm")]
-pub fn compile_wasm_runtime_from_bytes(
-    case: CorpusCase,
-) -> Result<CompiledRuntimeModel, Box<dyn Error>> {
-    let parsed = dsl::parse_module(case.source())?;
-    let analyzed = dsl::analyze_module(&parsed)?;
-    let model = analyzed
-        .models
-        .iter()
-        .find(|model| model.name == case.model_name())
-        .ok_or_else(|| io::Error::other(format!("{}: missing model in source", case.label())))?;
-    let execution = dsl::compile_analyzed_model(model)?;
-    let bytes = dsl::compile_execution_model_to_wasm_bytes(&execution)?;
-    Ok(adjust_runtime_model(
-        case,
-        dsl::load_runtime_wasm_bytes(&bytes)?,
-    ))
-}
-
-#[cfg(feature = "dsl-wasm")]
-pub fn compile_wasm_module_with_cache(
-    case: CorpusCase,
-    cache: &dsl::WasmCompileCache,
-) -> Result<dsl::CompiledWasmModule, Box<dyn Error>> {
-    Ok(cache.compile_module_source_to_wasm_module(case.source(), Some(case.model_name()))?)
 }
 
 pub fn assert_runtime_model_matches_reference(

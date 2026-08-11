@@ -1,3 +1,0 @@
-## Ignore browser E2E build outputs; run.mjs regenerates them on demand.
-*
-!.gitignore
