@@ -132,7 +132,11 @@ pub fn reference_values() -> Result<Vec<f64>, Box<dyn Error>> {
 
     let predictions = model.estimate_predictions(&subject(), &parameters)?;
 
-    Ok(predictions.flat_predictions())
+    Ok(predictions
+        .predictions()
+        .into_iter()
+        .map(Prediction::prediction)
+        .collect())
 }
 
 pub fn report_values(label: &str, actual: &[f64], tolerance: f64) -> Result<(), Box<dyn Error>> {
@@ -181,7 +185,11 @@ pub fn report_subject_predictions(
     predictions: &SubjectPredictions,
     tolerance: f64,
 ) -> Result<(), Box<dyn Error>> {
-    let values = predictions.flat_predictions();
+    let values: Vec<f64> = predictions
+        .predictions()
+        .into_iter()
+        .map(Prediction::prediction)
+        .collect();
     report_values(label, &values, tolerance)
 }
 

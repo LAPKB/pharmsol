@@ -1,6 +1,5 @@
 use approx::assert_relative_eq;
 use pharmsol::prelude::*;
-use pharmsol::Predictions;
 
 fn infusion_subject(input: impl ToString, outeq: impl ToString) -> Subject {
     Subject::builder("sde-macro-iv")
@@ -51,9 +50,9 @@ fn covariate_subject(oral: impl ToString, iv: impl ToString, cp: impl ToString) 
         .build()
 }
 
-fn prediction_means(predictions: &ndarray::Array2<Prediction>) -> Vec<f64> {
+fn prediction_means(predictions: &ParticlePredictions) -> Vec<f64> {
     predictions
-        .predictions()
+        .mean_predictions()
         .into_iter()
         .map(|prediction| prediction.prediction())
         .collect()

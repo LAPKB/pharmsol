@@ -78,7 +78,7 @@ pub fn pm_three_compartments_cl_with_absorption(
 
 #[cfg(test)]
 mod tests {
-    use super::super::tests::SubjectInfo;
+    use super::super::tests::{prediction_values, SubjectInfo};
     use super::{three_compartments_cl, three_compartments_cl_with_absorption};
     use crate::*;
     use approx::assert_relative_eq;
@@ -162,8 +162,8 @@ mod tests {
             )
             .unwrap();
 
-        let pred_ode = &op_ode.flat_predictions()[..];
-        let pred_analytical = &op_analytical.flat_predictions()[..];
+        let pred_ode = prediction_values(&op_ode);
+        let pred_analytical = prediction_values(&op_analytical);
 
         for (&od, &an) in pred_ode.iter().zip(pred_analytical.iter()) {
             assert_relative_eq!(od, an, max_relative = 1e-3, epsilon = 1e-3);
@@ -248,8 +248,8 @@ mod tests {
             )
             .unwrap();
 
-        let pred_ode = &op_ode.flat_predictions()[..];
-        let pred_analytical = &op_analytical.flat_predictions()[..];
+        let pred_ode = prediction_values(&op_ode);
+        let pred_analytical = prediction_values(&op_analytical);
 
         for (&od, &an) in pred_ode.iter().zip(pred_analytical.iter()) {
             assert_relative_eq!(od, an, max_relative = 1e-3, epsilon = 1e-3);

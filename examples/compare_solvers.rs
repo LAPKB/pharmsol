@@ -85,7 +85,11 @@ fn main() {
     let mut rows: Vec<(&str, u128, Vec<f64>)> = Vec::new();
     for (name, ode) in &results {
         let (preds, us) = timed(|| ode.estimate_predictions(&subject, &parameters).unwrap());
-        let preds: Vec<f64> = preds.flat_predictions().to_vec();
+        let preds: Vec<f64> = preds
+            .predictions()
+            .iter()
+            .map(|prediction| prediction.prediction())
+            .collect();
         rows.push((name, us, preds));
     }
 

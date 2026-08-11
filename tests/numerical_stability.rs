@@ -1,10 +1,19 @@
 use pharmsol::prelude::models::{
     one_compartment, one_compartment_with_absorption, two_compartments,
 };
+use pharmsol::prelude::{Prediction, SubjectPredictions};
 use pharmsol::*;
 
 const REL_TOL: f64 = 1e-2;
 const ABS_TOL: f64 = 1e-2;
+
+fn prediction_values(predictions: &SubjectPredictions) -> Vec<f64> {
+    predictions
+        .predictions()
+        .into_iter()
+        .map(Prediction::prediction)
+        .collect()
+}
 
 fn parameters_for_analytical(
     label: &str,
@@ -110,8 +119,8 @@ fn assert_models_agree(
         .estimate_predictions(subject, &ode_params)
         .expect("ode predictions");
 
-    let expected = analytical_predictions.flat_predictions();
-    let actual = ode_predictions.flat_predictions();
+    let expected = prediction_values(&analytical_predictions);
+    let actual = prediction_values(&ode_predictions);
 
     assert_eq!(
         expected.len(),

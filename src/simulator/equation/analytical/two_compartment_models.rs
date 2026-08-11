@@ -117,7 +117,7 @@ pub fn pm_two_compartments_with_absorption(x: &V, p: &V, t: T, rateiv: &V, cov: 
 
 #[cfg(test)]
 mod tests {
-    use super::super::tests::SubjectInfo;
+    use super::super::tests::{prediction_values, SubjectInfo};
     use super::{two_compartments, two_compartments_with_absorption};
     use crate::*;
     use approx::assert_relative_eq;
@@ -186,8 +186,8 @@ mod tests {
             .estimate_predictions(&subject, &crate::parameters::dense([0.1, 3.0, 1.0, 1.0]))
             .unwrap();
 
-        let pred_ode = &op_ode.flat_predictions()[..];
-        let pred_analytical = &op_analytical.flat_predictions()[..];
+        let pred_ode = prediction_values(&op_ode);
+        let pred_analytical = prediction_values(&op_analytical);
 
         println!("ode: {:?}", pred_ode);
         println!("analitycal: {:?}", pred_analytical);
@@ -268,8 +268,8 @@ mod tests {
             )
             .unwrap();
 
-        let pred_ode = &op_ode.flat_predictions()[..];
-        let pred_analytical = &op_analytical.flat_predictions()[..];
+        let pred_ode = prediction_values(&op_ode);
+        let pred_analytical = prediction_values(&op_analytical);
 
         println!("ode: {:?}", pred_ode);
         println!("analitycal: {:?}", pred_analytical);

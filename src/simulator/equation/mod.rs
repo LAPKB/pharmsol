@@ -63,8 +63,6 @@ use crate::{
     PharmsolError, Subject,
 };
 
-use super::prediction::Prediction;
-
 /// Trait for state vectors that can receive bolus doses.
 pub trait State {
     /// Add a bolus dose to the state at the specified resolved input index.
@@ -73,40 +71,6 @@ pub trait State {
     /// - `input`: The resolved dense input index used by the execution layer
     /// - `amount`: The bolus amount
     fn add_bolus(&mut self, input: usize, amount: f64);
-}
-
-/// Trait for prediction containers.
-pub trait Predictions: Default {
-    /// Create a new prediction container with specified capacity.
-    ///
-    /// # Parameters
-    /// - `nparticles`: Number of particles (for SDE)
-    ///
-    /// # Returns
-    /// A new predictions container
-    fn new(_nparticles: usize) -> Self {
-        Default::default()
-    }
-
-    /// Get all predictions as a vector.
-    ///
-    /// # Returns
-    /// Vector of prediction objects
-    fn predictions(&self) -> Vec<Prediction>;
-
-    /// Visit each effective prediction without requiring callers to own a `Vec`.
-    fn for_each_prediction(&self, mut f: impl FnMut(&Prediction)) {
-        let predictions = self.predictions();
-        for prediction in &predictions {
-            f(prediction);
-        }
-    }
-
-    /// Record the subject identifier these predictions belong to.
-    ///
-    /// The default implementation is a no-op for containers that do not carry a
-    /// subject identifier (for example the particle grid used by SDE models).
-    fn set_subject_id(&mut self, _id: &str) {}
 }
 
 /// Trait for prediction caching on deterministic ODE and analytical equations.
@@ -163,7 +127,7 @@ pub trait EquationTypes {
     /// The state vector type
     type S: State + Debug;
     /// The predictions container type
-    type P: Predictions;
+    type P;
 }
 
 pub(crate) trait EquationPriv: EquationTypes {
@@ -175,6 +139,8 @@ pub(crate) trait EquationPriv: EquationTypes {
     fn get_ndrugs(&self) -> usize;
     fn get_nouteqs(&self) -> usize;
     fn metadata(&self) -> Option<&ValidatedModelMetadata>;
+    /// Create an empty prediction container sized and labelled for `subject`.
+    fn new_predictions(&self, subject: &Subject) -> Self::P;
     fn solve(
         &self,
         state: &mut Self::S,
@@ -184,9 +150,6 @@ pub(crate) trait EquationPriv: EquationTypes {
         start_time: f64,
         end_time: f64,
     ) -> Result<(), PharmsolError>;
-    fn nparticles(&self) -> usize {
-        1
-    }
 
     fn resolve_input_label(
         &self,
@@ -388,8 +351,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
         subject: &Subject,
         parameters: &[f64],
     ) -> Result<Self::P, PharmsolError> {
-        let mut output = Self::P::new(self.nparticles());
-        output.set_subject_id(subject.id());
+        let mut output = self.new_predictions(subject);
         for occasion in subject.occasions() {
             let covariates = occasion.covariates();
 

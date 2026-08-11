@@ -2,7 +2,6 @@ mod em;
 
 use diffsol::{NalgebraContext, Vector};
 use nalgebra::DVector;
-use ndarray::{concatenate, Array2, Axis};
 use pharmsol_dsl::ModelKind;
 use rand::Rng;
 use rayon::prelude::*;
@@ -10,7 +9,7 @@ use thiserror::Error;
 
 use crate::{
     data::{Covariates, Infusion},
-    prelude::simulator::Prediction,
+    prelude::simulator::{ParticlePredictions, Prediction},
     simulator::{Diffusion, Drift, Fa, Init, Lag, Neqs, Out, V},
     Event, Observation, Parameters, Subject,
 };
@@ -20,8 +19,8 @@ use diffsol::VectorCommon;
 use crate::PharmsolError;
 
 use super::{
-    EqnKind, Equation, EquationPriv, EquationTypes, ModelMetadata, ModelMetadataError, Predictions,
-    State, ValidatedModelMetadata,
+    EqnKind, Equation, EquationPriv, EquationTypes, ModelMetadata, ModelMetadataError, State,
+    ValidatedModelMetadata,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
@@ -795,44 +794,10 @@ impl State for Vec<DVector<f64>> {
     }
 }
 
-/// Predictions implementation for particle-based SDE simulation outputs.
-///
-/// This implementation manages and processes predictions from multiple particles.
-impl Predictions for Array2<Prediction> {
-    fn new(nparticles: usize) -> Self {
-        Array2::from_shape_fn((nparticles, 0), |_| Prediction::default())
-    }
-    fn predictions(&self) -> Vec<Prediction> {
-        // Make this return the mean prediction across all particles
-        if self.is_empty() || self.ncols() == 0 {
-            return Vec::new();
-        }
-
-        let mut result = Vec::with_capacity(self.ncols());
-
-        for col in 0..self.ncols() {
-            let column = self.column(col);
-
-            let mean_prediction: f64 = column
-                .iter()
-                .map(|pred: &Prediction| pred.prediction())
-                .sum::<f64>()
-                / self.nrows() as f64;
-
-            let mut prediction = column.first().unwrap().clone();
-            prediction.set_prediction(mean_prediction);
-            result.push(prediction);
-        }
-
-        result
-    }
-}
-
 impl EquationTypes for SDE {
     type S = Vec<DVector<f64>>; // Vec -> particles, DVector -> state
-    type P = Array2<Prediction>; // Rows -> particles, Columns -> time
+    type P = ParticlePredictions; // Rows -> particles, Columns -> observations
 }
-
 impl EquationPriv for SDE {
     // #[inline(always)]
     // fn get_init(&self) -> &Init {
@@ -883,6 +848,10 @@ impl EquationPriv for SDE {
         self.metadata.as_ref()
     }
 
+    fn new_predictions(&self, subject: &Subject) -> Self::P {
+        ParticlePredictions::new(subject.id(), self.nparticles)
+    }
+
     #[inline(always)]
     fn solve(
         &self,
@@ -912,9 +881,6 @@ impl EquationPriv for SDE {
             .clone();
         });
         Ok(())
-    }
-    fn nparticles(&self) -> usize {
-        self.nparticles
     }
 
     #[inline(always)]
@@ -950,8 +916,7 @@ impl EquationPriv for SDE {
             );
             *p = observation.to_prediction(output_label.clone(), y[outeq]);
         });
-        let out = Array2::from_shape_vec((self.nparticles, 1), pred)?;
-        *output = concatenate(Axis(1), &[output.view(), out.view()]).unwrap();
+        output.add_predictions(pred, observation.occasion())?;
         Ok(())
     }
     #[inline(always)]

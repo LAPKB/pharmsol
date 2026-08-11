@@ -1,5 +1,13 @@
 use pharmsol::prelude::*;
 
+fn prediction_values(predictions: &SubjectPredictions) -> Vec<f64> {
+    predictions
+        .predictions()
+        .into_iter()
+        .map(Prediction::prediction)
+        .collect()
+}
+
 fn max_abs_diff(left: &[f64], right: &[f64]) -> f64 {
     left.iter()
         .zip(right.iter())
@@ -397,8 +405,8 @@ fn ode_full_feature_macro_matches_handwritten() -> Result<(), pharmsol::Pharmsol
     let handwritten_predictions = handwritten_ode.estimate_predictions(&subject, &params)?;
 
     let diff = max_abs_diff(
-        &macro_predictions.flat_predictions(),
-        &handwritten_predictions.flat_predictions(),
+        &prediction_values(&macro_predictions),
+        &prediction_values(&handwritten_predictions),
     );
     assert!(
         diff <= 1e-10,
@@ -456,8 +464,8 @@ fn analytical_full_feature_macro_matches_handwritten() -> Result<(), pharmsol::P
     let handwritten_predictions = handwritten_analytical.estimate_predictions(&subject, &params)?;
 
     let diff = max_abs_diff(
-        &macro_predictions.flat_predictions(),
-        &handwritten_predictions.flat_predictions(),
+        &prediction_values(&macro_predictions),
+        &prediction_values(&handwritten_predictions),
     );
     assert!(
         diff <= 1e-10,

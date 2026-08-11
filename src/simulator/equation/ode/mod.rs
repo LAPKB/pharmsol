@@ -19,7 +19,6 @@ use crate::{
 
 use super::parameters_hash;
 use crate::simulator::cache::{PredictionCache, DEFAULT_CACHE_SIZE};
-use crate::simulator::equation::Predictions;
 use closure::PMProblem;
 use diffsol::{
     error::OdeSolverError, ode_solver::method::OdeSolverMethod, NalgebraContext, NonLinearOp,
@@ -288,7 +287,7 @@ fn _simulate_subject_dense(
     subject: &Subject,
     parameters: &[f64],
 ) -> Result<SubjectPredictions, PharmsolError> {
-    let mut output = SubjectPredictions::new(ode.nparticles());
+    let mut output = SubjectPredictions::new(subject.id());
 
     let nstates = ode.get_nstates();
     let ndrugs = ode.get_ndrugs();
@@ -464,6 +463,10 @@ impl EquationPriv for ODE {
 
     fn metadata(&self) -> Option<&ValidatedModelMetadata> {
         self.metadata.as_ref()
+    }
+
+    fn new_predictions(&self, subject: &Subject) -> Self::P {
+        SubjectPredictions::new(subject.id())
     }
 
     #[inline(always)]

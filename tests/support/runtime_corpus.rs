@@ -10,10 +10,9 @@ use std::io;
 use std::path::PathBuf;
 
 use diffsol::Vector;
-use ndarray::Array2;
 use pharmsol::dsl::{self, CompiledRuntimeModel, RuntimeCompilationTarget, RuntimePredictions};
 use pharmsol::prelude::{
-    one_compartment_with_absorption, Equation, Prediction, SubjectPredictions,
+    one_compartment_with_absorption, Equation, ParticlePredictions, Prediction, SubjectPredictions,
 };
 use pharmsol::{
     equation, equation::SDE, fa, fetch_cov, fetch_params, lag, Parameters, Subject,
@@ -417,7 +416,7 @@ impl ArtifactWorkspace {
 
 enum ExpectedPredictions {
     Subject(SubjectPredictions),
-    Particles(Array2<Prediction>),
+    Particles(ParticlePredictions),
 }
 
 fn adjust_runtime_model(case: CorpusCase, model: CompiledRuntimeModel) -> CompiledRuntimeModel {
@@ -608,8 +607,8 @@ fn compare_subject_predictions(
     actual: &SubjectPredictions,
     expected: &SubjectPredictions,
 ) -> Result<(), Box<dyn Error>> {
-    let actual_values = actual.flat_predictions();
-    let expected_values = expected.flat_predictions();
+    let actual_values = prediction_values(actual);
+    let expected_values = prediction_values(expected);
 
     if actual_values.len() != expected_values.len() {
         return Err(io::Error::other(format!(
@@ -651,8 +650,8 @@ fn compare_subject_predictions_pairwise(
     right_label: &str,
     right: &SubjectPredictions,
 ) -> Result<(), Box<dyn Error>> {
-    let left_values = left.flat_predictions();
-    let right_values = right.flat_predictions();
+    let left_values = prediction_values(left);
+    let right_values = prediction_values(right);
 
     if left_values.len() != right_values.len() {
         return Err(io::Error::other(format!(
@@ -689,25 +688,37 @@ fn compare_subject_predictions_pairwise(
     Ok(())
 }
 
+fn prediction_values(predictions: &SubjectPredictions) -> Vec<f64> {
+    predictions
+        .predictions()
+        .into_iter()
+        .map(Prediction::prediction)
+        .collect()
+}
+
+fn particle_dim(predictions: &ParticlePredictions) -> (usize, usize) {
+    (predictions.nparticles(), predictions.nobservations())
+}
+
 fn compare_particle_predictions(
     case: CorpusCase,
     backend_label: &str,
-    actual: &Array2<Prediction>,
-    expected: &Array2<Prediction>,
+    actual: &ParticlePredictions,
+    expected: &ParticlePredictions,
 ) -> Result<(), Box<dyn Error>> {
-    if actual.dim() != expected.dim() {
+    if particle_dim(actual) != particle_dim(expected) {
         return Err(io::Error::other(format!(
             "{} [{}]: expected particle matrix {:?}, got {:?}",
             case.label(),
             backend_label,
-            expected.dim(),
-            actual.dim()
+            particle_dim(expected),
+            particle_dim(actual)
         ))
         .into());
     }
 
-    for row in 0..actual.nrows() {
-        for col in 0..actual.ncols() {
+    for row in 0..actual.nparticles() {
+        for col in 0..actual.nobservations() {
             let actual_prediction = &actual[(row, col)];
             let expected_prediction = &expected[(row, col)];
             let abs_diff =
@@ -733,24 +744,24 @@ fn compare_particle_predictions(
 fn compare_particle_predictions_pairwise(
     case: CorpusCase,
     left_label: &str,
-    left: &Array2<Prediction>,
+    left: &ParticlePredictions,
     right_label: &str,
-    right: &Array2<Prediction>,
+    right: &ParticlePredictions,
 ) -> Result<(), Box<dyn Error>> {
-    if left.dim() != right.dim() {
+    if particle_dim(left) != particle_dim(right) {
         return Err(io::Error::other(format!(
             "{} [{} vs {}]: particle matrix mismatch {:?} vs {:?}",
             case.label(),
             left_label,
             right_label,
-            left.dim(),
-            right.dim()
+            particle_dim(left),
+            particle_dim(right)
         ))
         .into());
     }
 
-    for row in 0..left.nrows() {
-        for col in 0..left.ncols() {
+    for row in 0..left.nparticles() {
+        for col in 0..left.nobservations() {
             let left_prediction = &left[(row, col)];
             let right_prediction = &right[(row, col)];
             let abs_diff = (left_prediction.prediction() - right_prediction.prediction()).abs();
@@ -1199,7 +1210,7 @@ fn reference_analytical_full_predictions() -> Result<SubjectPredictions, Box<dyn
     Ok(model.estimate_predictions(&subject, &parameters)?)
 }
 
-fn reference_sde_predictions() -> Result<Array2<Prediction>, Box<dyn Error>> {
+fn reference_sde_predictions() -> Result<ParticlePredictions, Box<dyn Error>> {
     let model = SDE::new(
         |x, p, _t, dx, _rateiv, _cov| {
             fetch_params!(p, ka, ke0, kcp, kpc, _vol, _ske);
