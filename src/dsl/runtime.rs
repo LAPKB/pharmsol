@@ -82,7 +82,6 @@
 use std::fmt;
 use std::path::Path;
 
-use ndarray::Array2;
 use thiserror::Error;
 
 #[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]
@@ -105,7 +104,7 @@ use super::wasm_compile::{
     compile_execution_model_to_wasm_bytes, compile_module_source_to_wasm_bytes, WasmError,
 };
 use crate::{
-    simulator::prediction::{Prediction, SubjectPredictions},
+    simulator::prediction::{ParticlePredictions, SubjectPredictions},
     Parameters, PharmsolError, Subject, ValidatedModelMetadata,
 };
 use pharmsol_dsl::{
@@ -158,7 +157,7 @@ pub enum RuntimeArtifactFormat {
 #[derive(Clone, Debug)]
 pub enum RuntimePredictions {
     Subject(SubjectPredictions),
-    Particles(Array2<Prediction>),
+    Particles(ParticlePredictions),
 }
 
 impl RuntimePredictions {
@@ -169,7 +168,7 @@ impl RuntimePredictions {
         }
     }
 
-    pub fn as_particles(&self) -> Option<&Array2<Prediction>> {
+    pub fn as_particles(&self) -> Option<&ParticlePredictions> {
         match self {
             Self::Particles(predictions) => Some(predictions),
             Self::Subject(_) => None,
@@ -183,7 +182,7 @@ impl RuntimePredictions {
         }
     }
 
-    pub fn into_particles(self) -> Option<Array2<Prediction>> {
+    pub fn into_particles(self) -> Option<ParticlePredictions> {
         match self {
             Self::Particles(predictions) => Some(predictions),
             Self::Subject(_) => None,

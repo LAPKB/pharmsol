@@ -68,19 +68,20 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
     println!("│   Time    │   Prediction    │   Prediction    │                     │");
     println!("├───────────┼─────────────────┼─────────────────┼─────────────────────┤");
 
-    let times = analytical_predictions.flat_times();
-    let analytical_preds = analytical_predictions.flat_predictions();
-    let ode_preds = ode_predictions.flat_predictions();
-
-    for ((t, a), b) in times
+    for (analytical_prediction, ode_prediction) in analytical_predictions
+        .predictions()
         .iter()
-        .zip(analytical_preds.iter())
-        .zip(ode_preds.iter())
+        .zip(ode_predictions.predictions())
     {
+        let a = analytical_prediction.prediction();
+        let b = ode_prediction.prediction();
         let diff = a - b;
         println!(
             "│ {:>9.2} │ {:>15.9} │ {:>15.9} │ {:>19.2e} │",
-            t, a, b, diff
+            analytical_prediction.time(),
+            a,
+            b,
+            diff
         );
     }
 

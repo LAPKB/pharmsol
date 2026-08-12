@@ -9,7 +9,16 @@
 //! 6. Covariate handling
 
 use pharmsol::prelude::models::{one_compartment, one_compartment_with_absorption};
+use pharmsol::prelude::{Prediction, SubjectPredictions};
 use pharmsol::*;
+
+fn prediction_values(predictions: &SubjectPredictions) -> Vec<f64> {
+    predictions
+        .predictions()
+        .into_iter()
+        .map(Prediction::prediction)
+        .collect()
+}
 
 const REL_TOL: f64 = 1e-2; // 1% relative tolerance for most comparisons
 const ABS_TOL: f64 = 1e-6;
@@ -164,8 +173,8 @@ fn assert_ode_matches_analytical(
         .estimate_predictions(subject, &ode_params)
         .expect("ode predictions should succeed");
 
-    let expected = analytical_predictions.flat_predictions();
-    let actual = ode_predictions.flat_predictions();
+    let expected = prediction_values(&analytical_predictions);
+    let actual = prediction_values(&ode_predictions);
 
     assert_eq!(
         expected.len(),
@@ -1070,7 +1079,7 @@ fn time_varying_covariates_work_correctly() {
     assert!(result.is_ok(), "ODE with covariates should succeed");
 
     let predictions = result.unwrap();
-    let preds = predictions.flat_predictions();
+    let preds = prediction_values(&predictions);
 
     // All predictions should be positive
     for (i, &pred) in preds.iter().enumerate() {

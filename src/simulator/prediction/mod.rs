@@ -1,8 +1,10 @@
 //! Prediction data structures produced by simulation.
 
+mod particle;
 mod subject;
 
-pub use subject::SubjectPredictions;
+pub use particle::ParticlePredictions;
+pub use subject::{OccasionPredictions, SubjectPredictions};
 
 use crate::{Censor, ErrorPoly, OutputLabel};
 

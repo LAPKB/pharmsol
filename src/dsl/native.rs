@@ -7,7 +7,6 @@ use diffsol::{
     OdeSolverStopReason, Vector, VectorHost,
 };
 use nalgebra::DVector;
-use ndarray::{concatenate, Array2, Axis};
 use rayon::prelude::*;
 
 #[cfg(feature = "dsl-jit")]
@@ -32,7 +31,7 @@ use crate::{
             sde::{infusion_discontinuities, simulate_sde_event_with},
             EqnKind, Equation, EquationPriv, EquationTypes,
         },
-        prediction::{Prediction, SubjectPredictions},
+        prediction::{ParticlePredictions, Prediction, SubjectPredictions},
         Fa, Lag, M, T, V,
     },
     Event, Observation, Occasion, Parameters, PharmsolError, Subject, ValidatedModelMetadata,
@@ -1601,6 +1600,10 @@ impl EquationPriv for NativeOdeModel {
         Some(self.shared.metadata())
     }
 
+    fn new_predictions(&self, subject: &Subject) -> Self::P {
+        SubjectPredictions::new(subject.id())
+    }
+
     fn solve(
         &self,
         _state: &mut Self::S,
@@ -1933,6 +1936,10 @@ impl EquationPriv for NativeAnalyticalModel {
         Some(self.shared.metadata())
     }
 
+    fn new_predictions(&self, subject: &Subject) -> Self::P {
+        SubjectPredictions::new(subject.id())
+    }
+
     fn solve(
         &self,
         _state: &mut Self::S,
@@ -2047,7 +2054,7 @@ impl NativeSdeModel {
         &self,
         subject: &Subject,
         parameters: &Parameters,
-    ) -> Result<Array2<Prediction>, PharmsolError> {
+    ) -> Result<ParticlePredictions, PharmsolError> {
         self.estimate_predictions_dense(subject, parameters.as_slice())
     }
 
@@ -2055,9 +2062,9 @@ impl NativeSdeModel {
         &self,
         subject: &Subject,
         support_point: &[f64],
-    ) -> Result<Array2<Prediction>, PharmsolError> {
+    ) -> Result<ParticlePredictions, PharmsolError> {
         self.shared.validate_support_point(support_point)?;
-        let mut output = Array2::from_shape_fn((self.nparticles, 0), |_| Prediction::default());
+        let mut output = ParticlePredictions::new(subject.id(), self.nparticles);
 
         for occasion in subject.occasions() {
             let mut events = self.shared.resolve_events(occasion)?;
@@ -2116,8 +2123,7 @@ impl NativeSdeModel {
                                 infusions.as_slice(),
                             )?);
                         }
-                        let column = Array2::from_shape_vec((self.nparticles, 1), column)?;
-                        output = concatenate(Axis(1), &[output.view(), column.view()]).unwrap();
+                        output.add_predictions(column, occasion.index())?;
                     }
                 }
 
@@ -2291,7 +2297,7 @@ impl NativeSdeModel {
 
 impl EquationTypes for NativeSdeModel {
     type S = Vec<DVector<f64>>;
-    type P = Array2<Prediction>;
+    type P = ParticlePredictions;
 }
 
 impl EquationPriv for NativeSdeModel {
@@ -2315,12 +2321,12 @@ impl EquationPriv for NativeSdeModel {
         self.shared.info.output_len
     }
 
-    fn nparticles(&self) -> usize {
-        self.nparticles
-    }
-
     fn metadata(&self) -> Option<&crate::ValidatedModelMetadata> {
         Some(self.shared.metadata())
+    }
+
+    fn new_predictions(&self, subject: &Subject) -> Self::P {
+        ParticlePredictions::new(subject.id(), self.nparticles)
     }
 
     fn solve(
@@ -3176,9 +3182,12 @@ mod tests {
             .estimate_predictions_dense(&subject, &[])
             .expect("noise-free SDE infusion model should simulate");
 
-        assert_eq!(predictions.dim(), (2, 3));
+        assert_eq!(
+            (predictions.nparticles(), predictions.nobservations()),
+            (2, 3)
+        );
 
-        for particle in 0..predictions.nrows() {
+        for particle in 0..predictions.nparticles() {
             // Before the infusion begins nothing has been delivered.
             assert!(
                 predictions[(particle, 0)].prediction().abs() < 1e-9,
@@ -3479,7 +3488,10 @@ mod tests {
 
         match actual {
             RuntimePredictions::Subject(predictions) => {
-                assert_eq!(predictions.flat_predictions(), expected.flat_predictions());
+                assert_eq!(
+                    predictions.predictions().len(),
+                    expected.predictions().len()
+                );
             }
             RuntimePredictions::Particles(_) => {
                 panic!("ODE runtime model should return subject predictions")
@@ -3488,6 +3500,6 @@ mod tests {
 
         let direct = runtime_ode_predictions(&model, &subject, parameters.as_slice())
             .expect("direct native helper should return cached prediction");
-        assert_eq!(direct.flat_predictions(), expected.flat_predictions());
+        assert_eq!(direct.predictions().len(), expected.predictions().len());
     }
 }

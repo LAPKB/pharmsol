@@ -8,8 +8,6 @@ use pharmsol::equation::{
     self, AnalyticalKernel, RouteKind as HandwrittenRouteKind, ValidatedModelMetadata,
 };
 use pharmsol::prelude::*;
-#[cfg(feature = "dsl-jit")]
-use pharmsol::Predictions;
 use pharmsol_dsl::{
     analyze_model, compile_analyzed_model, parse_model, CovariateInterpolation, ExecutionModel,
     ModelKind, RouteKind as DslRouteKind,
@@ -983,11 +981,20 @@ fn assert_prediction_vectors_diverge(left: &[f64], right: &[f64], tolerance: f64
 }
 
 #[cfg(feature = "dsl-jit")]
-fn particle_prediction_means(predictions: &ndarray::Array2<Prediction>) -> Vec<f64> {
+fn particle_prediction_means(predictions: &ParticlePredictions) -> Vec<f64> {
     predictions
-        .get_predictions()
+        .mean_predictions()
         .into_iter()
         .map(|prediction| prediction.prediction())
+        .collect()
+}
+
+#[cfg(feature = "dsl-jit")]
+fn subject_prediction_values(predictions: &SubjectPredictions) -> Vec<f64> {
+    predictions
+        .predictions()
+        .into_iter()
+        .map(Prediction::prediction)
         .collect()
 }
 
@@ -1472,19 +1479,19 @@ fn ode_runtime_jit_macro_and_handwritten_predictions_agree_on_shared_input_shape
         .estimate_predictions(&subject, &support_point)
         .expect("runtime ODE model should simulate")
     {
-        RuntimePredictions::Subject(predictions) => predictions.flat_predictions().to_vec(),
+        RuntimePredictions::Subject(predictions) => subject_prediction_values(&predictions),
         RuntimePredictions::Particles(_) => panic!("ODE runtime should return subject predictions"),
     };
-    let macro_predictions = macro_model
-        .estimate_predictions(&subject, &support_point)
-        .expect("macro ODE model should simulate")
-        .flat_predictions()
-        .to_vec();
-    let handwritten_predictions = handwritten_model
-        .estimate_predictions(&subject, &support_point)
-        .expect("handwritten ODE model should simulate")
-        .flat_predictions()
-        .to_vec();
+    let macro_predictions = subject_prediction_values(
+        &macro_model
+            .estimate_predictions(&subject, &support_point)
+            .expect("macro ODE model should simulate"),
+    );
+    let handwritten_predictions = subject_prediction_values(
+        &handwritten_model
+            .estimate_predictions(&subject, &support_point)
+            .expect("handwritten ODE model should simulate"),
+    );
 
     assert_prediction_vectors_close(&runtime_predictions, &macro_predictions, 1e-4);
     assert_prediction_vectors_close(&runtime_predictions, &handwritten_predictions, 1e-4);
@@ -1553,21 +1560,21 @@ fn analytical_runtime_jit_macro_and_handwritten_predictions_agree_on_shared_inpu
         .estimate_predictions(&subject, &support_point)
         .expect("runtime analytical model should simulate")
     {
-        RuntimePredictions::Subject(predictions) => predictions.flat_predictions().to_vec(),
+        RuntimePredictions::Subject(predictions) => subject_prediction_values(&predictions),
         RuntimePredictions::Particles(_) => {
             panic!("analytical runtime should return subject predictions")
         }
     };
-    let macro_predictions = macro_model
-        .estimate_predictions(&subject, &support_point)
-        .expect("macro analytical model should simulate")
-        .flat_predictions()
-        .to_vec();
-    let handwritten_predictions = handwritten_model
-        .estimate_predictions(&subject, &support_point)
-        .expect("handwritten analytical model should simulate")
-        .flat_predictions()
-        .to_vec();
+    let macro_predictions = subject_prediction_values(
+        &macro_model
+            .estimate_predictions(&subject, &support_point)
+            .expect("macro analytical model should simulate"),
+    );
+    let handwritten_predictions = subject_prediction_values(
+        &handwritten_model
+            .estimate_predictions(&subject, &support_point)
+            .expect("handwritten analytical model should simulate"),
+    );
 
     assert_prediction_vectors_close(&runtime_predictions, &macro_predictions, 1e-8);
     assert_prediction_vectors_close(&runtime_predictions, &handwritten_predictions, 1e-8);
@@ -1702,14 +1709,14 @@ fn route_input_policy_runtime_mismatches_are_detected_explicitly() {
         .estimate_predictions(&subject, &support_point)
         .expect("runtime ODE model should simulate")
     {
-        RuntimePredictions::Subject(predictions) => predictions.flat_predictions().to_vec(),
+        RuntimePredictions::Subject(predictions) => subject_prediction_values(&predictions),
         RuntimePredictions::Particles(_) => panic!("ODE runtime should return subject predictions"),
     };
-    let mismatched_predictions = mismatched_model
-        .estimate_predictions(&subject, &support_point)
-        .expect("mismatched handwritten ODE should simulate")
-        .flat_predictions()
-        .to_vec();
+    let mismatched_predictions = subject_prediction_values(
+        &mismatched_model
+            .estimate_predictions(&subject, &support_point)
+            .expect("mismatched handwritten ODE should simulate"),
+    );
 
     assert_prediction_vectors_diverge(&runtime_predictions, &mismatched_predictions, 1e-4);
 }
@@ -1745,7 +1752,7 @@ fn ode_runtime_jit_preserves_mixed_output_labels() {
         .estimate_predictions(&subject, &support_point)
         .expect("runtime mixed-output model should simulate")
     {
-        RuntimePredictions::Subject(predictions) => predictions.flat_predictions().to_vec(),
+        RuntimePredictions::Subject(predictions) => subject_prediction_values(&predictions),
         RuntimePredictions::Particles(_) => panic!("ODE runtime should return subject predictions"),
     };
 

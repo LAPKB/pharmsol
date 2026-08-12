@@ -53,7 +53,7 @@
 //! let parameters = Parameters::with_model(&model, [("ke", 1.022), ("v", 194.0)])
 //!     .expect("valid named parameters");
 //! let predictions = model.estimate_predictions(&subject, &parameters)?;
-//! assert_eq!(predictions.flat_predictions().len(), 2);
+//! assert_eq!(predictions.predictions().len(), 2);
 //! # Ok::<(), pharmsol::PharmsolError>(())
 //! ```
 //!
@@ -155,7 +155,7 @@ pub use crate::simulator::equation::{
     self,
     ode::{ExplicitRkTableau, OdeSolver, SdirkTableau},
     AnalyticalKernel, Cache, Equation, ModelKind, ModelMetadata, ModelMetadataError, NameDomain,
-    Predictions, RouteInputPolicy, RouteKind, State, ValidatedModelMetadata,
+    RouteInputPolicy, RouteKind, State, ValidatedModelMetadata,
 };
 pub use error::PharmsolError;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
@@ -383,7 +383,9 @@ pub mod prelude {
             cache::{self, PredictionCache, DEFAULT_CACHE_SIZE},
             equation,
             equation::Equation,
-            prediction::{Prediction, SubjectPredictions},
+            prediction::{
+                OccasionPredictions, ParticlePredictions, Prediction, SubjectPredictions,
+            },
         };
     }
 
@@ -395,7 +397,7 @@ pub mod prelude {
             ode::{ExplicitRkTableau, OdeSolver, SdirkTableau},
             Equation,
         },
-        prediction::{Prediction, SubjectPredictions},
+        prediction::{OccasionPredictions, ParticlePredictions, Prediction, SubjectPredictions},
     };
 
     // Analytical model functions

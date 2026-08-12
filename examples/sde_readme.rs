@@ -40,7 +40,10 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
     let predictions = sde.estimate_predictions(&subject, &parameters)?;
 
     println!("first prediction => {}", predictions[[0, 0]].prediction());
-    println!("prediction grid shape => {:?}", predictions.dim());
+    println!(
+        "prediction grid shape => {:?}",
+        (predictions.nparticles(), predictions.nobservations())
+    );
 
     Ok(())
 }

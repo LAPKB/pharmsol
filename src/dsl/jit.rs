@@ -1346,7 +1346,7 @@ mod tests {
     use crate::equation::ode::{ExplicitRkTableau, OdeSolver};
     use crate::equation::{ODE, SDE};
     use crate::simulator::equation::analytical::one_compartment_with_absorption;
-    use crate::simulator::equation::{Equation, Predictions as PredictionTrait};
+    use crate::simulator::equation::Equation;
     use crate::test_fixtures::STRUCTURED_BLOCK_CORPUS;
     use crate::{equation, Parameters, Subject, SubjectBuilderExt};
     use approx::assert_relative_eq;
@@ -2554,9 +2554,9 @@ model analytical_mixed {
             .expect("reference sde predictions");
 
         for (jit_pred, reference_pred) in jit_predictions
-            .get_predictions()
+            .mean_predictions()
             .iter()
-            .zip(reference_predictions.get_predictions())
+            .zip(reference_predictions.mean_predictions())
         {
             assert_relative_eq!(
                 jit_pred.prediction(),

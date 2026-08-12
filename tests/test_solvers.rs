@@ -61,8 +61,10 @@ fn preds(solver: OdeSolver) -> Vec<f64> {
     model
         .estimate_predictions(&sub, &parameters)
         .unwrap()
-        .flat_predictions()
-        .to_vec()
+        .predictions()
+        .into_iter()
+        .map(Prediction::prediction)
+        .collect()
 }
 
 #[test]

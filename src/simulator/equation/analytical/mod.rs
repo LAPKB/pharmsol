@@ -25,7 +25,6 @@ use crate::simulator::{
 };
 use crate::PharmsolError;
 use crate::{data::Covariates, simulator::*, Observation, Parameters, Subject};
-
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
 pub enum AnalyticalMetadataError {
     #[error(transparent)]
@@ -284,6 +283,10 @@ impl EquationPriv for Analytical {
         self.metadata.as_ref()
     }
 
+    fn new_predictions(&self, subject: &Subject) -> Self::P {
+        SubjectPredictions::new(subject.id())
+    }
+
     #[inline(always)]
     fn solve(
         &self,
@@ -438,6 +441,15 @@ pub(crate) mod tests {
         InfusionDosing,
         OralInfusionDosage,
     }
+
+    pub(crate) fn prediction_values(predictions: &SubjectPredictions) -> Vec<f64> {
+        predictions
+            .predictions()
+            .into_iter()
+            .map(crate::simulator::prediction::Prediction::prediction)
+            .collect()
+    }
+
     impl SubjectInfo {
         pub(crate) fn get_subject(&self) -> Subject {
             match self {
@@ -1070,7 +1082,7 @@ fn analytical_subject_predictions(
         return Ok(cached);
     }
 
-    let mut output = SubjectPredictions::default();
+    let mut output = SubjectPredictions::new(subject.id());
     for occasion in subject.occasions() {
         let covariates = occasion.covariates();
         let mut state = model.initial_state(parameters, covariates, occasion.index());

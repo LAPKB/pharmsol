@@ -37,8 +37,13 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
         "state central => {}",
         ode.state_index("central").expect("central state exists")
     );
-    println!("prediction times => {:?}", predictions.flat_times());
-    println!("predictions => {:?}", predictions.flat_predictions());
+    for prediction in predictions.predictions() {
+        println!(
+            "time => {:.2}, prediction => {:.4}",
+            prediction.time(),
+            prediction.prediction()
+        );
+    }
 
     Ok(())
 }
