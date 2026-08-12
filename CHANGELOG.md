@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.7](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.28.6...pharmsol-v0.28.7) - 2026-08-12
+
+### Added
+
+- Improve Pmetrics import/export ([#313](https://github.com/LAPKB/pharmsol/pull/313))
+
+### Other
+
+- Add code coverage ([#336](https://github.com/LAPKB/pharmsol/pull/336))
+- Remove WASM ([#335](https://github.com/LAPKB/pharmsol/pull/335))
+
 ## [0.28.6](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.28.5...pharmsol-v0.28.6) - 2026-08-07
 
 ### Fixed
