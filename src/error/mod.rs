@@ -3,7 +3,7 @@ use thiserror::Error;
 use pharmsol_dsl::RouteKind;
 
 use crate::data::error_model::ErrorModelError;
-use crate::data::row::DataError;
+use crate::data::parser::pmetrics::DataError;
 
 use crate::parameters::ParameterError;
 use crate::CovariateError;
