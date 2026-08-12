@@ -30,8 +30,8 @@
 //! # Choose A Data Input Path
 //!
 //! - Use `Subject::builder` when you are authoring a schedule directly in Rust.
-//! - Use [`row::DataRow`] and [`row::DataRowBuilder`] when your source data is
-//!   already row-shaped in memory.
+//! - Use [`row::DataRow`] and [`row::DataRowBuilder`] for the existing
+//!   Pmetrics-shaped row ingestion API.
 //! - Use [`parser::read_pmetrics`] when you are loading a Pmetrics-style file
 //!   from disk.
 //! - Use [`Event`] variants directly when you already have validated event
@@ -88,7 +88,6 @@ pub mod event;
 pub mod observation_error;
 pub mod parser;
 pub mod residual_error;
-pub mod row;
 pub mod structs;
 pub use crate::nca::{MetricsError, ObservationMetrics};
 pub use covariate::*;
