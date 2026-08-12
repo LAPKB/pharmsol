@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.7](https://github.com/LAPKB/pharmsol/compare/pharmsol-macros-v0.28.6...pharmsol-macros-v0.28.7) - 2026-08-12
+
+### Other
+
+- Refactor monolith to modules ([#323](https://github.com/LAPKB/pharmsol/pull/323))
+
 ## [0.28.5](https://github.com/LAPKB/pharmsol/compare/pharmsol-macros-v0.28.4...pharmsol-macros-v0.28.5) - 2026-08-06
 
 ### Added
