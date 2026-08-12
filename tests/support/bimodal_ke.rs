@@ -69,8 +69,7 @@ pub fn subject() -> Subject {
 
 #[cfg(any(
     feature = "dsl-jit",
-    all(feature = "dsl-aot", feature = "dsl-aot-load"),
-    feature = "dsl-wasm"
+    all(feature = "dsl-aot", feature = "dsl-aot-load")
 ))]
 pub fn subject_for_runtime_model(model: &pharmsol::dsl::CompiledRuntimeModel) -> Subject {
     let route_label = if model.info().routes.iter().any(|route| route.name == "iv") {
@@ -187,8 +186,7 @@ pub fn report_subject_predictions(
 
 #[cfg(any(
     feature = "dsl-jit",
-    all(feature = "dsl-aot", feature = "dsl-aot-load"),
-    feature = "dsl-wasm"
+    all(feature = "dsl-aot", feature = "dsl-aot-load")
 ))]
 pub fn report_runtime_model(
     label: &str,
@@ -232,16 +230,6 @@ pub fn compile_runtime_native_aot_model(
     )?)
 }
 
-#[cfg(feature = "dsl-wasm")]
-pub fn compile_runtime_wasm_model() -> Result<pharmsol::dsl::CompiledRuntimeModel, Box<dyn Error>> {
-    Ok(pharmsol::dsl::compile_module_source_to_runtime(
-        AUTHORING_DSL,
-        Some(MODEL_NAME),
-        pharmsol::dsl::RuntimeCompilationTarget::Wasm,
-        |_, _| {},
-    )?)
-}
-
 #[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]
 pub fn compile_direct_aot_model(
     workspace: &ArtifactWorkspace,
@@ -258,11 +246,4 @@ pub fn compile_direct_aot_model(
         &artifact,
         pharmsol::dsl::RuntimeArtifactFormat::NativeAot,
     )?)
-}
-
-#[cfg(feature = "dsl-wasm")]
-pub fn compile_bytes_wasm_model() -> Result<pharmsol::dsl::CompiledRuntimeModel, Box<dyn Error>> {
-    let bytes =
-        pharmsol::dsl::compile_module_source_to_wasm_bytes(AUTHORING_DSL, Some(MODEL_NAME))?;
-    Ok(pharmsol::dsl::load_runtime_wasm_bytes(&bytes)?)
 }

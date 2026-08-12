@@ -9,7 +9,7 @@ Use this crate when you need to work with model source as data:
 - analyze names and types into a checked model
 - compile validated models into the ready-to-run form used by runtime backends
 
-Do not use this crate for JIT compilation, native AoT export or load, WASM runtime loading, or `Subject`-based prediction helpers. Those workflows stay in `pharmsol::dsl` in the main `pharmsol` crate.
+Do not use this crate for JIT compilation, native AoT export or load, or `Subject`-based prediction helpers. Those workflows stay in `pharmsol::dsl` in the main `pharmsol` crate.
 
 ## Main Pipeline
 
@@ -51,7 +51,7 @@ The main public modules are:
 - `syntax` for the syntax tree
 - `diagnostic` for spans, codes, and rendered reports
 - `analysis` for the analyzed, fully checked model
-- `execution` for the ready-to-run model shared by JIT, AoT, and WASM backends
+- `execution` for the ready-to-run model shared by JIT and AoT backends
 
 The parser accepts both canonical `model { ... }` source and the authoring
 shorthand used by the `pharmsol` examples.

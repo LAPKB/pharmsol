@@ -82,8 +82,6 @@
 //! - `dsl-jit`: adds in-process JIT compilation
 //! - `dsl-aot`: adds native ahead-of-time artifact compilation
 //! - `dsl-aot-load`: adds native artifact loading
-//! - `dsl-wasm-compile`: adds WASM artifact generation
-//! - `dsl-wasm`: adds WASM runtime loading and execution
 //!
 //! ## Labels And Indices
 //!
@@ -96,8 +94,8 @@
 //! ## Platform Notes
 //!
 //! The main `data`, `simulator`, `nca`, and `optimize` modules are documented
-//! for native targets. Some surfaces are not built on `wasm32-unknown-unknown`.
-//! The DSL runtime also has feature-specific platform limits.
+//! for native targets. The DSL runtime also has feature-specific platform
+//! limits.
 //!
 //! ## Next Stops
 //!
@@ -112,44 +110,26 @@ extern crate self as pharmsol;
 
 #[cfg(feature = "dsl-aot")]
 mod build_support;
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub mod data;
 #[cfg(feature = "dsl-core")]
 pub mod dsl;
 pub mod error;
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub mod nca;
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub mod optimize;
 mod parameter_order;
 mod parameters;
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub mod simulator;
-#[cfg(all(
-    test,
-    any(
-        feature = "dsl-jit",
-        all(feature = "dsl-wasm", feature = "dsl-wasm-compile")
-    )
-))]
+#[cfg(all(test, feature = "dsl-jit"))]
 mod test_fixtures;
 
 //extension traits
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use crate::data::builder::SubjectBuilderExt;
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use crate::data::Interpolation::*;
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use crate::data::*;
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use crate::optimize::effect::get_e2;
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use crate::optimize::parameters::ParameterOptimizer;
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use crate::simulator::equation::analytical::*;
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use crate::simulator::equation::metadata;
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use crate::simulator::equation::{
     self,
     ode::{ExplicitRkTableau, OdeSolver, SdirkTableau},
@@ -157,12 +137,10 @@ pub use crate::simulator::equation::{
     NameDomain, Predictions, RouteInputPolicy, RouteKind, State, ValidatedModelMetadata, ODE, SDE,
 };
 pub use error::PharmsolError;
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use nalgebra::dmatrix;
 pub use parameters::{ParameterError, ParameterOrder, Parameters};
 #[doc(hidden)]
 pub use pharmsol_macros::{analytical as __analytical_impl, ode as __ode_impl, sde as __sde_impl};
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use std::collections::HashMap;
 
 /// Define an ODE (ordinary differential equation) model.
@@ -313,7 +291,6 @@ macro_rules! sde {
 }
 
 #[doc(hidden)]
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub mod __macro_support {
     pub fn vector_from_values(values: Vec<f64>) -> crate::simulator::V {
         nalgebra::DVector::from_vec(values).into()
@@ -346,7 +323,6 @@ pub mod __macro_support {
 ///
 /// assert_eq!(subject.id(), "patient_001");
 /// ```
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub mod prelude {
 
     pub use crate::Parameters;

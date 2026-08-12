@@ -39,9 +39,6 @@ dsl-jit = [
 ]
 dsl-aot = ["dsl-core"]
 dsl-aot-load = ["dsl-core", "dep:libloading"]
-dsl-wasm-compile = ["dsl-core", "dep:wasm-encoder"]
-dsl-wasm = ["dsl-wasm-compile", "dep:wasmtime"]
-wasm = ["dsl-wasm"]
 
 [dependencies]
 pharmsol-dsl = { workspace = true }
@@ -55,9 +52,6 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tracing = "0.1.44"
-wasm-encoder = { version = "0.255.0", optional = true }
-
-[target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dependencies]
 ahash = "0.8.12"
 csv = "1.4.0"
 diffsol = "=0.16.1"
@@ -71,7 +65,6 @@ statrs = "0.19.0"
 argmin = "0.11.0"
 argmin-math = "0.5.1"
 quick_cache = "0.7.0"
-wasmtime = { version = "47.0.3", optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.8.2", features = ["html_reports"] }
@@ -90,4 +83,4 @@ harness = false
 [[bench]]
 name = "dsl_matrix"
 harness = false
-required-features = ["dsl-jit", "dsl-aot", "dsl-aot-load", "dsl-wasm"]
+required-features = ["dsl-jit", "dsl-aot", "dsl-aot-load"]

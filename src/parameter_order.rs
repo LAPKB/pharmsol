@@ -6,7 +6,6 @@ use std::fmt;
 
 #[cfg(feature = "dsl-core")]
 use crate::dsl::NativeModelInfo;
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 use crate::simulator::equation::ValidatedModelMetadata;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -85,7 +84,6 @@ impl ParameterOrderPlan {
         })
     }
 
-    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     pub(crate) fn from_metadata<S>(
         metadata: Option<&ValidatedModelMetadata>,
         source_names: S,
@@ -205,7 +203,6 @@ mod tests {
 
     #[cfg(feature = "dsl-core")]
     use crate::dsl::NativeModelInfo;
-    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     use crate::{metadata, ModelKind};
     #[cfg(feature = "dsl-core")]
     use pharmsol_dsl::ModelKind as DslModelKind;
@@ -291,7 +288,6 @@ mod tests {
         );
     }
 
-    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     #[test]
     fn metadata_wrapper_requires_metadata() {
         let error = ParameterOrderPlan::from_metadata(None, ["ka", "ke"]).unwrap_err();
@@ -303,7 +299,6 @@ mod tests {
         );
     }
 
-    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     #[test]
     fn metadata_wrapper_uses_declared_parameter_order() {
         let metadata = metadata::new("one_cmt")

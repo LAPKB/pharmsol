@@ -19,9 +19,8 @@
 //!   analyzed models into the ready-to-run form used by the runtime backends.
 //! - [`compile_module_source_to_runtime`] and [`compile_execution_model_to_runtime`]
 //!   for the one-stop compile-and-run path.
-//! - [`load_runtime_artifact`], [`load_aot_model`], and
-//!   [`load_runtime_wasm_bytes`] for loading saved artifacts back into a model
-//!   you can execute.
+//! - [`load_runtime_artifact`] and [`load_aot_model`] for loading saved
+//!   artifacts back into a model you can execute.
 //!
 //! Common workflow choices:
 //!
@@ -31,8 +30,6 @@
 //!   keep everything inside the current process.
 //! - Native artifact shipping: export a native AoT artifact, then load it later
 //!   on a compatible host.
-//! - WASM artifact shipping: emit `.wasm` bytes or a bundled module for browser
-//!   or portable runtime use.
 //!
 //! Feature map:
 //!
@@ -46,13 +43,6 @@
 //!   [`compile_module_source_to_aot`] and [`export_execution_model_to_aot`].
 //! - `dsl-aot-load`: enables native AoT artifact loading through
 //!   [`load_aot_model`] and [`read_aot_model_info`].
-//! - `dsl-wasm-compile`: enables WASM artifact emission through
-//!   [`compile_module_source_to_wasm_bytes`],
-//!   [`compile_module_source_to_wasm_module`], and the browser loader helpers.
-//! - `dsl-wasm`: enables host-side WASM loading and runtime execution on
-//!   non-browser native hosts. This includes
-//!   [`compile_module_source_to_runtime_wasm`], [`load_runtime_wasm_bytes`],
-//!   [`read_wasm_model_info`], and [`read_wasm_model_info_bytes`].
 //!
 //! Smallest compile-to-runtime example:
 //!
@@ -96,35 +86,15 @@ mod compiled_backend_abi;
 #[cfg(feature = "dsl-jit")]
 mod jit;
 mod model_info;
-#[cfg(any(
-    feature = "dsl-jit",
-    feature = "dsl-aot-load",
-    all(
-        feature = "dsl-wasm",
-        not(all(target_arch = "wasm32", target_os = "unknown"))
-    )
-))]
+#[cfg(any(feature = "dsl-jit", feature = "dsl-aot-load"))]
 mod native;
 #[cfg(any(
     feature = "dsl-jit",
-    all(feature = "dsl-aot", feature = "dsl-aot-load"),
-    all(
-        feature = "dsl-wasm",
-        not(all(target_arch = "wasm32", target_os = "unknown"))
-    )
+    all(feature = "dsl-aot", feature = "dsl-aot-load")
 ))]
 mod runtime;
 #[cfg(feature = "dsl-aot")]
 mod rust_backend;
-#[cfg(all(
-    feature = "dsl-wasm",
-    not(all(target_arch = "wasm32", target_os = "unknown"))
-))]
-mod wasm;
-#[cfg(feature = "dsl-wasm-compile")]
-mod wasm_compile;
-#[cfg(feature = "dsl-wasm-compile")]
-mod wasm_direct_emitter;
 
 #[cfg(feature = "dsl-aot")]
 pub use aot::{
@@ -143,14 +113,7 @@ pub use jit::{
     JitCompileError, JitExecutionArtifact, JitOdeModel, JitSdeModel,
 };
 pub use model_info::{NativeCovariateInfo, NativeModelInfo, NativeOutputInfo, NativeRouteInfo};
-#[cfg(any(
-    feature = "dsl-jit",
-    feature = "dsl-aot-load",
-    all(
-        feature = "dsl-wasm",
-        not(all(target_arch = "wasm32", target_os = "unknown"))
-    )
-))]
+#[cfg(any(feature = "dsl-jit", feature = "dsl-aot-load"))]
 pub use native::{
     CompiledModelFunction, CompiledNativeModel, NativeAnalyticalModel, NativeExecutionArtifact,
     NativeOdeModel, NativeSdeModel, RuntimeBackend,
@@ -158,35 +121,11 @@ pub use native::{
 pub use pharmsol_dsl::*;
 #[cfg(any(
     feature = "dsl-jit",
-    all(feature = "dsl-aot", feature = "dsl-aot-load"),
-    all(
-        feature = "dsl-wasm",
-        not(all(target_arch = "wasm32", target_os = "unknown"))
-    )
+    all(feature = "dsl-aot", feature = "dsl-aot-load")
 ))]
 pub use runtime::{
     compile_execution_model_to_runtime, compile_module_source_to_runtime, load_runtime_artifact,
     CompiledRuntimeModel, RuntimeAnalyticalModel, RuntimeArtifactFormat, RuntimeCompilationTarget,
     RuntimeCovariateInfo, RuntimeError, RuntimeModelInfo, RuntimeOdeModel, RuntimeOutputInfo,
     RuntimePredictions, RuntimeRouteInfo, RuntimeSdeModel, RuntimeStateInfo,
-};
-#[cfg(all(
-    feature = "dsl-wasm",
-    not(all(target_arch = "wasm32", target_os = "unknown"))
-))]
-pub use runtime::{
-    compile_execution_model_to_runtime_wasm, compile_module_source_to_runtime_wasm,
-    load_runtime_wasm_bytes,
-};
-#[cfg(all(
-    feature = "dsl-wasm",
-    not(all(target_arch = "wasm32", target_os = "unknown"))
-))]
-pub use wasm::{read_wasm_model_info, read_wasm_model_info_bytes};
-#[cfg(feature = "dsl-wasm-compile")]
-pub use wasm_compile::{
-    browser_loader_source, compile_execution_model_to_wasm_bytes,
-    compile_execution_model_to_wasm_module, compile_module_source_to_wasm_bytes,
-    compile_module_source_to_wasm_module, CompiledWasmModule, WasmCompileCache, WasmError,
-    DEFAULT_WASM_COMPILE_CACHE_CAPACITY, WASM_API_VERSION,
 };
