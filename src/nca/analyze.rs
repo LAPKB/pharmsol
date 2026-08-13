@@ -72,7 +72,7 @@ pub(crate) fn analyze(ctx: &AnalysisContext) -> Result<NCAResult, NCAError> {
 
     let clearance = ctx
         .dose_amount
-        .and_then(|d| lambda_z_result.as_ref().map(|lz| (d, lz)))
+        .zip(lambda_z_result.as_ref())
         .and_then(|(d, lz)| {
             exposure
                 .auc_inf_obs

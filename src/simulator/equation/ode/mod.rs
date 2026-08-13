@@ -313,7 +313,7 @@ fn _simulate_subject_dense(
         Some(error_models) => Some(ode.bind_error_models(error_models)?),
         None => None,
     };
-    let bound_error_models = bound_error_models.as_ref().map(|models| &**models);
+    let bound_error_models = bound_error_models.as_deref();
 
     let mut output = SubjectPredictions::new(ode.nparticles());
 

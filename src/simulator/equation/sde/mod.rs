@@ -1,4 +1,5 @@
 mod em;
+pub mod paper;
 
 use diffsol::{NalgebraContext, Vector};
 use nalgebra::DVector;

@@ -1,6 +1,6 @@
 use nalgebra::DVector;
-use rand::rng;
-use rand_distr::{Distribution, Normal};
+use rand::{rng, Rng};
+use rand_distr::{Distribution, Normal, StandardNormal};
 
 /// Implementation of the Euler-Maruyama method for solving stochastic differential equations.
 ///
@@ -114,6 +114,32 @@ where
         for i in 0..n {
             state[i] +=
                 drift_term[i] * dt + diffusion_term[i] * normal_dist.sample(&mut rng) * dt.sqrt();
+        }
+    }
+
+    /// Performs one Euler--Maruyama step using a caller-supplied random stream.
+    ///
+    /// The caller controls the random stream so a complete simulation can be
+    /// reproduced. One independent standard-normal draw is consumed for each
+    /// state component.
+    pub fn step_with_rng<R: Rng + ?Sized>(
+        &self,
+        time: f64,
+        dt: f64,
+        state: &mut DVector<f64>,
+        rng: &mut R,
+    ) {
+        let n = state.len();
+        let mut drift_term = DVector::zeros(n);
+        (self.drift)(time, state, &mut drift_term);
+
+        let mut diffusion_term = DVector::zeros(n);
+        (self.diffusion)(time, state, &mut diffusion_term);
+
+        let sqrt_dt = dt.sqrt();
+        for i in 0..n {
+            let z: f64 = StandardNormal.sample(rng);
+            state[i] += drift_term[i] * dt + diffusion_term[i] * z * sqrt_dt;
         }
     }
 
