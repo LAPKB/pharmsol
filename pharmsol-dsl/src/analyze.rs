@@ -1530,7 +1530,7 @@ impl<'a> Analyzer<'a> {
                 } else {
                     Err(AnalysisError::new(
                         format!(
-                            "equality comparison cannot mix boolean and numeric operands, found {:?} and {:?}",
+                            "cannot compare boolean and numeric operands, found {:?} and {:?}",
                             lhs.ty, rhs.ty
                         ),
                         span,
