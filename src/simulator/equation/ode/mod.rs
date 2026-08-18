@@ -549,10 +549,10 @@ impl EquationPriv for ODE {
     }
 }
 
-/// Restart the solver after an infusion boundary (a RHS discontinuity).
+/// Restart the solver after a state or RHS discontinuity.
 ///
 /// The multi-step history and the internal Jacobian were built for the
-/// pre-boundary RHS, so the first step into the new segment must not reuse
+/// pre-discontinuity state/RHS, so the first step into the new segment must not reuse
 /// them as-is:
 /// - `set_state` forces diffsol to recompute its BDF coefficients and
 ///   reinitialize the internal Jacobian for the current state;
@@ -630,9 +630,9 @@ impl ODE {
         let infusion_boundary_times = solver.problem().eqn.infusion_boundary_times();
         let mut infusion_boundary_cursor = 0usize;
         let mut index = 0usize;
-        // Set when the previous stop was an infusion boundary: the solver must
-        // be restarted before the first step of the next segment (the RHS is
-        // discontinuous at the boundary). Deferred until `set_stop_time`
+        // Set when the previous event changed the state or the previous stop
+        // was an infusion boundary: the solver must be restarted before the
+        // first step of the next segment. Deferred until `set_stop_time`
         // succeeds so a stop that is already reached does not trigger a
         // restart for a zero-length segment.
         let mut pending_reinit = false;
@@ -684,6 +684,7 @@ impl ODE {
 
                     state_with_bolus.axpy(-1.0, state_without_bolus, 1.0);
                     solver.state_mut().y.axpy(1.0, state_with_bolus, 1.0);
+                    pending_reinit = true;
                 }
                 Event::Infusion(_) => {
                     // Infusions are handled within the ODE function itself
