@@ -21,7 +21,7 @@ authors:
     orcid: 0000-0002-1675-8276
     affiliation: 1
 affiliations:
-  - name: Laboratory of Applied Pharmacokinetics and Bioinformatics, Children's Hospital of Los Angeles, Los Angeles, USA
+  - name: Laboratory of Applied Pharmacokinetics and Bioinformatics, Children's Hospital of Los Angeles, Los Angeles, United States of America
     index: 1
   - name: Department of Transplantation Medicine, Oslo University Hospital, Oslo, Norway
     index: 2
@@ -41,9 +41,9 @@ As a fully open-source solution, `pharmsol` empowers users to inspect, modify, a
 
 # State of the field
 
-Several tools exist for performing pharmacokinetic and pharmacodynamic modelling and simulation. Most well known are the full-suite applications such as NONMEM [@nonmem], Phoenix NLME [@phoenix], Monolix [@monolix], and Pumas [@rackauckas2020pumas]. These are generally commercial or proprietary, while open-source alternatives include the R packages `Pmetrics` [@pmetrics] and `mrgsolve` [@mrgsolve], as well as implementations in Python and Julia. The latter two are powered by Fortran and C++, respectively.
+Several tools exist for performing pharmacokinetic and pharmacodynamic modelling and simulation. Most well-known are the full-suite applications such as NONMEM [@nonmem], Phoenix NLME [@phoenix], Monolix [@monolix], and Pumas [@rackauckas2020pumas]. These are generally commercial or proprietary, while open-source alternatives include the R packages `Pmetrics` [@pmetrics] and `mrgsolve` [@mrgsolve], as well as implementations in Python and Julia. The latter two are powered by Fortran and C++, respectively.
 
-The choice to develop `pharmsol` as a new library rather than contribute to the existing solutions is motivated by several factors. First, Rust provides compile-time memory safety guarantees which are not available in Fortran or C++, without sacrificing performance. This is especially important for software used in healthcare settings. Second, existing alternatives are coupled to their parent frameworks, and may be difficult to integrate with new solutions or software. 
+The choice to develop `pharmsol` as a new library rather than contribute to the existing solutions is motivated by several factors. First, Rust provides compile-time memory safety guarantees which are not available in Fortran or C++, without sacrificing performance. This is especially important for software used in healthcare settings. Second, existing alternatives are coupled to their parent frameworks, and may be difficult to integrate with new solutions or software.
 
 The aim of `pharmsol` is to provide developers of higher-level software with a library for performing efficient and memory-safe pharmacokinetic modeling and simulation. Importantly, `pharmsol` is open-source released under a GPL-3.0 license, allowing developers to inspect, extend, and integrate the library into new or existing solutions, given that derived works remain open-source.
 
@@ -59,7 +59,7 @@ The three different solver types, i.e. analytical, ODE, and SDE based, are all b
 
 As a tool for pharmacokinetic modelling and simulation, `pharmsol` has already demonstrated research impact. Already, it has been used to generate results in scientific publications, such as the creation of a new algorithm for non-parametric parameter estimation [@npod]. Perhaps most importantly, `pharmsol` is used as the simulation engine for `PMcore` which powers `Pmetrics` [@pmetrics] - the _de facto_ R package for non-parametric population pharmacokinetic modelling and simulation, with more than 500 citations to date.
 
-By utilizing the SDE solver in `pharmsol`, our research group is currently researching the use of SDEs in a non-parametric pharmacokinetic framework. We have also developed internal applications which rely on `pharmsol` for simulating alternative dose regimens to individualize drug therapy.
+By utilizing the SDE solver in `pharmsol`, our research group is currently investigating the use of SDEs in a non-parametric pharmacokinetic framework. We have also developed internal applications which rely on `pharmsol` for simulating alternative dose regimens to individualize drug therapy.
 
 # Data format
 
@@ -93,7 +93,7 @@ Experimental support for stochastic differential equations (SDEs) is available u
 
 # AI usage disclosure
 
-The authors declare that generative AI has been used during software development and manuscript preparation. For software development, generative AI has been used to generate code by instruction, refactor existing code, produce tests and write documentation. For the manuscript, generative AI was used to improve the language of the submission. All use of generative AI was reviewed, edited, and verified by the authors. The authors take full responsibility for the contents of the submission, and for the software within the scopes of the software license.
+The authors declare that generative AI has been used during software development and manuscript preparation. For software development, generative AI has been used to generate code by instruction, refactor existing code, produce tests, and write documentation. For the manuscript, generative AI was used to improve the language of the submission. All use of generative AI was reviewed, edited, and verified by the authors. The authors take full responsibility for the contents of the submission, and for the software within the scopes of the software license.
 
 # Acknowledgements
 
