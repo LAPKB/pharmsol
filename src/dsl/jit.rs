@@ -824,7 +824,7 @@ fn lower_binary(
             })
         }
         AnalyzedBinaryOp::Eq | AnalyzedBinaryOp::NotEq => {
-            let value = lower_equality(builder, lhs, rhs, target_ty, op, span)?;
+            let value = lower_equality(builder, lhs, rhs, op, span)?;
             Ok(LoweredValue {
                 value,
                 ty: ValueType::Bool,
@@ -1010,7 +1010,6 @@ fn lower_equality(
     builder: &mut FunctionBuilder<'_>,
     lhs: LoweredValue,
     rhs: LoweredValue,
-    target_ty: ValueType,
     op: AnalyzedBinaryOp,
     span: Span,
 ) -> Result<Value, JitCompileError> {
@@ -1019,8 +1018,15 @@ fn lower_equality(
         AnalyzedBinaryOp::NotEq => false,
         _ => unreachable!(),
     };
+    let operand_ty = if lhs.ty == ValueType::Real || rhs.ty == ValueType::Real {
+        ValueType::Real
+    } else if lhs.ty == ValueType::Bool && rhs.ty == ValueType::Bool {
+        ValueType::Bool
+    } else {
+        ValueType::Int
+    };
 
-    let comparison = match target_ty {
+    let comparison = match operand_ty {
         ValueType::Real => {
             let lhs = cast_value(builder, lhs, ValueType::Real, span)?;
             let rhs = cast_value(builder, rhs, ValueType::Real, span)?;
@@ -1035,8 +1041,8 @@ fn lower_equality(
             )
         }
         ValueType::Int | ValueType::Bool => {
-            let lhs = cast_value(builder, lhs, target_ty, span)?;
-            let rhs = cast_value(builder, rhs, target_ty, span)?;
+            let lhs = cast_value(builder, lhs, operand_ty, span)?;
+            let rhs = cast_value(builder, rhs, operand_ty, span)?;
             builder.ins().icmp(
                 if predicate {
                     IntCC::Equal

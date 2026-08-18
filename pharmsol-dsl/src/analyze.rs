@@ -1523,16 +1523,19 @@ impl<'a> Analyzer<'a> {
                 Ok(ValueType::Bool)
             }
             AnalyzedBinaryOp::Eq | AnalyzedBinaryOp::NotEq => {
-                if lhs.ty != rhs.ty {
-                    return Err(AnalysisError::new(
+                if (lhs.ty.is_numeric() && rhs.ty.is_numeric())
+                    || (lhs.ty == ValueType::Bool && rhs.ty == ValueType::Bool)
+                {
+                    Ok(ValueType::Bool)
+                } else {
+                    Err(AnalysisError::new(
                         format!(
-                            "equality comparison requires matching operand types, found {:?} and {:?}",
+                            "equality comparison cannot mix boolean and numeric operands, found {:?} and {:?}",
                             lhs.ty, rhs.ty
                         ),
                         span,
-                    ));
+                    ))
                 }
-                Ok(ValueType::Bool)
             }
             AnalyzedBinaryOp::Lt
             | AnalyzedBinaryOp::LtEq
@@ -2835,8 +2838,21 @@ fn fold_binary(op: AnalyzedBinaryOp, lhs: &ConstValue, rhs: &ConstValue) -> Opti
         AnalyzedBinaryOp::And => Some(ConstValue::Bool(
             matches!(lhs, ConstValue::Bool(true)) && matches!(rhs, ConstValue::Bool(true)),
         )),
-        AnalyzedBinaryOp::Eq => Some(ConstValue::Bool(lhs == rhs)),
-        AnalyzedBinaryOp::NotEq => Some(ConstValue::Bool(lhs != rhs)),
+        AnalyzedBinaryOp::Eq | AnalyzedBinaryOp::NotEq => {
+            let equal = match (lhs, rhs) {
+                (ConstValue::Bool(lhs), ConstValue::Bool(rhs)) => lhs == rhs,
+                (ConstValue::Int(lhs), ConstValue::Int(rhs)) => lhs == rhs,
+                (lhs, rhs) if lhs.value_type().is_numeric() && rhs.value_type().is_numeric() => {
+                    lhs.as_f64()? == rhs.as_f64()?
+                }
+                _ => return None,
+            };
+            Some(ConstValue::Bool(match op {
+                AnalyzedBinaryOp::Eq => equal,
+                AnalyzedBinaryOp::NotEq => !equal,
+                _ => unreachable!(),
+            }))
+        }
         AnalyzedBinaryOp::Lt => Some(ConstValue::Bool(lhs.as_f64()? < rhs.as_f64()?)),
         AnalyzedBinaryOp::LtEq => Some(ConstValue::Bool(lhs.as_f64()? <= rhs.as_f64()?)),
         AnalyzedBinaryOp::Gt => Some(ConstValue::Bool(lhs.as_f64()? > rhs.as_f64()?)),
