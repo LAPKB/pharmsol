@@ -1,4 +1,4 @@
-//! DSL bench matrix (feature-gated): JIT, native AoT across all workloads + solvers.
+//! DSL bench matrix (feature-gated): JIT across all workloads + solvers.
 //! Mirrors `native_matrix.rs` but compiles models from DSL source.
 //!
 //! IDs:
@@ -8,15 +8,13 @@
 //! - `dsl/likelihood-matrix` → `{workload}/{kind}/{backend}`
 
 use std::hint::black_box;
-use std::path::PathBuf;
 use std::time::Duration;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, SamplingMode};
-use tempfile::TempDir;
 
 use pharmsol::dsl::{
-    compile_module_source_to_runtime, CompiledRuntimeModel, NativeAnalyticalModel,
-    NativeAotCompileOptions, NativeOdeModel, NativeSdeModel, RuntimeCompilationTarget,
+    compile_module_source_to_runtime, CompiledRuntimeModel, NativeAnalyticalModel, NativeOdeModel,
+    NativeSdeModel, RuntimeCompilationTarget,
 };
 use pharmsol::prelude::*;
 use pharmsol::{Cache, Parameters};
@@ -31,21 +29,17 @@ const MATRIX_N_SUBJECTS: usize = 32;
 const MATRIX_N_SUPPORT: usize = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // Aot temporarily disabled in `Backend::all`
 enum Backend {
     Jit,
-    Aot,
 }
 
 impl Backend {
     fn label(self) -> &'static str {
         match self {
             Self::Jit => "dsl-jit",
-            Self::Aot => "dsl-aot",
         }
     }
 
-    // AoT backend temporarily disabled — too slow for the current matrix.
     fn all() -> [Backend; 1] {
         [Backend::Jit]
     }
@@ -70,52 +64,19 @@ impl CacheState {
     }
 }
 
-/// One `TempDir` shared across the bench binary; each compile gets a fresh subdir.
-struct AotWorkspace {
-    root: TempDir,
-    counter: std::cell::Cell<usize>,
-}
-
-impl AotWorkspace {
-    fn new() -> Self {
-        Self {
-            root: tempfile::Builder::new()
-                .prefix("pharmsol-bench-dsl-aot-")
-                .tempdir()
-                .expect("create AoT workspace tempdir"),
-            counter: std::cell::Cell::new(0),
-        }
-    }
-
-    fn fresh(&self, stem: &str) -> PathBuf {
-        let n = self.counter.get();
-        self.counter.set(n + 1);
-        self.root.path().join(format!("{stem}-{n:04}"))
-    }
-}
-
 /// Compile `(workload, kind)` with `backend` and return the full `CompiledRuntimeModel`.
-fn compile_runtime(
-    workload: Workload,
-    kind: SolverKind,
-    backend: Backend,
-    aot: &AotWorkspace,
-) -> CompiledRuntimeModel {
+fn compile_runtime(workload: Workload, kind: SolverKind, backend: Backend) -> CompiledRuntimeModel {
     let source = dsl_source(workload, kind);
     let name = dsl_model_name(workload, kind);
     let target = match backend {
         Backend::Jit => RuntimeCompilationTarget::Jit,
-        Backend::Aot => {
-            let dir = aot.fresh(&format!("{}-{}", workload.label(), kind.label()));
-            RuntimeCompilationTarget::NativeAot(NativeAotCompileOptions::new(dir))
-        }
     };
     compile_module_source_to_runtime(source, Some(name), target, |_, _| {})
         .unwrap_or_else(|e| panic!("compile {} via {} failed: {e:?}", name, backend.label()))
 }
 
-fn compile_ode(workload: Workload, backend: Backend, aot: &AotWorkspace) -> NativeOdeModel {
-    match compile_runtime(workload, SolverKind::Ode, backend, aot) {
+fn compile_ode(workload: Workload, backend: Backend) -> NativeOdeModel {
+    match compile_runtime(workload, SolverKind::Ode, backend) {
         CompiledRuntimeModel::Ode(model) => model,
         other => panic!(
             "expected Ode model for {}, got {:?}",
@@ -125,12 +86,8 @@ fn compile_ode(workload: Workload, backend: Backend, aot: &AotWorkspace) -> Nati
     }
 }
 
-fn compile_analytical(
-    workload: Workload,
-    backend: Backend,
-    aot: &AotWorkspace,
-) -> NativeAnalyticalModel {
-    match compile_runtime(workload, SolverKind::Analytical, backend, aot) {
+fn compile_analytical(workload: Workload, backend: Backend) -> NativeAnalyticalModel {
+    match compile_runtime(workload, SolverKind::Analytical, backend) {
         CompiledRuntimeModel::Analytical(model) => model,
         other => panic!(
             "expected Analytical model for {}, got {:?}",
@@ -140,8 +97,8 @@ fn compile_analytical(
     }
 }
 
-fn compile_sde(workload: Workload, backend: Backend, aot: &AotWorkspace) -> NativeSdeModel {
-    match compile_runtime(workload, SolverKind::Sde, backend, aot) {
+fn compile_sde(workload: Workload, backend: Backend) -> NativeSdeModel {
+    match compile_runtime(workload, SolverKind::Sde, backend) {
         CompiledRuntimeModel::Sde(model) => model,
         other => panic!(
             "expected Sde model for {}, got {:?}",
@@ -175,15 +132,13 @@ fn compile_group(c: &mut Criterion) {
     group.sampling_mode(SamplingMode::Flat);
     group.sample_size(10);
     group.measurement_time(Duration::from_secs(5));
-    // Each compile leaks an executable mmap (JIT) or runs rustc (AoT). Without
-    // a cap, a fast JIT compile (~60 µs) lets Criterion request hundreds of
-    // thousands of iterations per cell and exhausts the runner's executable
-    // memory pool / `vm.max_map_count`. We hard-cap real iterations per
-    // Criterion batch to `MAX_ITERS_PER_BATCH` and scale the reported elapsed
-    // time linearly so per-iteration timings stay accurate.
+    // Each compile leaks an executable mmap. Without a cap, a fast JIT compile
+    // (~60 µs) lets Criterion request hundreds of thousands of iterations per
+    // cell and exhausts the runner's executable memory pool /
+    // `vm.max_map_count`. We hard-cap real iterations per Criterion batch to
+    // `MAX_ITERS_PER_BATCH` and scale the reported elapsed time linearly so
+    // per-iteration timings stay accurate.
     const MAX_ITERS_PER_BATCH: u64 = 25;
-
-    let aot = AotWorkspace::new();
 
     for workload in Workload::all() {
         for kind in SolverKind::all() {
@@ -203,7 +158,6 @@ fn compile_group(c: &mut Criterion) {
                                 black_box(workload),
                                 black_box(kind),
                                 black_box(backend),
-                                &aot,
                             ));
                         }
                         let elapsed = start.elapsed();
@@ -223,8 +177,6 @@ fn predictions_group(c: &mut Criterion) {
     let mut group = c.benchmark_group("dsl/predictions");
     group.sampling_mode(SamplingMode::Flat);
 
-    let aot = AotWorkspace::new();
-
     for workload in Workload::all() {
         let subject = subject_for_predictions(workload);
         for kind in SolverKind::all() {
@@ -240,10 +192,8 @@ fn predictions_group(c: &mut Criterion) {
                     match kind {
                         SolverKind::Ode => {
                             let model = match cache {
-                                CacheState::Hot => compile_ode(workload, backend, &aot),
-                                CacheState::Cold => {
-                                    compile_ode(workload, backend, &aot).disable_cache()
-                                }
+                                CacheState::Hot => compile_ode(workload, backend),
+                                CacheState::Cold => compile_ode(workload, backend).disable_cache(),
                             };
                             let theta = ode_parameters(&model, workload);
                             group.bench_function(bench_id, |b| {
@@ -261,9 +211,9 @@ fn predictions_group(c: &mut Criterion) {
                         }
                         SolverKind::Analytical => {
                             let model = match cache {
-                                CacheState::Hot => compile_analytical(workload, backend, &aot),
+                                CacheState::Hot => compile_analytical(workload, backend),
                                 CacheState::Cold => {
-                                    compile_analytical(workload, backend, &aot).disable_cache()
+                                    compile_analytical(workload, backend).disable_cache()
                                 }
                             };
                             let theta = analytical_parameters(&model, workload);
@@ -282,10 +232,8 @@ fn predictions_group(c: &mut Criterion) {
                         }
                         SolverKind::Sde => {
                             let model = match cache {
-                                CacheState::Hot => compile_sde(workload, backend, &aot),
-                                CacheState::Cold => {
-                                    compile_sde(workload, backend, &aot).disable_cache()
-                                }
+                                CacheState::Hot => compile_sde(workload, backend),
+                                CacheState::Cold => compile_sde(workload, backend).disable_cache(),
                             };
                             let theta = sde_parameters(&model, workload);
                             group.bench_function(bench_id, |b| {
@@ -316,7 +264,6 @@ fn log_likelihood_group(c: &mut Criterion) {
     let mut group = c.benchmark_group("dsl/log-likelihood");
     group.sampling_mode(SamplingMode::Flat);
 
-    let aot = AotWorkspace::new();
     let error_models = assay_error_models();
 
     for workload in Workload::all() {
@@ -334,10 +281,8 @@ fn log_likelihood_group(c: &mut Criterion) {
                     match kind {
                         SolverKind::Ode => {
                             let model = match cache {
-                                CacheState::Hot => compile_ode(workload, backend, &aot),
-                                CacheState::Cold => {
-                                    compile_ode(workload, backend, &aot).disable_cache()
-                                }
+                                CacheState::Hot => compile_ode(workload, backend),
+                                CacheState::Cold => compile_ode(workload, backend).disable_cache(),
                             };
                             let theta = ode_parameters(&model, workload);
                             group.bench_function(bench_id, |b| {
@@ -356,9 +301,9 @@ fn log_likelihood_group(c: &mut Criterion) {
                         }
                         SolverKind::Analytical => {
                             let model = match cache {
-                                CacheState::Hot => compile_analytical(workload, backend, &aot),
+                                CacheState::Hot => compile_analytical(workload, backend),
                                 CacheState::Cold => {
-                                    compile_analytical(workload, backend, &aot).disable_cache()
+                                    compile_analytical(workload, backend).disable_cache()
                                 }
                             };
                             let theta = analytical_parameters(&model, workload);
@@ -378,10 +323,8 @@ fn log_likelihood_group(c: &mut Criterion) {
                         }
                         SolverKind::Sde => {
                             let model = match cache {
-                                CacheState::Hot => compile_sde(workload, backend, &aot),
-                                CacheState::Cold => {
-                                    compile_sde(workload, backend, &aot).disable_cache()
-                                }
+                                CacheState::Hot => compile_sde(workload, backend),
+                                CacheState::Cold => compile_sde(workload, backend).disable_cache(),
                             };
                             let theta = sde_parameters(&model, workload);
                             group.bench_function(bench_id, |b| {
@@ -417,7 +360,6 @@ fn likelihood_matrix_group(c: &mut Criterion) {
     group.sample_size(10);
     group.measurement_time(Duration::from_secs(20));
 
-    let aot = AotWorkspace::new();
     let error_models = assay_error_models();
 
     for workload in Workload::all() {
@@ -433,7 +375,7 @@ fn likelihood_matrix_group(c: &mut Criterion) {
                 ));
                 match kind {
                     SolverKind::Ode => {
-                        let model = compile_ode(workload, backend, &aot);
+                        let model = compile_ode(workload, backend);
                         group.bench_function(bench_id, |b| {
                             b.iter(|| {
                                 black_box(
@@ -450,7 +392,7 @@ fn likelihood_matrix_group(c: &mut Criterion) {
                         });
                     }
                     SolverKind::Analytical => {
-                        let model = compile_analytical(workload, backend, &aot);
+                        let model = compile_analytical(workload, backend);
                         group.bench_function(bench_id, |b| {
                             b.iter(|| {
                                 black_box(
@@ -467,7 +409,7 @@ fn likelihood_matrix_group(c: &mut Criterion) {
                         });
                     }
                     SolverKind::Sde => {
-                        let model = compile_sde(workload, backend, &aot);
+                        let model = compile_sde(workload, backend);
                         group.bench_function(bench_id, |b| {
                             b.iter(|| {
                                 black_box(
