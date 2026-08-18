@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.8](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.28.7...pharmsol-v0.28.8) - 2026-08-18
+
+### Fixed
+
+- numeric equality in DSL ([#342](https://github.com/LAPKB/pharmsol/pull/342))
+- fix BDF restart after bolus events ([#341](https://github.com/LAPKB/pharmsol/pull/341))
+
+### Other
+
+- AEiC comments ([#340](https://github.com/LAPKB/pharmsol/pull/340))
+- Bump codecov/codecov-action from 5 to 7 ([#337](https://github.com/LAPKB/pharmsol/pull/337))
+
 ## [0.28.7](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.28.6...pharmsol-v0.28.7) - 2026-08-12
 
 ### Added
