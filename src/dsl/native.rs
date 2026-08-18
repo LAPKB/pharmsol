@@ -1358,9 +1358,9 @@ impl NativeOdeModel {
         let infusion_boundary_times = solver.problem().eqn.infusion_boundary_times();
         let mut infusion_boundary_cursor = 0usize;
         let mut index = 0usize;
-        // Set when the previous stop was an infusion boundary: the solver must
-        // be restarted before the first step of the next segment (the RHS is
-        // discontinuous at the boundary). Deferred until `set_stop_time`
+        // Set when the previous event changed the state or the previous stop
+        // was an infusion boundary: the solver must be restarted before the
+        // first step of the next segment. Deferred until `set_stop_time`
         // succeeds so a stop that is already reached does not trigger a
         // restart for a zero-length segment.
         let mut pending_reinit = false;
@@ -1381,6 +1381,7 @@ impl NativeOdeModel {
                         input,
                         bolus.amount(),
                     )?;
+                    pending_reinit = true;
                 }
                 Event::Infusion(_) => {}
                 Event::Observation(observation) => {
