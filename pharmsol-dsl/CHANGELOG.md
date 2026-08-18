@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.8](https://github.com/LAPKB/pharmsol/compare/pharmsol-dsl-v0.28.7...pharmsol-dsl-v0.28.8) - 2026-08-18
+
+### Fixed
+
+- numeric equality in DSL ([#342](https://github.com/LAPKB/pharmsol/pull/342))
+
 ## [0.28.7](https://github.com/LAPKB/pharmsol/compare/pharmsol-dsl-v0.28.6...pharmsol-dsl-v0.28.7) - 2026-08-12
 
 ### Other
