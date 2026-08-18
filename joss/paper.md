@@ -35,61 +35,61 @@ bibliography: paper.bib
 
 # Statement of need
 
-Pharmacokinetic and pharmacodynamic modeling and simulation are computationally intense when applied to modern, complex, and sophisticated dosing regimens, mechanistic models, and individualized approaches. Unlike comprehensive pharmacometric platforms such as NONMEM [@nonmem], Phoenix NLME [@phoenix], or Monolix [@monolix], `pharmsol` is purpose-built as a simulation engine that pharmacometricians can leverage to rapidly execute simulations for individuals or populations with pre- and user-defined models.
+Pharmacokinetic and pharmacodynamic modeling and simulation are computationally intensive when applied to modern, complex, and sophisticated dosing regimens, mechanistic models, and individualized approaches. Unlike comprehensive pharmacometric platforms such as NONMEM [@nonmem], Phoenix NLME [@phoenix], or Monolix [@monolix], `pharmsol` is purpose-built as a simulation engine that pharmacometricians can leverage to rapidly execute simulations for individuals or populations with pre- and user-defined models.
 
-As a fully open-source solution, `pharmsol` empowers users to inspect, modify, and extend the simulation capabilities without licensing constraints. Users can define custom models by specifying their own differential equations as closures, or use the provided analytical solutions for standard compartmental models. Additionally, `pharmsol` can be integrated in more user-friendly languages such as R using `extendr` [@extendr], making it accessible to pharmacometricians who may prefer higher-level interfaces.
+As a fully open-source solution, `pharmsol` empowers users to inspect, modify, and extend the simulation capabilities without licensing constraints. Users can define custom models by specifying their own differential equations as closures, or use the provided analytical solutions for standard compartmental models. Additionally, `pharmsol` can be integrated into more user-friendly languages such as R using `extendr` [@extendr], making it accessible to pharmacometricians who may prefer higher-level interfaces.
 
 # State of the field
 
-Several tools exist for performing pharmacokinetic and pharmacodynamic modelling and simulation. Most well-known are the full-suite applications such as NONMEM [@nonmem], Phoenix NLME [@phoenix], Monolix [@monolix], and Pumas [@rackauckas2020pumas]. These are generally commercial or proprietary, while open-source alternatives include the R packages `Pmetrics` [@pmetrics] and `mrgsolve` [@mrgsolve], as well as implementations in Python and Julia. The latter two are powered by Fortran and C++, respectively.
+Several tools exist for performing pharmacokinetic and pharmacodynamic modeling and simulation. The most well-known are the full-suite applications such as NONMEM [@nonmem], Phoenix NLME [@phoenix], Monolix [@monolix], and Pumas [@rackauckas2020pumas]. These are generally commercial or proprietary, while open-source alternatives include the R packages `Pmetrics` [@pmetrics] and `mrgsolve` [@mrgsolve], as well as implementations in Python and Julia. The latter two are powered by Fortran and C++, respectively.
 
 The choice to develop `pharmsol` as a new library rather than contribute to the existing solutions is motivated by several factors. First, Rust provides compile-time memory safety guarantees which are not available in Fortran or C++, without sacrificing performance. This is especially important for software used in healthcare settings. Second, existing alternatives are coupled to their parent frameworks, and may be difficult to integrate with new solutions or software.
 
-The aim of `pharmsol` is to provide developers of higher-level software with a library for performing efficient and memory-safe pharmacokinetic modeling and simulation. Importantly, `pharmsol` is open-source released under a GPL-3.0 license, allowing developers to inspect, extend, and integrate the library into new or existing solutions, given that derived works remain open-source.
+The aim of `pharmsol` is to provide developers of higher-level software with a library for performing efficient and memory-safe pharmacokinetic modeling and simulation. Importantly, `pharmsol` is open-source, released under a GPL-3.0 license, allowing developers to inspect, extend, and integrate the library into new or existing solutions, provided that derived works remain open-source.
 
 # Software design
 
 To the authors' knowledge, `pharmsol` is the first software written in Rust for pharmacokinetic modeling and simulation. The design principle of `pharmsol` is to provide researchers and pharmacometricians with a flexible and efficient library for solving pharmacokinetic problems.
 
-These problems are defined by two key aspects: the pharmacokinetic data, and the structural model. While the data structure is explained in detail below, the structural model is more complex. In `pharmsol`, models are defined using a set of closures, providing methods to define the set of equations that describe the mass transfer of drug, as well as initial conditions and output equations, i.e. detailing the initial and observed states of the system. Bioavailability terms and lag-time of absorption are also supported. Covariates may be applied on both parameters and state values. Importantly, `pharmsol` provides both linear interpolation and carry-forward for covariates, both common in population pharmacokinetic models.
+These problems are defined by two key aspects: the pharmacokinetic data, and the structural model. While the data structure is explained in detail below, the structural model is more complex. In `pharmsol`, models are defined using a set of closures, providing methods to define the set of equations that describe the mass transfer of drug, as well as initial conditions and output equations, i.e., detailing the initial and observed states of the system. Bioavailability terms and lag-time of absorption are also supported. Covariates may be applied to both parameters and state values. Importantly, `pharmsol` provides both linear interpolation and carry-forward for covariates, both common in population pharmacokinetic models.
 
-The three different solver types, i.e. analytical, ODE, and SDE based, are all built around a common `Equation` trait. This gives `pharmsol` a modular design, allowing users to easily extend the library with new solvers or to rely on it while being agnostic on the underlying solver type. This flexibility is particularly useful when integrating `pharmsol` with other software, as it allows users to select the most appropriate solver for their specific use case (e.g., speed vs. model complexity).
+The three different solver types, i.e., analytical, ODE, and SDE based, are all built around a common `Equation` trait. This gives `pharmsol` a modular design, allowing users to easily extend the library with new solvers or to rely on it while remaining agnostic to the underlying solver type. This flexibility is particularly useful when integrating `pharmsol` with other software, as it allows users to select the most appropriate solver for their specific use case (e.g., speed vs. model complexity).
 
 # Research impact statement
 
-As a tool for pharmacokinetic modelling and simulation, `pharmsol` has already demonstrated research impact. Already, it has been used to generate results in scientific publications, such as the creation of a new algorithm for non-parametric parameter estimation [@npod]. Perhaps most importantly, `pharmsol` is used as the simulation engine for `PMcore` which powers `Pmetrics` [@pmetrics] - the _de facto_ R package for non-parametric population pharmacokinetic modelling and simulation, with more than 500 citations to date.
+As a tool for pharmacokinetic modeling and simulation, `pharmsol` has already demonstrated research impact. It has been used to generate results in scientific publications, such as the creation of a new algorithm for non-parametric parameter estimation [@npod]. Perhaps most importantly, `pharmsol` is used as the simulation engine for `PMcore`, which powers `Pmetrics` [@pmetrics] — the _de facto_ R package for non-parametric population pharmacokinetic modeling and simulation, with more than 500 citations to date.
 
 By utilizing the SDE solver in `pharmsol`, our research group is currently investigating the use of SDEs in a non-parametric pharmacokinetic framework. We have also developed internal applications which rely on `pharmsol` for simulating alternative dose regimens to individualize drug therapy.
 
 # Data format
 
-`pharmsol` is designed around a hierarchical data structure that models the typical organization of pharmacometric data. The primary data struct, `Data`, is a collection of `Subject`s, which may have one or more `Occasion`s, i.e. separate pharmacokinetic investigations. Each occasion consists of one or more `Event`s, e.g. an instantaneous dose (bolus), infusions of drug, or observed concentrations at given times.
+`pharmsol` is designed around a hierarchical data structure that models the typical organization of pharmacometric data. The primary data struct, `Data`, is a collection of `Subject`s, which may have one or more `Occasion`s, i.e., separate pharmacokinetic investigations. Each occasion consists of one or more `Event`s, e.g., an instantaneous dose (bolus), an infusion of drug, or an observed concentration at a given time.
 
 ```text
 Data → Subject → Occasion → Event (Bolus, Infusion, Observation)
 ```
 
-Currently, `pharmsol` provides methods to parse the Pmetrics [@pmetrics] data format. In the future, we aim to also support additional formats, such as those used by NONMEM, Monolix [@monolix], and more. Data may also be built using a provided builder-pattern, providing a flexible method for defining subjects programmatically. This is especially useful when integrating `pharmsol` with third-party software, as it allows for reading and generating data that is not in an already supported format.
+Currently, `pharmsol` provides methods to parse the `Pmetrics` [@pmetrics] data format. In the future, we aim to also support additional formats, such as those used by NONMEM [@nonmem], Monolix [@monolix], and more. Data may also be built using a provided builder pattern, providing a flexible method for defining subjects programmatically. This is especially useful when integrating `pharmsol` with third-party software, as it allows for reading and generating data that is not in an already supported format.
 
 # Supported equation formats
 
-As stated before, the `Equation` trait provides the architectural backbone for simulating PK/PD profiles. Pharmsol currently also provides three solvers implementing this trait: analytical solutions, ordinary differential equations, and experimental support for stochastic differential equations.
+As stated before, the `Equation` trait provides the architectural backbone for simulating PK/PD profiles. `pharmsol` currently provides three solvers implementing this trait: analytical solutions, ordinary differential equations, and experimental support for stochastic differential equations.
 
-## Analytical Solutions
+## Analytical solutions
 
-For standard compartmental models, `pharmsol` provides closed-form solutions for one-, two- and three-compartment models, with and without oral absorption. These have been verified against their differential equation counterparts. Benchmarks demonstrate 20-33× speedups compared to equivalent ODE formulations without loss of precision (see repository benchmarks for details). Additional analytical solutions will be added in future versions.
+For standard compartmental models, `pharmsol` provides closed-form solutions for one-, two-, and three-compartment models, with and without oral absorption. These have been verified against their differential equation counterparts. Benchmarks demonstrate 20 to 33 times speedups compared to equivalent ODE formulations without loss of precision (see repository benchmarks for details). Additional analytical solutions will be added in future versions.
 
-## Ordinary Differential Equations
+## Ordinary differential equations
 
 For more complex or non-standard models, `pharmsol` supports user-defined ordinary differential equations (ODEs). The numerical integration is performed using the `diffsol` library [@diffsol], which provides efficient BDF solvers suitable for the stiff systems often encountered in pharmacometric modeling.
 
-## Stochastic Differential Equations
+## Stochastic differential equations
 
-Experimental support for stochastic differential equations (SDEs) is available using the Euler-Maruyama method. SDEs allow modeling of within-subject variability as a continuous stochastic process. However, particular care should be taken if applying SDEs in a non-parametric approach to population pharmacokinetic modeling, such as when using the non-parametric adaptive grid algorithm (NPAG) [@npag] for parameter estimation.
+Experimental support for stochastic differential equations (SDEs) is available using the Euler–Maruyama method. SDEs allow modeling of within-subject variability as a continuous stochastic process. However, particular care should be taken if applying SDEs in a non-parametric approach to population pharmacokinetic modeling, such as when using the non-parametric adaptive grid algorithm (NPAG) [@npag] for parameter estimation.
 
 # Conclusion and Future Work
 
-`pharmsol` aims to support the evolving needs of pharmacometric research by providing a modern, efficient platform that can adapt to the increasing complexity of pharmaceutical development while remaining accessible through its open-source licensing model. Future development will focus on additional analytical model implementations, support for common data formats used by other pharmacometric software, non-compartmental analysis and continued performance improvements.
+`pharmsol` aims to support the evolving needs of pharmacometric research by providing a modern, efficient platform that can adapt to the increasing complexity of pharmaceutical development while remaining accessible through its open-source licensing model. Future development will focus on additional analytical model implementations, support for common data formats used by other pharmacometric software, non-compartmental analysis, and continued performance improvements.
 
 # AI usage disclosure
 
@@ -99,6 +99,6 @@ The authors declare that generative AI has been used during software development
 
 We acknowledge the intellectual contributions to the package by members of the Laboratory of Applied Pharmacokinetics and Bioinformatics (LAPKB), and feedback from the pharmacokinetics research group at the University of Oslo.
 
-We are especially grateful to the authors of the packages on which `pharmsol` relies, in particular Martin Robinson (diffsol), Sarah Quinones (faer), and Mossa Reimert (extendr). Their help and discussions are much appreciated.
+We are especially grateful to the authors of the packages on which `pharmsol` relies, in particular Martin Robinson (diffsol), Sarah Quiñones El Kazdadi (faer), and Mossa Reimert (extendr). Their help and discussions are much appreciated.
 
 # References
