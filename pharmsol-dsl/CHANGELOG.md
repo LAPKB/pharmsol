@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.7](https://github.com/LAPKB/pharmsol/compare/pharmsol-dsl-v0.28.6...pharmsol-dsl-v0.28.7) - 2026-08-12
+
+### Other
+
+- Remove WASM ([#335](https://github.com/LAPKB/pharmsol/pull/335))
+- Feat/if braces ([#330](https://github.com/LAPKB/pharmsol/pull/330))
+
+## [0.28.5](https://github.com/LAPKB/pharmsol/compare/pharmsol-dsl-v0.28.4...pharmsol-dsl-v0.28.5) - 2026-08-06
+
+### Fixed
+
+- Allow boluses and infusions to go to the same comparment ([#326](https://github.com/LAPKB/pharmsol/pull/326))
+
 ## [0.28.3](https://github.com/LAPKB/pharmsol/compare/pharmsol-dsl-v0.28.2...pharmsol-dsl-v0.28.3) - 2026-07-28
 
 ### Added

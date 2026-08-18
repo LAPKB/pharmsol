@@ -82,8 +82,6 @@
 //! - `dsl-jit`: adds in-process JIT compilation
 //! - `dsl-aot`: adds native ahead-of-time artifact compilation
 //! - `dsl-aot-load`: adds native artifact loading
-//! - `dsl-wasm-compile`: adds WASM artifact generation
-//! - `dsl-wasm`: adds WASM runtime loading and execution
 //!
 //! ## Labels And Indices
 //!
@@ -96,8 +94,8 @@
 //! ## Platform Notes
 //!
 //! The main `data`, `simulator`, `nca`, and `optimize` modules are documented
-//! for native targets. Some surfaces are not built on `wasm32-unknown-unknown`.
-//! The DSL runtime also has feature-specific platform limits.
+//! for native targets. The DSL runtime also has feature-specific platform
+//! limits.
 //!
 //! ## Next Stops
 //!
@@ -107,46 +105,31 @@
 //! - Open [`nca`] if you need exposure and terminal metrics.
 //! - Use `pharmsol::dsl` if the model comes from source text instead of Rust code.
 
+// Lets `ode!`, `analytical!`, and `sde!` expand to `::pharmsol::…` inside this crate too.
+extern crate self as pharmsol;
+
 #[cfg(feature = "dsl-aot")]
 mod build_support;
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub mod data;
 #[cfg(feature = "dsl-core")]
 pub mod dsl;
 pub mod error;
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub mod nca;
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub mod optimize;
 mod parameter_order;
 mod parameters;
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub mod simulator;
-#[cfg(all(
-    test,
-    any(
-        feature = "dsl-jit",
-        all(feature = "dsl-wasm", feature = "dsl-wasm-compile")
-    )
-))]
+#[cfg(all(test, feature = "dsl-jit"))]
 mod test_fixtures;
 
 //extension traits
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use crate::data::builder::SubjectBuilderExt;
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use crate::data::Interpolation::*;
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use crate::data::*;
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use crate::optimize::effect::get_e2;
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use crate::optimize::parameters::ParameterOptimizer;
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use crate::simulator::equation::analytical::*;
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use crate::simulator::equation::metadata;
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use crate::simulator::equation::{
     self,
     ode::{ExplicitRkTableau, OdeSolver, SdirkTableau},
@@ -154,15 +137,160 @@ pub use crate::simulator::equation::{
     NameDomain, Predictions, RouteInputPolicy, RouteKind, State, ValidatedModelMetadata, ODE, SDE,
 };
 pub use error::PharmsolError;
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use nalgebra::dmatrix;
 pub use parameters::{ParameterError, ParameterOrder, Parameters};
-pub use pharmsol_macros::{analytical, ode, sde};
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+#[doc(hidden)]
+pub use pharmsol_macros::{analytical as __analytical_impl, ode as __ode_impl, sde as __sde_impl};
 pub use std::collections::HashMap;
 
+/// Define an ODE (ordinary differential equation) model.
+///
+/// This is the primary entry point for building pharmacometric ODE models.
+/// The macro generates and validates an `ODE` model and automatically generates its metadata
+/// (parameter names, state labels, output labels, route declarations).
+///
+/// # Fields
+///
+/// | Field | Required | Description |
+/// |-------|----------|-------------|
+/// | `name` | yes | Model name (`"my_model"`) |
+/// | `params` | yes | Parameter identifiers `[ka, ke, v]` |
+/// | `covariates` | no | Covariate identifiers `[wt, age]` |
+/// | `states` | yes | State identifiers `[gut, central]` |
+/// | `outputs` | yes | Output identifiers `[cp]` |
+/// | `routes` | no | Route declarations `[bolus(oral) -> gut, infusion(iv) -> central]` |
+/// | `diffeq` | yes | Closure `\|x, p, t, dx, cov\| { … }` writing derivatives into `dx` |
+/// | `lag` | no | Closure returning route‑specific lag times via `lag! { route => expr }` |
+/// | `fa` | no | Closure returning bioavailability fractions |
+/// | `init` | no | Closure setting initial state values |
+/// | `out` | yes | Closure `\|x, p, t, cov, y\| { … }` mapping states to outputs |
+/// | `crate` | no | Escape hatch to override the resolved `pharmsol` path, e.g. `"my_vendor::pharmsol"` |
+///
+/// # Example
+///
+/// ```ignore
+/// let model = ode! {
+///     name: "one_cmt_iv",
+///     params: [ke, v],
+///     states: [central],
+///     outputs: [cp],
+///     routes: [infusion(iv) -> central],
+///     diffeq: |x, _p, _t, dx, _cov| {
+///         dx[central] = -ke * x[central];
+///     },
+///     out: |x, _p, _t, _cov, y| {
+///         y[cp] = x[central] / v;
+///     },
+/// };
+/// ```
+#[macro_export]
+macro_rules! ode {
+    ($($body:tt)*) => {
+        $crate::__ode_impl! { @pharmsol_crate($crate) $($body)* }
+    };
+}
+
+/// Define an analytical (closed‑form) PK model.
+///
+/// Builds a model that uses a built‑in analytical solution. The macro validates that the declared parameters
+/// match the chosen analytical solution's requirements and generates an `Analytical` value
+/// with full metadata.
+///
+/// # Fields
+///
+/// | Field | Required | Description |
+/// |-------|----------|-------------|
+/// | `name` | yes | Model name |
+/// | `params` | yes | Parameter identifiers |
+/// | `derived` | no | Derived parameter identifiers (computed in `derive`) |
+/// | `covariates` | no | Covariate identifiers |
+/// | `states` | yes | State identifiers |
+/// | `outputs` | yes | Output identifiers |
+/// | `routes` | no | Route declarations |
+/// | `structure` | yes | Built‑in function name, e.g. `one_compartment` or `one_compartment_with_absorption` |
+/// | `derive` | no | Closure `\|t\| { … }` computing derived parameters from primaries and covariates |
+/// | `lag` | no | Lag‑time closure |
+/// | `fa` | no | Bioavailability closure |
+/// | `init` | no | Initial‑state closure |
+/// | `out` | yes | Output mapping closure |
+/// | `crate` | no | Escape hatch to override the resolved `pharmsol` path |
+///
+/// # Example
+///
+/// ```ignore
+/// let model = analytical! {
+///     name: "one_cmt_oral",
+///     params: [ka, ke, v],
+///     states: [gut, central],
+///     outputs: [cp],
+///     routes: [bolus(oral) -> gut],
+///     structure: one_compartment_with_absorption,
+///     out: |x, _t, y| {
+///         y[cp] = x[central] / v;
+///     },
+/// };
+/// ```
+#[macro_export]
+macro_rules! analytical {
+    ($($body:tt)*) => {
+        $crate::__analytical_impl! { @pharmsol_crate($crate) $($body)* }
+    };
+}
+
+/// Define an SDE (stochastic differential equation) model.
+///
+/// Builds a particle‑based stochastic model with a drift term, a diffusion
+/// term, and a configurable number of particles. The macro generates an `SDE`
+/// value with full metadata.
+///
+/// # Fields
+///
+/// | Field | Required | Description |
+/// |-------|----------|-------------|
+/// | `name` | yes | Model name |
+/// | `params` | yes | Parameter identifiers |
+/// | `covariates` | no | Covariate identifiers |
+/// | `states` | yes | State identifiers |
+/// | `outputs` | yes | Output identifiers |
+/// | `particles` | yes | Number of particles for the simulation |
+/// | `routes` | no | Route declarations |
+/// | `drift` | yes | Closure `\|x, p, t, dx, cov\| { … }` for the deterministic drift |
+/// | `diffusion` | yes | Closure `\|p, sigma\| { … }` setting per‑state diffusion coefficients |
+/// | `lag` | no | Lag‑time closure |
+/// | `fa` | no | Bioavailability closure |
+/// | `init` | no | Initial‑state closure |
+/// | `out` | yes | Output mapping closure |
+/// | `crate` | no | Escape hatch to override the resolved `pharmsol` path |
+///
+/// # Example
+///
+/// ```ignore
+/// let model = sde! {
+///     name: "one_cmt_sde",
+///     params: [ke, sigma_ke, v],
+///     states: [central],
+///     outputs: [cp],
+///     particles: 16,
+///     routes: [infusion(iv) -> central],
+///     drift: |x, _p, _t, dx, _cov| {
+///         dx[central] = -ke * x[central];
+///     },
+///     diffusion: |_p, sigma| {
+///         sigma[central] = sigma_ke;
+///     },
+///     out: |x, _p, _t, _cov, y| {
+///         y[cp] = x[central] / v;
+///     },
+/// };
+/// ```
+#[macro_export]
+macro_rules! sde {
+    ($($body:tt)*) => {
+        $crate::__sde_impl! { @pharmsol_crate($crate) $($body)* }
+    };
+}
+
 #[doc(hidden)]
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub mod __macro_support {
     pub fn vector_from_values(values: Vec<f64>) -> crate::simulator::V {
         nalgebra::DVector::from_vec(values).into()
@@ -195,7 +323,6 @@ pub mod __macro_support {
 ///
 /// assert_eq!(subject.id(), "patient_001");
 /// ```
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub mod prelude {
 
     pub use crate::Parameters;
@@ -206,7 +333,7 @@ pub mod prelude {
     pub mod data {
         pub use crate::data::{
             error_model::{AssayErrorModel, AssayErrorModels},
-            parser::{read_pmetrics, DataRow, DataRowBuilder},
+            parser::{read_pmetrics, DataError, DataRow, DataRowBuilder},
             residual_error::{ResidualErrorModel, ResidualErrorModels},
             Covariates, Data, Event, Occasion, Subject,
         };

@@ -2,6 +2,7 @@
 
 [![Build](https://github.com/LAPKB/pharmsol/actions/workflows/build.yml/badge.svg)](https://github.com/LAPKB/pharmsol/actions/workflows/build.yml)
 [![Documentation](https://github.com/LAPKB/pharmsol/actions/workflows/docs.yml/badge.svg)](https://github.com/LAPKB/pharmsol/actions/workflows/docs.yml)
+[![codecov](https://codecov.io/gh/LAPKB/pharmsol/branch/main/graph/badge.svg)](https://codecov.io/gh/LAPKB/pharmsol)
 [![crates.io](https://img.shields.io/crates/v/pharmsol.svg)](https://crates.io/crates/pharmsol)
 
 A high-performance Rust library for pharmacokinetic/pharmacodynamic (PK/PD) simulation using analytical solutions, ordinary differential equations (ODEs), or stochastic differential equations (SDEs).
@@ -108,19 +109,17 @@ see [docs/analytical-authoring-migration.md](docs/analytical-authoring-migration
 
 If the model needs to be loaded or compiled at runtime, pharmsol also provides a DSL with
 the same broad modeling coverage: ODE, analytical, and SDE authoring. The DSL can target
-an in-process JIT runtime, native ahead-of-time artifacts, or WASM bundles depending on
-how you want to ship and execute the model.
+an in-process JIT runtime or native ahead-of-time artifacts depending on how you want to
+ship and execute the model.
 
 - `dsl-jit`: compile DSL source into a runtime model inside the current process.
 - `dsl-aot` and `dsl-aot-load`: emit a native artifact and load it later.
-- `dsl-wasm`: compile and execute portable WASM model artifacts.
 
 See [examples/dsl_runtime_jit.rs](examples/dsl_runtime_jit.rs) for the in-repo JIT flow and
 [examples/dsl_jit_analytical_covariates.rs](examples/dsl_jit_analytical_covariates.rs) for a
 small analytical covariate example written both as DSL JIT source and as an
 `analytical!` model.
-The companion `pharmsol-examples` crate includes end-to-end native AOT and WASM runtime
-examples.
+The companion `pharmsol-examples` crate includes an end-to-end native AOT runtime example.
 
 ## Performance
 

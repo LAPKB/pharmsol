@@ -10,7 +10,7 @@ use pharmsol_dsl::{AnalyticalKernel, CovariateInterpolation, ModelKind, RouteKin
 
 /// Public metadata extracted from a compiled backend model.
 ///
-/// This is the shared inspection surface returned by the native AoT, WASM, and
+/// This is the shared inspection surface returned by the native AoT and
 /// runtime loaders. It keeps public labels and buffer sizes available without
 /// exposing backend-specific function details.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

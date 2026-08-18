@@ -1,4 +1,4 @@
-//! DSL bench matrix (feature-gated): JIT, native AoT, WASM across all workloads + solvers.
+//! DSL bench matrix (feature-gated): JIT, native AoT across all workloads + solvers.
 //! Mirrors `native_matrix.rs` but compiles models from DSL source.
 //!
 //! IDs:
@@ -31,11 +31,10 @@ const MATRIX_N_SUBJECTS: usize = 32;
 const MATRIX_N_SUPPORT: usize = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // Aot/Wasm temporarily disabled in `Backend::all`
+#[allow(dead_code)] // Aot temporarily disabled in `Backend::all`
 enum Backend {
     Jit,
     Aot,
-    Wasm,
 }
 
 impl Backend {
@@ -43,11 +42,10 @@ impl Backend {
         match self {
             Self::Jit => "dsl-jit",
             Self::Aot => "dsl-aot",
-            Self::Wasm => "dsl-wasm",
         }
     }
 
-    // AoT and WASM backends temporarily disabled — too slow for the current matrix.
+    // AoT backend temporarily disabled — too slow for the current matrix.
     fn all() -> [Backend; 1] {
         [Backend::Jit]
     }
@@ -111,7 +109,6 @@ fn compile_runtime(
             let dir = aot.fresh(&format!("{}-{}", workload.label(), kind.label()));
             RuntimeCompilationTarget::NativeAot(NativeAotCompileOptions::new(dir))
         }
-        Backend::Wasm => RuntimeCompilationTarget::Wasm,
     };
     compile_module_source_to_runtime(source, Some(name), target, |_, _| {})
         .unwrap_or_else(|e| panic!("compile {} via {} failed: {e:?}", name, backend.label()))

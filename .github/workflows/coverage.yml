@@ -1,0 +1,54 @@
+name: Coverage
+"on":
+    push:
+        branches:
+            - main
+    pull_request:
+        branches:
+            - main
+
+concurrency:
+    group: "${{ github.workflow }}-${{ github.ref }}"
+    cancel-in-progress: true
+
+env:
+    CARGO_TERM_COLOR: always
+    PHARMSOL_LOCAL_EXA: "1"
+    CARGO_INCREMENTAL: "0"
+
+jobs:
+    coverage:
+        name: Collect and upload coverage
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v7
+
+            - name: Install Rust toolchain
+              uses: dtolnay/rust-toolchain@stable
+              with:
+                  components: llvm-tools-preview
+
+            - name: Install cargo-llvm-cov
+              uses: taiki-e/install-action@cargo-llvm-cov
+
+            - name: Setup cache
+              uses: Swatinem/rust-cache@v2
+              with:
+                  # Instrumented artifacts differ from the ones built by build.yml, so
+                  # keep them in a separate cache entry. Only main writes the cache.
+                  key: coverage
+                  save-if: ${{ github.ref == 'refs/heads/main' }}
+
+            - name: Collect coverage
+              run: |
+                  cargo llvm-cov --workspace --all-features \
+                    --ignore-filename-regex '/(tests|benches|examples)/|test_fixtures\.rs$' \
+                    --lcov --output-path lcov.info
+
+            - name: Upload coverage to Codecov
+              uses: codecov/codecov-action@v7
+              with:
+                  token: ${{ secrets.CODECOV_TOKEN }}
+                  files: lcov.info
+                  fail_ci_if_error: true
