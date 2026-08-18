@@ -2,8 +2,10 @@
 
 [![Build](https://github.com/LAPKB/pharmsol/actions/workflows/build.yml/badge.svg)](https://github.com/LAPKB/pharmsol/actions/workflows/build.yml)
 [![Documentation](https://github.com/LAPKB/pharmsol/actions/workflows/docs.yml/badge.svg)](https://github.com/LAPKB/pharmsol/actions/workflows/docs.yml)
-[![codecov](https://codecov.io/gh/LAPKB/pharmsol/branch/main/graph/badge.svg)](https://codecov.io/gh/LAPKB/pharmsol)
+[![DOI](https://joss.theoj.org/papers/10.21105/joss.10580/status.svg)](https://doi.org/10.21105/joss.10580)
 [![crates.io](https://img.shields.io/crates/v/pharmsol.svg)](https://crates.io/crates/pharmsol)
+[![codecov](https://codecov.io/gh/LAPKB/pharmsol/branch/main/graph/badge.svg)](https://codecov.io/gh/LAPKB/pharmsol)  
+
 
 A high-performance Rust library for pharmacokinetic/pharmacodynamic (PK/PD) simulation using analytical solutions, ordinary differential equations (ODEs), or stochastic differential equations (SDEs).
 
