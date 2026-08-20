@@ -313,7 +313,7 @@ fn _simulate_subject_dense(
         Some(error_models) => Some(ode.bind_error_models(error_models)?),
         None => None,
     };
-    let bound_error_models = bound_error_models.as_ref().map(|models| &**models);
+    let bound_error_models = bound_error_models.as_deref();
 
     let mut output = SubjectPredictions::new(ode.nparticles());
 
@@ -585,24 +585,6 @@ where
     state.dy.copy_from(dy_scratch);
 }
 
-/// Whether a requested solver stop is effectively at the current state time.
-///
-/// diffsol reports `StopTimeAtCurrentTime` not only for a stop exactly at the
-/// current time, but also when its internal state time has landed a few ULPs
-/// past the requested stop (adaptive steps may end slightly beyond a stop).
-/// Dense output grids built with floating-point arithmetic routinely place
-/// requested times a few ULPs away from event times (e.g. a `t += dt`
-/// accumulation puts a point ~16 ULPs after a bolus at `t = 12`), so accept a
-/// stop within a small relative tolerance of the current time instead of
-/// erroring. The tolerance stays far below any meaningful time difference:
-/// ~64-128 ULPs of the current time, i.e. at most ~1e-13 at `t = 12`.
-///
-/// Shared with the DSL/JIT ODE path ([`crate::dsl::native::NativeOdeModel`]).
-pub(crate) fn stop_time_reached(stop_time: f64, state_t: f64) -> bool {
-    let tolerance = f64::EPSILON * state_t.abs().max(1.0) * 64.0;
-    (stop_time - state_t).abs() <= tolerance
-}
-
 impl ODE {
     /// Generic event-loop runner, parameterized over the concrete solver type.
     #[allow(clippy::too_many_arguments)]
@@ -758,6 +740,10 @@ impl ODE {
                                     Ok(OdeSolverStopReason::InternalTimestep) => continue,
                                     Ok(OdeSolverStopReason::TstopReached) => {
                                         solver.problem().eqn.set_left_continuity_time(None);
+                                        if solver.state().t != stop_time {
+                                            *solver.state_mut().t = stop_time;
+                                            pending_reinit = true;
+                                        }
                                         if is_infusion_boundary {
                                             pending_reinit = true;
                                         }
@@ -782,33 +768,49 @@ impl ODE {
                             OdeSolverError::StopTimeAtCurrentTime,
                         )) => {
                             solver.problem().eqn.set_left_continuity_time(None);
-                            let state_t = solver.state().t;
-                            let stop_reached = stop_time_reached(stop_time, state_t);
-
-                            if stop_reached {
-                                if is_infusion_boundary {
-                                    pending_reinit = true;
-                                }
-                                // The requested stop is the current time within
-                                // a small relative tolerance. If it is an
-                                // infusion boundary before the next subject
-                                // event, keep integrating toward the event;
-                                // break only when the reached stop is the
-                                // event time itself. Breaking early would skip
-                                // the remaining interval and leave the solver
-                                // state at the boundary when the observation is
-                                // evaluated.
-                                if stop_time < next_event_time {
-                                    continue;
-                                }
-                                break;
+                            // Close forward stops are coalesced by contract after checking
+                            // that doing so cannot omit material infusion input. An actually
+                            // earlier stop uses a distinct error. Snap the logical time before the next
+                            // event or RHS evaluation. Otherwise a state a few ULPs before
+                            // an infusion boundary can be restarted with the old rate.
+                            let state_time = solver.state().t;
+                            if state_time > stop_time {
+                                return Err(PharmsolError::from_solver_error(
+                                    diffsol::error::DiffsolError::OdeSolverError(
+                                        OdeSolverError::StopTimeBeforeCurrentTime {
+                                            stop_time,
+                                            state_time,
+                                        },
+                                    ),
+                                    stop_time,
+                                ));
                             }
-                            return Err(PharmsolError::from_solver_error(
-                                diffsol::error::DiffsolError::OdeSolverError(
-                                    OdeSolverError::StopTimeAtCurrentTime,
-                                ),
-                                stop_time,
-                            ));
+                            let skipped_infusion = solver
+                                .problem()
+                                .eqn
+                                .infusion_amount_between(state_time, stop_time);
+                            let state_scale = solver
+                                .state()
+                                .y
+                                .as_slice()
+                                .iter()
+                                .fold(0.0_f64, |scale, value| scale.max(value.abs()));
+                            let material_tolerance =
+                                self.atol.abs() + self.rtol.abs() * state_scale;
+                            if skipped_infusion > material_tolerance {
+                                return Err(PharmsolError::OtherError(format!(
+                                    "coalescing stop times from t = {state_time:.16e} to \
+                                     t = {stop_time:.16e} would skip infusion amount \
+                                     {skipped_infusion:.6e}, above tolerance \
+                                     {material_tolerance:.6e}"
+                                )));
+                            }
+                            *solver.state_mut().t = stop_time;
+                            pending_reinit = true;
+                            if stop_time < next_event_time {
+                                continue;
+                            }
+                            break;
                         }
                         Err(err) => {
                             solver.problem().eqn.set_left_continuity_time(None);
@@ -1349,8 +1351,8 @@ mod tests {
         // The infusion ends exactly one ULP after the observation at t = 10.
         // After landing on the observation stop the solver is already within
         // diffsol's round-off of the end boundary, so `set_stop_time` reports
-        // `StopTimeAtCurrentTime` and the loop accepts it through the
-        // same-ULP check. The reached boundary is *before* the observation at
+        // `StopTimeAtCurrentTime`, which confirms the boundary is reached.
+        // The reached boundary is *before* the observation at
         // t = 20, so the event loop must keep integrating toward it; breaking
         // early would evaluate the observation with the state frozen at the
         // boundary and miss the exponential decay.

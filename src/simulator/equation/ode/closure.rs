@@ -182,6 +182,20 @@ impl InfusionSchedule {
         &self.boundary_times
     }
 
+    /// Absolute infusion input omitted when two adjacent stops are coalesced.
+    /// The event loop calls this only before the next infusion boundary, so the
+    /// active rate is constant over the interval.
+    fn infusion_amount_between(&self, from: f64, to: f64) -> f64 {
+        if to <= from {
+            return 0.0;
+        }
+        let duration = to - from;
+        self.tracks
+            .iter()
+            .map(|track| track.rate_at_left(to).abs() * duration)
+            .sum()
+    }
+
     fn fill_rate_vector(&self, time: f64, rateiv: &mut V) {
         let left_continuity_time = self.left_continuity_time.get();
         rateiv.fill(0.0);
@@ -412,6 +426,10 @@ where
 
     pub(crate) fn infusion_boundary_times(&self) -> &[f64] {
         self.infusion_schedule.infusion_boundary_times()
+    }
+
+    pub(crate) fn infusion_amount_between(&self, from: f64, to: f64) -> f64 {
+        self.infusion_schedule.infusion_amount_between(from, to)
     }
 
     /// Evaluate the full RHS (including the currently scheduled infusion

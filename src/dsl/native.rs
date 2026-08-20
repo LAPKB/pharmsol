@@ -234,7 +234,7 @@ impl FunctionSession for NativeFunctionSession<'_> {
             ))
         })?;
 
-        function(time, states, params, covariates, routes, derived, out);
+        unsafe { function(time, states, params, covariates, routes, derived, out) };
         Ok(())
     }
 }
@@ -1350,11 +1350,8 @@ impl NativeOdeModel {
         S: OdeSolverMethod<'a, PMProblem<'a, F>>,
     {
         // Mirror the closure-based ODE event loop: stop at every infusion
-        // start and end boundary in addition to subject events, using the
-        // left-continuous rate while integrating toward a boundary and the
-        // right-continuous rate after reaching it. This keeps the JIT
-        // implementation numerically consistent with the reference [`ODE`]
-        // path (see `ode::run_events`).
+        // boundary in addition to subject events. This keeps compiled models
+        // numerically consistent with the reference [`ODE`] path.
         let infusion_boundary_times = solver.problem().eqn.infusion_boundary_times();
         let mut infusion_boundary_cursor = 0usize;
         let mut index = 0usize;
@@ -1448,6 +1445,10 @@ impl NativeOdeModel {
                                     Ok(OdeSolverStopReason::InternalTimestep) => continue,
                                     Ok(OdeSolverStopReason::TstopReached) => {
                                         solver.problem().eqn.set_left_continuity_time(None);
+                                        if solver.state().t != stop_time {
+                                            *solver.state_mut().t = stop_time;
+                                            pending_reinit = true;
+                                        }
                                         if is_infusion_boundary {
                                             pending_reinit = true;
                                         }
@@ -1472,32 +1473,49 @@ impl NativeOdeModel {
                             OdeSolverError::StopTimeAtCurrentTime,
                         )) => {
                             solver.problem().eqn.set_left_continuity_time(None);
-                            let state_t = solver.state().t;
-                            let stop_reached = crate::simulator::equation::ode::stop_time_reached(
-                                stop_time, state_t,
-                            );
-
-                            if stop_reached {
-                                if is_infusion_boundary {
-                                    pending_reinit = true;
-                                }
-                                // The requested stop is the current time within
-                                // a small relative tolerance. If it is an
-                                // infusion boundary before the next subject
-                                // event, keep integrating toward the event;
-                                // break only when the reached stop is the
-                                // event time itself.
-                                if stop_time < next_event_time {
-                                    continue;
-                                }
-                                break;
+                            // Close forward stops are coalesced by contract after checking
+                            // that doing so cannot omit material infusion input. An actually
+                            // earlier stop uses a distinct error. Snap the logical time before the next
+                            // event or RHS evaluation. Otherwise a state a few ULPs before
+                            // an infusion boundary can be restarted with the old rate.
+                            let state_time = solver.state().t;
+                            if state_time > stop_time {
+                                return Err(PharmsolError::from_solver_error(
+                                    diffsol::error::DiffsolError::OdeSolverError(
+                                        OdeSolverError::StopTimeBeforeCurrentTime {
+                                            stop_time,
+                                            state_time,
+                                        },
+                                    ),
+                                    stop_time,
+                                ));
                             }
-                            return Err(PharmsolError::from_solver_error(
-                                diffsol::error::DiffsolError::OdeSolverError(
-                                    OdeSolverError::StopTimeAtCurrentTime,
-                                ),
-                                stop_time,
-                            ));
+                            let skipped_infusion = solver
+                                .problem()
+                                .eqn
+                                .infusion_amount_between(state_time, stop_time);
+                            let state_scale = solver
+                                .state()
+                                .y
+                                .as_slice()
+                                .iter()
+                                .fold(0.0_f64, |scale, value| scale.max(value.abs()));
+                            let material_tolerance =
+                                self.atol.abs() + self.rtol.abs() * state_scale;
+                            if skipped_infusion > material_tolerance {
+                                return Err(PharmsolError::OtherError(format!(
+                                    "coalescing stop times from t = {state_time:.16e} to \
+                                     t = {stop_time:.16e} would skip infusion amount \
+                                     {skipped_infusion:.6e}, above tolerance \
+                                     {material_tolerance:.6e}"
+                                )));
+                            }
+                            *solver.state_mut().t = stop_time;
+                            pending_reinit = true;
+                            if stop_time < next_event_time {
+                                continue;
+                            }
+                            break;
                         }
                         Err(err) => {
                             solver.problem().eqn.set_left_continuity_time(None);
