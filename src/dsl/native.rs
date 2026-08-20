@@ -234,7 +234,7 @@ impl FunctionSession for NativeFunctionSession<'_> {
             ))
         })?;
 
-        function(time, states, params, covariates, routes, derived, out);
+        unsafe { function(time, states, params, covariates, routes, derived, out) };
         Ok(())
     }
 }
@@ -1472,32 +1472,15 @@ impl NativeOdeModel {
                             OdeSolverError::StopTimeAtCurrentTime,
                         )) => {
                             solver.problem().eqn.set_left_continuity_time(None);
-                            let state_t = solver.state().t;
-                            let stop_reached = crate::simulator::equation::ode::stop_time_reached(
-                                stop_time, state_t,
-                            );
-
-                            if stop_reached {
-                                if is_infusion_boundary {
-                                    pending_reinit = true;
-                                }
-                                // The requested stop is the current time within
-                                // a small relative tolerance. If it is an
-                                // infusion boundary before the next subject
-                                // event, keep integrating toward the event;
-                                // break only when the reached stop is the
-                                // event time itself.
-                                if stop_time < next_event_time {
-                                    continue;
-                                }
-                                break;
+                            // diffsol has already applied the solver's stop-time
+                            // tolerance; an actually earlier stop uses a distinct error.
+                            if is_infusion_boundary {
+                                pending_reinit = true;
                             }
-                            return Err(PharmsolError::from_solver_error(
-                                diffsol::error::DiffsolError::OdeSolverError(
-                                    OdeSolverError::StopTimeAtCurrentTime,
-                                ),
-                                stop_time,
-                            ));
+                            if stop_time < next_event_time {
+                                continue;
+                            }
+                            break;
                         }
                         Err(err) => {
                             solver.problem().eqn.set_left_continuity_time(None);
