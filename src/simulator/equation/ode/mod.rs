@@ -893,11 +893,11 @@ where
                 }
                 return Ok(());
             }
-            Ok(OdeSolverStopReason::RootFound(_, _)) => {
+            Ok(OdeSolverStopReason::RootFound(root_time, _)) => {
                 return Err(PharmsolError::OtherError(format!(
                     "solver stopped at an unexpected root at t = {:.4} \
                      (root finding is not configured)",
-                    stop_time
+                    root_time
                 )));
             }
             Err(diffsol::error::DiffsolError::OdeSolverError(

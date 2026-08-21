@@ -70,8 +70,9 @@ impl PharmsolError {
         match self {
             PharmsolError::DiffsolError(msg) => PharmsolError::DiffsolError(format!(
                 "{msg} ({rescues} automatic solver restart(s) did not recover; \
-                 the system may be too stiff for the selected solver — stiff \
-                 problems need an implicit solver such as BDF)"
+                 the problem is too stiff for the selected solver at this point — \
+                 if using an explicit solver, switch to an implicit one such as BDF; \
+                 otherwise check for extreme or implausible parameter values)"
             )),
             other => other,
         }
