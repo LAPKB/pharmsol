@@ -60,23 +60,6 @@ impl PharmsolError {
     pub fn from_solver_error(error: diffsol::error::DiffsolError, target_time: f64) -> Self {
         PharmsolError::DiffsolError(describe_diffsol_error(&error, Some(target_time)))
     }
-
-    /// Annotate a solver error with the number of automatic in-place restarts
-    /// that were attempted before giving up. No-op for zero attempts.
-    pub(crate) fn with_rescue_context(self, rescues: usize) -> Self {
-        if rescues == 0 {
-            return self;
-        }
-        match self {
-            PharmsolError::DiffsolError(msg) => PharmsolError::DiffsolError(format!(
-                "{msg} ({rescues} automatic solver restart(s) did not recover; \
-                 the problem is too stiff for the selected solver at this point — \
-                 if using an explicit solver, switch to an implicit one such as BDF; \
-                 otherwise check for extreme or implausible parameter values)"
-            )),
-            other => other,
-        }
-    }
 }
 
 impl PharmsolError {
