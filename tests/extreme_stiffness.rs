@@ -11,9 +11,11 @@
 
 use pharmsol::prelude::*;
 
-/// Shared relative/absolute tolerance for analytical comparisons: well above
-/// the solver tolerances (1e-4) but far below any qualitative difference.
-const PRED_TOLERANCE: f64 = 1e-3;
+/// Tolerances for analytical comparisons. The absolute component stays just
+/// above the default solver `atol` without allowing a milliscale error when
+/// the analytical result is zero.
+const PRED_RELATIVE_TOLERANCE: f64 = 1e-3;
+const PRED_ABSOLUTE_TOLERANCE: f64 = 2e-4;
 
 fn implicit_solvers() -> [(&'static str, OdeSolver); 3] {
     [
@@ -37,11 +39,11 @@ fn assert_close(label: &str, actual: f64, expected: f64) {
         actual.is_finite(),
         "{label}: prediction is not finite (expected {expected:.6e})"
     );
-    let scale = expected.abs().max(1.0);
+    let allowed_error = PRED_ABSOLUTE_TOLERANCE.max(PRED_RELATIVE_TOLERANCE * expected.abs());
     assert!(
-        (actual - expected).abs() <= PRED_TOLERANCE * scale,
+        (actual - expected).abs() <= allowed_error,
         "{label}: prediction {actual:.6e} differs from analytical {expected:.6e} \
-         by more than {PRED_TOLERANCE:.0e} (scale {scale:.3e})"
+         by more than {allowed_error:.3e}"
     );
 }
 
@@ -487,4 +489,277 @@ fn impossibly_stiff_problem_returns_descriptive_error() {
         message.contains("did not recover"),
         "error should mention the exhausted restarts: {message}"
     );
+}
+
+#[test]
+fn impossibly_stiff_explicit_problem_returns_descriptive_error() {
+    const CHILD_MARKER: &str = "PHARMSOL_RUN_IMPOSSIBLY_STIFF_EXPLICIT_CHILD";
+    if std::env::var_os(CHILD_MARKER).is_none() {
+        let executable = std::env::current_exe().expect("resolve current test executable");
+        let mut child = std::process::Command::new(executable)
+            .args([
+                "--exact",
+                "impossibly_stiff_explicit_problem_returns_descriptive_error",
+                "--nocapture",
+            ])
+            .env(CHILD_MARKER, "1")
+            .spawn()
+            .expect("spawn bounded explicit-stiffness test");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            if let Some(status) = child.try_wait().expect("query child test status") {
+                assert!(status.success(), "explicit-stiffness child test failed");
+                return;
+            }
+            if std::time::Instant::now() >= deadline {
+                match child.kill() {
+                    Ok(()) => {
+                        child.wait().expect("reap explicit-stiffness child test");
+                        panic!(
+                            "TSIT45 did not reject an impossible stiff problem within ten \
+                             seconds; one extreme trajectory could stall a long-running job"
+                        );
+                    }
+                    Err(kill_error) => {
+                        let status = child
+                            .wait()
+                            .expect("reap explicit-stiffness child after exit race");
+                        assert!(
+                            status.success(),
+                            "explicit-stiffness child failed while reaching the deadline \
+                             ({kill_error})"
+                        );
+                        return;
+                    }
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    let ke = 1e12;
+    let subject = Subject::builder("impossibly_stiff_explicit")
+        .infusion(0.0, ke * 24.0, "iv", 24.0)
+        .missing_observation(48.0, "cp")
+        .build();
+    let model = infusion_model(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45));
+    let parameters =
+        Parameters::with_model(&model, [("ke", ke)]).expect("parameters should validate");
+
+    let error = model
+        .estimate_predictions_dense(&subject, parameters.as_slice())
+        .expect_err("an explicit solver should reject this impossible stiffness");
+    let message = error.to_string();
+    assert!(
+        message.contains("did not recover") && message.contains("implicit"),
+        "explicit-solver exhaustion should explain the failed recovery and suggest an implicit \
+         method: {message}"
+    );
+}
+
+fn close_gap_exponential_model(solver: OdeSolver) -> equation::ODE {
+    equation::ODE::new(
+        |x, p, _t, dx, _b, _rateiv, _cov| dx[0] = p[0] * x[0],
+        |_p, _t, _cov| lag! {},
+        |_p, _t, _cov| fa! {},
+        |_p, _t, _cov, x| x[0] = 1.0,
+        |x, _p, _t, _cov, y| y[0] = x[0],
+    )
+    .with_nstates(1)
+    .with_ndrugs(0)
+    .with_nout(1)
+    .with_solver(solver)
+    .with_metadata(
+        equation::metadata::new("close_gap_exponential")
+            .parameters(["rate"])
+            .states(["amount"])
+            .outputs(["cp"]),
+    )
+    .expect("close-gap model metadata should validate")
+}
+
+fn close_gap_bolus_model(solver: OdeSolver) -> equation::ODE {
+    equation::ODE::new(
+        |x, p, _t, dx, bolus, _rateiv, _cov| dx[0] = bolus[0] - p[0] * x[0],
+        |_p, _t, _cov| lag! {},
+        |_p, _t, _cov| fa! {},
+        |_p, _t, _cov, _x| {},
+        |x, _p, _t, _cov, y| y[0] = x[0],
+    )
+    .with_nstates(1)
+    .with_ndrugs(1)
+    .with_nout(1)
+    .with_solver(solver)
+    .with_metadata(
+        equation::metadata::new("close_gap_bolus")
+            .parameters(["rate"])
+            .states(["amount"])
+            .outputs(["cp"])
+            .routes([equation::Route::bolus("dose")
+                .to_state("amount")
+                .expect_explicit_input()]),
+    )
+    .expect("close-gap bolus metadata should validate")
+}
+
+fn close_gap_failure(
+    label: &str,
+    result: Result<SubjectPredictions, PharmsolError>,
+    start: f64,
+    stop: f64,
+    expected: f64,
+) -> Option<String> {
+    match result {
+        Ok(predictions) => {
+            let actual = predictions
+                .predictions()
+                .last()
+                .expect("close-gap case should produce a prediction")
+                .prediction();
+            let relative_error = (actual - expected).abs() / expected.abs().max(f64::MIN_POSITIVE);
+            (relative_error > 1.0e-3).then(|| {
+                format!(
+                    "{label}: solver silently skipped material dynamics: prediction \
+                     {actual:.16e}, expected {expected:.16e}, relative error {relative_error:.3e}"
+                )
+            })
+        }
+        Err(error) => {
+            let message = error.to_string();
+            let interval = format!("from t = {start:.16e} to t = {stop:.16e}");
+            (!(message.contains("cannot integrate distinct stop") && message.contains(&interval)))
+                .then(|| {
+                    format!(
+                        "{label}: close distinct stops may fail explicitly, but the error must \
+                         identify the exact interval `{interval}` instead of returning an \
+                         unrelated failure: {message}"
+                    )
+                })
+        }
+    }
+}
+
+#[test]
+fn close_distinct_stops_do_not_silently_skip_autonomous_dynamics() {
+    let mut failures = Vec::new();
+    for (solver_name, solver) in all_solvers() {
+        for (case_name, start, stop, exponent) in [
+            ("small-time-growth", 0.0, 3.0e-13, 0.3),
+            ("small-time-decay", 0.0, 3.0e-13, -0.3),
+            ("large-time-growth", 1.0e6, 1.0e6_f64.next_up(), 0.3),
+            ("large-time-decay", 1.0e6, 1.0e6_f64.next_up(), -0.3),
+        ] {
+            let gap = stop - start;
+            let rate = exponent / gap;
+            let subject_id = format!("close-gap-{case_name}-{solver_name}");
+            let subject = Subject::builder(&subject_id)
+                .missing_observation(start, "cp")
+                .missing_observation(stop, "cp")
+                .build();
+            let result = close_gap_exponential_model(solver.clone())
+                .estimate_predictions_dense(&subject, &[rate]);
+            if let Some(failure) = close_gap_failure(
+                &format!("{solver_name} {case_name}"),
+                result,
+                start,
+                stop,
+                exponent.exp(),
+            ) {
+                failures.push(failure);
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn close_distinct_stop_after_bolus_does_not_skip_decay() {
+    let start = 0.0;
+    let stop = 3.0e-13;
+    let exponent = 0.3;
+    let rate = exponent / (stop - start);
+    let mut failures = Vec::new();
+
+    for (solver_name, solver) in all_solvers() {
+        let subject_id = format!("close-gap-bolus-{solver_name}");
+        let subject = Subject::builder(&subject_id)
+            .bolus(start, 1.0, "dose")
+            .missing_observation(start, "cp")
+            .missing_observation(stop, "cp")
+            .build();
+        let result = close_gap_bolus_model(solver).estimate_predictions_dense(&subject, &[rate]);
+        if let Some(failure) = close_gap_failure(
+            &format!("{solver_name} close-gap bolus"),
+            result,
+            start,
+            stop,
+            (-exponent).exp(),
+        ) {
+            failures.push(failure);
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+fn locf_subject() -> Subject {
+    let mut subject = Subject::builder("locf-breakpoint")
+        .covariate("cov_rate", 0.0, 1.0)
+        .covariate("cov_rate", 5.0, 2.0)
+        .missing_observation(0.0, "cp")
+        .missing_observation(10.0, "cp")
+        .build();
+    for occasion in subject.occasions_mut() {
+        assert!(occasion
+            .covariates_mut()
+            .set_covariate_fixed("cov_rate", true));
+    }
+    subject
+}
+
+fn locf_integral_model(solver: OdeSolver) -> equation::ODE {
+    equation::ODE::new(
+        |_x, _p, t, dx, _b, _rateiv, covariates| {
+            dx[0] = covariates
+                .get_covariate("cov_rate")
+                .expect("rate covariate")
+                .interpolate(t)
+                .expect("rate value");
+        },
+        |_p, _t, _cov| lag! {},
+        |_p, _t, _cov| fa! {},
+        |_p, _t, _cov, _x| {},
+        |x, _p, _t, _cov, y| y[0] = x[0],
+    )
+    .with_nstates(1)
+    .with_ndrugs(0)
+    .with_nout(1)
+    .with_solver(solver)
+    .with_metadata(
+        equation::metadata::new("locf_integral")
+            .covariates([equation::Covariate::locf("cov_rate")])
+            .states(["integral"])
+            .outputs(["cp"]),
+    )
+    .expect("LOCF model metadata should validate")
+}
+
+#[test]
+fn locf_rhs_change_matches_piecewise_analytical_integral() {
+    let expected = 15.0;
+    for (solver_name, solver) in all_solvers() {
+        let predictions = locf_integral_model(solver)
+            .estimate_predictions_dense(&locf_subject(), &[])
+            .unwrap_or_else(|error| panic!("{solver_name} LOCF simulation failed: {error}"));
+        let actual = predictions
+            .predictions()
+            .last()
+            .expect("LOCF case should produce a prediction")
+            .prediction();
+        let absolute_error = (actual - expected).abs();
+        assert!(
+            absolute_error <= 5.0e-3,
+            "{solver_name}: LOCF integral {actual:.16e}, expected {expected:.16e}, \
+             absolute error {absolute_error:.3e}"
+        );
+    }
 }

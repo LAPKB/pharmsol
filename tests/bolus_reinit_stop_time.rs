@@ -7,7 +7,10 @@
 
 use pharmsol::prelude::*;
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(any(
+    feature = "dsl-jit",
+    all(feature = "dsl-aot", feature = "dsl-aot-load")
+))]
 use pharmsol::dsl::{
     compile_module_source_to_runtime, CompiledRuntimeModel, RuntimeCompilationTarget,
 };
@@ -235,7 +238,10 @@ fn closure_solvers_restart_with_post_infusion_rhs() {
     }
 }
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(any(
+    feature = "dsl-jit",
+    all(feature = "dsl-aot", feature = "dsl-aot-load")
+))]
 const INFUSION_DSL_MODEL: &str = r#"
 name = accepted_infusion_boundary
 kind = ode
@@ -378,6 +384,296 @@ fn jit_solvers_accept_reached_stop_after_bolus_restarts() -> Result<(), Box<dyn 
             .predictions()
             .iter()
             .all(|prediction| prediction.prediction().is_finite()));
+    }
+    Ok(())
+}
+
+#[cfg(any(
+    feature = "dsl-jit",
+    all(feature = "dsl-aot", feature = "dsl-aot-load")
+))]
+const CLOSE_GAP_DSL_MODEL: &str = r#"
+name = close_gap_exponential
+kind = ode
+params = growth_rate
+states = amount
+outputs = cp
+init(amount) = 1
+dx(amount) = growth_rate * amount
+out(cp) = amount
+"#;
+
+#[cfg(any(
+    feature = "dsl-jit",
+    all(feature = "dsl-aot", feature = "dsl-aot-load")
+))]
+const LOCF_DSL_MODEL: &str = r#"
+name = locf_integral
+kind = ode
+covariates = cov_rate @locf
+states = integral
+outputs = cp
+dx(integral) = cov_rate
+out(cp) = integral
+"#;
+
+#[cfg(any(
+    feature = "dsl-jit",
+    all(feature = "dsl-aot", feature = "dsl-aot-load")
+))]
+fn configured_runtime_ode(
+    compiled: &CompiledRuntimeModel,
+    solver: OdeSolver,
+) -> CompiledRuntimeModel {
+    match compiled.clone() {
+        CompiledRuntimeModel::Ode(model) => CompiledRuntimeModel::Ode(model.with_solver(solver)),
+        _ => panic!("expected an ODE model"),
+    }
+}
+
+#[cfg(any(
+    feature = "dsl-jit",
+    all(feature = "dsl-aot", feature = "dsl-aot-load")
+))]
+fn assert_runtime_close_gaps(backend: &str, compiled: &CompiledRuntimeModel) {
+    let mut failures = Vec::new();
+    for (solver_name, solver) in solver_cases() {
+        for (case_name, start, stop, exponent) in [
+            ("small-time-growth", 0.0, 3.0e-13, 0.3),
+            ("small-time-decay", 0.0, 3.0e-13, -0.3),
+            ("large-time-growth", 1.0e6, 1.0e6_f64.next_up(), 0.3),
+            ("large-time-decay", 1.0e6, 1.0e6_f64.next_up(), -0.3),
+        ] {
+            let gap = stop - start;
+            let rate = exponent / gap;
+            let subject_id = format!("{backend}-close-gap-{case_name}-{solver_name}");
+            let subject = Subject::builder(&subject_id)
+                .missing_observation(start, "cp")
+                .missing_observation(stop, "cp")
+                .build();
+            let model = configured_runtime_ode(compiled, solver.clone());
+            let result = match &model {
+                CompiledRuntimeModel::Ode(model) => {
+                    model.estimate_predictions_dense(&subject, &[rate])
+                }
+                _ => unreachable!(),
+            };
+
+            match result {
+                Ok(predictions) => {
+                    let actual = predictions
+                        .predictions()
+                        .last()
+                        .expect("close-gap runtime case should produce a prediction")
+                        .prediction();
+                    let expected = exponent.exp();
+                    let relative_error =
+                        (actual - expected).abs() / expected.abs().max(f64::MIN_POSITIVE);
+                    if relative_error > 1.0e-3 {
+                        failures.push(format!(
+                            "{backend} {solver_name} {case_name}: solver silently skipped material \
+                             dynamics: prediction {actual:.16e}, expected {expected:.16e}, relative \
+                             error {relative_error:.3e}"
+                        ));
+                    }
+                }
+                Err(error) => {
+                    let message = error.to_string();
+                    let interval = format!("from t = {start:.16e} to t = {stop:.16e}");
+                    if !(message.contains("cannot integrate distinct stop")
+                        && message.contains(&interval))
+                    {
+                        failures.push(format!(
+                            "{backend} {solver_name} {case_name}: close distinct stops may fail \
+                             explicitly, but the error must identify the exact interval \
+                             `{interval}`: {message}"
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[cfg(any(
+    feature = "dsl-jit",
+    all(feature = "dsl-aot", feature = "dsl-aot-load")
+))]
+fn runtime_locf_subject() -> Subject {
+    let mut subject = Subject::builder("runtime-locf-breakpoint")
+        .covariate("cov_rate", 0.0, 1.0)
+        .covariate("cov_rate", 5.0, 2.0)
+        .missing_observation(0.0, "cp")
+        .missing_observation(10.0, "cp")
+        .build();
+    for occasion in subject.occasions_mut() {
+        assert!(occasion
+            .covariates_mut()
+            .set_covariate_fixed("cov_rate", true));
+    }
+    subject
+}
+
+#[cfg(any(
+    feature = "dsl-jit",
+    all(feature = "dsl-aot", feature = "dsl-aot-load")
+))]
+fn assert_runtime_locf_integral(backend: &str, compiled: &CompiledRuntimeModel) {
+    let expected = 15.0;
+    for (solver_name, solver) in solver_cases() {
+        let model = configured_runtime_ode(compiled, solver);
+        let predictions = match &model {
+            CompiledRuntimeModel::Ode(model) => model
+                .estimate_predictions_dense(&runtime_locf_subject(), &[])
+                .unwrap_or_else(|error| {
+                    panic!("{backend} {solver_name} LOCF simulation failed: {error}")
+                }),
+            _ => unreachable!(),
+        };
+        let actual = predictions
+            .predictions()
+            .last()
+            .expect("runtime LOCF case should produce a prediction")
+            .prediction();
+        let absolute_error = (actual - expected).abs();
+        assert!(
+            absolute_error <= 5.0e-3,
+            "{backend} {solver_name}: LOCF integral {actual:.16e}, expected {expected:.16e}, \
+             absolute error {absolute_error:.3e}"
+        );
+    }
+}
+
+#[cfg(feature = "dsl-jit")]
+#[test]
+fn jit_close_distinct_stops_do_not_silently_skip_dynamics() -> Result<(), Box<dyn std::error::Error>>
+{
+    let compiled = compile_module_source_to_runtime(
+        CLOSE_GAP_DSL_MODEL,
+        Some("close_gap_exponential"),
+        RuntimeCompilationTarget::Jit,
+        |_, _| {},
+    )?;
+    assert_runtime_close_gaps("JIT", &compiled);
+    Ok(())
+}
+
+#[cfg(feature = "dsl-jit")]
+#[test]
+fn jit_locf_rhs_change_matches_piecewise_analytical_integral(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let compiled = compile_module_source_to_runtime(
+        LOCF_DSL_MODEL,
+        Some("locf_integral"),
+        RuntimeCompilationTarget::Jit,
+        |_, _| {},
+    )?;
+    assert_runtime_locf_integral("JIT", &compiled);
+    Ok(())
+}
+
+#[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]
+#[test]
+fn native_aot_close_distinct_stops_do_not_silently_skip_dynamics(
+) -> Result<(), Box<dyn std::error::Error>> {
+    use pharmsol::dsl::NativeAotCompileOptions;
+    use tempfile::tempdir;
+
+    let workspace = tempdir()?;
+    let compiled = compile_module_source_to_runtime(
+        CLOSE_GAP_DSL_MODEL,
+        Some("close_gap_exponential"),
+        RuntimeCompilationTarget::NativeAot(
+            NativeAotCompileOptions::new(workspace.path().join("build"))
+                .with_output(workspace.path().join("close_gap_exponential.pkm")),
+        ),
+        |_, _| {},
+    )?;
+    assert_runtime_close_gaps("native AOT", &compiled);
+    Ok(())
+}
+
+#[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]
+#[test]
+fn native_aot_locf_rhs_change_matches_piecewise_analytical_integral(
+) -> Result<(), Box<dyn std::error::Error>> {
+    use pharmsol::dsl::NativeAotCompileOptions;
+    use tempfile::tempdir;
+
+    let workspace = tempdir()?;
+    let compiled = compile_module_source_to_runtime(
+        LOCF_DSL_MODEL,
+        Some("locf_integral"),
+        RuntimeCompilationTarget::NativeAot(
+            NativeAotCompileOptions::new(workspace.path().join("build"))
+                .with_output(workspace.path().join("locf_integral.pkm")),
+        ),
+        |_, _| {},
+    )?;
+    assert_runtime_locf_integral("native AOT", &compiled);
+    Ok(())
+}
+
+#[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]
+#[test]
+fn native_aot_preserves_infusion_boundary_contracts() -> Result<(), Box<dyn std::error::Error>> {
+    use pharmsol::dsl::NativeAotCompileOptions;
+    use tempfile::tempdir;
+
+    let workspace = tempdir()?;
+    let compiled = compile_module_source_to_runtime(
+        INFUSION_DSL_MODEL,
+        Some("accepted_infusion_boundary"),
+        RuntimeCompilationTarget::NativeAot(
+            NativeAotCompileOptions::new(workspace.path().join("build"))
+                .with_output(workspace.path().join("accepted_infusion_boundary.pkm")),
+        ),
+        |_, _| {},
+    )?;
+
+    for (solver_name, solver) in solver_cases() {
+        let model = configured_runtime_ode(&compiled, solver);
+        for (scenario, subject, expected) in [
+            (
+                "accepted",
+                infusion_boundary_subject(),
+                accepted_boundary_expected(),
+            ),
+            (
+                "stepped",
+                stepped_infusion_boundary_subject(),
+                stepped_boundary_expected(),
+            ),
+        ] {
+            let predictions = match &model {
+                CompiledRuntimeModel::Ode(model) => model
+                    .estimate_predictions_dense(&subject, &[])
+                    .unwrap_or_else(|error| {
+                        panic!("native AOT {solver_name} {scenario} infusion failed: {error}")
+                    }),
+                _ => unreachable!(),
+            };
+            let maximum_relative_error = if solver_name == "TSIT45" {
+                1.0e-3
+            } else {
+                1.0e-2
+            };
+            assert_post_infusion_decay(
+                &format!("native AOT {solver_name} {scenario}"),
+                &predictions,
+                expected,
+                maximum_relative_error,
+            );
+        }
+
+        let error = match &model {
+            CompiledRuntimeModel::Ode(model) => model
+                .estimate_predictions_dense(&material_short_infusion_subject(), &[])
+                .unwrap_err(),
+            _ => unreachable!(),
+        };
+        assert_material_infusion_error(&format!("native AOT {solver_name}"), error);
     }
     Ok(())
 }
