@@ -28,13 +28,10 @@ jobs:
         include:
           - name: ubuntu-latest / stable
             os: ubuntu-latest
-            native_aot_smoke_target: ""
           - name: macos-14 / stable
             os: macos-14
-            native_aot_smoke_target: x86_64-apple-darwin
           - name: windows-latest / stable
             os: windows-latest
-            native_aot_smoke_target: ""
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -43,10 +40,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-
-      - name: Install Native AoT smoke target
-        if: ${{ matrix.native_aot_smoke_target != '' }}
-        run: rustup target add ${{ matrix.native_aot_smoke_target }}
 
       - name: Setup cache
         uses: Swatinem/rust-cache@v2
@@ -75,8 +68,6 @@ jobs:
         run: cargo test
 
       - name: Run tests (all features)
-        env:
-          PHARMSOL_NATIVE_AOT_SMOKE_TARGET: ${{ matrix.native_aot_smoke_target }}
         run: cargo test --all-features
 
       - name: Run doc tests

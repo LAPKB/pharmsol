@@ -12,8 +12,6 @@ use rayon::prelude::*;
 
 #[cfg(feature = "dsl-jit")]
 use cranelift_jit::JITModule;
-#[cfg(feature = "dsl-aot-load")]
-use libloading::Library;
 use pharmsol_dsl::execution::ModelFunctionKind;
 use pharmsol_dsl::{
     AnalyticalKernel, AnalyticalStructureInputKind, AnalyticalStructureInputPlan, ModelKind,
@@ -59,8 +57,6 @@ const DEFAULT_ODE_ATOL: f64 = 1e-4;
 pub enum RuntimeBackend {
     #[cfg(feature = "dsl-jit")]
     Jit,
-    #[cfg(feature = "dsl-aot-load")]
-    NativeAot,
 }
 
 pub(crate) trait FunctionSession {
@@ -88,8 +84,6 @@ pub(crate) trait RuntimeArtifact: Send + Sync + std::fmt::Debug {
 enum NativeArtifactOwner {
     #[cfg(feature = "dsl-jit")]
     Jit(Box<JITModule>),
-    #[cfg(feature = "dsl-aot-load")]
-    Library(Library),
 }
 
 impl std::fmt::Debug for NativeArtifactOwner {
@@ -97,9 +91,7 @@ impl std::fmt::Debug for NativeArtifactOwner {
         match self {
             #[cfg(feature = "dsl-jit")]
             Self::Jit(_) => _f.write_str("NativeArtifactOwner::Jit(..)"),
-            #[cfg(feature = "dsl-aot-load")]
-            Self::Library(_) => _f.write_str("NativeArtifactOwner::Library(..)"),
-            #[cfg(not(any(feature = "dsl-jit", feature = "dsl-aot-load")))]
+            #[cfg(not(feature = "dsl-jit"))]
             _ => unreachable!(
                 "native artifact owner should only exist for supported native backends"
             ),
@@ -170,34 +162,6 @@ impl NativeExecutionArtifact {
             _owner: Some(NativeArtifactOwner::Jit(Box::new(module))),
         }
     }
-
-    #[cfg(feature = "dsl-aot-load")]
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn from_library(
-        model_name: String,
-        derive: Option<CompiledModelFunction>,
-        dynamics: Option<CompiledModelFunction>,
-        outputs: CompiledModelFunction,
-        init: Option<CompiledModelFunction>,
-        drift: Option<CompiledModelFunction>,
-        diffusion: Option<CompiledModelFunction>,
-        route_lag: Option<CompiledModelFunction>,
-        route_bioavailability: Option<CompiledModelFunction>,
-        library: Library,
-    ) -> Self {
-        Self {
-            model_name,
-            derive,
-            dynamics,
-            outputs,
-            init,
-            drift,
-            diffusion,
-            route_lag,
-            route_bioavailability,
-            _owner: Some(NativeArtifactOwner::Library(library)),
-        }
-    }
 }
 
 struct NativeFunctionSession<'a> {
@@ -244,8 +208,6 @@ impl RuntimeArtifact for NativeExecutionArtifact {
         match &self._owner {
             #[cfg(feature = "dsl-jit")]
             Some(NativeArtifactOwner::Jit(_)) => RuntimeBackend::Jit,
-            #[cfg(feature = "dsl-aot-load")]
-            Some(NativeArtifactOwner::Library(_)) => RuntimeBackend::NativeAot,
             _ => unreachable!("native execution artifacts should always retain a supported owner"),
         }
     }
@@ -2900,19 +2862,11 @@ mod tests {
         NativeOutputInfo, NativeRouteInfo, NativeSdeModel, NativeStateInfo, RuntimeArtifact,
         RuntimeBackend, SharedNativeModel,
     };
-    #[cfg(any(
-        feature = "dsl-jit",
-        all(feature = "dsl-aot", feature = "dsl-aot-load")
-    ))]
     use super::{
         runtime_ode_predictions, BoundErrorModelCache, PredictionCache,
         DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE, DEFAULT_ODE_ATOL, DEFAULT_ODE_RTOL,
     };
     use crate::PharmsolError;
-    #[cfg(any(
-        feature = "dsl-jit",
-        all(feature = "dsl-aot", feature = "dsl-aot-load")
-    ))]
     use crate::{
         data::builder::SubjectBuilderExt,
         dsl::{CompiledRuntimeModel, RuntimePredictions},
@@ -2925,10 +2879,6 @@ mod tests {
         AnalyticalKernel, AnalyticalStructureInputKind, CovariateInterpolation, ModelKind,
         RouteKind,
     };
-    #[cfg(any(
-        feature = "dsl-jit",
-        all(feature = "dsl-aot", feature = "dsl-aot-load")
-    ))]
     use std::sync::Arc;
 
     #[derive(Debug)]
@@ -3233,10 +3183,6 @@ mod tests {
             .to_vec()
     }
 
-    #[cfg(any(
-        feature = "dsl-jit",
-        all(feature = "dsl-aot", feature = "dsl-aot-load")
-    ))]
     fn cached_runtime_ode_model() -> NativeOdeModel {
         NativeOdeModel {
             shared: Arc::new(bolus_only_shared_model()),
@@ -3250,10 +3196,6 @@ mod tests {
         }
     }
 
-    #[cfg(any(
-        feature = "dsl-jit",
-        all(feature = "dsl-aot", feature = "dsl-aot-load")
-    ))]
     fn cached_runtime_subject() -> Subject {
         Subject::builder("runtime_cached_prediction")
             .bolus(0.0, 100.0, "oral")
@@ -3402,10 +3344,6 @@ mod tests {
         ));
     }
 
-    #[cfg(any(
-        feature = "dsl-jit",
-        all(feature = "dsl-aot", feature = "dsl-aot-load")
-    ))]
     #[test]
     fn compiled_runtime_ode_predictions_use_prefilled_cache() {
         let model = cached_runtime_ode_model();

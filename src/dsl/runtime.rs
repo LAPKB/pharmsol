@@ -1,16 +1,12 @@
 //! Unified runtime entrypoints for DSL-backed models.
 //!
 //! Use this module when you already know you want an executable model and need
-//! one backend-neutral surface for compile, load, and prediction workflows.
-//! It normalizes the backend-specific JIT and native AoT entrypoints so
-//! callers can choose a deployment target without rewriting the downstream
-//! prediction code.
+//! one backend-neutral surface for compile and prediction workflows.
 //!
 //! Use the backend modules directly only when you need a backend-specific
 //! artifact or compile control:
 //!
 //! - [`super::jit`] for direct in-process JIT compilation.
-//! - [`compile_module_source_to_aot`][crate::dsl::compile_module_source_to_aot] for native artifact export and reload.
 //!
 //! Main entrypoints:
 //!
@@ -18,18 +14,13 @@
 //!   path.
 //! - [`compile_execution_model_to_runtime`] when you already have an
 //!   [`ExecutionModel`](pharmsol_dsl::ExecutionModel).
-//! - [`load_runtime_artifact`] when the model has already been compiled and
-//!   stored elsewhere.
 //! - [`CompiledRuntimeModel::estimate_predictions`] for backend-neutral
 //!   execution against a [`Subject`](crate::Subject).
 //!
 //! Backend choice guide:
 //!
 //! - [`RuntimeCompilationTarget::Jit`] keeps compilation and execution inside
-//!   the current process. Use it for native interactive workflows and tests.
-//! - [`RuntimeCompilationTarget::NativeAot`] emits a native artifact and reloads
-//!   it into the same runtime model shape. Use it when you want reusable native
-//!   artifacts and can control the target platform.
+//!   the current process.
 //!
 //! Smallest compile-and-run example:
 //!
@@ -75,15 +66,10 @@
 //! ```
 
 use std::fmt;
-use std::path::Path;
 
 use ndarray::Array2;
 use thiserror::Error;
 
-#[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]
-use super::aot::{
-    export_execution_model_to_aot, load_aot_model, AotError, NativeAotCompileOptions,
-};
 #[cfg(feature = "dsl-jit")]
 use super::jit::{compile_execution_model_to_jit, JitCompileError};
 use super::native::{
@@ -119,17 +105,6 @@ pub enum RuntimeCompilationTarget {
     /// Compile and execute the model inside the current native process.
     #[cfg(feature = "dsl-jit")]
     Jit,
-    /// Export a native artifact and reload it as a runtime model.
-    #[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]
-    NativeAot(NativeAotCompileOptions),
-}
-
-/// Identifies the on-disk artifact format for [`load_runtime_artifact`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RuntimeArtifactFormat {
-    /// A native ahead-of-time artifact produced by the AoT compiler.
-    #[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]
-    NativeAot,
 }
 
 /// Backend-neutral prediction output from a compiled runtime model.
@@ -175,7 +150,7 @@ impl RuntimePredictions {
 /// Executable runtime model returned by the backend-neutral runtime surface.
 ///
 /// This type hides the concrete backend and keeps the prediction entrypoint the
-/// same across JIT and native AoT-based flows.
+/// same across runtime flows.
 #[derive(Clone, Debug)]
 pub enum CompiledRuntimeModel {
     Ode(RuntimeOdeModel),
@@ -241,8 +216,8 @@ impl CompiledRuntimeModel {
     }
 }
 
-/// Errors produced while parsing, lowering, compiling, loading, or executing a
-/// runtime DSL model.
+/// Errors produced while parsing, lowering, compiling, or executing a runtime
+/// DSL model.
 #[derive(Error)]
 pub enum RuntimeError {
     #[error("failed to parse DSL source: {0}")]
@@ -256,9 +231,6 @@ pub enum RuntimeError {
     #[cfg(feature = "dsl-jit")]
     #[error(transparent)]
     Jit(#[from] JitCompileError),
-    #[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]
-    #[error(transparent)]
-    Aot(#[from] AotError),
     #[error(transparent)]
     Runtime(#[from] PharmsolError),
 }
@@ -370,42 +342,17 @@ pub fn compile_execution_model_to_runtime(
             );
             Ok(compiled.into())
         }
-        #[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]
-        RuntimeCompilationTarget::NativeAot(options) => {
-            let artifact = export_execution_model_to_aot(model, options, event_callback)?;
-            load_runtime_artifact(&artifact, RuntimeArtifactFormat::NativeAot)
-        }
     }
 }
 
-/// Load a previously compiled native AoT artifact from disk.
-pub fn load_runtime_artifact(
-    path: impl AsRef<Path>,
-    format: RuntimeArtifactFormat,
-) -> Result<CompiledRuntimeModel, RuntimeError> {
-    #[cfg(not(all(feature = "dsl-aot", feature = "dsl-aot-load")))]
-    let _ = path.as_ref();
-    match format {
-        #[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]
-        RuntimeArtifactFormat::NativeAot => Ok(load_aot_model(path)?.into()),
-    }
-}
-
-#[cfg(all(
-    test,
-    feature = "dsl-jit",
-    feature = "dsl-aot",
-    feature = "dsl-aot-load"
-))]
+#[cfg(all(test, feature = "dsl-jit"))]
 mod tests {
     use super::*;
     use crate::dsl::compile_sde_model_to_jit;
     use crate::test_fixtures::STRUCTURED_BLOCK_CORPUS;
     use crate::PharmsolError;
     use crate::SubjectBuilderExt;
-    use approx::assert_relative_eq;
     use pharmsol_dsl::{DiagnosticPhase, RouteKind, DSL_BACKEND_GENERIC, DSL_PARSE_GENERIC};
-    use tempfile::tempdir;
 
     const MULTI_DIGIT_OUTPUT_ORDER_RUNTIME_DSL: &str = r#"
 name = multi_digit_output_runtime
@@ -544,30 +491,14 @@ out(cp) = central / v ~ continuous()
             .collect()
     }
 
-    fn compile_runtime_backend_matrix(
-        source: &str,
-        model_name: &str,
-        work_dir: &std::path::Path,
-    ) -> (CompiledRuntimeModel, CompiledRuntimeModel) {
-        let jit = compile_module_source_to_runtime(
+    fn compile_runtime_model(source: &str, model_name: &str) -> CompiledRuntimeModel {
+        compile_module_source_to_runtime(
             source,
             Some(model_name),
             RuntimeCompilationTarget::Jit,
             |_, _| {},
         )
-        .expect("compile jit runtime model");
-        let aot = compile_module_source_to_runtime(
-            source,
-            Some(model_name),
-            RuntimeCompilationTarget::NativeAot(
-                NativeAotCompileOptions::new(work_dir.join(format!("{model_name}-aot-build")))
-                    .with_output(work_dir.join(format!("{model_name}.pkm"))),
-            ),
-            |_, _| {},
-        )
-        .expect("compile aot runtime model");
-
-        (jit, aot)
+        .expect("compile jit runtime model")
     }
 
     fn compiled_route_input_index(model: &CompiledRuntimeModel, name: &str) -> Option<usize> {
@@ -683,32 +614,13 @@ out(cp) = central / v ~ continuous()
     }
 
     #[test]
-    fn runtime_backend_matrix_matches_ode_predictions() {
-        let work_dir = tempdir().expect("tempdir");
-
-        let jit = compile_module_source_to_runtime(
-            corpus_source(),
-            Some("one_cmt_oral_iv"),
-            RuntimeCompilationTarget::Jit,
-            |_, _| {},
-        )
-        .expect("compile jit runtime model");
-        let aot = compile_module_source_to_runtime(
-            corpus_source(),
-            Some("one_cmt_oral_iv"),
-            RuntimeCompilationTarget::NativeAot(
-                NativeAotCompileOptions::new(work_dir.path().join("aot-build"))
-                    .with_output(work_dir.path().join("one_cmt_oral_iv.pkm")),
-            ),
-            |_, _| {},
-        )
-        .expect("compile aot runtime model");
+    fn runtime_jit_matches_ode_predictions() {
+        let jit = compile_runtime_model(corpus_source(), "one_cmt_oral_iv");
 
         assert_eq!(jit.backend(), RuntimeBackend::Jit);
-        assert_eq!(aot.backend(), RuntimeBackend::NativeAot);
         assert_eq!(jit.info().name, "one_cmt_oral_iv");
         assert_eq!(
-            aot.info().parameters,
+            jit.info().parameters,
             vec!["ka", "cl", "v", "tlag", "f_oral"]
         );
         let support = Parameters::with_model(
@@ -732,21 +644,13 @@ out(cp) = central / v ~ continuous()
             &jit.estimate_predictions(&subject, &support)
                 .expect("jit predictions"),
         );
-        let aot_values = subject_values(
-            &aot.estimate_predictions(&subject, &support)
-                .expect("aot predictions"),
-        );
-
-        for (jit_value, aot_value) in jit_values.iter().zip(aot_values.iter()) {
-            assert_relative_eq!(jit_value, aot_value, max_relative = 1e-4);
-        }
+        assert_eq!(jit_values.len(), 6);
+        assert!(jit_values.iter().all(|value| value.is_finite()));
     }
 
     #[test]
-    fn runtime_backend_matrix_kindless_routes_accept_both_input_kinds() {
-        let work_dir = tempdir().expect("tempdir");
-        let (jit, aot) =
-            compile_runtime_backend_matrix(corpus_source(), "one_cmt_oral_iv", work_dir.path());
+    fn runtime_jit_kindless_routes_accept_both_input_kinds() {
+        let jit = compile_runtime_model(corpus_source(), "one_cmt_oral_iv");
         let support = Parameters::with_model(
             &jit,
             [
@@ -762,21 +666,19 @@ out(cp) = central / v ~ continuous()
         // Canonical `model {}` routes carry no kind and keep their declaration
         // ordinals. A future collapse of `None` to `Some(Bolus)` anywhere in
         // the lowering pipeline must fail here, close to its source.
-        for model in [&jit, &aot] {
-            let routes = &model.info().routes;
-            let oral = routes
-                .iter()
-                .find(|route| route.name == "oral")
-                .expect("oral route");
-            let iv = routes
-                .iter()
-                .find(|route| route.name == "iv")
-                .expect("iv route");
-            assert_eq!(oral.kind, None, "oral route kind collapsed");
-            assert_eq!(iv.kind, None, "iv route kind collapsed");
-            assert_eq!(oral.index, 0);
-            assert_eq!(iv.index, 1);
-        }
+        let routes = &jit.info().routes;
+        let oral = routes
+            .iter()
+            .find(|route| route.name == "oral")
+            .expect("oral route");
+        let iv = routes
+            .iter()
+            .find(|route| route.name == "iv")
+            .expect("iv route");
+        assert_eq!(oral.kind, None, "oral route kind collapsed");
+        assert_eq!(iv.kind, None, "iv route kind collapsed");
+        assert_eq!(oral.index, 0);
+        assert_eq!(iv.index, 1);
 
         // A kindless route is usable as either input kind: bolus and infusion
         // events both resolve through the same declaration, in both the
@@ -802,20 +704,14 @@ out(cp) = central / v ~ continuous()
             .missing_observation(1.0, "cp")
             .build();
 
-        for model in [&jit, &aot] {
-            model
-                .estimate_predictions(&natural_bolus, &support)
-                .expect("bolus oral resolves on kindless route");
-            model
-                .estimate_predictions(&natural_infusion, &support)
-                .expect("infusion iv resolves on kindless route");
-            model
-                .estimate_predictions(&cross_bolus, &support)
-                .expect("bolus iv resolves on kindless route");
-            model
-                .estimate_predictions(&cross_infusion, &support)
-                .expect("infusion oral resolves on kindless route");
-        }
+        jit.estimate_predictions(&natural_bolus, &support)
+            .expect("bolus oral resolves on kindless route");
+        jit.estimate_predictions(&natural_infusion, &support)
+            .expect("infusion iv resolves on kindless route");
+        jit.estimate_predictions(&cross_bolus, &support)
+            .expect("bolus iv resolves on kindless route");
+        jit.estimate_predictions(&cross_infusion, &support)
+            .expect("infusion oral resolves on kindless route");
     }
 
     #[test]
@@ -840,169 +736,122 @@ out(cp) = central / v ~ continuous()
     }
 
     #[test]
-    fn runtime_backend_matrix_reports_route_kind_mismatch() {
-        let work_dir = tempdir().expect("tempdir");
+    fn runtime_jit_reports_route_kind_mismatch() {
         let subject = mismatched_route_kind_subject();
 
-        let (jit, aot) = compile_runtime_backend_matrix(
+        let jit = compile_runtime_model(
             NUMERIC_ROUTE_LABELS_RUNTIME_DSL,
             "prefixed_numeric_route_runtime",
-            work_dir.path(),
         );
         let support = Parameters::with_model(&jit, [("ke", 0.2), ("v", 10.0)])
             .expect("valid named parameters");
         let expected_input =
             compiled_route_input_index(&jit, "input_10").expect("input_10 route index");
 
-        for model in [&jit, &aot] {
-            assert_unsupported_input_route_kind(
-                model,
-                &subject,
-                &support,
-                expected_input,
-                RouteKind::Infusion,
-            );
-        }
+        assert_unsupported_input_route_kind(
+            &jit,
+            &subject,
+            &support,
+            expected_input,
+            RouteKind::Infusion,
+        );
     }
 
     #[test]
-    fn runtime_backend_matrix_preserves_multi_digit_output_label_order() {
-        let work_dir = tempdir().expect("tempdir");
-        let (jit, aot) = compile_runtime_backend_matrix(
+    fn runtime_jit_preserves_multi_digit_output_label_order() {
+        let jit = compile_runtime_model(
             MULTI_DIGIT_OUTPUT_ORDER_RUNTIME_DSL,
             "multi_digit_output_runtime",
-            work_dir.path(),
         );
 
         assert_eq!(compiled_output_slot_index(&jit, "outeq_2"), Some(0));
         assert_eq!(compiled_output_slot_index(&jit, "outeq_10"), Some(1));
         assert_eq!(compiled_output_slot_index(&jit, "outeq_11"), Some(2));
-        assert_eq!(compiled_output_slot_index(&aot, "outeq_2"), Some(0));
-        assert_eq!(compiled_output_slot_index(&aot, "outeq_10"), Some(1));
-        assert_eq!(compiled_output_slot_index(&aot, "outeq_11"), Some(2));
     }
 
     #[test]
-    fn runtime_backend_matrix_supports_prefixed_multi_digit_numeric_route_labels() {
-        let work_dir = tempdir().expect("tempdir");
-        let (jit, aot) = compile_runtime_backend_matrix(
+    fn runtime_jit_supports_prefixed_multi_digit_numeric_route_labels() {
+        let jit = compile_runtime_model(
             NUMERIC_ROUTE_LABELS_RUNTIME_DSL,
             "prefixed_numeric_route_runtime",
-            work_dir.path(),
         );
         let support = Parameters::with_model(&jit, [("ke", 0.2), ("v", 10.0)])
             .expect("valid named parameters");
 
         assert_eq!(compiled_route_input_index(&jit, "input_10"), Some(0));
         assert_eq!(compiled_route_input_index(&jit, "input_11"), Some(1));
-        assert_eq!(compiled_route_input_index(&aot, "input_10"), Some(0));
-        assert_eq!(compiled_route_input_index(&aot, "input_11"), Some(1));
 
         let subject = numeric_route_subject();
 
-        let jit_values = subject_values(
+        let values = subject_values(
             &jit.estimate_predictions(&subject, &support)
                 .expect("jit predictions"),
         );
-        let aot_values = subject_values(
-            &aot.estimate_predictions(&subject, &support)
-                .expect("aot predictions"),
-        );
-        for (jit_value, aot_value) in jit_values.iter().zip(aot_values.iter()) {
-            assert_relative_eq!(jit_value, aot_value, max_relative = 1e-4);
-        }
+        assert!(values.iter().all(|value| value.is_finite()));
     }
 
     #[test]
-    fn runtime_backend_matrix_resolves_raw_numeric_route_labels_against_prefixed_metadata() {
-        let work_dir = tempdir().expect("tempdir");
-        let (jit, aot) = compile_runtime_backend_matrix(
+    fn runtime_jit_resolves_raw_numeric_route_labels_against_prefixed_metadata() {
+        let jit = compile_runtime_model(
             NUMERIC_ROUTE_LABELS_RUNTIME_DSL,
             "prefixed_numeric_route_runtime",
-            work_dir.path(),
         );
         let support = Parameters::with_model(&jit, [("ke", 0.2), ("v", 10.0)])
             .expect("valid named parameters");
 
         let subject = numeric_route_alias_subject();
 
-        let jit_values = subject_values(
+        let values = subject_values(
             &jit.estimate_predictions(&subject, &support)
                 .expect("jit predictions"),
         );
-        let aot_values = subject_values(
-            &aot.estimate_predictions(&subject, &support)
-                .expect("aot predictions"),
-        );
-        for (jit_value, aot_value) in jit_values.iter().zip(aot_values.iter()) {
-            assert_relative_eq!(jit_value, aot_value, max_relative = 1e-4);
-        }
+        assert!(values.iter().all(|value| value.is_finite()));
     }
 
     #[test]
-    fn runtime_backend_matrix_supports_prefixed_numeric_route_and_output_labels() {
-        let work_dir = tempdir().expect("tempdir");
-        let (jit, aot) = compile_runtime_backend_matrix(
+    fn runtime_jit_supports_prefixed_numeric_route_and_output_labels() {
+        let jit = compile_runtime_model(
             SHARED_NUMERIC_ROUTE_OUTPUT_LABEL_RUNTIME_DSL,
             "prefixed_numeric_route_output_runtime",
-            work_dir.path(),
         );
         let support = Parameters::with_model(&jit, [("ke", 0.2), ("v", 10.0)])
             .expect("valid named parameters");
 
         assert_eq!(compiled_route_input_index(&jit, "input_1"), Some(0));
         assert_eq!(compiled_output_slot_index(&jit, "outeq_1"), Some(0));
-        assert_eq!(compiled_route_input_index(&aot, "input_1"), Some(0));
-        assert_eq!(compiled_output_slot_index(&aot, "outeq_1"), Some(0));
 
         let subject = shared_numeric_route_output_subject();
 
-        let jit_values = subject_values(
+        let values = subject_values(
             &jit.estimate_predictions(&subject, &support)
                 .expect("jit predictions"),
         );
-        let aot_values = subject_values(
-            &aot.estimate_predictions(&subject, &support)
-                .expect("aot predictions"),
-        );
-        for (jit_value, aot_value) in jit_values.iter().zip(aot_values.iter()) {
-            assert_relative_eq!(jit_value, aot_value, max_relative = 1e-4);
-        }
+        assert!(values.iter().all(|value| value.is_finite()));
     }
 
     #[test]
-    fn runtime_backend_matrix_resolves_shared_raw_numeric_route_and_output_aliases() {
-        let work_dir = tempdir().expect("tempdir");
-        let (jit, aot) = compile_runtime_backend_matrix(
+    fn runtime_jit_resolves_shared_raw_numeric_route_and_output_aliases() {
+        let jit = compile_runtime_model(
             SHARED_NUMERIC_ROUTE_OUTPUT_LABEL_RUNTIME_DSL,
             "prefixed_numeric_route_output_runtime",
-            work_dir.path(),
         );
         let support = Parameters::with_model(&jit, [("ke", 0.2), ("v", 10.0)])
             .expect("valid named parameters");
 
         let subject = shared_numeric_route_output_alias_subject();
 
-        let jit_values = subject_values(
+        let values = subject_values(
             &jit.estimate_predictions(&subject, &support)
                 .expect("jit predictions"),
         );
-        let aot_values = subject_values(
-            &aot.estimate_predictions(&subject, &support)
-                .expect("aot predictions"),
-        );
-        for (jit_value, aot_value) in jit_values.iter().zip(aot_values.iter()) {
-            assert_relative_eq!(jit_value, aot_value, max_relative = 1e-4);
-        }
+        assert!(values.iter().all(|value| value.is_finite()));
     }
 
     #[test]
-    fn runtime_backend_matrix_rejects_undeclared_numeric_output_labels() {
-        let work_dir = tempdir().expect("tempdir");
-        let (jit, aot) = compile_runtime_backend_matrix(
+    fn runtime_jit_rejects_undeclared_numeric_output_labels() {
+        let jit = compile_runtime_model(
             UNDECLARED_NUMERIC_OUTPUT_LABEL_RUNTIME_DSL,
             "undeclared_numeric_output_runtime",
-            work_dir.path(),
         );
         let support = Parameters::with_model(&jit, [("ke", 0.2), ("v", 10.0)])
             .expect("valid named parameters");
@@ -1012,16 +861,13 @@ out(cp) = central / v ~ continuous()
             .build();
 
         assert_unknown_output_label(&jit, &subject, &support, "10");
-        assert_unknown_output_label(&aot, &subject, &support, "10");
     }
 
     #[test]
-    fn runtime_backend_matrix_rejects_undeclared_numeric_input_labels() {
-        let work_dir = tempdir().expect("tempdir");
-        let (jit, aot) = compile_runtime_backend_matrix(
+    fn runtime_jit_rejects_undeclared_numeric_input_labels() {
+        let jit = compile_runtime_model(
             UNDECLARED_NUMERIC_INPUT_LABEL_RUNTIME_DSL,
             "undeclared_numeric_input_runtime",
-            work_dir.path(),
         );
         let support = Parameters::with_model(&jit, [("ke", 0.2), ("v", 10.0)])
             .expect("valid named parameters");
@@ -1031,7 +877,6 @@ out(cp) = central / v ~ continuous()
             .build();
 
         assert_unknown_input_label(&jit, &subject, &support, "10");
-        assert_unknown_input_label(&aot, &subject, &support, "10");
     }
 
     #[test]

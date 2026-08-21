@@ -37,13 +37,10 @@ dsl-jit = [
     "dep:cranelift-module",
     "dep:cranelift-native",
 ]
-dsl-aot = ["dsl-core"]
-dsl-aot-load = ["dsl-core", "dep:libloading"]
 
 [dependencies]
 pharmsol-dsl = { workspace = true }
 pharmsol-macros = { workspace = true }
-libloading = { version = "0.9.0", optional = true, features = [] }
 cranelift = { version = "0.134.3", optional = true }
 cranelift-jit = { version = "0.134.3", optional = true }
 cranelift-module = { version = "0.134.3", optional = true }
@@ -70,8 +67,6 @@ quick_cache = "0.7.0"
 criterion = { version = "0.8.2", features = ["html_reports"] }
 approx = "0.5.1"
 tempfile = "3.27.0"
-tiny_http = "0.12.0"
-webbrowser = "1.2.1"
 
 [lib]
 bench = false
@@ -83,4 +78,4 @@ harness = false
 [[bench]]
 name = "dsl_matrix"
 harness = false
-required-features = ["dsl-jit", "dsl-aot", "dsl-aot-load"]
+required-features = ["dsl-jit"]

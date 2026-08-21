@@ -80,8 +80,6 @@
 //!
 //! - `dsl-core`: exposes the `pharmsol::dsl` facade and DSL compiler types
 //! - `dsl-jit`: adds in-process JIT compilation
-//! - `dsl-aot`: adds native ahead-of-time artifact compilation
-//! - `dsl-aot-load`: adds native artifact loading
 //!
 //! ## Labels And Indices
 //!
@@ -108,8 +106,6 @@
 // Lets `ode!`, `analytical!`, and `sde!` expand to `::pharmsol::…` inside this crate too.
 extern crate self as pharmsol;
 
-#[cfg(feature = "dsl-aot")]
-mod build_support;
 pub mod data;
 #[cfg(feature = "dsl-core")]
 pub mod dsl;

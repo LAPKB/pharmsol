@@ -5,10 +5,7 @@ use thiserror::Error;
 
 use crate::parameter_order::{ParameterOrderError, ParameterOrderPlan};
 
-#[cfg(any(
-    feature = "dsl-jit",
-    all(feature = "dsl-aot", feature = "dsl-aot-load")
-))]
+#[cfg(feature = "dsl-jit")]
 use crate::dsl::{CompiledRuntimeModel, RuntimeAnalyticalModel, RuntimeOdeModel, RuntimeSdeModel};
 use crate::{Analytical, ODE, SDE};
 
@@ -221,10 +218,7 @@ impl NamedParameterModel for SDE {
     }
 }
 
-#[cfg(any(
-    feature = "dsl-jit",
-    all(feature = "dsl-aot", feature = "dsl-aot-load")
-))]
+#[cfg(feature = "dsl-jit")]
 impl NamedParameterModel for CompiledRuntimeModel {
     fn parameter_order_plan<S>(&self, source_names: S) -> Result<ParameterOrderPlan, ParameterError>
     where
@@ -236,10 +230,7 @@ impl NamedParameterModel for CompiledRuntimeModel {
     }
 }
 
-#[cfg(any(
-    feature = "dsl-jit",
-    all(feature = "dsl-aot", feature = "dsl-aot-load")
-))]
+#[cfg(feature = "dsl-jit")]
 impl NamedParameterModel for RuntimeOdeModel {
     fn parameter_order_plan<S>(&self, source_names: S) -> Result<ParameterOrderPlan, ParameterError>
     where
@@ -251,10 +242,7 @@ impl NamedParameterModel for RuntimeOdeModel {
     }
 }
 
-#[cfg(any(
-    feature = "dsl-jit",
-    all(feature = "dsl-aot", feature = "dsl-aot-load")
-))]
+#[cfg(feature = "dsl-jit")]
 impl NamedParameterModel for RuntimeAnalyticalModel {
     fn parameter_order_plan<S>(&self, source_names: S) -> Result<ParameterOrderPlan, ParameterError>
     where
@@ -266,10 +254,7 @@ impl NamedParameterModel for RuntimeAnalyticalModel {
     }
 }
 
-#[cfg(any(
-    feature = "dsl-jit",
-    all(feature = "dsl-aot", feature = "dsl-aot-load")
-))]
+#[cfg(feature = "dsl-jit")]
 impl NamedParameterModel for RuntimeSdeModel {
     fn parameter_order_plan<S>(&self, source_names: S) -> Result<ParameterOrderPlan, ParameterError>
     where

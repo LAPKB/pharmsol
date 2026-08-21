@@ -19,8 +19,6 @@
 //!   analyzed models into the ready-to-run form used by the runtime backends.
 //! - [`compile_module_source_to_runtime`] and [`compile_execution_model_to_runtime`]
 //!   for the one-stop compile-and-run path.
-//! - [`load_runtime_artifact`] and [`load_aot_model`] for loading saved
-//!   artifacts back into a model you can execute.
 //!
 //! Common workflow choices:
 //!
@@ -28,8 +26,6 @@
 //!   you need diagnostics, authoring tools, or your own backend.
 //! - In-process execution: compile straight to [`RuntimeCompilationTarget`] and
 //!   keep everything inside the current process.
-//! - Native artifact shipping: export a native AoT artifact, then load it later
-//!   on a compatible host.
 //!
 //! Feature map:
 //!
@@ -39,10 +35,6 @@
 //!   [`compile_module_source_to_runtime`] with
 //!   [`RuntimeCompilationTarget::Jit`], plus the lower-level JIT compile
 //!   entrypoints.
-//! - `dsl-aot`: enables native ahead-of-time artifact export through
-//!   [`compile_module_source_to_aot`] and [`export_execution_model_to_aot`].
-//! - `dsl-aot-load`: enables native AoT artifact loading through
-//!   [`load_aot_model`] and [`read_aot_model_info`].
 //!
 //! Smallest compile-to-runtime example:
 //!
@@ -80,32 +72,14 @@
 //! `pharmsol-dsl`. For a complete runtime path inside the main crate, stay in
 //! [`pharmsol::dsl`](self).
 
-#[cfg(any(feature = "dsl-aot", feature = "dsl-aot-load"))]
-mod aot;
-mod compiled_backend_abi;
 #[cfg(feature = "dsl-jit")]
 mod jit;
 mod model_info;
-#[cfg(any(feature = "dsl-jit", feature = "dsl-aot-load"))]
+#[cfg(feature = "dsl-jit")]
 mod native;
-#[cfg(any(
-    feature = "dsl-jit",
-    all(feature = "dsl-aot", feature = "dsl-aot-load")
-))]
+#[cfg(feature = "dsl-jit")]
 mod runtime;
-#[cfg(feature = "dsl-aot")]
-mod rust_backend;
 
-#[cfg(feature = "dsl-aot")]
-pub use aot::{
-    compile_module_source_to_aot, export_execution_model_to_aot, AotError, NativeAotCompileOptions,
-    NativeAotTarget, AOT_API_VERSION,
-};
-#[cfg(feature = "dsl-aot-load")]
-pub use aot::{load_aot_model, read_aot_model_info};
-#[cfg(all(not(feature = "dsl-aot"), feature = "dsl-aot-load"))]
-pub use aot::{AotError, AOT_API_VERSION};
-pub use compiled_backend_abi::{CompiledFunctionAvailability, CompiledModelInfoEnvelope};
 #[cfg(feature = "dsl-jit")]
 pub use jit::{
     compile_analytical_model_to_jit, compile_execution_artifact, compile_execution_model_to_jit,
@@ -113,19 +87,16 @@ pub use jit::{
     JitCompileError, JitExecutionArtifact, JitOdeModel, JitSdeModel,
 };
 pub use model_info::{NativeCovariateInfo, NativeModelInfo, NativeOutputInfo, NativeRouteInfo};
-#[cfg(any(feature = "dsl-jit", feature = "dsl-aot-load"))]
+#[cfg(feature = "dsl-jit")]
 pub use native::{
     CompiledModelFunction, CompiledNativeModel, NativeAnalyticalModel, NativeExecutionArtifact,
     NativeOdeModel, NativeSdeModel, RuntimeBackend,
 };
 pub use pharmsol_dsl::*;
-#[cfg(any(
-    feature = "dsl-jit",
-    all(feature = "dsl-aot", feature = "dsl-aot-load")
-))]
+#[cfg(feature = "dsl-jit")]
 pub use runtime::{
-    compile_execution_model_to_runtime, compile_module_source_to_runtime, load_runtime_artifact,
-    CompiledRuntimeModel, RuntimeAnalyticalModel, RuntimeArtifactFormat, RuntimeCompilationTarget,
-    RuntimeCovariateInfo, RuntimeError, RuntimeModelInfo, RuntimeOdeModel, RuntimeOutputInfo,
-    RuntimePredictions, RuntimeRouteInfo, RuntimeSdeModel, RuntimeStateInfo,
+    compile_execution_model_to_runtime, compile_module_source_to_runtime, CompiledRuntimeModel,
+    RuntimeAnalyticalModel, RuntimeCompilationTarget, RuntimeCovariateInfo, RuntimeError,
+    RuntimeModelInfo, RuntimeOdeModel, RuntimeOutputInfo, RuntimePredictions, RuntimeRouteInfo,
+    RuntimeSdeModel, RuntimeStateInfo,
 };

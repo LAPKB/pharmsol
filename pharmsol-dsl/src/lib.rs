@@ -42,8 +42,7 @@
 //! - [`syntax`] for the syntax tree.
 //! - [`analysis`] for the analyzed, fully checked model.
 //! - [`diagnostic`] for spans, diagnostic codes, and rendered reports.
-//! - [`execution`] for the ready-to-run model shared by the JIT and AoT
-//!   backends.
+//! - [`execution`] for the ready-to-run model consumed by the JIT backend.
 //!
 //! Smallest one-shot example:
 //!
