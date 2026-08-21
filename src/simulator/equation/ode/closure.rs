@@ -182,9 +182,9 @@ impl InfusionSchedule {
         &self.boundary_times
     }
 
-    /// Absolute infusion input omitted when two adjacent stops are coalesced.
-    /// The event loop calls this only before the next infusion boundary, so the
-    /// active rate is constant over the interval.
+    /// Absolute infusion input in an interval that the backend could not
+    /// integrate. The event loop uses this to produce a dose-specific failure
+    /// rather than silently advancing across the unresolved boundary.
     fn infusion_amount_between(&self, from: f64, to: f64) -> f64 {
         if to <= from {
             return 0.0;
@@ -215,6 +215,7 @@ where
     nstates: usize,
     nparams: usize,
     infusion_schedule: &'a InfusionSchedule,
+    time_origin: &'a Cell<f64>,
     covariates: &'a Covariates,
     p_as_v: &'a V,
     func: &'a F,
@@ -356,13 +357,15 @@ where
     F: Fn(&V, &V, T, &mut V, &V, &V, &Covariates),
 {
     fn call_inplace(&self, x: &Self::V, t: Self::T, y: &mut Self::V) {
+        let absolute_time = self.time_origin.get() + t;
         let mut rateiv_ref = self.rateiv_buffer.borrow_mut();
-        self.infusion_schedule.fill_rate_vector(t, &mut rateiv_ref);
+        self.infusion_schedule
+            .fill_rate_vector(absolute_time, &mut rateiv_ref);
 
         (self.func)(
             x,
             self.p_as_v,
-            t,
+            absolute_time,
             y,
             self.zero_bolus,
             &rateiv_ref,
@@ -376,10 +379,11 @@ where
     F: Fn(&V, &V, T, &mut V, &V, &V, &Covariates),
 {
     fn jac_mul_inplace(&self, _x: &Self::V, t: Self::T, v: &Self::V, y: &mut Self::V) {
+        let absolute_time = self.time_origin.get() + t;
         (self.func)(
             v,
             self.p_as_v,
-            t,
+            absolute_time,
             y,
             self.zero_bolus,
             self.zero_bolus,
@@ -413,6 +417,7 @@ where
     zero_bolus: V,
     covariates: &'a Covariates,
     infusion_schedule: InfusionSchedule,
+    time_origin: Cell<f64>,
     rateiv_buffer: RefCell<V>,
 }
 
@@ -420,6 +425,21 @@ impl<'a, F> PMProblem<'a, F>
 where
     F: Fn(&V, &V, T, &mut V, &V, &V, &Covariates) + 'a,
 {
+    /// Convert diffsol's local independent variable to model/data time.
+    pub(crate) fn absolute_time(&self, solver_time: f64) -> f64 {
+        self.time_origin.get() + solver_time
+    }
+
+    /// Convert model/data time to diffsol's current local coordinate.
+    pub(crate) fn solver_time(&self, absolute_time: f64) -> f64 {
+        absolute_time - self.time_origin.get()
+    }
+
+    /// Start a new local coordinate at an accepted absolute-time state.
+    pub(crate) fn rebase_time_origin(&self, absolute_time: f64) {
+        self.time_origin.set(absolute_time);
+    }
+
     pub(crate) fn set_left_continuity_time(&self, time: Option<f64>) {
         self.infusion_schedule.set_left_continuity_time(time);
     }
@@ -433,18 +453,20 @@ where
     }
 
     /// Evaluate the full RHS (including the currently scheduled infusion
-    /// rates) at time `t` into `dx`.
+    /// rates) at local solver time `t` into `dx`.
     ///
     /// Used at infusion boundaries to refresh the solver's stored derivative
     /// against the post-boundary (right-continuous) RHS, so a solver restart
     /// predicts with the new dynamics instead of the pre-boundary ones.
     pub(crate) fn refresh_state_derivative(&self, t: f64, x: &V, dx: &mut V) {
+        let absolute_time = self.absolute_time(t);
         let mut rateiv = self.rateiv_buffer.borrow_mut();
-        self.infusion_schedule.fill_rate_vector(t, &mut rateiv);
+        self.infusion_schedule
+            .fill_rate_vector(absolute_time, &mut rateiv);
         (self.func)(
             x,
             &self.p_as_v,
-            t,
+            absolute_time,
             dx,
             &self.zero_bolus,
             &rateiv,
@@ -482,6 +504,7 @@ where
             zero_bolus,
             covariates,
             infusion_schedule,
+            time_origin: Cell::new(0.0),
             rateiv_buffer,
         })
     }
@@ -532,6 +555,7 @@ where
             nstates: self.nstates,
             nparams: self.nparams,
             infusion_schedule: &self.infusion_schedule,
+            time_origin: &self.time_origin,
             covariates: self.covariates,
             p_as_v: &self.p_as_v,
             func: &self.func,

@@ -39,6 +39,9 @@ use super::{
 
 const RTOL: f64 = 1e-4;
 const ATOL: f64 = 1e-4;
+/// Headroom above diffsol's hard minimum after a close stop, allowing the
+/// controller to shrink a restarted step before reaching that floor again.
+const MINIMUM_TIMESTEP_HEADROOM: f64 = 4.0;
 
 /// ODE solver selection.
 ///
@@ -584,6 +587,55 @@ where
     solver.state_mut().dy.copy_from(dy_scratch);
 }
 
+fn restore_timestep_after_close_stop<'a, F, S>(solver: &mut S)
+where
+    F: Fn(&V, &V, f64, &mut V, &V, &V, &Covariates) + 'a,
+    S: OdeSolverMethod<'a, PMProblem<'a, F>>,
+{
+    let minimum_timestep = *solver.config().as_base_ref().minimum_timestep;
+    let restart_timestep = MINIMUM_TIMESTEP_HEADROOM * minimum_timestep;
+    let state = solver.state_mut();
+    if minimum_timestep > 0.0 && state.h.abs() < restart_timestep {
+        *state.h = restart_timestep.copysign(*state.h);
+    }
+}
+
+/// Shift diffsol's independent variable to zero without changing the model's
+/// absolute time or state. This discards solver history, then integrates the
+/// complete remaining interval in a coordinate system where distinct nearby
+/// times remain representable.
+fn rebase_solver_time<'a, F, S>(
+    solver: &mut S,
+    absolute_time: f64,
+    target_time: f64,
+    dy_scratch: &mut V,
+) where
+    F: Fn(&V, &V, f64, &mut V, &V, &V, &Covariates) + 'a,
+    S: OdeSolverMethod<'a, PMProblem<'a, F>>,
+{
+    let remaining = target_time - absolute_time;
+    let current_step = solver.state().h.abs();
+    {
+        let state = solver.state_mut();
+        *state.t = 0.0;
+        *state.h = if current_step == 0.0 {
+            remaining
+        } else {
+            current_step.min(remaining)
+        };
+    }
+    solver.problem().eqn.rebase_time_origin(absolute_time);
+    let state = solver.state_clone();
+    solver.set_state(state);
+
+    let y = solver.state().y;
+    solver
+        .problem()
+        .eqn
+        .refresh_state_derivative(0.0, y, dy_scratch);
+    solver.state_mut().dy.copy_from(dy_scratch);
+}
+
 fn ensure_no_material_infusion_is_skipped<'a, F, S>(
     solver: &S,
     start_time: f64,
@@ -628,6 +680,51 @@ fn stop_time_before_current_time(stop_time: f64, state_time: f64) -> PharmsolErr
     )
 }
 
+fn solver_error_at_absolute_time<'a, F, S>(
+    solver: &S,
+    error: diffsol::error::DiffsolError,
+    absolute_target_time: f64,
+) -> PharmsolError
+where
+    F: Fn(&V, &V, f64, &mut V, &V, &V, &Covariates) + 'a,
+    S: OdeSolverMethod<'a, PMProblem<'a, F>>,
+{
+    use diffsol::error::DiffsolError;
+
+    let error = match error {
+        DiffsolError::OdeSolverError(error) => {
+            let error = match error {
+                OdeSolverError::StopTimeBeforeCurrentTime {
+                    stop_time,
+                    state_time,
+                } => OdeSolverError::StopTimeBeforeCurrentTime {
+                    stop_time: solver.problem().eqn.absolute_time(stop_time),
+                    state_time: solver.problem().eqn.absolute_time(state_time),
+                },
+                OdeSolverError::TooManyNonlinearSolverFailures { time, num_failures } => {
+                    OdeSolverError::TooManyNonlinearSolverFailures {
+                        time: solver.problem().eqn.absolute_time(time),
+                        num_failures,
+                    }
+                }
+                OdeSolverError::TooManyErrorTestFailures { time, num_failures } => {
+                    OdeSolverError::TooManyErrorTestFailures {
+                        time: solver.problem().eqn.absolute_time(time),
+                        num_failures,
+                    }
+                }
+                OdeSolverError::StepSizeTooSmall { time } => OdeSolverError::StepSizeTooSmall {
+                    time: solver.problem().eqn.absolute_time(time),
+                },
+                other => other,
+            };
+            DiffsolError::OdeSolverError(error)
+        }
+        other => other,
+    };
+    PharmsolError::from_solver_error(error, absolute_target_time)
+}
+
 fn cannot_integrate_distinct_stop(
     start_time: f64,
     stop_time: f64,
@@ -643,23 +740,15 @@ fn cannot_integrate_distinct_stop(
     ))
 }
 
-fn interval_is_near_minimum_timestep<'a, F, S>(solver: &S, start_time: f64, stop_time: f64) -> bool
-where
-    F: Fn(&V, &V, f64, &mut V, &V, &V, &Covariates) + 'a,
-    S: OdeSolverMethod<'a, PMProblem<'a, F>>,
-{
-    let minimum_timestep = *solver.config().as_base_ref().minimum_timestep;
-    stop_time > start_time && stop_time - start_time <= 4.0 * minimum_timestep
-}
-
 /// Normalize a stop only after diffsol reports that it has been reached.
 ///
-/// Diffsol may accept a step whose time is a few ULPs before the requested
-/// stop. Relabeling that accepted state prevents a duplicate stop request, but
-/// must never move time backward or omit material infusion input.
+/// Diffsol may accept a step whose time is a few ULPs from the requested
+/// stop. A state short of the stop can be relabeled only after the infusion
+/// guard; a state past it in the integration direction is interpolated back.
 fn normalize_reached_stop<'a, F, S>(
     solver: &mut S,
     stop_time: f64,
+    absolute_stop_time: f64,
     rtol: f64,
     atol: f64,
 ) -> Result<bool, PharmsolError>
@@ -671,10 +760,27 @@ where
     if state_time == stop_time {
         return Ok(false);
     }
-    if state_time > stop_time {
-        return Err(stop_time_before_current_time(stop_time, state_time));
+    let absolute_state_time = solver.problem().eqn.absolute_time(state_time);
+    let step = solver.state().h;
+    let passed_stop =
+        (step >= 0.0 && state_time > stop_time) || (step < 0.0 && state_time < stop_time);
+    if passed_stop {
+        if let Err(error) = solver.state_mut_back(stop_time) {
+            return Err(solver_error_at_absolute_time(
+                solver,
+                error,
+                absolute_stop_time,
+            ));
+        }
+        return Ok(true);
     }
-    ensure_no_material_infusion_is_skipped(solver, state_time, stop_time, rtol, atol)?;
+    ensure_no_material_infusion_is_skipped(
+        solver,
+        absolute_state_time,
+        absolute_stop_time,
+        rtol,
+        atol,
+    )?;
     *solver.state_mut().t = stop_time;
     Ok(true)
 }
@@ -706,15 +812,16 @@ where
     S: OdeSolverMethod<'a, PMProblem<'a, F>>,
     H: FnMut() -> Result<(), PharmsolError>,
 {
-    while next_event_time > solver.state().t {
+    while next_event_time > solver.problem().eqn.absolute_time(solver.state().t) {
+        let current_time = solver.problem().eqn.absolute_time(solver.state().t);
         let infusion_boundary_times = solver.problem().eqn.infusion_boundary_times();
         while *infusion_boundary_cursor < infusion_boundary_times.len()
-            && infusion_boundary_times[*infusion_boundary_cursor] <= solver.state().t
+            && infusion_boundary_times[*infusion_boundary_cursor] <= current_time
         {
             *infusion_boundary_cursor += 1;
         }
 
-        let (stop_time, is_infusion_boundary) =
+        let (absolute_stop_time, is_infusion_boundary) =
             match infusion_boundary_times.get(*infusion_boundary_cursor) {
                 Some(&boundary_time) if boundary_time <= next_event_time => {
                     *infusion_boundary_cursor += 1;
@@ -727,52 +834,111 @@ where
             .problem()
             .eqn
             .set_left_continuity_time(if is_infusion_boundary {
-                Some(stop_time)
+                Some(absolute_stop_time)
             } else {
                 None
             });
 
-        match solver.set_stop_time(stop_time) {
-            Ok(()) => {
-                if *pending_reinit {
-                    reinitialize_at_boundary(solver, dy_scratch);
-                    *pending_reinit = false;
+        let segment_start_time = current_time;
+        let configured_minimum_timestep = *solver.config().as_base_ref().minimum_timestep;
+        let short_segment = absolute_stop_time - segment_start_time
+            <= MINIMUM_TIMESTEP_HEADROOM * configured_minimum_timestep;
+        if short_segment {
+            *solver.config_mut().as_base_mut().minimum_timestep = 0.0;
+        }
+
+        let segment_result = (|| -> Result<(), PharmsolError> {
+            let mut rebased = false;
+            loop {
+                let stop_time = solver.problem().eqn.solver_time(absolute_stop_time);
+                match solver.set_stop_time(stop_time) {
+                    Ok(()) => {
+                        if *pending_reinit {
+                            reinitialize_at_boundary(solver, dy_scratch);
+                            if let Err(error) = after_step() {
+                                solver.problem().eqn.set_left_continuity_time(None);
+                                return Err(error);
+                            }
+                            *pending_reinit = false;
+                        }
+                        integrate_to_stop(
+                            solver,
+                            stop_time,
+                            absolute_stop_time,
+                            is_infusion_boundary,
+                            pending_reinit,
+                            rtol,
+                            atol,
+                            after_step,
+                        )?;
+                        return Ok(());
+                    }
+                    Err(diffsol::error::DiffsolError::OdeSolverError(
+                        OdeSolverError::StopTimeAtCurrentTime,
+                    )) => {
+                        let state_time = solver.state().t;
+                        let absolute_state_time = solver.problem().eqn.absolute_time(state_time);
+                        if absolute_state_time > absolute_stop_time {
+                            solver.problem().eqn.set_left_continuity_time(None);
+                            return Err(stop_time_before_current_time(
+                                absolute_stop_time,
+                                absolute_state_time,
+                            ));
+                        }
+                        if absolute_state_time == absolute_stop_time {
+                            solver.problem().eqn.set_left_continuity_time(None);
+                            if is_infusion_boundary {
+                                *pending_reinit = true;
+                            }
+                            return Ok(());
+                        }
+                        if rebased {
+                            solver.problem().eqn.set_left_continuity_time(None);
+                            ensure_no_material_infusion_is_skipped(
+                                solver,
+                                absolute_state_time,
+                                absolute_stop_time,
+                                rtol,
+                                atol,
+                            )?;
+                            return Err(cannot_integrate_distinct_stop(
+                                segment_start_time,
+                                absolute_stop_time,
+                                absolute_state_time,
+                            ));
+                        }
+                        rebase_solver_time(
+                            solver,
+                            absolute_state_time,
+                            absolute_stop_time,
+                            dy_scratch,
+                        );
+                        if let Err(error) = after_step() {
+                            solver.problem().eqn.set_left_continuity_time(None);
+                            return Err(error);
+                        }
+                        *pending_reinit = false;
+                        rebased = true;
+                    }
+                    Err(err) => {
+                        solver.problem().eqn.set_left_continuity_time(None);
+                        return Err(solver_error_at_absolute_time(
+                            solver,
+                            err,
+                            absolute_stop_time,
+                        ));
+                    }
                 }
-                integrate_to_stop(
-                    solver,
-                    stop_time,
-                    is_infusion_boundary,
-                    pending_reinit,
-                    rtol,
-                    atol,
-                    after_step,
-                )?;
             }
-            Err(diffsol::error::DiffsolError::OdeSolverError(
-                OdeSolverError::StopTimeAtCurrentTime,
-            )) => {
-                solver.problem().eqn.set_left_continuity_time(None);
-                let state_time = solver.state().t;
-                if state_time > stop_time {
-                    return Err(stop_time_before_current_time(stop_time, state_time));
-                }
-                if state_time < stop_time {
-                    ensure_no_material_infusion_is_skipped(
-                        solver, state_time, stop_time, rtol, atol,
-                    )?;
-                    return Err(cannot_integrate_distinct_stop(
-                        state_time, stop_time, state_time,
-                    ));
-                }
-                if is_infusion_boundary {
-                    *pending_reinit = true;
-                }
-            }
-            Err(err) => {
-                solver.problem().eqn.set_left_continuity_time(None);
-                return Err(PharmsolError::from_solver_error(err, stop_time));
+        })();
+
+        if short_segment {
+            *solver.config_mut().as_base_mut().minimum_timestep = configured_minimum_timestep;
+            if segment_result.is_ok() {
+                restore_timestep_after_close_stop(solver);
             }
         }
+        segment_result?;
     }
     Ok(())
 }
@@ -785,6 +951,7 @@ where
 fn integrate_to_stop<'a, F, S, H>(
     solver: &mut S,
     stop_time: f64,
+    absolute_stop_time: f64,
     is_infusion_boundary: bool,
     pending_reinit: &mut bool,
     rtol: f64,
@@ -796,7 +963,7 @@ where
     S: OdeSolverMethod<'a, PMProblem<'a, F>>,
     H: FnMut() -> Result<(), PharmsolError>,
 {
-    let segment_start_time = solver.state().t;
+    let segment_start_time = solver.problem().eqn.absolute_time(solver.state().t);
     loop {
         match solver.step() {
             Ok(OdeSolverStopReason::InternalTimestep) => {
@@ -808,7 +975,7 @@ where
             Ok(OdeSolverStopReason::TstopReached) => {
                 solver.problem().eqn.set_left_continuity_time(None);
                 after_step()?;
-                if normalize_reached_stop(solver, stop_time, rtol, atol)? {
+                if normalize_reached_stop(solver, stop_time, absolute_stop_time, rtol, atol)? {
                     *pending_reinit = true;
                 }
                 if is_infusion_boundary {
@@ -818,10 +985,11 @@ where
             }
             Ok(OdeSolverStopReason::RootFound(root_time, _)) => {
                 solver.problem().eqn.set_left_continuity_time(None);
+                let absolute_root_time = solver.problem().eqn.absolute_time(root_time);
                 return Err(PharmsolError::OtherError(format!(
                     "solver stopped at an unexpected root at t = {:.4} \
                      (root finding is not configured)",
-                    root_time
+                    absolute_root_time
                 )));
             }
             Err(diffsol::error::DiffsolError::OdeSolverError(
@@ -830,17 +998,25 @@ where
                 solver.problem().eqn.set_left_continuity_time(None);
                 after_step()?;
                 let state_time = solver.state().t;
+                let absolute_state_time = solver.problem().eqn.absolute_time(state_time);
                 if state_time > stop_time {
-                    return Err(stop_time_before_current_time(stop_time, state_time));
+                    return Err(stop_time_before_current_time(
+                        absolute_stop_time,
+                        absolute_state_time,
+                    ));
                 }
                 if state_time < stop_time {
                     ensure_no_material_infusion_is_skipped(
-                        solver, state_time, stop_time, rtol, atol,
+                        solver,
+                        absolute_state_time,
+                        absolute_stop_time,
+                        rtol,
+                        atol,
                     )?;
                     return Err(cannot_integrate_distinct_stop(
                         segment_start_time,
-                        stop_time,
-                        state_time,
+                        absolute_stop_time,
+                        absolute_state_time,
                     ));
                 }
                 if is_infusion_boundary {
@@ -850,31 +1026,14 @@ where
             }
             Err(err) => {
                 solver.problem().eqn.set_left_continuity_time(None);
-                let state_time = solver.state().t;
-                let close_step_size_failure =
-                    matches!(
-                        &err,
-                        diffsol::error::DiffsolError::OdeSolverError(
-                            OdeSolverError::StepSizeTooSmall { .. }
-                        )
-                    ) && interval_is_near_minimum_timestep(solver, state_time, stop_time);
-                if close_step_size_failure {
-                    // A model-function error raised inside the RHS is the root
-                    // cause when present; surface it over the solver error.
-                    after_step()?;
-                    ensure_no_material_infusion_is_skipped(
-                        solver, state_time, stop_time, rtol, atol,
-                    )?;
-                    return Err(cannot_integrate_distinct_stop(
-                        segment_start_time,
-                        stop_time,
-                        state_time,
-                    ));
-                }
                 // A model-function error raised inside the RHS is the root
                 // cause when present; surface it over the solver error.
                 after_step()?;
-                return Err(PharmsolError::from_solver_error(err, stop_time));
+                return Err(solver_error_at_absolute_time(
+                    solver,
+                    err,
+                    absolute_stop_time,
+                ));
             }
         }
     }

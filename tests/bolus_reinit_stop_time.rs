@@ -307,28 +307,32 @@ fn material_short_infusion_subject() -> Subject {
         .build()
 }
 
-fn assert_material_infusion_error(label: &str, error: PharmsolError) {
-    let message = error.to_string();
-    assert!(
-        message.contains("would skip infusion amount"),
-        "{label}: unexpected error: {message}"
-    );
+fn material_short_infusion_expected() -> f64 {
+    let duration = 1.0_f64.next_up() - 1.0;
+    let elimination = 0.5;
+    let state_at_end = 100.0 * -(-elimination * duration).exp_m1() / (elimination * duration);
+    state_at_end * (-elimination * (2.0 - (1.0 + duration))).exp()
 }
 
 #[test]
-fn closure_solvers_reject_material_coalesced_infusions() {
+fn closure_solvers_integrate_material_short_infusions() {
     for (label, solver) in solver_cases() {
         let model = closure_infusion_model(solver);
-        let error = model
+        let predictions = model
             .estimate_predictions_dense(&material_short_infusion_subject(), &[])
-            .unwrap_err();
-        assert_material_infusion_error(&format!("closure {label}"), error);
+            .unwrap_or_else(|error| panic!("closure {label} short infusion failed: {error}"));
+        assert_post_infusion_decay(
+            &format!("closure {label} short infusion"),
+            &predictions,
+            material_short_infusion_expected(),
+            1.0e-2,
+        );
     }
 }
 
 #[test]
 #[cfg(feature = "dsl-jit")]
-fn jit_solvers_reject_material_coalesced_infusions() -> Result<(), Box<dyn std::error::Error>> {
+fn jit_solvers_integrate_material_short_infusions() -> Result<(), Box<dyn std::error::Error>> {
     for (label, solver) in solver_cases() {
         let compiled = compile_module_source_to_runtime(
             INFUSION_DSL_MODEL,
@@ -342,13 +346,18 @@ fn jit_solvers_reject_material_coalesced_infusions() -> Result<(), Box<dyn std::
             }
             _ => return Err("expected an ODE model".into()),
         };
-        let error = match &model {
+        let predictions = match &model {
             CompiledRuntimeModel::Ode(model) => model
                 .estimate_predictions_dense(&material_short_infusion_subject(), &[])
-                .unwrap_err(),
+                .unwrap_or_else(|error| panic!("JIT {label} short infusion failed: {error}")),
             _ => unreachable!(),
         };
-        assert_material_infusion_error(&format!("JIT {label}"), error);
+        assert_post_infusion_decay(
+            &format!("JIT {label} short infusion"),
+            &predictions,
+            material_short_infusion_expected(),
+            1.0e-2,
+        );
     }
     Ok(())
 }
@@ -477,19 +486,10 @@ fn assert_runtime_close_gaps(backend: &str, compiled: &CompiledRuntimeModel) {
                         ));
                     }
                 }
-                Err(error) => {
-                    let message = error.to_string();
-                    let interval = format!("from t = {start:.16e} to t = {stop:.16e}");
-                    if !(message.contains("cannot integrate distinct stop")
-                        && message.contains(&interval))
-                    {
-                        failures.push(format!(
-                            "{backend} {solver_name} {case_name}: close distinct stops may fail \
-                             explicitly, but the error must identify the exact interval \
-                             `{interval}`: {message}"
-                        ));
-                    }
-                }
+                Err(error) => failures.push(format!(
+                    "{backend} {solver_name} {case_name}: solver must integrate the distinct \
+                     interval from t = {start:.16e} to t = {stop:.16e}, but returned: {error}"
+                )),
             }
         }
     }
@@ -667,13 +667,20 @@ fn native_aot_preserves_infusion_boundary_contracts() -> Result<(), Box<dyn std:
             );
         }
 
-        let error = match &model {
+        let predictions = match &model {
             CompiledRuntimeModel::Ode(model) => model
                 .estimate_predictions_dense(&material_short_infusion_subject(), &[])
-                .unwrap_err(),
+                .unwrap_or_else(|error| {
+                    panic!("native AOT {solver_name} short infusion failed: {error}")
+                }),
             _ => unreachable!(),
         };
-        assert_material_infusion_error(&format!("native AOT {solver_name}"), error);
+        assert_post_infusion_decay(
+            &format!("native AOT {solver_name} short infusion"),
+            &predictions,
+            material_short_infusion_expected(),
+            1.0e-2,
+        );
     }
     Ok(())
 }

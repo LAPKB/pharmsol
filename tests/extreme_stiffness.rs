@@ -485,9 +485,15 @@ fn impossibly_stiff_problem_returns_descriptive_error() {
         .estimate_predictions_dense(&subject, parameters.as_slice())
         .expect_err("a problem beyond the minimum step size should fail");
     let message = error.to_string();
+    let actionable_failure = (message.contains("step size collapsed")
+        && message.contains("system is too stiff"))
+        || (message.contains("error test failed")
+            && message.contains("tolerances may be too tight or the parameters implausible"));
     assert!(
-        message.contains("did not recover"),
-        "error should mention the exhausted restarts: {message}"
+        actionable_failure
+            && message.contains("subject `impossibly_stiff`")
+            && message.contains("ke=1000000000000.0"),
+        "error should identify the numerical failure and failing trajectory: {message}"
     );
 }
 
@@ -578,6 +584,27 @@ fn close_gap_exponential_model(solver: OdeSolver) -> equation::ODE {
     .expect("close-gap model metadata should validate")
 }
 
+fn absolute_time_rhs_model(solver: OdeSolver) -> equation::ODE {
+    equation::ODE::new(
+        |_x, p, t, dx, _b, _rateiv, _cov| dx[0] = p[0] * t,
+        |_p, _t, _cov| lag! {},
+        |_p, _t, _cov| fa! {},
+        |_p, _t, _cov, x| x[0] = 1.0,
+        |x, _p, _t, _cov, y| y[0] = x[0],
+    )
+    .with_nstates(1)
+    .with_ndrugs(0)
+    .with_nout(1)
+    .with_solver(solver)
+    .with_metadata(
+        equation::metadata::new("absolute_time_rhs")
+            .parameters(["rate"])
+            .states(["amount"])
+            .outputs(["cp"]),
+    )
+    .expect("absolute-time model metadata should validate")
+}
+
 fn close_gap_bolus_model(solver: OdeSolver) -> equation::ODE {
     equation::ODE::new(
         |x, p, _t, dx, bolus, _rateiv, _cov| dx[0] = bolus[0] - p[0] * x[0],
@@ -624,18 +651,10 @@ fn close_gap_failure(
                 )
             })
         }
-        Err(error) => {
-            let message = error.to_string();
-            let interval = format!("from t = {start:.16e} to t = {stop:.16e}");
-            (!(message.contains("cannot integrate distinct stop") && message.contains(&interval)))
-                .then(|| {
-                    format!(
-                        "{label}: close distinct stops may fail explicitly, but the error must \
-                         identify the exact interval `{interval}` instead of returning an \
-                         unrelated failure: {message}"
-                    )
-                })
-        }
+        Err(error) => Some(format!(
+            "{label}: solver must integrate the distinct interval from t = {start:.16e} to \
+             t = {stop:.16e}, but returned: {error}"
+        )),
     }
 }
 
@@ -667,6 +686,34 @@ fn close_distinct_stops_do_not_silently_skip_autonomous_dynamics() {
             ) {
                 failures.push(failure);
             }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn rebased_close_segment_preserves_absolute_model_time() {
+    let start = 1.0e6_f64;
+    let stop = start.next_up();
+    let expected_change = 0.3;
+    let integrated_time = 0.5 * (start + stop) * (stop - start);
+    let rate = expected_change / integrated_time;
+    let subject = Subject::builder("rebased-absolute-time")
+        .missing_observation(start, "cp")
+        .missing_observation(stop, "cp")
+        .build();
+    let mut failures = Vec::new();
+
+    for (solver_name, solver) in all_solvers() {
+        let result = absolute_time_rhs_model(solver).estimate_predictions_dense(&subject, &[rate]);
+        if let Some(failure) = close_gap_failure(
+            &format!("{solver_name} rebased absolute-time RHS"),
+            result,
+            start,
+            stop,
+            1.0 + expected_change,
+        ) {
+            failures.push(failure);
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
