@@ -26,7 +26,7 @@ use crate::simulator::equation::Predictions;
 use closure::PMProblem;
 use diffsol::{
     error::OdeSolverError, ode_solver::method::OdeSolverMethod, NalgebraContext, OdeBuilder,
-    OdeSolverStopReason, Vector, VectorHost,
+    OdeSolverConfig, OdeSolverStopReason, Vector, VectorHost,
 };
 use nalgebra::DVector;
 use pharmsol_dsl::ModelKind;
@@ -560,13 +560,35 @@ impl EquationPriv for ODE {
 ///   (right-continuous) RHS so a first-order restart predicts with the new
 ///   dynamics instead of the pre-boundary ones;
 /// - `state_mut` marks the state as modified so the next step restarts the
-///   multi-step method at first order.
+///   multi-step method at first order;
+/// - the step size is raised to at least [`restart_step_size_floor`] so a
+///   step crushed by a nearby previous stop cannot doom the next segment.
 ///
 /// Shared with the DSL/JIT ODE path ([`crate::dsl::native::NativeOdeModel`]),
 /// which must apply the same discontinuity semantics as the closure-based
 /// [`ODE`] event loop.
 pub(crate) fn reinitialize_at_boundary<'a, F, S>(solver: &mut S, dy_scratch: &mut V)
 where
+    F: Fn(&V, &V, f64, &mut V, &V, &V, &Covariates) + 'a,
+    S: OdeSolverMethod<'a, PMProblem<'a, F>>,
+{
+    restart_solver_at_current_state(solver, dy_scratch, None);
+}
+
+/// Shared restart core for boundary reinitializations and rescue restarts.
+///
+/// `step_size` replaces the current step size when given (rescue restarts);
+/// otherwise the current step size is kept. Either way the result is floored:
+/// diffsol shrinks `h` to land exactly on a close stop and *ignores* the
+/// `StepSizeTooSmall` this may raise, and once `h` sits below half the
+/// solver's minimum step every later step-size update — including growth,
+/// which is capped at 2x — fails. Restarting is the safe place to undo that:
+/// the state is already marked modified, so raising `h` costs nothing extra.
+fn restart_solver_at_current_state<'a, F, S>(
+    solver: &mut S,
+    dy_scratch: &mut V,
+    step_size: Option<f64>,
+) where
     F: Fn(&V, &V, f64, &mut V, &V, &V, &Covariates) + 'a,
     S: OdeSolverMethod<'a, PMProblem<'a, F>>,
 {
@@ -581,8 +603,355 @@ where
             .eqn
             .refresh_state_derivative(t, y, dy_scratch);
     }
+    let floor = restart_step_size_floor(t);
     let state = solver.state_mut();
     state.dy.copy_from(dy_scratch);
+    *state.h = step_size.unwrap_or(*state.h).max(floor);
+}
+
+/// Fresh-start step size for rescue restarts; matches the `h0` given to
+/// `OdeBuilder`.
+const RESTART_STEP_SIZE: f64 = 1e-3;
+/// Cap on rescue restarts within one integration segment.
+const MAX_RESCUES_PER_SEGMENT: usize = 16;
+/// Cap on consecutive rescue restarts that fail to advance the state time.
+const MAX_STALLED_RESCUES: usize = 8;
+
+/// Smallest step size a restarted segment may begin with.
+///
+/// This is a starting value, not a hard limit: the error controller is free to
+/// shrink below it afterwards (down to diffsol's minimum step). It only needs
+/// to sit far enough above the minimum step (1e-13) that step-size growth,
+/// capped at 2x per update, can never fail, and far enough above the ULP
+/// spacing of `t` that steps still advance time.
+fn restart_step_size_floor(t: f64) -> f64 {
+    (f64::EPSILON * t.abs() * 256.0).max(1e-9)
+}
+
+/// Advance below this threshold counts a rescue restart as stalled.
+fn progress_epsilon(t: f64) -> f64 {
+    f64::EPSILON * t.abs().max(1.0) * 100.0
+}
+
+/// Step failures that an in-place restart (fresh Jacobian, first order, small
+/// step) can plausibly clear.
+///
+/// These are the failure modes of a stiff transient or a mid-segment RHS
+/// discontinuity (e.g. a covariate change): the failure budgets are exhausted
+/// or the step collapses while the state itself is still the last accepted,
+/// finite solution. Setup, interpolation, and ordering errors are not
+/// recoverable by restarting.
+fn recoverable_step_failure(error: &diffsol::error::DiffsolError) -> bool {
+    use diffsol::error::DiffsolError;
+    match error {
+        DiffsolError::OdeSolverError(ode_error) => matches!(
+            ode_error,
+            OdeSolverError::StepSizeTooSmall { .. }
+                | OdeSolverError::TooManyErrorTestFailures { .. }
+                | OdeSolverError::TooManyNonlinearSolverFailures { .. }
+        ),
+        DiffsolError::NonLinearSolverError(_) | DiffsolError::LaError(_) => true,
+        _ => false,
+    }
+}
+
+/// Restart step size for the next rescue attempt.
+///
+/// Starts at the fresh-start size (bounded by the remaining segment) and
+/// shrinks tenfold per stalled attempt, never below the restart floor.
+fn rescue_step_size(state_time: f64, stop_time: f64, stalled_rescues: usize) -> f64 {
+    let floor = restart_step_size_floor(state_time);
+    let remaining = (stop_time - state_time).max(0.0);
+    let base = RESTART_STEP_SIZE.min(remaining * 0.5).max(floor);
+    (base * 10f64.powi(-(stalled_rescues.min(12) as i32))).max(floor)
+}
+
+fn solver_state_is_finite<'a, F, S>(solver: &S) -> bool
+where
+    F: Fn(&V, &V, f64, &mut V, &V, &V, &Covariates) + 'a,
+    S: OdeSolverMethod<'a, PMProblem<'a, F>>,
+{
+    let state = solver.state();
+    state.t.is_finite() && state.y.as_slice().iter().all(|value| value.is_finite())
+}
+
+/// Gap below which the event loop coalesces a forward stop itself instead of
+/// asking the solver to integrate it.
+///
+/// diffsol cannot integrate a segment shorter than its minimum step: its
+/// pre-step stop handling clamps `h` to the gap and either fails outright
+/// (the Runge-Kutta family re-clamps on every retry, so restarts cannot
+/// recover) or leaves behind a crushed step size that fails on the next
+/// update. A gap of a few minimum steps is indistinguishable from the same
+/// time for simulation purposes.
+fn min_integrable_gap<'a, F, S>(solver: &S, state_time: f64) -> f64
+where
+    F: Fn(&V, &V, f64, &mut V, &V, &V, &Covariates) + 'a,
+    S: OdeSolverMethod<'a, PMProblem<'a, F>>,
+{
+    let minimum_timestep = *solver.config().as_base_ref().minimum_timestep;
+    (minimum_timestep * 4.0).max(f64::EPSILON * state_time.abs() * 4.0)
+}
+
+/// Snap the solver's logical time forward to `stop_time` without integrating,
+/// after verifying that doing so cannot omit material infusion input.
+///
+/// The state itself is left untouched; only stops closer than the solver can
+/// resolve are coalesced, so the skipped interval is below the solution
+/// tolerances by construction (and this is enforced against the scheduled
+/// infusion rates). The caller must restart the solver before the next
+/// segment because `state_mut` marks the state as modified.
+fn coalesce_stop_to<'a, F, S>(
+    solver: &mut S,
+    stop_time: f64,
+    rtol: f64,
+    atol: f64,
+) -> Result<(), PharmsolError>
+where
+    F: Fn(&V, &V, f64, &mut V, &V, &V, &Covariates) + 'a,
+    S: OdeSolverMethod<'a, PMProblem<'a, F>>,
+{
+    let state_time = solver.state().t;
+    let skipped_infusion = solver
+        .problem()
+        .eqn
+        .infusion_amount_between(state_time, stop_time);
+    let state_scale = solver
+        .state()
+        .y
+        .as_slice()
+        .iter()
+        .fold(0.0_f64, |scale, value| scale.max(value.abs()));
+    let material_tolerance = atol.abs() + rtol.abs() * state_scale;
+    if skipped_infusion > material_tolerance {
+        return Err(PharmsolError::OtherError(format!(
+            "coalescing stop times from t = {state_time:.16e} to \
+             t = {stop_time:.16e} would skip infusion amount \
+             {skipped_infusion:.6e}, above tolerance \
+             {material_tolerance:.6e}"
+        )));
+    }
+    *solver.state_mut().t = stop_time;
+    Ok(())
+}
+
+/// Advance the solver to `next_event_time`, stopping at every infusion
+/// boundary in between.
+///
+/// This is the single implementation of the event-to-event integration loop
+/// shared by the closure-based [`ODE`] equation and the DSL runtime ODE path
+/// ([`crate::dsl::native::NativeOdeModel`]): stop selection, left-continuity
+/// handling at infusion boundaries, coalescing of stops that diffsol reports
+/// as already reached, and bounded rescue restarts after recoverable step
+/// failures.
+///
+/// `after_step` runs after every step; the DSL path uses it to surface
+/// model-function errors raised inside the RHS callback.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn advance_solver_to_event<'a, F, S, H>(
+    solver: &mut S,
+    next_event_time: f64,
+    infusion_boundary_cursor: &mut usize,
+    pending_reinit: &mut bool,
+    dy_scratch: &mut V,
+    rtol: f64,
+    atol: f64,
+    after_step: &mut H,
+) -> Result<(), PharmsolError>
+where
+    F: Fn(&V, &V, f64, &mut V, &V, &V, &Covariates) + 'a,
+    S: OdeSolverMethod<'a, PMProblem<'a, F>>,
+    H: FnMut() -> Result<(), PharmsolError>,
+{
+    while next_event_time > solver.state().t {
+        let infusion_boundary_times = solver.problem().eqn.infusion_boundary_times();
+        while *infusion_boundary_cursor < infusion_boundary_times.len()
+            && infusion_boundary_times[*infusion_boundary_cursor] <= solver.state().t
+        {
+            *infusion_boundary_cursor += 1;
+        }
+
+        let (stop_time, is_infusion_boundary) =
+            match infusion_boundary_times.get(*infusion_boundary_cursor) {
+                Some(&boundary_time) if boundary_time <= next_event_time => {
+                    *infusion_boundary_cursor += 1;
+                    (boundary_time, true)
+                }
+                _ => (next_event_time, false),
+            };
+
+        // Gaps the solver cannot integrate are coalesced up front; letting
+        // diffsol clamp its step to such a gap either fails immediately or
+        // leaves a crushed step size behind.
+        let state_time = solver.state().t;
+        if stop_time > state_time && stop_time - state_time < min_integrable_gap(solver, state_time)
+        {
+            coalesce_stop_to(solver, stop_time, rtol, atol)?;
+            *pending_reinit = true;
+            continue;
+        }
+
+        solver
+            .problem()
+            .eqn
+            .set_left_continuity_time(if is_infusion_boundary {
+                Some(stop_time)
+            } else {
+                None
+            });
+
+        match solver.set_stop_time(stop_time) {
+            Ok(()) => {
+                if *pending_reinit {
+                    reinitialize_at_boundary(solver, dy_scratch);
+                    *pending_reinit = false;
+                }
+                integrate_to_stop(
+                    solver,
+                    stop_time,
+                    is_infusion_boundary,
+                    pending_reinit,
+                    dy_scratch,
+                    after_step,
+                )?;
+            }
+            Err(diffsol::error::DiffsolError::OdeSolverError(
+                OdeSolverError::StopTimeAtCurrentTime,
+            )) => {
+                solver.problem().eqn.set_left_continuity_time(None);
+                // The requested stop is within diffsol's round-off of the
+                // current time. Coalesce forward stops; an actually earlier
+                // stop is a genuine ordering error. Snapping the logical time
+                // matters: a state left a few ULPs before an infusion
+                // boundary would otherwise be restarted with the old rate.
+                let state_time = solver.state().t;
+                if state_time > stop_time {
+                    return Err(PharmsolError::from_solver_error(
+                        diffsol::error::DiffsolError::OdeSolverError(
+                            OdeSolverError::StopTimeBeforeCurrentTime {
+                                stop_time,
+                                state_time,
+                            },
+                        ),
+                        stop_time,
+                    ));
+                }
+                coalesce_stop_to(solver, stop_time, rtol, atol)?;
+                *pending_reinit = true;
+            }
+            Err(err) => {
+                solver.problem().eqn.set_left_continuity_time(None);
+                return Err(PharmsolError::from_solver_error(err, stop_time));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Step the solver until the stop set by `set_stop_time`, rescuing
+/// recoverable failures with bounded in-place restarts.
+///
+/// A recoverable failure leaves the state parked at the last accepted step,
+/// typically right before a stiff transient or a mid-segment RHS
+/// discontinuity that is not an event (e.g. a covariate change). Restarting
+/// there with a fresh Jacobian at first order and a small step resets
+/// diffsol's failure budgets and lets the solver walk across the transient.
+/// Rescues that do not advance the state shrink the restart step tenfold; the
+/// attempt and stall caps bound the retry work, and exhaustion returns the
+/// original error annotated with the restart count.
+fn integrate_to_stop<'a, F, S, H>(
+    solver: &mut S,
+    stop_time: f64,
+    is_infusion_boundary: bool,
+    pending_reinit: &mut bool,
+    dy_scratch: &mut V,
+    after_step: &mut H,
+) -> Result<(), PharmsolError>
+where
+    F: Fn(&V, &V, f64, &mut V, &V, &V, &Covariates) + 'a,
+    S: OdeSolverMethod<'a, PMProblem<'a, F>>,
+    H: FnMut() -> Result<(), PharmsolError>,
+{
+    let mut rescues = 0usize;
+    let mut stalled_rescues = 0usize;
+    let mut last_rescue_time: Option<f64> = None;
+
+    loop {
+        match solver.step() {
+            Ok(OdeSolverStopReason::InternalTimestep) => {
+                after_step()?;
+            }
+            Ok(OdeSolverStopReason::TstopReached) => {
+                after_step()?;
+                solver.problem().eqn.set_left_continuity_time(None);
+                if solver.state().t != stop_time {
+                    *solver.state_mut().t = stop_time;
+                    *pending_reinit = true;
+                }
+                if is_infusion_boundary {
+                    *pending_reinit = true;
+                }
+                return Ok(());
+            }
+            Ok(OdeSolverStopReason::RootFound(_, _)) => {
+                return Err(PharmsolError::OtherError(format!(
+                    "solver stopped at an unexpected root at t = {:.4} \
+                     (root finding is not configured)",
+                    stop_time
+                )));
+            }
+            Err(diffsol::error::DiffsolError::OdeSolverError(
+                OdeSolverError::StopTimeAtCurrentTime,
+            )) => {
+                // A restart re-arms the pending stop inside diffsol, and the
+                // state can sit within diffsol's round-off of it; the stop is
+                // then effectively reached.
+                after_step()?;
+                solver.problem().eqn.set_left_continuity_time(None);
+                if solver.state().t != stop_time {
+                    *solver.state_mut().t = stop_time;
+                    *pending_reinit = true;
+                }
+                if is_infusion_boundary {
+                    *pending_reinit = true;
+                }
+                return Ok(());
+            }
+            Err(err) => {
+                // A model-function error raised inside the RHS is the root
+                // cause when present; surface it over the solver error.
+                after_step()?;
+                let state_time = solver.state().t;
+                if !recoverable_step_failure(&err)
+                    || rescues >= MAX_RESCUES_PER_SEGMENT
+                    || !solver_state_is_finite(solver)
+                {
+                    solver.problem().eqn.set_left_continuity_time(None);
+                    return Err(PharmsolError::from_solver_error(err, stop_time)
+                        .with_rescue_context(rescues));
+                }
+                match last_rescue_time {
+                    Some(previous) if state_time <= previous + progress_epsilon(previous) => {
+                        stalled_rescues += 1;
+                        if stalled_rescues > MAX_STALLED_RESCUES {
+                            solver.problem().eqn.set_left_continuity_time(None);
+                            return Err(PharmsolError::from_solver_error(err, stop_time)
+                                .with_rescue_context(rescues));
+                        }
+                    }
+                    _ => stalled_rescues = 0,
+                }
+                last_rescue_time = Some(state_time);
+                rescues += 1;
+                let restart_step = rescue_step_size(state_time, stop_time, stalled_rescues);
+                tracing::debug!(
+                    "rescuing ODE solve at t = {state_time:.6e} toward t = {stop_time:.6e} \
+                     (attempt {rescues}, restart step {restart_step:.3e}): {err}"
+                );
+                restart_solver_at_current_state(solver, dy_scratch, Some(restart_step));
+            }
+        }
+    }
 }
 
 impl ODE {
@@ -609,7 +978,6 @@ impl ODE {
         F: Fn(&V, &V, f64, &mut V, &V, &V, &Covariates) + 'a,
         S: OdeSolverMethod<'a, PMProblem<'a, F>>,
     {
-        let infusion_boundary_times = solver.problem().eqn.infusion_boundary_times();
         let mut infusion_boundary_cursor = 0usize;
         let mut index = 0usize;
         // Set when the previous event changed the state or the previous stop
@@ -699,125 +1067,16 @@ impl ODE {
 
             // Advance to the next event time if it exists
             if let Some(next_event) = next_event {
-                let next_event_time = next_event.time();
-                while next_event_time > solver.state().t {
-                    while infusion_boundary_cursor < infusion_boundary_times.len()
-                        && infusion_boundary_times[infusion_boundary_cursor] <= solver.state().t
-                    {
-                        infusion_boundary_cursor += 1;
-                    }
-
-                    let (stop_time, is_infusion_boundary) = if let Some(stop_time) =
-                        infusion_boundary_times.get(infusion_boundary_cursor)
-                    {
-                        if *stop_time <= next_event_time {
-                            infusion_boundary_cursor += 1;
-                            (*stop_time, true)
-                        } else {
-                            (next_event_time, false)
-                        }
-                    } else {
-                        (next_event_time, false)
-                    };
-
-                    solver
-                        .problem()
-                        .eqn
-                        .set_left_continuity_time(if is_infusion_boundary {
-                            Some(stop_time)
-                        } else {
-                            None
-                        });
-
-                    match solver.set_stop_time(stop_time) {
-                        Ok(_) => {
-                            if pending_reinit {
-                                reinitialize_at_boundary(solver, dy_scratch);
-                                pending_reinit = false;
-                            }
-                            loop {
-                                match solver.step() {
-                                    Ok(OdeSolverStopReason::InternalTimestep) => continue,
-                                    Ok(OdeSolverStopReason::TstopReached) => {
-                                        solver.problem().eqn.set_left_continuity_time(None);
-                                        if solver.state().t != stop_time {
-                                            *solver.state_mut().t = stop_time;
-                                            pending_reinit = true;
-                                        }
-                                        if is_infusion_boundary {
-                                            pending_reinit = true;
-                                        }
-                                        break;
-                                    }
-                                    Ok(OdeSolverStopReason::RootFound(_, _)) => {
-                                        return Err(PharmsolError::OtherError(format!(
-                                            "solver stopped at an unexpected root at t = {:.4} \
-                                             (root finding is not configured)",
-                                            stop_time
-                                        )));
-                                    }
-                                    Err(err) => {
-                                        return Err(PharmsolError::from_solver_error(
-                                            err, stop_time,
-                                        ));
-                                    }
-                                }
-                            }
-                        }
-                        Err(diffsol::error::DiffsolError::OdeSolverError(
-                            OdeSolverError::StopTimeAtCurrentTime,
-                        )) => {
-                            solver.problem().eqn.set_left_continuity_time(None);
-                            // Close forward stops are coalesced by contract after checking
-                            // that doing so cannot omit material infusion input. An actually
-                            // earlier stop uses a distinct error. Snap the logical time before the next
-                            // event or RHS evaluation. Otherwise a state a few ULPs before
-                            // an infusion boundary can be restarted with the old rate.
-                            let state_time = solver.state().t;
-                            if state_time > stop_time {
-                                return Err(PharmsolError::from_solver_error(
-                                    diffsol::error::DiffsolError::OdeSolverError(
-                                        OdeSolverError::StopTimeBeforeCurrentTime {
-                                            stop_time,
-                                            state_time,
-                                        },
-                                    ),
-                                    stop_time,
-                                ));
-                            }
-                            let skipped_infusion = solver
-                                .problem()
-                                .eqn
-                                .infusion_amount_between(state_time, stop_time);
-                            let state_scale = solver
-                                .state()
-                                .y
-                                .as_slice()
-                                .iter()
-                                .fold(0.0_f64, |scale, value| scale.max(value.abs()));
-                            let material_tolerance =
-                                self.atol.abs() + self.rtol.abs() * state_scale;
-                            if skipped_infusion > material_tolerance {
-                                return Err(PharmsolError::OtherError(format!(
-                                    "coalescing stop times from t = {state_time:.16e} to \
-                                     t = {stop_time:.16e} would skip infusion amount \
-                                     {skipped_infusion:.6e}, above tolerance \
-                                     {material_tolerance:.6e}"
-                                )));
-                            }
-                            *solver.state_mut().t = stop_time;
-                            pending_reinit = true;
-                            if stop_time < next_event_time {
-                                continue;
-                            }
-                            break;
-                        }
-                        Err(err) => {
-                            solver.problem().eqn.set_left_continuity_time(None);
-                            return Err(PharmsolError::from_solver_error(err, stop_time));
-                        }
-                    }
-                }
+                advance_solver_to_event(
+                    solver,
+                    next_event.time(),
+                    &mut infusion_boundary_cursor,
+                    &mut pending_reinit,
+                    dy_scratch,
+                    self.rtol,
+                    self.atol,
+                    &mut || Ok(()),
+                )?;
             }
             index += 1;
         }
