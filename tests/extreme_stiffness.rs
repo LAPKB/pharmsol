@@ -605,6 +605,54 @@ fn absolute_time_rhs_model(solver: OdeSolver) -> equation::ODE {
     .expect("absolute-time model metadata should validate")
 }
 
+fn absolute_time_linear_rhs_model(solver: OdeSolver) -> equation::ODE {
+    equation::ODE::new(
+        |x, p, t, dx, _b, _rateiv, _cov| dx[0] = p[0] * t * x[0],
+        |_p, _t, _cov| lag! {},
+        |_p, _t, _cov| fa! {},
+        |_p, _t, _cov, x| x[0] = 1.0,
+        |x, _p, _t, _cov, y| y[0] = x[0],
+    )
+    .with_nstates(1)
+    .with_ndrugs(0)
+    .with_nout(1)
+    .with_solver(solver)
+    .with_metadata(
+        equation::metadata::new("absolute_time_linear_rhs")
+            .parameters(["rate"])
+            .states(["amount"])
+            .outputs(["cp"]),
+    )
+    .expect("absolute-time linear model metadata should validate")
+}
+
+fn rebase_absolute_time_rhs_model(solver: OdeSolver) -> equation::ODE {
+    equation::ODE::new(
+        |_x, _p, t, dx, _b, rateiv, _cov| {
+            dx[0] = rateiv[0];
+            dx[1] = rateiv[0] * t;
+        },
+        |_p, _t, _cov| lag! {},
+        |_p, _t, _cov| fa! {},
+        |_p, _t, _cov, _x| {},
+        |x, _p, _t, _cov, y| {
+            y[0] = x[0];
+            y[1] = x[1];
+        },
+    )
+    .with_nstates(2)
+    .with_ndrugs(1)
+    .with_nout(2)
+    .with_solver(solver)
+    .with_metadata(
+        equation::metadata::new("rebase_absolute_time_rhs")
+            .states(["amount", "time_weighted_amount"])
+            .outputs(["amount", "time_weighted_amount"])
+            .routes([equation::Route::infusion("iv").to_state("amount")]),
+    )
+    .expect("rebase absolute-time model metadata should validate")
+}
+
 fn close_gap_bolus_model(solver: OdeSolver) -> equation::ODE {
     equation::ODE::new(
         |x, p, _t, dx, bolus, _rateiv, _cov| dx[0] = bolus[0] - p[0] * x[0],
@@ -692,31 +740,176 @@ fn close_distinct_stops_do_not_silently_skip_autonomous_dynamics() {
 }
 
 #[test]
-fn rebased_close_segment_preserves_absolute_model_time() {
-    let start = 1.0e6_f64;
-    let stop = start.next_up();
+fn large_initial_time_close_segment_preserves_absolute_model_time() {
     let expected_change = 0.3;
-    let integrated_time = 0.5 * (start + stop) * (stop - start);
-    let rate = expected_change / integrated_time;
-    let subject = Subject::builder("rebased-absolute-time")
-        .missing_observation(start, "cp")
-        .missing_observation(stop, "cp")
-        .build();
     let mut failures = Vec::new();
 
-    for (solver_name, solver) in all_solvers() {
-        let result = absolute_time_rhs_model(solver).estimate_predictions_dense(&subject, &[rate]);
-        if let Some(failure) = close_gap_failure(
-            &format!("{solver_name} rebased absolute-time RHS"),
-            result,
-            start,
-            stop,
-            1.0 + expected_change,
-        ) {
-            failures.push(failure);
+    for (case_name, start) in [
+        ("large-positive", 1.0e6_f64),
+        ("large-negative", -1.0e6_f64),
+    ] {
+        let stop = start.next_up();
+        let integrated_time = 0.5 * (start + stop) * (stop - start);
+        let rate = expected_change / integrated_time;
+        let subject = Subject::builder(format!("large-initial-time-absolute-time-{case_name}"))
+            .missing_observation(start, "cp")
+            .missing_observation(stop, "cp")
+            .build();
+
+        for (solver_name, solver) in all_solvers() {
+            let result =
+                absolute_time_rhs_model(solver).estimate_predictions_dense(&subject, &[rate]);
+            if let Some(failure) = close_gap_failure(
+                &format!("{solver_name} {case_name} large-initial-time absolute-time RHS"),
+                result,
+                start,
+                stop,
+                1.0 + expected_change,
+            ) {
+                failures.push(failure);
+            }
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn rebase_after_large_event_preserves_absolute_time_rhs() {
+    let center = 1.0e12_f64;
+    let stop = center.next_up();
+    let gap = stop - center;
+    let delivered = 0.3;
+    let expected_time_weighted_amount = delivered * 0.5 * (center + stop);
+    let subject = Subject::builder("rebase-after-large-event")
+        .infusion(center, delivered, "iv", gap)
+        .missing_observation(0.0, "amount")
+        .missing_observation(center, "amount")
+        .missing_observation(stop, "amount")
+        .missing_observation(center, "time_weighted_amount")
+        .missing_observation(stop, "time_weighted_amount")
+        .build();
+
+    for (solver_name, solver) in all_solvers() {
+        let predictions = rebase_absolute_time_rhs_model(solver)
+            .estimate_predictions_dense(&subject, &[])
+            .unwrap_or_else(|error| panic!("{solver_name}: rebase simulation failed: {error}"));
+        assert_eq!(
+            predictions.predictions().len(),
+            5,
+            "{solver_name}: prediction count"
+        );
+        let value_at = |time: f64, outeq: usize| {
+            predictions
+                .predictions()
+                .iter()
+                .find(|prediction| prediction.time() == time && prediction.outeq() == outeq)
+                .unwrap_or_else(|| {
+                    panic!("{solver_name}: missing prediction at t = {time}, output {outeq}")
+                })
+                .prediction()
+        };
+
+        assert_close(
+            &format!("{solver_name} amount at the large event"),
+            value_at(center, 0),
+            0.0,
+        );
+        assert_close(
+            &format!("{solver_name} amount at the ULP-close event"),
+            value_at(stop, 0),
+            delivered,
+        );
+        assert_close(
+            &format!("{solver_name} absolute-time RHS at the ULP-close event"),
+            value_at(stop, 1),
+            expected_time_weighted_amount,
+        );
+    }
+}
+
+#[test]
+fn invalid_ode_schedules_return_actionable_errors() {
+    let cases = [
+        (
+            "nonfinite event time",
+            Subject::builder("nonfinite-event-time")
+                .missing_observation(f64::NAN, "cp")
+                .build(),
+        ),
+        (
+            "nonfinite infusion amount",
+            Subject::builder("nonfinite-infusion-amount")
+                .infusion(0.0, f64::INFINITY, "iv", 1.0)
+                .missing_observation(2.0, "cp")
+                .build(),
+        ),
+        (
+            "nonfinite infusion duration",
+            Subject::builder("nonfinite-infusion-duration")
+                .infusion(0.0, 1.0, "iv", f64::NAN)
+                .missing_observation(2.0, "cp")
+                .build(),
+        ),
+        (
+            "unrepresentable infusion endpoint",
+            Subject::builder("unrepresentable-infusion-endpoint")
+                .infusion(f64::MAX, 1.0, "iv", 1.0)
+                .missing_observation(f64::MAX, "cp")
+                .build(),
+        ),
+        (
+            "unrepresentable event gap",
+            Subject::builder("unrepresentable-event-gap")
+                .missing_observation(-f64::MAX, "cp")
+                .missing_observation(f64::MAX, "cp")
+                .build(),
+        ),
+    ];
+
+    for (label, subject) in cases {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            infusion_model(OdeSolver::Bdf).estimate_predictions_dense(&subject, &[0.5])
+        }))
+        .unwrap_or_else(|_| panic!("{label}: invalid schedule must not panic"));
+        let error = result.expect_err(&format!("{label}: invalid schedule must fail"));
+        assert!(
+            error.to_string().contains("invalid ODE event schedule"),
+            "{label}: expected actionable schedule error, got {error}"
+        );
+    }
+}
+
+#[test]
+fn finite_cancellation_schedule_preserves_absolute_callback_times() {
+    let start = -192.0_f64;
+    let stop = 0.35_f64;
+    let rate = 1.0e-6_f64;
+    let expected = (0.5_f64 * rate * (stop * stop - start * start)).exp();
+    let subject = Subject::builder("finite-cancellation-schedule")
+        .missing_observation(start, "cp")
+        .missing_observation(stop, "cp")
+        .build();
+
+    for (solver_name, solver) in all_solvers() {
+        let predictions = absolute_time_linear_rhs_model(solver)
+            .estimate_predictions_dense(&subject, &[rate])
+            .unwrap_or_else(|error| panic!("{solver_name}: finite cancellation failed: {error}"));
+        assert_eq!(
+            predictions.predictions().len(),
+            2,
+            "{solver_name}: prediction count"
+        );
+        assert_eq!(
+            predictions.predictions()[1].time(),
+            stop,
+            "{solver_name}: absolute callback stop time"
+        );
+        assert_close(
+            &format!("{solver_name}: absolute callback time integration"),
+            predictions.predictions()[1].prediction(),
+            expected,
+        );
+    }
 }
 
 #[test]

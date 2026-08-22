@@ -202,6 +202,22 @@ impl ODE {
             DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
         ));
     }
+
+    fn initial_state_at_time(
+        &self,
+        parameters: &[f64],
+        covariates: &Covariates,
+        occasion_index: usize,
+        time: f64,
+    ) -> V {
+        let init = &self.init;
+        let mut x = V::zeros(self.get_nstates(), NalgebraContext::new());
+        if occasion_index == 0 {
+            let parameters = DVector::from_vec(parameters.to_vec());
+            (init)(&parameters.into(), time, covariates, &mut x);
+        }
+        x
+    }
 }
 
 fn validate_metadata_dimensions(
@@ -344,11 +360,12 @@ fn _simulate_subject_dense(
         let occasion_result: Result<(), PharmsolError> = (|| {
             let covariates = occasion.covariates();
             let events = ode.resolve_occasion_events(occasion, parameters, covariates)?;
+            let time_origin = validate_resolved_ode_schedule(&events)?;
 
             let problem = OdeBuilder::<M>::new()
                 .atol(vec![ode.atol])
                 .rtol(ode.rtol)
-                .t0(occasion.initial_time())
+                .t0(0.0)
                 .h0(1e-3)
                 .p(parameters_vec.clone())
                 .build_from_eqn(PMProblem::with_params_v(
@@ -363,7 +380,13 @@ fn _simulate_subject_dense(
                         Event::Infusion(infusion) => Some(infusion),
                         _ => None,
                     }),
-                    ode.initial_state(parameters, covariates, occasion.index()),
+                    ode.initial_state_at_time(
+                        parameters,
+                        covariates,
+                        occasion.index(),
+                        time_origin,
+                    ),
+                    time_origin,
                 )?)?;
 
             match &ode.solver {
@@ -552,6 +575,137 @@ impl EquationPriv for ODE {
     }
 }
 
+fn checked_local_time(
+    time_origin: f64,
+    absolute_time: f64,
+    context: &str,
+) -> Result<f64, PharmsolError> {
+    let local_time = absolute_time - time_origin;
+    let round_trip = time_origin + local_time;
+    if !time_origin.is_finite()
+        || !absolute_time.is_finite()
+        || !local_time.is_finite()
+        || !round_trip.is_finite()
+        || round_trip != absolute_time
+    {
+        return Err(PharmsolError::OtherError(format!(
+            "{context}: absolute time {absolute_time:?} cannot be represented relative to origin {time_origin:?} (local = {local_time:?}, round trip = {round_trip:?})"
+        )));
+    }
+    Ok(local_time)
+}
+
+/// Validate a resolved ODE schedule and return its absolute-time origin.
+///
+/// Validation happens after route resolution, lag, bioavailability, and event
+/// reordering so the solver never has to interpret an invalid schedule. The
+/// solver starts at local `t = 0` at the first resolved event. Schedule
+/// validation is absolute-time validation; a later time may need a coordinate
+/// shift before it is passed to diffsol.
+pub(crate) fn validate_resolved_ode_schedule(events: &[Event]) -> Result<f64, PharmsolError> {
+    let first_event_time = events.first().map(Event::time).unwrap_or(0.0);
+    if !first_event_time.is_finite() {
+        return Err(PharmsolError::OtherError(format!(
+            "invalid ODE event schedule: first resolved event time {first_event_time:?} is not finite"
+        )));
+    }
+    let time_origin = first_event_time;
+
+    let mut required_times = Vec::with_capacity(events.len() * 2);
+    let mut previous_event_time = None;
+
+    for (index, event) in events.iter().enumerate() {
+        let time = event.time();
+        if !time.is_finite() {
+            return Err(PharmsolError::OtherError(format!(
+                "invalid ODE event schedule: resolved event {index} has non-finite time {time:?}"
+            )));
+        }
+        if let Some(previous) = previous_event_time {
+            if time < previous {
+                return Err(PharmsolError::OtherError(format!(
+                    "invalid ODE event schedule: resolved event times are not nondecreasing; event {index} at t = {time:.16e} follows t = {previous:.16e}"
+                )));
+            }
+            let gap = time - previous;
+            if !gap.is_finite() || (time > previous && gap <= 0.0) {
+                return Err(PharmsolError::OtherError(format!(
+                    "invalid ODE event schedule: gap from t = {previous:.16e} to t = {time:.16e} is not representable"
+                )));
+            }
+        }
+        previous_event_time = Some(time);
+        required_times.push(time);
+
+        match event {
+            Event::Bolus(bolus) => {
+                if !bolus.amount().is_finite() {
+                    return Err(PharmsolError::OtherError(format!(
+                        "invalid ODE event schedule: bolus at t = {time:.16e} has non-finite amount {:?}",
+                        bolus.amount()
+                    )));
+                }
+            }
+            Event::Infusion(infusion) => {
+                let amount = infusion.amount();
+                if !amount.is_finite() {
+                    return Err(PharmsolError::OtherError(format!(
+                        "invalid ODE event schedule: infusion at t = {time:.16e} has non-finite amount {amount:?}"
+                    )));
+                }
+
+                let duration = infusion.duration();
+                if !duration.is_finite() {
+                    return Err(PharmsolError::OtherError(format!(
+                        "invalid ODE event schedule: infusion at t = {time:.16e} has non-finite duration {duration:?}"
+                    )));
+                }
+                if duration <= 0.0 {
+                    return Err(PharmsolError::OtherError(format!(
+                        "invalid ODE event schedule: infusion at t = {time:.16e} must have positive duration, got {duration:.16e}"
+                    )));
+                }
+                let rate = amount / duration;
+                if !rate.is_finite() {
+                    return Err(PharmsolError::OtherError(format!(
+                        "invalid ODE event schedule: infusion at t = {time:.16e} has non-finite rate from amount {amount:.16e} and duration {duration:.16e}"
+                    )));
+                }
+                let endpoint = time + duration;
+                if !endpoint.is_finite() {
+                    return Err(PharmsolError::OtherError(format!(
+                        "invalid ODE event schedule: infusion endpoint {time:.16e} + {duration:.16e} is not finite"
+                    )));
+                }
+                let endpoint_gap = endpoint - time;
+                if !endpoint_gap.is_finite() || endpoint_gap <= 0.0 {
+                    return Err(PharmsolError::OtherError(format!(
+                        "invalid ODE event schedule: infusion endpoint {endpoint:.16e} is not representably after start t = {time:.16e}"
+                    )));
+                }
+                required_times.push(endpoint);
+            }
+            Event::Observation(_) => {}
+        }
+    }
+
+    let mut previous_time: Option<f64> = None;
+    required_times.sort_by(f64::total_cmp);
+    for time in required_times {
+        if let Some(previous_time) = previous_time.filter(|previous_time| time > *previous_time) {
+            let gap = time - previous_time;
+            if !gap.is_finite() || gap <= 0.0 {
+                return Err(PharmsolError::OtherError(format!(
+                    "invalid ODE event schedule: required positive gap from t = {previous_time:.16e} to t = {time:.16e} is not representable"
+                )));
+            }
+        }
+        previous_time = Some(time);
+    }
+
+    Ok(time_origin)
+}
+
 /// Restart the solver after a state or RHS discontinuity.
 ///
 /// The multi-step history and the internal Jacobian were built for the
@@ -600,31 +754,75 @@ where
     }
 }
 
-/// Shift diffsol's independent variable to zero without changing the model's
-/// absolute time or state. This discards solver history, then integrates the
-/// complete remaining interval in a coordinate system where distinct nearby
-/// times remain representable.
-fn rebase_solver_time<'a, F, S>(
+/// Shift diffsol's independent variable without changing the accepted state
+/// or either absolute endpoint. The selected origin and both local times must
+/// round-trip exactly; this helper never approximates model time. It also
+/// discards solver history/Jacobian assumptions and refreshes the RHS at the
+/// accepted absolute state.
+fn shift_solver_coordinate<'a, F, S>(
     solver: &mut S,
-    absolute_time: f64,
+    new_origin: f64,
     target_time: f64,
     dy_scratch: &mut V,
-) where
+) -> Result<(), PharmsolError>
+where
     F: Fn(&V, &V, f64, &mut V, &V, &V, &Covariates) + 'a,
     S: OdeSolverMethod<'a, PMProblem<'a, F>>,
 {
-    let remaining = target_time - absolute_time;
+    let state_time = solver.state().t;
+    let old_origin = solver.problem().eqn.time_origin();
+    let current_time = old_origin + state_time;
+    if !state_time.is_finite()
+        || !old_origin.is_finite()
+        || !current_time.is_finite()
+        || !target_time.is_finite()
+    {
+        return Err(PharmsolError::OtherError(format!(
+            "ODE solver coordinate shift requires finite times: origin = {old_origin:?}, local state = {state_time:?}, current = {current_time:?}, target = {target_time:?}"
+        )));
+    }
+    if target_time <= current_time {
+        return Err(PharmsolError::OtherError(format!(
+            "ODE solver cannot shift to a non-positive residual interval from t = {current_time:.16e} to t = {target_time:.16e}"
+        )));
+    }
+
+    let new_state_time = checked_local_time(
+        new_origin,
+        current_time,
+        "ODE solver coordinate-shift current conversion",
+    )?;
+    let new_target_time = checked_local_time(
+        new_origin,
+        target_time,
+        "ODE solver coordinate-shift target conversion",
+    )?;
+    let remaining = new_target_time - new_state_time;
+    if !remaining.is_finite() || remaining <= 0.0 {
+        return Err(PharmsolError::OtherError(format!(
+            "ODE solver coordinate shift cannot preserve the positive interval from absolute t = {current_time:.16e} to t = {target_time:.16e} with origin {new_origin:.16e} (local state = {new_state_time:?}, local target = {new_target_time:?})"
+        )));
+    }
+
     let current_step = solver.state().h.abs();
+    if !current_step.is_finite() {
+        return Err(PharmsolError::OtherError(format!(
+            "ODE solver coordinate shift cannot retain a non-finite accepted step at absolute t = {current_time:.16e}: h = {:?}",
+            solver.state().h
+        )));
+    }
+    let bounded_step = if current_step == 0.0 {
+        remaining
+    } else {
+        current_step.min(remaining)
+    };
+
+    solver.problem().eqn.rebase_time_origin(new_origin);
     {
         let state = solver.state_mut();
-        *state.t = 0.0;
-        *state.h = if current_step == 0.0 {
-            remaining
-        } else {
-            current_step.min(remaining)
-        };
+        *state.t = new_state_time;
+        *state.h = bounded_step;
     }
-    solver.problem().eqn.rebase_time_origin(absolute_time);
     let state = solver.state_clone();
     solver.set_state(state);
 
@@ -632,8 +830,137 @@ fn rebase_solver_time<'a, F, S>(
     solver
         .problem()
         .eqn
-        .refresh_state_derivative(0.0, y, dy_scratch);
+        .refresh_state_derivative(new_state_time, y, dy_scratch);
     solver.state_mut().dy.copy_from(dy_scratch);
+    Ok(())
+}
+
+/// Pick a deterministic origin that represents the accepted absolute state
+/// and the next absolute stop exactly. Zero is preferred because every finite
+/// f64 absolute time round-trips relative to it; the accepted current time is
+/// the deterministic fallback and is accepted only when both conversions and
+/// the positive local gap are exact.
+fn coordinate_shift_origin(current_time: f64, target_time: f64) -> Result<f64, PharmsolError> {
+    if !current_time.is_finite() || !target_time.is_finite() || target_time <= current_time {
+        return Err(PharmsolError::OtherError(format!(
+            "ODE solver cannot choose a coordinate origin for current t = {current_time:?} and target t = {target_time:?}; expected finite target after current time"
+        )));
+    }
+
+    for new_origin in [0.0, current_time] {
+        let Ok(local_current) = checked_local_time(
+            new_origin,
+            current_time,
+            "ODE solver coordinate-shift current conversion",
+        ) else {
+            continue;
+        };
+        let Ok(local_target) = checked_local_time(
+            new_origin,
+            target_time,
+            "ODE solver coordinate-shift target conversion",
+        ) else {
+            continue;
+        };
+        let local_gap = local_target - local_current;
+        if local_gap.is_finite() && local_gap > 0.0 {
+            return Ok(new_origin);
+        }
+    }
+
+    Err(PharmsolError::OtherError(format!(
+        "ODE solver cannot preserve exact absolute coordinates for current t = {current_time:.16e} and target t = {target_time:.16e}; tried deterministic origins 0 and the current absolute time, but no finite positive local interval round-tripped exactly. No model-time approximation was attempted"
+    )))
+}
+
+/// Ensure the accepted current state and an absolute stop can both be passed
+/// to diffsol under the active origin. A coordinate shift is performed once
+/// when the active origin loses either round trip, and native callback errors
+/// are drained immediately after the refresh.
+fn ensure_solver_stop_coordinates<'a, F, S, H>(
+    solver: &mut S,
+    absolute_stop_time: f64,
+    dy_scratch: &mut V,
+    after_step: &mut H,
+) -> Result<f64, PharmsolError>
+where
+    F: Fn(&V, &V, f64, &mut V, &V, &V, &Covariates) + 'a,
+    S: OdeSolverMethod<'a, PMProblem<'a, F>>,
+    H: FnMut() -> Result<(), PharmsolError>,
+{
+    let state_time = solver.state().t;
+    let time_origin = solver.problem().eqn.time_origin();
+    let current_time = time_origin + state_time;
+    if !state_time.is_finite()
+        || !time_origin.is_finite()
+        || !current_time.is_finite()
+        || !absolute_stop_time.is_finite()
+    {
+        return Err(PharmsolError::OtherError(format!(
+            "ODE event coordinate normalization requires finite times: origin = {time_origin:?}, local state = {state_time:?}, current = {current_time:?}, target = {absolute_stop_time:?}"
+        )));
+    }
+    if absolute_stop_time < current_time {
+        return Err(stop_time_before_current_time(
+            absolute_stop_time,
+            current_time,
+        ));
+    }
+    if absolute_stop_time == current_time {
+        return checked_local_time(
+            time_origin,
+            absolute_stop_time,
+            "ODE event equal-target conversion",
+        );
+    }
+
+    let active_state_time = checked_local_time(
+        time_origin,
+        current_time,
+        "ODE event current-state conversion",
+    );
+    let active_stop_time =
+        checked_local_time(time_origin, absolute_stop_time, "ODE event stop conversion");
+    if let (Ok(active_state_time), Ok(active_stop_time)) = (active_state_time, active_stop_time) {
+        let local_gap = active_stop_time - active_state_time;
+        if active_state_time == state_time && local_gap.is_finite() && local_gap > 0.0 {
+            return Ok(active_stop_time);
+        }
+    }
+
+    let new_origin = coordinate_shift_origin(current_time, absolute_stop_time)?;
+    shift_solver_coordinate::<F, S>(solver, new_origin, absolute_stop_time, dy_scratch)?;
+    after_step()?;
+
+    let shifted_stop_time = checked_local_time(
+        solver.problem().eqn.time_origin(),
+        absolute_stop_time,
+        "ODE event shifted stop conversion",
+    )?;
+    let shifted_state_time = solver.state().t;
+    let shifted_gap = shifted_stop_time - shifted_state_time;
+    if !shifted_gap.is_finite() || shifted_gap <= 0.0 {
+        return Err(PharmsolError::OtherError(format!(
+            "ODE event coordinate shift did not preserve a positive local interval: current absolute t = {current_time:.16e}, target = {absolute_stop_time:.16e}, local state = {shifted_state_time:?}, local target = {shifted_stop_time:?}"
+        )));
+    }
+    Ok(shifted_stop_time)
+}
+
+/// Rebase a close accepted stop at its absolute current time. Unlike the
+/// general coordinate normalization, this intentionally sets local state time
+/// to zero and permits one residual integration attempt.
+fn rebase_solver_time<'a, F, S>(
+    solver: &mut S,
+    absolute_time: f64,
+    target_time: f64,
+    dy_scratch: &mut V,
+) -> Result<(), PharmsolError>
+where
+    F: Fn(&V, &V, f64, &mut V, &V, &V, &Covariates) + 'a,
+    S: OdeSolverMethod<'a, PMProblem<'a, F>>,
+{
+    shift_solver_coordinate::<F, S>(solver, absolute_time, target_time, dy_scratch)
 }
 
 fn ensure_no_material_infusion_is_skipped<'a, F, S>(
@@ -651,6 +978,11 @@ where
         .problem()
         .eqn
         .infusion_amount_between(start_time, stop_time);
+    if !skipped_infusion.is_finite() {
+        return Err(PharmsolError::OtherError(format!(
+            "ODE solver cannot safely resolve the infusion boundary from t = {start_time:.16e} to t = {stop_time:.16e}: the scheduled infusion amount is non-finite. Check infusion amounts, durations, and time units"
+        )));
+    }
     let state_scale = solver
         .state()
         .y
@@ -740,28 +1072,66 @@ fn cannot_integrate_distinct_stop(
     ))
 }
 
-/// Normalize a stop only after diffsol reports that it has been reached.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReachedStop {
+    Exact,
+    Interpolated,
+    Rebased,
+}
+
+/// Reconcile the accepted state after diffsol reports `TstopReached`.
 ///
-/// Diffsol may accept a step whose time is a few ULPs from the requested
-/// stop. A state short of the stop can be relabeled only after the infusion
-/// guard; a state past it in the integration direction is interpolated back.
+/// Diffsol's stop comparison is intentionally tolerant: an accepted state may
+/// be a few ULPs short of the requested stop. Such a state must not be
+/// relabeled. It is rebased once at its accepted absolute time so the complete
+/// residual interval can be integrated. A state past the stop is instead
+/// interpolated with diffsol's `state_mut_back` contract.
 fn normalize_reached_stop<'a, F, S>(
     solver: &mut S,
     stop_time: f64,
     absolute_stop_time: f64,
+    segment_start_time: f64,
+    allow_rebase: bool,
+    dy_scratch: &mut V,
     rtol: f64,
     atol: f64,
-) -> Result<bool, PharmsolError>
+) -> Result<ReachedStop, PharmsolError>
 where
     F: Fn(&V, &V, f64, &mut V, &V, &V, &Covariates) + 'a,
     S: OdeSolverMethod<'a, PMProblem<'a, F>>,
 {
     let state_time = solver.state().t;
-    if state_time == stop_time {
-        return Ok(false);
+    if !stop_time.is_finite() || !absolute_stop_time.is_finite() || !state_time.is_finite() {
+        return Err(PharmsolError::OtherError(format!(
+            "ODE solver reached a stop with non-finite time coordinates: state = {state_time:?}, stop = {stop_time:?}, absolute stop = {absolute_stop_time:?}"
+        )));
     }
     let absolute_state_time = solver.problem().eqn.absolute_time(state_time);
+    if !absolute_state_time.is_finite() {
+        return Err(PharmsolError::OtherError(format!(
+            "ODE solver reached a stop whose absolute state time is not finite: local state = {state_time:?}, absolute state = {absolute_state_time:?}"
+        )));
+    }
+    if state_time == stop_time && absolute_state_time == absolute_stop_time {
+        return Ok(ReachedStop::Exact);
+    }
+    if absolute_state_time > absolute_stop_time {
+        if let Err(error) = solver.state_mut_back(stop_time) {
+            return Err(solver_error_at_absolute_time(
+                solver,
+                error,
+                absolute_stop_time,
+            ));
+        }
+        return Ok(ReachedStop::Interpolated);
+    }
+
     let step = solver.state().h;
+    if !step.is_finite() {
+        return Err(PharmsolError::OtherError(format!(
+            "ODE solver reached a stop with a non-finite accepted step h = {step:?}"
+        )));
+    }
     let passed_stop =
         (step >= 0.0 && state_time > stop_time) || (step < 0.0 && state_time < stop_time);
     if passed_stop {
@@ -772,17 +1142,41 @@ where
                 absolute_stop_time,
             ));
         }
-        return Ok(true);
+        return Ok(ReachedStop::Interpolated);
     }
-    ensure_no_material_infusion_is_skipped(
-        solver,
-        absolute_state_time,
-        absolute_stop_time,
-        rtol,
-        atol,
-    )?;
-    *solver.state_mut().t = stop_time;
-    Ok(true)
+
+    let residual = absolute_stop_time - absolute_state_time;
+    if !residual.is_finite() || residual <= 0.0 {
+        ensure_no_material_infusion_is_skipped(
+            solver,
+            absolute_state_time,
+            absolute_stop_time,
+            rtol,
+            atol,
+        )?;
+        return Err(cannot_integrate_distinct_stop(
+            segment_start_time,
+            absolute_stop_time,
+            absolute_state_time,
+        ));
+    }
+    if !allow_rebase {
+        ensure_no_material_infusion_is_skipped(
+            solver,
+            absolute_state_time,
+            absolute_stop_time,
+            rtol,
+            atol,
+        )?;
+        return Err(cannot_integrate_distinct_stop(
+            segment_start_time,
+            absolute_stop_time,
+            absolute_state_time,
+        ));
+    }
+
+    rebase_solver_time(solver, absolute_state_time, absolute_stop_time, dy_scratch)?;
+    Ok(ReachedStop::Rebased)
 }
 
 /// Advance the solver to `next_event_time`, stopping at every infusion
@@ -812,8 +1206,58 @@ where
     S: OdeSolverMethod<'a, PMProblem<'a, F>>,
     H: FnMut() -> Result<(), PharmsolError>,
 {
-    while next_event_time > solver.problem().eqn.absolute_time(solver.state().t) {
-        let current_time = solver.problem().eqn.absolute_time(solver.state().t);
+    let initial_state_time = solver.state().t;
+    if !next_event_time.is_finite() || !initial_state_time.is_finite() {
+        return Err(PharmsolError::OtherError(format!(
+            "ODE event advance requires finite target and solver state times: target = {next_event_time:?}, state = {initial_state_time:?}"
+        )));
+    }
+    let initial_current_time = solver.problem().eqn.absolute_time(initial_state_time);
+    if !initial_current_time.is_finite() {
+        return Err(PharmsolError::OtherError(format!(
+            "ODE event advance produced a non-finite absolute current time from solver state {initial_state_time:?}"
+        )));
+    }
+    if next_event_time < initial_current_time {
+        return Err(stop_time_before_current_time(
+            next_event_time,
+            initial_current_time,
+        ));
+    }
+    if next_event_time == initial_current_time {
+        return Ok(());
+    }
+    if !(next_event_time - initial_current_time).is_finite() {
+        return Err(PharmsolError::OtherError(format!(
+            "ODE event advance gap from t = {initial_current_time:.16e} to t = {next_event_time:.16e} is not representable"
+        )));
+    }
+
+    loop {
+        let state_time = solver.state().t;
+        if !state_time.is_finite() {
+            return Err(PharmsolError::OtherError(format!(
+                "ODE event advance encountered a non-finite solver state time {state_time:?}"
+            )));
+        }
+        let current_time = solver.problem().eqn.absolute_time(state_time);
+        if !current_time.is_finite() {
+            return Err(PharmsolError::OtherError(format!(
+                "ODE event advance encountered a non-finite absolute current time from solver state {state_time:?}"
+            )));
+        }
+        if next_event_time < current_time {
+            return Err(stop_time_before_current_time(next_event_time, current_time));
+        }
+        if next_event_time == current_time {
+            return Ok(());
+        }
+        if !(next_event_time - current_time).is_finite() {
+            return Err(PharmsolError::OtherError(format!(
+                "ODE event advance gap from t = {current_time:.16e} to t = {next_event_time:.16e} is not representable"
+            )));
+        }
+
         let infusion_boundary_times = solver.problem().eqn.infusion_boundary_times();
         while *infusion_boundary_cursor < infusion_boundary_times.len()
             && infusion_boundary_times[*infusion_boundary_cursor] <= current_time
@@ -829,6 +1273,22 @@ where
                 }
                 _ => (next_event_time, false),
             };
+        if !absolute_stop_time.is_finite() {
+            return Err(PharmsolError::OtherError(format!(
+                "ODE event advance selected a non-finite stop time {absolute_stop_time:?}"
+            )));
+        }
+        if absolute_stop_time <= current_time {
+            return Err(stop_time_before_current_time(
+                absolute_stop_time,
+                current_time,
+            ));
+        }
+        if !(absolute_stop_time - current_time).is_finite() {
+            return Err(PharmsolError::OtherError(format!(
+                "ODE event segment gap from t = {current_time:.16e} to t = {absolute_stop_time:.16e} is not representable"
+            )));
+        }
 
         solver
             .problem()
@@ -850,7 +1310,19 @@ where
         let segment_result = (|| -> Result<(), PharmsolError> {
             let mut rebased = false;
             loop {
-                let stop_time = solver.problem().eqn.solver_time(absolute_stop_time);
+                let stop_time = ensure_solver_stop_coordinates::<F, S, H>(
+                    solver,
+                    absolute_stop_time,
+                    dy_scratch,
+                    after_step,
+                )?;
+                let state_time = solver.state().t;
+                let local_gap = stop_time - state_time;
+                if !stop_time.is_finite() || !state_time.is_finite() || !local_gap.is_finite() {
+                    return Err(PharmsolError::OtherError(format!(
+                        "ODE event coordinate conversion is not finite: current local t = {state_time:?}, absolute stop = {absolute_stop_time:?}, local stop = {stop_time:?}, gap = {local_gap:?}"
+                    )));
+                }
                 match solver.set_stop_time(stop_time) {
                     Ok(()) => {
                         if *pending_reinit {
@@ -865,8 +1337,11 @@ where
                             solver,
                             stop_time,
                             absolute_stop_time,
+                            segment_start_time,
                             is_infusion_boundary,
                             pending_reinit,
+                            !rebased,
+                            dy_scratch,
                             rtol,
                             atol,
                             after_step,
@@ -878,6 +1353,11 @@ where
                     )) => {
                         let state_time = solver.state().t;
                         let absolute_state_time = solver.problem().eqn.absolute_time(state_time);
+                        if !state_time.is_finite() || !absolute_state_time.is_finite() {
+                            return Err(PharmsolError::OtherError(format!(
+                                "ODE event advance encountered a non-finite state after set_stop_time: local = {state_time:?}, absolute = {absolute_state_time:?}"
+                            )));
+                        }
                         if absolute_state_time > absolute_stop_time {
                             solver.problem().eqn.set_left_continuity_time(None);
                             return Err(stop_time_before_current_time(
@@ -912,7 +1392,7 @@ where
                             absolute_state_time,
                             absolute_stop_time,
                             dy_scratch,
-                        );
+                        )?;
                         if let Err(error) = after_step() {
                             solver.problem().eqn.set_left_continuity_time(None);
                             return Err(error);
@@ -938,9 +1418,11 @@ where
                 restore_timestep_after_close_stop(solver);
             }
         }
+        if segment_result.is_err() {
+            solver.problem().eqn.set_left_continuity_time(None);
+        }
         segment_result?;
     }
-    Ok(())
 }
 
 /// Step the solver until the stop set by `set_stop_time`.
@@ -952,8 +1434,11 @@ fn integrate_to_stop<'a, F, S, H>(
     solver: &mut S,
     stop_time: f64,
     absolute_stop_time: f64,
+    segment_start_time: f64,
     is_infusion_boundary: bool,
     pending_reinit: &mut bool,
+    allow_close_rebase: bool,
+    dy_scratch: &mut V,
     rtol: f64,
     atol: f64,
     after_step: &mut H,
@@ -963,7 +1448,6 @@ where
     S: OdeSolverMethod<'a, PMProblem<'a, F>>,
     H: FnMut() -> Result<(), PharmsolError>,
 {
-    let segment_start_time = solver.problem().eqn.absolute_time(solver.state().t);
     loop {
         match solver.step() {
             Ok(OdeSolverStopReason::InternalTimestep) => {
@@ -973,15 +1457,137 @@ where
                 }
             }
             Ok(OdeSolverStopReason::TstopReached) => {
-                solver.problem().eqn.set_left_continuity_time(None);
-                after_step()?;
-                if normalize_reached_stop(solver, stop_time, absolute_stop_time, rtol, atol)? {
-                    *pending_reinit = true;
+                // Keep left-continuity active while reconciling the accepted
+                // state. In particular, a residual close segment ending at an
+                // infusion boundary must refresh and integrate with the rate
+                // on the left until the exact boundary is reached.
+                if let Err(error) = after_step() {
+                    solver.problem().eqn.set_left_continuity_time(None);
+                    return Err(error);
                 }
-                if is_infusion_boundary {
-                    *pending_reinit = true;
+                let reached = match normalize_reached_stop(
+                    solver,
+                    stop_time,
+                    absolute_stop_time,
+                    segment_start_time,
+                    allow_close_rebase,
+                    dy_scratch,
+                    rtol,
+                    atol,
+                ) {
+                    Ok(reached) => reached,
+                    Err(error) => {
+                        solver.problem().eqn.set_left_continuity_time(None);
+                        return Err(error);
+                    }
+                };
+
+                match reached {
+                    ReachedStop::Exact | ReachedStop::Interpolated => {
+                        solver.problem().eqn.set_left_continuity_time(None);
+                        if matches!(reached, ReachedStop::Interpolated) {
+                            *pending_reinit = true;
+                        }
+                        if is_infusion_boundary {
+                            *pending_reinit = true;
+                        }
+                        return Ok(());
+                    }
+                    ReachedStop::Rebased => {
+                        // `rebase_solver_time` refreshes the RHS and Jacobian;
+                        // native callbacks may report an error during that
+                        // refresh. Surface it before asking diffsol to accept
+                        // another stop time, and leave the segment cleanup to
+                        // the same restoration path as every other failure.
+                        let configured_minimum_timestep =
+                            *solver.config().as_base_ref().minimum_timestep;
+                        if let Err(error) = after_step() {
+                            *solver.config_mut().as_base_mut().minimum_timestep =
+                                configured_minimum_timestep;
+                            solver.problem().eqn.set_left_continuity_time(None);
+                            return Err(error);
+                        }
+                        *solver.config_mut().as_base_mut().minimum_timestep = 0.0;
+                        let residual_result = (|| -> Result<(), PharmsolError> {
+                            let residual_stop = ensure_solver_stop_coordinates::<F, S, H>(
+                                solver,
+                                absolute_stop_time,
+                                dy_scratch,
+                                after_step,
+                            )?;
+                            let residual_state = solver.state().t;
+                            let residual_gap = residual_stop - residual_state;
+                            if !residual_stop.is_finite()
+                                || !residual_state.is_finite()
+                                || !residual_gap.is_finite()
+                                || residual_gap <= 0.0
+                            {
+                                let absolute_state_time =
+                                    solver.problem().eqn.absolute_time(residual_state);
+                                ensure_no_material_infusion_is_skipped(
+                                    solver,
+                                    absolute_state_time,
+                                    absolute_stop_time,
+                                    rtol,
+                                    atol,
+                                )?;
+                                return Err(cannot_integrate_distinct_stop(
+                                    segment_start_time,
+                                    absolute_stop_time,
+                                    absolute_state_time,
+                                ));
+                            }
+
+                            match solver.set_stop_time(residual_stop) {
+                                Ok(()) => integrate_to_stop(
+                                    solver,
+                                    residual_stop,
+                                    absolute_stop_time,
+                                    segment_start_time,
+                                    is_infusion_boundary,
+                                    pending_reinit,
+                                    false,
+                                    dy_scratch,
+                                    rtol,
+                                    atol,
+                                    after_step,
+                                ),
+                                Err(diffsol::error::DiffsolError::OdeSolverError(
+                                    OdeSolverError::StopTimeAtCurrentTime,
+                                )) => {
+                                    let absolute_state_time =
+                                        solver.problem().eqn.absolute_time(solver.state().t);
+                                    ensure_no_material_infusion_is_skipped(
+                                        solver,
+                                        absolute_state_time,
+                                        absolute_stop_time,
+                                        rtol,
+                                        atol,
+                                    )?;
+                                    Err(cannot_integrate_distinct_stop(
+                                        segment_start_time,
+                                        absolute_stop_time,
+                                        absolute_state_time,
+                                    ))
+                                }
+                                Err(error) => Err(solver_error_at_absolute_time(
+                                    solver,
+                                    error,
+                                    absolute_stop_time,
+                                )),
+                            }
+                        })();
+                        *solver.config_mut().as_base_mut().minimum_timestep =
+                            configured_minimum_timestep;
+                        if residual_result.is_ok() {
+                            restore_timestep_after_close_stop(solver);
+                        } else {
+                            solver.problem().eqn.set_left_continuity_time(None);
+                        }
+                        residual_result?;
+                        return Ok(());
+                    }
                 }
-                return Ok(());
             }
             Ok(OdeSolverStopReason::RootFound(root_time, _)) => {
                 solver.problem().eqn.set_left_continuity_time(None);
@@ -995,17 +1601,32 @@ where
             Err(diffsol::error::DiffsolError::OdeSolverError(
                 OdeSolverError::StopTimeAtCurrentTime,
             )) => {
-                solver.problem().eqn.set_left_continuity_time(None);
-                after_step()?;
+                if let Err(error) = after_step() {
+                    solver.problem().eqn.set_left_continuity_time(None);
+                    return Err(error);
+                }
                 let state_time = solver.state().t;
                 let absolute_state_time = solver.problem().eqn.absolute_time(state_time);
-                if state_time > stop_time {
-                    return Err(stop_time_before_current_time(
-                        absolute_stop_time,
-                        absolute_state_time,
-                    ));
+                if !state_time.is_finite() || !absolute_state_time.is_finite() {
+                    solver.problem().eqn.set_left_continuity_time(None);
+                    return Err(PharmsolError::OtherError(format!(
+                        "ODE solver reached a stop with non-finite state time: local = {state_time:?}, absolute = {absolute_state_time:?}"
+                    )));
                 }
-                if state_time < stop_time {
+                if absolute_state_time > absolute_stop_time {
+                    if let Err(error) = solver.state_mut_back(stop_time) {
+                        solver.problem().eqn.set_left_continuity_time(None);
+                        return Err(solver_error_at_absolute_time(
+                            solver,
+                            error,
+                            absolute_stop_time,
+                        ));
+                    }
+                    solver.problem().eqn.set_left_continuity_time(None);
+                    *pending_reinit = true;
+                    return Ok(());
+                }
+                if absolute_state_time < absolute_stop_time {
                     ensure_no_material_infusion_is_skipped(
                         solver,
                         absolute_state_time,
@@ -1013,12 +1634,14 @@ where
                         rtol,
                         atol,
                     )?;
+                    solver.problem().eqn.set_left_continuity_time(None);
                     return Err(cannot_integrate_distinct_stop(
                         segment_start_time,
                         absolute_stop_time,
                         absolute_state_time,
                     ));
                 }
+                solver.problem().eqn.set_left_continuity_time(None);
                 if is_infusion_boundary {
                     *pending_reinit = true;
                 }
@@ -1252,6 +1875,230 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     static PREDICTION_CACHE_DIFFEQ_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+    #[test]
+    fn shared_advance_helper_rejects_backward_targets() {
+        let covariates = Covariates::default();
+        let problem = OdeBuilder::<M>::new()
+            .atol(vec![1e-4])
+            .rtol(1e-4)
+            .t0(0.0)
+            .h0(1e-3)
+            .p(Vec::<f64>::new())
+            .build_from_eqn(
+                PMProblem::with_params_v(
+                    |_x, _p, _t, dx, _bolus, _rateiv, _cov| dx[0] = 0.0,
+                    1,
+                    0,
+                    V::zeros(0, NalgebraContext::new()),
+                    &covariates,
+                    std::iter::empty::<&Infusion>(),
+                    V::zeros(1, NalgebraContext::new()),
+                    0.0,
+                )
+                .expect("finite test ODE problem"),
+            )
+            .expect("test ODE builder should succeed");
+        let mut solver = problem
+            .bdf::<diffsol::NalgebraLU<f64>>()
+            .expect("test BDF solver should build");
+        let mut infusion_boundary_cursor = 0;
+        let mut pending_reinit = false;
+        let mut dy_scratch = V::zeros(1, NalgebraContext::new());
+        let error = advance_solver_to_event(
+            &mut solver,
+            -1.0,
+            &mut infusion_boundary_cursor,
+            &mut pending_reinit,
+            &mut dy_scratch,
+            1e-4,
+            1e-4,
+            &mut || Ok(()),
+        )
+        .expect_err("backward event target must be rejected");
+
+        assert!(error.to_string().contains("before current time"));
+        assert_eq!(solver.state().t, 0.0);
+
+        let mut callback_called = false;
+        advance_solver_to_event(
+            &mut solver,
+            0.0,
+            &mut infusion_boundary_cursor,
+            &mut pending_reinit,
+            &mut dy_scratch,
+            1e-4,
+            1e-4,
+            &mut || {
+                callback_called = true;
+                Ok(())
+            },
+        )
+        .expect("equal target should be a zero-length no-op");
+        assert!(!callback_called);
+        assert_eq!(solver.state().t, 0.0);
+    }
+
+    #[test]
+    fn shared_advance_helper_normalizes_unrepresentable_local_targets() {
+        let covariates = Covariates::default();
+        let problem = OdeBuilder::<M>::new()
+            .atol(vec![1e-4])
+            .rtol(1e-4)
+            .t0(0.0)
+            .h0(1e-3)
+            .p(Vec::<f64>::new())
+            .build_from_eqn(
+                PMProblem::with_params_v(
+                    |_x, _p, _t, dx, _bolus, _rateiv, _cov| dx[0] = 0.0,
+                    1,
+                    0,
+                    V::zeros(0, NalgebraContext::new()),
+                    &covariates,
+                    std::iter::empty::<&Infusion>(),
+                    V::zeros(1, NalgebraContext::new()),
+                    -192.0,
+                )
+                .expect("finite test ODE problem"),
+            )
+            .expect("test ODE builder should succeed");
+        let mut solver = problem
+            .bdf::<diffsol::NalgebraLU<f64>>()
+            .expect("test BDF solver should build");
+        let mut infusion_boundary_cursor = 0;
+        let mut pending_reinit = false;
+        let mut dy_scratch = V::zeros(1, NalgebraContext::new());
+        advance_solver_to_event(
+            &mut solver,
+            0.35,
+            &mut infusion_boundary_cursor,
+            &mut pending_reinit,
+            &mut dy_scratch,
+            1e-4,
+            1e-4,
+            &mut || Ok(()),
+        )
+        .expect("finite cancellation should be normalized before set_stop_time");
+
+        let absolute_time = solver.problem().eqn.absolute_time(solver.state().t);
+        assert_eq!(
+            absolute_time,
+            0.35,
+            "origin = {}, local state = {}",
+            solver.problem().eqn.time_origin(),
+            solver.state().t
+        );
+    }
+
+    #[test]
+    fn normalize_reached_stop_does_not_relabel_local_time_equality() {
+        let covariates = Covariates::default();
+        let problem = OdeBuilder::<M>::new()
+            .atol(vec![1e-4])
+            .rtol(1e-4)
+            .t0(0.0)
+            .h0(1e-3)
+            .p(Vec::<f64>::new())
+            .build_from_eqn(
+                PMProblem::with_params_v(
+                    |_x, _p, _t, dx, _bolus, _rateiv, _cov| dx[0] = 0.0,
+                    1,
+                    0,
+                    V::zeros(0, NalgebraContext::new()),
+                    &covariates,
+                    std::iter::empty::<&Infusion>(),
+                    V::zeros(1, NalgebraContext::new()),
+                    -1.0e16,
+                )
+                .expect("finite test ODE problem"),
+            )
+            .expect("test ODE builder should succeed");
+        let mut solver = problem
+            .bdf::<diffsol::NalgebraLU<f64>>()
+            .expect("test BDF solver should build");
+        *solver.state_mut().t = 1.0e16;
+        let mut dy_scratch = V::zeros(1, NalgebraContext::new());
+
+        let reached = normalize_reached_stop(
+            &mut solver,
+            1.0e16,
+            1.0,
+            0.0,
+            true,
+            &mut dy_scratch,
+            1e-4,
+            1e-4,
+        )
+        .expect("mismatched local equality should use the checked rebase");
+
+        assert_eq!(reached, ReachedStop::Rebased);
+        assert_eq!(solver.problem().eqn.time_origin(), 0.0);
+        assert_eq!(solver.state().t, 0.0);
+    }
+
+    #[test]
+    fn rebase_callback_error_precedes_followup_solver_error() {
+        let covariates = Covariates::default();
+        let problem = OdeBuilder::<M>::new()
+            .atol(vec![1e-4])
+            .rtol(1e-4)
+            .t0(0.0)
+            .h0(1e-3)
+            .p(Vec::<f64>::new())
+            .build_from_eqn(
+                PMProblem::with_params_v(
+                    |_x, _p, _t, dx, _bolus, _rateiv, _cov| dx[0] = 0.0,
+                    1,
+                    0,
+                    V::zeros(0, NalgebraContext::new()),
+                    &covariates,
+                    std::iter::empty::<&Infusion>(),
+                    V::zeros(1, NalgebraContext::new()),
+                    0.0,
+                )
+                .expect("finite test ODE problem"),
+            )
+            .expect("test ODE builder should succeed");
+        let mut solver = problem
+            .bdf::<diffsol::NalgebraLU<f64>>()
+            .expect("test BDF solver should build");
+        let mut infusion_boundary_cursor = 0;
+        let mut pending_reinit = false;
+        let mut dy_scratch = V::zeros(1, NalgebraContext::new());
+        let large_time = 1.0e6_f64;
+        advance_solver_to_event(
+            &mut solver,
+            large_time,
+            &mut infusion_boundary_cursor,
+            &mut pending_reinit,
+            &mut dy_scratch,
+            1e-4,
+            1e-4,
+            &mut || Ok(()),
+        )
+        .expect("the solver should reach the large event before the close target");
+
+        let close_target = large_time.next_up();
+        let error = advance_solver_to_event(
+            &mut solver,
+            close_target,
+            &mut infusion_boundary_cursor,
+            &mut pending_reinit,
+            &mut dy_scratch,
+            1e-4,
+            1e-4,
+            &mut || {
+                Err(PharmsolError::OtherError(
+                    "callback error during rebase".into(),
+                ))
+            },
+        )
+        .expect_err("the callback error must be returned");
+
+        assert!(error.to_string().contains("callback error during rebase"));
+        assert_eq!(solver.problem().eqn.time_origin(), large_time);
+        assert_eq!(solver.state().t, 0.0);
+    }
 
     fn simple_ode() -> ODE {
         ODE::new(

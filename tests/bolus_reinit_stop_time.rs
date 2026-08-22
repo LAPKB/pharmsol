@@ -2,8 +2,9 @@
 //!
 //! A solver restart can land a few ULPs from a requested event or infusion
 //! boundary while diffsol still correctly reports that stop as reached. The
-//! event loop must accept diffsol's `StopTimeAtCurrentTime`, align the logical
-//! state time with the accepted stop, and restart with the post-boundary RHS.
+//! event loop must accept diffsol's `StopTimeAtCurrentTime`, integrate any
+//! distinct residual instead of relabeling the clock, and restart with the
+//! post-boundary RHS.
 
 use pharmsol::prelude::*;
 
@@ -416,6 +417,37 @@ out(cp) = amount
     feature = "dsl-jit",
     all(feature = "dsl-aot", feature = "dsl-aot-load")
 ))]
+const ABSOLUTE_TIME_DSL_MODEL: &str = r#"
+name = absolute_time_close_gap
+kind = ode
+params = slope
+states = amount
+outputs = cp
+init(amount) = 1
+dx(amount) = slope * time
+out(cp) = amount
+"#;
+
+#[cfg(any(
+    feature = "dsl-jit",
+    all(feature = "dsl-aot", feature = "dsl-aot-load")
+))]
+const REBASE_ABSOLUTE_TIME_DSL_MODEL: &str = r#"
+name = rebase_absolute_time_close_gap
+kind = ode
+states = amount, time_weighted_amount
+outputs = cp, callback
+infusion(input_1) -> amount
+dx(amount) = 0
+dx(time_weighted_amount) = rate(input_1) * time
+out(cp) = amount
+out(callback) = time_weighted_amount
+"#;
+
+#[cfg(any(
+    feature = "dsl-jit",
+    all(feature = "dsl-aot", feature = "dsl-aot-load")
+))]
 const LOCF_DSL_MODEL: &str = r#"
 name = locf_integral
 kind = ode
@@ -500,6 +532,132 @@ fn assert_runtime_close_gaps(backend: &str, compiled: &CompiledRuntimeModel) {
     feature = "dsl-jit",
     all(feature = "dsl-aot", feature = "dsl-aot-load")
 ))]
+fn assert_runtime_large_initial_times_absolute_time(
+    backend: &str,
+    compiled: &CompiledRuntimeModel,
+) {
+    let expected_change = 0.3;
+    let mut failures = Vec::new();
+    for (solver_name, solver) in solver_cases() {
+        for (case_name, start) in [
+            ("large-positive", 1.0e6_f64),
+            ("large-negative", -1.0e6_f64),
+        ] {
+            let stop = start.next_up();
+            let integrated_time = 0.5 * (start + stop) * (stop - start);
+            let rate = expected_change / integrated_time;
+            let subject = Subject::builder(format!("{backend}-absolute-time-{case_name}"))
+                .missing_observation(start, "cp")
+                .missing_observation(stop, "cp")
+                .build();
+            let model = configured_runtime_ode(compiled, solver.clone());
+            let result = match &model {
+                CompiledRuntimeModel::Ode(model) => {
+                    model.estimate_predictions_dense(&subject, &[rate])
+                }
+                _ => unreachable!(),
+            };
+
+            match result {
+                Ok(predictions) => {
+                    let actual = predictions
+                        .predictions()
+                        .last()
+                        .expect("absolute-time runtime case should produce a prediction")
+                        .prediction();
+                    let relative_error =
+                        (actual - (1.0 + expected_change)).abs() / (1.0 + expected_change);
+                    if relative_error > 1.0e-3 {
+                        failures.push(format!(
+                            "{backend} {solver_name} {case_name}: absolute callback result {actual:.16e}, expected {:.16e}, relative error {relative_error:.3e}",
+                            1.0 + expected_change
+                        ));
+                    }
+                }
+                Err(error) => failures.push(format!(
+                    "{backend} {solver_name} {case_name}: absolute-time simulation failed: {error}"
+                )),
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[cfg(any(
+    feature = "dsl-jit",
+    all(feature = "dsl-aot", feature = "dsl-aot-load")
+))]
+fn assert_runtime_rebase_after_large_event(backend: &str, compiled: &CompiledRuntimeModel) {
+    let center = 1.0e12_f64;
+    let stop = center.next_up();
+    let gap = stop - center;
+    let delivered = 0.3;
+    let expected_time_weighted_amount = delivered * 0.5 * (center + stop);
+    let subject = Subject::builder(format!("{backend}-rebase-after-large-event"))
+        .infusion(center, delivered, "input_1", gap)
+        .missing_observation(0.0, "cp")
+        .missing_observation(center, "cp")
+        .missing_observation(stop, "cp")
+        .missing_observation(center, "callback")
+        .missing_observation(stop, "callback")
+        .build();
+    let mut failures = Vec::new();
+
+    for (solver_name, solver) in solver_cases() {
+        let model = configured_runtime_ode(compiled, solver);
+        let result = match &model {
+            CompiledRuntimeModel::Ode(model) => model.estimate_predictions_dense(&subject, &[]),
+            _ => unreachable!(),
+        };
+        match result {
+            Ok(predictions) => {
+                if predictions.predictions().len() != 5 {
+                    failures.push(format!(
+                        "{backend} {solver_name}: expected five rebase observations, got {}",
+                        predictions.predictions().len()
+                    ));
+                    continue;
+                }
+                let value_at = |time: f64, outeq: usize| {
+                    predictions
+                        .predictions()
+                        .iter()
+                        .find(|prediction| {
+                            prediction.time() == time && prediction.outeq() == outeq
+                        })
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "{backend} {solver_name}: missing prediction at t = {time}, output {outeq}"
+                            )
+                        })
+                        .prediction()
+                };
+                let amount_at_center = value_at(center, 0);
+                let amount_at_stop = value_at(stop, 0);
+                let time_weighted_at_stop = value_at(stop, 1);
+                let amount_error = (amount_at_stop - delivered).abs();
+                let callback_error = (time_weighted_at_stop - expected_time_weighted_amount).abs();
+                if amount_at_center.abs() > 5.0e-3
+                    || amount_error > 5.0e-3
+                    || callback_error > 1.0e-3 * expected_time_weighted_amount.abs()
+                {
+                    failures.push(format!(
+                        "{backend} {solver_name}: rebase amount at center/stop [{amount_at_center:.16e}, {amount_at_stop:.16e}], expected stop {delivered:.16e}; time-weighted stop {time_weighted_at_stop:.16e}, expected {expected_time_weighted_amount:.16e}"
+                    ));
+                }
+            }
+            Err(error) => failures.push(format!(
+                "{backend} {solver_name}: rebase simulation failed: {error}"
+            )),
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[cfg(any(
+    feature = "dsl-jit",
+    all(feature = "dsl-aot", feature = "dsl-aot-load")
+))]
 fn runtime_locf_subject() -> Subject {
     let mut subject = Subject::builder("runtime-locf-breakpoint")
         .covariate("cov_rate", 0.0, 1.0)
@@ -547,6 +705,34 @@ fn assert_runtime_locf_integral(backend: &str, compiled: &CompiledRuntimeModel) 
 
 #[cfg(feature = "dsl-jit")]
 #[test]
+fn jit_large_initial_times_preserve_absolute_time_callbacks(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let compiled = compile_module_source_to_runtime(
+        ABSOLUTE_TIME_DSL_MODEL,
+        Some("absolute_time_close_gap"),
+        RuntimeCompilationTarget::Jit,
+        |_, _| {},
+    )?;
+    assert_runtime_large_initial_times_absolute_time("JIT", &compiled);
+    Ok(())
+}
+
+#[cfg(feature = "dsl-jit")]
+#[test]
+fn jit_rebase_after_large_event_preserves_absolute_time_rhs(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let compiled = compile_module_source_to_runtime(
+        REBASE_ABSOLUTE_TIME_DSL_MODEL,
+        Some("rebase_absolute_time_close_gap"),
+        RuntimeCompilationTarget::Jit,
+        |_, _| {},
+    )?;
+    assert_runtime_rebase_after_large_event("JIT", &compiled);
+    Ok(())
+}
+
+#[cfg(feature = "dsl-jit")]
+#[test]
 fn jit_close_distinct_stops_do_not_silently_skip_dynamics() -> Result<(), Box<dyn std::error::Error>>
 {
     let compiled = compile_module_source_to_runtime(
@@ -570,6 +756,48 @@ fn jit_locf_rhs_change_matches_piecewise_analytical_integral(
         |_, _| {},
     )?;
     assert_runtime_locf_integral("JIT", &compiled);
+    Ok(())
+}
+
+#[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]
+#[test]
+fn native_aot_large_initial_times_preserve_absolute_time_callbacks(
+) -> Result<(), Box<dyn std::error::Error>> {
+    use pharmsol::dsl::NativeAotCompileOptions;
+    use tempfile::tempdir;
+
+    let workspace = tempdir()?;
+    let compiled = compile_module_source_to_runtime(
+        ABSOLUTE_TIME_DSL_MODEL,
+        Some("absolute_time_close_gap"),
+        RuntimeCompilationTarget::NativeAot(
+            NativeAotCompileOptions::new(workspace.path().join("build"))
+                .with_output(workspace.path().join("absolute_time_close_gap.pkm")),
+        ),
+        |_, _| {},
+    )?;
+    assert_runtime_large_initial_times_absolute_time("native AOT", &compiled);
+    Ok(())
+}
+
+#[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]
+#[test]
+fn native_aot_rebase_after_large_event_preserves_absolute_time_rhs(
+) -> Result<(), Box<dyn std::error::Error>> {
+    use pharmsol::dsl::NativeAotCompileOptions;
+    use tempfile::tempdir;
+
+    let workspace = tempdir()?;
+    let compiled = compile_module_source_to_runtime(
+        REBASE_ABSOLUTE_TIME_DSL_MODEL,
+        Some("rebase_absolute_time_close_gap"),
+        RuntimeCompilationTarget::NativeAot(
+            NativeAotCompileOptions::new(workspace.path().join("build"))
+                .with_output(workspace.path().join("rebase_absolute_time_close_gap.pkm")),
+        ),
+        |_, _| {},
+    )?;
+    assert_runtime_rebase_after_large_event("native AOT", &compiled);
     Ok(())
 }
 

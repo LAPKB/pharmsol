@@ -31,7 +31,10 @@ use crate::{
             DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE, DEFAULT_CACHE_SIZE,
         },
         equation::{
-            ode::{closure_helpers::PMProblem, ExplicitRkTableau, OdeSolver, SdirkTableau},
+            ode::{
+                closure_helpers::PMProblem, validate_resolved_ode_schedule, ExplicitRkTableau,
+                OdeSolver, SdirkTableau,
+            },
             sde::simulate_sde_event_with,
             EqnKind, Equation, EquationPriv, EquationTypes, Predictions,
         },
@@ -888,6 +891,7 @@ impl SharedNativeModel {
         support_point: &[f64],
         covariates: &Covariates,
         occasion_index: usize,
+        time: f64,
     ) -> Result<Vec<f64>, PharmsolError> {
         let mut state = vec![0.0; self.info.state_len];
         if occasion_index == 0 {
@@ -896,7 +900,7 @@ impl SharedNativeModel {
             let mut derived = vec![0.0; self.info.derived_len];
             self.refresh_derived(
                 session,
-                0.0,
+                time,
                 &state,
                 support_point,
                 covariates,
@@ -908,7 +912,7 @@ impl SharedNativeModel {
                 unsafe {
                     session.invoke_raw(
                         ModelFunctionKind::Init,
-                        0.0,
+                        time,
                         state.as_ptr(),
                         support_point.as_ptr(),
                         cov_buf.as_ptr(),
@@ -1187,13 +1191,6 @@ impl NativeOdeModel {
 
         for occasion in subject.occasions() {
             let mut events = self.shared.resolve_events(occasion)?;
-            let infusions = events
-                .iter()
-                .filter_map(|event| match event {
-                    Event::Infusion(infusion) => Some(infusion.clone()),
-                    _ => None,
-                })
-                .collect::<Vec<_>>();
             let session = RefCell::new(self.shared.artifact.start_session()?);
             let mut route_session = session.borrow_mut();
             self.shared.apply_route_properties(
@@ -1204,6 +1201,14 @@ impl NativeOdeModel {
             )?;
             drop(route_session);
 
+            let time_origin = validate_resolved_ode_schedule(&events)?;
+            let infusions = events
+                .iter()
+                .filter_map(|event| match event {
+                    Event::Infusion(infusion) => Some(infusion.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
             let cov_buf = RefCell::new(vec![0.0; self.shared.info.covariates.len()]);
             let derived_buf = RefCell::new(vec![0.0; self.shared.info.derived_len]);
             let shared = Arc::clone(&self.shared);
@@ -1274,6 +1279,7 @@ impl NativeOdeModel {
                         support_point,
                         occasion.covariates(),
                         occasion.index(),
+                        time_origin,
                     )?
                 },
                 NalgebraContext::new(),
@@ -1282,7 +1288,7 @@ impl NativeOdeModel {
             let problem = OdeBuilder::<M>::new()
                 .atol(vec![self.atol])
                 .rtol(self.rtol)
-                .t0(occasion.initial_time())
+                .t0(0.0)
                 .h0(1e-3)
                 .p(support_point_vec.clone())
                 .build_from_eqn(PMProblem::with_params_v(
@@ -1293,6 +1299,7 @@ impl NativeOdeModel {
                     occasion.covariates(),
                     infusions.iter(),
                     initial_state,
+                    time_origin,
                 )?)?;
 
             macro_rules! run_solver {
@@ -1729,6 +1736,7 @@ impl NativeAnalyticalModel {
                 support_point,
                 occasion.covariates(),
                 occasion.index(),
+                0.0,
             )?;
 
             for (index, event) in events.iter().enumerate() {
@@ -2135,6 +2143,7 @@ impl NativeSdeModel {
                 support_point,
                 occasion.covariates(),
                 occasion.index(),
+                0.0,
             )?;
             let mut particles = (0..self.nparticles)
                 .map(|_| DVector::from_vec(initial.clone()))

@@ -430,9 +430,9 @@ where
         self.time_origin.get() + solver_time
     }
 
-    /// Convert model/data time to diffsol's current local coordinate.
-    pub(crate) fn solver_time(&self, absolute_time: f64) -> f64 {
-        absolute_time - self.time_origin.get()
+    /// Return diffsol's current absolute-time origin.
+    pub(crate) fn time_origin(&self) -> f64 {
+        self.time_origin.get()
     }
 
     /// Start a new local coordinate at an accepted absolute-time state.
@@ -474,8 +474,11 @@ where
         );
     }
 
-    /// Creates a new PMProblem with a pre-converted parameter vector.
-    /// This avoids an allocation when the caller already has a V representation.
+    /// Creates a new PMProblem with a pre-converted parameter vector and an
+    /// absolute-time origin for diffsol's local clock.
+    ///
+    /// This avoids an allocation when the caller already has a V representation
+    /// while keeping all model callbacks in absolute time.
     #[allow(clippy::too_many_arguments)]
     pub fn with_params_v<'b, I>(
         func: F,
@@ -485,10 +488,17 @@ where
         covariates: &'a Covariates,
         infusions: I,
         init: V,
+        time_origin: f64,
     ) -> Result<Self, PharmsolError>
     where
         I: IntoIterator<Item = &'b Infusion>,
     {
+        if !time_origin.is_finite() {
+            return Err(PharmsolError::OtherError(format!(
+                "invalid ODE time origin {time_origin:?}: the resolved event schedule must be finite"
+            )));
+        }
+
         let nparams = p_as_v.len();
         let rateiv_buffer = RefCell::new(V::zeros(ndrugs, NalgebraContext::new()));
         let infusion_schedule = InfusionSchedule::new(ndrugs, infusions)?;
@@ -504,7 +514,7 @@ where
             zero_bolus,
             covariates,
             infusion_schedule,
-            time_origin: Cell::new(0.0),
+            time_origin: Cell::new(time_origin),
             rateiv_buffer,
         })
     }
