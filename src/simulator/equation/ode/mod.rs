@@ -722,6 +722,11 @@ pub(crate) fn validate_resolved_ode_schedule(events: &[Event]) -> Result<f64, Ph
                         "invalid ODE event schedule: infusion at t = {time:.16e} has non-finite rate from amount {amount:.16e} and duration {duration:.16e}"
                     )));
                 }
+                if amount != 0.0 && rate == 0.0 {
+                    return Err(PharmsolError::OtherError(format!(
+                        "invalid ODE event schedule: infusion at t = {time:.16e} with amount {amount:.16e} and duration {duration:.16e} has a zero rate, which would silently lose nonzero infusion material"
+                    )));
+                }
                 let endpoint = time + duration;
                 if !endpoint.is_finite() {
                     return Err(PharmsolError::OtherError(format!(
@@ -792,16 +797,19 @@ where
     solver.state_mut().dy.copy_from(dy_scratch);
 }
 
-fn restore_timestep_after_close_stop<'a, F, S>(solver: &mut S)
+/// Keep an exact-stop alignment step from poisoning the next segment. This
+/// changes only the next-step proposal after the current segment succeeded;
+/// the accepted state and time remain unchanged.
+fn restore_timestep_after_successful_stop<'a, F, S>(solver: &mut S)
 where
     F: Fn(&V, &V, f64, &mut V, &V, &V, &Covariates) + 'a,
     S: OdeSolverMethod<'a, PMProblem<'a, F>>,
 {
     let minimum_timestep = *solver.config().as_base_ref().minimum_timestep;
     let restart_timestep = MINIMUM_TIMESTEP_HEADROOM * minimum_timestep;
-    let state = solver.state_mut();
-    if minimum_timestep > 0.0 && state.h.abs() < restart_timestep {
-        *state.h = restart_timestep.copysign(*state.h);
+    let step = solver.state().h;
+    if minimum_timestep > 0.0 && step.abs() < restart_timestep {
+        *solver.state_mut().h = restart_timestep.copysign(step);
     }
 }
 
@@ -1137,6 +1145,7 @@ enum ReachedStop {
 /// relabeled. It is rebased once at its accepted absolute time so the complete
 /// residual interval can be integrated. A state past the stop is instead
 /// interpolated with diffsol's `state_mut_back` contract.
+#[allow(clippy::too_many_arguments)]
 fn normalize_reached_stop<'a, F, S>(
     solver: &mut S,
     stop_time: f64,
@@ -1463,6 +1472,7 @@ where
                     }
                     Err(err) => {
                         solver.problem().eqn.set_left_continuity_time(None);
+                        after_step()?;
                         return Err(solver_error_at_absolute_time(
                             solver,
                             err,
@@ -1475,9 +1485,9 @@ where
 
         if short_segment {
             *solver.config_mut().as_base_mut().minimum_timestep = configured_minimum_timestep;
-            if segment_result.is_ok() {
-                restore_timestep_after_close_stop(solver);
-            }
+        }
+        if segment_result.is_ok() {
+            restore_timestep_after_successful_stop(solver);
         }
         if segment_result.is_err() {
             solver.problem().eqn.set_left_continuity_time(None);
@@ -1491,6 +1501,7 @@ where
 /// Solver failures are returned directly. Retrying every nonlinear or linear
 /// algebra failure can hide structural model errors and has no generally safe,
 /// unit-independent restart step.
+#[allow(clippy::too_many_arguments)]
 fn integrate_to_stop<'a, F, S, H>(
     solver: &mut S,
     stop_time: f64,
@@ -1654,18 +1665,19 @@ where
                                         absolute_state_time,
                                     ))
                                 }
-                                Err(error) => Err(solver_error_at_absolute_time(
-                                    solver,
-                                    error,
-                                    absolute_stop_time,
-                                )),
+                                Err(error) => {
+                                    after_step()?;
+                                    Err(solver_error_at_absolute_time(
+                                        solver,
+                                        error,
+                                        absolute_stop_time,
+                                    ))
+                                }
                             }
                         })();
                         *solver.config_mut().as_base_mut().minimum_timestep =
                             configured_minimum_timestep;
-                        if residual_result.is_ok() {
-                            restore_timestep_after_close_stop(solver);
-                        } else {
+                        if residual_result.is_err() {
                             solver.problem().eqn.set_left_continuity_time(None);
                         }
                         residual_result?;
@@ -1679,6 +1691,10 @@ where
                     .problem()
                     .eqn
                     .record_explicit_accepted_step(accepted_time);
+                if let Err(error) = after_step() {
+                    solver.problem().eqn.set_left_continuity_time(None);
+                    return Err(error);
+                }
                 solver.problem().eqn.set_left_continuity_time(None);
                 let absolute_root_time = solver.problem().eqn.absolute_time(root_time);
                 return Err(PharmsolError::OtherError(format!(
@@ -2367,6 +2383,31 @@ mod tests {
     }
 
     #[test]
+    fn callback_error_precedes_set_stop_time_error() {
+        let problem = build_guard_test_problem!(1.0);
+        let mut solver = problem
+            .bdf::<diffsol::NalgebraLU<f64>>()
+            .expect("test BDF solver should build");
+        *solver.state_mut().h = -1.0;
+        let mut integration_boundary_cursor = 0;
+        let mut pending_reinit = false;
+        let mut dy_scratch = V::zeros(1, NalgebraContext::new());
+
+        let error = advance_solver_to_event(
+            &mut solver,
+            1.0,
+            &mut integration_boundary_cursor,
+            &mut pending_reinit,
+            &mut dy_scratch,
+            1e-4,
+            1e-4,
+            &mut || Err(PharmsolError::OtherError("native callback error".into())),
+        )
+        .expect_err("callback failure must precede the set_stop_time error");
+        assert!(error.to_string().contains("native callback error"));
+    }
+
+    #[test]
     fn callback_error_precedes_explicit_step_budget_error() {
         let problem = build_guard_test_problem!(1.0);
         problem
@@ -2392,6 +2433,41 @@ mod tests {
         )
         .expect_err("callback failure must retain precedence");
         assert!(error.to_string().contains("native callback error"));
+    }
+
+    #[test]
+    fn resolved_schedule_rejects_positive_nonzero_infusion_rate_underflow() {
+        let amount = f64::from_bits(1);
+        let events = [Event::Infusion(Infusion::new(1.5, amount, "0", 2.0, 0))];
+        let error = validate_resolved_ode_schedule(&events)
+            .expect_err("positive nonzero infusion underflow must be rejected");
+        let message = error.to_string();
+        assert!(message.contains("t = 1.5000000000000000e0"));
+        assert!(message.contains("amount"));
+        assert!(message.contains("duration"));
+        assert!(message.contains("silently lose nonzero infusion material"));
+    }
+
+    #[test]
+    fn resolved_schedule_rejects_negative_nonzero_infusion_rate_underflow() {
+        let amount = -f64::from_bits(1);
+        let events = [Event::Infusion(Infusion::new(1.5, amount, "0", 2.0, 0))];
+        let error = validate_resolved_ode_schedule(&events)
+            .expect_err("negative nonzero infusion underflow must be rejected");
+        let message = error.to_string();
+        assert!(message.contains("t = 1.5000000000000000e0"));
+        assert!(message.contains("amount"));
+        assert!(message.contains("duration"));
+        assert!(message.contains("silently lose nonzero infusion material"));
+    }
+
+    #[test]
+    fn resolved_schedule_accepts_zero_amount_infusion_with_zero_rate() {
+        let events = [Event::Infusion(Infusion::new(1.5, 0.0, "0", 2.0, 0))];
+        assert_eq!(
+            validate_resolved_ode_schedule(&events).expect("zero amount is material-free"),
+            1.5
+        );
     }
 
     #[test]

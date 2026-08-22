@@ -12,6 +12,12 @@ use pharmsol::prelude::*;
     feature = "dsl-jit",
     all(feature = "dsl-aot", feature = "dsl-aot-load")
 ))]
+use pharmsol::Cache;
+
+#[cfg(any(
+    feature = "dsl-jit",
+    all(feature = "dsl-aot", feature = "dsl-aot-load")
+))]
 use pharmsol::dsl::{
     compile_module_source_to_runtime, CompiledRuntimeModel, RuntimeCompilationTarget,
 };
@@ -51,12 +57,40 @@ const PARAMETERS: [(&str, f64); 5] = [
     ("vp0", 58.32162380218506),
 ];
 
+const CRUSHED_STOP_PARAMETERS: [(&str, f64); 5] = [
+    ("ka", 1.9966840744018555),
+    ("cl0", 4.55677330493927),
+    ("vc0", 8.071004152297974),
+    ("q0", 2.822192907333374),
+    ("vp0", 59.72854793071747),
+];
+
+const CRUSHED_STOP_OBSERVATION_TIMES: [f64; 6] = [
+    0.0,
+    0.3,
+    0.566666666666667,
+    1.06666666666667,
+    1.53333333333333,
+    2.0,
+];
+
 fn subject_with_bolus_history() -> Subject {
     let mut builder = Subject::builder("g34");
     for dose_index in -16..=0 {
         builder = builder.bolus(f64::from(dose_index) * 12.0, 750.0, "input_1");
     }
     for time in OBSERVATION_TIMES {
+        builder = builder.missing_observation(time, "outeq_1");
+    }
+    builder.build()
+}
+
+fn subject_with_crushed_endpoint_step() -> Subject {
+    let mut builder = Subject::builder("g10");
+    for dose_index in -16..=0 {
+        builder = builder.bolus(f64::from(dose_index) * 12.0, 1000.0, "input_1");
+    }
+    for time in CRUSHED_STOP_OBSERVATION_TIMES {
         builder = builder.missing_observation(time, "outeq_1");
     }
     builder.build()
@@ -113,6 +147,39 @@ fn closure_solvers_accept_reached_stop_after_bolus_restarts(
             .predictions()
             .iter()
             .all(|prediction| prediction.prediction().is_finite()));
+    }
+    Ok(())
+}
+
+#[test]
+fn bdf_restores_crushed_timestep_after_successful_stop() -> Result<(), Box<dyn std::error::Error>> {
+    let subject = subject_with_crushed_endpoint_step();
+    let bdf_model = closure_model(OdeSolver::Bdf);
+    let bdf_parameters = Parameters::with_model(&bdf_model, CRUSHED_STOP_PARAMETERS)?;
+    let bdf_predictions =
+        bdf_model.estimate_predictions_dense(&subject, bdf_parameters.as_slice())?;
+
+    let reference_model = closure_model(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45));
+    let reference_parameters = Parameters::with_model(&reference_model, CRUSHED_STOP_PARAMETERS)?;
+    let reference_predictions =
+        reference_model.estimate_predictions_dense(&subject, reference_parameters.as_slice())?;
+
+    assert_eq!(
+        bdf_predictions.predictions().len(),
+        CRUSHED_STOP_OBSERVATION_TIMES.len()
+    );
+    for (bdf, reference) in bdf_predictions
+        .predictions()
+        .iter()
+        .zip(reference_predictions.predictions())
+    {
+        let bdf = bdf.prediction();
+        let reference = reference.prediction();
+        let scaled_error = (bdf - reference).abs() / reference.abs().max(1.0);
+        assert!(
+            scaled_error < 1.0e-3,
+            "BDF prediction {bdf:.16e} differs from TSIT45 reference {reference:.16e} by {scaled_error:.3e}"
+        );
     }
     Ok(())
 }
@@ -398,6 +465,42 @@ fn jit_solvers_accept_reached_stop_after_bolus_restarts() -> Result<(), Box<dyn 
     Ok(())
 }
 
+#[test]
+#[cfg(feature = "dsl-jit")]
+fn jit_bdf_restores_crushed_timestep_after_successful_stop(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let compiled = compile_module_source_to_runtime(
+        DSL_MODEL,
+        Some("bolus_reinit_stop_time"),
+        RuntimeCompilationTarget::Jit,
+        |_, _| {},
+    )?;
+    let model = match compiled {
+        CompiledRuntimeModel::Ode(model) => {
+            CompiledRuntimeModel::Ode(model.with_solver(OdeSolver::Bdf).disable_cache())
+        }
+        _ => return Err("expected an ODE model".into()),
+    };
+    let parameters = Parameters::with_model(&model, CRUSHED_STOP_PARAMETERS)?;
+    let predictions = match &model {
+        CompiledRuntimeModel::Ode(model) => model.estimate_predictions_dense(
+            &subject_with_crushed_endpoint_step(),
+            parameters.as_slice(),
+        )?,
+        _ => unreachable!(),
+    };
+
+    assert_eq!(
+        predictions.predictions().len(),
+        CRUSHED_STOP_OBSERVATION_TIMES.len()
+    );
+    assert!(predictions
+        .predictions()
+        .iter()
+        .all(|prediction| prediction.prediction().is_finite()));
+    Ok(())
+}
+
 #[cfg(any(
     feature = "dsl-jit",
     all(feature = "dsl-aot", feature = "dsl-aot-load")
@@ -467,7 +570,9 @@ fn configured_runtime_ode(
     solver: OdeSolver,
 ) -> CompiledRuntimeModel {
     match compiled.clone() {
-        CompiledRuntimeModel::Ode(model) => CompiledRuntimeModel::Ode(model.with_solver(solver)),
+        CompiledRuntimeModel::Ode(model) => {
+            CompiledRuntimeModel::Ode(model.with_solver(solver).disable_cache())
+        }
         _ => panic!("expected an ODE model"),
     }
 }
