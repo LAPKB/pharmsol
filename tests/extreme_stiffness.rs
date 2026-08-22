@@ -400,7 +400,8 @@ fn lagged_bolus_into_stiff_elimination_matches_analytical() {
 
 // ---------------------------------------------------------------------------
 // Michaelis-Menten depletion: stiffness switches on as the state crosses Km,
-// far from any event. All solvers must agree with each other.
+// far from any event. Every solver is compared with the independently derived
+// analytical solution, not with another numerical solver.
 // ---------------------------------------------------------------------------
 
 fn michaelis_menten_model(solver: OdeSolver) -> equation::ODE {
@@ -428,12 +429,61 @@ fn michaelis_menten_model(solver: OdeSolver) -> equation::ODE {
     .expect("michaelis-menten metadata should validate")
 }
 
+fn michaelis_menten_infusion_elapsed(x: f64, vmax: f64, km: f64, rate: f64) -> f64 {
+    let a = rate - vmax;
+    let b = rate * km;
+    let antiderivative = |state: f64| state / a - km * vmax / (a * a) * (a * state + b).ln();
+    antiderivative(x) - antiderivative(0.0)
+}
+
+/// Independent analytical solution for the test trajectory. During infusion,
+/// the monotone implicit integral is inverted by bisection. After infusion,
+/// the exact depletion integral is
+/// `elapsed = (x_start - x + km * ln(x_start / x)) / vmax`, which is inverted
+/// by the same bracketed scalar solve. No ODE solver supplies this reference.
+fn michaelis_menten_analytical_solution(vmax: f64, km: f64, time: f64) -> f64 {
+    const INFUSION_RATE: f64 = 10.0;
+    const INFUSION_END: f64 = 1.0;
+
+    if time <= INFUSION_END {
+        let mut lower = 0.0;
+        let mut upper = INFUSION_RATE * time;
+        for _ in 0..100 {
+            let middle = 0.5 * (lower + upper);
+            if michaelis_menten_infusion_elapsed(middle, vmax, km, INFUSION_RATE) < time {
+                lower = middle;
+            } else {
+                upper = middle;
+            }
+        }
+        return 0.5 * (lower + upper);
+    }
+
+    let state_at_infusion_end = michaelis_menten_analytical_solution(vmax, km, INFUSION_END);
+    let elapsed = time - INFUSION_END;
+    let mut lower = 0.0;
+    let mut upper = state_at_infusion_end;
+    for _ in 0..100 {
+        let middle = 0.5 * (lower + upper);
+        let elapsed_from_middle = (state_at_infusion_end - middle
+            + km * (state_at_infusion_end.ln() - middle.ln()))
+            / vmax;
+        if elapsed_from_middle > elapsed {
+            lower = middle;
+        } else {
+            upper = middle;
+        }
+    }
+    0.5 * (lower + upper)
+}
+
 #[test]
 fn michaelis_menten_depletion_agrees_across_solvers() {
     // Saturated elimination consumes the 10-unit infusion at ~1/unit time, so
     // the state crosses Km (1e-2) around t = 10 and the local stiffness jumps
     // from ~0 to vmax/km = 1e2 mid-segment. Solver tolerances are tightened so
-    // cross-solver agreement is meaningful through the depletion corner.
+    // agreement with the independent integral solution is meaningful through
+    // the depletion corner.
     let parameters = [("vmax", 1.0), ("km", 1e-2)];
     let times = [0.5, 1.0, 5.0, 9.5, 9.9, 10.0, 10.05, 10.5, 11.0];
     let subject = {
@@ -444,20 +494,16 @@ fn michaelis_menten_depletion_agrees_across_solvers() {
         builder.build()
     };
     let model_for = |solver: OdeSolver| michaelis_menten_model(solver).with_tolerances(1e-6, 1e-6);
-
-    let reference = predictions_for(
-        "BDF michaelis-menten",
-        &model_for(OdeSolver::Bdf),
-        &subject,
-        &parameters,
-    );
-    assert_eq!(reference.len(), times.len());
+    let expected = times
+        .iter()
+        .map(|&time| michaelis_menten_analytical_solution(1.0, 1e-2, time))
+        .collect::<Vec<_>>();
 
     for (name, solver) in all_solvers() {
         let label = format!("{name} michaelis-menten");
         let actual = predictions_for(&label, &model_for(solver), &subject, &parameters);
-        assert_eq!(actual.len(), reference.len(), "{label}: prediction count");
-        for ((time, actual), expected) in times.iter().zip(&actual).zip(&reference) {
+        assert_eq!(actual.len(), expected.len(), "{label}: prediction count");
+        for ((time, actual), expected) in times.iter().zip(&actual).zip(&expected) {
             assert_close(&format!("{label} at t = {time}"), *actual, *expected);
         }
     }

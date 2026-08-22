@@ -12,6 +12,37 @@ type V = <M as MatrixCommon>::V;
 type C = <M as MatrixCommon>::C;
 type T = <M as MatrixCommon>::T;
 
+/// Evaluate one model RHS using the absolute model time and the active route
+/// rates. Passing `active_rateiv` lets a directional derivative reuse exactly
+/// the same rates for its base and perturbed states.
+fn evaluate_rhs<F>(
+    func: &F,
+    p_as_v: &V,
+    covariates: &Covariates,
+    zero_bolus: &V,
+    infusion_schedule: &InfusionSchedule,
+    time_origin: &Cell<f64>,
+    rateiv_buffer: &RefCell<V>,
+    x: &V,
+    t: f64,
+    active_rateiv: Option<&V>,
+    y: &mut V,
+) where
+    F: Fn(&V, &V, T, &mut V, &V, &V, &Covariates),
+{
+    let absolute_time = time_origin.get() + t;
+    match active_rateiv {
+        Some(rateiv) => {
+            (func)(x, p_as_v, absolute_time, y, zero_bolus, rateiv, covariates);
+        }
+        None => {
+            let mut rateiv = rateiv_buffer.borrow_mut();
+            infusion_schedule.fill_rate_vector(absolute_time, &mut rateiv);
+            (func)(x, p_as_v, absolute_time, y, zero_bolus, &rateiv, covariates);
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct InfusionTrack {
     input: usize,
@@ -220,6 +251,9 @@ where
     p_as_v: &'a V,
     func: &'a F,
     rateiv_buffer: &'a RefCell<V>,
+    jvp_x_buffer: &'a RefCell<V>,
+    jvp_base_buffer: &'a RefCell<V>,
+    jvp_perturbed_buffer: &'a RefCell<V>,
     zero_bolus: &'a V,
 }
 
@@ -357,19 +391,18 @@ where
     F: Fn(&V, &V, T, &mut V, &V, &V, &Covariates),
 {
     fn call_inplace(&self, x: &Self::V, t: Self::T, y: &mut Self::V) {
-        let absolute_time = self.time_origin.get() + t;
-        let mut rateiv_ref = self.rateiv_buffer.borrow_mut();
-        self.infusion_schedule
-            .fill_rate_vector(absolute_time, &mut rateiv_ref);
-
-        (self.func)(
-            x,
+        evaluate_rhs(
+            self.func,
             self.p_as_v,
-            absolute_time,
-            y,
-            self.zero_bolus,
-            &rateiv_ref,
             self.covariates,
+            self.zero_bolus,
+            self.infusion_schedule,
+            self.time_origin,
+            self.rateiv_buffer,
+            x,
+            t,
+            None,
+            y,
         );
     }
 }
@@ -378,17 +411,136 @@ impl<F> NonLinearOpJacobian for PmRhs<'_, F>
 where
     F: Fn(&V, &V, T, &mut V, &V, &V, &Covariates),
 {
-    fn jac_mul_inplace(&self, _x: &Self::V, t: Self::T, v: &Self::V, y: &mut Self::V) {
+    fn jac_mul_inplace(&self, x: &Self::V, t: Self::T, v: &Self::V, y: &mut Self::V) {
+        // Forward directional difference:
+        //
+        //     J(x, t)v ~= (f(x + h v, t) - f(x, t)) / h
+        //
+        // with h = sqrt(eps) * max(1, ||x||_inf) / ||v||_inf.  The
+        // normalized construction below avoids forming an overflowing h
+        // when v is very small while making the state perturbation explicit.
+        let mut x_scale: f64 = 1.0;
+        let mut v_scale: f64 = 0.0;
+        let mut v_is_zero = true;
+        let mut finite_inputs = true;
+        for index in 0..self.nstates {
+            let xi = x.get_index(index);
+            let vi = v.get_index(index);
+            v_is_zero &= vi == 0.0;
+            if xi.is_finite() {
+                x_scale = x_scale.max(xi.abs());
+            } else {
+                finite_inputs = false;
+            }
+            if vi.is_finite() {
+                v_scale = v_scale.max(vi.abs());
+            } else {
+                finite_inputs = false;
+            }
+        }
+
+        // NonLinearOpJacobian has no error return. Invalid numeric inputs must
+        // remain visibly non-finite rather than becoming a silent zero JVP.
+        if !finite_inputs {
+            y.fill(f64::NAN);
+            return;
+        }
+
+        // The finite zero direction is exact and must not call a user callback.
+        if v_is_zero {
+            y.fill(0.0);
+            return;
+        }
+
+        let delta = f64::EPSILON.sqrt() * x_scale;
+        if !v_scale.is_finite() || v_scale == 0.0 || !delta.is_finite() || delta == 0.0 {
+            y.fill(f64::NAN);
+            return;
+        }
+
+        let mut signed_delta = delta;
+        let mut x_perturbed = self.jvp_x_buffer.borrow_mut();
+        let mut perturbation_is_finite = true;
+        for index in 0..self.nstates {
+            let candidate = x.get_index(index) + delta * (v.get_index(index) / v_scale);
+            if candidate.is_finite() {
+                x_perturbed.set_index(index, candidate);
+            } else {
+                perturbation_is_finite = false;
+                break;
+            }
+        }
+        if !perturbation_is_finite {
+            // Use the opposite one-sided perturbation if the first direction
+            // would overflow a state component near the edge of f64.
+            signed_delta = -delta;
+            perturbation_is_finite = true;
+            for index in 0..self.nstates {
+                let candidate = x.get_index(index) - delta * (v.get_index(index) / v_scale);
+                if candidate.is_finite() {
+                    x_perturbed.set_index(index, candidate);
+                } else {
+                    perturbation_is_finite = false;
+                    break;
+                }
+            }
+        }
+        if !perturbation_is_finite {
+            y.fill(f64::NAN);
+            return;
+        }
+
+        // Build the active rate vector once. Both evaluations below receive
+        // the same borrow, including the schedule's left/right continuity
+        // choice at this absolute time.
+        let mut rateiv = self.rateiv_buffer.borrow_mut();
         let absolute_time = self.time_origin.get() + t;
-        (self.func)(
-            v,
+        self.infusion_schedule
+            .fill_rate_vector(absolute_time, &mut rateiv);
+        let mut base = self.jvp_base_buffer.borrow_mut();
+        let mut perturbed = self.jvp_perturbed_buffer.borrow_mut();
+        evaluate_rhs(
+            self.func,
             self.p_as_v,
-            absolute_time,
-            y,
-            self.zero_bolus,
-            self.zero_bolus,
             self.covariates,
+            self.zero_bolus,
+            self.infusion_schedule,
+            self.time_origin,
+            self.rateiv_buffer,
+            x,
+            t,
+            Some(&rateiv),
+            &mut base,
         );
+        evaluate_rhs(
+            self.func,
+            self.p_as_v,
+            self.covariates,
+            self.zero_bolus,
+            self.infusion_schedule,
+            self.time_origin,
+            self.rateiv_buffer,
+            &x_perturbed,
+            t,
+            Some(&rateiv),
+            &mut perturbed,
+        );
+
+        // Scale the output by v_scale / signed_delta rather than dividing by
+        // h directly. An unusable scale must remain visibly non-finite rather
+        // than being sanitized after the callback evaluations.
+        let output_scale = v_scale / signed_delta;
+        if !output_scale.is_finite() || output_scale == 0.0 {
+            y.fill(f64::NAN);
+            return;
+        }
+
+        // Preserve NaN/Inf from the model's RHS difference. No callback retry
+        // or exceptional-value sanitization belongs in this no-error API.
+        for index in 0..self.nstates {
+            let difference = perturbed.get_index(index) - base.get_index(index);
+            y.set_index(index, difference * output_scale);
+        }
     }
 }
 
@@ -419,6 +571,9 @@ where
     infusion_schedule: InfusionSchedule,
     time_origin: Cell<f64>,
     rateiv_buffer: RefCell<V>,
+    jvp_x_buffer: RefCell<V>,
+    jvp_base_buffer: RefCell<V>,
+    jvp_perturbed_buffer: RefCell<V>,
 }
 
 impl<'a, F> PMProblem<'a, F>
@@ -459,18 +614,18 @@ where
     /// against the post-boundary (right-continuous) RHS, so a solver restart
     /// predicts with the new dynamics instead of the pre-boundary ones.
     pub(crate) fn refresh_state_derivative(&self, t: f64, x: &V, dx: &mut V) {
-        let absolute_time = self.absolute_time(t);
-        let mut rateiv = self.rateiv_buffer.borrow_mut();
-        self.infusion_schedule
-            .fill_rate_vector(absolute_time, &mut rateiv);
-        (self.func)(
-            x,
+        evaluate_rhs(
+            &self.func,
             &self.p_as_v,
-            absolute_time,
-            dx,
-            &self.zero_bolus,
-            &rateiv,
             self.covariates,
+            &self.zero_bolus,
+            &self.infusion_schedule,
+            &self.time_origin,
+            &self.rateiv_buffer,
+            x,
+            t,
+            None,
+            dx,
         );
     }
 
@@ -502,8 +657,11 @@ where
         let nparams = p_as_v.len();
         let rateiv_buffer = RefCell::new(V::zeros(ndrugs, NalgebraContext::new()));
         let infusion_schedule = InfusionSchedule::new(ndrugs, infusions)?;
-        // Pre-allocate zero bolus vector
+        // Pre-allocate zero bolus and directional-derivative scratch vectors.
         let zero_bolus = V::zeros(ndrugs, NalgebraContext::new());
+        let jvp_x_buffer = RefCell::new(V::zeros(nstates, NalgebraContext::new()));
+        let jvp_base_buffer = RefCell::new(V::zeros(nstates, NalgebraContext::new()));
+        let jvp_perturbed_buffer = RefCell::new(V::zeros(nstates, NalgebraContext::new()));
 
         Ok(Self {
             func,
@@ -516,6 +674,9 @@ where
             infusion_schedule,
             time_origin: Cell::new(time_origin),
             rateiv_buffer,
+            jvp_x_buffer,
+            jvp_base_buffer,
+            jvp_perturbed_buffer,
         })
     }
 }
@@ -570,6 +731,9 @@ where
             p_as_v: &self.p_as_v,
             func: &self.func,
             rateiv_buffer: &self.rateiv_buffer,
+            jvp_x_buffer: &self.jvp_x_buffer,
+            jvp_base_buffer: &self.jvp_base_buffer,
+            jvp_perturbed_buffer: &self.jvp_perturbed_buffer,
             zero_bolus: &self.zero_bolus,
         }
     }
@@ -613,5 +777,179 @@ where
         } else {
             self.p_as_v = p.clone();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use diffsol::{NonLinearOpJacobian, OdeEquations, Vector};
+    use std::cell::Cell;
+
+    #[test]
+    fn pm_rhs_jvp_zero_direction_skips_callback() {
+        let callback_count = Cell::new(0);
+        let covariates = Covariates::default();
+        let infusions = Vec::<Infusion>::new();
+        let problem = PMProblem::with_params_v(
+            |x, _p, _t, dx, _bolus, _rateiv, _cov| {
+                callback_count.set(callback_count.get() + 1);
+                dx[0] = x[0];
+            },
+            1,
+            0,
+            V::zeros(0, NalgebraContext::new()),
+            &covariates,
+            infusions.iter(),
+            V::zeros(1, NalgebraContext::new()),
+            0.0,
+        )
+        .unwrap_or_else(|error| panic!("zero-direction RHS problem should build: {error}"));
+        let rhs = problem.rhs();
+        let x = V::from_vec(vec![3.0], NalgebraContext::new());
+        let v = V::zeros(1, NalgebraContext::new());
+        let mut jvp = V::from_vec(vec![f64::NAN], NalgebraContext::new());
+
+        rhs.jac_mul_inplace(&x, 0.0, &v, &mut jvp);
+
+        assert_eq!(jvp.get_index(0), 0.0);
+        assert_eq!(callback_count.get(), 0);
+    }
+
+    #[test]
+    fn pm_rhs_jvp_preserves_nonfinite_inputs() {
+        let callback_count = Cell::new(0);
+        let covariates = Covariates::default();
+        let infusions = Vec::<Infusion>::new();
+        let problem = PMProblem::with_params_v(
+            |_x, _p, _t, dx, _bolus, _rateiv, _cov| {
+                callback_count.set(callback_count.get() + 1);
+                dx[0] = 1.0;
+            },
+            1,
+            0,
+            V::zeros(0, NalgebraContext::new()),
+            &covariates,
+            infusions.iter(),
+            V::zeros(1, NalgebraContext::new()),
+            0.0,
+        )
+        .unwrap_or_else(|error| panic!("non-finite-input RHS problem should build: {error}"));
+        let rhs = problem.rhs();
+        let mut jvp = V::zeros(1, NalgebraContext::new());
+
+        let x = V::from_vec(vec![f64::NAN], NalgebraContext::new());
+        let v = V::from_vec(vec![1.0], NalgebraContext::new());
+        rhs.jac_mul_inplace(&x, 0.0, &v, &mut jvp);
+        assert!(
+            jvp.get_index(0).is_nan(),
+            "NaN state must remain visible: {jvp:?}"
+        );
+
+        let x = V::from_vec(vec![1.0], NalgebraContext::new());
+        let v = V::from_vec(vec![f64::INFINITY], NalgebraContext::new());
+        rhs.jac_mul_inplace(&x, 0.0, &v, &mut jvp);
+        assert!(
+            jvp.get_index(0).is_nan(),
+            "infinite direction must remain visible: {jvp:?}"
+        );
+        assert_eq!(callback_count.get(), 0);
+    }
+
+    #[test]
+    fn pm_rhs_jvp_preserves_nonfinite_rhs_differences_without_retry() {
+        let callback_count = Cell::new(0);
+        let covariates = Covariates::default();
+        let infusions = Vec::<Infusion>::new();
+        let problem = PMProblem::with_params_v(
+            |_x, _p, _t, dx, _bolus, _rateiv, _cov| {
+                callback_count.set(callback_count.get() + 1);
+                dx[0] = f64::NAN;
+                dx[1] = if _x[1] > 1.0 { f64::INFINITY } else { 0.0 };
+            },
+            2,
+            0,
+            V::zeros(0, NalgebraContext::new()),
+            &covariates,
+            infusions.iter(),
+            V::zeros(2, NalgebraContext::new()),
+            0.0,
+        )
+        .unwrap_or_else(|error| panic!("non-finite-RHS problem should build: {error}"));
+        let rhs = problem.rhs();
+        let x = V::from_vec(vec![1.0, 1.0], NalgebraContext::new());
+        let v = V::from_vec(vec![1.0, 1.0], NalgebraContext::new());
+        let mut jvp = V::zeros(2, NalgebraContext::new());
+
+        rhs.jac_mul_inplace(&x, 0.0, &v, &mut jvp);
+
+        assert!(
+            jvp.get_index(0).is_nan(),
+            "NaN RHS difference was sanitized: {jvp:?}"
+        );
+        assert!(
+            jvp.get_index(1).is_infinite(),
+            "infinite RHS difference was sanitized: {jvp:?}"
+        );
+        assert_eq!(callback_count.get(), 2);
+    }
+
+    #[test]
+    fn pm_rhs_jvp_matches_nonlinear_square_rhs() {
+        let covariates = Covariates::default();
+        let infusions = Vec::<Infusion>::new();
+        let problem = PMProblem::with_params_v(
+            |x, _p, _t, dx, _bolus, _rateiv, _cov| dx[0] = x[0] * x[0],
+            1,
+            0,
+            V::zeros(0, NalgebraContext::new()),
+            &covariates,
+            infusions.iter(),
+            V::zeros(1, NalgebraContext::new()),
+            0.0,
+        )
+        .unwrap_or_else(|error| panic!("square RHS problem should build: {error}"));
+        let rhs = problem.rhs();
+        let x = V::from_vec(vec![3.0], NalgebraContext::new());
+        let v = V::from_vec(vec![2.0], NalgebraContext::new());
+        let mut jvp = V::zeros(1, NalgebraContext::new());
+
+        rhs.jac_mul_inplace(&x, 0.0, &v, &mut jvp);
+
+        assert!((jvp.get_index(0) - 12.0).abs() < 1e-6, "Jv = {jvp:?}");
+    }
+
+    #[test]
+    fn pm_rhs_jvp_uses_absolute_time_and_active_infusion_rate() {
+        let covariates = Covariates::default();
+        let infusions = vec![Infusion::new(10.0, 3.0, 0, 1.0, 0)];
+        let problem = PMProblem::with_params_v(
+            |x, _p, t, dx, _bolus, rateiv, _cov| {
+                dx[0] = (rateiv[0] + t) * x[0] * x[0];
+            },
+            1,
+            1,
+            V::zeros(0, NalgebraContext::new()),
+            &covariates,
+            infusions.iter(),
+            V::zeros(1, NalgebraContext::new()),
+            10.0,
+        )
+        .unwrap_or_else(|error| panic!("rate-dependent RHS problem should build: {error}"));
+        let rhs = problem.rhs();
+        let x = V::from_vec(vec![2.0], NalgebraContext::new());
+        let v = V::from_vec(vec![0.5], NalgebraContext::new());
+        let mut jvp = V::zeros(1, NalgebraContext::new());
+
+        rhs.jac_mul_inplace(&x, 0.25, &v, &mut jvp);
+        assert!((jvp.get_index(0) - 26.5).abs() < 1e-6, "Jv = {jvp:?}");
+
+        problem.set_left_continuity_time(Some(10.0));
+        rhs.jac_mul_inplace(&x, 0.0, &v, &mut jvp);
+        assert!((jvp.get_index(0) - 20.0).abs() < 1e-6, "left Jv = {jvp:?}");
+
+        problem.set_left_continuity_time(None);
+        rhs.jac_mul_inplace(&x, 0.0, &v, &mut jvp);
+        assert!((jvp.get_index(0) - 26.0).abs() < 1e-6, "right Jv = {jvp:?}");
     }
 }
