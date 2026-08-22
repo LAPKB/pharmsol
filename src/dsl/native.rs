@@ -32,8 +32,8 @@ use crate::{
         },
         equation::{
             ode::{
-                closure_helpers::PMProblem, validate_resolved_ode_schedule, ExplicitRkTableau,
-                OdeSolver, SdirkTableau,
+                accepted_step_limits_for_solver, closure_helpers::PMProblem,
+                validate_resolved_ode_schedule, ExplicitRkTableau, OdeSolver, SdirkTableau,
             },
             sde::simulate_sde_event_with,
             EqnKind, Equation, EquationPriv, EquationTypes, Predictions,
@@ -1302,6 +1302,9 @@ impl NativeOdeModel {
                     initial_state,
                     time_origin,
                 )?)?;
+            problem
+                .eqn
+                .configure_explicit_step_guard(accepted_step_limits_for_solver(&self.solver));
 
             macro_rules! run_solver {
                 ($solver:expr) => {{

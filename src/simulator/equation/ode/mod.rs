@@ -42,6 +42,45 @@ const ATOL: f64 = 1e-4;
 /// Headroom above diffsol's hard minimum after a close stop, allowing the
 /// controller to shrink a restarted step before reaching that floor again.
 const MINIMUM_TIMESTEP_HEADROOM: f64 = 4.0;
+/// Default dimensionless TSIT45 accepted-step limit for one exact smooth
+/// segment. This is a count of accepted solver steps, not model time,
+/// tolerance, or wall-clock time.
+pub(crate) const DEFAULT_TSIT45_MAX_ACCEPTED_STEPS_PER_SEGMENT: usize = 500_000;
+/// Initial dimensionless cumulative TSIT45 accepted-step limit for one
+/// `PMProblem`, which corresponds to one subject occasion. This provisional
+/// value remains subject to workflow calibration against the external solver
+/// and model matrices.
+pub(crate) const DEFAULT_TSIT45_MAX_ACCEPTED_STEPS_PER_SESSION: usize = 2_000_000;
+
+/// Accepted-step limits configured once for one `PMProblem`/occasion.
+///
+/// Both dimensions count accepted solver steps only. Starting another exact
+/// event-loop segment resets the segment count but never the session count;
+/// coordinate rebases and residual integrations do neither. `None` disables
+/// both limits for implicit solver sessions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ExplicitStepBudgetConfig {
+    pub(crate) max_accepted_steps_per_segment: usize,
+    pub(crate) max_accepted_steps_per_session: usize,
+}
+
+/// Return the accepted-step budgets selected for one solver session.
+///
+/// Only TSIT45 uses the explicit work guard. The implicit methods retain their
+/// ordinary diffsol failure semantics and are never limited by either budget.
+pub(crate) fn accepted_step_limits_for_solver(
+    solver: &OdeSolver,
+) -> Option<ExplicitStepBudgetConfig> {
+    match solver {
+        OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45) => Some(ExplicitStepBudgetConfig {
+            max_accepted_steps_per_segment: DEFAULT_TSIT45_MAX_ACCEPTED_STEPS_PER_SEGMENT,
+            max_accepted_steps_per_session: DEFAULT_TSIT45_MAX_ACCEPTED_STEPS_PER_SESSION,
+        }),
+        OdeSolver::Bdf
+        | OdeSolver::Sdirk(SdirkTableau::TrBdf2)
+        | OdeSolver::Sdirk(SdirkTableau::Esdirk34) => None,
+    }
+}
 
 /// ODE solver selection.
 ///
@@ -389,6 +428,9 @@ fn _simulate_subject_dense(
                     ),
                     time_origin,
                 )?)?;
+            problem
+                .eqn
+                .configure_explicit_step_guard(accepted_step_limits_for_solver(&ode.solver));
 
             match &ode.solver {
                 OdeSolver::Bdf => {
@@ -1307,6 +1349,10 @@ where
             });
 
         let segment_start_time = current_time;
+        solver
+            .problem()
+            .eqn
+            .begin_explicit_step_segment(segment_start_time, absolute_stop_time);
         let configured_minimum_timestep = *solver.config().as_base_ref().minimum_timestep;
         let short_segment = absolute_stop_time - segment_start_time
             <= MINIMUM_TIMESTEP_HEADROOM * configured_minimum_timestep;
@@ -1456,14 +1502,39 @@ where
     H: FnMut() -> Result<(), PharmsolError>,
 {
     loop {
+        if solver.problem().eqn.explicit_step_budget_exhausted() {
+            if let Err(error) = after_step() {
+                solver.problem().eqn.set_left_continuity_time(None);
+                return Err(error);
+            }
+            let error = match solver.problem().eqn.explicit_step_budget_error() {
+                Some(error) => error,
+                None => PharmsolError::OtherError(
+                    "TSIT45 accepted-step guard was exhausted without diagnostic state".into(),
+                ),
+            };
+            solver.problem().eqn.set_left_continuity_time(None);
+            return Err(error);
+        }
+
         match solver.step() {
             Ok(OdeSolverStopReason::InternalTimestep) => {
+                let accepted_time = solver.problem().eqn.absolute_time(solver.state().t);
+                solver
+                    .problem()
+                    .eqn
+                    .record_explicit_accepted_step(accepted_time);
                 if let Err(error) = after_step() {
                     solver.problem().eqn.set_left_continuity_time(None);
                     return Err(error);
                 }
             }
             Ok(OdeSolverStopReason::TstopReached) => {
+                let accepted_time = solver.problem().eqn.absolute_time(solver.state().t);
+                solver
+                    .problem()
+                    .eqn
+                    .record_explicit_accepted_step(accepted_time);
                 // Keep left-continuity active while reconciling the accepted
                 // state. In particular, a residual close segment ending at a
                 // covariate or infusion boundary must use the segment on the
@@ -1597,6 +1668,11 @@ where
                 }
             }
             Ok(OdeSolverStopReason::RootFound(root_time, _)) => {
+                let accepted_time = solver.problem().eqn.absolute_time(solver.state().t);
+                solver
+                    .problem()
+                    .eqn
+                    .record_explicit_accepted_step(accepted_time);
                 solver.problem().eqn.set_left_continuity_time(None);
                 let absolute_root_time = solver.problem().eqn.absolute_time(root_time);
                 return Err(PharmsolError::OtherError(format!(
@@ -1882,6 +1958,351 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     static PREDICTION_CACHE_DIFFEQ_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+    type GuardTestRhs = fn(&V, &V, f64, &mut V, &V, &V, &Covariates);
+
+    fn unit_rhs(
+        _x: &V,
+        _p: &V,
+        _t: f64,
+        dx: &mut V,
+        _bolus: &V,
+        _rateiv: &V,
+        _covariates: &Covariates,
+    ) {
+        dx[0] = 1.0;
+    }
+
+    fn guard_test_problem(h0: f64) -> diffsol::OdeSolverProblem<PMProblem<'static, GuardTestRhs>> {
+        let covariates = Covariates::default();
+        OdeBuilder::<M>::new()
+            .atol(vec![1e-4])
+            .rtol(1e-4)
+            .t0(0.0)
+            .h0(h0)
+            .p(Vec::<f64>::new())
+            .build_from_eqn(
+                PMProblem::with_params_v(
+                    unit_rhs as GuardTestRhs,
+                    1,
+                    0,
+                    V::zeros(0, NalgebraContext::new()),
+                    &covariates,
+                    std::iter::empty::<&Infusion>(),
+                    V::zeros(1, NalgebraContext::new()),
+                    0.0,
+                )
+                .expect("finite test ODE problem"),
+            )
+            .expect("test ODE builder should succeed")
+    }
+
+    macro_rules! build_guard_test_problem {
+        ($h0:expr) => {{
+            let covariates = Covariates::default();
+            OdeBuilder::<M>::new()
+                .atol(vec![1e-4])
+                .rtol(1e-4)
+                .t0(0.0)
+                .h0($h0)
+                .p(Vec::<f64>::new())
+                .build_from_eqn(
+                    PMProblem::with_params_v(
+                        unit_rhs as GuardTestRhs,
+                        1,
+                        0,
+                        V::zeros(0, NalgebraContext::new()),
+                        &covariates,
+                        std::iter::empty::<&Infusion>(),
+                        V::zeros(1, NalgebraContext::new()),
+                        0.0,
+                    )
+                    .expect("finite test ODE problem"),
+                )
+                .expect("test ODE builder should succeed")
+        }};
+    }
+
+    #[test]
+    fn explicit_step_guard_is_selected_only_for_tsit45() {
+        assert_eq!(accepted_step_limits_for_solver(&OdeSolver::Bdf), None);
+        assert_eq!(
+            accepted_step_limits_for_solver(&OdeSolver::Sdirk(SdirkTableau::TrBdf2)),
+            None
+        );
+        assert_eq!(
+            accepted_step_limits_for_solver(&OdeSolver::Sdirk(SdirkTableau::Esdirk34)),
+            None
+        );
+        assert_eq!(
+            accepted_step_limits_for_solver(&OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45)),
+            Some(ExplicitStepBudgetConfig {
+                max_accepted_steps_per_segment: DEFAULT_TSIT45_MAX_ACCEPTED_STEPS_PER_SEGMENT,
+                max_accepted_steps_per_session: DEFAULT_TSIT45_MAX_ACCEPTED_STEPS_PER_SESSION,
+            })
+        );
+    }
+
+    #[test]
+    fn explicit_step_guard_resets_only_for_new_segments_not_rebases() {
+        let problem = guard_test_problem(1.0);
+        problem
+            .eqn
+            .configure_explicit_step_guard(Some(ExplicitStepBudgetConfig {
+                max_accepted_steps_per_segment: 2,
+                max_accepted_steps_per_session: 4,
+            }));
+        problem.eqn.begin_explicit_step_segment(10.0, 20.0);
+        problem.eqn.record_explicit_accepted_step(12.0);
+        problem.eqn.rebase_time_origin(12.0);
+        problem.eqn.record_explicit_accepted_step(14.0);
+        assert!(problem.eqn.explicit_step_budget_exhausted());
+        let error = problem
+            .eqn
+            .explicit_step_budget_error()
+            .expect("enabled exhausted guard should have an error");
+        let message = error.to_string();
+        assert!(message.contains("budget scope = segment"));
+        assert!(message.contains("segment start = 1.0000000000000000e1"));
+        assert!(message.contains("target = 2.0000000000000000e1"));
+        assert!(message.contains("numeric gap (target - start) = 1.0000000000000000e1"));
+        assert!(message.contains("last accepted absolute time = 1.4000000000000000e1"));
+        assert!(message.contains("segment count/limit = 2/2"));
+        assert!(message.contains("cumulative session count/limit = 2/4"));
+        assert!(message.contains("no incomplete state was returned"));
+        assert!(message.contains("model stiffness and state/time/unit scaling"));
+        assert!(message.contains("explicitly choose an implicit solver"));
+
+        problem.eqn.begin_explicit_step_segment(20.0, 30.0);
+        assert!(!problem.eqn.explicit_step_budget_exhausted());
+        problem.eqn.record_explicit_accepted_step(22.0);
+        problem.eqn.record_explicit_accepted_step(24.0);
+        let second_segment_error = problem
+            .eqn
+            .explicit_step_budget_error()
+            .expect("the session count must survive a new segment");
+        let second_segment_message = second_segment_error.to_string();
+        assert!(second_segment_message.contains("budget scope = session"));
+        assert!(second_segment_message.contains("segment start = 2.0000000000000000e1"));
+        assert!(second_segment_message.contains("target = 3.0000000000000000e1"));
+        assert!(second_segment_message.contains("segment count/limit = 2/2"));
+        assert!(second_segment_message.contains("cumulative session count/limit = 4/4"));
+    }
+
+    #[test]
+    fn rebase_and_residual_do_not_reset_session_budget() {
+        let problem = build_guard_test_problem!(1.0);
+        let target = 1.0e-4_f64.next_down();
+        problem
+            .eqn
+            .configure_explicit_step_guard(Some(ExplicitStepBudgetConfig {
+                max_accepted_steps_per_segment: 3,
+                max_accepted_steps_per_session: 2,
+            }));
+        let mut solver = problem.tsit45().expect("test TSIT45 solver should build");
+        let mut dy_scratch = V::zeros(1, NalgebraContext::new());
+        problem.eqn.begin_explicit_step_segment(0.0, target);
+        problem.eqn.record_explicit_accepted_step(0.0);
+        rebase_solver_time(&mut solver, 0.0, target, &mut dy_scratch)
+            .expect("the test rebase should preserve a positive residual");
+
+        let mut pending_reinit = false;
+        let _error = integrate_to_stop(
+            &mut solver,
+            target,
+            target,
+            0.0,
+            false,
+            &mut pending_reinit,
+            false,
+            &mut dy_scratch,
+            1e-4,
+            1e-4,
+            &mut || Ok(()),
+        )
+        .expect_err("the residual must stop before requesting another step");
+
+        let error = problem
+            .eqn
+            .explicit_step_budget_error()
+            .expect("the residual accepted step must retain the session count");
+        let message = error.to_string();
+        assert!(message.contains("budget scope = session"));
+        assert!(message.contains("segment count/limit = 2/3"));
+        assert!(message.contains("cumulative session count/limit = 2/2"));
+    }
+
+    #[test]
+    fn advance_resets_segment_budget_but_not_session_budget() {
+        let problem = build_guard_test_problem!(1.0);
+        problem
+            .eqn
+            .configure_explicit_step_guard(Some(ExplicitStepBudgetConfig {
+                max_accepted_steps_per_segment: 1,
+                max_accepted_steps_per_session: 2,
+            }));
+        let mut solver = problem.tsit45().expect("test TSIT45 solver should build");
+        let mut integration_boundary_cursor = 0;
+        let mut pending_reinit = false;
+        let mut dy_scratch = V::zeros(1, NalgebraContext::new());
+        let first_target = 1.0e-4_f64.next_down();
+
+        advance_solver_to_event(
+            &mut solver,
+            first_target,
+            &mut integration_boundary_cursor,
+            &mut pending_reinit,
+            &mut dy_scratch,
+            1e-4,
+            1e-4,
+            &mut || Ok(()),
+        )
+        .expect("the first segment should use its one-step budget");
+
+        let current_time = solver.state().t;
+        let next_target = current_time + solver.state().h;
+        assert!(next_target > current_time);
+        advance_solver_to_event(
+            &mut solver,
+            next_target,
+            &mut integration_boundary_cursor,
+            &mut pending_reinit,
+            &mut dy_scratch,
+            1e-4,
+            1e-4,
+            &mut || Ok(()),
+        )
+        .expect("a new exact segment should reset only its segment budget");
+
+        let state_before_third = solver.state().t;
+        let third_target = state_before_third + solver.state().h;
+        assert!(third_target > state_before_third);
+        let error = advance_solver_to_event(
+            &mut solver,
+            third_target,
+            &mut integration_boundary_cursor,
+            &mut pending_reinit,
+            &mut dy_scratch,
+            1e-4,
+            1e-4,
+            &mut || Ok(()),
+        )
+        .expect_err("the cumulative session budget must block the next segment");
+        let message = error.to_string();
+        assert!(message.contains("budget scope = session"));
+        assert!(message.contains("segment count/limit = 0/1"));
+        assert!(message.contains("cumulative session count/limit = 2/2"));
+        assert!(message.contains("numeric gap (target - start)"));
+        assert_eq!(solver.state().t, state_before_third);
+    }
+
+    #[test]
+    fn disabled_explicit_step_guard_never_limits_implicit_session() {
+        let problem = guard_test_problem(1.0);
+        problem
+            .eqn
+            .configure_explicit_step_guard(accepted_step_limits_for_solver(&OdeSolver::Bdf));
+        problem.eqn.begin_explicit_step_segment(0.0, 2.0);
+        for time in 1..=4 {
+            problem.eqn.record_explicit_accepted_step(f64::from(time));
+        }
+        assert!(!problem.eqn.explicit_step_budget_exhausted());
+        assert!(problem.eqn.explicit_step_budget_error().is_none());
+    }
+
+    #[test]
+    fn explicit_step_guard_checks_before_requesting_next_step() {
+        let problem = build_guard_test_problem!(1.0);
+        problem
+            .eqn
+            .configure_explicit_step_guard(Some(ExplicitStepBudgetConfig {
+                max_accepted_steps_per_segment: 1,
+                max_accepted_steps_per_session: 2,
+            }));
+        let mut solver = problem.tsit45().expect("test TSIT45 solver should build");
+        let mut integration_boundary_cursor = 0;
+        let mut pending_reinit = false;
+        let mut dy_scratch = V::zeros(1, NalgebraContext::new());
+
+        let error = advance_solver_to_event(
+            &mut solver,
+            2.0e-4,
+            &mut integration_boundary_cursor,
+            &mut pending_reinit,
+            &mut dy_scratch,
+            1e-4,
+            1e-4,
+            &mut || Ok(()),
+        )
+        .expect_err("the second accepted step must be blocked");
+        let message = error.to_string();
+        assert!(message.contains("budget scope = segment"));
+        assert!(message.contains("numeric gap (target - start)"));
+        assert!(message.contains("segment count/limit = 1/1"));
+        assert!(message.contains("cumulative session count/limit = 1/2"));
+        assert!(message.contains("last accepted absolute time"));
+        assert!(message.contains("no incomplete state was returned"));
+        assert!(message.contains("explicitly choose an implicit solver"));
+        assert!(solver.state().t > 0.0);
+        assert!(solver.state().t < 2.0e-4);
+    }
+
+    #[test]
+    fn explicit_step_guard_accepts_exact_completion_on_final_step() {
+        let problem = build_guard_test_problem!(1.0);
+        let final_target = 1.0e-4_f64.next_down();
+        problem
+            .eqn
+            .configure_explicit_step_guard(Some(ExplicitStepBudgetConfig {
+                max_accepted_steps_per_segment: 1,
+                max_accepted_steps_per_session: 2,
+            }));
+        let mut solver = problem.tsit45().expect("test TSIT45 solver should build");
+        let mut integration_boundary_cursor = 0;
+        let mut pending_reinit = false;
+        let mut dy_scratch = V::zeros(1, NalgebraContext::new());
+
+        advance_solver_to_event(
+            &mut solver,
+            final_target,
+            &mut integration_boundary_cursor,
+            &mut pending_reinit,
+            &mut dy_scratch,
+            1e-4,
+            1e-4,
+            &mut || Ok(()),
+        )
+        .expect("a final permitted step that reaches the target is complete");
+        assert_eq!(solver.state().t, final_target);
+    }
+
+    #[test]
+    fn callback_error_precedes_explicit_step_budget_error() {
+        let problem = build_guard_test_problem!(1.0);
+        problem
+            .eqn
+            .configure_explicit_step_guard(Some(ExplicitStepBudgetConfig {
+                max_accepted_steps_per_segment: 0,
+                max_accepted_steps_per_session: 1,
+            }));
+        let mut solver = problem.tsit45().expect("test TSIT45 solver should build");
+        let mut integration_boundary_cursor = 0;
+        let mut pending_reinit = false;
+        let mut dy_scratch = V::zeros(1, NalgebraContext::new());
+
+        let error = advance_solver_to_event(
+            &mut solver,
+            1.0,
+            &mut integration_boundary_cursor,
+            &mut pending_reinit,
+            &mut dy_scratch,
+            1e-4,
+            1e-4,
+            &mut || Err(PharmsolError::OtherError("native callback error".into())),
+        )
+        .expect_err("callback failure must retain precedence");
+        assert!(error.to_string().contains("native callback error"));
+    }
 
     #[test]
     fn shared_advance_helper_rejects_backward_targets() {

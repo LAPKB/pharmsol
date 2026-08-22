@@ -510,8 +510,9 @@ fn michaelis_menten_depletion_agrees_across_solvers() {
 }
 
 // ---------------------------------------------------------------------------
-// Beyond rescue: a problem stiffer than the solver's hard minimum step must
-// fail with a descriptive error, not hang or panic.
+// Beyond the explicit work budget: a problem that makes TSIT45 accept
+// impractically many tiny steps must fail with a descriptive error, not hang
+// or panic.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -568,7 +569,7 @@ fn impossibly_stiff_explicit_problem_returns_descriptive_error() {
                     Ok(()) => {
                         child.wait().expect("reap explicit-stiffness child test");
                         panic!(
-                            "TSIT45 did not reject an impossible stiff problem within ten \
+                            "TSIT45 did not hit its accepted-step work limit within ten \
                              seconds; one extreme trajectory could stall a long-running job"
                         );
                     }
@@ -603,9 +604,17 @@ fn impossibly_stiff_explicit_problem_returns_descriptive_error() {
         .expect_err("an explicit solver should reject this impossible stiffness");
     let message = error.to_string();
     assert!(
-        message.contains("did not recover") && message.contains("implicit"),
-        "explicit-solver exhaustion should explain the failed recovery and suggest an implicit \
-         method: {message}"
+        message.contains("TSIT45 accepted-step budget exhausted (budget scope = segment)")
+            && message.contains("segment start =")
+            && message.contains("target =")
+            && message.contains("numeric gap (target - start) =")
+            && message.contains("last accepted absolute time =")
+            && message.contains("segment count/limit = 500000/500000")
+            && message.contains("cumulative session count/limit = 500000/2000000")
+            && message.contains("no incomplete state was returned")
+            && message.contains("explicitly choose an implicit solver")
+            && message.contains("model stiffness and state/time/unit scaling"),
+        "explicit work exhaustion should return the direct bounded diagnostic: {message}"
     );
 }
 

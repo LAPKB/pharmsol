@@ -1,3 +1,4 @@
+use super::ExplicitStepBudgetConfig;
 use crate::{Covariates, Infusion, PharmsolError};
 use diffsol::{
     ConstantOp, LinearOp, MatrixCommon, NalgebraContext, NalgebraMat, NonLinearOp,
@@ -265,6 +266,110 @@ impl IntegrationSchedule {
                 rateiv[track.input] = rate;
             }
         }
+    }
+}
+
+/// Per-PMProblem/occasion accepted-work budgets for TSIT45.
+///
+/// Both limits are deliberately expressed only as numbers of accepted solver
+/// steps. They are dimensionless computational-work limits, not model-time,
+/// tolerance, or wall-clock constants. A new exact segment resets only the
+/// segment counter; coordinate rebases and residual integrations reset neither
+/// counter.
+#[derive(Debug, Clone)]
+struct ExplicitStepGuard {
+    config: Cell<Option<ExplicitStepBudgetConfig>>,
+    accepted_steps_in_segment: Cell<usize>,
+    accepted_steps_in_session: Cell<usize>,
+    segment_start_time: Cell<f64>,
+    segment_target_time: Cell<f64>,
+    last_accepted_time: Cell<f64>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ExplicitStepBudgetScope {
+    Segment,
+    Session,
+}
+
+impl Default for ExplicitStepGuard {
+    fn default() -> Self {
+        Self {
+            config: Cell::new(None),
+            accepted_steps_in_segment: Cell::new(0),
+            accepted_steps_in_session: Cell::new(0),
+            segment_start_time: Cell::new(f64::NAN),
+            segment_target_time: Cell::new(f64::NAN),
+            last_accepted_time: Cell::new(f64::NAN),
+        }
+    }
+}
+
+impl ExplicitStepGuard {
+    fn configure(&self, config: Option<ExplicitStepBudgetConfig>) {
+        self.config.set(config);
+        self.accepted_steps_in_segment.set(0);
+        self.accepted_steps_in_session.set(0);
+        self.segment_start_time.set(f64::NAN);
+        self.segment_target_time.set(f64::NAN);
+        self.last_accepted_time.set(f64::NAN);
+    }
+
+    fn begin_segment(&self, start_time: f64, target_time: f64) {
+        if self.config.get().is_none() {
+            return;
+        }
+        self.accepted_steps_in_segment.set(0);
+        self.segment_start_time.set(start_time);
+        self.segment_target_time.set(target_time);
+        if self.accepted_steps_in_session.get() == 0 {
+            self.last_accepted_time.set(start_time);
+        }
+    }
+
+    fn record_accepted_step(&self, absolute_time: f64) {
+        if self.config.get().is_some() {
+            self.accepted_steps_in_segment
+                .set(self.accepted_steps_in_segment.get().saturating_add(1));
+            self.accepted_steps_in_session
+                .set(self.accepted_steps_in_session.get().saturating_add(1));
+            self.last_accepted_time.set(absolute_time);
+        }
+    }
+
+    fn exhausted_scope(&self) -> Option<ExplicitStepBudgetScope> {
+        let config = self.config.get()?;
+        if self.accepted_steps_in_session.get() >= config.max_accepted_steps_per_session {
+            Some(ExplicitStepBudgetScope::Session)
+        } else if self.accepted_steps_in_segment.get() >= config.max_accepted_steps_per_segment {
+            Some(ExplicitStepBudgetScope::Segment)
+        } else {
+            None
+        }
+    }
+
+    fn is_exhausted(&self) -> bool {
+        self.exhausted_scope().is_some()
+    }
+
+    fn error(&self) -> Option<PharmsolError> {
+        let config = self.config.get()?;
+        let scope = self.exhausted_scope()?;
+        let scope_name = match scope {
+            ExplicitStepBudgetScope::Segment => "segment",
+            ExplicitStepBudgetScope::Session => "session",
+        };
+        let segment_start_time = self.segment_start_time.get();
+        let segment_target_time = self.segment_target_time.get();
+        let numeric_gap = segment_target_time - segment_start_time;
+        Some(PharmsolError::OtherError(format!(
+            "TSIT45 accepted-step budget exhausted (budget scope = {scope_name}) for exact smooth segment; segment start = {segment_start_time:.16e}; target = {segment_target_time:.16e}; numeric gap (target - start) = {numeric_gap:.16e}; last accepted absolute time = {:.16e}; segment count/limit = {}/{}; cumulative session count/limit = {}/{}; no incomplete state was returned. This is a dimensionless computational work budget, independent of model time and tolerance heuristics. Inspect model stiffness and state/time/unit scaling, or explicitly choose an implicit solver (BDF, TRBDF2, or ESDIRK34).",
+            self.last_accepted_time.get(),
+            self.accepted_steps_in_segment.get(),
+            config.max_accepted_steps_per_segment,
+            self.accepted_steps_in_session.get(),
+            config.max_accepted_steps_per_session,
+        )))
     }
 }
 
@@ -599,6 +704,7 @@ where
     covariates: Covariates,
     integration_schedule: IntegrationSchedule,
     time_origin: Cell<f64>,
+    explicit_step_guard: ExplicitStepGuard,
     rateiv_buffer: RefCell<V>,
     jvp_x_buffer: RefCell<V>,
     jvp_base_buffer: RefCell<V>,
@@ -623,6 +729,31 @@ where
     /// Start a new local coordinate at an accepted absolute-time state.
     pub(crate) fn rebase_time_origin(&self, absolute_time: f64) {
         self.time_origin.set(absolute_time);
+    }
+
+    /// Configure the private accepted-work guard once for this solver
+    /// session. `None` keeps both limits disabled for implicit sessions.
+    pub(crate) fn configure_explicit_step_guard(&self, config: Option<ExplicitStepBudgetConfig>) {
+        self.explicit_step_guard.configure(config);
+    }
+
+    /// Start a new exact event-loop integration segment. A coordinate rebase
+    /// and its residual integration deliberately do not call this method.
+    pub(crate) fn begin_explicit_step_segment(&self, start_time: f64, target_time: f64) {
+        self.explicit_step_guard
+            .begin_segment(start_time, target_time);
+    }
+
+    pub(crate) fn record_explicit_accepted_step(&self, absolute_time: f64) {
+        self.explicit_step_guard.record_accepted_step(absolute_time);
+    }
+
+    pub(crate) fn explicit_step_budget_exhausted(&self) -> bool {
+        self.explicit_step_guard.is_exhausted()
+    }
+
+    pub(crate) fn explicit_step_budget_error(&self) -> Option<PharmsolError> {
+        self.explicit_step_guard.error()
     }
 
     pub(crate) fn set_left_continuity_time(&self, time: Option<f64>) {
@@ -716,6 +847,7 @@ where
             covariates,
             integration_schedule,
             time_origin: Cell::new(time_origin),
+            explicit_step_guard: ExplicitStepGuard::default(),
             rateiv_buffer,
             jvp_x_buffer,
             jvp_base_buffer,
