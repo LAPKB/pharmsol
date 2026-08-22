@@ -779,19 +779,6 @@ impl Occasion {
         self.events.iter_mut()
     }
 
-    pub(crate) fn initial_time(&self) -> f64 {
-        //TODO this can be pre-computed when the struct is initially created
-        self.events
-            .iter()
-            .map(|event| match event {
-                Event::Observation(observation) => observation.time(),
-                Event::Bolus(bolus) => bolus.time(),
-                Event::Infusion(infusion) => infusion.time(),
-            })
-            .min_by(|a, b| a.partial_cmp(b).unwrap())
-            .unwrap_or(0.0)
-    }
-
     /// Get an iterator over all events
     ///
     /// # Returns

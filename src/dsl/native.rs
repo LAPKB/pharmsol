@@ -3,8 +3,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use diffsol::{
-    error::OdeSolverError, ode_solver::method::OdeSolverMethod, NalgebraContext, OdeBuilder,
-    OdeSolverStopReason, Vector, VectorHost,
+    ode_solver::method::OdeSolverMethod, NalgebraContext, OdeBuilder, Vector, VectorHost,
 };
 use nalgebra::DVector;
 use ndarray::{concatenate, Array2, Axis};
@@ -32,7 +31,10 @@ use crate::{
             DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE, DEFAULT_CACHE_SIZE,
         },
         equation::{
-            ode::{closure_helpers::PMProblem, ExplicitRkTableau, OdeSolver, SdirkTableau},
+            ode::{
+                accepted_step_limits_for_solver, closure_helpers::PMProblem,
+                validate_resolved_ode_schedule, ExplicitRkTableau, OdeSolver, SdirkTableau,
+            },
             sde::simulate_sde_event_with,
             EqnKind, Equation, EquationPriv, EquationTypes, Predictions,
         },
@@ -234,7 +236,7 @@ impl FunctionSession for NativeFunctionSession<'_> {
             ))
         })?;
 
-        function(time, states, params, covariates, routes, derived, out);
+        unsafe { function(time, states, params, covariates, routes, derived, out) };
         Ok(())
     }
 }
@@ -889,6 +891,7 @@ impl SharedNativeModel {
         support_point: &[f64],
         covariates: &Covariates,
         occasion_index: usize,
+        time: f64,
     ) -> Result<Vec<f64>, PharmsolError> {
         let mut state = vec![0.0; self.info.state_len];
         if occasion_index == 0 {
@@ -897,7 +900,7 @@ impl SharedNativeModel {
             let mut derived = vec![0.0; self.info.derived_len];
             self.refresh_derived(
                 session,
-                0.0,
+                time,
                 &state,
                 support_point,
                 covariates,
@@ -909,7 +912,7 @@ impl SharedNativeModel {
                 unsafe {
                     session.invoke_raw(
                         ModelFunctionKind::Init,
-                        0.0,
+                        time,
                         state.as_ptr(),
                         support_point.as_ptr(),
                         cov_buf.as_ptr(),
@@ -1183,18 +1186,12 @@ impl NativeOdeModel {
         self.shared.validate_support_point(support_point)?;
         let mut output = SubjectPredictions::default();
         let support_vector: V = DVector::from_vec(support_point.to_vec()).into();
-        // Scratch for refreshing the solver's derivative at infusion boundaries.
+        // Scratch for refreshing the solver's derivative at discontinuity boundaries.
         let mut dy_scratch = V::zeros(self.shared.info.state_len, NalgebraContext::new());
 
         for occasion in subject.occasions() {
+            occasion.covariates().validate_for_ode()?;
             let mut events = self.shared.resolve_events(occasion)?;
-            let infusions = events
-                .iter()
-                .filter_map(|event| match event {
-                    Event::Infusion(infusion) => Some(infusion.clone()),
-                    _ => None,
-                })
-                .collect::<Vec<_>>();
             let session = RefCell::new(self.shared.artifact.start_session()?);
             let mut route_session = session.borrow_mut();
             self.shared.apply_route_properties(
@@ -1205,6 +1202,14 @@ impl NativeOdeModel {
             )?;
             drop(route_session);
 
+            let time_origin = validate_resolved_ode_schedule(&events)?;
+            let infusions = events
+                .iter()
+                .filter_map(|event| match event {
+                    Event::Infusion(infusion) => Some(infusion.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
             let cov_buf = RefCell::new(vec![0.0; self.shared.info.covariates.len()]);
             let derived_buf = RefCell::new(vec![0.0; self.shared.info.derived_len]);
             let shared = Arc::clone(&self.shared);
@@ -1275,6 +1280,7 @@ impl NativeOdeModel {
                         support_point,
                         occasion.covariates(),
                         occasion.index(),
+                        time_origin,
                     )?
                 },
                 NalgebraContext::new(),
@@ -1283,7 +1289,7 @@ impl NativeOdeModel {
             let problem = OdeBuilder::<M>::new()
                 .atol(vec![self.atol])
                 .rtol(self.rtol)
-                .t0(occasion.initial_time())
+                .t0(0.0)
                 .h0(1e-3)
                 .p(support_point_vec.clone())
                 .build_from_eqn(PMProblem::with_params_v(
@@ -1294,7 +1300,11 @@ impl NativeOdeModel {
                     occasion.covariates(),
                     infusions.iter(),
                     initial_state,
+                    time_origin,
                 )?)?;
+            problem
+                .eqn
+                .configure_explicit_step_guard(accepted_step_limits_for_solver(&self.solver));
 
             macro_rules! run_solver {
                 ($solver:expr) => {{
@@ -1349,17 +1359,13 @@ impl NativeOdeModel {
         F: Fn(&V, &V, f64, &mut V, &V, &V, &Covariates) + 'a,
         S: OdeSolverMethod<'a, PMProblem<'a, F>>,
     {
-        // Mirror the closure-based ODE event loop: stop at every infusion
-        // start and end boundary in addition to subject events, using the
-        // left-continuous rate while integrating toward a boundary and the
-        // right-continuous rate after reaching it. This keeps the JIT
-        // implementation numerically consistent with the reference [`ODE`]
-        // path (see `ode::run_events`).
-        let infusion_boundary_times = solver.problem().eqn.infusion_boundary_times();
-        let mut infusion_boundary_cursor = 0usize;
+        // The event-to-event integration loop is shared with the closure-based
+        // [`ODE`] equation so compiled models stay numerically consistent with
+        // the reference path by construction.
+        let mut integration_boundary_cursor = 0usize;
         let mut index = 0usize;
         // Set when the previous event changed the state or the previous stop
-        // was an infusion boundary: the solver must be restarted before the
+        // was a discontinuity boundary: the solver must be restarted before the
         // first step of the next segment. Deferred until `set_stop_time`
         // succeeds so a stop that is already reached does not trigger a
         // restart for a zero-length segment.
@@ -1402,109 +1408,19 @@ impl NativeOdeModel {
 
             // Advance to the next event time if it exists.
             if let Some(next_event) = next_event {
-                let next_event_time = next_event.time();
-                while next_event_time > solver.state().t {
-                    while infusion_boundary_cursor < infusion_boundary_times.len()
-                        && infusion_boundary_times[infusion_boundary_cursor] <= solver.state().t
-                    {
-                        infusion_boundary_cursor += 1;
-                    }
-
-                    let (stop_time, is_infusion_boundary) = if let Some(stop_time) =
-                        infusion_boundary_times.get(infusion_boundary_cursor)
-                    {
-                        if *stop_time <= next_event_time {
-                            infusion_boundary_cursor += 1;
-                            (*stop_time, true)
-                        } else {
-                            (next_event_time, false)
-                        }
-                    } else {
-                        (next_event_time, false)
-                    };
-
-                    solver
-                        .problem()
-                        .eqn
-                        .set_left_continuity_time(if is_infusion_boundary {
-                            Some(stop_time)
-                        } else {
-                            None
-                        });
-
-                    match solver.set_stop_time(stop_time) {
-                        Ok(_) => {
-                            if pending_reinit {
-                                crate::simulator::equation::ode::reinitialize_at_boundary(
-                                    solver, dy_scratch,
-                                );
-                                pending_reinit = false;
-                            }
-                            loop {
-                                match solver.step() {
-                                    Ok(_) if function_error.borrow().is_some() => {
-                                        return Err(function_error.borrow_mut().take().unwrap());
-                                    }
-                                    Ok(OdeSolverStopReason::InternalTimestep) => continue,
-                                    Ok(OdeSolverStopReason::TstopReached) => {
-                                        solver.problem().eqn.set_left_continuity_time(None);
-                                        if is_infusion_boundary {
-                                            pending_reinit = true;
-                                        }
-                                        break;
-                                    }
-                                    Ok(OdeSolverStopReason::RootFound(_, _)) => {
-                                        return Err(PharmsolError::OtherError(format!(
-                                            "solver stopped at an unexpected root at t = {:.4} \
-                                             (root finding is not configured)",
-                                            stop_time
-                                        )));
-                                    }
-                                    Err(err) => {
-                                        return Err(PharmsolError::from_solver_error(
-                                            err, stop_time,
-                                        ));
-                                    }
-                                }
-                            }
-                        }
-                        Err(diffsol::error::DiffsolError::OdeSolverError(
-                            OdeSolverError::StopTimeAtCurrentTime,
-                        )) => {
-                            solver.problem().eqn.set_left_continuity_time(None);
-                            let state_t = solver.state().t;
-                            let stop_reached = crate::simulator::equation::ode::stop_time_reached(
-                                stop_time, state_t,
-                            );
-
-                            if stop_reached {
-                                if is_infusion_boundary {
-                                    pending_reinit = true;
-                                }
-                                // The requested stop is the current time within
-                                // a small relative tolerance. If it is an
-                                // infusion boundary before the next subject
-                                // event, keep integrating toward the event;
-                                // break only when the reached stop is the
-                                // event time itself.
-                                if stop_time < next_event_time {
-                                    continue;
-                                }
-                                break;
-                            }
-                            return Err(PharmsolError::from_solver_error(
-                                diffsol::error::DiffsolError::OdeSolverError(
-                                    OdeSolverError::StopTimeAtCurrentTime,
-                                ),
-                                stop_time,
-                            ));
-                        }
-                        Err(err) => {
-                            solver.problem().eqn.set_left_continuity_time(None);
-                            return Err(PharmsolError::from_solver_error(err, stop_time));
-                        }
-                    }
-                }
+                crate::simulator::equation::ode::advance_solver_to_event(
+                    solver,
+                    next_event.time(),
+                    &mut integration_boundary_cursor,
+                    &mut pending_reinit,
+                    dy_scratch,
+                    self.rtol,
+                    self.atol,
+                    &mut || match function_error.borrow_mut().take() {
+                        Some(error) => Err(error),
+                        None => Ok(()),
+                    },
+                )?;
             }
             index += 1;
         }
@@ -1824,6 +1740,7 @@ impl NativeAnalyticalModel {
                 support_point,
                 occasion.covariates(),
                 occasion.index(),
+                0.0,
             )?;
 
             for (index, event) in events.iter().enumerate() {
@@ -2230,6 +2147,7 @@ impl NativeSdeModel {
                 support_point,
                 occasion.covariates(),
                 occasion.index(),
+                0.0,
             )?;
             let mut particles = (0..self.nparticles)
                 .map(|_| DVector::from_vec(initial.clone()))
