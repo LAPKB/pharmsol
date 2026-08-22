@@ -604,17 +604,23 @@ fn impossibly_stiff_explicit_problem_returns_descriptive_error() {
         .expect_err("an explicit solver should reject this impossible stiffness");
     let message = error.to_string();
     assert!(
-        message.contains("TSIT45 accepted-step budget exhausted (budget scope = segment)")
-            && message.contains("segment start =")
+        message.contains(
+            "TSIT45 accepted-step budget exhausted (budget scope = insufficient segment progress)"
+        ) && message.contains("segment start =")
             && message.contains("target =")
             && message.contains("numeric gap (target - start) =")
+            && message.contains("progress window start =")
+            && message.contains("actual progress =")
+            && message.contains("required progress =")
+            && message.contains("progress fraction =")
+            && message.contains("minimum progress fraction = 1.0000000000000000e-4")
             && message.contains("last accepted absolute time =")
-            && message.contains("segment count/limit = 500000/500000")
-            && message.contains("cumulative session count/limit = 500000/2000000")
+            && message.contains("window count/limit = 500000/500000")
+            && message.contains("cumulative count/limit = 500000/10000000")
             && message.contains("no incomplete state was returned")
             && message.contains("explicitly choose an implicit solver")
             && message.contains("model stiffness and state/time/unit scaling"),
-        "explicit work exhaustion should return the direct bounded diagnostic: {message}"
+        "insufficient progress should return the direct bounded diagnostic: {message}"
     );
 }
 

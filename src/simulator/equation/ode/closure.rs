@@ -1,4 +1,4 @@
-use super::ExplicitStepBudgetConfig;
+use super::{ExplicitStepBudgetConfig, MIN_TSIT45_PROGRESS_FRACTION_PER_WINDOW};
 use crate::{Covariates, Infusion, PharmsolError};
 use diffsol::{
     ConstantOp, LinearOp, MatrixCommon, NalgebraContext, NalgebraMat, NonLinearOp,
@@ -269,37 +269,39 @@ impl IntegrationSchedule {
     }
 }
 
-/// Per-PMProblem/occasion accepted-work budgets for TSIT45.
+/// Per-PMProblem/occasion accepted-work guard for TSIT45.
 ///
-/// Both limits are deliberately expressed only as numbers of accepted solver
-/// steps. They are dimensionless computational-work limits, not model-time,
-/// tolerance, or wall-clock constants. A new exact segment resets only the
-/// segment counter; coordinate rebases and residual integrations reset neither
-/// counter.
+/// The window and session limits count accepted solver steps only. The window
+/// is a dimensionless progress check: a productive window starts a new window
+/// at its last accepted absolute time, while a stagnant window fails closed.
+/// A new exact segment resets the window; coordinate rebases and residual
+/// integrations reset neither the window nor the session total.
 #[derive(Debug, Clone)]
 struct ExplicitStepGuard {
     config: Cell<Option<ExplicitStepBudgetConfig>>,
-    accepted_steps_in_segment: Cell<usize>,
+    accepted_steps_in_window: Cell<usize>,
     accepted_steps_in_session: Cell<usize>,
     segment_start_time: Cell<f64>,
     segment_target_time: Cell<f64>,
+    progress_window_start_time: Cell<f64>,
     last_accepted_time: Cell<f64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ExplicitStepBudgetScope {
-    Segment,
-    Session,
+    InsufficientSegmentProgress,
+    SessionTotal,
 }
 
 impl Default for ExplicitStepGuard {
     fn default() -> Self {
         Self {
             config: Cell::new(None),
-            accepted_steps_in_segment: Cell::new(0),
+            accepted_steps_in_window: Cell::new(0),
             accepted_steps_in_session: Cell::new(0),
             segment_start_time: Cell::new(f64::NAN),
             segment_target_time: Cell::new(f64::NAN),
+            progress_window_start_time: Cell::new(f64::NAN),
             last_accepted_time: Cell::new(f64::NAN),
         }
     }
@@ -308,10 +310,11 @@ impl Default for ExplicitStepGuard {
 impl ExplicitStepGuard {
     fn configure(&self, config: Option<ExplicitStepBudgetConfig>) {
         self.config.set(config);
-        self.accepted_steps_in_segment.set(0);
+        self.accepted_steps_in_window.set(0);
         self.accepted_steps_in_session.set(0);
         self.segment_start_time.set(f64::NAN);
         self.segment_target_time.set(f64::NAN);
+        self.progress_window_start_time.set(f64::NAN);
         self.last_accepted_time.set(f64::NAN);
     }
 
@@ -319,57 +322,98 @@ impl ExplicitStepGuard {
         if self.config.get().is_none() {
             return;
         }
-        self.accepted_steps_in_segment.set(0);
+        self.accepted_steps_in_window.set(0);
         self.segment_start_time.set(start_time);
         self.segment_target_time.set(target_time);
-        if self.accepted_steps_in_session.get() == 0 {
-            self.last_accepted_time.set(start_time);
-        }
+        self.progress_window_start_time.set(start_time);
+        self.last_accepted_time.set(start_time);
     }
 
     fn record_accepted_step(&self, absolute_time: f64) {
         if self.config.get().is_some() {
-            self.accepted_steps_in_segment
-                .set(self.accepted_steps_in_segment.get().saturating_add(1));
+            self.accepted_steps_in_window
+                .set(self.accepted_steps_in_window.get().saturating_add(1));
             self.accepted_steps_in_session
                 .set(self.accepted_steps_in_session.get().saturating_add(1));
             self.last_accepted_time.set(absolute_time);
         }
     }
 
-    fn exhausted_scope(&self) -> Option<ExplicitStepBudgetScope> {
+    fn progress_stats(&self) -> (f64, f64, f64, f64) {
+        let numeric_gap = self.segment_target_time.get() - self.segment_start_time.get();
+        let actual_progress = self.last_accepted_time.get() - self.progress_window_start_time.get();
+        let required_progress = numeric_gap * MIN_TSIT45_PROGRESS_FRACTION_PER_WINDOW;
+        let progress_fraction = actual_progress / numeric_gap;
+        (
+            numeric_gap,
+            actual_progress,
+            required_progress,
+            progress_fraction,
+        )
+    }
+
+    fn window_is_productive(&self) -> bool {
+        let (numeric_gap, actual_progress, _, progress_fraction) = self.progress_stats();
+        numeric_gap.is_finite()
+            && numeric_gap > 0.0
+            && actual_progress.is_finite()
+            && actual_progress >= 0.0
+            && progress_fraction.is_finite()
+            && progress_fraction >= MIN_TSIT45_PROGRESS_FRACTION_PER_WINDOW
+    }
+
+    fn check_due(&self) -> bool {
+        let Some(config) = self.config.get() else {
+            return false;
+        };
+        self.accepted_steps_in_session.get() >= config.max_accepted_steps_per_session
+            || self.accepted_steps_in_window.get() >= config.max_accepted_steps_per_segment
+    }
+
+    /// Check the guard immediately before requesting another solver step.
+    /// Productive-window state is reset only here, never while rebasing a
+    /// residual or changing the solver coordinate origin.
+    fn check_at_next_step(&self) -> Option<PharmsolError> {
         let config = self.config.get()?;
         if self.accepted_steps_in_session.get() >= config.max_accepted_steps_per_session {
-            Some(ExplicitStepBudgetScope::Session)
-        } else if self.accepted_steps_in_segment.get() >= config.max_accepted_steps_per_segment {
-            Some(ExplicitStepBudgetScope::Segment)
-        } else {
-            None
+            return Some(self.error_for(config, ExplicitStepBudgetScope::SessionTotal));
         }
+        if self.accepted_steps_in_window.get() >= config.max_accepted_steps_per_segment {
+            if self.window_is_productive() {
+                self.accepted_steps_in_window.set(0);
+                self.progress_window_start_time
+                    .set(self.last_accepted_time.get());
+                return None;
+            }
+            return Some(
+                self.error_for(config, ExplicitStepBudgetScope::InsufficientSegmentProgress),
+            );
+        }
+        None
     }
 
-    fn is_exhausted(&self) -> bool {
-        self.exhausted_scope().is_some()
-    }
-
-    fn error(&self) -> Option<PharmsolError> {
-        let config = self.config.get()?;
-        let scope = self.exhausted_scope()?;
+    fn error_for(
+        &self,
+        config: ExplicitStepBudgetConfig,
+        scope: ExplicitStepBudgetScope,
+    ) -> PharmsolError {
         let scope_name = match scope {
-            ExplicitStepBudgetScope::Segment => "segment",
-            ExplicitStepBudgetScope::Session => "session",
+            ExplicitStepBudgetScope::InsufficientSegmentProgress => "insufficient segment progress",
+            ExplicitStepBudgetScope::SessionTotal => "session total",
         };
         let segment_start_time = self.segment_start_time.get();
         let segment_target_time = self.segment_target_time.get();
-        let numeric_gap = segment_target_time - segment_start_time;
-        Some(PharmsolError::OtherError(format!(
-            "TSIT45 accepted-step budget exhausted (budget scope = {scope_name}) for exact smooth segment; segment start = {segment_start_time:.16e}; target = {segment_target_time:.16e}; numeric gap (target - start) = {numeric_gap:.16e}; last accepted absolute time = {:.16e}; segment count/limit = {}/{}; cumulative session count/limit = {}/{}; no incomplete state was returned. This is a dimensionless computational work budget, independent of model time and tolerance heuristics. Inspect model stiffness and state/time/unit scaling, or explicitly choose an implicit solver (BDF, TRBDF2, or ESDIRK34).",
+        let (numeric_gap, actual_progress, required_progress, progress_fraction) =
+            self.progress_stats();
+        PharmsolError::OtherError(format!(
+            "TSIT45 accepted-step budget exhausted (budget scope = {scope_name}) for exact smooth segment; segment start = {segment_start_time:.16e}; target = {segment_target_time:.16e}; numeric gap (target - start) = {numeric_gap:.16e}; progress window start = {:.16e}; actual progress = {actual_progress:.16e}; required progress = {required_progress:.16e}; progress fraction = {progress_fraction:.16e}; minimum progress fraction = {MIN_TSIT45_PROGRESS_FRACTION_PER_WINDOW:.16e}; last accepted absolute time = {:.16e}; window count/limit = {}/{}; cumulative count/limit = {}/{}; no incomplete state was returned. This is a dimensionless computational work budget, independent of model time and tolerance heuristics. Inspect model stiffness and state/time/unit scaling, or explicitly choose an implicit solver (BDF, TRBDF2, or ESDIRK34).",
+            self.progress_window_start_time.get(),
             self.last_accepted_time.get(),
-            self.accepted_steps_in_segment.get(),
+            self.accepted_steps_in_window.get(),
             config.max_accepted_steps_per_segment,
             self.accepted_steps_in_session.get(),
             config.max_accepted_steps_per_session,
-        )))
+        ))
     }
 }
 
@@ -748,12 +792,12 @@ where
         self.explicit_step_guard.record_accepted_step(absolute_time);
     }
 
-    pub(crate) fn explicit_step_budget_exhausted(&self) -> bool {
-        self.explicit_step_guard.is_exhausted()
+    pub(crate) fn explicit_step_budget_check_due(&self) -> bool {
+        self.explicit_step_guard.check_due()
     }
 
-    pub(crate) fn explicit_step_budget_error(&self) -> Option<PharmsolError> {
-        self.explicit_step_guard.error()
+    pub(crate) fn check_explicit_step_budget(&self) -> Option<PharmsolError> {
+        self.explicit_step_guard.check_at_next_step()
     }
 
     pub(crate) fn set_left_continuity_time(&self, time: Option<f64>) {

@@ -43,19 +43,27 @@ const ATOL: f64 = 1e-4;
 /// controller to shrink a restarted step before reaching that floor again.
 const MINIMUM_TIMESTEP_HEADROOM: f64 = 4.0;
 /// Default dimensionless TSIT45 accepted-step limit for one exact smooth
-/// segment. This is a count of accepted solver steps, not model time,
-/// tolerance, or wall-clock time.
+/// segment. This is a progress-check window, not model time, tolerance, or
+/// wall-clock work.
 pub(crate) const DEFAULT_TSIT45_MAX_ACCEPTED_STEPS_PER_SEGMENT: usize = 500_000;
-/// Initial dimensionless cumulative TSIT45 accepted-step limit for one
-/// `PMProblem`, which corresponds to one subject occasion. This provisional
-/// value remains subject to workflow calibration against the external solver
-/// and model matrices.
-pub(crate) const DEFAULT_TSIT45_MAX_ACCEPTED_STEPS_PER_SESSION: usize = 2_000_000;
+/// Minimum dimensionless fraction of the original exact segment gap that an
+/// accepted-step window must cover before the same segment may continue.
+const MIN_TSIT45_PROGRESS_FRACTION_PER_WINDOW: f64 = 1e-4;
+/// Default cumulative dimensionless TSIT45 accepted-step limit for one
+/// `PMProblem`, which corresponds to one subject occasion. The 10,000,000
+/// value is supported by successful calibration: standalone and fresh isolated
+/// Pmetrics matrices both passed 16/16, standalone script2/TSIT45 took
+/// 109.681 s (replay 111.68 s), fresh Pmetrics script2/TSIT45 took 21.079 s,
+/// the watchdog took about 3.2 s, and unmodified script8.R completed 100
+/// cycles with objective 12034.912411317557 and a generated report. These are
+/// calibration evidence, not completion of the remaining audit and acceptance
+/// gates.
+pub(crate) const DEFAULT_TSIT45_MAX_ACCEPTED_STEPS_PER_SESSION: usize = 10_000_000;
 
 /// Accepted-step limits configured once for one `PMProblem`/occasion.
 ///
 /// Both dimensions count accepted solver steps only. Starting another exact
-/// event-loop segment resets the segment count but never the session count;
+/// event-loop segment resets the progress window but never the session count;
 /// coordinate rebases and residual integrations do neither. `None` disables
 /// both limits for implicit solver sessions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1502,19 +1510,17 @@ where
     H: FnMut() -> Result<(), PharmsolError>,
 {
     loop {
-        if solver.problem().eqn.explicit_step_budget_exhausted() {
+        if solver.problem().eqn.explicit_step_budget_check_due() {
+            // Drain callback errors before deciding whether this is a
+            // productive window reset or a fail-closed guard error.
             if let Err(error) = after_step() {
                 solver.problem().eqn.set_left_continuity_time(None);
                 return Err(error);
             }
-            let error = match solver.problem().eqn.explicit_step_budget_error() {
-                Some(error) => error,
-                None => PharmsolError::OtherError(
-                    "TSIT45 accepted-step guard was exhausted without diagnostic state".into(),
-                ),
-            };
-            solver.problem().eqn.set_left_continuity_time(None);
-            return Err(error);
+            if let Some(error) = solver.problem().eqn.check_explicit_step_budget() {
+                solver.problem().eqn.set_left_continuity_time(None);
+                return Err(error);
+            }
         }
 
         match solver.step() {
@@ -2037,14 +2043,14 @@ mod tests {
         assert_eq!(
             accepted_step_limits_for_solver(&OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45)),
             Some(ExplicitStepBudgetConfig {
-                max_accepted_steps_per_segment: DEFAULT_TSIT45_MAX_ACCEPTED_STEPS_PER_SEGMENT,
-                max_accepted_steps_per_session: DEFAULT_TSIT45_MAX_ACCEPTED_STEPS_PER_SESSION,
+                max_accepted_steps_per_segment: 500_000,
+                max_accepted_steps_per_session: 10_000_000,
             })
         );
     }
 
     #[test]
-    fn explicit_step_guard_resets_only_for_new_segments_not_rebases() {
+    fn explicit_step_guard_rejects_stagnant_window_and_accumulates_session() {
         let problem = guard_test_problem(1.0);
         problem
             .eqn
@@ -2053,40 +2059,92 @@ mod tests {
                 max_accepted_steps_per_session: 4,
             }));
         problem.eqn.begin_explicit_step_segment(10.0, 20.0);
-        problem.eqn.record_explicit_accepted_step(12.0);
-        problem.eqn.rebase_time_origin(12.0);
-        problem.eqn.record_explicit_accepted_step(14.0);
-        assert!(problem.eqn.explicit_step_budget_exhausted());
+        problem.eqn.record_explicit_accepted_step(10.0);
+        problem.eqn.rebase_time_origin(10.0);
+        problem.eqn.record_explicit_accepted_step(10.0);
+        assert!(problem.eqn.explicit_step_budget_check_due());
         let error = problem
             .eqn
-            .explicit_step_budget_error()
-            .expect("enabled exhausted guard should have an error");
+            .check_explicit_step_budget()
+            .expect("a stagnant window must fail closed");
         let message = error.to_string();
-        assert!(message.contains("budget scope = segment"));
+        assert!(message.contains("budget scope = insufficient segment progress"));
         assert!(message.contains("segment start = 1.0000000000000000e1"));
         assert!(message.contains("target = 2.0000000000000000e1"));
         assert!(message.contains("numeric gap (target - start) = 1.0000000000000000e1"));
-        assert!(message.contains("last accepted absolute time = 1.4000000000000000e1"));
-        assert!(message.contains("segment count/limit = 2/2"));
-        assert!(message.contains("cumulative session count/limit = 2/4"));
+        assert!(message.contains("progress window start = 1.0000000000000000e1"));
+        assert!(message.contains("actual progress = 0.0000000000000000e0"));
+        assert!(message.contains("required progress = 1.0000000000000000e-3"));
+        assert!(message.contains("progress fraction = 0.0000000000000000e0"));
+        assert!(message.contains("minimum progress fraction = 1.0000000000000000e-4"));
+        assert!(message.contains("last accepted absolute time = 1.0000000000000000e1"));
+        assert!(message.contains("window count/limit = 2/2"));
+        assert!(message.contains("cumulative count/limit = 2/4"));
         assert!(message.contains("no incomplete state was returned"));
         assert!(message.contains("model stiffness and state/time/unit scaling"));
         assert!(message.contains("explicitly choose an implicit solver"));
 
         problem.eqn.begin_explicit_step_segment(20.0, 30.0);
-        assert!(!problem.eqn.explicit_step_budget_exhausted());
-        problem.eqn.record_explicit_accepted_step(22.0);
-        problem.eqn.record_explicit_accepted_step(24.0);
+        assert!(!problem.eqn.explicit_step_budget_check_due());
+        problem.eqn.record_explicit_accepted_step(20.0);
+        problem.eqn.record_explicit_accepted_step(20.0);
         let second_segment_error = problem
             .eqn
-            .explicit_step_budget_error()
+            .check_explicit_step_budget()
             .expect("the session count must survive a new segment");
         let second_segment_message = second_segment_error.to_string();
-        assert!(second_segment_message.contains("budget scope = session"));
+        assert!(second_segment_message.contains("budget scope = session total"));
         assert!(second_segment_message.contains("segment start = 2.0000000000000000e1"));
         assert!(second_segment_message.contains("target = 3.0000000000000000e1"));
-        assert!(second_segment_message.contains("segment count/limit = 2/2"));
-        assert!(second_segment_message.contains("cumulative session count/limit = 4/4"));
+        assert!(second_segment_message.contains("progress window start = 2.0000000000000000e1"));
+        assert!(second_segment_message.contains("window count/limit = 2/2"));
+        assert!(second_segment_message.contains("cumulative count/limit = 4/4"));
+    }
+
+    #[test]
+    fn explicit_step_guard_rejects_zero_progress_for_positive_subnormal_gap() {
+        let problem = guard_test_problem(1.0);
+        problem
+            .eqn
+            .configure_explicit_step_guard(Some(ExplicitStepBudgetConfig {
+                max_accepted_steps_per_segment: 1,
+                max_accepted_steps_per_session: 2,
+            }));
+        let positive_subnormal_gap = f64::from_bits(1);
+        problem
+            .eqn
+            .begin_explicit_step_segment(0.0, positive_subnormal_gap);
+        problem.eqn.record_explicit_accepted_step(0.0);
+        assert!(problem.eqn.explicit_step_budget_check_due());
+
+        let error = problem
+            .eqn
+            .check_explicit_step_budget()
+            .expect("zero progress must fail closed even when required progress underflows");
+        let message = error.to_string();
+        assert!(message.contains("budget scope = insufficient segment progress"));
+        assert!(message.contains("required progress = 0.0000000000000000e0"));
+        assert!(message.contains("progress fraction = 0.0000000000000000e0"));
+        assert!(problem.eqn.explicit_step_budget_check_due());
+    }
+
+    #[test]
+    fn explicit_step_guard_continues_after_productive_window() {
+        let problem = guard_test_problem(1.0);
+        problem
+            .eqn
+            .configure_explicit_step_guard(Some(ExplicitStepBudgetConfig {
+                max_accepted_steps_per_segment: 2,
+                max_accepted_steps_per_session: 4,
+            }));
+        problem.eqn.begin_explicit_step_segment(10.0, 20.0);
+        problem.eqn.record_explicit_accepted_step(10.0);
+        problem.eqn.record_explicit_accepted_step(10.01);
+        assert!(problem.eqn.explicit_step_budget_check_due());
+        assert!(problem.eqn.check_explicit_step_budget().is_none());
+        assert!(!problem.eqn.explicit_step_budget_check_due());
+        problem.eqn.record_explicit_accepted_step(10.02);
+        assert!(!problem.eqn.explicit_step_budget_check_due());
     }
 
     #[test]
@@ -2124,12 +2182,12 @@ mod tests {
 
         let error = problem
             .eqn
-            .explicit_step_budget_error()
+            .check_explicit_step_budget()
             .expect("the residual accepted step must retain the session count");
         let message = error.to_string();
-        assert!(message.contains("budget scope = session"));
-        assert!(message.contains("segment count/limit = 2/3"));
-        assert!(message.contains("cumulative session count/limit = 2/2"));
+        assert!(message.contains("budget scope = session total"));
+        assert!(message.contains("window count/limit = 2/3"));
+        assert!(message.contains("cumulative count/limit = 2/2"));
     }
 
     #[test]
@@ -2189,9 +2247,9 @@ mod tests {
         )
         .expect_err("the cumulative session budget must block the next segment");
         let message = error.to_string();
-        assert!(message.contains("budget scope = session"));
-        assert!(message.contains("segment count/limit = 0/1"));
-        assert!(message.contains("cumulative session count/limit = 2/2"));
+        assert!(message.contains("budget scope = session total"));
+        assert!(message.contains("window count/limit = 0/1"));
+        assert!(message.contains("cumulative count/limit = 2/2"));
         assert!(message.contains("numeric gap (target - start)"));
         assert_eq!(solver.state().t, state_before_third);
     }
@@ -2206,8 +2264,7 @@ mod tests {
         for time in 1..=4 {
             problem.eqn.record_explicit_accepted_step(f64::from(time));
         }
-        assert!(!problem.eqn.explicit_step_budget_exhausted());
-        assert!(problem.eqn.explicit_step_budget_error().is_none());
+        assert!(!problem.eqn.explicit_step_budget_check_due());
     }
 
     #[test]
@@ -2226,7 +2283,7 @@ mod tests {
 
         let error = advance_solver_to_event(
             &mut solver,
-            2.0e-4,
+            10.0,
             &mut integration_boundary_cursor,
             &mut pending_reinit,
             &mut dy_scratch,
@@ -2236,15 +2293,19 @@ mod tests {
         )
         .expect_err("the second accepted step must be blocked");
         let message = error.to_string();
-        assert!(message.contains("budget scope = segment"));
+        assert!(message.contains("budget scope = insufficient segment progress"));
         assert!(message.contains("numeric gap (target - start)"));
-        assert!(message.contains("segment count/limit = 1/1"));
-        assert!(message.contains("cumulative session count/limit = 1/2"));
+        assert!(message.contains("progress window start ="));
+        assert!(message.contains("actual progress ="));
+        assert!(message.contains("required progress ="));
+        assert!(message.contains("progress fraction ="));
+        assert!(message.contains("window count/limit = 1/1"));
+        assert!(message.contains("cumulative count/limit = 1/2"));
         assert!(message.contains("last accepted absolute time"));
         assert!(message.contains("no incomplete state was returned"));
         assert!(message.contains("explicitly choose an implicit solver"));
         assert!(solver.state().t > 0.0);
-        assert!(solver.state().t < 2.0e-4);
+        assert!(solver.state().t < 10.0);
     }
 
     #[test]
@@ -2273,6 +2334,35 @@ mod tests {
             &mut || Ok(()),
         )
         .expect("a final permitted step that reaches the target is complete");
+        assert_eq!(solver.state().t, final_target);
+    }
+
+    #[test]
+    fn explicit_step_guard_accepts_exact_completion_on_final_session_step() {
+        let problem = build_guard_test_problem!(1.0);
+        let final_target = 1.0e-4_f64.next_down();
+        problem
+            .eqn
+            .configure_explicit_step_guard(Some(ExplicitStepBudgetConfig {
+                max_accepted_steps_per_segment: 2,
+                max_accepted_steps_per_session: 1,
+            }));
+        let mut solver = problem.tsit45().expect("test TSIT45 solver should build");
+        let mut integration_boundary_cursor = 0;
+        let mut pending_reinit = false;
+        let mut dy_scratch = V::zeros(1, NalgebraContext::new());
+
+        advance_solver_to_event(
+            &mut solver,
+            final_target,
+            &mut integration_boundary_cursor,
+            &mut pending_reinit,
+            &mut dy_scratch,
+            1e-4,
+            1e-4,
+            &mut || Ok(()),
+        )
+        .expect("a final permitted session step that reaches the target is complete");
         assert_eq!(solver.state().t, final_target);
     }
 
