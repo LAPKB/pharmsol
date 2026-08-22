@@ -1186,10 +1186,11 @@ impl NativeOdeModel {
         self.shared.validate_support_point(support_point)?;
         let mut output = SubjectPredictions::default();
         let support_vector: V = DVector::from_vec(support_point.to_vec()).into();
-        // Scratch for refreshing the solver's derivative at infusion boundaries.
+        // Scratch for refreshing the solver's derivative at discontinuity boundaries.
         let mut dy_scratch = V::zeros(self.shared.info.state_len, NalgebraContext::new());
 
         for occasion in subject.occasions() {
+            occasion.covariates().validate_for_ode()?;
             let mut events = self.shared.resolve_events(occasion)?;
             let session = RefCell::new(self.shared.artifact.start_session()?);
             let mut route_session = session.borrow_mut();
@@ -1358,10 +1359,10 @@ impl NativeOdeModel {
         // The event-to-event integration loop is shared with the closure-based
         // [`ODE`] equation so compiled models stay numerically consistent with
         // the reference path by construction.
-        let mut infusion_boundary_cursor = 0usize;
+        let mut integration_boundary_cursor = 0usize;
         let mut index = 0usize;
         // Set when the previous event changed the state or the previous stop
-        // was an infusion boundary: the solver must be restarted before the
+        // was a discontinuity boundary: the solver must be restarted before the
         // first step of the next segment. Deferred until `set_stop_time`
         // succeeds so a stop that is already reached does not trigger a
         // restart for a zero-length segment.
@@ -1407,7 +1408,7 @@ impl NativeOdeModel {
                 crate::simulator::equation::ode::advance_solver_to_event(
                     solver,
                     next_event.time(),
-                    &mut infusion_boundary_cursor,
+                    &mut integration_boundary_cursor,
                     &mut pending_reinit,
                     dy_scratch,
                     self.rtol,

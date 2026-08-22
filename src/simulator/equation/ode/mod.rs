@@ -347,7 +347,7 @@ fn _simulate_subject_dense(
     let zero_bolus = V::zeros(ndrugs, NalgebraContext::new());
     let zero_rateiv = V::zeros(ndrugs, NalgebraContext::new());
     let mut bolus_v = V::zeros(ndrugs, NalgebraContext::new());
-    // Scratch for refreshing the solver's derivative at infusion boundaries.
+    // Scratch for refreshing the solver's derivative at discontinuity boundaries.
     let mut dy_scratch = V::zeros(nstates, NalgebraContext::new());
     let parameters_vec = parameters.to_vec();
     let parameters_v: V = DVector::from_vec(parameters_vec.clone()).into();
@@ -359,6 +359,7 @@ fn _simulate_subject_dense(
         // subject and support point in a single place below.
         let occasion_result: Result<(), PharmsolError> = (|| {
             let covariates = occasion.covariates();
+            covariates.validate_for_ode()?;
             let events = ode.resolve_occasion_events(occasion, parameters, covariates)?;
             let time_origin = validate_resolved_ode_schedule(&events)?;
 
@@ -1179,14 +1180,15 @@ where
     Ok(ReachedStop::Rebased)
 }
 
-/// Advance the solver to `next_event_time`, stopping at every infusion
-/// boundary in between.
+/// Advance the solver to `next_event_time`, stopping at every scheduled
+/// integration boundary in between.
 ///
 /// This is the single implementation of the event-to-event integration loop
 /// shared by the closure-based [`ODE`] equation and the DSL runtime ODE path
-/// ([`crate::dsl::native::NativeOdeModel`]): stop selection, left-continuity
-/// handling at infusion boundaries, exact discontinuity restarts, and safe
-/// normalization of stops that diffsol has already reached.
+/// ([`crate::dsl::native::NativeOdeModel`]): stop selection at integration
+/// boundaries, left-continuity handling at covariate and infusion knots, exact
+/// restarts for true RHS discontinuities, and safe normalization of stops that
+/// diffsol has already reached.
 ///
 /// `after_step` runs after every step; the DSL path uses it to surface
 /// model-function errors raised inside the RHS callback.
@@ -1194,7 +1196,7 @@ where
 pub(crate) fn advance_solver_to_event<'a, F, S, H>(
     solver: &mut S,
     next_event_time: f64,
-    infusion_boundary_cursor: &mut usize,
+    integration_boundary_cursor: &mut usize,
     pending_reinit: &mut bool,
     dy_scratch: &mut V,
     rtol: f64,
@@ -1258,21 +1260,26 @@ where
             )));
         }
 
-        let infusion_boundary_times = solver.problem().eqn.infusion_boundary_times();
-        while *infusion_boundary_cursor < infusion_boundary_times.len()
-            && infusion_boundary_times[*infusion_boundary_cursor] <= current_time
+        let integration_boundary_times = solver.problem().eqn.integration_boundary_times();
+        while *integration_boundary_cursor < integration_boundary_times.len()
+            && integration_boundary_times[*integration_boundary_cursor] <= current_time
         {
-            *infusion_boundary_cursor += 1;
+            *integration_boundary_cursor += 1;
         }
 
-        let (absolute_stop_time, is_infusion_boundary) =
-            match infusion_boundary_times.get(*infusion_boundary_cursor) {
+        let (absolute_stop_time, is_integration_boundary) =
+            match integration_boundary_times.get(*integration_boundary_cursor) {
                 Some(&boundary_time) if boundary_time <= next_event_time => {
-                    *infusion_boundary_cursor += 1;
+                    *integration_boundary_cursor += 1;
                     (boundary_time, true)
                 }
                 _ => (next_event_time, false),
             };
+        let is_discontinuity_boundary = is_integration_boundary
+            && solver
+                .problem()
+                .eqn
+                .is_discontinuity_time(absolute_stop_time);
         if !absolute_stop_time.is_finite() {
             return Err(PharmsolError::OtherError(format!(
                 "ODE event advance selected a non-finite stop time {absolute_stop_time:?}"
@@ -1293,7 +1300,7 @@ where
         solver
             .problem()
             .eqn
-            .set_left_continuity_time(if is_infusion_boundary {
+            .set_left_continuity_time(if is_integration_boundary {
                 Some(absolute_stop_time)
             } else {
                 None
@@ -1338,7 +1345,7 @@ where
                             stop_time,
                             absolute_stop_time,
                             segment_start_time,
-                            is_infusion_boundary,
+                            is_discontinuity_boundary,
                             pending_reinit,
                             !rebased,
                             dy_scratch,
@@ -1367,7 +1374,7 @@ where
                         }
                         if absolute_state_time == absolute_stop_time {
                             solver.problem().eqn.set_left_continuity_time(None);
-                            if is_infusion_boundary {
+                            if is_discontinuity_boundary {
                                 *pending_reinit = true;
                             }
                             return Ok(());
@@ -1435,7 +1442,7 @@ fn integrate_to_stop<'a, F, S, H>(
     stop_time: f64,
     absolute_stop_time: f64,
     segment_start_time: f64,
-    is_infusion_boundary: bool,
+    is_discontinuity_boundary: bool,
     pending_reinit: &mut bool,
     allow_close_rebase: bool,
     dy_scratch: &mut V,
@@ -1458,9 +1465,9 @@ where
             }
             Ok(OdeSolverStopReason::TstopReached) => {
                 // Keep left-continuity active while reconciling the accepted
-                // state. In particular, a residual close segment ending at an
-                // infusion boundary must refresh and integrate with the rate
-                // on the left until the exact boundary is reached.
+                // state. In particular, a residual close segment ending at a
+                // covariate or infusion boundary must use the segment on the
+                // left until the exact boundary is reached.
                 if let Err(error) = after_step() {
                     solver.problem().eqn.set_left_continuity_time(None);
                     return Err(error);
@@ -1488,7 +1495,7 @@ where
                         if matches!(reached, ReachedStop::Interpolated) {
                             *pending_reinit = true;
                         }
-                        if is_infusion_boundary {
+                        if is_discontinuity_boundary {
                             *pending_reinit = true;
                         }
                         return Ok(());
@@ -1544,7 +1551,7 @@ where
                                     residual_stop,
                                     absolute_stop_time,
                                     segment_start_time,
-                                    is_infusion_boundary,
+                                    is_discontinuity_boundary,
                                     pending_reinit,
                                     false,
                                     dy_scratch,
@@ -1642,7 +1649,7 @@ where
                     ));
                 }
                 solver.problem().eqn.set_left_continuity_time(None);
-                if is_infusion_boundary {
+                if is_discontinuity_boundary {
                     *pending_reinit = true;
                 }
                 return Ok(());
@@ -1686,10 +1693,10 @@ impl ODE {
         F: Fn(&V, &V, f64, &mut V, &V, &V, &Covariates) + 'a,
         S: OdeSolverMethod<'a, PMProblem<'a, F>>,
     {
-        let mut infusion_boundary_cursor = 0usize;
+        let mut integration_boundary_cursor = 0usize;
         let mut index = 0usize;
         // Set when the previous event changed the state or the previous stop
-        // was an infusion boundary: the solver must be restarted before the
+        // was a discontinuity boundary: the solver must be restarted before the
         // first step of the next segment. Deferred until `set_stop_time`
         // succeeds so a stop that is already reached does not trigger a
         // restart for a zero-length segment.
@@ -1778,7 +1785,7 @@ impl ODE {
                 advance_solver_to_event(
                     solver,
                     next_event.time(),
-                    &mut infusion_boundary_cursor,
+                    &mut integration_boundary_cursor,
                     &mut pending_reinit,
                     dy_scratch,
                     self.rtol,
@@ -1902,13 +1909,13 @@ mod tests {
         let mut solver = problem
             .bdf::<diffsol::NalgebraLU<f64>>()
             .expect("test BDF solver should build");
-        let mut infusion_boundary_cursor = 0;
+        let mut integration_boundary_cursor = 0;
         let mut pending_reinit = false;
         let mut dy_scratch = V::zeros(1, NalgebraContext::new());
         let error = advance_solver_to_event(
             &mut solver,
             -1.0,
-            &mut infusion_boundary_cursor,
+            &mut integration_boundary_cursor,
             &mut pending_reinit,
             &mut dy_scratch,
             1e-4,
@@ -1924,7 +1931,7 @@ mod tests {
         advance_solver_to_event(
             &mut solver,
             0.0,
-            &mut infusion_boundary_cursor,
+            &mut integration_boundary_cursor,
             &mut pending_reinit,
             &mut dy_scratch,
             1e-4,
@@ -1965,13 +1972,13 @@ mod tests {
         let mut solver = problem
             .bdf::<diffsol::NalgebraLU<f64>>()
             .expect("test BDF solver should build");
-        let mut infusion_boundary_cursor = 0;
+        let mut integration_boundary_cursor = 0;
         let mut pending_reinit = false;
         let mut dy_scratch = V::zeros(1, NalgebraContext::new());
         advance_solver_to_event(
             &mut solver,
             0.35,
-            &mut infusion_boundary_cursor,
+            &mut integration_boundary_cursor,
             &mut pending_reinit,
             &mut dy_scratch,
             1e-4,
@@ -2062,14 +2069,14 @@ mod tests {
         let mut solver = problem
             .bdf::<diffsol::NalgebraLU<f64>>()
             .expect("test BDF solver should build");
-        let mut infusion_boundary_cursor = 0;
+        let mut integration_boundary_cursor = 0;
         let mut pending_reinit = false;
         let mut dy_scratch = V::zeros(1, NalgebraContext::new());
         let large_time = 1.0e6_f64;
         advance_solver_to_event(
             &mut solver,
             large_time,
-            &mut infusion_boundary_cursor,
+            &mut integration_boundary_cursor,
             &mut pending_reinit,
             &mut dy_scratch,
             1e-4,
@@ -2082,7 +2089,7 @@ mod tests {
         let error = advance_solver_to_event(
             &mut solver,
             close_target,
-            &mut infusion_boundary_cursor,
+            &mut integration_boundary_cursor,
             &mut pending_reinit,
             &mut dy_scratch,
             1e-4,
