@@ -1172,7 +1172,11 @@ where
             "ODE solver reached a stop whose absolute state time is not finite: local state = {state_time:?}, absolute state = {absolute_state_time:?}"
         )));
     }
-    if state_time == stop_time && absolute_state_time == absolute_stop_time {
+    // Absolute model time is authoritative. Diffsol may report `TstopReached`
+    // with its local state one ULP below the local stop even though adding the
+    // time origin maps that accepted state exactly to the requested event.
+    // In that case there is no absolute residual—and no dynamics—to integrate.
+    if absolute_state_time == absolute_stop_time {
         return Ok(ReachedStop::Exact);
     }
     if absolute_state_time > absolute_stop_time {
@@ -2628,6 +2632,62 @@ mod tests {
         assert_eq!(reached, ReachedStop::Rebased);
         assert_eq!(solver.problem().eqn.time_origin(), 0.0);
         assert_eq!(solver.state().t, 0.0);
+    }
+
+    #[test]
+    fn normalize_reached_stop_accepts_exact_absolute_time_with_local_roundoff() {
+        let origin = f64::from_bits(0x3ff8_4444_4444_439d);
+        let local_state = f64::from_bits(0x3ff8_0000_0000_00b6);
+        let local_stop = f64::from_bits(0x3ff8_0000_0000_00b7);
+        let absolute_stop = f64::from_bits(0x4008_2222_2222_222a);
+        assert_ne!(local_state, local_stop);
+        assert_eq!(origin + local_state, absolute_stop);
+
+        let covariates = Covariates::default();
+        let problem = OdeBuilder::<M>::new()
+            .atol(vec![1e-4])
+            .rtol(1e-4)
+            .t0(0.0)
+            .h0(1e-3)
+            .p(Vec::<f64>::new())
+            .build_from_eqn(
+                PMProblem::with_params_v(
+                    |_x, _p, _t, dx, _bolus, _rateiv, _cov| dx[0] = 0.0,
+                    1,
+                    0,
+                    V::zeros(0, NalgebraContext::new()),
+                    &covariates,
+                    std::iter::empty::<&Infusion>(),
+                    V::zeros(1, NalgebraContext::new()),
+                    origin,
+                )
+                .expect("finite test ODE problem"),
+            )
+            .expect("test ODE builder should succeed");
+        let mut solver = problem
+            .bdf::<diffsol::NalgebraLU<f64>>()
+            .expect("test BDF solver should build");
+        *solver.state_mut().t = local_state;
+        let mut dy_scratch = V::zeros(1, NalgebraContext::new());
+
+        let reached = normalize_reached_stop(
+            &mut solver,
+            local_stop,
+            absolute_stop,
+            origin,
+            true,
+            &mut dy_scratch,
+            1e-4,
+            1e-4,
+        )
+        .expect("exact absolute time should not require a residual integration");
+
+        assert_eq!(reached, ReachedStop::Exact);
+        assert_eq!(solver.state().t, local_state);
+        assert_eq!(
+            solver.problem().eqn.absolute_time(local_state),
+            absolute_stop
+        );
     }
 
     #[test]

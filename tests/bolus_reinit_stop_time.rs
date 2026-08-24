@@ -74,6 +74,35 @@ const CRUSHED_STOP_OBSERVATION_TIMES: [f64; 6] = [
     2.0,
 ];
 
+const LAGGED_STOP_PARAMETERS: [(&str, f64); 7] = [
+    ("lag1", 2.963254451751709),
+    ("ka", 2.2961074113845825),
+    ("cl0", 2.888387441635132),
+    ("vc0", 89.66886115074158),
+    ("q0", 81.8881014585495),
+    ("vp0", 2264.831554889679),
+    ("fa1", 0.409921451807021),
+];
+
+const LAGGED_STOP_OBSERVATION_TIMES: [f64; 16] = [
+    0.0,
+    0.25,
+    0.516666666666667,
+    1.01666666666667,
+    1.51666666666667,
+    2.03333333333333,
+    2.53333333333333,
+    3.01666666666667,
+    4.0,
+    5.0,
+    7.01666666666667,
+    7.98333333333333,
+    9.0,
+    10.2666666666667,
+    11.2666666666667,
+    12.2666666666667,
+];
+
 fn subject_with_bolus_history() -> Subject {
     let mut builder = Subject::builder("g34");
     for dose_index in -16..=0 {
@@ -91,6 +120,17 @@ fn subject_with_crushed_endpoint_step() -> Subject {
         builder = builder.bolus(f64::from(dose_index) * 12.0, 1000.0, "input_1");
     }
     for time in CRUSHED_STOP_OBSERVATION_TIMES {
+        builder = builder.missing_observation(time, "outeq_1");
+    }
+    builder.build()
+}
+
+fn subject_with_lagged_absolute_stop_roundoff() -> Subject {
+    let mut builder = Subject::builder("g28");
+    for dose_index in -16..=0 {
+        builder = builder.bolus(f64::from(dose_index) * 12.0, 750.0, "input_1");
+    }
+    for time in LAGGED_STOP_OBSERVATION_TIMES {
         builder = builder.missing_observation(time, "outeq_1");
     }
     builder.build()
@@ -132,6 +172,48 @@ fn closure_model(solver: OdeSolver) -> equation::ODE {
     .expect("regression model metadata should validate")
 }
 
+fn lagged_closure_model(solver: OdeSolver) -> equation::ODE {
+    equation::ODE::new(
+        |x, p, _t, dx, b, rateiv, _cov| {
+            fetch_params!(p, _lag1, ka, cl0, vc0, q0, vp0, _fa1);
+            let ke = cl0 / vc0;
+            let k23 = q0 / vc0;
+            let k32 = q0 / vp0;
+
+            dx[0] = b[0] - x[0] * ka;
+            dx[1] = rateiv[0] + x[0] * ka + x[2] * k32 - x[1] * (ke + k23);
+            dx[2] = x[1] * k23 - x[2] * k32;
+        },
+        |p, _t, _cov| {
+            fetch_params!(p, lag1, _ka, _cl0, _vc0, _q0, _vp0, _fa1);
+            lag! { 0 => lag1 }
+        },
+        |p, _t, _cov| {
+            fetch_params!(p, _lag1, _ka, _cl0, _vc0, _q0, _vp0, fa1);
+            fa! { 0 => fa1 }
+        },
+        |_p, _t, _cov, _x| {},
+        |x, p, _t, _cov, y| {
+            fetch_params!(p, _lag1, _ka, _cl0, vc0, _q0, _vp0, _fa1);
+            y[0] = x[1] / vc0;
+        },
+    )
+    .with_nstates(3)
+    .with_ndrugs(1)
+    .with_nout(1)
+    .with_solver(solver)
+    .with_metadata(
+        equation::metadata::new("lagged_absolute_stop_roundoff")
+            .parameters(["lag1", "ka", "cl0", "vc0", "q0", "vp0", "fa1"])
+            .states(["x1", "x2", "x3"])
+            .outputs(["outeq_1"])
+            .routes([equation::Route::bolus("input_1")
+                .to_state("x1")
+                .expect_explicit_input()]),
+    )
+    .expect("lagged regression model metadata should validate")
+}
+
 #[test]
 fn closure_solvers_accept_reached_stop_after_bolus_restarts(
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -167,6 +249,39 @@ fn bdf_restores_crushed_timestep_after_successful_stop() -> Result<(), Box<dyn s
     assert_eq!(
         bdf_predictions.predictions().len(),
         CRUSHED_STOP_OBSERVATION_TIMES.len()
+    );
+    for (bdf, reference) in bdf_predictions
+        .predictions()
+        .iter()
+        .zip(reference_predictions.predictions())
+    {
+        let bdf = bdf.prediction();
+        let reference = reference.prediction();
+        let scaled_error = (bdf - reference).abs() / reference.abs().max(1.0);
+        assert!(
+            scaled_error < 1.0e-3,
+            "BDF prediction {bdf:.16e} differs from TSIT45 reference {reference:.16e} by {scaled_error:.3e}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn bdf_accepts_exact_absolute_stop_with_local_roundoff() -> Result<(), Box<dyn std::error::Error>> {
+    let subject = subject_with_lagged_absolute_stop_roundoff();
+    let bdf_model = lagged_closure_model(OdeSolver::Bdf);
+    let bdf_parameters = Parameters::with_model(&bdf_model, LAGGED_STOP_PARAMETERS)?;
+    let bdf_predictions =
+        bdf_model.estimate_predictions_dense(&subject, bdf_parameters.as_slice())?;
+
+    let reference_model = lagged_closure_model(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45));
+    let reference_parameters = Parameters::with_model(&reference_model, LAGGED_STOP_PARAMETERS)?;
+    let reference_predictions =
+        reference_model.estimate_predictions_dense(&subject, reference_parameters.as_slice())?;
+
+    assert_eq!(
+        bdf_predictions.predictions().len(),
+        LAGGED_STOP_OBSERVATION_TIMES.len()
     );
     for (bdf, reference) in bdf_predictions
         .predictions()
