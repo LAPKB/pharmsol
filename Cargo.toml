@@ -3,15 +3,15 @@ members = [".", "pharmsol-dsl", "pharmsol-macros"]
 resolver = "2"
 
 [workspace.package]
-version = "0.28.7"
+version = "0.28.8"
 edition = "2021"
 license = "GPL-3.0"
 authors = ["Julián D. Otálvaro <juliandavid347@gmail.com>", "Markus Hovd"]
 repository = "https://github.com/LAPKB/pharmsol"
 
 [workspace.dependencies]
-pharmsol-dsl = { path = "pharmsol-dsl", version = "0.28.7" }
-pharmsol-macros = { path = "pharmsol-macros", version = "0.28.7" }
+pharmsol-dsl = { path = "pharmsol-dsl", version = "0.28.8" }
+pharmsol-macros = { path = "pharmsol-macros", version = "0.28.8" }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 thiserror = "2.0.18"
@@ -41,18 +41,19 @@ dsl-jit = [
 [dependencies]
 pharmsol-dsl = { workspace = true }
 pharmsol-macros = { workspace = true }
-cranelift = { version = "0.134.3", optional = true }
-cranelift-jit = { version = "0.134.3", optional = true }
-cranelift-module = { version = "0.134.3", optional = true }
-cranelift-native = { version = "0.134.3", optional = true }
+libloading = { version = "0.9.0", optional = true, features = [] }
+cranelift = { version = "0.135.0", optional = true }
+cranelift-jit = { version = "0.135.0", optional = true }
+cranelift-module = { version = "0.135.0", optional = true }
+cranelift-native = { version = "0.135.0", optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tracing = "0.1.44"
 ahash = "0.8.12"
 csv = "1.4.0"
-diffsol = "=0.16.1"
-diffsol-la = "0.1.0"
+diffsol = "=0.16.2"
+diffsol-la = "0.1.1"
 nalgebra = "0.35.0"
 ndarray = { version = "0.17.2", features = ["rayon"] }
 rand = "0.10.1"
