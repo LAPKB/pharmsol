@@ -1,12 +1,10 @@
 //! Unified runtime entrypoints for DSL-backed models.
 //!
 //! Use this module when you already know you want an executable model and need
-//! one backend-neutral surface for compile and prediction workflows.
+//! one surface for compile and prediction workflows.
 //!
-//! Use the backend modules directly only when you need a backend-specific
-//! artifact or compile control:
-//!
-//! - [`super::jit`] for direct in-process JIT compilation.
+//! Use [`super::jit`] directly only when you need the lower-level compile
+//! entrypoints or the raw execution artifact.
 //!
 //! Main entrypoints:
 //!
@@ -14,7 +12,7 @@
 //!   path.
 //! - [`compile_execution_model_to_runtime`] when you already have an
 //!   [`ExecutionModel`](pharmsol_dsl::ExecutionModel).
-//! - [`CompiledRuntimeModel::estimate_predictions`] for backend-neutral
+//! - [`CompiledRuntimeModel::estimate_predictions`] for kind-agnostic
 //!   execution against a [`Subject`](crate::Subject).
 //!
 //! Smallest compile-and-run example:
@@ -114,10 +112,10 @@ impl RuntimePredictions {
     }
 }
 
-/// Executable runtime model returned by the backend-neutral runtime surface.
+/// Executable runtime model returned by the compile entrypoints.
 ///
-/// This type hides the concrete backend and keeps the prediction entrypoint the
-/// same across runtime flows.
+/// This type hides the model kind and keeps the prediction entrypoint the
+/// same across ODE, analytical, and SDE models.
 #[derive(Clone, Debug)]
 pub enum CompiledRuntimeModel {
     Ode(RuntimeOdeModel),

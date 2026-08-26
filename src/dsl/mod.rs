@@ -2,21 +2,21 @@
 //!
 //! Use this module when you want to work with pharmsol models as source text
 //! and stay inside the main crate for the full workflow: parse DSL source,
-//! inspect diagnostics, compile to the execution model and then to a runtime
-//! backend, load saved artifacts, and run predictions.
+//! inspect diagnostics, compile to the execution model and then to an
+//! executable runtime model, and run predictions.
 //!
 //! Use the `pharmsol-dsl` crate directly only when you need the source-to-execution
 //! compiler as an engineering API. That crate owns parsing, diagnostics,
 //! analysis, and compilation to the execution model. This module re-exports
-//! that stable compiler surface and adds the backend-specific entrypoints
-//! that stay owned by `pharmsol`.
+//! that stable compiler surface and adds the code-generation and execution
+//! entrypoints that stay owned by `pharmsol`.
 //!
 //! Main entrypoints:
 //!
 //! - [`parse_model`], [`parse_module`], [`analyze_model`], and
 //!   [`analyze_module`] for source-level validation and inspection.
 //! - [`compile_analyzed_model`] and [`compile_analyzed_module`] for compiling
-//!   analyzed models into the ready-to-run form used by the runtime backends.
+//!   analyzed models into the ready-to-run form used by the runtime.
 //! - [`compile_module_source_to_runtime`] and [`compile_execution_model_to_runtime`]
 //!   for the one-stop compile-and-run path.
 //!

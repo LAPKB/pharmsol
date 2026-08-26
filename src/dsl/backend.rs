@@ -592,7 +592,7 @@ impl SharedRuntimeModel {
         self.metadata.as_ref()
     }
 
-    /// Resolve a route by label and kind from the native model info, which
+    /// Resolve a route by label and kind from the runtime model info, which
     /// preserves the declared `Option<RouteKind>`. Validated metadata has
     /// already collapsed kind-less routes to bolus, so it cannot tell a
     /// genuinely kind-less route from an explicitly bolus one; the info

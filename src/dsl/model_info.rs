@@ -8,11 +8,11 @@ use pharmsol_dsl::execution::{
 };
 use pharmsol_dsl::{AnalyticalKernel, CovariateInterpolation, ModelKind, RouteKind};
 
-/// Public metadata extracted from a compiled backend model.
+/// Public metadata extracted from a compiled model.
 ///
-/// This is the shared inspection surface returned by the runtime loaders. It
-/// keeps public labels and buffer sizes available without exposing
-/// backend-specific function details.
+/// This is the shared inspection surface for compiled runtime models. It
+/// keeps public labels and buffer sizes available without exposing the
+/// compiled function pointers.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeModelInfo {
     /// Public model name.
@@ -346,7 +346,7 @@ out(cp) = central / v ~ continuous()
     }
 
     #[test]
-    fn native_model_info_preserves_state_covariate_and_route_metadata() {
+    fn runtime_model_info_preserves_state_covariate_and_route_metadata() {
         let info = load_model_info(
             r#"
 name = metadata_surface
@@ -385,7 +385,7 @@ out(cp) = central / v
     }
 
     #[test]
-    fn native_model_info_preserves_canonical_numeric_channel_names() {
+    fn runtime_model_info_preserves_canonical_numeric_channel_names() {
         let info = load_model_info(
             r#"
 name = canonical_numeric_channels
@@ -423,7 +423,7 @@ out(outeq_2) = depot / v
     }
 
     #[test]
-    fn native_model_info_preserves_declared_derived_order() {
+    fn runtime_model_info_preserves_declared_derived_order() {
         let info = load_model_info(
             r#"
 model analytical_projection {

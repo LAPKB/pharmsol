@@ -3,8 +3,7 @@ mod closure;
 /// Re-export of the diffsol `OdeEquations` adapter so the JIT module can build
 /// `OdeBuilder` problems with closures (rather than plain `fn` pointers).
 ///
-/// This helper is shared by the legacy JIT path and the native
-/// runtime wrappers.
+/// This helper is shared by the DSL runtime wrappers.
 #[cfg(feature = "dsl")]
 pub(crate) mod closure_helpers {
     pub(crate) use super::closure::PMProblem;

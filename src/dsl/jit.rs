@@ -1911,7 +1911,7 @@ out(cp) = central / v ~ continuous()
     }
 
     #[test]
-    fn native_resolution_matches_bare_numeric_aliases() {
+    fn route_resolution_matches_bare_numeric_aliases() {
         let source = r#"
 name = numeric_alias
 kind = ode
