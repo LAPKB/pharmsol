@@ -32,6 +32,10 @@ pub const DEFAULT_CACHE_SIZE: usize = 100_000;
 pub const DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE: usize = 32;
 
 /// Cache key: (subject_hash, parameters_hash)
+// TODO: PredictionCache keys currently omit solver and tolerance settings.
+// Shallow clones share entries, so changing either after a prediction is cached
+// can reuse a stale entry; leave key/invalidation/configuration behavior unchanged
+// until that follow-up is designed.
 pub(crate) type PredictionKey = (u64, u64);
 
 /// Cache key for SDE: (subject_hash, parameters_hash, error_model_hash)
