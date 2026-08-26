@@ -250,9 +250,11 @@ pub(crate) trait EquationPriv: EquationTypes {
         parameters: &[f64],
         covariates: &Covariates,
     ) -> Result<Vec<Event>, PharmsolError> {
-        let mut resolved = occasion.clone();
+        // Clone only the events; the occasion's covariates are borrowed
+        // separately by every consumer of the resolved schedule.
+        let mut events = occasion.events().to_vec();
 
-        for event in resolved.events_iter_mut() {
+        for event in events.iter_mut() {
             match event {
                 Event::Bolus(bolus) => {
                     let input = self.resolve_input_label(bolus.input(), RouteKind::Bolus)?;
@@ -269,7 +271,14 @@ pub(crate) trait EquationPriv: EquationTypes {
             }
         }
 
-        Ok(resolved.process_events(Some((self.fa(), self.lag(), parameters, covariates))))
+        crate::data::structs::apply_dose_adjustments(
+            &mut events,
+            self.fa(),
+            self.lag(),
+            parameters,
+            covariates,
+        );
+        Ok(events)
     }
     #[allow(dead_code)]
     fn is_sde(&self) -> bool {

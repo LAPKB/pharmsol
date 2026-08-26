@@ -559,6 +559,57 @@ pub struct Occasion {
     pub(crate) index: usize,
 }
 
+/// Apply model lag and bioavailability to resolved dose events in place.
+///
+/// Lag shifts bolus times (re-sorting only when something moved) and
+/// bioavailability scales bolus amounts. The parameter vector is built once
+/// and shared by both passes.
+pub(crate) fn apply_dose_adjustments(
+    events: &mut [Event],
+    fn_fa: &Fa,
+    fn_lag: &Lag,
+    parameters: &[f64],
+    covariates: &Covariates,
+) {
+    let parameters: V = nalgebra::DVector::from_vec(parameters.to_vec()).into();
+
+    let mut shifted = false;
+    for event in events.iter_mut() {
+        // Lag time delays boluses only; infusions are never lagged.
+        let Event::Bolus(bolus) = event else {
+            continue;
+        };
+        let Some(input) = bolus.input_index() else {
+            continue;
+        };
+        let lagtime = fn_lag(&parameters, bolus.time(), covariates);
+        if let Some(&l) = lagtime.get(&input) {
+            if l != 0.0 {
+                *bolus.mut_time() += l;
+                shifted = true;
+            }
+        }
+    }
+    // Events were sorted at construction; an unchanged pass stays sorted.
+    if shifted {
+        events.sort_by(Event::cmp_time_then_type);
+    }
+
+    for event in events.iter_mut() {
+        // Bioavailability scales bolus amounts only.
+        let Event::Bolus(bolus) = event else {
+            continue;
+        };
+        let Some(input) = bolus.input_index() else {
+            continue;
+        };
+        let fa = fn_fa(&parameters, bolus.time(), covariates);
+        if let Some(&f) = fa.get(&input) {
+            bolus.set_amount(bolus.amount() * f);
+        }
+    }
+}
+
 impl Occasion {
     /// Create a new occasion
     ///
@@ -608,63 +659,6 @@ impl Occasion {
         self.covariates = covariates;
     }
 
-    fn add_lagtime(&mut self, reorder: Option<(&Fa, &Lag, &[f64], &Covariates)>) {
-        let Some((_, fn_lag, parameters, covariates)) = reorder else {
-            // No model context: events are already time-sorted from construction.
-            return;
-        };
-
-        // Build the parameter vector once and reuse it for every dose.
-        let parameters: V = nalgebra::DVector::from_vec(parameters.to_vec()).into();
-        let mut shifted = false;
-
-        for event in self.events.iter_mut() {
-            // Lag time delays boluses only; infusions are never lagged.
-            let Event::Bolus(bolus) = event else {
-                continue;
-            };
-            let Some(input) = bolus.input_index() else {
-                continue;
-            };
-            let lagtime = fn_lag(&parameters, bolus.time(), covariates);
-            if let Some(&l) = lagtime.get(&input) {
-                if l != 0.0 {
-                    *bolus.mut_time() += l;
-                    shifted = true;
-                }
-            }
-        }
-
-        // Re-sort only when a lag actually moved an event; the events were
-        // already sorted at construction time, so an unchanged pass stays sorted.
-        if shifted {
-            self.sort();
-        }
-    }
-
-    fn add_bioavailability(&mut self, reorder: Option<(&Fa, &Lag, &[f64], &Covariates)>) {
-        let Some((fn_fa, _, parameters, covariates)) = reorder else {
-            return;
-        };
-
-        // Build the parameter vector once and reuse it for every dose.
-        let parameters: V = nalgebra::DVector::from_vec(parameters.to_vec()).into();
-
-        for event in self.events.iter_mut() {
-            // Bioavailability scales bolus amounts only.
-            let Event::Bolus(bolus) = event else {
-                continue;
-            };
-            let Some(input) = bolus.input_index() else {
-                continue;
-            };
-            let fa = fn_fa(&parameters, bolus.time(), covariates);
-            if let Some(&f) = fa.get(&input) {
-                bolus.set_amount(bolus.amount() * f);
-            }
-        }
-    }
-
     /// Sort by time, placing observations before doses at equal times.
     pub(crate) fn sort(&mut self) {
         self.events.sort_by(Event::cmp_time_then_type);
@@ -682,11 +676,11 @@ impl Occasion {
         &self,
         reorder: Option<(&Fa, &Lag, &[f64], &Covariates)>,
     ) -> Vec<Event> {
-        let mut occ = self.clone();
-        occ.add_lagtime(reorder);
-        occ.add_bioavailability(reorder);
-
-        occ.events
+        let mut events = self.events.clone();
+        if let Some((fa, lag, parameters, covariates)) = reorder {
+            apply_dose_adjustments(&mut events, fa, lag, parameters, covariates);
+        }
+        events
     }
 
     /// Get a reference to the  covariates for this occasion
