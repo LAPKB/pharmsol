@@ -1250,7 +1250,7 @@ fn state_address(
 /// lower steps and want the JIT backend directly instead of the higher-level
 /// runtime facade.
 ///
-/// This function requires the `dsl-jit` feature.
+/// This function requires the `dsl` feature.
 ///
 /// ```rust,no_run
 /// use pharmsol::dsl::{

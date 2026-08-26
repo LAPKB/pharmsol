@@ -5,7 +5,7 @@ mod closure;
 ///
 /// This helper is shared by the legacy JIT path and the native
 /// runtime wrappers.
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 pub(crate) mod closure_helpers {
     pub(crate) use super::closure::PMProblem;
 }

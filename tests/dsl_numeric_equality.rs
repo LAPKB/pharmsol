@@ -1,9 +1,6 @@
 //! Regression coverage for numeric equality in the DSL runtime.
 
-#![cfg(any(
-    feature = "dsl-jit",
-    all(feature = "dsl-aot", feature = "dsl-aot-load")
-))]
+#![cfg(feature = "dsl")]
 
 use pharmsol::dsl::{
     compile_module_source_to_runtime, CompiledRuntimeModel, RuntimeCompilationTarget,
@@ -81,7 +78,7 @@ fn assert_numeric_equality_results(model: &CompiledRuntimeModel) {
     }
 }
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 #[test]
 fn numeric_equality_selects_real_covariate_branches_under_jit() {
     let model = compile_module_source_to_runtime(
@@ -91,27 +88,6 @@ fn numeric_equality_selects_real_covariate_branches_under_jit() {
         |_, _| {},
     )
     .expect("compile numeric equality model with JIT");
-
-    assert_numeric_equality_results(&model);
-}
-
-#[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]
-#[test]
-fn numeric_equality_matches_native_aot() {
-    use pharmsol::dsl::NativeAotCompileOptions;
-    use tempfile::tempdir;
-
-    let work_dir = tempdir().expect("temporary AOT workspace");
-    let model = compile_module_source_to_runtime(
-        MODEL_SOURCE,
-        Some("numeric_equality"),
-        RuntimeCompilationTarget::NativeAot(
-            NativeAotCompileOptions::new(work_dir.path().join("build"))
-                .with_output(work_dir.path().join("numeric_equality.pkm")),
-        ),
-        |_, _| {},
-    )
-    .expect("compile numeric equality model with native AOT");
 
     assert_numeric_equality_results(&model);
 }

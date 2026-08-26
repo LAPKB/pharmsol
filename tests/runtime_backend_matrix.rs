@@ -1,7 +1,7 @@
 #[path = "support/runtime_corpus.rs"]
 mod runtime_corpus;
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 mod tests {
     use super::runtime_corpus::{self as corpus, CorpusCase};
     use pharmsol::dsl::RuntimeBackend;

@@ -29,16 +29,13 @@
 //!
 //! Feature map:
 //!
-//! - `dsl-core`: enables this facade and the compiler re-exports from
-//!   `pharmsol-dsl`.
-//! - `dsl-jit`: enables in-process JIT compilation through
+//! - `dsl`: enables this facade, the compiler re-exports from `pharmsol-dsl`,
+//!   and in-process JIT compilation through
 //!   [`compile_module_source_to_runtime`] with
 //!   [`RuntimeCompilationTarget::Jit`], plus the lower-level JIT compile
 //!   entrypoints.
 //!
 //! Smallest compile-to-runtime example:
-//!
-//! This example requires `dsl-jit`.
 //!
 //! ```rust,no_run
 //! use pharmsol::dsl::{compile_module_source_to_runtime, RuntimeCompilationTarget};
@@ -72,28 +69,22 @@
 //! `pharmsol-dsl`. For a complete runtime path inside the main crate, stay in
 //! [`pharmsol::dsl`](self).
 
-#[cfg(feature = "dsl-jit")]
 mod jit;
 mod model_info;
-#[cfg(feature = "dsl-jit")]
 mod native;
-#[cfg(feature = "dsl-jit")]
 mod runtime;
 
-#[cfg(feature = "dsl-jit")]
 pub use jit::{
     compile_analytical_model_to_jit, compile_execution_artifact, compile_execution_model_to_jit,
     compile_ode_model_to_jit, compile_sde_model_to_jit, CompiledJitModel, JitAnalyticalModel,
     JitCompileError, JitExecutionArtifact, JitOdeModel, JitSdeModel,
 };
 pub use model_info::{NativeCovariateInfo, NativeModelInfo, NativeOutputInfo, NativeRouteInfo};
-#[cfg(feature = "dsl-jit")]
 pub use native::{
     CompiledModelFunction, CompiledNativeModel, NativeAnalyticalModel, NativeExecutionArtifact,
     NativeOdeModel, NativeSdeModel, RuntimeBackend,
 };
 pub use pharmsol_dsl::*;
-#[cfg(feature = "dsl-jit")]
 pub use runtime::{
     compile_execution_model_to_runtime, compile_module_source_to_runtime, CompiledRuntimeModel,
     RuntimeAnalyticalModel, RuntimeCompilationTarget, RuntimeCovariateInfo, RuntimeError,

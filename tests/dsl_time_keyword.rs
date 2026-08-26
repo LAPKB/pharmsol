@@ -2,7 +2,7 @@
 //! current simulation time and flows correctly through analysis, execution
 //! compilation, and the JIT backend.
 
-#![cfg(feature = "dsl-jit")]
+#![cfg(feature = "dsl")]
 
 use pharmsol::dsl::{compile_module_source_to_runtime, RuntimeCompilationTarget};
 use pharmsol::{prelude::*, Parameters};
@@ -76,7 +76,7 @@ fn assert_time_echo_matches_observation_times(
 }
 
 #[test]
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 fn t_keyword_reflects_the_current_simulation_time_jit() -> Result<(), Box<dyn std::error::Error>> {
     let model = compile_module_source_to_runtime(
         MODEL_SOURCE,

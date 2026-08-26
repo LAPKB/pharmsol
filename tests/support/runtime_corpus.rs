@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-#![cfg(feature = "dsl-jit")]
+#![cfg(feature = "dsl")]
 
 use std::error::Error;
 use std::io;
@@ -397,7 +397,7 @@ fn adjust_runtime_model(case: CorpusCase, model: CompiledRuntimeModel) -> Compil
     }
 }
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 pub fn compile_runtime_jit_model(case: CorpusCase) -> Result<CompiledRuntimeModel, Box<dyn Error>> {
     Ok(adjust_runtime_model(
         case,

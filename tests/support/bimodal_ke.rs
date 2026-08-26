@@ -44,7 +44,7 @@ pub fn subject() -> Subject {
     subject_for_labels("iv", "cp")
 }
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 pub fn subject_for_runtime_model(model: &pharmsol::dsl::CompiledRuntimeModel) -> Subject {
     let route_label = if model.info().routes.iter().any(|route| route.name == "iv") {
         "iv"
@@ -158,7 +158,7 @@ pub fn report_subject_predictions(
     report_values(label, &values, tolerance)
 }
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 pub fn report_runtime_model(
     label: &str,
     model: &pharmsol::dsl::CompiledRuntimeModel,
@@ -174,7 +174,7 @@ pub fn report_runtime_model(
     report_subject_predictions(label, &predictions, tolerance)
 }
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 pub fn compile_runtime_jit_model() -> Result<pharmsol::dsl::CompiledRuntimeModel, Box<dyn Error>> {
     Ok(pharmsol::dsl::compile_module_source_to_runtime(
         AUTHORING_DSL,

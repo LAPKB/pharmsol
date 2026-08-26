@@ -24,7 +24,7 @@
 //!
 //! Smallest compile-and-run example:
 //!
-//! This example requires `dsl-jit`.
+//! This example requires `dsl`.
 //!
 //! ```rust,no_run
 //! use pharmsol::dsl::{compile_module_source_to_runtime, RuntimeCompilationTarget};
@@ -70,7 +70,6 @@ use std::fmt;
 use ndarray::Array2;
 use thiserror::Error;
 
-#[cfg(feature = "dsl-jit")]
 use super::jit::{compile_execution_model_to_jit, JitCompileError};
 use super::native::{
     CompiledNativeModel, NativeAnalyticalModel, NativeCovariateInfo, NativeModelInfo,
@@ -103,7 +102,6 @@ pub type RuntimeSdeModel = NativeSdeModel;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeCompilationTarget {
     /// Compile and execute the model inside the current native process.
-    #[cfg(feature = "dsl-jit")]
     Jit,
 }
 
@@ -228,7 +226,6 @@ pub enum RuntimeError {
     Lowering(#[source] CompileError),
     #[error("{0}")]
     ModelSelection(String),
-    #[cfg(feature = "dsl-jit")]
     #[error(transparent)]
     Jit(#[from] JitCompileError),
     #[error(transparent)]
@@ -241,7 +238,6 @@ impl RuntimeError {
             Self::Parse(error) => Some(error.diagnostic()),
             Self::Semantic(error) => Some(error.diagnostic()),
             Self::Lowering(error) => Some(error.diagnostic()),
-            #[cfg(feature = "dsl-jit")]
             Self::Jit(error) => Some(error.diagnostic()),
             _ => None,
         }
@@ -257,7 +253,6 @@ impl RuntimeError {
             Self::Parse(error) => Some(error.diagnostic_report(source_name)),
             Self::Semantic(error) => Some(error.diagnostic_report(source_name)),
             Self::Lowering(error) => Some(error.diagnostic_report(source_name)),
-            #[cfg(feature = "dsl-jit")]
             Self::Jit(error) => Some(error.diagnostic_report(source_name)),
             _ => None,
         }
@@ -270,7 +265,6 @@ impl fmt::Debug for RuntimeError {
             Self::Parse(error) => fmt::Display::fmt(error, f),
             Self::Semantic(error) => fmt::Display::fmt(error, f),
             Self::Lowering(error) => fmt::Display::fmt(error, f),
-            #[cfg(feature = "dsl-jit")]
             Self::Jit(error) => fmt::Display::fmt(error, f),
             _ => fmt::Display::fmt(self, f),
         }
@@ -311,7 +305,6 @@ pub fn compile_module_source_to_runtime(
     let execution = compile_analyzed_model(model)
         .map_err(|error| RuntimeError::Lowering(error.with_source(source)))?;
     compile_execution_model_to_runtime(&execution, target, event_callback).map_err(|error| {
-        #[cfg(feature = "dsl-jit")]
         if let RuntimeError::Jit(error) = error {
             return RuntimeError::Jit(error.with_source(source));
         }
@@ -329,7 +322,6 @@ pub fn compile_execution_model_to_runtime(
     event_callback: impl Fn(String, String) + Send + Sync + 'static,
 ) -> Result<CompiledRuntimeModel, RuntimeError> {
     match target {
-        #[cfg(feature = "dsl-jit")]
         RuntimeCompilationTarget::Jit => {
             event_callback(
                 "started".into(),
@@ -345,7 +337,7 @@ pub fn compile_execution_model_to_runtime(
     }
 }
 
-#[cfg(all(test, feature = "dsl-jit"))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::dsl::compile_sde_model_to_jit;

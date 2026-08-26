@@ -5,9 +5,9 @@
 //! to estimate predictions — no recompilation of the host binary needed.
 //!
 //! Run with:
-//! cargo run --example dsl_runtime_jit --features dsl-jit
+//! cargo run --example dsl_runtime_jit --features dsl
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     use std::io;
 
@@ -81,8 +81,8 @@ out(cp) = central / v
     Ok(())
 }
 
-#[cfg(not(feature = "dsl-jit"))]
+#[cfg(not(feature = "dsl"))]
 fn main() {
-    eprintln!("Run with: cargo run --example bimodal_ke_dsl_runtime_jit --features dsl-jit");
+    eprintln!("Run with: cargo run --example bimodal_ke_dsl_runtime_jit --features dsl");
     std::process::exit(1);
 }

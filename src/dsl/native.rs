@@ -9,7 +9,6 @@ use nalgebra::DVector;
 use ndarray::{concatenate, Array2, Axis};
 use rayon::prelude::*;
 
-#[cfg(feature = "dsl-jit")]
 use cranelift_jit::JITModule;
 use pharmsol_dsl::execution::ModelFunctionKind;
 use pharmsol_dsl::{
@@ -57,7 +56,6 @@ const DEFAULT_ODE_ATOL: f64 = 1e-4;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RuntimeBackend {
-    #[cfg(feature = "dsl-jit")]
     Jit,
 }
 
@@ -82,21 +80,15 @@ pub(crate) trait RuntimeArtifact: Send + Sync + std::fmt::Debug {
     fn start_session(&self) -> Result<Box<dyn FunctionSession + '_>, PharmsolError>;
 }
 
-#[allow(dead_code)]
 enum NativeArtifactOwner {
-    #[cfg(feature = "dsl-jit")]
-    Jit(Box<JITModule>),
+    /// Held only to keep the JIT-allocated code alive for the artifact's lifetime.
+    Jit(#[allow(dead_code)] Box<JITModule>),
 }
 
 impl std::fmt::Debug for NativeArtifactOwner {
-    fn fmt(&self, _f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            #[cfg(feature = "dsl-jit")]
-            Self::Jit(_) => _f.write_str("NativeArtifactOwner::Jit(..)"),
-            #[cfg(not(feature = "dsl-jit"))]
-            _ => unreachable!(
-                "native artifact owner should only exist for supported native backends"
-            ),
+            Self::Jit(_) => f.write_str("NativeArtifactOwner::Jit(..)"),
         }
     }
 }
@@ -111,7 +103,7 @@ pub struct NativeExecutionArtifact {
     pub diffusion: Option<CompiledModelFunction>,
     pub route_lag: Option<CompiledModelFunction>,
     pub route_bioavailability: Option<CompiledModelFunction>,
-    _owner: Option<NativeArtifactOwner>,
+    _owner: NativeArtifactOwner,
 }
 
 unsafe impl Send for NativeExecutionArtifact {}
@@ -137,7 +129,6 @@ impl std::fmt::Debug for NativeExecutionArtifact {
 }
 
 impl NativeExecutionArtifact {
-    #[cfg(feature = "dsl-jit")]
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn from_jit_module(
         model_name: String,
@@ -161,7 +152,7 @@ impl NativeExecutionArtifact {
             diffusion,
             route_lag,
             route_bioavailability,
-            _owner: Some(NativeArtifactOwner::Jit(Box::new(module))),
+            _owner: NativeArtifactOwner::Jit(Box::new(module)),
         }
     }
 }
@@ -208,9 +199,7 @@ impl FunctionSession for NativeFunctionSession<'_> {
 impl RuntimeArtifact for NativeExecutionArtifact {
     fn backend(&self) -> RuntimeBackend {
         match &self._owner {
-            #[cfg(feature = "dsl-jit")]
-            Some(NativeArtifactOwner::Jit(_)) => RuntimeBackend::Jit,
-            _ => unreachable!("native execution artifacts should always retain a supported owner"),
+            NativeArtifactOwner::Jit(_) => RuntimeBackend::Jit,
         }
     }
 

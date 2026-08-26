@@ -110,7 +110,7 @@ see [docs/analytical-authoring-migration.md](docs/analytical-authoring-migration
 ## DSL and Runtime Targets
 
 If the model needs to be loaded or compiled at runtime, pharmsol also provides a DSL with
-the same broad modeling coverage: ODE, analytical, and SDE authoring. Enable the `dsl-jit`
+the same broad modeling coverage: ODE, analytical, and SDE authoring. Enable the `dsl`
 feature to compile DSL source into a runtime model inside the current process.
 
 See [examples/dsl_runtime_jit.rs](examples/dsl_runtime_jit.rs) for the in-repo JIT flow and

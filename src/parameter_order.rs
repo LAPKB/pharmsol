@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 
-#[cfg(feature = "dsl-core")]
+#[cfg(feature = "dsl")]
 use crate::dsl::NativeModelInfo;
 use crate::simulator::equation::ValidatedModelMetadata;
 
@@ -105,7 +105,7 @@ impl ParameterOrderPlan {
         )
     }
 
-    #[cfg(feature = "dsl-core")]
+    #[cfg(feature = "dsl")]
     pub(crate) fn from_runtime_info<S>(
         info: &NativeModelInfo,
         source_names: S,
@@ -201,10 +201,10 @@ impl Error for ParameterOrderError {}
 mod tests {
     use super::{ParameterOrderError, ParameterOrderPlan};
 
-    #[cfg(feature = "dsl-core")]
+    #[cfg(feature = "dsl")]
     use crate::dsl::NativeModelInfo;
     use crate::{metadata, ModelKind};
-    #[cfg(feature = "dsl-core")]
+    #[cfg(feature = "dsl")]
     use pharmsol_dsl::ModelKind as DslModelKind;
 
     #[test]
@@ -316,7 +316,7 @@ mod tests {
         assert_eq!(plan.reorder_values(&[0.3, 0.1]).unwrap(), vec![0.1, 0.3]);
     }
 
-    #[cfg(feature = "dsl-core")]
+    #[cfg(feature = "dsl")]
     #[test]
     fn runtime_info_wrapper_uses_declared_parameter_order() {
         let info = NativeModelInfo {
