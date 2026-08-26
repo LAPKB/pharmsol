@@ -6,7 +6,7 @@ use std::io;
 
 use diffsol::Vector;
 use ndarray::Array2;
-use pharmsol::dsl::{self, CompiledRuntimeModel, RuntimeCompilationTarget, RuntimePredictions};
+use pharmsol::dsl::{self, CompiledRuntimeModel, RuntimePredictions};
 use pharmsol::prelude::{
     one_compartment_with_absorption, Equation, Prediction, SubjectPredictions,
 };
@@ -401,12 +401,7 @@ fn adjust_runtime_model(case: CorpusCase, model: CompiledRuntimeModel) -> Compil
 pub fn compile_runtime_jit_model(case: CorpusCase) -> Result<CompiledRuntimeModel, Box<dyn Error>> {
     Ok(adjust_runtime_model(
         case,
-        dsl::compile_module_source_to_runtime(
-            case.source(),
-            Some(case.model_name()),
-            RuntimeCompilationTarget::Jit,
-            |_, _| {},
-        )?,
+        dsl::compile_module_source_to_runtime(case.source(), Some(case.model_name()), |_, _| {})?,
     ))
 }
 

@@ -179,7 +179,6 @@ pub fn compile_runtime_jit_model() -> Result<pharmsol::dsl::CompiledRuntimeModel
     Ok(pharmsol::dsl::compile_module_source_to_runtime(
         AUTHORING_DSL,
         Some(MODEL_NAME),
-        pharmsol::dsl::RuntimeCompilationTarget::Jit,
         |_, _| {},
     )?)
 }

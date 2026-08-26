@@ -2,9 +2,7 @@
 
 #![cfg(feature = "dsl")]
 
-use pharmsol::dsl::{
-    compile_module_source_to_runtime, CompiledRuntimeModel, RuntimeCompilationTarget,
-};
+use pharmsol::dsl::{compile_module_source_to_runtime, CompiledRuntimeModel};
 use pharmsol::{prelude::*, Parameters};
 
 const MODEL_SOURCE: &str = r#"
@@ -81,13 +79,8 @@ fn assert_numeric_equality_results(model: &CompiledRuntimeModel) {
 #[cfg(feature = "dsl")]
 #[test]
 fn numeric_equality_selects_real_covariate_branches_under_jit() {
-    let model = compile_module_source_to_runtime(
-        MODEL_SOURCE,
-        Some("numeric_equality"),
-        RuntimeCompilationTarget::Jit,
-        |_, _| {},
-    )
-    .expect("compile numeric equality model with JIT");
+    let model = compile_module_source_to_runtime(MODEL_SOURCE, Some("numeric_equality"), |_, _| {})
+        .expect("compile numeric equality model with JIT");
 
     assert_numeric_equality_results(&model);
 }

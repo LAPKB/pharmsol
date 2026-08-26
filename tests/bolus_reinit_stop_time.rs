@@ -12,9 +12,7 @@ use pharmsol::prelude::*;
 use pharmsol::Cache;
 
 #[cfg(feature = "dsl")]
-use pharmsol::dsl::{
-    compile_module_source_to_runtime, CompiledRuntimeModel, RuntimeCompilationTarget,
-};
+use pharmsol::dsl::{compile_module_source_to_runtime, CompiledRuntimeModel};
 
 const OBSERVATION_TIMES: [f64; 15] = [
     0.0,
@@ -433,7 +431,6 @@ fn jit_solvers_restart_with_post_infusion_rhs() -> Result<(), Box<dyn std::error
         let compiled = compile_module_source_to_runtime(
             INFUSION_DSL_MODEL,
             Some("accepted_infusion_boundary"),
-            RuntimeCompilationTarget::Jit,
             |_, _| {},
         )?;
         let model = match compiled {
@@ -511,7 +508,6 @@ fn jit_solvers_integrate_material_short_infusions() -> Result<(), Box<dyn std::e
         let compiled = compile_module_source_to_runtime(
             INFUSION_DSL_MODEL,
             Some("accepted_infusion_boundary"),
-            RuntimeCompilationTarget::Jit,
             |_, _| {},
         )?;
         let model = match compiled {
@@ -541,12 +537,8 @@ fn jit_solvers_integrate_material_short_infusions() -> Result<(), Box<dyn std::e
 fn jit_solvers_accept_reached_stop_after_bolus_restarts() -> Result<(), Box<dyn std::error::Error>>
 {
     for (label, solver) in solver_cases() {
-        let compiled = compile_module_source_to_runtime(
-            DSL_MODEL,
-            Some("bolus_reinit_stop_time"),
-            RuntimeCompilationTarget::Jit,
-            |_, _| {},
-        )?;
+        let compiled =
+            compile_module_source_to_runtime(DSL_MODEL, Some("bolus_reinit_stop_time"), |_, _| {})?;
         let model = match compiled {
             CompiledRuntimeModel::Ode(model) => {
                 CompiledRuntimeModel::Ode(model.with_solver(solver))
@@ -575,12 +567,8 @@ fn jit_solvers_accept_reached_stop_after_bolus_restarts() -> Result<(), Box<dyn 
 #[cfg(feature = "dsl")]
 fn jit_bdf_restores_crushed_timestep_after_successful_stop(
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let compiled = compile_module_source_to_runtime(
-        DSL_MODEL,
-        Some("bolus_reinit_stop_time"),
-        RuntimeCompilationTarget::Jit,
-        |_, _| {},
-    )?;
+    let compiled =
+        compile_module_source_to_runtime(DSL_MODEL, Some("bolus_reinit_stop_time"), |_, _| {})?;
     let model = match compiled {
         CompiledRuntimeModel::Ode(model) => {
             CompiledRuntimeModel::Ode(model.with_solver(OdeSolver::Bdf).disable_cache())
@@ -891,7 +879,6 @@ fn jit_large_initial_times_preserve_absolute_time_callbacks(
     let compiled = compile_module_source_to_runtime(
         ABSOLUTE_TIME_DSL_MODEL,
         Some("absolute_time_close_gap"),
-        RuntimeCompilationTarget::Jit,
         |_, _| {},
     )?;
     assert_runtime_large_initial_times_absolute_time("JIT", &compiled);
@@ -905,7 +892,6 @@ fn jit_rebase_after_large_event_preserves_absolute_time_rhs(
     let compiled = compile_module_source_to_runtime(
         REBASE_ABSOLUTE_TIME_DSL_MODEL,
         Some("rebase_absolute_time_close_gap"),
-        RuntimeCompilationTarget::Jit,
         |_, _| {},
     )?;
     assert_runtime_rebase_after_large_event("JIT", &compiled);
@@ -919,7 +905,6 @@ fn jit_close_distinct_stops_do_not_silently_skip_dynamics() -> Result<(), Box<dy
     let compiled = compile_module_source_to_runtime(
         CLOSE_GAP_DSL_MODEL,
         Some("close_gap_exponential"),
-        RuntimeCompilationTarget::Jit,
         |_, _| {},
     )?;
     assert_runtime_close_gaps("JIT", &compiled);
@@ -930,12 +915,8 @@ fn jit_close_distinct_stops_do_not_silently_skip_dynamics() -> Result<(), Box<dy
 #[test]
 fn jit_locf_rhs_change_matches_piecewise_analytical_integral(
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let compiled = compile_module_source_to_runtime(
-        LOCF_DSL_MODEL,
-        Some("locf_integral"),
-        RuntimeCompilationTarget::Jit,
-        |_, _| {},
-    )?;
+    let compiled =
+        compile_module_source_to_runtime(LOCF_DSL_MODEL, Some("locf_integral"), |_, _| {})?;
     assert_runtime_locf_integral("JIT", &compiled);
     Ok(())
 }

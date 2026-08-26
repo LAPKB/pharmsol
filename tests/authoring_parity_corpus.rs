@@ -1,7 +1,7 @@
 #[cfg(feature = "dsl")]
 use approx::assert_relative_eq;
 #[cfg(feature = "dsl")]
-use pharmsol::dsl::{self, RuntimeCompilationTarget, RuntimePredictions};
+use pharmsol::dsl::{self, RuntimePredictions};
 #[cfg(feature = "dsl")]
 use pharmsol::equation::RouteInputPolicy;
 use pharmsol::equation::{
@@ -382,13 +382,8 @@ fn load_execution_model(src: &str) -> ExecutionModel {
 
 #[cfg(feature = "dsl")]
 fn compile_runtime_jit_model(src: &str, model_name: &str) -> dsl::CompiledRuntimeModel {
-    dsl::compile_module_source_to_runtime(
-        src,
-        Some(model_name),
-        RuntimeCompilationTarget::Jit,
-        |_, _| {},
-    )
-    .expect("DSL runtime model should compile")
+    dsl::compile_module_source_to_runtime(src, Some(model_name), |_, _| {})
+        .expect("DSL runtime model should compile")
 }
 
 #[cfg(feature = "dsl")]
@@ -498,7 +493,7 @@ fn dsl_metadata_view(src: &str) -> MetadataParityView {
 #[cfg(feature = "dsl")]
 fn dsl_route_input_policy_view(src: &str) -> Vec<RouteInputPolicyParity> {
     let model = load_execution_model(src);
-    let info = dsl::NativeModelInfo::from_execution_model(&model);
+    let info = dsl::RuntimeModelInfo::from_execution_model(&model);
 
     info.routes
         .into_iter()

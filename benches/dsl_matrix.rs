@@ -13,8 +13,8 @@ use std::time::Duration;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, SamplingMode};
 
 use pharmsol::dsl::{
-    compile_module_source_to_runtime, CompiledRuntimeModel, NativeAnalyticalModel, NativeOdeModel,
-    NativeSdeModel, RuntimeCompilationTarget,
+    compile_module_source_to_runtime, CompiledRuntimeModel, RuntimeAnalyticalModel,
+    RuntimeOdeModel, RuntimeSdeModel,
 };
 use pharmsol::prelude::*;
 use pharmsol::{Cache, Parameters};
@@ -68,57 +68,54 @@ impl CacheState {
 fn compile_runtime(workload: Workload, kind: SolverKind, backend: Backend) -> CompiledRuntimeModel {
     let source = dsl_source(workload, kind);
     let name = dsl_model_name(workload, kind);
-    let target = match backend {
-        Backend::Jit => RuntimeCompilationTarget::Jit,
-    };
-    compile_module_source_to_runtime(source, Some(name), target, |_, _| {})
+    compile_module_source_to_runtime(source, Some(name), |_, _| {})
         .unwrap_or_else(|e| panic!("compile {} via {} failed: {e:?}", name, backend.label()))
 }
 
-fn compile_ode(workload: Workload, backend: Backend) -> NativeOdeModel {
+fn compile_ode(workload: Workload, backend: Backend) -> RuntimeOdeModel {
     match compile_runtime(workload, SolverKind::Ode, backend) {
         CompiledRuntimeModel::Ode(model) => model,
         other => panic!(
             "expected Ode model for {}, got {:?}",
             workload.label(),
-            other.backend()
+            other.kind()
         ),
     }
 }
 
-fn compile_analytical(workload: Workload, backend: Backend) -> NativeAnalyticalModel {
+fn compile_analytical(workload: Workload, backend: Backend) -> RuntimeAnalyticalModel {
     match compile_runtime(workload, SolverKind::Analytical, backend) {
         CompiledRuntimeModel::Analytical(model) => model,
         other => panic!(
             "expected Analytical model for {}, got {:?}",
             workload.label(),
-            other.backend()
+            other.kind()
         ),
     }
 }
 
-fn compile_sde(workload: Workload, backend: Backend) -> NativeSdeModel {
+fn compile_sde(workload: Workload, backend: Backend) -> RuntimeSdeModel {
     match compile_runtime(workload, SolverKind::Sde, backend) {
         CompiledRuntimeModel::Sde(model) => model,
         other => panic!(
             "expected Sde model for {}, got {:?}",
             workload.label(),
-            other.backend()
+            other.kind()
         ),
     }
 }
 
-fn ode_parameters(model: &NativeOdeModel, workload: Workload) -> Parameters {
+fn ode_parameters(model: &RuntimeOdeModel, workload: Workload) -> Parameters {
     Parameters::with_model(model, named_params(workload, SolverKind::Ode))
         .expect("DSL ODE bench parameters should validate")
 }
 
-fn analytical_parameters(model: &NativeAnalyticalModel, workload: Workload) -> Parameters {
+fn analytical_parameters(model: &RuntimeAnalyticalModel, workload: Workload) -> Parameters {
     Parameters::with_model(model, named_params(workload, SolverKind::Analytical))
         .expect("DSL analytical bench parameters should validate")
 }
 
-fn sde_parameters(model: &NativeSdeModel, workload: Workload) -> Parameters {
+fn sde_parameters(model: &RuntimeSdeModel, workload: Workload) -> Parameters {
     Parameters::with_model(model, named_params(workload, SolverKind::Sde))
         .expect("DSL SDE bench parameters should validate")
 }

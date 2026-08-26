@@ -4,7 +4,7 @@ mod runtime_corpus;
 #[cfg(feature = "dsl")]
 mod tests {
     use super::runtime_corpus::{self as corpus, CorpusCase};
-    use pharmsol::dsl::{CompiledRuntimeModel, RuntimeBackend};
+    use pharmsol::dsl::CompiledRuntimeModel;
 
     fn owned_names(names: &[&str]) -> Vec<String> {
         names.iter().map(|name| (*name).to_owned()).collect()
@@ -125,7 +125,6 @@ mod tests {
         assert_public_shape: fn(&CompiledRuntimeModel),
     ) -> Result<(), Box<dyn std::error::Error>> {
         let jit = corpus::compile_runtime_jit_model(case)?;
-        assert_eq!(jit.backend(), RuntimeBackend::Jit);
         assert_public_shape(&jit);
         corpus::assert_runtime_model_matches_reference(case, "runtime-jit", &jit)?;
 

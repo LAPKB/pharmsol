@@ -17,17 +17,10 @@
 //! - [`CompiledRuntimeModel::estimate_predictions`] for backend-neutral
 //!   execution against a [`Subject`](crate::Subject).
 //!
-//! Backend choice guide:
-//!
-//! - [`RuntimeCompilationTarget::Jit`] keeps compilation and execution inside
-//!   the current process.
-//!
 //! Smallest compile-and-run example:
 //!
-//! This example requires `dsl`.
-//!
 //! ```rust,no_run
-//! use pharmsol::dsl::{compile_module_source_to_runtime, RuntimeCompilationTarget};
+//! use pharmsol::dsl::compile_module_source_to_runtime;
 //! use pharmsol::{Parameters, prelude::*};
 //!
 //! let source = r#"
@@ -47,7 +40,6 @@
 //! let model = compile_module_source_to_runtime(
 //!     source,
 //!     Some("bimodal_ke"),
-//!     RuntimeCompilationTarget::Jit,
 //!     |_, _| {},
 //! )?;
 //!
@@ -70,12 +62,9 @@ use std::fmt;
 use ndarray::Array2;
 use thiserror::Error;
 
+use super::backend::{RuntimeAnalyticalModel, RuntimeOdeModel, RuntimeSdeModel};
 use super::jit::{compile_execution_model_to_jit, JitCompileError};
-use super::native::{
-    CompiledNativeModel, NativeAnalyticalModel, NativeCovariateInfo, NativeModelInfo,
-    NativeOdeModel, NativeOutputInfo, NativeRouteInfo, NativeSdeModel, NativeStateInfo,
-    RuntimeBackend,
-};
+use super::model_info::RuntimeModelInfo;
 use crate::{
     simulator::likelihood::{Prediction, SubjectPredictions},
     Parameters, PharmsolError, Subject, ValidatedModelMetadata,
@@ -84,26 +73,6 @@ use pharmsol_dsl::{
     analyze_module, compile_analyzed_model, parse_module, AnalysisError, CompileError, Diagnostic,
     DiagnosticReport, ExecutionModel, ModelKind, ParseError,
 };
-
-pub type RuntimeModelInfo = NativeModelInfo;
-pub type RuntimeCovariateInfo = NativeCovariateInfo;
-pub type RuntimeStateInfo = NativeStateInfo;
-pub type RuntimeRouteInfo = NativeRouteInfo;
-pub type RuntimeOutputInfo = NativeOutputInfo;
-pub type RuntimeOdeModel = NativeOdeModel;
-pub type RuntimeAnalyticalModel = NativeAnalyticalModel;
-pub type RuntimeSdeModel = NativeSdeModel;
-
-/// Selects which backend should produce the executable runtime model.
-///
-/// This enum is the main backend-switching point for
-/// [`compile_module_source_to_runtime`] and
-/// [`compile_execution_model_to_runtime`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RuntimeCompilationTarget {
-    /// Compile and execute the model inside the current native process.
-    Jit,
-}
 
 /// Backend-neutral prediction output from a compiled runtime model.
 ///
@@ -156,25 +125,7 @@ pub enum CompiledRuntimeModel {
     Sde(RuntimeSdeModel),
 }
 
-impl From<CompiledNativeModel> for CompiledRuntimeModel {
-    fn from(value: CompiledNativeModel) -> Self {
-        match value {
-            CompiledNativeModel::Ode(model) => Self::Ode(model),
-            CompiledNativeModel::Analytical(model) => Self::Analytical(model),
-            CompiledNativeModel::Sde(model) => Self::Sde(model),
-        }
-    }
-}
-
 impl CompiledRuntimeModel {
-    pub fn backend(&self) -> RuntimeBackend {
-        match self {
-            Self::Ode(model) => model.backend(),
-            Self::Analytical(model) => model.backend(),
-            Self::Sde(model) => model.backend(),
-        }
-    }
-
     pub fn info(&self) -> &RuntimeModelInfo {
         match self {
             Self::Ode(model) => model.info(),
@@ -278,7 +229,6 @@ impl fmt::Debug for RuntimeError {
 pub fn compile_module_source_to_runtime(
     source: &str,
     model_name: Option<&str>,
-    target: RuntimeCompilationTarget,
     event_callback: impl Fn(String, String) + Send + Sync + 'static,
 ) -> Result<CompiledRuntimeModel, RuntimeError> {
     let parsed =
@@ -304,7 +254,7 @@ pub fn compile_module_source_to_runtime(
 
     let execution = compile_analyzed_model(model)
         .map_err(|error| RuntimeError::Lowering(error.with_source(source)))?;
-    compile_execution_model_to_runtime(&execution, target, event_callback).map_err(|error| {
+    compile_execution_model_to_runtime(&execution, event_callback).map_err(|error| {
         if let RuntimeError::Jit(error) = error {
             return RuntimeError::Jit(error.with_source(source));
         }
@@ -312,29 +262,24 @@ pub fn compile_module_source_to_runtime(
     })
 }
 
-/// Compile a compiled execution model to a selected runtime backend.
+/// Compile a compiled execution model to an executable runtime model.
 ///
 /// Use this when you already own the frontend pipeline and only need the final
 /// backend step.
 pub fn compile_execution_model_to_runtime(
     model: &ExecutionModel,
-    target: RuntimeCompilationTarget,
     event_callback: impl Fn(String, String) + Send + Sync + 'static,
 ) -> Result<CompiledRuntimeModel, RuntimeError> {
-    match target {
-        RuntimeCompilationTarget::Jit => {
-            event_callback(
-                "started".into(),
-                format!("Compiling jit model `{}`", model.name),
-            );
-            let compiled = compile_execution_model_to_jit(model)?;
-            event_callback(
-                "finished".into(),
-                format!("Compiled jit model `{}`", model.name),
-            );
-            Ok(compiled.into())
-        }
-    }
+    event_callback(
+        "started".into(),
+        format!("Compiling jit model `{}`", model.name),
+    );
+    let compiled = compile_execution_model_to_jit(model)?;
+    event_callback(
+        "finished".into(),
+        format!("Compiled jit model `{}`", model.name),
+    );
+    Ok(compiled)
 }
 
 #[cfg(test)]
@@ -484,13 +429,8 @@ out(cp) = central / v ~ continuous()
     }
 
     fn compile_runtime_model(source: &str, model_name: &str) -> CompiledRuntimeModel {
-        compile_module_source_to_runtime(
-            source,
-            Some(model_name),
-            RuntimeCompilationTarget::Jit,
-            |_, _| {},
-        )
-        .expect("compile jit runtime model")
+        compile_module_source_to_runtime(source, Some(model_name), |_, _| {})
+            .expect("compile jit runtime model")
     }
 
     fn compiled_route_input_index(model: &CompiledRuntimeModel, name: &str) -> Option<usize> {
@@ -608,8 +548,6 @@ out(cp) = central / v ~ continuous()
     #[test]
     fn runtime_jit_matches_ode_predictions() {
         let jit = compile_runtime_model(corpus_source(), "one_cmt_oral_iv");
-
-        assert_eq!(jit.backend(), RuntimeBackend::Jit);
         assert_eq!(jit.info().name, "one_cmt_oral_iv");
         assert_eq!(
             jit.info().parameters,
@@ -711,7 +649,6 @@ out(cp) = central / v ~ continuous()
         let model = compile_module_source_to_runtime(
             corpus_source(),
             Some("transit_absorption"),
-            RuntimeCompilationTarget::Jit,
             |_, _| {},
         )
         .expect("compile jit runtime model");
@@ -874,13 +811,8 @@ out(cp) = central / v ~ continuous()
     #[test]
     fn runtime_compile_preserves_parse_diagnostic_structure() {
         let source = "model broken { kind ode outputs { cp = 1 + } }";
-        let error = compile_module_source_to_runtime(
-            source,
-            None,
-            RuntimeCompilationTarget::Jit,
-            |_, _| {},
-        )
-        .expect_err("invalid DSL should fail before runtime compilation");
+        let error = compile_module_source_to_runtime(source, None, |_, _| {})
+            .expect_err("invalid DSL should fail before runtime compilation");
 
         let diagnostic = error
             .diagnostic()

@@ -6,7 +6,7 @@
 //! Predictions from both paths are printed side by side to verify parity.
 //!
 //! Run with:
-//! cargo run --example dsl_jit_analytical_covariates --features dsl
+//! cargo run --example dsl_analytical_covariates --features dsl
 
 #[cfg(feature = "dsl")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -95,6 +95,6 @@ out(cp) = central / v ~ continuous()
 
 #[cfg(not(feature = "dsl"))]
 fn main() {
-    eprintln!("Run with: cargo run --example dsl_jit_analytical_covariates --features dsl");
+    eprintln!("Run with: cargo run --example dsl_analytical_covariates --features dsl");
     std::process::exit(1);
 }

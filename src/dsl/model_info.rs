@@ -10,11 +10,11 @@ use pharmsol_dsl::{AnalyticalKernel, CovariateInterpolation, ModelKind, RouteKin
 
 /// Public metadata extracted from a compiled backend model.
 ///
-/// This is the shared inspection surface returned by the native AoT and
-/// runtime loaders. It keeps public labels and buffer sizes available without
-/// exposing backend-specific function details.
+/// This is the shared inspection surface returned by the runtime loaders. It
+/// keeps public labels and buffer sizes available without exposing
+/// backend-specific function details.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct NativeModelInfo {
+pub struct RuntimeModelInfo {
     /// Public model name.
     pub name: String,
     /// High-level model family.
@@ -25,13 +25,13 @@ pub struct NativeModelInfo {
     #[serde(default)]
     pub derived: Vec<String>,
     /// Declared covariates and their dense runtime indices.
-    pub covariates: Vec<NativeCovariateInfo>,
+    pub covariates: Vec<RuntimeCovariateInfo>,
     /// Declared states together with their dense runtime offsets.
-    pub states: Vec<NativeStateInfo>,
+    pub states: Vec<RuntimeStateInfo>,
     /// Declared routes together with declaration-order and dense runtime indices.
-    pub routes: Vec<NativeRouteInfo>,
+    pub routes: Vec<RuntimeRouteInfo>,
     /// Declared outputs and their dense runtime indices.
-    pub outputs: Vec<NativeOutputInfo>,
+    pub outputs: Vec<RuntimeOutputInfo>,
     /// Length of the state buffer used during execution.
     pub state_len: usize,
     /// Length of the derived-value buffer used during execution.
@@ -48,7 +48,7 @@ pub struct NativeModelInfo {
 
 /// Metadata for one compiled covariate.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct NativeCovariateInfo {
+pub struct RuntimeCovariateInfo {
     /// Public covariate name.
     pub name: String,
     /// Dense runtime covariate index.
@@ -59,7 +59,7 @@ pub struct NativeCovariateInfo {
 
 /// Metadata for one compiled state.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct NativeStateInfo {
+pub struct RuntimeStateInfo {
     /// Public state name.
     pub name: String,
     /// Dense runtime state offset.
@@ -68,7 +68,7 @@ pub struct NativeStateInfo {
 
 /// Metadata for one compiled route.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct NativeRouteInfo {
+pub struct RuntimeRouteInfo {
     /// Public route label.
     pub name: String,
     /// Route position in declaration order.
@@ -93,14 +93,14 @@ pub struct NativeRouteInfo {
 
 /// Metadata for one compiled output.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct NativeOutputInfo {
+pub struct RuntimeOutputInfo {
     /// Public output label.
     pub name: String,
     /// Dense runtime output index.
     pub index: usize,
 }
 
-impl NativeModelInfo {
+impl RuntimeModelInfo {
     /// Build public compiled-model metadata from a compiled execution model.
     pub fn from_execution_model(model: &ExecutionModel) -> Self {
         let explicit_route_input_usage = explicit_route_input_usage(model);
@@ -123,7 +123,7 @@ impl NativeModelInfo {
                 .metadata
                 .covariates
                 .iter()
-                .map(|covariate| NativeCovariateInfo {
+                .map(|covariate| RuntimeCovariateInfo {
                     name: covariate.name.clone(),
                     index: covariate.index,
                     interpolation: covariate.interpolation,
@@ -133,7 +133,7 @@ impl NativeModelInfo {
                 .metadata
                 .states
                 .iter()
-                .map(|state| NativeStateInfo {
+                .map(|state| RuntimeStateInfo {
                     name: state.name.clone(),
                     offset: state.offset,
                 })
@@ -142,7 +142,7 @@ impl NativeModelInfo {
                 .metadata
                 .routes
                 .iter()
-                .map(|route| NativeRouteInfo {
+                .map(|route| RuntimeRouteInfo {
                     name: route.name.clone(),
                     declaration_index: route.declaration_index,
                     index: route.index,
@@ -161,7 +161,7 @@ impl NativeModelInfo {
                 .metadata
                 .outputs
                 .iter()
-                .map(|output| NativeOutputInfo {
+                .map(|output| RuntimeOutputInfo {
                     name: output.name.clone(),
                     index: output.index,
                 })
@@ -263,11 +263,11 @@ mod tests {
     use super::*;
     use pharmsol_dsl::{analyze_model, compile_analyzed_model, parse_model};
 
-    fn load_model_info(src: &str) -> NativeModelInfo {
+    fn load_model_info(src: &str) -> RuntimeModelInfo {
         let model = parse_model(src).expect("model parses");
         let analyzed = analyze_model(&model).expect("model analyzes");
         let compiled = compile_analyzed_model(&analyzed).expect("model lowers");
-        NativeModelInfo::from_execution_model(&compiled)
+        RuntimeModelInfo::from_execution_model(&compiled)
     }
 
     #[test]
