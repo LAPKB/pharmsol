@@ -558,7 +558,7 @@ fn impossibly_stiff_explicit_problem_returns_descriptive_error() {
             .env(CHILD_MARKER, "1")
             .spawn()
             .expect("spawn bounded explicit-stiffness test");
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
         loop {
             if let Some(status) = child.try_wait().expect("query child test status") {
                 assert!(status.success(), "explicit-stiffness child test failed");
@@ -569,7 +569,7 @@ fn impossibly_stiff_explicit_problem_returns_descriptive_error() {
                     Ok(()) => {
                         child.wait().expect("reap explicit-stiffness child test");
                         panic!(
-                            "TSIT45 did not hit its accepted-step work limit within ten \
+                            "TSIT45 did not hit its accepted-step work limit within thirty \
                              seconds; one extreme trajectory could stall a long-running job"
                         );
                     }

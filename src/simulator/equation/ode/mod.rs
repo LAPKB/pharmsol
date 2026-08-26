@@ -50,14 +50,8 @@ pub(crate) const DEFAULT_TSIT45_MAX_ACCEPTED_STEPS_PER_SEGMENT: usize = 500_000;
 /// accepted-step window must cover before the same segment may continue.
 const MIN_TSIT45_PROGRESS_FRACTION_PER_WINDOW: f64 = 1e-4;
 /// Default cumulative dimensionless TSIT45 accepted-step limit for one
-/// `PMProblem`, which corresponds to one subject occasion. The 10,000,000
-/// value is supported by successful calibration: standalone and fresh isolated
-/// Pmetrics matrices both passed 16/16, standalone script2/TSIT45 took
-/// 109.681 s (replay 111.68 s), fresh Pmetrics script2/TSIT45 took 21.079 s,
-/// the watchdog took about 3.2 s, and unmodified script8.R completed 100
-/// cycles with objective 12034.912411317557 and a generated report. These are
-/// calibration evidence, not completion of the remaining audit and acceptance
-/// gates.
+/// `PMProblem` (one subject occasion). Calibrated against long Pmetrics/PMcore
+/// runs; hitting it indicates a stalled trajectory, not normal work.
 pub(crate) const DEFAULT_TSIT45_MAX_ACCEPTED_STEPS_PER_SESSION: usize = 10_000_000;
 
 /// Accepted-step limits configured once for one `PMProblem`/occasion.
@@ -1401,10 +1395,7 @@ where
                     Ok(()) => {
                         if *pending_reinit {
                             reinitialize_at_boundary(solver, dy_scratch);
-                            if let Err(error) = after_step() {
-                                solver.problem().eqn.set_left_continuity_time(None);
-                                return Err(error);
-                            }
+                            after_step()?;
                             *pending_reinit = false;
                         }
                         integrate_to_stop(
@@ -1433,21 +1424,18 @@ where
                             )));
                         }
                         if absolute_state_time > absolute_stop_time {
-                            solver.problem().eqn.set_left_continuity_time(None);
                             return Err(stop_time_before_current_time(
                                 absolute_stop_time,
                                 absolute_state_time,
                             ));
                         }
                         if absolute_state_time == absolute_stop_time {
-                            solver.problem().eqn.set_left_continuity_time(None);
                             if is_discontinuity_boundary {
                                 *pending_reinit = true;
                             }
                             return Ok(());
                         }
                         if rebased {
-                            solver.problem().eqn.set_left_continuity_time(None);
                             ensure_no_material_infusion_is_skipped(
                                 solver,
                                 absolute_state_time,
@@ -1467,15 +1455,11 @@ where
                             absolute_stop_time,
                             dy_scratch,
                         )?;
-                        if let Err(error) = after_step() {
-                            solver.problem().eqn.set_left_continuity_time(None);
-                            return Err(error);
-                        }
+                        after_step()?;
                         *pending_reinit = false;
                         rebased = true;
                     }
                     Err(err) => {
-                        solver.problem().eqn.set_left_continuity_time(None);
                         after_step()?;
                         return Err(solver_error_at_absolute_time(
                             solver,
@@ -1490,11 +1474,10 @@ where
         if short_segment {
             *solver.config_mut().as_base_mut().minimum_timestep = configured_minimum_timestep;
         }
+        // The marker armed above is segment-scoped; this is its only clear.
+        solver.problem().eqn.set_left_continuity_time(None);
         if segment_result.is_ok() {
             restore_timestep_after_successful_stop(solver);
-        }
-        if segment_result.is_err() {
-            solver.problem().eqn.set_left_continuity_time(None);
         }
         segment_result?;
     }
@@ -1505,6 +1488,9 @@ where
 /// Solver failures are returned directly. Retrying every nonlinear or linear
 /// algebra failure can hide structural model errors and has no generally safe,
 /// unit-independent restart step.
+///
+/// The left-continuity marker is owned by [`advance_solver_to_event`], which
+/// clears it after every segment; no exit path here manages it.
 #[allow(clippy::too_many_arguments)]
 fn integrate_to_stop<'a, F, S, H>(
     solver: &mut S,
@@ -1528,12 +1514,8 @@ where
         if solver.problem().eqn.explicit_step_budget_check_due() {
             // Drain callback errors before deciding whether this is a
             // productive window reset or a fail-closed guard error.
-            if let Err(error) = after_step() {
-                solver.problem().eqn.set_left_continuity_time(None);
-                return Err(error);
-            }
+            after_step()?;
             if let Some(error) = solver.problem().eqn.check_explicit_step_budget() {
-                solver.problem().eqn.set_left_continuity_time(None);
                 return Err(error);
             }
         }
@@ -1545,10 +1527,7 @@ where
                     .problem()
                     .eqn
                     .record_explicit_accepted_step(accepted_time);
-                if let Err(error) = after_step() {
-                    solver.problem().eqn.set_left_continuity_time(None);
-                    return Err(error);
-                }
+                after_step()?;
             }
             Ok(OdeSolverStopReason::TstopReached) => {
                 let accepted_time = solver.problem().eqn.absolute_time(solver.state().t);
@@ -1560,11 +1539,8 @@ where
                 // state. In particular, a residual close segment ending at a
                 // covariate or infusion boundary must use the segment on the
                 // left until the exact boundary is reached.
-                if let Err(error) = after_step() {
-                    solver.problem().eqn.set_left_continuity_time(None);
-                    return Err(error);
-                }
-                let reached = match normalize_reached_stop(
+                after_step()?;
+                let reached = normalize_reached_stop(
                     solver,
                     stop_time,
                     absolute_stop_time,
@@ -1573,17 +1549,10 @@ where
                     dy_scratch,
                     rtol,
                     atol,
-                ) {
-                    Ok(reached) => reached,
-                    Err(error) => {
-                        solver.problem().eqn.set_left_continuity_time(None);
-                        return Err(error);
-                    }
-                };
+                )?;
 
                 match reached {
                     ReachedStop::Exact | ReachedStop::Interpolated => {
-                        solver.problem().eqn.set_left_continuity_time(None);
                         if matches!(reached, ReachedStop::Interpolated) {
                             *pending_reinit = true;
                         }
@@ -1596,16 +1565,10 @@ where
                         // `rebase_solver_time` refreshes the RHS and Jacobian;
                         // native callbacks may report an error during that
                         // refresh. Surface it before asking diffsol to accept
-                        // another stop time, and leave the segment cleanup to
-                        // the same restoration path as every other failure.
+                        // another stop time.
                         let configured_minimum_timestep =
                             *solver.config().as_base_ref().minimum_timestep;
-                        if let Err(error) = after_step() {
-                            *solver.config_mut().as_base_mut().minimum_timestep =
-                                configured_minimum_timestep;
-                            solver.problem().eqn.set_left_continuity_time(None);
-                            return Err(error);
-                        }
+                        after_step()?;
                         *solver.config_mut().as_base_mut().minimum_timestep = 0.0;
                         let residual_result = (|| -> Result<(), PharmsolError> {
                             let residual_stop = ensure_solver_stop_coordinates::<F, S, H>(
@@ -1681,9 +1644,6 @@ where
                         })();
                         *solver.config_mut().as_base_mut().minimum_timestep =
                             configured_minimum_timestep;
-                        if residual_result.is_err() {
-                            solver.problem().eqn.set_left_continuity_time(None);
-                        }
                         residual_result?;
                         return Ok(());
                     }
@@ -1695,11 +1655,7 @@ where
                     .problem()
                     .eqn
                     .record_explicit_accepted_step(accepted_time);
-                if let Err(error) = after_step() {
-                    solver.problem().eqn.set_left_continuity_time(None);
-                    return Err(error);
-                }
-                solver.problem().eqn.set_left_continuity_time(None);
+                after_step()?;
                 let absolute_root_time = solver.problem().eqn.absolute_time(root_time);
                 return Err(PharmsolError::OtherError(format!(
                     "solver stopped at an unexpected root at t = {:.4} \
@@ -1710,28 +1666,22 @@ where
             Err(diffsol::error::DiffsolError::OdeSolverError(
                 OdeSolverError::StopTimeAtCurrentTime,
             )) => {
-                if let Err(error) = after_step() {
-                    solver.problem().eqn.set_left_continuity_time(None);
-                    return Err(error);
-                }
+                after_step()?;
                 let state_time = solver.state().t;
                 let absolute_state_time = solver.problem().eqn.absolute_time(state_time);
                 if !state_time.is_finite() || !absolute_state_time.is_finite() {
-                    solver.problem().eqn.set_left_continuity_time(None);
                     return Err(PharmsolError::OtherError(format!(
                         "ODE solver reached a stop with non-finite state time: local = {state_time:?}, absolute = {absolute_state_time:?}"
                     )));
                 }
                 if absolute_state_time > absolute_stop_time {
                     if let Err(error) = solver.state_mut_back(stop_time) {
-                        solver.problem().eqn.set_left_continuity_time(None);
                         return Err(solver_error_at_absolute_time(
                             solver,
                             error,
                             absolute_stop_time,
                         ));
                     }
-                    solver.problem().eqn.set_left_continuity_time(None);
                     *pending_reinit = true;
                     return Ok(());
                 }
@@ -1743,21 +1693,18 @@ where
                         rtol,
                         atol,
                     )?;
-                    solver.problem().eqn.set_left_continuity_time(None);
                     return Err(cannot_integrate_distinct_stop(
                         segment_start_time,
                         absolute_stop_time,
                         absolute_state_time,
                     ));
                 }
-                solver.problem().eqn.set_left_continuity_time(None);
                 if is_discontinuity_boundary {
                     *pending_reinit = true;
                 }
                 return Ok(());
             }
             Err(err) => {
-                solver.problem().eqn.set_left_continuity_time(None);
                 // A model-function error raised inside the RHS is the root
                 // cause when present; surface it over the solver error.
                 after_step()?;
@@ -3386,156 +3333,169 @@ mod tests {
 
     #[test]
     fn ode_infusions_long_horizon_boundary_failures_do_not_accumulate() {
-        // Exact finite-f64 reproduction of debug/dat.csv subject `1`: 145
-        // events (103 short infusions and 42 observations), including duplicate
-        // observations. Without boundary restarts, individually recovered
-        // Newton failures accumulate past diffsol's 50-failure limit.
+        // Exact finite-f64 reproduction of debug/dat.csv subject `1`: 103
+        // short infusions and 42 observations (with duplicates). Without
+        // boundary restarts, individually recovered Newton failures accumulate
+        // past diffsol's 50-failure limit. `build()` orders events by time, so
+        // the two tables reproduce the interleaved source schedule exactly.
+        const INFUSION_DURATION: f64 = 0.00125;
+        const INFUSIONS: [(f64, f64); 103] = [
+            (0.0, 1e+09),
+            (0.5, 1e+09),
+            (1.0, 1e+09),
+            (1.5, 1e+09),
+            (2.0, 1e+09),
+            (2.5, 1e+09),
+            (3.0, 1e+09),
+            (3.5, 1e+09),
+            (4.0, 1e+09),
+            (4.5, 1e+09),
+            (5.0, 1e+09),
+            (5.5, 1e+09),
+            (6.0, 1e+09),
+            (6.5, 1e+09),
+            (7.0, 1e+09),
+            (7.5, 1e+09),
+            (8.49083333333333, 1e+09),
+            (8.99291666666667, 1e+09),
+            (9.49291666666667, 1e+09),
+            (9.99291666666667, 1e+09),
+            (10.4929166666667, 1e+09),
+            (10.9929166666667, 1e+09),
+            (11.4929166666667, 1e+09),
+            (12.0145833333333, 3e+09),
+            (13.0154166666667, 3e+09),
+            (14.0154166666667, 3e+09),
+            (15.0154166666667, 3e+09),
+            (16.0154166666667, 3e+09),
+            (17.0154166666667, 3e+09),
+            (18.0154166666667, 3e+09),
+            (19.0154166666667, 3e+09),
+            (20.0491666666667, 3e+09),
+            (21.0491666666667, 3e+09),
+            (22.0491666666667, 3e+09),
+            (23.0491666666667, 3e+09),
+            (26.05125, 3e+09),
+            (27.05125, 3e+09),
+            (28.05125, 3e+09),
+            (29.05125, 3e+09),
+            (30.05125, 3e+09),
+            (33.0604166666667, 3e+09),
+            (34.0604166666667, 3e+09),
+            (35.0604166666667, 3e+09),
+            (36.0604166666667, 3e+09),
+            (37.0604166666667, 3e+09),
+            (40.0604166666667, 3e+09),
+            (41.0604166666667, 3e+09),
+            (42.0604166666667, 3e+09),
+            (43.0604166666667, 3e+09),
+            (44.0604166666667, 3e+09),
+            (47.0604166666667, 3e+09),
+            (48.0604166666667, 3e+09),
+            (49.0604166666667, 3e+09),
+            (50.0604166666667, 3e+09),
+            (51.0604166666667, 3e+09),
+            (54.0366666666667, 3e+09),
+            (55.0366666666667, 3e+09),
+            (56.1741666666667, 3e+09),
+            (57.1741666666667, 3e+09),
+            (58.1741666666667, 3e+09),
+            (61.1758333333333, 3e+09),
+            (62.1758333333333, 3e+09),
+            (63.1758333333333, 3e+09),
+            (64.1758333333333, 3e+09),
+            (65.1758333333333, 3e+09),
+            (68.1758333333333, 3e+09),
+            (69.1758333333333, 3e+09),
+            (70.1758333333333, 3e+09),
+            (71.1758333333333, 3e+09),
+            (72.1758333333333, 3e+09),
+            (75.1758333333333, 3e+09),
+            (76.1758333333333, 3e+09),
+            (77.1758333333333, 3e+09),
+            (78.1758333333333, 3e+09),
+            (79.1758333333333, 3e+09),
+            (82.1758333333333, 3e+09),
+            (83.1758333333333, 3e+09),
+            (84.1758333333333, 3e+09),
+            (85.1758333333333, 3e+09),
+            (86.1758333333333, 3e+09),
+            (89.1758333333333, 3e+09),
+            (90.1758333333333, 3e+09),
+            (91.1758333333333, 3e+09),
+            (92.1758333333333, 3e+09),
+            (93.1758333333333, 3e+09),
+            (96.0279166666667, 4.5e+09),
+            (97.0279166666667, 4.5e+09),
+            (98.0279166666667, 4.5e+09),
+            (99.0279166666667, 4.5e+09),
+            (100.027916666667, 4.5e+09),
+            (103.027916666667, 4.5e+09),
+            (104.027916666667, 4.5e+09),
+            (105.027916666667, 4.5e+09),
+            (106.027916666667, 4.5e+09),
+            (107.027916666667, 4.5e+09),
+            (110.027916666667, 4.5e+09),
+            (111.027916666667, 4.5e+09),
+            (112.027916666667, 4.5e+09),
+            (113.027916666667, 4.5e+09),
+            (114.027916666667, 4.5e+09),
+            (117.05, 4.5e+09),
+            (118.05, 4.5e+09),
+            (119.05, 4.5e+09),
+        ];
+        const OBSERVATION_TIMES: [f64; 42] = [
+            0.005,
+            0.0179166666666667,
+            0.0220833333333333,
+            0.0220833333333333,
+            0.0345833333333333,
+            0.0383333333333333,
+            0.0383333333333333,
+            0.0845833333333333,
+            0.18625,
+            8.99166666666667,
+            8.99583333333333,
+            9.01041666666667,
+            9.07416666666667,
+            9.16666666666667,
+            12.0395833333333,
+            12.0395833333333,
+            13.01375,
+            13.0179166666667,
+            13.1925,
+            13.1925,
+            13.1925,
+            13.26875,
+            21.0333333333333,
+            21.055,
+            21.0679166666667,
+            33.0533333333333,
+            33.06375,
+            34.0375,
+            34.0375,
+            56.2166666666667,
+            56.2166666666667,
+            58.0154166666667,
+            58.0154166666667,
+            91.0595833333333,
+            93.0741666666667,
+            93.0741666666667,
+            112.027083333333,
+            112.027083333333,
+            112.074166666667,
+            112.074166666667,
+            114.133333333333,
+            114.133333333333,
+        ];
+
         let mut builder = Subject::builder("long_horizon_short_infusions");
-        builder = builder.infusion(0.0, 1e+09, "iv", 0.00125);
-        builder = builder.missing_observation(0.005, "cp");
-        builder = builder.missing_observation(0.0179166666666667, "cp");
-        builder = builder.missing_observation(0.0220833333333333, "cp");
-        builder = builder.missing_observation(0.0220833333333333, "cp");
-        builder = builder.missing_observation(0.0345833333333333, "cp");
-        builder = builder.missing_observation(0.0383333333333333, "cp");
-        builder = builder.missing_observation(0.0383333333333333, "cp");
-        builder = builder.missing_observation(0.0845833333333333, "cp");
-        builder = builder.missing_observation(0.18625, "cp");
-        builder = builder.infusion(0.5, 1e+09, "iv", 0.00125);
-        builder = builder.infusion(1.0, 1e+09, "iv", 0.00125);
-        builder = builder.infusion(1.5, 1e+09, "iv", 0.00125);
-        builder = builder.infusion(2.0, 1e+09, "iv", 0.00125);
-        builder = builder.infusion(2.5, 1e+09, "iv", 0.00125);
-        builder = builder.infusion(3.0, 1e+09, "iv", 0.00125);
-        builder = builder.infusion(3.5, 1e+09, "iv", 0.00125);
-        builder = builder.infusion(4.0, 1e+09, "iv", 0.00125);
-        builder = builder.infusion(4.5, 1e+09, "iv", 0.00125);
-        builder = builder.infusion(5.0, 1e+09, "iv", 0.00125);
-        builder = builder.infusion(5.5, 1e+09, "iv", 0.00125);
-        builder = builder.infusion(6.0, 1e+09, "iv", 0.00125);
-        builder = builder.infusion(6.5, 1e+09, "iv", 0.00125);
-        builder = builder.infusion(7.0, 1e+09, "iv", 0.00125);
-        builder = builder.infusion(7.5, 1e+09, "iv", 0.00125);
-        builder = builder.infusion(8.49083333333333, 1e+09, "iv", 0.00125);
-        builder = builder.missing_observation(8.99166666666667, "cp");
-        builder = builder.infusion(8.99291666666667, 1e+09, "iv", 0.00125);
-        builder = builder.missing_observation(8.99583333333333, "cp");
-        builder = builder.missing_observation(9.01041666666667, "cp");
-        builder = builder.missing_observation(9.07416666666667, "cp");
-        builder = builder.missing_observation(9.16666666666667, "cp");
-        builder = builder.infusion(9.49291666666667, 1e+09, "iv", 0.00125);
-        builder = builder.infusion(9.99291666666667, 1e+09, "iv", 0.00125);
-        builder = builder.infusion(10.4929166666667, 1e+09, "iv", 0.00125);
-        builder = builder.infusion(10.9929166666667, 1e+09, "iv", 0.00125);
-        builder = builder.infusion(11.4929166666667, 1e+09, "iv", 0.00125);
-        builder = builder.infusion(12.0145833333333, 3e+09, "iv", 0.00125);
-        builder = builder.missing_observation(12.0395833333333, "cp");
-        builder = builder.missing_observation(12.0395833333333, "cp");
-        builder = builder.missing_observation(13.01375, "cp");
-        builder = builder.infusion(13.0154166666667, 3e+09, "iv", 0.00125);
-        builder = builder.missing_observation(13.0179166666667, "cp");
-        builder = builder.missing_observation(13.1925, "cp");
-        builder = builder.missing_observation(13.1925, "cp");
-        builder = builder.missing_observation(13.1925, "cp");
-        builder = builder.missing_observation(13.26875, "cp");
-        builder = builder.infusion(14.0154166666667, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(15.0154166666667, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(16.0154166666667, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(17.0154166666667, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(18.0154166666667, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(19.0154166666667, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(20.0491666666667, 3e+09, "iv", 0.00125);
-        builder = builder.missing_observation(21.0333333333333, "cp");
-        builder = builder.infusion(21.0491666666667, 3e+09, "iv", 0.00125);
-        builder = builder.missing_observation(21.055, "cp");
-        builder = builder.missing_observation(21.0679166666667, "cp");
-        builder = builder.infusion(22.0491666666667, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(23.0491666666667, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(26.05125, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(27.05125, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(28.05125, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(29.05125, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(30.05125, 3e+09, "iv", 0.00125);
-        builder = builder.missing_observation(33.0533333333333, "cp");
-        builder = builder.infusion(33.0604166666667, 3e+09, "iv", 0.00125);
-        builder = builder.missing_observation(33.06375, "cp");
-        builder = builder.missing_observation(34.0375, "cp");
-        builder = builder.missing_observation(34.0375, "cp");
-        builder = builder.infusion(34.0604166666667, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(35.0604166666667, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(36.0604166666667, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(37.0604166666667, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(40.0604166666667, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(41.0604166666667, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(42.0604166666667, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(43.0604166666667, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(44.0604166666667, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(47.0604166666667, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(48.0604166666667, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(49.0604166666667, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(50.0604166666667, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(51.0604166666667, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(54.0366666666667, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(55.0366666666667, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(56.1741666666667, 3e+09, "iv", 0.00125);
-        builder = builder.missing_observation(56.2166666666667, "cp");
-        builder = builder.missing_observation(56.2166666666667, "cp");
-        builder = builder.infusion(57.1741666666667, 3e+09, "iv", 0.00125);
-        builder = builder.missing_observation(58.0154166666667, "cp");
-        builder = builder.missing_observation(58.0154166666667, "cp");
-        builder = builder.infusion(58.1741666666667, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(61.1758333333333, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(62.1758333333333, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(63.1758333333333, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(64.1758333333333, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(65.1758333333333, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(68.1758333333333, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(69.1758333333333, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(70.1758333333333, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(71.1758333333333, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(72.1758333333333, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(75.1758333333333, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(76.1758333333333, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(77.1758333333333, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(78.1758333333333, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(79.1758333333333, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(82.1758333333333, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(83.1758333333333, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(84.1758333333333, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(85.1758333333333, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(86.1758333333333, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(89.1758333333333, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(90.1758333333333, 3e+09, "iv", 0.00125);
-        builder = builder.missing_observation(91.0595833333333, "cp");
-        builder = builder.infusion(91.1758333333333, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(92.1758333333333, 3e+09, "iv", 0.00125);
-        builder = builder.missing_observation(93.0741666666667, "cp");
-        builder = builder.missing_observation(93.0741666666667, "cp");
-        builder = builder.infusion(93.1758333333333, 3e+09, "iv", 0.00125);
-        builder = builder.infusion(96.0279166666667, 4.5e+09, "iv", 0.00125);
-        builder = builder.infusion(97.0279166666667, 4.5e+09, "iv", 0.00125);
-        builder = builder.infusion(98.0279166666667, 4.5e+09, "iv", 0.00125);
-        builder = builder.infusion(99.0279166666667, 4.5e+09, "iv", 0.00125);
-        builder = builder.infusion(100.027916666667, 4.5e+09, "iv", 0.00125);
-        builder = builder.infusion(103.027916666667, 4.5e+09, "iv", 0.00125);
-        builder = builder.infusion(104.027916666667, 4.5e+09, "iv", 0.00125);
-        builder = builder.infusion(105.027916666667, 4.5e+09, "iv", 0.00125);
-        builder = builder.infusion(106.027916666667, 4.5e+09, "iv", 0.00125);
-        builder = builder.infusion(107.027916666667, 4.5e+09, "iv", 0.00125);
-        builder = builder.infusion(110.027916666667, 4.5e+09, "iv", 0.00125);
-        builder = builder.infusion(111.027916666667, 4.5e+09, "iv", 0.00125);
-        builder = builder.missing_observation(112.027083333333, "cp");
-        builder = builder.missing_observation(112.027083333333, "cp");
-        builder = builder.infusion(112.027916666667, 4.5e+09, "iv", 0.00125);
-        builder = builder.missing_observation(112.074166666667, "cp");
-        builder = builder.missing_observation(112.074166666667, "cp");
-        builder = builder.infusion(113.027916666667, 4.5e+09, "iv", 0.00125);
-        builder = builder.infusion(114.027916666667, 4.5e+09, "iv", 0.00125);
-        builder = builder.missing_observation(114.133333333333, "cp");
-        builder = builder.missing_observation(114.133333333333, "cp");
-        builder = builder.infusion(117.05, 4.5e+09, "iv", 0.00125);
-        builder = builder.infusion(118.05, 4.5e+09, "iv", 0.00125);
-        builder = builder.infusion(119.05, 4.5e+09, "iv", 0.00125);
+        for (time, amount) in INFUSIONS {
+            builder = builder.infusion(time, amount, "iv", INFUSION_DURATION);
+        }
+        for time in OBSERVATION_TIMES {
+            builder = builder.missing_observation(time, "cp");
+        }
         let subject = builder.build();
 
         let predictions = run_hybrid_phage_infusions(&subject);
