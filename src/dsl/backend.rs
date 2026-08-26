@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 
 use diffsol::{
@@ -11,6 +12,7 @@ use rayon::prelude::*;
 
 use cranelift_jit::JITModule;
 use pharmsol_dsl::execution::ModelFunctionKind;
+
 use pharmsol_dsl::{
     AnalyticalKernel, AnalyticalStructureInputKind, AnalyticalStructureInputPlan, ModelKind,
     RouteKind, NUMERIC_ROUTE_PREFIX,
@@ -39,6 +41,14 @@ use crate::{
     Event, Observation, Occasion, Parameters, PharmsolError, Subject, ValidatedModelMetadata,
 };
 
+/// Host callback ABI for runtime-only pharmacometric functions.
+///
+/// The callback is passed as the final argument to every compiled kernel. The
+/// JIT code only invokes this function pointer; the scientific implementation
+/// remains in `src/optimize/effect.rs`.
+pub type GetE2Callback = extern "C" fn(f64, f64, f64, f64, f64) -> f64;
+
+/// ABI for JIT kernels.
 pub type CompiledModelFunction = unsafe extern "C" fn(
     t: f64,
     states: *const f64,
@@ -47,7 +57,13 @@ pub type CompiledModelFunction = unsafe extern "C" fn(
     routes: *const f64,
     derived: *const f64,
     out: *mut f64,
+    get_e2_callback: GetE2Callback,
 );
+
+/// The host callback never permits a Rust panic to cross the C ABI.
+pub(crate) extern "C" fn get_e2_callback(u: f64, v: f64, alpha: f64, h1: f64, h2: f64) -> f64 {
+    catch_unwind(AssertUnwindSafe(|| crate::get_e2(u, v, alpha, h1, h2))).unwrap_or(f64::NAN)
+}
 
 const DEFAULT_ODE_RTOL: f64 = 1e-4;
 const DEFAULT_ODE_ATOL: f64 = 1e-4;
@@ -183,7 +199,12 @@ impl FunctionSession for RuntimeFunctionSession<'_> {
             ))
         })?;
 
-        unsafe { function(time, states, params, covariates, routes, derived, out) };
+        let callback: GetE2Callback = get_e2_callback;
+        unsafe {
+            function(
+                time, states, params, covariates, routes, derived, out, callback,
+            );
+        }
         Ok(())
     }
 }

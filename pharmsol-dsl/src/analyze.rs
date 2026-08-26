@@ -24,6 +24,7 @@ const RESERVED_NAMES: &[&str] = &[
     "ddt",
     "exp",
     "floor",
+    "get_e2",
     "lag",
     "linear",
     "ln",
@@ -1462,6 +1463,41 @@ impl<'a> Analyzer<'a> {
             });
         }
 
+        if let Some(function) = PharmacometricFunction::from_name(&callee.text) {
+            match function.argument_count() {
+                ArgumentCount::Exact(expected) if expected != args.len() => {
+                    return Err(AnalysisError::new(
+                        format!(
+                            "function `{}` expects {} argument(s), got {}",
+                            callee.text,
+                            expected,
+                            args.len()
+                        ),
+                        callee.span,
+                    ));
+                }
+                _ => {}
+            }
+
+            let mut typed_args = Vec::with_capacity(args.len());
+            for arg in args {
+                let analyzed = self.analyze_expr(arg, env)?;
+                self.expect_numeric(&analyzed, &format!("`{}` argument", callee.text), arg.span)?;
+                typed_args.push(analyzed);
+            }
+            return Ok(AnalyzedExpr {
+                kind: AnalyzedExprKind::Call {
+                    callee: AnalyzedCall::Pharmacometric(function),
+                    args: typed_args,
+                },
+                ty: ValueType::Real,
+                // Pharmacometric calls are deliberately runtime-only, even
+                // when every argument happens to be a literal.
+                constant: None,
+                span,
+            });
+        }
+
         let intrinsic = MathFunction::from_name(&callee.text).ok_or_else(|| {
             let error =
                 AnalysisError::new(format!("unknown function `{}`", callee.text), callee.span);
@@ -1695,6 +1731,29 @@ impl<'a> Analyzer<'a> {
                 if callee.text == RATE_FUNCTION_NAME {
                     return Err(AnalysisError::new(
                         "`rate(...)` cannot appear in a compile-time expression",
+                        callee.span,
+                    ));
+                }
+                if let Some(function) = PharmacometricFunction::from_name(&callee.text) {
+                    match function.argument_count() {
+                        ArgumentCount::Exact(expected) if expected != args.len() => {
+                            return Err(AnalysisError::new(
+                                format!(
+                                    "function `{}` expects {} argument(s), got {}",
+                                    callee.text,
+                                    expected,
+                                    args.len()
+                                ),
+                                callee.span,
+                            ));
+                        }
+                        _ => {}
+                    }
+                    return Err(AnalysisError::new(
+                        format!(
+                            "`{}` is runtime-only and cannot appear in a compile-time expression",
+                            function.name()
+                        ),
                         callee.span,
                     ));
                 }
@@ -2178,6 +2237,17 @@ impl<'a> Analyzer<'a> {
                     callee.span,
                     RATE_FUNCTION_NAME,
                     "did you mean `rate`?",
+                    Applicability::MaybeIncorrect,
+                ),
+        ));
+        candidates.push(SimilarNameCandidate::new(
+            PharmacometricFunction::GetE2.name(),
+            AnalysisAssist::default()
+                .help("`get_e2` is a runtime-only pharmacometric function with five numeric arguments")
+                .replacement_suggestion(
+                    callee.span,
+                    PharmacometricFunction::GetE2.name(),
+                    "did you mean `get_e2`?",
                     Applicability::MaybeIncorrect,
                 ),
         ));
@@ -4014,6 +4084,9 @@ model broken {
                 "call:{}({})",
                 match callee {
                     AnalyzedCall::Math(intrinsic) => format!("math:{intrinsic:?}"),
+                    AnalyzedCall::Pharmacometric(function) => {
+                        format!("pharmacometric:{function:?}")
+                    }
                     AnalyzedCall::Rate(symbol) => format!("rate:{}", symbol_name(model, *symbol)),
                 },
                 args.iter()
@@ -4031,5 +4104,134 @@ model broken {
             .find(|entry| entry.id == symbol)
             .map(|entry| entry.name.clone())
             .unwrap_or_else(|| format!("#{symbol}"))
+    }
+
+    #[test]
+    fn get_e2_resolves_as_a_runtime_pharmacometric_call() {
+        let source = r#"
+model get_e2_model {
+    kind ode
+    parameters { u, v, alpha, h1, h2 }
+    states { central }
+    dynamics {
+        ddt(central) = 0
+    }
+    outputs {
+        cp = get_e2(u, v, alpha, h1, h2)
+    }
+}
+"#;
+        let model = crate::parse_model(source).expect("model parses");
+        let analyzed = analyze_model(&model).expect("get_e2 model analyzes");
+        let output = &analyzed
+            .outputs_block
+            .statements
+            .first()
+            .expect("output assignment")
+            .kind;
+        let AnalyzedStmtKind::Assign(output) = output else {
+            panic!("expected output assignment");
+        };
+        let AnalyzedExprKind::Call { callee, args } = &output.value.kind else {
+            panic!("expected get_e2 call");
+        };
+        assert_eq!(args.len(), 5);
+        assert_eq!(output.value.ty, ValueType::Real);
+        assert!(output.value.constant.is_none());
+        assert_eq!(
+            callee,
+            &AnalyzedCall::Pharmacometric(PharmacometricFunction::GetE2)
+        );
+
+        let execution = crate::compile_analyzed_model(&analyzed).expect("model compiles");
+        let output_function = execution
+            .function(crate::execution::ModelFunctionKind::Outputs)
+            .expect("outputs function");
+        let crate::execution::FunctionBody::Statements(program) = &output_function.body else {
+            panic!("expected statement outputs function");
+        };
+        let crate::execution::ExecutionStmtKind::Assign(assign) = &program.body.statements[0].kind
+        else {
+            panic!("expected execution assignment");
+        };
+        let crate::execution::ExecutionExprKind::Call { callee, args } = &assign.value.kind else {
+            panic!("expected execution get_e2 call");
+        };
+        assert_eq!(args.len(), 5);
+        assert_eq!(
+            callee,
+            &crate::execution::ExecutionCall::Pharmacometric(PharmacometricFunction::GetE2)
+        );
+    }
+
+    #[test]
+    fn get_e2_requires_exactly_five_numeric_arguments() {
+        let source = r#"
+model broken_get_e2 {
+    kind ode
+    states { central }
+    dynamics {
+        ddt(central) = 0
+    }
+    outputs {
+        cp = get_e2(1, 2, 3, 4)
+    }
+}
+"#;
+        let model = crate::parse_model(source).expect("model parses");
+        let error = analyze_model(&model).expect_err("wrong get_e2 arity must fail");
+        assert!(error
+            .render(source)
+            .contains("function `get_e2` expects 5 argument(s), got 4"));
+
+        let source = source.replace("4)", "4, true)");
+        let model = crate::parse_model(&source).expect("model parses");
+        let error = analyze_model(&model).expect_err("boolean get_e2 argument must fail");
+        assert!(error
+            .render(&source)
+            .contains("`get_e2` argument must be numeric"));
+    }
+
+    #[test]
+    fn get_e2_is_runtime_only_in_constants() {
+        let source = r#"
+model constant_get_e2 {
+    kind ode
+    constants {
+        value = get_e2(1, 1, 0, 1, 1)
+    }
+    states { central }
+    dynamics {
+        ddt(central) = 0
+    }
+    outputs {
+        cp = central
+    }
+}
+"#;
+        let model = crate::parse_model(source).expect("model parses");
+        let error = analyze_model(&model).expect_err("constant get_e2 must fail cleanly");
+        assert!(error
+            .render(source)
+            .contains("`get_e2` is runtime-only and cannot appear in a compile-time expression"));
+    }
+
+    #[test]
+    fn get_e2_name_resolution_is_exact() {
+        let source = r#"
+model case_sensitive_get_e2 {
+    kind ode
+    states { central }
+    dynamics {
+        ddt(central) = 0
+    }
+    outputs {
+        cp = GET_E2(1, 1, 0, 1, 1)
+    }
+}
+"#;
+        let model = crate::parse_model(source).expect("model parses");
+        let error = analyze_model(&model).expect_err("case variant must not resolve");
+        assert!(error.render(source).contains("unknown function `GET_E2`"));
     }
 }

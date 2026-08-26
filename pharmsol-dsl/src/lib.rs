@@ -44,6 +44,13 @@
 //! - [`diagnostic`] for spans, diagnostic codes, and rendered reports.
 //! - [`execution`] for the ready-to-run model consumed by the JIT backend.
 //!
+//! The runtime-only `get_e2(u, v, alpha, h1, h2)` function has exactly five
+//! numeric arguments and a real result. This crate preserves the call in the
+//! execution IR and rejects it in compile-time constants; `pharmsol::dsl`
+//! supplies the callback when the model is executed. The runtime computes
+//! `w = alpha * u * v`, so callers migrating from the old six-argument form
+//! must remove the explicit `w` argument.
+//!
 //! Smallest one-shot example:
 //!
 //! ```rust
