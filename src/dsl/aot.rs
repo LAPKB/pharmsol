@@ -15,15 +15,14 @@ use rand_distr::Alphanumeric;
 use serde_json;
 use thiserror::Error;
 
+#[cfg(feature = "dsl-aot-load")]
 use super::compiled_backend_abi::{
-    decode_compiled_model_info, API_VERSION_SYMBOL, DERIVE_SYMBOL, DIFFUSION_SYMBOL, DRIFT_SYMBOL,
-    DYNAMICS_SYMBOL, INIT_SYMBOL, MODEL_INFO_JSON_LEN_SYMBOL, MODEL_INFO_JSON_PTR_SYMBOL,
-    OUTPUTS_SYMBOL, ROUTE_BIOAVAILABILITY_SYMBOL, ROUTE_LAG_SYMBOL,
+    decode_compiled_model_info, CompiledModelFunction, API_VERSION_SYMBOL, DERIVE_SYMBOL,
+    DIFFUSION_SYMBOL, DRIFT_SYMBOL, DYNAMICS_SYMBOL, INIT_SYMBOL, MODEL_INFO_JSON_LEN_SYMBOL,
+    MODEL_INFO_JSON_PTR_SYMBOL, OUTPUTS_SYMBOL, ROUTE_BIOAVAILABILITY_SYMBOL, ROUTE_LAG_SYMBOL,
 };
 #[cfg(feature = "dsl-aot-load")]
-use super::native::{
-    CompiledModelFunction, CompiledNativeModel, NativeExecutionArtifact, NativeModelInfo,
-};
+use super::native::{CompiledNativeModel, NativeExecutionArtifact, NativeModelInfo};
 #[cfg(feature = "dsl-aot")]
 use super::rust_backend::{emit_rust_backend_source, RustBackendFlavor};
 #[cfg(feature = "dsl-aot")]
@@ -40,7 +39,7 @@ use pharmsol_dsl::{analyze_module, compile_analyzed_model, parse_module, Executi
 use pharmsol_dsl::{AnalysisError, CompileError, Diagnostic, DiagnosticReport, ParseError};
 
 /// ABI version for native AoT artifacts produced by this crate.
-pub const AOT_API_VERSION: u32 = 2;
+pub const AOT_API_VERSION: u32 = 3;
 
 #[cfg(feature = "dsl-aot")]
 /// Selects the compilation target for a native ahead-of-time artifact.
@@ -401,10 +400,12 @@ fn aot_template_manifest() -> String {
 
 #[cfg(feature = "dsl-aot-load")]
 unsafe fn ensure_api_version(library: &Library) -> Result<(), AotError> {
-    let symbol: Symbol<unsafe extern "C" fn() -> u32> = library
-        .get(API_VERSION_SYMBOL.as_bytes())
-        .map_err(|_| AotError::MissingSymbol(API_VERSION_SYMBOL))?;
-    let found = symbol();
+    let symbol: Symbol<unsafe extern "C" fn() -> u32> = unsafe {
+        library
+            .get(API_VERSION_SYMBOL.as_bytes())
+            .map_err(|_| AotError::MissingSymbol(API_VERSION_SYMBOL))?
+    };
+    let found = unsafe { symbol() };
     if found != AOT_API_VERSION {
         return Err(AotError::ApiVersionMismatch {
             expected: AOT_API_VERSION,
@@ -416,17 +417,21 @@ unsafe fn ensure_api_version(library: &Library) -> Result<(), AotError> {
 
 #[cfg(feature = "dsl-aot-load")]
 unsafe fn read_model_info_from_library(library: &Library) -> Result<NativeModelInfo, AotError> {
-    ensure_api_version(library)?;
-    let ptr_symbol: Symbol<unsafe extern "C" fn() -> *const u8> = library
-        .get(MODEL_INFO_JSON_PTR_SYMBOL.as_bytes())
-        .map_err(|_| AotError::MissingSymbol(MODEL_INFO_JSON_PTR_SYMBOL))?;
-    let len_symbol: Symbol<unsafe extern "C" fn() -> usize> = library
-        .get(MODEL_INFO_JSON_LEN_SYMBOL.as_bytes())
-        .map_err(|_| AotError::MissingSymbol(MODEL_INFO_JSON_LEN_SYMBOL))?;
+    unsafe { ensure_api_version(library)? };
+    let ptr_symbol: Symbol<unsafe extern "C" fn() -> *const u8> = unsafe {
+        library
+            .get(MODEL_INFO_JSON_PTR_SYMBOL.as_bytes())
+            .map_err(|_| AotError::MissingSymbol(MODEL_INFO_JSON_PTR_SYMBOL))?
+    };
+    let len_symbol: Symbol<unsafe extern "C" fn() -> usize> = unsafe {
+        library
+            .get(MODEL_INFO_JSON_LEN_SYMBOL.as_bytes())
+            .map_err(|_| AotError::MissingSymbol(MODEL_INFO_JSON_LEN_SYMBOL))?
+    };
 
-    let ptr = ptr_symbol();
-    let len = len_symbol();
-    let bytes = std::slice::from_raw_parts(ptr, len);
+    let ptr = unsafe { ptr_symbol() };
+    let len = unsafe { len_symbol() };
+    let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
     let envelope = decode_compiled_model_info(bytes)?;
     if envelope.abi_version != AOT_API_VERSION {
         return Err(AotError::ApiVersionMismatch {
@@ -442,9 +447,11 @@ unsafe fn load_required_function(
     library: &Library,
     name: &'static str,
 ) -> Result<CompiledModelFunction, AotError> {
-    let symbol: Symbol<CompiledModelFunction> = library
-        .get(name.as_bytes())
-        .map_err(|_| AotError::MissingSymbol(name))?;
+    let symbol: Symbol<CompiledModelFunction> = unsafe {
+        library
+            .get(name.as_bytes())
+            .map_err(|_| AotError::MissingSymbol(name))?
+    };
     Ok(*symbol)
 }
 
@@ -453,10 +460,12 @@ unsafe fn load_optional_function(
     library: &Library,
     name: &'static str,
 ) -> Option<CompiledModelFunction> {
-    library
-        .get::<CompiledModelFunction>(name.as_bytes())
-        .ok()
-        .map(|symbol| *symbol)
+    unsafe {
+        library
+            .get::<CompiledModelFunction>(name.as_bytes())
+            .ok()
+            .map(|symbol| *symbol)
+    }
 }
 
 #[cfg(all(

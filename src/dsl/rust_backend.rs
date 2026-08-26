@@ -9,7 +9,9 @@ use pharmsol_dsl::execution::{
     ExecutionProgram, ExecutionStateRef, ExecutionStmt, ExecutionStmtKind, ExecutionTargetKind,
     FunctionBody,
 };
-use pharmsol_dsl::{AnalyzedBinaryOp, AnalyzedUnaryOp, MathFunction, ValueType};
+use pharmsol_dsl::{
+    AnalyzedBinaryOp, AnalyzedUnaryOp, MathFunction, PharmacometricFunction, ValueType,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RustBackendFlavor {
@@ -101,6 +103,11 @@ fn emit_statement_function(
     writeln!(source, "    routes: *const f64,").unwrap();
     writeln!(source, "    derived: *const f64,").unwrap();
     writeln!(source, "    out: *mut f64,").unwrap();
+    writeln!(
+        source,
+        "    get_e2_callback: extern \"C\" fn(f64, f64, f64, f64, f64) -> f64,"
+    )
+    .unwrap();
     writeln!(source, ") {{").unwrap();
 
     for local in &program.locals {
@@ -367,6 +374,34 @@ fn emit_call_expr(
 ) -> Result<String, String> {
     match callee {
         ExecutionCall::Math(intrinsic) => emit_math_call(*intrinsic, args, result_ty),
+        ExecutionCall::Pharmacometric(function) => {
+            emit_pharmacometric_call(*function, args, result_ty)
+        }
+    }
+}
+
+fn emit_pharmacometric_call(
+    function: PharmacometricFunction,
+    args: &[ExecutionExpr],
+    result_ty: ValueType,
+) -> Result<String, String> {
+    match function {
+        PharmacometricFunction::GetE2 => {
+            if args.len() != 5 {
+                return Err("get_e2 expects exactly five numeric arguments".to_string());
+            }
+            let args = args.iter().map(emit_expr).collect::<Result<Vec<_>, _>>()?;
+            let args = args
+                .into_iter()
+                .map(|arg| cast_expr(arg.rendered, arg.ty, ValueType::Real))
+                .collect::<Vec<_>>()
+                .join(", ");
+            Ok(cast_expr(
+                format!("get_e2_callback({args})"),
+                ValueType::Real,
+                result_ty,
+            ))
+        }
     }
 }
 
@@ -487,4 +522,40 @@ fn push_line(source: &mut String, indent: usize, line: &str) {
     }
     source.push_str(line);
     source.push('\n');
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pharmsol_dsl::{analyze_module, compile_analyzed_model, parse_module};
+
+    #[test]
+    fn generated_get_e2_source_invokes_only_the_host_callback() {
+        let source = r#"
+model callback_only {
+    kind ode
+    parameters { u, v, alpha, h1, h2 }
+    states { central }
+    dynamics {
+        ddt(central) = 0
+    }
+    outputs {
+        cp = get_e2(u, v, alpha, h1, h2)
+    }
+}
+"#;
+        let parsed = parse_module(source).expect("model parses");
+        let analyzed = analyze_module(&parsed).expect("model analyzes");
+        let execution = compile_analyzed_model(&analyzed.models[0]).expect("model lowers");
+        let generated =
+            emit_rust_backend_source(&execution, RustBackendFlavor::NativeAot { api_version: 3 })
+                .expect("backend source emits");
+
+        assert!(generated.contains("get_e2_callback("));
+        assert!(
+            generated.contains("get_e2_callback: extern \"C\" fn(f64, f64, f64, f64, f64) -> f64")
+        );
+        assert!(!generated.contains("argmin"));
+        assert!(!generated.contains("get_e2("));
+    }
 }

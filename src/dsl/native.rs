@@ -14,6 +14,8 @@ use cranelift_jit::JITModule;
 #[cfg(feature = "dsl-aot-load")]
 use libloading::Library;
 use pharmsol_dsl::execution::ModelFunctionKind;
+
+use super::compiled_backend_abi::{get_e2_callback, CompiledModelFunction, GetE2Callback};
 use pharmsol_dsl::{
     AnalyticalKernel, AnalyticalStructureInputKind, AnalyticalStructureInputPlan, ModelKind,
     RouteKind, NUMERIC_ROUTE_PREFIX,
@@ -43,16 +45,6 @@ use crate::{
     },
     Event, Observation, Occasion, Parameters, PharmsolError, Subject, ValidatedModelMetadata,
 };
-
-pub type CompiledModelFunction = unsafe extern "C" fn(
-    t: f64,
-    states: *const f64,
-    params: *const f64,
-    covariates: *const f64,
-    routes: *const f64,
-    derived: *const f64,
-    out: *mut f64,
-);
 
 const DEFAULT_ODE_RTOL: f64 = 1e-4;
 const DEFAULT_ODE_ATOL: f64 = 1e-4;
@@ -236,7 +228,12 @@ impl FunctionSession for NativeFunctionSession<'_> {
             ))
         })?;
 
-        unsafe { function(time, states, params, covariates, routes, derived, out) };
+        let callback: GetE2Callback = get_e2_callback;
+        unsafe {
+            function(
+                time, states, params, covariates, routes, derived, out, callback,
+            );
+        }
         Ok(())
     }
 }
