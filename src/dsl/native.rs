@@ -15,7 +15,9 @@ use cranelift_jit::JITModule;
 use libloading::Library;
 use pharmsol_dsl::execution::ModelFunctionKind;
 
-use super::compiled_backend_abi::{get_e2_callback, CompiledModelFunction, GetE2Callback};
+use super::compiled_backend_abi::{
+    get_e2_callback, get_e3_callback, CompiledModelFunction, GetE2Callback, GetE3Callback,
+};
 use pharmsol_dsl::{
     AnalyticalKernel, AnalyticalStructureInputKind, AnalyticalStructureInputPlan, ModelKind,
     RouteKind, NUMERIC_ROUTE_PREFIX,
@@ -228,10 +230,11 @@ impl FunctionSession for NativeFunctionSession<'_> {
             ))
         })?;
 
-        let callback: GetE2Callback = get_e2_callback;
+        let get_e2: GetE2Callback = get_e2_callback;
+        let get_e3: GetE3Callback = get_e3_callback;
         unsafe {
             function(
-                time, states, params, covariates, routes, derived, out, callback,
+                time, states, params, covariates, routes, derived, out, get_e2, get_e3,
             );
         }
         Ok(())

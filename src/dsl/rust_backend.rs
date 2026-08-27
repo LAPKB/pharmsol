@@ -108,6 +108,11 @@ fn emit_statement_function(
         "    get_e2_callback: extern \"C\" fn(f64, f64, f64, f64, f64) -> f64,"
     )
     .unwrap();
+    writeln!(
+        source,
+        "    get_e3_callback: extern \"C\" fn(f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64,"
+    )
+    .unwrap();
     writeln!(source, ") {{").unwrap();
 
     for local in &program.locals {
@@ -386,9 +391,16 @@ fn emit_pharmacometric_call(
     result_ty: ValueType,
 ) -> Result<String, String> {
     match function {
-        PharmacometricFunction::GetE2 => {
-            if args.len() != 5 {
-                return Err("get_e2 expects exactly five numeric arguments".to_string());
+        PharmacometricFunction::GetE2 | PharmacometricFunction::GetE3 => {
+            let expected = match function {
+                PharmacometricFunction::GetE2 => 5,
+                PharmacometricFunction::GetE3 => 10,
+            };
+            if args.len() != expected {
+                return Err(format!(
+                    "{} expects exactly {expected} numeric arguments",
+                    function.name()
+                ));
             }
             let args = args.iter().map(emit_expr).collect::<Result<Vec<_>, _>>()?;
             let args = args
@@ -397,7 +409,7 @@ fn emit_pharmacometric_call(
                 .collect::<Vec<_>>()
                 .join(", ");
             Ok(cast_expr(
-                format!("get_e2_callback({args})"),
+                format!("{}_callback({args})", function.name()),
                 ValueType::Real,
                 result_ty,
             ))
@@ -530,17 +542,18 @@ mod tests {
     use pharmsol_dsl::{analyze_module, compile_analyzed_model, parse_module};
 
     #[test]
-    fn generated_get_e2_source_invokes_only_the_host_callback() {
+    fn generated_pharmacometric_source_invokes_only_host_callbacks() {
         let source = r#"
 model callback_only {
     kind ode
-    parameters { u, v, alpha, h1, h2 }
+    parameters { a, b, c, alpha12, alpha13, alpha23, alpha123, h1, h2, h3 }
     states { central }
     dynamics {
         ddt(central) = 0
     }
     outputs {
-        cp = get_e2(u, v, alpha, h1, h2)
+        e2 = get_e2(a, b, alpha12, h1, h2)
+        e3 = get_e3(a, b, c, alpha12, alpha13, alpha23, alpha123, h1, h2, h3)
     }
 }
 "#;
@@ -548,14 +561,19 @@ model callback_only {
         let analyzed = analyze_module(&parsed).expect("model analyzes");
         let execution = compile_analyzed_model(&analyzed.models[0]).expect("model lowers");
         let generated =
-            emit_rust_backend_source(&execution, RustBackendFlavor::NativeAot { api_version: 3 })
+            emit_rust_backend_source(&execution, RustBackendFlavor::NativeAot { api_version: 4 })
                 .expect("backend source emits");
 
         assert!(generated.contains("get_e2_callback("));
+        assert!(generated.contains("get_e3_callback("));
         assert!(
             generated.contains("get_e2_callback: extern \"C\" fn(f64, f64, f64, f64, f64) -> f64")
         );
+        assert!(generated.contains(
+            "get_e3_callback: extern \"C\" fn(f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64"
+        ));
         assert!(!generated.contains("argmin"));
         assert!(!generated.contains("get_e2("));
+        assert!(!generated.contains("get_e3("));
     }
 }

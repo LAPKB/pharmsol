@@ -39,7 +39,7 @@ use pharmsol_dsl::{analyze_module, compile_analyzed_model, parse_module, Executi
 use pharmsol_dsl::{AnalysisError, CompileError, Diagnostic, DiagnosticReport, ParseError};
 
 /// ABI version for native AoT artifacts produced by this crate.
-pub const AOT_API_VERSION: u32 = 3;
+pub const AOT_API_VERSION: u32 = 4;
 
 #[cfg(feature = "dsl-aot")]
 /// Selects the compilation target for a native ahead-of-time artifact.

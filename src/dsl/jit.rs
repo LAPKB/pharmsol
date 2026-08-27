@@ -8,9 +8,9 @@ use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{Linkage, Module};
 
-#[cfg(test)]
-use super::compiled_backend_abi::get_e2_callback;
 pub use super::compiled_backend_abi::CompiledModelFunction;
+#[cfg(test)]
+use super::compiled_backend_abi::{get_e2_callback, get_e3_callback};
 use super::native::{
     CompiledNativeModel, NativeAnalyticalModel, NativeExecutionArtifact, NativeModelInfo,
     NativeOdeModel, NativeSdeModel,
@@ -202,6 +202,7 @@ struct FunctionArgs {
     derived: Value,
     out: Value,
     get_e2_callback: Value,
+    get_e3_callback: Value,
 }
 
 #[derive(Clone, Copy)]
@@ -215,6 +216,7 @@ struct EmitEnv<'a> {
     args: FunctionArgs,
     externs: ExternRefs,
     get_e2_signature: codegen::ir::SigRef,
+    get_e3_signature: codegen::ir::SigRef,
     locals: &'a BTreeMap<usize, LocalBinding>,
 }
 
@@ -457,11 +459,20 @@ fn emit_statement_function(
         derived: params[5],
         out: params[6],
         get_e2_callback: params[7],
+        get_e3_callback: params[8],
     };
 
     let get_e2_signature = {
         let mut signature = module.make_signature();
         for _ in 0..5 {
+            signature.params.push(AbiParam::new(types::F64));
+        }
+        signature.returns.push(AbiParam::new(types::F64));
+        builder.func.import_signature(signature)
+    };
+    let get_e3_signature = {
+        let mut signature = module.make_signature();
+        for _ in 0..10 {
             signature.params.push(AbiParam::new(types::F64));
         }
         signature.returns.push(AbiParam::new(types::F64));
@@ -503,6 +514,7 @@ fn emit_statement_function(
         args,
         externs,
         get_e2_signature,
+        get_e3_signature,
         locals: &locals,
     };
     emit_block(&mut builder, &env, &program.body)?;
@@ -520,7 +532,7 @@ fn dense_function_signature(module: &mut JITModule) -> cranelift::codegen::ir::S
     let mut signature = module.make_signature();
     let ptr_ty = module.target_config().pointer_type();
     signature.params.push(AbiParam::new(types::F64));
-    for _ in 0..7 {
+    for _ in 0..8 {
         signature.params.push(AbiParam::new(ptr_ty));
     }
     signature
@@ -929,10 +941,21 @@ fn lower_pharmacometric_call(
     span: Span,
 ) -> Result<LoweredValue, JitCompileError> {
     match function {
-        PharmacometricFunction::GetE2 => {
-            if args.len() != 5 {
+        PharmacometricFunction::GetE2 | PharmacometricFunction::GetE3 => {
+            let (expected, signature, callback) = match function {
+                PharmacometricFunction::GetE2 => {
+                    (5, env.get_e2_signature, env.args.get_e2_callback)
+                }
+                PharmacometricFunction::GetE3 => {
+                    (10, env.get_e3_signature, env.args.get_e3_callback)
+                }
+            };
+            if args.len() != expected {
                 return Err(JitCompileError::new(
-                    "get_e2 expects exactly five numeric arguments",
+                    format!(
+                        "{} expects exactly {expected} numeric arguments",
+                        function.name()
+                    ),
                     Some(span),
                 ));
             }
@@ -943,11 +966,7 @@ fn lower_pharmacometric_call(
                 .into_iter()
                 .map(|arg| arg.value)
                 .collect::<Vec<_>>();
-            let call = builder.ins().call_indirect(
-                env.get_e2_signature,
-                env.args.get_e2_callback,
-                &call_args,
-            );
+            let call = builder.ins().call_indirect(signature, callback, &call_args);
             let result = builder.inst_results(call)[0];
             cast_value(
                 builder,
@@ -2103,6 +2122,7 @@ out(cp) = central / v ~ continuous()
                 derived.as_ptr(),
                 derived.as_mut_ptr(),
                 get_e2_callback,
+                get_e3_callback,
             );
             artifact.dynamics.expect("dynamics function present")(
                 0.0,
@@ -2113,6 +2133,7 @@ out(cp) = central / v ~ continuous()
                 derived.as_ptr(),
                 dx.as_mut_ptr(),
                 get_e2_callback,
+                get_e3_callback,
             );
             (artifact.outputs)(
                 0.0,
@@ -2123,6 +2144,7 @@ out(cp) = central / v ~ continuous()
                 derived.as_ptr(),
                 out.as_mut_ptr(),
                 get_e2_callback,
+                get_e3_callback,
             );
         }
 

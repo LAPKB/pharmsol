@@ -666,18 +666,23 @@ pub enum AnalyzedCall {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PharmacometricFunction {
     GetE2,
+    GetE3,
 }
 
 impl PharmacometricFunction {
+    pub const ALL: [Self; 2] = [Self::GetE2, Self::GetE3];
+
     pub const fn name(self) -> &'static str {
         match self {
             Self::GetE2 => "get_e2",
+            Self::GetE3 => "get_e3",
         }
     }
 
     pub fn from_name(name: &str) -> Option<Self> {
         match name {
             "get_e2" => Some(Self::GetE2),
+            "get_e3" => Some(Self::GetE3),
             _ => None,
         }
     }
@@ -685,6 +690,7 @@ impl PharmacometricFunction {
     pub const fn argument_count(self) -> ArgumentCount {
         match self {
             Self::GetE2 => ArgumentCount::Exact(5),
+            Self::GetE3 => ArgumentCount::Exact(10),
         }
     }
 }
