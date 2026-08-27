@@ -245,7 +245,7 @@ impl ODE {
 
     fn initial_state_at_time(
         &self,
-        parameters: &[f64],
+        parameters: &V,
         covariates: &Covariates,
         occasion_index: usize,
         time: f64,
@@ -253,8 +253,7 @@ impl ODE {
         let init = &self.init;
         let mut x = V::zeros(self.get_nstates(), NalgebraContext::new());
         if occasion_index == 0 {
-            let parameters = DVector::from_vec(parameters.to_vec());
-            (init)(&parameters.into(), time, covariates, &mut x);
+            (init)(parameters, time, covariates, &mut x);
         }
         x
     }
@@ -422,7 +421,7 @@ fn _simulate_subject_dense(
                         _ => None,
                     }),
                     ode.initial_state_at_time(
-                        parameters,
+                        &parameters_v,
                         covariates,
                         occasion.index(),
                         time_origin,
@@ -655,7 +654,7 @@ pub(crate) fn validate_resolved_ode_schedule(events: &[Event]) -> Result<f64, Ph
     }
     let time_origin = first_event_time;
 
-    let mut required_times = Vec::with_capacity(events.len() * 2);
+    let mut infusion_endpoints = Vec::new();
     let mut previous_event_time = None;
 
     for (index, event) in events.iter().enumerate() {
@@ -679,7 +678,6 @@ pub(crate) fn validate_resolved_ode_schedule(events: &[Event]) -> Result<f64, Ph
             }
         }
         previous_event_time = Some(time);
-        required_times.push(time);
 
         match event {
             Event::Bolus(bolus) => {
@@ -732,12 +730,21 @@ pub(crate) fn validate_resolved_ode_schedule(events: &[Event]) -> Result<f64, Ph
                         "invalid ODE event schedule: infusion endpoint {endpoint:.16e} is not representably after start t = {time:.16e}"
                     )));
                 }
-                required_times.push(endpoint);
+                infusion_endpoints.push(endpoint);
             }
             Event::Observation(_) => {}
         }
     }
 
+    // Consecutive event gaps were checked above; the pairwise sweep is only
+    // needed when infusion endpoints fall between event times.
+    if infusion_endpoints.is_empty() {
+        return Ok(time_origin);
+    }
+
+    let mut required_times = Vec::with_capacity(events.len() + infusion_endpoints.len());
+    required_times.extend(events.iter().map(Event::time));
+    required_times.append(&mut infusion_endpoints);
     let mut previous_time: Option<f64> = None;
     required_times.sort_by(f64::total_cmp);
     for time in required_times {

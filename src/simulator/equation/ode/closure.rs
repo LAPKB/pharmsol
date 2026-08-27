@@ -868,8 +868,7 @@ where
         let nparams = p_as_v.len();
         let rateiv_buffer = RefCell::new(V::zeros(ndrugs, NalgebraContext::new()));
         let covariates = covariates.clone();
-        let covariate_breakpoints = covariates.ode_breakpoint_times()?;
-        let covariate_discontinuities = covariates.ode_discontinuity_times()?;
+        let (covariate_breakpoints, covariate_discontinuities) = covariates.ode_boundary_times()?;
         let integration_schedule = IntegrationSchedule::new(
             ndrugs,
             infusions,

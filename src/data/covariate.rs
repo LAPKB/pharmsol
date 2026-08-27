@@ -264,39 +264,29 @@ impl Covariate {
     pub(crate) fn ode_breakpoint_times(&self) -> Result<Vec<f64>, CovariateError> {
         self.validate_for_ode()?;
 
-        let mut breakpoints: Vec<f64> = if self.fixed {
-            self.observations
-                .windows(2)
-                .filter(|pair| pair[0].1 != pair[1].1)
-                .map(|pair| pair[1].0)
-                .collect()
-        } else {
-            self.observations.iter().map(|&(time, _)| time).collect()
-        };
+        let mut breakpoints = Vec::new();
+        let mut discontinuities = Vec::new();
+        self.collect_ode_boundaries(&mut breakpoints, &mut discontinuities);
         breakpoints.sort_by(f64::total_cmp);
         breakpoints.dedup();
         Ok(breakpoints)
     }
 
-    /// Return exact knots where the covariate value itself changes at the
-    /// right-hand side. Linear knots are intentionally absent: their values
-    /// are continuous even when the time derivative changes, so they need an
-    /// integration stop but not a state/RHS discontinuity restart.
-    pub(crate) fn ode_discontinuity_times(&self) -> Result<Vec<f64>, CovariateError> {
-        self.validate_for_ode()?;
-
-        let mut discontinuities = if self.fixed {
-            self.observations
-                .windows(2)
-                .filter(|pair| pair[0].1 != pair[1].1)
-                .map(|pair| pair[1].0)
-                .collect()
+    /// Collect integration boundaries and RHS discontinuity knots in one
+    /// pass. Discontinuities are LOCF value changes only: linear knots stay
+    /// continuous in value even when the derivative changes, so they need an
+    /// integration stop but not a state/RHS restart. Callers validate first.
+    fn collect_ode_boundaries(&self, breakpoints: &mut Vec<f64>, discontinuities: &mut Vec<f64>) {
+        if self.fixed {
+            for pair in self.observations.windows(2) {
+                if pair[0].1 != pair[1].1 {
+                    breakpoints.push(pair[1].0);
+                    discontinuities.push(pair[1].0);
+                }
+            }
         } else {
-            Vec::new()
-        };
-        discontinuities.sort_by(f64::total_cmp);
-        discontinuities.dedup();
-        Ok(discontinuities)
+            breakpoints.extend(self.observations.iter().map(|&(time, _)| time));
+        }
     }
 
     fn set_left_continuity_time(&self, time: Option<f64>) {
@@ -482,27 +472,20 @@ impl Covariates {
         Ok(())
     }
 
-    /// Collect exact covariate discontinuity and derivative-knot times.
-    pub(crate) fn ode_breakpoint_times(&self) -> Result<Vec<f64>, CovariateError> {
+    /// Validate every covariate once and collect exact integration boundaries
+    /// and RHS discontinuity knots in a single pass.
+    pub(crate) fn ode_boundary_times(&self) -> Result<(Vec<f64>, Vec<f64>), CovariateError> {
         let mut breakpoints = Vec::new();
+        let mut discontinuities = Vec::new();
         for covariate in self.covariates.values() {
-            breakpoints.extend(covariate.ode_breakpoint_times()?);
+            covariate.validate_for_ode()?;
+            covariate.collect_ode_boundaries(&mut breakpoints, &mut discontinuities);
         }
         breakpoints.sort_by(f64::total_cmp);
         breakpoints.dedup();
-        Ok(breakpoints)
-    }
-
-    /// Collect exact covariate value-change times that require a solver
-    /// history/Jacobian restart. Linear knots are integration boundaries only.
-    pub(crate) fn ode_discontinuity_times(&self) -> Result<Vec<f64>, CovariateError> {
-        let mut discontinuities = Vec::new();
-        for covariate in self.covariates.values() {
-            discontinuities.extend(covariate.ode_discontinuity_times()?);
-        }
         discontinuities.sort_by(f64::total_cmp);
         discontinuities.dedup();
-        Ok(discontinuities)
+        Ok((breakpoints, discontinuities))
     }
 
     /// Set the session-local left-continuity boundary on every covariate.
