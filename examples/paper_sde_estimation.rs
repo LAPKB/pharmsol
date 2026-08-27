@@ -1,4 +1,4 @@
-//! Generate the population data and fixed-grid NPMLE distributions for Figures 1, 2, and 5.
+//! Generate the population data and fixed-grid NPMLE outputs for Figures 1, 2, 5, and 6.
 //!
 //! This example deliberately reuses the `population_ke0.csv` produced for
 //! Figures 3 and 4. It keeps the expensive estimation workflow separate from
@@ -6,7 +6,12 @@
 //!
 //! ```text
 //! cargo run --release --example paper_sde_estimation
-//! /tmp/pharmsol-paper-venv/bin/python paper/plot_population_distributions.py
+//! python paper/plot_population_distributions.py
+//!
+//! To generate only Figure 6 from the saved Figure 5 likelihood matrix and FML,
+//! use `cargo run --release --example paper_sde_estimation -- --figure6-only`.
+//! This post-processing mode does not rerun simulation, particle filtering, or
+//! population optimization.
 //!
 //! The default is the practical reduced fixed-grid run (201 support points,
 //! 256 particles). Add `--manuscript` to request the manuscript's 1000 × 1000
@@ -25,7 +30,7 @@
 
 use std::{collections::BTreeMap, env, path::PathBuf};
 
-use csv::{Reader, Writer};
+use csv::{Reader, ReaderBuilder, Writer};
 use rand::{rngs::StdRng, RngExt, SeedableRng};
 use rand_distr::{Distribution, StandardNormal};
 use rayon::prelude::*;
@@ -45,6 +50,7 @@ const SIGMA_Y: f64 = 0.5;
 const EXPERIMENT_1_SEED: u64 = 20_260_814;
 const EXPERIMENT_2_SEED: u64 = 20_260_815;
 const FIGURE_5_SAMPLE_SEED: u64 = 20_260_816;
+const ACTIVE_FML_SUPPORT_TOLERANCE: f64 = 1e-6;
 
 #[derive(Clone, Copy, Debug)]
 struct RunConfig {
@@ -101,6 +107,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let smoke = args.iter().any(|arg| arg == "--smoke");
     let manuscript = args.iter().any(|arg| arg == "--manuscript");
     let reduced = args.iter().any(|arg| arg == "--reduced");
+    let figure_6_only = args.iter().any(|arg| arg == "--figure6-only");
     let config = if smoke {
         RunConfig::smoke()
     } else if manuscript {
@@ -112,6 +119,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let output_dir = PathBuf::from(config.output_dir);
     std::fs::create_dir_all(&output_dir)?;
+
+    if figure_6_only {
+        println!("Figure 6 post-processing from the saved Figure 5 fit");
+        generate_figure_6_from_saved_outputs(&output_dir)?;
+        return Ok(());
+    }
 
     println!("Paper population estimation");
     println!(
@@ -232,10 +245,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &weights_1,
         &output_dir.join("figure2_fml_sigma_ke_0.csv"),
     )?;
-    write_distribution(
+    let figure_5_distribution_path = output_dir.join("figure5_fml_sigma_ke_0_5.csv");
+    write_distribution(&support_points, &weights_2, &figure_5_distribution_path)?;
+
+    // Read back the serialized Figure 5 FML so Figure 6 diagnoses exactly the
+    // support points and weights exported for Figure 5, including its output
+    // tolerance, rather than a separately refitted or modified distribution.
+    let figure_5_weights = read_fml_on_grid(&figure_5_distribution_path, &support_points)?;
+    write_and_report_directional_derivative(
+        &experiment_2_log_likelihood,
         &support_points,
-        &weights_2,
-        &output_dir.join("figure5_fml_sigma_ke_0_5.csv"),
+        &figure_5_weights,
+        &output_dir.join("figure6_directional_derivative.csv"),
     )?;
 
     let sample_1 = sample_distribution(&support_points, &weights_1, FIGURE_5_SAMPLE_SEED);
@@ -579,6 +600,206 @@ fn logsumexp(values: &[f64]) -> f64 {
             .map(|value| (value - maximum).exp())
             .sum::<f64>()
             .ln()
+}
+
+fn generate_figure_6_from_saved_outputs(
+    output_dir: &PathBuf,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let log_likelihoods =
+        read_likelihood_matrix(&output_dir.join("experiment2_log_likelihood.csv"))?;
+    if log_likelihoods.is_empty() || log_likelihoods[0].is_empty() {
+        return Err("Experiment 2 likelihood matrix is empty".into());
+    }
+    let support = make_support_grid(log_likelihoods[0].len());
+    validate_log_likelihood_matrix(&log_likelihoods, log_likelihoods.len(), support.len())?;
+    let fml_weights = read_fml_on_grid(&output_dir.join("figure5_fml_sigma_ke_0_5.csv"), &support)?;
+    write_and_report_directional_derivative(
+        &log_likelihoods,
+        &support,
+        &fml_weights,
+        &output_dir.join("figure6_directional_derivative.csv"),
+    )
+}
+
+fn read_likelihood_matrix(path: &PathBuf) -> Result<Vec<Vec<f64>>, Box<dyn std::error::Error>> {
+    let mut reader = ReaderBuilder::new().has_headers(false).from_path(path)?;
+    let mut matrix = Vec::new();
+    for record in reader.records() {
+        let record = record?;
+        let row = record
+            .iter()
+            .map(str::parse::<f64>)
+            .collect::<Result<Vec<_>, _>>()?;
+        matrix.push(row);
+    }
+    Ok(matrix)
+}
+
+fn read_fml_on_grid(
+    path: &PathBuf,
+    support: &[f64],
+) -> Result<Vec<f64>, Box<dyn std::error::Error>> {
+    if support.is_empty() {
+        return Err("cannot map an FML onto an empty candidate grid".into());
+    }
+    let mut reader = Reader::from_path(path)?;
+    let headers = reader.headers()?.clone();
+    let ke0_index = headers
+        .iter()
+        .position(|header| header == "ke0")
+        .ok_or("Figure 5 FML CSV has no ke0 column")?;
+    let weight_index = headers
+        .iter()
+        .position(|header| header == "weight")
+        .ok_or("Figure 5 FML CSV has no weight column")?;
+    let mut weights = vec![0.0; support.len()];
+    let mut occupied = vec![false; support.len()];
+    for record in reader.records() {
+        let record = record?;
+        let ke0: f64 = record
+            .get(ke0_index)
+            .ok_or("Figure 5 FML row has no ke0 value")?
+            .parse()?;
+        let weight: f64 = record
+            .get(weight_index)
+            .ok_or("Figure 5 FML row has no weight value")?
+            .parse()?;
+        if !ke0.is_finite() || !weight.is_finite() || weight < 0.0 {
+            return Err("Figure 5 FML contains an invalid support point or weight".into());
+        }
+        let (grid_index, distance) = support
+            .iter()
+            .enumerate()
+            .map(|(index, candidate)| (index, (candidate - ke0).abs()))
+            .min_by(|left, right| left.1.total_cmp(&right.1))
+            .ok_or("candidate grid is empty")?;
+        if distance > 1e-10 {
+            return Err(format!("Figure 5 support {ke0} is not on the likelihood grid").into());
+        }
+        if occupied[grid_index] {
+            return Err(format!("duplicate Figure 5 support point at {ke0}").into());
+        }
+        weights[grid_index] = weight;
+        occupied[grid_index] = true;
+    }
+    validate_weights(&weights)?;
+    Ok(weights)
+}
+
+fn directional_derivative(
+    log_likelihoods: &[Vec<f64>],
+    fml_weights: &[f64],
+) -> Result<Vec<f64>, Box<dyn std::error::Error>> {
+    if log_likelihoods.is_empty() || fml_weights.is_empty() {
+        return Err("directional derivative requires subjects and candidate points".into());
+    }
+    let n_subjects = log_likelihoods.len();
+    validate_log_likelihood_matrix(log_likelihoods, n_subjects, fml_weights.len())?;
+    validate_weights(fml_weights)?;
+
+    let mut log_mixture_likelihoods = Vec::with_capacity(n_subjects);
+    for row in log_likelihoods {
+        let mixture_terms = row
+            .iter()
+            .zip(fml_weights.iter())
+            .filter_map(|(&log_likelihood, &weight)| {
+                (weight > 0.0).then_some(log_likelihood + weight.ln())
+            })
+            .collect::<Vec<_>>();
+        if mixture_terms.is_empty() {
+            return Err("Figure 5 FML has no positive weights".into());
+        }
+        log_mixture_likelihoods.push(logsumexp(&mixture_terms));
+    }
+
+    let mut derivatives = Vec::with_capacity(fml_weights.len());
+    for candidate in 0..fml_weights.len() {
+        let ratio_sum = log_likelihoods
+            .iter()
+            .zip(log_mixture_likelihoods.iter())
+            .map(|(row, &log_mixture)| (row[candidate] - log_mixture).exp())
+            .sum::<f64>();
+        let derivative = ratio_sum - n_subjects as f64;
+        if !derivative.is_finite() {
+            return Err(
+                format!("non-finite directional derivative at grid index {candidate}").into(),
+            );
+        }
+        derivatives.push(derivative);
+    }
+    Ok(derivatives)
+}
+
+fn write_and_report_directional_derivative(
+    log_likelihoods: &[Vec<f64>],
+    support: &[f64],
+    fml_weights: &[f64],
+    path: &PathBuf,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if support.len() != fml_weights.len() {
+        return Err("Figure 6 support and FML weight lengths differ".into());
+    }
+    let derivatives = directional_derivative(log_likelihoods, fml_weights)?;
+    let mut writer = Writer::from_path(path)?;
+    writer.write_record([
+        "ke0",
+        "directional_derivative",
+        "is_fml_support",
+        "fml_weight",
+    ])?;
+    for ((&ke0, &derivative), &weight) in support
+        .iter()
+        .zip(derivatives.iter())
+        .zip(fml_weights.iter())
+    {
+        writer.write_record([
+            format!("{ke0:.17}"),
+            format!("{derivative:.17}"),
+            (weight > ACTIVE_FML_SUPPORT_TOLERANCE).to_string(),
+            format!("{weight:.17}"),
+        ])?;
+    }
+    writer.flush()?;
+
+    let (maximum_index, maximum) = derivatives
+        .iter()
+        .enumerate()
+        .max_by(|left, right| left.1.total_cmp(right.1))
+        .ok_or("Figure 6 has no evaluation points")?;
+    let minimum = derivatives
+        .iter()
+        .copied()
+        .min_by(f64::total_cmp)
+        .ok_or("Figure 6 has no evaluation points")?;
+    println!("Figure 6 directional derivative diagnostic:");
+    println!("  number of subjects N: {}", log_likelihoods.len());
+    println!("  number of evaluation points: {}", support.len());
+    println!(
+        "  evaluation range: [{:.6}, {:.6}]",
+        support[0],
+        support[support.len() - 1]
+    );
+    println!("  max D(theta, FML): {maximum:.12e}");
+    println!("  theta at max D: {:.17}", support[maximum_index]);
+    println!("  min D(theta, FML): {minimum:.12e}");
+    println!(
+        "  active Figure 5 supports (weight > {:.1e}):",
+        ACTIVE_FML_SUPPORT_TOLERANCE
+    );
+    let mut maximum_support_absolute_derivative = 0.0_f64;
+    for ((&ke0, &weight), &derivative) in support
+        .iter()
+        .zip(fml_weights.iter())
+        .zip(derivatives.iter())
+        .filter(|((_, weight), _)| **weight > ACTIVE_FML_SUPPORT_TOLERANCE)
+    {
+        maximum_support_absolute_derivative =
+            maximum_support_absolute_derivative.max(derivative.abs());
+        println!("    K0={ke0:.17}, weight={weight:.12e}, D={derivative:.12e}");
+    }
+    println!("  max |D| at active FML supports: {maximum_support_absolute_derivative:.12e}");
+    println!("  wrote {}", path.display());
+    Ok(())
 }
 
 fn validate_observations(

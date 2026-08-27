@@ -1,4 +1,4 @@
-"""Plot Figures 1, 2, and 5 from paper estimation CSV outputs.
+"""Plot Figures 1, 2, 5, and 6 from paper estimation CSV outputs.
 
 The estimation example owns simulation, likelihoods, and fitted weights. This
 script only reads those numerical outputs and renders empirical/discrete
@@ -73,6 +73,27 @@ def read_sample(path: Path) -> list[float]:
     if not values or any(not math.isfinite(value) for value in values):
         raise ValueError(f"sample file {path} has no finite values")
     return values
+
+
+def read_directional_derivative(
+    path: Path,
+) -> tuple[list[float], list[float], list[bool]]:
+    supports: list[float] = []
+    derivatives: list[float] = []
+    active_supports: list[bool] = []
+    try:
+        with path.open(newline="") as handle:
+            for row in csv.DictReader(handle):
+                supports.append(float(row["ke0"]))
+                derivatives.append(float(row["directional_derivative"]))
+                active_supports.append(row["is_fml_support"].lower() == "true")
+    except (OSError, KeyError, TypeError, ValueError, csv.Error) as exc:
+        raise ValueError(f"cannot read directional derivative file {path}: {exc}") from exc
+    if not supports or len(supports) != len(derivatives):
+        raise ValueError(f"directional derivative file {path} is empty or malformed")
+    if any(not math.isfinite(value) for value in supports + derivatives):
+        raise ValueError(f"directional derivative file {path} has non-finite values")
+    return supports, derivatives, active_supports
 
 
 def validate_observations(path: Path, expected_subjects: int = 100) -> None:
@@ -160,6 +181,23 @@ def plot_sample_histogram(output_dir: Path, sample: list[float]) -> None:
     save_figure(fig, output_dir / "figure5_estimated_k0_sample_histogram")
 
 
+def plot_figure_6(output_dir: Path) -> None:
+    supports, derivatives, active_supports = read_directional_derivative(
+        output_dir / "figure6_directional_derivative.csv"
+    )
+    fig, ax = plt.subplots(figsize=(7.0, 4.8), constrained_layout=True)
+    ax.plot(supports, derivatives, color="steelblue", linewidth=1.0)
+    active_x = [value for value, active in zip(supports, active_supports) if active]
+    active_y = [value for value, active in zip(derivatives, active_supports) if active]
+    ax.plot(active_x, active_y, "o", color="steelblue", markersize=2.5)
+    ax.axhline(0.0, color="black", linewidth=0.8)
+    ax.set_xlabel("Population elimination rate K0")
+    ax.set_ylabel("Directional derivative D(K0, FML)")
+    ax.set_xlim(min(supports), max(supports))
+    ax.grid(True, linewidth=0.3, alpha=0.35)
+    save_figure(fig, output_dir / "figure6_directional_derivative")
+
+
 def ks_statistic(left: list[float], right: list[float]) -> float:
     left_sorted = sorted(left)
     right_sorted = sorted(right)
@@ -228,11 +266,12 @@ def main() -> None:
     sample_1 = read_sample(output_dir / "figure2_fml_sample_n100.csv")
     sample_2 = read_sample(output_dir / "figure5_fml_sample_n100.csv")
     plot_sample_histogram(output_dir, sample_2)
+    plot_figure_6(output_dir)
     for label, sample in [("Experiment 1", sample_1), ("Experiment 2", sample_2)]:
         statistic = ks_statistic(population, sample)
         pvalue = ks_asymptotic_pvalue(statistic, len(population), len(sample))
         print(f"{label} KS statistic={statistic:.6f}, asymptotic p-value={pvalue:.6f}")
-    print(f"wrote Figures 1, 2, and 5 under {output_dir}")
+    print(f"wrote Figures 1, 2, 5, and 6 under {output_dir}")
 
 
 if __name__ == "__main__":
