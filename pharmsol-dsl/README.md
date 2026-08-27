@@ -56,6 +56,19 @@ The main public modules are:
 The parser accepts both canonical `model { ... }` source and the authoring
 shorthand used by the `pharmsol` examples.
 
+## Runtime-only pharmacometric functions
+
+The DSL recognizes `get_e2(u, v, alpha, h1, h2)` as a five-argument,
+real-valued pharmacometric call. It is intentionally represented separately
+from mathematical intrinsics: `pharmsol-dsl` validates and lowers the call but
+does not evaluate it while folding constants. A model using it must be executed
+through a `pharmsol` runtime backend, which supplies the host callback and the
+canonical `pharmsol::get_e2` implementation.
+
+This is a breaking five-argument API migration from the old
+`get_e2(a, b, w, h1, h2, alpha_s)` form. Pass `alpha` as the third argument;
+`w = alpha * u * v` is computed by the runtime.
+
 ## Errors
 
 Every stage reports errors with source spans and renders an annotated report

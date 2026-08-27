@@ -13,8 +13,8 @@ use crate::{
     AnalyzedExprKind, AnalyzedModel, AnalyzedModule, AnalyzedRangeExpr, AnalyzedStatePlace,
     AnalyzedStatementBlock, AnalyzedStmt, AnalyzedStmtKind, AnalyzedUnaryOp, ConstValue,
     CovariateInterpolation, Diagnostic, DiagnosticPhase, DiagnosticReport, MathFunction, ModelKind,
-    RouteKind, RoutePropertyKind, Span, Symbol, SymbolId, SymbolKind, SymbolType, ValueType,
-    DSL_COMPILE_GENERIC,
+    PharmacometricFunction, RouteKind, RoutePropertyKind, Span, Symbol, SymbolId, SymbolKind,
+    SymbolType, ValueType, DSL_COMPILE_GENERIC,
 };
 
 /// Compiles every model in an analyzed module into its ready-to-run form.
@@ -367,6 +367,7 @@ pub enum ExecutionLoad {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExecutionCall {
     Math(MathFunction),
+    Pharmacometric(PharmacometricFunction),
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -1175,6 +1176,13 @@ impl<'a> ModelCompiler<'a> {
             AnalyzedExprKind::Call { callee, args } => match callee {
                 AnalyzedCall::Math(intrinsic) => ExecutionExprKind::Call {
                     callee: ExecutionCall::Math(*intrinsic),
+                    args: args
+                        .iter()
+                        .map(|arg| self.compile_expr(arg, locals))
+                        .collect::<Result<Vec<_>, _>>()?,
+                },
+                AnalyzedCall::Pharmacometric(function) => ExecutionExprKind::Call {
+                    callee: ExecutionCall::Pharmacometric(*function),
                     args: args
                         .iter()
                         .map(|arg| self.compile_expr(arg, locals))

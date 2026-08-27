@@ -1,7 +1,52 @@
+use std::panic::{catch_unwind, AssertUnwindSafe};
+
 use serde::{Deserialize, Serialize};
 
 use super::model_info::NativeModelInfo;
 use pharmsol_dsl::execution::{ExecutionModel, ModelFunctionKind};
+
+/// Host callback ABI for the runtime-only two-site effect function.
+pub type GetE2Callback = extern "C" fn(f64, f64, f64, f64, f64) -> f64;
+
+/// Host callback ABI for the runtime-only three-site effect function.
+pub type GetE3Callback = extern "C" fn(f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64;
+
+/// ABI shared by JIT kernels, generated native AoT kernels, and the loader.
+pub type CompiledModelFunction = unsafe extern "C" fn(
+    t: f64,
+    states: *const f64,
+    params: *const f64,
+    covariates: *const f64,
+    routes: *const f64,
+    derived: *const f64,
+    out: *mut f64,
+    get_e2_callback: GetE2Callback,
+    get_e3_callback: GetE3Callback,
+);
+
+/// The native host callbacks never permit a Rust panic to cross the C ABI.
+pub(crate) extern "C" fn get_e2_callback(u: f64, v: f64, alpha: f64, h1: f64, h2: f64) -> f64 {
+    catch_unwind(AssertUnwindSafe(|| crate::get_e2(u, v, alpha, h1, h2))).unwrap_or(f64::NAN)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) extern "C" fn get_e3_callback(
+    a: f64,
+    b: f64,
+    c: f64,
+    alpha12: f64,
+    alpha13: f64,
+    alpha23: f64,
+    alpha123: f64,
+    h1: f64,
+    h2: f64,
+    h3: f64,
+) -> f64 {
+    catch_unwind(AssertUnwindSafe(|| {
+        crate::get_e3(a, b, c, alpha12, alpha13, alpha23, alpha123, h1, h2, h3)
+    }))
+    .unwrap_or(f64::NAN)
+}
 
 #[cfg(any(test, feature = "dsl-aot", feature = "dsl-aot-load"))]
 pub const API_VERSION_SYMBOL: &str = "pharmsol_dsl_api_version";

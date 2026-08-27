@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Breaking: add runtime-only `get_e2(u, v, alpha, h1, h2)` with exact arity five; the runtime computes `w = alpha * u * v` and compiler constants reject the call.
+
 ## [0.28.8](https://github.com/LAPKB/pharmsol/compare/pharmsol-dsl-v0.28.7...pharmsol-dsl-v0.28.8) - 2026-08-18
 
 ### Fixed

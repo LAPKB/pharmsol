@@ -76,6 +76,13 @@
 //! # Ok::<(), pharmsol::dsl::RuntimeError>(())
 //! ```
 //!
+//! Runtime-only pharmacometric calls use the same backend-neutral path. The
+//! DSL supports five-argument `get_e2(u, v, alpha, h1, h2)` and ten-argument
+//! `get_e3(a, b, c, alpha12, alpha13, alpha23, alpha123, h1, h2, h3)`. JIT and
+//! native AoT kernels receive host callbacks and never embed either optimizer.
+//! The E2 runtime computes `w = alpha * u * v`, which is the breaking-change
+//! migration from the former six-argument call.
+//!
 //! For just the source-to-execution compiler without backend selection, use
 //! `pharmsol-dsl`. For a complete runtime path inside the main crate, stay in
 //! [`pharmsol::dsl`](self).
@@ -105,7 +112,10 @@ pub use aot::{
 pub use aot::{load_aot_model, read_aot_model_info};
 #[cfg(all(not(feature = "dsl-aot"), feature = "dsl-aot-load"))]
 pub use aot::{AotError, AOT_API_VERSION};
-pub use compiled_backend_abi::{CompiledFunctionAvailability, CompiledModelInfoEnvelope};
+pub use compiled_backend_abi::{
+    CompiledFunctionAvailability, CompiledModelFunction, CompiledModelInfoEnvelope, GetE2Callback,
+    GetE3Callback,
+};
 #[cfg(feature = "dsl-jit")]
 pub use jit::{
     compile_analytical_model_to_jit, compile_execution_artifact, compile_execution_model_to_jit,
@@ -115,8 +125,8 @@ pub use jit::{
 pub use model_info::{NativeCovariateInfo, NativeModelInfo, NativeOutputInfo, NativeRouteInfo};
 #[cfg(any(feature = "dsl-jit", feature = "dsl-aot-load"))]
 pub use native::{
-    CompiledModelFunction, CompiledNativeModel, NativeAnalyticalModel, NativeExecutionArtifact,
-    NativeOdeModel, NativeSdeModel, RuntimeBackend,
+    CompiledNativeModel, NativeAnalyticalModel, NativeExecutionArtifact, NativeOdeModel,
+    NativeSdeModel, RuntimeBackend,
 };
 pub use pharmsol_dsl::*;
 #[cfg(any(

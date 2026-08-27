@@ -8,7 +8,7 @@
 //! numeric values such as `1` are preserved as numeric-looking labels.
 
 use crate::data::*;
-use ::csv::{ReaderBuilder, StringRecord};
+use csv::{ReaderBuilder, StringRecord};
 use serde::de::{MapAccess, Visitor};
 use serde::{de, Deserialize, Deserializer};
 use std::collections::{HashMap, HashSet};
