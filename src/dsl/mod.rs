@@ -63,11 +63,12 @@
 //! # Ok::<(), pharmsol::dsl::RuntimeError>(())
 //! ```
 //!
-//! Runtime-only pharmacometric calls use the same backend-neutral path. For
-//! example, `out(cp) = get_e2(u, v, alpha, h1, h2)` has five numeric arguments;
-//! JIT kernels receive one host callback and never embed the optimizer
-//! implementation. The runtime computes `w = alpha * u * v`, which
-//! is the breaking-change migration from the former six-argument call.
+//! Runtime-only pharmacometric calls use the same backend-neutral path. The
+//! DSL supports five-argument `get_e2(u, v, alpha, h1, h2)` and ten-argument
+//! `get_e3(a, b, c, alpha12, alpha13, alpha23, alpha123, h1, h2, h3)`. JIT
+//! kernels receive host callbacks and never embed either optimizer.
+//! The E2 runtime computes `w = alpha * u * v`, which is the breaking-change
+//! migration from the former six-argument call.
 //!
 //! For just the source-to-execution compiler without backend selection, use
 //! `pharmsol-dsl`. For a complete runtime path inside the main crate, stay in
@@ -79,8 +80,8 @@ mod model_info;
 mod runtime;
 
 pub use backend::{
-    CompiledModelFunction, GetE2Callback, RuntimeAnalyticalModel, RuntimeExecutionArtifact, RuntimeOdeModel,
-    RuntimeSdeModel,
+    CompiledModelFunction, GetE2Callback, GetE3Callback, RuntimeAnalyticalModel,
+    RuntimeExecutionArtifact, RuntimeOdeModel, RuntimeSdeModel,
 };
 pub use jit::{
     compile_analytical_model_to_jit, compile_execution_artifact, compile_execution_model_to_jit,

@@ -25,6 +25,7 @@ const RESERVED_NAMES: &[&str] = &[
     "exp",
     "floor",
     "get_e2",
+    "get_e3",
     "lag",
     "linear",
     "ln",
@@ -2240,17 +2241,23 @@ impl<'a> Analyzer<'a> {
                     Applicability::MaybeIncorrect,
                 ),
         ));
-        candidates.push(SimilarNameCandidate::new(
-            PharmacometricFunction::GetE2.name(),
-            AnalysisAssist::default()
-                .help("`get_e2` is a runtime-only pharmacometric function with five numeric arguments")
-                .replacement_suggestion(
-                    callee.span,
-                    PharmacometricFunction::GetE2.name(),
-                    "did you mean `get_e2`?",
-                    Applicability::MaybeIncorrect,
-                ),
-        ));
+        candidates.extend(PharmacometricFunction::ALL.into_iter().map(|function| {
+            let name = function.name();
+            let ArgumentCount::Exact(argument_count) = function.argument_count();
+            SimilarNameCandidate::new(
+                name,
+                AnalysisAssist::default()
+                    .help(format!(
+                        "`{name}` is a runtime-only pharmacometric function with {argument_count} numeric arguments"
+                    ))
+                    .replacement_suggestion(
+                        callee.span,
+                        name,
+                        format!("did you mean `{name}`?"),
+                        Applicability::MaybeIncorrect,
+                    ),
+            )
+        }));
         best_similar_name_assist(&callee.text, candidates)
     }
 
@@ -4233,5 +4240,101 @@ model case_sensitive_get_e2 {
         let model = crate::parse_model(source).expect("model parses");
         let error = analyze_model(&model).expect_err("case variant must not resolve");
         assert!(error.render(source).contains("unknown function `GET_E2`"));
+    }
+
+    #[test]
+    fn get_e3_resolves_as_a_ten_argument_runtime_call() {
+        let source = r#"
+model get_e3_model {
+    kind ode
+    parameters { a, b, c, alpha12, alpha13, alpha23, alpha123, h1, h2, h3 }
+    states { central }
+    dynamics {
+        ddt(central) = 0
+    }
+    outputs {
+        cp = get_e3(a, b, c, alpha12, alpha13, alpha23, alpha123, h1, h2, h3)
+    }
+}
+"#;
+        let model = crate::parse_model(source).expect("model parses");
+        let analyzed = analyze_model(&model).expect("get_e3 model analyzes");
+        let AnalyzedStmtKind::Assign(output) = &analyzed.outputs_block.statements[0].kind else {
+            panic!("expected output assignment");
+        };
+        let AnalyzedExprKind::Call { callee, args } = &output.value.kind else {
+            panic!("expected get_e3 call");
+        };
+        assert_eq!(args.len(), 10);
+        assert_eq!(output.value.ty, ValueType::Real);
+        assert!(output.value.constant.is_none());
+        assert_eq!(
+            callee,
+            &AnalyzedCall::Pharmacometric(PharmacometricFunction::GetE3)
+        );
+    }
+
+    #[test]
+    fn get_e3_requires_exactly_ten_numeric_arguments() {
+        let source = r#"
+model broken_get_e3 {
+    kind ode
+    states { central }
+    dynamics {
+        ddt(central) = 0
+    }
+    outputs {
+        cp = get_e3(1, 1, 1, 0, 0, 0, 0, 1, 1)
+    }
+}
+"#;
+        let model = crate::parse_model(source).expect("model parses");
+        let error = analyze_model(&model).expect_err("wrong get_e3 arity must fail");
+        assert!(error
+            .render(source)
+            .contains("function `get_e3` expects 10 argument(s), got 9"));
+
+        let source = source.replace("1, 1)", "1, 1, true)");
+        let model = crate::parse_model(&source).expect("model parses");
+        let error = analyze_model(&model).expect_err("boolean get_e3 argument must fail");
+        assert!(error
+            .render(&source)
+            .contains("`get_e3` argument must be numeric"));
+    }
+
+    #[test]
+    fn get_e3_is_runtime_only_and_case_sensitive() {
+        let constant_source = r#"
+model constant_get_e3 {
+    kind ode
+    constants {
+        value = get_e3(1, 1, 1, 0, 0, 0, 0, 1, 1, 1)
+    }
+    states { central }
+    dynamics {
+        ddt(central) = 0
+    }
+    outputs {
+        cp = central
+    }
+}
+"#;
+        let model = crate::parse_model(constant_source).expect("model parses");
+        let error = analyze_model(&model).expect_err("constant get_e3 must fail cleanly");
+        assert!(error
+            .render(constant_source)
+            .contains("`get_e3` is runtime-only and cannot appear in a compile-time expression"));
+
+        let case_source = constant_source
+            .replace(
+                "constants {\n        value = get_e3(1, 1, 1, 0, 0, 0, 0, 1, 1, 1)\n    }",
+                "",
+            )
+            .replace("cp = central", "cp = GET_E3(1, 1, 1, 0, 0, 0, 0, 1, 1, 1)");
+        let model = crate::parse_model(&case_source).expect("model parses");
+        let error = analyze_model(&model).expect_err("case variant must not resolve");
+        assert!(error
+            .render(&case_source)
+            .contains("unknown function `GET_E3`"));
     }
 }

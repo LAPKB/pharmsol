@@ -1,10 +1,11 @@
-//! Maximum-effect (`E2`) optimization for dual-site pharmacodynamic models.
+//! Maximum-effect optimization for multi-site pharmacodynamic models.
 //!
-//! The central entry point is [`get_e2`], which computes the maximum achievable
-//! effect for a model with two binding sites. The canonical equation is solved
-//! in positive `M` space through a one-dimensional Nelder-Mead optimization,
-//! with the historical FINDM0-style estimate used to recover from a poor first
-//! optimization result.
+//! [`get_e2`] solves the canonical two-site Drusano/Greco equation, while
+//! [`get_e3`] implements the three-site extension described by Snyder et al.
+//! (PMID 10722511). Both equations are solved in positive `M` space. The
+//! two-site path retains its historical Nelder-Mead and FINDM0 behavior; the
+//! three-site path combines root bracketing with multi-start Nelder-Mead so
+//! signed interactions cannot trap the solve at a non-root local minimum.
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
@@ -14,16 +15,40 @@ use argmin::{
 };
 
 const RESIDUAL_COST_TOLERANCE: f64 = 1.0e-10;
+const HISTORICAL_NELDER_MEAD_TOLERANCE: f64 = 1.0e-8;
+const E3_NELDER_MEAD_TOLERANCE: f64 = 1.0e-24;
+const E3_ROOT_COST_TOLERANCE: f64 = 1.0e-24;
 const INVALID_COST: f64 = 1.0e100;
+const NEGLIGIBLE_EXPOSURE: f64 = 1.0e-5;
+const MAX_RESIDUAL_TERMS: usize = 7;
+const E3_LOG_SEARCH_MARGIN: f64 = 32.0;
+const E3_LOG_SEARCH_STEP: f64 = 0.25;
+const E3_MAX_SEARCH_INTERVALS: usize = 8192;
+
+#[derive(Debug, Clone, Copy)]
+struct ResidualTerm {
+    coefficient: f64,
+    exponent: f64,
+}
+
+impl ResidualTerm {
+    const ZERO: Self = Self {
+        coefficient: 0.0,
+        exponent: 1.0,
+    };
+
+    const fn new(coefficient: f64, exponent: f64) -> Self {
+        Self {
+            coefficient,
+            exponent,
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 struct BestM0 {
-    u: f64,
-    v: f64,
-    w: f64,
-    h1: f64,
-    h2: f64,
-    xx: f64,
+    terms: [ResidualTerm; MAX_RESIDUAL_TERMS],
+    term_count: usize,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -56,36 +81,54 @@ impl CostFunction for BestM0 {
 }
 
 impl BestM0 {
+    fn from_terms<const N: usize>(terms: [ResidualTerm; N]) -> Self {
+        assert!(N <= MAX_RESIDUAL_TERMS);
+        let mut padded = [ResidualTerm::ZERO; MAX_RESIDUAL_TERMS];
+        padded[..N].copy_from_slice(&terms);
+        Self {
+            terms: padded,
+            term_count: N,
+        }
+    }
+
     fn residual(&self, xm: f64) -> Option<f64> {
         if !(xm.is_finite() && xm > 0.0) {
             return None;
         }
 
-        let term = |coefficient: f64, exponent: f64| {
-            if coefficient == 0.0 {
-                Some(0.0)
-            } else {
-                let denominator = xm.powf(exponent);
-                let value = coefficient / denominator;
-                value.is_finite().then_some(value)
+        let mut residual = 1.0;
+        for term in &self.terms[..self.term_count] {
+            if term.coefficient == 0.0 {
+                continue;
             }
-        };
-
-        let t1 = term(self.u, self.h1)?;
-        let t2 = term(self.v, self.h2)?;
-        let t3 = term(self.w, self.xx)?;
-        let residual = 1.0 - t1 - t2 - t3;
+            let denominator = xm.powf(term.exponent);
+            let value = term.coefficient / denominator;
+            if !value.is_finite() {
+                return None;
+            }
+            residual -= value;
+        }
         residual.is_finite().then_some(residual)
     }
 
-    /// Start and step are in log-space (`ln(M)`). Optimizer panics and missing
-    /// best parameters are converted into ordinary errors so no failure can
-    /// escape the public scalar API.
+    /// Start and step are in log-space (`ln(M)`). This entry point preserves
+    /// the historical E2 Nelder-Mead tolerance.
     fn get_best(&self, start_log: f64, step_log: f64) -> Result<OptimizationResult, BestM0Error> {
+        self.get_best_with_tolerance(start_log, step_log, HISTORICAL_NELDER_MEAD_TOLERANCE)
+    }
+
+    /// Optimizer panics and missing best parameters are converted into ordinary
+    /// errors so no failure can escape either public scalar API.
+    fn get_best_with_tolerance(
+        &self,
+        start_log: f64,
+        step_log: f64,
+        tolerance: f64,
+    ) -> Result<OptimizationResult, BestM0Error> {
         let run = catch_unwind(AssertUnwindSafe(|| {
-            if !start_log.is_finite() {
+            if !start_log.is_finite() || !(tolerance.is_finite() && tolerance > 0.0) {
                 return Err(BestM0Error::OptimizationError(
-                    "optimizer start is not finite".to_string(),
+                    "optimizer start or tolerance is invalid".to_string(),
                 ));
             }
 
@@ -97,7 +140,7 @@ impl BestM0 {
             };
 
             let solver = NelderMead::new(initial_simplex)
-                .with_sd_tolerance(1.0e-8)
+                .with_sd_tolerance(tolerance)
                 .map_err(|error| {
                     BestM0Error::OptimizationError(format!(
                         "failed setting the Nelder-Mead tolerance: {error}"
@@ -150,6 +193,174 @@ impl BestM0 {
                 "Nelder-Mead panicked while optimizing".to_string(),
             )),
         }
+    }
+
+    fn candidate_at_log(&self, log_xm: f64) -> Option<(OptimizationResult, f64)> {
+        let xm = log_xm.exp();
+        let residual = self.residual(xm)?;
+        let cost = residual * residual;
+        cost.is_finite().then_some((
+            OptimizationResult {
+                xm,
+                cost,
+                converged: false,
+            },
+            residual,
+        ))
+    }
+
+    fn bisect_root(
+        &self,
+        mut left_log: f64,
+        mut left_residual: f64,
+        mut right_log: f64,
+        right_residual: f64,
+    ) -> Option<OptimizationResult> {
+        let mut best = select_lower_residual(
+            self.candidate_at_log(left_log).map(|value| value.0),
+            self.candidate_at_log(right_log).map(|value| value.0),
+        );
+        if left_residual == 0.0 || right_residual == 0.0 {
+            return best;
+        }
+        if left_residual.is_sign_negative() == right_residual.is_sign_negative() {
+            return best;
+        }
+
+        for _ in 0..128 {
+            let middle_log = left_log + (right_log - left_log) / 2.0;
+            let (mut candidate, middle_residual) = self.candidate_at_log(middle_log)?;
+            candidate.converged = true;
+            best = select_lower_residual(best, Some(candidate));
+            if candidate.cost <= E3_ROOT_COST_TOLERANCE {
+                return Some(candidate);
+            }
+
+            if left_residual.is_sign_negative() == middle_residual.is_sign_negative() {
+                left_log = middle_log;
+                left_residual = middle_residual;
+            } else {
+                right_log = middle_log;
+            }
+        }
+        best
+    }
+
+    /// Search characteristic concentration scales across the one-dimensional
+    /// E3 objective, avoiding non-root local minima from signed interactions.
+    fn get_global_best(&self, initial_log: f64) -> Result<OptimizationResult, BestM0Error> {
+        if !initial_log.is_finite() {
+            return Err(BestM0Error::OptimizationError(
+                "optimizer start is not finite".to_string(),
+            ));
+        }
+
+        let mut anchors = vec![initial_log];
+        let mut grouped_terms: Vec<ResidualTerm> = Vec::new();
+        for term in &self.terms[..self.term_count] {
+            if term.coefficient == 0.0 {
+                continue;
+            }
+            let characteristic_log = term.coefficient.abs().ln() / term.exponent;
+            if characteristic_log.is_finite() {
+                anchors.push(characteristic_log);
+            }
+            if let Some(group) = grouped_terms
+                .iter_mut()
+                .find(|group| group.exponent.to_bits() == term.exponent.to_bits())
+            {
+                group.coefficient += term.coefficient;
+            } else {
+                grouped_terms.push(*term);
+            }
+        }
+        for term in grouped_terms {
+            if term.coefficient != 0.0 {
+                let characteristic_log = term.coefficient.abs().ln() / term.exponent;
+                if characteristic_log.is_finite() {
+                    anchors.push(characteristic_log);
+                }
+            }
+        }
+
+        let min_anchor = anchors.iter().copied().fold(f64::INFINITY, f64::min);
+        let max_anchor = anchors.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let lower = (min_anchor - E3_LOG_SEARCH_MARGIN).max(-700.0);
+        let upper = (max_anchor + E3_LOG_SEARCH_MARGIN).min(700.0);
+        if !(lower.is_finite() && upper.is_finite() && lower < upper) {
+            return Err(BestM0Error::OptimizationError(
+                "could not construct a finite E3 search interval".to_string(),
+            ));
+        }
+
+        let interval_count = (((upper - lower) / E3_LOG_SEARCH_STEP).ceil() as usize)
+            .clamp(1, E3_MAX_SEARCH_INTERVALS);
+        let step = (upper - lower) / interval_count as f64;
+        let mut samples = Vec::with_capacity(interval_count + 1);
+        let mut best = None;
+        for index in 0..=interval_count {
+            let log_xm = if index == interval_count {
+                upper
+            } else {
+                lower + index as f64 * step
+            };
+            let sample = self.candidate_at_log(log_xm);
+            if let Some((candidate, _)) = sample {
+                best = select_lower_residual(best, Some(candidate));
+            }
+            samples.push(sample.map(|(candidate, residual)| (log_xm, candidate, residual)));
+        }
+
+        for pair in samples.windows(2) {
+            let (Some((left_log, _, left_residual)), Some((right_log, _, right_residual))) =
+                (pair[0], pair[1])
+            else {
+                continue;
+            };
+            if left_residual == 0.0
+                || right_residual == 0.0
+                || left_residual.is_sign_negative() != right_residual.is_sign_negative()
+            {
+                best = select_lower_residual(
+                    best,
+                    self.bisect_root(left_log, left_residual, right_log, right_residual),
+                );
+                if best.is_some_and(|candidate| candidate.cost <= E3_ROOT_COST_TOLERANCE) {
+                    return best.ok_or_else(|| {
+                        BestM0Error::OptimizationError("E3 root selection failed".to_string())
+                    });
+                }
+            }
+        }
+
+        let mut seeds = anchors;
+        if let Some(candidate) = best {
+            seeds.push(candidate.xm.ln());
+        }
+        for window in samples.windows(3) {
+            let (Some((_, left, _)), Some((middle_log, middle, _)), Some((_, right, _))) =
+                (window[0], window[1], window[2])
+            else {
+                continue;
+            };
+            if middle.cost <= left.cost && middle.cost <= right.cost {
+                seeds.push(middle_log);
+            }
+        }
+        seeds.retain(|seed| seed.is_finite());
+        seeds.sort_by(|left, right| left.total_cmp(right));
+        seeds.dedup_by(|left, right| (*left - *right).abs() < 1.0e-8);
+
+        for seed in seeds.into_iter().take(32) {
+            let candidate = self
+                .get_best_with_tolerance(seed, 0.1, E3_NELDER_MEAD_TOLERANCE)
+                .ok();
+            best = select_lower_residual(best, candidate);
+        }
+
+        best.ok_or_else(|| {
+            BestM0Error::OptimizationError("E3 search found no finite candidate".to_string())
+        })
     }
 }
 
@@ -286,14 +497,15 @@ fn select_lower_residual(
 /// * `u` - Coefficient for the first binding site.
 /// * `v` - Coefficient for the second binding site.
 /// * `alpha` - Finite interaction coefficient, including negative antagonistic values.
-/// * `h1` - Hill exponent for the first site; must be positive and finite.
-/// * `h2` - Hill exponent for the second site; must be positive and finite.
+/// * `h1` - Positive finite exponent `H1`, the reciprocal of the first conventional Hill coefficient.
+/// * `h2` - Positive finite exponent `H2`, the reciprocal of the second conventional Hill coefficient.
 ///
 /// # Returns
 ///
-/// The effect `M / (1 + M)`. Exact zero coefficients use their closed-form
-/// single-site solution. Malformed inputs and cases without a meaningful finite
-/// scalar return `NaN`.
+/// The effect `M / (1 + M)`. Two coefficients below `1e-5` return zero, as in
+/// the historical boundary condition, and exact zero coefficients use their
+/// closed-form single-site solution. Malformed inputs and cases without a
+/// meaningful finite scalar return `NaN`.
 ///
 /// # Example
 ///
@@ -322,6 +534,10 @@ pub fn get_e2(u: f64, v: f64, alpha: f64, h1: f64, h2: f64) -> f64 {
         return f64::NAN;
     }
 
+    if u < NEGLIGIBLE_EXPOSURE && v < NEGLIGIBLE_EXPOSURE {
+        return 0.0;
+    }
+
     let w = alpha * u * v;
     if !w.is_finite() {
         return f64::NAN;
@@ -341,14 +557,11 @@ pub fn get_e2(u: f64, v: f64, alpha: f64, h1: f64, h2: f64) -> f64 {
     if !xx.is_finite() {
         return f64::NAN;
     }
-    let objective = BestM0 {
-        u,
-        v,
-        w,
-        h1,
-        h2,
-        xx,
-    };
+    let objective = BestM0::from_terms([
+        ResidualTerm::new(u, h1),
+        ResidualTerm::new(v, h2),
+        ResidualTerm::new(w, xx),
+    ]);
 
     let xm_guess = v.powf(1.0 / h2).max(u.powf(1.0 / h1)).max(1.0e-12);
     if !(xm_guess.is_finite() && xm_guess > 0.0) {
@@ -390,6 +603,138 @@ pub fn get_e2(u: f64, v: f64, alpha: f64, h1: f64, h2: f64) -> f64 {
     f64::NAN
 }
 
+/// Computes the effect metric for the three-site Greco response-surface model.
+///
+/// This is the three-drug extension published by Snyder et al. (PMID 10722511).
+/// With positive `M`, the canonical residual is
+///
+/// ```text
+/// r(M) = 1 - a/M^h1 - b/M^h2 - c/M^h3
+///        - (alpha12*a*b)/M^((h1+h2)/2)
+///        - (alpha13*a*c)/M^((h1+h3)/2)
+///        - (alpha23*b*c)/M^((h2+h3)/2)
+///        - (alpha123*a*b*c)/M^((h1+h2+h3)/3)
+/// ```
+///
+/// The function brackets positive roots across characteristic concentration
+/// scales and uses multi-start Nelder-Mead for any remaining least-squares
+/// minima, then returns `M / (1 + M)`.
+/// Each normalized exposure below `1e-5` is treated as zero. Consequently, the
+/// model reduces exactly to [`get_e2`] when one site is absent and to the
+/// corresponding closed-form single-site equation when two sites are absent.
+/// Finite negative interaction parameters are valid and represent antagonism.
+///
+/// The exponent arguments are `H_i = 1 / m_i`, where `m_i` are the conventional
+/// Hill coefficients used in the source publication. Pairwise and three-way
+/// interaction exponents are therefore the arithmetic means of these reciprocal
+/// Hill coefficients.
+///
+/// # Arguments
+///
+/// * `a`, `b`, `c` - Nonnegative finite normalized drug exposures.
+/// * `alpha12`, `alpha13`, `alpha23` - Finite pairwise interaction coefficients.
+/// * `alpha123` - Finite three-way interaction coefficient.
+/// * `h1`, `h2`, `h3` - Positive finite reciprocal Hill exponents `H1`, `H2`, and `H3`.
+///
+/// # Returns
+///
+/// The effect `M / (1 + M)`. Malformed inputs and search failures without a
+/// meaningful finite scalar return `NaN`. If no exact positive root exists, the
+/// best finite least-squares candidate found by the bounded log-space search is
+/// returned.
+///
+/// # Example
+///
+/// ```
+/// use pharmsol::get_e3;
+///
+/// // With all exponents equal to one, M is the sum of all seven coefficients.
+/// let effect = get_e3(1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0);
+/// assert!((effect - 0.8).abs() < 1e-6);
+/// ```
+#[allow(clippy::too_many_arguments)]
+pub fn get_e3(
+    a: f64,
+    b: f64,
+    c: f64,
+    alpha12: f64,
+    alpha13: f64,
+    alpha23: f64,
+    alpha123: f64,
+    h1: f64,
+    h2: f64,
+    h3: f64,
+) -> f64 {
+    if ![a, b, c, alpha12, alpha13, alpha23, alpha123, h1, h2, h3]
+        .into_iter()
+        .all(f64::is_finite)
+        || a < 0.0
+        || b < 0.0
+        || c < 0.0
+        || h1 <= 0.0
+        || h2 <= 0.0
+        || h3 <= 0.0
+    {
+        return f64::NAN;
+    }
+
+    let a = if a < NEGLIGIBLE_EXPOSURE { 0.0 } else { a };
+    let b = if b < NEGLIGIBLE_EXPOSURE { 0.0 } else { b };
+    let c = if c < NEGLIGIBLE_EXPOSURE { 0.0 } else { c };
+
+    match (a == 0.0, b == 0.0, c == 0.0) {
+        (true, true, true) => return 0.0,
+        (false, true, true) => return single_site_xm(a, h1).map_or(f64::NAN, effect_from_xm),
+        (true, false, true) => return single_site_xm(b, h2).map_or(f64::NAN, effect_from_xm),
+        (true, true, false) => return single_site_xm(c, h3).map_or(f64::NAN, effect_from_xm),
+        (false, false, true) => return get_e2(a, b, alpha12, h1, h2),
+        (false, true, false) => return get_e2(a, c, alpha13, h1, h3),
+        (true, false, false) => return get_e2(b, c, alpha23, h2, h3),
+        (false, false, false) => {}
+    }
+
+    let h12 = (h1 + h2) / 2.0;
+    let h13 = (h1 + h3) / 2.0;
+    let h23 = (h2 + h3) / 2.0;
+    let h123 = (h1 + h2 + h3) / 3.0;
+    let w12 = alpha12 * a * b;
+    let w13 = alpha13 * a * c;
+    let w23 = alpha23 * b * c;
+    let w123 = alpha123 * a * b * c;
+    if ![h12, h13, h23, h123, w12, w13, w23, w123]
+        .into_iter()
+        .all(f64::is_finite)
+    {
+        return f64::NAN;
+    }
+
+    let objective = BestM0::from_terms([
+        ResidualTerm::new(a, h1),
+        ResidualTerm::new(b, h2),
+        ResidualTerm::new(c, h3),
+        ResidualTerm::new(w12, h12),
+        ResidualTerm::new(w13, h13),
+        ResidualTerm::new(w23, h23),
+        ResidualTerm::new(w123, h123),
+    ]);
+
+    let Some(a_xm) = single_site_xm(a, h1) else {
+        return f64::NAN;
+    };
+    let Some(b_xm) = single_site_xm(b, h2) else {
+        return f64::NAN;
+    };
+    let Some(c_xm) = single_site_xm(c, h3) else {
+        return f64::NAN;
+    };
+    let xm_guess = a_xm.max(b_xm).max(c_xm).max(1.0e-12);
+
+    objective
+        .get_global_best(xm_guess.ln())
+        .ok()
+        .map_or(f64::NAN, |candidate| effect_from_xm(candidate.xm))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -398,11 +743,40 @@ mod tests {
         1.0 - u / xm.powf(h1) - v / xm.powf(h2) - (alpha * u * v) / xm.powf((h1 + h2) / 2.0)
     }
 
+    fn canonical_e3_residual(
+        exposures: [f64; 3],
+        pairwise_alpha: [f64; 3],
+        alpha123: f64,
+        exponents: [f64; 3],
+        xm: f64,
+    ) -> f64 {
+        let [a, b, c] = exposures;
+        let [alpha12, alpha13, alpha23] = pairwise_alpha;
+        let [h1, h2, h3] = exponents;
+        1.0 - a / xm.powf(h1)
+            - b / xm.powf(h2)
+            - c / xm.powf(h3)
+            - alpha12 * a * b / xm.powf((h1 + h2) / 2.0)
+            - alpha13 * a * c / xm.powf((h1 + h3) / 2.0)
+            - alpha23 * b * c / xm.powf((h2 + h3) / 2.0)
+            - alpha123 * a * b * c / xm.powf((h1 + h2 + h3) / 3.0)
+    }
+
     #[test]
     fn single_site_vectors_match_closed_form() {
         assert!((get_e2(1.0, 0.0, 7.0, 1.0, 2.0) - 0.5).abs() < 1.0e-12);
         let expected = 2.0_f64.sqrt() / (1.0 + 2.0_f64.sqrt());
         assert!((get_e2(0.0, 2.0, -3.0, 1.0, 2.0) - expected).abs() < 1.0e-12);
+    }
+
+    #[test]
+    fn dual_exposure_boundary_matches_the_historical_threshold() {
+        assert_eq!(get_e2(0.9e-5, 0.9e-5, f64::MAX, 1.0, 1.0), 0.0);
+    }
+
+    #[test]
+    fn get_e2_preserves_the_historical_optimizer_result() {
+        assert!((get_e2(1.0, 1.0, -0.5, 1.0, 1.0) - 0.6).abs() < 1.0e-10);
     }
 
     #[test]
@@ -430,23 +804,16 @@ mod tests {
 
     #[test]
     fn optimizer_candidate_cost_is_the_canonical_squared_residual() {
-        let objective = BestM0 {
-            u: 1.0,
-            v: 1.0,
-            w: -0.5,
-            h1: 1.0,
-            h2: 1.0,
-            xx: 1.0,
-        };
+        let objective = BestM0::from_terms([
+            ResidualTerm::new(1.0, 1.0),
+            ResidualTerm::new(1.0, 1.0),
+            ResidualTerm::new(-0.5, 1.0),
+        ]);
         let root = 1.5_f64;
-        let cost = objective.cost(&root.ln()).expect("finite cost");
+        let cost = objective.cost(&root.ln()).unwrap_or(INVALID_COST);
         assert!(cost < RESIDUAL_COST_TOLERANCE);
-        assert!(
-            (objective.residual(root).expect("finite residual")
-                - canonical_residual(1.0, 1.0, -0.5, 1.0, 1.0, root))
-            .abs()
-                < 1.0e-15
-        );
+        let residual = objective.residual(root).unwrap_or(f64::NAN);
+        assert!((residual - canonical_residual(1.0, 1.0, -0.5, 1.0, 1.0, root)).abs() < 1.0e-15);
     }
 
     #[test]
@@ -457,6 +824,120 @@ mod tests {
         let xm = effect / (1.0 - effect);
         let residual = canonical_residual(1.0, 1.0, -3.0, 1.0, 1.0, xm);
         assert!(residual * residual > RESIDUAL_COST_TOLERANCE);
+    }
+
+    #[test]
+    fn get_e3_equal_exponents_match_the_closed_form() {
+        let (a, b, c) = (1.0, 2.0, 0.5);
+        let (alpha12, alpha13, alpha23, alpha123) = (0.2, -0.1, 0.3, 0.4);
+        let expected_m =
+            a + b + c + alpha12 * a * b + alpha13 * a * c + alpha23 * b * c + alpha123 * a * b * c;
+        let expected = expected_m / (1.0 + expected_m);
+        let actual = get_e3(a, b, c, alpha12, alpha13, alpha23, alpha123, 1.0, 1.0, 1.0);
+        assert!(
+            (actual - expected).abs() < 1.0e-6,
+            "actual={actual}, expected={expected}"
+        );
+    }
+
+    #[test]
+    fn get_e3_uses_reciprocal_hill_averages_from_the_published_equation() {
+        let exposures = [0.8, 1.1, 0.6];
+        let pairwise_alpha = [0.25, -0.1, 0.4];
+        let alpha123 = 0.15;
+        let exponents = [0.75, 1.4, 2.1];
+        let effect = get_e3(
+            exposures[0],
+            exposures[1],
+            exposures[2],
+            pairwise_alpha[0],
+            pairwise_alpha[1],
+            pairwise_alpha[2],
+            alpha123,
+            exponents[0],
+            exponents[1],
+            exponents[2],
+        );
+        assert!(effect.is_finite() && (0.0..1.0).contains(&effect));
+        let xm = effect / (1.0 - effect);
+        let residual = canonical_e3_residual(exposures, pairwise_alpha, alpha123, exponents, xm);
+        assert!(
+            residual * residual <= RESIDUAL_COST_TOLERANCE,
+            "effect={effect}, xm={xm}, residual={residual}"
+        );
+    }
+
+    #[test]
+    fn get_e3_finds_the_global_antagonistic_root() {
+        // Multiplying the residual by M^3 gives the strictly increasing cubic
+        // M^3 - 2M^2 + 3M - 1, which has one positive root near 0.43016.
+        let effect = get_e3(1.0, 1.0, 1.0, -3.0, 0.0, 0.0, 0.0, 1.0, 3.0, 1.0);
+        assert!(effect.is_finite() && (0.0..1.0).contains(&effect));
+        let xm = effect / (1.0 - effect);
+        let residual =
+            canonical_e3_residual([1.0, 1.0, 1.0], [-3.0, 0.0, 0.0], 0.0, [1.0, 3.0, 1.0], xm);
+        assert!(
+            (xm - 0.430_159_709).abs() < 1.0e-6,
+            "xm={xm}, residual={residual}"
+        );
+        assert!(residual * residual <= E3_ROOT_COST_TOLERANCE * 10.0);
+    }
+
+    #[test]
+    fn get_e3_reduces_to_the_canonical_lower_order_models() {
+        let expected_bc = get_e2(1.25, 0.75, -0.2, 1.2, 0.8);
+        assert_eq!(
+            get_e3(1.0e-6, 1.25, 0.75, 8.0, -4.0, -0.2, 3.0, 2.0, 1.2, 0.8,),
+            expected_bc
+        );
+
+        let expected_ac = get_e2(0.8, 1.4, 0.3, 1.1, 0.9);
+        assert_eq!(
+            get_e3(0.8, 1.0e-6, 1.4, -2.0, 0.3, 4.0, -1.0, 1.1, 2.0, 0.9,),
+            expected_ac
+        );
+        let expected_ab = get_e2(0.8, 1.4, -0.3, 1.1, 0.9);
+        assert_eq!(
+            get_e3(0.8, 1.4, 1.0e-6, -0.3, 2.0, -4.0, 1.0, 1.1, 0.9, 2.0,),
+            expected_ab
+        );
+
+        let expected_a_xm = 2.0_f64.sqrt();
+        let expected_a = expected_a_xm / (1.0 + expected_a_xm);
+        assert!(
+            (get_e3(2.0, 0.0, 0.0, 1.0, 2.0, 3.0, 4.0, 2.0, 1.0, 1.5) - expected_a).abs() < 1.0e-15
+        );
+        assert_eq!(
+            get_e3(0.0, 0.0, 0.0, 1.0, 2.0, 3.0, 4.0, 2.0, 1.0, 1.5),
+            0.0
+        );
+    }
+
+    #[test]
+    fn get_e3_is_invariant_to_site_permutation() {
+        let original = get_e3(0.8, 1.1, 0.6, 0.25, -0.1, 0.4, 0.15, 0.75, 1.4, 2.1);
+        let swapped_ab = get_e3(1.1, 0.8, 0.6, 0.25, 0.4, -0.1, 0.15, 1.4, 0.75, 2.1);
+        assert!((original - swapped_ab).abs() < 1.0e-8);
+    }
+
+    #[test]
+    fn get_e3_malformed_inputs_are_total_and_return_nan() {
+        let cases = [
+            [f64::NAN, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            [1.0, 1.0, 1.0, f64::INFINITY, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0],
+            [-1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+        ];
+        for args in cases {
+            let result = std::panic::catch_unwind(|| {
+                get_e3(
+                    args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7],
+                    args[8], args[9],
+                )
+            });
+            assert!(result.is_ok());
+            assert!(result.expect("call did not panic").is_nan());
+        }
     }
 
     #[test]

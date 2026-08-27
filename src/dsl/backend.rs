@@ -41,12 +41,11 @@ use crate::{
     Event, Observation, Occasion, Parameters, PharmsolError, Subject, ValidatedModelMetadata,
 };
 
-/// Host callback ABI for runtime-only pharmacometric functions.
-///
-/// The callback is passed as the final argument to every compiled kernel. The
-/// JIT code only invokes this function pointer; the scientific implementation
-/// remains in `src/optimize/effect.rs`.
+/// Host callback ABI for the runtime-only two-site effect function.
 pub type GetE2Callback = extern "C" fn(f64, f64, f64, f64, f64) -> f64;
+
+/// Host callback ABI for the runtime-only three-site effect function.
+pub type GetE3Callback = extern "C" fn(f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64;
 
 /// ABI for JIT kernels.
 pub type CompiledModelFunction = unsafe extern "C" fn(
@@ -58,11 +57,31 @@ pub type CompiledModelFunction = unsafe extern "C" fn(
     derived: *const f64,
     out: *mut f64,
     get_e2_callback: GetE2Callback,
+    get_e3_callback: GetE3Callback,
 );
 
 /// The host callback never permits a Rust panic to cross the C ABI.
 pub(crate) extern "C" fn get_e2_callback(u: f64, v: f64, alpha: f64, h1: f64, h2: f64) -> f64 {
     catch_unwind(AssertUnwindSafe(|| crate::get_e2(u, v, alpha, h1, h2))).unwrap_or(f64::NAN)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) extern "C" fn get_e3_callback(
+    a: f64,
+    b: f64,
+    c: f64,
+    alpha12: f64,
+    alpha13: f64,
+    alpha23: f64,
+    alpha123: f64,
+    h1: f64,
+    h2: f64,
+    h3: f64,
+) -> f64 {
+    catch_unwind(AssertUnwindSafe(|| {
+        crate::get_e3(a, b, c, alpha12, alpha13, alpha23, alpha123, h1, h2, h3)
+    }))
+    .unwrap_or(f64::NAN)
 }
 
 const DEFAULT_ODE_RTOL: f64 = 1e-4;
@@ -199,10 +218,11 @@ impl FunctionSession for RuntimeFunctionSession<'_> {
             ))
         })?;
 
-        let callback: GetE2Callback = get_e2_callback;
+        let get_e2: GetE2Callback = get_e2_callback;
+        let get_e3: GetE3Callback = get_e3_callback;
         unsafe {
             function(
-                time, states, params, covariates, routes, derived, out, callback,
+                time, states, params, covariates, routes, derived, out, get_e2, get_e3,
             );
         }
         Ok(())
