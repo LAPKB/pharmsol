@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.29.0](https://github.com/LAPKB/pharmsol/compare/pharmsol-dsl-v0.28.8...pharmsol-dsl-v0.29.0) - 2026-08-27
+
+### Other
+
+- Remove AOT as backend ([#343](https://github.com/LAPKB/pharmsol/pull/343))
+
 ## [0.28.8](https://github.com/LAPKB/pharmsol/compare/pharmsol-dsl-v0.28.7...pharmsol-dsl-v0.28.8) - 2026-08-18
 
 ### Fixed
