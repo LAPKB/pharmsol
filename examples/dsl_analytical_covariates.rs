@@ -6,9 +6,9 @@
 //! Predictions from both paths are printed side by side to verify parity.
 //!
 //! Run with:
-//! cargo run --example dsl_jit_analytical_covariates --features dsl-jit
+//! cargo run --example dsl_analytical_covariates --features dsl
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     use std::io;
 
@@ -34,7 +34,6 @@ out(cp) = central / v ~ continuous()
     let jit_model = pharmsol::dsl::compile_module_source_to_runtime(
         model_source,
         Some("one_cmt_covariates"),
-        pharmsol::dsl::RuntimeCompilationTarget::Jit,
         |_kind, _message| {},
     )?;
 
@@ -77,7 +76,7 @@ out(cp) = central / v ~ continuous()
     let analytical_predictions =
         analytical.estimate_predictions(&subject, &analytical_parameters)?;
 
-    println!("t      dsl-jit      analytical!");
+    println!("t      dsl      analytical!");
     for (jit, analytical) in jit_predictions
         .predictions()
         .iter()
@@ -94,8 +93,8 @@ out(cp) = central / v ~ continuous()
     Ok(())
 }
 
-#[cfg(not(feature = "dsl-jit"))]
+#[cfg(not(feature = "dsl"))]
 fn main() {
-    eprintln!("Run with: cargo run --example dsl_jit_analytical_covariates --features dsl-jit");
+    eprintln!("Run with: cargo run --example dsl_analytical_covariates --features dsl");
     std::process::exit(1);
 }

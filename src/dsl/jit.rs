@@ -8,11 +8,12 @@ use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{Linkage, Module};
 
-pub use super::native::CompiledModelFunction;
-use super::native::{
-    CompiledNativeModel, NativeAnalyticalModel, NativeExecutionArtifact, NativeModelInfo,
-    NativeOdeModel, NativeSdeModel,
+pub use super::backend::CompiledModelFunction;
+use super::backend::{
+    RuntimeAnalyticalModel, RuntimeExecutionArtifact, RuntimeOdeModel, RuntimeSdeModel,
 };
+use super::model_info::RuntimeModelInfo;
+use super::runtime::CompiledRuntimeModel;
 use pharmsol_dsl::execution::{
     ExecutionBlock, ExecutionCall, ExecutionExpr, ExecutionExprKind, ExecutionForStmt,
     ExecutionIfStmt, ExecutionLoad, ExecutionModel, ExecutionProgram, ExecutionStateRef,
@@ -77,12 +78,6 @@ mod externs {
         a.powf(b)
     }
 }
-
-pub type JitExecutionArtifact = NativeExecutionArtifact;
-pub type JitOdeModel = NativeOdeModel;
-pub type JitAnalyticalModel = NativeAnalyticalModel;
-pub type JitSdeModel = NativeSdeModel;
-pub type CompiledJitModel = CompiledNativeModel;
 
 /// Error reported while lowering an execution model into native in-process JIT
 /// code.
@@ -226,7 +221,7 @@ struct LoweredValue {
 /// the model. Most callers should use [`compile_execution_model_to_jit`] instead.
 pub fn compile_execution_artifact(
     model: &ExecutionModel,
-) -> Result<NativeExecutionArtifact, JitCompileError> {
+) -> Result<RuntimeExecutionArtifact, JitCompileError> {
     let mut flag_builder = settings::builder();
     flag_builder
         .set("is_pic", "false")
@@ -340,7 +335,7 @@ pub fn compile_execution_artifact(
         .finalize_definitions()
         .map_err(|error| JitCompileError::new(error.to_string(), Some(model.span)))?;
 
-    Ok(NativeExecutionArtifact::from_jit_module(
+    Ok(RuntimeExecutionArtifact::from_jit_module(
         model.name.clone(),
         derive.map(|id| function_pointer(&mut module, id)),
         dynamics.map(|id| function_pointer(&mut module, id)),
@@ -1250,7 +1245,7 @@ fn state_address(
 /// lower steps and want the JIT backend directly instead of the higher-level
 /// runtime facade.
 ///
-/// This function requires the `dsl-jit` feature.
+/// This function requires the `dsl` feature.
 ///
 /// ```rust,no_run
 /// use pharmsol::dsl::{
@@ -1280,18 +1275,20 @@ fn state_address(
 /// ```
 pub fn compile_execution_model_to_jit(
     model: &ExecutionModel,
-) -> Result<CompiledJitModel, JitCompileError> {
+) -> Result<CompiledRuntimeModel, JitCompileError> {
     match model.kind {
-        ModelKind::Ode => Ok(CompiledJitModel::Ode(compile_ode_model_to_jit(model)?)),
-        ModelKind::Analytical => Ok(CompiledJitModel::Analytical(
+        ModelKind::Ode => Ok(CompiledRuntimeModel::Ode(compile_ode_model_to_jit(model)?)),
+        ModelKind::Analytical => Ok(CompiledRuntimeModel::Analytical(
             compile_analytical_model_to_jit(model)?,
         )),
-        ModelKind::Sde => Ok(CompiledJitModel::Sde(compile_sde_model_to_jit(model)?)),
+        ModelKind::Sde => Ok(CompiledRuntimeModel::Sde(compile_sde_model_to_jit(model)?)),
     }
 }
 
 /// Compile an ODE execution model to the native in-process JIT backend.
-pub fn compile_ode_model_to_jit(model: &ExecutionModel) -> Result<JitOdeModel, JitCompileError> {
+pub fn compile_ode_model_to_jit(
+    model: &ExecutionModel,
+) -> Result<RuntimeOdeModel, JitCompileError> {
     if model.kind != ModelKind::Ode {
         return Err(JitCompileError::new(
             format!(
@@ -1301,8 +1298,8 @@ pub fn compile_ode_model_to_jit(model: &ExecutionModel) -> Result<JitOdeModel, J
             Some(model.span),
         ));
     }
-    JitOdeModel::new(
-        NativeModelInfo::from_execution_model(model),
+    RuntimeOdeModel::new(
+        RuntimeModelInfo::from_execution_model(model),
         compile_execution_artifact(model)?,
     )
     .map_err(|error| JitCompileError::new(error.to_string(), Some(model.span)))
@@ -1311,7 +1308,7 @@ pub fn compile_ode_model_to_jit(model: &ExecutionModel) -> Result<JitOdeModel, J
 /// Compile an analytical execution model to the native in-process JIT backend.
 pub fn compile_analytical_model_to_jit(
     model: &ExecutionModel,
-) -> Result<JitAnalyticalModel, JitCompileError> {
+) -> Result<RuntimeAnalyticalModel, JitCompileError> {
     if model.kind != ModelKind::Analytical {
         return Err(JitCompileError::new(
             format!(
@@ -1321,15 +1318,17 @@ pub fn compile_analytical_model_to_jit(
             Some(model.span),
         ));
     }
-    JitAnalyticalModel::new(
-        NativeModelInfo::from_execution_model(model),
+    RuntimeAnalyticalModel::new(
+        RuntimeModelInfo::from_execution_model(model),
         compile_execution_artifact(model)?,
     )
     .map_err(|error| JitCompileError::new(error.to_string(), Some(model.span)))
 }
 
 /// Compile an SDE execution model to the native in-process JIT backend.
-pub fn compile_sde_model_to_jit(model: &ExecutionModel) -> Result<JitSdeModel, JitCompileError> {
+pub fn compile_sde_model_to_jit(
+    model: &ExecutionModel,
+) -> Result<RuntimeSdeModel, JitCompileError> {
     if model.kind != ModelKind::Sde {
         return Err(JitCompileError::new(
             format!(
@@ -1339,8 +1338,8 @@ pub fn compile_sde_model_to_jit(model: &ExecutionModel) -> Result<JitSdeModel, J
             Some(model.span),
         ));
     }
-    JitSdeModel::new(
-        NativeModelInfo::from_execution_model(model),
+    RuntimeSdeModel::new(
+        RuntimeModelInfo::from_execution_model(model),
         compile_execution_artifact(model)?,
     )
     .map_err(|error| JitCompileError::new(error.to_string(), Some(model.span)))
@@ -1912,7 +1911,7 @@ out(cp) = central / v ~ continuous()
     }
 
     #[test]
-    fn native_resolution_matches_bare_numeric_aliases() {
+    fn route_resolution_matches_bare_numeric_aliases() {
         let source = r#"
 name = numeric_alias
 kind = ode

@@ -1,23 +1,18 @@
 #![allow(dead_code)]
-#![cfg(any(
-    feature = "dsl-jit",
-    all(feature = "dsl-aot", feature = "dsl-aot-load")
-))]
+#![cfg(feature = "dsl")]
 
 use std::error::Error;
 use std::io;
-use std::path::PathBuf;
 
 use diffsol::Vector;
 use ndarray::Array2;
-use pharmsol::dsl::{self, CompiledRuntimeModel, RuntimeCompilationTarget, RuntimePredictions};
+use pharmsol::dsl::{self, CompiledRuntimeModel, RuntimePredictions};
 use pharmsol::prelude::{
     one_compartment_with_absorption, Equation, Prediction, SubjectPredictions,
 };
 use pharmsol::{
     equation, fa, fetch_cov, fetch_params, lag, Parameters, Subject, SubjectBuilderExt, SDE,
 };
-use tempfile::{tempdir, TempDir};
 
 const ODE_SOURCE: &str = r#"
 name = one_cmt_oral_iv
@@ -388,27 +383,6 @@ impl CorpusCase {
     }
 }
 
-#[derive(Debug)]
-pub struct ArtifactWorkspace {
-    tempdir: TempDir,
-}
-
-impl ArtifactWorkspace {
-    pub fn new() -> Result<Self, Box<dyn Error>> {
-        Ok(Self {
-            tempdir: tempdir()?,
-        })
-    }
-
-    fn aot_output(&self, stem: &str) -> PathBuf {
-        self.tempdir.path().join(format!("{stem}.pkm"))
-    }
-
-    fn build_root(&self, stem: &str) -> PathBuf {
-        self.tempdir.path().join(stem)
-    }
-}
-
 enum ExpectedPredictions {
     Subject(SubjectPredictions),
     Particles(Array2<Prediction>),
@@ -423,37 +397,11 @@ fn adjust_runtime_model(case: CorpusCase, model: CompiledRuntimeModel) -> Compil
     }
 }
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 pub fn compile_runtime_jit_model(case: CorpusCase) -> Result<CompiledRuntimeModel, Box<dyn Error>> {
     Ok(adjust_runtime_model(
         case,
-        dsl::compile_module_source_to_runtime(
-            case.source(),
-            Some(case.model_name()),
-            RuntimeCompilationTarget::Jit,
-            |_, _| {},
-        )?,
-    ))
-}
-
-#[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]
-pub fn compile_runtime_native_aot_model(
-    case: CorpusCase,
-    workspace: &ArtifactWorkspace,
-) -> Result<CompiledRuntimeModel, Box<dyn Error>> {
-    Ok(adjust_runtime_model(
-        case,
-        dsl::compile_module_source_to_runtime(
-            case.source(),
-            Some(case.model_name()),
-            RuntimeCompilationTarget::NativeAot(
-                dsl::NativeAotCompileOptions::new(
-                    workspace.build_root(&format!("{}-runtime-aot-build", case.label())),
-                )
-                .with_output(workspace.aot_output(&format!("{}-runtime-aot", case.label()))),
-            ),
-            |_, _| {},
-        )?,
+        dsl::compile_module_source_to_runtime(case.source(), Some(case.model_name()), |_, _| {})?,
     ))
 }
 
@@ -478,36 +426,6 @@ pub fn assert_runtime_model_matches_reference(
                 "{} [{}]: runtime prediction kind did not match reference kind",
                 case.label(),
                 backend_label
-            ))
-            .into())
-        }
-    }
-}
-
-pub fn assert_runtime_models_match_each_other(
-    case: CorpusCase,
-    left_label: &str,
-    left: &CompiledRuntimeModel,
-    right_label: &str,
-    right: &CompiledRuntimeModel,
-) -> Result<(), Box<dyn Error>> {
-    let left_predictions = estimate_runtime_predictions(case, left)?;
-    let right_predictions = estimate_runtime_predictions(case, right)?;
-
-    match (&left_predictions, &right_predictions) {
-        (RuntimePredictions::Subject(left), RuntimePredictions::Subject(right)) => {
-            compare_subject_predictions_pairwise(case, left_label, left, right_label, right)
-        }
-        (RuntimePredictions::Particles(left), RuntimePredictions::Particles(right)) => {
-            compare_particle_predictions_pairwise(case, left_label, left, right_label, right)
-        }
-        (RuntimePredictions::Subject(_), RuntimePredictions::Particles(_))
-        | (RuntimePredictions::Particles(_), RuntimePredictions::Subject(_)) => {
-            Err(io::Error::other(format!(
-                "{} [{} vs {}]: runtime prediction kind mismatch",
-                case.label(),
-                left_label,
-                right_label
             ))
             .into())
         }
@@ -590,51 +508,6 @@ fn compare_subject_predictions(
     Ok(())
 }
 
-fn compare_subject_predictions_pairwise(
-    case: CorpusCase,
-    left_label: &str,
-    left: &SubjectPredictions,
-    right_label: &str,
-    right: &SubjectPredictions,
-) -> Result<(), Box<dyn Error>> {
-    let left_values = left.flat_predictions();
-    let right_values = right.flat_predictions();
-
-    if left_values.len() != right_values.len() {
-        return Err(io::Error::other(format!(
-            "{} [{} vs {}]: prediction length mismatch ({} vs {})",
-            case.label(),
-            left_label,
-            right_label,
-            left_values.len(),
-            right_values.len()
-        ))
-        .into());
-    }
-
-    for (index, (left_value, right_value)) in
-        left_values.iter().zip(right_values.iter()).enumerate()
-    {
-        let abs_diff = (left_value - right_value).abs();
-        if abs_diff > case.tolerance() {
-            return Err(io::Error::other(format!(
-                "{} [{} vs {}]: prediction {} differed by {:.6} (left {:.6}, right {:.6}, tolerance {:.6})",
-                case.label(),
-                left_label,
-                right_label,
-                index,
-                abs_diff,
-                left_value,
-                right_value,
-                case.tolerance()
-            ))
-            .into());
-        }
-    }
-
-    Ok(())
-}
-
 fn compare_particle_predictions(
     case: CorpusCase,
     backend_label: &str,
@@ -666,49 +539,6 @@ fn compare_particle_predictions(
                     abs_diff,
                     expected_prediction.prediction(),
                     actual_prediction.prediction(),
-                    case.tolerance()
-                ))
-                .into());
-            }
-        }
-    }
-
-    Ok(())
-}
-
-fn compare_particle_predictions_pairwise(
-    case: CorpusCase,
-    left_label: &str,
-    left: &Array2<Prediction>,
-    right_label: &str,
-    right: &Array2<Prediction>,
-) -> Result<(), Box<dyn Error>> {
-    if left.dim() != right.dim() {
-        return Err(io::Error::other(format!(
-            "{} [{} vs {}]: particle matrix mismatch {:?} vs {:?}",
-            case.label(),
-            left_label,
-            right_label,
-            left.dim(),
-            right.dim()
-        ))
-        .into());
-    }
-
-    for row in 0..left.nrows() {
-        for col in 0..left.ncols() {
-            let left_prediction = &left[(row, col)];
-            let right_prediction = &right[(row, col)];
-            let abs_diff = (left_prediction.prediction() - right_prediction.prediction()).abs();
-            if abs_diff > case.tolerance() {
-                return Err(io::Error::other(format!(
-                    "{} [{} vs {}]: particle ({row}, {col}) differed by {:.6} (left {:.6}, right {:.6}, tolerance {:.6})",
-                    case.label(),
-                    left_label,
-                    right_label,
-                    abs_diff,
-                    left_prediction.prediction(),
-                    right_prediction.prediction(),
                     case.tolerance()
                 ))
                 .into());

@@ -3,9 +3,8 @@ mod closure;
 /// Re-export of the diffsol `OdeEquations` adapter so the JIT module can build
 /// `OdeBuilder` problems with closures (rather than plain `fn` pointers).
 ///
-/// This helper is shared by the legacy JIT path and the native
-/// runtime wrappers.
-#[cfg(any(feature = "dsl-jit", feature = "dsl-aot-load"))]
+/// This helper is shared by the DSL runtime wrappers.
+#[cfg(feature = "dsl")]
 pub(crate) mod closure_helpers {
     pub(crate) use super::closure::PMProblem;
 }
@@ -769,7 +768,7 @@ pub(crate) fn validate_resolved_ode_schedule(events: &[Event]) -> Result<f64, Ph
 /// - `state_mut` marks the state as modified so the next step restarts the
 ///   multi-step method at first order.
 ///
-/// Shared with the DSL/JIT ODE path ([`crate::dsl::native::NativeOdeModel`]),
+/// Shared with the DSL/JIT ODE path ([`crate::dsl::backend::RuntimeOdeModel`]),
 /// which must apply the same discontinuity semantics as the closure-based
 /// [`ODE`] event loop.
 pub(crate) fn reinitialize_at_boundary<'a, F, S>(solver: &mut S, dy_scratch: &mut V)
@@ -1242,7 +1241,7 @@ where
 ///
 /// This is the single implementation of the event-to-event integration loop
 /// shared by the closure-based [`ODE`] equation and the DSL runtime ODE path
-/// ([`crate::dsl::native::NativeOdeModel`]): stop selection at integration
+/// ([`crate::dsl::backend::RuntimeOdeModel`]): stop selection at integration
 /// boundaries, left-continuity handling at covariate and infusion knots, exact
 /// restarts for true RHS discontinuities, and safe normalization of stops that
 /// diffsol has already reached.

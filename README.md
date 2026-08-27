@@ -4,8 +4,7 @@
 [![Documentation](https://github.com/LAPKB/pharmsol/actions/workflows/docs.yml/badge.svg)](https://github.com/LAPKB/pharmsol/actions/workflows/docs.yml)
 [![DOI](https://joss.theoj.org/papers/10.21105/joss.10580/status.svg)](https://doi.org/10.21105/joss.10580)
 [![crates.io](https://img.shields.io/crates/v/pharmsol.svg)](https://crates.io/crates/pharmsol)
-[![codecov](https://codecov.io/gh/LAPKB/pharmsol/branch/main/graph/badge.svg)](https://codecov.io/gh/LAPKB/pharmsol)  
-
+[![codecov](https://codecov.io/gh/LAPKB/pharmsol/branch/main/graph/badge.svg)](https://codecov.io/gh/LAPKB/pharmsol)
 
 A high-performance Rust library for pharmacokinetic/pharmacodynamic (PK/PD) simulation using analytical solutions, ordinary differential equations (ODEs), or stochastic differential equations (SDEs).
 
@@ -92,11 +91,9 @@ let ode = ode! {
 See [examples/analytical_readme.rs](examples/analytical_readme.rs),
 [examples/ode_readme.rs](examples/ode_readme.rs),
 [examples/sde_readme.rs](examples/sde_readme.rs),
-[examples/dsl_jit_analytical_covariates.rs](examples/dsl_jit_analytical_covariates.rs),
+[examples/dsl_analytical_covariates.rs](examples/dsl_analytical_covariates.rs),
 [examples/analytical_vs_ode.rs](examples/analytical_vs_ode.rs), and
-[examples/compare_solvers.rs](examples/compare_solvers.rs). For migration-oriented notes,
-see [docs/analytical-authoring-migration.md](docs/analytical-authoring-migration.md) and
-[docs/ode-authoring-migration.md](docs/ode-authoring-migration.md).
+[examples/compare_solvers.rs](examples/compare_solvers.rs).
 
 ### Built-In Analytical Kernels
 
@@ -110,18 +107,13 @@ see [docs/analytical-authoring-migration.md](docs/analytical-authoring-migration
 ## DSL and Runtime Targets
 
 If the model needs to be loaded or compiled at runtime, pharmsol also provides a DSL with
-the same broad modeling coverage: ODE, analytical, and SDE authoring. The DSL can target
-an in-process JIT runtime or native ahead-of-time artifacts depending on how you want to
-ship and execute the model.
+the same broad modeling coverage: ODE, analytical, and SDE authoring. Enable the `dsl`
+feature to compile DSL source into a runtime model inside the current process.
 
-- `dsl-jit`: compile DSL source into a runtime model inside the current process.
-- `dsl-aot` and `dsl-aot-load`: emit a native artifact and load it later.
-
-See [examples/dsl_runtime_jit.rs](examples/dsl_runtime_jit.rs) for the in-repo JIT flow and
-[examples/dsl_jit_analytical_covariates.rs](examples/dsl_jit_analytical_covariates.rs) for a
+See [examples/dsl_runtime.rs](examples/dsl_runtime.rs) for the in-repo JIT flow and
+[examples/dsl_analytical_covariates.rs](examples/dsl_analytical_covariates.rs) for a
 small analytical covariate example written both as DSL JIT source and as an
 `analytical!` model.
-The companion `pharmsol-examples` crate includes an end-to-end native AOT runtime example.
 
 ## Performance
 

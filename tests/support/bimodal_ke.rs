@@ -2,10 +2,8 @@
 
 use std::error::Error;
 use std::io;
-use std::path::PathBuf;
 
 use pharmsol::prelude::*;
-use tempfile::{tempdir, TempDir};
 
 pub const MODEL_NAME: &str = "bimodal_ke";
 pub const OBSERVATION_TIMES: [f64; 7] = [0.5, 1.0, 2.0, 3.0, 4.0, 6.0, 8.0];
@@ -25,27 +23,6 @@ dx(central) = -ke * central
 
 out(cp) = central / v ~ continuous()
 "#;
-
-#[derive(Debug)]
-pub struct ArtifactWorkspace {
-    tempdir: TempDir,
-}
-
-impl ArtifactWorkspace {
-    pub fn new() -> Result<Self, Box<dyn Error>> {
-        Ok(Self {
-            tempdir: tempdir()?,
-        })
-    }
-
-    pub fn aot_output(&self, stem: &str) -> PathBuf {
-        self.tempdir.path().join(format!("{stem}.pkm"))
-    }
-
-    pub fn build_root(&self, stem: &str) -> PathBuf {
-        self.tempdir.path().join(stem)
-    }
-}
 
 fn subject_for_indices(route_index: usize, output_index: usize) -> Subject {
     let mut builder = Subject::builder(MODEL_NAME).infusion(0.0, 500.0, route_index, 0.5);
@@ -67,10 +44,7 @@ pub fn subject() -> Subject {
     subject_for_labels("iv", "cp")
 }
 
-#[cfg(any(
-    feature = "dsl-jit",
-    all(feature = "dsl-aot", feature = "dsl-aot-load")
-))]
+#[cfg(feature = "dsl")]
 pub fn subject_for_runtime_model(model: &pharmsol::dsl::CompiledRuntimeModel) -> Subject {
     let route_label = if model.info().routes.iter().any(|route| route.name == "iv") {
         "iv"
@@ -184,10 +158,7 @@ pub fn report_subject_predictions(
     report_values(label, &values, tolerance)
 }
 
-#[cfg(any(
-    feature = "dsl-jit",
-    all(feature = "dsl-aot", feature = "dsl-aot-load")
-))]
+#[cfg(feature = "dsl")]
 pub fn report_runtime_model(
     label: &str,
     model: &pharmsol::dsl::CompiledRuntimeModel,
@@ -203,47 +174,11 @@ pub fn report_runtime_model(
     report_subject_predictions(label, &predictions, tolerance)
 }
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 pub fn compile_runtime_jit_model() -> Result<pharmsol::dsl::CompiledRuntimeModel, Box<dyn Error>> {
     Ok(pharmsol::dsl::compile_module_source_to_runtime(
         AUTHORING_DSL,
         Some(MODEL_NAME),
-        pharmsol::dsl::RuntimeCompilationTarget::Jit,
         |_, _| {},
-    )?)
-}
-
-#[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]
-pub fn compile_runtime_native_aot_model(
-    workspace: &ArtifactWorkspace,
-) -> Result<pharmsol::dsl::CompiledRuntimeModel, Box<dyn Error>> {
-    Ok(pharmsol::dsl::compile_module_source_to_runtime(
-        AUTHORING_DSL,
-        Some(MODEL_NAME),
-        pharmsol::dsl::RuntimeCompilationTarget::NativeAot(
-            pharmsol::dsl::NativeAotCompileOptions::new(
-                workspace.build_root("runtime-native-aot-build"),
-            )
-            .with_output(workspace.aot_output("bimodal-ke-runtime-native-aot")),
-        ),
-        |_, _| {},
-    )?)
-}
-
-#[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]
-pub fn compile_direct_aot_model(
-    workspace: &ArtifactWorkspace,
-) -> Result<pharmsol::dsl::CompiledRuntimeModel, Box<dyn Error>> {
-    let artifact = pharmsol::dsl::compile_module_source_to_aot(
-        AUTHORING_DSL,
-        Some(MODEL_NAME),
-        pharmsol::dsl::NativeAotCompileOptions::new(workspace.build_root("direct-aot-build"))
-            .with_output(workspace.aot_output("bimodal-ke-direct-aot")),
-        |_, _| {},
-    )?;
-
-    Ok(pharmsol::dsl::load_runtime_artifact(
-        &artifact,
-        pharmsol::dsl::RuntimeArtifactFormat::NativeAot,
     )?)
 }

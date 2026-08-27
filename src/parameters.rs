@@ -5,10 +5,7 @@ use thiserror::Error;
 
 use crate::parameter_order::{ParameterOrderError, ParameterOrderPlan};
 
-#[cfg(any(
-    feature = "dsl-jit",
-    all(feature = "dsl-aot", feature = "dsl-aot-load")
-))]
+#[cfg(feature = "dsl")]
 use crate::dsl::{CompiledRuntimeModel, RuntimeAnalyticalModel, RuntimeOdeModel, RuntimeSdeModel};
 use crate::{Analytical, ODE, SDE};
 
@@ -221,10 +218,7 @@ impl NamedParameterModel for SDE {
     }
 }
 
-#[cfg(any(
-    feature = "dsl-jit",
-    all(feature = "dsl-aot", feature = "dsl-aot-load")
-))]
+#[cfg(feature = "dsl")]
 impl NamedParameterModel for CompiledRuntimeModel {
     fn parameter_order_plan<S>(&self, source_names: S) -> Result<ParameterOrderPlan, ParameterError>
     where
@@ -236,10 +230,7 @@ impl NamedParameterModel for CompiledRuntimeModel {
     }
 }
 
-#[cfg(any(
-    feature = "dsl-jit",
-    all(feature = "dsl-aot", feature = "dsl-aot-load")
-))]
+#[cfg(feature = "dsl")]
 impl NamedParameterModel for RuntimeOdeModel {
     fn parameter_order_plan<S>(&self, source_names: S) -> Result<ParameterOrderPlan, ParameterError>
     where
@@ -251,10 +242,7 @@ impl NamedParameterModel for RuntimeOdeModel {
     }
 }
 
-#[cfg(any(
-    feature = "dsl-jit",
-    all(feature = "dsl-aot", feature = "dsl-aot-load")
-))]
+#[cfg(feature = "dsl")]
 impl NamedParameterModel for RuntimeAnalyticalModel {
     fn parameter_order_plan<S>(&self, source_names: S) -> Result<ParameterOrderPlan, ParameterError>
     where
@@ -266,10 +254,7 @@ impl NamedParameterModel for RuntimeAnalyticalModel {
     }
 }
 
-#[cfg(any(
-    feature = "dsl-jit",
-    all(feature = "dsl-aot", feature = "dsl-aot-load")
-))]
+#[cfg(feature = "dsl")]
 impl NamedParameterModel for RuntimeSdeModel {
     fn parameter_order_plan<S>(&self, source_names: S) -> Result<ParameterOrderPlan, ParameterError>
     where
@@ -289,8 +274,8 @@ mod tests {
 
     use crate::{fa, lag, metadata, Equation, ModelKind, Subject, SubjectBuilderExt, ODE};
 
-    #[cfg(feature = "dsl-jit")]
-    use crate::dsl::{compile_module_source_to_runtime, RuntimeCompilationTarget};
+    #[cfg(feature = "dsl")]
+    use crate::dsl::compile_module_source_to_runtime;
 
     fn metadata_backed_ode() -> ODE {
         ODE::new(
@@ -466,7 +451,7 @@ mod tests {
         assert_eq!(dense_theta.rows, vec![vec![10.0, 0.5], vec![20.0, 0.7]]);
     }
 
-    #[cfg(feature = "dsl-jit")]
+    #[cfg(feature = "dsl")]
     #[test]
     fn builds_dense_parameters_for_compiled_runtime_model() {
         const SIMPLE_RUNTIME_DSL: &str = r#"
@@ -484,20 +469,16 @@ dx(central) = -ke * central
 out(cp) = central / v ~ continuous()
 "#;
 
-        let model = compile_module_source_to_runtime(
-            SIMPLE_RUNTIME_DSL,
-            Some("named_runtime"),
-            RuntimeCompilationTarget::Jit,
-            |_, _| {},
-        )
-        .expect("compile runtime model");
+        let model =
+            compile_module_source_to_runtime(SIMPLE_RUNTIME_DSL, Some("named_runtime"), |_, _| {})
+                .expect("compile runtime model");
 
         let parameters = Parameters::with_model(&model, [("v", 50.0), ("ke", 1.2)]).unwrap();
 
         assert_eq!(parameters.as_slice(), &[1.2, 50.0]);
     }
 
-    #[cfg(feature = "dsl-jit")]
+    #[cfg(feature = "dsl")]
     #[test]
     fn builds_batch_order_for_compiled_runtime_model() {
         const SIMPLE_RUNTIME_DSL: &str = r#"
@@ -515,13 +496,9 @@ dx(central) = -ke * central
 out(cp) = central / v ~ continuous()
 "#;
 
-        let model = compile_module_source_to_runtime(
-            SIMPLE_RUNTIME_DSL,
-            Some("named_runtime"),
-            RuntimeCompilationTarget::Jit,
-            |_, _| {},
-        )
-        .expect("compile runtime model");
+        let model =
+            compile_module_source_to_runtime(SIMPLE_RUNTIME_DSL, Some("named_runtime"), |_, _| {})
+                .expect("compile runtime model");
         let order = ParameterOrder::with_model(&model, ["v", "ke"]).unwrap();
 
         assert_eq!(order.permutation(), &[1, 0]);

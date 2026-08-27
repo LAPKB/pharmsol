@@ -15,7 +15,7 @@
 //! - [`nca`] to calculate NCA metrics from the same data structures
 //! - [`optimize`] for optimizer-oriented workflows
 //!
-//! The DSL runtime surface is feature-gated. When you enable `dsl-core`, the
+//! The DSL runtime surface is feature-gated. When you enable `dsl`, the
 //! `pharmsol::dsl` module adds parsing, analysis, compilation, and runtime
 //! entrypoints for models written as DSL source text.
 //!
@@ -69,7 +69,7 @@
 //! | Simulate a model written in Rust | [`simulator`] or [`prelude`] | Supports analytical, ODE, and SDE models. |
 //! | Run NCA | [`nca`] or [`prelude`] | Reuses the same `Subject`, `Occasion`, and `Data` types. |
 //! | Use optimization helpers | [`optimize`] | Intended for advanced workflows. |
-//! | Parse or compile DSL source | `pharmsol::dsl` | Requires one or more DSL features. |
+//! | Parse or compile DSL source | `pharmsol::dsl` | Requires the `dsl` feature. |
 //!
 //! ## Feature Guide
 //!
@@ -78,10 +78,8 @@
 //!
 //! DSL work is feature-gated:
 //!
-//! - `dsl-core`: exposes the `pharmsol::dsl` facade and DSL compiler types
-//! - `dsl-jit`: adds in-process JIT compilation
-//! - `dsl-aot`: adds native ahead-of-time artifact compilation
-//! - `dsl-aot-load`: adds native artifact loading
+//! - `dsl`: exposes the `pharmsol::dsl` facade, the DSL compiler types, and
+//!   in-process JIT compilation
 //!
 //! ## Labels And Indices
 //!
@@ -108,10 +106,8 @@
 // Lets `ode!`, `analytical!`, and `sde!` expand to `::pharmsol::…` inside this crate too.
 extern crate self as pharmsol;
 
-#[cfg(feature = "dsl-aot")]
-mod build_support;
 pub mod data;
-#[cfg(feature = "dsl-core")]
+#[cfg(feature = "dsl")]
 pub mod dsl;
 pub mod error;
 pub mod nca;
@@ -119,7 +115,7 @@ pub mod optimize;
 mod parameter_order;
 mod parameters;
 pub mod simulator;
-#[cfg(all(test, feature = "dsl-jit"))]
+#[cfg(all(test, feature = "dsl"))]
 mod test_fixtures;
 
 //extension traits

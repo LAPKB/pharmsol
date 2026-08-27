@@ -8,19 +8,11 @@
 
 use pharmsol::prelude::*;
 
-#[cfg(any(
-    feature = "dsl-jit",
-    all(feature = "dsl-aot", feature = "dsl-aot-load")
-))]
+#[cfg(feature = "dsl")]
 use pharmsol::Cache;
 
-#[cfg(any(
-    feature = "dsl-jit",
-    all(feature = "dsl-aot", feature = "dsl-aot-load")
-))]
-use pharmsol::dsl::{
-    compile_module_source_to_runtime, CompiledRuntimeModel, RuntimeCompilationTarget,
-};
+#[cfg(feature = "dsl")]
+use pharmsol::dsl::{compile_module_source_to_runtime, CompiledRuntimeModel};
 
 const OBSERVATION_TIMES: [f64; 15] = [
     0.0,
@@ -299,7 +291,7 @@ fn bdf_accepts_exact_absolute_stop_with_local_roundoff() -> Result<(), Box<dyn s
     Ok(())
 }
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 const DSL_MODEL: &str = r#"
 name = bolus_reinit_stop_time
 kind = ode
@@ -421,10 +413,7 @@ fn closure_solvers_restart_with_post_infusion_rhs() {
     }
 }
 
-#[cfg(any(
-    feature = "dsl-jit",
-    all(feature = "dsl-aot", feature = "dsl-aot-load")
-))]
+#[cfg(feature = "dsl")]
 const INFUSION_DSL_MODEL: &str = r#"
 name = accepted_infusion_boundary
 kind = ode
@@ -436,13 +425,12 @@ out(cp) = central
 "#;
 
 #[test]
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 fn jit_solvers_restart_with_post_infusion_rhs() -> Result<(), Box<dyn std::error::Error>> {
     for (label, solver) in solver_cases() {
         let compiled = compile_module_source_to_runtime(
             INFUSION_DSL_MODEL,
             Some("accepted_infusion_boundary"),
-            RuntimeCompilationTarget::Jit,
             |_, _| {},
         )?;
         let model = match compiled {
@@ -514,13 +502,12 @@ fn closure_solvers_integrate_material_short_infusions() {
 }
 
 #[test]
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 fn jit_solvers_integrate_material_short_infusions() -> Result<(), Box<dyn std::error::Error>> {
     for (label, solver) in solver_cases() {
         let compiled = compile_module_source_to_runtime(
             INFUSION_DSL_MODEL,
             Some("accepted_infusion_boundary"),
-            RuntimeCompilationTarget::Jit,
             |_, _| {},
         )?;
         let model = match compiled {
@@ -546,16 +533,12 @@ fn jit_solvers_integrate_material_short_infusions() -> Result<(), Box<dyn std::e
 }
 
 #[test]
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 fn jit_solvers_accept_reached_stop_after_bolus_restarts() -> Result<(), Box<dyn std::error::Error>>
 {
     for (label, solver) in solver_cases() {
-        let compiled = compile_module_source_to_runtime(
-            DSL_MODEL,
-            Some("bolus_reinit_stop_time"),
-            RuntimeCompilationTarget::Jit,
-            |_, _| {},
-        )?;
+        let compiled =
+            compile_module_source_to_runtime(DSL_MODEL, Some("bolus_reinit_stop_time"), |_, _| {})?;
         let model = match compiled {
             CompiledRuntimeModel::Ode(model) => {
                 CompiledRuntimeModel::Ode(model.with_solver(solver))
@@ -581,15 +564,11 @@ fn jit_solvers_accept_reached_stop_after_bolus_restarts() -> Result<(), Box<dyn 
 }
 
 #[test]
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 fn jit_bdf_restores_crushed_timestep_after_successful_stop(
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let compiled = compile_module_source_to_runtime(
-        DSL_MODEL,
-        Some("bolus_reinit_stop_time"),
-        RuntimeCompilationTarget::Jit,
-        |_, _| {},
-    )?;
+    let compiled =
+        compile_module_source_to_runtime(DSL_MODEL, Some("bolus_reinit_stop_time"), |_, _| {})?;
     let model = match compiled {
         CompiledRuntimeModel::Ode(model) => {
             CompiledRuntimeModel::Ode(model.with_solver(OdeSolver::Bdf).disable_cache())
@@ -616,10 +595,7 @@ fn jit_bdf_restores_crushed_timestep_after_successful_stop(
     Ok(())
 }
 
-#[cfg(any(
-    feature = "dsl-jit",
-    all(feature = "dsl-aot", feature = "dsl-aot-load")
-))]
+#[cfg(feature = "dsl")]
 const CLOSE_GAP_DSL_MODEL: &str = r#"
 name = close_gap_exponential
 kind = ode
@@ -631,10 +607,7 @@ dx(amount) = growth_rate * amount
 out(cp) = amount
 "#;
 
-#[cfg(any(
-    feature = "dsl-jit",
-    all(feature = "dsl-aot", feature = "dsl-aot-load")
-))]
+#[cfg(feature = "dsl")]
 const ABSOLUTE_TIME_DSL_MODEL: &str = r#"
 name = absolute_time_close_gap
 kind = ode
@@ -646,10 +619,7 @@ dx(amount) = slope * time
 out(cp) = amount
 "#;
 
-#[cfg(any(
-    feature = "dsl-jit",
-    all(feature = "dsl-aot", feature = "dsl-aot-load")
-))]
+#[cfg(feature = "dsl")]
 const REBASE_ABSOLUTE_TIME_DSL_MODEL: &str = r#"
 name = rebase_absolute_time_close_gap
 kind = ode
@@ -662,10 +632,7 @@ out(cp) = amount
 out(callback) = time_weighted_amount
 "#;
 
-#[cfg(any(
-    feature = "dsl-jit",
-    all(feature = "dsl-aot", feature = "dsl-aot-load")
-))]
+#[cfg(feature = "dsl")]
 const LOCF_DSL_MODEL: &str = r#"
 name = locf_integral
 kind = ode
@@ -676,10 +643,7 @@ dx(integral) = cov_rate
 out(cp) = integral
 "#;
 
-#[cfg(any(
-    feature = "dsl-jit",
-    all(feature = "dsl-aot", feature = "dsl-aot-load")
-))]
+#[cfg(feature = "dsl")]
 fn configured_runtime_ode(
     compiled: &CompiledRuntimeModel,
     solver: OdeSolver,
@@ -692,10 +656,7 @@ fn configured_runtime_ode(
     }
 }
 
-#[cfg(any(
-    feature = "dsl-jit",
-    all(feature = "dsl-aot", feature = "dsl-aot-load")
-))]
+#[cfg(feature = "dsl")]
 fn assert_runtime_close_gaps(backend: &str, compiled: &CompiledRuntimeModel) {
     let mut failures = Vec::new();
     for (solver_name, solver) in solver_cases() {
@@ -748,10 +709,7 @@ fn assert_runtime_close_gaps(backend: &str, compiled: &CompiledRuntimeModel) {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
-#[cfg(any(
-    feature = "dsl-jit",
-    all(feature = "dsl-aot", feature = "dsl-aot-load")
-))]
+#[cfg(feature = "dsl")]
 fn assert_runtime_large_initial_times_absolute_time(
     backend: &str,
     compiled: &CompiledRuntimeModel,
@@ -803,10 +761,7 @@ fn assert_runtime_large_initial_times_absolute_time(
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
-#[cfg(any(
-    feature = "dsl-jit",
-    all(feature = "dsl-aot", feature = "dsl-aot-load")
-))]
+#[cfg(feature = "dsl")]
 fn assert_runtime_rebase_after_large_event(backend: &str, compiled: &CompiledRuntimeModel) {
     let center = 1.0e12_f64;
     let stop = center.next_up();
@@ -874,10 +829,7 @@ fn assert_runtime_rebase_after_large_event(backend: &str, compiled: &CompiledRun
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
-#[cfg(any(
-    feature = "dsl-jit",
-    all(feature = "dsl-aot", feature = "dsl-aot-load")
-))]
+#[cfg(feature = "dsl")]
 fn runtime_locf_subject() -> Subject {
     let mut subject = Subject::builder("runtime-locf-breakpoint")
         .covariate("cov_rate", 0.0, 1.0)
@@ -893,10 +845,7 @@ fn runtime_locf_subject() -> Subject {
     subject
 }
 
-#[cfg(any(
-    feature = "dsl-jit",
-    all(feature = "dsl-aot", feature = "dsl-aot-load")
-))]
+#[cfg(feature = "dsl")]
 fn assert_runtime_locf_integral(backend: &str, compiled: &CompiledRuntimeModel) {
     let expected = 15.0;
     for (solver_name, solver) in solver_cases() {
@@ -923,212 +872,51 @@ fn assert_runtime_locf_integral(backend: &str, compiled: &CompiledRuntimeModel) 
     }
 }
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 #[test]
 fn jit_large_initial_times_preserve_absolute_time_callbacks(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let compiled = compile_module_source_to_runtime(
         ABSOLUTE_TIME_DSL_MODEL,
         Some("absolute_time_close_gap"),
-        RuntimeCompilationTarget::Jit,
         |_, _| {},
     )?;
     assert_runtime_large_initial_times_absolute_time("JIT", &compiled);
     Ok(())
 }
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 #[test]
 fn jit_rebase_after_large_event_preserves_absolute_time_rhs(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let compiled = compile_module_source_to_runtime(
         REBASE_ABSOLUTE_TIME_DSL_MODEL,
         Some("rebase_absolute_time_close_gap"),
-        RuntimeCompilationTarget::Jit,
         |_, _| {},
     )?;
     assert_runtime_rebase_after_large_event("JIT", &compiled);
     Ok(())
 }
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 #[test]
 fn jit_close_distinct_stops_do_not_silently_skip_dynamics() -> Result<(), Box<dyn std::error::Error>>
 {
     let compiled = compile_module_source_to_runtime(
         CLOSE_GAP_DSL_MODEL,
         Some("close_gap_exponential"),
-        RuntimeCompilationTarget::Jit,
         |_, _| {},
     )?;
     assert_runtime_close_gaps("JIT", &compiled);
     Ok(())
 }
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 #[test]
 fn jit_locf_rhs_change_matches_piecewise_analytical_integral(
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let compiled = compile_module_source_to_runtime(
-        LOCF_DSL_MODEL,
-        Some("locf_integral"),
-        RuntimeCompilationTarget::Jit,
-        |_, _| {},
-    )?;
+    let compiled =
+        compile_module_source_to_runtime(LOCF_DSL_MODEL, Some("locf_integral"), |_, _| {})?;
     assert_runtime_locf_integral("JIT", &compiled);
-    Ok(())
-}
-
-#[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]
-#[test]
-fn native_aot_large_initial_times_preserve_absolute_time_callbacks(
-) -> Result<(), Box<dyn std::error::Error>> {
-    use pharmsol::dsl::NativeAotCompileOptions;
-    use tempfile::tempdir;
-
-    let workspace = tempdir()?;
-    let compiled = compile_module_source_to_runtime(
-        ABSOLUTE_TIME_DSL_MODEL,
-        Some("absolute_time_close_gap"),
-        RuntimeCompilationTarget::NativeAot(
-            NativeAotCompileOptions::new(workspace.path().join("build"))
-                .with_output(workspace.path().join("absolute_time_close_gap.pkm")),
-        ),
-        |_, _| {},
-    )?;
-    assert_runtime_large_initial_times_absolute_time("native AOT", &compiled);
-    Ok(())
-}
-
-#[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]
-#[test]
-fn native_aot_rebase_after_large_event_preserves_absolute_time_rhs(
-) -> Result<(), Box<dyn std::error::Error>> {
-    use pharmsol::dsl::NativeAotCompileOptions;
-    use tempfile::tempdir;
-
-    let workspace = tempdir()?;
-    let compiled = compile_module_source_to_runtime(
-        REBASE_ABSOLUTE_TIME_DSL_MODEL,
-        Some("rebase_absolute_time_close_gap"),
-        RuntimeCompilationTarget::NativeAot(
-            NativeAotCompileOptions::new(workspace.path().join("build"))
-                .with_output(workspace.path().join("rebase_absolute_time_close_gap.pkm")),
-        ),
-        |_, _| {},
-    )?;
-    assert_runtime_rebase_after_large_event("native AOT", &compiled);
-    Ok(())
-}
-
-#[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]
-#[test]
-fn native_aot_close_distinct_stops_do_not_silently_skip_dynamics(
-) -> Result<(), Box<dyn std::error::Error>> {
-    use pharmsol::dsl::NativeAotCompileOptions;
-    use tempfile::tempdir;
-
-    let workspace = tempdir()?;
-    let compiled = compile_module_source_to_runtime(
-        CLOSE_GAP_DSL_MODEL,
-        Some("close_gap_exponential"),
-        RuntimeCompilationTarget::NativeAot(
-            NativeAotCompileOptions::new(workspace.path().join("build"))
-                .with_output(workspace.path().join("close_gap_exponential.pkm")),
-        ),
-        |_, _| {},
-    )?;
-    assert_runtime_close_gaps("native AOT", &compiled);
-    Ok(())
-}
-
-#[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]
-#[test]
-fn native_aot_locf_rhs_change_matches_piecewise_analytical_integral(
-) -> Result<(), Box<dyn std::error::Error>> {
-    use pharmsol::dsl::NativeAotCompileOptions;
-    use tempfile::tempdir;
-
-    let workspace = tempdir()?;
-    let compiled = compile_module_source_to_runtime(
-        LOCF_DSL_MODEL,
-        Some("locf_integral"),
-        RuntimeCompilationTarget::NativeAot(
-            NativeAotCompileOptions::new(workspace.path().join("build"))
-                .with_output(workspace.path().join("locf_integral.pkm")),
-        ),
-        |_, _| {},
-    )?;
-    assert_runtime_locf_integral("native AOT", &compiled);
-    Ok(())
-}
-
-#[cfg(all(feature = "dsl-aot", feature = "dsl-aot-load"))]
-#[test]
-fn native_aot_preserves_infusion_boundary_contracts() -> Result<(), Box<dyn std::error::Error>> {
-    use pharmsol::dsl::NativeAotCompileOptions;
-    use tempfile::tempdir;
-
-    let workspace = tempdir()?;
-    let compiled = compile_module_source_to_runtime(
-        INFUSION_DSL_MODEL,
-        Some("accepted_infusion_boundary"),
-        RuntimeCompilationTarget::NativeAot(
-            NativeAotCompileOptions::new(workspace.path().join("build"))
-                .with_output(workspace.path().join("accepted_infusion_boundary.pkm")),
-        ),
-        |_, _| {},
-    )?;
-
-    for (solver_name, solver) in solver_cases() {
-        let model = configured_runtime_ode(&compiled, solver);
-        for (scenario, subject, expected) in [
-            (
-                "accepted",
-                infusion_boundary_subject(),
-                accepted_boundary_expected(),
-            ),
-            (
-                "stepped",
-                stepped_infusion_boundary_subject(),
-                stepped_boundary_expected(),
-            ),
-        ] {
-            let predictions = match &model {
-                CompiledRuntimeModel::Ode(model) => model
-                    .estimate_predictions_dense(&subject, &[])
-                    .unwrap_or_else(|error| {
-                        panic!("native AOT {solver_name} {scenario} infusion failed: {error}")
-                    }),
-                _ => unreachable!(),
-            };
-            let maximum_relative_error = if solver_name == "TSIT45" {
-                1.0e-3
-            } else {
-                1.0e-2
-            };
-            assert_post_infusion_decay(
-                &format!("native AOT {solver_name} {scenario}"),
-                &predictions,
-                expected,
-                maximum_relative_error,
-            );
-        }
-
-        let predictions = match &model {
-            CompiledRuntimeModel::Ode(model) => model
-                .estimate_predictions_dense(&material_short_infusion_subject(), &[])
-                .unwrap_or_else(|error| {
-                    panic!("native AOT {solver_name} short infusion failed: {error}")
-                }),
-            _ => unreachable!(),
-        };
-        assert_post_infusion_decay(
-            &format!("native AOT {solver_name} short infusion"),
-            &predictions,
-            material_short_infusion_expected(),
-            1.0e-2,
-        );
-    }
     Ok(())
 }

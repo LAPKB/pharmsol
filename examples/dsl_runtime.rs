@@ -5,9 +5,9 @@
 //! to estimate predictions — no recompilation of the host binary needed.
 //!
 //! Run with:
-//! cargo run --example dsl_runtime_jit --features dsl-jit
+//! cargo run --example dsl_runtime --features dsl
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     use std::io;
 
@@ -44,7 +44,6 @@ out(cp) = central / v
     let model = pharmsol::dsl::compile_module_source_to_runtime(
         model_source,
         Some("bimodal_ke"),
-        pharmsol::dsl::RuntimeCompilationTarget::Jit,
         on_compile_event,
     )?;
     let support_point = Parameters::with_model(&model, [("ke", 1.2), ("v", 50.0)])?;
@@ -81,8 +80,8 @@ out(cp) = central / v
     Ok(())
 }
 
-#[cfg(not(feature = "dsl-jit"))]
+#[cfg(not(feature = "dsl"))]
 fn main() {
-    eprintln!("Run with: cargo run --example bimodal_ke_dsl_runtime_jit --features dsl-jit");
+    eprintln!("Run with: cargo run --example dsl_runtime --features dsl");
     std::process::exit(1);
 }

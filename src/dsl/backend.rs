@@ -9,19 +9,14 @@ use nalgebra::DVector;
 use ndarray::{concatenate, Array2, Axis};
 use rayon::prelude::*;
 
-#[cfg(feature = "dsl-jit")]
 use cranelift_jit::JITModule;
-#[cfg(feature = "dsl-aot-load")]
-use libloading::Library;
 use pharmsol_dsl::execution::ModelFunctionKind;
 use pharmsol_dsl::{
     AnalyticalKernel, AnalyticalStructureInputKind, AnalyticalStructureInputPlan, ModelKind,
     RouteKind, NUMERIC_ROUTE_PREFIX,
 };
 
-pub use super::model_info::{
-    NativeCovariateInfo, NativeModelInfo, NativeOutputInfo, NativeRouteInfo, NativeStateInfo,
-};
+use super::model_info::{RuntimeModelInfo, RuntimeRouteInfo, RuntimeStateInfo};
 use crate::{
     data::error_model::AssayErrorModels,
     data::{Covariates, Infusion, InputLabel, OutputLabel},
@@ -57,14 +52,6 @@ pub type CompiledModelFunction = unsafe extern "C" fn(
 const DEFAULT_ODE_RTOL: f64 = 1e-4;
 const DEFAULT_ODE_ATOL: f64 = 1e-4;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RuntimeBackend {
-    #[cfg(feature = "dsl-jit")]
-    Jit,
-    #[cfg(feature = "dsl-aot-load")]
-    NativeAot,
-}
-
 pub(crate) trait FunctionSession {
     #[allow(clippy::too_many_arguments)]
     unsafe fn invoke_raw(
@@ -81,35 +68,24 @@ pub(crate) trait FunctionSession {
 }
 
 pub(crate) trait RuntimeArtifact: Send + Sync + std::fmt::Debug {
-    fn backend(&self) -> RuntimeBackend;
     fn has_function(&self, role: ModelFunctionKind) -> bool;
     fn start_session(&self) -> Result<Box<dyn FunctionSession + '_>, PharmsolError>;
 }
 
-#[allow(dead_code)]
-enum NativeArtifactOwner {
-    #[cfg(feature = "dsl-jit")]
-    Jit(Box<JITModule>),
-    #[cfg(feature = "dsl-aot-load")]
-    Library(Library),
+enum RuntimeArtifactOwner {
+    /// Held only to keep the JIT-allocated code alive for the artifact's lifetime.
+    Jit(#[allow(dead_code)] Box<JITModule>),
 }
 
-impl std::fmt::Debug for NativeArtifactOwner {
-    fn fmt(&self, _f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl std::fmt::Debug for RuntimeArtifactOwner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            #[cfg(feature = "dsl-jit")]
-            Self::Jit(_) => _f.write_str("NativeArtifactOwner::Jit(..)"),
-            #[cfg(feature = "dsl-aot-load")]
-            Self::Library(_) => _f.write_str("NativeArtifactOwner::Library(..)"),
-            #[cfg(not(any(feature = "dsl-jit", feature = "dsl-aot-load")))]
-            _ => unreachable!(
-                "native artifact owner should only exist for supported native backends"
-            ),
+            Self::Jit(_) => f.write_str("RuntimeArtifactOwner::Jit(..)"),
         }
     }
 }
 
-pub struct NativeExecutionArtifact {
+pub struct RuntimeExecutionArtifact {
     pub model_name: String,
     pub derive: Option<CompiledModelFunction>,
     pub dynamics: Option<CompiledModelFunction>,
@@ -119,15 +95,15 @@ pub struct NativeExecutionArtifact {
     pub diffusion: Option<CompiledModelFunction>,
     pub route_lag: Option<CompiledModelFunction>,
     pub route_bioavailability: Option<CompiledModelFunction>,
-    _owner: Option<NativeArtifactOwner>,
+    _owner: RuntimeArtifactOwner,
 }
 
-unsafe impl Send for NativeExecutionArtifact {}
-unsafe impl Sync for NativeExecutionArtifact {}
+unsafe impl Send for RuntimeExecutionArtifact {}
+unsafe impl Sync for RuntimeExecutionArtifact {}
 
-impl std::fmt::Debug for NativeExecutionArtifact {
+impl std::fmt::Debug for RuntimeExecutionArtifact {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("NativeExecutionArtifact")
+        f.debug_struct("RuntimeExecutionArtifact")
             .field("model_name", &self.model_name)
             .field("derive", &self.derive.map(|ptr| ptr as *const ()))
             .field("dynamics", &self.dynamics.map(|ptr| ptr as *const ()))
@@ -144,8 +120,7 @@ impl std::fmt::Debug for NativeExecutionArtifact {
     }
 }
 
-impl NativeExecutionArtifact {
-    #[cfg(feature = "dsl-jit")]
+impl RuntimeExecutionArtifact {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn from_jit_module(
         model_name: String,
@@ -169,44 +144,16 @@ impl NativeExecutionArtifact {
             diffusion,
             route_lag,
             route_bioavailability,
-            _owner: Some(NativeArtifactOwner::Jit(Box::new(module))),
-        }
-    }
-
-    #[cfg(feature = "dsl-aot-load")]
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn from_library(
-        model_name: String,
-        derive: Option<CompiledModelFunction>,
-        dynamics: Option<CompiledModelFunction>,
-        outputs: CompiledModelFunction,
-        init: Option<CompiledModelFunction>,
-        drift: Option<CompiledModelFunction>,
-        diffusion: Option<CompiledModelFunction>,
-        route_lag: Option<CompiledModelFunction>,
-        route_bioavailability: Option<CompiledModelFunction>,
-        library: Library,
-    ) -> Self {
-        Self {
-            model_name,
-            derive,
-            dynamics,
-            outputs,
-            init,
-            drift,
-            diffusion,
-            route_lag,
-            route_bioavailability,
-            _owner: Some(NativeArtifactOwner::Library(library)),
+            _owner: RuntimeArtifactOwner::Jit(Box::new(module)),
         }
     }
 }
 
-struct NativeFunctionSession<'a> {
-    artifact: &'a NativeExecutionArtifact,
+struct RuntimeFunctionSession<'a> {
+    artifact: &'a RuntimeExecutionArtifact,
 }
 
-impl FunctionSession for NativeFunctionSession<'_> {
+impl FunctionSession for RuntimeFunctionSession<'_> {
     unsafe fn invoke_raw(
         &mut self,
         role: ModelFunctionKind,
@@ -241,17 +188,7 @@ impl FunctionSession for NativeFunctionSession<'_> {
     }
 }
 
-impl RuntimeArtifact for NativeExecutionArtifact {
-    fn backend(&self) -> RuntimeBackend {
-        match &self._owner {
-            #[cfg(feature = "dsl-jit")]
-            Some(NativeArtifactOwner::Jit(_)) => RuntimeBackend::Jit,
-            #[cfg(feature = "dsl-aot-load")]
-            Some(NativeArtifactOwner::Library(_)) => RuntimeBackend::NativeAot,
-            _ => unreachable!("native execution artifacts should always retain a supported owner"),
-        }
-    }
-
+impl RuntimeArtifact for RuntimeExecutionArtifact {
     fn has_function(&self, role: ModelFunctionKind) -> bool {
         match role {
             ModelFunctionKind::Derive => self.derive.is_some(),
@@ -267,20 +204,20 @@ impl RuntimeArtifact for NativeExecutionArtifact {
     }
 
     fn start_session(&self) -> Result<Box<dyn FunctionSession + '_>, PharmsolError> {
-        Ok(Box::new(NativeFunctionSession { artifact: self }))
+        Ok(Box::new(RuntimeFunctionSession { artifact: self }))
     }
 }
 
 #[derive(Clone, Debug)]
-struct SharedNativeModel {
-    info: Arc<NativeModelInfo>,
+struct SharedRuntimeModel {
+    info: Arc<RuntimeModelInfo>,
     metadata: Arc<ValidatedModelMetadata>,
     route_semantics: Arc<RouteInputSemantics>,
     artifact: Arc<dyn RuntimeArtifact>,
 }
 
 fn sorted_dense_metadata<'a, T>(
-    info: &NativeModelInfo,
+    info: &RuntimeModelInfo,
     domain: &str,
     expected_len: usize,
     entries: &'a [T],
@@ -315,8 +252,8 @@ fn sorted_dense_metadata<'a, T>(
 }
 
 fn sorted_state_metadata<'a>(
-    info: &'a NativeModelInfo,
-) -> Result<Vec<&'a NativeStateInfo>, PharmsolError> {
+    info: &'a RuntimeModelInfo,
+) -> Result<Vec<&'a RuntimeStateInfo>, PharmsolError> {
     if info.state_len == 0 {
         if info.states.is_empty() {
             return Ok(Vec::new());
@@ -382,10 +319,10 @@ fn sorted_state_metadata<'a>(
 }
 
 fn state_declaration_for_offset<'a>(
-    info: &NativeModelInfo,
-    states: &[&'a NativeStateInfo],
+    info: &RuntimeModelInfo,
+    states: &[&'a RuntimeStateInfo],
     offset: usize,
-) -> Result<(usize, &'a NativeStateInfo), PharmsolError> {
+) -> Result<(usize, &'a RuntimeStateInfo), PharmsolError> {
     if offset >= info.state_len {
         return Err(PharmsolError::InvalidMetadata {
             model: info.name.clone(),
@@ -410,7 +347,9 @@ fn state_declaration_for_offset<'a>(
     Ok((declaration_index, states[declaration_index]))
 }
 
-fn runtime_model_metadata(info: &NativeModelInfo) -> Result<ValidatedModelMetadata, PharmsolError> {
+fn runtime_model_metadata(
+    info: &RuntimeModelInfo,
+) -> Result<ValidatedModelMetadata, PharmsolError> {
     let states = sorted_state_metadata(info)?;
     let state_names = states
         .iter()
@@ -570,7 +509,7 @@ struct RouteInputSemantics {
 }
 
 impl RouteInputSemantics {
-    fn from_model_info(info: &NativeModelInfo) -> Self {
+    fn from_model_info(info: &RuntimeModelInfo) -> Self {
         let mut bolus_destinations = vec![None; info.route_len];
         let mut infusion_inputs = vec![false; info.route_len];
         let mut injected_infusion_destinations = vec![None; info.route_len];
@@ -622,8 +561,8 @@ impl RouteInputSemantics {
     }
 }
 
-impl SharedNativeModel {
-    fn with_info(&self, info: NativeModelInfo) -> Result<Self, PharmsolError> {
+impl SharedRuntimeModel {
+    fn with_info(&self, info: RuntimeModelInfo) -> Result<Self, PharmsolError> {
         let metadata = Arc::new(runtime_model_metadata(&info)?);
         let route_semantics = Arc::new(RouteInputSemantics::from_model_info(&info));
         Ok(Self {
@@ -635,7 +574,7 @@ impl SharedNativeModel {
     }
 
     fn new(
-        info: NativeModelInfo,
+        info: RuntimeModelInfo,
         artifact: impl RuntimeArtifact + 'static,
     ) -> Result<Self, PharmsolError> {
         let artifact = Arc::new(artifact);
@@ -653,7 +592,7 @@ impl SharedNativeModel {
         self.metadata.as_ref()
     }
 
-    /// Resolve a route by label and kind from the native model info, which
+    /// Resolve a route by label and kind from the runtime model info, which
     /// preserves the declared `Option<RouteKind>`. Validated metadata has
     /// already collapsed kind-less routes to bolus, so it cannot tell a
     /// genuinely kind-less route from an explicitly bolus one; the info
@@ -666,7 +605,7 @@ impl SharedNativeModel {
         &self,
         label: &str,
         kind: Option<RouteKind>,
-    ) -> Option<&NativeRouteInfo> {
+    ) -> Option<&RuntimeRouteInfo> {
         self.info
             .routes
             .iter()
@@ -1089,8 +1028,8 @@ impl SharedNativeModel {
 }
 
 #[derive(Clone, Debug)]
-pub struct NativeOdeModel {
-    shared: Arc<SharedNativeModel>,
+pub struct RuntimeOdeModel {
+    shared: Arc<SharedRuntimeModel>,
     solver: OdeSolver,
     rtol: f64,
     atol: f64,
@@ -1099,43 +1038,26 @@ pub struct NativeOdeModel {
 }
 
 #[derive(Clone, Debug)]
-pub struct NativeAnalyticalModel {
-    shared: Arc<SharedNativeModel>,
+pub struct RuntimeAnalyticalModel {
+    shared: Arc<SharedRuntimeModel>,
     cache: Option<PredictionCache>,
     parameter_projection: AnalyticalStructureInputKind,
 }
 
 #[derive(Clone, Debug)]
-pub struct NativeSdeModel {
-    shared: Arc<SharedNativeModel>,
+pub struct RuntimeSdeModel {
+    shared: Arc<SharedRuntimeModel>,
     nparticles: usize,
     cache: Option<SdeLikelihoodCache>,
 }
 
-#[derive(Clone, Debug)]
-pub enum CompiledNativeModel {
-    Ode(NativeOdeModel),
-    Analytical(NativeAnalyticalModel),
-    Sde(NativeSdeModel),
-}
-
-impl CompiledNativeModel {
-    pub fn metadata(&self) -> &ValidatedModelMetadata {
-        match self {
-            Self::Ode(model) => model.metadata(),
-            Self::Analytical(model) => model.metadata(),
-            Self::Sde(model) => model.metadata(),
-        }
-    }
-}
-
-impl NativeOdeModel {
+impl RuntimeOdeModel {
     pub(crate) fn new(
-        info: NativeModelInfo,
+        info: RuntimeModelInfo,
         artifact: impl RuntimeArtifact + 'static,
     ) -> Result<Self, PharmsolError> {
         Ok(Self {
-            shared: Arc::new(SharedNativeModel::new(info, artifact)?),
+            shared: Arc::new(SharedRuntimeModel::new(info, artifact)?),
             solver: OdeSolver::default(),
             rtol: DEFAULT_ODE_RTOL,
             atol: DEFAULT_ODE_ATOL,
@@ -1157,17 +1079,13 @@ impl NativeOdeModel {
         self
     }
 
-    pub fn info(&self) -> &NativeModelInfo {
+    pub fn info(&self) -> &RuntimeModelInfo {
         self.shared.info.as_ref()
     }
 
     /// Access the validated metadata attached to this compiled ODE model.
     pub fn metadata(&self) -> &ValidatedModelMetadata {
         self.shared.metadata()
-    }
-
-    pub fn backend(&self) -> RuntimeBackend {
-        self.shared.artifact.backend()
     }
 
     pub fn estimate_predictions(
@@ -1438,7 +1356,7 @@ fn runtime_no_fa(_: &V, _: T, _: &Covariates) -> HashMap<usize, T> {
 
 #[inline(always)]
 fn runtime_ode_predictions(
-    model: &NativeOdeModel,
+    model: &RuntimeOdeModel,
     subject: &Subject,
     support_point: &[f64],
 ) -> Result<SubjectPredictions, PharmsolError> {
@@ -1470,7 +1388,7 @@ fn runtime_ode_predictions(
     }
 }
 
-impl crate::simulator::equation::Cache for NativeOdeModel {
+impl crate::simulator::equation::Cache for RuntimeOdeModel {
     fn with_cache_capacity(mut self, size: usize) -> Self {
         self.cache = Some(PredictionCache::new(size));
         self.error_model_cache = Some(BoundErrorModelCache::new(
@@ -1503,12 +1421,12 @@ impl crate::simulator::equation::Cache for NativeOdeModel {
     }
 }
 
-impl EquationTypes for NativeOdeModel {
+impl EquationTypes for RuntimeOdeModel {
     type S = V;
     type P = SubjectPredictions;
 }
 
-impl EquationPriv for NativeOdeModel {
+impl EquationPriv for RuntimeOdeModel {
     fn lag(&self) -> &Lag {
         &(runtime_no_lag as Lag)
     }
@@ -1569,7 +1487,7 @@ impl EquationPriv for NativeOdeModel {
     }
 }
 
-impl Equation for NativeOdeModel {
+impl Equation for RuntimeOdeModel {
     fn bound_error_model_cache(&self) -> Option<&BoundErrorModelCache> {
         self.error_model_cache.as_ref()
     }
@@ -1676,30 +1594,26 @@ impl Equation for NativeOdeModel {
     }
 }
 
-impl NativeAnalyticalModel {
+impl RuntimeAnalyticalModel {
     pub(crate) fn new(
-        info: NativeModelInfo,
+        info: RuntimeModelInfo,
         artifact: impl RuntimeArtifact + 'static,
     ) -> Result<Self, PharmsolError> {
         let parameter_projection = build_analytical_parameter_projection(&info)?;
         Ok(Self {
-            shared: Arc::new(SharedNativeModel::new(info, artifact)?),
+            shared: Arc::new(SharedRuntimeModel::new(info, artifact)?),
             cache: Some(PredictionCache::new(DEFAULT_CACHE_SIZE)),
             parameter_projection,
         })
     }
 
-    pub fn info(&self) -> &NativeModelInfo {
+    pub fn info(&self) -> &RuntimeModelInfo {
         self.shared.info.as_ref()
     }
 
     /// Access the validated metadata attached to this compiled analytical model.
     pub fn metadata(&self) -> &ValidatedModelMetadata {
         self.shared.metadata()
-    }
-
-    pub fn backend(&self) -> RuntimeBackend {
-        self.shared.artifact.backend()
     }
 
     pub fn estimate_predictions(
@@ -1856,7 +1770,7 @@ impl NativeAnalyticalModel {
 
 #[inline(always)]
 fn runtime_analytical_predictions(
-    model: &NativeAnalyticalModel,
+    model: &RuntimeAnalyticalModel,
     subject: &Subject,
     support_point: &[f64],
 ) -> Result<SubjectPredictions, PharmsolError> {
@@ -1888,7 +1802,7 @@ fn runtime_analytical_predictions(
     }
 }
 
-impl crate::simulator::equation::Cache for NativeAnalyticalModel {
+impl crate::simulator::equation::Cache for RuntimeAnalyticalModel {
     fn with_cache_capacity(mut self, size: usize) -> Self {
         self.cache = Some(PredictionCache::new(size));
         self
@@ -1911,12 +1825,12 @@ impl crate::simulator::equation::Cache for NativeAnalyticalModel {
     }
 }
 
-impl EquationTypes for NativeAnalyticalModel {
+impl EquationTypes for RuntimeAnalyticalModel {
     type S = V;
     type P = SubjectPredictions;
 }
 
-impl EquationPriv for NativeAnalyticalModel {
+impl EquationPriv for RuntimeAnalyticalModel {
     fn lag(&self) -> &Lag {
         &(runtime_no_lag as Lag)
     }
@@ -1977,7 +1891,7 @@ impl EquationPriv for NativeAnalyticalModel {
     }
 }
 
-impl Equation for NativeAnalyticalModel {
+impl Equation for RuntimeAnalyticalModel {
     fn estimate_likelihood(
         &self,
         subject: &Subject,
@@ -2005,7 +1919,7 @@ impl Equation for NativeAnalyticalModel {
         subject: &Subject,
         parameters: &[f64],
     ) -> Result<Self::P, PharmsolError> {
-        NativeAnalyticalModel::estimate_predictions_dense(self, subject, parameters)
+        RuntimeAnalyticalModel::estimate_predictions_dense(self, subject, parameters)
     }
 
     fn kind() -> EqnKind {
@@ -2026,7 +1940,7 @@ impl Equation for NativeAnalyticalModel {
         subject: &Subject,
         parameters: &Parameters,
     ) -> Result<Self::P, PharmsolError> {
-        NativeAnalyticalModel::estimate_predictions(self, subject, parameters)
+        RuntimeAnalyticalModel::estimate_predictions(self, subject, parameters)
     }
 
     fn simulate_subject(
@@ -2058,9 +1972,9 @@ impl Equation for NativeAnalyticalModel {
     }
 }
 
-impl NativeSdeModel {
+impl RuntimeSdeModel {
     pub(crate) fn new(
-        info: NativeModelInfo,
+        info: RuntimeModelInfo,
         artifact: impl RuntimeArtifact + 'static,
     ) -> Result<Self, PharmsolError> {
         let nparticles = info
@@ -2070,7 +1984,7 @@ impl NativeSdeModel {
                 detail: "SDE models must declare a particle count".to_string(),
             })?;
         Ok(Self {
-            shared: Arc::new(SharedNativeModel::new(info, artifact)?),
+            shared: Arc::new(SharedRuntimeModel::new(info, artifact)?),
             nparticles,
             cache: Some(SdeLikelihoodCache::new(DEFAULT_CACHE_SIZE)),
         })
@@ -2096,17 +2010,13 @@ impl NativeSdeModel {
         self
     }
 
-    pub fn info(&self) -> &NativeModelInfo {
+    pub fn info(&self) -> &RuntimeModelInfo {
         self.shared.info.as_ref()
     }
 
     /// Access the validated metadata attached to this compiled SDE model.
     pub fn metadata(&self) -> &ValidatedModelMetadata {
         self.shared.metadata()
-    }
-
-    pub fn backend(&self) -> RuntimeBackend {
-        self.shared.artifact.backend()
     }
 
     pub fn estimate_predictions(
@@ -2355,7 +2265,7 @@ impl NativeSdeModel {
 
 #[inline(always)]
 fn runtime_sde_log_likelihood(
-    model: &NativeSdeModel,
+    model: &RuntimeSdeModel,
     subject: &Subject,
     support_point: &[f64],
     error_models: &AssayErrorModels,
@@ -2380,7 +2290,7 @@ fn runtime_sde_log_likelihood(
     }
 }
 
-impl crate::simulator::equation::Cache for NativeSdeModel {
+impl crate::simulator::equation::Cache for RuntimeSdeModel {
     fn with_cache_capacity(mut self, size: usize) -> Self {
         self.cache = Some(SdeLikelihoodCache::new(size));
         self
@@ -2403,12 +2313,12 @@ impl crate::simulator::equation::Cache for NativeSdeModel {
     }
 }
 
-impl EquationTypes for NativeSdeModel {
+impl EquationTypes for RuntimeSdeModel {
     type S = Vec<DVector<f64>>;
     type P = Array2<Prediction>;
 }
 
-impl EquationPriv for NativeSdeModel {
+impl EquationPriv for RuntimeSdeModel {
     fn lag(&self) -> &Lag {
         &(runtime_no_lag as Lag)
     }
@@ -2477,7 +2387,7 @@ impl EquationPriv for NativeSdeModel {
     }
 }
 
-impl Equation for NativeSdeModel {
+impl Equation for RuntimeSdeModel {
     fn estimate_likelihood(
         &self,
         subject: &Subject,
@@ -2516,7 +2426,7 @@ impl Equation for NativeSdeModel {
         subject: &Subject,
         parameters: &Parameters,
     ) -> Result<Self::P, PharmsolError> {
-        NativeSdeModel::estimate_predictions(self, subject, parameters)
+        RuntimeSdeModel::estimate_predictions(self, subject, parameters)
     }
 
     fn estimate_predictions_dense(
@@ -2524,7 +2434,7 @@ impl Equation for NativeSdeModel {
         subject: &Subject,
         parameters: &[f64],
     ) -> Result<Self::P, PharmsolError> {
-        NativeSdeModel::estimate_predictions_dense(self, subject, parameters)
+        RuntimeSdeModel::estimate_predictions_dense(self, subject, parameters)
     }
 
     fn estimate_log_likelihood_dense(
@@ -2557,7 +2467,7 @@ impl Equation for NativeSdeModel {
             None => None,
         };
 
-        let predictions = NativeSdeModel::estimate_predictions_dense(self, subject, parameters)?;
+        let predictions = RuntimeSdeModel::estimate_predictions_dense(self, subject, parameters)?;
         let likelihood = match bound_error_models.as_ref() {
             Some(error_models) => Some(predictions.log_likelihood(error_models)?.exp()),
             None => None,
@@ -2620,7 +2530,7 @@ fn sort_events(events: &mut [Event]) {
 }
 
 fn build_analytical_parameter_projection(
-    info: &NativeModelInfo,
+    info: &RuntimeModelInfo,
 ) -> Result<AnalyticalStructureInputKind, PharmsolError> {
     let function = info.analytical.ok_or_else(|| {
         PharmsolError::OtherError(format!(
@@ -2814,23 +2724,15 @@ fn apply_analytical_kernel(
 mod tests {
     use super::{
         build_analytical_parameter_projection, project_analytical_parameters, FunctionSession,
-        NativeAnalyticalModel, NativeCovariateInfo, NativeModelInfo, NativeOdeModel,
-        NativeOutputInfo, NativeRouteInfo, NativeSdeModel, NativeStateInfo, RuntimeArtifact,
-        RuntimeBackend, SharedNativeModel,
+        RuntimeAnalyticalModel, RuntimeArtifact, RuntimeModelInfo, RuntimeOdeModel,
+        RuntimeRouteInfo, RuntimeSdeModel, RuntimeStateInfo, SharedRuntimeModel,
     };
-    #[cfg(any(
-        feature = "dsl-jit",
-        all(feature = "dsl-aot", feature = "dsl-aot-load")
-    ))]
     use super::{
         runtime_ode_predictions, BoundErrorModelCache, PredictionCache,
         DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE, DEFAULT_ODE_ATOL, DEFAULT_ODE_RTOL,
     };
+    use crate::dsl::model_info::{RuntimeCovariateInfo, RuntimeOutputInfo};
     use crate::PharmsolError;
-    #[cfg(any(
-        feature = "dsl-jit",
-        all(feature = "dsl-aot", feature = "dsl-aot-load")
-    ))]
     use crate::{
         data::builder::SubjectBuilderExt,
         dsl::{CompiledRuntimeModel, RuntimePredictions},
@@ -2843,20 +2745,12 @@ mod tests {
         AnalyticalKernel, AnalyticalStructureInputKind, CovariateInterpolation, ModelKind,
         RouteKind,
     };
-    #[cfg(any(
-        feature = "dsl-jit",
-        all(feature = "dsl-aot", feature = "dsl-aot-load")
-    ))]
     use std::sync::Arc;
 
     #[derive(Debug)]
     struct DummyArtifact;
 
     impl RuntimeArtifact for DummyArtifact {
-        fn backend(&self) -> RuntimeBackend {
-            panic!("dummy artifact backend should not be used in tests")
-        }
-
         fn has_function(&self, _role: ModelFunctionKind) -> bool {
             false
         }
@@ -2866,19 +2760,19 @@ mod tests {
         }
     }
 
-    fn bolus_only_shared_model() -> SharedNativeModel {
-        SharedNativeModel::new(
-            NativeModelInfo {
+    fn bolus_only_shared_model() -> SharedRuntimeModel {
+        SharedRuntimeModel::new(
+            RuntimeModelInfo {
                 name: "bolus_only".to_string(),
                 kind: ModelKind::Ode,
                 parameters: Vec::new(),
                 derived: Vec::new(),
                 covariates: Vec::new(),
-                states: vec![NativeStateInfo {
+                states: vec![RuntimeStateInfo {
                     name: "gut".to_string(),
                     offset: 0,
                 }],
-                routes: vec![NativeRouteInfo {
+                routes: vec![RuntimeRouteInfo {
                     name: "oral".to_string(),
                     declaration_index: 0,
                     index: 0,
@@ -2889,7 +2783,7 @@ mod tests {
                     has_bioavailability: false,
                     inject_input_to_destination: false,
                 }],
-                outputs: vec![NativeOutputInfo {
+                outputs: vec![RuntimeOutputInfo {
                     name: "cp".to_string(),
                     index: 0,
                 }],
@@ -2909,15 +2803,15 @@ mod tests {
         parameters: &[&str],
         derived: &[&str],
         function: AnalyticalKernel,
-    ) -> NativeModelInfo {
-        NativeModelInfo {
+    ) -> RuntimeModelInfo {
+        RuntimeModelInfo {
             name: "analytical_projection".to_string(),
             kind: ModelKind::Analytical,
             parameters: parameters.iter().map(|name| (*name).to_string()).collect(),
             derived: derived.iter().map(|name| (*name).to_string()).collect(),
             covariates: Vec::new(),
             states: (0..function.state_count())
-                .map(|offset| NativeStateInfo {
+                .map(|offset| RuntimeStateInfo {
                     name: format!("state_{offset}"),
                     offset,
                 })
@@ -2935,22 +2829,22 @@ mod tests {
 
     #[test]
     fn runtime_ode_models_expose_validated_metadata_for_declared_routes() {
-        let model = NativeOdeModel::new(
-            NativeModelInfo {
+        let model = RuntimeOdeModel::new(
+            RuntimeModelInfo {
                 name: "runtime_metadata".to_string(),
                 kind: ModelKind::Ode,
                 parameters: vec!["ke".to_string(), "v".to_string()],
                 derived: Vec::new(),
-                covariates: vec![NativeCovariateInfo {
+                covariates: vec![RuntimeCovariateInfo {
                     name: "wt".to_string(),
                     index: 0,
                     interpolation: Some(CovariateInterpolation::Linear),
                 }],
-                states: vec![NativeStateInfo {
+                states: vec![RuntimeStateInfo {
                     name: "central".to_string(),
                     offset: 0,
                 }],
-                routes: vec![NativeRouteInfo {
+                routes: vec![RuntimeRouteInfo {
                     name: "iv".to_string(),
                     declaration_index: 0,
                     index: 0,
@@ -2961,7 +2855,7 @@ mod tests {
                     has_bioavailability: false,
                     inject_input_to_destination: false,
                 }],
-                outputs: vec![NativeOutputInfo {
+                outputs: vec![RuntimeOutputInfo {
                     name: "cp".to_string(),
                     index: 0,
                 }],
@@ -2985,7 +2879,7 @@ mod tests {
         assert_eq!(metadata.route("iv").unwrap().destination(), "central");
         assert_eq!(metadata.output("cp").unwrap().name(), "cp");
 
-        let compiled = super::CompiledNativeModel::Ode(model.clone());
+        let compiled = CompiledRuntimeModel::Ode(model.clone());
         assert_eq!(
             compiled.metadata().route("iv").unwrap().destination(),
             "central"
@@ -2994,25 +2888,25 @@ mod tests {
 
     #[test]
     fn runtime_ode_models_map_array_state_offsets_to_declarations() {
-        let model = NativeOdeModel::new(
-            NativeModelInfo {
+        let model = RuntimeOdeModel::new(
+            RuntimeModelInfo {
                 name: "array_state_runtime_metadata".to_string(),
                 kind: ModelKind::Ode,
                 parameters: vec!["ke".to_string(), "v".to_string()],
                 derived: Vec::new(),
                 covariates: Vec::new(),
                 states: vec![
-                    NativeStateInfo {
+                    RuntimeStateInfo {
                         name: "transit".to_string(),
                         offset: 0,
                     },
-                    NativeStateInfo {
+                    RuntimeStateInfo {
                         name: "central".to_string(),
                         offset: 4,
                     },
                 ],
                 routes: vec![
-                    NativeRouteInfo {
+                    RuntimeRouteInfo {
                         name: "oral".to_string(),
                         declaration_index: 0,
                         index: 0,
@@ -3023,7 +2917,7 @@ mod tests {
                         has_bioavailability: false,
                         inject_input_to_destination: false,
                     },
-                    NativeRouteInfo {
+                    RuntimeRouteInfo {
                         name: "iv".to_string(),
                         declaration_index: 1,
                         index: 0,
@@ -3035,7 +2929,7 @@ mod tests {
                         inject_input_to_destination: false,
                     },
                 ],
-                outputs: vec![NativeOutputInfo {
+                outputs: vec![RuntimeOutputInfo {
                     name: "cp".to_string(),
                     index: 0,
                 }],
@@ -3062,18 +2956,18 @@ mod tests {
 
     #[test]
     fn runtime_ode_model_setup_rejects_invalid_route_destination_metadata() {
-        let error = NativeOdeModel::new(
-            NativeModelInfo {
+        let error = RuntimeOdeModel::new(
+            RuntimeModelInfo {
                 name: "runtime_metadata_invalid_destination".to_string(),
                 kind: ModelKind::Ode,
                 parameters: vec!["ke".to_string()],
                 derived: Vec::new(),
                 covariates: Vec::new(),
-                states: vec![NativeStateInfo {
+                states: vec![RuntimeStateInfo {
                     name: "central".to_string(),
                     offset: 0,
                 }],
-                routes: vec![NativeRouteInfo {
+                routes: vec![RuntimeRouteInfo {
                     name: "iv".to_string(),
                     declaration_index: 0,
                     index: 0,
@@ -3084,7 +2978,7 @@ mod tests {
                     has_bioavailability: false,
                     inject_input_to_destination: false,
                 }],
-                outputs: vec![NativeOutputInfo {
+                outputs: vec![RuntimeOutputInfo {
                     name: "cp".to_string(),
                     index: 0,
                 }],
@@ -3109,19 +3003,19 @@ mod tests {
 
     #[test]
     fn runtime_sde_with_particles_updates_metadata_and_info() {
-        let model = NativeSdeModel::new(
-            NativeModelInfo {
+        let model = RuntimeSdeModel::new(
+            RuntimeModelInfo {
                 name: "runtime_sde_particles".to_string(),
                 kind: ModelKind::Sde,
                 parameters: vec!["ke".to_string()],
                 derived: Vec::new(),
                 covariates: Vec::new(),
-                states: vec![NativeStateInfo {
+                states: vec![RuntimeStateInfo {
                     name: "central".to_string(),
                     offset: 0,
                 }],
                 routes: Vec::new(),
-                outputs: vec![NativeOutputInfo {
+                outputs: vec![RuntimeOutputInfo {
                     name: "cp".to_string(),
                     index: 0,
                 }],
@@ -3142,7 +3036,7 @@ mod tests {
     }
 
     fn analytical_projection_values(
-        model: &NativeAnalyticalModel,
+        model: &RuntimeAnalyticalModel,
         support_point: &[f64],
         derived: &[f64],
     ) -> Vec<f64> {
@@ -3151,12 +3045,8 @@ mod tests {
             .to_vec()
     }
 
-    #[cfg(any(
-        feature = "dsl-jit",
-        all(feature = "dsl-aot", feature = "dsl-aot-load")
-    ))]
-    fn cached_runtime_ode_model() -> NativeOdeModel {
-        NativeOdeModel {
+    fn cached_runtime_ode_model() -> RuntimeOdeModel {
+        RuntimeOdeModel {
             shared: Arc::new(bolus_only_shared_model()),
             solver: Default::default(),
             rtol: DEFAULT_ODE_RTOL,
@@ -3168,10 +3058,6 @@ mod tests {
         }
     }
 
-    #[cfg(any(
-        feature = "dsl-jit",
-        all(feature = "dsl-aot", feature = "dsl-aot-load")
-    ))]
     fn cached_runtime_subject() -> Subject {
         Subject::builder("runtime_cached_prediction")
             .bolus(0.0, 100.0, "oral")
@@ -3198,7 +3084,7 @@ mod tests {
 
     #[test]
     fn compiled_analytical_projection_uses_primary_identity_order() {
-        let model = NativeAnalyticalModel::new(
+        let model = RuntimeAnalyticalModel::new(
             analytical_model_info(
                 &["ka", "ke", "v"],
                 &[],
@@ -3220,7 +3106,7 @@ mod tests {
 
     #[test]
     fn compiled_analytical_projection_reorders_all_derived_inputs() {
-        let model = NativeAnalyticalModel::new(
+        let model = RuntimeAnalyticalModel::new(
             analytical_model_info(
                 &["ke0", "v"],
                 &["ke", "ka"],
@@ -3245,7 +3131,7 @@ mod tests {
 
     #[test]
     fn compiled_analytical_projection_gathers_mixed_primary_and_derived_inputs() {
-        let model = NativeAnalyticalModel::new(
+        let model = RuntimeAnalyticalModel::new(
             analytical_model_info(
                 &["ka", "v", "ke0"],
                 &["ke"],
@@ -3267,7 +3153,7 @@ mod tests {
 
     #[test]
     fn compiled_analytical_projection_reports_missing_required_name_at_setup() {
-        let error = NativeAnalyticalModel::new(
+        let error = RuntimeAnalyticalModel::new(
             analytical_model_info(
                 &["ka", "v"],
                 &[],
@@ -3288,7 +3174,7 @@ mod tests {
 
     #[test]
     fn compiled_analytical_projection_reports_conflicting_primary_and_derived_name_at_setup() {
-        let error = NativeAnalyticalModel::new(
+        let error = RuntimeAnalyticalModel::new(
             analytical_model_info(
                 &["ka", "ke", "v"],
                 &["ke"],
@@ -3320,10 +3206,6 @@ mod tests {
         ));
     }
 
-    #[cfg(any(
-        feature = "dsl-jit",
-        all(feature = "dsl-aot", feature = "dsl-aot-load")
-    ))]
     #[test]
     fn compiled_runtime_ode_predictions_use_prefilled_cache() {
         let model = cached_runtime_ode_model();

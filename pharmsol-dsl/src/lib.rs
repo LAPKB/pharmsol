@@ -11,9 +11,9 @@
 //! - check names, types, and model structure
 //! - compile a validated model into its execution form
 //!
-//! Do not use this crate for JIT compilation, native ahead-of-time export or
-//! load, or `Subject`-based prediction helpers. Those
-//! workflows stay in `pharmsol::dsl` in the main `pharmsol` crate.
+//! Do not use this crate for JIT compilation or `Subject`-based prediction
+//! helpers. Those workflows stay in `pharmsol::dsl` in the main `pharmsol`
+//! crate.
 //!
 //! Main entrypoints:
 //!
@@ -42,8 +42,7 @@
 //! - [`syntax`] for the syntax tree.
 //! - [`analysis`] for the analyzed, fully checked model.
 //! - [`diagnostic`] for spans, diagnostic codes, and rendered reports.
-//! - [`execution`] for the ready-to-run model shared by the JIT and AoT
-//!   backends.
+//! - [`execution`] for the ready-to-run model consumed by the JIT backend.
 //!
 //! Smallest one-shot example:
 //!
