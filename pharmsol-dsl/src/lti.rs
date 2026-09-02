@@ -11,7 +11,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::differentiate::{function_reads, is_state_free};
+use crate::differentiate::{find_load, function_reads};
 use crate::execution::{
     ExecutionExpr, ExecutionExprKind, ExecutionLoad, ExecutionModel, ExecutionStmt,
     ExecutionStmtKind, ExecutionTargetKind, FunctionBody, ModelFunction, ModelFunctionKind,
@@ -66,17 +66,17 @@ pub fn classify_linear_time_invariant(
         ));
     }
 
-    let jacobian = model
-        .function(ModelFunctionKind::Jacobian)
-        .ok_or_else(|| match &model.jacobian_decline {
+    let jacobian = model.function(ModelFunctionKind::Jacobian).ok_or_else(|| {
+        match &model.jacobian_decline {
             Some(decline) => LtiDecline::new(decline.reason.clone(), decline.span),
             None => LtiDecline::new("model has no derivable state Jacobian", model.span),
-        })?;
+        }
+    })?;
 
-    if !is_state_free(jacobian) {
+    if let Some(span) = find_load(jacobian, &|load| matches!(load, ExecutionLoad::State(_))) {
         return Err(LtiDecline::new(
             "the state Jacobian still depends on the states, so the system is nonlinear",
-            jacobian.span,
+            span,
         ));
     }
 
@@ -89,14 +89,14 @@ pub fn classify_linear_time_invariant(
     let varying = TimeVarying::analyze(model);
     let mut required = BTreeSet::new();
     for function in [jacobian, dynamics] {
-        if function_reads(function, &|load| matches!(load, ExecutionLoad::Time)) {
+        if let Some(span) = find_load(function, &|load| matches!(load, ExecutionLoad::Time)) {
             return Err(LtiDecline::new(
                 "`t` appears in the dynamics, so the system is not time-invariant",
-                function.span,
+                span,
             ));
         }
-        if let Some(decline) = varying.time_dependent_derived(function) {
-            return Err(LtiDecline::new(decline, function.span));
+        if let Some((reason, span)) = varying.time_dependent_derived(function) {
+            return Err(LtiDecline::new(reason, span));
         }
         required.extend(varying.covariates_reached(function));
     }
@@ -139,7 +139,11 @@ impl TimeVarying {
         if let Some(derive) = model.function(ModelFunctionKind::Derive) {
             if let FunctionBody::Statements(program) = &derive.body {
                 let mut locals = LocalDependencies::default();
-                analysis.propagate(&program.body.statements, &mut locals, &Dependencies::default());
+                analysis.propagate(
+                    &program.body.statements,
+                    &mut locals,
+                    &Dependencies::default(),
+                );
             }
         }
         analysis
@@ -190,11 +194,7 @@ impl TimeVarying {
         }
     }
 
-    fn expr_dependencies(
-        &self,
-        expr: &ExecutionExpr,
-        locals: &LocalDependencies,
-    ) -> Dependencies {
+    fn expr_dependencies(&self, expr: &ExecutionExpr, locals: &LocalDependencies) -> Dependencies {
         match &expr.kind {
             ExecutionExprKind::Literal(_) => Dependencies::default(),
             ExecutionExprKind::Load(load) => self.load_dependencies(load, locals),
@@ -243,19 +243,22 @@ impl TimeVarying {
         dependencies
     }
 
-    fn time_dependent_derived(&self, function: &ModelFunction) -> Option<String> {
+    fn time_dependent_derived(&self, function: &ModelFunction) -> Option<(String, Span)> {
         self.time_dependent_derived.iter().find_map(|index| {
-            function_reads(function, &|load| {
+            find_load(function, &|load| {
                 matches!(load, ExecutionLoad::Derived(slot) if slot == index)
             })
-            .then(|| {
+            .map(|span| {
                 let name = self
                     .derived_names
                     .get(*index)
                     .map(String::as_str)
                     .unwrap_or("<derived>");
-                format!(
-                    "derived value `{name}` depends on `t`, so the coefficients vary within an interval"
+                (
+                    format!(
+                        "derived value `{name}` depends on `t`, so the coefficients vary within an interval"
+                    ),
+                    span,
                 )
             })
         })
@@ -266,15 +269,21 @@ impl TimeVarying {
     fn covariates_reached(&self, function: &ModelFunction) -> BTreeSet<String> {
         let mut reached = BTreeSet::new();
         for (index, name) in self.covariate_names.iter().enumerate() {
-            let direct = function_reads(function, &|load| {
-                matches!(load, ExecutionLoad::Covariate(slot) if *slot == index)
-            });
-            let via_derived = self.derived_covariates.iter().enumerate().any(|(slot, set)| {
-                set.contains(&index)
-                    && function_reads(function, &|load| {
-                        matches!(load, ExecutionLoad::Derived(other) if *other == slot)
-                    })
-            });
+            let direct = function_reads(
+                function,
+                &|load| matches!(load, ExecutionLoad::Covariate(slot) if *slot == index),
+            );
+            let via_derived = self
+                .derived_covariates
+                .iter()
+                .enumerate()
+                .any(|(slot, set)| {
+                    set.contains(&index)
+                        && function_reads(
+                            function,
+                            &|load| matches!(load, ExecutionLoad::Derived(other) if *other == slot),
+                        )
+                });
             if direct || via_derived {
                 reached.insert(name.clone());
             }

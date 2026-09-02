@@ -87,20 +87,34 @@ out(cp) = central / v
         ("circadian", time_varying),
     ] {
         let model = compile(source)?;
-        let closed_form = model.uses_closed_form_for(&subject);
-        let solver = if closed_form { "closed form" } else { "numeric" };
-        let why = if closed_form {
-            "linear, coefficients constant between events".to_string()
-        } else {
-            // The compiler keeps the reason it declined, rendered against the
-            // model source with a span.
-            let compiled = pharmsol_dsl::compile_model(source)?;
-            match pharmsol_dsl::classify_linear_time_invariant(&compiled) {
-                Ok(_) => "-".to_string(),
-                Err(decline) => decline.reason,
-            }
+        let solver = match model.closed_form_decline_for(&subject) {
+            None => "closed form",
+            Some(_) => "numeric",
         };
+        let why = model
+            .closed_form_decline_for(&subject)
+            .unwrap_or_else(|| "linear, coefficients constant between events".to_string());
         println!("{name:<18} {solver:>12}   {why}");
+    }
+
+    println!("\nThe same notice is emitted through the compile callback, rendered\nagainst the source:");
+    compile_module_source_to_runtime(michaelis_menten, None, |kind, message| {
+        if kind == "solver" {
+            for line in message.lines() {
+                println!("  {line}");
+            }
+        }
+    })?;
+
+    println!("\nRequiring the fast path turns a silent slowdown into an error:");
+    let strict = compile(michaelis_menten)?.require_closed_form();
+    let strict_parameters = Parameters::with_model(
+        &strict,
+        [("ka", 1.1), ("vmax", 10.0), ("km", 5.0), ("v", 20.0)],
+    )?;
+    match strict.estimate_predictions(&subject, &strict_parameters) {
+        Ok(_) => println!("  (unexpectedly succeeded)"),
+        Err(error) => println!("  {error}"),
     }
 
     println!("\nOne-compartment oral, 7 doses over 72 h, 200 repeated solves:");

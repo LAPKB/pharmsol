@@ -291,14 +291,179 @@ fn solver_class_is_reported_for_inspection() {
         ode_model(ONE_COMPARTMENT_ORAL).info().solver_class,
         SolverClass::LinearTimeInvariant { .. }
     ));
-    assert_eq!(
+    assert!(matches!(
         ode_model(MICHAELIS_MENTEN).info().solver_class,
-        SolverClass::Numeric
-    );
+        SolverClass::Numeric { .. }
+    ));
     assert_eq!(
         ode_model(LOCF_COVARIATE)
             .info()
             .closed_form_covariate_requirements(),
         ["wt"]
     );
+}
+
+#[test]
+fn compile_time_declines_explain_themselves() {
+    let explanation = ode_model(MICHAELIS_MENTEN).info().solver_explanation();
+    assert!(
+        explanation.contains("integrated numerically") && explanation.contains("nonlinear"),
+        "{explanation}"
+    );
+
+    let explanation = ode_model(EXPLICIT_TIME).info().solver_explanation();
+    assert!(explanation.contains("`t` appears in the dynamics"), "{explanation}");
+
+    let explanation = ode_model(ONE_COMPARTMENT_ORAL).info().solver_explanation();
+    assert!(explanation.contains("closed form"), "{explanation}");
+
+    // A model that qualifies only for some data says so up front.
+    let explanation = ode_model(LOCF_COVARIATE).info().solver_explanation();
+    assert!(
+        explanation.contains("carry-forward") && explanation.contains("`wt`"),
+        "{explanation}"
+    );
+}
+
+#[test]
+fn data_dependent_declines_name_the_covariate_and_subject() {
+    let model = ode_model(LINEAR_COVARIATE);
+    let interpolated = Subject::builder("patient-7")
+        .bolus(0.0, 100.0, "iv")
+        .covariate("wt", 0.0, 70.0)
+        .covariate("wt", 6.0, 100.0)
+        .missing_observation(3.0, "cp")
+        .build();
+    let decline = model
+        .closed_form_decline_for(&interpolated)
+        .expect("interpolated covariate data declines");
+    assert!(decline.contains("`wt`"), "{decline}");
+    assert!(decline.contains("patient-7"), "{decline}");
+
+    let mut carried = interpolated.clone();
+    for occasion in carried.occasions_mut() {
+        occasion.covariates_mut().set_covariate_fixed("wt", true);
+    }
+    assert_eq!(model.closed_form_decline_for(&carried), None);
+}
+
+#[test]
+fn compilation_reports_the_chosen_solver() {
+    use std::sync::{Arc, Mutex};
+
+    let events: Arc<Mutex<Vec<(String, String)>>> = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&events);
+    compile_module_source_to_runtime(MICHAELIS_MENTEN, None, move |kind, message| {
+        sink.lock().unwrap().push((kind, message));
+    })
+    .expect("model compiles");
+
+    let events = events.lock().unwrap();
+    let solver = events
+        .iter()
+        .find(|(kind, _)| kind == "solver")
+        .expect("compilation emits a solver event");
+    assert!(solver.1.contains("integrated numerically"), "{}", solver.1);
+}
+
+#[test]
+fn the_solver_notice_points_at_the_offending_equation() {
+    use std::sync::{Arc, Mutex};
+
+    let events: Arc<Mutex<Vec<(String, String)>>> = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&events);
+    compile_module_source_to_runtime(MICHAELIS_MENTEN, None, move |kind, message| {
+        sink.lock().unwrap().push((kind, message));
+    })
+    .expect("model compiles");
+
+    let events = events.lock().unwrap();
+    let rendered = &events
+        .iter()
+        .find(|(kind, _)| kind == "solver")
+        .expect("solver event")
+        .1;
+    // A note rather than an error, pointing at the equation responsible.
+    assert!(rendered.starts_with("note[DSL5000]"), "{rendered}");
+    assert!(rendered.contains("--> line 8"), "{rendered}");
+    assert!(
+        rendered.contains("dx(central) = -vmax * central / (km + central)"),
+        "{rendered}"
+    );
+}
+
+#[test]
+fn a_time_dependent_decline_points_at_the_time_reference() {
+    use std::sync::{Arc, Mutex};
+
+    let events: Arc<Mutex<Vec<(String, String)>>> = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&events);
+    compile_module_source_to_runtime(EXPLICIT_TIME, None, move |kind, message| {
+        sink.lock().unwrap().push((kind, message));
+    })
+    .expect("model compiles");
+
+    let events = events.lock().unwrap();
+    let rendered = &events
+        .iter()
+        .find(|(kind, _)| kind == "solver")
+        .expect("solver event")
+        .1;
+    assert!(rendered.contains("not time-invariant"), "{rendered}");
+    assert!(
+        rendered.contains("dx(central) = -ke * central * (1.0 + 0.1 * t)"),
+        "{rendered}"
+    );
+}
+
+#[test]
+fn closed_form_can_be_required_instead_of_assumed() {
+    // A model that qualifies is unaffected.
+    let linear = ode_model(ONE_COMPARTMENT_ORAL).require_closed_form();
+    let parameters =
+        Parameters::with_model(&linear, vec![("ka", 1.1), ("ke", 0.15), ("v", 20.0)]).unwrap();
+    assert!(linear
+        .estimate_predictions(&oral_subject(), &parameters)
+        .is_ok());
+
+    // A model that does not qualify fails instead of silently slowing down.
+    let nonlinear = ode_model(MICHAELIS_MENTEN).require_closed_form();
+    let parameters = Parameters::with_model(
+        &nonlinear,
+        vec![("vmax", 10.0), ("km", 5.0), ("v", 20.0)],
+    )
+    .unwrap();
+    let subject = Subject::builder("mm")
+        .bolus(0.0, 100.0, "iv")
+        .missing_observation(3.0, "cp")
+        .build();
+    let error = nonlinear
+        .estimate_predictions(&subject, &parameters)
+        .expect_err("requiring closed form should fail for a nonlinear model");
+    let message = error.to_string();
+    assert!(
+        message.contains("requires closed-form propagation"),
+        "{message}"
+    );
+    assert!(message.contains("nonlinear"), "{message}");
+}
+
+#[test]
+fn requiring_closed_form_also_catches_data_that_disqualifies_a_linear_model() {
+    let model = ode_model(LINEAR_COVARIATE).require_closed_form();
+    let interpolated = Subject::builder("patient-7")
+        .bolus(0.0, 100.0, "iv")
+        .covariate("wt", 0.0, 70.0)
+        .covariate("wt", 6.0, 100.0)
+        .missing_observation(3.0, "cp")
+        .build();
+    let parameters =
+        Parameters::with_model(&model, vec![("ke0", 0.2), ("v", 10.0)]).unwrap();
+
+    let error = model
+        .estimate_predictions(&interpolated, &parameters)
+        .expect_err("interpolated covariate data should fail the requirement");
+    let message = error.to_string();
+    assert!(message.contains("patient-7"), "{message}");
+    assert!(message.contains("`wt`"), "{message}");
 }

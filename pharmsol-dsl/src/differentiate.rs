@@ -61,9 +61,9 @@ pub fn build_jacobian(model: &ExecutionModel) -> Result<ModelFunction, JacobianD
         }
     };
 
-    let function = model.function(source_kind).ok_or_else(|| {
-        JacobianDecline::new("model declares no dynamics function", model.span)
-    })?;
+    let function = model
+        .function(source_kind)
+        .ok_or_else(|| JacobianDecline::new("model declares no dynamics function", model.span))?;
     let FunctionBody::Statements(program) = &function.body else {
         return Err(JacobianDecline::new(
             "dynamics function is not a statement program",
@@ -95,79 +95,97 @@ pub fn build_jacobian(model: &ExecutionModel) -> Result<ModelFunction, JacobianD
 /// `true` when no expression in the function reads a state, i.e. the Jacobian
 /// is constant over an interval and the underlying system is linear in `x`.
 pub fn is_state_free(function: &ModelFunction) -> bool {
-    let FunctionBody::Statements(program) = &function.body else {
-        return false;
-    };
-    !block_reads(&program.body.statements, &|load| {
-        matches!(load, ExecutionLoad::State(_))
-    })
+    find_load(function, &|load| matches!(load, ExecutionLoad::State(_))).is_none()
 }
 
 /// `true` when any expression in the function performs a load matching
 /// `predicate`.
-pub fn function_reads(function: &ModelFunction, predicate: &dyn Fn(&ExecutionLoad) -> bool) -> bool {
+pub fn function_reads(
+    function: &ModelFunction,
+    predicate: &dyn Fn(&ExecutionLoad) -> bool,
+) -> bool {
+    find_load(function, predicate).is_some()
+}
+
+/// Span of the first load matching `predicate`, for pointing a diagnostic at
+/// the expression responsible rather than at the whole block.
+pub fn find_load(
+    function: &ModelFunction,
+    predicate: &dyn Fn(&ExecutionLoad) -> bool,
+) -> Option<Span> {
     let FunctionBody::Statements(program) = &function.body else {
-        return false;
+        return None;
     };
-    block_reads(&program.body.statements, predicate)
+    block_load_span(&program.body.statements, predicate)
 }
 
-fn block_reads(statements: &[ExecutionStmt], predicate: &dyn Fn(&ExecutionLoad) -> bool) -> bool {
-    statements.iter().any(|statement| match &statement.kind {
-        ExecutionStmtKind::Let(let_stmt) => expr_reads(&let_stmt.value, predicate),
-        ExecutionStmtKind::Assign(assign) => {
-            target_reads(&assign.target, predicate) || expr_reads(&assign.value, predicate)
-        }
-        ExecutionStmtKind::If(if_stmt) => {
-            expr_reads(&if_stmt.condition, predicate)
-                || block_reads(&if_stmt.then_branch, predicate)
-                || if_stmt
-                    .else_branch
-                    .as_deref()
-                    .is_some_and(|branch| block_reads(branch, predicate))
-        }
-        ExecutionStmtKind::For(for_stmt) => {
-            expr_reads(&for_stmt.range.start, predicate)
-                || expr_reads(&for_stmt.range.end, predicate)
-                || block_reads(&for_stmt.body, predicate)
-        }
-    })
+fn block_load_span(
+    statements: &[ExecutionStmt],
+    predicate: &dyn Fn(&ExecutionLoad) -> bool,
+) -> Option<Span> {
+    statements
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            ExecutionStmtKind::Let(let_stmt) => expr_load_span(&let_stmt.value, predicate),
+            ExecutionStmtKind::Assign(assign) => target_load_span(&assign.target, predicate)
+                .or_else(|| expr_load_span(&assign.value, predicate))
+                // A derivative assignment reads its state on the right-hand side;
+                // report the whole statement so the label covers the equation.
+                .map(|_| statement.span),
+            ExecutionStmtKind::If(if_stmt) => expr_load_span(&if_stmt.condition, predicate)
+                .or_else(|| block_load_span(&if_stmt.then_branch, predicate))
+                .or_else(|| {
+                    if_stmt
+                        .else_branch
+                        .as_deref()
+                        .and_then(|branch| block_load_span(branch, predicate))
+                }),
+            ExecutionStmtKind::For(for_stmt) => expr_load_span(&for_stmt.range.start, predicate)
+                .or_else(|| expr_load_span(&for_stmt.range.end, predicate))
+                .or_else(|| block_load_span(&for_stmt.body, predicate)),
+        })
 }
 
-fn target_reads(target: &ExecutionTarget, predicate: &dyn Fn(&ExecutionLoad) -> bool) -> bool {
+fn target_load_span(
+    target: &ExecutionTarget,
+    predicate: &dyn Fn(&ExecutionLoad) -> bool,
+) -> Option<Span> {
     let state_ref = match &target.kind {
         ExecutionTargetKind::StateInit(state)
         | ExecutionTargetKind::StateDerivative(state)
         | ExecutionTargetKind::StateNoise(state) => state,
-        _ => return false,
+        _ => return None,
     };
     state_ref
         .index
         .as_deref()
-        .is_some_and(|index| expr_reads(index, predicate))
+        .and_then(|index| expr_load_span(index, predicate))
 }
 
-fn expr_reads(expr: &ExecutionExpr, predicate: &dyn Fn(&ExecutionLoad) -> bool) -> bool {
+fn expr_load_span(
+    expr: &ExecutionExpr,
+    predicate: &dyn Fn(&ExecutionLoad) -> bool,
+) -> Option<Span> {
     match &expr.kind {
-        ExecutionExprKind::Literal(_) => false,
+        ExecutionExprKind::Literal(_) => None,
         ExecutionExprKind::Load(load) => {
             if predicate(load) {
-                return true;
+                return Some(expr.span);
             }
             match load {
                 ExecutionLoad::State(state) => state
                     .index
                     .as_deref()
-                    .is_some_and(|index| expr_reads(index, predicate)),
-                _ => false,
+                    .and_then(|index| expr_load_span(index, predicate)),
+                _ => None,
             }
         }
-        ExecutionExprKind::Unary { expr, .. } => expr_reads(expr, predicate),
+        ExecutionExprKind::Unary { expr, .. } => expr_load_span(expr, predicate),
         ExecutionExprKind::Binary { lhs, rhs, .. } => {
-            expr_reads(lhs, predicate) || expr_reads(rhs, predicate)
+            expr_load_span(lhs, predicate).or_else(|| expr_load_span(rhs, predicate))
         }
         ExecutionExprKind::Call { args, .. } => {
-            args.iter().any(|arg| expr_reads(arg, predicate))
+            args.iter().find_map(|arg| expr_load_span(arg, predicate))
         }
     }
 }
@@ -232,12 +250,12 @@ impl Differentiator {
                     }
                 }
                 ExecutionStmtKind::If(if_stmt) => {
-                    if expr_reads(&if_stmt.condition, &|load| {
+                    if let Some(span) = expr_load_span(&if_stmt.condition, &|load| {
                         matches!(load, ExecutionLoad::State(_))
                     }) {
                         return Err(JacobianDecline::new(
                             "a branch condition depends on a state, making the dynamics piecewise",
-                            statement.span,
+                            span,
                         ));
                     }
                     let then_branch = self.differentiate_block(&if_stmt.then_branch)?;
@@ -385,7 +403,10 @@ impl Differentiator {
             // d/dx a^b = b * a^(b-1) * a'
             let reduced = sub(exponent.clone(), one(span));
             return Ok(mul(
-                mul(exponent.clone(), call2(MathFunction::Pow, base.clone(), reduced)),
+                mul(
+                    exponent.clone(),
+                    call2(MathFunction::Pow, base.clone(), reduced),
+                ),
                 dbase,
             ));
         }
@@ -422,10 +443,7 @@ impl Differentiator {
         let derivative = match function {
             MathFunction::Exp => mul(call1(MathFunction::Exp, inner), d_inner),
             MathFunction::Ln | MathFunction::Log => div(d_inner, inner),
-            MathFunction::Log10 => div(
-                d_inner,
-                mul(inner, literal(std::f64::consts::LN_10, span)),
-            ),
+            MathFunction::Log10 => div(d_inner, mul(inner, literal(std::f64::consts::LN_10, span))),
             MathFunction::Log2 => div(d_inner, mul(inner, literal(std::f64::consts::LN_2, span))),
             MathFunction::Sqrt => div(
                 d_inner,
@@ -438,9 +456,10 @@ impl Differentiator {
                 div(d_inner, mul(cosine.clone(), cosine))
             }
             MathFunction::Pow => {
-                let exponent = args.get(1).cloned().ok_or_else(|| {
-                    JacobianDecline::new("`pow` requires two arguments", span)
-                })?;
+                let exponent = args
+                    .get(1)
+                    .cloned()
+                    .ok_or_else(|| JacobianDecline::new("`pow` requires two arguments", span))?;
                 return self.differentiate_pow(&args[0], &exponent, column, span);
             }
             MathFunction::Abs
@@ -472,10 +491,7 @@ fn constant_state_offset(state: &ExecutionStateRef) -> Result<usize, JacobianDec
                 .and_then(ConstValue::as_i64)
                 .filter(|value| *value >= 0)
                 .ok_or_else(|| {
-                    JacobianDecline::new(
-                        "state index is not known at compile time",
-                        index.span,
-                    )
+                    JacobianDecline::new("state index is not known at compile time", index.span)
                 })?;
             Ok(state.base_offset + element as usize)
         }

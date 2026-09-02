@@ -16,7 +16,7 @@ use pharmsol_dsl::{
     RouteKind, NUMERIC_ROUTE_PREFIX,
 };
 
-use super::model_info::{RuntimeModelInfo, RuntimeRouteInfo, RuntimeStateInfo};
+use super::model_info::{RuntimeModelInfo, RuntimeRouteInfo, RuntimeStateInfo, SolverClass};
 use crate::{
     data::error_model::AssayErrorModels,
     data::{Covariates, Infusion, InputLabel, OutputLabel},
@@ -1069,6 +1069,7 @@ pub struct RuntimeOdeModel {
     rtol: f64,
     atol: f64,
     force_numeric: bool,
+    require_closed_form: bool,
     cache: Option<PredictionCache>,
     error_model_cache: Option<BoundErrorModelCache>,
 }
@@ -1098,11 +1099,23 @@ impl RuntimeOdeModel {
             rtol: DEFAULT_ODE_RTOL,
             atol: DEFAULT_ODE_ATOL,
             force_numeric: false,
+            require_closed_form: false,
             cache: Some(PredictionCache::new(DEFAULT_CACHE_SIZE)),
             error_model_cache: Some(BoundErrorModelCache::new(
                 DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
             )),
         })
+    }
+
+    /// Fail instead of falling back to numeric integration.
+    ///
+    /// Whether a model is propagated in closed form depends on both its source
+    /// and its subject data, so an edit or a data change can silently cost an
+    /// order of magnitude. Set this when that would matter and you would rather
+    /// hear about it.
+    pub fn require_closed_form(mut self) -> Self {
+        self.require_closed_form = true;
+        self
     }
 
     /// Integrate numerically even when the model qualifies for closed-form
@@ -1123,21 +1136,50 @@ impl RuntimeOdeModel {
     /// coefficients must also be carry-forward in this subject's data, which is
     /// why the subject is needed.
     pub fn uses_closed_form_for(&self, subject: &Subject) -> bool {
-        if self.force_numeric || !self.shared.info.is_linear_time_invariant() {
-            return false;
+        self.closed_form_decline_for(subject).is_none()
+    }
+
+    /// Why `subject` is integrated numerically, or `None` when it is propagated
+    /// in closed form.
+    ///
+    /// The compile-time reason is on [`RuntimeModelInfo::solver_explanation`].
+    /// This covers the part that only the data can settle, which is otherwise
+    /// invisible: two subjects of the same model can take different paths.
+    pub fn closed_form_decline_for(&self, subject: &Subject) -> Option<String> {
+        if self.force_numeric {
+            return Some("numeric integration was requested explicitly".to_string());
         }
-        let required = self.shared.info.closed_form_covariate_requirements();
-        if required.is_empty() {
-            return true;
+        match &self.shared.info.solver_class {
+            SolverClass::Numeric { reason, .. } => Some(
+                reason
+                    .clone()
+                    .unwrap_or_else(|| "the model is not linear and time-invariant".to_string()),
+            ),
+            SolverClass::LinearTimeInvariant {
+                requires_carry_forward,
+            } => {
+                for occasion in subject.occasions() {
+                    for name in requires_carry_forward {
+                        match occasion.covariates().get_covariate(name) {
+                            Some(covariate) if covariate.fixed() => {}
+                            Some(_) => {
+                                return Some(format!(
+                                    "covariate `{name}` interpolates continuously in subject `{}`, so the coefficients vary within an interval",
+                                    subject.id()
+                                ))
+                            }
+                            None => {
+                                return Some(format!(
+                                    "covariate `{name}` is missing from subject `{}`",
+                                    subject.id()
+                                ))
+                            }
+                        }
+                    }
+                }
+                None
+            }
         }
-        subject.occasions().iter().all(|occasion| {
-            required.iter().all(|name| {
-                occasion
-                    .covariates()
-                    .get_covariate(name)
-                    .is_some_and(|covariate| covariate.fixed())
-            })
-        })
     }
 
     pub fn with_solver(mut self, solver: OdeSolver) -> Self {
@@ -1165,7 +1207,11 @@ impl RuntimeOdeModel {
         covariates: &Covariates,
         route_inputs: &[f64],
     ) -> Result<Option<Vec<f64>>, PharmsolError> {
-        if !self.shared.artifact.has_function(ModelFunctionKind::Jacobian) {
+        if !self
+            .shared
+            .artifact
+            .has_function(ModelFunctionKind::Jacobian)
+        {
             return Ok(None);
         }
         let states = self.shared.info.state_len;
@@ -1440,8 +1486,16 @@ impl RuntimeOdeModel {
         support_point: &[f64],
     ) -> Result<SubjectPredictions, PharmsolError> {
         self.shared.validate_support_point(support_point)?;
-        if self.uses_closed_form_for(subject) {
-            return self.estimate_predictions_linear(subject, support_point);
+        match self.closed_form_decline_for(subject) {
+            None => return self.estimate_predictions_linear(subject, support_point),
+            Some(reason) if self.require_closed_form => {
+                return Err(PharmsolError::ClosedFormRequired {
+                    model: self.shared.info.name.clone(),
+                    subject: subject.id().to_string(),
+                    reason,
+                })
+            }
+            Some(_) => {}
         }
         let mut output = SubjectPredictions::default();
         let support_vector: V = DVector::from_vec(support_point.to_vec()).into();
@@ -1552,8 +1606,7 @@ impl RuntimeOdeModel {
             let jacobian_shared = Arc::clone(&self.shared);
             let jacobian_session = &session;
             let jacobian_error = function_error;
-            let jacobian_cov_buf =
-                RefCell::new(vec![0.0; self.shared.info.covariates.len()]);
+            let jacobian_cov_buf = RefCell::new(vec![0.0; self.shared.info.covariates.len()]);
             let jacobian_derived_buf = RefCell::new(vec![0.0; self.shared.info.derived_len]);
             let jacobian: Option<Box<RhsJacobianFn<'_>>> = if self
                 .shared
@@ -1561,12 +1614,7 @@ impl RuntimeOdeModel {
                 .has_function(ModelFunctionKind::Jacobian)
             {
                 Some(Box::new(
-                    move |x: &V,
-                          p: &V,
-                          t: f64,
-                          rateiv: &V,
-                          cov: &Covariates,
-                          out: &mut [f64]| {
+                    move |x: &V, p: &V, t: f64, rateiv: &V, cov: &Covariates, out: &mut [f64]| {
                         if jacobian_error.borrow().is_some() {
                             out.fill(0.0);
                             return;
@@ -3514,6 +3562,7 @@ mod tests {
             rtol: DEFAULT_ODE_RTOL,
             atol: DEFAULT_ODE_ATOL,
             force_numeric: false,
+            require_closed_form: false,
             cache: Some(PredictionCache::new(1)),
             error_model_cache: Some(BoundErrorModelCache::new(
                 DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
