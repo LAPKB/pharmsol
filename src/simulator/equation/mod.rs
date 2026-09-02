@@ -487,7 +487,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
             Some(error_models) => Some(self.bind_error_models(error_models)?),
             None => None,
         };
-        let bound_error_models = bound_error_models.as_ref().map(|models| &**models);
+        let bound_error_models = bound_error_models.as_deref();
 
         let mut output = Self::P::new(self.nparticles());
         let mut likelihood = Vec::new();

@@ -410,18 +410,16 @@ impl EquationPriv for Analytical {
         &self,
         parameters: &[f64],
         covariates: &Covariates,
-        occasion_index: usize,
+        _occasion_index: usize,
     ) -> V {
         let init = &self.init;
         let mut x = V::zeros(self.get_nstates(), NalgebraContext::new());
-        if occasion_index == 0 {
-            (init)(
-                &V::from_vec(parameters.to_vec(), NalgebraContext::new()),
-                0.0,
-                covariates,
-                &mut x,
-            );
-        }
+        (init)(
+            &V::from_vec(parameters.to_vec(), NalgebraContext::new()),
+            0.0,
+            covariates,
+            &mut x,
+        );
         x
     }
 }

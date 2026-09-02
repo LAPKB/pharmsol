@@ -45,6 +45,9 @@ const RESERVED_NAMES: &[&str] = &[
     "time",
 ];
 
+const ROUTE_PROPERTY_STATE: u8 = 1;
+const ROUTE_PROPERTY_RATE: u8 = 2;
+
 #[derive(Default)]
 struct AnalysisAssist {
     context_labels: Vec<(Span, String)>,
@@ -254,7 +257,7 @@ impl<'a> Analyzer<'a> {
         let constants = self.resolve_and_register_constants(sections.constants)?;
         let covariates = self.register_covariates(sections.covariates)?;
         let states = self.register_states(sections.states)?;
-        let routes = self.register_routes(sections.routes)?;
+        let mut routes = self.register_routes(sections.routes)?;
 
         let derived = self.register_implicit_symbols(
             sections.derive.map(|block| block.statements.as_slice()),
@@ -289,6 +292,12 @@ impl<'a> Analyzer<'a> {
             .as_ref()
             .map(|result| result.available_derived.clone())
             .unwrap_or_default();
+        self.analyze_route_properties(
+            sections.routes,
+            &mut routes,
+            &available_derived,
+            derive_result.as_ref().map(|result| &result.block),
+        )?;
 
         let dynamics = if let Some(block) = sections.dynamics {
             Some(self.analyze_statement_block(
@@ -648,60 +657,197 @@ impl<'a> Analyzer<'a> {
                 if prefer_for_rate {
                     self.globals.routes.insert(route.input.text.clone(), id);
                 }
+                self.validate_route_property_declarations(&route.properties)?;
                 let destination = self.analyze_state_place_const(&route.destination)?;
-                let mut seen_props = BTreeMap::new();
-                let mut properties = Vec::new();
-                for property in &route.properties {
-                    let kind = match property.name.text.as_str() {
-                        "lag" => RoutePropertyKind::Lag,
-                        "bioavailability" => RoutePropertyKind::Bioavailability,
-                        other => {
-                            return Err(AnalysisError::new(
-                                format!("unknown route property `{other}`"),
-                                property.name.span,
-                            )
-                            .with_note(
-                                "supported route properties are `lag` and `bioavailability`",
-                            ));
-                        }
-                    };
-                    if let Some(existing_span) = seen_props.insert(kind, property.name.span) {
-                        return Err(AnalysisAssist::default()
-                            .context_label(
-                                existing_span,
-                                format!(
-                                    "route property `{}` first declared here",
-                                    property.name.text
-                                ),
-                            )
-                            .help(format!(
-                                "each route can declare `{}` at most once",
-                                property.name.text
-                            ))
-                            .apply(AnalysisError::new(
-                                format!("duplicate route property `{}`", property.name.text),
-                                property.name.span,
-                            )));
-                    }
-                    let env = BlockEnv::new(BTreeSet::new());
-                    let value = self.analyze_expr(&property.value, &env)?;
-                    self.expect_numeric(&value, "route property", property.value.span)?;
-                    properties.push(AnalyzedRouteProperty {
-                        kind,
-                        value,
-                        span: property.span,
-                    });
-                }
                 routes.push(AnalyzedRoute {
                     symbol: id,
                     kind: route.kind,
                     destination,
-                    properties,
+                    properties: Vec::new(),
                     span: route.span,
                 });
             }
         }
         Ok(routes)
+    }
+
+    fn validate_route_property_declarations(
+        &self,
+        properties: &[syntax::Binding],
+    ) -> Result<(), AnalysisError> {
+        let mut seen_props = BTreeMap::new();
+        for property in properties {
+            let kind = self.route_property_kind(property)?;
+            if let Some(existing_span) = seen_props.insert(kind, property.name.span) {
+                return Err(AnalysisAssist::default()
+                    .context_label(
+                        existing_span,
+                        format!(
+                            "route property `{}` first declared here",
+                            property.name.text
+                        ),
+                    )
+                    .help(format!(
+                        "each route can declare `{}` at most once",
+                        property.name.text
+                    ))
+                    .apply(AnalysisError::new(
+                        format!("duplicate route property `{}`", property.name.text),
+                        property.name.span,
+                    )));
+            }
+        }
+        Ok(())
+    }
+
+    fn route_property_kind(
+        &self,
+        property: &syntax::Binding,
+    ) -> Result<RoutePropertyKind, AnalysisError> {
+        match property.name.text.as_str() {
+            "lag" => Ok(RoutePropertyKind::Lag),
+            "bioavailability" => Ok(RoutePropertyKind::Bioavailability),
+            other => Err(AnalysisError::new(
+                format!("unknown route property `{other}`"),
+                property.name.span,
+            )
+            .with_note("supported route properties are `lag` and `bioavailability`")),
+        }
+    }
+
+    fn analyze_route_properties(
+        &self,
+        block: Option<&syntax::RoutesBlock>,
+        routes: &mut [AnalyzedRoute],
+        available_derived: &BTreeSet<SymbolId>,
+        derive: Option<&AnalyzedStatementBlock>,
+    ) -> Result<(), AnalysisError> {
+        let Some(block) = block else {
+            return Ok(());
+        };
+        let derived_dependencies = self.route_property_derived_dependencies(derive);
+
+        for (route, syntax_route) in routes.iter_mut().zip(&block.routes) {
+            let mut properties = Vec::new();
+            for property in &syntax_route.properties {
+                let kind = self.route_property_kind(property)?;
+                let env = BlockEnv::new(available_derived.clone());
+                let value = self.analyze_expr(&property.value, &env)?;
+                self.expect_numeric(&value, "route property", property.value.span)?;
+                self.validate_route_property_dependencies(&value, &derived_dependencies)?;
+                properties.push(AnalyzedRouteProperty {
+                    kind,
+                    value,
+                    span: property.span,
+                });
+            }
+            route.properties = properties;
+        }
+        Ok(())
+    }
+
+    fn route_property_derived_dependencies(
+        &self,
+        derive: Option<&AnalyzedStatementBlock>,
+    ) -> BTreeMap<SymbolId, u8> {
+        let mut dependencies = BTreeMap::new();
+        if let Some(derive) = derive {
+            self.collect_route_property_dependencies(&derive.statements, &mut dependencies, 0);
+        }
+        dependencies
+    }
+
+    fn collect_route_property_dependencies(
+        &self,
+        statements: &[AnalyzedStmt],
+        dependencies: &mut BTreeMap<SymbolId, u8>,
+        inherited: u8,
+    ) {
+        for statement in statements {
+            match &statement.kind {
+                AnalyzedStmtKind::Let(let_stmt) => {
+                    let value =
+                        self.route_property_expr_dependencies(&let_stmt.value, dependencies);
+                    dependencies.insert(let_stmt.symbol, inherited | value);
+                }
+                AnalyzedStmtKind::Assign(assign) => {
+                    if let AnalyzedAssignTargetKind::Derived(symbol) = &assign.target.kind {
+                        let value =
+                            self.route_property_expr_dependencies(&assign.value, dependencies);
+                        dependencies.insert(*symbol, inherited | value);
+                    }
+                }
+                AnalyzedStmtKind::If(if_stmt) => {
+                    let condition =
+                        self.route_property_expr_dependencies(&if_stmt.condition, dependencies);
+                    let branch_context = inherited | condition;
+                    let base = dependencies.clone();
+                    let mut then_dependencies = base.clone();
+                    self.collect_route_property_dependencies(
+                        &if_stmt.then_branch,
+                        &mut then_dependencies,
+                        branch_context,
+                    );
+                    let mut merged = base;
+                    merge_route_property_dependencies(&mut merged, &then_dependencies);
+                    if let Some(else_branch) = &if_stmt.else_branch {
+                        let mut else_dependencies = dependencies.clone();
+                        self.collect_route_property_dependencies(
+                            else_branch,
+                            &mut else_dependencies,
+                            branch_context,
+                        );
+                        merge_route_property_dependencies(&mut merged, &else_dependencies);
+                    }
+                    *dependencies = merged;
+                }
+                AnalyzedStmtKind::For(for_stmt) => {
+                    let range = self
+                        .route_property_expr_dependencies(&for_stmt.range.start, dependencies)
+                        | self.route_property_expr_dependencies(&for_stmt.range.end, dependencies);
+                    let loop_context = inherited | range;
+                    let mut loop_dependencies = dependencies.clone();
+                    loop_dependencies.insert(for_stmt.binding, loop_context);
+                    self.collect_route_property_dependencies(
+                        &for_stmt.body,
+                        &mut loop_dependencies,
+                        loop_context,
+                    );
+                    merge_route_property_dependencies(dependencies, &loop_dependencies);
+                }
+            }
+        }
+    }
+
+    fn route_property_route_dependency_error(&self, span: Span) -> AnalysisError {
+        AnalysisError::new(
+            "route property expressions cannot depend on `rate(route)` or route inputs, directly or through a derived value; they are evaluated with zero route buffers",
+            span,
+        )
+        .with_note(
+            "route properties are evaluated before events with zero route buffers; use parameters, constants, covariates, time, or event-safe derived values",
+        )
+    }
+
+    fn validate_route_property_dependencies(
+        &self,
+        value: &AnalyzedExpr,
+        dependencies: &BTreeMap<SymbolId, u8>,
+    ) -> Result<(), AnalysisError> {
+        let dependencies = self.route_property_expr_dependencies(value, dependencies);
+        if dependencies & ROUTE_PROPERTY_STATE != 0 {
+            return Err(AnalysisError::new(
+                "route property expressions cannot depend on state values, directly or through a derived value; they are evaluated with zero state buffers",
+                value.span,
+            )
+            .with_note(
+                "route properties are evaluated before events with zero state buffers; use parameters, constants, covariates, time, or event-safe derived values",
+            ));
+        }
+        if dependencies & ROUTE_PROPERTY_RATE != 0 {
+            return Err(self.route_property_route_dependency_error(value.span));
+        }
+        Ok(())
     }
 
     fn register_implicit_symbols(
@@ -1148,6 +1294,40 @@ impl<'a> Analyzer<'a> {
             index,
             span: place.span,
         })
+    }
+
+    fn route_property_expr_dependencies(
+        &self,
+        expr: &AnalyzedExpr,
+        dependencies: &BTreeMap<SymbolId, u8>,
+    ) -> u8 {
+        match &expr.kind {
+            AnalyzedExprKind::Literal(_) | AnalyzedExprKind::Time => 0,
+            AnalyzedExprKind::Symbol(symbol) => dependencies.get(symbol).copied().unwrap_or(0),
+            AnalyzedExprKind::StateValue(place) => {
+                ROUTE_PROPERTY_STATE
+                    | place
+                        .index
+                        .as_deref()
+                        .map(|index| self.route_property_expr_dependencies(index, dependencies))
+                        .unwrap_or(0)
+            }
+            AnalyzedExprKind::Unary { expr, .. } => {
+                self.route_property_expr_dependencies(expr, dependencies)
+            }
+            AnalyzedExprKind::Binary { lhs, rhs, .. } => {
+                self.route_property_expr_dependencies(lhs, dependencies)
+                    | self.route_property_expr_dependencies(rhs, dependencies)
+            }
+            AnalyzedExprKind::Call { callee, args } => args.iter().fold(
+                if matches!(callee, AnalyzedCall::Rate(_)) {
+                    ROUTE_PROPERTY_RATE
+                } else {
+                    0
+                },
+                |total, arg| total | self.route_property_expr_dependencies(arg, dependencies),
+            ),
+        }
     }
 
     fn analyze_expr(
@@ -2770,6 +2950,15 @@ fn promote_numeric(lhs: ValueType, rhs: ValueType) -> ValueType {
     }
 }
 
+fn merge_route_property_dependencies(
+    target: &mut BTreeMap<SymbolId, u8>,
+    source: &BTreeMap<SymbolId, u8>,
+) {
+    for (symbol, dependencies) in source {
+        *target.entry(*symbol).or_default() |= *dependencies;
+    }
+}
+
 fn intersect_sets(set_a: &BTreeSet<SymbolId>, set_b: &BTreeSet<SymbolId>) -> BTreeSet<SymbolId> {
     set_a.intersection(set_b).copied().collect()
 }
@@ -2964,6 +3153,110 @@ mod tests {
             .find(|symbol| symbol.name == "ke")
             .expect("derived symbol exists");
         assert!(matches!(ke_symbol.ty, SymbolType::Scalar(ValueType::Real)));
+    }
+
+    #[test]
+    fn route_properties_allow_definitely_assigned_derived_values() {
+        let model = parse_model(
+            r#"
+model route_properties_ok {
+    kind ode
+    parameters { tlag, f, ke }
+    states { depot }
+    routes {
+        oral -> depot {
+            lag = lag_value
+            bioavailability = fa_value
+        }
+    }
+    derive {
+        lag_value = tlag + time
+        fa_value = f
+    }
+    dynamics {
+        ddt(depot) = -ke * depot
+    }
+    outputs {
+        cp = depot
+    }
+}
+"#,
+        )
+        .expect("model parses");
+
+        analyze_model(&model).expect("derived route properties analyze");
+    }
+
+    #[test]
+    fn route_properties_reject_direct_state_dependencies() {
+        let model = parse_model(
+            r#"
+model route_property_state_dependency {
+    kind ode
+    parameters { ke }
+    states { depot }
+    routes {
+        oral -> depot {
+            lag = depot
+        }
+    }
+    dynamics {
+        ddt(depot) = -ke * depot
+    }
+    outputs {
+        cp = depot
+    }
+}
+"#,
+        )
+        .expect("model parses");
+
+        let error = analyze_model(&model).expect_err("state-dependent route property must fail");
+        assert!(error
+            .to_string()
+            .contains("route property expressions cannot depend on state values"));
+        assert!(error
+            .diagnostic()
+            .notes
+            .iter()
+            .any(|note| note.contains("zero state buffers")));
+    }
+
+    #[test]
+    fn route_properties_reject_transitive_rate_dependencies() {
+        let model = parse_model(
+            r#"
+model route_property_rate_dependency {
+    kind ode
+    parameters { ke }
+    states { depot }
+    routes {
+        oral -> depot { lag = lag_value }
+    }
+    derive {
+        event_rate = rate(oral)
+        lag_value = event_rate
+    }
+    dynamics {
+        ddt(depot) = -ke * depot
+    }
+    outputs {
+        cp = depot
+    }
+}
+"#,
+        )
+        .expect("model parses");
+
+        let error = analyze_model(&model).expect_err("rate-dependent route property must fail");
+        assert!(error
+            .to_string()
+            .contains("route property expressions cannot depend on `rate(route)`"));
+        assert!(error
+            .diagnostic()
+            .notes
+            .iter()
+            .any(|note| note.contains("zero route buffers")));
     }
 
     #[test]

@@ -829,37 +829,35 @@ impl SharedRuntimeModel {
         session: &mut dyn FunctionSession,
         support_point: &[f64],
         covariates: &Covariates,
-        occasion_index: usize,
+        _occasion_index: usize,
         time: f64,
     ) -> Result<Vec<f64>, PharmsolError> {
         let mut state = vec![0.0; self.info.state_len];
-        if occasion_index == 0 {
-            let mut cov_buf = vec![0.0; self.info.covariates.len()];
-            let routes = vec![0.0; self.info.route_len];
-            let mut derived = vec![0.0; self.info.derived_len];
-            self.refresh_derived(
-                session,
-                time,
-                &state,
-                support_point,
-                covariates,
-                &routes,
-                &mut derived,
-                &mut cov_buf,
-            )?;
-            if self.artifact.has_function(ModelFunctionKind::Init) {
-                unsafe {
-                    session.invoke_raw(
-                        ModelFunctionKind::Init,
-                        time,
-                        state.as_ptr(),
-                        support_point.as_ptr(),
-                        cov_buf.as_ptr(),
-                        routes.as_ptr(),
-                        derived.as_ptr(),
-                        state.as_mut_ptr(),
-                    )?;
-                }
+        let mut cov_buf = vec![0.0; self.info.covariates.len()];
+        let routes = vec![0.0; self.info.route_len];
+        let mut derived = vec![0.0; self.info.derived_len];
+        self.refresh_derived(
+            session,
+            time,
+            &state,
+            support_point,
+            covariates,
+            &routes,
+            &mut derived,
+            &mut cov_buf,
+        )?;
+        if self.artifact.has_function(ModelFunctionKind::Init) {
+            unsafe {
+                session.invoke_raw(
+                    ModelFunctionKind::Init,
+                    time,
+                    state.as_ptr(),
+                    support_point.as_ptr(),
+                    cov_buf.as_ptr(),
+                    routes.as_ptr(),
+                    derived.as_ptr(),
+                    state.as_mut_ptr(),
+                )?;
             }
         }
         Ok(state)
