@@ -37,7 +37,12 @@ pub fn compile_analyzed_module(module: &AnalyzedModule) -> Result<ExecutionModul
 /// This is the final pipeline stage after [`parse_model`](crate::parse_model)
 /// and [`analyze_model`](crate::analyze_model).
 pub fn compile_analyzed_model(model: &AnalyzedModel) -> Result<ExecutionModel, CompileError> {
-    ModelCompiler::new(model)?.compile()
+    let mut compiled = ModelCompiler::new(model)?.compile()?;
+    match crate::differentiate::build_jacobian(&compiled) {
+        Ok(jacobian) => compiled.functions.push(jacobian),
+        Err(decline) => compiled.jacobian_decline = Some(decline),
+    }
+    Ok(compiled)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -53,6 +58,9 @@ pub struct ExecutionModel {
     pub metadata: ExecutionMetadata,
     pub layout: ExecutionLayout,
     pub functions: Vec<ModelFunction>,
+    /// Set when the state Jacobian could not be derived symbolically; the
+    /// model then carries no [`ModelFunctionKind::Jacobian`] function.
+    pub jacobian_decline: Option<crate::differentiate::JacobianDecline>,
     pub span: Span,
 }
 
@@ -189,6 +197,9 @@ pub enum ModelFunctionKind {
     RouteLag,
     RouteBioavailability,
     Analytical,
+    /// Row-major `n x n` state Jacobian of [`ModelFunctionKind::Dynamics`]
+    /// (or [`ModelFunctionKind::Drift`]), derived symbolically.
+    Jacobian,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -217,6 +228,7 @@ pub enum FunctionArgumentKind {
     RouteLag,
     RouteBioavailability,
     AnalyticalState,
+    Jacobian,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -315,6 +327,12 @@ pub enum ExecutionTargetKind {
     StateNoise(ExecutionStateRef),
     RouteLag(usize),
     RouteBioavailability(usize),
+    /// Entry of the row-major state Jacobian; flat offset is `row * n + col`.
+    JacobianEntry {
+        row: usize,
+        col: usize,
+        states: usize,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -718,6 +736,7 @@ impl<'a> ModelCompiler<'a> {
             metadata: self.metadata,
             layout,
             functions,
+            jacobian_decline: None,
             span: self.model.span,
         })
     }
@@ -1408,12 +1427,26 @@ fn signature_for(kind: ModelFunctionKind) -> FunctionSignature {
             arg(FunctionArgumentKind::Derived, Access::Input),
             arg(FunctionArgumentKind::AnalyticalState, Access::Output),
         ],
+        ModelFunctionKind::Jacobian => vec![
+            arg(FunctionArgumentKind::Time, Access::Input),
+            arg(FunctionArgumentKind::States, Access::Input),
+            arg(FunctionArgumentKind::Parameters, Access::Input),
+            arg(FunctionArgumentKind::Covariates, Access::Input),
+            arg(FunctionArgumentKind::RouteInputs, Access::Input),
+            arg(FunctionArgumentKind::Derived, Access::Input),
+            arg(FunctionArgumentKind::Jacobian, Access::Output),
+        ],
     };
     FunctionSignature { args }
 }
 
 fn arg(kind: FunctionArgumentKind, access: Access) -> FunctionArgument {
     FunctionArgument { kind, access }
+}
+
+/// Signature of the derived [`ModelFunctionKind::Jacobian`] function.
+pub fn jacobian_signature() -> FunctionSignature {
+    signature_for(ModelFunctionKind::Jacobian)
 }
 
 fn lookup_symbol<'a>(
@@ -1525,6 +1558,7 @@ mod tests {
                 ModelFunctionKind::RouteLag,
                 ModelFunctionKind::RouteBioavailability,
                 ModelFunctionKind::Outputs,
+                ModelFunctionKind::Jacobian,
             ]
         );
     }
@@ -1749,6 +1783,7 @@ out(cp) = central / v ~ continuous()
                 ModelFunctionKind::Drift,
                 ModelFunctionKind::Diffusion,
                 ModelFunctionKind::Outputs,
+                ModelFunctionKind::Jacobian,
             ]
         );
 

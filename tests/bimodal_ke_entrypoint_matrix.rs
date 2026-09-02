@@ -9,10 +9,13 @@ mod tests {
     fn bimodal_ke_entrypoint_matrix_matches_reference_predictions(
     ) -> Result<(), Box<dyn std::error::Error>> {
         let runtime_jit = bimodal_ke::compile_runtime_jit_model()?;
+        // The compiled model propagates this linear system in closed form while
+        // the reference integrates it, so the two agree to the reference
+        // solver's accuracy rather than to machine precision.
         bimodal_ke::report_runtime_model(
             "dsl::compile_module_source_to_runtime(Jit)",
             &runtime_jit,
-            1e-10,
+            1e-8,
         )?;
 
         Ok(())

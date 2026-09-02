@@ -429,6 +429,8 @@ where
     covariates: &'a Covariates,
     p_as_v: &'a V,
     func: &'a F,
+    jacobian: Option<&'a RhsJacobianFn<'a>>,
+    jacobian_buffer: &'a RefCell<Vec<f64>>,
     rateiv_buffer: &'a RefCell<V>,
     jvp_x_buffer: &'a RefCell<V>,
     jvp_base_buffer: &'a RefCell<V>,
@@ -591,6 +593,11 @@ where
     F: Fn(&V, &V, T, &mut V, &V, &V, &Covariates),
 {
     fn jac_mul_inplace(&self, x: &Self::V, t: Self::T, v: &Self::V, y: &mut Self::V) {
+        if let Some(jacobian) = self.jacobian {
+            self.exact_jac_mul_inplace(jacobian, x, t, v, y);
+            return;
+        }
+
         // Forward directional difference:
         //
         //     J(x, t)v ~= (f(x + h v, t) - f(x, t)) / h
@@ -723,6 +730,46 @@ where
     }
 }
 
+impl<F> PmRhs<'_, F>
+where
+    F: Fn(&V, &V, T, &mut V, &V, &V, &Covariates),
+{
+    /// `J(x, t) v` from an exact Jacobian, avoiding both the two RHS
+    /// evaluations and the `sqrt(eps)` accuracy of the difference quotient.
+    fn exact_jac_mul_inplace(
+        &self,
+        jacobian: &RhsJacobianFn<'_>,
+        x: &V,
+        t: T,
+        v: &V,
+        y: &mut V,
+    ) {
+        let absolute_time = self.time_origin.get() + t;
+        let mut rateiv = self.rateiv_buffer.borrow_mut();
+        self.integration_schedule
+            .fill_rate_vector(absolute_time, &mut rateiv);
+
+        let mut entries = self.jacobian_buffer.borrow_mut();
+        entries.fill(0.0);
+        (jacobian)(
+            x,
+            self.p_as_v,
+            absolute_time,
+            &rateiv,
+            self.covariates,
+            &mut entries,
+        );
+
+        for row in 0..self.nstates {
+            let mut sum = 0.0;
+            for column in 0..self.nstates {
+                sum += entries[row * self.nstates + column] * v.get_index(column);
+            }
+            y.set_index(row, sum);
+        }
+    }
+}
+
 impl LinearOp for PmMass {
     fn gemv_inplace(&self, _x: &Self::V, _t: Self::T, _beta: Self::T, _y: &mut Self::V) {}
 }
@@ -735,12 +782,22 @@ impl NonLinearOp for PmOut {
     fn call_inplace(&self, _x: &Self::V, _t: Self::T, _y: &mut Self::V) {}
 }
 
+/// Fills a row-major `n x n` state Jacobian for the model RHS.
+///
+/// Supplied by backends that can derive one symbolically; solvers otherwise
+/// fall back to a finite-difference directional derivative.
+pub(crate) type RhsJacobianFn<'a> = dyn Fn(&V, &V, T, &V, &Covariates, &mut [f64]) + 'a;
+
 // Completely revised PMProblem to fix lifetime issues and improve performance
 pub(crate) struct PMProblem<'a, F>
 where
     F: Fn(&V, &V, T, &mut V, &V, &V, &Covariates) + 'a,
 {
     func: F,
+    // Borrowed rather than owned: an owned trait object would make drop-check
+    // require `'a` to strictly outlive every borrow of the problem.
+    jacobian: Option<&'a RhsJacobianFn<'a>>,
+    jacobian_buffer: RefCell<Vec<f64>>,
     nstates: usize,
     nparams: usize,
     init: V,
@@ -884,6 +941,8 @@ where
 
         Ok(Self {
             func,
+            jacobian: None,
+            jacobian_buffer: RefCell::new(vec![0.0; nstates * nstates]),
             nstates,
             nparams,
             init,
@@ -899,6 +958,13 @@ where
             jvp_perturbed_buffer,
             _lifetime: PhantomData,
         })
+    }
+
+    /// Supply an exact state Jacobian, replacing the finite-difference
+    /// directional derivative the solver would otherwise use.
+    pub(crate) fn with_jacobian(mut self, jacobian: &'a RhsJacobianFn<'a>) -> Self {
+        self.jacobian = Some(jacobian);
+        self
     }
 }
 
@@ -951,6 +1017,8 @@ where
             covariates: &self.covariates,
             p_as_v: &self.p_as_v,
             func: &self.func,
+            jacobian: self.jacobian,
+            jacobian_buffer: &self.jacobian_buffer,
             rateiv_buffer: &self.rateiv_buffer,
             jvp_x_buffer: &self.jvp_x_buffer,
             jvp_base_buffer: &self.jvp_base_buffer,

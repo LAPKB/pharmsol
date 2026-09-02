@@ -44,6 +44,46 @@ pub struct RuntimeModelInfo {
     pub analytical: Option<AnalyticalKernel>,
     /// Particle count when the compiled model is stochastic.
     pub particles: Option<usize>,
+    /// How this model will be propagated between events.
+    #[serde(default)]
+    pub solver_class: SolverClass,
+}
+
+/// How a compiled model advances its state between events.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SolverClass {
+    /// Dynamics are linear and free of explicit time dependence, so the state
+    /// can be propagated in closed form.
+    ///
+    /// The listed covariates must additionally be carry-forward in the subject
+    /// data. Interpolation is a property of the data, not of the model, so that
+    /// part can only be settled at simulation time.
+    LinearTimeInvariant {
+        requires_carry_forward: Vec<String>,
+    },
+    /// Propagated by a numeric integrator.
+    #[default]
+    Numeric,
+}
+
+impl RuntimeModelInfo {
+    /// `true` when this model's dynamics are linear and time-invariant.
+    ///
+    /// Closed-form propagation may still require carry-forward covariates; see
+    /// [`SolverClass::LinearTimeInvariant`].
+    pub fn is_linear_time_invariant(&self) -> bool {
+        matches!(self.solver_class, SolverClass::LinearTimeInvariant { .. })
+    }
+
+    /// Covariates that must be carry-forward for closed-form propagation.
+    pub fn closed_form_covariate_requirements(&self) -> &[String] {
+        match &self.solver_class {
+            SolverClass::LinearTimeInvariant {
+                requires_carry_forward,
+            } => requires_carry_forward,
+            SolverClass::Numeric => &[],
+        }
+    }
 }
 
 /// Metadata for one compiled covariate.
@@ -172,6 +212,12 @@ impl RuntimeModelInfo {
             route_len: model.layout.route_buffer.len,
             analytical: model.metadata.analytical,
             particles: model.metadata.particles,
+            solver_class: match pharmsol_dsl::classify_linear_time_invariant(model) {
+                Ok(requirements) => SolverClass::LinearTimeInvariant {
+                    requires_carry_forward: requirements.piecewise_constant_covariates,
+                },
+                Err(_) => SolverClass::Numeric,
+            },
         }
     }
 }

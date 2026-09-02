@@ -27,7 +27,8 @@ use crate::{
         },
         equation::{
             ode::{
-                accepted_step_limits_for_solver, closure_helpers::PMProblem,
+                accepted_step_limits_for_solver,
+                closure_helpers::{PMProblem, RhsJacobianFn},
                 validate_resolved_ode_schedule, ExplicitRkTableau, OdeSolver, SdirkTableau,
             },
             sde::simulate_sde_event_with,
@@ -95,6 +96,7 @@ pub struct RuntimeExecutionArtifact {
     pub diffusion: Option<CompiledModelFunction>,
     pub route_lag: Option<CompiledModelFunction>,
     pub route_bioavailability: Option<CompiledModelFunction>,
+    pub jacobian: Option<CompiledModelFunction>,
     _owner: RuntimeArtifactOwner,
 }
 
@@ -116,6 +118,7 @@ impl std::fmt::Debug for RuntimeExecutionArtifact {
                 "route_bioavailability",
                 &self.route_bioavailability.map(|ptr| ptr as *const ()),
             )
+            .field("jacobian", &self.jacobian.map(|ptr| ptr as *const ()))
             .finish()
     }
 }
@@ -132,6 +135,7 @@ impl RuntimeExecutionArtifact {
         diffusion: Option<CompiledModelFunction>,
         route_lag: Option<CompiledModelFunction>,
         route_bioavailability: Option<CompiledModelFunction>,
+        jacobian: Option<CompiledModelFunction>,
         module: JITModule,
     ) -> Self {
         Self {
@@ -144,6 +148,7 @@ impl RuntimeExecutionArtifact {
             diffusion,
             route_lag,
             route_bioavailability,
+            jacobian,
             _owner: RuntimeArtifactOwner::Jit(Box::new(module)),
         }
     }
@@ -174,6 +179,7 @@ impl FunctionSession for RuntimeFunctionSession<'_> {
             ModelFunctionKind::Diffusion => self.artifact.diffusion,
             ModelFunctionKind::RouteLag => self.artifact.route_lag,
             ModelFunctionKind::RouteBioavailability => self.artifact.route_bioavailability,
+            ModelFunctionKind::Jacobian => self.artifact.jacobian,
             ModelFunctionKind::Analytical => None,
         }
         .ok_or_else(|| {
@@ -199,6 +205,7 @@ impl RuntimeArtifact for RuntimeExecutionArtifact {
             ModelFunctionKind::Diffusion => self.diffusion.is_some(),
             ModelFunctionKind::RouteLag => self.route_lag.is_some(),
             ModelFunctionKind::RouteBioavailability => self.route_bioavailability.is_some(),
+            ModelFunctionKind::Jacobian => self.jacobian.is_some(),
             ModelFunctionKind::Analytical => false,
         }
     }
@@ -824,6 +831,34 @@ impl SharedRuntimeModel {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn write_jacobian(
+        &self,
+        session: &mut dyn FunctionSession,
+        time: f64,
+        state: &[f64],
+        support_point: &[f64],
+        route_inputs: &[f64],
+        derived: &[f64],
+        cov_buf: &[f64],
+        out: &mut [f64],
+    ) -> Result<(), PharmsolError> {
+        out.fill(0.0);
+        unsafe {
+            session.invoke_raw(
+                ModelFunctionKind::Jacobian,
+                time,
+                state.as_ptr(),
+                support_point.as_ptr(),
+                cov_buf.as_ptr(),
+                route_inputs.as_ptr(),
+                derived.as_ptr(),
+                out.as_mut_ptr(),
+            )?;
+        }
+        Ok(())
+    }
+
     fn initial_state(
         &self,
         session: &mut dyn FunctionSession,
@@ -1033,6 +1068,7 @@ pub struct RuntimeOdeModel {
     solver: OdeSolver,
     rtol: f64,
     atol: f64,
+    force_numeric: bool,
     cache: Option<PredictionCache>,
     error_model_cache: Option<BoundErrorModelCache>,
 }
@@ -1061,10 +1097,46 @@ impl RuntimeOdeModel {
             solver: OdeSolver::default(),
             rtol: DEFAULT_ODE_RTOL,
             atol: DEFAULT_ODE_ATOL,
+            force_numeric: false,
             cache: Some(PredictionCache::new(DEFAULT_CACHE_SIZE)),
             error_model_cache: Some(BoundErrorModelCache::new(
                 DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
             )),
+        })
+    }
+
+    /// Integrate numerically even when the model qualifies for closed-form
+    /// propagation.
+    ///
+    /// Closed-form propagation is exact, so the two paths do not agree to
+    /// machine precision. This switch exists to compare them and to reproduce
+    /// solver-specific behaviour.
+    pub fn force_numeric_solver(mut self) -> Self {
+        self.force_numeric = true;
+        self
+    }
+
+    /// `true` when predictions for `subject` are produced by closed-form
+    /// propagation.
+    ///
+    /// Linearity is settled at compile time, but the covariates feeding the
+    /// coefficients must also be carry-forward in this subject's data, which is
+    /// why the subject is needed.
+    pub fn uses_closed_form_for(&self, subject: &Subject) -> bool {
+        if self.force_numeric || !self.shared.info.is_linear_time_invariant() {
+            return false;
+        }
+        let required = self.shared.info.closed_form_covariate_requirements();
+        if required.is_empty() {
+            return true;
+        }
+        subject.occasions().iter().all(|occasion| {
+            required.iter().all(|name| {
+                occasion
+                    .covariates()
+                    .get_covariate(name)
+                    .is_some_and(|covariate| covariate.fixed())
+            })
         })
     }
 
@@ -1083,9 +1155,275 @@ impl RuntimeOdeModel {
         self.shared.info.as_ref()
     }
 
+    /// Row-major `n x n` state Jacobian `d(dx_i)/d(x_j)` at the given point,
+    /// or `None` when the model's Jacobian could not be derived symbolically.
+    pub fn state_jacobian(
+        &self,
+        time: f64,
+        state: &[f64],
+        parameters: &[f64],
+        covariates: &Covariates,
+        route_inputs: &[f64],
+    ) -> Result<Option<Vec<f64>>, PharmsolError> {
+        if !self.shared.artifact.has_function(ModelFunctionKind::Jacobian) {
+            return Ok(None);
+        }
+        let states = self.shared.info.state_len;
+        let mut session = self.shared.artifact.start_session()?;
+        let mut cov_buf = vec![0.0; self.shared.info.covariates.len()];
+        let mut derived = vec![0.0; self.shared.info.derived_len];
+        let mut jacobian = vec![0.0; states * states];
+        self.shared.refresh_derived(
+            &mut *session,
+            time,
+            state,
+            parameters,
+            covariates,
+            route_inputs,
+            &mut derived,
+            &mut cov_buf,
+        )?;
+        self.shared.write_jacobian(
+            &mut *session,
+            time,
+            state,
+            parameters,
+            route_inputs,
+            &derived,
+            &cov_buf,
+            &mut jacobian,
+        )?;
+        Ok(Some(jacobian))
+    }
+
+    /// `dx/dt` at the given point, including route rates injected from
+    /// declared infusion destinations.
+    pub fn state_derivative(
+        &self,
+        time: f64,
+        state: &[f64],
+        parameters: &[f64],
+        covariates: &Covariates,
+        route_inputs: &[f64],
+    ) -> Result<Vec<f64>, PharmsolError> {
+        let mut session = self.shared.artifact.start_session()?;
+        let mut cov_buf = vec![0.0; self.shared.info.covariates.len()];
+        let mut derived = vec![0.0; self.shared.info.derived_len];
+        let mut rates = vec![0.0; self.shared.info.state_len];
+        self.shared.refresh_derived(
+            &mut *session,
+            time,
+            state,
+            parameters,
+            covariates,
+            route_inputs,
+            &mut derived,
+            &mut cov_buf,
+        )?;
+        unsafe {
+            session.invoke_raw(
+                ModelFunctionKind::Dynamics,
+                time,
+                state.as_ptr(),
+                parameters.as_ptr(),
+                cov_buf.as_ptr(),
+                route_inputs.as_ptr(),
+                derived.as_ptr(),
+                rates.as_mut_ptr(),
+            )?;
+        }
+        self.shared
+            .apply_route_inputs_to_rates(&mut rates, route_inputs);
+        Ok(rates)
+    }
+
     /// Access the validated metadata attached to this compiled ODE model.
     pub fn metadata(&self) -> &ValidatedModelMetadata {
         self.shared.metadata()
+    }
+
+    /// Event loop for models whose dynamics are linear with coefficients that
+    /// hold still between integration boundaries.
+    ///
+    /// Over each such interval `dx/dt = A x + b` is solved exactly, so no
+    /// integrator, step control, or error tolerance is involved.
+    fn estimate_predictions_linear(
+        &self,
+        subject: &Subject,
+        support_point: &[f64],
+    ) -> Result<SubjectPredictions, PharmsolError> {
+        let mut output = SubjectPredictions::default();
+
+        for occasion in subject.occasions() {
+            occasion.covariates().validate_for_ode()?;
+            let mut events = self.shared.resolve_events(occasion)?;
+            let mut session = self.shared.artifact.start_session()?;
+            self.shared.apply_route_properties(
+                &mut *session,
+                events.as_mut_slice(),
+                occasion.covariates(),
+                support_point,
+            )?;
+            validate_resolved_ode_schedule(&events)?;
+
+            let covariate_boundaries = occasion.covariates().ode_breakpoint_times()?;
+            let mut infusions = Vec::new();
+            let mut state = self.shared.initial_state(
+                &mut *session,
+                support_point,
+                occasion.covariates(),
+                occasion.index(),
+                events.first().map(Event::time).unwrap_or(0.0),
+            )?;
+
+            for (index, event) in events.iter().enumerate() {
+                match event {
+                    Event::Bolus(bolus) => {
+                        let input = bolus.input_index().ok_or_else(|| {
+                            PharmsolError::unknown_input_label(
+                                bolus.input(),
+                                &self.shared.metadata().route_labels(),
+                            )
+                        })?;
+                        self.shared.apply_bolus(&mut state, input, bolus.amount())?;
+                    }
+                    Event::Infusion(infusion) => infusions.push(infusion.clone()),
+                    Event::Observation(observation) => {
+                        output.add_prediction(self.shared.observation_prediction(
+                            &mut *session,
+                            observation,
+                            &state,
+                            support_point,
+                            occasion.covariates(),
+                            infusions.as_slice(),
+                        )?);
+                    }
+                }
+
+                if let Some(next_event) = events.get(index + 1) {
+                    self.propagate_linear(
+                        &mut *session,
+                        &mut state,
+                        support_point,
+                        occasion.covariates(),
+                        infusions.as_slice(),
+                        &covariate_boundaries,
+                        event.time(),
+                        next_event.time(),
+                    )?;
+                }
+            }
+        }
+
+        Ok(output)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn propagate_linear(
+        &self,
+        session: &mut dyn FunctionSession,
+        state: &mut [f64],
+        support_point: &[f64],
+        covariates: &Covariates,
+        infusions: &[Infusion],
+        covariate_boundaries: &[f64],
+        start_time: f64,
+        end_time: f64,
+    ) -> Result<(), PharmsolError> {
+        if start_time >= end_time {
+            return Ok(());
+        }
+
+        let states = self.shared.info.state_len;
+        let mut interior = Vec::new();
+        for infusion in infusions {
+            let begin = infusion.time();
+            let finish = begin + infusion.duration();
+            if begin > start_time && begin < end_time {
+                interior.push(begin);
+            }
+            if finish > start_time && finish < end_time {
+                interior.push(finish);
+            }
+        }
+        // Carried-forward covariates change value at their knots; the
+        // coefficients are only constant between them.
+        for boundary in covariate_boundaries {
+            if *boundary > start_time && *boundary < end_time {
+                interior.push(*boundary);
+            }
+        }
+        interior.sort_by(f64::total_cmp);
+        interior.dedup();
+        // The interval endpoints are never merged: an interval can be narrower
+        // than any fixed tolerance and still carry material dynamics.
+        let mut breakpoints = Vec::with_capacity(interior.len() + 2);
+        breakpoints.push(start_time);
+        breakpoints.extend(interior);
+        breakpoints.push(end_time);
+
+        let mut cov_buf = vec![0.0; self.shared.info.covariates.len()];
+        let mut derived = vec![0.0; self.shared.info.derived_len];
+        let mut jacobian = vec![0.0; states * states];
+        let mut drift = vec![0.0; states];
+        let mut current = breakpoints[0];
+
+        for next in breakpoints.iter().copied().skip(1) {
+            let step = next - current;
+            if step == 0.0 {
+                continue;
+            }
+            let route_inputs =
+                interval_route_inputs(infusions, current, next, self.shared.info.route_len);
+
+            // Coefficients are constant on the interval, so any interior time
+            // evaluates them; the midpoint keeps carried-forward covariates on
+            // the value that actually applies here.
+            let sample_time = current + step * 0.5;
+            self.shared.refresh_derived(
+                session,
+                sample_time,
+                state,
+                support_point,
+                covariates,
+                &route_inputs,
+                &mut derived,
+                &mut cov_buf,
+            )?;
+            self.shared.write_jacobian(
+                session,
+                sample_time,
+                state,
+                support_point,
+                &route_inputs,
+                &derived,
+                &cov_buf,
+                &mut jacobian,
+            )?;
+            // b = f(0): the Jacobian is state-free here, so evaluating the
+            // dynamics at a zero state leaves exactly the constant term.
+            drift.fill(0.0);
+            let zero_state = vec![0.0; states];
+            unsafe {
+                session.invoke_raw(
+                    ModelFunctionKind::Dynamics,
+                    sample_time,
+                    zero_state.as_ptr(),
+                    support_point.as_ptr(),
+                    cov_buf.as_ptr(),
+                    route_inputs.as_ptr(),
+                    derived.as_ptr(),
+                    drift.as_mut_ptr(),
+                )?;
+            }
+            self.shared
+                .apply_route_inputs_to_rates(&mut drift, &route_inputs);
+
+            propagate_linear_state(&jacobian, &drift, states, step, state)?;
+            current = next;
+        }
+
+        Ok(())
     }
 
     pub fn estimate_predictions(
@@ -1102,10 +1440,15 @@ impl RuntimeOdeModel {
         support_point: &[f64],
     ) -> Result<SubjectPredictions, PharmsolError> {
         self.shared.validate_support_point(support_point)?;
+        if self.uses_closed_form_for(subject) {
+            return self.estimate_predictions_linear(subject, support_point);
+        }
         let mut output = SubjectPredictions::default();
         let support_vector: V = DVector::from_vec(support_point.to_vec()).into();
         // Scratch for refreshing the solver's derivative at discontinuity boundaries.
         let mut dy_scratch = V::zeros(self.shared.info.state_len, NalgebraContext::new());
+        // Outlives every per-occasion closure that reports into it.
+        let function_error = RefCell::new(None::<PharmsolError>);
 
         for occasion in subject.occasions() {
             occasion.covariates().validate_for_ode()?;
@@ -1137,10 +1480,10 @@ impl RuntimeOdeModel {
                     shared.info.name
                 )));
             }
-            let function_error = RefCell::new(None::<PharmsolError>);
+            let function_error = &function_error;
 
             let diffeq_session = &session;
-            let diffeq_error = &function_error;
+            let diffeq_error = function_error;
             let diffeq = move |x: &V,
                                p: &V,
                                t: f64,
@@ -1203,23 +1546,88 @@ impl RuntimeOdeModel {
                 },
                 NalgebraContext::new(),
             );
+
+            // An exact Jacobian, where one could be derived, replaces the
+            // solver's finite-difference directional derivative.
+            let jacobian_shared = Arc::clone(&self.shared);
+            let jacobian_session = &session;
+            let jacobian_error = function_error;
+            let jacobian_cov_buf =
+                RefCell::new(vec![0.0; self.shared.info.covariates.len()]);
+            let jacobian_derived_buf = RefCell::new(vec![0.0; self.shared.info.derived_len]);
+            let jacobian: Option<Box<RhsJacobianFn<'_>>> = if self
+                .shared
+                .artifact
+                .has_function(ModelFunctionKind::Jacobian)
+            {
+                Some(Box::new(
+                    move |x: &V,
+                          p: &V,
+                          t: f64,
+                          rateiv: &V,
+                          cov: &Covariates,
+                          out: &mut [f64]| {
+                        if jacobian_error.borrow().is_some() {
+                            out.fill(0.0);
+                            return;
+                        }
+                        let mut cov_values = jacobian_cov_buf.borrow_mut();
+                        let mut derived_values = jacobian_derived_buf.borrow_mut();
+                        let mut session = jacobian_session.borrow_mut();
+                        let result = jacobian_shared
+                            .refresh_derived(
+                                &mut **session,
+                                t,
+                                x.as_slice(),
+                                p.as_slice(),
+                                cov,
+                                rateiv.as_slice(),
+                                &mut derived_values,
+                                &mut cov_values,
+                            )
+                            .and_then(|()| {
+                                jacobian_shared.write_jacobian(
+                                    &mut **session,
+                                    t,
+                                    x.as_slice(),
+                                    p.as_slice(),
+                                    rateiv.as_slice(),
+                                    &derived_values,
+                                    &cov_values,
+                                    out,
+                                )
+                            });
+                        if let Err(error) = result {
+                            *jacobian_error.borrow_mut() = Some(error);
+                            out.fill(0.0);
+                        }
+                    },
+                ))
+            } else {
+                None
+            };
+
             let support_point_vec = support_point.to_vec();
+            let mut equation = PMProblem::with_params_v(
+                diffeq,
+                self.shared.info.state_len,
+                self.shared.info.route_len,
+                support_vector.clone(),
+                occasion.covariates(),
+                infusions.iter(),
+                initial_state,
+                time_origin,
+            )?;
+            if let Some(jacobian) = jacobian.as_deref() {
+                equation = equation.with_jacobian(jacobian);
+            }
             let problem = OdeBuilder::<M>::new()
                 .atol(vec![self.atol])
                 .rtol(self.rtol)
                 .t0(0.0)
                 .h0(1e-3)
                 .p(support_point_vec.clone())
-                .build_from_eqn(PMProblem::with_params_v(
-                    diffeq,
-                    self.shared.info.state_len,
-                    self.shared.info.route_len,
-                    support_vector.clone(),
-                    occasion.covariates(),
-                    infusions.iter(),
-                    initial_state,
-                    time_origin,
-                )?)?;
+                .build_from_eqn(equation)?;
             problem
                 .eqn
                 .configure_explicit_step_guard(accepted_step_limits_for_solver(&self.solver));
@@ -1252,7 +1660,7 @@ impl RuntimeOdeModel {
                 }
             }
 
-            if let Some(error) = function_error.into_inner() {
+            if let Some(error) = function_error.borrow_mut().take() {
                 return Err(error);
             }
         }
@@ -2598,6 +3006,54 @@ fn project_analytical_parameters(
     }
 }
 
+/// Advance `x` by `dt` under `dx/dt = A x + b` with `A`, `b` constant.
+///
+/// Uses the augmented matrix `M = [[A, b], [0, 0]]`, whose exponential yields
+/// both the homogeneous propagator and the particular solution:
+///
+/// ```text
+/// exp(M dt) = [[exp(A dt), A^-1 (exp(A dt) - I) b], [0, 1]]
+/// ```
+///
+/// Reading the particular term out of the exponential avoids inverting `A`,
+/// so a compartment with no elimination (singular `A`) needs no special case.
+fn propagate_linear_state(
+    jacobian: &[f64],
+    drift: &[f64],
+    states: usize,
+    dt: f64,
+    state: &mut [f64],
+) -> Result<(), PharmsolError> {
+    if states == 0 || dt == 0.0 {
+        return Ok(());
+    }
+
+    let size = states + 1;
+    let mut augmented = nalgebra::DMatrix::<f64>::zeros(size, size);
+    for row in 0..states {
+        for col in 0..states {
+            augmented[(row, col)] = jacobian[row * states + col] * dt;
+        }
+        augmented[(row, states)] = drift[row] * dt;
+    }
+
+    let exponential = crate::simulator::expm::expm(&augmented).ok_or_else(|| {
+        PharmsolError::OtherError(
+            "closed-form propagation failed: the linear system is not finite".to_string(),
+        )
+    })?;
+
+    let previous = state.to_vec();
+    for row in 0..states {
+        let mut value = exponential[(row, states)];
+        for (col, entry) in previous.iter().enumerate() {
+            value += exponential[(row, col)] * entry;
+        }
+        state[row] = value;
+    }
+    Ok(())
+}
+
 fn apply_analytical_kernel(
     function: AnalyticalKernel,
     state: &[f64],
@@ -2793,6 +3249,7 @@ mod tests {
                 route_len: 1,
                 analytical: None,
                 particles: None,
+                solver_class: Default::default(),
             },
             DummyArtifact,
         )
@@ -2824,6 +3281,7 @@ mod tests {
             route_len: 0,
             analytical: Some(function),
             particles: None,
+            solver_class: Default::default(),
         }
     }
 
@@ -2865,6 +3323,7 @@ mod tests {
                 route_len: 1,
                 analytical: None,
                 particles: None,
+                solver_class: Default::default(),
             },
             DummyArtifact,
         )
@@ -2939,6 +3398,7 @@ mod tests {
                 route_len: 1,
                 analytical: None,
                 particles: None,
+                solver_class: Default::default(),
             },
             DummyArtifact,
         )
@@ -2988,6 +3448,7 @@ mod tests {
                 route_len: 1,
                 analytical: None,
                 particles: None,
+                solver_class: Default::default(),
             },
             DummyArtifact,
         )
@@ -3025,6 +3486,7 @@ mod tests {
                 route_len: 0,
                 analytical: None,
                 particles: Some(32),
+                solver_class: Default::default(),
             },
             DummyArtifact,
         )
@@ -3051,6 +3513,7 @@ mod tests {
             solver: Default::default(),
             rtol: DEFAULT_ODE_RTOL,
             atol: DEFAULT_ODE_ATOL,
+            force_numeric: false,
             cache: Some(PredictionCache::new(1)),
             error_model_cache: Some(BoundErrorModelCache::new(
                 DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,

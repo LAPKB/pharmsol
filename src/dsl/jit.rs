@@ -330,6 +330,15 @@ pub fn compile_execution_artifact(
         model,
         ModelFunctionKind::RouteBioavailability,
     )?;
+    let jacobian = compile_role_function(
+        &mut module,
+        &mut ctx,
+        &mut builder_context,
+        ptr_ty,
+        externs,
+        model,
+        ModelFunctionKind::Jacobian,
+    )?;
 
     module
         .finalize_definitions()
@@ -345,6 +354,7 @@ pub fn compile_execution_artifact(
         diffusion.map(|id| function_pointer(&mut module, id)),
         route_lag.map(|id| function_pointer(&mut module, id)),
         route_bioavailability.map(|id| function_pointer(&mut module, id)),
+        jacobian.map(|id| function_pointer(&mut module, id)),
         module,
     ))
 }
@@ -524,6 +534,7 @@ fn function_kind_name(role: ModelFunctionKind) -> &'static str {
         ModelFunctionKind::RouteLag => "route_lag",
         ModelFunctionKind::RouteBioavailability => "route_bioavailability",
         ModelFunctionKind::Analytical => "analytical",
+        ModelFunctionKind::Jacobian => "jacobian",
     }
 }
 
@@ -677,6 +688,10 @@ fn store_target(
         | ExecutionTargetKind::StateDerivative(state_ref)
         | ExecutionTargetKind::StateNoise(state_ref) => {
             store_state_ref(builder, env, env.args.out, state_ref, value.value)
+        }
+        ExecutionTargetKind::JacobianEntry { row, col, states } => {
+            store_fixed(builder, env.args.out, row * states + col, value.value);
+            Ok(())
         }
     }
 }

@@ -70,6 +70,9 @@ pub fn subject_for_runtime_model(model: &pharmsol::dsl::CompiledRuntimeModel) ->
 }
 
 pub fn reference_values() -> Result<Vec<f64>, Box<dyn Error>> {
+    // Tightened well past the 1e-4 default: compiled models propagate this
+    // linear system in closed form, so a loosely integrated reference would
+    // only measure solver error.
     let model = equation::ODE::new(
         |x, p, _t, dx, _bolus, rateiv, _cov| {
             fetch_params!(p, ke, _v);
@@ -97,7 +100,8 @@ pub fn reference_values() -> Result<Vec<f64>, Box<dyn Error>> {
                     .expect_explicit_input(),
             ),
     )
-    .expect("bimodal_ke metadata should validate");
+    .expect("bimodal_ke metadata should validate")
+    .with_tolerances(1e-11, 1e-11);
 
     let parameters =
         Parameters::with_model(&model, [("ke", SUPPORT_POINT[0]), ("v", SUPPORT_POINT[1])])
