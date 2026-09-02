@@ -35,6 +35,18 @@ dx(central) = ka * depot - (cl / v) * central
 out(cp) = central / (v * (wt / 70.0)) ~ continuous()
 "#;
 
+#[cfg(feature = "dsl")]
+const SCALED_INFUSION_DSL: &str = r#"
+name = scaled_infusion
+kind = ode
+params = scale
+states = central
+outputs = cp
+infusion(iv) -> central
+dx(central) = rate(iv) * scale
+out(cp) = central
+"#;
+
 const ODE_MACRO_DSL: &str = r#"
 name = one_cmt_oral_covariate_parity
 kind = ode
@@ -1399,6 +1411,27 @@ fn invalid_dsl_infusion_route_properties_fail_explicitly() {
     assert!(error
         .to_string()
         .contains("DSL authoring does not allow `lag` on infusion route `iv`"));
+}
+
+#[cfg(feature = "dsl")]
+#[test]
+fn ode_runtime_jit_applies_explicit_infusion_scale_once() {
+    let model = compile_runtime_jit_model(SCALED_INFUSION_DSL, "scaled_infusion");
+    let parameters =
+        pharmsol::Parameters::with_model(&model, [("scale", 2.0)]).expect("valid named parameters");
+    let subject = Subject::builder("scaled-infusion")
+        .infusion(0.0, 100.0, "iv", 1.0)
+        .missing_observation(1.0, "cp")
+        .build();
+    let predictions = match model
+        .estimate_predictions(&subject, &parameters)
+        .expect("scaled infusion should simulate")
+    {
+        RuntimePredictions::Subject(predictions) => predictions,
+        RuntimePredictions::Particles(_) => panic!("ODE runtime should return subject predictions"),
+    };
+
+    assert_relative_eq!(predictions.flat_predictions()[0], 200.0, epsilon = 1e-6);
 }
 
 #[cfg(feature = "dsl")]

@@ -63,6 +63,10 @@ covariates, time, and derived values that depend only on those inputs. State
 and route-rate dependencies are rejected because route properties are evaluated
 before the event is applied.
 
+An infusion route adds its rate to the destination derivative by default. When
+that derivative explicitly uses `rate(route)`, the explicit expression replaces
+the default contribution instead of adding a second rate term.
+
 Model initial conditions run before the first event of every occasion.
 
 ## Errors
