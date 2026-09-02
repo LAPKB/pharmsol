@@ -736,14 +736,7 @@ where
 {
     /// `J(x, t) v` from an exact Jacobian, avoiding both the two RHS
     /// evaluations and the `sqrt(eps)` accuracy of the difference quotient.
-    fn exact_jac_mul_inplace(
-        &self,
-        jacobian: &RhsJacobianFn<'_>,
-        x: &V,
-        t: T,
-        v: &V,
-        y: &mut V,
-    ) {
+    fn exact_jac_mul_inplace(&self, jacobian: &RhsJacobianFn<'_>, x: &V, t: T, v: &V, y: &mut V) {
         let absolute_time = self.time_origin.get() + t;
         let mut rateiv = self.rateiv_buffer.borrow_mut();
         self.integration_schedule

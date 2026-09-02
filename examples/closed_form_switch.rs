@@ -97,7 +97,9 @@ out(cp) = central / v
         println!("{name:<18} {solver:>12}   {why}");
     }
 
-    println!("\nThe same notice is emitted through the compile callback, rendered\nagainst the source:");
+    println!(
+        "\nThe same notice is emitted through the compile callback, rendered\nagainst the source:"
+    );
     compile_module_source_to_runtime(michaelis_menten, None, |kind, message| {
         if kind == "solver" {
             for line in message.lines() {

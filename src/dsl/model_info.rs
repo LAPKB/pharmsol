@@ -61,9 +61,7 @@ pub enum SolverClass {
     /// The listed covariates must additionally be carry-forward in the subject
     /// data. Interpolation is a property of the data, not of the model, so that
     /// part can only be settled at simulation time.
-    LinearTimeInvariant {
-        requires_carry_forward: Vec<String>,
-    },
+    LinearTimeInvariant { requires_carry_forward: Vec<String> },
     /// Propagated by a numeric integrator, for the stated reason.
     Numeric {
         reason: Option<String>,

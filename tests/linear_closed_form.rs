@@ -312,7 +312,10 @@ fn compile_time_declines_explain_themselves() {
     );
 
     let explanation = ode_model(EXPLICIT_TIME).info().solver_explanation();
-    assert!(explanation.contains("`t` appears in the dynamics"), "{explanation}");
+    assert!(
+        explanation.contains("`t` appears in the dynamics"),
+        "{explanation}"
+    );
 
     let explanation = ode_model(ONE_COMPARTMENT_ORAL).info().solver_explanation();
     assert!(explanation.contains("closed form"), "{explanation}");
@@ -428,11 +431,8 @@ fn closed_form_can_be_required_instead_of_assumed() {
 
     // A model that does not qualify fails instead of silently slowing down.
     let nonlinear = ode_model(MICHAELIS_MENTEN).require_closed_form();
-    let parameters = Parameters::with_model(
-        &nonlinear,
-        vec![("vmax", 10.0), ("km", 5.0), ("v", 20.0)],
-    )
-    .unwrap();
+    let parameters =
+        Parameters::with_model(&nonlinear, vec![("vmax", 10.0), ("km", 5.0), ("v", 20.0)]).unwrap();
     let subject = Subject::builder("mm")
         .bolus(0.0, 100.0, "iv")
         .missing_observation(3.0, "cp")
@@ -457,8 +457,7 @@ fn requiring_closed_form_also_catches_data_that_disqualifies_a_linear_model() {
         .covariate("wt", 6.0, 100.0)
         .missing_observation(3.0, "cp")
         .build();
-    let parameters =
-        Parameters::with_model(&model, vec![("ke0", 0.2), ("v", 10.0)]).unwrap();
+    let parameters = Parameters::with_model(&model, vec![("ke0", 0.2), ("v", 10.0)]).unwrap();
 
     let error = model
         .estimate_predictions(&interpolated, &parameters)
