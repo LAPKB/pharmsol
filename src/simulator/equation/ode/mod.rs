@@ -243,13 +243,7 @@ impl ODE {
         ));
     }
 
-    fn initial_state_at_time(
-        &self,
-        parameters: &[f64],
-        covariates: &Covariates,
-        _occasion_index: usize,
-        time: f64,
-    ) -> V {
+    fn initial_state_at_time(&self, parameters: &[f64], covariates: &Covariates, time: f64) -> V {
         let init = &self.init;
         let mut x = V::zeros(self.get_nstates(), NalgebraContext::new());
         let parameters = DVector::from_vec(parameters.to_vec());
@@ -419,12 +413,7 @@ fn _simulate_subject_dense(
                         Event::Infusion(infusion) => Some(infusion),
                         _ => None,
                     }),
-                    ode.initial_state_at_time(
-                        parameters,
-                        covariates,
-                        occasion.index(),
-                        time_origin,
-                    ),
+                    ode.initial_state_at_time(parameters, covariates, time_origin),
                     time_origin,
                 )?)?;
             problem
@@ -601,12 +590,7 @@ impl EquationPriv for ODE {
     }
 
     #[inline(always)]
-    fn initial_state(
-        &self,
-        parameters: &[f64],
-        covariates: &Covariates,
-        _occasion_index: usize,
-    ) -> V {
+    fn initial_state(&self, parameters: &[f64], covariates: &Covariates) -> V {
         let init = &self.init;
         let mut x = V::zeros(self.get_nstates(), NalgebraContext::new());
         let parameters = DVector::from_vec(parameters.to_vec());

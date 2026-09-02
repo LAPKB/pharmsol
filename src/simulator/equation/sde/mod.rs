@@ -576,12 +576,7 @@ impl EquationPriv for SDE {
         Ok(())
     }
     #[inline(always)]
-    fn initial_state(
-        &self,
-        parameters: &[f64],
-        covariates: &Covariates,
-        _occasion_index: usize,
-    ) -> Self::S {
+    fn initial_state(&self, parameters: &[f64], covariates: &Covariates) -> Self::S {
         let mut x = Vec::with_capacity(self.nparticles);
         for _ in 0..self.nparticles {
             let mut state: V = DVector::zeros(self.get_nstates()).into();

@@ -289,12 +289,7 @@ pub(crate) trait EquationPriv: EquationTypes {
         output: &mut Self::P,
     ) -> Result<(), PharmsolError>;
 
-    fn initial_state(
-        &self,
-        parameters: &[f64],
-        covariates: &Covariates,
-        occasion_index: usize,
-    ) -> Self::S;
+    fn initial_state(&self, parameters: &[f64], covariates: &Covariates) -> Self::S;
 
     #[allow(clippy::too_many_arguments)]
     fn simulate_event(
@@ -494,7 +489,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
         for occasion in subject.occasions() {
             let covariates = occasion.covariates();
 
-            let mut x = self.initial_state(parameters, covariates, occasion.index());
+            let mut x = self.initial_state(parameters, covariates);
             let mut infusions = Vec::new();
             let events = self.resolve_occasion_events(occasion, parameters, covariates)?;
             for (index, event) in events.iter().enumerate() {

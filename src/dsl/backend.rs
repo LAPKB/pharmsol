@@ -829,7 +829,6 @@ impl SharedRuntimeModel {
         session: &mut dyn FunctionSession,
         support_point: &[f64],
         covariates: &Covariates,
-        _occasion_index: usize,
         time: f64,
     ) -> Result<Vec<f64>, PharmsolError> {
         let mut state = vec![0.0; self.info.state_len];
@@ -1195,7 +1194,6 @@ impl RuntimeOdeModel {
                         &mut **initial_session,
                         support_point,
                         occasion.covariates(),
-                        occasion.index(),
                         time_origin,
                     )?
                 },
@@ -1475,12 +1473,7 @@ impl EquationPriv for RuntimeOdeModel {
         unimplemented!("process_observation is not used for runtime ODE models")
     }
 
-    fn initial_state(
-        &self,
-        _support_point: &[f64],
-        _covariates: &Covariates,
-        _occasion_index: usize,
-    ) -> Self::S {
+    fn initial_state(&self, _support_point: &[f64], _covariates: &Covariates) -> Self::S {
         V::zeros(self.shared.info.state_len, NalgebraContext::new())
     }
 }
@@ -1651,7 +1644,6 @@ impl RuntimeAnalyticalModel {
                 &mut *session,
                 support_point,
                 occasion.covariates(),
-                occasion.index(),
                 0.0,
             )?;
 
@@ -1879,12 +1871,7 @@ impl EquationPriv for RuntimeAnalyticalModel {
         unimplemented!("process_observation is not used for runtime analytical models")
     }
 
-    fn initial_state(
-        &self,
-        _support_point: &[f64],
-        _covariates: &Covariates,
-        _occasion_index: usize,
-    ) -> Self::S {
+    fn initial_state(&self, _support_point: &[f64], _covariates: &Covariates) -> Self::S {
         V::zeros(self.shared.info.state_len, NalgebraContext::new())
     }
 }
@@ -2054,7 +2041,6 @@ impl RuntimeSdeModel {
                 &mut *session,
                 support_point,
                 occasion.covariates(),
-                occasion.index(),
                 0.0,
             )?;
             let mut particles = (0..self.nparticles)
@@ -2375,12 +2361,7 @@ impl EquationPriv for RuntimeSdeModel {
         unimplemented!("process_observation is not used for runtime SDE models")
     }
 
-    fn initial_state(
-        &self,
-        _support_point: &[f64],
-        _covariates: &Covariates,
-        _occasion_index: usize,
-    ) -> Self::S {
+    fn initial_state(&self, _support_point: &[f64], _covariates: &Covariates) -> Self::S {
         vec![DVector::zeros(self.shared.info.state_len); self.nparticles]
     }
 }
