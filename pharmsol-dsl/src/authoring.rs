@@ -1136,6 +1136,18 @@ fn inject_infusion_rates(
             continue;
         };
 
+        // An author who already reads `rate(iv)` in the destination's own
+        // derivative owns that input term; injecting it again would add the
+        // infusion twice. A read somewhere else (a time-weighted accumulator,
+        // say) still needs the destination term injected here.
+        if destination_reads_route_rate(
+            derivative_statements,
+            &route.destination,
+            &surface_route.input.text,
+        ) {
+            continue;
+        }
+
         let rate_expr = Expr {
             span: surface_route.span,
             kind: ExprKind::Call {
@@ -1161,6 +1173,47 @@ fn inject_infusion_rates(
                     value: rate_expr,
                 }),
             });
+        }
+    }
+}
+
+fn destination_reads_route_rate(statements: &[Stmt], destination: &Place, route: &str) -> bool {
+    statements.iter().any(|statement| match &statement.kind {
+        StmtKind::Assign(assign) if derivative_target_matches(&assign.target, destination) => {
+            expr_reads_route_rate(&assign.value, route)
+        }
+        StmtKind::If(if_stmt) => {
+            destination_reads_route_rate(&if_stmt.then_branch, destination, route)
+                || if_stmt
+                    .else_branch
+                    .as_deref()
+                    .is_some_and(|branch| destination_reads_route_rate(branch, destination, route))
+        }
+        StmtKind::For(for_stmt) => destination_reads_route_rate(&for_stmt.body, destination, route),
+        _ => false,
+    })
+}
+
+fn expr_reads_route_rate(expr: &Expr, route: &str) -> bool {
+    match &expr.kind {
+        ExprKind::Number(_) | ExprKind::Bool(_) | ExprKind::Name(_) => false,
+        ExprKind::Unary { expr, .. } => expr_reads_route_rate(expr, route),
+        ExprKind::Binary { lhs, rhs, .. } => {
+            expr_reads_route_rate(lhs, route) || expr_reads_route_rate(rhs, route)
+        }
+        ExprKind::Index { target, index } => {
+            expr_reads_route_rate(target, route) || expr_reads_route_rate(index, route)
+        }
+        ExprKind::Call { callee, args } => {
+            if callee.text == RATE_FUNCTION_NAME
+                && matches!(
+                    args.first().map(|arg| &arg.kind),
+                    Some(ExprKind::Name(name)) if name.text == route
+                )
+            {
+                return true;
+            }
+            args.iter().any(|arg| expr_reads_route_rate(arg, route))
         }
     }
 }

@@ -1465,19 +1465,24 @@ fn ode_runtime_jit_macro_and_handwritten_predictions_agree_on_shared_input_shape
         RuntimePredictions::Subject(predictions) => predictions.flat_predictions().to_vec(),
         RuntimePredictions::Particles(_) => panic!("ODE runtime should return subject predictions"),
     };
+    // The compiled model propagates this linear system in closed form, so the
+    // numeric references are tightened well past their 1e-4 default to make the
+    // comparison meaningful.
     let macro_predictions = macro_model
+        .with_tolerances(1e-11, 1e-11)
         .estimate_predictions(&subject, &support_point)
         .expect("macro ODE model should simulate")
         .flat_predictions()
         .to_vec();
     let handwritten_predictions = handwritten_model
+        .with_tolerances(1e-11, 1e-11)
         .estimate_predictions(&subject, &support_point)
         .expect("handwritten ODE model should simulate")
         .flat_predictions()
         .to_vec();
 
-    assert_prediction_vectors_close(&runtime_predictions, &macro_predictions, 1e-4);
-    assert_prediction_vectors_close(&runtime_predictions, &handwritten_predictions, 1e-4);
+    assert_prediction_vectors_close(&runtime_predictions, &macro_predictions, 1e-6);
+    assert_prediction_vectors_close(&runtime_predictions, &handwritten_predictions, 1e-6);
 }
 
 #[cfg(feature = "dsl")]

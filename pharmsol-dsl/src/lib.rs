@@ -103,8 +103,10 @@ pub mod analysis;
 mod analyze;
 mod authoring;
 pub mod diagnostic;
+pub mod differentiate;
 pub mod execution;
 mod lexer;
+pub mod lti;
 mod name_match;
 mod parser;
 mod pipeline;
@@ -125,9 +127,11 @@ pub(crate) const RATE_FUNCTION_NAME: &str = "rate";
 pub use analysis::*;
 pub use analyze::{analyze_model, analyze_module, AnalysisError};
 pub use diagnostic::*;
+pub use differentiate::{build_jacobian, is_state_free, JacobianDecline};
 pub use execution::{
     compile_analyzed_model, compile_analyzed_module, CompileError, ExecutionModel, ExecutionModule,
 };
+pub use lti::{classify_linear_time_invariant, LtiDecline, LtiRequirements};
 pub use parser::{parse_model, parse_module, MAX_NESTING_DEPTH};
 pub use pipeline::{compile_model, compile_module, DslError};
 pub use syntax::*;

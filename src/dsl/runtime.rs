@@ -252,7 +252,7 @@ pub fn compile_module_source_to_runtime(
 
     let execution = compile_analyzed_model(model)
         .map_err(|error| RuntimeError::Lowering(error.with_source(source)))?;
-    compile_execution_model_to_runtime(&execution, event_callback).map_err(|error| {
+    compile_with_solver_notice(&execution, Some(source), event_callback).map_err(|error| {
         if let RuntimeError::Jit(error) = error {
             return RuntimeError::Jit(error.with_source(source));
         }
@@ -268,11 +268,32 @@ pub fn compile_execution_model_to_runtime(
     model: &ExecutionModel,
     event_callback: impl Fn(String, String) + Send + Sync + 'static,
 ) -> Result<CompiledRuntimeModel, RuntimeError> {
+    compile_with_solver_notice(model, None, event_callback)
+}
+
+/// Compile and report the chosen solver through `event_callback` under the
+/// `"solver"` kind.
+///
+/// With `source` available the notice is rendered against it and points at the
+/// equation that forced the decision; otherwise it is a plain one-liner.
+fn compile_with_solver_notice(
+    model: &ExecutionModel,
+    source: Option<&str>,
+    event_callback: impl Fn(String, String) + Send + Sync + 'static,
+) -> Result<CompiledRuntimeModel, RuntimeError> {
     event_callback(
         "started".into(),
         format!("Compiling jit model `{}`", model.name),
     );
     let compiled = compile_execution_model_to_jit(model)?;
+    if matches!(compiled, CompiledRuntimeModel::Ode(_)) {
+        let info = compiled.info();
+        let message = match source {
+            Some(source) => info.solver_diagnostic().render(source),
+            None => info.solver_explanation(),
+        };
+        event_callback("solver".into(), message);
+    }
     event_callback(
         "finished".into(),
         format!("Compiled jit model `{}`", model.name),
