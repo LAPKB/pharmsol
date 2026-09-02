@@ -1147,7 +1147,12 @@ fn inject_infusion_rates(
             },
         };
 
-        if !augment_derivative_statements(derivative_statements, &route.destination, &rate_expr) {
+        if !augment_derivative_statements(
+            derivative_statements,
+            &route.destination,
+            &rate_expr,
+            &surface_route.input,
+        ) {
             derivative_statements.push(Stmt {
                 span: surface_route.span,
                 kind: StmtKind::Assign(AssignStmt {
@@ -1622,39 +1627,70 @@ fn augment_derivative_statements(
     statements: &mut [Stmt],
     destination: &Place,
     rate_expr: &Expr,
+    route: &Ident,
 ) -> bool {
     let mut matched = false;
     for stmt in statements {
         match &mut stmt.kind {
             StmtKind::Assign(assign) if derivative_target_matches(&assign.target, destination) => {
-                let value = Expr {
-                    span: assign.value.span.join(rate_expr.span),
-                    kind: ExprKind::Binary {
-                        op: BinaryOp::Add,
-                        lhs: Box::new(assign.value.clone()),
-                        rhs: Box::new(rate_expr.clone()),
-                    },
-                };
-                assign.value = value;
-                stmt.span = stmt.span.join(rate_expr.span);
+                if !expr_uses_rate(&assign.value, route) {
+                    assign.value = Expr {
+                        span: assign.value.span.join(rate_expr.span),
+                        kind: ExprKind::Binary {
+                            op: BinaryOp::Add,
+                            lhs: Box::new(assign.value.clone()),
+                            rhs: Box::new(rate_expr.clone()),
+                        },
+                    };
+                    stmt.span = stmt.span.join(rate_expr.span);
+                }
                 matched = true;
             }
             StmtKind::If(if_stmt) => {
-                let then_match =
-                    augment_derivative_statements(&mut if_stmt.then_branch, destination, rate_expr);
+                let then_match = augment_derivative_statements(
+                    &mut if_stmt.then_branch,
+                    destination,
+                    rate_expr,
+                    route,
+                );
                 let else_match = if_stmt.else_branch.as_mut().is_some_and(|branch| {
-                    augment_derivative_statements(branch, destination, rate_expr)
+                    augment_derivative_statements(branch, destination, rate_expr, route)
                 });
                 matched |= then_match || else_match;
             }
             StmtKind::For(for_stmt) => {
-                matched |=
-                    augment_derivative_statements(&mut for_stmt.body, destination, rate_expr);
+                matched |= augment_derivative_statements(
+                    &mut for_stmt.body,
+                    destination,
+                    rate_expr,
+                    route,
+                );
             }
             _ => {}
         }
     }
     matched
+}
+
+fn expr_uses_rate(expr: &Expr, route: &Ident) -> bool {
+    match &expr.kind {
+        ExprKind::Call { callee, args }
+            if callee.text == RATE_FUNCTION_NAME
+                && args.len() == 1
+                && matches!(&args[0].kind, ExprKind::Name(name) if name.text == route.text) =>
+        {
+            true
+        }
+        ExprKind::Unary { expr, .. } => expr_uses_rate(expr, route),
+        ExprKind::Binary { lhs, rhs, .. } => {
+            expr_uses_rate(lhs, route) || expr_uses_rate(rhs, route)
+        }
+        ExprKind::Call { args, .. } => args.iter().any(|arg| expr_uses_rate(arg, route)),
+        ExprKind::Index { target, index } => {
+            expr_uses_rate(target, route) || expr_uses_rate(index, route)
+        }
+        ExprKind::Number(_) | ExprKind::Bool(_) | ExprKind::Name(_) => false,
+    }
 }
 
 fn derivative_target_matches(target: &AssignTarget, destination: &Place) -> bool {

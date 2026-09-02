@@ -56,6 +56,19 @@ The main public modules are:
 The parser accepts both canonical `model { ... }` source and the authoring
 shorthand used by the `pharmsol` examples.
 
+## Route Properties And Initial Conditions
+
+Bolus `lag` and `bioavailability` properties may use parameters, constants,
+covariates, time, and derived values that depend only on those inputs. State
+and route-rate dependencies are rejected because route properties are evaluated
+before the event is applied.
+
+An infusion route adds its rate to the destination derivative by default. When
+that derivative explicitly uses `rate(route)`, the explicit expression replaces
+the default contribution instead of adding a second rate term.
+
+Model initial conditions run before the first event of every occasion.
+
 ## Errors
 
 Every stage reports errors with source spans and renders an annotated report

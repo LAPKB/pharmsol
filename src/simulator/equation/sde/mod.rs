@@ -576,23 +576,16 @@ impl EquationPriv for SDE {
         Ok(())
     }
     #[inline(always)]
-    fn initial_state(
-        &self,
-        parameters: &[f64],
-        covariates: &Covariates,
-        occasion_index: usize,
-    ) -> Self::S {
+    fn initial_state(&self, parameters: &[f64], covariates: &Covariates) -> Self::S {
         let mut x = Vec::with_capacity(self.nparticles);
         for _ in 0..self.nparticles {
             let mut state: V = DVector::zeros(self.get_nstates()).into();
-            if occasion_index == 0 {
-                (self.init)(
-                    &V::from_vec(parameters.to_vec(), NalgebraContext::new()),
-                    0.0,
-                    covariates,
-                    &mut state,
-                );
-            }
+            (self.init)(
+                &V::from_vec(parameters.to_vec(), NalgebraContext::new()),
+                0.0,
+                covariates,
+                &mut state,
+            );
             x.push(state.inner().clone());
         }
         x

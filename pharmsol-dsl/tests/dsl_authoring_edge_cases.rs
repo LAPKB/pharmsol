@@ -49,6 +49,37 @@ out(cp) = central
 }
 
 #[test]
+fn explicit_infusion_rate_is_not_injected_twice() {
+    let default = r#"
+name = default_infusion
+kind = ode
+params = ke
+states = central
+infusion(iv) -> central
+dx(central) = -ke * central
+out(cp) = central
+"#;
+    let scaled = r#"
+name = scaled_infusion
+kind = ode
+params = ke, scale
+states = central
+infusion(iv) -> central
+dx(central) = rate(iv) * scale - ke * central
+out(cp) = central
+"#;
+
+    let default = parse_module(default).expect("default infusion model parses");
+    let scaled = parse_module(scaled).expect("scaled infusion model parses");
+    let default = default.to_string();
+    let scaled = scaled.to_string();
+
+    assert_eq!(default.matches("rate(iv)").count(), 1);
+    assert_eq!(scaled.matches("rate(iv)").count(), 1);
+    assert!(scaled.contains("rate(iv) * scale"));
+}
+
+#[test]
 fn rejects_out_target_not_in_declared_outputs() {
     let src = r#"
 name = bimodal_ke

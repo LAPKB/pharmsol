@@ -243,19 +243,11 @@ impl ODE {
         ));
     }
 
-    fn initial_state_at_time(
-        &self,
-        parameters: &[f64],
-        covariates: &Covariates,
-        occasion_index: usize,
-        time: f64,
-    ) -> V {
+    fn initial_state_at_time(&self, parameters: &[f64], covariates: &Covariates, time: f64) -> V {
         let init = &self.init;
         let mut x = V::zeros(self.get_nstates(), NalgebraContext::new());
-        if occasion_index == 0 {
-            let parameters = DVector::from_vec(parameters.to_vec());
-            (init)(&parameters.into(), time, covariates, &mut x);
-        }
+        let parameters = DVector::from_vec(parameters.to_vec());
+        (init)(&parameters.into(), time, covariates, &mut x);
         x
     }
 }
@@ -421,12 +413,7 @@ fn _simulate_subject_dense(
                         Event::Infusion(infusion) => Some(infusion),
                         _ => None,
                     }),
-                    ode.initial_state_at_time(
-                        parameters,
-                        covariates,
-                        occasion.index(),
-                        time_origin,
-                    ),
+                    ode.initial_state_at_time(parameters, covariates, time_origin),
                     time_origin,
                 )?)?;
             problem
@@ -603,18 +590,11 @@ impl EquationPriv for ODE {
     }
 
     #[inline(always)]
-    fn initial_state(
-        &self,
-        parameters: &[f64],
-        covariates: &Covariates,
-        occasion_index: usize,
-    ) -> V {
+    fn initial_state(&self, parameters: &[f64], covariates: &Covariates) -> V {
         let init = &self.init;
         let mut x = V::zeros(self.get_nstates(), NalgebraContext::new());
-        if occasion_index == 0 {
-            let parameters = DVector::from_vec(parameters.to_vec());
-            (init)(&parameters.into(), 0.0, covariates, &mut x);
-        }
+        let parameters = DVector::from_vec(parameters.to_vec());
+        (init)(&parameters.into(), 0.0, covariates, &mut x);
         x
     }
 }
@@ -2755,6 +2735,10 @@ mod tests {
 
     fn zero_init(_p: &V, _t: f64, _cov: &Covariates, _x: &mut V) {}
 
+    fn ten_init(_p: &V, _t: f64, _cov: &Covariates, x: &mut V) {
+        x[0] = 10.0;
+    }
+
     fn state_output(x: &V, _p: &V, _t: f64, _cov: &Covariates, y: &mut V) {
         y[0] = x[0];
     }
@@ -3027,6 +3011,37 @@ mod tests {
             .with_ndrugs(2);
 
         assert!(ode.metadata().is_none());
+    }
+
+    #[test]
+    fn handwritten_ode_runs_init_for_each_occasion() {
+        let ode = ODE::new(
+            injected_route_function,
+            zero_lag,
+            unit_fa,
+            ten_init,
+            state_output,
+        )
+        .with_nstates(1)
+        .with_ndrugs(1)
+        .with_nout(1);
+        let subject = Subject::builder("per_occasion_init")
+            .observation(0.0, 0.0, 0)
+            .reset()
+            .observation(0.0, 0.0, 0)
+            .build();
+
+        let predictions = ode
+            .estimate_predictions(&subject, &crate::parameters::dense([]))
+            .expect("predictions should succeed");
+        assert_eq!(
+            predictions
+                .predictions()
+                .iter()
+                .map(|prediction| prediction.prediction())
+                .collect::<Vec<_>>(),
+            vec![10.0, 10.0]
+        );
     }
 
     #[test]
