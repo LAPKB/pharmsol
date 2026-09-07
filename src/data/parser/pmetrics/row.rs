@@ -55,7 +55,7 @@ fn ensure_finite(value: f64, field: &str, id: &str) -> Result<(), DataError> {
 ///
 /// All fields use the public labeling conventions:
 /// - `input` and `outeq` preserve the route and output labels from the source data
-/// - `evid`: 0=observation, 1=dose, 4=reset/new occasion
+/// - `evid`: 0=observation, 1=dose, 2=covariates only, 4=reset/new occasion
 /// - `addl`: positive=forward in time, negative=backward in time
 /// - a covariate name ending in `!` selects fixed carry-forward interpolation
 ///
@@ -88,7 +88,7 @@ pub struct DataRow {
     pub id: String,
     /// Event time (required)
     pub time: f64,
-    /// Event type: 0=observation, 1=dose, 4=reset/new occasion
+    /// Event type: 0=observation, 1=dose, 2=covariates only, 4=reset/new occasion
     pub evid: i64,
     /// Dose amount (for EVID=1)
     pub dose: Option<f64>,
@@ -202,7 +202,7 @@ impl DataRow {
                 self.id, self.time
             )));
         }
-        if !matches!(self.evid, 0 | 1 | 4) {
+        if !matches!(self.evid, 0 | 1 | 2 | 4) {
             return Err(DataError::UnknownEvid {
                 evid: self.evid as isize,
                 id: self.id.clone(),
@@ -223,7 +223,7 @@ impl DataRow {
     /// Convert this row into one or more [`Event`] values.
     ///
     /// This method performs the row-level translation logic:
-    /// - EVID interpretation (0=observation, 1=dose, 4=reset)
+    /// - EVID interpretation (0=observation, 1=dose, 2=covariates only, 4=reset)
     /// - ADDL/II expansion (both positive and negative directions)
     /// - Infusion vs bolus detection based on DUR
     /// - Censoring and error polynomial handling
@@ -240,6 +240,7 @@ impl DataRow {
     /// # Returns
     ///
     /// A vector of Events. A single row may produce multiple events when ADDL is used.
+    /// EVID=2 produces no events; [`build_data`] collects its covariates at the row time.
     ///
     /// # Errors
     ///
@@ -271,6 +272,7 @@ impl DataRow {
         let mut events: Vec<Event> = Vec::new();
 
         match self.evid {
+            2 => {} // Covariates are collected separately by build_data.
             0 => {
                 // Observation event
                 let outeq =
@@ -448,7 +450,7 @@ impl DataRowBuilder {
     ///
     /// # Arguments
     ///
-    /// * `evid` - Event ID: 0=observation, 1=dose, 4=reset/new occasion
+    /// * `evid` - Event ID: 0=observation, 1=dose, 2=covariates only, 4=reset/new occasion
     pub fn evid(mut self, evid: i64) -> Self {
         self.row.evid = evid;
         self

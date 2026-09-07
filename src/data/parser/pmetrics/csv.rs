@@ -14,6 +14,7 @@ use std::io::{Seek, SeekFrom, Write};
 enum PmetricsEvid {
     Observation,
     Dose,
+    Covariates,
     ResetDose,
 }
 
@@ -22,6 +23,7 @@ impl PmetricsEvid {
         match self {
             Self::Observation => "0",
             Self::Dose => "1",
+            Self::Covariates => "2",
             Self::ResetDose => "4",
         }
     }
@@ -248,6 +250,9 @@ fn validate_occasion(
 
     let events = occasion.events();
     let Some(first) = events.first() else {
+        if occasion_index == 0 && !occasion.covariates().covariates().is_empty() {
+            return Ok(());
+        }
         return Err(unrepresentable(format!(
             "subject `{}` occasion {occasion_index} has no dose or observation rows",
             subject.id()
@@ -329,33 +334,35 @@ fn encode_occasion(
         for (time, value) in covariate.observations() {
             ensure_finite(time, &format!("{} time", csv_covariate.name), subject.id())?;
             ensure_finite(value, &csv_covariate.name, subject.id())?;
-            let mut matched_event = false;
+            let mut matched_row = false;
             for row in &mut rows {
                 if row.time == time {
                     row.fields[CoreColumn::COUNT + column_index] = value.to_string();
-                    matched_event = true;
+                    matched_row = true;
                 }
             }
-            if !matched_event {
-                return Err(unrepresentable(format!(
-                    "covariate `{}` for subject `{}` occasion {occasion_index} at time {time} has no dose or observation row",
-                    csv_covariate.name,
-                    subject.id()
-                )));
+            if !matched_row {
+                let mut fields =
+                    empty_row(subject.id(), PmetricsEvid::Covariates, time, schema.len());
+                fields[CoreColumn::COUNT + column_index] = value.to_string();
+                rows.push(PmetricsCsvRow { time, fields });
             }
         }
     }
 
+    // Keep the reset dose first so all covariate rows stay in their occasion.
+    let start = usize::from(occasion_index > 0);
+    rows[start..].sort_by(|left, right| left.time.total_cmp(&right.time));
     Ok(rows)
 }
 
 impl Data {
     /// Return the dataset as Pmetrics CSV bytes.
     ///
-    /// Every occasion must contain real events. Each occasion after the first
-    /// must begin with an unambiguous dose, and every covariate observation must
-    /// share a time with a dose or observation row. Doses expanded from
-    /// `ADDL`/`II` input are written as individual rows.
+    /// Each occasion after the first must begin with an unambiguous dose.
+    /// Covariate observations without a dose or observation at the same time
+    /// are written as EVID=2 rows. The first occasion may contain only covariates.
+    /// Doses expanded from `ADDL`/`II` input are written as individual rows.
     ///
     /// Missing observations are written as `OUT=-99`; a real value of `-99`
     /// cannot be represented.

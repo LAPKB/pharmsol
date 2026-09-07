@@ -8,7 +8,7 @@
 //! numeric values such as `1` are preserved as numeric-looking labels.
 
 use crate::data::*;
-use ::csv::{ReaderBuilder, StringRecord};
+use csv::{ReaderBuilder, StringRecord};
 use serde::de::{MapAccess, Visitor};
 use serde::{de, Deserialize, Deserializer};
 use std::collections::{HashMap, HashSet};
@@ -114,7 +114,9 @@ pub(super) fn core_headers() -> impl ExactSizeIterator<Item = &'static str> {
 /// covariates. Column names are read without regard to capitalization. A
 /// covariate header ending in `!` selects carry-forward behavior; otherwise its
 /// values are interpolated. The same covariate cannot be declared in both
-/// forms.
+/// forms. An `EVID=2` row adds covariate values at `TIME` without creating a
+/// dose or observation; `DOSE`, `INPUT`, `OUT`, and `OUTEQ` are not required.
+/// Export uses `EVID=2` for covariate times without a dose or observation.
 ///
 /// `ADDL`/`II` doses are expanded while reading. Export writes the expanded
 /// doses as individual rows. For `EVID=4`, positive `ADDL` resets at the base

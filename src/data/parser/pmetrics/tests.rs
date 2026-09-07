@@ -283,16 +283,33 @@ fn valid_mixed_case_covariate_headers_are_normalized() {
 }
 
 #[test]
-fn standalone_covariate_time_is_not_exportable() {
+fn standalone_covariate_times_round_trip() {
     let data = Data::new(vec![Subject::builder("s")
         .bolus(0.0, 1.0, "iv")
+        .observation(2.0, 3.0, "cp")
         .covariate("wt", 1.0, 70.0)
+        .covariate("age", 1.0, 40.0)
+        .reset()
+        .bolus(24.0, 2.0, "iv")
+        .covariate("wt", 23.0, 71.0)
+        .covariate("wt", 25.0, 72.0)
         .build()]);
-    assert!(matches!(
-        data.to_pmetrics_csv_bytes(),
-        Err(DataError::UnrepresentablePmetricsData(message))
-            if message.contains("has no dose or observation row")
-    ));
+    let bytes = data.to_pmetrics_csv_bytes().unwrap();
+    let rows = records(&bytes);
+    assert_eq!(
+        rows.iter()
+            .map(|row| (row.get(1).unwrap(), row.get(2).unwrap()))
+            .collect::<Vec<_>>(),
+        [
+            ("1", "0"),
+            ("2", "1"),
+            ("0", "2"),
+            ("4", "24"),
+            ("2", "23"),
+            ("2", "25")
+        ]
+    );
+    assert_data_equivalent(&data, &Data::from_pmetrics_csv_bytes(&bytes).unwrap());
 }
 
 #[test]
@@ -654,15 +671,63 @@ fn actual_minus_99_observation_is_not_exportable() {
 }
 
 #[test]
-fn evid_2_is_neither_written_nor_read() {
-    let bytes = fixture_data().to_pmetrics_csv_bytes().unwrap();
-    assert!(records(&bytes).iter().all(|row| row.get(1) != Some("2")));
+fn evid_2_adds_covariates_without_events() {
+    let input = concat!(
+        "ID,EVID,TIME,DOSE,INPUT,OUT,OUTEQ,WT,AGE!\n",
+        "s,1,0,100,iv,.,.,70,40\n",
+        "s,2,12,.,.,.,.,72,41\n",
+        "s,0,24,.,.,1,cp,74,.\n",
+    );
+    let data = Data::from_pmetrics_csv_bytes(input.as_bytes()).unwrap();
+    let subject = data.subjects()[0];
+    assert_eq!(subject.occasions().len(), 1);
+    let occasion = &subject.occasions()[0];
+    assert_eq!(occasion.events().len(), 2);
+    let weight = occasion.covariates().get_covariate("wt").unwrap();
+    assert_eq!(
+        weight.observations(),
+        [(0.0, 70.0), (12.0, 72.0), (24.0, 74.0)]
+    );
+    assert_eq!(weight.interpolate(6.0).unwrap(), 71.0);
+    let age = occasion.covariates().get_covariate("age").unwrap();
+    assert!(age.fixed());
+    assert_eq!(age.interpolate(6.0).unwrap(), 40.0);
+    assert_eq!(age.interpolate(12.0).unwrap(), 41.0);
+    let bytes = data.to_pmetrics_csv_bytes().unwrap();
+    assert_data_equivalent(&data, &Data::from_pmetrics_csv_bytes(&bytes).unwrap());
+}
 
-    let unsupported = pmetrics_input(&["wt"], "s,2,0,.,.,.,.,.,.,.,.,.,.,.,.,70\n");
-    assert!(matches!(
-        Data::from_pmetrics_csv_bytes(unsupported.as_bytes()),
-        Err(DataError::UnknownEvid { evid: 2, ref id, .. }) if id == "s"
-    ));
+#[test]
+fn covariate_only_csv_round_trips_without_event_columns() {
+    let data = Data::from_pmetrics_csv_bytes(b"ID,EVID,TIME,WT\ns,2,12,70\n").unwrap();
+    let occasion = &data.subjects()[0].occasions()[0];
+    assert!(occasion.events().is_empty());
+    assert_eq!(
+        occasion
+            .covariates()
+            .get_covariate("wt")
+            .unwrap()
+            .observations(),
+        [(12.0, 70.0)]
+    );
+    let bytes = data.to_pmetrics_csv_bytes().unwrap();
+    assert_eq!(records(&bytes)[0].get(1), Some("2"));
+    assert_data_equivalent(&data, &Data::from_pmetrics_csv_bytes(&bytes).unwrap());
+}
+
+#[test]
+fn evid_2_preserves_covariate_validation() {
+    for input in [
+        "ID,EVID,TIME,WT\ns,2,0,70\ns,2,0,71\n",
+        "ID,EVID,TIME,WT\ns,2,0,NaN\n",
+        "ID,EVID,TIME,WT\ns,2,inf,70\n",
+        "ID,EVID,TIME,WT,ADDL,II\ns,2,0,70,1,12\n",
+    ] {
+        assert!(
+            Data::from_pmetrics_csv_bytes(input.as_bytes()).is_err(),
+            "{input}"
+        );
+    }
 }
 
 #[test]
