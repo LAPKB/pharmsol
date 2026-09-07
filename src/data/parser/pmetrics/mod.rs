@@ -15,7 +15,8 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::str::FromStr;
 
-mod csv;
+#[path = "csv.rs"]
+mod csv_writer;
 mod row;
 
 #[cfg(test)]
