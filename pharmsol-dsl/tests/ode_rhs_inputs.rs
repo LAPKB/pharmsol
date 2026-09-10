@@ -41,10 +41,13 @@ fn shared_bolus_and_infusion_label_is_supported() {
 #[test]
 fn removed_ode_authoring_forms_fail_clearly() {
     for (equation, expected) in [
-        ("bolus(oral) -> gut\ndx(gut) = 0", "ODE inputs belong"),
+        (
+            "bolus(oral) -> gut\ndx(gut) = 0",
+            "use `+ bolus(input)` or `+ infusion(input)`, not a route declaration",
+        ),
         (
             "infusion(iv) -> central\ndx(central) = 0",
-            "ODE inputs belong",
+            "use `+ bolus(input)` or `+ infusion(input)`, not a route declaration",
         ),
         (
             "fa(oral) = f\ndx(gut) = bolus(oral)",

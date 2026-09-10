@@ -753,7 +753,7 @@ impl<'a> AuthoringParser<'a> {
     fn lower_ode_inputs(&mut self) -> Result<(), ParseError> {
         if let Some(route) = self.routes.values().next() {
             return Err(ParseError::new(
-                "ODE inputs belong in the derivative RHS: use `bolus(input) * scale` or `infusion(input) * scale`, not a route declaration",
+                "ODE inputs belong in the derivative RHS: use `+ bolus(input)` or `+ infusion(input)`, not a route declaration",
                 route.span,
             ));
         }
