@@ -325,11 +325,9 @@ params = ka, ke, v
 states = depot, central
 outputs = cp
 
-bolus(oral) -> depot
-infusion(iv) -> central
 
-dx(depot) = -ka * depot
-dx(central) = ka * depot - ke * central
+dx(depot) = bolus(oral) - ka * depot
+dx(central) = infusion(iv) + ka * depot - ke * central
 
 out(cp) = central / v ~ continuous()
 "#,
@@ -357,13 +355,10 @@ covariates = wt@linear
 states = depot, central
 outputs = cp
 
-bolus(oral) -> depot
-infusion(iv) -> central
 lag(oral) = 1.0
-fa(oral) = 0.8
 
-dx(depot) = -ke * depot
-dx(central) = ke * depot - rate(iv)
+dx(depot) = bolus(oral) * (0.8) - ke * depot
+dx(central) = ke * depot - infusion(iv)
 
 out(cp) = central / v
 "#,
@@ -395,11 +390,9 @@ params = ke, v
 states = depot, central
 outputs = cp, outeq_2
 
-bolus(input_10) -> depot
-infusion(iv) -> central
 
-dx(depot) = -ke * depot
-dx(central) = rate(input_10) - ke * central
+dx(depot) = bolus(input_10) - ke * depot
+dx(central) = infusion(iv) - ke * central
 
 out(cp) = central / v
 out(outeq_2) = depot / v

@@ -299,8 +299,6 @@ params = ka, cl0, vc0, q0, vp0
 states = x1, x2, x3
 outputs = outeq_1
 
-bolus(input_1) -> x1
-infusion(input_1) -> x2
 
 cl = cl0
 vc = vc0
@@ -310,8 +308,8 @@ ke = cl / vc
 k23 = q / vc
 k32 = q / vp
 
-dx(x1) = -(x1 * ka)
-dx(x2) = x1 * ka + (x3 * k32) - (x2 * (ke + k23))
+dx(x1) = bolus(input_1) - (x1 * ka)
+dx(x2) = infusion(input_1) + x1 * ka + (x3 * k32) - (x2 * (ke + k23))
 dx(x3) = x2 * k23 - (x3 * k32)
 
 out(outeq_1) = x2 / vc
@@ -419,8 +417,7 @@ name = accepted_infusion_boundary
 kind = ode
 states = central
 outputs = cp
-infusion(input_1) -> central
-dx(central) = -(0.5 * central)
+dx(central) = infusion(input_1) - (0.5 * central)
 out(cp) = central
 "#;
 
@@ -625,9 +622,8 @@ name = per_occasion_init
 kind = ode
 states = amount
 outputs = cp
-bolus(input_1) -> amount
 init(amount) = 10
-dx(amount) = 0
+dx(amount) = bolus(input_1) + 0
 out(cp) = amount
 "#;
 
@@ -638,10 +634,8 @@ kind = ode
 params = scale
 states = amount
 outputs = cp
-bolus(input_1) -> amount
-fa(input_1) = dose_scale
 dose_scale = scale
-dx(amount) = 0
+dx(amount) = bolus(input_1) * (dose_scale) + 0
 out(cp) = amount
 "#;
 
@@ -651,9 +645,8 @@ name = rebase_absolute_time_close_gap
 kind = ode
 states = amount, time_weighted_amount
 outputs = cp, callback
-infusion(input_1) -> amount
-dx(amount) = 0
-dx(time_weighted_amount) = rate(input_1) * time
+dx(amount) = infusion(input_1) + 0
+dx(time_weighted_amount) = infusion(input_1) * time
 out(cp) = amount
 out(callback) = time_weighted_amount
 "#;

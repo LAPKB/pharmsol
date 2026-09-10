@@ -367,9 +367,8 @@ params = ke, v
 states = central
 outputs = cp
 
-infusion(iv) -> central
 
-dx(central) = -ke * central
+dx(central) = infusion(iv) - ke * central
 out(cp) = central / v
 "#;
 
@@ -410,7 +409,7 @@ fn dsl_error_reports_phase_and_renders_source() {
     assert!(err.to_string().contains("error[DSL2000]"));
     assert!(err.to_string().contains("unknown identifier `mystery`"));
 
-    let src = "name = m\nkind = ode\nstates = central\ninfusion(iv) -> central\nlag(iv) = 0.5\nddt(central) = 0\nout(cp) = central\n";
+    let src = "name = m\nkind = ode\nstates = central\nlag(iv) = 0.5\nddt(central) = infusion(iv)\nout(cp) = central\n";
     let err = compile_model(src).unwrap_err();
     assert!(matches!(err, DslError::Compile(_)));
     assert_eq!(err.phase(), DiagnosticPhase::Compile);
