@@ -4,18 +4,17 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 use syn::{
     ext::IdentExt,
     parse::{Parse, ParseStream},
-    ExprClosure, Ident, LitStr, Token,
+    visit::{self, Visit},
+    Expr, ExprClosure, Ident, LitStr, Token,
 };
 
-use super::{
-    missing_required_field, parse_ident_list, parse_route_list, parse_symbolic_index_list, set_once,
-};
+use super::{missing_required_field, parse_ident_list, parse_symbolic_index_list, set_once};
+use crate::analysis::closure_param_ident;
 use crate::crate_path::{parse_crate_marker, resolve_crate_path};
-use crate::symbols::{symbolic_index_idents, OdeRouteDecl, SymbolicIndex};
+use crate::symbols::{symbolic_index_idents, OdeRouteDecl, OdeRouteKind, SymbolicIndex};
 use crate::validate::{
-    validate_named_binding_compatibility, validate_ode_diffeq_uses_automatic_injection,
-    validate_routes, validate_unique_idents, validate_unique_symbolic_indices,
-    CommonBindingClosures, NamedBindingSets, OdeBindingClosures,
+    validate_named_binding_compatibility, validate_routes, validate_unique_idents,
+    validate_unique_symbolic_indices, CommonBindingClosures, NamedBindingSets, OdeBindingClosures,
 };
 
 const MACRO_LABEL: &str = "declaration-first `ode!`";
@@ -30,7 +29,6 @@ pub(crate) struct OdeInput {
     pub(crate) routes: Vec<OdeRouteDecl>,
     pub(crate) diffeq: ExprClosure,
     pub(crate) lag: Option<ExprClosure>,
-    pub(crate) fa: Option<ExprClosure>,
     pub(crate) init: Option<ExprClosure>,
     pub(crate) out: ExprClosure,
 }
@@ -44,10 +42,8 @@ impl Parse for OdeInput {
         let mut covariates = None;
         let mut states = None;
         let mut outputs = None;
-        let mut routes = None;
         let mut diffeq = None;
         let mut lag = None;
-        let mut fa = None;
         let mut init = None;
         let mut out = None;
 
@@ -86,23 +82,19 @@ impl Parse for OdeInput {
                     "outputs",
                     "ode!",
                 )?,
-                "routes" => set_once(
-                    &mut routes,
-                    parse_route_list(input)?,
+                "routes" | "fa" => return Err(syn::Error::new_spanned(
                     &key,
-                    "routes",
-                    "ode!",
-                )?,
+                    "`ode!` inputs now belong in `diffeq`: use `bolus[input] * scale` or `infusion[input] * scale`; `routes` and `fa` fields have been removed",
+                )),
                 "diffeq" => set_once(&mut diffeq, input.parse()?, &key, "diffeq", "ode!")?,
                 "lag" => set_once(&mut lag, input.parse()?, &key, "lag", "ode!")?,
-                "fa" => set_once(&mut fa, input.parse()?, &key, "fa", "ode!")?,
                 "init" => set_once(&mut init, input.parse()?, &key, "init", "ode!")?,
                 "out" => set_once(&mut out, input.parse()?, &key, "out", "ode!")?,
                 other => {
                     return Err(syn::Error::new_spanned(
                         &key,
                         format!(
-                            "unknown field `{other}`, expected one of: name, crate, params, covariates, states, outputs, routes, diffeq, lag, fa, init, out"
+                            "unknown field `{other}`, expected one of: name, crate, params, covariates, states, outputs, diffeq, lag, init, out"
                         ),
                     ));
                 }
@@ -116,7 +108,7 @@ impl Parse for OdeInput {
         let name = name.ok_or_else(|| {
             syn::Error::new(
                 Span::call_site(),
-                "declaration-first `ode!` requires `name`, `params`, `states`, `outputs`, and `routes`; the old inferred-dimensions form has been removed",
+                "declaration-first `ode!` requires `name`, `params`, `states`, and `outputs`; the old inferred-dimensions form has been removed",
             )
         })?;
         let krate = resolve_crate_path(krate, forwarded_krate)?;
@@ -124,10 +116,9 @@ impl Parse for OdeInput {
         let covariates = covariates.unwrap_or_default();
         let states = states.ok_or_else(|| missing_required_field("states", MACRO_LABEL))?;
         let outputs = outputs.ok_or_else(|| missing_required_field("outputs", MACRO_LABEL))?;
-        let routes = routes.ok_or_else(|| missing_required_field("routes", MACRO_LABEL))?;
         let diffeq = diffeq.ok_or_else(|| missing_required_field("diffeq", MACRO_LABEL))?;
         let out = out.ok_or_else(|| missing_required_field("out", MACRO_LABEL))?;
-        validate_ode_diffeq_uses_automatic_injection(&diffeq, &routes)?;
+        let routes = infer_ode_routes(&diffeq)?;
 
         validate_unique_idents("parameter", &params, "ode!")?;
         validate_unique_idents("covariate", &covariates, "ode!")?;
@@ -149,7 +140,7 @@ impl Parse for OdeInput {
                 diffeq: &diffeq,
                 common: CommonBindingClosures {
                     lag: lag.as_ref(),
-                    fa: fa.as_ref(),
+                    fa: None,
                     init: init.as_ref(),
                     out: &out,
                 },
@@ -166,10 +157,135 @@ impl Parse for OdeInput {
             routes,
             diffeq,
             lag,
-            fa,
             init,
             out,
         })
+    }
+}
+
+/// Recognize the public RHS input forms, never arbitrary Rust vector indexing.
+pub(crate) fn ode_rhs_input(expr: &Expr) -> syn::Result<Option<(OdeRouteKind, SymbolicIndex)>> {
+    let (function, argument) = match expr {
+        Expr::Index(index) => (index.expr.as_ref(), index.index.as_ref()),
+        Expr::Call(call) if call.args.len() == 1 => (call.func.as_ref(), &call.args[0]),
+        _ => return Ok(None),
+    };
+    let Expr::Path(path) = function else {
+        return Ok(None);
+    };
+    let Some(name) = path.path.get_ident() else {
+        return Ok(None);
+    };
+    let kind = match name.to_string().as_str() {
+        "bolus" => OdeRouteKind::Bolus,
+        "infusion" => OdeRouteKind::Infusion,
+        _ => return Ok(None),
+    };
+    let input = syn::parse2::<SymbolicIndex>(quote::quote!(#argument)).map_err(|_| {
+        syn::Error::new_spanned(argument, "an ODE input must be a single input label")
+    })?;
+    Ok(Some((kind, input)))
+}
+
+fn infer_ode_routes(diffeq: &ExprClosure) -> syn::Result<Vec<OdeRouteDecl>> {
+    let dx_index = match diffeq.inputs.len() {
+        3 => 2,
+        5 => 3,
+        _ => return Err(syn::Error::new_spanned(diffeq,
+            "`ode!` requires `diffeq` to have either 5 parameters: |x, p, t, dx, cov| or 3 parameters: |x, t, dx|")),
+    };
+    let dx = closure_param_ident(diffeq, dx_index).ok_or_else(|| {
+        syn::Error::new_spanned(diffeq, "the derivative parameter must have a name")
+    })?;
+    let mut visitor = OdeInputVisitor {
+        dx,
+        destination: None,
+        routes: Vec::new(),
+        error: None,
+    };
+    visitor.visit_expr(&diffeq.body);
+    match visitor.error {
+        Some(error) => Err(error),
+        None => Ok(visitor.routes),
+    }
+}
+
+struct OdeInputVisitor {
+    dx: Ident,
+    destination: Option<Ident>,
+    routes: Vec<OdeRouteDecl>,
+    error: Option<syn::Error>,
+}
+
+impl OdeInputVisitor {
+    fn destination(&self, expr: &Expr) -> Option<Ident> {
+        let Expr::Index(index) = expr else {
+            return None;
+        };
+        let Expr::Path(base) = index.expr.as_ref() else {
+            return None;
+        };
+        if !base.path.is_ident(&self.dx) {
+            return None;
+        }
+        let Expr::Path(state) = index.index.as_ref() else {
+            return None;
+        };
+        state.path.get_ident().cloned()
+    }
+
+    fn record(&mut self, kind: OdeRouteKind, input: SymbolicIndex, expr: &Expr) -> syn::Result<()> {
+        let destination = self.destination.as_ref().ok_or_else(|| syn::Error::new_spanned(
+            expr, "ODE inputs must appear in the RHS of a named derivative assignment such as `dx[central] = infusion[iv] * scale`",
+        ))?;
+        if let Some(existing) = self
+            .routes
+            .iter()
+            .find(|route| route.kind == kind && route.input.name() == input.name())
+        {
+            if kind == OdeRouteKind::Bolus && existing.destination != *destination {
+                return Err(syn::Error::new_spanned(
+                    expr,
+                    "an ODE bolus input must have one destination state",
+                ));
+            }
+        } else {
+            self.routes.push(OdeRouteDecl {
+                kind,
+                input,
+                destination: destination.clone(),
+            });
+        }
+        Ok(())
+    }
+}
+
+impl<'ast> Visit<'ast> for OdeInputVisitor {
+    fn visit_expr(&mut self, expr: &'ast Expr) {
+        if self.error.is_some() {
+            return;
+        }
+        match ode_rhs_input(expr) {
+            Ok(Some((kind, input))) => {
+                if let Err(error) = self.record(kind, input, expr) {
+                    self.error = Some(error);
+                }
+                return;
+            }
+            Err(error) => {
+                self.error = Some(error);
+                return;
+            }
+            Ok(None) => {}
+        }
+        if let Expr::Assign(assign) = expr {
+            let previous = self.destination.take();
+            self.destination = self.destination(&assign.left);
+            self.visit_expr(&assign.right);
+            self.destination = previous;
+        } else {
+            visit::visit_expr(self, expr);
+        }
     }
 }
 
@@ -178,149 +294,122 @@ mod tests {
     use super::*;
     use crate::symbols::{dense_index_len, ode_route_input_bindings};
 
-    #[test]
-    fn crate_key_overrides_the_emitted_path() {
-        let input = syn::parse_str::<OdeInput>(
-            "name: \"demo\", crate: \"pmcore::pharmsol\", params: [ke], covariates: [wt], states: [central], outputs: [cp], routes: [infusion(iv) -> central], diffeq: |x, p, t, dx, cov| { dx[central] = -ke * x[central] * wt; }, out: |x, p, t, cov, y| { y[cp] = x[central]; }",
-        )
-        .expect("`crate` key must parse");
-
-        assert_eq!(input.krate.to_string(), ":: pmcore :: pharmsol");
+    fn source(equations: &str) -> String {
+        format!("name: \"demo\", params: [ke], states: [depot, central], outputs: [cp], diffeq: |x, t, dx| {{ {equations} }}, out: |x, t, y| {{ y[cp] = x[central]; }}")
     }
 
     #[test]
-    fn forwarded_marker_sets_the_emitted_path() {
-        let input = syn::parse_str::<OdeInput>(
-            "@pharmsol_crate(::reexporter::pharmsol) name: \"demo\", params: [ke], states: [central], outputs: [cp], routes: [infusion(iv) -> central], diffeq: |x, p, t, dx, cov| {}, out: |x, p, t, cov, y| {}",
-        )
-        .expect("forwarded marker must parse");
-
-        assert_eq!(input.krate.to_string(), ":: reexporter :: pharmsol");
-    }
-
-    #[test]
-    fn crate_key_wins_over_the_forwarded_marker() {
-        let input = syn::parse_str::<OdeInput>(
-            "@pharmsol_crate(::reexporter::pharmsol) name: \"demo\", crate: \"my_vendor::pharmsol\", params: [ke], states: [central], outputs: [cp], routes: [infusion(iv) -> central], diffeq: |x, p, t, dx, cov| {}, out: |x, p, t, cov, y| {}",
-        )
-        .expect("both crate sources must parse");
-
-        assert_eq!(input.krate.to_string(), ":: my_vendor :: pharmsol");
-    }
-
-    #[test]
-    fn crate_key_rejects_generic_arguments() {
-        let error = syn::parse_str::<OdeInput>(
-            "name: \"demo\", crate: \"pmcore::pharmsol<T>\", params: [ke], states: [central], outputs: [cp], routes: [infusion(iv) -> central], diffeq: |x, p, t, dx, cov| {}, out: |x, p, t, cov, y| {}",
-        )
+    fn crate_sources_keep_their_precedence() {
+        for (prefix, expected) in [
+            ("crate: \"pmcore::pharmsol\", ", ":: pmcore :: pharmsol"),
+            (
+                "@pharmsol_crate(::reexporter::pharmsol) ",
+                ":: reexporter :: pharmsol",
+            ),
+            (
+                "@pharmsol_crate(::reexporter::pharmsol) crate: \"my_vendor::pharmsol\", ",
+                ":: my_vendor :: pharmsol",
+            ),
+        ] {
+            let input = syn::parse_str::<OdeInput>(&format!(
+                "{prefix}{}",
+                source("dx[central] = infusion[iv] - ke*x[central];")
+            ))
+            .unwrap();
+            assert_eq!(input.krate.to_string(), expected);
+        }
+        assert!(syn::parse_str::<OdeInput>(&format!(
+            "crate: \"pmcore::pharmsol<T>\", {}",
+            source("")
+        ))
         .err()
-        .expect("generic arguments must fail");
-
-        assert!(error
-            .to_string()
-            .contains("plain module path without generic arguments"));
+        .unwrap()
+        .to_string()
+        .contains("without generic arguments"));
     }
 
     #[test]
-    fn rejects_removed_legacy_form() {
+    fn rejects_removed_fields() {
+        for field in ["routes: [infusion(iv) -> central], ", "fa: |t| fa! {}, "] {
+            let error = syn::parse_str::<OdeInput>(&format!("{field}{}", source("")))
+                .err()
+                .unwrap();
+            assert!(error.to_string().contains("fields have been removed"));
+        }
+    }
+
+    #[test]
+    fn rejects_legacy_closure_and_missing_declarations() {
         let error = syn::parse_str::<OdeInput>(
             "diffeq: |x, p, t, dx, b, rateiv, cov| {}, out: |x, p, t, cov, y| {}",
         )
         .err()
-        .expect("legacy macro form must fail");
-
+        .unwrap();
         assert!(error
             .to_string()
-            .contains("requires `name`, `params`, `states`, `outputs`, and `routes`"));
-        assert!(error
-            .to_string()
-            .contains("old inferred-dimensions form has been removed"));
+            .contains("requires `name`, `params`, `states`, and `outputs`"));
     }
 
     #[test]
-    fn validates_route_destinations() {
-        let error = syn::parse_str::<OdeInput>(
-            "name: \"demo\", params: [ke], states: [central], outputs: [cp], routes: [infusion(iv) -> peripheral], diffeq: |x, p, t, dx, cov| {}, out: |x, p, t, cov, y| {}",
-        )
-        .err()
-        .expect("unknown route destination must fail");
-
-        assert!(error
-            .to_string()
-            .contains("route destination `peripheral` is not declared in the `states` section"));
-    }
-
-    #[test]
-    fn rejects_named_binding_collisions() {
-        let error = syn::parse_str::<OdeInput>(
-            "name: \"demo\", params: [central, v], states: [central], outputs: [cp], routes: [infusion(iv) -> central], diffeq: |x, p, t, dx, cov| {}, out: |x, p, t, cov, y| {}",
-        )
-        .err()
-        .expect("parameter/state binding collisions must fail");
-
-        assert!(error
-            .to_string()
-            .contains("named parameter binding `central` conflicts with named state binding"));
-    }
-
-    #[test]
-    fn ode_route_bindings_share_inputs_by_kind_local_ordinal() {
-        let input = syn::parse_str::<OdeInput>(
-            "name: \"demo\", params: [ka, ke, v], states: [depot, central], outputs: [cp], routes: [bolus(oral) -> depot, infusion(iv) -> central, bolus(sc) -> depot], diffeq: |x, p, t, dx, cov| {}, out: |x, p, t, cov, y| {}",
-        )
-        .expect("declaration-first ode input should parse");
-
+    fn rhs_routes_share_inputs_by_kind_local_ordinal() {
+        let input = syn::parse_str::<OdeInput>(&source(
+            "dx[depot] = bolus[oral] + bolus[sc]; dx[central] = infusion[iv];",
+        ))
+        .unwrap();
         let bindings = ode_route_input_bindings(&input.routes);
-
         assert_eq!(dense_index_len(&bindings), 2);
-        assert_eq!(bindings[0].0.name(), "oral");
-        assert_eq!(bindings[0].1, 0);
-        assert_eq!(bindings[1].0.name(), "iv");
-        assert_eq!(bindings[1].1, 0);
-        assert_eq!(bindings[2].0.name(), "sc");
-        assert_eq!(bindings[2].1, 1);
+        assert_eq!(
+            bindings
+                .iter()
+                .map(|(name, index)| (name.name(), *index))
+                .collect::<Vec<_>>(),
+            vec![("oral".into(), 0), ("sc".into(), 1), ("iv".into(), 0)]
+        );
     }
 
     #[test]
-    fn ode_allows_shared_label_across_bolus_and_infusion_routes() {
-        let input = syn::parse_str::<OdeInput>(
-            "name: \"demo\", params: [ke, v], states: [central], outputs: [cp], routes: [bolus(input_1) -> central, infusion(input_1) -> central], diffeq: |x, p, t, dx, cov| {}, out: |x, p, t, cov, y| {}",
-        )
-        .expect("bolus and infusion sharing a label must parse");
-
+    fn supports_shared_labels_and_call_syntax() {
+        let input = syn::parse_str::<OdeInput>(&source(
+            "dx[central] = bolus(input_1) + infusion(input_1);",
+        ))
+        .unwrap();
         assert_eq!(input.routes.len(), 2);
-
-        // Each kind keeps its own input ordinal, so both routes share input 0.
-        let bindings = ode_route_input_bindings(&input.routes);
-        assert_eq!(bindings[0].0.name(), "input_1");
-        assert_eq!(bindings[0].1, 0);
-        assert_eq!(bindings[1].0.name(), "input_1");
-        assert_eq!(bindings[1].1, 0);
+        assert_eq!(dense_index_len(&ode_route_input_bindings(&input.routes)), 1);
     }
 
     #[test]
-    fn ode_rejects_shared_label_within_same_kind() {
-        let error = syn::parse_str::<OdeInput>(
-            "name: \"demo\", params: [ke, v], states: [central], outputs: [cp], routes: [bolus(input_1) -> central, bolus(input_1) -> central], diffeq: |x, p, t, dx, cov| {}, out: |x, p, t, cov, y| {}",
-        )
-        .err()
-        .expect("duplicate bolus routes must fail");
-
-        assert!(error
-            .to_string()
-            .contains("duplicate route `input_1` in declaration-first `ode!`"));
+    fn reuses_infusion_slots_across_derivatives() {
+        let input = syn::parse_str::<OdeInput>(&source(
+            "dx[depot] = infusion[iv]; dx[central] = infusion[iv] * t;",
+        ))
+        .unwrap();
+        assert_eq!(input.routes.len(), 1);
+        assert_eq!(dense_index_len(&ode_route_input_bindings(&input.routes)), 1);
     }
 
     #[test]
-    fn rejects_braced_route_lists() {
-        let error = syn::parse_str::<OdeInput>(
-            "name: \"demo\", params: [ke], states: [central], outputs: [cp], routes: { infusion(iv) -> central }, diffeq: |x, p, t, dx, cov| {}, out: |x, p, t, cov, y| {}",
-        )
-        .err()
-        .expect("braced route lists must fail");
+    fn validates_inferred_destinations() {
+        for equations in [
+            "dx[unknown] = bolus[oral];",
+            "dx[depot] = bolus[oral]; dx[central] = bolus[oral];",
+            "let dose = bolus[oral]; dx[depot] = dose;",
+            "dx[central] = infusion[iv + 1];",
+        ] {
+            assert!(
+                syn::parse_str::<OdeInput>(&source(equations)).is_err(),
+                "{equations}"
+            );
+        }
+    }
 
-        assert!(error
+    #[test]
+    fn retains_named_binding_collision_checks() {
+        let input =
+            source("dx[central] = infusion[iv];").replace("params: [ke]", "params: [central]");
+        assert!(syn::parse_str::<OdeInput>(&input)
+            .err()
+            .unwrap()
             .to_string()
-            .contains("declaration-first macro `routes` must use `[...]`, not `{...}`"));
+            .contains("named parameter binding `central` conflicts"));
     }
 }

@@ -15,9 +15,8 @@ params = ke
 states = central
 outputs = cp, time_echo
 
-infusion(iv) -> central
 
-dx(central) = -ke * central
+dx(central) = infusion(iv) - ke * central
 
 out(cp) = central
 out(time_echo) = t
@@ -31,9 +30,8 @@ params = ke
 states = central
 outputs = cp, time_echo
 
-infusion(iv) -> central
 
-dx(central) = -ke * central
+dx(central) = infusion(iv) - ke * central
 
 out(cp) = central
 out(time_echo) = time

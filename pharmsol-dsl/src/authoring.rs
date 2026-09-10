@@ -192,6 +192,11 @@ impl<'a> AuthoringParser<'a> {
             });
         }
 
+        let kind = self.determine_kind(module_span)?;
+        if kind == ModelKind::Ode {
+            self.lower_ode_inputs()?;
+        }
+
         let surface_routes = std::mem::take(&mut self.routes);
         let route_order = std::mem::take(&mut self.route_order);
         let mut route_modifiers = std::mem::take(&mut self.route_modifiers);
@@ -236,7 +241,6 @@ impl<'a> AuthoringParser<'a> {
             ));
         }
 
-        let kind = self.determine_kind(module_span)?;
         if matches!(kind, ModelKind::Analytical) && !self.derivative_statements.is_empty() {
             return Err(ParseError::new(
                 "analytical models cannot declare `dx(...)` equations",
@@ -259,7 +263,9 @@ impl<'a> AuthoringParser<'a> {
         }
 
         let mut derivative_statements = std::mem::take(&mut self.derivative_statements);
-        inject_infusion_rates(&surface_routes, &routes, &mut derivative_statements);
+        if kind == ModelKind::Sde {
+            inject_infusion_rates(&surface_routes, &routes, &mut derivative_statements);
+        }
 
         let name = self
             .name
@@ -742,6 +748,237 @@ impl<'a> AuthoringParser<'a> {
         ))
     }
 
+    // ODE input syntax lowers to the existing routes, event scales, and rates.
+    // The execution model and simulator do not need a second input mechanism.
+    fn lower_ode_inputs(&mut self) -> Result<(), ParseError> {
+        if let Some(route) = self.routes.values().next() {
+            return Err(ParseError::new(
+                "ODE inputs belong in the derivative RHS: use `bolus(input) * scale` or `infusion(input) * scale`, not a route declaration",
+                route.span,
+            ));
+        }
+        for property in self.route_modifiers.values().flatten() {
+            if property.name.text == "bioavailability" {
+                return Err(ParseError::new(
+                    "ODE models no longer accept `fa(input)`; multiply `bolus(input)` by the scale in the derivative RHS",
+                    property.span,
+                ));
+            }
+        }
+        let mut statements = std::mem::take(&mut self.derivative_statements);
+        self.lower_ode_input_statements(&mut statements, false)?;
+        self.derivative_statements = statements;
+        Ok(())
+    }
+
+    fn lower_ode_input_statements(
+        &mut self,
+        statements: &mut [Stmt],
+        conditional: bool,
+    ) -> Result<(), ParseError> {
+        for statement in statements {
+            match &mut statement.kind {
+                StmtKind::Assign(assign) => {
+                    let AssignTargetKind::Call { callee, args } = &assign.target.kind else {
+                        continue;
+                    };
+                    if callee.text != "ddt" || args.len() != 1 {
+                        continue;
+                    }
+                    let target = &args[0];
+                    let destination = parse_place_at(
+                        &self.src[target.span.start..target.span.end],
+                        target.span.start,
+                    )?;
+                    self.lower_ode_input_expr(&mut assign.value, &destination, conditional)?;
+                }
+                StmtKind::If(branch) => {
+                    self.lower_ode_input_statements(&mut branch.then_branch, true)?;
+                    if let Some(otherwise) = &mut branch.else_branch {
+                        self.lower_ode_input_statements(otherwise, true)?;
+                    }
+                }
+                StmtKind::For(body) => {
+                    self.lower_ode_input_statements(&mut body.body, true)?;
+                }
+                StmtKind::Let(_) => {}
+            }
+        }
+        Ok(())
+    }
+
+    fn lower_ode_input_expr(
+        &mut self,
+        expr: &mut Expr,
+        destination: &Place,
+        conditional: bool,
+    ) -> Result<(), ParseError> {
+        let input_argument = match &expr.kind {
+            ExprKind::Call { callee, args }
+                if matches!(callee.text.as_str(), "bolus" | "infusion") && args.len() == 1 =>
+            {
+                Some(&args[0])
+            }
+            ExprKind::Index { target, index } if matches!(&target.kind, ExprKind::Name(name) if matches!(name.text.as_str(), "bolus" | "infusion")) => {
+                Some(index.as_ref())
+            }
+            _ => None,
+        };
+        if let Some(argument) = input_argument {
+            parse_route_label_segment(
+                &self.src[argument.span.start..argument.span.end],
+                argument.span.start,
+            )?;
+        }
+        if let Some((input, scale)) = scaled_bolus_term(expr) {
+            if conditional {
+                return Err(ParseError::new(
+                    "put conditional bolus scaling in an event-safe derived value, then use one `bolus(input) * scale` term outside the conditional",
+                    expr.span,
+                ));
+            }
+            self.infer_ode_route(
+                input.clone(),
+                SurfaceRouteKind::Bolus,
+                destination,
+                expr.span,
+            )?;
+            if !matches!(scale.kind, ExprKind::Number(1.0)) {
+                self.route_modifiers
+                    .entry(input.text)
+                    .or_default()
+                    .push(Binding {
+                        name: Ident::new("bioavailability", expr.span),
+                        value: scale,
+                        span: expr.span,
+                    });
+            }
+            expr.kind = ExprKind::Number(0.0);
+            return Ok(());
+        }
+        if let Some((kind, input)) = ode_input(expr) {
+            if kind == SurfaceRouteKind::Infusion {
+                self.infer_ode_route(input.clone(), kind, destination, expr.span)?;
+                expr.kind = ExprKind::Call {
+                    callee: Ident::new(RATE_FUNCTION_NAME, expr.span),
+                    args: vec![Expr {
+                        span: input.span,
+                        kind: ExprKind::Name(input),
+                    }],
+                };
+                return Ok(());
+            }
+        }
+        match &mut expr.kind {
+            ExprKind::Binary {
+                op: BinaryOp::Add,
+                lhs,
+                rhs,
+            } => {
+                let had_bolus = contains_bolus(lhs) || contains_bolus(rhs);
+                self.lower_ode_input_expr(lhs, destination, conditional)?;
+                self.lower_ode_input_expr(rhs, destination, conditional)?;
+                if had_bolus && matches!(lhs.kind, ExprKind::Number(0.0)) {
+                    expr.kind = rhs.kind.clone();
+                } else if had_bolus && matches!(rhs.kind, ExprKind::Number(0.0)) {
+                    expr.kind = lhs.kind.clone();
+                }
+            }
+            ExprKind::Binary {
+                op: BinaryOp::Sub,
+                lhs,
+                rhs,
+            } => {
+                let had_bolus = contains_bolus(lhs);
+                self.lower_ode_input_expr(lhs, destination, conditional)?;
+                reject_bolus_term(rhs)?;
+                self.lower_ode_input_expr(rhs, destination, conditional)?;
+                if had_bolus && matches!(lhs.kind, ExprKind::Number(0.0)) {
+                    expr.kind = ExprKind::Unary {
+                        op: UnaryOp::Minus,
+                        expr: rhs.clone(),
+                    };
+                }
+            }
+            _ => {
+                reject_bolus_term(expr)?;
+                match &mut expr.kind {
+                    ExprKind::Unary { expr, .. } => {
+                        self.lower_ode_input_expr(expr, destination, conditional)?
+                    }
+                    ExprKind::Binary { lhs, rhs, .. } => {
+                        self.lower_ode_input_expr(lhs, destination, conditional)?;
+                        self.lower_ode_input_expr(rhs, destination, conditional)?;
+                    }
+                    ExprKind::Call { callee, args } => {
+                        if matches!(
+                            callee.text.as_str(),
+                            "bolus" | "infusion" | RATE_FUNCTION_NAME
+                        ) {
+                            return Err(ParseError::new(
+                                "use `bolus(input_name)` or `infusion(input_name)` in the ODE derivative RHS",
+                                expr.span,
+                            ));
+                        }
+                        for arg in args {
+                            self.lower_ode_input_expr(arg, destination, conditional)?;
+                        }
+                    }
+                    ExprKind::Index { target, index } => {
+                        self.lower_ode_input_expr(target, destination, conditional)?;
+                        self.lower_ode_input_expr(index, destination, conditional)?;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn infer_ode_route(
+        &mut self,
+        input: Ident,
+        kind: SurfaceRouteKind,
+        destination: &Place,
+        span: Span,
+    ) -> Result<(), ParseError> {
+        parse_route_label_segment(&input.text, input.span.start)?;
+        let key = (input.text.clone(), kind);
+        if let Some(existing) = self.routes.get(&key) {
+            if kind == SurfaceRouteKind::Bolus
+                && !expr_matches_place(&place_to_expr(&existing.destination), destination)
+            {
+                return Err(ParseError::new(
+                    format!("input `{}` must have one destination state", input.text),
+                    span,
+                ));
+            }
+            if kind == SurfaceRouteKind::Bolus {
+                return Err(ParseError::new(
+                    format!(
+                        "use one `bolus({}) * scale` term for this input",
+                        input.text
+                    ),
+                    span,
+                ));
+            }
+            // Infusions reuse their rate slot wherever referenced. The first
+            // destination supplies metadata only; it does not inject a rate.
+            return Ok(());
+        }
+        self.route_order.push(key.clone());
+        self.routes.insert(
+            key,
+            SurfaceRoute {
+                input,
+                destination: destination.clone(),
+                kind,
+                span,
+            },
+        );
+        Ok(())
+    }
+
     fn parse_route_line(
         &mut self,
         trimmed: &str,
@@ -1120,6 +1357,94 @@ impl<'a> AuthoringParser<'a> {
         self.first_span.get_or_insert(span);
         self.last_span = Some(span);
     }
+}
+
+fn ode_input(expr: &Expr) -> Option<(SurfaceRouteKind, Ident)> {
+    let (name, argument) = match &expr.kind {
+        ExprKind::Call { callee, args } if args.len() == 1 => (&callee.text, &args[0]),
+        ExprKind::Index { target, index } => {
+            let ExprKind::Name(name) = &target.kind else {
+                return None;
+            };
+            (&name.text, index.as_ref())
+        }
+        _ => return None,
+    };
+    let kind = match name.as_str() {
+        "bolus" => SurfaceRouteKind::Bolus,
+        "infusion" => SurfaceRouteKind::Infusion,
+        _ => return None,
+    };
+    let ExprKind::Name(input) = &argument.kind else {
+        return None;
+    };
+    Some((kind, input.clone()))
+}
+
+fn contains_bolus(expr: &Expr) -> bool {
+    if matches!(ode_input(expr), Some((SurfaceRouteKind::Bolus, _))) {
+        return true;
+    }
+    match &expr.kind {
+        ExprKind::Unary { expr, .. } => contains_bolus(expr),
+        ExprKind::Binary { lhs, rhs, .. } => contains_bolus(lhs) || contains_bolus(rhs),
+        ExprKind::Call { args, .. } => args.iter().any(contains_bolus),
+        ExprKind::Index { target, index } => contains_bolus(target) || contains_bolus(index),
+        _ => false,
+    }
+}
+
+fn reject_bolus_term(expr: &Expr) -> Result<(), ParseError> {
+    if contains_bolus(expr) {
+        return Err(ParseError::new(
+            "bolus inputs must be additive linear terms such as `bolus(input) * scale`; put the scale in an event-safe derived value",
+            expr.span,
+        ));
+    }
+    Ok(())
+}
+
+fn scaled_bolus_term(expr: &Expr) -> Option<(Ident, Expr)> {
+    if let Some((SurfaceRouteKind::Bolus, input)) = ode_input(expr) {
+        return Some((
+            input,
+            Expr {
+                span: expr.span,
+                kind: ExprKind::Number(1.0),
+            },
+        ));
+    }
+    if let ExprKind::Binary {
+        op: BinaryOp::Mul,
+        lhs,
+        rhs,
+    } = &expr.kind
+    {
+        let (input, scale, other) = if !contains_bolus(rhs) {
+            let (input, scale) = scaled_bolus_term(lhs)?;
+            (input, scale, rhs)
+        } else if !contains_bolus(lhs) {
+            let (input, scale) = scaled_bolus_term(rhs)?;
+            (input, scale, lhs)
+        } else {
+            return None;
+        };
+        if matches!(scale.kind, ExprKind::Number(1.0)) {
+            return Some((input, other.as_ref().clone()));
+        }
+        return Some((
+            input,
+            Expr {
+                span: expr.span,
+                kind: ExprKind::Binary {
+                    op: BinaryOp::Mul,
+                    lhs: Box::new(scale),
+                    rhs: other.clone(),
+                },
+            },
+        ));
+    }
+    None
 }
 
 fn inject_infusion_rates(

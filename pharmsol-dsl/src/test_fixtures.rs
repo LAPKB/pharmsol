@@ -139,9 +139,7 @@ params = ka, ke, v
 states = depot, central
 outputs = cp
 
-bolus(oral) -> depot
-
-dx(depot) = -ka * depot
+dx(depot) = bolus(oral) - ka * depot
 dx(central) = ka * depot - ke * central
 
 out(cp) = central / v ~ continuous()
@@ -162,7 +160,7 @@ pub(crate) const RECOMMENDED_STYLE_CANONICAL: &str = r#"model recommended_style 
     bolus oral -> depot
   }
   dynamics {
-    ddt(depot) = -ka * depot
+    ddt(depot) = -(ka * depot)
     ddt(central) = ka * depot - ke * central
   }
   outputs {

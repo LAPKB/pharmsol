@@ -27,9 +27,7 @@ params = ke, v
 states = central
 outputs = cp
 
-infusion(iv) -> central
-
-dx(central) = -ke * central
+dx(central) = infusion(iv) - ke * central
 out(cp) = central / v
 "#;
 
@@ -56,16 +54,45 @@ The main public modules are:
 The parser accepts both canonical `model { ... }` source and the authoring
 shorthand used by the `pharmsol` examples.
 
-## Route Properties And Initial Conditions
+## Inputs And Initial Conditions
 
-Bolus `lag` and `bioavailability` properties may use parameters, constants,
-covariates, time, and derived values that depend only on those inputs. State
-and route-rate dependencies are rejected because route properties are evaluated
-before the event is applied.
+ODE authoring uses `bolus(input) * scale` and `infusion(input) * scale` in the
+`dx(state)` RHS. Routes are inferred. ODE route declarations and `fa(input)`
+assignments are no longer accepted; `lag(input)` remains available. Analytical
+and SDE models keep their route APIs.
 
-An infusion route adds its rate to the destination derivative by default. When
-that derivative explicitly uses `rate(route)`, the explicit expression replaces
-the default contribution instead of adding a second rate term.
+Bolus scales and lag may use parameters, constants, covariates, time, and
+transitively event-safe derived values, but not states or infusion rates. Each
+bolus input has one additive term and one destination. Infusion scales are
+ordinary continuous RHS expressions, and the same infusion rate may be used in
+more than one derivative. No additional input term is injected automatically.
+
+```text
+oral_scale = f * wt / 70
+lag(oral) = tlag
+
+dx(gut) = bolus(oral) * oral_scale - ka * gut
+dx(central) = infusion(iv) * iv_scale + ka * gut - ke * central
+```
+
+`bolus[oral]` and `infusion[iv]` are also accepted. A bolus is a discrete dose,
+not a continuous rate: its term lowers into the existing route and dose-scaling
+machinery. The execution ABI, simulator, and normalized route representation
+stay unchanged. Lag and scale keep their existing evaluation timing.
+
+To migrate an ODE authoring model:
+
+- Remove the `bolus(input) -> state` and `infusion(input) -> state` declarations.
+- Add the corresponding input term to the destination derivative.
+- Move `fa(input)` into the bolus term as a scale, using derived values as needed.
+- Replace explicit `rate(input)` calls with `infusion(input)`.
+- Keep `lag` and initial conditions unchanged. Put conditional bolus scaling in
+  an event-safe derived value, with one bolus term outside the conditional.
+
+The `ode!` macro likewise removes `routes` and `fa` fields. Write
+`bolus[oral] * oral_scale` and `infusion[iv] * iv_scale` inside its `diffeq`
+closure; the macro binds them to the existing simulator input vectors. Both
+three-argument `|x, t, dx|` and five-argument `|x, p, t, dx, cov|` closures remain.
 
 Model initial conditions run before the first event of every occasion.
 

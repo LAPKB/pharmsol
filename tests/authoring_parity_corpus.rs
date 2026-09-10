@@ -24,13 +24,10 @@ covariates = wt @linear
 states = depot, central
 outputs = cp
 
-bolus(oral) -> depot
-infusion(iv) -> central
 lag(oral) = tlag
-fa(oral) = f_oral
 
-dx(depot) = -ka * depot
-dx(central) = ka * depot - (cl / v) * central
+dx(depot) = bolus(oral) * (f_oral) - ka * depot
+dx(central) = infusion(iv) + ka * depot - (cl / v) * central
 
 out(cp) = central / (v * (wt / 70.0)) ~ continuous()
 "#;
@@ -42,8 +39,7 @@ kind = ode
 params = scale
 states = central
 outputs = cp
-infusion(iv) -> central
-dx(central) = rate(iv) * scale
+dx(central) = infusion(iv) * scale
 out(cp) = central
 "#;
 
@@ -56,11 +52,9 @@ covariates = wt @linear
 states = depot, central
 outputs = cp
 
-bolus(oral) -> depot
 lag(oral) = tlag
-fa(oral) = f_oral
 
-dx(depot) = -ka * depot
+dx(depot) = bolus(oral) * (f_oral) - ka * depot
 dx(central) = ka * depot - (cl / v) * central
 
 out(cp) = central / (v * (wt / 70.0)) ~ continuous()
@@ -74,9 +68,8 @@ params = ke, v
 states = central
 outputs = outeq_2, outeq_10, outeq_11
 
-infusion(iv) -> central
 
-dx(central) = -ke * central
+dx(central) = infusion(iv) - ke * central
 
 out(outeq_10) = central / v ~ continuous()
 out(outeq_2) = central / v ~ continuous()
@@ -90,11 +83,9 @@ kind = ode
 states = first, second
 outputs = cp
 
-bolus(input_10) -> first
-bolus(input_11) -> second
 
-dx(first) = 0
-dx(second) = 0
+dx(first) = bolus(input_10) + 0
+dx(second) = bolus(input_11) + 0
 
 out(cp) = first + second ~ continuous()
 "#;
@@ -127,10 +118,9 @@ params = ke, v, tlag
 states = central
 outputs = cp
 
-infusion(iv) -> central
 lag(iv) = tlag
 
-dx(central) = -ke * central
+dx(central) = infusion(iv) - ke * central
 
 out(cp) = central / v ~ continuous()
 "#;
@@ -144,13 +134,10 @@ params = ka, ke, v, tlag, f_oral
 states = depot, central
 outputs = cp
 
-bolus(oral) -> depot
-infusion(iv) -> central
 lag(oral) = tlag
-fa(oral) = f_oral
 
-dx(depot) = -ka * depot
-dx(central) = ka * depot - ke * central
+dx(depot) = bolus(oral) * (f_oral) - ka * depot
+dx(central) = infusion(iv) + ka * depot - ke * central
 
 out(cp) = central / v ~ continuous()
 "#;
@@ -164,9 +151,8 @@ params = ke, v
 states = central
 outputs = cp, outeq_0, outeq_1
 
-infusion(iv) -> central
 
-dx(central) = -ke * central
+dx(central) = infusion(iv) - ke * central
 
 out(cp) = central / v ~ continuous()
 out(outeq_0) = 2 * central / v ~ continuous()
@@ -182,9 +168,8 @@ params = ke, v
 states = central
 outputs = a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10
 
-infusion(iv) -> central
 
-dx(central) = -ke * central
+dx(central) = infusion(iv) - ke * central
 
 out(a0) = central / v ~ continuous()
 out(a1) = central / v ~ continuous()
@@ -208,19 +193,8 @@ params = ke, v
 states = central
 outputs = cp
 
-bolus(r0) -> central
-bolus(r1) -> central
-bolus(r2) -> central
-bolus(r3) -> central
-bolus(r4) -> central
-bolus(r5) -> central
-bolus(r6) -> central
-bolus(r7) -> central
-bolus(r8) -> central
-bolus(r9) -> central
-bolus(r10) -> central
 
-dx(central) = -ke * central
+dx(central) = bolus(r0) + bolus(r1) + bolus(r2) + bolus(r3) + bolus(r4) + bolus(r5) + bolus(r6) + bolus(r7) + bolus(r8) + bolus(r9) + bolus(r10) - ke * central
 
 out(cp) = central / v ~ continuous()
 "#;
@@ -608,19 +582,15 @@ fn macro_ode_model() -> equation::ODE {
         covariates: [wt],
         states: [depot, central],
         outputs: [cp],
-        routes: [
-            bolus(oral) -> depot,
-        ],
+
         diffeq: |x, _p, _t, dx, _cov| {
-            dx[depot] = -ka * x[depot];
+            dx[depot] = bolus[oral] * (f_oral) - ka * x[depot];
             dx[central] = ka * x[depot] - (cl / v) * x[central];
         },
         lag: |_p, _t, _cov| {
             lag! { oral => tlag }
         },
-        fa: |_p, _t, _cov| {
-            fa! { oral => f_oral }
-        },
+
         out: |x, _p, t, cov, y| {
             fetch_cov!(cov, t, wt);
             y[cp] = x[central] / (v * (wt / 70.0));
@@ -704,20 +674,15 @@ fn runtime_shared_input_macro_ode() -> equation::ODE {
         params: [ka, ke, v, tlag, f_oral],
         states: [depot, central],
         outputs: [cp],
-        routes: [
-            bolus(oral) -> depot,
-            infusion(iv) -> central,
-        ],
+
         diffeq: |x, _p, _t, dx, _cov| {
-            dx[depot] = -ka * x[depot];
-            dx[central] = ka * x[depot] - ke * x[central];
+            dx[depot] = bolus[oral] * (f_oral) - ka * x[depot];
+            dx[central] = infusion[iv] + ka * x[depot] - ke * x[central];
         },
         lag: |_p, _t, _cov| {
             lag! { oral => tlag }
         },
-        fa: |_p, _t, _cov| {
-            fa! { oral => f_oral }
-        },
+
         out: |x, _p, _t, _cov, y| {
             y[cp] = x[central] / v;
         },
@@ -1293,7 +1258,13 @@ fn ode_macro_dsl_and_handwritten_metadata_agree_on_macro_authorable_shape() {
     );
 
     assert_eq!(handwritten_view, dsl_view);
-    assert_eq!(macro_view, dsl_view);
+    // The DSL lowers bolus scales to event properties; ode! uses its existing
+    // RHS bolus vector. Public labels, destinations, and lag still agree.
+    let mut macro_expected = dsl_view.clone();
+    for route in &mut macro_expected.routes {
+        route.has_bioavailability = false;
+    }
+    assert_eq!(macro_view, macro_expected);
 }
 
 #[test]
