@@ -24,7 +24,7 @@ use pharmsol_dsl::execution::{
 };
 use pharmsol_dsl::{
     AnalyzedBinaryOp, AnalyzedUnaryOp, ConstValue, Diagnostic, DiagnosticPhase, DiagnosticReport,
-    MathFunction, ModelKind, PharmacometricFunction, Span, ValueType, DSL_BACKEND_GENERIC,
+    MathFunction, ModelKind, Span, UtilityFunctions, ValueType, DSL_BACKEND_GENERIC,
 };
 
 mod externs {
@@ -930,20 +930,16 @@ fn lower_call(
 fn lower_pharmacometric_call(
     builder: &mut FunctionBuilder<'_>,
     env: &EmitEnv<'_>,
-    function: PharmacometricFunction,
+    function: UtilityFunctions,
     args: &[LoweredValue],
     target_ty: ValueType,
     span: Span,
 ) -> Result<LoweredValue, JitCompileError> {
     match function {
-        PharmacometricFunction::GetE2 | PharmacometricFunction::GetE3 => {
+        UtilityFunctions::GetE2 | UtilityFunctions::GetE3 => {
             let (expected, signature, callback) = match function {
-                PharmacometricFunction::GetE2 => {
-                    (5, env.get_e2_signature, env.args.get_e2_callback)
-                }
-                PharmacometricFunction::GetE3 => {
-                    (10, env.get_e3_signature, env.args.get_e3_callback)
-                }
+                UtilityFunctions::GetE2 => (5, env.get_e2_signature, env.args.get_e2_callback),
+                UtilityFunctions::GetE3 => (10, env.get_e3_signature, env.args.get_e3_callback),
             };
             if args.len() != expected {
                 return Err(JitCompileError::new(

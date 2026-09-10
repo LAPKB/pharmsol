@@ -1464,7 +1464,7 @@ impl<'a> Analyzer<'a> {
             });
         }
 
-        if let Some(function) = PharmacometricFunction::from_name(&callee.text) {
+        if let Some(function) = UtilityFunctions::from_name(&callee.text) {
             match function.argument_count() {
                 ArgumentCount::Exact(expected) if expected != args.len() => {
                     return Err(AnalysisError::new(
@@ -1735,7 +1735,7 @@ impl<'a> Analyzer<'a> {
                         callee.span,
                     ));
                 }
-                if let Some(function) = PharmacometricFunction::from_name(&callee.text) {
+                if let Some(function) = UtilityFunctions::from_name(&callee.text) {
                     match function.argument_count() {
                         ArgumentCount::Exact(expected) if expected != args.len() => {
                             return Err(AnalysisError::new(
@@ -2241,7 +2241,7 @@ impl<'a> Analyzer<'a> {
                     Applicability::MaybeIncorrect,
                 ),
         ));
-        candidates.extend(PharmacometricFunction::ALL.into_iter().map(|function| {
+        candidates.extend(UtilityFunctions::ALL.into_iter().map(|function| {
             let name = function.name();
             let ArgumentCount::Exact(argument_count) = function.argument_count();
             SimilarNameCandidate::new(
@@ -4147,7 +4147,7 @@ model get_e2_model {
         assert!(output.value.constant.is_none());
         assert_eq!(
             callee,
-            &AnalyzedCall::Pharmacometric(PharmacometricFunction::GetE2)
+            &AnalyzedCall::Pharmacometric(UtilityFunctions::GetE2)
         );
 
         let execution = crate::compile_analyzed_model(&analyzed).expect("model compiles");
@@ -4167,7 +4167,7 @@ model get_e2_model {
         assert_eq!(args.len(), 5);
         assert_eq!(
             callee,
-            &crate::execution::ExecutionCall::Pharmacometric(PharmacometricFunction::GetE2)
+            &crate::execution::ExecutionCall::Pharmacometric(UtilityFunctions::GetE2)
         );
     }
 
@@ -4270,7 +4270,7 @@ model get_e3_model {
         assert!(output.value.constant.is_none());
         assert_eq!(
             callee,
-            &AnalyzedCall::Pharmacometric(PharmacometricFunction::GetE3)
+            &AnalyzedCall::Pharmacometric(UtilityFunctions::GetE3)
         );
     }
 

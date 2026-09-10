@@ -656,20 +656,20 @@ pub enum AnalyzedBinaryOp {
 #[derive(Debug, Clone, PartialEq)]
 pub enum AnalyzedCall {
     Math(MathFunction),
-    Pharmacometric(PharmacometricFunction),
+    Pharmacometric(UtilityFunctions),
     Rate(SymbolId),
 }
 
-/// Runtime-only pharmacometric functions provided by the main `pharmsol`
+/// Runtime-only utility functions provided by the main `pharmsol`
 /// crate. These calls are represented separately from inexpensive mathematical
 /// intrinsics so compiler-only consumers cannot accidentally evaluate them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PharmacometricFunction {
+pub enum UtilityFunctions {
     GetE2,
     GetE3,
 }
 
-impl PharmacometricFunction {
+impl UtilityFunctions {
     pub const ALL: [Self; 2] = [Self::GetE2, Self::GetE3];
 
     pub const fn name(self) -> &'static str {

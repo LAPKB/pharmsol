@@ -13,8 +13,8 @@ use crate::{
     AnalyzedExprKind, AnalyzedModel, AnalyzedModule, AnalyzedRangeExpr, AnalyzedStatePlace,
     AnalyzedStatementBlock, AnalyzedStmt, AnalyzedStmtKind, AnalyzedUnaryOp, ConstValue,
     CovariateInterpolation, Diagnostic, DiagnosticPhase, DiagnosticReport, MathFunction, ModelKind,
-    PharmacometricFunction, RouteKind, RoutePropertyKind, Span, Symbol, SymbolId, SymbolKind,
-    SymbolType, ValueType, DSL_COMPILE_GENERIC,
+    RouteKind, RoutePropertyKind, Span, Symbol, SymbolId, SymbolKind, SymbolType, UtilityFunctions,
+    ValueType, DSL_COMPILE_GENERIC,
 };
 
 /// Compiles every model in an analyzed module into its ready-to-run form.
@@ -367,7 +367,7 @@ pub enum ExecutionLoad {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExecutionCall {
     Math(MathFunction),
-    Pharmacometric(PharmacometricFunction),
+    Pharmacometric(UtilityFunctions),
 }
 
 #[derive(Clone, PartialEq, Eq)]
