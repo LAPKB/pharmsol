@@ -8,14 +8,15 @@
 //! numeric values such as `1` are preserved as numeric-looking labels.
 
 use crate::data::*;
-use ::csv::{ReaderBuilder, StringRecord};
+use csv::{ReaderBuilder, StringRecord};
 use serde::de::{MapAccess, Visitor};
 use serde::{de, Deserialize, Deserializer};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::str::FromStr;
 
-mod csv;
+#[path = "csv.rs"]
+mod csv_writer;
 mod row;
 
 #[cfg(test)]
@@ -108,13 +109,20 @@ pub(super) fn core_headers() -> impl ExactSizeIterator<Item = &'static str> {
 ///
 /// The parser normalizes header names to lowercase, preserves `INPUT` and
 /// `OUTEQ` as public labels, expands `ADDL` dosing rows through the shared row
-/// ingestion path, and groups rows into occasions using `EVID=4`.
+/// ingestion path, and groups rows into occasions using `EVID=3` or `EVID=4`.
 ///
 /// All columns not claimed by the core Pmetrics schema are treated as
 /// covariates. Column names are read without regard to capitalization. A
 /// covariate header ending in `!` selects carry-forward behavior; otherwise its
 /// values are interpolated. The same covariate cannot be declared in both
-/// forms.
+/// forms. An `EVID=2` row adds covariate values at `TIME` without creating a
+/// dose or observation; `DOSE`, `INPUT`, `OUT`, and `OUTEQ` are not required.
+/// Export uses `EVID=2` for covariate times without a dose or observation.
+///
+/// `EVID=3` starts a new occasion without a dose; `EVID=4` starts one with a dose.
+/// Every occasion may begin with observations or covariates instead of a dose.
+/// Covariates on a reset row belong to the new occasion. Reset-only rows create
+/// no dose or observation event.
 ///
 /// `ADDL`/`II` doses are expanded while reading. Export writes the expanded
 /// doses as individual rows. For `EVID=4`, positive `ADDL` resets at the base
@@ -153,7 +161,7 @@ pub(super) fn core_headers() -> impl ExactSizeIterator<Item = &'static str> {
 /// The parser will:
 /// - Convert all headers to lowercase for case-insensitivity
 /// - Group rows by subject ID
-/// - Create occasions based on EVID=4 events
+/// - Create occasions based on EVID=3 or EVID=4 rows
 /// - Parse covariates and create appropriate interpolations
 /// - Handle additional doses via ADDL and II fields
 /// - Preserve raw `INPUT` and `OUTEQ` labels as strings until model resolution
