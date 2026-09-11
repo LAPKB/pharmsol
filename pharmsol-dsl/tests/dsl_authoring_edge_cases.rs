@@ -49,6 +49,35 @@ out(cp) = central
 }
 
 #[test]
+fn explicit_infusion_rate_is_not_injected_twice() {
+    let default = r#"
+name = default_infusion
+kind = ode
+params = ke
+states = central
+dx(central) = infusion(iv) - ke * central
+out(cp) = central
+"#;
+    let scaled = r#"
+name = scaled_infusion
+kind = ode
+params = ke, scale
+states = central
+dx(central) = infusion(iv) * scale - ke * central
+out(cp) = central
+"#;
+
+    let default = parse_module(default).expect("default infusion model parses");
+    let scaled = parse_module(scaled).expect("scaled infusion model parses");
+    let default = default.to_string();
+    let scaled = scaled.to_string();
+
+    assert_eq!(default.matches("rate(iv)").count(), 1);
+    assert_eq!(scaled.matches("rate(iv)").count(), 1);
+    assert!(scaled.contains("rate(iv) * scale"));
+}
+
+#[test]
 fn rejects_out_target_not_in_declared_outputs() {
     let src = r#"
 name = bimodal_ke
@@ -56,8 +85,7 @@ kind = ode
 params = ke, v
 states = central
 outputs = cpa
-infusion(iv) -> central
-ddt(central) = -ke * central
+ddt(central) = infusion(iv) - ke * central
 out(cp) = central / v ~ continuous()
 "#;
 
@@ -169,8 +197,7 @@ kind = ode
 params = ke, v
 states = central
 outputs = cp, outeq_0, outeq_1
-infusion(iv) -> central
-ddt(central) = -ke * central
+ddt(central) = infusion(iv) - ke * central
 out(cp) = central / v
 out(outeq_0) = 2 * central / v
 out(outeq_1) = 3 * central / v
@@ -217,8 +244,7 @@ kind = ode
 params = ke, v
 states = central
 outputs = outeq_1
-infusion(input_1) -> central
-ddt(central) = -ke * central
+ddt(central) = infusion(input_1) - ke * central
 out(outeq_1) = central / v
 "#;
 
@@ -292,8 +318,7 @@ name = numeric_routes
 kind = ode
 states = central
 outputs = cp
-infusion(1) -> central
-ddt(central) = 0
+ddt(central) = infusion(1) + 0
 out(cp) = central
 "#;
 
@@ -435,10 +460,8 @@ kind = ode
 params = ke, v, tlag
 states = central
 outputs = cp
-bolus(input_1) -> central
-infusion(input_1) -> central
 lag(input_1) = tlag
-ddt(central) = -ke * central
+ddt(central) = bolus(input_1) + infusion(input_1) - ke * central
 out(cp) = central / v
 "#;
 
@@ -481,15 +504,14 @@ name = duplicate_bolus
 kind = ode
 states = central
 outputs = cp
-bolus(input_1) -> central
-bolus(input_1) -> central
-ddt(central) = 0
+ddt(central) = bolus(input_1) + bolus(input_1) + 0
 out(cp) = central
 "#;
 
-    let err = parse_model(src).expect_err("duplicate bolus routes must fail");
+    let err = parse_model(src).expect_err("repeated bolus terms must fail");
     assert!(
-        err.render(src).contains("duplicate route `input_1`"),
+        err.render(src)
+            .contains("use one `bolus(input_1) * scale` term"),
         "{}",
         err.render(src)
     );
@@ -683,8 +705,7 @@ name = wrong_prefix_route
 kind = ode
 states = central
 outputs = cp
-infusion(outeq_1) -> central
-ddt(central) = 0
+ddt(central) = infusion(outeq_1) + 0
 out(cp) = central
 "#;
 
@@ -704,8 +725,7 @@ name = wrong_prefix_output
 kind = ode
 states = central
 outputs = cp
-infusion(iv) -> central
-ddt(central) = 0
+ddt(central) = infusion(iv) + 0
 out(input_1) = central
 "#;
 
@@ -729,8 +749,7 @@ kind = ode
 params = ke
 states = central, iv
 outputs = cp
-infusion(iv) -> central
-ddt(central) = -ke * central
+ddt(central) = infusion(iv) - ke * central
 ddt(iv) = 0
 out(cp) = central
 "#;
@@ -756,11 +775,12 @@ params = ke, v
 states = central
 outputs = cp
 
-infusion(iv) -> centrale
 
 dx(central) = -ke * central
 
 out(cp) = central / v ~ continuous()
+
+dx(centrale) = infusion(iv)
 "#;
 
     let model = parse_model(src).expect("authoring model parses");

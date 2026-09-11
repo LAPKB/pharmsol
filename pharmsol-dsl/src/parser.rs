@@ -1852,8 +1852,7 @@ kind = ode
 params = ke, v
 states = central
 outputs = cpa
-infusion(iv) -> central
-ddt(central) = -ke * central
+ddt(central) = infusion(iv) - ke * central
 out(cp) = central / v ~ continuous()
 "#;
 

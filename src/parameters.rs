@@ -462,9 +462,8 @@ params = ke, v
 states = central
 outputs = cp
 
-bolus(iv) -> central
 
-dx(central) = -ke * central
+dx(central) = bolus(iv) - ke * central
 
 out(cp) = central / v ~ continuous()
 "#;
@@ -489,9 +488,8 @@ params = ke, v
 states = central
 outputs = cp
 
-bolus(iv) -> central
 
-dx(central) = -ke * central
+dx(central) = bolus(iv) - ke * central
 
 out(cp) = central / v ~ continuous()
 "#;

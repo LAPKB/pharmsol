@@ -37,8 +37,6 @@ pub(crate) fn generated_ident(name: &str) -> Ident {
 #[derive(Default)]
 pub(crate) struct ClosureBodyUsage {
     idents: HashSet<String>,
-    indexed_idents: HashSet<String>,
-    assigned_indexed_idents: HashSet<String>,
     contains_macro: bool,
 }
 
@@ -51,18 +49,6 @@ impl ClosureBodyUsage {
 
     pub(crate) fn uses(&self, ident: &Ident) -> bool {
         self.contains_macro || self.idents.contains(&ident.to_string())
-    }
-
-    pub(crate) fn mentions(&self, ident: &Ident) -> bool {
-        self.idents.contains(&ident.to_string())
-    }
-
-    pub(crate) fn indexes(&self, ident: &Ident) -> bool {
-        self.indexed_idents.contains(&ident.to_string())
-    }
-
-    pub(crate) fn assigns_index(&self, ident: &Ident) -> bool {
-        self.assigned_indexed_idents.contains(&ident.to_string())
     }
 }
 
@@ -87,36 +73,6 @@ impl<'ast> Visit<'ast> for ClosureBodyUsage {
     fn visit_stmt_macro(&mut self, stmt_macro: &'ast syn::StmtMacro) {
         self.contains_macro = true;
         syn::visit::visit_stmt_macro(self, stmt_macro);
-    }
-
-    fn visit_expr_index(&mut self, expr_index: &'ast syn::ExprIndex) {
-        if let Expr::Path(expr_path) = expr_index.expr.as_ref() {
-            if expr_path.qself.is_none()
-                && expr_path.path.leading_colon.is_none()
-                && expr_path.path.segments.len() == 1
-            {
-                self.indexed_idents
-                    .insert(expr_path.path.segments[0].ident.to_string());
-            }
-        }
-
-        syn::visit::visit_expr_index(self, expr_index);
-    }
-
-    fn visit_expr_assign(&mut self, expr_assign: &'ast syn::ExprAssign) {
-        if let Expr::Index(expr_index) = expr_assign.left.as_ref() {
-            if let Expr::Path(expr_path) = expr_index.expr.as_ref() {
-                if expr_path.qself.is_none()
-                    && expr_path.path.leading_colon.is_none()
-                    && expr_path.path.segments.len() == 1
-                {
-                    self.assigned_indexed_idents
-                        .insert(expr_path.path.segments[0].ident.to_string());
-                }
-            }
-        }
-
-        syn::visit::visit_expr_assign(self, expr_assign);
     }
 }
 

@@ -297,9 +297,8 @@ params = ke, v
 states = central
 outputs = outeq_2, outeq_10, outeq_11
 
-infusion(iv) -> central
 
-dx(central) = -ke * central
+dx(central) = infusion(iv) - ke * central
 
 out(outeq_10) = central / v ~ continuous()
 out(outeq_2) = central / v ~ continuous()
@@ -314,10 +313,8 @@ params = ke, v
 states = central
 outputs = cp
 
-bolus(input_10) -> central
-bolus(input_11) -> central
 
-dx(central) = -ke * central
+dx(central) = bolus(input_10) + bolus(input_11) - ke * central
 
 out(cp) = central / v ~ continuous()
 "#;
@@ -330,9 +327,8 @@ params = ke, v
 states = central
 outputs = outeq_1
 
-infusion(input_1) -> central
 
-dx(central) = -ke * central
+dx(central) = infusion(input_1) - ke * central
 
 out(outeq_1) = central / v ~ continuous()
 "#;
@@ -345,9 +341,8 @@ params = ke, v
 states = central
 outputs = a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10
 
-infusion(iv) -> central
 
-dx(central) = -ke * central
+dx(central) = infusion(iv) - ke * central
 
 out(a0) = central / v ~ continuous()
 out(a1) = central / v ~ continuous()
@@ -370,19 +365,8 @@ params = ke, v
 states = central
 outputs = cp
 
-bolus(r0) -> central
-bolus(r1) -> central
-bolus(r2) -> central
-bolus(r3) -> central
-bolus(r4) -> central
-bolus(r5) -> central
-bolus(r6) -> central
-bolus(r7) -> central
-bolus(r8) -> central
-bolus(r9) -> central
-bolus(r10) -> central
 
-dx(central) = -ke * central
+dx(central) = bolus(r0) + bolus(r1) + bolus(r2) + bolus(r3) + bolus(r4) + bolus(r5) + bolus(r6) + bolus(r7) + bolus(r8) + bolus(r9) + bolus(r10) - ke * central
 
 out(cp) = central / v ~ continuous()
 "#;

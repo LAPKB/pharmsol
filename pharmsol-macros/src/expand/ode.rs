@@ -3,9 +3,12 @@
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use std::collections::HashSet;
-use syn::{ExprClosure, Ident};
+use syn::{
+    visit_mut::{self, VisitMut},
+    Expr, ExprClosure, Ident,
+};
 
-use super::{covariate_metadata, empty_init, empty_route_map, route_destination_index};
+use super::{covariate_metadata, empty_init, empty_route_map};
 use crate::analysis::{
     closure_param_ident, generated_ident, IndexRewriteTarget, NumericLabelRewriter,
 };
@@ -14,7 +17,7 @@ use crate::bindings::{
     generate_parameter_bindings, generate_supported_input_aliases,
 };
 use crate::crate_path::rewrite_crate_paths;
-use crate::input::OdeInput;
+use crate::input::{ode_rhs_input, OdeInput};
 use crate::symbols::{
     bolus_route_input_bindings, dense_index_len, ode_route_input_bindings, symbolic_index_bindings,
     symbolic_numeric_binding_map, OdeRouteDecl, OdeRouteKind, SymbolicIndex,
@@ -27,7 +30,6 @@ pub(crate) fn expand(input: OdeInput) -> syn::Result<TokenStream2> {
     let route_bindings = ode_route_input_bindings(&input.routes);
     let bolus_route_bindings = bolus_route_input_bindings(&input.routes);
     let lag_routes = route_property_routes(input.lag.as_ref(), "lag", &input.routes)?;
-    let fa_routes = route_property_routes(input.fa.as_ref(), "fa", &input.routes)?;
 
     let diffeq = expand_diffeq(
         &input.diffeq,
@@ -57,16 +59,7 @@ pub(crate) fn expand(input: OdeInput) -> syn::Result<TokenStream2> {
         None => empty_route_map(),
     };
 
-    let fa = match input.fa.as_ref() {
-        Some(closure) => expand_route_map(
-            "fa",
-            closure,
-            &input.params,
-            &input.covariates,
-            &bolus_route_bindings,
-        )?,
-        None => empty_route_map(),
-    };
+    let fa = empty_route_map();
 
     let init = match input.init.as_ref() {
         Some(closure) => expand_init(closure, &input.params, &input.covariates, &input.states)?,
@@ -81,7 +74,7 @@ pub(crate) fn expand(input: OdeInput) -> syn::Result<TokenStream2> {
     let params = &input.params;
     let states = &input.states;
     let outputs = &input.outputs;
-    let routes = expand_route_metadata(&input.routes, &lag_routes, &fa_routes);
+    let routes = expand_route_metadata(&input.routes, &lag_routes);
     let covariates = covariate_metadata(&input.covariates);
 
     let expanded = quote! {{
@@ -144,18 +137,18 @@ fn expand_diffeq(
     let input_aliases = generate_supported_input_aliases(
         diffeq,
         &[&full_inputs, &reduced_inputs],
-        "declaration-first `ode!` injected-route `diffeq` requires either 5 parameters: |x, p, t, dx, cov| or 3 parameters: |x, t, dx|",
+        "declaration-first `ode!` requires `diffeq` to have either 5 parameters: |x, p, t, dx, cov| or 3 parameters: |x, t, dx|",
     )?;
     let parameter_bindings = generate_parameter_bindings(params, diffeq, &p);
     let covariate_bindings = generate_covariate_bindings(covariates, diffeq, &cov, &t);
-    let body = &diffeq.body;
-    let dx_binding = if diffeq.inputs.len() == full_inputs.len() {
-        closure_param_ident(diffeq, 3).unwrap_or_else(|| dx.clone())
-    } else {
-        closure_param_ident(diffeq, 2).unwrap_or_else(|| dx.clone())
-    };
-    let route_terms =
-        expand_injected_route_terms(routes, states, route_bindings, &dx_binding, &bolus, &rateiv);
+    let mut body = diffeq.body.clone();
+    RhsInputRewriter {
+        routes,
+        route_bindings,
+        bolus: &bolus,
+        infusion: &rateiv,
+    }
+    .visit_expr_mut(&mut body);
 
     Ok(quote! {{
         let __pharmsol_diffeq: fn(
@@ -178,7 +171,6 @@ fn expand_diffeq(
             #parameter_bindings
             #covariate_bindings
             #body
-            #route_terms
         };
         __pharmsol_diffeq
     }})
@@ -336,7 +328,6 @@ fn expand_init(
 fn expand_route_metadata(
     routes: &[OdeRouteDecl],
     lag_routes: &HashSet<String>,
-    fa_routes: &HashSet<String>,
 ) -> Vec<TokenStream2> {
     routes
         .iter()
@@ -352,55 +343,47 @@ fn expand_route_metadata(
                     quote! { ::pharmsol::equation::Route::infusion(stringify!(#input)) }
                 }
             };
-            // Lag and bioavailability are bolus-only; when a bolus and an
-            // infusion share a label, the property binds to the bolus route.
+            // Lag is bolus-only, including when input labels are shared.
             let bolus_route = matches!(route.kind, OdeRouteKind::Bolus);
             let lag_flag = if bolus_route && lag_routes.contains(&route_name) {
                 quote! { .with_lag() }
             } else {
                 quote! {}
             };
-            let fa_flag = if bolus_route && fa_routes.contains(&route_name) {
-                quote! { .with_bioavailability() }
-            } else {
-                quote! {}
-            };
-
             quote! {
                 #route_builder
                     .to_state(stringify!(#destination))
                     #lag_flag
-                    #fa_flag
-                    .inject_input_to_destination()
+                    .expect_explicit_input()
             }
         })
         .collect()
 }
 
-fn expand_injected_route_terms(
-    routes: &[OdeRouteDecl],
-    states: &[Ident],
-    route_bindings: &[(SymbolicIndex, usize)],
-    dx: &Ident,
-    bolus: &Ident,
-    rateiv: &Ident,
-) -> TokenStream2 {
-    let terms = routes
-        .iter()
-        .zip(route_bindings.iter())
-        .map(|(route, (_, input_index))| {
-            let destination = route_destination_index(route, states);
-            match route.kind {
-                OdeRouteKind::Bolus => quote! {
-                    #dx[#destination] += #bolus[#input_index];
-                },
-                OdeRouteKind::Infusion => quote! {
-                    #dx[#destination] += #rateiv[#input_index];
-                },
-            }
-        });
+struct RhsInputRewriter<'a> {
+    routes: &'a [OdeRouteDecl],
+    route_bindings: &'a [(SymbolicIndex, usize)],
+    bolus: &'a Ident,
+    infusion: &'a Ident,
+}
 
-    quote! {
-        #(#terms)*
+impl VisitMut for RhsInputRewriter<'_> {
+    fn visit_expr_mut(&mut self, expr: &mut Expr) {
+        if let Ok(Some((kind, input))) = ode_rhs_input(expr) {
+            if let Some((_, (_, index))) = self
+                .routes
+                .iter()
+                .zip(self.route_bindings)
+                .find(|(route, _)| route.kind == kind && route.input.name() == input.name())
+            {
+                let vector = match kind {
+                    OdeRouteKind::Bolus => self.bolus,
+                    OdeRouteKind::Infusion => self.infusion,
+                };
+                *expr = syn::parse_quote!(#vector[#index]);
+                return;
+            }
+        }
+        visit_mut::visit_expr_mut(self, expr);
     }
 }

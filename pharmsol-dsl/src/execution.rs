@@ -1538,13 +1538,10 @@ params = ka, ke, v, tlag, f_oral
 states = depot, central
 outputs = cp
 
-bolus(oral) -> depot
-infusion(iv) -> central
 lag(oral) = tlag
-fa(oral) = f_oral
 
-dx(depot) = -ka * depot
-dx(central) = ka * depot - ke * central
+dx(depot) = bolus(oral) * (f_oral) - ka * depot
+dx(central) = infusion(iv) + ka * depot - ke * central
 
 out(cp) = central / v ~ continuous()
 "#;
@@ -1576,11 +1573,9 @@ params = ke, v
 states = depot, central
 outputs = cp, outeq_2
 
-bolus(input_10) -> depot
-infusion(iv) -> central
 
-dx(depot) = -ke * depot
-dx(central) = rate(input_10) - ke * central
+dx(depot) = bolus(input_10) - ke * depot
+dx(central) = infusion(iv) - ke * central
 
 out(cp) = central / v
 out(outeq_2) = depot / v
@@ -1639,10 +1634,9 @@ params = ke, v, tlag
 states = central
 outputs = cp
 
-infusion(iv) -> central
 lag(iv) = tlag
 
-dx(central) = -ke * central
+dx(central) = infusion(iv) - ke * central
 
 out(cp) = central / v ~ continuous()
 "#;
@@ -1658,30 +1652,23 @@ out(cp) = central / v ~ continuous()
     }
 
     #[test]
-    fn authoring_routes_reject_infusion_bioavailability_properties() {
-        let src = r#"name = invalid_infusion_fa
+    fn authoring_ode_rejects_removed_fa() {
+        let src = r#"name = invalid_ode_fa
 kind = ode
 
 params = ke, v, f_iv
 states = central
 outputs = cp
-
-infusion(iv) -> central
 fa(iv) = f_iv
 
-dx(central) = -ke * central
+dx(central) = infusion(iv) - ke * central
 
 out(cp) = central / v ~ continuous()
 "#;
 
-        let model = crate::parse_model(src).expect("authoring model parses");
-        let analyzed = crate::analyze_model(&model).expect("authoring model analyzes");
-        let error = crate::compile_analyzed_model(&analyzed)
-            .expect_err("infusion bioavailability should fail during compilation");
-
-        assert!(error
-            .to_string()
-            .contains("DSL authoring does not allow `bioavailability` on infusion route `iv`"));
+        let error =
+            crate::parse_model(src).expect_err("ODE fa must fail at the authoring boundary");
+        assert!(error.to_string().contains("no longer accept `fa(input)`"));
     }
 
     #[test]

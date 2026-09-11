@@ -14,19 +14,17 @@ fn macro_ode_model() -> equation::ODE {
         covariates: [wt, renal],
         states: [depot, central, peripheral],
         outputs: [cp],
-        routes: [
-            bolus(oral) -> depot,
-            bolus(load) -> central,
-            infusion(iv) -> central,
-        ],
+
         diffeq: |x, _t, dx| {
+            let fa_scale = (renal / 90.0).powf(0.1);
+
             let wt_scale = (wt / 70.0).powf(0.75);
             let renal_scale = (renal / 90.0).powf(0.25);
             let adjusted_ke = ke * wt_scale * renal_scale;
             let adjusted_kcp = kcp * (wt / 70.0).powf(0.25);
 
-            dx[depot] = -ka * x[depot];
-            dx[central] = ka * x[depot]
+            dx[depot] = bolus[oral] * ((f_oral * fa_scale).clamp(0.0, 1.0)) - ka * x[depot];
+            dx[central] = bolus[load] + infusion[iv] + ka * x[depot]
                 - (adjusted_ke + adjusted_kcp) * x[central]
                 + kpc * x[peripheral];
             dx[peripheral] = adjusted_kcp * x[central] - kpc * x[peripheral];
@@ -35,10 +33,7 @@ fn macro_ode_model() -> equation::ODE {
             let lag_scale = (wt / 70.0).sqrt() * (90.0 / renal).powf(0.1);
             lag! { oral => tlag * lag_scale }
         },
-        fa: |_t| {
-            let fa_scale = (renal / 90.0).powf(0.1);
-            fa! { oral => (f_oral * fa_scale).clamp(0.0, 1.0) }
-        },
+
         init: |_t, x| {
             x[depot] = base_depot + 0.05 * wt;
             x[central] = base_central + 0.1 * renal;
@@ -357,7 +352,24 @@ fn ode_full_feature_macro_matches_handwritten() -> Result<(), pharmsol::Pharmsol
     let handwritten_ode = handwritten_ode_model();
     let macro_metadata = macro_ode.metadata().expect("macro ODE metadata exists");
 
-    assert_eq!(macro_ode.metadata(), handwritten_ode.metadata());
+    let handwritten_metadata = handwritten_ode.metadata().unwrap();
+    assert_eq!(
+        macro_metadata.parameters(),
+        handwritten_metadata.parameters()
+    );
+    assert_eq!(
+        macro_metadata.covariates(),
+        handwritten_metadata.covariates()
+    );
+    assert_eq!(macro_metadata.states(), handwritten_metadata.states());
+    assert_eq!(macro_metadata.outputs(), handwritten_metadata.outputs());
+    assert_eq!(
+        macro_metadata.route_labels(),
+        handwritten_metadata.route_labels()
+    );
+    // ode! now scales boluses in its RHS rather than advertising an fa callback.
+    assert!(!macro_metadata.route("oral").unwrap().has_bioavailability());
+    assert!(macro_metadata.route("oral").unwrap().has_lag());
 
     let oral = macro_metadata
         .route("oral")

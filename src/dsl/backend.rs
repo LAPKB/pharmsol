@@ -829,37 +829,34 @@ impl SharedRuntimeModel {
         session: &mut dyn FunctionSession,
         support_point: &[f64],
         covariates: &Covariates,
-        occasion_index: usize,
         time: f64,
     ) -> Result<Vec<f64>, PharmsolError> {
         let mut state = vec![0.0; self.info.state_len];
-        if occasion_index == 0 {
-            let mut cov_buf = vec![0.0; self.info.covariates.len()];
-            let routes = vec![0.0; self.info.route_len];
-            let mut derived = vec![0.0; self.info.derived_len];
-            self.refresh_derived(
-                session,
-                time,
-                &state,
-                support_point,
-                covariates,
-                &routes,
-                &mut derived,
-                &mut cov_buf,
-            )?;
-            if self.artifact.has_function(ModelFunctionKind::Init) {
-                unsafe {
-                    session.invoke_raw(
-                        ModelFunctionKind::Init,
-                        time,
-                        state.as_ptr(),
-                        support_point.as_ptr(),
-                        cov_buf.as_ptr(),
-                        routes.as_ptr(),
-                        derived.as_ptr(),
-                        state.as_mut_ptr(),
-                    )?;
-                }
+        let mut cov_buf = vec![0.0; self.info.covariates.len()];
+        let routes = vec![0.0; self.info.route_len];
+        let mut derived = vec![0.0; self.info.derived_len];
+        self.refresh_derived(
+            session,
+            time,
+            &state,
+            support_point,
+            covariates,
+            &routes,
+            &mut derived,
+            &mut cov_buf,
+        )?;
+        if self.artifact.has_function(ModelFunctionKind::Init) {
+            unsafe {
+                session.invoke_raw(
+                    ModelFunctionKind::Init,
+                    time,
+                    state.as_ptr(),
+                    support_point.as_ptr(),
+                    cov_buf.as_ptr(),
+                    routes.as_ptr(),
+                    derived.as_ptr(),
+                    state.as_mut_ptr(),
+                )?;
             }
         }
         Ok(state)
@@ -1197,7 +1194,6 @@ impl RuntimeOdeModel {
                         &mut **initial_session,
                         support_point,
                         occasion.covariates(),
-                        occasion.index(),
                         time_origin,
                     )?
                 },
@@ -1477,12 +1473,7 @@ impl EquationPriv for RuntimeOdeModel {
         unimplemented!("process_observation is not used for runtime ODE models")
     }
 
-    fn initial_state(
-        &self,
-        _support_point: &[f64],
-        _covariates: &Covariates,
-        _occasion_index: usize,
-    ) -> Self::S {
+    fn initial_state(&self, _support_point: &[f64], _covariates: &Covariates) -> Self::S {
         V::zeros(self.shared.info.state_len, NalgebraContext::new())
     }
 }
@@ -1653,7 +1644,6 @@ impl RuntimeAnalyticalModel {
                 &mut *session,
                 support_point,
                 occasion.covariates(),
-                occasion.index(),
                 0.0,
             )?;
 
@@ -1881,12 +1871,7 @@ impl EquationPriv for RuntimeAnalyticalModel {
         unimplemented!("process_observation is not used for runtime analytical models")
     }
 
-    fn initial_state(
-        &self,
-        _support_point: &[f64],
-        _covariates: &Covariates,
-        _occasion_index: usize,
-    ) -> Self::S {
+    fn initial_state(&self, _support_point: &[f64], _covariates: &Covariates) -> Self::S {
         V::zeros(self.shared.info.state_len, NalgebraContext::new())
     }
 }
@@ -2056,7 +2041,6 @@ impl RuntimeSdeModel {
                 &mut *session,
                 support_point,
                 occasion.covariates(),
-                occasion.index(),
                 0.0,
             )?;
             let mut particles = (0..self.nparticles)
@@ -2377,12 +2361,7 @@ impl EquationPriv for RuntimeSdeModel {
         unimplemented!("process_observation is not used for runtime SDE models")
     }
 
-    fn initial_state(
-        &self,
-        _support_point: &[f64],
-        _covariates: &Covariates,
-        _occasion_index: usize,
-    ) -> Self::S {
+    fn initial_state(&self, _support_point: &[f64], _covariates: &Covariates) -> Self::S {
         vec![DVector::zeros(self.shared.info.state_len); self.nparticles]
     }
 }

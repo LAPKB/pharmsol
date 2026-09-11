@@ -57,9 +57,7 @@
 //! states = central
 //! outputs = cp
 //!
-//! infusion(iv) -> central
-//!
-//! dx(central) = -ke * central
+//! dx(central) = infusion(iv) - ke * central
 //! out(cp) = central / v
 //! "#;
 //!

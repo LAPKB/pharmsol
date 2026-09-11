@@ -1406,11 +1406,9 @@ params = ka, ke, v
 states = depot, central
 outputs = cp
 
-bolus(oral) -> depot
-infusion(iv) -> central
 
-dx(depot) = -ka * depot
-dx(central) = ka * depot - ke * central
+dx(depot) = bolus(oral) - ka * depot
+dx(central) = infusion(iv) + ka * depot - ke * central
 
 out(cp) = central / v ~ continuous()
 "#;
@@ -1526,11 +1524,9 @@ params = ke, v, tlag
 states = central
 outputs = cp
 
-bolus(input_1) -> central
-infusion(input_1) -> central
 lag(input_1) = tlag
 
-dx(central) = -ke * central
+dx(central) = bolus(input_1) + infusion(input_1) - ke * central
 
 out(cp) = central / v ~ continuous()
 "#;
@@ -1634,11 +1630,9 @@ params = ke, v, tlag
 states = central
 outputs = cp
 
-bolus(input_1) -> central
-infusion(input_1) -> central
 lag(input_1) = tlag
 
-dx(central) = -ke * central
+dx(central) = bolus(input_1) + infusion(input_1) - ke * central
 
 out(cp) = central / v ~ continuous()
 "#;
@@ -1729,13 +1723,10 @@ params = ka, kp, ke, v
 states = gut, peripheral, central
 outputs = cp
 
-bolus(input_1) -> gut
-infusion(input_2) -> peripheral
-infusion(input_1) -> central
 
-ddt(gut) = -ka * gut
-ddt(peripheral) = -kp * peripheral
-ddt(central) = -ke * central
+ddt(gut) = bolus(input_1) - ka * gut
+ddt(peripheral) = infusion(input_2) - kp * peripheral
+ddt(central) = infusion(input_1) - ke * central
 
 out(cp) = central / v ~ continuous()
 "#;
@@ -1846,11 +1837,9 @@ params = ka, ke, v
 states = gut, central
 outputs = cp
 
-bolus(oral) -> gut
-infusion(iv) -> central
 
-ddt(gut) = -ka * gut
-ddt(central) = -ke * central
+ddt(gut) = bolus(oral) - ka * gut
+ddt(central) = infusion(iv) - ke * central
 
 out(cp) = central / v ~ continuous()
 "#;
@@ -1920,9 +1909,8 @@ params = ke, v
 states = central
 outputs = cp
 
-infusion(input_1) -> central
 
-ddt(central) = -ke * central
+ddt(central) = infusion(input_1) - ke * central
 
 out(cp) = central / v ~ continuous()
 "#;
@@ -1974,9 +1962,8 @@ params = ke, v
 states = central
 outputs = cp
 
-bolus(input_0) -> central
 
-ddt(central) = -ke * central
+ddt(central) = bolus(input_0) - ke * central
 
 out(cp) = central / v ~ continuous()
 "#;
