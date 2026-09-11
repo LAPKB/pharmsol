@@ -54,6 +54,20 @@ The main public modules are:
 The parser accepts both canonical `model { ... }` source and the authoring
 shorthand used by the `pharmsol` examples.
 
+## Runtime-only utility functions
+
+The DSL supports the same effect functions as the Rust API:
+
+- `estimate_effect_2(u, v, alpha, h1, h2)` takes five numeric arguments.
+- `estimate_effect_3(a, b, c, alpha12, alpha13, alpha23, alpha123, h1, h2, h3)` takes ten numeric arguments.
+
+These functions calculate a combined effect using supplied interaction
+coefficients; they do not fit those coefficients. Both return real values.
+`pharmsol-dsl` validates and lowers these calls separately from mathematical
+intrinsics but does not evaluate them while folding constants. Execute models
+using these calls through the `pharmsol` runtime, which supplies host callbacks
+to the Rust implementations.
+
 ## Errors
 
 Every stage reports errors with source spans and renders an annotated report

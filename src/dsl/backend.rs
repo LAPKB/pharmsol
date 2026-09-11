@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 
 use diffsol::{
@@ -11,6 +12,7 @@ use rayon::prelude::*;
 
 use cranelift_jit::JITModule;
 use pharmsol_dsl::execution::ModelFunctionKind;
+
 use pharmsol_dsl::{
     AnalyticalKernel, AnalyticalStructureInputKind, AnalyticalStructureInputPlan, ModelKind,
     RouteKind, NUMERIC_ROUTE_PREFIX,
@@ -39,6 +41,14 @@ use crate::{
     Event, Observation, Occasion, Parameters, PharmsolError, Subject, ValidatedModelMetadata,
 };
 
+/// Host callback ABI for the runtime-only two-site effect function.
+pub type EstimateEffect2Callback = extern "C" fn(f64, f64, f64, f64, f64) -> f64;
+
+/// Host callback ABI for the runtime-only three-site effect function.
+pub type EstimateEffect3Callback =
+    extern "C" fn(f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64;
+
+/// ABI for JIT kernels.
 pub type CompiledModelFunction = unsafe extern "C" fn(
     t: f64,
     states: *const f64,
@@ -47,7 +57,42 @@ pub type CompiledModelFunction = unsafe extern "C" fn(
     routes: *const f64,
     derived: *const f64,
     out: *mut f64,
+    estimate_effect_2_callback: EstimateEffect2Callback,
+    estimate_effect_3_callback: EstimateEffect3Callback,
 );
+
+/// The host callback never permits a Rust panic to cross the C ABI.
+pub(crate) extern "C" fn estimate_effect_2_callback(
+    u: f64,
+    v: f64,
+    alpha: f64,
+    h1: f64,
+    h2: f64,
+) -> f64 {
+    catch_unwind(AssertUnwindSafe(|| {
+        crate::estimate_effect_2(u, v, alpha, h1, h2)
+    }))
+    .unwrap_or(f64::NAN)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) extern "C" fn estimate_effect_3_callback(
+    a: f64,
+    b: f64,
+    c: f64,
+    alpha12: f64,
+    alpha13: f64,
+    alpha23: f64,
+    alpha123: f64,
+    h1: f64,
+    h2: f64,
+    h3: f64,
+) -> f64 {
+    catch_unwind(AssertUnwindSafe(|| {
+        crate::estimate_effect_3(a, b, c, alpha12, alpha13, alpha23, alpha123, h1, h2, h3)
+    }))
+    .unwrap_or(f64::NAN)
+}
 
 const DEFAULT_ODE_RTOL: f64 = 1e-4;
 const DEFAULT_ODE_ATOL: f64 = 1e-4;
@@ -183,7 +228,21 @@ impl FunctionSession for RuntimeFunctionSession<'_> {
             ))
         })?;
 
-        unsafe { function(time, states, params, covariates, routes, derived, out) };
+        let estimate_effect_2: EstimateEffect2Callback = estimate_effect_2_callback;
+        let estimate_effect_3: EstimateEffect3Callback = estimate_effect_3_callback;
+        unsafe {
+            function(
+                time,
+                states,
+                params,
+                covariates,
+                routes,
+                derived,
+                out,
+                estimate_effect_2,
+                estimate_effect_3,
+            );
+        }
         Ok(())
     }
 }

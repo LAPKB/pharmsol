@@ -122,7 +122,7 @@ mod test_fixtures;
 pub use crate::data::builder::SubjectBuilderExt;
 pub use crate::data::Interpolation::*;
 pub use crate::data::*;
-pub use crate::optimize::effect::get_e2;
+pub use crate::optimize::effect::{estimate_effect_2, estimate_effect_3};
 pub use crate::optimize::parameters::ParameterOptimizer;
 pub use crate::simulator::equation::analytical::*;
 pub use crate::simulator::equation::metadata;

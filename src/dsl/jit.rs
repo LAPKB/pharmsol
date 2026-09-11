@@ -9,6 +9,8 @@ use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{Linkage, Module};
 
 pub use super::backend::CompiledModelFunction;
+#[cfg(test)]
+use super::backend::{estimate_effect_2_callback, estimate_effect_3_callback};
 use super::backend::{
     RuntimeAnalyticalModel, RuntimeExecutionArtifact, RuntimeOdeModel, RuntimeSdeModel,
 };
@@ -22,7 +24,7 @@ use pharmsol_dsl::execution::{
 };
 use pharmsol_dsl::{
     AnalyzedBinaryOp, AnalyzedUnaryOp, ConstValue, Diagnostic, DiagnosticPhase, DiagnosticReport,
-    MathFunction, ModelKind, Span, ValueType, DSL_BACKEND_GENERIC,
+    MathFunction, ModelKind, Span, UtilityFunctions, ValueType, DSL_BACKEND_GENERIC,
 };
 
 mod externs {
@@ -194,6 +196,8 @@ struct FunctionArgs {
     routes: Value,
     derived: Value,
     out: Value,
+    estimate_effect_2_callback: Value,
+    estimate_effect_3_callback: Value,
 }
 
 #[derive(Clone, Copy)]
@@ -206,6 +210,8 @@ struct EmitEnv<'a> {
     _ptr_ty: Type,
     args: FunctionArgs,
     externs: ExternRefs,
+    estimate_effect_2_signature: codegen::ir::SigRef,
+    estimate_effect_3_signature: codegen::ir::SigRef,
     locals: &'a BTreeMap<usize, LocalBinding>,
 }
 
@@ -447,6 +453,25 @@ fn emit_statement_function(
         routes: params[4],
         derived: params[5],
         out: params[6],
+        estimate_effect_2_callback: params[7],
+        estimate_effect_3_callback: params[8],
+    };
+
+    let estimate_effect_2_signature = {
+        let mut signature = module.make_signature();
+        for _ in 0..5 {
+            signature.params.push(AbiParam::new(types::F64));
+        }
+        signature.returns.push(AbiParam::new(types::F64));
+        builder.func.import_signature(signature)
+    };
+    let estimate_effect_3_signature = {
+        let mut signature = module.make_signature();
+        for _ in 0..10 {
+            signature.params.push(AbiParam::new(types::F64));
+        }
+        signature.returns.push(AbiParam::new(types::F64));
+        builder.func.import_signature(signature)
     };
 
     let externs = ExternRefs {
@@ -483,6 +508,8 @@ fn emit_statement_function(
         _ptr_ty: ptr_ty,
         args,
         externs,
+        estimate_effect_2_signature,
+        estimate_effect_3_signature,
         locals: &locals,
     };
     emit_block(&mut builder, &env, &program.body)?;
@@ -500,7 +527,7 @@ fn dense_function_signature(module: &mut JITModule) -> cranelift::codegen::ir::S
     let mut signature = module.make_signature();
     let ptr_ty = module.target_config().pointer_type();
     signature.params.push(AbiParam::new(types::F64));
-    for _ in 0..6 {
+    for _ in 0..8 {
         signature.params.push(AbiParam::new(ptr_ty));
     }
     signature
@@ -893,6 +920,62 @@ fn lower_call(
     match callee {
         ExecutionCall::Math(intrinsic) => {
             lower_math_call(builder, env, *intrinsic, args, target_ty, span)
+        }
+        ExecutionCall::Pharmacometric(function) => {
+            lower_pharmacometric_call(builder, env, *function, args, target_ty, span)
+        }
+    }
+}
+
+fn lower_pharmacometric_call(
+    builder: &mut FunctionBuilder<'_>,
+    env: &EmitEnv<'_>,
+    function: UtilityFunctions,
+    args: &[LoweredValue],
+    target_ty: ValueType,
+    span: Span,
+) -> Result<LoweredValue, JitCompileError> {
+    match function {
+        UtilityFunctions::EstimateEffect2 | UtilityFunctions::EstimateEffect3 => {
+            let (expected, signature, callback) = match function {
+                UtilityFunctions::EstimateEffect2 => (
+                    5,
+                    env.estimate_effect_2_signature,
+                    env.args.estimate_effect_2_callback,
+                ),
+                UtilityFunctions::EstimateEffect3 => (
+                    10,
+                    env.estimate_effect_3_signature,
+                    env.args.estimate_effect_3_callback,
+                ),
+            };
+            if args.len() != expected {
+                return Err(JitCompileError::new(
+                    format!(
+                        "{} expects exactly {expected} numeric arguments",
+                        function.name()
+                    ),
+                    Some(span),
+                ));
+            }
+            let call_args = args
+                .iter()
+                .map(|arg| cast_value(builder, *arg, ValueType::Real, span))
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .map(|arg| arg.value)
+                .collect::<Vec<_>>();
+            let call = builder.ins().call_indirect(signature, callback, &call_args);
+            let result = builder.inst_results(call)[0];
+            cast_value(
+                builder,
+                LoweredValue {
+                    value: result,
+                    ty: ValueType::Real,
+                },
+                target_ty,
+                span,
+            )
         }
     }
 }
@@ -2028,6 +2111,8 @@ out(cp) = central / v ~ continuous()
                 routes.as_ptr(),
                 derived.as_ptr(),
                 derived.as_mut_ptr(),
+                estimate_effect_2_callback,
+                estimate_effect_3_callback,
             );
             artifact.dynamics.expect("dynamics function present")(
                 0.0,
@@ -2037,6 +2122,8 @@ out(cp) = central / v ~ continuous()
                 routes.as_ptr(),
                 derived.as_ptr(),
                 dx.as_mut_ptr(),
+                estimate_effect_2_callback,
+                estimate_effect_3_callback,
             );
             (artifact.outputs)(
                 0.0,
@@ -2046,6 +2133,8 @@ out(cp) = central / v ~ continuous()
                 routes.as_ptr(),
                 derived.as_ptr(),
                 out.as_mut_ptr(),
+                estimate_effect_2_callback,
+                estimate_effect_3_callback,
             );
         }
 
