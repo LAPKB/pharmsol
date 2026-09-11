@@ -2,10 +2,10 @@
 
 use approx::assert_relative_eq;
 use pharmsol::dsl::{compile_module_source_to_runtime, CompiledRuntimeModel};
-use pharmsol::{get_e2, Parameters, Subject, SubjectBuilderExt};
+use pharmsol::{estimate_effect_2, Parameters, Subject, SubjectBuilderExt};
 
-const GET_E2_MODEL: &str = r#"
-name = get_e2_backend_parity
+const ESTIMATE_EFFECT_2_MODEL: &str = r#"
+name = estimate_effect_2_backend_parity
 kind = ode
 
 params = u, v, alpha, h1, h2
@@ -13,11 +13,11 @@ states = central
 outputs = cp
 
 dx(central) = 0
-out(cp) = get_e2(u, v, alpha, h1, h2)
+out(cp) = estimate_effect_2(u, v, alpha, h1, h2)
 "#;
 
 fn subject() -> Subject {
-    Subject::builder("get_e2_backend_parity")
+    Subject::builder("estimate_effect_2_backend_parity")
         .missing_observation(0.0, "cp")
         .build()
 }
@@ -25,7 +25,7 @@ fn subject() -> Subject {
 fn prediction(model: &CompiledRuntimeModel, parameters: &Parameters) -> f64 {
     model
         .estimate_predictions(&subject(), parameters)
-        .expect("get_e2 runtime prediction")
+        .expect("estimate_effect_2 runtime prediction")
         .into_subject()
         .expect("ODE runtime returns subject predictions")
         .predictions()[0]
@@ -34,25 +34,30 @@ fn prediction(model: &CompiledRuntimeModel, parameters: &Parameters) -> f64 {
 
 fn compile_jit() -> Result<CompiledRuntimeModel, Box<dyn std::error::Error>> {
     Ok(compile_module_source_to_runtime(
-        GET_E2_MODEL,
-        Some("get_e2_backend_parity"),
+        ESTIMATE_EFFECT_2_MODEL,
+        Some("estimate_effect_2_backend_parity"),
         |_, _| {},
     )?)
 }
 
 fn assert_vector(model: &CompiledRuntimeModel, values: &[(&str, f64)], expected: f64, label: &str) {
-    let parameters =
-        Parameters::with_model(model, values.iter().copied()).expect("valid get_e2 parameters");
+    let parameters = Parameters::with_model(model, values.iter().copied())
+        .expect("valid estimate_effect_2 parameters");
     assert_relative_eq!(
         prediction(model, &parameters),
         expected,
         max_relative = 1e-10
     );
-    assert_eq!(model.info().name, "get_e2_backend_parity", "{label}");
+    assert_eq!(
+        model.info().name,
+        "estimate_effect_2_backend_parity",
+        "{label}"
+    );
 }
 
 #[test]
-fn direct_and_jit_get_e2_values_are_identical() -> Result<(), Box<dyn std::error::Error>> {
+fn direct_and_jit_estimate_effect_2_values_are_identical() -> Result<(), Box<dyn std::error::Error>>
+{
     let jit = compile_jit()?;
 
     let vectors = [
@@ -79,7 +84,7 @@ fn direct_and_jit_get_e2_values_are_identical() -> Result<(), Box<dyn std::error
     ];
 
     for (values, expected) in vectors {
-        let direct = get_e2(
+        let direct = estimate_effect_2(
             values[0].1,
             values[1].1,
             values[2].1,

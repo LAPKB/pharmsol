@@ -2,10 +2,10 @@
 
 use approx::assert_relative_eq;
 use pharmsol::dsl::{compile_module_source_to_runtime, CompiledRuntimeModel};
-use pharmsol::{get_e2, get_e3, Parameters, Subject, SubjectBuilderExt};
+use pharmsol::{estimate_effect_2, estimate_effect_3, Parameters, Subject, SubjectBuilderExt};
 
-const GET_E3_MODEL: &str = r#"
-name = get_e3_backend_parity
+const ESTIMATE_EFFECT_3_MODEL: &str = r#"
+name = estimate_effect_3_backend_parity
 kind = ode
 
 params = a, b, c, alpha12, alpha13, alpha23, alpha123, h1, h2, h3
@@ -13,11 +13,11 @@ states = central
 outputs = cp
 
 dx(central) = 0
-out(cp) = get_e3(a, b, c, alpha12, alpha13, alpha23, alpha123, h1, h2, h3)
+out(cp) = estimate_effect_3(a, b, c, alpha12, alpha13, alpha23, alpha123, h1, h2, h3)
 "#;
 
 fn subject() -> Subject {
-    Subject::builder("get_e3_backend_parity")
+    Subject::builder("estimate_effect_3_backend_parity")
         .missing_observation(0.0, "cp")
         .build()
 }
@@ -35,14 +35,14 @@ fn prediction(
 
 fn compile_jit() -> Result<CompiledRuntimeModel, Box<dyn std::error::Error>> {
     Ok(compile_module_source_to_runtime(
-        GET_E3_MODEL,
-        Some("get_e3_backend_parity"),
+        ESTIMATE_EFFECT_3_MODEL,
+        Some("estimate_effect_3_backend_parity"),
         |_, _| {},
     )?)
 }
 
 fn direct(values: &[(&str, f64); 10]) -> f64 {
-    get_e3(
+    estimate_effect_3(
         values[0].1,
         values[1].1,
         values[2].1,
@@ -68,12 +68,17 @@ fn assert_vector(
         expected,
         max_relative = 1e-10
     );
-    assert_eq!(model.info().name, "get_e3_backend_parity", "{label}");
+    assert_eq!(
+        model.info().name,
+        "estimate_effect_3_backend_parity",
+        "{label}"
+    );
     Ok(())
 }
 
 #[test]
-fn direct_and_jit_get_e3_values_are_identical() -> Result<(), Box<dyn std::error::Error>> {
+fn direct_and_jit_estimate_effect_3_values_are_identical() -> Result<(), Box<dyn std::error::Error>>
+{
     let jit = compile_jit()?;
 
     let vectors = [
@@ -124,7 +129,7 @@ fn direct_and_jit_get_e3_values_are_identical() -> Result<(), Box<dyn std::error
     let reduction = vectors[1];
     assert_relative_eq!(
         direct(&reduction),
-        get_e2(
+        estimate_effect_2(
             reduction[1].1,
             reduction[2].1,
             reduction[5].1,

@@ -1,7 +1,7 @@
 //! Maximum-effect optimization for multi-site pharmacodynamic models.
 //!
-//! [`get_e2`] solves the canonical two-site Drusano/Greco equation, while
-//! [`get_e3`] implements the three-site extension described by Snyder et al.
+//! [`estimate_effect_2`] solves the canonical two-site Drusano/Greco equation, while
+//! [`estimate_effect_3`] implements the three-site extension described by Snyder et al.
 //! (PMID 10722511). Both equations are solved in positive `M` space. The
 //! two-site path retains its historical Nelder-Mead and FINDM0 behavior; the
 //! three-site path combines root bracketing with multi-start Nelder-Mead so
@@ -510,17 +510,17 @@ fn select_lower_residual(
 /// # Example
 ///
 /// ```
-/// use pharmsol::get_e2;
+/// use pharmsol::estimate_effect_2;
 ///
 /// // Single-site model: M = u^(1/h1) = 1.
-/// let e2 = get_e2(1.0, 0.0, 0.5, 1.0, 2.0);
+/// let e2 = estimate_effect_2(1.0, 0.0, 0.5, 1.0, 2.0);
 /// assert!((e2 - 0.5).abs() < 1e-10);
 ///
 /// // Equal exponents have a closed-form combined coefficient.
-/// let e2 = get_e2(1.0, 1.0, -0.5, 1.0, 1.0);
+/// let e2 = estimate_effect_2(1.0, 1.0, -0.5, 1.0, 1.0);
 /// assert!((e2 - 0.6).abs() < 1e-6);
 /// ```
-pub fn get_e2(u: f64, v: f64, alpha: f64, h1: f64, h2: f64) -> f64 {
+pub fn estimate_effect_2(u: f64, v: f64, alpha: f64, h1: f64, h2: f64) -> f64 {
     if !(u.is_finite()
         && v.is_finite()
         && alpha.is_finite()
@@ -620,7 +620,7 @@ pub fn get_e2(u: f64, v: f64, alpha: f64, h1: f64, h2: f64) -> f64 {
 /// scales and uses multi-start Nelder-Mead for any remaining least-squares
 /// minima, then returns `M / (1 + M)`.
 /// Each normalized exposure below `1e-5` is treated as zero. Consequently, the
-/// model reduces exactly to [`get_e2`] when one site is absent and to the
+/// model reduces exactly to [`estimate_effect_2`] when one site is absent and to the
 /// corresponding closed-form single-site equation when two sites are absent.
 /// Finite negative interaction parameters are valid and represent antagonism.
 ///
@@ -646,14 +646,14 @@ pub fn get_e2(u: f64, v: f64, alpha: f64, h1: f64, h2: f64) -> f64 {
 /// # Example
 ///
 /// ```
-/// use pharmsol::get_e3;
+/// use pharmsol::estimate_effect_3;
 ///
 /// // With all exponents equal to one, M is the sum of all seven coefficients.
-/// let effect = get_e3(1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0);
+/// let effect = estimate_effect_3(1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0);
 /// assert!((effect - 0.8).abs() < 1e-6);
 /// ```
 #[allow(clippy::too_many_arguments)]
-pub fn get_e3(
+pub fn estimate_effect_3(
     a: f64,
     b: f64,
     c: f64,
@@ -687,9 +687,9 @@ pub fn get_e3(
         (false, true, true) => return single_site_xm(a, h1).map_or(f64::NAN, effect_from_xm),
         (true, false, true) => return single_site_xm(b, h2).map_or(f64::NAN, effect_from_xm),
         (true, true, false) => return single_site_xm(c, h3).map_or(f64::NAN, effect_from_xm),
-        (false, false, true) => return get_e2(a, b, alpha12, h1, h2),
-        (false, true, false) => return get_e2(a, c, alpha13, h1, h3),
-        (true, false, false) => return get_e2(b, c, alpha23, h2, h3),
+        (false, false, true) => return estimate_effect_2(a, b, alpha12, h1, h2),
+        (false, true, false) => return estimate_effect_2(a, c, alpha13, h1, h3),
+        (true, false, false) => return estimate_effect_2(b, c, alpha23, h2, h3),
         (false, false, false) => {}
     }
 
@@ -764,19 +764,19 @@ mod tests {
 
     #[test]
     fn single_site_vectors_match_closed_form() {
-        assert!((get_e2(1.0, 0.0, 7.0, 1.0, 2.0) - 0.5).abs() < 1.0e-12);
+        assert!((estimate_effect_2(1.0, 0.0, 7.0, 1.0, 2.0) - 0.5).abs() < 1.0e-12);
         let expected = 2.0_f64.sqrt() / (1.0 + 2.0_f64.sqrt());
-        assert!((get_e2(0.0, 2.0, -3.0, 1.0, 2.0) - expected).abs() < 1.0e-12);
+        assert!((estimate_effect_2(0.0, 2.0, -3.0, 1.0, 2.0) - expected).abs() < 1.0e-12);
     }
 
     #[test]
     fn dual_exposure_boundary_matches_the_historical_threshold() {
-        assert_eq!(get_e2(0.9e-5, 0.9e-5, f64::MAX, 1.0, 1.0), 0.0);
+        assert_eq!(estimate_effect_2(0.9e-5, 0.9e-5, f64::MAX, 1.0, 1.0), 0.0);
     }
 
     #[test]
-    fn get_e2_preserves_the_historical_optimizer_result() {
-        assert!((get_e2(1.0, 1.0, -0.5, 1.0, 1.0) - 0.6).abs() < 1.0e-10);
+    fn estimate_effect_2_preserves_the_historical_optimizer_result() {
+        assert!((estimate_effect_2(1.0, 1.0, -0.5, 1.0, 1.0) - 0.6).abs() < 1.0e-10);
     }
 
     #[test]
@@ -786,7 +786,7 @@ mod tests {
         let alpha = -0.5;
         let expected_m = u + v + alpha * u * v;
         let expected = expected_m / (1.0 + expected_m);
-        let actual = get_e2(u, v, alpha, 1.0, 1.0);
+        let actual = estimate_effect_2(u, v, alpha, 1.0, 1.0);
         assert!((actual - expected).abs() < 1.0e-6);
     }
 
@@ -799,7 +799,7 @@ mod tests {
         let h2 = 1.0;
         let xm = 0.5;
         assert!(canonical_residual(u, v, alpha, h1, h2, xm).abs() < 1.0e-12);
-        assert!((get_e2(u, v, alpha, h1, h2) - xm / (1.0 + xm)).abs() < 1.0e-6);
+        assert!((estimate_effect_2(u, v, alpha, h1, h2) - xm / (1.0 + xm)).abs() < 1.0e-6);
     }
 
     #[test]
@@ -818,7 +818,7 @@ mod tests {
 
     #[test]
     fn no_positive_root_returns_the_historical_best_candidate() {
-        let effect = get_e2(1.0, 1.0, -3.0, 1.0, 1.0);
+        let effect = estimate_effect_2(1.0, 1.0, -3.0, 1.0, 1.0);
         assert!(effect.is_finite() && (0.0..=1.0).contains(&effect));
 
         let xm = effect / (1.0 - effect);
@@ -827,13 +827,13 @@ mod tests {
     }
 
     #[test]
-    fn get_e3_equal_exponents_match_the_closed_form() {
+    fn estimate_effect_3_equal_exponents_match_the_closed_form() {
         let (a, b, c) = (1.0, 2.0, 0.5);
         let (alpha12, alpha13, alpha23, alpha123) = (0.2, -0.1, 0.3, 0.4);
         let expected_m =
             a + b + c + alpha12 * a * b + alpha13 * a * c + alpha23 * b * c + alpha123 * a * b * c;
         let expected = expected_m / (1.0 + expected_m);
-        let actual = get_e3(a, b, c, alpha12, alpha13, alpha23, alpha123, 1.0, 1.0, 1.0);
+        let actual = estimate_effect_3(a, b, c, alpha12, alpha13, alpha23, alpha123, 1.0, 1.0, 1.0);
         assert!(
             (actual - expected).abs() < 1.0e-6,
             "actual={actual}, expected={expected}"
@@ -841,12 +841,12 @@ mod tests {
     }
 
     #[test]
-    fn get_e3_uses_reciprocal_hill_averages_from_the_published_equation() {
+    fn estimate_effect_3_uses_reciprocal_hill_averages_from_the_published_equation() {
         let exposures = [0.8, 1.1, 0.6];
         let pairwise_alpha = [0.25, -0.1, 0.4];
         let alpha123 = 0.15;
         let exponents = [0.75, 1.4, 2.1];
-        let effect = get_e3(
+        let effect = estimate_effect_3(
             exposures[0],
             exposures[1],
             exposures[2],
@@ -868,10 +868,10 @@ mod tests {
     }
 
     #[test]
-    fn get_e3_finds_the_global_antagonistic_root() {
+    fn estimate_effect_3_finds_the_global_antagonistic_root() {
         // Multiplying the residual by M^3 gives the strictly increasing cubic
         // M^3 - 2M^2 + 3M - 1, which has one positive root near 0.43016.
-        let effect = get_e3(1.0, 1.0, 1.0, -3.0, 0.0, 0.0, 0.0, 1.0, 3.0, 1.0);
+        let effect = estimate_effect_3(1.0, 1.0, 1.0, -3.0, 0.0, 0.0, 0.0, 1.0, 3.0, 1.0);
         assert!(effect.is_finite() && (0.0..1.0).contains(&effect));
         let xm = effect / (1.0 - effect);
         let residual =
@@ -884,44 +884,46 @@ mod tests {
     }
 
     #[test]
-    fn get_e3_reduces_to_the_canonical_lower_order_models() {
-        let expected_bc = get_e2(1.25, 0.75, -0.2, 1.2, 0.8);
+    fn estimate_effect_3_reduces_to_the_canonical_lower_order_models() {
+        let expected_bc = estimate_effect_2(1.25, 0.75, -0.2, 1.2, 0.8);
         assert_eq!(
-            get_e3(1.0e-6, 1.25, 0.75, 8.0, -4.0, -0.2, 3.0, 2.0, 1.2, 0.8,),
+            estimate_effect_3(1.0e-6, 1.25, 0.75, 8.0, -4.0, -0.2, 3.0, 2.0, 1.2, 0.8,),
             expected_bc
         );
 
-        let expected_ac = get_e2(0.8, 1.4, 0.3, 1.1, 0.9);
+        let expected_ac = estimate_effect_2(0.8, 1.4, 0.3, 1.1, 0.9);
         assert_eq!(
-            get_e3(0.8, 1.0e-6, 1.4, -2.0, 0.3, 4.0, -1.0, 1.1, 2.0, 0.9,),
+            estimate_effect_3(0.8, 1.0e-6, 1.4, -2.0, 0.3, 4.0, -1.0, 1.1, 2.0, 0.9,),
             expected_ac
         );
-        let expected_ab = get_e2(0.8, 1.4, -0.3, 1.1, 0.9);
+        let expected_ab = estimate_effect_2(0.8, 1.4, -0.3, 1.1, 0.9);
         assert_eq!(
-            get_e3(0.8, 1.4, 1.0e-6, -0.3, 2.0, -4.0, 1.0, 1.1, 0.9, 2.0,),
+            estimate_effect_3(0.8, 1.4, 1.0e-6, -0.3, 2.0, -4.0, 1.0, 1.1, 0.9, 2.0,),
             expected_ab
         );
 
         let expected_a_xm = 2.0_f64.sqrt();
         let expected_a = expected_a_xm / (1.0 + expected_a_xm);
         assert!(
-            (get_e3(2.0, 0.0, 0.0, 1.0, 2.0, 3.0, 4.0, 2.0, 1.0, 1.5) - expected_a).abs() < 1.0e-15
+            (estimate_effect_3(2.0, 0.0, 0.0, 1.0, 2.0, 3.0, 4.0, 2.0, 1.0, 1.5) - expected_a)
+                .abs()
+                < 1.0e-15
         );
         assert_eq!(
-            get_e3(0.0, 0.0, 0.0, 1.0, 2.0, 3.0, 4.0, 2.0, 1.0, 1.5),
+            estimate_effect_3(0.0, 0.0, 0.0, 1.0, 2.0, 3.0, 4.0, 2.0, 1.0, 1.5),
             0.0
         );
     }
 
     #[test]
-    fn get_e3_is_invariant_to_site_permutation() {
-        let original = get_e3(0.8, 1.1, 0.6, 0.25, -0.1, 0.4, 0.15, 0.75, 1.4, 2.1);
-        let swapped_ab = get_e3(1.1, 0.8, 0.6, 0.25, 0.4, -0.1, 0.15, 1.4, 0.75, 2.1);
+    fn estimate_effect_3_is_invariant_to_site_permutation() {
+        let original = estimate_effect_3(0.8, 1.1, 0.6, 0.25, -0.1, 0.4, 0.15, 0.75, 1.4, 2.1);
+        let swapped_ab = estimate_effect_3(1.1, 0.8, 0.6, 0.25, 0.4, -0.1, 0.15, 1.4, 0.75, 2.1);
         assert!((original - swapped_ab).abs() < 1.0e-8);
     }
 
     #[test]
-    fn get_e3_malformed_inputs_are_total_and_return_nan() {
+    fn estimate_effect_3_malformed_inputs_are_total_and_return_nan() {
         let cases = [
             [f64::NAN, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
             [1.0, 1.0, 1.0, f64::INFINITY, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
@@ -930,7 +932,7 @@ mod tests {
         ];
         for args in cases {
             let result = std::panic::catch_unwind(|| {
-                get_e3(
+                estimate_effect_3(
                     args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7],
                     args[8], args[9],
                 )
@@ -949,8 +951,9 @@ mod tests {
             (1.0, 1.0, 0.0, 0.0, 1.0),
             (-1.0, 1.0, 0.0, 1.0, 1.0),
         ] {
-            let result =
-                std::panic::catch_unwind(|| get_e2(args.0, args.1, args.2, args.3, args.4));
+            let result = std::panic::catch_unwind(|| {
+                estimate_effect_2(args.0, args.1, args.2, args.3, args.4)
+            });
             assert!(result.is_ok());
             assert!(result.expect("call did not panic").is_nan());
         }

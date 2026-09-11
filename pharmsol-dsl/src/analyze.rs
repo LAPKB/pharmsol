@@ -24,8 +24,8 @@ const RESERVED_NAMES: &[&str] = &[
     "ddt",
     "exp",
     "floor",
-    "get_e2",
-    "get_e3",
+    "estimate_effect_2",
+    "estimate_effect_3",
     "lag",
     "linear",
     "ln",
@@ -4114,9 +4114,9 @@ model broken {
     }
 
     #[test]
-    fn get_e2_resolves_as_a_runtime_pharmacometric_call() {
+    fn estimate_effect_2_resolves_as_a_runtime_pharmacometric_call() {
         let source = r#"
-model get_e2_model {
+model estimate_effect_2_model {
     kind ode
     parameters { u, v, alpha, h1, h2 }
     states { central }
@@ -4124,12 +4124,12 @@ model get_e2_model {
         ddt(central) = 0
     }
     outputs {
-        cp = get_e2(u, v, alpha, h1, h2)
+        cp = estimate_effect_2(u, v, alpha, h1, h2)
     }
 }
 "#;
         let model = crate::parse_model(source).expect("model parses");
-        let analyzed = analyze_model(&model).expect("get_e2 model analyzes");
+        let analyzed = analyze_model(&model).expect("estimate_effect_2 model analyzes");
         let output = &analyzed
             .outputs_block
             .statements
@@ -4140,14 +4140,14 @@ model get_e2_model {
             panic!("expected output assignment");
         };
         let AnalyzedExprKind::Call { callee, args } = &output.value.kind else {
-            panic!("expected get_e2 call");
+            panic!("expected estimate_effect_2 call");
         };
         assert_eq!(args.len(), 5);
         assert_eq!(output.value.ty, ValueType::Real);
         assert!(output.value.constant.is_none());
         assert_eq!(
             callee,
-            &AnalyzedCall::Pharmacometric(UtilityFunctions::GetE2)
+            &AnalyzedCall::Pharmacometric(UtilityFunctions::EstimateEffect2)
         );
 
         let execution = crate::compile_analyzed_model(&analyzed).expect("model compiles");
@@ -4162,50 +4162,51 @@ model get_e2_model {
             panic!("expected execution assignment");
         };
         let crate::execution::ExecutionExprKind::Call { callee, args } = &assign.value.kind else {
-            panic!("expected execution get_e2 call");
+            panic!("expected execution estimate_effect_2 call");
         };
         assert_eq!(args.len(), 5);
         assert_eq!(
             callee,
-            &crate::execution::ExecutionCall::Pharmacometric(UtilityFunctions::GetE2)
+            &crate::execution::ExecutionCall::Pharmacometric(UtilityFunctions::EstimateEffect2)
         );
     }
 
     #[test]
-    fn get_e2_requires_exactly_five_numeric_arguments() {
+    fn estimate_effect_2_requires_exactly_five_numeric_arguments() {
         let source = r#"
-model broken_get_e2 {
+model broken_estimate_effect_2 {
     kind ode
     states { central }
     dynamics {
         ddt(central) = 0
     }
     outputs {
-        cp = get_e2(1, 2, 3, 4)
+        cp = estimate_effect_2(1, 2, 3, 4)
     }
 }
 "#;
         let model = crate::parse_model(source).expect("model parses");
-        let error = analyze_model(&model).expect_err("wrong get_e2 arity must fail");
+        let error = analyze_model(&model).expect_err("wrong estimate_effect_2 arity must fail");
         assert!(error
             .render(source)
-            .contains("function `get_e2` expects 5 argument(s), got 4"));
+            .contains("function `estimate_effect_2` expects 5 argument(s), got 4"));
 
         let source = source.replace("4)", "4, true)");
         let model = crate::parse_model(&source).expect("model parses");
-        let error = analyze_model(&model).expect_err("boolean get_e2 argument must fail");
+        let error =
+            analyze_model(&model).expect_err("boolean estimate_effect_2 argument must fail");
         assert!(error
             .render(&source)
-            .contains("`get_e2` argument must be numeric"));
+            .contains("`estimate_effect_2` argument must be numeric"));
     }
 
     #[test]
-    fn get_e2_is_runtime_only_in_constants() {
+    fn estimate_effect_2_is_runtime_only_in_constants() {
         let source = r#"
-model constant_get_e2 {
+model constant_estimate_effect_2 {
     kind ode
     constants {
-        value = get_e2(1, 1, 0, 1, 1)
+        value = estimate_effect_2(1, 1, 0, 1, 1)
     }
     states { central }
     dynamics {
@@ -4217,35 +4218,56 @@ model constant_get_e2 {
 }
 "#;
         let model = crate::parse_model(source).expect("model parses");
-        let error = analyze_model(&model).expect_err("constant get_e2 must fail cleanly");
-        assert!(error
-            .render(source)
-            .contains("`get_e2` is runtime-only and cannot appear in a compile-time expression"));
+        let error =
+            analyze_model(&model).expect_err("constant estimate_effect_2 must fail cleanly");
+        assert!(error.render(source).contains(
+            "`estimate_effect_2` is runtime-only and cannot appear in a compile-time expression"
+        ));
     }
 
     #[test]
-    fn get_e2_name_resolution_is_exact() {
+    fn old_effect_names_are_not_aliases() {
+        for (name, args) in [
+            ("get_e2", "1, 1, 0, 1, 1"),
+            ("get_e3", "1, 1, 1, 0, 0, 0, 0, 1, 1, 1"),
+        ] {
+            let source = format!(
+                "name = removed_effect_name\nkind = ode\nstates = central\ndx(central) = 0\nout(cp) = {name}({args})\n"
+            );
+            let model = crate::parse_model(&source).expect("model syntax is valid");
+            let error = analyze_model(&model).expect_err("old effect names must not resolve");
+            assert!(error
+                .render(&source)
+                .contains(&format!("unknown function `{name}`")));
+            assert!(UtilityFunctions::from_name(name).is_none());
+        }
+    }
+
+    #[test]
+    fn estimate_effect_2_name_resolution_is_exact() {
         let source = r#"
-model case_sensitive_get_e2 {
+model case_sensitive_estimate_effect_2 {
     kind ode
     states { central }
     dynamics {
         ddt(central) = 0
     }
     outputs {
-        cp = GET_E2(1, 1, 0, 1, 1)
+        cp = ESTIMATE_EFFECT_2(1, 1, 0, 1, 1)
     }
 }
 "#;
         let model = crate::parse_model(source).expect("model parses");
         let error = analyze_model(&model).expect_err("case variant must not resolve");
-        assert!(error.render(source).contains("unknown function `GET_E2`"));
+        assert!(error
+            .render(source)
+            .contains("unknown function `ESTIMATE_EFFECT_2`"));
     }
 
     #[test]
-    fn get_e3_resolves_as_a_ten_argument_runtime_call() {
+    fn estimate_effect_3_resolves_as_a_ten_argument_runtime_call() {
         let source = r#"
-model get_e3_model {
+model estimate_effect_3_model {
     kind ode
     parameters { a, b, c, alpha12, alpha13, alpha23, alpha123, h1, h2, h3 }
     states { central }
@@ -4253,62 +4275,63 @@ model get_e3_model {
         ddt(central) = 0
     }
     outputs {
-        cp = get_e3(a, b, c, alpha12, alpha13, alpha23, alpha123, h1, h2, h3)
+        cp = estimate_effect_3(a, b, c, alpha12, alpha13, alpha23, alpha123, h1, h2, h3)
     }
 }
 "#;
         let model = crate::parse_model(source).expect("model parses");
-        let analyzed = analyze_model(&model).expect("get_e3 model analyzes");
+        let analyzed = analyze_model(&model).expect("estimate_effect_3 model analyzes");
         let AnalyzedStmtKind::Assign(output) = &analyzed.outputs_block.statements[0].kind else {
             panic!("expected output assignment");
         };
         let AnalyzedExprKind::Call { callee, args } = &output.value.kind else {
-            panic!("expected get_e3 call");
+            panic!("expected estimate_effect_3 call");
         };
         assert_eq!(args.len(), 10);
         assert_eq!(output.value.ty, ValueType::Real);
         assert!(output.value.constant.is_none());
         assert_eq!(
             callee,
-            &AnalyzedCall::Pharmacometric(UtilityFunctions::GetE3)
+            &AnalyzedCall::Pharmacometric(UtilityFunctions::EstimateEffect3)
         );
     }
 
     #[test]
-    fn get_e3_requires_exactly_ten_numeric_arguments() {
+    fn estimate_effect_3_requires_exactly_ten_numeric_arguments() {
         let source = r#"
-model broken_get_e3 {
+model broken_estimate_effect_3 {
     kind ode
     states { central }
     dynamics {
         ddt(central) = 0
     }
     outputs {
-        cp = get_e3(1, 1, 1, 0, 0, 0, 0, 1, 1)
+        cp = estimate_effect_3(1, 1, 1, 0, 0, 0, 0, 1, 1)
     }
 }
 "#;
         let model = crate::parse_model(source).expect("model parses");
-        let error = analyze_model(&model).expect_err("wrong get_e3 arity must fail");
+        let error = analyze_model(&model).expect_err("wrong estimate_effect_3 arity must fail");
         assert!(error
             .render(source)
-            .contains("function `get_e3` expects 10 argument(s), got 9"));
+            .contains("function `estimate_effect_3` expects 10 argument(s), got 9"));
 
         let source = source.replace("1, 1)", "1, 1, true)");
         let model = crate::parse_model(&source).expect("model parses");
-        let error = analyze_model(&model).expect_err("boolean get_e3 argument must fail");
+        let error =
+            analyze_model(&model).expect_err("boolean estimate_effect_3 argument must fail");
         assert!(error
             .render(&source)
-            .contains("`get_e3` argument must be numeric"));
+            .contains("`estimate_effect_3` argument must be numeric"));
     }
 
     #[test]
-    fn get_e3_is_runtime_only_and_case_sensitive() {
+    fn estimate_effect_3_is_runtime_only_and_case_sensitive() {
         let constant_source = r#"
-model constant_get_e3 {
+model constant_estimate_effect_3 {
     kind ode
     constants {
-        value = get_e3(1, 1, 1, 0, 0, 0, 0, 1, 1, 1)
+        value = estimate_effect_3(1, 1, 1, 0, 0, 0, 0, 1, 1, 1)
     }
     states { central }
     dynamics {
@@ -4320,21 +4343,22 @@ model constant_get_e3 {
 }
 "#;
         let model = crate::parse_model(constant_source).expect("model parses");
-        let error = analyze_model(&model).expect_err("constant get_e3 must fail cleanly");
-        assert!(error
-            .render(constant_source)
-            .contains("`get_e3` is runtime-only and cannot appear in a compile-time expression"));
+        let error =
+            analyze_model(&model).expect_err("constant estimate_effect_3 must fail cleanly");
+        assert!(error.render(constant_source).contains(
+            "`estimate_effect_3` is runtime-only and cannot appear in a compile-time expression"
+        ));
 
         let case_source = constant_source
             .replace(
-                "constants {\n        value = get_e3(1, 1, 1, 0, 0, 0, 0, 1, 1, 1)\n    }",
+                "constants {\n        value = estimate_effect_3(1, 1, 1, 0, 0, 0, 0, 1, 1, 1)\n    }",
                 "",
             )
-            .replace("cp = central", "cp = GET_E3(1, 1, 1, 0, 0, 0, 0, 1, 1, 1)");
+            .replace("cp = central", "cp = ESTIMATE_EFFECT_3(1, 1, 1, 0, 0, 0, 0, 1, 1, 1)");
         let model = crate::parse_model(&case_source).expect("model parses");
         let error = analyze_model(&model).expect_err("case variant must not resolve");
         assert!(error
             .render(&case_source)
-            .contains("unknown function `GET_E3`"));
+            .contains("unknown function `ESTIMATE_EFFECT_3`"));
     }
 }

@@ -665,32 +665,32 @@ pub enum AnalyzedCall {
 /// intrinsics so compiler-only consumers cannot accidentally evaluate them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UtilityFunctions {
-    GetE2,
-    GetE3,
+    EstimateEffect2,
+    EstimateEffect3,
 }
 
 impl UtilityFunctions {
-    pub const ALL: [Self; 2] = [Self::GetE2, Self::GetE3];
+    pub const ALL: [Self; 2] = [Self::EstimateEffect2, Self::EstimateEffect3];
 
     pub const fn name(self) -> &'static str {
         match self {
-            Self::GetE2 => "get_e2",
-            Self::GetE3 => "get_e3",
+            Self::EstimateEffect2 => "estimate_effect_2",
+            Self::EstimateEffect3 => "estimate_effect_3",
         }
     }
 
     pub fn from_name(name: &str) -> Option<Self> {
         match name {
-            "get_e2" => Some(Self::GetE2),
-            "get_e3" => Some(Self::GetE3),
+            "estimate_effect_2" => Some(Self::EstimateEffect2),
+            "estimate_effect_3" => Some(Self::EstimateEffect3),
             _ => None,
         }
     }
 
     pub const fn argument_count(self) -> ArgumentCount {
         match self {
-            Self::GetE2 => ArgumentCount::Exact(5),
-            Self::GetE3 => ArgumentCount::Exact(10),
+            Self::EstimateEffect2 => ArgumentCount::Exact(5),
+            Self::EstimateEffect3 => ArgumentCount::Exact(10),
         }
     }
 }

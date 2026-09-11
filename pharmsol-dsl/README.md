@@ -56,18 +56,24 @@ The main public modules are:
 The parser accepts both canonical `model { ... }` source and the authoring
 shorthand used by the `pharmsol` examples.
 
-## Runtime-only pharmacometric functions
+## Runtime-only utility functions
 
-The DSL recognizes `get_e2(u, v, alpha, h1, h2)` as a five-argument,
-real-valued pharmacometric call. It is intentionally represented separately
-from mathematical intrinsics: `pharmsol-dsl` validates and lowers the call but
-does not evaluate it while folding constants. A model using it must be executed
-through a `pharmsol` runtime backend, which supplies the host callback and the
-canonical `pharmsol::get_e2` implementation.
+The DSL supports the same effect functions as the Rust API:
 
-This is a breaking five-argument API migration from the old
-`get_e2(a, b, w, h1, h2, alpha_s)` form. Pass `alpha` as the third argument;
-`w = alpha * u * v` is computed by the runtime.
+- `estimate_effect_2(u, v, alpha, h1, h2)` takes five numeric arguments.
+- `estimate_effect_3(a, b, c, alpha12, alpha13, alpha23, alpha123, h1, h2, h3)` takes ten numeric arguments.
+
+These functions calculate a combined effect using supplied interaction
+coefficients; they do not fit those coefficients. Both return real values.
+`pharmsol-dsl` validates and lowers these calls separately from mathematical
+intrinsics but does not evaluate them while folding constants. Execute models
+using these calls through the `pharmsol` runtime, which supplies host callbacks
+to the Rust implementations.
+
+Replace `get_e2` and `get_e3` with these names in both Rust and DSL code; the old
+names are not retained as aliases. When migrating the former six-argument
+`get_e2(a, b, w, h1, h2, alpha_s)` call to `estimate_effect_2`, pass `alpha` as the
+third argument. The runtime computes `w = alpha * u * v`.
 
 ## Errors
 

@@ -10,7 +10,7 @@ use cranelift_module::{Linkage, Module};
 
 pub use super::backend::CompiledModelFunction;
 #[cfg(test)]
-use super::backend::{get_e2_callback, get_e3_callback};
+use super::backend::{estimate_effect_2_callback, estimate_effect_3_callback};
 use super::backend::{
     RuntimeAnalyticalModel, RuntimeExecutionArtifact, RuntimeOdeModel, RuntimeSdeModel,
 };
@@ -196,8 +196,8 @@ struct FunctionArgs {
     routes: Value,
     derived: Value,
     out: Value,
-    get_e2_callback: Value,
-    get_e3_callback: Value,
+    estimate_effect_2_callback: Value,
+    estimate_effect_3_callback: Value,
 }
 
 #[derive(Clone, Copy)]
@@ -210,8 +210,8 @@ struct EmitEnv<'a> {
     _ptr_ty: Type,
     args: FunctionArgs,
     externs: ExternRefs,
-    get_e2_signature: codegen::ir::SigRef,
-    get_e3_signature: codegen::ir::SigRef,
+    estimate_effect_2_signature: codegen::ir::SigRef,
+    estimate_effect_3_signature: codegen::ir::SigRef,
     locals: &'a BTreeMap<usize, LocalBinding>,
 }
 
@@ -453,11 +453,11 @@ fn emit_statement_function(
         routes: params[4],
         derived: params[5],
         out: params[6],
-        get_e2_callback: params[7],
-        get_e3_callback: params[8],
+        estimate_effect_2_callback: params[7],
+        estimate_effect_3_callback: params[8],
     };
 
-    let get_e2_signature = {
+    let estimate_effect_2_signature = {
         let mut signature = module.make_signature();
         for _ in 0..5 {
             signature.params.push(AbiParam::new(types::F64));
@@ -465,7 +465,7 @@ fn emit_statement_function(
         signature.returns.push(AbiParam::new(types::F64));
         builder.func.import_signature(signature)
     };
-    let get_e3_signature = {
+    let estimate_effect_3_signature = {
         let mut signature = module.make_signature();
         for _ in 0..10 {
             signature.params.push(AbiParam::new(types::F64));
@@ -508,8 +508,8 @@ fn emit_statement_function(
         _ptr_ty: ptr_ty,
         args,
         externs,
-        get_e2_signature,
-        get_e3_signature,
+        estimate_effect_2_signature,
+        estimate_effect_3_signature,
         locals: &locals,
     };
     emit_block(&mut builder, &env, &program.body)?;
@@ -936,10 +936,18 @@ fn lower_pharmacometric_call(
     span: Span,
 ) -> Result<LoweredValue, JitCompileError> {
     match function {
-        UtilityFunctions::GetE2 | UtilityFunctions::GetE3 => {
+        UtilityFunctions::EstimateEffect2 | UtilityFunctions::EstimateEffect3 => {
             let (expected, signature, callback) = match function {
-                UtilityFunctions::GetE2 => (5, env.get_e2_signature, env.args.get_e2_callback),
-                UtilityFunctions::GetE3 => (10, env.get_e3_signature, env.args.get_e3_callback),
+                UtilityFunctions::EstimateEffect2 => (
+                    5,
+                    env.estimate_effect_2_signature,
+                    env.args.estimate_effect_2_callback,
+                ),
+                UtilityFunctions::EstimateEffect3 => (
+                    10,
+                    env.estimate_effect_3_signature,
+                    env.args.estimate_effect_3_callback,
+                ),
             };
             if args.len() != expected {
                 return Err(JitCompileError::new(
@@ -2116,8 +2124,8 @@ out(cp) = central / v ~ continuous()
                 routes.as_ptr(),
                 derived.as_ptr(),
                 derived.as_mut_ptr(),
-                get_e2_callback,
-                get_e3_callback,
+                estimate_effect_2_callback,
+                estimate_effect_3_callback,
             );
             artifact.dynamics.expect("dynamics function present")(
                 0.0,
@@ -2127,8 +2135,8 @@ out(cp) = central / v ~ continuous()
                 routes.as_ptr(),
                 derived.as_ptr(),
                 dx.as_mut_ptr(),
-                get_e2_callback,
-                get_e3_callback,
+                estimate_effect_2_callback,
+                estimate_effect_3_callback,
             );
             (artifact.outputs)(
                 0.0,
@@ -2138,8 +2146,8 @@ out(cp) = central / v ~ continuous()
                 routes.as_ptr(),
                 derived.as_ptr(),
                 out.as_mut_ptr(),
-                get_e2_callback,
-                get_e3_callback,
+                estimate_effect_2_callback,
+                estimate_effect_3_callback,
             );
         }
 

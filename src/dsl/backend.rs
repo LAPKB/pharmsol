@@ -42,10 +42,11 @@ use crate::{
 };
 
 /// Host callback ABI for the runtime-only two-site effect function.
-pub type GetE2Callback = extern "C" fn(f64, f64, f64, f64, f64) -> f64;
+pub type EstimateEffect2Callback = extern "C" fn(f64, f64, f64, f64, f64) -> f64;
 
 /// Host callback ABI for the runtime-only three-site effect function.
-pub type GetE3Callback = extern "C" fn(f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64;
+pub type EstimateEffect3Callback =
+    extern "C" fn(f64, f64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64;
 
 /// ABI for JIT kernels.
 pub type CompiledModelFunction = unsafe extern "C" fn(
@@ -56,17 +57,26 @@ pub type CompiledModelFunction = unsafe extern "C" fn(
     routes: *const f64,
     derived: *const f64,
     out: *mut f64,
-    get_e2_callback: GetE2Callback,
-    get_e3_callback: GetE3Callback,
+    estimate_effect_2_callback: EstimateEffect2Callback,
+    estimate_effect_3_callback: EstimateEffect3Callback,
 );
 
 /// The host callback never permits a Rust panic to cross the C ABI.
-pub(crate) extern "C" fn get_e2_callback(u: f64, v: f64, alpha: f64, h1: f64, h2: f64) -> f64 {
-    catch_unwind(AssertUnwindSafe(|| crate::get_e2(u, v, alpha, h1, h2))).unwrap_or(f64::NAN)
+pub(crate) extern "C" fn estimate_effect_2_callback(
+    u: f64,
+    v: f64,
+    alpha: f64,
+    h1: f64,
+    h2: f64,
+) -> f64 {
+    catch_unwind(AssertUnwindSafe(|| {
+        crate::estimate_effect_2(u, v, alpha, h1, h2)
+    }))
+    .unwrap_or(f64::NAN)
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) extern "C" fn get_e3_callback(
+pub(crate) extern "C" fn estimate_effect_3_callback(
     a: f64,
     b: f64,
     c: f64,
@@ -79,7 +89,7 @@ pub(crate) extern "C" fn get_e3_callback(
     h3: f64,
 ) -> f64 {
     catch_unwind(AssertUnwindSafe(|| {
-        crate::get_e3(a, b, c, alpha12, alpha13, alpha23, alpha123, h1, h2, h3)
+        crate::estimate_effect_3(a, b, c, alpha12, alpha13, alpha23, alpha123, h1, h2, h3)
     }))
     .unwrap_or(f64::NAN)
 }
@@ -218,11 +228,19 @@ impl FunctionSession for RuntimeFunctionSession<'_> {
             ))
         })?;
 
-        let get_e2: GetE2Callback = get_e2_callback;
-        let get_e3: GetE3Callback = get_e3_callback;
+        let estimate_effect_2: EstimateEffect2Callback = estimate_effect_2_callback;
+        let estimate_effect_3: EstimateEffect3Callback = estimate_effect_3_callback;
         unsafe {
             function(
-                time, states, params, covariates, routes, derived, out, get_e2, get_e3,
+                time,
+                states,
+                params,
+                covariates,
+                routes,
+                derived,
+                out,
+                estimate_effect_2,
+                estimate_effect_3,
             );
         }
         Ok(())

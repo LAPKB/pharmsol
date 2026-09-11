@@ -64,8 +64,8 @@
 //! ```
 //!
 //! Runtime-only pharmacometric calls use the same backend-neutral path. The
-//! DSL supports five-argument `get_e2(u, v, alpha, h1, h2)` and ten-argument
-//! `get_e3(a, b, c, alpha12, alpha13, alpha23, alpha123, h1, h2, h3)`. JIT
+//! DSL supports five-argument `estimate_effect_2(u, v, alpha, h1, h2)` and ten-argument
+//! `estimate_effect_3(a, b, c, alpha12, alpha13, alpha23, alpha123, h1, h2, h3)`. JIT
 //! kernels receive host callbacks and never embed either optimizer.
 //! The E2 runtime computes `w = alpha * u * v`, which is the breaking-change
 //! migration from the former six-argument call.
@@ -80,8 +80,8 @@ mod model_info;
 mod runtime;
 
 pub use backend::{
-    CompiledModelFunction, GetE2Callback, GetE3Callback, RuntimeAnalyticalModel,
-    RuntimeExecutionArtifact, RuntimeOdeModel, RuntimeSdeModel,
+    CompiledModelFunction, EstimateEffect2Callback, EstimateEffect3Callback,
+    RuntimeAnalyticalModel, RuntimeExecutionArtifact, RuntimeOdeModel, RuntimeSdeModel,
 };
 pub use jit::{
     compile_analytical_model_to_jit, compile_execution_artifact, compile_execution_model_to_jit,
