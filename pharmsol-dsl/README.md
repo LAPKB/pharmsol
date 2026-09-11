@@ -70,11 +70,6 @@ intrinsics but does not evaluate them while folding constants. Execute models
 using these calls through the `pharmsol` runtime, which supplies host callbacks
 to the Rust implementations.
 
-Replace `get_e2` and `get_e3` with these names in both Rust and DSL code; the old
-names are not retained as aliases. When migrating the former six-argument
-`get_e2(a, b, w, h1, h2, alpha_s)` call to `estimate_effect_2`, pass `alpha` as the
-third argument. The runtime computes `w = alpha * u * v`.
-
 ## Errors
 
 Every stage reports errors with source spans and renders an annotated report
