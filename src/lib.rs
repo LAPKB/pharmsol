@@ -143,7 +143,10 @@ pub use std::collections::HashMap;
 ///
 /// This is the primary entry point for building pharmacometric ODE models.
 /// The macro generates and validates an `ODE` model and automatically generates its metadata
-/// (parameter names, state labels, output labels, route declarations).
+/// (parameter names, state labels, output labels, and inferred input routes).
+/// Write `bolus[oral] * oral_scale` and `infusion[iv] * iv_scale` in the derivative
+/// RHS. The macro uses the existing simulator input vectors; no `routes` or `fa`
+/// field is needed. Use `lag` for delayed bolus inputs.
 ///
 /// # Fields
 ///
@@ -154,10 +157,8 @@ pub use std::collections::HashMap;
 /// | `covariates` | no | Covariate identifiers `[wt, age]` |
 /// | `states` | yes | State identifiers `[gut, central]` |
 /// | `outputs` | yes | Output identifiers `[cp]` |
-/// | `routes` | no | Route declarations `[bolus(oral) -> gut, infusion(iv) -> central]` |
 /// | `diffeq` | yes | Closure `\|x, p, t, dx, cov\| { … }` writing derivatives into `dx` |
 /// | `lag` | no | Closure returning route‑specific lag times via `lag! { route => expr }` |
-/// | `fa` | no | Closure returning bioavailability fractions |
 /// | `init` | no | Closure setting initial state values |
 /// | `out` | yes | Closure `\|x, p, t, cov, y\| { … }` mapping states to outputs |
 /// | `crate` | no | Escape hatch to override the resolved `pharmsol` path, e.g. `"my_vendor::pharmsol"` |
@@ -170,9 +171,8 @@ pub use std::collections::HashMap;
 ///     params: [ke, v],
 ///     states: [central],
 ///     outputs: [cp],
-///     routes: [infusion(iv) -> central],
 ///     diffeq: |x, _p, _t, dx, _cov| {
-///         dx[central] = -ke * x[central];
+///         dx[central] = infusion[iv] - ke * x[central];
 ///     },
 ///     out: |x, _p, _t, _cov, y| {
 ///         y[cp] = x[central] / v;

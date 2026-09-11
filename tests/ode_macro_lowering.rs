@@ -68,11 +68,9 @@ fn injected_macro_ode() -> equation::ODE {
         params: [ke, v],
         states: [central],
         outputs: [cp],
-        routes: [
-            infusion(iv) -> central,
-        ],
+
         diffeq: |x, _t, dx| {
-            dx[central] = -ke * x[central];
+            dx[central] = infusion[iv] - ke * x[central];
         },
         out: |x, _t, y| {
             y[cp] = x[central] / v;
@@ -117,11 +115,9 @@ fn numeric_label_macro_ode() -> equation::ODE {
         params: [ke, v],
         states: [central],
         outputs: [outeq_1],
-        routes: [
-            infusion(input_1) -> central,
-        ],
+
         diffeq: |x, _t, dx| {
-            dx[central] = -ke * x[central];
+            dx[central] = infusion[input_1] - ke * x[central];
         },
         out: |x, _t, y| {
             y[outeq_1] = x[central] / v;
@@ -166,20 +162,15 @@ fn shared_input_macro_ode() -> equation::ODE {
         params: [ka, ke, v, tlag, f_oral],
         states: [depot, central],
         outputs: [cp],
-        routes: [
-            bolus(oral) -> depot,
-            infusion(iv) -> central,
-        ],
+
         diffeq: |x, _t, dx| {
-            dx[depot] = -ka * x[depot];
-            dx[central] = ka * x[depot] - ke * x[central];
+            dx[depot] = bolus[oral] * (f_oral) - ka * x[depot];
+            dx[central] = infusion[iv] + ka * x[depot] - ke * x[central];
         },
         lag: |_t| {
             lag! { oral => tlag }
         },
-        fa: |_t| {
-            fa! { oral => f_oral }
-        },
+
         out: |x, _t, y| {
             y[cp] = x[central] / v;
         },
@@ -235,12 +226,9 @@ fn shared_label_macro_ode() -> equation::ODE {
         params: [ke, v, tlag],
         states: [central],
         outputs: [cp],
-        routes: [
-            bolus(input_1) -> central,
-            infusion(input_1) -> central,
-        ],
+
         diffeq: |x, _t, dx| {
-            dx[central] = -ke * x[central];
+            dx[central] = bolus[input_1] + infusion[input_1] - ke * x[central];
         },
         lag: |_t| {
             lag! { input_1 => tlag }
@@ -295,19 +283,15 @@ fn numeric_route_property_macro_ode() -> equation::ODE {
         params: [ka, ke, v, tlag, f_oral],
         states: [depot, central],
         outputs: [outeq_1],
-        routes: [
-            bolus(input_1) -> depot,
-        ],
+
         diffeq: |x, _t, dx| {
-            dx[depot] = -ka * x[depot];
+            dx[depot] = bolus[input_1] * (f_oral) - ka * x[depot];
             dx[central] = ka * x[depot] - ke * x[central];
         },
         lag: |_t| {
             lag! { input_1 => tlag }
         },
-        fa: |_t| {
-            fa! { input_1 => f_oral }
-        },
+
         out: |x, _t, y| {
             y[outeq_1] = x[central] / v;
         },
@@ -360,11 +344,9 @@ fn mixed_output_labels_macro_ode() -> equation::ODE {
         params: [ke, v],
         states: [central],
         outputs: [cp, outeq_0, outeq_1],
-        routes: [
-            infusion(iv) -> central,
-        ],
+
         diffeq: |x, _t, dx| {
-            dx[central] = -ke * x[central];
+            dx[central] = infusion[iv] - ke * x[central];
         },
         out: |x, _t, y| {
             y[cp] = x[central] / v;
@@ -414,12 +396,10 @@ fn covariate_macro_ode() -> equation::ODE {
         covariates: [wt],
         states: [gut, central],
         outputs: [cp],
-        routes: [
-            bolus(oral) -> gut,
-        ],
+
         diffeq: |x, _t, dx| {
             let scaled_ke = ke * (wt / 70.0);
-            dx[gut] = -ka * x[gut];
+            dx[gut] = bolus[oral] - ka * x[gut];
             dx[central] = ka * x[gut] - scaled_ke * x[central];
         },
         out: |x, _t, y| {
@@ -463,6 +443,31 @@ fn covariate_handwritten_ode() -> equation::ODE {
     .expect("handwritten covariate metadata should validate")
 }
 
+fn assert_metadata_shape(left: &equation::ODE, right: &equation::ODE) {
+    let left = left.metadata().unwrap();
+    let right = right.metadata().unwrap();
+    assert_eq!(left.name(), right.name());
+    assert_eq!(left.parameters(), right.parameters());
+    assert_eq!(left.covariates(), right.covariates());
+    assert_eq!(left.states(), right.states());
+    assert_eq!(left.outputs(), right.outputs());
+    assert_eq!(left.route_input_count(), right.route_input_count());
+    assert_eq!(left.routes().len(), right.routes().len());
+    for (left, right) in left.routes().iter().zip(right.routes()) {
+        assert_eq!(left.name(), right.name());
+        assert_eq!(left.kind(), right.kind());
+        assert_eq!(left.input_index(), right.input_index());
+        assert_eq!(left.destination_index(), right.destination_index());
+        assert_eq!(left.has_lag(), right.has_lag());
+        // RHS scales live in the macro's derivative, not a route-fa callback.
+        assert!(!left.has_bioavailability());
+        assert_eq!(
+            left.input_policy(),
+            Some(equation::RouteInputPolicy::ExplicitInputVector)
+        );
+    }
+}
+
 fn assert_prediction_match(left: &[f64], right: &[f64]) {
     assert_eq!(left.len(), right.len());
     for (left, right) in left.iter().zip(right.iter()) {
@@ -481,7 +486,7 @@ fn macro_injected_lowering_matches_handwritten_metadata_and_predictions() {
         .metadata()
         .expect("macro injected model should carry metadata");
 
-    assert_eq!(macro_ode.metadata(), handwritten_ode.metadata());
+    assert_metadata_shape(&macro_ode, &handwritten_ode);
     assert!(macro_metadata.route("iv").is_some());
     assert!(macro_metadata.output("cp").is_some());
     assert_eq!(macro_ode.state_index("central"), Some(0));
@@ -511,7 +516,7 @@ fn macro_numeric_labels_lower_to_dense_slots() {
         .metadata()
         .expect("macro numeric-label model should carry metadata");
 
-    assert_eq!(macro_ode.metadata(), handwritten_ode.metadata());
+    assert_metadata_shape(&macro_ode, &handwritten_ode);
     assert!(macro_metadata.route("input_1").is_some());
     assert!(macro_metadata.output("outeq_1").is_some());
     assert_eq!(macro_ode.state_index("central"), Some(0));
@@ -550,7 +555,7 @@ fn macro_shared_input_lowering_matches_handwritten_metadata_and_predictions() {
         .metadata()
         .expect("macro shared-input model should carry metadata");
 
-    assert_eq!(macro_ode.metadata(), handwritten_ode.metadata());
+    assert_metadata_shape(&macro_ode, &handwritten_ode);
     assert!(macro_metadata.route("oral").is_some());
     assert!(macro_metadata.route("iv").is_some());
     assert!(macro_metadata.output("cp").is_some());
@@ -583,7 +588,7 @@ fn macro_shared_label_lowering_matches_handwritten_metadata_and_predictions() {
         .metadata()
         .expect("macro shared-label model should carry metadata");
 
-    assert_eq!(macro_ode.metadata(), handwritten_ode.metadata());
+    assert_metadata_shape(&macro_ode, &handwritten_ode);
     assert!(macro_metadata.route("input_1").is_some());
     assert!(macro_metadata.output("cp").is_some());
     assert_eq!(macro_ode.state_index("central"), Some(0));
@@ -618,7 +623,7 @@ fn macro_mixed_output_labels_lower_to_dense_slots() {
         .metadata()
         .expect("macro mixed-output model should carry metadata");
 
-    assert_eq!(macro_ode.metadata(), handwritten_ode.metadata());
+    assert_metadata_shape(&macro_ode, &handwritten_ode);
     assert!(macro_metadata.output("cp").is_some());
     assert!(macro_metadata.output("outeq_0").is_some());
     assert!(macro_metadata.output("outeq_1").is_some());
@@ -657,7 +662,7 @@ fn macro_numeric_route_properties_lower_to_dense_slots() {
         .metadata()
         .expect("macro numeric route-property model should carry metadata");
 
-    assert_eq!(macro_ode.metadata(), handwritten_ode.metadata());
+    assert_metadata_shape(&macro_ode, &handwritten_ode);
     assert!(macro_metadata.route("input_1").is_some());
     assert!(macro_metadata.output("outeq_1").is_some());
     assert_eq!(macro_ode.state_index("depot"), Some(0));
@@ -743,7 +748,7 @@ fn macro_covariate_lowering_matches_handwritten_metadata_and_predictions() {
         .metadata()
         .expect("macro covariate model should carry metadata");
 
-    assert_eq!(macro_ode.metadata(), handwritten_ode.metadata());
+    assert_metadata_shape(&macro_ode, &handwritten_ode);
     assert_eq!(macro_metadata.covariates().len(), 1);
     assert!(macro_metadata.route("oral").is_some());
     assert!(macro_metadata.output("cp").is_some());

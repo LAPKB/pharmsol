@@ -5,7 +5,7 @@ mod ode;
 mod sde;
 
 pub(crate) use analytical::AnalyticalInput;
-pub(crate) use ode::OdeInput;
+pub(crate) use ode::{ode_rhs_input, OdeInput};
 pub(crate) use sde::SdeInput;
 
 use syn::{parse::ParseStream, punctuated::Punctuated, token, Ident, Token};

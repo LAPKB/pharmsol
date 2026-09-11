@@ -12,11 +12,9 @@ fn macro_model() -> equation::ODE {
         params: [ke, v],
         states: [central],
         outputs: [cp],
-        routes: [
-            infusion(iv) -> central,
-        ],
+
         diffeq: |x, _p, _t, dx, _cov| {
-            dx[central] = -ke * x[central];
+            dx[central] = infusion[iv] - ke * x[central];
         },
         out: |x, _p, _t, _cov, y| {
             y[cp] = x[central] / v;

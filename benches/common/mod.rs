@@ -435,11 +435,9 @@ pub fn macro_ode(workload: Workload) -> ODE {
             params: [ka, ke, v],
             states: [depot, central],
             outputs: [plasma],
-            routes: [
-                bolus(po) -> depot,
-            ],
+
             diffeq: |x, _p, _t, dx, _cov| {
-                dx[depot] = -ka * x[depot];
+                dx[depot] = bolus[po] + -ka * x[depot];
                 dx[central] = ka * x[depot] - ke * x[central];
             },
             out: |x, _p, _t, _cov, y| {
@@ -451,11 +449,9 @@ pub fn macro_ode(workload: Workload) -> ODE {
             params: [ke, kcp, kpc, v],
             states: [central, peripheral],
             outputs: [plasma],
-            routes: [
-                bolus(iv) -> central,
-            ],
+
             diffeq: |x, _p, _t, dx, _cov| {
-                dx[central] = -ke * x[central] - kcp * x[central] + kpc * x[peripheral];
+                dx[central] = bolus[iv] + -ke * x[central] - kcp * x[central] + kpc * x[peripheral];
                 dx[peripheral] = kcp * x[central] - kpc * x[peripheral];
             },
             out: |x, _p, _t, _cov, y| {
@@ -575,9 +571,8 @@ params = ka, ke, v
 states = depot, central
 outputs = plasma
 
-bolus(po) -> depot
 
-dx(depot) = -ka * depot
+dx(depot) = bolus(po) + -ka * depot
 dx(central) = ka * depot - ke * central
 
 out(plasma) = central / v ~ continuous()
@@ -625,9 +620,8 @@ params = ke, kcp, kpc, v
 states = central, peripheral
 outputs = plasma
 
-bolus(iv) -> central
 
-dx(central) = -ke * central - kcp * central + kpc * peripheral
+dx(central) = bolus(iv) + -ke * central - kcp * central + kpc * peripheral
 dx(peripheral) = kcp * central - kpc * peripheral
 
 out(plasma) = central / v ~ continuous()

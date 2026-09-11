@@ -299,8 +299,6 @@ params = ka, cl0, vc0, q0, vp0
 states = x1, x2, x3
 outputs = outeq_1
 
-bolus(input_1) -> x1
-infusion(input_1) -> x2
 
 cl = cl0
 vc = vc0
@@ -310,8 +308,8 @@ ke = cl / vc
 k23 = q / vc
 k32 = q / vp
 
-dx(x1) = -(x1 * ka)
-dx(x2) = x1 * ka + (x3 * k32) - (x2 * (ke + k23))
+dx(x1) = bolus(input_1) - (x1 * ka)
+dx(x2) = infusion(input_1) + x1 * ka + (x3 * k32) - (x2 * (ke + k23))
 dx(x3) = x2 * k23 - (x3 * k32)
 
 out(outeq_1) = x2 / vc
@@ -419,8 +417,7 @@ name = accepted_infusion_boundary
 kind = ode
 states = central
 outputs = cp
-infusion(input_1) -> central
-dx(central) = -(0.5 * central)
+dx(central) = infusion(input_1) - (0.5 * central)
 out(cp) = central
 "#;
 
@@ -620,14 +617,36 @@ out(cp) = amount
 "#;
 
 #[cfg(feature = "dsl")]
+const PER_OCCASION_INIT_DSL_MODEL: &str = r#"
+name = per_occasion_init
+kind = ode
+states = amount
+outputs = cp
+init(amount) = 10
+dx(amount) = bolus(input_1) + 0
+out(cp) = amount
+"#;
+
+#[cfg(feature = "dsl")]
+const DERIVED_FA_DSL_MODEL: &str = r#"
+name = derived_fa
+kind = ode
+params = scale
+states = amount
+outputs = cp
+dose_scale = scale
+dx(amount) = bolus(input_1) * (dose_scale) + 0
+out(cp) = amount
+"#;
+
+#[cfg(feature = "dsl")]
 const REBASE_ABSOLUTE_TIME_DSL_MODEL: &str = r#"
 name = rebase_absolute_time_close_gap
 kind = ode
 states = amount, time_weighted_amount
 outputs = cp, callback
-infusion(input_1) -> amount
-dx(amount) = 0
-dx(time_weighted_amount) = rate(input_1) * time
+dx(amount) = infusion(input_1) + 0
+dx(time_weighted_amount) = infusion(input_1) * time
 out(cp) = amount
 out(callback) = time_weighted_amount
 "#;
@@ -882,6 +901,55 @@ fn jit_large_initial_times_preserve_absolute_time_callbacks(
         |_, _| {},
     )?;
     assert_runtime_large_initial_times_absolute_time("JIT", &compiled);
+    Ok(())
+}
+
+#[cfg(feature = "dsl")]
+#[test]
+fn jit_runs_user_init_before_each_occasion() -> Result<(), Box<dyn std::error::Error>> {
+    let compiled = compile_module_source_to_runtime(
+        PER_OCCASION_INIT_DSL_MODEL,
+        Some("per_occasion_init"),
+        |_, _| {},
+    )?;
+    let subject = Subject::builder("per-occasion-init")
+        .bolus(0.0, 0.0, "input_1")
+        .missing_observation(0.0, "cp")
+        .reset()
+        .bolus(0.0, 0.0, "input_1")
+        .missing_observation(0.0, "cp")
+        .build();
+    let predictions = match compiled {
+        CompiledRuntimeModel::Ode(model) => model.estimate_predictions_dense(&subject, &[])?,
+        _ => unreachable!("expected an ODE model"),
+    };
+
+    assert_eq!(
+        predictions
+            .predictions()
+            .iter()
+            .map(|prediction| prediction.prediction())
+            .collect::<Vec<_>>(),
+        vec![10.0, 10.0]
+    );
+    Ok(())
+}
+
+#[cfg(feature = "dsl")]
+#[test]
+fn jit_applies_derived_bioavailability() -> Result<(), Box<dyn std::error::Error>> {
+    let compiled =
+        compile_module_source_to_runtime(DERIVED_FA_DSL_MODEL, Some("derived_fa"), |_, _| {})?;
+    let subject = Subject::builder("derived-fa")
+        .bolus(0.0, 2.0, "input_1")
+        .missing_observation(1.0, "cp")
+        .build();
+    let predictions = match compiled {
+        CompiledRuntimeModel::Ode(model) => model.estimate_predictions_dense(&subject, &[3.0])?,
+        _ => unreachable!("expected an ODE model"),
+    };
+
+    assert_eq!(predictions.predictions()[0].prediction(), 6.0);
     Ok(())
 }
 

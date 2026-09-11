@@ -24,17 +24,14 @@ states = depot, central
 derived = cl_i, ke
 outputs = cp
 
-bolus(oral) -> depot
-infusion(iv) -> central
 
 lag(oral) = tlag
-fa(oral) = f_oral
 
 cl_i = cl * pow(wt / 70.0, 0.75)
 ke = cl_i / v
 
-dx(depot) = -ka * depot
-dx(central) = ka * depot - ke * central
+dx(depot) = bolus(oral) * (f_oral) - ka * depot
+dx(central) = infusion(iv) + ka * depot - ke * central
 
 out(cp) = central / v ~ continuous()
 "#;
@@ -49,19 +46,15 @@ derived = adjusted_ke, adjusted_kcp, adjusted_v
 states = depot, central, peripheral
 outputs = cp
 
-bolus(oral) -> depot
-bolus(load) -> central
-infusion(iv) -> central
 
 lag(oral) = tlag * sqrt(wt / 70.0) * pow(90.0 / renal, 0.1)
-fa(oral) = min(max(f_oral * pow(renal / 90.0, 0.1), 0.0), 1.0)
 
 adjusted_ke = ke * pow(wt / 70.0, 0.75) * pow(renal / 90.0, 0.25)
 adjusted_kcp = kcp * pow(wt / 70.0, 0.25)
 adjusted_v = v * (wt / 70.0) * (1.0 + 0.001 * (renal - 90.0))
 
-dx(depot) = -ka * depot
-dx(central) = ka * depot - (adjusted_ke + adjusted_kcp) * central + kpc * peripheral
+dx(depot) = bolus(oral) * (min(max(f_oral * pow(renal / 90.0, 0.1), 0.0), 1.0)) - ka * depot
+dx(central) = bolus(load) + infusion(iv) + ka * depot - (adjusted_ke + adjusted_kcp) * central + kpc * peripheral
 dx(peripheral) = adjusted_kcp * central - kpc * peripheral
 
 init(depot) = base_depot + 0.05 * wt
