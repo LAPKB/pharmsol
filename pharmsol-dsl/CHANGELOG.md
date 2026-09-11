@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.29.1](https://github.com/LAPKB/pharmsol/compare/pharmsol-dsl-v0.29.0...pharmsol-dsl-v0.29.1) - 2026-09-11
+
+### Added
+
+- add support for get_e2 in the DSL ([#358](https://github.com/LAPKB/pharmsol/pull/358))
+
+### Fixed
+
+- support derived route properties and per-occasion initialization ([#360](https://github.com/LAPKB/pharmsol/pull/360))
+
 ### Changed
 
 - Breaking: add runtime-only `get_e2(u, v, alpha, h1, h2)` with exact arity five; the runtime computes `w = alpha * u * v` and compiler constants reject the call.

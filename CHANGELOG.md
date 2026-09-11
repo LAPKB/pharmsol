@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.29.1](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.29.0...pharmsol-v0.29.1) - 2026-09-11
+
+### Added
+
+- add support for get_e2 in the DSL ([#358](https://github.com/LAPKB/pharmsol/pull/358))
+- add support for EVID==2 (covariate only) ([#363](https://github.com/LAPKB/pharmsol/pull/363))
+
+### Fixed
+
+- support derived route properties and per-occasion initialization ([#360](https://github.com/LAPKB/pharmsol/pull/360))
+
 ## [0.29.0](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.28.8...pharmsol-v0.29.0) - 2026-08-27
 
 ### Breaking Changes
