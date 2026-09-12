@@ -334,6 +334,7 @@ mod tests {
             route_len: 0,
             analytical: None,
             particles: None,
+            solver_class: Default::default(),
         };
 
         let plan = ParameterOrderPlan::from_runtime_info(&info, ["ke", "ka"]).unwrap();

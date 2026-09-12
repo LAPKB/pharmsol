@@ -6,7 +6,7 @@ mod closure;
 /// This helper is shared by the DSL runtime wrappers.
 #[cfg(feature = "dsl")]
 pub(crate) mod closure_helpers {
-    pub(crate) use super::closure::PMProblem;
+    pub(crate) use super::closure::{PMProblem, RhsJacobianFn};
 }
 
 use crate::{
