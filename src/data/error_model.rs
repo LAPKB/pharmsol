@@ -282,16 +282,8 @@ impl AssayErrorModels {
 
         let mut bound = Self::with_output_names(outputs.iter().map(String::as_str));
 
-        // Models added by slot keep their slot. Models added by label are
-        // matched to the declared outputs below.
-        let labeled_slots: Vec<usize> = self.labels.values().copied().collect();
-        for (slot, model) in self.models.iter().enumerate() {
-            if model == &AssayErrorModel::None || labeled_slots.contains(&slot) {
-                continue;
-            }
-            bound.insert_model_at(slot, model.clone())?;
-        }
-
+        // Every model in an unbound set was added by label, so match each one
+        // to the declared output it names.
         for (label, slot) in &self.labels {
             let model = self
                 .models
@@ -305,10 +297,7 @@ impl AssayErrorModels {
         Ok(BoundAssayErrorModels::Owned(bound))
     }
 
-    /// Create an unbound error-model set for dense-slot callers.
-    ///
-    /// This keeps the pre-existing numeric-slot setup path available for low-level
-    /// tests or workflows that deliberately operate on dense output indices.
+    /// Create an empty, unbound error-model set.
     pub(crate) fn empty() -> Self {
         Self {
             models: vec![],
