@@ -11,7 +11,7 @@ pub(crate) mod closure_helpers {
 
 use crate::{
     data::{Covariates, Infusion},
-    error_model::AssayErrorModels,
+    error_model::{AssayErrorModels, DenseAssayErrorModels},
     prelude::simulator::SubjectPredictions,
     simulator::{DiffEq, Fa, Init, Lag, Neqs, Out, M, V},
     Event, Observation, Parameters, PharmsolError, Subject,
@@ -579,7 +579,7 @@ impl EquationPriv for ODE {
         &self,
         _parameters: &[f64],
         _observation: &Observation,
-        _error_models: Option<&AssayErrorModels>,
+        _error_models: Option<&DenseAssayErrorModels>,
         _time: f64,
         _covariates: &Covariates,
         _x: &mut Self::S,
@@ -1706,7 +1706,7 @@ impl ODE {
         events: &[Event],
         parameters_v: &V,
         covariates: &Covariates,
-        error_models: Option<&AssayErrorModels>,
+        error_models: Option<&DenseAssayErrorModels>,
         bolus_v: &mut V,
         zero_bolus: &V,
         zero_rateiv: &V,

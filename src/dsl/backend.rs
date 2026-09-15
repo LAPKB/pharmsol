@@ -20,7 +20,7 @@ use pharmsol_dsl::{
 
 use super::model_info::{RuntimeModelInfo, RuntimeRouteInfo, RuntimeStateInfo};
 use crate::{
-    data::error_model::AssayErrorModels,
+    data::error_model::{AssayErrorModels, DenseAssayErrorModels},
     data::{Covariates, Infusion, InputLabel, OutputLabel},
     simulator::{
         cache::{
@@ -1522,7 +1522,7 @@ impl EquationPriv for RuntimeOdeModel {
         &self,
         _support_point: &[f64],
         _observation: &Observation,
-        _error_models: Option<&AssayErrorModels>,
+        _error_models: Option<&DenseAssayErrorModels>,
         _time: f64,
         _covariates: &Covariates,
         _x: &mut Self::S,
@@ -1604,15 +1604,6 @@ impl Equation for RuntimeOdeModel {
 
     fn kind() -> EqnKind {
         EqnKind::ODE
-    }
-
-    fn assay_error_models(&self) -> AssayErrorModels {
-        AssayErrorModels::with_output_names(
-            self.info()
-                .outputs
-                .iter()
-                .map(|output| output.name.as_str()),
-        )
     }
 
     fn estimate_predictions(
@@ -1920,7 +1911,7 @@ impl EquationPriv for RuntimeAnalyticalModel {
         &self,
         _support_point: &[f64],
         _observation: &Observation,
-        _error_models: Option<&AssayErrorModels>,
+        _error_models: Option<&DenseAssayErrorModels>,
         _time: f64,
         _covariates: &Covariates,
         _x: &mut Self::S,
@@ -1968,15 +1959,6 @@ impl Equation for RuntimeAnalyticalModel {
 
     fn kind() -> EqnKind {
         EqnKind::Analytical
-    }
-
-    fn assay_error_models(&self) -> AssayErrorModels {
-        AssayErrorModels::with_output_names(
-            self.info()
-                .outputs
-                .iter()
-                .map(|output| output.name.as_str()),
-        )
     }
 
     fn estimate_predictions(
@@ -2311,7 +2293,7 @@ fn runtime_sde_log_likelihood(
     model: &RuntimeSdeModel,
     subject: &Subject,
     support_point: &[f64],
-    error_models: &AssayErrorModels,
+    error_models: &DenseAssayErrorModels,
 ) -> Result<f64, PharmsolError> {
     if let Some(cache) = &model.cache {
         let key = (
@@ -2410,7 +2392,7 @@ impl EquationPriv for RuntimeSdeModel {
         &self,
         _support_point: &[f64],
         _observation: &Observation,
-        _error_models: Option<&AssayErrorModels>,
+        _error_models: Option<&DenseAssayErrorModels>,
         _time: f64,
         _covariates: &Covariates,
         _x: &mut Self::S,
@@ -2448,15 +2430,6 @@ impl Equation for RuntimeSdeModel {
 
     fn kind() -> EqnKind {
         EqnKind::SDE
-    }
-
-    fn assay_error_models(&self) -> AssayErrorModels {
-        AssayErrorModels::with_output_names(
-            self.info()
-                .outputs
-                .iter()
-                .map(|output| output.name.as_str()),
-        )
     }
 
     fn estimate_predictions(

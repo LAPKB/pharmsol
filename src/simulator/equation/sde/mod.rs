@@ -10,7 +10,7 @@ use thiserror::Error;
 
 use crate::{
     data::{Covariates, Infusion},
-    error_model::AssayErrorModels,
+    error_model::{AssayErrorModels, DenseAssayErrorModels},
     prelude::simulator::Prediction,
     simulator::{Diffusion, Drift, Fa, Init, Lag, Neqs, Out, V},
     Parameters, Subject,
@@ -415,7 +415,10 @@ impl Predictions for Array2<Prediction> {
 
         result
     }
-    fn log_likelihood(&self, error_models: &AssayErrorModels) -> Result<f64, crate::PharmsolError> {
+    fn log_likelihood(
+        &self,
+        error_models: &DenseAssayErrorModels,
+    ) -> Result<f64, crate::PharmsolError> {
         // For SDE, compute log-likelihood using mean predictions across particles
         let predictions = self.get_predictions();
         if predictions.is_empty() {
@@ -527,7 +530,7 @@ impl EquationPriv for SDE {
         &self,
         parameters: &[f64],
         observation: &crate::Observation,
-        error_models: Option<&AssayErrorModels>,
+        error_models: Option<&DenseAssayErrorModels>,
         _time: f64,
         covariates: &Covariates,
         x: &mut Self::S,
@@ -596,7 +599,7 @@ impl EquationPriv for SDE {
         parameters: &[f64],
         event: &crate::Event,
         next_event: Option<&crate::Event>,
-        error_models: Option<&AssayErrorModels>,
+        error_models: Option<&DenseAssayErrorModels>,
         covariates: &Covariates,
         x: &mut Self::S,
         infusions: &mut Vec<Infusion>,

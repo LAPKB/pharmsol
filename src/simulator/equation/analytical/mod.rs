@@ -21,7 +21,7 @@ use super::{
     EqnKind, Equation, EquationPriv, EquationTypes, ModelMetadata, ModelMetadataError,
     ValidatedModelMetadata,
 };
-use crate::data::error_model::AssayErrorModels;
+use crate::data::error_model::{AssayErrorModels, DenseAssayErrorModels};
 use crate::simulator::cache::{
     BoundErrorModelCache, PredictionCache, DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE, DEFAULT_CACHE_SIZE,
 };
@@ -374,7 +374,7 @@ impl EquationPriv for Analytical {
         &self,
         parameters: &[f64],
         observation: &Observation,
-        error_models: Option<&AssayErrorModels>,
+        error_models: Option<&DenseAssayErrorModels>,
         _time: f64,
         covariates: &Covariates,
         x: &mut Self::S,

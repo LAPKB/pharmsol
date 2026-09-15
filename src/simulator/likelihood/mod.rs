@@ -3,7 +3,7 @@
 //! This module provides functions and types for computing log-likelihoods
 //! in pharmacometric population modeling. It supports both:
 //!
-//! - **Non-parametric algorithms** (NPAG, NPOD): Use [`ErrorModels`] with observation-based sigma
+//! - **Non-parametric algorithms** (NPAG, NPOD): Use [`AssayErrorModels`] with observation-based sigma
 //! - **Parametric algorithms** (SAEM, FOCE): Use [`ResidualErrorModels`] with prediction-based sigma
 //!
 //! # Module Organization
@@ -229,7 +229,7 @@ pub fn log_likelihood_subject(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::error_model::{AssayErrorModel, ErrorPoly};
+    use crate::data::error_model::{AssayErrorModel, DenseAssayErrorModels, ErrorPoly};
     use crate::data::event::Observation;
     use crate::Censor;
 
@@ -248,12 +248,10 @@ mod tests {
         };
 
         // Create error model with additive error
-        let error_models = crate::AssayErrorModels::empty()
-            .add(
-                0,
-                AssayErrorModel::additive(ErrorPoly::new(0.0, 1.0, 0.0, 0.0), 0.0),
-            )
-            .unwrap();
+        let error_models = DenseAssayErrorModels::from_dense(vec![AssayErrorModel::additive(
+            ErrorPoly::new(0.0, 1.0, 0.0, 0.0),
+            0.0,
+        )]);
 
         #[allow(deprecated)]
         let lik = prediction.likelihood(&error_models).unwrap();
@@ -295,12 +293,10 @@ mod tests {
         ];
 
         let subject_predictions = SubjectPredictions::from(predictions);
-        let error_models = crate::AssayErrorModels::empty()
-            .add(
-                0,
-                AssayErrorModel::additive(ErrorPoly::new(0.0, 1.0, 0.0, 0.0), 0.0),
-            )
-            .unwrap();
+        let error_models = DenseAssayErrorModels::from_dense(vec![AssayErrorModel::additive(
+            ErrorPoly::new(0.0, 1.0, 0.0, 0.0),
+            0.0,
+        )]);
 
         #[allow(deprecated)]
         let lik = subject_predictions.likelihood(&error_models).unwrap();
@@ -319,7 +315,7 @@ mod tests {
     #[test]
     fn test_empty_predictions_have_neutral_log_likelihood() {
         let preds = SubjectPredictions::default();
-        let errors = crate::AssayErrorModels::empty();
+        let errors = DenseAssayErrorModels::default();
         assert_eq!(preds.log_likelihood(&errors).unwrap(), 0.0); // log(1) = 0
     }
 
@@ -330,9 +326,7 @@ mod tests {
         preds.add_prediction(obs.to_prediction(1.0, vec![]));
 
         let error_model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 0.0);
-        let errors = crate::AssayErrorModels::empty()
-            .add(0, error_model)
-            .unwrap();
+        let errors = DenseAssayErrorModels::from_dense(vec![error_model]);
 
         let log_lik = preds.log_likelihood(&errors).unwrap();
         assert!(log_lik.is_finite());

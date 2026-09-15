@@ -183,7 +183,7 @@ mod tests {
     }
 
     fn likelihood_error_models() -> AssayErrorModels {
-        AssayErrorModels::empty()
+        AssayErrorModels::new()
             .add(
                 "cp",
                 AssayErrorModel::additive(ErrorPoly::new(0.0, 1.0, 0.0, 0.0), 0.0),

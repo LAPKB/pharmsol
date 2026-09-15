@@ -23,7 +23,7 @@ use std::{fmt, sync::Arc};
 
 use quick_cache::sync::Cache;
 
-use crate::{data::error_model::AssayErrorModels, simulator::likelihood::SubjectPredictions};
+use crate::{data::error_model::DenseAssayErrorModels, simulator::likelihood::SubjectPredictions};
 
 /// Default maximum number of entries per cache.
 pub const DEFAULT_CACHE_SIZE: usize = 100_000;
@@ -96,7 +96,7 @@ impl fmt::Debug for PredictionCache {
 /// Entries are keyed by the public error-model definition hash and hold the
 /// dense, equation-specific binding that likelihood evaluation needs.
 #[derive(Clone)]
-pub struct BoundErrorModelCache(Arc<Cache<BoundErrorModelKey, Arc<AssayErrorModels>>>);
+pub struct BoundErrorModelCache(Arc<Cache<BoundErrorModelKey, Arc<DenseAssayErrorModels>>>);
 
 impl BoundErrorModelCache {
     pub fn new(size: usize) -> Self {
@@ -104,12 +104,12 @@ impl BoundErrorModelCache {
     }
 
     #[inline]
-    pub fn get(&self, key: &BoundErrorModelKey) -> Option<Arc<AssayErrorModels>> {
+    pub fn get(&self, key: &BoundErrorModelKey) -> Option<Arc<DenseAssayErrorModels>> {
         self.0.get(key)
     }
 
     #[inline]
-    pub fn insert(&self, key: BoundErrorModelKey, value: Arc<AssayErrorModels>) {
+    pub fn insert(&self, key: BoundErrorModelKey, value: Arc<DenseAssayErrorModels>) {
         self.0.insert(key, value);
     }
 
@@ -266,7 +266,7 @@ mod tests {
     #[test]
     fn bound_error_model_cache_clone_shares_data() {
         let cache = BoundErrorModelCache::new(10);
-        let models = Arc::new(AssayErrorModels::empty());
+        let models = Arc::new(DenseAssayErrorModels::default());
         cache.insert(7, Arc::clone(&models));
 
         let clone = cache.clone();
