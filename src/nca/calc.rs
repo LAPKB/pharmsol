@@ -762,7 +762,7 @@ mod tests {
             .observation(12.0, 1.0, 0)
             .build();
         let occ = &subject.occasions()[0];
-        Profile::from_occasion(occ, 0, &BLQRule::Exclude).unwrap()
+        Profile::from_occasion(occ, None, &BLQRule::Exclude).unwrap()
     }
 
     #[test]
@@ -899,7 +899,7 @@ mod tests {
             .observation(4.0, 1.0, 0)
             .build();
         let occ = &subject.occasions()[0];
-        let profile = Profile::from_occasion(occ, 0, &BLQRule::Exclude).unwrap();
+        let profile = Profile::from_occasion(occ, None, &BLQRule::Exclude).unwrap();
         let result = c0_logslope(&profile);
         assert!(result.is_some());
         assert!((result.unwrap() - 40.0).abs() < 0.1);
@@ -916,7 +916,7 @@ mod tests {
             .observation(2.0, 5.0, 0)
             .build();
         let occ = &subject.occasions()[0];
-        let profile = Profile::from_occasion(occ, 0, &BLQRule::Exclude).unwrap();
+        let profile = Profile::from_occasion(occ, None, &BLQRule::Exclude).unwrap();
         let result = c0_logslope(&profile);
         assert!(result.is_some());
     }
@@ -929,7 +929,7 @@ mod tests {
             .observation(2.0, 10.0, 0)
             .build();
         let occ = &subject.occasions()[0];
-        let profile = Profile::from_occasion(occ, 0, &BLQRule::Exclude).unwrap();
+        let profile = Profile::from_occasion(occ, None, &BLQRule::Exclude).unwrap();
         let result = c0_logslope(&profile);
         // c2 >= c1, so should return None
         assert!(result.is_none());
@@ -982,7 +982,7 @@ mod tests {
             .observation(4.0, 10.0, 0)
             .build();
         let occ = &subject.occasions()[0];
-        let profile = Profile::from_occasion(occ, 0, &BLQRule::Exclude).unwrap();
+        let profile = Profile::from_occasion(occ, None, &BLQRule::Exclude).unwrap();
         let methods = vec![C0Method::Observed, C0Method::LogSlope, C0Method::FirstConc];
         let lambda_z = 0.5;
         let (c0_val, method) = c0(&profile, &methods, lambda_z);

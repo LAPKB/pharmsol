@@ -33,11 +33,20 @@ pub enum ObservationError {
     #[error("All values are zero or below quantification limit")]
     AllBelowLOQ,
 
-    /// No observations found for the requested output equation
-    #[error("No observations found for outeq {outeq}")]
+    /// No observations carry the requested output label
+    ///
+    /// The requested label is reported together with the labels that *are*
+    /// present, so a typo or a stale numeric column is immediately visible.
+    #[error("No observations found for output `{outeq}`{}", if available.is_empty() {
+        " (this occasion has no observations)".to_string()
+    } else {
+        format!(" (present in this occasion: {})", available.join(", "))
+    })]
     NoObservations {
-        /// The output equation index that had no observations
-        outeq: usize,
+        /// The requested output label
+        outeq: String,
+        /// Output labels that are present in the data
+        available: Vec<String>,
     },
 
     /// Array length mismatch between parallel input arrays

@@ -944,23 +944,49 @@ impl Occasion {
     // Observation Extraction
     // ========================================================================
 
-    /// Extract time-concentration data for a specific output equation
+    /// The distinct output labels observed in this occasion, in first-seen
+    /// order.
+    ///
+    /// This is the set of outputs that can be selected for analysis; anything
+    /// else is a caller error rather than an empty result.
+    pub(crate) fn observation_labels(&self) -> Vec<&OutputLabel> {
+        let mut labels: Vec<&OutputLabel> = Vec::new();
+        for event in &self.events {
+            if let Event::Observation(obs) = event {
+                if !labels.contains(&obs.outeq()) {
+                    labels.push(obs.outeq());
+                }
+            }
+        }
+        labels
+    }
+
+    /// Extract time-concentration data for one output label.
+    ///
+    /// Returns `None` when no observation in this occasion carries `outeq`, so
+    /// that a mistyped or undeclared label is reported as an error instead of
+    /// silently yielding an empty profile.
     ///
     /// # Arguments
     ///
-    /// * `outeq` - Output equation index to extract
+    /// * `outeq` - Output label to extract
     ///
     /// # Returns
     ///
     /// Tuple of (times, concentrations, censoring) vectors
-    pub(crate) fn get_observations(&self, outeq: usize) -> (Vec<f64>, Vec<f64>, Vec<Censor>) {
+    pub(crate) fn get_observations(
+        &self,
+        outeq: &str,
+    ) -> Option<(Vec<f64>, Vec<f64>, Vec<Censor>)> {
         let mut times = Vec::new();
         let mut concs = Vec::new();
         let mut censoring = Vec::new();
+        let mut matched = false;
 
         for event in &self.events {
             if let Event::Observation(obs) = event {
-                if obs.outeq_index() == Some(outeq) {
+                if obs.outeq().as_str() == outeq {
+                    matched = true;
                     if let Some(value) = obs.value() {
                         times.push(obs.time());
                         concs.push(value);
@@ -970,7 +996,7 @@ impl Occasion {
             }
         }
 
-        (times, concs, censoring)
+        matched.then_some((times, concs, censoring))
     }
 }
 
