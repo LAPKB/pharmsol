@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.29.2](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.29.1...pharmsol-v0.29.2) - 2026-09-15
+
+### Fixed
+
+- pin sibling crates to the exact workspace version ([#370](https://github.com/LAPKB/pharmsol/pull/370))
+
 ## [0.29.1](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.29.0...pharmsol-v0.29.1) - 2026-09-11
 
 ### Added
