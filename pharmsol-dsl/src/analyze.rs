@@ -916,7 +916,11 @@ impl<'a> Analyzer<'a> {
             let id = self.insert_global_symbol(
                 &ident.text,
                 kind,
-                PendingSymbolType::Scalar(None),
+                // Derived values and outputs are stored in f64 buffers, so they
+                // are always real-valued. Letting a whole-number initialiser
+                // narrow one to Int writes an f64 and reads it back as an
+                // integer, which silently returns the bit pattern.
+                PendingSymbolType::Scalar(Some(ValueType::Real)),
                 ident.span,
             )?;
             match kind {
