@@ -58,13 +58,33 @@ pub use pharmsol_dsl::{AnalyticalKernel, ModelKind};
 pub use sde::*;
 
 use crate::{
+    data::resolved::{
+        resolve_occasion, LabelResolver, ResolvedEvent, ResolvedInfusion, ResolvedObservation,
+    },
     error_model::{AssayErrorModel, AssayErrorModels, DenseAssayErrorModels},
     simulator::{cache::BoundErrorModelCache, Fa, Lag},
-    Covariates, Event, Infusion, InputLabel, Observation, Occasion, OutputLabel, Parameters,
-    PharmsolError, Subject,
+    Covariates, InputLabel, Occasion, OutputLabel, Parameters, PharmsolError, Subject,
 };
 
 use super::likelihood::Prediction;
+
+/// Adapts an [`EquationPriv`] implementation to the shared [`LabelResolver`]
+/// interface used by [`resolve_occasion`].
+struct EquationLabelResolver<'e, E: ?Sized>(&'e E);
+
+impl<E: EquationPriv + ?Sized> LabelResolver for EquationLabelResolver<'_, E> {
+    fn resolve_bolus_input(&self, label: &InputLabel) -> Result<usize, PharmsolError> {
+        self.0.resolve_input_label(label, RouteKind::Bolus)
+    }
+
+    fn resolve_infusion_input(&self, label: &InputLabel) -> Result<usize, PharmsolError> {
+        self.0.resolve_input_label(label, RouteKind::Infusion)
+    }
+
+    fn resolve_output(&self, label: &OutputLabel) -> Result<usize, PharmsolError> {
+        self.0.resolve_output_label(label)
+    }
+}
 
 /// Trait for state vectors that can receive bolus doses.
 pub trait State {
@@ -184,7 +204,7 @@ pub(crate) trait EquationPriv: EquationTypes {
         state: &mut Self::S,
         parameters: &[f64],
         covariates: &Covariates,
-        infusions: &[Infusion],
+        infusions: &[ResolvedInfusion<'_>],
         start_time: f64,
         end_time: f64,
     ) -> Result<(), PharmsolError>;
@@ -268,32 +288,17 @@ pub(crate) trait EquationPriv: EquationTypes {
         Ok(DenseAssayErrorModels::from_dense(dense))
     }
 
-    fn resolve_occasion_events(
+    fn resolve_occasion_events<'a>(
         &self,
-        occasion: &Occasion,
+        occasion: &'a Occasion,
         parameters: &[f64],
         covariates: &Covariates,
-    ) -> Result<Vec<Event>, PharmsolError> {
-        let mut resolved = occasion.clone();
-
-        for event in resolved.events_iter_mut() {
-            match event {
-                Event::Bolus(bolus) => {
-                    let input = self.resolve_input_label(bolus.input(), RouteKind::Bolus)?;
-                    bolus.set_input(input);
-                }
-                Event::Infusion(infusion) => {
-                    let input = self.resolve_input_label(infusion.input(), RouteKind::Infusion)?;
-                    infusion.set_input(input);
-                }
-                Event::Observation(observation) => {
-                    let outeq = self.resolve_output_label(observation.outeq())?;
-                    observation.set_outeq(outeq);
-                }
-            }
-        }
-
-        Ok(resolved.process_events(Some((self.fa(), self.lag(), parameters, covariates))))
+    ) -> Result<Vec<ResolvedEvent<'a>>, PharmsolError> {
+        resolve_occasion(
+            occasion,
+            &EquationLabelResolver(self),
+            Some((self.fa(), self.lag(), parameters, covariates)),
+        )
     }
     #[allow(dead_code)]
     fn is_sde(&self) -> bool {
@@ -304,7 +309,7 @@ pub(crate) trait EquationPriv: EquationTypes {
     fn process_observation(
         &self,
         parameters: &[f64],
-        observation: &Observation,
+        observation: &ResolvedObservation<'_>,
         error_models: Option<&DenseAssayErrorModels>,
         time: f64,
         covariates: &Covariates,
@@ -316,28 +321,21 @@ pub(crate) trait EquationPriv: EquationTypes {
     fn initial_state(&self, parameters: &[f64], covariates: &Covariates) -> Self::S;
 
     #[allow(clippy::too_many_arguments)]
-    fn simulate_event(
+    fn simulate_event<'a>(
         &self,
         parameters: &[f64],
-        event: &Event,
-        next_event: Option<&Event>,
+        event: &ResolvedEvent<'a>,
+        next_event: Option<&ResolvedEvent<'a>>,
         error_models: Option<&DenseAssayErrorModels>,
         covariates: &Covariates,
         x: &mut Self::S,
-        infusions: &mut Vec<Infusion>,
+        infusions: &mut Vec<ResolvedInfusion<'a>>,
         likelihood: &mut Vec<f64>,
         output: &mut Self::P,
     ) -> Result<(), PharmsolError> {
         match event {
-            Event::Bolus(bolus) => {
-                let input = bolus.input_index().ok_or_else(|| {
-                    let available = self
-                        .metadata()
-                        .map(|m| m.route_labels())
-                        .unwrap_or_default();
-                    PharmsolError::unknown_input_label(bolus.input(), &available)
-                })?;
-
+            ResolvedEvent::Bolus(bolus) => {
+                let input = bolus.input_slot();
                 if input >= self.get_ndrugs() {
                     return Err(PharmsolError::InputOutOfRange {
                         input,
@@ -346,10 +344,10 @@ pub(crate) trait EquationPriv: EquationTypes {
                 }
                 x.add_bolus(input, bolus.amount());
             }
-            Event::Infusion(infusion) => {
-                infusions.push(infusion.clone());
+            ResolvedEvent::Infusion(infusion) => {
+                infusions.push(*infusion);
             }
-            Event::Observation(observation) => {
+            ResolvedEvent::Observation(observation) => {
                 self.process_observation(
                     parameters,
                     observation,

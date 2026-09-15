@@ -9,7 +9,7 @@
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt};
 
-use crate::data::event::{AUCMethod, BLQRule, Route};
+use crate::data::event::{AUCMethod, BLQRule, OutputLabel, Route};
 
 // ============================================================================
 // Configuration Types
@@ -70,10 +70,12 @@ pub struct NCAOptions {
     /// is a depot, not central).
     pub route_override: Option<Route>,
 
-    /// Output equation index to analyze (default: 0)
+    /// Output label to analyze (default: the first output present in the data)
     ///
-    /// For multi-output models, select which output equation to run NCA on.
-    pub outeq: usize,
+    /// For multi-output models, select which output to run NCA on by its
+    /// label. Requesting a label that the data does not carry is an error that
+    /// lists the labels that *are* present; it never yields an empty profile.
+    pub outeq: Option<OutputLabel>,
 
     /// Dose times for multi-dose NCA (None = single-dose)
     ///
@@ -94,7 +96,7 @@ impl Default for NCAOptions {
             max_auc_extrap_pct: 20.0,
             concentration_threshold: None,
             route_override: None,
-            outeq: 0,
+            outeq: None,
             dose_times: None,
         }
     }
@@ -192,9 +194,11 @@ impl NCAOptions {
         self
     }
 
-    /// Set output equation index (default: 0)
-    pub fn with_outeq(mut self, outeq: usize) -> Self {
-        self.outeq = outeq;
+    /// Select the output to analyze by label
+    ///
+    /// Defaults to the first output present in the data.
+    pub fn with_outeq(mut self, outeq: impl Into<OutputLabel>) -> Self {
+        self.outeq = Some(outeq.into());
         self
     }
 

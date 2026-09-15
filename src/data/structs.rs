@@ -872,7 +872,7 @@ impl Occasion {
                 }
                 Event::Bolus(b) => {
                     has_dose = true;
-                    if b.input() == 0 {
+                    if b.input().index() == Some(0) {
                         has_extravascular = true;
                     }
                 }
@@ -906,7 +906,7 @@ impl Occasion {
             match event {
                 Event::Infusion(_) => has_infusion = true,
                 Event::Bolus(b) => {
-                    if b.input() == 0 {
+                    if b.input().index() == Some(0) {
                         has_extravascular = true;
                     } else {
                         has_iv_bolus = true;
@@ -944,23 +944,49 @@ impl Occasion {
     // Observation Extraction
     // ========================================================================
 
-    /// Extract time-concentration data for a specific output equation
+    /// The distinct output labels observed in this occasion, in first-seen
+    /// order.
+    ///
+    /// This is the set of outputs that can be selected for analysis; anything
+    /// else is a caller error rather than an empty result.
+    pub(crate) fn observation_labels(&self) -> Vec<&OutputLabel> {
+        let mut labels: Vec<&OutputLabel> = Vec::new();
+        for event in &self.events {
+            if let Event::Observation(obs) = event {
+                if !labels.contains(&obs.outeq()) {
+                    labels.push(obs.outeq());
+                }
+            }
+        }
+        labels
+    }
+
+    /// Extract time-concentration data for one output label.
+    ///
+    /// Returns `None` when no observation in this occasion carries `outeq`, so
+    /// that a mistyped or undeclared label is reported as an error instead of
+    /// silently yielding an empty profile.
     ///
     /// # Arguments
     ///
-    /// * `outeq` - Output equation index to extract
+    /// * `outeq` - Output label to extract
     ///
     /// # Returns
     ///
     /// Tuple of (times, concentrations, censoring) vectors
-    pub(crate) fn get_observations(&self, outeq: usize) -> (Vec<f64>, Vec<f64>, Vec<Censor>) {
+    pub(crate) fn get_observations(
+        &self,
+        outeq: &str,
+    ) -> Option<(Vec<f64>, Vec<f64>, Vec<Censor>)> {
         let mut times = Vec::new();
         let mut concs = Vec::new();
         let mut censoring = Vec::new();
+        let mut matched = false;
 
         for event in &self.events {
             if let Event::Observation(obs) = event {
-                if obs.outeq_index() == Some(outeq) {
+                if obs.outeq().as_str() == outeq {
+                    matched = true;
                     if let Some(value) = obs.value() {
                         times.push(obs.time());
                         concs.push(value);
@@ -970,7 +996,7 @@ impl Occasion {
             }
         }
 
-        (times, concs, censoring)
+        matched.then_some((times, concs, censoring))
     }
 }
 
@@ -1510,7 +1536,7 @@ mod tests {
                 assert!(matches!(event, Event::Bolus(_)));
                 if let Event::Bolus(bolus) = event {
                     assert_eq!(bolus.amount(), 50.0); // Amount from sample data
-                    assert_eq!(bolus.input(), 1); // Input compartment 1
+                    assert_eq!(bolus.input().as_str(), "1"); // Input compartment 1
                 }
                 event_count += 1;
             }
@@ -1537,7 +1563,7 @@ mod tests {
                 assert_eq!(event.time(), 1.0); // Observation time from sample data
                 if let Event::Observation(observation) = event {
                     assert_eq!(observation.value(), Some(10.0)); // Value from sample data
-                    assert_eq!(observation.outeq(), 1); // Output equation 1
+                    assert_eq!(observation.outeq().as_str(), "1"); // Output equation 1
                 }
             }
         }
@@ -1569,7 +1595,7 @@ mod tests {
         {
             assert_eq!(bolus.amount(), 100.0);
             assert_eq!(bolus.time(), 0.0);
-            assert_eq!(bolus.input(), 1);
+            assert_eq!(bolus.input().as_str(), "1");
         } else {
             panic!("Bolus event not found");
         }
@@ -1617,7 +1643,7 @@ mod tests {
         {
             assert_eq!(obs.time(), 12.0);
             assert_eq!(obs.value(), None);
-            assert_eq!(obs.outeq(), 1);
+            assert_eq!(obs.outeq().as_str(), "1");
         } else {
             panic!("Observation at time 12 not found");
         }

@@ -593,7 +593,7 @@ fn test_lambda_z_candidates_returns_multiple() {
 
     // Get ObservationProfile for the first occasion
     let occasion = &subject.occasions()[0];
-    let profile = ObservationProfile::from_occasion(occasion, 0, &options.blq_rule).unwrap();
+    let profile = ObservationProfile::from_occasion(occasion, None, &options.blq_rule).unwrap();
 
     let candidates = lambda_z_candidates(&profile, &options.lambda_z, auc_last);
     assert!(
@@ -619,7 +619,7 @@ fn test_lambda_z_candidates_selected_matches_nca_result() {
     let auc_last = result.exposure.auc_last;
 
     let occasion = &subject.occasions()[0];
-    let profile = ObservationProfile::from_occasion(occasion, 0, &options.blq_rule).unwrap();
+    let profile = ObservationProfile::from_occasion(occasion, None, &options.blq_rule).unwrap();
 
     let candidates = lambda_z_candidates(&profile, &options.lambda_z, auc_last);
     let selected = candidates.iter().find(|c| c.is_selected).unwrap();
@@ -652,7 +652,7 @@ fn test_lambda_z_candidates_all_have_positive_lambda_z() {
     let auc_last = results[0].as_ref().unwrap().exposure.auc_last;
 
     let occasion = &subject.occasions()[0];
-    let profile = ObservationProfile::from_occasion(occasion, 0, &options.blq_rule).unwrap();
+    let profile = ObservationProfile::from_occasion(occasion, None, &options.blq_rule).unwrap();
 
     let candidates = lambda_z_candidates(&profile, &options.lambda_z, auc_last);
     for c in &candidates {
@@ -680,7 +680,7 @@ fn test_lambda_z_candidates_empty_for_insufficient_points() {
     let options = NCAOptions::default();
     let occasion = &subject.occasions()[0];
 
-    if let Ok(profile) = ObservationProfile::from_occasion(occasion, 0, &options.blq_rule) {
+    if let Ok(profile) = ObservationProfile::from_occasion(occasion, None, &options.blq_rule) {
         let candidates = lambda_z_candidates(&profile, &options.lambda_z, 10.0);
         // Either empty or no selected candidate (not enough points after Cmax)
         let selected = candidates.iter().filter(|c| c.is_selected).count();
@@ -699,7 +699,7 @@ fn test_lambda_z_candidates_span_ratio_and_extrap() {
     let auc_last = results[0].as_ref().unwrap().exposure.auc_last;
 
     let occasion = &subject.occasions()[0];
-    let profile = ObservationProfile::from_occasion(occasion, 0, &options.blq_rule).unwrap();
+    let profile = ObservationProfile::from_occasion(occasion, None, &options.blq_rule).unwrap();
 
     let candidates = lambda_z_candidates(&profile, &options.lambda_z, auc_last);
     for c in &candidates {
@@ -931,4 +931,94 @@ fn test_population_error_isolation() {
     let err_count = all.iter().filter(|r| r.is_err()).count();
     assert_eq!(ok_count, 1);
     assert_eq!(err_count, 1);
+}
+
+// ============================================================================
+// Label-keyed output selection
+// ============================================================================
+
+/// Two named outputs on the same subject, e.g. parent drug and metabolite.
+fn named_outputs_subject() -> Subject {
+    Subject::builder("named")
+        .bolus(0.0, 100.0, 0)
+        .observation(0.0, 0.0, "cp")
+        .observation(1.0, 10.0, "cp")
+        .observation(2.0, 8.0, "cp")
+        .observation(4.0, 4.0, "cp")
+        .observation(8.0, 2.0, "cp")
+        .observation(0.0, 0.0, "metabolite")
+        .observation(1.0, 1.0, "metabolite")
+        .observation(2.0, 2.0, "metabolite")
+        .observation(4.0, 1.5, "metabolite")
+        .observation(8.0, 0.5, "metabolite")
+        .build()
+}
+
+/// Regression: NCA used to compare the observation's *index* against a `usize`
+/// outeq. For a model with named outputs `outeq_index()` is `None`, so nothing
+/// matched and NCA silently analysed an empty profile instead of erroring.
+#[test]
+fn named_outputs_are_selected_by_label() {
+    let subject = named_outputs_subject();
+
+    let parent = subject
+        .nca(&NCAOptions::default().with_outeq("cp"))
+        .expect("`cp` is present in the data");
+    let metabolite = subject
+        .nca(&NCAOptions::default().with_outeq("metabolite"))
+        .expect("`metabolite` is present in the data");
+
+    assert!(parent.exposure.cmax > metabolite.exposure.cmax);
+    assert_eq!(parent.exposure.cmax, 10.0);
+    assert_eq!(metabolite.exposure.cmax, 2.0);
+}
+
+/// An output the data does not carry is a hard error that lists the outputs
+/// that *are* present — never an empty result set.
+#[test]
+fn an_absent_output_label_errors_and_lists_what_is_present() {
+    let subject = named_outputs_subject();
+
+    let message = subject
+        .nca(&NCAOptions::default().with_outeq("effect"))
+        .expect_err("`effect` is not in the data")
+        .to_string();
+
+    assert!(message.contains("effect"), "{message}");
+    assert!(message.contains("cp"), "{message}");
+    assert!(message.contains("metabolite"), "{message}");
+}
+
+/// Without an explicit selection, NCA uses the first output present, which is
+/// the useful default for single-output data.
+#[test]
+fn the_default_output_is_the_first_one_present() {
+    let subject = named_outputs_subject();
+
+    let default = subject.nca(&NCAOptions::default()).expect("first output");
+    let explicit = subject
+        .nca(&NCAOptions::default().with_outeq("cp"))
+        .expect("`cp` is present");
+
+    assert_eq!(default.exposure.cmax, explicit.exposure.cmax);
+}
+
+/// The observation-metric trait is label-keyed too, and reports the same error.
+#[test]
+fn observation_metrics_are_label_keyed() {
+    let subject = named_outputs_subject();
+
+    assert_eq!(subject.cmax_first("cp").expect("`cp` is present"), 10.0);
+    assert_eq!(
+        subject
+            .cmax_first("metabolite")
+            .expect("`metabolite` is present"),
+        2.0
+    );
+
+    let message = subject
+        .cmax_first("effect")
+        .expect_err("`effect` is not in the data")
+        .to_string();
+    assert!(message.contains("cp"), "{message}");
 }

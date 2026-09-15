@@ -180,12 +180,14 @@ pub fn sparse_auc(
 
 /// Compute population AUC from sparse/destructive sampling using a [`Data`] dataset
 ///
-/// Extracts all observations for the given `outeq` from every subject and occasion
-/// in the dataset, then applies Bailer's method.
+/// Extracts all observations carrying the given output label from every subject
+/// and occasion in the dataset, then applies Bailer's method.
+///
+/// Subjects and occasions that do not carry the label contribute nothing.
 ///
 /// # Arguments
 /// * `data` - Population dataset with sparsely-sampled subjects
-/// * `outeq` - Output equation index to extract observations for
+/// * `outeq` - Output label to extract observations for
 /// * `time_tolerance` - Tolerance for grouping time points (None = exact matching)
 ///
 /// # Returns
@@ -198,20 +200,21 @@ pub fn sparse_auc(
 /// use pharmsol::nca::sparse::sparse_auc_from_data;
 ///
 /// let data: Data = /* load or build population data */;
-/// let result = sparse_auc_from_data(&data, 0, None).unwrap();
+/// let result = sparse_auc_from_data(&data, "cp", None).unwrap();
 /// println!("Population AUC: {:.2} ± {:.2}", result.auc, result.auc_se);
 /// ```
 pub fn sparse_auc_from_data(
     data: &Data,
-    outeq: usize,
+    outeq: &str,
     time_tolerance: Option<f64>,
 ) -> Option<SparsePKResult> {
     let (mut all_times, mut all_concs) = (Vec::new(), Vec::new());
     for subject in data.subjects() {
         for occasion in subject.occasions() {
-            let (times, concs, _censoring) = occasion.get_observations(outeq);
-            all_times.extend(times);
-            all_concs.extend(concs);
+            if let Some((times, concs, _censoring)) = occasion.get_observations(outeq) {
+                all_times.extend(times);
+                all_concs.extend(concs);
+            }
         }
     }
     sparse_auc(&all_times, &all_concs, time_tolerance)

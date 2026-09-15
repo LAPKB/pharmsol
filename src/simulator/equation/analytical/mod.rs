@@ -22,11 +22,12 @@ use super::{
     ValidatedModelMetadata,
 };
 use crate::data::error_model::{AssayErrorModels, DenseAssayErrorModels};
+use crate::data::resolved::{ResolvedInfusion, ResolvedObservation};
 use crate::simulator::cache::{
     BoundErrorModelCache, PredictionCache, DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE, DEFAULT_CACHE_SIZE,
 };
 use crate::PharmsolError;
-use crate::{data::Covariates, simulator::*, Observation, Parameters, Subject};
+use crate::{data::Covariates, simulator::*, Parameters, Subject};
 
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
 pub enum AnalyticalMetadataError {
@@ -301,7 +302,7 @@ impl EquationPriv for Analytical {
         x: &mut Self::S,
         parameters: &[f64],
         covariates: &Covariates,
-        infusions: &[Infusion],
+        infusions: &[ResolvedInfusion<'_>],
         ti: f64,
         tf: f64,
     ) -> Result<(), PharmsolError> {
@@ -338,14 +339,7 @@ impl EquationPriv for Analytical {
                 let s = inf.time();
                 let e = s + inf.duration();
                 if current_t >= s && next_t <= e {
-                    let input = inf.input_index().ok_or_else(|| {
-                        let available = self
-                            .metadata()
-                            .map(|m| m.route_labels())
-                            .unwrap_or_default();
-                        PharmsolError::unknown_input_label(inf.input(), &available)
-                    })?;
-
+                    let input = inf.input_slot();
                     if input >= self.get_ndrugs() {
                         return Err(PharmsolError::InputOutOfRange {
                             input,
@@ -373,7 +367,7 @@ impl EquationPriv for Analytical {
     fn process_observation(
         &self,
         parameters: &[f64],
-        observation: &Observation,
+        observation: &ResolvedObservation<'_>,
         error_models: Option<&DenseAssayErrorModels>,
         _time: f64,
         covariates: &Covariates,
@@ -390,14 +384,7 @@ impl EquationPriv for Analytical {
             covariates,
             &mut y,
         );
-        let outeq = observation.outeq_index().ok_or_else(|| {
-            let available = self
-                .metadata()
-                .map(|m| m.output_labels())
-                .unwrap_or_default();
-            PharmsolError::unknown_output_label(observation.outeq(), &available)
-        })?;
-        let pred = y[outeq];
+        let pred = y[observation.outeq_slot()];
         let pred = observation.to_prediction(pred, x.as_slice().to_vec());
         if let Some(error_models) = error_models {
             likelihood.push(pred.log_likelihood(error_models)?.exp());
@@ -594,7 +581,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn handwritten_analytical_metadata_resolves_raw_numeric_aliases_against_canonical_labels() {
+    fn handwritten_analytical_metadata_rejects_raw_numeric_labels() {
         let eq = |x: &V, _p: &V, dt: f64, rateiv: &V, _cov: &Covariates| {
             let mut next = x.clone();
             next[0] += rateiv[0] * dt;
@@ -626,23 +613,34 @@ pub(crate) mod tests {
             .infusion(0.0, 100.0, "input_1", 1.0)
             .observation(1.0, 0.0, "outeq_1")
             .build();
-        let aliased = Subject::builder("aliased")
-            .infusion(0.0, 100.0, "1", 1.0)
+        let numeric_output = Subject::builder("numeric_output")
+            .infusion(0.0, 100.0, "input_1", 1.0)
             .observation(1.0, 0.0, "1")
             .build();
+        let numeric_input = Subject::builder("numeric_input")
+            .infusion(0.0, 100.0, "1", 1.0)
+            .observation(1.0, 0.0, "outeq_1")
+            .build();
 
-        let canonical_predictions = analytical
+        analytical
             .estimate_predictions(&canonical, &crate::parameters::dense([]))
             .expect("canonical labels should simulate");
-        let aliased_predictions = analytical
-            .estimate_predictions(&aliased, &crate::parameters::dense([]))
-            .expect("raw numeric aliases should simulate");
 
-        assert_relative_eq!(
-            canonical_predictions.predictions()[0].prediction(),
-            aliased_predictions.predictions()[0].prediction(),
-            epsilon = 1e-10
-        );
+        let output_error = analytical
+            .estimate_predictions(&numeric_output, &crate::parameters::dense([]))
+            .expect_err("numeric output labels must not alias to `outeq_<n>`")
+            .to_string();
+        assert!(output_error.contains("`1`"), "{output_error}");
+        assert!(output_error.contains("outeq_1"), "{output_error}");
+        assert!(output_error.contains("no longer matched"), "{output_error}");
+
+        let input_error = analytical
+            .estimate_predictions(&numeric_input, &crate::parameters::dense([]))
+            .expect_err("numeric input labels must not alias to `input_<n>`")
+            .to_string();
+        assert!(input_error.contains("`1`"), "{input_error}");
+        assert!(input_error.contains("input_1"), "{input_error}");
+        assert!(input_error.contains("no longer matched"), "{input_error}");
     }
 
     #[test]

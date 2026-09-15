@@ -443,7 +443,7 @@ mod tests {
             .observation(24.0, 0.25, 0)
             .build();
         let occ = &subject.occasions()[0];
-        Profile::from_occasion(occ, 0, &BLQRule::Exclude).unwrap()
+        Profile::from_occasion(occ, None, &BLQRule::Exclude).unwrap()
     }
 
     fn run_analyze(

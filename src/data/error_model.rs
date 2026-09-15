@@ -521,13 +521,14 @@ impl DenseAssayErrorModels {
     /// algorithms (SAEM, FOCE), use [`crate::ResidualErrorModels`] instead.
     #[inline]
     pub fn sigma(&self, prediction: &Prediction) -> Result<f64, ErrorModelError> {
-        self.defined_model(prediction.outeq)?.sigma(prediction)
+        self.defined_model(prediction.outeq_slot)?.sigma(prediction)
     }
 
     /// Computes the variance for a prediction.
     #[inline]
     pub fn variance(&self, prediction: &Prediction) -> Result<f64, ErrorModelError> {
-        self.defined_model(prediction.outeq)?.variance(prediction)
+        self.defined_model(prediction.outeq_slot)?
+            .variance(prediction)
     }
 
     /// Computes the standard deviation (sigma) for a raw value.
@@ -947,7 +948,7 @@ mod tests {
     #[test]
     fn test_additive_error_model() {
         let observation = Observation::new(0.0, Some(20.0), 0, None, 0, Censor::None);
-        let prediction = observation.to_prediction(10.0, vec![]);
+        let prediction = observation.to_prediction_at(0, 10.0, vec![]);
         let model = additive(1.0, 5.0);
         assert_eq!(model.sigma(&prediction).unwrap(), (26.0_f64).sqrt());
     }
@@ -955,7 +956,7 @@ mod tests {
     #[test]
     fn test_proportional_error_model() {
         let observation = Observation::new(0.0, Some(20.0), 0, None, 0, Censor::None);
-        let prediction = observation.to_prediction(10.0, vec![]);
+        let prediction = observation.to_prediction_at(0, 10.0, vec![]);
         let model = proportional(1.0, 2.0);
         assert_eq!(model.sigma(&prediction).unwrap(), 2.0);
     }
@@ -1433,7 +1434,7 @@ mod tests {
     #[test]
     fn test_fixed_parameters_in_calculations() {
         let observation = Observation::new(0.0, Some(20.0), 0, None, 0, Censor::None);
-        let prediction = observation.to_prediction(10.0, vec![]);
+        let prediction = observation.to_prediction_at(0, 10.0, vec![]);
 
         let model_variable = additive(1.0, 5.0);
         let model_fixed = AssayErrorModel::additive_fixed(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
@@ -1523,7 +1524,7 @@ mod tests {
         let models = DenseAssayErrorModels::from_dense(vec![additive(1.0, 5.0)]);
 
         let observation = Observation::new(0.0, Some(20.0), 0, None, 0, Censor::None);
-        let prediction = observation.to_prediction(10.0, vec![]);
+        let prediction = observation.to_prediction_at(0, 10.0, vec![]);
 
         assert_eq!(models.sigma(&prediction).unwrap(), (26.0_f64).sqrt());
     }
@@ -1533,7 +1534,7 @@ mod tests {
         let models = DenseAssayErrorModels::from_dense(vec![additive(1.0, 5.0)]);
 
         let observation = Observation::new(0.0, Some(20.0), 0, None, 0, Censor::None);
-        let prediction = observation.to_prediction(10.0, vec![]);
+        let prediction = observation.to_prediction_at(0, 10.0, vec![]);
 
         let expected_sigma = (26.0_f64).sqrt();
         assert_eq!(
@@ -1548,11 +1549,11 @@ mod tests {
             DenseAssayErrorModels::from_dense(vec![additive(1.0, 5.0), proportional(1.0, 2.0)]);
 
         let obs1 = Observation::new(0.0, Some(20.0), 0, None, 0, Censor::None);
-        let pred1 = obs1.to_prediction(10.0, vec![]);
+        let pred1 = obs1.to_prediction_at(0, 10.0, vec![]);
         assert_eq!(models.sigma(&pred1).unwrap(), (26.0_f64).sqrt());
 
         let obs2 = Observation::new(0.0, Some(20.0), 1, None, 0, Censor::None);
-        let pred2 = obs2.to_prediction(10.0, vec![]);
+        let pred2 = obs2.to_prediction_at(1, 10.0, vec![]);
         assert_eq!(models.sigma(&pred2).unwrap(), 2.0);
     }
 
@@ -1561,7 +1562,7 @@ mod tests {
         let models = DenseAssayErrorModels::from_dense(vec![additive(1.0, 5.0)]);
 
         let observation = Observation::new(0.0, Some(20.0), 1, None, 0, Censor::None);
-        let prediction = observation.to_prediction(10.0, vec![]);
+        let prediction = observation.to_prediction_at(1, 10.0, vec![]);
 
         match models.sigma(&prediction) {
             Err(ErrorModelError::InvalidOutputEquation(outeq)) => assert_eq!(outeq, 1),
@@ -1587,7 +1588,7 @@ mod tests {
         assert_eq!(models.len(), 2);
 
         let observation = Observation::new(0.0, Some(20.0), 1, None, 0, Censor::None);
-        let prediction = observation.to_prediction(10.0, vec![]);
+        let prediction = observation.to_prediction_at(1, 10.0, vec![]);
 
         match models.sigma(&prediction) {
             Err(ErrorModelError::NoneErrorModel(outeq)) => assert_eq!(outeq, 1),

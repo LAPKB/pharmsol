@@ -30,10 +30,7 @@
 //! assert!(metadata.output("cp").is_some());
 //! ```
 
-use pharmsol_dsl::{
-    AnalyticalKernel, CovariateInterpolation, ModelKind, NUMERIC_OUTPUT_PREFIX,
-    NUMERIC_ROUTE_PREFIX,
-};
+use pharmsol_dsl::{AnalyticalKernel, CovariateInterpolation, ModelKind};
 use std::fmt;
 use thiserror::Error;
 
@@ -235,13 +232,9 @@ impl ValidatedModelMetadata {
     /// route), so the kind is part of the match: bolus events resolve bolus
     /// routes and infusion events resolve infusion routes.
     ///
-    /// Resolution order:
-    /// 1. exact route name of the given kind,
-    /// 2. canonical numeric alias (`input_<n>`) for a bare numeric label,
-    ///    matching Pmetrics `INPUT` numbering.
-    ///
-    /// A bare numeric label never falls back to a declaration position, so
-    /// `"10"` does not resolve unless an `input_10` route is declared.
+    /// A label is matched only against the exact declared route name. There is
+    /// no numeric alias and no positional fallback: `"1"` resolves only if a
+    /// route literally named `1` was declared.
     ///
     /// Use [`ValidatedRoute::input_index`] on the result for the dense
     /// execution input slot.
@@ -249,29 +242,14 @@ impl ValidatedModelMetadata {
         self.routes
             .iter()
             .find(|route| route.kind() == kind && route.name() == label)
-            .or_else(|| {
-                if !is_bare_numeric_label(label) {
-                    return None;
-                }
-                let aliased = format!("{NUMERIC_ROUTE_PREFIX}{label}");
-                self.routes
-                    .iter()
-                    .find(|route| route.kind() == kind && route.name() == aliased)
-            })
     }
 
     /// Resolve a public output label from data to its dense output index.
     ///
-    /// Uses the same resolution order as [`Self::route_for_label`]: exact
-    /// output name, then the `outeq_<n>` alias matching Pmetrics `OUTEQ`
-    /// numbering, with no positional fallback.
+    /// Uses the same rule as [`Self::route_for_label`]: the exact declared
+    /// output name, with no numeric alias and no positional fallback.
     pub fn output_for_label(&self, label: &str) -> Option<usize> {
-        self.output_index(label).or_else(|| {
-            if !is_bare_numeric_label(label) {
-                return None;
-            }
-            self.output_index(&format!("{NUMERIC_OUTPUT_PREFIX}{label}"))
-        })
+        self.output_index(label)
     }
 
     pub fn parameter(&self, name: &str) -> Option<&Parameter> {
@@ -812,11 +790,6 @@ impl Route {
     }
 }
 
-/// Returns `true` for labels consisting only of ASCII digits (`"0"`, `"12"`).
-pub(crate) fn is_bare_numeric_label(label: &str) -> bool {
-    !label.is_empty() && label.chars().all(|ch| ch.is_ascii_digit())
-}
-
 fn resolve_kind(
     declared_kind: Option<ModelKind>,
     requested_kind: Option<ModelKind>,
@@ -1123,7 +1096,7 @@ mod tests {
     }
 
     #[test]
-    fn numeric_labels_resolve_via_canonical_alias_only() {
+    fn numeric_labels_never_alias_to_canonical_declarations() {
         let metadata = new("mixed_labels")
             .kind(ModelKind::Ode)
             .parameters(["ke", "v"])
@@ -1134,32 +1107,29 @@ mod tests {
             .validate()
             .expect("metadata should validate");
 
-        // Exact names resolve first.
+        // Exact names resolve.
         assert_eq!(metadata.output_for_label("cp"), Some(0));
+        assert_eq!(metadata.output_for_label("outeq_0"), Some(1));
         assert_eq!(
             metadata
                 .route_for_label("iv", RouteKind::Infusion)
                 .map(|route| route.declaration_index()),
             Some(0)
         );
-
-        // Bare numeric labels resolve through the `outeq_<n>`/`input_<n>`
-        // aliases, including `0`.
-        assert_eq!(metadata.output_for_label("0"), Some(1));
-        assert_eq!(metadata.output_for_label("1"), Some(2));
         assert_eq!(
             metadata
-                .route_for_label("0", RouteKind::Bolus)
+                .route_for_label("input_0", RouteKind::Bolus)
                 .map(|route| route.declaration_index()),
             Some(1)
         );
 
-        // Without a declared alias, a bare numeric label never falls back to
-        // a declaration position.
+        // Bare numeric labels are ordinary names: they neither alias to
+        // `outeq_<n>`/`input_<n>` nor fall back to a declaration position.
+        assert_eq!(metadata.output_for_label("0"), None);
+        assert_eq!(metadata.output_for_label("1"), None);
         assert_eq!(metadata.output_for_label("2"), None);
-        assert_eq!(metadata.output_for_label("3"), None);
+        assert!(metadata.route_for_label("0", RouteKind::Bolus).is_none());
         assert!(metadata.route_for_label("1", RouteKind::Bolus).is_none());
-        assert!(metadata.route_for_label("2", RouteKind::Bolus).is_none());
         assert_eq!(metadata.output_for_label("missing"), None);
         assert!(metadata
             .route_for_label("missing", RouteKind::Bolus)

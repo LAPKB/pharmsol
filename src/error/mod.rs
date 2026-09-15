@@ -34,10 +34,18 @@ pub enum PharmsolError {
     ZeroLikelihood,
     #[error("Missing observation in prediction")]
     MissingObservation,
-    #[error("Input label `{label}` could not be resolved to a route input{available}")]
-    UnknownInputLabel { label: String, available: String },
-    #[error("Output label `{label}` could not be resolved to an output{available}")]
-    UnknownOutputLabel { label: String, available: String },
+    #[error("Input label `{label}` could not be resolved to a route input{available}{hint}")]
+    UnknownInputLabel {
+        label: String,
+        available: String,
+        hint: String,
+    },
+    #[error("Output label `{label}` could not be resolved to an output{available}{hint}")]
+    UnknownOutputLabel {
+        label: String,
+        available: String,
+        hint: String,
+    },
     #[error("Input index {input} does not support route kind {kind:?}")]
     UnsupportedInputRouteKind { input: usize, kind: RouteKind },
     #[error("Input index {input} is out of range (ndrugs = {ndrugs})")]
@@ -99,20 +107,42 @@ impl PharmsolError {
     /// Build an [`UnknownInputLabel`](PharmsolError::UnknownInputLabel) error,
     /// listing the valid route labels when they are known (empty otherwise).
     pub fn unknown_input_label(label: impl std::fmt::Display, available: &[&str]) -> Self {
+        let label = label.to_string();
+        let hint = numeric_label_hint(&label, "INPUT", "input", "route");
         PharmsolError::UnknownInputLabel {
-            label: label.to_string(),
+            label,
             available: format_available(available),
+            hint,
         }
     }
 
     /// Build an [`UnknownOutputLabel`](PharmsolError::UnknownOutputLabel) error,
     /// listing the valid output labels when they are known (empty otherwise).
     pub fn unknown_output_label(label: impl std::fmt::Display, available: &[&str]) -> Self {
+        let label = label.to_string();
+        let hint = numeric_label_hint(&label, "OUTEQ", "outeq", "output");
         PharmsolError::UnknownOutputLabel {
-            label: label.to_string(),
+            label,
             available: format_available(available),
+            hint,
         }
     }
+}
+
+/// Render the migration hint shown when a bare numeric data label fails to
+/// resolve against a model that declares named labels.
+///
+/// Numeric labels used to be aliased to canonical `outeq_<n>` / `input_<n>`
+/// declarations. That aliasing is gone: a label is matched only against the
+/// declared name, so numeric columns must be renamed.
+fn numeric_label_hint(label: &str, column: &str, prefix: &str, noun: &str) -> String {
+    if label.is_empty() || !label.chars().all(|ch| ch.is_ascii_digit()) {
+        return String::new();
+    }
+    format!(
+        ". Numeric {column} values are no longer matched against `{prefix}_<n>` declarations; \
+         rename the {column} column to the declared {noun} name"
+    )
 }
 
 /// Render a ` (available: a, b, c)` suffix, or an empty string when the list is

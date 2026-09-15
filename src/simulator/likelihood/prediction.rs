@@ -5,7 +5,7 @@
 //! calculation.
 
 use crate::data::error_model::DenseAssayErrorModels;
-use crate::data::event::Observation;
+use crate::data::event::{Observation, OutputLabel};
 use crate::{Censor, ErrorPoly, PharmsolError};
 
 use super::distributions::{lognormccdf, lognormcdf, lognormpdf};
@@ -14,12 +14,18 @@ use super::distributions::{lognormccdf, lognormcdf, lognormpdf};
 ///
 /// This struct contains all information needed to calculate the likelihood
 /// contribution of a single observation.
+///
+/// The output this prediction belongs to is identified by its public
+/// [`OutputLabel`]. The dense slot that label resolved to is kept privately for
+/// the runtime's flat error-model lookup and is never part of the public
+/// surface.
 #[derive(Debug, Clone)]
 pub struct Prediction {
     pub(crate) time: f64,
     pub(crate) observation: Option<f64>,
     pub(crate) prediction: f64,
-    pub(crate) outeq: usize,
+    pub(crate) outeq: OutputLabel,
+    pub(crate) outeq_slot: usize,
     pub(crate) errorpoly: Option<ErrorPoly>,
     pub(crate) state: Vec<f64>,
     pub(crate) occasion: usize,
@@ -47,9 +53,20 @@ impl Prediction {
         self.prediction = prediction;
     }
 
-    /// Get the output equation index.
-    pub fn outeq(&self) -> usize {
-        self.outeq
+    /// Get the public output label this prediction belongs to.
+    ///
+    /// This is the label the observation was recorded with, e.g. `"cp"`, not a
+    /// dense index into the model's output vector.
+    pub fn outeq(&self) -> &OutputLabel {
+        &self.outeq
+    }
+
+    /// The dense output slot this prediction's label resolved to.
+    ///
+    /// Runtime-internal: used to index the dense error models and the flat
+    /// output vector. Never exposed publicly.
+    pub(crate) fn outeq_slot(&self) -> usize {
+        self.outeq_slot
     }
 
     /// Get the error polynomial coefficients, if available.
@@ -180,7 +197,7 @@ impl Prediction {
         Observation::new(
             self.time,
             self.observation,
-            self.outeq,
+            self.outeq.as_str(),
             self.errorpoly,
             self.occasion,
             self.censoring,
@@ -194,7 +211,8 @@ impl Default for Prediction {
             time: 0.0,
             observation: None,
             prediction: 0.0,
-            outeq: 0,
+            outeq: OutputLabel::default(),
+            outeq_slot: 0,
             errorpoly: None,
             state: vec![],
             occasion: 0,
@@ -227,7 +245,8 @@ mod tests {
             time: 1.0,
             observation: Some(obs),
             prediction: pred,
-            outeq: 0,
+            outeq: OutputLabel::new("cp"),
+            outeq_slot: 0,
             errorpoly: None,
             state: vec![pred],
             occasion: 0,

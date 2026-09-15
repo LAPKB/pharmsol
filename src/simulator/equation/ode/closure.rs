@@ -1,5 +1,5 @@
 use super::{ExplicitStepBudgetConfig, MIN_TSIT45_PROGRESS_FRACTION_PER_WINDOW};
-use crate::{Covariates, Infusion, PharmsolError};
+use crate::{data::resolved::ResolvedInfusion, Covariates, PharmsolError};
 use diffsol::{
     ConstantOp, LinearOp, MatrixCommon, NalgebraContext, NalgebraMat, NonLinearOp,
     NonLinearOpJacobian, OdeEquations, OdeEquationsRef, Op, UnitCallable, Vector,
@@ -153,7 +153,7 @@ impl IntegrationSchedule {
         covariate_discontinuities: &[f64],
     ) -> Result<Self, PharmsolError>
     where
-        I: IntoIterator<Item = &'a Infusion>,
+        I: IntoIterator<Item = ResolvedInfusion<'a>>,
     {
         let mut integration_boundary_times = covariate_breakpoints.to_vec();
         let mut discontinuity_times = covariate_discontinuities.to_vec();
@@ -178,9 +178,7 @@ impl IntegrationSchedule {
                 continue;
             }
 
-            let input = infusion
-                .input_index()
-                .ok_or_else(|| PharmsolError::unknown_input_label(infusion.input(), &[]))?;
+            let input = infusion.input_slot();
             if input >= ndrugs {
                 return Err(PharmsolError::InputOutOfRange { input, ndrugs });
             }
@@ -857,7 +855,7 @@ where
         time_origin: f64,
     ) -> Result<Self, PharmsolError>
     where
-        I: IntoIterator<Item = &'b Infusion>,
+        I: IntoIterator<Item = ResolvedInfusion<'b>>,
     {
         if !time_origin.is_finite() {
             return Err(PharmsolError::OtherError(format!(
@@ -1004,7 +1002,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Covariate;
+    use crate::{Covariate, Infusion};
     use diffsol::{NonLinearOpJacobian, OdeEquations, Vector};
     use std::cell::Cell;
 
@@ -1022,7 +1020,7 @@ mod tests {
             0,
             V::zeros(0, NalgebraContext::new()),
             &covariates,
-            infusions.iter(),
+            infusions.iter().map(|inf| ResolvedInfusion::new(inf, 0)),
             V::zeros(1, NalgebraContext::new()),
             0.0,
         )
@@ -1052,7 +1050,7 @@ mod tests {
             0,
             V::zeros(0, NalgebraContext::new()),
             &covariates,
-            infusions.iter(),
+            infusions.iter().map(|inf| ResolvedInfusion::new(inf, 0)),
             V::zeros(1, NalgebraContext::new()),
             0.0,
         )
@@ -1093,7 +1091,7 @@ mod tests {
             0,
             V::zeros(0, NalgebraContext::new()),
             &covariates,
-            infusions.iter(),
+            infusions.iter().map(|inf| ResolvedInfusion::new(inf, 0)),
             V::zeros(2, NalgebraContext::new()),
             0.0,
         )
@@ -1126,7 +1124,7 @@ mod tests {
             0,
             V::zeros(0, NalgebraContext::new()),
             &covariates,
-            infusions.iter(),
+            infusions.iter().map(|inf| ResolvedInfusion::new(inf, 0)),
             V::zeros(1, NalgebraContext::new()),
             0.0,
         )
@@ -1153,7 +1151,7 @@ mod tests {
             1,
             V::zeros(0, NalgebraContext::new()),
             &covariates,
-            infusions.iter(),
+            infusions.iter().map(|inf| ResolvedInfusion::new(inf, 0)),
             V::zeros(1, NalgebraContext::new()),
             10.0,
         )
@@ -1191,7 +1189,7 @@ mod tests {
             1,
             V::zeros(0, NalgebraContext::new()),
             &covariates,
-            infusions.iter(),
+            infusions.iter().map(|inf| ResolvedInfusion::new(inf, 0)),
             V::zeros(1, NalgebraContext::new()),
             0.0,
         )
@@ -1217,7 +1215,7 @@ mod tests {
             0,
             V::zeros(0, NalgebraContext::new()),
             &source,
-            std::iter::empty::<&Infusion>(),
+            std::iter::empty::<ResolvedInfusion<'_>>(),
             V::zeros(1, NalgebraContext::new()),
             0.0,
         )

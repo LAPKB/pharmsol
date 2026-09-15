@@ -735,7 +735,7 @@ mod tests {
             Event::Observation(obs) => {
                 assert_eq!(obs.time(), 1.0);
                 assert_eq!(obs.value(), Some(25.5));
-                assert_eq!(obs.outeq(), 1); // Kept as 1-indexed
+                assert_eq!(obs.outeq().as_str(), "1"); // Kept as 1-indexed
             }
             _ => panic!("Expected observation event"),
         }
@@ -756,7 +756,7 @@ mod tests {
             Event::Bolus(bolus) => {
                 assert_eq!(bolus.time(), 0.0);
                 assert_eq!(bolus.amount(), 100.0);
-                assert_eq!(bolus.input(), 1); // Kept as 1-indexed
+                assert_eq!(bolus.input().as_str(), "1"); // Kept as 1-indexed
             }
             _ => panic!("Expected bolus event"),
         }
@@ -779,7 +779,7 @@ mod tests {
                 assert_eq!(inf.time(), 0.0);
                 assert_eq!(inf.amount(), 100.0);
                 assert_eq!(inf.duration(), 2.0);
-                assert_eq!(inf.input(), 1); // Kept as 1-indexed
+                assert_eq!(inf.input().as_str(), "1"); // Kept as 1-indexed
             }
             _ => panic!("Expected infusion event"),
         }

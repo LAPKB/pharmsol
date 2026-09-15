@@ -70,10 +70,10 @@ fn two_output_parameters(ode: &ODE) -> Parameters {
 fn observed_data() -> Data {
     let subject = Subject::builder("1")
         .bolus(0.0, 100.0, "iv")
-        // Raw outeq = 0 matches the declared `outeq_0` output.
-        .observation(1.0, 2.0, 0)
-        .observation(2.0, 1.5, 0)
-        .observation(4.0, 0.8, 0)
+        // The data must spell the declared output name in full.
+        .observation(1.0, 2.0, "outeq_0")
+        .observation(2.0, 1.5, "outeq_0")
+        .observation(4.0, 0.8, "outeq_0")
         .build();
     Data::new(vec![subject])
 }

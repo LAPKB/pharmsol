@@ -123,25 +123,62 @@ impl std::fmt::Display for ObservationProfile {
 // Construction
 // ============================================================================
 
+/// Times, concentrations, and censoring flags of one output, in event order.
+pub(crate) type RawObservations = (Vec<f64>, Vec<f64>, Vec<Censor>);
+
+/// Extract the raw (unfiltered) observations of one output from an occasion.
+///
+/// `outeq` selects the output label; `None` selects the first output present in
+/// the occasion, which is the useful default for single-output data. A label
+/// that no observation carries is an error naming the labels that *are*
+/// present, never an empty result set.
+pub(crate) fn occasion_observations(
+    occasion: &Occasion,
+    outeq: Option<&str>,
+) -> Result<RawObservations, ObservationError> {
+    let available = occasion.observation_labels();
+    let requested = match outeq {
+        Some(label) => label,
+        None => match available.first() {
+            Some(first) => first.as_str(),
+            None => {
+                return Err(ObservationError::NoObservations {
+                    outeq: "<first>".to_string(),
+                    available: Vec::new(),
+                })
+            }
+        },
+    };
+
+    occasion
+        .get_observations(requested)
+        .ok_or_else(|| ObservationError::NoObservations {
+            outeq: requested.to_string(),
+            available: available.iter().map(|label| label.to_string()).collect(),
+        })
+}
+
 impl ObservationProfile {
     /// Create a profile from an [`Occasion`]
     ///
-    /// Extracts observations for the given `outeq`, applies BLQ filtering,
-    /// and validates the result.
+    /// Extracts observations for the given output label, applies BLQ
+    /// filtering, and validates the result.
     ///
     /// # Arguments
     /// * `occasion` - The occasion containing events
-    /// * `outeq` - Output equation index to extract
+    /// * `outeq` - Output label to extract, or `None` for the first output
+    ///   present in the occasion
     /// * `blq_rule` - How to handle BLQ observations
     ///
     /// # Errors
-    /// Returns error if data is insufficient or invalid
+    /// Returns an error if the label is absent from the occasion, or if the
+    /// data is insufficient or invalid
     pub(crate) fn from_occasion(
         occasion: &Occasion,
-        outeq: usize,
+        outeq: Option<&str>,
         blq_rule: &BLQRule,
     ) -> Result<Self, ObservationError> {
-        let (times, concs, censoring) = occasion.get_observations(outeq);
+        let (times, concs, censoring) = occasion_observations(occasion, outeq)?;
         Self::from_arrays(&times, &concs, &censoring, blq_rule.clone())
     }
 
@@ -158,7 +195,7 @@ impl ObservationProfile {
     ///
     /// # Errors
     /// Returns error if arrays mismatch, data is insufficient, or all values are BLQ
-    fn from_arrays(
+    pub(crate) fn from_arrays(
         times: &[f64],
         concentrations: &[f64],
         censoring: &[Censor],
@@ -432,7 +469,7 @@ mod tests {
             .build();
 
         let occasion = &subject.occasions()[0];
-        let profile = ObservationProfile::from_occasion(occasion, 0, &BLQRule::Exclude).unwrap();
+        let profile = ObservationProfile::from_occasion(occasion, None, &BLQRule::Exclude).unwrap();
 
         assert_eq!(profile.times.len(), 5);
         assert_eq!(profile.cmax(), 10.0);
@@ -451,7 +488,7 @@ mod tests {
             .observation(8.0, 2.0, 0)
             .build();
         let occ = &subject.occasions()[0];
-        let profile = ObservationProfile::from_occasion(occ, 0, &BLQRule::Exclude).unwrap();
+        let profile = ObservationProfile::from_occasion(occ, None, &BLQRule::Exclude).unwrap();
 
         assert_eq!(profile.cmax(), 10.0);
         assert_eq!(profile.tmax(), 1.0);
@@ -501,7 +538,7 @@ mod tests {
             .observation(8.0, 1.0, 0)
             .build();
         let occ = &subject.occasions()[0];
-        let profile = ObservationProfile::from_occasion(occ, 0, &BLQRule::Exclude).unwrap();
+        let profile = ObservationProfile::from_occasion(occ, None, &BLQRule::Exclude).unwrap();
         assert_eq!(profile.cmin(), 1.0);
     }
 
@@ -597,7 +634,7 @@ mod tests {
             .build();
 
         let occasion = &subject.occasions()[0];
-        let profile = ObservationProfile::from_occasion(occasion, 0, &BLQRule::Exclude).unwrap();
+        let profile = ObservationProfile::from_occasion(occasion, None, &BLQRule::Exclude).unwrap();
 
         let auc_val = profile.auc_last(&AUCMethod::Linear).unwrap();
         assert!((auc_val - 44.0).abs() < 1e-10);
@@ -614,7 +651,7 @@ mod tests {
             .observation(8.0, 2.0, 0)
             .build();
         let occ = &subject.occasions()[0];
-        let profile = ObservationProfile::from_occasion(occ, 0, &BLQRule::Exclude).unwrap();
+        let profile = ObservationProfile::from_occasion(occ, None, &BLQRule::Exclude).unwrap();
         let method = AUCMethod::Linear;
 
         let profile_auc = profile.auc_last(&method).unwrap();
@@ -631,7 +668,7 @@ mod tests {
             .observation(4.0, 6.0, 0)
             .build();
         let occ = &subject.occasions()[0];
-        let profile = ObservationProfile::from_occasion(occ, 0, &BLQRule::Exclude).unwrap();
+        let profile = ObservationProfile::from_occasion(occ, None, &BLQRule::Exclude).unwrap();
 
         assert!((profile.interpolate(1.0).unwrap() - 5.0).abs() < 1e-10);
         assert!((profile.interpolate(3.0).unwrap() - 8.0).abs() < 1e-10);
@@ -647,7 +684,7 @@ mod tests {
             .observation(8.0, 2.0, 0)
             .build();
         let occ = &subject.occasions()[0];
-        let profile = ObservationProfile::from_occasion(occ, 0, &BLQRule::Exclude).unwrap();
+        let profile = ObservationProfile::from_occasion(occ, None, &BLQRule::Exclude).unwrap();
 
         let display = format!("{}", profile);
         assert!(display.contains("ObservationProfile (5 points)"));

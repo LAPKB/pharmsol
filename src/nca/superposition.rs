@@ -356,7 +356,7 @@ impl Superposition for Occasion {
         tau: f64,
         n_eval_points: Option<usize>,
     ) -> Result<SuperpositionResult, NCAError> {
-        let profile = ObservationProfile::from_occasion(self, 0, &BLQRule::Exclude)?;
+        let profile = ObservationProfile::from_occasion(self, None, &BLQRule::Exclude)?;
         predict_from_nca(&profile, nca_result, tau, n_eval_points)
     }
 }
@@ -383,7 +383,7 @@ mod tests {
             .build();
 
         let occ = &subject.occasions()[0];
-        let profile = ObservationProfile::from_occasion(occ, 0, &BLQRule::Exclude).unwrap();
+        let profile = ObservationProfile::from_occasion(occ, None, &BLQRule::Exclude).unwrap();
 
         let lambda_z = 0.1;
         let tau = 12.0;
@@ -413,7 +413,7 @@ mod tests {
             .build();
 
         let occ = &subject.occasions()[0];
-        let profile = ObservationProfile::from_occasion(occ, 0, &BLQRule::Exclude).unwrap();
+        let profile = ObservationProfile::from_occasion(occ, None, &BLQRule::Exclude).unwrap();
 
         assert!(predict(&profile, -0.1, 12.0, None).is_none());
         assert!(predict(&profile, 0.1, 0.0, None).is_none());
@@ -440,7 +440,7 @@ mod tests {
             .build();
 
         let occ = &subject.occasions()[0];
-        let profile = ObservationProfile::from_occasion(occ, 0, &BLQRule::Exclude).unwrap();
+        let profile = ObservationProfile::from_occasion(occ, None, &BLQRule::Exclude).unwrap();
 
         let result = predict(&profile, lambda_z, tau, Some(50)).unwrap();
 
