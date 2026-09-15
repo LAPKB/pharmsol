@@ -5,7 +5,11 @@ use std::{
     sync::Arc,
 };
 
-use crate::{data::event::OutputLabel, simulator::likelihood::Prediction};
+use crate::{
+    data::event::OutputLabel,
+    simulator::{equation::metadata::is_bare_numeric_label, likelihood::Prediction},
+};
+use pharmsol_dsl::NUMERIC_OUTPUT_PREFIX;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -123,16 +127,6 @@ impl ErrorPoly {
     }
 }
 
-impl From<Vec<AssayErrorModel>> for AssayErrorModels {
-    fn from(models: Vec<AssayErrorModel>) -> Self {
-        Self {
-            models,
-            output_lookup: BTreeMap::new(),
-            named_models: BTreeMap::new(),
-        }
-    }
-}
-
 /// Collection of assay/measurement error models for all outputs.
 ///
 /// This struct represents **measurement/assay noise** - the error associated with
@@ -144,13 +138,37 @@ impl From<Vec<AssayErrorModel>> for AssayErrorModels {
 /// For parametric algorithms (SAEM, FOCE), use [`crate::ResidualErrorModels`] instead,
 /// which computes sigma from the **prediction**.
 ///
-/// This is a wrapper around a vector of [AssayErrorModel]s, its size is determined by
-/// the number of outputs in the model/dataset.
+/// A collection of [AssayErrorModel]s, one per output.
+///
+/// All models live in the same dense list, so `len`, `iter` and `iter_mut` see
+/// every one of them. Before binding, `labels` remembers the label of each
+/// model added by name. A bound set uses `output_lookup` instead and leaves
+/// `labels` empty.
 #[derive(Serialize, Debug, Clone, Deserialize)]
 pub struct AssayErrorModels {
     models: Vec<AssayErrorModel>,
+    /// Declared outputs of the bound equation, mapped to their slots.
     output_lookup: BTreeMap<OutputLabel, usize>,
-    named_models: BTreeMap<OutputLabel, AssayErrorModel>,
+    /// Models added by label, mapped to their slot. Empty once bound.
+    labels: BTreeMap<OutputLabel, usize>,
+}
+
+fn hash_model<H: Hasher>(hasher: &mut H, model: &AssayErrorModel) {
+    match model {
+        AssayErrorModel::Additive { lambda, .. } => {
+            0u8.hash(hasher);
+            lambda.value().to_bits().hash(hasher);
+            lambda.is_fixed().hash(hasher);
+        }
+        AssayErrorModel::Proportional { gamma, .. } => {
+            1u8.hash(hasher);
+            gamma.value().to_bits().hash(hasher);
+            gamma.is_fixed().hash(hasher);
+        }
+        AssayErrorModel::None => {
+            2u8.hash(hasher);
+        }
+    }
 }
 
 /// Deprecated alias for [`AssayErrorModels`].
@@ -258,29 +276,33 @@ impl AssayErrorModels {
             return Ok(BoundAssayErrorModels::Borrowed(self));
         }
 
-        if self.named_models.is_empty() {
+        if self.labels.is_empty() {
             return Ok(BoundAssayErrorModels::Borrowed(self));
         }
 
         let mut bound = Self::with_output_names(outputs.iter().map(String::as_str));
-        bound.models = self.models.clone();
 
-        for (label, model) in &self.named_models {
-            bound = bound.add(label.clone(), model.clone())?;
+        // Every model in an unbound set was added by label, so match each one
+        // to the declared output it names.
+        for (label, slot) in &self.labels {
+            let model = self
+                .models
+                .get(*slot)
+                .cloned()
+                .unwrap_or(AssayErrorModel::None);
+            let resolved = bound.resolve_output_binding(label)?;
+            bound.insert_model_at(resolved, model)?;
         }
 
         Ok(BoundAssayErrorModels::Owned(bound))
     }
 
-    /// Create an unbound error-model set for dense-slot callers.
-    ///
-    /// This keeps the pre-existing numeric-slot setup path available for low-level
-    /// tests or workflows that deliberately operate on dense output indices.
+    /// Create an empty, unbound error-model set.
     pub(crate) fn empty() -> Self {
         Self {
             models: vec![],
             output_lookup: BTreeMap::new(),
-            named_models: BTreeMap::new(),
+            labels: BTreeMap::new(),
         }
     }
 
@@ -303,7 +325,7 @@ impl AssayErrorModels {
         Self {
             models: vec![],
             output_lookup,
-            named_models: BTreeMap::new(),
+            labels: BTreeMap::new(),
         }
     }
 
@@ -317,13 +339,29 @@ impl AssayErrorModels {
         names.into_iter().map(|(_, label)| label).collect()
     }
 
-    fn resolve_output_binding(&self, outeq: impl ToString) -> Result<usize, ErrorModelError> {
-        let label = OutputLabel::new(outeq);
-        self.output_lookup
-            .get(&label)
-            .copied()
-            .or_else(|| label.index())
-            .ok_or_else(|| ErrorModelError::UnknownOutputLabel(label.to_string()))
+    /// Resolve an output label to its slot, using the same rule as data:
+    /// exact declared name first, then the `outeq_<n>` alias for a bare number.
+    ///
+    /// Equations without declared output names keep the numeric fallback that
+    /// data labels use.
+    fn resolve_output_binding(&self, label: &OutputLabel) -> Result<usize, ErrorModelError> {
+        if let Some(index) = self.output_lookup.get(label) {
+            return Ok(*index);
+        }
+
+        if is_bare_numeric_label(label.as_str()) {
+            if let Some(number) = label.index() {
+                let alias = OutputLabel::new(format!("{NUMERIC_OUTPUT_PREFIX}{number}"));
+                if let Some(index) = self.output_lookup.get(&alias) {
+                    return Ok(*index);
+                }
+                if self.output_lookup.is_empty() {
+                    return Ok(number);
+                }
+            }
+        }
+
+        Err(ErrorModelError::UnknownOutputLabel(label.to_string()))
     }
 
     fn insert_model_at(
@@ -356,9 +394,17 @@ impl AssayErrorModels {
         Ok(&self.models[outeq])
     }
 
-    /// Add a new error model for a specific output equation or declared label.
+    /// Add a new error model for an output label.
+    ///
+    /// A bare number is treated as its OUTEQ number (`1` matches a declared
+    /// `outeq_1`), exactly like data labels, never as a dense slot. The label
+    /// is resolved when the collection is bound to a model.
+    ///
+    /// Every model goes into one dense list, so `iter`, `len` and `set_factor`
+    /// see all of them.
+    ///
     /// # Arguments
-    /// * `outeq` - The output slot index or public output label.
+    /// * `outeq` - The public output label, or a number for that output.
     /// * `model` - The [AssayErrorModel] to add for the specified output equation.
     /// # Returns
     /// A new instance of AssayErrorModels with the added model.
@@ -372,20 +418,21 @@ impl AssayErrorModels {
         let label = OutputLabel::new(outeq);
 
         if !self.output_lookup.is_empty() {
-            let outeq = self.resolve_output_binding(label.clone())?;
-            self.insert_model_at(outeq, model)?;
+            let slot = self.resolve_output_binding(&label)?;
+            self.insert_model_at(slot, model)?;
             return Ok(self);
         }
 
-        if let Some(outeq) = label.index() {
-            self.insert_model_at(outeq, model)?;
-            return Ok(self);
-        }
-
-        if self.named_models.contains_key(&label) {
+        if self.labels.contains_key(&label) {
             return Err(ErrorModelError::ExistingOutputLabel(label.to_string()));
         }
-        self.named_models.insert(label, model);
+        let slot = self
+            .models
+            .iter()
+            .position(|existing| existing == &AssayErrorModel::None)
+            .unwrap_or(self.models.len());
+        self.insert_model_at(slot, model)?;
+        self.labels.insert(label, slot);
         Ok(self)
     }
     /// Returns an iterator over the error models in the collection.
@@ -410,64 +457,34 @@ impl AssayErrorModels {
     pub fn hash(&self) -> u64 {
         let mut hasher = ahash::AHasher::default();
 
-        for (label, model) in &self.named_models {
+        // Labeled models hash by label, so insertion order does not matter.
+        for (label, slot) in &self.labels {
             3u8.hash(&mut hasher);
             label.hash(&mut hasher);
-
-            match model {
-                AssayErrorModel::Additive { lambda, .. } => {
-                    0u8.hash(&mut hasher);
-                    lambda.value().to_bits().hash(&mut hasher);
-                    lambda.is_fixed().hash(&mut hasher);
-                }
-                AssayErrorModel::Proportional { gamma, .. } => {
-                    1u8.hash(&mut hasher);
-                    gamma.value().to_bits().hash(&mut hasher);
-                    gamma.is_fixed().hash(&mut hasher);
-                }
-                AssayErrorModel::None => {
-                    2u8.hash(&mut hasher);
-                }
+            if let Some(model) = self.models.get(*slot) {
+                hash_model(&mut hasher, model);
             }
         }
 
-        for outeq in 0..self.models.len() {
-            // Find the model with the matching outeq ID
-
-            let model = &self.models[outeq];
-            outeq.hash(&mut hasher);
-
-            match model {
-                AssayErrorModel::Additive { lambda, .. } => {
-                    0u8.hash(&mut hasher); // Use 0 for additive model
-                    lambda.value().to_bits().hash(&mut hasher);
-                    lambda.is_fixed().hash(&mut hasher); // Include fixed/variable state in hash
-                }
-                AssayErrorModel::Proportional { gamma, .. } => {
-                    1u8.hash(&mut hasher); // Use 1 for proportional model
-                    gamma.value().to_bits().hash(&mut hasher);
-                    gamma.is_fixed().hash(&mut hasher); // Include fixed/variable state in hash
-                }
-                AssayErrorModel::None => {
-                    2u8.hash(&mut hasher); // Use 2 for no model
-                }
+        let labeled_slots: Vec<usize> = self.labels.values().copied().collect();
+        for (slot, model) in self.models.iter().enumerate() {
+            if labeled_slots.contains(&slot) {
+                continue;
             }
+            slot.hash(&mut hasher);
+            hash_model(&mut hasher, model);
         }
 
         hasher.finish()
     }
     /// Returns the number of error models in the collection.
     pub fn len(&self) -> usize {
-        if self.models.is_empty() && !self.named_models.is_empty() && self.output_lookup.is_empty()
-        {
-            return self.named_models.len();
-        }
         self.models.len()
     }
 
     /// Returns whether the collection contains no error models.
     pub fn is_empty(&self) -> bool {
-        self.models.is_empty() && self.named_models.is_empty()
+        self.models.is_empty()
     }
 
     /// Returns the error polynomial associated with the specified output equation.
@@ -1360,19 +1377,19 @@ mod tests {
     }
 
     #[test]
-    fn test_error_models_add_duplicate_outeq_fails() {
+    fn test_error_models_add_duplicate_numeric_label_fails() {
         let model1 = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         let model2 = AssayErrorModel::proportional(ErrorPoly::new(2.0, 0.0, 0.0, 0.0), 3.0);
 
         let result = AssayErrorModels::empty()
             .add(0, model1)
             .unwrap()
-            .add(0, model2); // Same outeq should fail
+            .add(0, model2); // Same output number should fail
 
         assert!(result.is_err());
         match result {
-            Err(ErrorModelError::ExistingOutputEquation(outeq)) => assert_eq!(outeq, 0),
-            _ => panic!("Expected ExistingOutputEquation error"),
+            Err(ErrorModelError::ExistingOutputLabel(label)) => assert_eq!(label, "0"),
+            _ => panic!("Expected ExistingOutputLabel error"),
         }
     }
 
@@ -1963,5 +1980,90 @@ mod tests {
             )
             .unwrap();
         assert_ne!(a.hash(), b.hash());
+    }
+
+    #[test]
+    fn test_label_addressed_models_are_visible_to_iteration() {
+        let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let mut models = AssayErrorModels::new().add("outeq_0", model).unwrap();
+
+        assert_eq!(models.len(), 1);
+        assert!(!models.is_empty());
+        assert_eq!(models.iter().count(), models.len());
+        assert_eq!(models.iter_mut().count(), models.len());
+    }
+
+    #[test]
+    fn test_label_addressed_models_support_dense_updates() {
+        let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let mut models = AssayErrorModels::new().add("outeq_0", model).unwrap();
+
+        // The optimizer picks models from iter_mut and updates them by slot,
+        // so a label-addressed model has to be visible there.
+        let optimizable: Vec<usize> = models
+            .iter_mut()
+            .filter_map(|(outeq, model)| model.optimize().then_some(outeq))
+            .collect();
+        assert_eq!(optimizable, vec![0]);
+
+        for outeq in optimizable {
+            let updated = models.factor(outeq).unwrap() * 2.0;
+            models.set_factor(outeq, updated).unwrap();
+        }
+        assert_eq!(models.factor(0).unwrap(), 10.0);
+    }
+
+    #[test]
+    fn test_label_addressed_models_bind_to_declared_outputs() {
+        let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let models = AssayErrorModels::new().add("effect", model).unwrap();
+        let bound = models.bind_output_names(["cp", "effect"]).unwrap();
+
+        assert_eq!(bound.error_model(1).unwrap().factor().unwrap(), 5.0);
+        assert_eq!(bound.error_model(0).unwrap(), &AssayErrorModel::None);
+        assert_eq!(
+            bound.bound_output_names(),
+            vec!["cp".to_string(), "effect".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_label_addressed_update_is_reflected_after_binding() {
+        let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
+        let mut models = AssayErrorModels::new().add("outeq_0", model).unwrap();
+
+        let optimizable: Vec<usize> = models
+            .iter_mut()
+            .filter_map(|(outeq, model)| model.optimize().then_some(outeq))
+            .collect();
+        assert_eq!(optimizable.len(), 1);
+        let outeq = optimizable[0];
+        let updated = models.factor(outeq).unwrap() * 2.0;
+        models.set_factor(outeq, updated).unwrap();
+
+        let bound = models.bind_output_names(["outeq_0"]).unwrap();
+        assert_eq!(bound.error_model(0).unwrap().factor().unwrap(), updated);
+    }
+
+    #[test]
+    fn test_label_models_bind_by_name_not_insertion_order() {
+        let additive = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 1.0);
+        let proportional = AssayErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0);
+
+        // Added in the opposite order to the declared outputs on purpose.
+        let models = AssayErrorModels::new()
+            .add("effect", proportional)
+            .unwrap()
+            .add("cp", additive)
+            .unwrap();
+
+        assert_eq!(models.len(), 2);
+        assert_eq!(models.iter().count(), models.len());
+
+        let bound = models.bind_output_names(["cp", "effect"]).unwrap();
+        assert!(bound.error_model(0).unwrap().is_additive());
+        assert_eq!(bound.error_model(0).unwrap().factor().unwrap(), 1.0);
+        assert!(bound.error_model(1).unwrap().is_proportional());
+        assert_eq!(bound.error_model(1).unwrap().factor().unwrap(), 2.0);
     }
 }
