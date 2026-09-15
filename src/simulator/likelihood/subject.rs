@@ -199,7 +199,7 @@ mod tests {
     fn test_log_likelihood_with_observations() {
         let mut preds = SubjectPredictions::default();
         let obs = Observation::new(0.0, Some(1.0), 0, None, 0, Censor::None);
-        preds.add_prediction(obs.to_prediction(1.0, vec![]));
+        preds.add_prediction(obs.to_prediction_at(0, 1.0, vec![]));
 
         let error_model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 0.0);
         let errors = DenseAssayErrorModels::from_dense(vec![error_model]);
@@ -216,7 +216,8 @@ mod tests {
                 time: 1.0,
                 observation: Some(10.0),
                 prediction: 10.1,
-                outeq: 0,
+                outeq: crate::OutputLabel::new(0usize),
+                outeq_slot: 0,
                 errorpoly: None,
                 state: vec![10.1],
                 occasion: 0,
@@ -226,7 +227,8 @@ mod tests {
                 time: 2.0,
                 observation: Some(8.0),
                 prediction: 8.2,
-                outeq: 0,
+                outeq: crate::OutputLabel::new(0usize),
+                outeq_slot: 0,
                 errorpoly: None,
                 state: vec![8.2],
                 occasion: 0,

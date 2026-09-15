@@ -10,11 +10,12 @@ pub(crate) mod closure_helpers {
 }
 
 use crate::{
-    data::{Covariates, Infusion},
+    data::resolved::{ResolvedEvent, ResolvedInfusion, ResolvedObservation},
+    data::Covariates,
     error_model::{AssayErrorModels, DenseAssayErrorModels},
     prelude::simulator::SubjectPredictions,
     simulator::{DiffEq, Fa, Init, Lag, Neqs, Out, M, V},
-    Event, Observation, Parameters, PharmsolError, Subject,
+    Parameters, PharmsolError, Subject,
 };
 
 use super::parameters_hash;
@@ -410,7 +411,7 @@ fn _simulate_subject_dense(
                     parameters_v.clone(),
                     covariates,
                     events.iter().filter_map(|event| match event {
-                        Event::Infusion(infusion) => Some(infusion),
+                        ResolvedEvent::Infusion(infusion) => Some(*infusion),
                         _ => None,
                     }),
                     ode.initial_state_at_time(parameters, covariates, time_origin),
@@ -568,7 +569,7 @@ impl EquationPriv for ODE {
         _state: &mut Self::S,
         _parameters: &[f64],
         _covariates: &Covariates,
-        _infusions: &[Infusion],
+        _infusions: &[ResolvedInfusion<'_>],
         _start_time: f64,
         _end_time: f64,
     ) -> Result<(), PharmsolError> {
@@ -578,7 +579,7 @@ impl EquationPriv for ODE {
     fn process_observation(
         &self,
         _parameters: &[f64],
-        _observation: &Observation,
+        _observation: &ResolvedObservation<'_>,
         _error_models: Option<&DenseAssayErrorModels>,
         _time: f64,
         _covariates: &Covariates,
@@ -626,8 +627,10 @@ fn checked_local_time(
 /// solver starts at local `t = 0` at the first resolved event. Schedule
 /// validation is absolute-time validation; a later time may need a coordinate
 /// shift before it is passed to diffsol.
-pub(crate) fn validate_resolved_ode_schedule(events: &[Event]) -> Result<f64, PharmsolError> {
-    let first_event_time = events.first().map(Event::time).unwrap_or(0.0);
+pub(crate) fn validate_resolved_ode_schedule(
+    events: &[ResolvedEvent<'_>],
+) -> Result<f64, PharmsolError> {
+    let first_event_time = events.first().map(ResolvedEvent::time).unwrap_or(0.0);
     if !first_event_time.is_finite() {
         return Err(PharmsolError::OtherError(format!(
             "invalid ODE event schedule: first resolved event time {first_event_time:?} is not finite"
@@ -662,19 +665,21 @@ pub(crate) fn validate_resolved_ode_schedule(events: &[Event]) -> Result<f64, Ph
         required_times.push(time);
 
         match event {
-            Event::Bolus(bolus) => {
+            ResolvedEvent::Bolus(bolus) => {
                 if !bolus.amount().is_finite() {
                     return Err(PharmsolError::OtherError(format!(
-                        "invalid ODE event schedule: bolus at t = {time:.16e} has non-finite amount {:?}",
+                        "invalid ODE event schedule: bolus on route `{}` at t = {time:.16e} has non-finite amount {:?}",
+                        bolus.label(),
                         bolus.amount()
                     )));
                 }
             }
-            Event::Infusion(infusion) => {
+            ResolvedEvent::Infusion(infusion) => {
                 let amount = infusion.amount();
                 if !amount.is_finite() {
                     return Err(PharmsolError::OtherError(format!(
-                        "invalid ODE event schedule: infusion at t = {time:.16e} has non-finite amount {amount:?}"
+                        "invalid ODE event schedule: infusion on route `{}` at t = {time:.16e} has non-finite amount {amount:?}",
+                        infusion.label()
                     )));
                 }
 
@@ -714,7 +719,7 @@ pub(crate) fn validate_resolved_ode_schedule(events: &[Event]) -> Result<f64, Ph
                 }
                 required_times.push(endpoint);
             }
-            Event::Observation(_) => {}
+            ResolvedEvent::Observation(_) => {}
         }
     }
 
@@ -1703,7 +1708,7 @@ impl ODE {
     fn run_events<'a, F, S>(
         &self,
         solver: &mut S,
-        events: &[Event],
+        events: &[ResolvedEvent<'_>],
         parameters_v: &V,
         covariates: &Covariates,
         error_models: Option<&DenseAssayErrorModels>,
@@ -1734,15 +1739,8 @@ impl ODE {
             let next_event = events.get(index + 1);
 
             match event {
-                Event::Bolus(bolus) => {
-                    let input = bolus.input_index().ok_or_else(|| {
-                        let available = self
-                            .metadata()
-                            .map(|m| m.route_labels())
-                            .unwrap_or_default();
-                        PharmsolError::unknown_input_label(bolus.input(), &available)
-                    })?;
-
+                ResolvedEvent::Bolus(bolus) => {
+                    let input = bolus.input_slot();
                     if input >= bolus_v.len() {
                         return Err(PharmsolError::InputOutOfRange {
                             input,
@@ -1779,10 +1777,10 @@ impl ODE {
                     solver.state_mut().y.axpy(1.0, state_with_bolus, 1.0);
                     pending_reinit = true;
                 }
-                Event::Infusion(_) => {
+                ResolvedEvent::Infusion(_) => {
                     // Infusions are handled within the ODE function itself
                 }
-                Event::Observation(observation) => {
+                ResolvedEvent::Observation(observation) => {
                     y_out.fill(0.0);
                     (self.out)(
                         solver.state().y,
@@ -1791,14 +1789,7 @@ impl ODE {
                         covariates,
                         y_out,
                     );
-                    let outeq = observation.outeq_index().ok_or_else(|| {
-                        let available = self
-                            .metadata()
-                            .map(|m| m.output_labels())
-                            .unwrap_or_default();
-                        PharmsolError::unknown_output_label(observation.outeq(), &available)
-                    })?;
-                    let pred = y_out[outeq];
+                    let pred = y_out[observation.outeq_slot()];
                     let pred =
                         observation.to_prediction(pred, solver.state().y.as_slice().to_vec());
                     if let Some(error_models) = error_models {
@@ -1905,7 +1896,7 @@ impl Equation for ODE {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{fa, lag, Subject, SubjectBuilderExt};
+    use crate::{fa, lag, Infusion, Subject, SubjectBuilderExt};
     use approx::assert_relative_eq;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -1940,7 +1931,7 @@ mod tests {
                     0,
                     V::zeros(0, NalgebraContext::new()),
                     &covariates,
-                    std::iter::empty::<&Infusion>(),
+                    std::iter::empty::<ResolvedInfusion<'_>>(),
                     V::zeros(1, NalgebraContext::new()),
                     0.0,
                 )
@@ -1965,7 +1956,7 @@ mod tests {
                         0,
                         V::zeros(0, NalgebraContext::new()),
                         &covariates,
-                        std::iter::empty::<&Infusion>(),
+                        std::iter::empty::<ResolvedInfusion<'_>>(),
                         V::zeros(1, NalgebraContext::new()),
                         0.0,
                     )
@@ -2368,7 +2359,8 @@ mod tests {
     #[test]
     fn resolved_schedule_rejects_positive_nonzero_infusion_rate_underflow() {
         let amount = f64::from_bits(1);
-        let events = [Event::Infusion(Infusion::new(1.5, amount, "0", 2.0, 0))];
+        let infusion = Infusion::new(1.5, amount, "0", 2.0, 0);
+        let events = [ResolvedEvent::Infusion(ResolvedInfusion::new(&infusion, 0))];
         let error = validate_resolved_ode_schedule(&events)
             .expect_err("positive nonzero infusion underflow must be rejected");
         let message = error.to_string();
@@ -2381,7 +2373,8 @@ mod tests {
     #[test]
     fn resolved_schedule_rejects_negative_nonzero_infusion_rate_underflow() {
         let amount = -f64::from_bits(1);
-        let events = [Event::Infusion(Infusion::new(1.5, amount, "0", 2.0, 0))];
+        let infusion = Infusion::new(1.5, amount, "0", 2.0, 0);
+        let events = [ResolvedEvent::Infusion(ResolvedInfusion::new(&infusion, 0))];
         let error = validate_resolved_ode_schedule(&events)
             .expect_err("negative nonzero infusion underflow must be rejected");
         let message = error.to_string();
@@ -2393,7 +2386,8 @@ mod tests {
 
     #[test]
     fn resolved_schedule_accepts_zero_amount_infusion_with_zero_rate() {
-        let events = [Event::Infusion(Infusion::new(1.5, 0.0, "0", 2.0, 0))];
+        let infusion = Infusion::new(1.5, 0.0, "0", 2.0, 0);
+        let events = [ResolvedEvent::Infusion(ResolvedInfusion::new(&infusion, 0))];
         assert_eq!(
             validate_resolved_ode_schedule(&events).expect("zero amount is material-free"),
             1.5
@@ -2416,7 +2410,7 @@ mod tests {
                     0,
                     V::zeros(0, NalgebraContext::new()),
                     &covariates,
-                    std::iter::empty::<&Infusion>(),
+                    std::iter::empty::<ResolvedInfusion<'_>>(),
                     V::zeros(1, NalgebraContext::new()),
                     0.0,
                 )
@@ -2479,7 +2473,7 @@ mod tests {
                     0,
                     V::zeros(0, NalgebraContext::new()),
                     &covariates,
-                    std::iter::empty::<&Infusion>(),
+                    std::iter::empty::<ResolvedInfusion<'_>>(),
                     V::zeros(1, NalgebraContext::new()),
                     -192.0,
                 )
@@ -2530,7 +2524,7 @@ mod tests {
                     0,
                     V::zeros(0, NalgebraContext::new()),
                     &covariates,
-                    std::iter::empty::<&Infusion>(),
+                    std::iter::empty::<ResolvedInfusion<'_>>(),
                     V::zeros(1, NalgebraContext::new()),
                     -1.0e16,
                 )
@@ -2583,7 +2577,7 @@ mod tests {
                     0,
                     V::zeros(0, NalgebraContext::new()),
                     &covariates,
-                    std::iter::empty::<&Infusion>(),
+                    std::iter::empty::<ResolvedInfusion<'_>>(),
                     V::zeros(1, NalgebraContext::new()),
                     origin,
                 )
@@ -2632,7 +2626,7 @@ mod tests {
                     0,
                     V::zeros(0, NalgebraContext::new()),
                     &covariates,
-                    std::iter::empty::<&Infusion>(),
+                    std::iter::empty::<ResolvedInfusion<'_>>(),
                     V::zeros(1, NalgebraContext::new()),
                     0.0,
                 )

@@ -9,7 +9,8 @@ use rayon::prelude::*;
 use thiserror::Error;
 
 use crate::{
-    data::{Covariates, Infusion},
+    data::resolved::{ResolvedEvent, ResolvedInfusion, ResolvedObservation},
+    data::Covariates,
     error_model::{AssayErrorModels, DenseAssayErrorModels},
     prelude::simulator::Prediction,
     simulator::{Diffusion, Drift, Fa, Init, Lag, Neqs, Out, V},
@@ -105,7 +106,7 @@ fn simulate_sde_event(
     x: V,
     parameters: &[f64],
     cov: &Covariates,
-    infusions: &[Infusion],
+    infusions: &[ResolvedInfusion<'_>],
     ndrugs: usize,
     ti: f64,
     tf: f64,
@@ -116,19 +117,21 @@ fn simulate_sde_event(
 
     let parameters_v = V::from_vec(parameters.to_vec(), NalgebraContext::new());
     let covariates = cov.clone();
-    let infusion_events = infusions.to_vec();
+    // Copy the infusion schedule into owned tuples so the drift closure does not
+    // borrow the resolved events.
+    let infusion_events: Vec<(usize, f64, f64, f64)> = infusions
+        .iter()
+        .map(|inf| (inf.input_slot(), inf.time(), inf.duration(), inf.amount()))
+        .collect();
     let drift_fn = *drift;
     let diffusion_fn = *difussion;
 
     let parameters_for_drift = parameters_v.clone();
     let drift_closure = move |time: f64, state: &DVector<f64>, out: &mut DVector<f64>| {
         let mut rateiv = V::zeros(ndrugs, NalgebraContext::new());
-        for infusion in &infusion_events {
-            if time >= infusion.time() && time <= infusion.duration() + infusion.time() {
-                let input = infusion
-                    .input_index()
-                    .expect("resolved infusions should use numeric input labels");
-                rateiv[input] += infusion.amount() / infusion.duration();
+        for &(input, start, duration, amount) in &infusion_events {
+            if time >= start && time <= start + duration {
+                rateiv[input] += amount / duration;
             }
         }
 
@@ -496,7 +499,7 @@ impl EquationPriv for SDE {
         state: &mut Self::S,
         parameters: &[f64],
         covariates: &Covariates,
-        infusions: &[Infusion],
+        infusions: &[ResolvedInfusion<'_>],
         ti: f64,
         tf: f64,
     ) -> Result<(), PharmsolError> {
@@ -529,7 +532,7 @@ impl EquationPriv for SDE {
     fn process_observation(
         &self,
         parameters: &[f64],
-        observation: &crate::Observation,
+        observation: &ResolvedObservation<'_>,
         error_models: Option<&DenseAssayErrorModels>,
         _time: f64,
         covariates: &Covariates,
@@ -548,10 +551,7 @@ impl EquationPriv for SDE {
                 covariates,
                 &mut y,
             );
-            let outeq = observation
-                .outeq_index()
-                .expect("resolved observations should use numeric output labels");
-            *p = observation.to_prediction(y[outeq], x[i].as_slice().to_vec());
+            *p = observation.to_prediction(y[observation.outeq_slot()], x[i].as_slice().to_vec());
         });
         let out = Array2::from_shape_vec((self.nparticles, 1), pred.clone())?;
         *output = concatenate(Axis(1), &[output.view(), out.view()]).unwrap();
@@ -594,28 +594,21 @@ impl EquationPriv for SDE {
         x
     }
 
-    fn simulate_event(
+    fn simulate_event<'a>(
         &self,
         parameters: &[f64],
-        event: &crate::Event,
-        next_event: Option<&crate::Event>,
+        event: &ResolvedEvent<'a>,
+        next_event: Option<&ResolvedEvent<'a>>,
         error_models: Option<&DenseAssayErrorModels>,
         covariates: &Covariates,
         x: &mut Self::S,
-        infusions: &mut Vec<Infusion>,
+        infusions: &mut Vec<ResolvedInfusion<'a>>,
         likelihood: &mut Vec<f64>,
         output: &mut Self::P,
     ) -> Result<(), PharmsolError> {
         match event {
-            crate::Event::Bolus(bolus) => {
-                let input = bolus.input_index().ok_or_else(|| {
-                    let available = self
-                        .metadata()
-                        .map(|m| m.route_labels())
-                        .unwrap_or_default();
-                    PharmsolError::unknown_input_label(bolus.input(), &available)
-                })?;
-
+            ResolvedEvent::Bolus(bolus) => {
+                let input = bolus.input_slot();
                 if input >= self.get_ndrugs() {
                     return Err(PharmsolError::InputOutOfRange {
                         input,
@@ -626,10 +619,10 @@ impl EquationPriv for SDE {
                     x.add_bolus(input, bolus.amount());
                 }
             }
-            crate::Event::Infusion(infusion) => {
-                infusions.push(infusion.clone());
+            ResolvedEvent::Infusion(infusion) => {
+                infusions.push(*infusion);
             }
-            crate::Event::Observation(observation) => {
+            ResolvedEvent::Observation(observation) => {
                 self.process_observation(
                     parameters,
                     observation,

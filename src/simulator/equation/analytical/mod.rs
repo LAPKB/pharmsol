@@ -22,11 +22,12 @@ use super::{
     ValidatedModelMetadata,
 };
 use crate::data::error_model::{AssayErrorModels, DenseAssayErrorModels};
+use crate::data::resolved::{ResolvedInfusion, ResolvedObservation};
 use crate::simulator::cache::{
     BoundErrorModelCache, PredictionCache, DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE, DEFAULT_CACHE_SIZE,
 };
 use crate::PharmsolError;
-use crate::{data::Covariates, simulator::*, Observation, Parameters, Subject};
+use crate::{data::Covariates, simulator::*, Parameters, Subject};
 
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
 pub enum AnalyticalMetadataError {
@@ -301,7 +302,7 @@ impl EquationPriv for Analytical {
         x: &mut Self::S,
         parameters: &[f64],
         covariates: &Covariates,
-        infusions: &[Infusion],
+        infusions: &[ResolvedInfusion<'_>],
         ti: f64,
         tf: f64,
     ) -> Result<(), PharmsolError> {
@@ -338,14 +339,7 @@ impl EquationPriv for Analytical {
                 let s = inf.time();
                 let e = s + inf.duration();
                 if current_t >= s && next_t <= e {
-                    let input = inf.input_index().ok_or_else(|| {
-                        let available = self
-                            .metadata()
-                            .map(|m| m.route_labels())
-                            .unwrap_or_default();
-                        PharmsolError::unknown_input_label(inf.input(), &available)
-                    })?;
-
+                    let input = inf.input_slot();
                     if input >= self.get_ndrugs() {
                         return Err(PharmsolError::InputOutOfRange {
                             input,
@@ -373,7 +367,7 @@ impl EquationPriv for Analytical {
     fn process_observation(
         &self,
         parameters: &[f64],
-        observation: &Observation,
+        observation: &ResolvedObservation<'_>,
         error_models: Option<&DenseAssayErrorModels>,
         _time: f64,
         covariates: &Covariates,
@@ -390,14 +384,7 @@ impl EquationPriv for Analytical {
             covariates,
             &mut y,
         );
-        let outeq = observation.outeq_index().ok_or_else(|| {
-            let available = self
-                .metadata()
-                .map(|m| m.output_labels())
-                .unwrap_or_default();
-            PharmsolError::unknown_output_label(observation.outeq(), &available)
-        })?;
-        let pred = y[outeq];
+        let pred = y[observation.outeq_slot()];
         let pred = observation.to_prediction(pred, x.as_slice().to_vec());
         if let Some(error_models) = error_models {
             likelihood.push(pred.log_likelihood(error_models)?.exp());

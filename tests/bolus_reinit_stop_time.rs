@@ -812,12 +812,12 @@ fn assert_runtime_rebase_after_large_event(backend: &str, compiled: &CompiledRun
                     ));
                     continue;
                 }
-                let value_at = |time: f64, outeq: usize| {
+                let value_at = |time: f64, outeq: &str| {
                     predictions
                         .predictions()
                         .iter()
                         .find(|prediction| {
-                            prediction.time() == time && prediction.outeq() == outeq
+                            prediction.time() == time && prediction.outeq().as_str() == outeq
                         })
                         .unwrap_or_else(|| {
                             panic!(
@@ -826,9 +826,9 @@ fn assert_runtime_rebase_after_large_event(backend: &str, compiled: &CompiledRun
                         })
                         .prediction()
                 };
-                let amount_at_center = value_at(center, 0);
-                let amount_at_stop = value_at(stop, 0);
-                let time_weighted_at_stop = value_at(stop, 1);
+                let amount_at_center = value_at(center, "cp");
+                let amount_at_stop = value_at(stop, "cp");
+                let time_weighted_at_stop = value_at(stop, "callback");
                 let amount_error = (amount_at_stop - delivered).abs();
                 let callback_error = (time_weighted_at_stop - expected_time_weighted_amount).abs();
                 if amount_at_center.abs() > 5.0e-3

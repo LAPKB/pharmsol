@@ -21,7 +21,10 @@ use pharmsol_dsl::{
 use super::model_info::{RuntimeModelInfo, RuntimeRouteInfo, RuntimeStateInfo};
 use crate::{
     data::error_model::{AssayErrorModels, DenseAssayErrorModels},
-    data::{Covariates, Infusion, InputLabel, OutputLabel},
+    data::resolved::{
+        resolve_occasion, LabelResolver, ResolvedEvent, ResolvedInfusion, ResolvedObservation,
+    },
+    data::{Covariates, InputLabel, OutputLabel},
     simulator::{
         cache::{
             BoundErrorModelCache, PredictionCache, SdeLikelihoodCache,
@@ -38,7 +41,7 @@ use crate::{
         likelihood::{Prediction, SubjectPredictions},
         Fa, Lag, M, T, V,
     },
-    Event, Observation, Occasion, Parameters, PharmsolError, Subject, ValidatedModelMetadata,
+    Occasion, Parameters, PharmsolError, Subject, ValidatedModelMetadata,
 };
 
 /// Host callback ABI for the runtime-only two-site effect function.
@@ -310,9 +313,7 @@ fn sorted_dense_metadata<'a, T>(
     Ok(sorted)
 }
 
-fn sorted_state_metadata<'a>(
-    info: &'a RuntimeModelInfo,
-) -> Result<Vec<&'a RuntimeStateInfo>, PharmsolError> {
+fn sorted_state_metadata(info: &RuntimeModelInfo) -> Result<Vec<&RuntimeStateInfo>, PharmsolError> {
     if info.state_len == 0 {
         if info.states.is_empty() {
             return Ok(Vec::new());
@@ -779,27 +780,16 @@ impl SharedRuntimeModel {
             })
     }
 
-    fn resolve_events(&self, occasion: &Occasion) -> Result<Vec<Event>, PharmsolError> {
-        let mut events = occasion.process_events(None);
-
-        for event in events.iter_mut() {
-            match event {
-                Event::Bolus(bolus) => {
-                    let input = self.resolve_input_label(bolus.input(), RouteKind::Bolus)?;
-                    bolus.set_input(input);
-                }
-                Event::Infusion(infusion) => {
-                    let input = self.resolve_input_label(infusion.input(), RouteKind::Infusion)?;
-                    infusion.set_input(input);
-                }
-                Event::Observation(observation) => {
-                    let outeq = self.resolve_output_label(observation.outeq())?;
-                    observation.set_outeq(outeq);
-                }
-            }
-        }
-
-        Ok(events)
+    /// Resolve every label of an occasion to its dense slot exactly once.
+    ///
+    /// Lag time and bioavailability are applied separately by
+    /// [`Self::apply_route_properties`], which calls the compiled route
+    /// functions, so no reorder context is passed here.
+    fn resolve_events<'a>(
+        &self,
+        occasion: &'a Occasion,
+    ) -> Result<Vec<ResolvedEvent<'a>>, PharmsolError> {
+        resolve_occasion(occasion, self, None)
     }
 
     fn fill_cov_buffer(&self, covariates: &Covariates, time: f64, buf: &mut [f64]) {
@@ -924,7 +914,7 @@ impl SharedRuntimeModel {
     fn apply_route_properties(
         &self,
         session: &mut dyn FunctionSession,
-        events: &mut [Event],
+        events: &mut [ResolvedEvent<'_>],
         covariates: &Covariates,
         support_point: &[f64],
     ) -> Result<(), PharmsolError> {
@@ -944,13 +934,8 @@ impl SharedRuntimeModel {
         let mut derived = vec![0.0; self.info.derived_len];
 
         for event in events.iter_mut() {
-            if let Event::Bolus(bolus) = event {
-                let input = bolus.input_index().ok_or_else(|| {
-                    PharmsolError::unknown_input_label(
-                        bolus.input(),
-                        &self.metadata().route_labels(),
-                    )
-                })?;
+            if let ResolvedEvent::Bolus(bolus) = event {
+                let input = bolus.input_slot();
                 self.validate_input_for_kind(input, RouteKind::Bolus)?;
 
                 if self.artifact.has_function(ModelFunctionKind::RouteLag) {
@@ -979,7 +964,7 @@ impl SharedRuntimeModel {
                     }
                     let lag = lag_values[input];
                     if lag != 0.0 {
-                        *bolus.mut_time() += lag;
+                        bolus.shift_time(lag);
                     }
                 }
 
@@ -1012,13 +997,13 @@ impl SharedRuntimeModel {
                     }
                     let factor = fa_values[input];
                     if factor != 1.0 {
-                        bolus.set_amount(bolus.amount() * factor);
+                        bolus.scale_amount(factor);
                     }
                 }
             }
         }
 
-        sort_events(events);
+        events.sort_by(ResolvedEvent::cmp_time_then_type);
         Ok(())
     }
 
@@ -1042,11 +1027,11 @@ impl SharedRuntimeModel {
     fn observation_prediction(
         &self,
         session: &mut dyn FunctionSession,
-        observation: &Observation,
+        observation: &ResolvedObservation<'_>,
         state: &[f64],
         support_point: &[f64],
         covariates: &Covariates,
-        infusions: &[Infusion],
+        infusions: &[ResolvedInfusion<'_>],
     ) -> Result<Prediction, PharmsolError> {
         let route_inputs = active_route_inputs(infusions, observation.time(), self.info.route_len);
         let mut cov_buf = vec![0.0; self.info.covariates.len()];
@@ -1072,14 +1057,23 @@ impl SharedRuntimeModel {
             &cov_buf,
             &mut outputs,
         )?;
-        let outeq = observation.outeq_index().ok_or_else(|| {
-            PharmsolError::unknown_output_label(
-                observation.outeq(),
-                &self.metadata().output_labels(),
-            )
-        })?;
+        let outeq = observation.outeq_slot();
         self.validate_output(outeq)?;
         Ok(observation.to_prediction(outputs[outeq], state.to_vec()))
+    }
+}
+
+impl LabelResolver for SharedRuntimeModel {
+    fn resolve_bolus_input(&self, label: &InputLabel) -> Result<usize, PharmsolError> {
+        self.resolve_input_label(label, RouteKind::Bolus)
+    }
+
+    fn resolve_infusion_input(&self, label: &InputLabel) -> Result<usize, PharmsolError> {
+        self.resolve_input_label(label, RouteKind::Infusion)
+    }
+
+    fn resolve_output(&self, label: &OutputLabel) -> Result<usize, PharmsolError> {
+        self.resolve_output_label(label)
     }
 }
 
@@ -1180,7 +1174,7 @@ impl RuntimeOdeModel {
             let infusions = events
                 .iter()
                 .filter_map(|event| match event {
-                    Event::Infusion(infusion) => Some(infusion.clone()),
+                    ResolvedEvent::Infusion(infusion) => Some(*infusion),
                     _ => None,
                 })
                 .collect::<Vec<_>>();
@@ -1271,7 +1265,7 @@ impl RuntimeOdeModel {
                     self.shared.info.route_len,
                     support_vector.clone(),
                     occasion.covariates(),
-                    infusions.iter(),
+                    infusions.iter().copied(),
                     initial_state,
                     time_origin,
                 )?)?;
@@ -1319,10 +1313,10 @@ impl RuntimeOdeModel {
     fn run_events<'a, F, S>(
         &self,
         solver: &mut S,
-        events: &[Event],
+        events: &[ResolvedEvent<'_>],
         support_point: &[f64],
         covariates: &Covariates,
-        infusions: &[Infusion],
+        infusions: &[ResolvedInfusion<'_>],
         dy_scratch: &mut V,
         output: &mut SubjectPredictions,
         session: &RefCell<Box<dyn FunctionSession + '_>>,
@@ -1348,22 +1342,16 @@ impl RuntimeOdeModel {
             let next_event = events.get(index + 1);
 
             match event {
-                Event::Bolus(bolus) => {
-                    let input = bolus.input_index().ok_or_else(|| {
-                        PharmsolError::unknown_input_label(
-                            bolus.input(),
-                            &self.shared.metadata().route_labels(),
-                        )
-                    })?;
+                ResolvedEvent::Bolus(bolus) => {
                     self.shared.apply_bolus(
                         solver.state_mut().y.as_mut_slice(),
-                        input,
+                        bolus.input_slot(),
                         bolus.amount(),
                     )?;
                     pending_reinit = true;
                 }
-                Event::Infusion(_) => {}
-                Event::Observation(observation) => {
+                ResolvedEvent::Infusion(_) => {}
+                ResolvedEvent::Observation(observation) => {
                     if function_error.borrow().is_some() {
                         return Err(function_error.borrow_mut().take().unwrap());
                     }
@@ -1511,7 +1499,7 @@ impl EquationPriv for RuntimeOdeModel {
         _state: &mut Self::S,
         _support_point: &[f64],
         _covariates: &Covariates,
-        _infusions: &[Infusion],
+        _infusions: &[ResolvedInfusion<'_>],
         _start_time: f64,
         _end_time: f64,
     ) -> Result<(), PharmsolError> {
@@ -1521,7 +1509,7 @@ impl EquationPriv for RuntimeOdeModel {
     fn process_observation(
         &self,
         _support_point: &[f64],
-        _observation: &Observation,
+        _observation: &ResolvedObservation<'_>,
         _error_models: Option<&DenseAssayErrorModels>,
         _time: f64,
         _covariates: &Covariates,
@@ -1678,7 +1666,7 @@ impl RuntimeAnalyticalModel {
             let infusions = events
                 .iter()
                 .filter_map(|event| match event {
-                    Event::Infusion(infusion) => Some(infusion.clone()),
+                    ResolvedEvent::Infusion(infusion) => Some(*infusion),
                     _ => None,
                 })
                 .collect::<Vec<_>>();
@@ -1699,17 +1687,12 @@ impl RuntimeAnalyticalModel {
 
             for (index, event) in events.iter().enumerate() {
                 match event {
-                    Event::Bolus(bolus) => {
-                        let input = bolus.input_index().ok_or_else(|| {
-                            PharmsolError::unknown_input_label(
-                                bolus.input(),
-                                &self.shared.metadata().route_labels(),
-                            )
-                        })?;
-                        self.shared.apply_bolus(&mut state, input, bolus.amount())?
+                    ResolvedEvent::Bolus(bolus) => {
+                        self.shared
+                            .apply_bolus(&mut state, bolus.input_slot(), bolus.amount())?
                     }
-                    Event::Infusion(_) => {}
-                    Event::Observation(observation) => {
+                    ResolvedEvent::Infusion(_) => {}
+                    ResolvedEvent::Observation(observation) => {
                         output.add_prediction(self.shared.observation_prediction(
                             &mut *session,
                             observation,
@@ -1745,7 +1728,7 @@ impl RuntimeAnalyticalModel {
         state: &mut [f64],
         support_point: &[f64],
         covariates: &Covariates,
-        infusions: &[Infusion],
+        infusions: &[ResolvedInfusion<'_>],
         start_time: f64,
         end_time: f64,
     ) -> Result<(), PharmsolError> {
@@ -1900,7 +1883,7 @@ impl EquationPriv for RuntimeAnalyticalModel {
         _state: &mut Self::S,
         _support_point: &[f64],
         _covariates: &Covariates,
-        _infusions: &[Infusion],
+        _infusions: &[ResolvedInfusion<'_>],
         _start_time: f64,
         _end_time: f64,
     ) -> Result<(), PharmsolError> {
@@ -1910,7 +1893,7 @@ impl EquationPriv for RuntimeAnalyticalModel {
     fn process_observation(
         &self,
         _support_point: &[f64],
-        _observation: &Observation,
+        _observation: &ResolvedObservation<'_>,
         _error_models: Option<&DenseAssayErrorModels>,
         _time: f64,
         _covariates: &Covariates,
@@ -2066,7 +2049,7 @@ impl RuntimeSdeModel {
             let infusions = events
                 .iter()
                 .filter_map(|event| match event {
-                    Event::Infusion(infusion) => Some(infusion.clone()),
+                    ResolvedEvent::Infusion(infusion) => Some(*infusion),
                     _ => None,
                 })
                 .collect::<Vec<_>>();
@@ -2090,23 +2073,17 @@ impl RuntimeSdeModel {
 
             for (index, event) in events.iter().enumerate() {
                 match event {
-                    Event::Bolus(bolus) => {
-                        let input = bolus.input_index().ok_or_else(|| {
-                            PharmsolError::unknown_input_label(
-                                bolus.input(),
-                                &self.shared.metadata().route_labels(),
-                            )
-                        })?;
+                    ResolvedEvent::Bolus(bolus) => {
                         for particle in &mut particles {
                             self.shared.apply_bolus(
                                 particle.as_mut_slice(),
-                                input,
+                                bolus.input_slot(),
                                 bolus.amount(),
                             )?;
                         }
                     }
-                    Event::Infusion(_) => {}
-                    Event::Observation(observation) => {
+                    ResolvedEvent::Infusion(_) => {}
+                    ResolvedEvent::Observation(observation) => {
                         let mut column = Vec::with_capacity(self.nparticles);
                         for particle in &particles {
                             column.push(self.shared.observation_prediction(
@@ -2144,7 +2121,7 @@ impl RuntimeSdeModel {
         particles: &mut [DVector<f64>],
         support_point: &[f64],
         covariates: &Covariates,
-        infusions: &[Infusion],
+        infusions: &[ResolvedInfusion<'_>],
         start_time: f64,
         end_time: f64,
     ) -> Result<(), PharmsolError> {
@@ -2381,7 +2358,7 @@ impl EquationPriv for RuntimeSdeModel {
         _state: &mut Self::S,
         _support_point: &[f64],
         _covariates: &Covariates,
-        _infusions: &[Infusion],
+        _infusions: &[ResolvedInfusion<'_>],
         _start_time: f64,
         _end_time: f64,
     ) -> Result<(), PharmsolError> {
@@ -2391,7 +2368,7 @@ impl EquationPriv for RuntimeSdeModel {
     fn process_observation(
         &self,
         _support_point: &[f64],
-        _observation: &Observation,
+        _observation: &ResolvedObservation<'_>,
         _error_models: Option<&DenseAssayErrorModels>,
         _time: f64,
         _covariates: &Covariates,
@@ -2487,12 +2464,14 @@ impl Equation for RuntimeSdeModel {
     }
 }
 
-fn active_route_inputs(infusions: &[Infusion], time: f64, route_len: usize) -> Vec<f64> {
+fn active_route_inputs(
+    infusions: &[ResolvedInfusion<'_>],
+    time: f64,
+    route_len: usize,
+) -> Vec<f64> {
     let mut values = vec![0.0; route_len];
     for infusion in infusions {
-        let input = infusion
-            .input_index()
-            .expect("resolved infusions should use numeric input labels");
+        let input = infusion.input_slot();
         if input < route_len
             && time >= infusion.time()
             && time <= infusion.time() + infusion.duration()
@@ -2504,7 +2483,7 @@ fn active_route_inputs(infusions: &[Infusion], time: f64, route_len: usize) -> V
 }
 
 fn interval_route_inputs(
-    infusions: &[Infusion],
+    infusions: &[ResolvedInfusion<'_>],
     start_time: f64,
     end_time: f64,
     route_len: usize,
@@ -2512,32 +2491,12 @@ fn interval_route_inputs(
     let mut values = vec![0.0; route_len];
     for infusion in infusions {
         let finish = infusion.time() + infusion.duration();
-        let input = infusion
-            .input_index()
-            .expect("resolved infusions should use numeric input labels");
+        let input = infusion.input_slot();
         if input < route_len && start_time >= infusion.time() && end_time <= finish {
             values[input] += infusion.amount() / infusion.duration();
         }
     }
     values
-}
-
-fn sort_events(events: &mut [Event]) {
-    events.sort_by(|lhs, rhs| {
-        fn order(event: &Event) -> u8 {
-            match event {
-                Event::Observation(_) => 1,
-                Event::Bolus(_) => 2,
-                Event::Infusion(_) => 3,
-            }
-        }
-
-        match lhs.time().partial_cmp(&rhs.time()) {
-            Some(std::cmp::Ordering::Equal) => order(lhs).cmp(&order(rhs)),
-            Some(ordering) => ordering,
-            None => std::cmp::Ordering::Equal,
-        }
-    });
 }
 
 fn build_analytical_parameter_projection(

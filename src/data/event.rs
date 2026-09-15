@@ -14,6 +14,7 @@ use crate::data::error_model::ErrorPoly;
 use crate::prelude::simulator::Prediction;
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::sync::Arc;
 
 // ============================================================================
 // Shared Analysis Types
@@ -117,15 +118,15 @@ pub enum Event {
 ///
 /// [`Bolus`] and [`Infusion`] store the original user-facing route name in
 /// this type.
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub struct InputLabel(String);
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct InputLabel(Arc<str>);
 
 impl InputLabel {
     /// Create a new public label.
     ///
     /// Prefer stable names when the model declares named routes.
     pub fn new(label: impl ToString) -> Self {
-        Self(label.to_string())
+        Self(Arc::from(label.to_string().as_str()))
     }
 
     /// Borrow the stored label as a string.
@@ -142,21 +143,33 @@ impl InputLabel {
     }
 }
 
+impl Serialize for InputLabel {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for InputLabel {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(Self::from(String::deserialize(deserializer)?))
+    }
+}
+
 impl From<String> for InputLabel {
     fn from(value: String) -> Self {
-        Self(value)
+        Self(Arc::from(value.as_str()))
     }
 }
 
 impl From<&str> for InputLabel {
     fn from(value: &str) -> Self {
-        Self(value.to_string())
+        Self(Arc::from(value))
     }
 }
 
 impl From<usize> for InputLabel {
     fn from(value: usize) -> Self {
-        Self(value.to_string())
+        Self::new(value)
     }
 }
 
@@ -199,15 +212,15 @@ impl PartialEq<&InputLabel> for usize {
 /// Public label for an observation output.
 ///
 /// [`Observation`] stores the original user-facing output name in this type.
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub struct OutputLabel(String);
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct OutputLabel(Arc<str>);
 
 impl OutputLabel {
     /// Create a new public label.
     ///
     /// Prefer stable names when the model declares named outputs.
     pub fn new(label: impl ToString) -> Self {
-        Self(label.to_string())
+        Self(Arc::from(label.to_string().as_str()))
     }
 
     /// Borrow the stored label as a string.
@@ -224,21 +237,33 @@ impl OutputLabel {
     }
 }
 
+impl Serialize for OutputLabel {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for OutputLabel {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(Self::from(String::deserialize(deserializer)?))
+    }
+}
+
 impl From<String> for OutputLabel {
     fn from(value: String) -> Self {
-        Self(value)
+        Self(Arc::from(value.as_str()))
     }
 }
 
 impl From<&str> for OutputLabel {
     fn from(value: &str) -> Self {
-        Self(value.to_string())
+        Self(Arc::from(value))
     }
 }
 
 impl From<usize> for OutputLabel {
     fn from(value: usize) -> Self {
-        Self(value.to_string())
+        Self::new(value)
     }
 }
 
@@ -690,19 +715,24 @@ impl Observation {
         &mut self.occasion
     }
 
-    /// Create a [`Prediction`] from this observation.
+    /// Create a [`Prediction`] from this observation at a resolved dense output
+    /// slot.
     ///
-    /// This is a low-level helper for code paths that already operate on a
-    /// resolved or numeric output index. Named output labels must be resolved by
-    /// the caller before this conversion happens.
-    pub fn to_prediction(&self, pred: f64, state: Vec<f64>) -> Prediction {
+    /// The public [`OutputLabel`] is carried through untouched; `outeq_slot` is
+    /// only the dense index the execution layer used and stays private to the
+    /// resulting [`Prediction`].
+    pub(crate) fn to_prediction_at(
+        &self,
+        outeq_slot: usize,
+        pred: f64,
+        state: Vec<f64>,
+    ) -> Prediction {
         Prediction {
             time: self.time(),
             observation: self.value(),
             prediction: pred,
-            outeq: self
-                .outeq_index()
-                .expect("prediction requires a resolved or numeric output label"),
+            outeq: self.outeq.clone(),
+            outeq_slot,
             errorpoly: self.errorpoly(),
             state,
             occasion: self.occasion(),

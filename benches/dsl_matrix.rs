@@ -126,7 +126,7 @@ fn compile_group(c: &mut Criterion) {
                 BenchmarkId::from_parameter(format!("{}/{}", workload.label(), kind.label()));
             group.bench_function(bench_id, |b| {
                 b.iter_custom(|iters| {
-                    let actual = iters.min(MAX_ITERS_PER_BATCH).max(1);
+                    let actual = iters.clamp(1, MAX_ITERS_PER_BATCH);
                     let start = Instant::now();
                     for _ in 0..actual {
                         black_box(compile_runtime(black_box(workload), black_box(kind)));
