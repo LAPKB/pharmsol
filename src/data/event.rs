@@ -185,30 +185,6 @@ impl fmt::Display for InputLabel {
     }
 }
 
-impl PartialEq<usize> for InputLabel {
-    fn eq(&self, other: &usize) -> bool {
-        self.index() == Some(*other)
-    }
-}
-
-impl PartialEq<InputLabel> for usize {
-    fn eq(&self, other: &InputLabel) -> bool {
-        other == self
-    }
-}
-
-impl PartialEq<usize> for &InputLabel {
-    fn eq(&self, other: &usize) -> bool {
-        (**self).eq(other)
-    }
-}
-
-impl PartialEq<&InputLabel> for usize {
-    fn eq(&self, other: &&InputLabel) -> bool {
-        other.eq(self)
-    }
-}
-
 /// Public label for an observation output.
 ///
 /// [`Observation`] stores the original user-facing output name in this type.
@@ -276,30 +252,6 @@ impl AsRef<str> for OutputLabel {
 impl fmt::Display for OutputLabel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
-    }
-}
-
-impl PartialEq<usize> for OutputLabel {
-    fn eq(&self, other: &usize) -> bool {
-        self.index() == Some(*other)
-    }
-}
-
-impl PartialEq<OutputLabel> for usize {
-    fn eq(&self, other: &OutputLabel) -> bool {
-        other == self
-    }
-}
-
-impl PartialEq<usize> for &OutputLabel {
-    fn eq(&self, other: &usize) -> bool {
-        (**self).eq(other)
-    }
-}
-
-impl PartialEq<&OutputLabel> for usize {
-    fn eq(&self, other: &&OutputLabel) -> bool {
-        other.eq(self)
     }
 }
 
@@ -810,7 +762,6 @@ mod tests {
         let bolus = Bolus::new(2.5, 100.0, 1, 0);
         assert_eq!(bolus.time(), 2.5);
         assert_eq!(bolus.amount(), 100.0);
-        assert_eq!(bolus.input(), 1);
         assert_eq!(bolus.input().as_str(), "1");
     }
 
@@ -825,7 +776,7 @@ mod tests {
         assert_eq!(bolus.amount(), 150.0);
 
         bolus.set_input(2);
-        assert_eq!(bolus.input(), 2);
+        assert_eq!(bolus.input().as_str(), "2");
     }
 
     #[test]
@@ -833,7 +784,6 @@ mod tests {
         let infusion = Infusion::new(1.0, 200.0, 1, 2.5, 0);
         assert_eq!(infusion.time(), 1.0);
         assert_eq!(infusion.amount(), 200.0);
-        assert_eq!(infusion.input(), 1);
         assert_eq!(infusion.input().as_str(), "1");
         assert_eq!(infusion.duration(), 2.5);
     }
@@ -849,7 +799,7 @@ mod tests {
         assert_eq!(infusion.amount(), 250.0);
 
         infusion.set_input(2);
-        assert_eq!(infusion.input(), 2);
+        assert_eq!(infusion.input().as_str(), "2");
 
         infusion.set_duration(3.0);
         assert_eq!(infusion.duration(), 3.0);
@@ -862,7 +812,6 @@ mod tests {
 
         assert_eq!(observation.time(), 5.0);
         assert_eq!(observation.value(), Some(75.5));
-        assert_eq!(observation.outeq(), 2);
         assert_eq!(observation.outeq().as_str(), "2");
         assert_eq!(observation.errorpoly(), error_poly);
     }
@@ -885,7 +834,7 @@ mod tests {
         assert_eq!(observation.value(), Some(80.0));
 
         observation.set_outeq(3);
-        assert_eq!(observation.outeq(), 3);
+        assert_eq!(observation.outeq().as_str(), "3");
 
         let new_error_poly = Some(ErrorPoly::new(0.2, 0.3, 0.4, 0.5));
         observation.set_errorpoly(new_error_poly);

@@ -872,7 +872,7 @@ impl Occasion {
                 }
                 Event::Bolus(b) => {
                     has_dose = true;
-                    if b.input() == 0 {
+                    if b.input().index() == Some(0) {
                         has_extravascular = true;
                     }
                 }
@@ -906,7 +906,7 @@ impl Occasion {
             match event {
                 Event::Infusion(_) => has_infusion = true,
                 Event::Bolus(b) => {
-                    if b.input() == 0 {
+                    if b.input().index() == Some(0) {
                         has_extravascular = true;
                     } else {
                         has_iv_bolus = true;
@@ -1536,7 +1536,7 @@ mod tests {
                 assert!(matches!(event, Event::Bolus(_)));
                 if let Event::Bolus(bolus) = event {
                     assert_eq!(bolus.amount(), 50.0); // Amount from sample data
-                    assert_eq!(bolus.input(), 1); // Input compartment 1
+                    assert_eq!(bolus.input().as_str(), "1"); // Input compartment 1
                 }
                 event_count += 1;
             }
@@ -1563,7 +1563,7 @@ mod tests {
                 assert_eq!(event.time(), 1.0); // Observation time from sample data
                 if let Event::Observation(observation) = event {
                     assert_eq!(observation.value(), Some(10.0)); // Value from sample data
-                    assert_eq!(observation.outeq(), 1); // Output equation 1
+                    assert_eq!(observation.outeq().as_str(), "1"); // Output equation 1
                 }
             }
         }
@@ -1595,7 +1595,7 @@ mod tests {
         {
             assert_eq!(bolus.amount(), 100.0);
             assert_eq!(bolus.time(), 0.0);
-            assert_eq!(bolus.input(), 1);
+            assert_eq!(bolus.input().as_str(), "1");
         } else {
             panic!("Bolus event not found");
         }
@@ -1643,7 +1643,7 @@ mod tests {
         {
             assert_eq!(obs.time(), 12.0);
             assert_eq!(obs.value(), None);
-            assert_eq!(obs.outeq(), 1);
+            assert_eq!(obs.outeq().as_str(), "1");
         } else {
             panic!("Observation at time 12 not found");
         }
