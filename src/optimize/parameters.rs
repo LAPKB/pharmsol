@@ -74,7 +74,6 @@ impl<'a, E: Equation> ParameterOptimizer<'a, E> {
     }
 
     /// Optimize the parameters to minimize the negative log-likelihood against the data.
-
     pub fn optimize_point(self, parameters: Array1<f64>) -> Result<Array1<f64>, Error> {
         let simplex = create_initial_simplex(&parameters.to_vec());
         let solver: NelderMead<Vec<f64>, f64> = NelderMead::new(simplex).with_sd_tolerance(1e-2)?;

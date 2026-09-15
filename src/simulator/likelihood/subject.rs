@@ -6,7 +6,7 @@
 
 use ndarray::{Array2, ShapeBuilder};
 
-use crate::data::error_model::AssayErrorModels;
+use crate::data::error_model::DenseAssayErrorModels;
 use crate::{PharmsolError, Predictions};
 
 use super::prediction::Prediction;
@@ -32,7 +32,7 @@ impl Predictions for SubjectPredictions {
         self.predictions.clone()
     }
 
-    fn log_likelihood(&self, error_models: &AssayErrorModels) -> Result<f64, PharmsolError> {
+    fn log_likelihood(&self, error_models: &DenseAssayErrorModels) -> Result<f64, PharmsolError> {
         SubjectPredictions::log_likelihood(self, error_models)
     }
 }
@@ -45,7 +45,7 @@ impl SubjectPredictions {
     /// when computing products of small probabilities.
     ///
     /// # Error Model
-    /// Uses observation-based sigma from [`AssayErrorModels`], which is appropriate
+    /// Uses observation-based sigma from [`DenseAssayErrorModels`], which is appropriate
     /// for non-parametric algorithms (NPAG, NPOD). For parametric algorithms
     /// (SAEM, FOCE), use [`crate::ResidualErrorModels`] directly.
     ///
@@ -60,7 +60,10 @@ impl SubjectPredictions {
     /// ```ignore
     /// let log_lik = subject_predictions.log_likelihood(&error_models)?;
     /// ```
-    pub fn log_likelihood(&self, error_models: &AssayErrorModels) -> Result<f64, PharmsolError> {
+    pub fn log_likelihood(
+        &self,
+        error_models: &DenseAssayErrorModels,
+    ) -> Result<f64, PharmsolError> {
         if self.predictions.is_empty() {
             return Ok(0.0);
         }
@@ -92,7 +95,7 @@ impl SubjectPredictions {
         since = "0.23.0",
         note = "Use log_likelihood() instead for better numerical stability"
     )]
-    pub fn likelihood(&self, error_models: &AssayErrorModels) -> Result<f64, PharmsolError> {
+    pub fn likelihood(&self, error_models: &DenseAssayErrorModels) -> Result<f64, PharmsolError> {
         match self.predictions.is_empty() {
             true => Ok(1.0),
             false => {
@@ -170,13 +173,11 @@ mod tests {
     use crate::data::event::Observation;
     use crate::Censor;
 
-    fn create_error_models() -> AssayErrorModels {
-        AssayErrorModels::empty()
-            .add(
-                0,
-                AssayErrorModel::additive(ErrorPoly::new(0.0, 1.0, 0.0, 0.0), 0.0),
-            )
-            .unwrap()
+    fn create_error_models() -> DenseAssayErrorModels {
+        DenseAssayErrorModels::from_dense(vec![AssayErrorModel::additive(
+            ErrorPoly::new(0.0, 1.0, 0.0, 0.0),
+            0.0,
+        )])
     }
 
     #[test]
@@ -201,7 +202,7 @@ mod tests {
         preds.add_prediction(obs.to_prediction(1.0, vec![]));
 
         let error_model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 0.0);
-        let errors = AssayErrorModels::empty().add(0, error_model).unwrap();
+        let errors = DenseAssayErrorModels::from_dense(vec![error_model]);
 
         let log_lik = preds.log_likelihood(&errors).unwrap();
         assert!(log_lik.is_finite());

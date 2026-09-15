@@ -4,7 +4,7 @@
 //! observation-prediction pair along with metadata needed for likelihood
 //! calculation.
 
-use crate::data::error_model::AssayErrorModels;
+use crate::data::error_model::DenseAssayErrorModels;
 use crate::data::event::Observation;
 use crate::{Censor, ErrorPoly, PharmsolError};
 
@@ -86,7 +86,7 @@ impl Prediction {
     /// - ALOQ (above limit of quantification): uses log-survival function
     ///
     /// # Error Model
-    /// Uses observation-based sigma from [`AssayErrorModels`], which is appropriate
+    /// Uses observation-based sigma from [`DenseAssayErrorModels`], which is appropriate
     /// for non-parametric algorithms (NPAG, NPOD). For parametric algorithms
     /// (SAEM, FOCE), use [`crate::ResidualErrorModels`] directly.
     ///
@@ -102,7 +102,10 @@ impl Prediction {
     /// let log_lik = prediction.log_likelihood(&error_models)?;
     /// ```
     #[inline]
-    pub fn log_likelihood(&self, error_models: &AssayErrorModels) -> Result<f64, PharmsolError> {
+    pub fn log_likelihood(
+        &self,
+        error_models: &DenseAssayErrorModels,
+    ) -> Result<f64, PharmsolError> {
         // Missing observations don't contribute to log-likelihood (log(1) = 0)
         let obs = match self.observation {
             Some(obs) => obs,
@@ -139,7 +142,7 @@ impl Prediction {
         since = "0.23.0",
         note = "Use log_likelihood() instead for better numerical stability"
     )]
-    pub fn likelihood(&self, error_models: &AssayErrorModels) -> Result<f64, PharmsolError> {
+    pub fn likelihood(&self, error_models: &DenseAssayErrorModels) -> Result<f64, PharmsolError> {
         let log_lik = self.log_likelihood(error_models)?;
         let lik = log_lik.exp();
 
@@ -232,13 +235,11 @@ mod tests {
         }
     }
 
-    fn create_error_models() -> AssayErrorModels {
-        AssayErrorModels::empty()
-            .add(
-                0,
-                AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 0.0),
-            )
-            .unwrap()
+    fn create_error_models() -> DenseAssayErrorModels {
+        DenseAssayErrorModels::from_dense(vec![AssayErrorModel::additive(
+            ErrorPoly::new(1.0, 0.0, 0.0, 0.0),
+            0.0,
+        )])
     }
 
     #[test]
