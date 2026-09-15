@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.29.3](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.29.2...pharmsol-v0.29.3) - 2026-09-15
+
+### Fixed
+
+- keep derived values real-valued in f64 buffers ([#372](https://github.com/LAPKB/pharmsol/pull/372))
+
 ## [0.29.2](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.29.1...pharmsol-v0.29.2) - 2026-09-15
 
 ### Fixed
