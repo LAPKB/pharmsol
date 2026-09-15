@@ -509,7 +509,7 @@ fn macro_injected_lowering_matches_handwritten_metadata_and_predictions() {
 fn macro_numeric_labels_lower_to_dense_slots() {
     let macro_ode = numeric_label_macro_ode();
     let handwritten_ode = numeric_label_handwritten_ode();
-    let subject = subject_for_route("1", "1");
+    let subject = subject_for_route("input_1", "outeq_1");
     let support_point = pharmsol::Parameters::with_model(&macro_ode, [("ke", 0.2), ("v", 10.0)])
         .expect("valid named parameters");
     let macro_metadata = macro_ode
@@ -614,8 +614,8 @@ fn macro_mixed_output_labels_lower_to_dense_slots() {
     let subject = Subject::builder("mixed-output-labels")
         .infusion(0.0, 100.0, "iv", 1.0)
         .missing_observation(0.5, "cp")
-        .missing_observation(1.0, "0")
-        .missing_observation(2.0, "1")
+        .missing_observation(1.0, "outeq_0")
+        .missing_observation(2.0, "outeq_1")
         .build();
     let support_point = pharmsol::Parameters::with_model(&macro_ode, [("ke", 0.2), ("v", 10.0)])
         .expect("valid named parameters");
@@ -646,7 +646,7 @@ fn macro_mixed_output_labels_lower_to_dense_slots() {
 fn macro_numeric_route_properties_lower_to_dense_slots() {
     let macro_ode = numeric_route_property_macro_ode();
     let handwritten_ode = numeric_route_property_handwritten_ode();
-    let subject = subject_for_numeric_bolus_route("1", "1");
+    let subject = subject_for_numeric_bolus_route("input_1", "outeq_1");
     let support_point = pharmsol::Parameters::with_model(
         &macro_ode,
         [
@@ -712,7 +712,7 @@ fn macro_named_labels_resolve_from_pmetrics_ingestion() {
 #[test]
 fn macro_numeric_labels_resolve_from_pmetrics_ingestion() {
     let file = write_pmetrics_fixture(
-        "ID,EVID,TIME,DUR,DOSE,ADDL,II,INPUT,OUT,OUTEQ,CENS,C0,C1,C2,C3\npt1,1,0,1,100,.,.,1,.,.,.,.,.,.,.\npt1,0,0.5,.,.,.,.,.,.,1,0,.,.,.,.\npt1,0,1.0,.,.,.,.,.,.,1,0,.,.,.,.\npt1,0,2.0,.,.,.,.,.,.,1,0,.,.,.,.\n",
+        "ID,EVID,TIME,DUR,DOSE,ADDL,II,INPUT,OUT,OUTEQ,CENS,C0,C1,C2,C3\npt1,1,0,1,100,.,.,input_1,.,.,.,.,.,.,.\npt1,0,0.5,.,.,.,.,.,.,outeq_1,0,.,.,.,.\npt1,0,1.0,.,.,.,.,.,.,outeq_1,0,.,.,.,.\npt1,0,2.0,.,.,.,.,.,.,outeq_1,0,.,.,.,.\n",
     );
 
     let data =
@@ -728,12 +728,36 @@ fn macro_numeric_labels_resolve_from_pmetrics_ingestion() {
         .flat_predictions()
         .to_vec();
     let manual_predictions = macro_ode
-        .estimate_predictions(&subject_for_route("1", "1"), &support_point)
+        .estimate_predictions(&subject_for_route("input_1", "outeq_1"), &support_point)
         .expect("macro internal-index numeric-label model should simulate")
         .flat_predictions()
         .to_vec();
 
     assert_prediction_match(&pmetrics_predictions, &manual_predictions);
+}
+
+/// Bare numeric `INPUT`/`OUTEQ` columns are no longer aliased to `input_<n>` /
+/// `outeq_<n>` declarations: they must be renamed to the declared label.
+#[test]
+fn bare_numeric_pmetrics_columns_no_longer_alias_to_canonical_declarations() {
+    let file = write_pmetrics_fixture(
+        "ID,EVID,TIME,DUR,DOSE,ADDL,II,INPUT,OUT,OUTEQ,CENS,C0,C1,C2,C3\npt1,1,0,1,100,.,.,1,.,.,.,.,.,.,.\npt1,0,0.5,.,.,.,.,.,.,1,0,.,.,.,.\n",
+    );
+
+    let data =
+        read_pmetrics(file.path().display().to_string()).expect("read numeric-label Pmetrics data");
+    let subject = &data.subjects()[0];
+    let macro_ode = numeric_label_macro_ode();
+    let support_point = pharmsol::Parameters::with_model(&macro_ode, [("ke", 0.2), ("v", 10.0)])
+        .expect("valid named parameters");
+
+    let message = macro_ode
+        .estimate_predictions(subject, &support_point)
+        .expect_err("bare numeric labels must not alias to canonical declarations")
+        .to_string();
+    assert!(message.contains("`1`"), "{message}");
+    assert!(message.contains("input_1"), "{message}");
+    assert!(message.contains("no longer matched"), "{message}");
 }
 
 #[test]

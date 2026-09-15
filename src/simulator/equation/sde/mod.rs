@@ -830,7 +830,7 @@ mod tests {
     }
 
     #[test]
-    fn handwritten_sde_metadata_resolves_raw_numeric_aliases_against_canonical_labels() {
+    fn handwritten_sde_metadata_rejects_raw_numeric_labels() {
         let drift = |_x: &V, _p: &V, _t: f64, dx: &mut V, rateiv: &V, _cov: &Covariates| {
             dx.fill(0.0);
             dx[1] = rateiv[0];
@@ -864,23 +864,33 @@ mod tests {
             .infusion(0.0, 100.0, "input_1", 1.0)
             .observation(1.0, 0.0, "outeq_1")
             .build();
-        let aliased = Subject::builder("aliased")
-            .infusion(0.0, 100.0, "1", 1.0)
+        let numeric_output = Subject::builder("numeric_output")
+            .infusion(0.0, 100.0, "input_1", 1.0)
             .observation(1.0, 0.0, "1")
             .build();
+        let numeric_input = Subject::builder("numeric_input")
+            .infusion(0.0, 100.0, "1", 1.0)
+            .observation(1.0, 0.0, "outeq_1")
+            .build();
 
-        let canonical_predictions = sde
-            .estimate_predictions(&canonical, &crate::parameters::dense([]))
+        sde.estimate_predictions(&canonical, &crate::parameters::dense([]))
             .expect("canonical labels should simulate");
-        let aliased_predictions = sde
-            .estimate_predictions(&aliased, &crate::parameters::dense([]))
-            .expect("raw numeric aliases should simulate");
 
-        assert!(
-            (canonical_predictions[[0, 0]].prediction() - aliased_predictions[[0, 0]].prediction())
-                .abs()
-                < 1e-10
-        );
+        let output_error = sde
+            .estimate_predictions(&numeric_output, &crate::parameters::dense([]))
+            .expect_err("numeric output labels must not alias to `outeq_<n>`")
+            .to_string();
+        assert!(output_error.contains("`1`"), "{output_error}");
+        assert!(output_error.contains("outeq_1"), "{output_error}");
+        assert!(output_error.contains("no longer matched"), "{output_error}");
+
+        let input_error = sde
+            .estimate_predictions(&numeric_input, &crate::parameters::dense([]))
+            .expect_err("numeric input labels must not alias to `input_<n>`")
+            .to_string();
+        assert!(input_error.contains("`1`"), "{input_error}");
+        assert!(input_error.contains("input_1"), "{input_error}");
+        assert!(input_error.contains("no longer matched"), "{input_error}");
     }
 
     #[test]

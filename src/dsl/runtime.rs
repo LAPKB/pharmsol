@@ -469,7 +469,7 @@ out(cp) = central / v ~ continuous()
 
     fn mismatched_route_kind_subject() -> Subject {
         Subject::builder("mismatched-route-kind-runtime")
-            .infusion(0.0, 120.0, "10", 1.0)
+            .infusion(0.0, 120.0, "input_10", 1.0)
             .missing_observation(0.5, "cp")
             .build()
     }
@@ -702,7 +702,7 @@ out(cp) = central / v ~ continuous()
     }
 
     #[test]
-    fn runtime_jit_resolves_raw_numeric_route_labels_against_prefixed_metadata() {
+    fn runtime_jit_rejects_raw_numeric_route_labels_against_prefixed_metadata() {
         let jit = compile_runtime_model(
             NUMERIC_ROUTE_LABELS_RUNTIME_DSL,
             "prefixed_numeric_route_runtime",
@@ -712,11 +712,7 @@ out(cp) = central / v ~ continuous()
 
         let subject = numeric_route_alias_subject();
 
-        let values = subject_values(
-            &jit.estimate_predictions(&subject, &support)
-                .expect("jit predictions"),
-        );
-        assert!(values.iter().all(|value| value.is_finite()));
+        assert_unknown_input_label(&jit, &subject, &support, "10");
     }
 
     #[test]
@@ -741,7 +737,7 @@ out(cp) = central / v ~ continuous()
     }
 
     #[test]
-    fn runtime_jit_resolves_shared_raw_numeric_route_and_output_aliases() {
+    fn runtime_jit_rejects_shared_raw_numeric_route_and_output_labels() {
         let jit = compile_runtime_model(
             SHARED_NUMERIC_ROUTE_OUTPUT_LABEL_RUNTIME_DSL,
             "prefixed_numeric_route_output_runtime",
@@ -751,11 +747,7 @@ out(cp) = central / v ~ continuous()
 
         let subject = shared_numeric_route_output_alias_subject();
 
-        let values = subject_values(
-            &jit.estimate_predictions(&subject, &support)
-                .expect("jit predictions"),
-        );
-        assert!(values.iter().all(|value| value.is_finite()));
+        assert_unknown_input_label(&jit, &subject, &support, "1");
     }
 
     #[test]

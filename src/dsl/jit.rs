@@ -1983,7 +1983,7 @@ out(cp) = central / v ~ continuous()
     }
 
     #[test]
-    fn route_resolution_matches_bare_numeric_aliases() {
+    fn route_resolution_rejects_bare_numeric_labels() {
         let source = r#"
 name = numeric_alias
 kind = ode
@@ -2010,22 +2010,38 @@ out(cp) = central / v ~ continuous()
         )
         .expect("valid named parameters");
 
-        // A bare numeric label resolves through the `input_<n>` alias.
+        // The declared name resolves.
+        let declared_subject = Subject::builder("ode")
+            .infusion(0.0, 100.0, "input_1", 2.0)
+            .observation(1.0, 0.0, "cp")
+            .build();
+        jit.estimate_predictions(&declared_subject, &support)
+            .expect("declared route name must resolve");
+
+        // A bare numeric label is not aliased to the `input_<n>` declaration.
         let numeric_subject = Subject::builder("ode")
             .infusion(0.0, 100.0, 1, 2.0)
             .observation(1.0, 0.0, "cp")
             .build();
-        jit.estimate_predictions(&numeric_subject, &support)
-            .expect("bare numeric alias must resolve");
+        let err = jit
+            .estimate_predictions(&numeric_subject, &support)
+            .expect_err("numeric label must not alias to `input_<n>`");
+        assert!(
+            matches!(err, crate::PharmsolError::UnknownInputLabel { .. }),
+            "unexpected error: {err:?}"
+        );
+        let message = err.to_string();
+        assert!(message.contains("input_1"), "{message}");
+        assert!(message.contains("no longer matched"), "{message}");
 
-        // A bare numeric label without a declared alias never resolves.
+        // A bare numeric label with no corresponding declaration also fails.
         let missing_subject = Subject::builder("ode")
             .infusion(0.0, 100.0, 9, 2.0)
             .observation(1.0, 0.0, "cp")
             .build();
         let err = jit
             .estimate_predictions(&missing_subject, &support)
-            .expect_err("undeclared numeric alias must fail");
+            .expect_err("undeclared numeric label must fail");
         assert!(
             matches!(err, crate::PharmsolError::UnknownInputLabel { .. }),
             "unexpected error: {err:?}"

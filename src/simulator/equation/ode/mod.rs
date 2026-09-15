@@ -2948,7 +2948,7 @@ mod tests {
     }
 
     #[test]
-    fn handwritten_ode_metadata_resolves_raw_numeric_aliases_against_canonical_labels() {
+    fn handwritten_ode_metadata_rejects_raw_numeric_labels() {
         let ode = ODE::new(
             explicit_route_function,
             zero_lag,
@@ -2971,25 +2971,33 @@ mod tests {
             .infusion(0.0, 100.0, "input_1", 1.0)
             .observation(1.0, 0.0, "outeq_1")
             .build();
-        let aliased = Subject::builder("aliased")
-            .infusion(0.0, 100.0, "1", 1.0)
+        let numeric_output = Subject::builder("numeric_output")
+            .infusion(0.0, 100.0, "input_1", 1.0)
             .observation(1.0, 0.0, "1")
             .build();
+        let numeric_input = Subject::builder("numeric_input")
+            .infusion(0.0, 100.0, "1", 1.0)
+            .observation(1.0, 0.0, "outeq_1")
+            .build();
 
-        let canonical_predictions = ode
-            .simulate_subject(&canonical, &crate::parameters::dense([]), None)
-            .expect("canonical labels should simulate")
-            .0;
-        let aliased_predictions = ode
-            .simulate_subject(&aliased, &crate::parameters::dense([]), None)
-            .expect("raw numeric aliases should simulate")
-            .0;
+        ode.simulate_subject(&canonical, &crate::parameters::dense([]), None)
+            .expect("canonical labels should simulate");
 
-        assert_relative_eq!(
-            canonical_predictions.predictions()[0].prediction(),
-            aliased_predictions.predictions()[0].prediction(),
-            epsilon = 1e-6
-        );
+        let output_error = ode
+            .simulate_subject(&numeric_output, &crate::parameters::dense([]), None)
+            .expect_err("numeric output labels must not alias to `outeq_<n>`")
+            .to_string();
+        assert!(output_error.contains("`1`"), "{output_error}");
+        assert!(output_error.contains("outeq_1"), "{output_error}");
+        assert!(output_error.contains("no longer matched"), "{output_error}");
+
+        let input_error = ode
+            .simulate_subject(&numeric_input, &crate::parameters::dense([]), None)
+            .expect_err("numeric input labels must not alias to `input_<n>`")
+            .to_string();
+        assert!(input_error.contains("`1`"), "{input_error}");
+        assert!(input_error.contains("input_1"), "{input_error}");
+        assert!(input_error.contains("no longer matched"), "{input_error}");
     }
 
     #[test]
@@ -3206,8 +3214,8 @@ mod tests {
         // the loop must treat them as reached instead of erroring.
         let ulp = 12.0f64.next_up() - 12.0;
         let subject = Subject::builder("dense_grid_near_event")
-            .bolus(0.0, 200.0, 0)
-            .bolus(12.0, 100.0, 0)
+            .bolus(0.0, 200.0, "input_0")
+            .bolus(12.0, 100.0, "input_0")
             .missing_observation(0.0, "cp")
             .missing_observation(12.0 - 16.0 * ulp, "cp")
             .missing_observation(12.0 + 16.0 * ulp, "cp")
