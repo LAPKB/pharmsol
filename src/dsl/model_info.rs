@@ -6,7 +6,10 @@ use pharmsol_dsl::execution::{
     ExecutionExpr, ExecutionExprKind, ExecutionLoad, ExecutionModel, ExecutionStmt,
     ExecutionStmtKind, FunctionBody, ModelFunctionKind,
 };
-use pharmsol_dsl::{AnalyticalKernel, CovariateInterpolation, ModelKind, RouteKind};
+use pharmsol_dsl::{
+    AnalyticalKernel, CovariateInterpolation, Diagnostic, DiagnosticPhase, ModelKind, RouteKind,
+    Span, DSL_SOLVER_CLASS,
+};
 
 /// Public metadata extracted from a compiled model.
 ///
@@ -44,6 +47,120 @@ pub struct RuntimeModelInfo {
     pub analytical: Option<AnalyticalKernel>,
     /// Particle count when the compiled model is stochastic.
     pub particles: Option<usize>,
+    /// How this model will be propagated between events.
+    #[serde(default)]
+    pub solver_class: SolverClass,
+}
+
+/// How a compiled model advances its state between events.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SolverClass {
+    /// Dynamics are linear and free of explicit time dependence, so the state
+    /// can be propagated in closed form.
+    ///
+    /// The listed covariates must additionally be carry-forward in the subject
+    /// data. Interpolation is a property of the data, not of the model, so that
+    /// part can only be settled at simulation time.
+    LinearTimeInvariant { requires_carry_forward: Vec<String> },
+    /// Propagated by a numeric integrator, for the stated reason.
+    Numeric {
+        reason: Option<String>,
+        /// Byte range in the model source that forced the decision.
+        #[serde(default)]
+        span: Option<(usize, usize)>,
+    },
+}
+
+impl Default for SolverClass {
+    fn default() -> Self {
+        Self::Numeric {
+            reason: None,
+            span: None,
+        }
+    }
+}
+
+impl RuntimeModelInfo {
+    /// `true` when this model's dynamics are linear and time-invariant.
+    ///
+    /// Closed-form propagation may still require carry-forward covariates; see
+    /// [`SolverClass::LinearTimeInvariant`].
+    pub fn is_linear_time_invariant(&self) -> bool {
+        matches!(self.solver_class, SolverClass::LinearTimeInvariant { .. })
+    }
+
+    /// Covariates that must be carry-forward for closed-form propagation.
+    pub fn closed_form_covariate_requirements(&self) -> &[String] {
+        match &self.solver_class {
+            SolverClass::LinearTimeInvariant {
+                requires_carry_forward,
+            } => requires_carry_forward,
+            SolverClass::Numeric { .. } => &[],
+        }
+    }
+
+    /// One line describing how this model is propagated, and why.
+    ///
+    /// Worth surfacing: a small edit can move a model between the two paths and
+    /// change its runtime by an order of magnitude.
+    pub fn solver_explanation(&self) -> String {
+        match &self.solver_class {
+            SolverClass::LinearTimeInvariant {
+                requires_carry_forward,
+            } if requires_carry_forward.is_empty() => {
+                format!("`{}` is propagated in closed form", self.name)
+            }
+            SolverClass::LinearTimeInvariant {
+                requires_carry_forward,
+            } => format!(
+                "`{}` is propagated in closed form when {} carry-forward in the subject data, and integrated numerically otherwise",
+                self.name,
+                describe_covariates(requires_carry_forward),
+            ),
+            SolverClass::Numeric {
+                reason: Some(reason),
+                ..
+            } => {
+                format!("`{}` is integrated numerically: {reason}", self.name)
+            }
+            SolverClass::Numeric { reason: None, .. } => {
+                format!("`{}` is integrated numerically", self.name)
+            }
+        }
+    }
+
+    /// The same explanation as a diagnostic, so it can be rendered against the
+    /// model source and point at the equation responsible.
+    pub fn solver_diagnostic(&self) -> Diagnostic {
+        let span = match &self.solver_class {
+            SolverClass::Numeric {
+                span: Some((start, end)),
+                ..
+            } => Span::new(*start, *end),
+            _ => Span::default(),
+        };
+        Diagnostic::note(
+            DSL_SOLVER_CLASS,
+            DiagnosticPhase::Compile,
+            self.solver_explanation(),
+            span,
+        )
+    }
+}
+
+fn describe_covariates(names: &[String]) -> String {
+    match names {
+        [] => "no covariates".to_string(),
+        [single] => format!("covariate `{single}` is"),
+        _ => format!(
+            "covariates {} are",
+            names
+                .iter()
+                .map(|name| format!("`{name}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    }
 }
 
 /// Metadata for one compiled covariate.
@@ -172,6 +289,15 @@ impl RuntimeModelInfo {
             route_len: model.layout.route_buffer.len,
             analytical: model.metadata.analytical,
             particles: model.metadata.particles,
+            solver_class: match pharmsol_dsl::classify_linear_time_invariant(model) {
+                Ok(requirements) => SolverClass::LinearTimeInvariant {
+                    requires_carry_forward: requirements.piecewise_constant_covariates,
+                },
+                Err(decline) => SolverClass::Numeric {
+                    reason: Some(decline.reason),
+                    span: Some((decline.span.start, decline.span.end)),
+                },
+            },
         }
     }
 }

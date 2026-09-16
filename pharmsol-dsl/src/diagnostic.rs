@@ -63,10 +63,14 @@ pub const DSL_PARSE_GENERIC: DiagnosticCode = DiagnosticCode::new("DSL1000");
 pub const DSL_ANALYSIS_GENERIC: DiagnosticCode = DiagnosticCode::new("DSL2000");
 pub const DSL_COMPILE_GENERIC: DiagnosticCode = DiagnosticCode::new("DSL3000");
 pub const DSL_BACKEND_GENERIC: DiagnosticCode = DiagnosticCode::new("DSL4000");
+/// Reports how a model will be propagated between events, and why.
+pub const DSL_SOLVER_CLASS: DiagnosticCode = DiagnosticCode::new("DSL5000");
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiagnosticSeverity {
     Error,
+    /// Carries information about a compiled model rather than a defect.
+    Note,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -158,6 +162,25 @@ impl Diagnostic {
         Self {
             code,
             severity: DiagnosticSeverity::Error,
+            phase,
+            message: message.into(),
+            labels: vec![DiagnosticLabel::primary(span)],
+            notes: Vec::new(),
+            helps: Vec::new(),
+            suggestions: Vec::new(),
+        }
+    }
+
+    /// A diagnostic that describes a compiled model rather than a defect.
+    pub fn note(
+        code: DiagnosticCode,
+        phase: DiagnosticPhase,
+        message: impl Into<String>,
+        span: Span,
+    ) -> Self {
+        Self {
+            code,
+            severity: DiagnosticSeverity::Note,
             phase,
             message: message.into(),
             labels: vec![DiagnosticLabel::primary(span)],
@@ -445,6 +468,7 @@ impl DiagnosticSeverity {
     fn as_str(self) -> &'static str {
         match self {
             Self::Error => "error",
+            Self::Note => "note",
         }
     }
 }

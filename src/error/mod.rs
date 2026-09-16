@@ -46,6 +46,15 @@ pub enum PharmsolError {
     OuteqOutOfRange { outeq: usize, nout: usize },
     #[error("Compiled model `{model}` has invalid runtime metadata: {detail}")]
     InvalidMetadata { model: String, detail: String },
+    #[error(
+        "Compiled model `{model}` requires closed-form propagation, but subject `{subject}` \
+         would be integrated numerically: {reason}"
+    )]
+    ClosedFormRequired {
+        model: String,
+        subject: String,
+        reason: String,
+    },
 }
 
 impl From<diffsol::error::DiffsolError> for PharmsolError {

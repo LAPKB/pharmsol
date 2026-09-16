@@ -89,6 +89,7 @@ pub use jit::{
 };
 pub use model_info::{
     RuntimeCovariateInfo, RuntimeModelInfo, RuntimeOutputInfo, RuntimeRouteInfo, RuntimeStateInfo,
+    SolverClass,
 };
 pub use pharmsol_dsl::*;
 pub use runtime::{

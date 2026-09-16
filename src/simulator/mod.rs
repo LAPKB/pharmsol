@@ -1,5 +1,6 @@
 pub mod cache;
 pub mod equation;
+pub(crate) mod expm;
 pub(crate) mod likelihood;
 use diffsol::{NalgebraMat, NalgebraVec};
 
