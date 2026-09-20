@@ -224,7 +224,6 @@ impl Data {
                                         None,
                                         outeq.clone(),
                                         None,
-                                        occasion.index,
                                         Censor::None,
                                     );
                                     new_events.push(Event::Observation(obs));
@@ -724,14 +723,13 @@ impl Occasion {
         errorpoly: Option<ErrorPoly>,
         censored: Censor,
     ) {
-        let observation =
-            Observation::new(time, Some(value), outeq, errorpoly, self.index, censored);
+        let observation = Observation::new(time, Some(value), outeq, errorpoly, censored);
         self.add_event(Event::Observation(observation));
     }
 
     /// Add a missing [Observation] event to the [Occasion]
     pub fn add_missing_observation(&mut self, time: f64, outeq: impl ToString) {
-        let observation = Observation::new(time, None, outeq, None, self.index, Censor::None);
+        let observation = Observation::new(time, None, outeq, None, Censor::None);
         self.add_event(Event::Observation(observation));
     }
 
@@ -746,26 +744,19 @@ impl Occasion {
         errorpoly: ErrorPoly,
         censored: Censor,
     ) {
-        let observation = Observation::new(
-            time,
-            Some(value),
-            outeq,
-            Some(errorpoly),
-            self.index,
-            censored,
-        );
+        let observation = Observation::new(time, Some(value), outeq, Some(errorpoly), censored);
         self.add_event(Event::Observation(observation));
     }
 
     /// Add a [Bolus] event to the [Occasion]
     pub fn add_bolus(&mut self, time: f64, amount: f64, input: impl ToString) {
-        let bolus = Bolus::new(time, amount, input, self.index);
+        let bolus = Bolus::new(time, amount, input);
         self.add_event(Event::Bolus(bolus));
     }
 
     /// Add an [Infusion] event to the [Occasion]
     pub fn add_infusion(&mut self, time: f64, amount: f64, input: impl ToString, duration: f64) {
-        let infusion = Infusion::new(time, amount, input, duration, self.index);
+        let infusion = Infusion::new(time, amount, input, duration);
         self.add_event(Event::Infusion(infusion));
     }
 
@@ -1518,7 +1509,7 @@ mod tests {
         }
 
         // Test mutable reference iterator on a new event
-        let mut infusion_event = Event::Infusion(Infusion::new(5.0, 200.0, 1, 2.0, 2));
+        let mut infusion_event = Event::Infusion(Infusion::new(5.0, 200.0, 1, 2.0));
         let original_time = infusion_event.time();
 
         for event in &mut infusion_event {

@@ -111,7 +111,7 @@ impl SubjectBuilder {
     /// Prefer stable route names such as `"depot"` or `"iv"` when the model
     /// declares named routes.
     pub fn bolus(self, time: f64, amount: f64, input: impl ToString) -> Self {
-        let bolus = Bolus::new(time, amount, input, self.current_occasion.index());
+        let bolus = Bolus::new(time, amount, input);
         let event = Event::Bolus(bolus);
         self.event(event)
     }
@@ -125,7 +125,7 @@ impl SubjectBuilder {
     /// * `input` - Public input label receiving the dose
     /// * `duration` - Duration of the infusion in time units
     pub fn infusion(self, time: f64, amount: f64, input: impl ToString, duration: f64) -> Self {
-        let infusion = Infusion::new(time, amount, input, duration, self.current_occasion.index());
+        let infusion = Infusion::new(time, amount, input, duration);
         let event = Event::Infusion(infusion);
         self.event(event)
     }
@@ -138,14 +138,7 @@ impl SubjectBuilder {
     /// * `value` - Observed value (e.g., drug concentration)
     /// * `outeq` - Public output label for this observation
     pub fn observation(self, time: f64, value: f64, outeq: impl ToString) -> Self {
-        let observation = Observation::new(
-            time,
-            Some(value),
-            outeq,
-            None,
-            self.current_occasion.index(),
-            Censor::None,
-        );
+        let observation = Observation::new(time, Some(value), outeq, None, Censor::None);
         let event = Event::Observation(observation);
         self.event(event)
     }
@@ -165,14 +158,7 @@ impl SubjectBuilder {
         outeq: impl ToString,
         censoring: Censor,
     ) -> Self {
-        let observation = Observation::new(
-            time,
-            Some(value),
-            outeq,
-            None,
-            self.current_occasion.index(),
-            censoring,
-        );
+        let observation = Observation::new(time, Some(value), outeq, None, censoring);
         let event = Event::Observation(observation);
         self.event(event)
     }
@@ -187,14 +173,7 @@ impl SubjectBuilder {
     /// Use this when you want a prediction at a time point but do not have an
     /// observed value.
     pub fn missing_observation(self, time: f64, outeq: impl ToString) -> Self {
-        let observation = Observation::new(
-            time,
-            None,
-            outeq,
-            None,
-            self.current_occasion.index(),
-            Censor::None,
-        );
+        let observation = Observation::new(time, None, outeq, None, Censor::None);
         let event = Event::Observation(observation);
         self.event(event)
     }
@@ -216,14 +195,7 @@ impl SubjectBuilder {
         errorpoly: ErrorPoly,
         censored: Censor,
     ) -> Self {
-        let observation = Observation::new(
-            time,
-            Some(value),
-            outeq,
-            Some(errorpoly),
-            self.current_occasion.index(),
-            censored,
-        );
+        let observation = Observation::new(time, Some(value), outeq, Some(errorpoly), censored);
         let event = Event::Observation(observation);
         self.event(event)
     }

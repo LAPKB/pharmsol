@@ -251,15 +251,6 @@ fn validate_occasion(
     }
 
     let events = occasion.events();
-    for event in events {
-        if event.occasion() != occasion_index {
-            return Err(unrepresentable(format!(
-                "subject `{}` has an event assigned to occasion {} inside occasion {occasion_index}",
-                subject.id(),
-                event.occasion()
-            )));
-        }
-    }
     if events
         .windows(2)
         .any(|pair| pair[0].cmp_time_then_type(&pair[1]).is_gt())

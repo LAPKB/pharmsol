@@ -1144,7 +1144,7 @@ mod tests {
     #[test]
     fn pm_rhs_jvp_uses_absolute_time_and_active_infusion_rate() {
         let covariates = Covariates::default();
-        let infusions = [Infusion::new(10.0, 3.0, 0, 1.0, 0)];
+        let infusions = [Infusion::new(10.0, 3.0, 0, 1.0)];
         let problem = PMProblem::with_params_v(
             |x, _p, t, dx, _bolus, rateiv, _cov| {
                 dx[0] = (rateiv[0] + t) * x[0] * x[0];
@@ -1183,7 +1183,7 @@ mod tests {
         covariate.add_observation(1.0, 2.0);
         covariate.add_observation(2.0, 4.0);
         covariates.add_covariate("rate".into(), covariate);
-        let infusions = [Infusion::new(0.0, 1.0, 0, 1.0, 0)];
+        let infusions = [Infusion::new(0.0, 1.0, 0, 1.0)];
 
         let problem = PMProblem::with_params_v(
             |_x, _p, _t, dx, _bolus, _rateiv, _cov| dx[0] = 0.0,

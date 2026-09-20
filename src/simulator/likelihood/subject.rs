@@ -197,7 +197,7 @@ mod tests {
     #[test]
     fn test_log_likelihood_with_observations() {
         let mut preds = SubjectPredictions::default();
-        let obs = Observation::new(0.0, Some(1.0), 0, None, 0, Censor::None);
+        let obs = Observation::new(0.0, Some(1.0), 0, None, Censor::None);
         preds.add_prediction(obs.to_prediction(1.0, vec![]));
 
         let error_model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 0.0);
@@ -218,7 +218,6 @@ mod tests {
                 outeq: 0,
                 errorpoly: None,
                 state: vec![10.1],
-                occasion: 0,
                 censoring: Censor::None,
             },
             Prediction {
@@ -228,7 +227,6 @@ mod tests {
                 outeq: 0,
                 errorpoly: None,
                 state: vec![8.2],
-                occasion: 0,
                 censoring: Censor::None,
             },
         ];
