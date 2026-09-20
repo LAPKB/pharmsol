@@ -109,7 +109,6 @@ fn assert_data_equivalent(left: &Data, right: &Data) {
                 left_occasion.events().iter().zip(right_occasion.events())
             {
                 assert_f64(left_event.time(), right_event.time());
-                assert_eq!(left_event.occasion(), right_event.occasion());
                 match (left_event, right_event) {
                     (Event::Bolus(left), Event::Bolus(right)) => {
                         assert_f64(left.amount(), right.amount());
@@ -611,7 +610,6 @@ fn negative_addl_reset_is_accepted_and_resets_at_earliest_expanded_dose() {
             .collect::<Vec<_>>(),
         [-2.0, -1.0, 0.0]
     );
-    assert!(occasion.events().iter().all(|event| event.occasion() == 1));
 
     let bytes = data.to_pmetrics_csv_bytes().unwrap();
     let rows = records(&bytes);

@@ -1184,7 +1184,7 @@ mod tests {
 
     #[test]
     fn test_additive_error_model() {
-        let observation = Observation::new(0.0, Some(20.0), 0, None, 0, Censor::None);
+        let observation = Observation::new(0.0, Some(20.0), 0, None, Censor::None);
         let prediction = observation.to_prediction(10.0, vec![]);
         let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         assert_eq!(model.sigma(&prediction).unwrap(), (26.0_f64).sqrt());
@@ -1192,7 +1192,7 @@ mod tests {
 
     #[test]
     fn test_proportional_error_model() {
-        let observation = Observation::new(0.0, Some(20.0), 0, None, 0, Censor::None);
+        let observation = Observation::new(0.0, Some(20.0), 0, None, Censor::None);
         let prediction = observation.to_prediction(10.0, vec![]);
         let model = AssayErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0);
         assert_eq!(model.sigma(&prediction).unwrap(), 2.0);
@@ -1353,7 +1353,7 @@ mod tests {
             .add("cp", model)
             .unwrap();
 
-        let observation = Observation::new(0.0, Some(20.0), 0, None, 0, Censor::None);
+        let observation = Observation::new(0.0, Some(20.0), 0, None, Censor::None);
         let prediction = observation.to_prediction(10.0, vec![]);
 
         assert_eq!(models.sigma(&prediction).unwrap(), (26.0_f64).sqrt());
@@ -1479,7 +1479,7 @@ mod tests {
         let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         let models = AssayErrorModels::empty().add(0, model).unwrap();
 
-        let observation = Observation::new(0.0, Some(20.0), 0, None, 0, Censor::None);
+        let observation = Observation::new(0.0, Some(20.0), 0, None, Censor::None);
         let prediction = observation.to_prediction(10.0, vec![]);
 
         // Non-parametric: sigma from observation
@@ -1492,7 +1492,7 @@ mod tests {
         let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         let models = AssayErrorModels::empty().add(0, model).unwrap();
 
-        let observation = Observation::new(0.0, Some(20.0), 1, None, 0, Censor::None); // outeq=1 not in models
+        let observation = Observation::new(0.0, Some(20.0), 1, None, Censor::None); // outeq=1 not in models
         let prediction = observation.to_prediction(10.0, vec![]);
 
         let result = models.sigma(&prediction);
@@ -1508,7 +1508,7 @@ mod tests {
         let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         let models = AssayErrorModels::empty().add(0, model).unwrap();
 
-        let observation = Observation::new(0.0, Some(20.0), 0, None, 0, Censor::None);
+        let observation = Observation::new(0.0, Some(20.0), 0, None, Censor::None);
         let prediction = observation.to_prediction(10.0, vec![]);
 
         let variance = models.variance(&prediction).unwrap();
@@ -1521,7 +1521,7 @@ mod tests {
         let model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
         let models = AssayErrorModels::empty().add(0, model).unwrap();
 
-        let observation = Observation::new(0.0, Some(20.0), 1, None, 0, Censor::None); // outeq=1 not in models
+        let observation = Observation::new(0.0, Some(20.0), 1, None, Censor::None); // outeq=1 not in models
         let prediction = observation.to_prediction(10.0, vec![]);
 
         let result = models.variance(&prediction);
@@ -1662,13 +1662,13 @@ mod tests {
             .unwrap();
 
         // Test with outeq=0 (additive model)
-        let obs1 = Observation::new(0.0, Some(20.0), 0, None, 0, Censor::None);
+        let obs1 = Observation::new(0.0, Some(20.0), 0, None, Censor::None);
         let pred1 = obs1.to_prediction(10.0, vec![]);
         let sigma1 = models.sigma(&pred1).unwrap();
         assert_eq!(sigma1, (26.0_f64).sqrt()); // additive: sqrt(alpha^2 + lambda^2) = sqrt(1^2 + 5^2) = sqrt(26)
 
         // Test with outeq=1 (proportional model)
-        let obs2 = Observation::new(0.0, Some(20.0), 1, None, 0, Censor::None);
+        let obs2 = Observation::new(0.0, Some(20.0), 1, None, Censor::None);
         let pred2 = obs2.to_prediction(10.0, vec![]);
         let sigma2 = models.sigma(&pred2).unwrap();
         assert_eq!(sigma2, 2.0); // proportional: gamma * alpha = 2 * 1 = 2
@@ -1810,7 +1810,7 @@ mod tests {
     #[test]
     fn test_fixed_parameters_in_calculations() {
         // Test that fixed and variable parameters produce the same calculation results
-        let observation = Observation::new(0.0, Some(20.0), 0, None, 0, Censor::None);
+        let observation = Observation::new(0.0, Some(20.0), 0, None, Censor::None);
         let prediction = observation.to_prediction(10.0, vec![]);
 
         let model_variable = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0);
