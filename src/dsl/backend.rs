@@ -32,7 +32,7 @@ use crate::{
                 accepted_step_limits_for_solver, closure_helpers::PMProblem,
                 validate_resolved_ode_schedule, ExplicitRkTableau, OdeSolver, SdirkTableau,
             },
-            sde::simulate_sde_event_with,
+            sde::{simulate_sde_event_with, SdeStepSize},
             EqnKind, Equation, EquationPriv, EquationTypes, Predictions,
         },
         likelihood::{Prediction, SubjectPredictions},
@@ -1105,6 +1105,7 @@ pub struct RuntimeSdeModel {
     shared: Arc<SharedRuntimeModel>,
     nparticles: usize,
     cache: Option<SdeLikelihoodCache>,
+    step_size: SdeStepSize,
 }
 
 impl RuntimeOdeModel {
@@ -2031,6 +2032,7 @@ impl RuntimeSdeModel {
             shared: Arc::new(SharedRuntimeModel::new(info, artifact)?),
             nparticles,
             cache: Some(SdeLikelihoodCache::new(DEFAULT_CACHE_SIZE)),
+            step_size: SdeStepSize::default(),
         })
     }
 
@@ -2051,6 +2053,35 @@ impl RuntimeSdeModel {
                 .expect("compiled SDE metadata should stay valid after particle override"),
         );
         self.nparticles = nparticles;
+        self
+    }
+
+    /// Configure the solver's step size strategy: either a fixed step size or
+    /// adaptive step size control (see [`SdeStepSize`]).
+    pub fn with_step_size(mut self, step_size: SdeStepSize) -> Self {
+        self.step_size = step_size;
+        self
+    }
+
+    /// Use a fixed step size `dt` for every integration step, disabling
+    /// adaptive error control.
+    pub fn with_fixed_step_size(mut self, dt: f64) -> Self {
+        self.step_size = SdeStepSize::Fixed(dt);
+        self
+    }
+
+    /// Divide every interval between consecutive bolus/observation events
+    /// into exactly `n` equal steps (infusions are applied continuously
+    /// within the drift function and don't create extra intervals).
+    pub fn with_event_steps(mut self, n: usize) -> Self {
+        self.step_size = SdeStepSize::EventSteps(n);
+        self
+    }
+
+    /// Use adaptive step size control, targeting the given relative (`rtol`)
+    /// and absolute (`atol`) tolerances.
+    pub fn with_adaptive_step_size(mut self, rtol: f64, atol: f64) -> Self {
+        self.step_size = SdeStepSize::adaptive(rtol, atol);
         self
     }
 
@@ -2294,6 +2325,7 @@ impl RuntimeSdeModel {
                     drift_state,
                     start_time,
                     end_time,
+                    self.step_size,
                 );
                 if let Some(error) = function_error.into_inner() {
                     return Err(error);
