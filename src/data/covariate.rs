@@ -1,17 +1,24 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::{
     collections::{BTreeMap, HashMap},
     fmt,
+    sync::atomic::{AtomicU64, Ordering},
 };
 use thiserror::Error;
+
+const NO_LEFT_CONTINUITY_TIME: u64 = u64::MAX;
 
 /// Error type for covariate operations
 #[derive(Error, Debug, Clone, Serialize, Deserialize)]
 pub enum CovariateError {
-    #[error("Observation already exists at time {time}")]
-    ObservationExists { time: f64 },
     #[error("No segments available for interpolation")]
     MissingSegments,
+    #[error(
+        "Covariate `{name}` has a non-finite ODE observation: time = {time:?}, value = {value:?}"
+    )]
+    NonFiniteObservation { name: String, time: f64, value: f64 },
+    #[error("Covariate `{name}` has duplicate ODE observations at time {time:?}")]
+    DuplicateObservation { name: String, time: f64 },
 }
 
 /// Method used to interpolate covariate values between observations
@@ -26,7 +33,7 @@ pub enum Interpolation {
 /// A segment of a piecewise interpolation function for a covariate
 ///
 /// Each segment defines how to interpolate values within its time range.
-#[derive(Serialize, Clone, Debug, Deserialize)]
+#[derive(Clone, Debug)]
 struct CovariateSegment {
     from: f64,
     to: Option<f64>,
@@ -45,25 +52,26 @@ impl CovariateSegment {
         CovariateSegment { from, to, method }
     }
 
-    /// Get the original observation time (same as 'from' for observation-based segments)
-    fn time(&self) -> f64 {
-        self.from
-    }
-
-    /// Get the original observation value
-    fn value(&self) -> f64 {
-        match self.method {
-            Interpolation::Linear { slope, intercept } => slope * self.from + intercept,
-            Interpolation::CarryForward { value } => value,
-        }
-    }
-
     /// Interpolate the covariate value at a specific time within this segment
     ///
     /// Returns None if the time is outside the segment's range.
     #[inline]
     fn interpolate(&self, time: f64) -> Option<f64> {
         if !self.in_interval(time) {
+            return None;
+        }
+
+        match self.method {
+            Interpolation::Linear { slope, intercept } => Some(slope * time + intercept),
+            Interpolation::CarryForward { value } => Some(value),
+        }
+    }
+
+    /// Evaluate the segment at its right endpoint without changing the public
+    /// right-continuous interpolation rule.
+    #[inline]
+    fn interpolate_at_end(&self, time: f64) -> Option<f64> {
+        if self.to != Some(time) {
             return None;
         }
 
@@ -80,18 +88,81 @@ impl CovariateSegment {
     }
 }
 
-/// A time-varying covariate consisting of computed segments
+/// A time-varying covariate built from source observations.
 ///
-/// The covariate holds interpolated segments that are rebuilt whenever observations are modified.
-/// Original observation data is stored within the segments themselves.
-#[derive(Serialize, Clone, Debug, Deserialize)]
+/// Source observations are retained exactly. Interpolation segments are rebuilt
+/// whenever those observations or the interpolation mode change.
+#[derive(Serialize, Debug)]
 pub struct Covariate {
     /// The name of the covariate
     name: String,
+    /// Original time-value observations
+    observations: Vec<(f64, f64)>,
     /// Segments representing the covariate's value over time
+    #[serde(skip)]
     segments: Vec<CovariateSegment>,
     /// Flag to indicate if this covariate should always use carry-forward interpolation
     fixed: bool,
+    /// Session-local boundary used to select the segment ending at an exact knot.
+    ///
+    /// This is deliberately atomic so public covariates remain `Send + Sync`.
+    /// `Clone` resets it because continuity belongs to one solver session.
+    #[serde(skip)]
+    left_continuity_time: AtomicU64,
+}
+
+impl Clone for Covariate {
+    fn clone(&self) -> Self {
+        Self {
+            name: self.name.clone(),
+            observations: self.observations.clone(),
+            segments: self.segments.clone(),
+            fixed: self.fixed,
+            left_continuity_time: AtomicU64::new(NO_LEFT_CONTINUITY_TIME),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CovariateData {
+    name: String,
+    observations: Vec<(f64, f64)>,
+    fixed: bool,
+}
+
+impl<'de> Deserialize<'de> for Covariate {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let data = CovariateData::deserialize(deserializer)?;
+        let mut observations = data.observations;
+        for (time, value) in &observations {
+            if !time.is_finite() || !value.is_finite() {
+                return Err(serde::de::Error::custom(
+                    "covariate observations must contain finite times and values",
+                ));
+            }
+        }
+        observations.sort_by(|left, right| left.0.total_cmp(&right.0));
+        if let Some(duplicate) = observations.windows(2).find(|pair| pair[0].0 == pair[1].0) {
+            return Err(serde::de::Error::custom(format!(
+                "duplicate covariate observation at time {}",
+                duplicate[0].0
+            )));
+        }
+
+        let mut covariate = Self {
+            name: data.name,
+            observations,
+            segments: Vec::new(),
+            fixed: data.fixed,
+            left_continuity_time: AtomicU64::new(NO_LEFT_CONTINUITY_TIME),
+        };
+        covariate.build_segments();
+        Ok(covariate)
+    }
 }
 
 impl Covariate {
@@ -104,164 +175,202 @@ impl Covariate {
     pub fn new(name: String, fixed: bool) -> Self {
         Covariate {
             name,
+            observations: Vec::new(),
             segments: Vec::new(),
             fixed,
+            left_continuity_time: AtomicU64::new(NO_LEFT_CONTINUITY_TIME),
         }
     }
 
-    /// Extract original observations from segments
-    fn get_observations(&self) -> Vec<(f64, f64)> {
-        let mut observations: Vec<(f64, f64)> = self
-            .segments
-            .iter()
-            .map(|segment| (segment.time(), segment.value()))
-            .collect();
-
-        // Remove duplicates and sort by time
-        observations.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-        observations.dedup_by(|a, b| a.0 == b.0);
-        observations
-    }
-
-    /// Add an observation to this covariate
-    ///
-    /// If an observation already exists at this time, it will update that value instead of adding a new one.
+    /// Add an observation, updating an existing value at the same time.
     pub fn add_observation(&mut self, time: f64, value: f64) {
-        // If an observation already exists at this time, update it instead of adding a new one
-        if let Some(existing_segment) = self.segments.iter_mut().find(|seg| seg.time() == time) {
-            // Update the existing observation's value
-            existing_segment.method = Interpolation::CarryForward { value };
-            self.build_segments();
+        if let Some(existing) = self
+            .observations
+            .iter_mut()
+            .find(|observation| observation.0 == time)
+        {
+            existing.1 = value;
+        } else {
+            self.observations.push((time, value));
         }
-
-        // Add a temporary segment to store the new observation
-        self.segments.push(CovariateSegment::new(
-            time,
-            Some(time),
-            Interpolation::CarryForward { value },
-        ));
-
-        // Rebuild all segments
         self.build_segments();
     }
 
-    /// Update an observation at a specific time
-    pub fn update_observation(&mut self, time: f64, new_value: f64) {
-        // Remove the old observation and add the new one
-        let removed = self.remove_observation(time);
-        if removed {
-            // Add the updated observation
-            self.add_observation(time, new_value)
-        }
+    /// Update an observation, returning whether the time was present.
+    pub fn update_observation(&mut self, time: f64, new_value: f64) -> bool {
+        let Some(existing) = self
+            .observations
+            .iter_mut()
+            .find(|observation| observation.0 == time)
+        else {
+            return false;
+        };
+        existing.1 = new_value;
+        self.build_segments();
+        true
     }
 
-    /// Remove an observation at a specific time
+    /// Remove an observation at a specific time.
     pub fn remove_observation(&mut self, time: f64) -> bool {
-        let initial_len = self.segments.len();
-        self.segments.retain(|seg| seg.time() != time);
-        if self.segments.len() < initial_len {
+        let initial_len = self.observations.len();
+        self.observations
+            .retain(|observation| observation.0 != time);
+        if self.observations.len() == initial_len {
+            false
+        } else {
             self.build_segments();
             true
-        } else {
-            false
         }
     }
 
-    /// Get all raw observations as time-value pairs
+    /// Get all source observations as time-value pairs.
     pub fn observations(&self) -> Vec<(f64, f64)> {
-        self.get_observations()
+        self.observations.clone()
     }
 
-    /// Build segments from raw observations
-    fn build_segments(&mut self) {
-        // Get observations from current segments
-        let observations = self.get_observations();
-
-        // Clear segments and rebuild
-        self.segments.clear();
-
-        if observations.is_empty() {
-            return;
-        }
-
-        for i in 0..observations.len() {
-            let current_obs = &observations[i];
-            let next_obs = observations.get(i + 1);
-            let to_time = next_obs.map(|next| next.0);
-
-            if self.fixed {
-                // Use CarryForward for fixed covariates
-                self.segments.push(CovariateSegment::new(
-                    current_obs.0,
-                    to_time,
-                    Interpolation::CarryForward {
-                        value: current_obs.1,
-                    },
-                ));
-            } else if let Some(next) = next_obs {
-                let slope = (next.1 - current_obs.1) / (next.0 - current_obs.0);
-                self.segments.push(CovariateSegment::new(
-                    current_obs.0,
-                    Some(next.0),
-                    Interpolation::Linear {
-                        slope,
-                        intercept: current_obs.1 - slope * current_obs.0,
-                    },
-                ));
-            } else {
-                // Single observation, not fixed - create a CarryForward segment to infinity
-                self.segments.push(CovariateSegment::new(
-                    current_obs.0,
-                    None,
-                    Interpolation::CarryForward {
-                        value: current_obs.1,
-                    },
-                ));
+    /// Validate source observations before they are used by an ODE callback.
+    pub(crate) fn validate_for_ode(&self) -> Result<(), CovariateError> {
+        for &(time, value) in &self.observations {
+            if !time.is_finite() || !value.is_finite() {
+                return Err(CovariateError::NonFiniteObservation {
+                    name: self.name.clone(),
+                    time,
+                    value,
+                });
             }
         }
+
+        if let Some(pair) = self
+            .observations
+            .windows(2)
+            .find(|pair| pair[0].0 == pair[1].0)
+        {
+            return Err(CovariateError::DuplicateObservation {
+                name: self.name.clone(),
+                time: pair[0].0,
+            });
+        }
+
+        Ok(())
     }
 
-    /// Interpolate the covariate value at a specific time
+    /// Return exact ODE integration boundaries introduced by this covariate.
     ///
-    /// Returns the interpolated value if the time falls within any segment's range,
-    /// otherwise returns the last known observation value.
-    ///
-    /// This method is optimized for sequential access patterns common in ODE solvers
-    /// by caching the last used segment index.
+    /// LOCF contributes only observation times whose carried value changes.
+    /// Linear interpolation contributes every observation knot, including the
+    /// first and last knots, because endpoint clamping and slope changes can
+    /// change the RHS derivative there. These are exact f64 times; no tolerance
+    /// based deduplication is used.
+    pub(crate) fn ode_breakpoint_times(&self) -> Result<Vec<f64>, CovariateError> {
+        self.validate_for_ode()?;
+
+        let mut breakpoints: Vec<f64> = if self.fixed {
+            self.observations
+                .windows(2)
+                .filter(|pair| pair[0].1 != pair[1].1)
+                .map(|pair| pair[1].0)
+                .collect()
+        } else {
+            self.observations.iter().map(|&(time, _)| time).collect()
+        };
+        breakpoints.sort_by(f64::total_cmp);
+        breakpoints.dedup();
+        Ok(breakpoints)
+    }
+
+    /// Return exact knots where the covariate value itself changes at the
+    /// right-hand side. Linear knots are intentionally absent: their values
+    /// are continuous even when the time derivative changes, so they need an
+    /// integration stop but not a state/RHS discontinuity restart.
+    pub(crate) fn ode_discontinuity_times(&self) -> Result<Vec<f64>, CovariateError> {
+        self.validate_for_ode()?;
+
+        let mut discontinuities = if self.fixed {
+            self.observations
+                .windows(2)
+                .filter(|pair| pair[0].1 != pair[1].1)
+                .map(|pair| pair[1].0)
+                .collect()
+        } else {
+            Vec::new()
+        };
+        discontinuities.sort_by(f64::total_cmp);
+        discontinuities.dedup();
+        Ok(discontinuities)
+    }
+
+    fn set_left_continuity_time(&self, time: Option<f64>) {
+        let encoded = time.map_or(NO_LEFT_CONTINUITY_TIME, f64::to_bits);
+        self.left_continuity_time.store(encoded, Ordering::Relaxed);
+    }
+
+    fn left_continuity_time(&self) -> Option<f64> {
+        let encoded = self.left_continuity_time.load(Ordering::Relaxed);
+        (encoded != NO_LEFT_CONTINUITY_TIME).then(|| f64::from_bits(encoded))
+    }
+
+    /// Rebuild interpolation segments from the source observations.
+    fn build_segments(&mut self) {
+        self.observations
+            .sort_by(|left, right| left.0.total_cmp(&right.0));
+        self.segments.clear();
+
+        for (index, current) in self.observations.iter().enumerate() {
+            let next = self.observations.get(index + 1);
+            let end = next.map(|observation| observation.0);
+
+            let method = if self.fixed {
+                Interpolation::CarryForward { value: current.1 }
+            } else if let Some(next) = next {
+                let slope = (next.1 - current.1) / (next.0 - current.0);
+                Interpolation::Linear {
+                    slope,
+                    intercept: current.1 - slope * current.0,
+                }
+            } else {
+                Interpolation::CarryForward { value: current.1 }
+            };
+            self.segments
+                .push(CovariateSegment::new(current.0, end, method));
+        }
+    }
+
+    /// Interpolate between observations, carrying endpoint values outside their range.
     #[inline]
     pub fn interpolate(&self, time: f64) -> Result<f64, CovariateError> {
-        // If no segments are available, return error
         if self.segments.is_empty() {
             return Err(CovariateError::MissingSegments);
         }
 
-        // Search for the correct segment
+        if self.left_continuity_time() == Some(time) {
+            if let Some(value) = self
+                .segments
+                .iter()
+                .find_map(|segment| segment.interpolate_at_end(time))
+            {
+                return Ok(value);
+            }
+        }
+
         if let Some(value) = self
             .segments
             .iter()
-            .find(|&segment| segment.in_interval(time))
-            .and_then(|segment| segment.interpolate(time))
+            .find_map(|segment| segment.interpolate(time))
         {
             return Ok(value);
         }
 
-        // If no segment contains this time, handle edge cases
-        let observations = self.get_observations();
-        if let Some(first_obs) = observations.first() {
-            if time < first_obs.0 {
-                // Time is before first observation - carry first value backwards
-                return Ok(first_obs.1);
+        if let Some(first) = self.observations.first() {
+            if time < first.0 {
+                return Ok(first.1);
+            }
+        }
+        if let Some(last) = self.observations.last() {
+            if time >= last.0 {
+                return Ok(last.1);
             }
         }
 
-        if let Some(last_obs) = observations.last() {
-            if time >= last_obs.0 {
-                // Time is after last observation - carry last value forward
-                return Ok(last_obs.1);
-            }
-        }
-
-        // Fallback: if we reach here, something went wrong
         Err(CovariateError::MissingSegments)
     }
 
@@ -338,29 +447,20 @@ impl Covariates {
     }
 
     /// Create covariates from Pmetrics raw observations
-    pub(crate) fn from_pmetrics_observations(
-        raw_observations: &HashMap<String, Vec<(f64, Option<f64>)>>,
+    pub(crate) fn from_row_observations(
+        raw_observations: &HashMap<String, Vec<(f64, f64)>>,
     ) -> Self {
         let mut covariates = Covariates::new();
 
-        for (key, occurrences) in raw_observations {
-            let is_fixed = key.ends_with('!');
-            let name = if is_fixed {
-                key.trim_end_matches('!').to_string()
-            } else {
-                key.clone()
-            };
-
-            let mut covariate = Covariate::new(name.clone(), is_fixed);
-            for &(time, value_opt) in occurrences {
-                if let Some(value) = value_opt {
-                    covariate.add_observation(time, value);
-                }
+        for (key, observations) in raw_observations {
+            let (name, fixed) = key
+                .strip_suffix('!')
+                .map_or_else(|| (key.as_str(), false), |name| (name, true));
+            let mut covariate = Covariate::new(name.to_string(), fixed);
+            for &(time, value) in observations {
+                covariate.add_observation(time, value);
             }
-
-            if !covariate.segments.is_empty() {
-                covariates.add_covariate(name, covariate);
-            }
+            covariates.add_covariate(name.to_string(), covariate);
         }
 
         covariates
@@ -374,28 +474,56 @@ impl Covariates {
             .collect()
     }
 
+    /// Validate all source observations before ODE construction or callbacks.
+    pub(crate) fn validate_for_ode(&self) -> Result<(), CovariateError> {
+        for covariate in self.covariates.values() {
+            covariate.validate_for_ode()?;
+        }
+        Ok(())
+    }
+
+    /// Collect exact covariate discontinuity and derivative-knot times.
+    pub(crate) fn ode_breakpoint_times(&self) -> Result<Vec<f64>, CovariateError> {
+        let mut breakpoints = Vec::new();
+        for covariate in self.covariates.values() {
+            breakpoints.extend(covariate.ode_breakpoint_times()?);
+        }
+        breakpoints.sort_by(f64::total_cmp);
+        breakpoints.dedup();
+        Ok(breakpoints)
+    }
+
+    /// Collect exact covariate value-change times that require a solver
+    /// history/Jacobian restart. Linear knots are integration boundaries only.
+    pub(crate) fn ode_discontinuity_times(&self) -> Result<Vec<f64>, CovariateError> {
+        let mut discontinuities = Vec::new();
+        for covariate in self.covariates.values() {
+            discontinuities.extend(covariate.ode_discontinuity_times()?);
+        }
+        discontinuities.sort_by(f64::total_cmp);
+        discontinuities.dedup();
+        Ok(discontinuities)
+    }
+
+    /// Set the session-local left-continuity boundary on every covariate.
+    pub(crate) fn set_left_continuity_time(&self, time: Option<f64>) {
+        for covariate in self.covariates.values() {
+            covariate.set_left_continuity_time(time);
+        }
+    }
+
     /// Produce a content-based hash of all covariates.
     ///
     /// The internal `BTreeMap` guarantees deterministic iteration order.
     pub fn hash(&self) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut hasher = ahash::AHasher::default();
-        for (name, cov) in &self.covariates {
+        for (name, covariate) in &self.covariates {
             name.hash(&mut hasher);
-            for seg in &cov.segments {
-                seg.from.to_bits().hash(&mut hasher);
-                seg.to.map(|t| t.to_bits()).hash(&mut hasher);
-                match &seg.method {
-                    crate::data::covariate::Interpolation::Linear { slope, intercept } => {
-                        0u8.hash(&mut hasher);
-                        slope.to_bits().hash(&mut hasher);
-                        intercept.to_bits().hash(&mut hasher);
-                    }
-                    crate::data::covariate::Interpolation::CarryForward { value } => {
-                        1u8.hash(&mut hasher);
-                        value.to_bits().hash(&mut hasher);
-                    }
-                }
+            covariate.fixed.hash(&mut hasher);
+            for (time, value) in &covariate.observations {
+                time.to_bits().hash(&mut hasher);
+                value.to_bits().hash(&mut hasher);
             }
         }
         hasher.finish()
@@ -436,14 +564,11 @@ impl Covariates {
         }
     }
 
-    /// Update an observation for a specific covariate
+    /// Update an observation for a specific covariate.
     pub fn update_observation(&mut self, name: &str, time: f64, new_value: f64) -> bool {
-        if let Some(covariate) = self.covariates.get_mut(name) {
-            covariate.update_observation(time, new_value);
-            true
-        } else {
-            false
-        }
+        self.covariates
+            .get_mut(name)
+            .is_some_and(|covariate| covariate.update_observation(time, new_value))
     }
 
     /// Remove an observation from a specific covariate
@@ -610,6 +735,54 @@ mod tests {
     }
 
     #[test]
+    fn covariate_deserialization_rebuilds_segments_from_observations() {
+        let json = r#"{
+            "name": "wt",
+            "observations": [[10.0, 10.0], [0.0, 0.0]],
+            "fixed": false
+        }"#;
+        let covariate: Covariate = serde_json::from_str(json).unwrap();
+        assert_eq!(covariate.observations(), [(0.0, 0.0), (10.0, 10.0)]);
+        assert_eq!(covariate.interpolate(5.0).unwrap(), 5.0);
+
+        let serialized = serde_json::to_string(&covariate).unwrap();
+        assert!(!serialized.contains("segments"));
+        let round_tripped: Covariate = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(round_tripped.interpolate(5.0).unwrap(), 5.0);
+    }
+
+    #[test]
+    fn covariate_deserialization_rejects_invalid_observations() {
+        let duplicate = r#"{
+            "name": "wt",
+            "observations": [[0.0, 70.0], [0.0, 71.0]],
+            "fixed": false
+        }"#;
+        assert!(serde_json::from_str::<Covariate>(duplicate)
+            .unwrap_err()
+            .to_string()
+            .contains("duplicate covariate observation"));
+
+        let derived_segments = r#"{
+            "name": "wt",
+            "observations": [[0.0, 70.0]],
+            "segments": [],
+            "fixed": false
+        }"#;
+        assert!(serde_json::from_str::<Covariate>(derived_segments)
+            .unwrap_err()
+            .to_string()
+            .contains("unknown field `segments`"));
+
+        let nonfinite = r#"{
+            "name": "wt",
+            "observations": [[1e400, 70.0]],
+            "fixed": false
+        }"#;
+        assert!(serde_json::from_str::<Covariate>(nonfinite).is_err());
+    }
+
+    #[test]
     fn test_covariate_data_update_functionality() {
         let mut covariates = Covariates::new();
 
@@ -629,6 +802,8 @@ mod tests {
 
         // Update an observation
         assert!(covariates.update_observation("bmi", 12.0, 27.0));
+        assert!(!covariates.update_observation("bmi", 18.0, 99.0));
+        assert!(!covariates.update_observation("missing", 12.0, 99.0));
 
         // Test updated interpolation
         assert_eq!(
@@ -662,16 +837,12 @@ mod tests {
     }
 
     #[test]
-    fn test_pmetrics_format_parsing() {
-        // Test parsing from Pmetrics-style format with "!" for fixed covariates
-        let mut raw_observations: HashMap<String, Vec<(f64, Option<f64>)>> = HashMap::new();
-        raw_observations.insert(
-            "weight".to_string(),
-            vec![(0.0, Some(70.0)), (12.0, Some(72.0))],
-        );
-        raw_observations.insert("age!".to_string(), vec![(0.0, Some(35.0))]); // Fixed covariate
+    fn test_row_observation_parsing() {
+        let mut raw_observations: HashMap<String, Vec<(f64, f64)>> = HashMap::new();
+        raw_observations.insert("weight".to_string(), vec![(0.0, 70.0), (12.0, 72.0)]);
+        raw_observations.insert("age!".to_string(), vec![(0.0, 35.0)]);
 
-        let covariates = Covariates::from_pmetrics_observations(&raw_observations);
+        let covariates = Covariates::from_row_observations(&raw_observations);
 
         // Weight should use linear interpolation
         let weight_cov = covariates.get_covariate("weight").unwrap();
@@ -704,10 +875,10 @@ mod tests {
         // Get the covariates for subject 1
         let covariates = subject1.occasions().first().unwrap().covariates();
 
-        // Verify that WT covariate exists
+        // Header names are normalized to lowercase.
         let wt_cov = covariates
             .get_covariate("wt")
-            .expect("WT covariate should exist");
+            .expect("wt covariate should exist");
 
         // Test interpolation at observation times
         assert_eq!(
@@ -752,7 +923,7 @@ mod tests {
         let covariates2 = subject2.occasions().first().unwrap().covariates();
         let wt_cov2 = covariates2
             .get_covariate("wt")
-            .expect("WT covariate should exist for subject 2");
+            .expect("wt covariate should exist for subject 2");
 
         // Test subject 2 weight interpolation
         assert_eq!(
@@ -810,5 +981,87 @@ mod tests {
         covs_b.add_covariate("ht".into(), cov_b);
 
         assert_ne!(covs_a.hash(), covs_b.hash());
+    }
+
+    #[test]
+    fn covariates_hash_includes_fixed_semantics() {
+        let mut linear = Covariates::new();
+        let mut linear_covariate = Covariate::new("age".into(), false);
+        linear_covariate.add_observation(0.0, 40.0);
+        linear.add_covariate("age".into(), linear_covariate);
+
+        let mut fixed = Covariates::new();
+        let mut fixed_covariate = Covariate::new("age".into(), true);
+        fixed_covariate.add_observation(0.0, 40.0);
+        fixed.add_covariate("age".into(), fixed_covariate);
+
+        assert_ne!(linear.hash(), fixed.hash());
+    }
+
+    #[test]
+    fn locf_interpolation_uses_left_segment_only_at_active_boundary() {
+        let mut covariate = Covariate::new("rate".into(), true);
+        covariate.add_observation(0.0, 1.0);
+        covariate.add_observation(1.0, 2.0);
+
+        assert_eq!(covariate.interpolate(1.0).unwrap(), 2.0);
+        covariate.set_left_continuity_time(Some(1.0));
+        assert_eq!(covariate.interpolate(1.0).unwrap(), 1.0);
+        assert_eq!(covariate.interpolate(1.0 + f64::EPSILON).unwrap(), 2.0);
+        covariate.set_left_continuity_time(None);
+        assert_eq!(covariate.interpolate(1.0).unwrap(), 2.0);
+    }
+
+    #[test]
+    fn locf_breakpoints_exclude_repeated_equal_values() {
+        let mut covariate = Covariate::new("rate".into(), true);
+        covariate.add_observation(0.0, 1.0);
+        covariate.add_observation(1.0, 1.0);
+        covariate.add_observation(2.0, 2.0);
+        covariate.add_observation(3.0, 2.0);
+        covariate.add_observation(4.0, 3.0);
+
+        assert_eq!(covariate.ode_breakpoint_times().unwrap(), [2.0, 4.0]);
+    }
+
+    #[test]
+    fn linear_breakpoints_include_endpoint_and_interior_knots_exactly() {
+        let mut covariate = Covariate::new("rate".into(), false);
+        covariate.add_observation(0.1, 1.0);
+        covariate.add_observation(1.1, 2.0);
+        covariate.add_observation(2.1, 4.0);
+
+        assert_eq!(covariate.ode_breakpoint_times().unwrap(), [0.1, 1.1, 2.1]);
+    }
+
+    #[test]
+    fn ode_validation_rejects_nonfinite_observations() {
+        let mut covariate = Covariate::new("rate".into(), true);
+        covariate.add_observation(f64::NAN, 1.0);
+
+        assert!(matches!(
+            covariate.ode_breakpoint_times(),
+            Err(CovariateError::NonFiniteObservation { .. })
+        ));
+    }
+
+    #[test]
+    fn covariates_remain_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+
+        assert_send_sync::<Covariate>();
+        assert_send_sync::<Covariates>();
+    }
+
+    #[test]
+    fn covariate_clone_resets_session_continuity_marker() {
+        let mut original = Covariate::new("rate".into(), true);
+        original.add_observation(0.0, 1.0);
+        original.add_observation(1.0, 2.0);
+        original.set_left_continuity_time(Some(1.0));
+
+        let clone = original.clone();
+        assert_eq!(original.interpolate(1.0).unwrap(), 1.0);
+        assert_eq!(clone.interpolate(1.0).unwrap(), 2.0);
     }
 }

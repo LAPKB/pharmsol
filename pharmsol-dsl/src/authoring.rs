@@ -28,8 +28,8 @@ struct AuthoringParser<'a> {
     explicit_outputs: BTreeMap<String, Span>,
     assigned_outputs: BTreeMap<String, Span>,
     declared_outputs_span: Option<Span>,
-    routes: BTreeMap<String, SurfaceRoute>,
-    route_order: Vec<String>,
+    routes: BTreeMap<(String, SurfaceRouteKind), SurfaceRoute>,
+    route_order: Vec<(String, SurfaceRouteKind)>,
     route_modifiers: BTreeMap<String, Vec<Binding>>,
     derive_statements: Vec<Stmt>,
     derivative_statements: Vec<Stmt>,
@@ -50,7 +50,7 @@ struct SurfaceRoute {
     span: Span,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum SurfaceRouteKind {
     Bolus,
     Infusion,
@@ -103,14 +103,66 @@ impl<'a> AuthoringParser<'a> {
 
     fn parse_module(mut self) -> Result<Module, ParseError> {
         let mut offset = 0;
-        for segment in self.src.split_inclusive('\n') {
+        let mut pending: Option<String> = None;
+        let mut pending_start = 0;
+        let mut brace_depth = 0i32;
+        let segments: Vec<&str> = self.src.split_inclusive('\n').collect();
+        let mut index = 0;
+        while index < segments.len() {
+            let segment = segments[index];
+            index += 1;
             let line = segment.strip_suffix('\n').unwrap_or(segment);
-            self.parse_line(line, offset)?;
+            let code = &line[..line.find('#').unwrap_or(line.len())];
+            let (opens, closes) = brace_counts(code);
+            let starts_with_else = starts_with_keyword(code.trim_start(), "else");
+            if pending.is_none()
+                && brace_depth == 0
+                && opens == 0
+                && closes == 0
+                && !starts_with_else
+            {
+                self.parse_line(line, offset)?;
+                offset += segment.len();
+                continue;
+            }
+
+            if pending.is_none() {
+                pending = Some(String::new());
+                pending_start = offset;
+            }
+            if let Some(text) = &mut pending {
+                text.push_str(&mask_comments(line));
+                text.push('\n');
+            }
+            brace_depth += opens - closes;
+
+            if brace_depth <= 0 {
+                let next_is_else = segments[index..]
+                    .iter()
+                    .find(|next| {
+                        let next_line = next.strip_suffix('\n').unwrap_or(next);
+                        let next_code =
+                            &next_line[..next_line.find('#').unwrap_or(next_line.len())];
+                        !next_code.trim().is_empty()
+                    })
+                    .is_some_and(|next| {
+                        let next_line = next.strip_suffix('\n').unwrap_or(next);
+                        let next_code =
+                            &next_line[..next_line.find('#').unwrap_or(next_line.len())];
+                        starts_with_keyword(next_code.trim_start(), "else")
+                    });
+                if !next_is_else {
+                    let text = pending.take().unwrap();
+                    self.parse_line(text.trim_end_matches('\n'), pending_start)?;
+                    pending_start = 0;
+                    brace_depth = 0;
+                }
+            }
             offset += segment.len();
         }
 
-        if !self.src.is_empty() && !self.src.ends_with('\n') && offset < self.src.len() {
-            self.parse_line(&self.src[offset..], offset)?;
+        if let Some(text) = pending {
+            self.parse_line(text.trim_end_matches('\n'), pending_start)?;
         }
 
         self.validate_declared_outputs_assigned()?;
@@ -140,16 +192,31 @@ impl<'a> AuthoringParser<'a> {
             });
         }
 
+        let kind = self.determine_kind(module_span)?;
+        if kind == ModelKind::Ode {
+            self.lower_ode_inputs()?;
+        }
+
         let surface_routes = std::mem::take(&mut self.routes);
         let route_order = std::mem::take(&mut self.route_order);
         let mut route_modifiers = std::mem::take(&mut self.route_modifiers);
         let mut routes = Vec::with_capacity(surface_routes.len());
-        for route_name in route_order {
-            let Some(route) = surface_routes.get(&route_name) else {
+        for (route_name, kind) in route_order {
+            let Some(route) = surface_routes.get(&(route_name.clone(), kind)) else {
                 continue;
             };
             let mut span = route.span;
-            let properties = route_modifiers.remove(&route_name).unwrap_or_default();
+            // Lag and bioavailability are bolus-only properties. When a bolus
+            // and an infusion share a label, the modifiers bind to the bolus
+            // route; the infusion route declares none.
+            let shared_label = surface_routes
+                .contains_key(&(route_name.clone(), SurfaceRouteKind::Bolus))
+                && surface_routes.contains_key(&(route_name.clone(), SurfaceRouteKind::Infusion));
+            let properties = if shared_label && kind == SurfaceRouteKind::Infusion {
+                Vec::new()
+            } else {
+                route_modifiers.remove(&route_name).unwrap_or_default()
+            };
             if !properties.is_empty() {
                 span = properties
                     .iter()
@@ -174,7 +241,6 @@ impl<'a> AuthoringParser<'a> {
             ));
         }
 
-        let kind = self.determine_kind(module_span)?;
         if matches!(kind, ModelKind::Analytical) && !self.derivative_statements.is_empty() {
             return Err(ParseError::new(
                 "analytical models cannot declare `dx(...)` equations",
@@ -197,7 +263,9 @@ impl<'a> AuthoringParser<'a> {
         }
 
         let mut derivative_statements = std::mem::take(&mut self.derivative_statements);
-        inject_infusion_rates(&surface_routes, &routes, &mut derivative_statements);
+        if kind == ModelKind::Sde {
+            inject_infusion_rates(&surface_routes, &routes, &mut derivative_statements);
+        }
 
         let name = self
             .name
@@ -309,6 +377,12 @@ impl<'a> AuthoringParser<'a> {
         let trimmed = &code[leading..trailing];
         let span = Span::new(line_offset + leading, line_offset + trailing);
         self.note_span(span);
+
+        if starts_with_keyword(trimmed, "if") {
+            let stmt = self.parse_if_statement(trimmed, span.start, span, 0)?;
+            self.derive_statements.push(stmt);
+            return Ok(());
+        }
 
         if let Some(arrow) = find_top_level_arrow(trimmed) {
             return self.parse_route_line(trimmed, arrow, span.start, span);
@@ -481,6 +555,430 @@ impl<'a> AuthoringParser<'a> {
         Ok(())
     }
 
+    fn parse_if_statement(
+        &mut self,
+        text: &str,
+        abs_start: usize,
+        span: Span,
+        depth: usize,
+    ) -> Result<Stmt, ParseError> {
+        // Statement-level `if` nesting is capped at half of [`MAX_NESTING_DEPTH`]
+        // (which remains the limit for expressions): each statement level spans
+        // three parser frames (`parse_if_statement` -> `parse_if_body` ->
+        // `parse_authoring_statement`), and at the full limit the unoptimized
+        // stack usage (~9.5 KB/level) would exhaust a default 2 MiB thread
+        // stack before the guard could fire.
+        if depth >= crate::parser::MAX_NESTING_DEPTH / 2 {
+            return Err(ParseError::new(
+                format!(
+                    "statement `if` is nested too deeply (maximum nesting depth is {})",
+                    crate::parser::MAX_NESTING_DEPTH / 2
+                ),
+                Span::new(abs_start, abs_start + text.len().min(2)),
+            ));
+        }
+        let rest = &text[2..];
+        let rest_leading = rest.len() - rest.trim_start().len();
+        let rest = &rest[rest_leading..];
+        let rest_abs = abs_start + 2 + rest_leading;
+        if !rest.starts_with('(') {
+            return Err(ParseError::new(
+                "expected `(` after `if`",
+                Span::new(rest_abs, rest_abs + rest.len().min(1)),
+            ));
+        }
+        let close = find_matching_delimiter(rest, '(', ')').ok_or_else(|| {
+            ParseError::new(
+                "unclosed `(` in `if` condition",
+                Span::new(rest_abs, rest_abs + rest.len()),
+            )
+        })?;
+        let condition = parse_expr_at(&rest[1..close], rest_abs + 1)?;
+        let remaining = &rest[close + 1..];
+        let remaining_abs = rest_abs + close + 1;
+
+        let (then_branch, then_consumed) = self.parse_if_body(remaining, remaining_abs, depth)?;
+
+        let after_then = &remaining[then_consumed..];
+        let after_then_leading = after_then.len() - after_then.trim_start().len();
+        let after_then_trimmed = &after_then[after_then_leading..];
+        let after_then_abs = remaining_abs + then_consumed + after_then_leading;
+
+        let else_branch = if after_then_trimmed.is_empty() {
+            None
+        } else {
+            if !starts_with_keyword(after_then_trimmed, "else") {
+                return Err(ParseError::new(
+                    "expected `else` or end of `if`",
+                    Span::new(
+                        after_then_abs,
+                        after_then_abs + after_then_trimmed.len().min(1),
+                    ),
+                ));
+            }
+            let else_rest = &after_then_trimmed[4..];
+            let else_rest_leading = else_rest.len() - else_rest.trim_start().len();
+            let else_rest_trimmed = &else_rest[else_rest_leading..];
+            let else_rest_abs = after_then_abs + 4 + else_rest_leading;
+            let (stmts, else_consumed) = if starts_with_keyword(else_rest_trimmed, "if") {
+                let nested_span = Span::new(else_rest_abs, else_rest_abs + else_rest_trimmed.len());
+                let nested = self.parse_if_statement(
+                    else_rest_trimmed,
+                    else_rest_abs,
+                    nested_span,
+                    depth + 1,
+                )?;
+                (vec![nested], else_rest_trimmed.len())
+            } else {
+                let (stmts, consumed) =
+                    self.parse_if_body(else_rest_trimmed, else_rest_abs, depth)?;
+                (stmts, consumed)
+            };
+            let trailing_src = &else_rest_trimmed[else_consumed..];
+            let trailing = trailing_src.trim_start();
+            let trailing_leading = trailing_src.len() - trailing.len();
+            let trailing_abs = else_rest_abs + else_consumed + trailing_leading;
+            if !trailing.is_empty() {
+                return Err(ParseError::new(
+                    "unexpected tokens after `if`/`else` statement",
+                    Span::new(trailing_abs, trailing_abs + trailing.len()),
+                ));
+            }
+            Some(stmts)
+        };
+
+        Ok(Stmt {
+            span,
+            kind: StmtKind::If(IfStmt {
+                condition,
+                then_branch,
+                else_branch,
+            }),
+        })
+    }
+
+    fn parse_if_body(
+        &mut self,
+        text: &str,
+        abs_start: usize,
+        depth: usize,
+    ) -> Result<(Vec<Stmt>, usize), ParseError> {
+        let trimmed = text.trim_start();
+        let leading = text.len() - trimmed.len();
+        let abs = abs_start + leading;
+        if !trimmed.starts_with('{') {
+            return Err(ParseError::new(
+                "expected `{` to open `if`/`else` body",
+                Span::new(abs, abs + trimmed.len().min(1)),
+            ));
+        }
+        let close = find_matching_delimiter(trimmed, '{', '}').ok_or_else(|| {
+            ParseError::new(
+                "unclosed `{` in `if`/`else` body",
+                Span::new(abs, abs + trimmed.len()),
+            )
+        })?;
+        let inner = &trimmed[1..close];
+        let inner_abs = abs + 1;
+        let mut statements = Vec::new();
+        for (start, end) in split_statement_chunks(inner) {
+            let chunk = &inner[start..end];
+            let stmt = self.parse_authoring_statement(chunk, inner_abs + start, depth)?;
+            statements.push(stmt);
+        }
+        Ok((statements, leading + close + 1))
+    }
+
+    fn parse_authoring_statement(
+        &mut self,
+        text: &str,
+        abs_start: usize,
+        depth: usize,
+    ) -> Result<Stmt, ParseError> {
+        let trimmed = text.trim();
+        let leading = text.len() - text.trim_start().len();
+        let abs = abs_start + leading;
+        if trimmed.is_empty() {
+            return Err(ParseError::new(
+                "empty statement in `if` body",
+                Span::new(abs, abs),
+            ));
+        }
+        if starts_with_keyword(trimmed, "if") {
+            let span = Span::new(abs, abs + trimmed.len());
+            return self.parse_if_statement(trimmed, abs, span, depth + 1);
+        }
+        let eq = find_top_level_assignment(trimmed).ok_or_else(|| {
+            ParseError::new(
+                "expected an assignment (`name = <expression>`) or `if` in `if` body",
+                Span::new(abs, abs + trimmed.len().min(1)),
+            )
+        })?;
+        let lhs = &trimmed[..eq];
+        let rhs = &trimmed[eq + 1..];
+        let lhs_trimmed = lhs.trim();
+        let lhs_leading = lhs.len() - lhs.trim_start().len();
+        let lhs_abs = abs + lhs_leading;
+        let rhs_trimmed = rhs.trim();
+        let rhs_leading = rhs.len() - rhs.trim_start().len();
+        let rhs_abs = abs + eq + 1 + rhs_leading;
+        if lhs_trimmed.is_empty() || rhs_trimmed.is_empty() {
+            return Err(ParseError::new(
+                "expected `name = <expression>`",
+                Span::new(abs, abs + trimmed.len().min(1)),
+            ));
+        }
+        if lhs_trimmed.contains('(') {
+            return Err(ParseError::new(
+                "an `if` statement body supports only plain-variable assignments \
+                 (`x = <expression>`); to make `ddt(...)`, `out(...)`, or `init(...)` \
+                 conditional, use a conditional equation instead, e.g. \
+                 `ddt(central) = if (cond) <a> else <b>`",
+                Span::new(lhs_abs, lhs_abs + lhs_trimmed.len()),
+            ));
+        }
+        let target = parse_ident_segment(lhs_trimmed, lhs_abs)?;
+        let rhs = parse_surface_rhs(rhs_trimmed, rhs_abs)?;
+        Ok(build_assignment_statement(
+            AssignTarget {
+                span: Span::new(lhs_abs, lhs_abs + lhs_trimmed.len()),
+                kind: AssignTargetKind::Name(target),
+            },
+            rhs,
+        ))
+    }
+
+    // ODE input syntax lowers to the existing routes, event scales, and rates.
+    // The execution model and simulator do not need a second input mechanism.
+    fn lower_ode_inputs(&mut self) -> Result<(), ParseError> {
+        if let Some(route) = self.routes.values().next() {
+            return Err(ParseError::new(
+                "ODE inputs belong in the derivative RHS: use `+ bolus(input)` or `+ infusion(input)`, not a route declaration",
+                route.span,
+            ));
+        }
+        for property in self.route_modifiers.values().flatten() {
+            if property.name.text == "bioavailability" {
+                return Err(ParseError::new(
+                    "ODE models no longer accept `fa(input)`; multiply `bolus(input)` by the scale in the derivative RHS",
+                    property.span,
+                ));
+            }
+        }
+        let mut statements = std::mem::take(&mut self.derivative_statements);
+        self.lower_ode_input_statements(&mut statements, false)?;
+        self.derivative_statements = statements;
+        Ok(())
+    }
+
+    fn lower_ode_input_statements(
+        &mut self,
+        statements: &mut [Stmt],
+        conditional: bool,
+    ) -> Result<(), ParseError> {
+        for statement in statements {
+            match &mut statement.kind {
+                StmtKind::Assign(assign) => {
+                    let AssignTargetKind::Call { callee, args } = &assign.target.kind else {
+                        continue;
+                    };
+                    if callee.text != "ddt" || args.len() != 1 {
+                        continue;
+                    }
+                    let target = &args[0];
+                    let destination = parse_place_at(
+                        &self.src[target.span.start..target.span.end],
+                        target.span.start,
+                    )?;
+                    self.lower_ode_input_expr(&mut assign.value, &destination, conditional)?;
+                }
+                StmtKind::If(branch) => {
+                    self.lower_ode_input_statements(&mut branch.then_branch, true)?;
+                    if let Some(otherwise) = &mut branch.else_branch {
+                        self.lower_ode_input_statements(otherwise, true)?;
+                    }
+                }
+                StmtKind::For(body) => {
+                    self.lower_ode_input_statements(&mut body.body, true)?;
+                }
+                StmtKind::Let(_) => {}
+            }
+        }
+        Ok(())
+    }
+
+    fn lower_ode_input_expr(
+        &mut self,
+        expr: &mut Expr,
+        destination: &Place,
+        conditional: bool,
+    ) -> Result<(), ParseError> {
+        let input_argument = match &expr.kind {
+            ExprKind::Call { callee, args }
+                if matches!(callee.text.as_str(), "bolus" | "infusion") && args.len() == 1 =>
+            {
+                Some(&args[0])
+            }
+            ExprKind::Index { target, index } if matches!(&target.kind, ExprKind::Name(name) if matches!(name.text.as_str(), "bolus" | "infusion")) => {
+                Some(index.as_ref())
+            }
+            _ => None,
+        };
+        if let Some(argument) = input_argument {
+            parse_route_label_segment(
+                &self.src[argument.span.start..argument.span.end],
+                argument.span.start,
+            )?;
+        }
+        if let Some((input, scale)) = scaled_bolus_term(expr) {
+            if conditional {
+                return Err(ParseError::new(
+                    "put conditional bolus scaling in an event-safe derived value, then use one `bolus(input) * scale` term outside the conditional",
+                    expr.span,
+                ));
+            }
+            self.infer_ode_route(
+                input.clone(),
+                SurfaceRouteKind::Bolus,
+                destination,
+                expr.span,
+            )?;
+            if !matches!(scale.kind, ExprKind::Number(1.0)) {
+                self.route_modifiers
+                    .entry(input.text)
+                    .or_default()
+                    .push(Binding {
+                        name: Ident::new("bioavailability", expr.span),
+                        value: scale,
+                        span: expr.span,
+                    });
+            }
+            expr.kind = ExprKind::Number(0.0);
+            return Ok(());
+        }
+        if let Some((kind, input)) = ode_input(expr) {
+            if kind == SurfaceRouteKind::Infusion {
+                self.infer_ode_route(input.clone(), kind, destination, expr.span)?;
+                expr.kind = ExprKind::Call {
+                    callee: Ident::new(RATE_FUNCTION_NAME, expr.span),
+                    args: vec![Expr {
+                        span: input.span,
+                        kind: ExprKind::Name(input),
+                    }],
+                };
+                return Ok(());
+            }
+        }
+        match &mut expr.kind {
+            ExprKind::Binary {
+                op: BinaryOp::Add,
+                lhs,
+                rhs,
+            } => {
+                let had_bolus = contains_bolus(lhs) || contains_bolus(rhs);
+                self.lower_ode_input_expr(lhs, destination, conditional)?;
+                self.lower_ode_input_expr(rhs, destination, conditional)?;
+                if had_bolus && matches!(lhs.kind, ExprKind::Number(0.0)) {
+                    expr.kind = rhs.kind.clone();
+                } else if had_bolus && matches!(rhs.kind, ExprKind::Number(0.0)) {
+                    expr.kind = lhs.kind.clone();
+                }
+            }
+            ExprKind::Binary {
+                op: BinaryOp::Sub,
+                lhs,
+                rhs,
+            } => {
+                let had_bolus = contains_bolus(lhs);
+                self.lower_ode_input_expr(lhs, destination, conditional)?;
+                reject_bolus_term(rhs)?;
+                self.lower_ode_input_expr(rhs, destination, conditional)?;
+                if had_bolus && matches!(lhs.kind, ExprKind::Number(0.0)) {
+                    expr.kind = ExprKind::Unary {
+                        op: UnaryOp::Minus,
+                        expr: rhs.clone(),
+                    };
+                }
+            }
+            _ => {
+                reject_bolus_term(expr)?;
+                match &mut expr.kind {
+                    ExprKind::Unary { expr, .. } => {
+                        self.lower_ode_input_expr(expr, destination, conditional)?
+                    }
+                    ExprKind::Binary { lhs, rhs, .. } => {
+                        self.lower_ode_input_expr(lhs, destination, conditional)?;
+                        self.lower_ode_input_expr(rhs, destination, conditional)?;
+                    }
+                    ExprKind::Call { callee, args } => {
+                        if matches!(
+                            callee.text.as_str(),
+                            "bolus" | "infusion" | RATE_FUNCTION_NAME
+                        ) {
+                            return Err(ParseError::new(
+                                "use `bolus(input_name)` or `infusion(input_name)` in the ODE derivative RHS",
+                                expr.span,
+                            ));
+                        }
+                        for arg in args {
+                            self.lower_ode_input_expr(arg, destination, conditional)?;
+                        }
+                    }
+                    ExprKind::Index { target, index } => {
+                        self.lower_ode_input_expr(target, destination, conditional)?;
+                        self.lower_ode_input_expr(index, destination, conditional)?;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn infer_ode_route(
+        &mut self,
+        input: Ident,
+        kind: SurfaceRouteKind,
+        destination: &Place,
+        span: Span,
+    ) -> Result<(), ParseError> {
+        parse_route_label_segment(&input.text, input.span.start)?;
+        let key = (input.text.clone(), kind);
+        if let Some(existing) = self.routes.get(&key) {
+            if kind == SurfaceRouteKind::Bolus
+                && !expr_matches_place(&place_to_expr(&existing.destination), destination)
+            {
+                return Err(ParseError::new(
+                    format!("input `{}` must have one destination state", input.text),
+                    span,
+                ));
+            }
+            if kind == SurfaceRouteKind::Bolus {
+                return Err(ParseError::new(
+                    format!(
+                        "use one `bolus({}) * scale` term for this input",
+                        input.text
+                    ),
+                    span,
+                ));
+            }
+            // Infusions reuse their rate slot wherever referenced. The first
+            // destination supplies metadata only; it does not inject a rate.
+            return Ok(());
+        }
+        self.route_order.push(key.clone());
+        self.routes.insert(
+            key,
+            SurfaceRoute {
+                input,
+                destination: destination.clone(),
+                kind,
+                span,
+            },
+        );
+        Ok(())
+    }
+
     fn parse_route_line(
         &mut self,
         trimmed: &str,
@@ -507,14 +1005,17 @@ impl<'a> AuthoringParser<'a> {
         let input = parse_route_label_segment(call.argument, call.argument_start)?;
         let route_name = input.text.clone();
         let destination = parse_place_at(rhs, line_start + arrow + 2)?;
-        if self.routes.contains_key(&route_name) {
+        // Route labels are unique per kind: a bolus and an infusion may share
+        // a label (one drug given by either route), but two routes of the
+        // same kind may not.
+        if self.routes.contains_key(&(route_name.clone(), kind)) {
             return Err(ParseError::new(
                 format!("duplicate route `{}`", input.text),
                 input.span,
             ));
         }
         self.routes.insert(
-            route_name.clone(),
+            (route_name.clone(), kind),
             SurfaceRoute {
                 input,
                 destination,
@@ -522,7 +1023,7 @@ impl<'a> AuthoringParser<'a> {
                 span,
             },
         );
-        self.route_order.push(route_name);
+        self.route_order.push((route_name, kind));
         Ok(())
     }
 
@@ -858,18 +1359,107 @@ impl<'a> AuthoringParser<'a> {
     }
 }
 
+fn ode_input(expr: &Expr) -> Option<(SurfaceRouteKind, Ident)> {
+    let (name, argument) = match &expr.kind {
+        ExprKind::Call { callee, args } if args.len() == 1 => (&callee.text, &args[0]),
+        ExprKind::Index { target, index } => {
+            let ExprKind::Name(name) = &target.kind else {
+                return None;
+            };
+            (&name.text, index.as_ref())
+        }
+        _ => return None,
+    };
+    let kind = match name.as_str() {
+        "bolus" => SurfaceRouteKind::Bolus,
+        "infusion" => SurfaceRouteKind::Infusion,
+        _ => return None,
+    };
+    let ExprKind::Name(input) = &argument.kind else {
+        return None;
+    };
+    Some((kind, input.clone()))
+}
+
+fn contains_bolus(expr: &Expr) -> bool {
+    if matches!(ode_input(expr), Some((SurfaceRouteKind::Bolus, _))) {
+        return true;
+    }
+    match &expr.kind {
+        ExprKind::Unary { expr, .. } => contains_bolus(expr),
+        ExprKind::Binary { lhs, rhs, .. } => contains_bolus(lhs) || contains_bolus(rhs),
+        ExprKind::Call { args, .. } => args.iter().any(contains_bolus),
+        ExprKind::Index { target, index } => contains_bolus(target) || contains_bolus(index),
+        _ => false,
+    }
+}
+
+fn reject_bolus_term(expr: &Expr) -> Result<(), ParseError> {
+    if contains_bolus(expr) {
+        return Err(ParseError::new(
+            "bolus inputs must be additive linear terms such as `bolus(input) * scale`; put the scale in an event-safe derived value",
+            expr.span,
+        ));
+    }
+    Ok(())
+}
+
+fn scaled_bolus_term(expr: &Expr) -> Option<(Ident, Expr)> {
+    if let Some((SurfaceRouteKind::Bolus, input)) = ode_input(expr) {
+        return Some((
+            input,
+            Expr {
+                span: expr.span,
+                kind: ExprKind::Number(1.0),
+            },
+        ));
+    }
+    if let ExprKind::Binary {
+        op: BinaryOp::Mul,
+        lhs,
+        rhs,
+    } = &expr.kind
+    {
+        let (input, scale, other) = if !contains_bolus(rhs) {
+            let (input, scale) = scaled_bolus_term(lhs)?;
+            (input, scale, rhs)
+        } else if !contains_bolus(lhs) {
+            let (input, scale) = scaled_bolus_term(rhs)?;
+            (input, scale, lhs)
+        } else {
+            return None;
+        };
+        if matches!(scale.kind, ExprKind::Number(1.0)) {
+            return Some((input, other.as_ref().clone()));
+        }
+        return Some((
+            input,
+            Expr {
+                span: expr.span,
+                kind: ExprKind::Binary {
+                    op: BinaryOp::Mul,
+                    lhs: Box::new(scale),
+                    rhs: other.clone(),
+                },
+            },
+        ));
+    }
+    None
+}
+
 fn inject_infusion_rates(
-    surface_routes: &BTreeMap<String, SurfaceRoute>,
+    surface_routes: &BTreeMap<(String, SurfaceRouteKind), SurfaceRoute>,
     routes: &[RouteDecl],
     derivative_statements: &mut Vec<Stmt>,
 ) {
     for route in routes {
-        let Some(surface_route) = surface_routes.get(&route.input.text) else {
+        let kind = match route.kind {
+            Some(RouteKind::Infusion) => SurfaceRouteKind::Infusion,
+            _ => continue,
+        };
+        let Some(surface_route) = surface_routes.get(&(route.input.text.clone(), kind)) else {
             continue;
         };
-        if surface_route.kind != SurfaceRouteKind::Infusion {
-            continue;
-        }
 
         let rate_expr = Expr {
             span: surface_route.span,
@@ -882,7 +1472,12 @@ fn inject_infusion_rates(
             },
         };
 
-        if !augment_derivative_statements(derivative_statements, &route.destination, &rate_expr) {
+        if !augment_derivative_statements(
+            derivative_statements,
+            &route.destination,
+            &rate_expr,
+            &surface_route.input,
+        ) {
             derivative_statements.push(Stmt {
                 span: surface_route.span,
                 kind: StmtKind::Assign(AssignStmt {
@@ -1184,6 +1779,34 @@ fn parse_surface_rhs_at(
     Ok(SurfaceRhs::Expr(parse_expr_at(src, abs_start)?))
 }
 
+fn parse_surface_rhs_body(
+    src: &str,
+    abs_start: usize,
+    depth: usize,
+) -> Result<(SurfaceRhs, usize), ParseError> {
+    let trimmed = src.trim_start();
+    let leading = src.len() - trimmed.len();
+    let abs = abs_start + leading;
+    if trimmed.starts_with('{') {
+        let close = find_matching_delimiter(trimmed, '{', '}').ok_or_else(|| {
+            ParseError::new(
+                "unclosed `{` in conditional expression",
+                Span::new(abs, abs + trimmed.len()),
+            )
+        })?;
+        let inner = &trimmed[1..close];
+        let inner_leading = inner.len() - inner.trim_start().len();
+        let inner_trimmed = &inner[inner_leading..];
+        let inner_trailing = inner_trimmed.trim_end().len();
+        let inner_trimmed = &inner_trimmed[..inner_trailing];
+        let inner_abs = abs + 1 + inner_leading;
+        let rhs = parse_surface_rhs_at(inner_trimmed, inner_abs, depth + 1)?;
+        return Ok((rhs, leading + close + 1));
+    }
+    let rhs = parse_surface_rhs_at(trimmed, abs, depth + 1)?;
+    Ok((rhs, leading + trimmed.len()))
+}
+
 fn parse_if_rhs(src: &str, abs_start: usize, depth: usize) -> Result<SurfaceRhs, ParseError> {
     if depth >= crate::parser::MAX_NESTING_DEPTH {
         return Err(ParseError::new(
@@ -1223,12 +1846,31 @@ fn parse_if_rhs(src: &str, abs_start: usize, depth: usize) -> Result<SurfaceRhs,
     })?;
 
     let condition = parse_expr_at(condition_src, rest_abs + 1)?;
-    let then_branch = parse_surface_rhs_at(&remaining[..else_index], remaining_abs, depth + 1)?;
-    let else_branch = parse_surface_rhs_at(
-        &remaining[else_index + 4..],
-        remaining_abs + else_index + 4,
-        depth + 1,
-    )?;
+    let then_src = &remaining[..else_index];
+    let (then_branch, then_consumed) = parse_surface_rhs_body(then_src, remaining_abs, depth)?;
+    let then_trailing_src = &then_src[then_consumed..];
+    let then_trailing = then_trailing_src.trim_start();
+    let then_trailing_leading = then_trailing_src.len() - then_trailing.len();
+    let then_trailing_pos = remaining_abs + then_consumed + then_trailing_leading;
+    if !then_trailing.is_empty() {
+        return Err(ParseError::new(
+            "unexpected tokens after `if`/`else` expression",
+            Span::new(then_trailing_pos, then_trailing_pos + then_trailing.len()),
+        ));
+    }
+    let else_src = &remaining[else_index + 4..];
+    let else_abs = remaining_abs + else_index + 4;
+    let (else_branch, else_consumed) = parse_surface_rhs_body(else_src, else_abs, depth)?;
+    let trailing_src = &else_src[else_consumed..];
+    let trailing = trailing_src.trim_start();
+    let trailing_leading = trailing_src.len() - trailing.len();
+    let trailing_pos = else_abs + else_consumed + trailing_leading;
+    if !trailing.is_empty() {
+        return Err(ParseError::new(
+            "unexpected tokens after `if`/`else` expression",
+            Span::new(trailing_pos, trailing_pos + trailing.len()),
+        ));
+    }
     let span = Span::new(abs_start, remaining_abs + remaining.len());
 
     Ok(SurfaceRhs::If {
@@ -1310,39 +1952,70 @@ fn augment_derivative_statements(
     statements: &mut [Stmt],
     destination: &Place,
     rate_expr: &Expr,
+    route: &Ident,
 ) -> bool {
     let mut matched = false;
     for stmt in statements {
         match &mut stmt.kind {
             StmtKind::Assign(assign) if derivative_target_matches(&assign.target, destination) => {
-                let value = Expr {
-                    span: assign.value.span.join(rate_expr.span),
-                    kind: ExprKind::Binary {
-                        op: BinaryOp::Add,
-                        lhs: Box::new(assign.value.clone()),
-                        rhs: Box::new(rate_expr.clone()),
-                    },
-                };
-                assign.value = value;
-                stmt.span = stmt.span.join(rate_expr.span);
+                if !expr_uses_rate(&assign.value, route) {
+                    assign.value = Expr {
+                        span: assign.value.span.join(rate_expr.span),
+                        kind: ExprKind::Binary {
+                            op: BinaryOp::Add,
+                            lhs: Box::new(assign.value.clone()),
+                            rhs: Box::new(rate_expr.clone()),
+                        },
+                    };
+                    stmt.span = stmt.span.join(rate_expr.span);
+                }
                 matched = true;
             }
             StmtKind::If(if_stmt) => {
-                let then_match =
-                    augment_derivative_statements(&mut if_stmt.then_branch, destination, rate_expr);
+                let then_match = augment_derivative_statements(
+                    &mut if_stmt.then_branch,
+                    destination,
+                    rate_expr,
+                    route,
+                );
                 let else_match = if_stmt.else_branch.as_mut().is_some_and(|branch| {
-                    augment_derivative_statements(branch, destination, rate_expr)
+                    augment_derivative_statements(branch, destination, rate_expr, route)
                 });
                 matched |= then_match || else_match;
             }
             StmtKind::For(for_stmt) => {
-                matched |=
-                    augment_derivative_statements(&mut for_stmt.body, destination, rate_expr);
+                matched |= augment_derivative_statements(
+                    &mut for_stmt.body,
+                    destination,
+                    rate_expr,
+                    route,
+                );
             }
             _ => {}
         }
     }
     matched
+}
+
+fn expr_uses_rate(expr: &Expr, route: &Ident) -> bool {
+    match &expr.kind {
+        ExprKind::Call { callee, args }
+            if callee.text == RATE_FUNCTION_NAME
+                && args.len() == 1
+                && matches!(&args[0].kind, ExprKind::Name(name) if name.text == route.text) =>
+        {
+            true
+        }
+        ExprKind::Unary { expr, .. } => expr_uses_rate(expr, route),
+        ExprKind::Binary { lhs, rhs, .. } => {
+            expr_uses_rate(lhs, route) || expr_uses_rate(rhs, route)
+        }
+        ExprKind::Call { args, .. } => args.iter().any(|arg| expr_uses_rate(arg, route)),
+        ExprKind::Index { target, index } => {
+            expr_uses_rate(target, route) || expr_uses_rate(index, route)
+        }
+        ExprKind::Number(_) | ExprKind::Bool(_) | ExprKind::Name(_) => false,
+    }
 }
 
 fn derivative_target_matches(target: &AssignTarget, destination: &Place) -> bool {
@@ -1492,21 +2165,35 @@ fn find_top_level_operator(src: &str, operator: &str) -> Option<usize> {
 }
 
 fn find_top_level_keyword(src: &str, keyword: &str) -> Option<usize> {
-    let mut paren_depth = 0;
-    let mut bracket_depth = 0;
+    let mut paren_depth = 0i32;
+    let mut bracket_depth = 0i32;
+    let mut brace_depth = 0i32;
+    let mut in_string = false;
     let bytes = src.as_bytes();
     let keyword_bytes = keyword.as_bytes();
     let mut index = 0;
     while index + keyword_bytes.len() <= bytes.len() {
-        match bytes[index] as char {
-            '(' => paren_depth += 1,
-            ')' => paren_depth -= 1,
-            '[' => bracket_depth += 1,
-            ']' => bracket_depth -= 1,
+        let byte = bytes[index];
+        if in_string {
+            if byte == b'"' {
+                in_string = false;
+            }
+            index += 1;
+            continue;
+        }
+        match byte {
+            b'"' => in_string = true,
+            b'(' => paren_depth += 1,
+            b')' => paren_depth -= 1,
+            b'[' => bracket_depth += 1,
+            b']' => bracket_depth -= 1,
+            b'{' => brace_depth += 1,
+            b'}' => brace_depth -= 1,
             _ => {}
         }
         if paren_depth == 0
             && bracket_depth == 0
+            && brace_depth == 0
             && &bytes[index..index + keyword_bytes.len()] == keyword_bytes
         {
             let prev = index.checked_sub(1).and_then(|idx| bytes.get(idx)).copied();
@@ -1522,10 +2209,100 @@ fn find_top_level_keyword(src: &str, keyword: &str) -> Option<usize> {
     None
 }
 
+fn mask_comments(line: &str) -> String {
+    let cutoff = line.find('#').unwrap_or(line.len());
+    let mut out = String::with_capacity(line.len());
+    out.push_str(&line[..cutoff]);
+    for _ in cutoff..line.len() {
+        out.push(' ');
+    }
+    out
+}
+
+fn brace_counts(src: &str) -> (i32, i32) {
+    let mut opens = 0i32;
+    let mut closes = 0i32;
+    let mut in_string = false;
+    let chars = src.chars().peekable();
+    for ch in chars {
+        if in_string {
+            if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_string = true,
+            '{' => opens += 1,
+            '}' => closes += 1,
+            _ => {}
+        }
+    }
+    (opens, closes)
+}
+
+fn split_statement_chunks(src: &str) -> Vec<(usize, usize)> {
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    let mut paren_depth = 0;
+    let mut bracket_depth = 0;
+    let mut brace_depth = 0;
+    let mut index = 0;
+    while index < src.len() {
+        match src.as_bytes()[index] {
+            b'(' => paren_depth += 1,
+            b')' => paren_depth -= 1,
+            b'[' => bracket_depth += 1,
+            b']' => bracket_depth -= 1,
+            b'{' => brace_depth += 1,
+            b'}' => brace_depth -= 1,
+            b';' | b'\n' if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 => {
+                // `else` continues the preceding `if` statement, so a boundary
+                // before one (across whitespace and blank/comment-masked lines)
+                // must not split the chunk. Same logical rule as at module level.
+                let mut next = index + 1;
+                while next < src.len() && src.as_bytes()[next].is_ascii_whitespace() {
+                    next += 1;
+                }
+                if !starts_with_keyword(&src[next..], "else") {
+                    chunks.push((start, index));
+                    start = index + 1;
+                }
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    chunks.push((start, src.len()));
+
+    let mut result = Vec::new();
+    for (a, b) in chunks {
+        let text = &src[a..b];
+        let trimmed_start = text.trim_start();
+        let leading = text.len() - trimmed_start.len();
+        let trimmed_end = trimmed_start.trim_end();
+        let trailing = trimmed_start.len() - trimmed_end.len();
+        if trimmed_end.is_empty() {
+            continue;
+        }
+        result.push((a + leading, b - trailing));
+    }
+    result
+}
+
 fn find_matching_delimiter(src: &str, open: char, close: char) -> Option<usize> {
-    let mut depth = 0;
+    let mut depth = 0i32;
+    let mut in_string = false;
     for (index, ch) in src.char_indices() {
-        if ch == open {
+        if in_string {
+            if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        if ch == '"' {
+            in_string = true;
+        } else if ch == open {
             depth += 1;
         } else if ch == close {
             depth -= 1;

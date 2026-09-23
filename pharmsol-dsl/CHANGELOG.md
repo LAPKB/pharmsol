@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.29.3](https://github.com/LAPKB/pharmsol/compare/pharmsol-dsl-v0.29.2...pharmsol-dsl-v0.29.3) - 2026-09-15
+
+### Fixed
+
+- keep derived values real-valued in f64 buffers ([#372](https://github.com/LAPKB/pharmsol/pull/372))
+
+## [0.29.1](https://github.com/LAPKB/pharmsol/compare/pharmsol-dsl-v0.29.0...pharmsol-dsl-v0.29.1) - 2026-09-11
+
+### Added
+
+- add support for get_e2 in the DSL ([#358](https://github.com/LAPKB/pharmsol/pull/358))
+
+### Fixed
+
+- support derived route properties and per-occasion initialization ([#360](https://github.com/LAPKB/pharmsol/pull/360))
+
+### Changed
+
+- Breaking: add runtime-only `get_e2(u, v, alpha, h1, h2)` with exact arity five; the runtime computes `w = alpha * u * v` and compiler constants reject the call.
+
+## [0.29.0](https://github.com/LAPKB/pharmsol/compare/pharmsol-dsl-v0.28.8...pharmsol-dsl-v0.29.0) - 2026-08-27
+
+### Other
+
+- Remove AOT as backend ([#343](https://github.com/LAPKB/pharmsol/pull/343))
+
+## [0.28.8](https://github.com/LAPKB/pharmsol/compare/pharmsol-dsl-v0.28.7...pharmsol-dsl-v0.28.8) - 2026-08-18
+
+### Fixed
+
+- numeric equality in DSL ([#342](https://github.com/LAPKB/pharmsol/pull/342))
+
+## [0.28.7](https://github.com/LAPKB/pharmsol/compare/pharmsol-dsl-v0.28.6...pharmsol-dsl-v0.28.7) - 2026-08-12
+
+### Other
+
+- Remove WASM ([#335](https://github.com/LAPKB/pharmsol/pull/335))
+- Feat/if braces ([#330](https://github.com/LAPKB/pharmsol/pull/330))
+
+## [0.28.5](https://github.com/LAPKB/pharmsol/compare/pharmsol-dsl-v0.28.4...pharmsol-dsl-v0.28.5) - 2026-08-06
+
+### Fixed
+
+- Allow boluses and infusions to go to the same comparment ([#326](https://github.com/LAPKB/pharmsol/pull/326))
+
 ## [0.28.3](https://github.com/LAPKB/pharmsol/compare/pharmsol-dsl-v0.28.2...pharmsol-dsl-v0.28.3) - 2026-07-28
 
 ### Added

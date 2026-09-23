@@ -1,14 +1,14 @@
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 use approx::assert_relative_eq;
-#[cfg(feature = "dsl-jit")]
-use pharmsol::dsl::{self, RuntimeCompilationTarget, RuntimePredictions};
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
+use pharmsol::dsl::{self, RuntimePredictions};
+#[cfg(feature = "dsl")]
 use pharmsol::equation::RouteInputPolicy;
 use pharmsol::equation::{
     self, AnalyticalKernel, RouteKind as HandwrittenRouteKind, ValidatedModelMetadata,
 };
 use pharmsol::prelude::*;
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 use pharmsol::Predictions;
 use pharmsol_dsl::{
     analyze_model, compile_analyzed_model, parse_model, CovariateInterpolation, ExecutionModel,
@@ -24,15 +24,23 @@ covariates = wt @linear
 states = depot, central
 outputs = cp
 
-bolus(oral) -> depot
-infusion(iv) -> central
 lag(oral) = tlag
-fa(oral) = f_oral
 
-dx(depot) = -ka * depot
-dx(central) = ka * depot - (cl / v) * central
+dx(depot) = bolus(oral) * (f_oral) - ka * depot
+dx(central) = infusion(iv) + ka * depot - (cl / v) * central
 
 out(cp) = central / (v * (wt / 70.0)) ~ continuous()
+"#;
+
+#[cfg(feature = "dsl")]
+const SCALED_INFUSION_DSL: &str = r#"
+name = scaled_infusion
+kind = ode
+params = scale
+states = central
+outputs = cp
+dx(central) = infusion(iv) * scale
+out(cp) = central
 "#;
 
 const ODE_MACRO_DSL: &str = r#"
@@ -44,11 +52,9 @@ covariates = wt @linear
 states = depot, central
 outputs = cp
 
-bolus(oral) -> depot
 lag(oral) = tlag
-fa(oral) = f_oral
 
-dx(depot) = -ka * depot
+dx(depot) = bolus(oral) * (f_oral) - ka * depot
 dx(central) = ka * depot - (cl / v) * central
 
 out(cp) = central / (v * (wt / 70.0)) ~ continuous()
@@ -62,9 +68,8 @@ params = ke, v
 states = central
 outputs = outeq_2, outeq_10, outeq_11
 
-infusion(iv) -> central
 
-dx(central) = -ke * central
+dx(central) = infusion(iv) - ke * central
 
 out(outeq_10) = central / v ~ continuous()
 out(outeq_2) = central / v ~ continuous()
@@ -78,11 +83,9 @@ kind = ode
 states = first, second
 outputs = cp
 
-bolus(input_10) -> first
-bolus(input_11) -> second
 
-dx(first) = 0
-dx(second) = 0
+dx(first) = bolus(input_10) + 0
+dx(second) = bolus(input_11) + 0
 
 out(cp) = first + second ~ continuous()
 "#;
@@ -115,15 +118,14 @@ params = ke, v, tlag
 states = central
 outputs = cp
 
-infusion(iv) -> central
 lag(iv) = tlag
 
-dx(central) = -ke * central
+dx(central) = infusion(iv) - ke * central
 
 out(cp) = central / v ~ continuous()
 "#;
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 const ODE_RUNTIME_SHARED_INPUT_DSL: &str = r#"
 name = shared_input_one_cpt
 kind = ode
@@ -132,18 +134,15 @@ params = ka, ke, v, tlag, f_oral
 states = depot, central
 outputs = cp
 
-bolus(oral) -> depot
-infusion(iv) -> central
 lag(oral) = tlag
-fa(oral) = f_oral
 
-dx(depot) = -ka * depot
-dx(central) = ka * depot - ke * central
+dx(depot) = bolus(oral) * (f_oral) - ka * depot
+dx(central) = infusion(iv) + ka * depot - ke * central
 
 out(cp) = central / v ~ continuous()
 "#;
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 const ODE_RUNTIME_MIXED_OUTPUT_LABELS_DSL: &str = r#"
 name = mixed_output_labels_runtime
 kind = ode
@@ -152,16 +151,15 @@ params = ke, v
 states = central
 outputs = cp, outeq_0, outeq_1
 
-infusion(iv) -> central
 
-dx(central) = -ke * central
+dx(central) = infusion(iv) - ke * central
 
 out(cp) = central / v ~ continuous()
 out(outeq_0) = 2 * central / v ~ continuous()
 out(outeq_1) = 3 * central / v ~ continuous()
 "#;
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 const ODE_RUNTIME_UNDECLARED_NUMERIC_OUTPUT_LABEL_DSL: &str = r#"
 name = undeclared_numeric_output_runtime
 kind = ode
@@ -170,9 +168,8 @@ params = ke, v
 states = central
 outputs = a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10
 
-infusion(iv) -> central
 
-dx(central) = -ke * central
+dx(central) = infusion(iv) - ke * central
 
 out(a0) = central / v ~ continuous()
 out(a1) = central / v ~ continuous()
@@ -187,7 +184,7 @@ out(a9) = central / v ~ continuous()
 out(a10) = central / v ~ continuous()
 "#;
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 const ODE_RUNTIME_UNDECLARED_NUMERIC_INPUT_LABEL_DSL: &str = r#"
 name = undeclared_numeric_input_runtime
 kind = ode
@@ -196,19 +193,8 @@ params = ke, v
 states = central
 outputs = cp
 
-bolus(r0) -> central
-bolus(r1) -> central
-bolus(r2) -> central
-bolus(r3) -> central
-bolus(r4) -> central
-bolus(r5) -> central
-bolus(r6) -> central
-bolus(r7) -> central
-bolus(r8) -> central
-bolus(r9) -> central
-bolus(r10) -> central
 
-dx(central) = -ke * central
+dx(central) = bolus(r0) + bolus(r1) + bolus(r2) + bolus(r3) + bolus(r4) + bolus(r5) + bolus(r6) + bolus(r7) + bolus(r8) + bolus(r9) + bolus(r10) - ke * central
 
 out(cp) = central / v ~ continuous()
 "#;
@@ -227,7 +213,7 @@ structure = one_compartment_with_absorption
 out(cp) = central / v ~ continuous()
 "#;
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 const ANALYTICAL_RUNTIME_SHARED_INPUT_DSL: &str = r#"
 name = one_cmt_abs_shared
 kind = analytical
@@ -282,7 +268,7 @@ noise(central) = sigma
 out(cp) = central / v ~ continuous()
 "#;
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 const SDE_RUNTIME_SHARED_INPUT_DSL: &str = r#"
 name = one_cmt_shared_sde
 kind = sde
@@ -343,7 +329,7 @@ struct RouteParity {
     has_bioavailability: bool,
 }
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct RouteInputPolicyParity {
     name: String,
@@ -380,18 +366,13 @@ fn load_execution_model(src: &str) -> ExecutionModel {
     compile_analyzed_model(&analyzed).expect("DSL model should compile")
 }
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 fn compile_runtime_jit_model(src: &str, model_name: &str) -> dsl::CompiledRuntimeModel {
-    dsl::compile_module_source_to_runtime(
-        src,
-        Some(model_name),
-        RuntimeCompilationTarget::Jit,
-        |_, _| {},
-    )
-    .expect("DSL runtime model should compile")
+    dsl::compile_module_source_to_runtime(src, Some(model_name), |_, _| {})
+        .expect("DSL runtime model should compile")
 }
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 fn compiled_route_input_index(model: &dsl::CompiledRuntimeModel, name: &str) -> Option<usize> {
     model
         .info()
@@ -401,7 +382,7 @@ fn compiled_route_input_index(model: &dsl::CompiledRuntimeModel, name: &str) -> 
         .map(|route| route.index)
 }
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 fn compiled_output_slot_index(model: &dsl::CompiledRuntimeModel, name: &str) -> Option<usize> {
     model
         .info()
@@ -411,7 +392,7 @@ fn compiled_output_slot_index(model: &dsl::CompiledRuntimeModel, name: &str) -> 
         .map(|output| output.index)
 }
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 fn shared_input_prediction_subject() -> Subject {
     Subject::builder("authoring-parity-shared-input")
         .bolus(0.0, 100.0, "oral")
@@ -495,10 +476,10 @@ fn dsl_metadata_view(src: &str) -> MetadataParityView {
     }
 }
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 fn dsl_route_input_policy_view(src: &str) -> Vec<RouteInputPolicyParity> {
     let model = load_execution_model(src);
-    let info = dsl::NativeModelInfo::from_execution_model(&model);
+    let info = dsl::RuntimeModelInfo::from_execution_model(&model);
 
     info.routes
         .into_iter()
@@ -576,7 +557,7 @@ fn validated_metadata_view(metadata: &ValidatedModelMetadata) -> MetadataParityV
     }
 }
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 fn handwritten_route_input_policy_view(
     metadata: &ValidatedModelMetadata,
 ) -> Vec<RouteInputPolicyParity> {
@@ -601,19 +582,15 @@ fn macro_ode_model() -> equation::ODE {
         covariates: [wt],
         states: [depot, central],
         outputs: [cp],
-        routes: [
-            bolus(oral) -> depot,
-        ],
+
         diffeq: |x, _p, _t, dx, _cov| {
-            dx[depot] = -ka * x[depot];
+            dx[depot] = bolus[oral] * (f_oral) - ka * x[depot];
             dx[central] = ka * x[depot] - (cl / v) * x[central];
         },
         lag: |_p, _t, _cov| {
             lag! { oral => tlag }
         },
-        fa: |_p, _t, _cov| {
-            fa! { oral => f_oral }
-        },
+
         out: |x, _p, t, cov, y| {
             fetch_cov!(cov, t, wt);
             y[cp] = x[central] / (v * (wt / 70.0));
@@ -690,34 +667,29 @@ fn handwritten_ode_model() -> equation::ODE {
     .expect("handwritten ODE metadata should validate")
 }
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 fn runtime_shared_input_macro_ode() -> equation::ODE {
     ode! {
         name: "shared_input_one_cpt",
         params: [ka, ke, v, tlag, f_oral],
         states: [depot, central],
         outputs: [cp],
-        routes: [
-            bolus(oral) -> depot,
-            infusion(iv) -> central,
-        ],
+
         diffeq: |x, _p, _t, dx, _cov| {
-            dx[depot] = -ka * x[depot];
-            dx[central] = ka * x[depot] - ke * x[central];
+            dx[depot] = bolus[oral] * (f_oral) - ka * x[depot];
+            dx[central] = infusion[iv] + ka * x[depot] - ke * x[central];
         },
         lag: |_p, _t, _cov| {
             lag! { oral => tlag }
         },
-        fa: |_p, _t, _cov| {
-            fa! { oral => f_oral }
-        },
+
         out: |x, _p, _t, _cov, y| {
             y[cp] = x[central] / v;
         },
     }
 }
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 fn runtime_shared_input_handwritten_ode() -> equation::ODE {
     equation::ODE::new(
         |x, p, _t, dx, bolus, rateiv, _cov| {
@@ -761,7 +733,7 @@ fn runtime_shared_input_handwritten_ode() -> equation::ODE {
     .expect("handwritten shared-input ODE metadata should validate")
 }
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 fn runtime_mismatched_shared_input_ode() -> equation::ODE {
     equation::ODE::new(
         |x, p, _t, dx, _bolus, _rateiv, _cov| {
@@ -805,7 +777,7 @@ fn runtime_mismatched_shared_input_ode() -> equation::ODE {
     .expect("mismatched shared-input ODE metadata should validate")
 }
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 fn runtime_shared_input_macro_analytical() -> equation::Analytical {
     analytical! {
         name: "one_cmt_abs_shared",
@@ -829,7 +801,7 @@ fn runtime_shared_input_macro_analytical() -> equation::Analytical {
     }
 }
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 fn runtime_shared_input_handwritten_analytical() -> equation::Analytical {
     equation::Analytical::new(
         equation::one_compartment_with_absorption,
@@ -869,7 +841,7 @@ fn runtime_shared_input_handwritten_analytical() -> equation::Analytical {
     .expect("handwritten shared-input analytical metadata should validate")
 }
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 fn runtime_shared_input_macro_sde() -> equation::SDE {
     sde! {
         name: "one_cmt_shared_sde",
@@ -905,7 +877,7 @@ fn runtime_shared_input_macro_sde() -> equation::SDE {
     }
 }
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 fn runtime_shared_input_handwritten_sde() -> equation::SDE {
     equation::SDE::new(
         |x, p, _t, dx, rateiv, _cov| {
@@ -959,7 +931,7 @@ fn runtime_shared_input_handwritten_sde() -> equation::SDE {
     .expect("handwritten shared-input SDE metadata should validate")
 }
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 fn assert_prediction_vectors_close(left: &[f64], right: &[f64], tolerance: f64) {
     assert_eq!(left.len(), right.len());
     for (left_value, right_value) in left.iter().zip(right.iter()) {
@@ -971,7 +943,7 @@ fn assert_prediction_vectors_close(left: &[f64], right: &[f64], tolerance: f64) 
     }
 }
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 fn assert_prediction_vectors_diverge(left: &[f64], right: &[f64], tolerance: f64) {
     assert_eq!(left.len(), right.len());
     assert!(
@@ -982,7 +954,7 @@ fn assert_prediction_vectors_diverge(left: &[f64], right: &[f64], tolerance: f64
     );
 }
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 fn particle_prediction_means(predictions: &ndarray::Array2<Prediction>) -> Vec<f64> {
     predictions
         .get_predictions()
@@ -1132,7 +1104,7 @@ fn handwritten_sde_macro_model() -> equation::SDE {
     .expect("handwritten macro-shape SDE metadata should validate")
 }
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 fn mismatched_ode_model() -> equation::ODE {
     equation::ODE::new(
         |_x, _p, _t, dx, _bolus, _rateiv, _cov| {
@@ -1286,7 +1258,13 @@ fn ode_macro_dsl_and_handwritten_metadata_agree_on_macro_authorable_shape() {
     );
 
     assert_eq!(handwritten_view, dsl_view);
-    assert_eq!(macro_view, dsl_view);
+    // The DSL lowers bolus scales to event properties; ode! uses its existing
+    // RHS bolus vector. Public labels, destinations, and lag still agree.
+    let mut macro_expected = dsl_view.clone();
+    for route in &mut macro_expected.routes {
+        route.has_bioavailability = false;
+    }
+    assert_eq!(macro_view, macro_expected);
 }
 
 #[test]
@@ -1342,7 +1320,7 @@ fn sde_macro_dsl_and_handwritten_metadata_agree_on_macro_authorable_shape() {
     assert_eq!(macro_view, dsl_view);
 }
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 #[test]
 fn ode_route_input_policies_agree_with_handwritten_metadata() {
     let dsl_view = dsl_route_input_policy_view(ODE_DSL);
@@ -1356,7 +1334,7 @@ fn ode_route_input_policies_agree_with_handwritten_metadata() {
     assert_eq!(handwritten_view, dsl_view);
 }
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 #[test]
 fn sde_route_input_policies_agree_with_handwritten_metadata() {
     let dsl_view = dsl_route_input_policy_view(SDE_DSL);
@@ -1370,7 +1348,7 @@ fn sde_route_input_policies_agree_with_handwritten_metadata() {
     assert_eq!(handwritten_view, dsl_view);
 }
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 #[test]
 fn route_input_policy_mismatches_are_detected_explicitly() {
     let dsl_view = dsl_route_input_policy_view(ODE_DSL);
@@ -1406,7 +1384,28 @@ fn invalid_dsl_infusion_route_properties_fail_explicitly() {
         .contains("DSL authoring does not allow `lag` on infusion route `iv`"));
 }
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
+#[test]
+fn ode_runtime_jit_applies_explicit_infusion_scale_once() {
+    let model = compile_runtime_jit_model(SCALED_INFUSION_DSL, "scaled_infusion");
+    let parameters =
+        pharmsol::Parameters::with_model(&model, [("scale", 2.0)]).expect("valid named parameters");
+    let subject = Subject::builder("scaled-infusion")
+        .infusion(0.0, 100.0, "iv", 1.0)
+        .missing_observation(1.0, "cp")
+        .build();
+    let predictions = match model
+        .estimate_predictions(&subject, &parameters)
+        .expect("scaled infusion should simulate")
+    {
+        RuntimePredictions::Subject(predictions) => predictions,
+        RuntimePredictions::Particles(_) => panic!("ODE runtime should return subject predictions"),
+    };
+
+    assert_relative_eq!(predictions.flat_predictions()[0], 200.0, epsilon = 1e-6);
+}
+
+#[cfg(feature = "dsl")]
 #[test]
 fn ode_runtime_jit_macro_and_handwritten_predictions_agree_on_shared_input_shape() {
     let runtime_model =
@@ -1485,7 +1484,7 @@ fn ode_runtime_jit_macro_and_handwritten_predictions_agree_on_shared_input_shape
     assert_prediction_vectors_close(&runtime_predictions, &handwritten_predictions, 1e-4);
 }
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 #[test]
 fn analytical_runtime_jit_macro_and_handwritten_predictions_agree_on_shared_input_shape() {
     let runtime_model =
@@ -1568,7 +1567,7 @@ fn analytical_runtime_jit_macro_and_handwritten_predictions_agree_on_shared_inpu
     assert_prediction_vectors_close(&runtime_predictions, &handwritten_predictions, 1e-8);
 }
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 #[test]
 fn sde_runtime_jit_macro_and_handwritten_predictions_agree_on_shared_input_shape() {
     let runtime_model =
@@ -1648,7 +1647,7 @@ fn sde_runtime_jit_macro_and_handwritten_predictions_agree_on_shared_input_shape
     assert_prediction_vectors_close(&runtime_predictions, &handwritten_predictions, 1e-4);
 }
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 #[test]
 fn route_input_policy_runtime_mismatches_are_detected_explicitly() {
     let runtime_model =
@@ -1709,7 +1708,7 @@ fn route_input_policy_runtime_mismatches_are_detected_explicitly() {
     assert_prediction_vectors_diverge(&runtime_predictions, &mismatched_predictions, 1e-4);
 }
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 #[test]
 fn ode_runtime_jit_preserves_mixed_output_labels() {
     let runtime_model = compile_runtime_jit_model(
@@ -1749,7 +1748,7 @@ fn ode_runtime_jit_preserves_mixed_output_labels() {
     assert_relative_eq!(predictions[2], 3.0 * predictions[0], epsilon = 1e-6);
 }
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 #[test]
 fn ode_runtime_jit_rejects_undeclared_numeric_output_labels_even_when_dense_index_exists() {
     let runtime_model = compile_runtime_jit_model(
@@ -1774,7 +1773,7 @@ fn ode_runtime_jit_rejects_undeclared_numeric_output_labels_even_when_dense_inde
     ));
 }
 
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 #[test]
 fn ode_runtime_jit_rejects_undeclared_numeric_input_labels_even_when_dense_index_exists() {
     let runtime_model = compile_runtime_jit_model(

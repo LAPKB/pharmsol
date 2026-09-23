@@ -1,21 +1,12 @@
 use std::ops::Deref;
 
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 use ndarray::Array2;
 use thiserror::Error;
 
 use crate::parameter_order::{ParameterOrderError, ParameterOrderPlan};
 
-#[cfg(any(
-    feature = "dsl-jit",
-    all(feature = "dsl-aot", feature = "dsl-aot-load"),
-    all(
-        feature = "dsl-wasm",
-        not(all(target_arch = "wasm32", target_os = "unknown"))
-    )
-))]
+#[cfg(feature = "dsl")]
 use crate::dsl::{CompiledRuntimeModel, RuntimeAnalyticalModel, RuntimeOdeModel, RuntimeSdeModel};
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 use crate::{Analytical, ODE, SDE};
 
 /// Errors produced while validating named parameter input against model order.
@@ -128,7 +119,6 @@ impl ParameterOrder {
     }
 
     /// Reorder a dense support-point matrix whose rows are support points.
-    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     pub fn matrix(&self, source_values: Array2<f64>) -> Result<Array2<f64>, ParameterError> {
         if source_values.ncols() != self.width() {
             return Err(ParameterError::WidthMismatch {
@@ -195,7 +185,6 @@ trait NamedParameterModel {
         S::Item: AsRef<str>;
 }
 
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 impl NamedParameterModel for ODE {
     fn parameter_order_plan<S>(&self, source_names: S) -> Result<ParameterOrderPlan, ParameterError>
     where
@@ -207,7 +196,6 @@ impl NamedParameterModel for ODE {
     }
 }
 
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 impl NamedParameterModel for Analytical {
     fn parameter_order_plan<S>(&self, source_names: S) -> Result<ParameterOrderPlan, ParameterError>
     where
@@ -219,7 +207,6 @@ impl NamedParameterModel for Analytical {
     }
 }
 
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 impl NamedParameterModel for SDE {
     fn parameter_order_plan<S>(&self, source_names: S) -> Result<ParameterOrderPlan, ParameterError>
     where
@@ -231,14 +218,7 @@ impl NamedParameterModel for SDE {
     }
 }
 
-#[cfg(any(
-    feature = "dsl-jit",
-    all(feature = "dsl-aot", feature = "dsl-aot-load"),
-    all(
-        feature = "dsl-wasm",
-        not(all(target_arch = "wasm32", target_os = "unknown"))
-    )
-))]
+#[cfg(feature = "dsl")]
 impl NamedParameterModel for CompiledRuntimeModel {
     fn parameter_order_plan<S>(&self, source_names: S) -> Result<ParameterOrderPlan, ParameterError>
     where
@@ -250,14 +230,7 @@ impl NamedParameterModel for CompiledRuntimeModel {
     }
 }
 
-#[cfg(any(
-    feature = "dsl-jit",
-    all(feature = "dsl-aot", feature = "dsl-aot-load"),
-    all(
-        feature = "dsl-wasm",
-        not(all(target_arch = "wasm32", target_os = "unknown"))
-    )
-))]
+#[cfg(feature = "dsl")]
 impl NamedParameterModel for RuntimeOdeModel {
     fn parameter_order_plan<S>(&self, source_names: S) -> Result<ParameterOrderPlan, ParameterError>
     where
@@ -269,14 +242,7 @@ impl NamedParameterModel for RuntimeOdeModel {
     }
 }
 
-#[cfg(any(
-    feature = "dsl-jit",
-    all(feature = "dsl-aot", feature = "dsl-aot-load"),
-    all(
-        feature = "dsl-wasm",
-        not(all(target_arch = "wasm32", target_os = "unknown"))
-    )
-))]
+#[cfg(feature = "dsl")]
 impl NamedParameterModel for RuntimeAnalyticalModel {
     fn parameter_order_plan<S>(&self, source_names: S) -> Result<ParameterOrderPlan, ParameterError>
     where
@@ -288,14 +254,7 @@ impl NamedParameterModel for RuntimeAnalyticalModel {
     }
 }
 
-#[cfg(any(
-    feature = "dsl-jit",
-    all(feature = "dsl-aot", feature = "dsl-aot-load"),
-    all(
-        feature = "dsl-wasm",
-        not(all(target_arch = "wasm32", target_os = "unknown"))
-    )
-))]
+#[cfg(feature = "dsl")]
 impl NamedParameterModel for RuntimeSdeModel {
     fn parameter_order_plan<S>(&self, source_names: S) -> Result<ParameterOrderPlan, ParameterError>
     where
@@ -311,16 +270,13 @@ impl NamedParameterModel for RuntimeSdeModel {
 mod tests {
     use super::{ParameterError, ParameterOrder, Parameters};
 
-    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     use ndarray::array;
 
-    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     use crate::{fa, lag, metadata, Equation, ModelKind, Subject, SubjectBuilderExt, ODE};
 
-    #[cfg(feature = "dsl-jit")]
-    use crate::dsl::{compile_module_source_to_runtime, RuntimeCompilationTarget};
+    #[cfg(feature = "dsl")]
+    use crate::dsl::compile_module_source_to_runtime;
 
-    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     fn metadata_backed_ode() -> ODE {
         ODE::new(
             |x, p, _t, dx, _b, _rateiv, _cov| {
@@ -349,7 +305,6 @@ mod tests {
         .expect("attach metadata")
     }
 
-    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     fn simple_subject() -> Subject {
         Subject::builder("named-parameters")
             .bolus(0.0, 100.0, "iv")
@@ -357,7 +312,6 @@ mod tests {
             .build()
     }
 
-    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     #[test]
     fn builds_dense_parameters_for_metadata_backed_ode() {
         let ode = metadata_backed_ode();
@@ -370,7 +324,6 @@ mod tests {
         assert_eq!(predictions.predictions().len(), 1);
     }
 
-    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     #[test]
     fn rejects_named_parameters_without_metadata() {
         let ode = ODE::new(
@@ -393,7 +346,6 @@ mod tests {
         );
     }
 
-    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     #[test]
     fn reports_public_missing_parameter_error() {
         let ode = metadata_backed_ode();
@@ -409,7 +361,6 @@ mod tests {
         assert_eq!(error.to_string(), "missing required parameter(s): v");
     }
 
-    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     #[test]
     fn builds_identity_batch_order() {
         let ode = metadata_backed_ode();
@@ -423,7 +374,6 @@ mod tests {
         assert_eq!(order.matrix(theta.clone()).unwrap(), theta);
     }
 
-    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     #[test]
     fn reorders_dense_rows_and_matrices() {
         let ode = metadata_backed_ode();
@@ -439,7 +389,6 @@ mod tests {
         );
     }
 
-    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     #[test]
     fn rejects_wrong_width_batch_matrix() {
         let ode = metadata_backed_ode();
@@ -459,7 +408,6 @@ mod tests {
         );
     }
 
-    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     #[test]
     fn downstream_dense_theta_can_apply_parameter_order_permutation() {
         struct DenseTheta {
@@ -503,7 +451,7 @@ mod tests {
         assert_eq!(dense_theta.rows, vec![vec![10.0, 0.5], vec![20.0, 0.7]]);
     }
 
-    #[cfg(feature = "dsl-jit")]
+    #[cfg(feature = "dsl")]
     #[test]
     fn builds_dense_parameters_for_compiled_runtime_model() {
         const SIMPLE_RUNTIME_DSL: &str = r#"
@@ -514,27 +462,22 @@ params = ke, v
 states = central
 outputs = cp
 
-bolus(iv) -> central
 
-dx(central) = -ke * central
+dx(central) = bolus(iv) - ke * central
 
 out(cp) = central / v ~ continuous()
 "#;
 
-        let model = compile_module_source_to_runtime(
-            SIMPLE_RUNTIME_DSL,
-            Some("named_runtime"),
-            RuntimeCompilationTarget::Jit,
-            |_, _| {},
-        )
-        .expect("compile runtime model");
+        let model =
+            compile_module_source_to_runtime(SIMPLE_RUNTIME_DSL, Some("named_runtime"), |_, _| {})
+                .expect("compile runtime model");
 
         let parameters = Parameters::with_model(&model, [("v", 50.0), ("ke", 1.2)]).unwrap();
 
         assert_eq!(parameters.as_slice(), &[1.2, 50.0]);
     }
 
-    #[cfg(feature = "dsl-jit")]
+    #[cfg(feature = "dsl")]
     #[test]
     fn builds_batch_order_for_compiled_runtime_model() {
         const SIMPLE_RUNTIME_DSL: &str = r#"
@@ -545,20 +488,15 @@ params = ke, v
 states = central
 outputs = cp
 
-bolus(iv) -> central
 
-dx(central) = -ke * central
+dx(central) = bolus(iv) - ke * central
 
 out(cp) = central / v ~ continuous()
 "#;
 
-        let model = compile_module_source_to_runtime(
-            SIMPLE_RUNTIME_DSL,
-            Some("named_runtime"),
-            RuntimeCompilationTarget::Jit,
-            |_, _| {},
-        )
-        .expect("compile runtime model");
+        let model =
+            compile_module_source_to_runtime(SIMPLE_RUNTIME_DSL, Some("named_runtime"), |_, _| {})
+                .expect("compile runtime model");
         let order = ParameterOrder::with_model(&model, ["v", "ke"]).unwrap();
 
         assert_eq!(order.permutation(), &[1, 0]);

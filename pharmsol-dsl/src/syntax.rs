@@ -117,7 +117,7 @@ pub struct RoutesBlock {
     pub span: Span,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum RouteKind {
     Bolus,
     Infusion,
@@ -452,6 +452,13 @@ fn write_routes_block(block: &RoutesBlock, out: &mut String, indent_level: usize
             out.push('\n');
         }
         indent(out, indent_level + 1);
+        if let Some(kind) = route.kind {
+            let keyword = match kind {
+                RouteKind::Bolus => "bolus",
+                RouteKind::Infusion => "infusion",
+            };
+            write!(out, "{keyword} ")?;
+        }
         write!(
             out,
             "{} -> {}",

@@ -89,11 +89,9 @@ fn one_cmt_iv() {
         params: [ke, v],
         states: [central],
         outputs: [cp],
-        routes: [
-            infusion(iv) -> central,
-        ],
+
         diffeq: |x, _p, _t, dx, _cov| {
-            dx[central] = -ke * x[central];
+            dx[central] = infusion[iv] - ke * x[central];
         },
         out: |x, _p, _t, _cov, y| {
             y[cp] = x[central] / v;
@@ -132,11 +130,9 @@ fn one_cmt_oral() {
         params: [ka, ke, v],
         states: [gut, central],
         outputs: [cp],
-        routes: [
-            bolus(oral) -> gut,
-        ],
+
         diffeq: |x, _p, _t, dx, _cov| {
-            dx[gut] = -ka * x[gut];
+            dx[gut] = bolus[oral] - ka * x[gut];
             dx[central] = ka * x[gut] - ke * x[central];
         },
         out: |x, _p, _t, _cov, y| {
@@ -177,11 +173,9 @@ fn two_cmt_iv() {
         params: [ke, kcp, kpc, v],
         states: [central, peripheral],
         outputs: [cp],
-        routes: [
-            infusion(iv) -> central,
-        ],
+
         diffeq: |x, _p, _t, dx, _cov| {
-            dx[central] = -ke * x[central] - kcp * x[central] + kpc * x[peripheral];
+            dx[central] = infusion[iv] - ke * x[central] - kcp * x[central] + kpc * x[peripheral];
             dx[peripheral] = kcp * x[central] - kpc * x[peripheral];
         },
         out: |x, _p, _t, _cov, y| {
@@ -225,11 +219,9 @@ fn two_cmt_oral() {
         params: [ka, ke, kcp, kpc, v],
         states: [gut, central, peripheral],
         outputs: [cp],
-        routes: [
-            bolus(oral) -> gut,
-        ],
+
         diffeq: |x, _p, _t, dx, _cov| {
-            dx[gut] = -ka * x[gut];
+            dx[gut] = bolus[oral] - ka * x[gut];
             dx[central] = ka * x[gut] - ke * x[central] - kcp * x[central] + kpc * x[peripheral];
             dx[peripheral] = kcp * x[central] - kpc * x[peripheral];
         },

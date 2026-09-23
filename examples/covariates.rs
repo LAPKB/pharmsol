@@ -13,13 +13,11 @@ fn main() {
         covariates: [creatinine, age],
         states: [gut, central],
         outputs: [cp],
-        routes: [
-            bolus(oral) -> gut,
-        ],
+
         diffeq: |x, _t, dx| {
             let scaled_ke = ke * (creatinine / 75.0).powf(0.75) * (age / 25.0).powf(0.5);
 
-            dx[gut] = -ka * x[gut];
+            dx[gut] = bolus[oral] - ka * x[gut];
             dx[central] = ka * x[gut] - scaled_ke * x[central];
         },
         // This blocks defines the lag-time of the bolus dose

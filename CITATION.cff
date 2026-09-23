@@ -1,0 +1,46 @@
+cff-version: "1.2.0"
+authors:
+- family-names: Otálvaro
+  given-names: Julián D.
+  orcid: "https://orcid.org/0000-0001-5202-1645"
+- family-names: Hovd
+  given-names: Markus
+  orcid: "https://orcid.org/0000-0002-6077-0934"
+- family-names: Yamada
+  given-names: Walter M.
+  orcid: "https://orcid.org/0000-0003-3512-9202"
+- family-names: Neely
+  given-names: Michael
+  orcid: "https://orcid.org/0000-0002-1675-8276"
+doi: 10.5281/zenodo.21770517
+message: If you use this software, please cite our article in the
+  Journal of Open Source Software.
+preferred-citation:
+  authors:
+  - family-names: Otálvaro
+    given-names: Julián D.
+    orcid: "https://orcid.org/0000-0001-5202-1645"
+  - family-names: Hovd
+    given-names: Markus
+    orcid: "https://orcid.org/0000-0002-6077-0934"
+  - family-names: Yamada
+    given-names: Walter M.
+    orcid: "https://orcid.org/0000-0003-3512-9202"
+  - family-names: Neely
+    given-names: Michael
+    orcid: "https://orcid.org/0000-0002-1675-8276"
+  date-published: 2026-08-18
+  doi: 10.21105/joss.10580
+  issn: 2475-9066
+  issue: 124
+  journal: Journal of Open Source Software
+  publisher:
+    name: Open Journals
+  start: 10580
+  title: "pharmsol: A high-performance Rust library for pharmacokinetic
+    and pharmacodynamic modeling and simulation"
+  type: article
+  url: "https://joss.theoj.org/papers/10.21105/joss.10580"
+  volume: 11
+title: "pharmsol: A high-performance Rust library for pharmacokinetic
+  and pharmacodynamic modeling and simulation"

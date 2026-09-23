@@ -7,6 +7,99 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.29.3](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.29.2...pharmsol-v0.29.3) - 2026-09-15
+
+### Fixed
+
+- keep derived values real-valued in f64 buffers ([#372](https://github.com/LAPKB/pharmsol/pull/372))
+
+## [0.29.2](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.29.1...pharmsol-v0.29.2) - 2026-09-15
+
+### Fixed
+
+- pin sibling crates to the exact workspace version ([#370](https://github.com/LAPKB/pharmsol/pull/370))
+
+## [0.29.1](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.29.0...pharmsol-v0.29.1) - 2026-09-11
+
+### Added
+
+- add support for get_e2 in the DSL ([#358](https://github.com/LAPKB/pharmsol/pull/358))
+- add support for EVID==2 (covariate only) ([#363](https://github.com/LAPKB/pharmsol/pull/363))
+
+### Fixed
+
+- support derived route properties and per-occasion initialization ([#360](https://github.com/LAPKB/pharmsol/pull/360))
+
+## [0.29.0](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.28.8...pharmsol-v0.29.0) - 2026-08-27
+
+### Breaking Changes
+
+- The ahead-of-time (AOT) backend is removed; the DSL now has a single JIT-backed runtime. `compile_module_source_to_aot`, `export_execution_model_to_aot`, `load_aot_model`, `read_aot_model_info`, `load_runtime_artifact`, `AotError`, `NativeAotCompileOptions`, `NativeAotTarget`, `RuntimeArtifactFormat` and `AOT_API_VERSION` no longer exist.
+- Feature flags collapsed into a single `dsl` feature. `dsl-core`, `dsl-aot` and `dsl-aot-load` are removed; `dsl-jit` is kept as a deprecated alias for `dsl`.
+- DSL runtime types now use one name per concept: the `Native*` and `Jit*` model types are renamed to `Runtime*` (`RuntimeOdeModel`, `RuntimeAnalyticalModel`, `RuntimeSdeModel`, `RuntimeExecutionArtifact`, `CompiledRuntimeModel`), and `Native*Info` to `Runtime*Info`. The old names are gone.
+- `RuntimeCompilationTarget` and `RuntimeBackend` are removed; `compile_module_source_to_runtime` and `compile_execution_model_to_runtime` no longer take a backend/target argument.
+- ODE schedules are validated before integration: non-finite event times or amounts, and zero or negative infusion durations, now return an error instead of being silently skipped.
+
+### Added
+
+- Improve simulator stability ([#347](https://github.com/LAPKB/pharmsol/pull/347))
+
+### Other
+
+- Remove AOT as backend ([#343](https://github.com/LAPKB/pharmsol/pull/343))
+- Fable suggestions ([#354](https://github.com/LAPKB/pharmsol/pull/354))
+- Update cranelift dependencies ([#353](https://github.com/LAPKB/pharmsol/pull/353))
+
+## [0.28.8](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.28.7...pharmsol-v0.28.8) - 2026-08-18
+
+### Fixed
+
+- numeric equality in DSL ([#342](https://github.com/LAPKB/pharmsol/pull/342))
+- fix BDF restart after bolus events ([#341](https://github.com/LAPKB/pharmsol/pull/341))
+
+### Other
+
+- AEiC comments ([#340](https://github.com/LAPKB/pharmsol/pull/340))
+- Bump codecov/codecov-action from 5 to 7 ([#337](https://github.com/LAPKB/pharmsol/pull/337))
+
+## [0.28.7](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.28.6...pharmsol-v0.28.7) - 2026-08-12
+
+### Added
+
+- Improve Pmetrics import/export ([#313](https://github.com/LAPKB/pharmsol/pull/313))
+
+### Other
+
+- Add code coverage ([#336](https://github.com/LAPKB/pharmsol/pull/336))
+- Remove WASM ([#335](https://github.com/LAPKB/pharmsol/pull/335))
+
+## [0.28.6](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.28.5...pharmsol-v0.28.6) - 2026-08-07
+
+### Fixed
+
+- Stop time relative tolerance ([#328](https://github.com/LAPKB/pharmsol/pull/328))
+
+### Other
+
+- Bump dependencies ([#321](https://github.com/LAPKB/pharmsol/pull/321))
+
+## [0.28.5](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.28.4...pharmsol-v0.28.5) - 2026-08-06
+
+### Added
+
+- Allow macro use in transitive dependencies ([#322](https://github.com/LAPKB/pharmsol/pull/322))
+
+### Fixed
+
+- Force the solver to stop at the infusions end time ([#324](https://github.com/LAPKB/pharmsol/pull/324))
+- Allow boluses and infusions to go to the same comparment ([#326](https://github.com/LAPKB/pharmsol/pull/326))
+
+## [0.28.4](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.28.3...pharmsol-v0.28.4) - 2026-08-03
+
+### Other
+
+- Update paper with latest changes ([#204](https://github.com/LAPKB/pharmsol/pull/204))
+
 ## [0.28.3](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.28.2...pharmsol-v0.28.3) - 2026-07-28
 
 ### Added

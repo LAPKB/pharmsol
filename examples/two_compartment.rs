@@ -27,9 +27,7 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
         covariates: [wt],
         states: [central, peripheral],
         outputs: [cp],
-        routes: [
-            infusion(iv) -> central,
-        ],
+
         diffeq: |x, _t, dx| {
             // CL: Clearance (L/hr), V: Central volume (L)
             // Vp: Peripheral volume (L), Q: Inter-compartmental clearance (L/hr)
@@ -50,7 +48,7 @@ fn main() -> Result<(), pharmsol::PharmsolError> {
 
             // Two-compartment model differential equations
             // Central compartment: elimination + distribution
-            dx[central] = -ke * x[central] - kcp * x[central] + kpc * x[peripheral];
+            dx[central] = infusion[iv] - ke * x[central] - kcp * x[central] + kpc * x[peripheral];
             // Peripheral compartment: distribution equilibrium
             dx[peripheral] = kcp * x[central] - kpc * x[peripheral];
         },

@@ -9,7 +9,7 @@ Use this crate when you need to work with model source as data:
 - analyze names and types into a checked model
 - compile validated models into the ready-to-run form used by runtime backends
 
-Do not use this crate for JIT compilation, native AoT export or load, WASM runtime loading, or `Subject`-based prediction helpers. Those workflows stay in `pharmsol::dsl` in the main `pharmsol` crate.
+Do not use this crate for JIT compilation or `Subject`-based prediction helpers. Those workflows stay in `pharmsol::dsl` in the main `pharmsol` crate.
 
 ## Main Pipeline
 
@@ -27,9 +27,7 @@ params = ke, v
 states = central
 outputs = cp
 
-infusion(iv) -> central
-
-dx(central) = -ke * central
+dx(central) = infusion(iv) - ke * central
 out(cp) = central / v
 "#;
 
@@ -51,10 +49,24 @@ The main public modules are:
 - `syntax` for the syntax tree
 - `diagnostic` for spans, codes, and rendered reports
 - `analysis` for the analyzed, fully checked model
-- `execution` for the ready-to-run model shared by JIT, AoT, and WASM backends
+- `execution` for the ready-to-run model consumed by the runtime backend
 
 The parser accepts both canonical `model { ... }` source and the authoring
 shorthand used by the `pharmsol` examples.
+
+## Runtime-only utility functions
+
+The DSL supports the same effect functions as the Rust API:
+
+- `estimate_effect_2(u, v, alpha, h1, h2)` takes five numeric arguments.
+- `estimate_effect_3(a, b, c, alpha12, alpha13, alpha23, alpha123, h1, h2, h3)` takes ten numeric arguments.
+
+These functions calculate a combined effect using supplied interaction
+coefficients; they do not fit those coefficients. Both return real values.
+`pharmsol-dsl` validates and lowers these calls separately from mathematical
+intrinsics but does not evaluate them while folding constants. Execute models
+using these calls through the `pharmsol` runtime, which supplies host callbacks
+to the Rust implementations.
 
 ## Errors
 

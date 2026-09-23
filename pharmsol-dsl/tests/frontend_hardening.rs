@@ -200,6 +200,93 @@ fn constant_two_to_the_63_stays_real() {
 }
 
 #[test]
+fn equality_analyzes_mixed_numeric_operands_in_both_directions() {
+    let src = r#"
+model m {
+    kind ode
+    covariates { drug }
+    states { central }
+    dynamics { ddt(central) = 0 }
+    outputs {
+        if drug == 1 {
+            cp = 1
+        } else if 1 != drug {
+            cp = 2
+        } else if 1.1 == drug {
+            cp = 3
+        } else {
+            cp = 4
+        }
+    }
+}
+"#;
+
+    let model = parse_model(src).expect("model parses");
+    analyze_model(&model).expect("mixed numeric equality analyzes");
+}
+
+#[test]
+fn equality_accepts_bool_operands_and_folds_exactly() {
+    let src = ode_with_constants("equal = true == true, not_equal = true != false");
+
+    assert_eq!(analyzed_constant(&src, "equal"), ConstValue::Bool(true));
+    assert_eq!(analyzed_constant(&src, "not_equal"), ConstValue::Bool(true));
+
+    let src = r#"
+model m {
+    kind ode
+    states { central }
+    dynamics { ddt(central) = 0 }
+    outputs {
+        if true == false {
+            cp = 1
+        } else {
+            cp = 2
+        }
+    }
+}
+"#;
+    let model = parse_model(src).expect("model parses");
+    analyze_model(&model).expect("bool equality analyzes");
+}
+
+#[test]
+fn equality_rejects_bool_numeric_operands() {
+    for expression in ["true == 1", "1 != false"] {
+        let src = format!(
+            "model m {{ kind ode states {{ central }} dynamics {{ ddt(central) = 0 }} outputs {{ if {expression} {{ cp = 1 }} else {{ cp = 2 }} }} }}"
+        );
+        let model = parse_model(&src).expect("model parses");
+        let error = analyze_model(&model).expect_err("bool/numeric equality must fail");
+        let rendered = error.render(&src);
+        assert!(
+            rendered.contains("boolean and numeric operands"),
+            "{rendered}"
+        );
+    }
+}
+
+#[test]
+fn equality_constant_folding_preserves_numeric_operand_types() {
+    let src = ode_with_constants(
+        "real_one = 1 / 1, mixed_eq = 1 == real_one, mixed_neq = 1 != real_one, large_left = 9007199254740992, large_right = large_left + 1, large_eq = large_left == large_right, large_neq = large_left != large_right",
+    );
+
+    assert_eq!(analyzed_constant(&src, "real_one"), ConstValue::Real(1.0));
+    assert_eq!(analyzed_constant(&src, "mixed_eq"), ConstValue::Bool(true));
+    assert_eq!(
+        analyzed_constant(&src, "mixed_neq"),
+        ConstValue::Bool(false)
+    );
+    assert_eq!(
+        analyzed_constant(&src, "large_right"),
+        ConstValue::Int(9_007_199_254_740_993)
+    );
+    assert_eq!(analyzed_constant(&src, "large_eq"), ConstValue::Bool(false));
+    assert_eq!(analyzed_constant(&src, "large_neq"), ConstValue::Bool(true));
+}
+
+#[test]
 fn compile_time_calls_enforce_intrinsic_arity() {
     for (call, message) in [
         (
@@ -280,9 +367,8 @@ params = ke, v
 states = central
 outputs = cp
 
-infusion(iv) -> central
 
-dx(central) = -ke * central
+dx(central) = infusion(iv) - ke * central
 out(cp) = central / v
 "#;
 
@@ -323,7 +409,7 @@ fn dsl_error_reports_phase_and_renders_source() {
     assert!(err.to_string().contains("error[DSL2000]"));
     assert!(err.to_string().contains("unknown identifier `mystery`"));
 
-    let src = "name = m\nkind = ode\nstates = central\ninfusion(iv) -> central\nlag(iv) = 0.5\nddt(central) = 0\nout(cp) = central\n";
+    let src = "name = m\nkind = ode\nstates = central\nlag(iv) = 0.5\nddt(central) = infusion(iv)\nout(cp) = central\n";
     let err = compile_model(src).unwrap_err();
     assert!(matches!(err, DslError::Compile(_)));
     assert_eq!(err.phase(), DiagnosticPhase::Compile);

@@ -1,10 +1,10 @@
 //! Verifies that the DSL's `t` keyword (and its `time` alias) resolves to the
 //! current simulation time and flows correctly through analysis, execution
-//! compilation, and the JIT / WASM backends.
+//! compilation, and the JIT backend.
 
-#![cfg(any(feature = "dsl-jit", feature = "dsl-wasm"))]
+#![cfg(feature = "dsl")]
 
-use pharmsol::dsl::{compile_module_source_to_runtime, RuntimeCompilationTarget};
+use pharmsol::dsl::compile_module_source_to_runtime;
 use pharmsol::{prelude::*, Parameters};
 
 const MODEL_SOURCE: &str = r#"
@@ -15,9 +15,8 @@ params = ke
 states = central
 outputs = cp, time_echo
 
-infusion(iv) -> central
 
-dx(central) = -ke * central
+dx(central) = infusion(iv) - ke * central
 
 out(cp) = central
 out(time_echo) = t
@@ -31,9 +30,8 @@ params = ke
 states = central
 outputs = cp, time_echo
 
-infusion(iv) -> central
 
-dx(central) = -ke * central
+dx(central) = infusion(iv) - ke * central
 
 out(cp) = central
 out(time_echo) = time
@@ -76,25 +74,8 @@ fn assert_time_echo_matches_observation_times(
 }
 
 #[test]
-#[cfg(feature = "dsl-jit")]
+#[cfg(feature = "dsl")]
 fn t_keyword_reflects_the_current_simulation_time_jit() -> Result<(), Box<dyn std::error::Error>> {
-    let model = compile_module_source_to_runtime(
-        MODEL_SOURCE,
-        Some("time_probe"),
-        RuntimeCompilationTarget::Jit,
-        |_, _| {},
-    )?;
-    assert_time_echo_matches_observation_times(&model)
-}
-
-#[test]
-#[cfg(feature = "dsl-wasm")]
-fn t_keyword_reflects_the_current_simulation_time_wasm() -> Result<(), Box<dyn std::error::Error>> {
-    let model = compile_module_source_to_runtime(
-        MODEL_SOURCE,
-        Some("time_probe"),
-        RuntimeCompilationTarget::Wasm,
-        |_, _| {},
-    )?;
+    let model = compile_module_source_to_runtime(MODEL_SOURCE, Some("time_probe"), |_, _| {})?;
     assert_time_echo_matches_observation_times(&model)
 }

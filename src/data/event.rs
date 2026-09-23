@@ -287,6 +287,22 @@ impl Event {
             Event::Observation(observation) => observation.time,
         }
     }
+
+    /// Compare events by time, with observations before doses at equal times.
+    pub(crate) fn cmp_time_then_type(&self, other: &Self) -> std::cmp::Ordering {
+        fn rank(event: &Event) -> u8 {
+            match event {
+                Event::Observation(_) => 0,
+                Event::Bolus(_) => 1,
+                Event::Infusion(_) => 2,
+            }
+        }
+
+        self.time()
+            .total_cmp(&other.time())
+            .then_with(|| rank(self).cmp(&rank(other)))
+    }
+
     /// Increment the event time by a specified delta
     pub(crate) fn inc_time(&mut self, dt: f64) {
         match self {

@@ -12,7 +12,8 @@ use crate::name_match::{
 };
 use crate::syntax;
 use crate::{
-    ModelKind, MAX_CONST_USIZE, NUMERIC_OUTPUT_PREFIX, NUMERIC_ROUTE_PREFIX, RATE_FUNCTION_NAME,
+    ModelKind, RouteKind, MAX_CONST_USIZE, NUMERIC_OUTPUT_PREFIX, NUMERIC_ROUTE_PREFIX,
+    RATE_FUNCTION_NAME,
 };
 
 const RESERVED_NAMES: &[&str] = &[
@@ -23,6 +24,8 @@ const RESERVED_NAMES: &[&str] = &[
     "ddt",
     "exp",
     "floor",
+    "estimate_effect_2",
+    "estimate_effect_3",
     "lag",
     "linear",
     "ln",
@@ -43,6 +46,21 @@ const RESERVED_NAMES: &[&str] = &[
     "t",
     "time",
 ];
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct RoutePropertyDependencies {
+    state: bool,
+    rate: bool,
+}
+
+impl RoutePropertyDependencies {
+    fn union(self, other: Self) -> Self {
+        Self {
+            state: self.state || other.state,
+            rate: self.rate || other.rate,
+        }
+    }
+}
 
 #[derive(Default)]
 struct AnalysisAssist {
@@ -253,7 +271,7 @@ impl<'a> Analyzer<'a> {
         let constants = self.resolve_and_register_constants(sections.constants)?;
         let covariates = self.register_covariates(sections.covariates)?;
         let states = self.register_states(sections.states)?;
-        let routes = self.register_routes(sections.routes)?;
+        let mut routes = self.register_routes(sections.routes)?;
 
         let derived = self.register_implicit_symbols(
             sections.derive.map(|block| block.statements.as_slice()),
@@ -288,6 +306,12 @@ impl<'a> Analyzer<'a> {
             .as_ref()
             .map(|result| result.available_derived.clone())
             .unwrap_or_default();
+        self.analyze_route_properties(
+            sections.routes,
+            &mut routes,
+            &available_derived,
+            derive_result.as_ref().map(|result| &result.block),
+        )?;
 
         let dynamics = if let Some(block) = sections.dynamics {
             Some(self.analyze_statement_block(
@@ -590,70 +614,261 @@ impl<'a> Analyzer<'a> {
         block: Option<&syntax::RoutesBlock>,
     ) -> Result<Vec<AnalyzedRoute>, AnalysisError> {
         let mut routes = Vec::new();
+        // Route labels are unique per kind: a bolus and an infusion may share
+        // a label (one drug given by either route), while two routes of the
+        // same kind may not, and a kind-less route may not share its label
+        // with any kinded route (it is usable as either input kind). Each
+        // route keeps its own symbol so per-kind input slots stay unambiguous
+        // in the execution layer; `globals.routes` keeps the symbol used by
+        // `rate(name)`, which reads the infusion input when a label is shared.
+        //
+        // The set of kinds per label is tracked here (not only in the parser)
+        // so that manually constructed or transformed ASTs that bypass
+        // parser duplicate validation are still rejected.
+        let mut route_kinds = BTreeMap::<String, BTreeSet<Option<RouteKind>>>::new();
         if let Some(block) = block {
             for route in &block.routes {
                 self.validate_route_label_name(&route.input)?;
-                let id = self.insert_global_symbol(
-                    &route.input.text,
-                    SymbolKind::Route,
-                    PendingSymbolType::Route,
-                    route.input.span,
-                )?;
-                self.globals.routes.insert(route.input.text.clone(), id);
-                let destination = self.analyze_state_place_const(&route.destination)?;
-                let mut seen_props = BTreeMap::new();
-                let mut properties = Vec::new();
-                for property in &route.properties {
-                    let kind = match property.name.text.as_str() {
-                        "lag" => RoutePropertyKind::Lag,
-                        "bioavailability" => RoutePropertyKind::Bioavailability,
-                        other => {
-                            return Err(AnalysisError::new(
-                                format!("unknown route property `{other}`"),
-                                property.name.span,
-                            )
-                            .with_note(
-                                "supported route properties are `lag` and `bioavailability`",
-                            ));
+                let (id, prefer_for_rate) = match route_kinds.get_mut(&route.input.text) {
+                    Some(seen_kinds) => {
+                        let duplicate = route.kind.is_none()
+                            || seen_kinds.contains(&None)
+                            || seen_kinds.contains(&route.kind);
+                        if duplicate {
+                            let existing = self.globals.routes[&route.input.text];
+                            return Err(AnalysisAssist::default()
+                                .context_label(
+                                    self.symbol_span(existing),
+                                    self.symbol_declared_here(existing),
+                                )
+                                .apply(AnalysisError::new(
+                                    format!("duplicate route `{}`", route.input.text),
+                                    route.input.span,
+                                )));
                         }
-                    };
-                    if let Some(existing_span) = seen_props.insert(kind, property.name.span) {
-                        return Err(AnalysisAssist::default()
-                            .context_label(
-                                existing_span,
-                                format!(
-                                    "route property `{}` first declared here",
-                                    property.name.text
-                                ),
-                            )
-                            .help(format!(
-                                "each route can declare `{}` at most once",
-                                property.name.text
-                            ))
-                            .apply(AnalysisError::new(
-                                format!("duplicate route property `{}`", property.name.text),
-                                property.name.span,
-                            )));
+                        seen_kinds.insert(route.kind);
+                        let id = self.symbols.len();
+                        self.symbols.push(PendingSymbol {
+                            id,
+                            name: route.input.text.clone(),
+                            kind: SymbolKind::Route,
+                            ty: PendingSymbolType::Route,
+                            span: route.input.span,
+                        });
+                        (id, route.kind == Some(RouteKind::Infusion))
                     }
-                    let env = BlockEnv::new(BTreeSet::new());
-                    let value = self.analyze_expr(&property.value, &env)?;
-                    self.expect_numeric(&value, "route property", property.value.span)?;
-                    properties.push(AnalyzedRouteProperty {
-                        kind,
-                        value,
-                        span: property.span,
-                    });
+                    None => {
+                        let id = self.insert_global_symbol(
+                            &route.input.text,
+                            SymbolKind::Route,
+                            PendingSymbolType::Route,
+                            route.input.span,
+                        )?;
+                        route_kinds.insert(route.input.text.clone(), BTreeSet::from([route.kind]));
+                        (id, true)
+                    }
+                };
+                if prefer_for_rate {
+                    self.globals.routes.insert(route.input.text.clone(), id);
                 }
+                self.validate_route_property_declarations(&route.properties)?;
+                let destination = self.analyze_state_place_const(&route.destination)?;
                 routes.push(AnalyzedRoute {
                     symbol: id,
                     kind: route.kind,
                     destination,
-                    properties,
+                    properties: Vec::new(),
                     span: route.span,
                 });
             }
         }
         Ok(routes)
+    }
+
+    fn validate_route_property_declarations(
+        &self,
+        properties: &[syntax::Binding],
+    ) -> Result<(), AnalysisError> {
+        let mut seen_props = BTreeMap::new();
+        for property in properties {
+            let kind = self.route_property_kind(property)?;
+            if let Some(existing_span) = seen_props.insert(kind, property.name.span) {
+                return Err(AnalysisAssist::default()
+                    .context_label(
+                        existing_span,
+                        format!(
+                            "route property `{}` first declared here",
+                            property.name.text
+                        ),
+                    )
+                    .help(format!(
+                        "each route can declare `{}` at most once",
+                        property.name.text
+                    ))
+                    .apply(AnalysisError::new(
+                        format!("duplicate route property `{}`", property.name.text),
+                        property.name.span,
+                    )));
+            }
+        }
+        Ok(())
+    }
+
+    fn route_property_kind(
+        &self,
+        property: &syntax::Binding,
+    ) -> Result<RoutePropertyKind, AnalysisError> {
+        match property.name.text.as_str() {
+            "lag" => Ok(RoutePropertyKind::Lag),
+            "bioavailability" => Ok(RoutePropertyKind::Bioavailability),
+            other => Err(AnalysisError::new(
+                format!("unknown route property `{other}`"),
+                property.name.span,
+            )
+            .with_note("supported route properties are `lag` and `bioavailability`")),
+        }
+    }
+
+    fn analyze_route_properties(
+        &self,
+        block: Option<&syntax::RoutesBlock>,
+        routes: &mut [AnalyzedRoute],
+        available_derived: &BTreeSet<SymbolId>,
+        derive: Option<&AnalyzedStatementBlock>,
+    ) -> Result<(), AnalysisError> {
+        let Some(block) = block else {
+            return Ok(());
+        };
+        let derived_dependencies = self.route_property_derived_dependencies(derive);
+
+        for (route, syntax_route) in routes.iter_mut().zip(&block.routes) {
+            let mut properties = Vec::new();
+            for property in &syntax_route.properties {
+                let kind = self.route_property_kind(property)?;
+                let env = BlockEnv::new(available_derived.clone());
+                let value = self.analyze_expr(&property.value, &env)?;
+                self.expect_numeric(&value, "route property", property.value.span)?;
+                self.validate_route_property_dependencies(&value, &derived_dependencies)?;
+                properties.push(AnalyzedRouteProperty {
+                    kind,
+                    value,
+                    span: property.span,
+                });
+            }
+            route.properties = properties;
+        }
+        Ok(())
+    }
+
+    fn route_property_derived_dependencies(
+        &self,
+        derive: Option<&AnalyzedStatementBlock>,
+    ) -> BTreeMap<SymbolId, RoutePropertyDependencies> {
+        let mut dependencies = BTreeMap::new();
+        if let Some(derive) = derive {
+            self.collect_route_property_dependencies(
+                &derive.statements,
+                &mut dependencies,
+                RoutePropertyDependencies::default(),
+            );
+        }
+        dependencies
+    }
+
+    fn collect_route_property_dependencies(
+        &self,
+        statements: &[AnalyzedStmt],
+        dependencies: &mut BTreeMap<SymbolId, RoutePropertyDependencies>,
+        inherited: RoutePropertyDependencies,
+    ) {
+        for statement in statements {
+            match &statement.kind {
+                AnalyzedStmtKind::Let(let_stmt) => {
+                    let value =
+                        self.route_property_expr_dependencies(&let_stmt.value, dependencies);
+                    dependencies.insert(let_stmt.symbol, inherited.union(value));
+                }
+                AnalyzedStmtKind::Assign(assign) => {
+                    if let AnalyzedAssignTargetKind::Derived(symbol) = &assign.target.kind {
+                        let value =
+                            self.route_property_expr_dependencies(&assign.value, dependencies);
+                        dependencies.insert(*symbol, inherited.union(value));
+                    }
+                }
+                AnalyzedStmtKind::If(if_stmt) => {
+                    let condition =
+                        self.route_property_expr_dependencies(&if_stmt.condition, dependencies);
+                    let branch_context = inherited.union(condition);
+                    let base = dependencies.clone();
+                    let mut then_dependencies = base.clone();
+                    self.collect_route_property_dependencies(
+                        &if_stmt.then_branch,
+                        &mut then_dependencies,
+                        branch_context,
+                    );
+                    let mut merged = base;
+                    merge_route_property_dependencies(&mut merged, &then_dependencies);
+                    if let Some(else_branch) = &if_stmt.else_branch {
+                        let mut else_dependencies = dependencies.clone();
+                        self.collect_route_property_dependencies(
+                            else_branch,
+                            &mut else_dependencies,
+                            branch_context,
+                        );
+                        merge_route_property_dependencies(&mut merged, &else_dependencies);
+                    }
+                    *dependencies = merged;
+                }
+                AnalyzedStmtKind::For(for_stmt) => {
+                    let range =
+                        self.route_property_expr_dependencies(&for_stmt.range.start, dependencies)
+                            .union(self.route_property_expr_dependencies(
+                                &for_stmt.range.end,
+                                dependencies,
+                            ));
+                    let loop_context = inherited.union(range);
+                    let mut loop_dependencies = dependencies.clone();
+                    loop_dependencies.insert(for_stmt.binding, loop_context);
+                    self.collect_route_property_dependencies(
+                        &for_stmt.body,
+                        &mut loop_dependencies,
+                        loop_context,
+                    );
+                    merge_route_property_dependencies(dependencies, &loop_dependencies);
+                }
+            }
+        }
+    }
+
+    fn route_property_route_dependency_error(&self, span: Span) -> AnalysisError {
+        AnalysisError::new(
+            "route property expressions cannot depend on `rate(route)` or route inputs, directly or through a derived value; they are evaluated with zero route buffers",
+            span,
+        )
+        .with_note(
+            "route properties are evaluated before events with zero route buffers; use parameters, constants, covariates, time, or event-safe derived values",
+        )
+    }
+
+    fn validate_route_property_dependencies(
+        &self,
+        value: &AnalyzedExpr,
+        dependencies: &BTreeMap<SymbolId, RoutePropertyDependencies>,
+    ) -> Result<(), AnalysisError> {
+        let dependencies = self.route_property_expr_dependencies(value, dependencies);
+        if dependencies.state {
+            return Err(AnalysisError::new(
+                "route property expressions cannot depend on state values, directly or through a derived value; they are evaluated with zero state buffers",
+                value.span,
+            )
+            .with_note(
+                "route properties are evaluated before events with zero state buffers; use parameters, constants, covariates, time, or event-safe derived values",
+            ));
+        }
+        if dependencies.rate {
+            return Err(self.route_property_route_dependency_error(value.span));
+        }
+        Ok(())
     }
 
     fn register_implicit_symbols(
@@ -701,7 +916,11 @@ impl<'a> Analyzer<'a> {
             let id = self.insert_global_symbol(
                 &ident.text,
                 kind,
-                PendingSymbolType::Scalar(None),
+                // Derived values and outputs are stored in f64 buffers, so they
+                // are always real-valued. Letting a whole-number initialiser
+                // narrow one to Int writes an f64 and reads it back as an
+                // integer, which silently returns the bit pattern.
+                PendingSymbolType::Scalar(Some(ValueType::Real)),
                 ident.span,
             )?;
             match kind {
@@ -1102,6 +1321,45 @@ impl<'a> Analyzer<'a> {
         })
     }
 
+    fn route_property_expr_dependencies(
+        &self,
+        expr: &AnalyzedExpr,
+        dependencies: &BTreeMap<SymbolId, RoutePropertyDependencies>,
+    ) -> RoutePropertyDependencies {
+        match &expr.kind {
+            AnalyzedExprKind::Literal(_) | AnalyzedExprKind::Time => {
+                RoutePropertyDependencies::default()
+            }
+            AnalyzedExprKind::Symbol(symbol) => {
+                dependencies.get(symbol).copied().unwrap_or_default()
+            }
+            AnalyzedExprKind::StateValue(place) => {
+                let index_dependencies = place
+                    .index
+                    .as_deref()
+                    .map(|index| self.route_property_expr_dependencies(index, dependencies))
+                    .unwrap_or_default();
+                RoutePropertyDependencies {
+                    state: true,
+                    ..index_dependencies
+                }
+            }
+            AnalyzedExprKind::Unary { expr, .. } => {
+                self.route_property_expr_dependencies(expr, dependencies)
+            }
+            AnalyzedExprKind::Binary { lhs, rhs, .. } => self
+                .route_property_expr_dependencies(lhs, dependencies)
+                .union(self.route_property_expr_dependencies(rhs, dependencies)),
+            AnalyzedExprKind::Call { callee, args } => args.iter().fold(
+                RoutePropertyDependencies {
+                    state: false,
+                    rate: matches!(callee, AnalyzedCall::Rate(_)),
+                },
+                |total, arg| total.union(self.route_property_expr_dependencies(arg, dependencies)),
+            ),
+        }
+    }
+
     fn analyze_expr(
         &self,
         expr: &syntax::Expr,
@@ -1414,6 +1672,41 @@ impl<'a> Analyzer<'a> {
             });
         }
 
+        if let Some(function) = UtilityFunctions::from_name(&callee.text) {
+            match function.argument_count() {
+                ArgumentCount::Exact(expected) if expected != args.len() => {
+                    return Err(AnalysisError::new(
+                        format!(
+                            "function `{}` expects {} argument(s), got {}",
+                            callee.text,
+                            expected,
+                            args.len()
+                        ),
+                        callee.span,
+                    ));
+                }
+                _ => {}
+            }
+
+            let mut typed_args = Vec::with_capacity(args.len());
+            for arg in args {
+                let analyzed = self.analyze_expr(arg, env)?;
+                self.expect_numeric(&analyzed, &format!("`{}` argument", callee.text), arg.span)?;
+                typed_args.push(analyzed);
+            }
+            return Ok(AnalyzedExpr {
+                kind: AnalyzedExprKind::Call {
+                    callee: AnalyzedCall::Pharmacometric(function),
+                    args: typed_args,
+                },
+                ty: ValueType::Real,
+                // Pharmacometric calls are deliberately runtime-only, even
+                // when every argument happens to be a literal.
+                constant: None,
+                span,
+            });
+        }
+
         let intrinsic = MathFunction::from_name(&callee.text).ok_or_else(|| {
             let error =
                 AnalysisError::new(format!("unknown function `{}`", callee.text), callee.span);
@@ -1475,16 +1768,19 @@ impl<'a> Analyzer<'a> {
                 Ok(ValueType::Bool)
             }
             AnalyzedBinaryOp::Eq | AnalyzedBinaryOp::NotEq => {
-                if lhs.ty != rhs.ty {
-                    return Err(AnalysisError::new(
+                if (lhs.ty.is_numeric() && rhs.ty.is_numeric())
+                    || (lhs.ty == ValueType::Bool && rhs.ty == ValueType::Bool)
+                {
+                    Ok(ValueType::Bool)
+                } else {
+                    Err(AnalysisError::new(
                         format!(
-                            "equality comparison requires matching operand types, found {:?} and {:?}",
+                            "cannot compare boolean and numeric operands, found {:?} and {:?}",
                             lhs.ty, rhs.ty
                         ),
                         span,
-                    ));
+                    ))
                 }
-                Ok(ValueType::Bool)
             }
             AnalyzedBinaryOp::Lt
             | AnalyzedBinaryOp::LtEq
@@ -1644,6 +1940,29 @@ impl<'a> Analyzer<'a> {
                 if callee.text == RATE_FUNCTION_NAME {
                     return Err(AnalysisError::new(
                         "`rate(...)` cannot appear in a compile-time expression",
+                        callee.span,
+                    ));
+                }
+                if let Some(function) = UtilityFunctions::from_name(&callee.text) {
+                    match function.argument_count() {
+                        ArgumentCount::Exact(expected) if expected != args.len() => {
+                            return Err(AnalysisError::new(
+                                format!(
+                                    "function `{}` expects {} argument(s), got {}",
+                                    callee.text,
+                                    expected,
+                                    args.len()
+                                ),
+                                callee.span,
+                            ));
+                        }
+                        _ => {}
+                    }
+                    return Err(AnalysisError::new(
+                        format!(
+                            "`{}` is runtime-only and cannot appear in a compile-time expression",
+                            function.name()
+                        ),
                         callee.span,
                     ));
                 }
@@ -2130,6 +2449,23 @@ impl<'a> Analyzer<'a> {
                     Applicability::MaybeIncorrect,
                 ),
         ));
+        candidates.extend(UtilityFunctions::ALL.into_iter().map(|function| {
+            let name = function.name();
+            let ArgumentCount::Exact(argument_count) = function.argument_count();
+            SimilarNameCandidate::new(
+                name,
+                AnalysisAssist::default()
+                    .help(format!(
+                        "`{name}` is a runtime-only pharmacometric function with {argument_count} numeric arguments"
+                    ))
+                    .replacement_suggestion(
+                        callee.span,
+                        name,
+                        format!("did you mean `{name}`?"),
+                        Applicability::MaybeIncorrect,
+                    ),
+            )
+        }));
         best_similar_name_assist(&callee.text, candidates)
     }
 
@@ -2719,6 +3055,16 @@ fn promote_numeric(lhs: ValueType, rhs: ValueType) -> ValueType {
     }
 }
 
+fn merge_route_property_dependencies(
+    target: &mut BTreeMap<SymbolId, RoutePropertyDependencies>,
+    source: &BTreeMap<SymbolId, RoutePropertyDependencies>,
+) {
+    for (symbol, dependencies) in source {
+        let current = target.entry(*symbol).or_default();
+        *current = current.union(*dependencies);
+    }
+}
+
 fn intersect_sets(set_a: &BTreeSet<SymbolId>, set_b: &BTreeSet<SymbolId>) -> BTreeSet<SymbolId> {
     set_a.intersection(set_b).copied().collect()
 }
@@ -2787,8 +3133,21 @@ fn fold_binary(op: AnalyzedBinaryOp, lhs: &ConstValue, rhs: &ConstValue) -> Opti
         AnalyzedBinaryOp::And => Some(ConstValue::Bool(
             matches!(lhs, ConstValue::Bool(true)) && matches!(rhs, ConstValue::Bool(true)),
         )),
-        AnalyzedBinaryOp::Eq => Some(ConstValue::Bool(lhs == rhs)),
-        AnalyzedBinaryOp::NotEq => Some(ConstValue::Bool(lhs != rhs)),
+        AnalyzedBinaryOp::Eq | AnalyzedBinaryOp::NotEq => {
+            let equal = match (lhs, rhs) {
+                (ConstValue::Bool(lhs), ConstValue::Bool(rhs)) => lhs == rhs,
+                (ConstValue::Int(lhs), ConstValue::Int(rhs)) => lhs == rhs,
+                (lhs, rhs) if lhs.value_type().is_numeric() && rhs.value_type().is_numeric() => {
+                    lhs.as_f64()? == rhs.as_f64()?
+                }
+                _ => return None,
+            };
+            Some(ConstValue::Bool(match op {
+                AnalyzedBinaryOp::Eq => equal,
+                AnalyzedBinaryOp::NotEq => !equal,
+                _ => unreachable!(),
+            }))
+        }
         AnalyzedBinaryOp::Lt => Some(ConstValue::Bool(lhs.as_f64()? < rhs.as_f64()?)),
         AnalyzedBinaryOp::LtEq => Some(ConstValue::Bool(lhs.as_f64()? <= rhs.as_f64()?)),
         AnalyzedBinaryOp::Gt => Some(ConstValue::Bool(lhs.as_f64()? > rhs.as_f64()?)),
@@ -2900,6 +3259,179 @@ mod tests {
             .find(|symbol| symbol.name == "ke")
             .expect("derived symbol exists");
         assert!(matches!(ke_symbol.ty, SymbolType::Scalar(ValueType::Real)));
+    }
+
+    #[test]
+    fn route_property_dependencies_preserve_independent_flags() {
+        let model = parse_model(
+            r#"
+model route_dependencies {
+    kind ode
+    parameters { ke }
+    states { depot }
+    routes { infusion iv -> depot }
+    derive {
+        safe = ke
+        from_state = depot
+        from_rate = rate(iv)
+        from_binary = from_state + from_rate
+        from_call = max(from_state, from_rate)
+        if ke > 0 {
+            from_branch = from_state
+        } else {
+            from_branch = from_rate
+        }
+        if depot > 0 {
+            from_condition = from_rate
+        } else {
+            from_condition = 0
+        }
+        from_loop = from_state
+        for i in 0..2 {
+            from_loop = from_rate
+        }
+    }
+    dynamics { ddt(depot) = -ke * depot }
+    outputs { cp = depot }
+}
+"#,
+        )
+        .expect("model parses");
+        let analyzed =
+            analyze_model(&model).expect("ordinary derived values allow these dependencies");
+        let dependencies =
+            Analyzer::new(&model).route_property_derived_dependencies(analyzed.derive.as_ref());
+        let none = RoutePropertyDependencies::default();
+        let state = RoutePropertyDependencies {
+            state: true,
+            ..none
+        };
+        let rate = RoutePropertyDependencies { rate: true, ..none };
+        let both = RoutePropertyDependencies {
+            state: true,
+            rate: true,
+        };
+        for (name, expected) in [
+            ("safe", none),
+            ("from_state", state),
+            ("from_rate", rate),
+            ("from_binary", both),
+            ("from_call", both),
+            ("from_branch", both),
+            ("from_condition", both),
+            ("from_loop", both),
+        ] {
+            let symbol = analyzed
+                .symbols
+                .iter()
+                .find(|symbol| symbol.name == name)
+                .expect("derived symbol exists");
+            assert_eq!(dependencies[&symbol.id], expected, "{name}");
+        }
+    }
+
+    #[test]
+    fn route_properties_allow_definitely_assigned_derived_values() {
+        let model = parse_model(
+            r#"
+model route_properties_ok {
+    kind ode
+    parameters { tlag, f, ke }
+    states { depot }
+    routes {
+        oral -> depot {
+            lag = lag_value
+            bioavailability = fa_value
+        }
+    }
+    derive {
+        lag_value = tlag + time
+        fa_value = f
+    }
+    dynamics {
+        ddt(depot) = -ke * depot
+    }
+    outputs {
+        cp = depot
+    }
+}
+"#,
+        )
+        .expect("model parses");
+
+        analyze_model(&model).expect("derived route properties analyze");
+    }
+
+    #[test]
+    fn route_properties_reject_direct_state_dependencies() {
+        let model = parse_model(
+            r#"
+model route_property_state_dependency {
+    kind ode
+    parameters { ke }
+    states { depot }
+    routes {
+        oral -> depot {
+            lag = depot
+        }
+    }
+    dynamics {
+        ddt(depot) = -ke * depot
+    }
+    outputs {
+        cp = depot
+    }
+}
+"#,
+        )
+        .expect("model parses");
+
+        let error = analyze_model(&model).expect_err("state-dependent route property must fail");
+        assert!(error
+            .to_string()
+            .contains("route property expressions cannot depend on state values"));
+        assert!(error
+            .diagnostic()
+            .notes
+            .iter()
+            .any(|note| note.contains("zero state buffers")));
+    }
+
+    #[test]
+    fn route_properties_reject_transitive_rate_dependencies() {
+        let model = parse_model(
+            r#"
+model route_property_rate_dependency {
+    kind ode
+    parameters { ke }
+    states { depot }
+    routes {
+        oral -> depot { lag = lag_value }
+    }
+    derive {
+        event_rate = rate(oral)
+        lag_value = event_rate
+    }
+    dynamics {
+        ddt(depot) = -ke * depot
+    }
+    outputs {
+        cp = depot
+    }
+}
+"#,
+        )
+        .expect("model parses");
+
+        let error = analyze_model(&model).expect_err("rate-dependent route property must fail");
+        assert!(error
+            .to_string()
+            .contains("route property expressions cannot depend on `rate(route)`"));
+        assert!(error
+            .diagnostic()
+            .notes
+            .iter()
+            .any(|note| note.contains("zero route buffers")));
     }
 
     #[test]
@@ -3217,7 +3749,7 @@ model analytical_broken {
             typed_model_signature(&canonical_typed)
         );
         assert_eq!(authoring_typed.routes[0].kind, Some(RouteKind::Bolus));
-        assert_eq!(canonical_typed.routes[0].kind, None);
+        assert_eq!(canonical_typed.routes[0].kind, Some(RouteKind::Bolus));
     }
 
     #[test]
@@ -3950,6 +4482,9 @@ model broken {
                 "call:{}({})",
                 match callee {
                     AnalyzedCall::Math(intrinsic) => format!("math:{intrinsic:?}"),
+                    AnalyzedCall::Pharmacometric(function) => {
+                        format!("pharmacometric:{function:?}")
+                    }
                     AnalyzedCall::Rate(symbol) => format!("rate:{}", symbol_name(model, *symbol)),
                 },
                 args.iter()
@@ -3967,5 +4502,254 @@ model broken {
             .find(|entry| entry.id == symbol)
             .map(|entry| entry.name.clone())
             .unwrap_or_else(|| format!("#{symbol}"))
+    }
+
+    #[test]
+    fn estimate_effect_2_resolves_as_a_runtime_pharmacometric_call() {
+        let source = r#"
+model estimate_effect_2_model {
+    kind ode
+    parameters { u, v, alpha, h1, h2 }
+    states { central }
+    dynamics {
+        ddt(central) = 0
+    }
+    outputs {
+        cp = estimate_effect_2(u, v, alpha, h1, h2)
+    }
+}
+"#;
+        let model = crate::parse_model(source).expect("model parses");
+        let analyzed = analyze_model(&model).expect("estimate_effect_2 model analyzes");
+        let output = &analyzed
+            .outputs_block
+            .statements
+            .first()
+            .expect("output assignment")
+            .kind;
+        let AnalyzedStmtKind::Assign(output) = output else {
+            panic!("expected output assignment");
+        };
+        let AnalyzedExprKind::Call { callee, args } = &output.value.kind else {
+            panic!("expected estimate_effect_2 call");
+        };
+        assert_eq!(args.len(), 5);
+        assert_eq!(output.value.ty, ValueType::Real);
+        assert!(output.value.constant.is_none());
+        assert_eq!(
+            callee,
+            &AnalyzedCall::Pharmacometric(UtilityFunctions::EstimateEffect2)
+        );
+
+        let execution = crate::compile_analyzed_model(&analyzed).expect("model compiles");
+        let output_function = execution
+            .function(crate::execution::ModelFunctionKind::Outputs)
+            .expect("outputs function");
+        let crate::execution::FunctionBody::Statements(program) = &output_function.body else {
+            panic!("expected statement outputs function");
+        };
+        let crate::execution::ExecutionStmtKind::Assign(assign) = &program.body.statements[0].kind
+        else {
+            panic!("expected execution assignment");
+        };
+        let crate::execution::ExecutionExprKind::Call { callee, args } = &assign.value.kind else {
+            panic!("expected execution estimate_effect_2 call");
+        };
+        assert_eq!(args.len(), 5);
+        assert_eq!(
+            callee,
+            &crate::execution::ExecutionCall::Pharmacometric(UtilityFunctions::EstimateEffect2)
+        );
+    }
+
+    #[test]
+    fn estimate_effect_2_requires_exactly_five_numeric_arguments() {
+        let source = r#"
+model broken_estimate_effect_2 {
+    kind ode
+    states { central }
+    dynamics {
+        ddt(central) = 0
+    }
+    outputs {
+        cp = estimate_effect_2(1, 2, 3, 4)
+    }
+}
+"#;
+        let model = crate::parse_model(source).expect("model parses");
+        let error = analyze_model(&model).expect_err("wrong estimate_effect_2 arity must fail");
+        assert!(error
+            .render(source)
+            .contains("function `estimate_effect_2` expects 5 argument(s), got 4"));
+
+        let source = source.replace("4)", "4, true)");
+        let model = crate::parse_model(&source).expect("model parses");
+        let error =
+            analyze_model(&model).expect_err("boolean estimate_effect_2 argument must fail");
+        assert!(error
+            .render(&source)
+            .contains("`estimate_effect_2` argument must be numeric"));
+    }
+
+    #[test]
+    fn estimate_effect_2_is_runtime_only_in_constants() {
+        let source = r#"
+model constant_estimate_effect_2 {
+    kind ode
+    constants {
+        value = estimate_effect_2(1, 1, 0, 1, 1)
+    }
+    states { central }
+    dynamics {
+        ddt(central) = 0
+    }
+    outputs {
+        cp = central
+    }
+}
+"#;
+        let model = crate::parse_model(source).expect("model parses");
+        let error =
+            analyze_model(&model).expect_err("constant estimate_effect_2 must fail cleanly");
+        assert!(error.render(source).contains(
+            "`estimate_effect_2` is runtime-only and cannot appear in a compile-time expression"
+        ));
+    }
+
+    #[test]
+    fn old_effect_names_are_not_aliases() {
+        for (name, args) in [
+            ("get_e2", "1, 1, 0, 1, 1"),
+            ("get_e3", "1, 1, 1, 0, 0, 0, 0, 1, 1, 1"),
+        ] {
+            let source = format!(
+                "name = removed_effect_name\nkind = ode\nstates = central\ndx(central) = 0\nout(cp) = {name}({args})\n"
+            );
+            let model = crate::parse_model(&source).expect("model syntax is valid");
+            let error = analyze_model(&model).expect_err("old effect names must not resolve");
+            assert!(error
+                .render(&source)
+                .contains(&format!("unknown function `{name}`")));
+            assert!(UtilityFunctions::from_name(name).is_none());
+        }
+    }
+
+    #[test]
+    fn estimate_effect_2_name_resolution_is_exact() {
+        let source = r#"
+model case_sensitive_estimate_effect_2 {
+    kind ode
+    states { central }
+    dynamics {
+        ddt(central) = 0
+    }
+    outputs {
+        cp = ESTIMATE_EFFECT_2(1, 1, 0, 1, 1)
+    }
+}
+"#;
+        let model = crate::parse_model(source).expect("model parses");
+        let error = analyze_model(&model).expect_err("case variant must not resolve");
+        assert!(error
+            .render(source)
+            .contains("unknown function `ESTIMATE_EFFECT_2`"));
+    }
+
+    #[test]
+    fn estimate_effect_3_resolves_as_a_ten_argument_runtime_call() {
+        let source = r#"
+model estimate_effect_3_model {
+    kind ode
+    parameters { a, b, c, alpha12, alpha13, alpha23, alpha123, h1, h2, h3 }
+    states { central }
+    dynamics {
+        ddt(central) = 0
+    }
+    outputs {
+        cp = estimate_effect_3(a, b, c, alpha12, alpha13, alpha23, alpha123, h1, h2, h3)
+    }
+}
+"#;
+        let model = crate::parse_model(source).expect("model parses");
+        let analyzed = analyze_model(&model).expect("estimate_effect_3 model analyzes");
+        let AnalyzedStmtKind::Assign(output) = &analyzed.outputs_block.statements[0].kind else {
+            panic!("expected output assignment");
+        };
+        let AnalyzedExprKind::Call { callee, args } = &output.value.kind else {
+            panic!("expected estimate_effect_3 call");
+        };
+        assert_eq!(args.len(), 10);
+        assert_eq!(output.value.ty, ValueType::Real);
+        assert!(output.value.constant.is_none());
+        assert_eq!(
+            callee,
+            &AnalyzedCall::Pharmacometric(UtilityFunctions::EstimateEffect3)
+        );
+    }
+
+    #[test]
+    fn estimate_effect_3_requires_exactly_ten_numeric_arguments() {
+        let source = r#"
+model broken_estimate_effect_3 {
+    kind ode
+    states { central }
+    dynamics {
+        ddt(central) = 0
+    }
+    outputs {
+        cp = estimate_effect_3(1, 1, 1, 0, 0, 0, 0, 1, 1)
+    }
+}
+"#;
+        let model = crate::parse_model(source).expect("model parses");
+        let error = analyze_model(&model).expect_err("wrong estimate_effect_3 arity must fail");
+        assert!(error
+            .render(source)
+            .contains("function `estimate_effect_3` expects 10 argument(s), got 9"));
+
+        let source = source.replace("1, 1)", "1, 1, true)");
+        let model = crate::parse_model(&source).expect("model parses");
+        let error =
+            analyze_model(&model).expect_err("boolean estimate_effect_3 argument must fail");
+        assert!(error
+            .render(&source)
+            .contains("`estimate_effect_3` argument must be numeric"));
+    }
+
+    #[test]
+    fn estimate_effect_3_is_runtime_only_and_case_sensitive() {
+        let constant_source = r#"
+model constant_estimate_effect_3 {
+    kind ode
+    constants {
+        value = estimate_effect_3(1, 1, 1, 0, 0, 0, 0, 1, 1, 1)
+    }
+    states { central }
+    dynamics {
+        ddt(central) = 0
+    }
+    outputs {
+        cp = central
+    }
+}
+"#;
+        let model = crate::parse_model(constant_source).expect("model parses");
+        let error =
+            analyze_model(&model).expect_err("constant estimate_effect_3 must fail cleanly");
+        assert!(error.render(constant_source).contains(
+            "`estimate_effect_3` is runtime-only and cannot appear in a compile-time expression"
+        ));
+
+        let case_source = constant_source
+            .replace(
+                "constants {\n        value = estimate_effect_3(1, 1, 1, 0, 0, 0, 0, 1, 1, 1)\n    }",
+                "",
+            )
+            .replace("cp = central", "cp = ESTIMATE_EFFECT_3(1, 1, 1, 0, 0, 0, 0, 1, 1, 1)");
+        let model = crate::parse_model(&case_source).expect("model parses");
+        let error = analyze_model(&model).expect_err("case variant must not resolve");
+        assert!(error
+            .render(&case_source)
+            .contains("unknown function `ESTIMATE_EFFECT_3`"));
     }
 }

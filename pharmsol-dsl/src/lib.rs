@@ -11,9 +11,9 @@
 //! - check names, types, and model structure
 //! - compile a validated model into its execution form
 //!
-//! Do not use this crate for JIT compilation, native ahead-of-time export or
-//! load, WASM runtime loading, or `Subject`-based prediction helpers. Those
-//! workflows stay in `pharmsol::dsl` in the main `pharmsol` crate.
+//! Do not use this crate for JIT compilation or `Subject`-based prediction
+//! helpers. Those workflows stay in `pharmsol::dsl` in the main `pharmsol`
+//! crate.
 //!
 //! Main entrypoints:
 //!
@@ -42,8 +42,16 @@
 //! - [`syntax`] for the syntax tree.
 //! - [`analysis`] for the analyzed, fully checked model.
 //! - [`diagnostic`] for spans, diagnostic codes, and rendered reports.
-//! - [`execution`] for the ready-to-run model shared by the JIT, AoT, and
-//!   WASM backends.
+//! - [`execution`] for the ready-to-run model consumed by the JIT backend.
+//!
+//! Runtime-only pharmacometric functions include five-argument
+//! `estimate_effect_2(u, v, alpha, h1, h2)` and ten-argument
+//! `estimate_effect_3(a, b, c, alpha12, alpha13, alpha23, alpha123, h1, h2, h3)`. Both
+//! have real results. This crate preserves the calls in the execution IR and
+//! rejects them in compile-time constants; `pharmsol::dsl` supplies callbacks
+//! to the canonical implementations when the model is executed. The E2 runtime
+//! computes `w = alpha * u * v`, so callers migrating from the old six-argument
+//! form must remove the explicit `w` argument.
 //!
 //! Smallest one-shot example:
 //!
@@ -58,9 +66,7 @@
 //! states = central
 //! outputs = cp
 //!
-//! infusion(iv) -> central
-//!
-//! dx(central) = -ke * central
+//! dx(central) = infusion(iv) - ke * central
 //! out(cp) = central / v
 //! "#;
 //!
