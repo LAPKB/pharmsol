@@ -115,6 +115,125 @@ impl PharmsolError {
     }
 }
 
+/// Snapshot of the most recent right-hand-side evaluation that produced
+/// non-finite derivatives.
+///
+/// Recorded by the compiled-model dynamics callback and cleared as soon as a
+/// later evaluation is finite, so it is only still present when the solver gave
+/// up straight after a non-finite evaluation, which is the usual cause of
+/// "step size collapsed" and "Newton solver failed" errors.
+#[cfg_attr(not(feature = "dsl"), allow(dead_code))]
+#[derive(Debug, Clone)]
+pub(crate) struct NonFiniteRhs {
+    /// Solver-local time of the evaluation.
+    pub time: f64,
+    pub state: Vec<f64>,
+    pub derivative: Vec<f64>,
+}
+
+/// Ratio of largest to smallest non-zero state magnitude above which a solver
+/// failure is annotated with a rescaling hint.
+#[cfg_attr(not(feature = "dsl"), allow(dead_code))]
+const STATE_RANGE_HINT_RATIO: f64 = 1e8;
+/// Maximum number of entries listed in a diagnostic note.
+#[cfg_attr(not(feature = "dsl"), allow(dead_code))]
+const MAX_LISTED_STATES: usize = 6;
+
+#[cfg_attr(not(feature = "dsl"), allow(dead_code))]
+impl PharmsolError {
+    /// Append actionable context to a solver failure.
+    ///
+    /// Adds (when applicable): the non-finite derivatives of the last RHS
+    /// evaluation together with the state that produced them, non-finite entries
+    /// in the last accepted state, and a rescaling hint when the accepted state
+    /// spans many orders of magnitude. Only [`PharmsolError::DiffsolError`] is
+    /// augmented; all other variants pass through unchanged.
+    ///
+    /// `state_name` maps a state index to a display label. `rhs` pairs the
+    /// recorded evaluation with its absolute time.
+    pub(crate) fn with_solver_diagnostics(
+        self,
+        accepted_time: f64,
+        accepted_state: &[f64],
+        atol: f64,
+        state_name: &dyn Fn(usize) -> String,
+        rhs: Option<(&NonFiniteRhs, f64)>,
+    ) -> Self {
+        let PharmsolError::DiffsolError(message) = self else {
+            return self;
+        };
+        let mut notes = Vec::new();
+
+        if let Some((rhs, absolute_time)) = rhs {
+            let bad = rhs
+                .derivative
+                .iter()
+                .enumerate()
+                .filter(|(_, value)| !value.is_finite())
+                .map(|(i, value)| format!("d{}/dt = {value}", state_name(i)))
+                .take(MAX_LISTED_STATES)
+                .collect::<Vec<_>>()
+                .join(", ");
+            let state = list_states(&rhs.state, state_name);
+            notes.push(format!(
+                "the last right-hand-side evaluation (t = {absolute_time:.4}) returned non-finite derivatives ({bad}) for state [{state}]; check for division by zero, negative bases of fractional powers, or overflow. A state that overshoots slightly below zero inside a stiff step can turn terms such as (c/x)^h into NaN"
+            ));
+        }
+
+        let non_finite = accepted_state
+            .iter()
+            .enumerate()
+            .filter(|(_, value)| !value.is_finite())
+            .map(|(i, value)| format!("{} = {value}", state_name(i)))
+            .take(MAX_LISTED_STATES)
+            .collect::<Vec<_>>();
+        if !non_finite.is_empty() {
+            notes.push(format!(
+                "the last accepted state (t = {accepted_time:.4}) contains non-finite values ({})",
+                non_finite.join(", ")
+            ));
+        } else {
+            let magnitudes = accepted_state
+                .iter()
+                .enumerate()
+                .map(|(i, value)| (i, value.abs()))
+                .filter(|(_, magnitude)| *magnitude > 0.0);
+            let largest = magnitudes.clone().max_by(|a, b| a.1.total_cmp(&b.1));
+            let smallest = magnitudes.min_by(|a, b| a.1.total_cmp(&b.1));
+            if let (Some((hi, max)), Some((lo, min))) = (largest, smallest) {
+                if max / min >= STATE_RANGE_HINT_RATIO {
+                    notes.push(format!(
+                        "the last accepted state (t = {accepted_time:.4}) spans {:.0} orders of magnitude ({} = {max:.3e}, {} = {min:.3e}) with atol = {atol:e}; consider rescaling states (e.g. counts in units of 1e6) or bounding unchecked exponential growth",
+                        (max / min).log10().floor(),
+                        state_name(hi),
+                        state_name(lo),
+                    ));
+                }
+            }
+        }
+
+        if notes.is_empty() {
+            return PharmsolError::DiffsolError(message);
+        }
+        PharmsolError::DiffsolError(format!("{message} Diagnostics: {}.", notes.join("; ")))
+    }
+}
+
+#[cfg_attr(not(feature = "dsl"), allow(dead_code))]
+fn list_states(state: &[f64], state_name: &dyn Fn(usize) -> String) -> String {
+    let mut listed = state
+        .iter()
+        .enumerate()
+        .take(MAX_LISTED_STATES)
+        .map(|(i, value)| format!("{} = {value:.4e}", state_name(i)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    if state.len() > MAX_LISTED_STATES {
+        listed.push_str(", ...");
+    }
+    listed
+}
+
 /// Render a ` (available: a, b, c)` suffix, or an empty string when the list is
 /// empty (e.g. index-only models without named labels).
 fn format_available(labels: &[&str]) -> String {
@@ -193,5 +312,74 @@ fn describe_diffsol_error(
             Some(_) => format!("solver error{toward}: {other}"),
             None => other.to_string(),
         },
+    }
+}
+
+#[cfg(test)]
+mod solver_diagnostics_tests {
+    use super::*;
+
+    fn solver_error() -> PharmsolError {
+        PharmsolError::DiffsolError("Newton solver failed".to_string())
+    }
+
+    fn name(i: usize) -> String {
+        ["drug", "bacteria"]
+            .get(i)
+            .map_or_else(|| format!("x[{i}]"), |n| n.to_string())
+    }
+
+    #[test]
+    fn wide_state_range_adds_rescaling_hint() {
+        let message = solver_error()
+            .with_solver_diagnostics(3.0, &[1.5, 1.6e10], 1e-4, &name, None)
+            .to_string();
+        assert!(message.contains("10 orders of magnitude"), "{message}");
+        assert!(message.contains("bacteria = 1.600e10"), "{message}");
+        assert!(message.contains("rescaling"), "{message}");
+    }
+
+    #[test]
+    fn moderate_state_range_is_not_annotated() {
+        let original = solver_error().to_string();
+        let message = solver_error()
+            .with_solver_diagnostics(3.0, &[1.5, 1.0e5], 1e-4, &name, None)
+            .to_string();
+        assert_eq!(message, original);
+    }
+
+    #[test]
+    fn non_finite_accepted_state_is_named() {
+        let message = solver_error()
+            .with_solver_diagnostics(3.0, &[1.0, f64::NAN], 1e-4, &name, None)
+            .to_string();
+        assert!(message.contains("bacteria = NaN"), "{message}");
+    }
+
+    #[test]
+    fn non_finite_rhs_lists_derivatives_and_state() {
+        let rhs = NonFiniteRhs {
+            time: 2.0,
+            state: vec![1.0, -1e-9],
+            derivative: vec![0.5, f64::NAN],
+        };
+        let message = solver_error()
+            .with_solver_diagnostics(2.0, &[1.0, 1.0], 1e-4, &name, Some((&rhs, 12.0)))
+            .to_string();
+        assert!(message.contains("dbacteria/dt = NaN"), "{message}");
+        assert!(message.contains("t = 12.0000"), "{message}");
+        assert!(message.contains("bacteria = -1.0000e-9"), "{message}");
+    }
+
+    #[test]
+    fn non_solver_errors_pass_through() {
+        let error = PharmsolError::OtherError("boom".to_string()).with_solver_diagnostics(
+            0.0,
+            &[f64::NAN],
+            1e-4,
+            &name,
+            None,
+        );
+        assert_eq!(error.to_string(), "Other error: boom");
     }
 }

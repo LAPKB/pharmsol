@@ -22,6 +22,7 @@ use super::model_info::{RuntimeModelInfo, RuntimeRouteInfo, RuntimeStateInfo};
 use crate::{
     data::error_model::AssayErrorModels,
     data::{Covariates, Infusion, InputLabel, OutputLabel},
+    error::NonFiniteRhs,
     simulator::{
         cache::{
             BoundErrorModelCache, PredictionCache, SdeLikelihoodCache,
@@ -1194,9 +1195,11 @@ impl RuntimeOdeModel {
                 )));
             }
             let function_error = RefCell::new(None::<PharmsolError>);
+            let non_finite_rhs = RefCell::new(None::<NonFiniteRhs>);
 
             let diffeq_session = &session;
             let diffeq_error = &function_error;
+            let diffeq_non_finite = &non_finite_rhs;
             let diffeq = move |x: &V,
                                p: &V,
                                t: f64,
@@ -1243,6 +1246,22 @@ impl RuntimeOdeModel {
                     dx.as_mut_slice().fill(0.0);
                 } else {
                     shared.apply_route_inputs_to_rates(dx.as_mut_slice(), rateiv.as_slice());
+                    // Track whether the most recent evaluation was non-finite so a
+                    // later solver failure can report it. Non-finite trial
+                    // evaluations are normally recovered by the solver, so this
+                    // never turns into an error on its own.
+                    let mut slot = diffeq_non_finite.borrow_mut();
+                    if dx.as_slice().iter().all(|value| value.is_finite()) {
+                        if slot.is_some() {
+                            *slot = None;
+                        }
+                    } else {
+                        *slot = Some(NonFiniteRhs {
+                            time: t,
+                            state: x.as_slice().to_vec(),
+                            derivative: dx.as_slice().to_vec(),
+                        });
+                    }
                 }
             };
 
@@ -1292,6 +1311,7 @@ impl RuntimeOdeModel {
                         &mut output,
                         &session,
                         &function_error,
+                        &non_finite_rhs,
                     )?;
                 }};
             }
@@ -1327,6 +1347,7 @@ impl RuntimeOdeModel {
         output: &mut SubjectPredictions,
         session: &RefCell<Box<dyn FunctionSession + '_>>,
         function_error: &RefCell<Option<PharmsolError>>,
+        non_finite_rhs: &RefCell<Option<NonFiniteRhs>>,
     ) -> Result<(), PharmsolError>
     where
         F: Fn(&V, &V, f64, &mut V, &V, &V, &Covariates) + 'a,
@@ -1393,7 +1414,25 @@ impl RuntimeOdeModel {
                         Some(error) => Err(error),
                         None => Ok(()),
                     },
-                )?;
+                )
+                .map_err(|error| {
+                    let states = self.shared.metadata().states();
+                    let state_name = |i: usize| {
+                        states
+                            .get(i)
+                            .map(|state| state.name().to_string())
+                            .unwrap_or_else(|| format!("x[{i}]"))
+                    };
+                    let rhs = non_finite_rhs.borrow();
+                    let eqn = &solver.problem().eqn;
+                    error.with_solver_diagnostics(
+                        eqn.absolute_time(solver.state().t),
+                        solver.state().y.as_slice(),
+                        self.atol,
+                        &state_name,
+                        rhs.as_ref().map(|rhs| (rhs, eqn.absolute_time(rhs.time))),
+                    )
+                })?;
             }
             index += 1;
         }
