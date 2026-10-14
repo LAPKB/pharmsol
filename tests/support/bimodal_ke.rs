@@ -47,13 +47,8 @@ pub fn subject() -> Subject {
 pub fn subject_for_runtime_model(model: &pharmsol::dsl::CompiledRuntimeModel) -> Subject {
     let route_label = if model.info().routes.iter().any(|route| route.name == "iv") {
         "iv"
-    } else if model
-        .info()
-        .routes
-        .iter()
-        .any(|route| route.name == "input_0")
-    {
-        "input_0"
+    } else if model.info().routes.iter().any(|route| route.name == "0") {
+        "0"
     } else {
         panic!("bimodal_ke route is available");
     };

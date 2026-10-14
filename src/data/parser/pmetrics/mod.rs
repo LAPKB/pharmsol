@@ -5,7 +5,12 @@
 //!
 //! `INPUT` and `OUTEQ` values are parsed as labels, not rewritten to dense
 //! indices. Named values such as `iv` and `cp` are preserved exactly, and
-//! numeric values such as `1` are preserved as numeric-looking labels.
+//! numeric values such as `1` stay the label `"1"`, which matches a model
+//! route or output declared as `1`.
+//!
+//! Because Pmetrics columns are numeric, an integer value written with a
+//! zero fractional part (`1.0`, `2.00`) is normalized to its integer text
+//! (`"1"`, `"2"`). Every other value, including `01`, is kept verbatim.
 
 use crate::data::*;
 use csv::{ReaderBuilder, StringRecord};
@@ -378,14 +383,31 @@ fn deserialize_option_route_label<'de, D>(deserializer: D) -> Result<Option<Inpu
 where
     D: Deserializer<'de>,
 {
-    deserialize_option::<String, D>(deserializer).map(|value| value.map(InputLabel::from))
+    deserialize_option::<String, D>(deserializer)
+        .map(|value| value.map(|label| InputLabel::from(normalize_numeric_label(label))))
 }
 
 fn deserialize_option_output_label<'de, D>(deserializer: D) -> Result<Option<OutputLabel>, D::Error>
 where
     D: Deserializer<'de>,
 {
-    deserialize_option::<String, D>(deserializer).map(|value| value.map(OutputLabel::from))
+    deserialize_option::<String, D>(deserializer)
+        .map(|value| value.map(|label| OutputLabel::from(normalize_numeric_label(label))))
+}
+
+/// Rewrite an integer written with a zero fraction (`1.0`, `2.00`) to its
+/// integer text. Any other label is returned unchanged.
+fn normalize_numeric_label(label: String) -> String {
+    match label.split_once('.') {
+        Some((integer, fraction))
+            if !integer.is_empty()
+                && integer.bytes().all(|byte| byte.is_ascii_digit())
+                && fraction.bytes().all(|byte| byte == b'0') =>
+        {
+            integer.to_string()
+        }
+        _ => label,
+    }
 }
 
 fn deserialize_option_i64<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
@@ -535,6 +557,33 @@ mod tests {
 
         match &events[1] {
             Event::Observation(observation) => assert_eq!(observation.outeq().as_str(), "1"),
+            _ => panic!("expected observation event"),
+        }
+    }
+
+    #[test]
+    fn read_pmetrics_normalizes_float_formatted_integer_labels() {
+        let file = NamedTempFile::new().unwrap();
+        std::fs::write(
+            file.path(),
+            "ID,EVID,TIME,DUR,DOSE,ADDL,II,INPUT,OUT,OUTEQ,CENS,C0,C1,C2,C3\npt1,1,0,.,100,.,.,1.0,.,.,.,.,.,.,.\npt1,0,1,.,.,.,.,.,42,2.00,0,.,.,.,.\npt1,0,2,.,.,.,.,.,42,01,0,.,.,.,.\n",
+        )
+        .unwrap();
+
+        let data = read_pmetrics(file.path().display().to_string()).unwrap();
+        let events = data.subjects()[0].occasions()[0].events();
+
+        match &events[0] {
+            Event::Bolus(bolus) => assert_eq!(bolus.input().as_str(), "1"),
+            _ => panic!("expected bolus event"),
+        }
+        match &events[1] {
+            Event::Observation(observation) => assert_eq!(observation.outeq().as_str(), "2"),
+            _ => panic!("expected observation event"),
+        }
+        // Leading zeros are not a float format: `01` stays a distinct label.
+        match &events[2] {
+            Event::Observation(observation) => assert_eq!(observation.outeq().as_str(), "01"),
             _ => panic!("expected observation event"),
         }
     }

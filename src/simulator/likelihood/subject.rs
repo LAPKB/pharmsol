@@ -172,7 +172,7 @@ mod tests {
 
     fn create_error_models() -> AssayErrorModels {
         AssayErrorModels::empty()
-            .add(
+            .add_at(
                 0,
                 AssayErrorModel::additive(ErrorPoly::new(0.0, 1.0, 0.0, 0.0), 0.0),
             )
@@ -201,7 +201,7 @@ mod tests {
         preds.add_prediction(obs.to_prediction(1.0, vec![]));
 
         let error_model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 0.0);
-        let errors = AssayErrorModels::empty().add(0, error_model).unwrap();
+        let errors = AssayErrorModels::empty().add_at(0, error_model).unwrap();
 
         let log_lik = preds.log_likelihood(&errors).unwrap();
         assert!(log_lik.is_finite());

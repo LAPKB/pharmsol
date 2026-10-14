@@ -66,14 +66,14 @@ kind = ode
 
 params = ke, v
 states = central
-outputs = outeq_2, outeq_10, outeq_11
+outputs = 2, 10, 11
 
 
 dx(central) = infusion(iv) - ke * central
 
-out(outeq_10) = central / v ~ continuous()
-out(outeq_2) = central / v ~ continuous()
-out(outeq_11) = central / v ~ continuous()
+out(10) = central / v ~ continuous()
+out(2) = central / v ~ continuous()
+out(11) = central / v ~ continuous()
 "#;
 
 const ODE_NUMERIC_ROUTE_LABELS_AUTHORING_DSL: &str = r#"
@@ -84,8 +84,8 @@ states = first, second
 outputs = cp
 
 
-dx(first) = bolus(input_10) + 0
-dx(second) = bolus(input_11) + 0
+dx(first) = bolus(10) + 0
+dx(second) = bolus(11) + 0
 
 out(cp) = first + second ~ continuous()
 "#;
@@ -97,8 +97,8 @@ const ODE_NUMERIC_ROUTE_LABELS_STRUCTURED_DSL: &str = r#"model structured_numeri
         second,
     }
     routes {
-        input_10 -> first
-        input_11 -> second
+        10 -> first
+        11 -> second
     }
     dynamics {
         ddt(first) = 0
@@ -149,14 +149,14 @@ kind = ode
 
 params = ke, v
 states = central
-outputs = cp, outeq_0, outeq_1
+outputs = cp, 0, 1
 
 
 dx(central) = infusion(iv) - ke * central
 
 out(cp) = central / v ~ continuous()
-out(outeq_0) = 2 * central / v ~ continuous()
-out(outeq_1) = 3 * central / v ~ continuous()
+out(0) = 2 * central / v ~ continuous()
+out(1) = 3 * central / v ~ continuous()
 "#;
 
 #[cfg(feature = "dsl")]
@@ -1162,15 +1162,15 @@ fn ode_dsl_declared_output_order_controls_dense_indices_for_multi_digit_labels()
         dsl_view.outputs,
         vec![
             NamedIndex {
-                name: "outeq_2".to_string(),
+                name: "2".to_string(),
                 index: 0,
             },
             NamedIndex {
-                name: "outeq_10".to_string(),
+                name: "10".to_string(),
                 index: 1,
             },
             NamedIndex {
-                name: "outeq_11".to_string(),
+                name: "11".to_string(),
                 index: 2,
             },
         ]
@@ -1186,7 +1186,7 @@ fn ode_authoring_dsl_supports_prefixed_multi_digit_numeric_route_labels() {
         dsl_view.routes,
         vec![
             RouteParity {
-                name: "input_10".to_string(),
+                name: "10".to_string(),
                 kind: Some(RouteKindParity::Bolus),
                 declaration_index: 0,
                 input_index: 0,
@@ -1196,7 +1196,7 @@ fn ode_authoring_dsl_supports_prefixed_multi_digit_numeric_route_labels() {
                 has_bioavailability: false,
             },
             RouteParity {
-                name: "input_11".to_string(),
+                name: "11".to_string(),
                 kind: Some(RouteKindParity::Bolus),
                 declaration_index: 1,
                 input_index: 1,
@@ -1218,7 +1218,7 @@ fn ode_structured_dsl_supports_prefixed_multi_digit_numeric_route_labels() {
         dsl_view.routes,
         vec![
             RouteParity {
-                name: "input_10".to_string(),
+                name: "10".to_string(),
                 kind: None,
                 declaration_index: 0,
                 input_index: 0,
@@ -1228,7 +1228,7 @@ fn ode_structured_dsl_supports_prefixed_multi_digit_numeric_route_labels() {
                 has_bioavailability: false,
             },
             RouteParity {
-                name: "input_11".to_string(),
+                name: "11".to_string(),
                 kind: None,
                 declaration_index: 1,
                 input_index: 1,
@@ -1718,22 +1718,16 @@ fn ode_runtime_jit_preserves_mixed_output_labels() {
     let subject = Subject::builder("runtime-mixed-output-labels")
         .infusion(0.0, 100.0, "iv", 1.0)
         .missing_observation(0.5, "cp")
-        .missing_observation(0.5, "outeq_0")
-        .missing_observation(0.5, "outeq_1")
+        .missing_observation(0.5, "0")
+        .missing_observation(0.5, "1")
         .build();
     let support_point =
         pharmsol::Parameters::with_model(&runtime_model, [("ke", 0.2), ("v", 10.0)])
             .expect("valid named parameters");
 
     assert_eq!(compiled_output_slot_index(&runtime_model, "cp"), Some(0));
-    assert_eq!(
-        compiled_output_slot_index(&runtime_model, "outeq_0"),
-        Some(1)
-    );
-    assert_eq!(
-        compiled_output_slot_index(&runtime_model, "outeq_1"),
-        Some(2)
-    );
+    assert_eq!(compiled_output_slot_index(&runtime_model, "0"), Some(1));
+    assert_eq!(compiled_output_slot_index(&runtime_model, "1"), Some(2));
 
     let predictions = match runtime_model
         .estimate_predictions(&subject, &support_point)

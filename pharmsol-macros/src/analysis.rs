@@ -78,27 +78,30 @@ impl<'ast> Visit<'ast> for ClosureBodyUsage {
 
 pub(crate) struct IndexRewriteTarget {
     container: Ident,
-    labels: HashMap<usize, usize>,
+    labels: HashMap<String, usize>,
 }
 
 impl IndexRewriteTarget {
-    pub(crate) fn new(container: Ident, labels: HashMap<usize, usize>) -> Self {
+    pub(crate) fn new(container: Ident, labels: HashMap<String, usize>) -> Self {
         Self { container, labels }
     }
 }
 
-/// Maps user-visible numeric labels onto the internal dense indices used by the
-/// generated closures.
+/// Maps numeric labels onto the dense slots their declarations were assigned.
+///
+/// A numeric label is a name: `y[2]` for a model declaring `outputs: [2]`
+/// becomes `y[0]`, the slot of the declaration named `2`. Labels are matched
+/// by their literal text, never by numeric value.
 pub(crate) struct NumericLabelRewriter {
     index_targets: Vec<IndexRewriteTarget>,
-    route_labels: Option<HashMap<usize, usize>>,
+    route_labels: Option<HashMap<String, usize>>,
 }
 
 impl NumericLabelRewriter {
     pub(crate) fn rewrite(
         expr: &Expr,
         index_targets: Vec<IndexRewriteTarget>,
-        route_labels: Option<HashMap<usize, usize>>,
+        route_labels: Option<HashMap<String, usize>>,
     ) -> Expr {
         let mut rewritten = expr.clone();
         let mut rewriter = Self {
@@ -109,7 +112,7 @@ impl NumericLabelRewriter {
         rewritten
     }
 
-    fn target_labels(&self, path: &syn::ExprPath) -> Option<&HashMap<usize, usize>> {
+    fn target_labels(&self, path: &syn::ExprPath) -> Option<&HashMap<String, usize>> {
         if path.qself.is_some()
             || path.path.leading_colon.is_some()
             || path.path.segments.len() != 1
@@ -139,8 +142,8 @@ impl NumericLabelRewriter {
         };
 
         let entries = entries.into_iter().map(|mut entry| {
-            if let Some(value) = entry.route.numeric_value() {
-                if let Some(internal_index) = route_labels.get(&value) {
+            if let Some(text) = entry.route.numeric_text() {
+                if let Some(internal_index) = route_labels.get(&text) {
                     entry.route = SymbolicIndex::numeric(*internal_index);
                 }
             }
@@ -172,16 +175,19 @@ impl VisitMut for NumericLabelRewriter {
         let Lit::Int(lit) = &expr_lit.lit else {
             return;
         };
-        let Ok(external_index) = lit.base10_parse::<usize>() else {
-            return;
-        };
-        let Some(internal_index) = labels.get(&external_index) else {
+        let Some(internal_index) = labels.get(&lit.to_string()) else {
             return;
         };
 
+        // The slot literal is macro output: resolve it at the macro's mixed
+        // site so lints do not read the label's source text (`0`) as the
+        // text of this different literal.
         *expr_index.index = Expr::Lit(syn::ExprLit {
             attrs: Vec::new(),
-            lit: Lit::Int(LitInt::new(&internal_index.to_string(), lit.span())),
+            lit: Lit::Int(LitInt::new(
+                &internal_index.to_string(),
+                lit.span().resolved_at(Span::mixed_site()),
+            )),
         });
     }
 

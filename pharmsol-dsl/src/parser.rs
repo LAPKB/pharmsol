@@ -109,9 +109,24 @@ pub(crate) fn parse_place_fragment(src: &str) -> Result<Place, ParseError> {
 /// `((((...))))`; the limit is far beyond any realistic model.
 pub const MAX_NESTING_DEPTH: usize = 256;
 
+/// Integer literals (ASCII digits only) are accepted as route and output
+/// labels; the label is the literal text.
+fn is_integer_literal_text(text: &str) -> bool {
+    !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+fn takes_route_label_argument(callee: &str) -> bool {
+    matches!(callee, "bolus" | "infusion" | crate::RATE_FUNCTION_NAME)
+}
+
+fn is_route_input_name(expr: &Expr) -> bool {
+    matches!(&expr.kind, ExprKind::Name(name) if matches!(name.text.as_str(), "bolus" | "infusion"))
+}
+
 struct Parser {
     tokens: Vec<Token>,
     index: usize,
+    src: String,
     src_len: usize,
     layout_boundaries: Vec<LayoutBoundary>,
     depth: usize,
@@ -135,14 +150,15 @@ enum StatementContext {
 
 impl Parser {
     fn new(src: &str) -> Result<Self, ParseError> {
-        Ok(Self::from_tokens(lex(src)?, src.len()))
+        Ok(Self::from_tokens(lex(src)?, src))
     }
 
-    fn from_tokens(tokens: Vec<Token>, src_len: usize) -> Self {
+    fn from_tokens(tokens: Vec<Token>, src: &str) -> Self {
         Self {
             tokens,
             index: 0,
-            src_len,
+            src: src.to_string(),
+            src_len: src.len(),
             layout_boundaries: Vec::new(),
             depth: 0,
             fatal: false,
@@ -617,7 +633,7 @@ impl Parser {
                 TokenKind::Ident(name) if name == "bolus" || name == "infusion" => {
                     let followed_by_label = self
                         .next_same_line_index(self.index)
-                        .is_some_and(|next| matches!(self.tokens[next].kind, TokenKind::Ident(_)));
+                        .is_some_and(|next| self.is_label_token(next));
                     if followed_by_label {
                         let keyword = self.bump().expect("peeked kind keyword exists");
                         let kind = match keyword.kind {
@@ -986,16 +1002,12 @@ impl Parser {
         })?;
         match token.kind {
             TokenKind::Ident(name) => Ok(Ident::new(name, token.span)),
-            // `usize::MAX as f64` rounds up to 2^64; keep the bound exclusive
-            // so the cast never saturates.
-            TokenKind::Number(value)
-                if value.is_finite()
-                    && value >= 0.0
-                    && value.fract() == 0.0
-                    && value < usize::MAX as f64 =>
-            {
-                Ok(Ident::new((value as usize).to_string(), token.span))
-            }
+            // Numeric labels are plain names: keep the literal exactly as
+            // written (`1`, `01`, `10`), so it matches data labels verbatim.
+            TokenKind::Number(_) if self.is_integer_literal(token.span) => Ok(Ident::new(
+                &self.src[token.span.start..token.span.end],
+                token.span,
+            )),
             other => Err(ParseError::new(
                 format!(
                     "expected {expected} identifier or non-negative integer, found {}",
@@ -1003,6 +1015,25 @@ impl Parser {
                 ),
                 token.span,
             )),
+        }
+    }
+
+    fn is_integer_literal(&self, span: Span) -> bool {
+        is_integer_literal_text(&self.src[span.start..span.end])
+    }
+
+    /// Route-label arguments such as the `1` in `rate(1)` or `bolus(1)` are
+    /// names, not numbers: rewrite an integer literal into a name carrying
+    /// its source text.
+    fn integer_literal_as_label(&self, expr: Expr) -> Expr {
+        if matches!(expr.kind, ExprKind::Number(_)) && self.is_integer_literal(expr.span) {
+            let ident = Ident::new(&self.src[expr.span.start..expr.span.end], expr.span);
+            Expr {
+                span: expr.span,
+                kind: ExprKind::Name(ident),
+            }
+        } else {
+            expr
         }
     }
 
@@ -1131,6 +1162,11 @@ impl Parser {
                     "index expression",
                 )?;
                 let span = expr.span.join(close.span);
+                let index = if is_route_input_name(&expr) {
+                    self.integer_literal_as_label(index)
+                } else {
+                    index
+                };
                 expr = Expr {
                     span,
                     kind: ExprKind::Index {
@@ -1148,7 +1184,11 @@ impl Parser {
                         return Err(ParseError::new("only identifiers can be called", expr.span));
                     }
                 };
-                let args = self.parse_expr_list(&open, TokenKindMatcher::RPAREN)?;
+                let mut args = self.parse_expr_list(&open, TokenKindMatcher::RPAREN)?;
+                if takes_route_label_argument(&callee.text) && args.len() == 1 {
+                    let arg = args.pop().expect("one argument");
+                    args.push(self.integer_literal_as_label(arg));
+                }
                 let close = self.expect_closing(
                     |kind| matches!(kind, TokenKind::RParen),
                     "`)`",
@@ -1478,18 +1518,34 @@ impl Parser {
     }
 
     fn line_starts_route_decl(&self, index: usize) -> bool {
-        let Some(TokenKind::Ident(_)) = self.tokens.get(index).map(|token| &token.kind) else {
+        if !self.is_label_token(index) {
             return false;
-        };
+        }
         let Some(next) = self.next_same_line_index(index) else {
             return false;
         };
         match self.tokens[next].kind {
             TokenKind::Arrow => true,
-            // Kinded form: `bolus input_1 -> central`.
-            TokenKind::Ident(_) => self
+            // Kinded form: `bolus 1 -> central`.
+            _ if self.is_label_token(next) => self
                 .next_same_line_index(next)
                 .is_some_and(|after| matches!(self.tokens[after].kind, TokenKind::Arrow)),
+            _ => false,
+        }
+    }
+
+    /// A route or output label: an identifier or an integer literal.
+    fn is_label_token(&self, index: usize) -> bool {
+        match self.tokens.get(index) {
+            Some(Token {
+                kind: TokenKind::Ident(_),
+                ..
+            }) => true,
+            Some(Token {
+                kind: TokenKind::Number(_),
+                span,
+                ..
+            }) => self.is_integer_literal(*span),
             _ => false,
         }
     }
@@ -1525,10 +1581,9 @@ impl Parser {
     }
 
     fn line_starts_numeric_output_assignment(&self, index: usize) -> bool {
-        matches!(
-            self.tokens.get(index).map(|token| &token.kind),
-            Some(TokenKind::Number(_))
-        ) && self
+        self.tokens.get(index).is_some_and(|token| {
+            matches!(token.kind, TokenKind::Number(_)) && self.is_integer_literal(token.span)
+        }) && self
             .next_same_line_index(index)
             .is_some_and(|next| matches!(self.tokens[next].kind, TokenKind::Eq))
     }

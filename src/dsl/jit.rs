@@ -1607,9 +1607,9 @@ params = ke, v, tlag
 states = central
 outputs = cp
 
-lag(input_1) = tlag
+lag(1) = tlag
 
-dx(central) = bolus(input_1) + infusion(input_1) - ke * central
+dx(central) = bolus(1) + infusion(1) - ke * central
 
 out(cp) = central / v ~ continuous()
 "#;
@@ -1625,16 +1625,14 @@ out(cp) = central / v ~ continuous()
             .info()
             .routes
             .iter()
-            .find(|route| {
-                route.name == "input_1" && route.kind == Some(pharmsol_dsl::RouteKind::Bolus)
-            })
+            .find(|route| route.name == "1" && route.kind == Some(pharmsol_dsl::RouteKind::Bolus))
             .expect("bolus route");
         let infusion_route = jit
             .info()
             .routes
             .iter()
             .find(|route| {
-                route.name == "input_1" && route.kind == Some(pharmsol_dsl::RouteKind::Infusion)
+                route.name == "1" && route.kind == Some(pharmsol_dsl::RouteKind::Infusion)
             })
             .expect("infusion route");
         assert_eq!(bolus_route.index, 0);
@@ -1642,8 +1640,8 @@ out(cp) = central / v ~ continuous()
         assert!(bolus_route.has_lag);
 
         let jit_subject = Subject::builder("ode")
-            .bolus(0.0, 500.0, "input_1")
-            .infusion(1.0, 100.0, "input_1", 2.0)
+            .bolus(0.0, 500.0, "1")
+            .infusion(1.0, 100.0, "1", 2.0)
             .observation(0.5, 0.0, "cp")
             .observation(1.0, 0.0, "cp")
             .observation(2.0, 0.0, "cp")
@@ -1713,9 +1711,9 @@ params = ke, v, tlag
 states = central
 outputs = cp
 
-lag(input_1) = tlag
+lag(1) = tlag
 
-dx(central) = bolus(input_1) + infusion(input_1) - ke * central
+dx(central) = bolus(1) + infusion(1) - ke * central
 
 out(cp) = central / v ~ continuous()
 "#;
@@ -1727,11 +1725,11 @@ model shared_label_canonical {
     parameters { ke, v, tlag }
     states { central }
     routes {
-        bolus input_1 -> central { lag = tlag },
-        infusion input_1 -> central
+        bolus 1 -> central { lag = tlag },
+        infusion 1 -> central
     }
     dynamics {
-        ddt(central) = -ke * central + rate(input_1)
+        ddt(central) = -ke * central + rate(1)
     }
     outputs {
         cp = central / v
@@ -1762,8 +1760,8 @@ model shared_label_canonical {
         .with_solver(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45));
 
         let subject = Subject::builder("ode")
-            .bolus(0.0, 500.0, "input_1")
-            .infusion(1.0, 100.0, "input_1", 2.0)
+            .bolus(0.0, 500.0, "1")
+            .infusion(1.0, 100.0, "1", 2.0)
             .observation(0.5, 0.0, "cp")
             .observation(1.0, 0.0, "cp")
             .observation(2.0, 0.0, "cp")
@@ -1807,9 +1805,9 @@ states = gut, peripheral, central
 outputs = cp
 
 
-ddt(gut) = bolus(input_1) - ka * gut
-ddt(peripheral) = infusion(input_2) - kp * peripheral
-ddt(central) = infusion(input_1) - ke * central
+ddt(gut) = bolus(1) - ka * gut
+ddt(peripheral) = infusion(2) - kp * peripheral
+ddt(central) = infusion(1) - ke * central
 
 out(cp) = central / v ~ continuous()
 "#;
@@ -1825,25 +1823,23 @@ out(cp) = central / v ~ continuous()
         let bolus = info
             .routes
             .iter()
-            .find(|route| {
-                route.name == "input_1" && route.kind == Some(pharmsol_dsl::RouteKind::Bolus)
-            })
-            .expect("input_1 bolus route");
+            .find(|route| route.name == "1" && route.kind == Some(pharmsol_dsl::RouteKind::Bolus))
+            .expect("1 bolus route");
         let infusion = info
             .routes
             .iter()
             .find(|route| {
-                route.name == "input_1" && route.kind == Some(pharmsol_dsl::RouteKind::Infusion)
+                route.name == "1" && route.kind == Some(pharmsol_dsl::RouteKind::Infusion)
             })
-            .expect("input_1 infusion route");
+            .expect("1 infusion route");
         assert_eq!(bolus.index, 0);
         assert_eq!(bolus.destination_name, "gut");
         assert_eq!(infusion.index, 1);
         assert_eq!(infusion.destination_name, "central");
 
         let jit_subject = Subject::builder("ode")
-            .bolus(0.0, 500.0, "input_1")
-            .infusion(0.0, 100.0, "input_1", 2.0)
+            .bolus(0.0, 500.0, "1")
+            .infusion(0.0, 100.0, "1", 2.0)
             .observation(0.5, 0.0, "cp")
             .observation(1.0, 0.0, "cp")
             .observation(2.0, 0.0, "cp")
@@ -1851,10 +1847,10 @@ out(cp) = central / v ~ continuous()
             .observation(4.0, 0.0, "cp")
             .build();
 
-        // The reference uses infusion ordinal 1 for `input_1` (its declared
-        // slot) and infusion ordinal 0 for `input_2`; if the runtime resolved
-        // the `input_1` infusion by a colliding numeric index it would land
-        // in `peripheral` (input_2's destination) and the predictions would
+        // The reference uses infusion ordinal 1 for `1` (its declared
+        // slot) and infusion ordinal 0 for `2`; if the runtime resolved
+        // the `1` infusion by a colliding numeric index it would land
+        // in `peripheral` (route `2`'s destination) and the predictions would
         // diverge.
         let reference_subject = Subject::builder("ode")
             .bolus(0.0, 500.0, 0)
@@ -1983,9 +1979,9 @@ out(cp) = central / v ~ continuous()
     }
 
     #[test]
-    fn route_resolution_matches_bare_numeric_aliases() {
+    fn route_resolution_matches_numeric_labels_exactly() {
         let source = r#"
-name = numeric_alias
+name = numeric_labels
 kind = ode
 
 params = ke, v
@@ -1993,7 +1989,7 @@ states = central
 outputs = cp
 
 
-ddt(central) = infusion(input_1) - ke * central
+ddt(central) = infusion(1) - ke * central
 
 out(cp) = central / v ~ continuous()
 "#;
@@ -2010,26 +2006,29 @@ out(cp) = central / v ~ continuous()
         )
         .expect("valid named parameters");
 
-        // A bare numeric label resolves through the `input_<n>` alias.
+        // The numeric label `1` resolves to the route declared as `1`.
         let numeric_subject = Subject::builder("ode")
             .infusion(0.0, 100.0, 1, 2.0)
             .observation(1.0, 0.0, "cp")
             .build();
         jit.estimate_predictions(&numeric_subject, &support)
-            .expect("bare numeric alias must resolve");
+            .expect("declared numeric label must resolve");
 
-        // A bare numeric label without a declared alias never resolves.
-        let missing_subject = Subject::builder("ode")
-            .infusion(0.0, 100.0, 9, 2.0)
-            .observation(1.0, 0.0, "cp")
-            .build();
-        let err = jit
-            .estimate_predictions(&missing_subject, &support)
-            .expect_err("undeclared numeric alias must fail");
-        assert!(
-            matches!(err, crate::PharmsolError::UnknownInputLabel { .. }),
-            "unexpected error: {err:?}"
-        );
+        // Undeclared labels never resolve: not by position, and `input_1`
+        // is not an alias of `1`.
+        for label in ["0", "9", "01", "input_1"] {
+            let missing_subject = Subject::builder("ode")
+                .infusion(0.0, 100.0, label, 2.0)
+                .observation(1.0, 0.0, "cp")
+                .build();
+            let err = jit
+                .estimate_predictions(&missing_subject, &support)
+                .expect_err("undeclared label must fail");
+            assert!(
+                matches!(err, crate::PharmsolError::UnknownInputLabel { .. }),
+                "unexpected error for `{label}`: {err:?}"
+            );
+        }
     }
 
     #[test]
@@ -2046,7 +2045,7 @@ states = central
 outputs = cp
 
 
-ddt(central) = bolus(input_0) - ke * central
+ddt(central) = bolus(0) - ke * central
 
 out(cp) = central / v ~ continuous()
 "#;
@@ -2060,8 +2059,8 @@ out(cp) = central / v ~ continuous()
 
         let ulp = 12.0f64.next_up() - 12.0;
         let subject = Subject::builder("dense_grid_near_event")
-            .bolus(0.0, 200.0, "input_0")
-            .bolus(12.0, 100.0, "input_0")
+            .bolus(0.0, 200.0, "0")
+            .bolus(12.0, 100.0, "0")
             .missing_observation(0.0, "cp")
             .missing_observation(12.0 - 16.0 * ulp, "cp")
             .missing_observation(12.0 + 16.0 * ulp, "cp")

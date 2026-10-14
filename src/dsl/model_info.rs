@@ -380,22 +380,22 @@ out(cp) = central / v
     }
 
     #[test]
-    fn runtime_model_info_preserves_canonical_numeric_channel_names() {
+    fn runtime_model_info_preserves_numeric_channel_names() {
         let info = load_model_info(
             r#"
-name = canonical_numeric_channels
+name = numeric_channels
 kind = ode
 
 params = ke, v
 states = depot, central
-outputs = cp, outeq_2
+outputs = cp, 2
 
 
-dx(depot) = bolus(input_10) - ke * depot
+dx(depot) = bolus(10) - ke * depot
 dx(central) = infusion(iv) - ke * central
 
 out(cp) = central / v
-out(outeq_2) = depot / v
+out(2) = depot / v
 "#,
         );
 
@@ -404,14 +404,14 @@ out(outeq_2) = depot / v
                 .iter()
                 .map(|route| route.name.as_str())
                 .collect::<Vec<_>>(),
-            vec!["input_10", "iv"]
+            vec!["10", "iv"]
         );
         assert_eq!(
             info.outputs
                 .iter()
                 .map(|output| output.name.as_str())
                 .collect::<Vec<_>>(),
-            vec!["cp", "outeq_2"]
+            vec!["cp", "2"]
         );
     }
 

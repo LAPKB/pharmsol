@@ -15,7 +15,7 @@ use pharmsol_dsl::execution::ModelFunctionKind;
 
 use pharmsol_dsl::{
     AnalyticalKernel, AnalyticalStructureInputKind, AnalyticalStructureInputPlan, ModelKind,
-    RouteKind, NUMERIC_ROUTE_PREFIX,
+    RouteKind,
 };
 
 use super::model_info::{RuntimeModelInfo, RuntimeRouteInfo, RuntimeStateInfo};
@@ -657,9 +657,7 @@ impl SharedRuntimeModel {
     /// genuinely kind-less route from an explicitly bolus one; the info
     /// representation can.
     ///
-    /// Bare numeric labels resolve through the `input_<n>` alias, matching
-    /// Pmetrics `INPUT` numbering, and never fall back to a declaration
-    /// position.
+    /// Labels match declared route names exactly.
     fn route_for_label_kind(
         &self,
         label: &str,
@@ -669,20 +667,6 @@ impl SharedRuntimeModel {
             .routes
             .iter()
             .find(|route| route.kind == kind && route.name == label)
-            .or_else(|| {
-                if !crate::simulator::equation::metadata::is_bare_numeric_label(label) {
-                    return None;
-                }
-                let aliased = format!("{NUMERIC_ROUTE_PREFIX}{label}");
-                self.info
-                    .routes
-                    .iter()
-                    .find(|route| route.kind == kind && route.name == aliased)
-            })
-    }
-
-    fn metadata_output_index_for_label(&self, label: &str) -> Option<usize> {
-        self.metadata().output_for_label(label)
     }
 
     fn validate_support_point(&self, support_point: &[f64]) -> Result<(), PharmsolError> {
@@ -741,7 +725,7 @@ impl SharedRuntimeModel {
         // An explicitly bolus or infusion route is never an any-kind
         // fallback: bolus and infusion indices are separate ordinal spaces,
         // so falling through to the other kind's route by a colliding
-        // numeric index would silently execute the wrong route.
+        // input slot would silently execute the wrong route.
         let route = match self.route_for_label_kind(name, Some(kind)) {
             Some(route) => Some(route),
             None => self.route_for_label_kind(name, None),
@@ -770,7 +754,8 @@ impl SharedRuntimeModel {
     }
 
     fn resolve_output_label(&self, label: &OutputLabel) -> Result<usize, PharmsolError> {
-        self.metadata_output_index_for_label(label.as_str())
+        self.metadata()
+            .output_for_label(label.as_str())
             .ok_or_else(|| {
                 PharmsolError::unknown_output_label(
                     label.as_str(),

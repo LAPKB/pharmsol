@@ -20,11 +20,12 @@
 //!
 //! Input and output labels arrive from public data APIs as strings.
 //!
-//! - Without metadata, handwritten models fall back to numeric labels such as
-//!   `0` or `1`.
 //! - With [`metadata::ModelMetadata`] attached, route and output labels are
-//!   resolved by name against the declared routes and outputs before
-//!   simulation.
+//!   resolved by exact name against the declared routes and outputs before
+//!   simulation. Numeric names such as `"1"` are ordinary names and never
+//!   resolve by position.
+//! - Without metadata, handwritten models declare no names, so labels are
+//!   dense indices such as `0` or `1`.
 //!
 //! That label-first path is the preferred public workflow for current authoring.
 //!
@@ -360,8 +361,8 @@ pub(crate) trait EquationPriv: EquationTypes {
 ///
 /// Subject data enters this layer through public labels on dose and observation
 /// events. If metadata is attached to the equation, those labels are resolved by
-/// name before simulation. Otherwise, the execution layer expects numeric labels
-/// that can be interpreted as dense indices.
+/// exact name before simulation. Otherwise, the equation declares no names and
+/// the execution layer expects labels that are dense indices.
 ///
 /// # Likelihood Calculation
 ///

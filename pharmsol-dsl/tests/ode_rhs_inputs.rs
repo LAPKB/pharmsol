@@ -34,7 +34,7 @@ fn brackets_and_derived_bolus_scales_are_supported() {
 
 #[test]
 fn shared_bolus_and_infusion_label_is_supported() {
-    let source = model("dx(gut) = bolus(input_1) * scale\ndx(central) = infusion(input_1) * v");
+    let source = model("dx(gut) = bolus(1) * scale\ndx(central) = infusion(1) * v");
     analyze_model(&parse_model(&source).unwrap()).unwrap();
 }
 

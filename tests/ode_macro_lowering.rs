@@ -33,8 +33,8 @@ fn subject_for_shared_input() -> Subject {
 
 fn subject_for_shared_label() -> Subject {
     Subject::builder("macro-shared-label")
-        .bolus(0.0, 500.0, "input_1")
-        .infusion(1.0, 100.0, "input_1", 2.0)
+        .bolus(0.0, 500.0, "1")
+        .infusion(1.0, 100.0, "1", 2.0)
         .missing_observation(0.5, "cp")
         .missing_observation(1.0, "cp")
         .missing_observation(2.0, "cp")
@@ -114,13 +114,13 @@ fn numeric_label_macro_ode() -> equation::ODE {
         name: "numeric_label_one_cpt",
         params: [ke, v],
         states: [central],
-        outputs: [outeq_1],
+        outputs: [1],
 
         diffeq: |x, _t, dx| {
-            dx[central] = infusion[input_1] - ke * x[central];
+            dx[central] = infusion[1] - ke * x[central];
         },
         out: |x, _t, y| {
-            y[outeq_1] = x[central] / v;
+            y[1] = x[central] / v;
         },
     }
 }
@@ -146,9 +146,9 @@ fn numeric_label_handwritten_ode() -> equation::ODE {
         equation::metadata::new("numeric_label_one_cpt")
             .parameters(["ke", "v"])
             .states(["central"])
-            .outputs(["outeq_1"])
+            .outputs(["1"])
             .route(
-                equation::Route::infusion("input_1")
+                equation::Route::infusion("1")
                     .to_state("central")
                     .inject_input_to_destination(),
             ),
@@ -228,10 +228,10 @@ fn shared_label_macro_ode() -> equation::ODE {
         outputs: [cp],
 
         diffeq: |x, _t, dx| {
-            dx[central] = bolus[input_1] + infusion[input_1] - ke * x[central];
+            dx[central] = bolus[1] + infusion[1] - ke * x[central];
         },
         lag: |_t| {
-            lag! { input_1 => tlag }
+            lag! { 1 => tlag }
         },
         out: |x, _t, y| {
             y[cp] = x[central] / v;
@@ -265,11 +265,11 @@ fn shared_label_handwritten_ode() -> equation::ODE {
             .states(["central"])
             .outputs(["cp"])
             .routes([
-                equation::Route::bolus("input_1")
+                equation::Route::bolus("1")
                     .to_state("central")
                     .with_lag()
                     .inject_input_to_destination(),
-                equation::Route::infusion("input_1")
+                equation::Route::infusion("1")
                     .to_state("central")
                     .inject_input_to_destination(),
             ]),
@@ -282,18 +282,18 @@ fn numeric_route_property_macro_ode() -> equation::ODE {
         name: "numeric_route_property_one_cpt",
         params: [ka, ke, v, tlag, f_oral],
         states: [depot, central],
-        outputs: [outeq_1],
+        outputs: [1],
 
         diffeq: |x, _t, dx| {
-            dx[depot] = bolus[input_1] * (f_oral) - ka * x[depot];
+            dx[depot] = bolus[1] * (f_oral) - ka * x[depot];
             dx[central] = ka * x[depot] - ke * x[central];
         },
         lag: |_t| {
-            lag! { input_1 => tlag }
+            lag! { 1 => tlag }
         },
 
         out: |x, _t, y| {
-            y[outeq_1] = x[central] / v;
+            y[1] = x[central] / v;
         },
     }
 }
@@ -326,9 +326,9 @@ fn numeric_route_property_handwritten_ode() -> equation::ODE {
         equation::metadata::new("numeric_route_property_one_cpt")
             .parameters(["ka", "ke", "v", "tlag", "f_oral"])
             .states(["depot", "central"])
-            .outputs(["outeq_1"])
+            .outputs(["1"])
             .route(
-                equation::Route::bolus("input_1")
+                equation::Route::bolus("1")
                     .to_state("depot")
                     .with_lag()
                     .with_bioavailability()
@@ -343,15 +343,15 @@ fn mixed_output_labels_macro_ode() -> equation::ODE {
         name: "mixed_output_labels_one_cpt",
         params: [ke, v],
         states: [central],
-        outputs: [cp, outeq_0, outeq_1],
+        outputs: [cp, 0, 1],
 
         diffeq: |x, _t, dx| {
             dx[central] = infusion[iv] - ke * x[central];
         },
         out: |x, _t, y| {
             y[cp] = x[central] / v;
-            y[outeq_0] = 2.0 * x[central] / v;
-            y[outeq_1] = 3.0 * x[central] / v;
+            y[0] = 2.0 * x[central] / v;
+            y[1] = 3.0 * x[central] / v;
         },
     }
 }
@@ -379,7 +379,7 @@ fn mixed_output_labels_handwritten_ode() -> equation::ODE {
         equation::metadata::new("mixed_output_labels_one_cpt")
             .parameters(["ke", "v"])
             .states(["central"])
-            .outputs(["cp", "outeq_0", "outeq_1"])
+            .outputs(["cp", "0", "1"])
             .route(
                 equation::Route::infusion("iv")
                     .to_state("central")
@@ -517,8 +517,8 @@ fn macro_numeric_labels_lower_to_dense_slots() {
         .expect("macro numeric-label model should carry metadata");
 
     assert_metadata_shape(&macro_ode, &handwritten_ode);
-    assert!(macro_metadata.route("input_1").is_some());
-    assert!(macro_metadata.output("outeq_1").is_some());
+    assert!(macro_metadata.route("1").is_some());
+    assert!(macro_metadata.output("1").is_some());
     assert_eq!(macro_ode.state_index("central"), Some(0));
 
     let macro_predictions = macro_ode
@@ -589,7 +589,7 @@ fn macro_shared_label_lowering_matches_handwritten_metadata_and_predictions() {
         .expect("macro shared-label model should carry metadata");
 
     assert_metadata_shape(&macro_ode, &handwritten_ode);
-    assert!(macro_metadata.route("input_1").is_some());
+    assert!(macro_metadata.route("1").is_some());
     assert!(macro_metadata.output("cp").is_some());
     assert_eq!(macro_ode.state_index("central"), Some(0));
 
@@ -625,8 +625,8 @@ fn macro_mixed_output_labels_lower_to_dense_slots() {
 
     assert_metadata_shape(&macro_ode, &handwritten_ode);
     assert!(macro_metadata.output("cp").is_some());
-    assert!(macro_metadata.output("outeq_0").is_some());
-    assert!(macro_metadata.output("outeq_1").is_some());
+    assert!(macro_metadata.output("0").is_some());
+    assert!(macro_metadata.output("1").is_some());
 
     let macro_predictions = macro_ode
         .estimate_predictions(&subject, &support_point)
@@ -663,8 +663,8 @@ fn macro_numeric_route_properties_lower_to_dense_slots() {
         .expect("macro numeric route-property model should carry metadata");
 
     assert_metadata_shape(&macro_ode, &handwritten_ode);
-    assert!(macro_metadata.route("input_1").is_some());
-    assert!(macro_metadata.output("outeq_1").is_some());
+    assert!(macro_metadata.route("1").is_some());
+    assert!(macro_metadata.output("1").is_some());
     assert_eq!(macro_ode.state_index("depot"), Some(0));
     assert_eq!(macro_ode.state_index("central"), Some(1));
 

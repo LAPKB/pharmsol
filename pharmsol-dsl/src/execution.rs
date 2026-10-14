@@ -1573,20 +1573,20 @@ out(cp) = central / v ~ continuous()
     }
 
     #[test]
-    fn canonical_numeric_channel_names_flow_into_execution_metadata_and_abi() {
-        let src = r#"name = canonical_numeric_channels
+    fn numeric_channel_names_flow_into_execution_metadata_and_abi() {
+        let src = r#"name = numeric_channels
 kind = ode
 
 params = ke, v
 states = depot, central
-outputs = cp, outeq_2
+outputs = cp, 2
 
 
-dx(depot) = bolus(input_10) - ke * depot
+dx(depot) = bolus(10) - ke * depot
 dx(central) = infusion(iv) - ke * central
 
 out(cp) = central / v
-out(outeq_2) = depot / v
+out(2) = depot / v
 "#;
 
         let model = crate::parse_model(src).expect("authoring model parses");
@@ -1600,7 +1600,7 @@ out(outeq_2) = depot / v
                 .iter()
                 .map(|route| route.name.as_str())
                 .collect::<Vec<_>>(),
-            vec!["input_10", "iv"]
+            vec!["10", "iv"]
         );
         assert_eq!(
             compiled
@@ -1609,7 +1609,7 @@ out(outeq_2) = depot / v
                 .iter()
                 .map(|output| output.name.as_str())
                 .collect::<Vec<_>>(),
-            vec!["cp", "outeq_2"]
+            vec!["cp", "2"]
         );
         assert_eq!(
             compiled
@@ -1619,7 +1619,7 @@ out(outeq_2) = depot / v
                 .iter()
                 .map(|slot| slot.name.as_str())
                 .collect::<Vec<_>>(),
-            vec!["input_10", "iv"]
+            vec!["10", "iv"]
         );
         assert_eq!(
             compiled
@@ -1629,7 +1629,7 @@ out(outeq_2) = depot / v
                 .iter()
                 .map(|slot| slot.name.as_str())
                 .collect::<Vec<_>>(),
-            vec!["cp", "outeq_2"]
+            vec!["cp", "2"]
         );
     }
 

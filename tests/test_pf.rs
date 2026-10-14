@@ -53,7 +53,7 @@ fn test_particle_filter_likelihood() {
 
     let ems = AssayErrorModels::default()
         .add(
-            0,
+            "cp",
             AssayErrorModel::additive(ErrorPoly::new(0.5, 0.0, 0.0, 0.0), 0.0),
         )
         .unwrap();

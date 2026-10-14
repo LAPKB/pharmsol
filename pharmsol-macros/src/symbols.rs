@@ -9,7 +9,10 @@ use syn::{
 };
 
 /// A `states` / `outputs` / route label, written either as a name or as a
-/// numeric index.
+/// numeric literal.
+///
+/// A numeric label is a plain name whose text is the literal (`1`, `10`):
+/// it has no relationship to declaration order or dense slots.
 #[derive(Clone)]
 pub(crate) enum SymbolicIndex {
     Ident(Ident),
@@ -20,7 +23,7 @@ impl SymbolicIndex {
     pub(crate) fn name(&self) -> String {
         match self {
             Self::Ident(ident) => ident.to_string(),
-            Self::Int(lit) => lit.base10_digits().to_string(),
+            Self::Int(lit) => lit.to_string(),
         }
     }
 
@@ -31,13 +34,11 @@ impl SymbolicIndex {
         }
     }
 
-    pub(crate) fn numeric_value(&self) -> Option<usize> {
+    /// The literal text of a numeric label (`"1"` for `1`, `"01"` for `01`).
+    pub(crate) fn numeric_text(&self) -> Option<String> {
         match self {
             Self::Ident(_) => None,
-            Self::Int(lit) => Some(
-                lit.base10_parse::<usize>()
-                    .expect("validated numeric label should fit usize"),
-            ),
+            Self::Int(lit) => Some(lit.to_string()),
         }
     }
 
@@ -50,17 +51,23 @@ impl Parse for SymbolicIndex {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         if input.peek(LitInt) {
             let lit: LitInt = input.parse()?;
-            lit.base10_parse::<usize>().map_err(|_| {
-                syn::Error::new_spanned(
+            if !is_plain_decimal(&lit.to_string()) {
+                return Err(syn::Error::new_spanned(
                     &lit,
-                    "numeric declaration-first labels must be non-negative base-10 integers that fit in usize",
-                )
-            })?;
+                    "numeric declaration-first labels must be plain decimal digits such as `1` or `10`",
+                ));
+            }
             Ok(Self::Int(lit))
         } else {
             Ok(Self::Ident(input.parse()?))
         }
     }
+}
+
+/// Whether a literal's source text is only ASCII digits (no suffix, sign,
+/// radix prefix or underscores).
+pub(crate) fn is_plain_decimal(text: &str) -> bool {
+    !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit())
 }
 
 impl ToTokens for SymbolicIndex {
@@ -164,12 +171,14 @@ pub(crate) fn symbolic_index_bindings(labels: &[SymbolicIndex]) -> Vec<(Symbolic
         .collect()
 }
 
+/// Maps each numeric label's literal text to the dense slot its declaration
+/// was assigned.
 pub(crate) fn symbolic_numeric_binding_map(
     bindings: &[(SymbolicIndex, usize)],
-) -> HashMap<usize, usize> {
+) -> HashMap<String, usize> {
     bindings
         .iter()
-        .filter_map(|(label, index)| label.numeric_value().map(|value| (value, *index)))
+        .filter_map(|(label, index)| label.numeric_text().map(|text| (text, *index)))
         .collect()
 }
 
@@ -236,4 +245,31 @@ pub(crate) fn dense_index_len(bindings: &[(SymbolicIndex, usize)]) -> usize {
         .map(|(_, index)| index + 1)
         .max()
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn numeric_labels_keep_their_literal_text() {
+        let labels = ["1", "01", "10"]
+            .map(|src| syn::parse_str::<SymbolicIndex>(src).expect("numeric label parses"));
+        assert_eq!(
+            labels.each_ref().map(SymbolicIndex::name),
+            ["1", "01", "10"]
+        );
+
+        let map = symbolic_numeric_binding_map(&symbolic_index_bindings(&labels));
+        assert_eq!(map.get("1"), Some(&0));
+        assert_eq!(map.get("01"), Some(&1));
+        assert_eq!(map.get("10"), Some(&2));
+    }
+
+    #[test]
+    fn rejects_non_decimal_numeric_labels() {
+        for src in ["1usize", "0x1", "1_0"] {
+            assert!(syn::parse_str::<SymbolicIndex>(src).is_err(), "{src}");
+        }
+    }
 }

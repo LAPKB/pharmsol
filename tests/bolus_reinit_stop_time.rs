@@ -98,10 +98,10 @@ const LAGGED_STOP_OBSERVATION_TIMES: [f64; 16] = [
 fn subject_with_bolus_history() -> Subject {
     let mut builder = Subject::builder("g34");
     for dose_index in -16..=0 {
-        builder = builder.bolus(f64::from(dose_index) * 12.0, 750.0, "input_1");
+        builder = builder.bolus(f64::from(dose_index) * 12.0, 750.0, "1");
     }
     for time in OBSERVATION_TIMES {
-        builder = builder.missing_observation(time, "outeq_1");
+        builder = builder.missing_observation(time, "1");
     }
     builder.build()
 }
@@ -109,10 +109,10 @@ fn subject_with_bolus_history() -> Subject {
 fn subject_with_crushed_endpoint_step() -> Subject {
     let mut builder = Subject::builder("g10");
     for dose_index in -16..=0 {
-        builder = builder.bolus(f64::from(dose_index) * 12.0, 1000.0, "input_1");
+        builder = builder.bolus(f64::from(dose_index) * 12.0, 1000.0, "1");
     }
     for time in CRUSHED_STOP_OBSERVATION_TIMES {
-        builder = builder.missing_observation(time, "outeq_1");
+        builder = builder.missing_observation(time, "1");
     }
     builder.build()
 }
@@ -120,10 +120,10 @@ fn subject_with_crushed_endpoint_step() -> Subject {
 fn subject_with_lagged_absolute_stop_roundoff() -> Subject {
     let mut builder = Subject::builder("g28");
     for dose_index in -16..=0 {
-        builder = builder.bolus(f64::from(dose_index) * 12.0, 750.0, "input_1");
+        builder = builder.bolus(f64::from(dose_index) * 12.0, 750.0, "1");
     }
     for time in LAGGED_STOP_OBSERVATION_TIMES {
-        builder = builder.missing_observation(time, "outeq_1");
+        builder = builder.missing_observation(time, "1");
     }
     builder.build()
 }
@@ -156,8 +156,8 @@ fn closure_model(solver: OdeSolver) -> equation::ODE {
         equation::metadata::new("bolus_reinit_stop_time")
             .parameters(["ka", "cl0", "vc0", "q0", "vp0"])
             .states(["x1", "x2", "x3"])
-            .outputs(["outeq_1"])
-            .routes([equation::Route::bolus("input_1")
+            .outputs(["1"])
+            .routes([equation::Route::bolus("1")
                 .to_state("x1")
                 .expect_explicit_input()]),
     )
@@ -198,8 +198,8 @@ fn lagged_closure_model(solver: OdeSolver) -> equation::ODE {
         equation::metadata::new("lagged_absolute_stop_roundoff")
             .parameters(["lag1", "ka", "cl0", "vc0", "q0", "vp0", "fa1"])
             .states(["x1", "x2", "x3"])
-            .outputs(["outeq_1"])
-            .routes([equation::Route::bolus("input_1")
+            .outputs(["1"])
+            .routes([equation::Route::bolus("1")
                 .to_state("x1")
                 .expect_explicit_input()]),
     )
@@ -297,7 +297,7 @@ name = bolus_reinit_stop_time
 kind = ode
 params = ka, cl0, vc0, q0, vp0
 states = x1, x2, x3
-outputs = outeq_1
+outputs = 1
 
 
 cl = cl0
@@ -308,24 +308,23 @@ ke = cl / vc
 k23 = q / vc
 k32 = q / vp
 
-dx(x1) = bolus(input_1) - (x1 * ka)
-dx(x2) = infusion(input_1) + x1 * ka + (x3 * k32) - (x2 * (ke + k23))
+dx(x1) = bolus(1) - (x1 * ka)
+dx(x2) = infusion(1) + x1 * ka + (x3 * k32) - (x2 * (ke + k23))
 dx(x3) = x2 * k23 - (x3 * k32)
 
-out(outeq_1) = x2 / vc
+out(1) = x2 / vc
 "#;
 
 fn infusion_boundary_subject() -> Subject {
     Subject::builder("accepted_infusion_boundary")
-        .infusion(5.0, 100.0, "input_1", 10.0_f64.next_up() - 5.0)
+        .infusion(5.0, 100.0, "1", 10.0_f64.next_up() - 5.0)
         .missing_observation(10.0, "cp")
         .missing_observation(20.0, "cp")
         .build()
 }
 
 fn stepped_infusion_boundary_subject() -> Subject {
-    let mut builder =
-        Subject::builder("stepped_infusion_boundary").infusion(0.0, 100.0, "input_1", 12.0);
+    let mut builder = Subject::builder("stepped_infusion_boundary").infusion(0.0, 100.0, "1", 12.0);
     for time in OBSERVATION_TIMES.into_iter().filter(|time| *time < 12.0) {
         builder = builder.missing_observation(time, "cp");
     }
@@ -350,7 +349,7 @@ fn closure_infusion_model(solver: OdeSolver) -> equation::ODE {
         equation::metadata::new("accepted_infusion_boundary")
             .states(["central"])
             .outputs(["cp"])
-            .routes([equation::Route::infusion("input_1").to_state("central")]),
+            .routes([equation::Route::infusion("1").to_state("central")]),
     )
     .expect("infusion metadata should validate")
 }
@@ -417,7 +416,7 @@ name = accepted_infusion_boundary
 kind = ode
 states = central
 outputs = cp
-dx(central) = infusion(input_1) - (0.5 * central)
+dx(central) = infusion(1) - (0.5 * central)
 out(cp) = central
 "#;
 
@@ -470,7 +469,7 @@ fn jit_solvers_restart_with_post_infusion_rhs() -> Result<(), Box<dyn std::error
 
 fn material_short_infusion_subject() -> Subject {
     Subject::builder("material_short_infusion")
-        .infusion(1.0, 100.0, "input_1", 1.0_f64.next_up() - 1.0)
+        .infusion(1.0, 100.0, "1", 1.0_f64.next_up() - 1.0)
         .missing_observation(2.0, "cp")
         .build()
 }
@@ -623,7 +622,7 @@ kind = ode
 states = amount
 outputs = cp
 init(amount) = 10
-dx(amount) = bolus(input_1) + 0
+dx(amount) = bolus(1) + 0
 out(cp) = amount
 "#;
 
@@ -635,7 +634,7 @@ params = scale
 states = amount
 outputs = cp
 dose_scale = scale
-dx(amount) = bolus(input_1) * (dose_scale) + 0
+dx(amount) = bolus(1) * (dose_scale) + 0
 out(cp) = amount
 "#;
 
@@ -645,8 +644,8 @@ name = rebase_absolute_time_close_gap
 kind = ode
 states = amount, time_weighted_amount
 outputs = cp, callback
-dx(amount) = infusion(input_1) + 0
-dx(time_weighted_amount) = infusion(input_1) * time
+dx(amount) = infusion(1) + 0
+dx(time_weighted_amount) = infusion(1) * time
 out(cp) = amount
 out(callback) = time_weighted_amount
 "#;
@@ -788,7 +787,7 @@ fn assert_runtime_rebase_after_large_event(backend: &str, compiled: &CompiledRun
     let delivered = 0.3;
     let expected_time_weighted_amount = delivered * 0.5 * (center + stop);
     let subject = Subject::builder(format!("{backend}-rebase-after-large-event"))
-        .infusion(center, delivered, "input_1", gap)
+        .infusion(center, delivered, "1", gap)
         .missing_observation(0.0, "cp")
         .missing_observation(center, "cp")
         .missing_observation(stop, "cp")
@@ -913,10 +912,10 @@ fn jit_runs_user_init_before_each_occasion() -> Result<(), Box<dyn std::error::E
         |_, _| {},
     )?;
     let subject = Subject::builder("per-occasion-init")
-        .bolus(0.0, 0.0, "input_1")
+        .bolus(0.0, 0.0, "1")
         .missing_observation(0.0, "cp")
         .reset()
-        .bolus(0.0, 0.0, "input_1")
+        .bolus(0.0, 0.0, "1")
         .missing_observation(0.0, "cp")
         .build();
     let predictions = match compiled {
@@ -941,7 +940,7 @@ fn jit_applies_derived_bioavailability() -> Result<(), Box<dyn std::error::Error
     let compiled =
         compile_module_source_to_runtime(DERIVED_FA_DSL_MODEL, Some("derived_fa"), |_, _| {})?;
     let subject = Subject::builder("derived-fa")
-        .bolus(0.0, 2.0, "input_1")
+        .bolus(0.0, 2.0, "1")
         .missing_observation(1.0, "cp")
         .build();
     let predictions = match compiled {
