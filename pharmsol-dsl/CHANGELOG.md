@@ -7,16 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Breaking Changes
-
-- Removed the public `NUMERIC_ROUTE_PREFIX` and `NUMERIC_OUTPUT_PREFIX` constants.
-- Numeric route and output labels are plain names. The DSL accepts an integer literal wherever a route or output name goes (`bolus(1)`, `infusion(1)`, `rate(1)`, `lag(1)`, `out(1)`, `outputs = 1`, `bolus 1 -> central`, `1 = central / v` in an `outputs` block) and keeps it as written, so `1` and `01` are different labels. Non-integer literals such as `1.0` are rejected as labels.
-- Bare numeric labels are no longer rejected with an `input_<n>` / `outeq_<n>` suggestion, and `input_<n>` / `outeq_<n>` are ordinary names that may be used on either kind of label.
-
-### Migration
-
-- Rename `input_1` → `1` and `outeq_1` → `1` in models that should keep matching Pmetrics data with `INPUT=1` / `OUTEQ=1`.
-
 ## [0.29.3](https://github.com/LAPKB/pharmsol/compare/pharmsol-dsl-v0.29.2...pharmsol-dsl-v0.29.3) - 2026-09-15
 
 ### Fixed
