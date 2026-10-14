@@ -669,10 +669,6 @@ impl SharedRuntimeModel {
             .find(|route| route.kind == kind && route.name == label)
     }
 
-    fn metadata_output_index_for_label(&self, label: &str) -> Option<usize> {
-        self.metadata().output_for_label(label)
-    }
-
     fn validate_support_point(&self, support_point: &[f64]) -> Result<(), PharmsolError> {
         if support_point.len() != self.info.parameters.len() {
             return Err(PharmsolError::OtherError(format!(
@@ -729,7 +725,7 @@ impl SharedRuntimeModel {
         // An explicitly bolus or infusion route is never an any-kind
         // fallback: bolus and infusion indices are separate ordinal spaces,
         // so falling through to the other kind's route by a colliding
-        // numeric index would silently execute the wrong route.
+        // input slot would silently execute the wrong route.
         let route = match self.route_for_label_kind(name, Some(kind)) {
             Some(route) => Some(route),
             None => self.route_for_label_kind(name, None),
@@ -758,7 +754,8 @@ impl SharedRuntimeModel {
     }
 
     fn resolve_output_label(&self, label: &OutputLabel) -> Result<usize, PharmsolError> {
-        self.metadata_output_index_for_label(label.as_str())
+        self.metadata()
+            .output_for_label(label.as_str())
             .ok_or_else(|| {
                 PharmsolError::unknown_output_label(
                     label.as_str(),

@@ -222,11 +222,6 @@ impl ValidatedModelMetadata {
             .position(|route| route.kind() == kind && route.name() == name)
     }
 
-    /// Look up an output by public name and return its dense output index.
-    pub(crate) fn output_index(&self, name: &str) -> Option<usize> {
-        self.outputs.iter().position(|output| output.name() == name)
-    }
-
     /// Resolve a public route label from data to a declared route of the
     /// given kind.
     ///
@@ -251,7 +246,9 @@ impl ValidatedModelMetadata {
     /// Like [`Self::route_for_label`], this is an exact name match with no
     /// aliasing and no positional fallback.
     pub fn output_for_label(&self, label: &str) -> Option<usize> {
-        self.output_index(label)
+        self.outputs
+            .iter()
+            .position(|output| output.name() == label)
     }
 
     pub fn parameter(&self, name: &str) -> Option<&Parameter> {
@@ -271,21 +268,16 @@ impl ValidatedModelMetadata {
     /// Look up a route by public name.
     ///
     /// Legacy name-only lookup: when a bolus and an infusion share a label,
-    /// this returns the first matching declaration. Prefer [`Self::route_by_kind`]
+    /// this returns the first matching declaration. Prefer [`Self::route_for_label`]
     /// when the route kind is known.
     pub fn route(&self, name: &str) -> Option<&ValidatedRoute> {
         self.route_declaration_index(name)
             .map(|index| &self.routes[index])
     }
 
-    /// Look up a route by public name and kind.
-    pub fn route_by_kind(&self, name: &str, kind: RouteKind) -> Option<&ValidatedRoute> {
-        self.route_declaration_index_by_kind(name, kind)
-            .map(|index| &self.routes[index])
-    }
-
     pub fn output(&self, name: &str) -> Option<&Output> {
-        self.output_index(name).map(|index| &self.outputs[index])
+        self.output_for_label(name)
+            .map(|index| &self.outputs[index])
     }
 }
 
@@ -1075,7 +1067,7 @@ mod tests {
         assert!(metadata.route("iv").is_some());
         assert_eq!(metadata.route_declaration_index("iv"), Some(0));
         assert_eq!(metadata.route_input_count(), 1);
-        assert_eq!(metadata.output_index("cp"), Some(0));
+        assert_eq!(metadata.output_for_label("cp"), Some(0));
         assert_eq!(
             metadata.route("iv").expect("route exists").destination(),
             "central"
@@ -1345,7 +1337,7 @@ mod tests {
         );
         assert_eq!(
             metadata
-                .route_by_kind("1", RouteKind::Infusion)
+                .route_for_label("1", RouteKind::Infusion)
                 .expect("route")
                 .destination(),
             "central"
