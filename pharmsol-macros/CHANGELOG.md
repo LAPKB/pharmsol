@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Numeric route and output labels are matched by their literal text, so `01` and `1` are different labels, and they must be written as plain decimal digits (`1usize`, `0x1` and `1_0` are rejected).
+
 ## [0.29.1](https://github.com/LAPKB/pharmsol/compare/pharmsol-macros-v0.29.0...pharmsol-macros-v0.29.1) - 2026-09-11
 
 ### Fixed

@@ -369,10 +369,8 @@ mod tests {
 
     #[test]
     fn supports_shared_labels_and_call_syntax() {
-        let input = syn::parse_str::<OdeInput>(&source(
-            "dx[central] = bolus(input_1) + infusion(input_1);",
-        ))
-        .unwrap();
+        let input =
+            syn::parse_str::<OdeInput>(&source("dx[central] = bolus(1) + infusion(1);")).unwrap();
         assert_eq!(input.routes.len(), 2);
         assert_eq!(dense_index_len(&ode_route_input_bindings(&input.routes)), 1);
     }

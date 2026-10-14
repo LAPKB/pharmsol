@@ -8,8 +8,10 @@
 //! After validation, the execution layer can resolve public labels such as
 //! `"iv"` and `"cp"` against those declarations before simulation.
 //!
-//! Without metadata, handwritten models fall back to numeric labels. With
-//! metadata, labels are matched by name.
+//! With metadata, labels are matched exactly by name. A numeric name such as
+//! `"1"` is an ordinary name: it never resolves by position. Without metadata,
+//! a handwritten model declares no names, so its routes and outputs are
+//! addressed by dense index (`"0"`, `"1"`, ...).
 //!
 //! # Example
 //!
@@ -30,10 +32,7 @@
 //! assert!(metadata.output("cp").is_some());
 //! ```
 
-use pharmsol_dsl::{
-    AnalyticalKernel, CovariateInterpolation, ModelKind, NUMERIC_OUTPUT_PREFIX,
-    NUMERIC_ROUTE_PREFIX,
-};
+use pharmsol_dsl::{AnalyticalKernel, CovariateInterpolation, ModelKind};
 use std::fmt;
 use thiserror::Error;
 
@@ -235,13 +234,9 @@ impl ValidatedModelMetadata {
     /// route), so the kind is part of the match: bolus events resolve bolus
     /// routes and infusion events resolve infusion routes.
     ///
-    /// Resolution order:
-    /// 1. exact route name of the given kind,
-    /// 2. canonical numeric alias (`input_<n>`) for a bare numeric label,
-    ///    matching Pmetrics `INPUT` numbering.
-    ///
-    /// A bare numeric label never falls back to a declaration position, so
-    /// `"10"` does not resolve unless an `input_10` route is declared.
+    /// Labels are opaque strings matched exactly against declared route
+    /// names. A numeric label such as `"1"` is just a name: it never falls
+    /// back to a declaration position and is not aliased to anything else.
     ///
     /// Use [`ValidatedRoute::input_index`] on the result for the dense
     /// execution input slot.
@@ -249,29 +244,14 @@ impl ValidatedModelMetadata {
         self.routes
             .iter()
             .find(|route| route.kind() == kind && route.name() == label)
-            .or_else(|| {
-                if !is_bare_numeric_label(label) {
-                    return None;
-                }
-                let aliased = format!("{NUMERIC_ROUTE_PREFIX}{label}");
-                self.routes
-                    .iter()
-                    .find(|route| route.kind() == kind && route.name() == aliased)
-            })
     }
 
     /// Resolve a public output label from data to its dense output index.
     ///
-    /// Uses the same resolution order as [`Self::route_for_label`]: exact
-    /// output name, then the `outeq_<n>` alias matching Pmetrics `OUTEQ`
-    /// numbering, with no positional fallback.
+    /// Like [`Self::route_for_label`], this is an exact name match with no
+    /// aliasing and no positional fallback.
     pub fn output_for_label(&self, label: &str) -> Option<usize> {
-        self.output_index(label).or_else(|| {
-            if !is_bare_numeric_label(label) {
-                return None;
-            }
-            self.output_index(&format!("{NUMERIC_OUTPUT_PREFIX}{label}"))
-        })
+        self.output_index(label)
     }
 
     pub fn parameter(&self, name: &str) -> Option<&Parameter> {
@@ -812,11 +792,6 @@ impl Route {
     }
 }
 
-/// Returns `true` for labels consisting only of ASCII digits (`"0"`, `"12"`).
-pub(crate) fn is_bare_numeric_label(label: &str) -> bool {
-    !label.is_empty() && label.chars().all(|ch| ch.is_ascii_digit())
-}
-
 fn resolve_kind(
     declared_kind: Option<ModelKind>,
     requested_kind: Option<ModelKind>,
@@ -1123,47 +1098,51 @@ mod tests {
     }
 
     #[test]
-    fn numeric_labels_resolve_via_canonical_alias_only() {
+    fn numeric_labels_resolve_by_exact_name_only() {
         let metadata = new("mixed_labels")
             .kind(ModelKind::Ode)
             .parameters(["ke", "v"])
             .states(["gut", "central"])
-            .outputs(["cp", "outeq_0", "outeq_1"])
+            .outputs(["cp", "2", "outeq_1"])
             .route(Route::infusion("iv").to_state("central"))
-            .route(Route::bolus("input_0").to_state("gut"))
+            .route(Route::bolus("10").to_state("gut"))
+            .route(Route::bolus("input_1").to_state("central"))
             .validate()
             .expect("metadata should validate");
 
-        // Exact names resolve first.
         assert_eq!(metadata.output_for_label("cp"), Some(0));
+        assert_eq!(metadata.output_for_label("2"), Some(1));
+        assert_eq!(metadata.output_for_label("outeq_1"), Some(2));
         assert_eq!(
             metadata
                 .route_for_label("iv", RouteKind::Infusion)
                 .map(|route| route.declaration_index()),
             Some(0)
         );
-
-        // Bare numeric labels resolve through the `outeq_<n>`/`input_<n>`
-        // aliases, including `0`.
-        assert_eq!(metadata.output_for_label("0"), Some(1));
-        assert_eq!(metadata.output_for_label("1"), Some(2));
         assert_eq!(
             metadata
-                .route_for_label("0", RouteKind::Bolus)
+                .route_for_label("10", RouteKind::Bolus)
                 .map(|route| route.declaration_index()),
             Some(1)
         );
+        assert_eq!(
+            metadata
+                .route_for_label("input_1", RouteKind::Bolus)
+                .map(|route| route.declaration_index()),
+            Some(2)
+        );
 
-        // Without a declared alias, a bare numeric label never falls back to
-        // a declaration position.
-        assert_eq!(metadata.output_for_label("2"), None);
-        assert_eq!(metadata.output_for_label("3"), None);
-        assert!(metadata.route_for_label("1", RouteKind::Bolus).is_none());
-        assert!(metadata.route_for_label("2", RouteKind::Bolus).is_none());
-        assert_eq!(metadata.output_for_label("missing"), None);
-        assert!(metadata
-            .route_for_label("missing", RouteKind::Bolus)
-            .is_none());
+        // Numeric labels never fall back to a position, and prefixed-looking
+        // names are not aliases of bare numbers (or vice versa).
+        for label in ["0", "1", "02", "outeq_2", "missing"] {
+            assert_eq!(metadata.output_for_label(label), None, "{label}");
+        }
+        for label in ["0", "1", "2", "010", "input_10", "missing"] {
+            assert!(
+                metadata.route_for_label(label, RouteKind::Bolus).is_none(),
+                "{label}"
+            );
+        }
     }
 
     #[test]
@@ -1266,8 +1245,8 @@ mod tests {
             .states(["central"])
             .outputs(["cp"])
             .routes([
-                Route::bolus("input_1").to_state("central"),
-                Route::infusion("input_1").to_state("central"),
+                Route::bolus("1").to_state("central"),
+                Route::infusion("1").to_state("central"),
             ])
             .validate()
             .expect("bolus and infusion sharing a label must validate");
@@ -1276,28 +1255,28 @@ mod tests {
         assert_eq!(metadata.route_input_count(), 1);
         assert_eq!(
             metadata
-                .route_for_label("input_1", RouteKind::Bolus)
+                .route_for_label("1", RouteKind::Bolus)
                 .expect("bolus route resolves by label")
                 .input_index(),
             0
         );
         assert_eq!(
             metadata
-                .route_for_label("input_1", RouteKind::Infusion)
+                .route_for_label("1", RouteKind::Infusion)
                 .expect("infusion route resolves by label")
                 .input_index(),
             0
         );
         assert_eq!(
             metadata
-                .route_for_label("input_1", RouteKind::Bolus)
+                .route_for_label("1", RouteKind::Bolus)
                 .expect("bolus route resolves by label")
                 .destination(),
             "central"
         );
         assert_eq!(
             metadata
-                .route_for_label("input_1", RouteKind::Infusion)
+                .route_for_label("1", RouteKind::Infusion)
                 .expect("infusion route resolves by label")
                 .destination(),
             "central"
@@ -1312,8 +1291,8 @@ mod tests {
             .states(["central"])
             .outputs(["cp"])
             .routes([
-                Route::bolus("input_1").to_state("central"),
-                Route::bolus("input_1").to_state("central"),
+                Route::bolus("1").to_state("central"),
+                Route::bolus("1").to_state("central"),
             ])
             .validate()
             .expect_err("duplicate bolus routes must fail");
@@ -1322,7 +1301,7 @@ mod tests {
             error,
             ModelMetadataError::DuplicateName {
                 domain: NameDomain::Route,
-                name: "input_1".to_string(),
+                name: "1".to_string(),
             }
         );
     }
@@ -1335,47 +1314,47 @@ mod tests {
             .states(["gut", "peripheral", "central"])
             .outputs(["cp"])
             .routes([
-                Route::bolus("input_1").to_state("gut"),
-                Route::infusion("input_2").to_state("peripheral"),
-                Route::infusion("input_1").to_state("central"),
+                Route::bolus("1").to_state("gut"),
+                Route::infusion("2").to_state("peripheral"),
+                Route::infusion("1").to_state("central"),
             ])
             .validate()
             .expect("mixed-order shared-label metadata should validate");
 
-        // The `input_1` bolus is the first bolus: bolus ordinal 0, gut.
+        // The `1` bolus is the first bolus: bolus ordinal 0, gut.
         let bolus = metadata
-            .route_for_label("input_1", RouteKind::Bolus)
+            .route_for_label("1", RouteKind::Bolus)
             .expect("bolus route");
         assert_eq!(bolus.input_index(), 0);
         assert_eq!(bolus.destination(), "gut");
         assert_eq!(
-            metadata.route_declaration_index_by_kind("input_1", RouteKind::Bolus),
+            metadata.route_declaration_index_by_kind("1", RouteKind::Bolus),
             Some(0)
         );
 
-        // The `input_1` infusion is the second infusion: infusion ordinal 1,
-        // central. It must never resolve to the `input_2` infusion slot 0.
+        // The `1` infusion is the second infusion: infusion ordinal 1,
+        // central. It must never resolve to the `2` infusion slot 0.
         let infusion = metadata
-            .route_for_label("input_1", RouteKind::Infusion)
+            .route_for_label("1", RouteKind::Infusion)
             .expect("infusion route");
         assert_eq!(infusion.input_index(), 1);
         assert_eq!(infusion.destination(), "central");
         assert_eq!(
-            metadata.route_declaration_index_by_kind("input_1", RouteKind::Infusion),
+            metadata.route_declaration_index_by_kind("1", RouteKind::Infusion),
             Some(2)
         );
         assert_eq!(
             metadata
-                .route_by_kind("input_1", RouteKind::Infusion)
+                .route_by_kind("1", RouteKind::Infusion)
                 .expect("route")
                 .destination(),
             "central"
         );
 
-        // The `input_2` infusion keeps its own infusion ordinal 0.
+        // The `2` infusion keeps its own infusion ordinal 0.
         let other = metadata
-            .route_for_label("input_2", RouteKind::Infusion)
-            .expect("input_2 route");
+            .route_for_label("2", RouteKind::Infusion)
+            .expect("route `2` route");
         assert_eq!(other.input_index(), 0);
         assert_eq!(other.destination(), "peripheral");
 
@@ -1384,15 +1363,15 @@ mod tests {
         // unique labels.
         assert_eq!(
             metadata
-                .route("input_1")
+                .route("1")
                 .expect("first-match route")
                 .declaration_index(),
             0
         );
-        assert_eq!(metadata.route_declaration_index("input_2"), Some(1));
+        assert_eq!(metadata.route_declaration_index("2"), Some(1));
 
         // The shared label is listed once in the error-message label list.
-        assert_eq!(metadata.route_labels(), vec!["input_1", "input_2"]);
+        assert_eq!(metadata.route_labels(), vec!["1", "2"]);
     }
 
     #[test]

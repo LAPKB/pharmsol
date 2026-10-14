@@ -14,6 +14,11 @@
       "type": "string",
       "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$"
     },
+    "label": {
+      "description": "A route or output name: an identifier or a plain integer such as `1`. Labels are matched exactly; numeric labels are names, not positions.",
+      "type": "string",
+      "pattern": "^(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+)$"
+    },
     "expression": {
       "type": "string",
       "minLength": 1
@@ -22,7 +27,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "id": { "$ref": "#/$defs/symbol" },
+        "id": { "$ref": "#/$defs/label" },
         "equation": { "$ref": "#/$defs/expression" },
         "name": { "type": "string" },
         "units": { "type": "string" }

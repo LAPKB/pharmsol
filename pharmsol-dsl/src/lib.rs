@@ -119,10 +119,6 @@ pub mod syntax;
 #[cfg(test)]
 mod test_fixtures;
 
-/// Canonical prefix for numeric route labels such as `input_1`.
-pub const NUMERIC_ROUTE_PREFIX: &str = "input_";
-/// Canonical prefix for numeric output labels such as `outeq_1`.
-pub const NUMERIC_OUTPUT_PREFIX: &str = "outeq_";
 /// Upper bound for compile-time-resolved sizes: state array sizes, route
 /// destination indices, and particle counts. Keeps compiled models within a
 /// comfortably allocatable state space.

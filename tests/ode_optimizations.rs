@@ -1148,7 +1148,7 @@ fn likelihood_calculation_matches_analytical() {
 
     let error_models = AssayErrorModels::default()
         .add(
-            0,
+            "cp",
             AssayErrorModel::additive(ErrorPoly::new(0.0, 0.1, 0.0, 0.0), 0.0),
         )
         .unwrap();

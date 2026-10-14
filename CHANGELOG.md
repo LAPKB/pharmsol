@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Route and output labels no longer have an `input_<n>` / `outeq_<n>` canonical form. A label is one string, matched exactly everywhere: in data, metadata, error models and the simulator.
+  - Numeric names such as `1` or `10` are plain names. They are accepted wherever a route or output name goes (the DSL, the `ode!` / `analytical!` / `sde!` macros and the metadata builder), have no relationship to declaration order, and are never aliased: data `"1"` no longer resolves to a route named `input_1` or an output named `outeq_1`.
+  - `input_1`, `outeq_1` and similar are ordinary names with no special meaning, and are accepted on either kind of label.
+  - Distinct strings are distinct labels: `"1"`, `"01"` and `"input_1"` are three different names.
+  - Label resolution never falls back to a declaration position or dense index. An unknown label is an error.
+- `AssayErrorModels::add` and `ResidualErrorModels::add` bind by exact output name. `AssayErrorModels::new().add("1", ...)` binds to the output declared as `1`; a numeric label is no longer treated as a dense slot. Adding a model for a label the equation does not declare fails with `ErrorModelError::UnknownOutputLabel` when the error models are used. Handwritten equations without metadata declare no output names, so their outputs keep being addressed by dense slot (`"0"`, `"1"`, ...), as their data labels are.
+- `ResidualErrorModels::add` now takes an output label (`impl ToString`) instead of a `usize` slot. Labels are bound to the equation's outputs in `log_likelihood_batch` and `log_likelihood_subject`; the slot accessors (`get`, `sigma`, `log_likelihood`, ...) work on the bound form.
+- Pmetrics `INPUT` / `OUTEQ` values written as an integer with a zero fraction (`1.0`, `2.00`) are normalized to their integer text (`"1"`, `"2"`). Other values, including `01`, are kept verbatim.
+
+### Migration
+
+- Rename `input_1` → `1` and `outeq_1` → `1` (and so on) in models that should keep matching Pmetrics data with `INPUT=1` / `OUTEQ=1`.
+- Error models keyed by a dense slot (`.add(0, ...)`) must use the output's declared name instead (`.add("cp", ...)` or `.add("1", ...)`).
+
 ## [0.29.3](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.29.2...pharmsol-v0.29.3) - 2026-09-15
 
 ### Fixed

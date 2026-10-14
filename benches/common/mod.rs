@@ -265,9 +265,9 @@ pub fn assay_error_models() -> AssayErrorModels {
         .expect("plasma assay error model")
 }
 
-/// Residual error model. Indexes outputs by dense `usize` — assumes a single output at index 0.
+/// Residual error model for the `plasma` output.
 pub fn residual_error_models() -> ResidualErrorModels {
-    ResidualErrorModels::new().add(0, ResidualErrorModel::constant(0.2))
+    ResidualErrorModels::new().add("plasma", ResidualErrorModel::constant(0.2))
 }
 
 // ───────────────────────────── Handwritten factories ─────────────────

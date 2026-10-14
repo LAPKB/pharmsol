@@ -92,6 +92,37 @@ See [examples/analytical_readme.rs](examples/analytical_readme.rs),
 [examples/analytical_vs_ode.rs](examples/analytical_vs_ode.rs), and
 [examples/compare_solvers.rs](examples/compare_solvers.rs).
 
+### Route and Output Labels
+
+Route and output names are plain strings, matched exactly everywhere: in data,
+error models, and simulation. A name may be an identifier (`iv`, `cp`) or a
+number (`1`, `10`). A numeric name is still just a name. It has no link to
+declaration order, and `"1"`, `"01"` and `"input_1"` are three different labels.
+
+To match Pmetrics data with `INPUT=1` and `OUTEQ=1`, declare the route and the
+output as `1`:
+
+```rust
+use pharmsol::prelude::*;
+
+let ode = ode! {
+    name: "one_cmt_pmetrics",
+    params: [ke, v],
+    states: [central],
+    outputs: [1],
+    diffeq: |x, _t, dx| {
+        dx[central] = infusion[1] - ke * x[central];
+    },
+    out: |x, _t, y| {
+        y[1] = x[central] / v;
+    },
+};
+
+let error_models = AssayErrorModels::new()
+    .add("1", AssayErrorModel::additive(ErrorPoly::new(0.0, 0.1, 0.0, 0.0), 0.0))
+    .unwrap();
+```
+
 ### Built-In Analytical Kernels
 
 - [x] One-compartment with IV infusion

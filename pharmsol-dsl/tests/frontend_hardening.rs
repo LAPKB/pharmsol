@@ -515,7 +515,7 @@ fn malformed_inputs_fail_with_errors_not_panics() {
         "kind = invalid",
         "model m { kind ode states { x[] } }",
         "model m { kind ode routes { oral -> } }",
-        "model m { kind ode outputs { 18446744073709551616 = central } }",
+        "model m { kind ode outputs { 1.5 = central } }",
     ];
     for src in cases {
         assert!(
