@@ -231,12 +231,12 @@ impl Data {
                         // Generate new observation times, stepping in integer
                         // microseconds to guarantee forward progress.
                         let mut new_events = Vec::new();
-                        let mut add_grid_point = |time_key: i64| {
+                        let mut add_grid_point = |time: f64, time_key: i64| {
                             for outeq in &outeq_values {
                                 // Only add if this (time, outeq) combination doesn't exist
                                 if !existing_obs.contains(&(time_key, outeq.clone())) {
                                     let obs = Observation::new(
-                                        time_key as f64 / 1e6,
+                                        time,
                                         None,
                                         outeq.clone(),
                                         None,
@@ -249,23 +249,27 @@ impl Data {
                         };
 
                         // Signed microseconds, so times before 0 neither saturate nor
-                        // collide. When the first event is before 0, the grid starts at
-                        // that event (so the simulation does not start earlier than the
-                        // data) and continues from the next multiple of `step_us`, to
-                        // stay aligned with the grid after 0.
+                        // collide. When the first event is before 0, the grid starts with
+                        // a point at that event's exact time, so it is never moved across
+                        // the first dose or before the simulation start. It then continues
+                        // from the first multiple of `step_us` strictly after that event,
+                        // to stay aligned with the grid after 0.
                         let last_time_us = (last_time * 1e6).round() as i64;
-                        let first_time_us = (first_time * 1e6).round() as i64;
-                        let mut time_key = if first_time_us < 0 {
-                            let aligned = -(-first_time_us).div_euclid(step_us) * step_us;
-                            if aligned != first_time_us && first_time_us <= last_time_us {
-                                add_grid_point(first_time_us);
+                        let mut time_key = if first_time < 0.0 {
+                            let first_time_us = (first_time * 1e6).round() as i64;
+                            if first_time <= last_time {
+                                add_grid_point(first_time, first_time_us);
+                            }
+                            let mut aligned = -(-first_time_us).div_euclid(step_us) * step_us;
+                            if aligned as f64 / 1e6 <= first_time {
+                                aligned += step_us;
                             }
                             aligned
                         } else {
                             0
                         };
                         while time_key <= last_time_us {
-                            add_grid_point(time_key);
+                            add_grid_point(time_key as f64 / 1e6, time_key);
                             time_key += step_us;
                         }
 
@@ -1886,5 +1890,48 @@ mod tests {
         let times = sorted_obs_times(&expanded.subjects()[0].occasions()[0]);
 
         assert_eq!(times, vec![-10.0, -9.0, -8.0]);
+    }
+
+    /// Observation times after expanding a subject with doses at `first_dose`
+    /// and 0, an observation at 1, `idelta = 0.5` and `tad = 1`.
+    fn expanded_times_with_first_dose(first_dose: f64) -> Vec<f64> {
+        let subject = Subject::builder("s1")
+            .bolus(first_dose, 100.0, 0)
+            .bolus(0.0, 100.0, 0)
+            .observation(1.0, 5.0, 0)
+            .build();
+        let expanded = Data::from(subject).expand(0.5, 1.0);
+        sorted_obs_times(&expanded.subjects()[0].occasions()[0])
+    }
+
+    #[test]
+    fn expand_first_point_keeps_exact_time_when_rounding_up() {
+        // -1.1000004 rounds to -1.1 µs-wise, which would put the first point
+        // after the first dose
+        let times = expanded_times_with_first_dose(-1.1000004);
+        assert_eq!(times[..3], [-1.1000004, -1.0, -0.5]);
+    }
+
+    #[test]
+    fn expand_first_point_keeps_exact_time_when_rounding_down() {
+        // -1.1000006 rounds to -1.100001, which would start the simulation
+        // before the first dose
+        let times = expanded_times_with_first_dose(-1.1000006);
+        assert_eq!(times[..3], [-1.1000006, -1.0, -0.5]);
+    }
+
+    #[test]
+    fn expand_first_point_rounding_onto_grid_multiple() {
+        // Rounds down onto -1.0: the next grid point must still be after the dose
+        let times = expanded_times_with_first_dose(-0.9999996);
+        assert_eq!(times[..3], [-0.9999996, -0.5, 0.0]);
+
+        // Rounds up onto -1.0: -1.0 is after the dose and stays on the grid
+        let times = expanded_times_with_first_dose(-1.0000004);
+        assert_eq!(times[..3], [-1.0000004, -1.0, -0.5]);
+
+        // Exactly on a grid multiple: one point there, no duplicate
+        let times = expanded_times_with_first_dose(-1.0);
+        assert_eq!(times[..3], [-1.0, -0.5, 0.0]);
     }
 }
