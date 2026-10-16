@@ -906,7 +906,7 @@ fn programmatic_covariate_name_is_lowercased_for_export() {
         .build()]);
     let bytes = data.to_pmetrics_csv_bytes().unwrap();
     let mut reader = ::csv::Reader::from_reader(bytes.as_slice());
-    assert_eq!(reader.headers().unwrap().iter().last(), Some("wt"));
+    assert_eq!(reader.headers().unwrap().iter().next_back(), Some("wt"));
 
     let parsed = Data::from_pmetrics_csv_bytes(&bytes).unwrap();
     let weight = parsed.subjects()[0].occasions()[0]
@@ -927,7 +927,7 @@ fn covariate_key_and_name_may_differ_by_ascii_case() {
 
     let bytes = Data::new(vec![subject]).to_pmetrics_csv_bytes().unwrap();
     let mut reader = ::csv::Reader::from_reader(bytes.as_slice());
-    assert_eq!(reader.headers().unwrap().iter().last(), Some("wt"));
+    assert_eq!(reader.headers().unwrap().iter().next_back(), Some("wt"));
 }
 
 #[test]
