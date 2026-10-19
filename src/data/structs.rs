@@ -149,6 +149,13 @@ impl Data {
     ///   to zero and the dataset is returned unchanged.
     /// * `tad` - Additional time to add after the last dose (time after dose)
     ///
+    /// The grid for each occasion starts at 0. If the occasion's earliest event
+    /// (dose or observation) is before 0, the grid instead starts at that event
+    /// and continues from the next multiple of `idelta`, so the simulation
+    /// still starts at the first real event and every later grid time is a
+    /// multiple of `idelta` measured from t = 0. The grid ends at the last dose
+    /// (or infusion end) of the occasion plus `tad`, inclusive.
+    ///
     /// # Returns
     ///
     /// A new `Data` object with expanded observations
@@ -160,7 +167,7 @@ impl Data {
         // Work in integer microseconds so the grid always makes progress.
         // A sub-microsecond `idelta` would otherwise round back to the previous
         // time on every iteration and spin forever.
-        let step_us = (idelta * 1e6).round() as u64;
+        let step_us = (idelta * 1e6).round() as i64;
         if step_us == 0 {
             return self.clone();
         }
@@ -194,14 +201,27 @@ impl Data {
                             .unwrap_or(0.0)
                             + tad;
 
+                        // Earliest event of this occasion. The grid starts here when it is
+                        // before 0, so dosing histories with negative times are covered.
+                        let first_time = occasion
+                            .events
+                            .iter()
+                            .map(|event| match event {
+                                Event::Bolus(bolus) => bolus.time(),
+                                Event::Infusion(infusion) => infusion.time(),
+                                Event::Observation(obs) => obs.time(),
+                            })
+                            .min_by(|a, b| a.partial_cmp(b).unwrap())
+                            .unwrap_or(0.0);
+
                         // Create a set of existing (time, outeq) pairs for fast lookup
-                        let existing_obs: std::collections::HashSet<(u64, OutputLabel)> =
+                        let existing_obs: std::collections::HashSet<(i64, OutputLabel)> =
                             old_events
                                 .iter()
                                 .filter_map(|event| match event {
                                     Event::Observation(obs) => {
                                         // Convert to microseconds for consistent comparison
-                                        let time_key = (obs.time() * 1e6).round() as u64;
+                                        let time_key = (obs.time() * 1e6).round() as i64;
                                         Some((time_key, obs.outeq().clone()))
                                     }
                                     _ => None,
@@ -211,11 +231,7 @@ impl Data {
                         // Generate new observation times, stepping in integer
                         // microseconds to guarantee forward progress.
                         let mut new_events = Vec::new();
-                        let last_time_us = (last_time * 1e6).round() as u64;
-                        let mut time_key = 0u64;
-                        while time_key <= last_time_us {
-                            let time = time_key as f64 / 1e6;
-
+                        let mut add_grid_point = |time: f64, time_key: i64| {
                             for outeq in &outeq_values {
                                 // Only add if this (time, outeq) combination doesn't exist
                                 if !existing_obs.contains(&(time_key, outeq.clone())) {
@@ -230,7 +246,30 @@ impl Data {
                                     new_events.push(Event::Observation(obs));
                                 }
                             }
+                        };
 
+                        // Signed microseconds, so times before 0 neither saturate nor
+                        // collide. When the first event is before 0, the grid starts with
+                        // a point at that event's exact time, so it is never moved across
+                        // the first dose or before the simulation start. It then continues
+                        // from the first multiple of `step_us` strictly after that event,
+                        // to stay aligned with the grid after 0.
+                        let last_time_us = (last_time * 1e6).round() as i64;
+                        let mut time_key = if first_time < 0.0 {
+                            let first_time_us = (first_time * 1e6).round() as i64;
+                            if first_time <= last_time {
+                                add_grid_point(first_time, first_time_us);
+                            }
+                            let mut aligned = -(-first_time_us).div_euclid(step_us) * step_us;
+                            if aligned as f64 / 1e6 <= first_time {
+                                aligned += step_us;
+                            }
+                            aligned
+                        } else {
+                            0
+                        };
+                        while time_key <= last_time_us {
+                            add_grid_point(time_key as f64 / 1e6, time_key);
                             time_key += step_us;
                         }
 
@@ -1735,5 +1774,164 @@ mod tests {
         assert_eq!(count_obs(&subject.occasions()[0]), 1);
         // Occasion 1: last dose = 10, grid at 0,5,10 -> 2 generated + 1 real = 3
         assert_eq!(count_obs(&subject.occasions()[1]), 3);
+    }
+
+    fn sorted_obs_times(occasion: &Occasion) -> Vec<f64> {
+        let mut times: Vec<f64> = occasion
+            .events()
+            .iter()
+            .filter_map(|e| match e {
+                Event::Observation(o) => Some(o.time()),
+                _ => None,
+            })
+            .collect();
+        times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        times
+    }
+
+    #[test]
+    fn expand_grid_covers_negative_times() {
+        // Dosing history before t = 0 with a trough sample just before the
+        // dose at 0; the grid ends at that last dose + tad.
+        let subject = Subject::builder("s1")
+            .bolus(-24.0, 100.0, 0)
+            .observation(-0.5, 5.0, 0)
+            .bolus(0.0, 100.0, 0)
+            .build();
+        let data = Data::from(subject);
+
+        let expanded = data.expand(0.5, 12.0);
+        let occasion = &expanded.subjects()[0].occasions()[0];
+        let times = sorted_obs_times(occasion);
+
+        assert_eq!(times.first(), Some(&-24.0));
+        assert_eq!(times.last(), Some(&12.0));
+        // -24..=12 in steps of 0.5
+        assert_eq!(times.len(), 73);
+        assert!(times.windows(2).all(|w| w[0] < w[1]), "no duplicate times");
+
+        // -0.5 appears once, and it is the original observation
+        let at_minus_half: Vec<_> = occasion
+            .events()
+            .iter()
+            .filter_map(|e| match e {
+                Event::Observation(o) if o.time() == -0.5 => Some(o),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(at_minus_half.len(), 1);
+        assert_eq!(at_minus_half[0].value(), Some(5.0));
+
+        assert!(times.contains(&0.0));
+    }
+
+    #[test]
+    fn expand_negative_observation_keeps_grid_point_at_zero() {
+        let subject = Subject::builder("s1")
+            .bolus(0.0, 100.0, 0)
+            .observation(-0.5, 5.0, 0)
+            .build();
+        let data = Data::from(subject);
+
+        let expanded = data.expand(1.0, 2.0);
+        let times = sorted_obs_times(&expanded.subjects()[0].occasions()[0]);
+
+        // Grid starts at the observation at -0.5, then 0 is still added
+        assert_eq!(times, vec![-0.5, 0.0, 1.0, 2.0]);
+    }
+
+    #[test]
+    fn expand_negative_grid_starts_at_first_event_then_aligns() {
+        let subject = Subject::builder("s1")
+            .bolus(-23.3, 100.0, 0)
+            .bolus(0.0, 100.0, 0)
+            .observation(1.0, 5.0, 0)
+            .build();
+        let data = Data::from(subject);
+
+        let expanded = data.expand(0.5, 1.0);
+        let times = sorted_obs_times(&expanded.subjects()[0].occasions()[0]);
+
+        // First point at the first dose, then the grid continues from -23.0
+        assert_eq!(times[..3], [-23.3, -23.0, -22.5]);
+        for t in times.iter().skip(1) {
+            let k = t / 0.5;
+            assert_eq!(k, k.round(), "{t} is not a multiple of idelta");
+        }
+        assert!(times.contains(&0.0));
+        assert_eq!(times.last(), Some(&1.0));
+    }
+
+    #[test]
+    fn expand_negative_observation_starts_grid_without_extra_point() {
+        // No doses: the grid starts at the first observation and ends at 0 + tad
+        let subject = Subject::builder("s1")
+            .observation(-0.5, 5.0, 0)
+            .observation(12.0, 3.0, 0)
+            .build();
+        let data = Data::from(subject);
+
+        let expanded = data.expand(1.0, 3.0);
+        let times = sorted_obs_times(&expanded.subjects()[0].occasions()[0]);
+
+        assert_eq!(times, vec![-0.5, 0.0, 1.0, 2.0, 3.0, 12.0]);
+    }
+
+    #[test]
+    fn expand_last_time_before_zero() {
+        // An observation is needed so the dataset has an output equation
+        let subject = Subject::builder("s1")
+            .bolus(-10.0, 100.0, 0)
+            .observation(-9.0, 5.0, 0)
+            .build();
+        let data = Data::from(subject);
+
+        let expanded = data.expand(1.0, 2.0);
+        let times = sorted_obs_times(&expanded.subjects()[0].occasions()[0]);
+
+        assert_eq!(times, vec![-10.0, -9.0, -8.0]);
+    }
+
+    /// Observation times after expanding a subject with doses at `first_dose`
+    /// and 0, an observation at 1, `idelta = 0.5` and `tad = 1`.
+    fn expanded_times_with_first_dose(first_dose: f64) -> Vec<f64> {
+        let subject = Subject::builder("s1")
+            .bolus(first_dose, 100.0, 0)
+            .bolus(0.0, 100.0, 0)
+            .observation(1.0, 5.0, 0)
+            .build();
+        let expanded = Data::from(subject).expand(0.5, 1.0);
+        sorted_obs_times(&expanded.subjects()[0].occasions()[0])
+    }
+
+    #[test]
+    fn expand_first_point_keeps_exact_time_when_rounding_up() {
+        // -1.1000004 rounds to -1.1 µs-wise, which would put the first point
+        // after the first dose
+        let times = expanded_times_with_first_dose(-1.1000004);
+        assert_eq!(times[..3], [-1.1000004, -1.0, -0.5]);
+    }
+
+    #[test]
+    fn expand_first_point_keeps_exact_time_when_rounding_down() {
+        // -1.1000006 rounds to -1.100001, which would start the simulation
+        // before the first dose
+        let times = expanded_times_with_first_dose(-1.1000006);
+        assert_eq!(times[..3], [-1.1000006, -1.0, -0.5]);
+    }
+
+    #[test]
+    fn expand_first_point_rounding_onto_grid_multiple() {
+        // Rounds down onto -1.0: the next grid point must still be after the dose
+        let times = expanded_times_with_first_dose(-0.9999996);
+        assert_eq!(times[..3], [-0.9999996, -0.5, 0.0]);
+
+        // Rounds up onto -1.0: -1.0 is after the dose and stays on the grid
+        let times = expanded_times_with_first_dose(-1.0000004);
+        assert_eq!(times[..3], [-1.0000004, -1.0, -0.5]);
+
+        // Exactly on a grid multiple: one point there, no duplicate
+        let times = expanded_times_with_first_dose(-1.0);
+        assert_eq!(times[..3], [-1.0, -0.5, 0.0]);
     }
 }
