@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.29.4](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.29.3...pharmsol-v0.29.4) - 2026-10-19
+
+### Fixed
+
+- cover negative times in Data::expand grid ([#384](https://github.com/LAPKB/pharmsol/pull/384))
+
 ## [0.29.3](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.29.2...pharmsol-v0.29.3) - 2026-09-15
 
 ### Fixed
