@@ -1565,6 +1565,36 @@ mod tests {
     }
 
     #[test]
+    fn numeric_and_text_labels_name_the_same_output() {
+        let mut models = AssayErrorModels::new()
+            .add(
+                1,
+                AssayErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 2.0),
+            )
+            .unwrap();
+        assert!(!models.is_empty());
+
+        // `1` and `"1"` are the same label; `"01"` is a different one.
+        assert!(models.contains(1) && models.contains("1"));
+        assert!(!models.contains("01"));
+        assert_eq!(models.get(1), models.get("1"));
+        assert!(models.error_model("01").is_err());
+        assert!(models.is_proportional("1") && !models.is_additive(1));
+        assert!(!models.is_proportional("01"));
+
+        // Changes through one spelling are seen through the other.
+        models.get_mut(1).unwrap().set_factor(3.0);
+        assert_eq!(models.factor("1").unwrap(), 3.0);
+
+        // Iterating `&mut` reaches every model, as an optimizer loop would.
+        for (_, model) in &mut models {
+            model.fix_factor();
+        }
+        assert!(models.is_factor_fixed("1").unwrap());
+        assert_eq!((&models).into_iter().count(), 1);
+    }
+
+    #[test]
     fn error_model_hash_differs_on_polynomial() {
         for model in [
             AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0),

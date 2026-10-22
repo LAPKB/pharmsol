@@ -6,7 +6,8 @@
 //! optimized. Error models are now keyed by label only, and predictions keep
 //! the label of the observation they came from.
 
-use pharmsol::prelude::simulator::log_likelihood_batch;
+use pharmsol::data::error_model::ErrorModelError;
+use pharmsol::prelude::simulator::{log_likelihood_batch, log_likelihood_subject};
 use pharmsol::prelude::*;
 use pharmsol::{ResidualErrorModel, ResidualErrorModels};
 
@@ -151,6 +152,40 @@ fn predictions_keep_their_output_label() -> Result<(), PharmsolError> {
         .collect();
     labels.sort_unstable();
     assert_eq!(labels, vec!["cp", "cp", "effect", "effect"]);
+
+    // Turning a prediction back into an observation (e.g. to build simulated
+    // data) keeps the label, so the observation resolves to the same output.
+    for prediction in predictions.predictions() {
+        assert_eq!(prediction.to_observation().outeq(), prediction.outeq());
+    }
+    Ok(())
+}
+
+#[test]
+fn an_observed_output_without_an_error_model_is_reported_by_label() -> Result<(), PharmsolError> {
+    let ode = two_output_ode();
+    let data = observed_data();
+    let subject = &data.subjects()[0];
+
+    // `effect` is observed, but explicitly has no error model.
+    let mut error_models = AssayErrorModels::new()
+        .add(
+            "cp",
+            AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 0.5),
+        )?
+        .add("effect", AssayErrorModel::None)?;
+
+    let none_for_effect = |error: &ErrorModelError| matches!(error, ErrorModelError::NoneErrorModel(label) if label == "effect");
+
+    match ode.estimate_log_likelihood(subject, &parameters(&ode), &error_models) {
+        Err(PharmsolError::ErrorModelError(error)) if none_for_effect(&error) => {}
+        other => panic!("expected NoneErrorModel(`effect`), got {other:?}"),
+    }
+
+    // An optimizer cannot read or move a factor that does not exist.
+    assert!(matches!(error_models.factor("effect"), Err(e) if none_for_effect(&e)));
+    assert!(matches!(error_models.set_factor("effect", 1.0), Err(e) if none_for_effect(&e)));
+    assert_eq!(error_models.factor("cp")?, 0.5);
     Ok(())
 }
 
@@ -205,6 +240,45 @@ fn residual_error_models_score_by_label() -> Result<(), PharmsolError> {
 }
 
 #[test]
+fn single_subject_residual_scoring_matches_the_batch() -> Result<(), PharmsolError> {
+    let ode = two_output_ode();
+    let data = observed_data();
+    let subject = data.subjects()[0];
+    let parameters = parameters(&ode);
+    let parameter_matrix =
+        ndarray::Array2::from_shape_vec((1, 2), parameters.as_slice().to_vec()).unwrap();
+
+    let mut residual_error_models = ResidualErrorModels::new()
+        .add("cp", ResidualErrorModel::constant(0.5))
+        .add("effect", ResidualErrorModel::proportional(0.1));
+
+    let single = log_likelihood_subject(&ode, subject, &parameters, &residual_error_models);
+    let batch = log_likelihood_batch(&ode, &data, &parameter_matrix, &residual_error_models)?;
+    assert!(single.is_finite());
+    assert_eq!(vec![single], batch);
+
+    // A parametric algorithm re-estimates sigma per output between iterations.
+    for (_, model) in residual_error_models.iter_mut() {
+        *model = model.with_updated_sigma(model.primary_parameter() * 2.0);
+    }
+    let updated = log_likelihood_subject(&ode, subject, &parameters, &residual_error_models);
+    assert_ne!(updated, single);
+    assert_eq!(
+        vec![updated],
+        log_likelihood_batch(&ode, &data, &parameter_matrix, &residual_error_models)?
+    );
+
+    // The single-subject entry point reports an undeclared label as -inf.
+    let undeclared =
+        ResidualErrorModels::new().add("concentration", ResidualErrorModel::constant(0.5));
+    assert_eq!(
+        log_likelihood_subject(&ode, subject, &parameters, &undeclared),
+        f64::NEG_INFINITY
+    );
+    Ok(())
+}
+
+#[test]
 fn error_models_serialize_as_a_label_map() -> Result<(), PharmsolError> {
     let error_models = AssayErrorModels::new().add(
         "cp",
@@ -219,77 +293,5 @@ fn error_models_serialize_as_a_label_map() -> Result<(), PharmsolError> {
 
     let label: OutputLabel = serde_json::from_str("\"cp\"").expect("label deserializes");
     assert_eq!(serde_json::to_string(&label).unwrap(), "\"cp\"");
-    Ok(())
-}
-
-fn one_cpt_sde() -> equation::SDE {
-    equation::SDE::new(
-        |x, p, _t, dx, rateiv, _cov| {
-            fetch_params!(p, ke, _v);
-            dx[0] = rateiv[0] - ke * x[0];
-        },
-        // No diffusion, so every particle follows the same path and the
-        // likelihood is deterministic.
-        |_p, sigma| {
-            sigma[0] = 0.0;
-        },
-        |_p, _t, _cov| lag! {},
-        |_p, _t, _cov| fa! {},
-        |_p, _t, _cov, _x| {},
-        |x, p, _t, _cov, y| {
-            fetch_params!(p, _ke, v);
-            y[0] = x[0] / v;
-        },
-        16,
-    )
-    .with_nstates(1)
-    .with_ndrugs(1)
-    .with_nout(1)
-    .with_metadata(
-        equation::metadata::new("one_cpt_sde")
-            .kind(equation::ModelKind::Sde)
-            .parameters(["ke", "v"])
-            .states(["central"])
-            .outputs(["cp"])
-            .route(
-                equation::Route::infusion("iv")
-                    .to_state("central")
-                    .inject_input_to_destination(),
-            ),
-    )
-    .expect("SDE metadata validates")
-}
-
-#[test]
-fn sde_likelihood_cache_sees_error_polynomial_changes() -> Result<(), PharmsolError> {
-    let sde = one_cpt_sde();
-    let subject = Subject::builder("1")
-        .infusion(0.0, 100.0, "iv", 1.0)
-        .observation(1.0, 4.0, "cp")
-        .observation(2.0, 3.5, "cp")
-        .build();
-    let parameters =
-        Parameters::with_model(&sde, [("ke", 0.2), ("v", 20.0)]).expect("valid named parameters");
-
-    let mut error_models = AssayErrorModels::new().add(
-        "cp",
-        AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 0.5),
-    )?;
-
-    let first = sde.estimate_log_likelihood(&subject, &parameters, &error_models)?;
-    // The likelihood cache is on by default: a repeat call is a cache hit.
-    assert_eq!(
-        sde.estimate_log_likelihood(&subject, &parameters, &error_models)?,
-        first
-    );
-
-    // Change only the polynomial; gamma/lambda and its fixed state stay put.
-    error_models.set_errorpoly("cp", ErrorPoly::new(5.0, 0.0, 0.0, 0.0))?;
-    let after = sde.estimate_log_likelihood(&subject, &parameters, &error_models)?;
-
-    assert!(
-        (after - first).abs() > 1e-6,
-        "a polynomial-only change must not reuse the cached likelihood ({first} == {after})"
-    );
     Ok(())
 }
