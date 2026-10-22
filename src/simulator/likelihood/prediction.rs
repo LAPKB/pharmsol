@@ -4,7 +4,7 @@
 //! observation-prediction pair along with metadata needed for likelihood
 //! calculation.
 
-use crate::data::error_model::{AssayErrorModels, DenseAssayErrorModels, ErrorModelError};
+use crate::data::error_model::AssayErrorModels;
 use crate::data::event::{Observation, OutputLabel};
 use crate::{Censor, ErrorPoly, PharmsolError};
 
@@ -20,8 +20,6 @@ pub struct Prediction {
     pub(crate) observation: Option<f64>,
     pub(crate) prediction: f64,
     pub(crate) outeq: OutputLabel,
-    /// Output slot the simulator resolved [`Self::outeq`] to, if it did.
-    pub(crate) outeq_slot: Option<usize>,
     pub(crate) errorpoly: Option<ErrorPoly>,
     pub(crate) state: Vec<f64>,
     pub(crate) occasion: usize,
@@ -105,31 +103,13 @@ impl Prediction {
     /// ```
     #[inline]
     pub fn log_likelihood(&self, error_models: &AssayErrorModels) -> Result<f64, PharmsolError> {
-        self.log_likelihood_with(|prediction| error_models.sigma(prediction))
-    }
-
-    /// [`Self::log_likelihood`] against error models bound to the equation
-    /// that produced this prediction.
-    #[inline]
-    pub(crate) fn log_likelihood_bound(
-        &self,
-        error_models: &DenseAssayErrorModels,
-    ) -> Result<f64, PharmsolError> {
-        self.log_likelihood_with(|prediction| error_models.sigma(prediction))
-    }
-
-    #[inline]
-    fn log_likelihood_with(
-        &self,
-        sigma: impl FnOnce(&Self) -> Result<f64, ErrorModelError>,
-    ) -> Result<f64, PharmsolError> {
         // Missing observations don't contribute to log-likelihood (log(1) = 0)
         let obs = match self.observation {
             Some(obs) => obs,
             None => return Ok(0.0),
         };
 
-        let sigma = sigma(self)?;
+        let sigma = error_models.sigma(self)?;
 
         let log_lik = match self.censoring {
             Censor::None => lognormpdf(obs, self.prediction, sigma),
@@ -212,7 +192,6 @@ impl Default for Prediction {
             observation: None,
             prediction: 0.0,
             outeq: OutputLabel::from(0),
-            outeq_slot: None,
             errorpoly: None,
             state: vec![],
             occasion: 0,
@@ -246,7 +225,6 @@ mod tests {
             observation: Some(obs),
             prediction: pred,
             outeq: OutputLabel::from(0),
-            outeq_slot: Some(0),
             errorpoly: None,
             state: vec![pred],
             occasion: 0,

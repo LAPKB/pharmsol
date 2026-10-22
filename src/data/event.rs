@@ -13,7 +13,9 @@
 use crate::data::error_model::ErrorPoly;
 use crate::prelude::simulator::Prediction;
 use serde::{Deserialize, Serialize};
+use std::borrow::Borrow;
 use std::fmt;
+use std::sync::Arc;
 
 // ============================================================================
 // Shared Analysis Types
@@ -200,15 +202,19 @@ impl PartialEq<&InputLabel> for usize {
 /// Public label for an observation output.
 ///
 /// [`Observation`] stores the original user-facing output name in this type.
+///
+/// The name is shared, so cloning a label (as every [`Prediction`] does) is a
+/// reference-count increment rather than a string copy.
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub struct OutputLabel(String);
+#[serde(from = "String", into = "String")]
+pub struct OutputLabel(Arc<str>);
 
 impl OutputLabel {
     /// Create a new public label.
     ///
     /// Prefer stable names when the model declares named outputs.
     pub fn new(label: impl ToString) -> Self {
-        Self(label.to_string())
+        Self(label.to_string().into())
     }
 
     /// Borrow the stored label as a string.
@@ -227,24 +233,38 @@ impl OutputLabel {
 
 impl From<String> for OutputLabel {
     fn from(value: String) -> Self {
-        Self(value)
+        Self(value.into())
     }
 }
 
 impl From<&str> for OutputLabel {
     fn from(value: &str) -> Self {
-        Self(value.to_string())
+        Self(value.into())
     }
 }
 
 impl From<usize> for OutputLabel {
     fn from(value: usize) -> Self {
-        Self(value.to_string())
+        Self(value.to_string().into())
+    }
+}
+
+impl From<OutputLabel> for String {
+    fn from(value: OutputLabel) -> Self {
+        value.0.to_string()
     }
 }
 
 impl AsRef<str> for OutputLabel {
     fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+/// Lets label-keyed maps be searched with a plain `&str`, without building an
+/// [`OutputLabel`].
+impl Borrow<str> for OutputLabel {
+    fn borrow(&self) -> &str {
         self.as_str()
     }
 }
@@ -258,7 +278,7 @@ impl fmt::Display for OutputLabel {
 impl PartialEq<usize> for OutputLabel {
     /// Labels compare as text: `"1" == 1`, but `"01" != 1`.
     fn eq(&self, other: &usize) -> bool {
-        self.0 == other.to_string()
+        *self.0 == other.to_string()
     }
 }
 
@@ -718,7 +738,6 @@ impl Observation {
             observation: self.value(),
             prediction: pred,
             outeq: self.outeq.clone(),
-            outeq_slot: self.outeq_slot,
             errorpoly: self.errorpoly(),
             state,
             occasion: self.occasion(),

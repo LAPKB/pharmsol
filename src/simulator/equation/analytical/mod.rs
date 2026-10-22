@@ -21,10 +21,8 @@ use super::{
     EqnKind, Equation, EquationPriv, EquationTypes, ModelMetadata, ModelMetadataError,
     ValidatedModelMetadata,
 };
-use crate::data::error_model::{AssayErrorModels, DenseAssayErrorModels};
-use crate::simulator::cache::{
-    BoundErrorModelCache, PredictionCache, DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE, DEFAULT_CACHE_SIZE,
-};
+use crate::data::error_model::AssayErrorModels;
+use crate::simulator::cache::{PredictionCache, DEFAULT_CACHE_SIZE};
 use crate::PharmsolError;
 use crate::{data::Covariates, simulator::*, Observation, Parameters, Subject};
 
@@ -55,7 +53,6 @@ pub struct Analytical {
     neqs: Neqs,
     metadata: Option<ValidatedModelMetadata>,
     cache: Option<PredictionCache>,
-    error_model_cache: Option<BoundErrorModelCache>,
 }
 
 #[inline(always)]
@@ -110,9 +107,6 @@ impl Analytical {
             neqs: Neqs::default(),
             metadata: None,
             cache: Some(PredictionCache::new(DEFAULT_CACHE_SIZE)),
-            error_model_cache: Some(BoundErrorModelCache::new(
-                DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
-            )),
         }
     }
 
@@ -145,9 +139,6 @@ impl Analytical {
         let metadata = metadata.validate_for(ModelKind::Analytical)?;
         validate_metadata_dimensions(&metadata, &self.neqs)?;
         self.metadata = Some(metadata);
-        self.error_model_cache = Some(BoundErrorModelCache::new(
-            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
-        ));
         Ok(self)
     }
 
@@ -170,9 +161,6 @@ impl Analytical {
 
     fn invalidate_metadata(&mut self) {
         self.metadata = None;
-        self.error_model_cache = Some(BoundErrorModelCache::new(
-            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
-        ));
     }
 }
 
@@ -210,17 +198,11 @@ fn validate_metadata_dimensions(
 impl super::Cache for Analytical {
     fn with_cache_capacity(mut self, size: usize) -> Self {
         self.cache = Some(PredictionCache::new(size));
-        self.error_model_cache = Some(BoundErrorModelCache::new(
-            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
-        ));
         self
     }
 
     fn enable_cache(mut self) -> Self {
         self.cache = Some(PredictionCache::new(DEFAULT_CACHE_SIZE));
-        self.error_model_cache = Some(BoundErrorModelCache::new(
-            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
-        ));
         self
     }
 
@@ -228,14 +210,10 @@ impl super::Cache for Analytical {
         if let Some(cache) = &self.cache {
             cache.invalidate_all();
         }
-        if let Some(cache) = &self.error_model_cache {
-            cache.invalidate_all();
-        }
     }
 
     fn disable_cache(mut self) -> Self {
         self.cache = None;
-        self.error_model_cache = None;
         self
     }
 }
@@ -374,7 +352,7 @@ impl EquationPriv for Analytical {
         &self,
         parameters: &[f64],
         observation: &Observation,
-        error_models: Option<&DenseAssayErrorModels>,
+        error_models: Option<&AssayErrorModels>,
         _time: f64,
         covariates: &Covariates,
         x: &mut Self::S,
@@ -400,7 +378,7 @@ impl EquationPriv for Analytical {
         let pred = y[outeq];
         let pred = observation.to_prediction(pred, x.as_slice().to_vec());
         if let Some(error_models) = error_models {
-            likelihood.push(pred.log_likelihood_bound(error_models)?.exp());
+            likelihood.push(pred.log_likelihood(error_models)?.exp());
         }
         output.add_prediction(pred);
         Ok(())
@@ -888,10 +866,6 @@ pub(crate) mod tests {
     }
 }
 impl Equation for Analytical {
-    fn bound_error_model_cache(&self) -> Option<&BoundErrorModelCache> {
-        self.error_model_cache.as_ref()
-    }
-
     fn estimate_likelihood(
         &self,
         subject: &Subject,
@@ -907,9 +881,9 @@ impl Equation for Analytical {
         parameters: &Parameters,
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
-        let bound_error_models = self.bind_error_models(error_models)?;
+        self.validate_error_models(error_models)?;
         let ypred = _subject_predictions(self, subject, parameters.as_slice())?;
-        ypred.log_likelihood_bound(&bound_error_models)
+        ypred.log_likelihood(error_models)
     }
 
     fn kind() -> EqnKind {
@@ -947,7 +921,7 @@ fn _estimate_likelihood(
     parameters: &[f64],
     error_models: &AssayErrorModels,
 ) -> Result<f64, PharmsolError> {
-    let bound_error_models = ode.bind_error_models(error_models)?;
+    ode.validate_error_models(error_models)?;
     let ypred = _subject_predictions(ode, subject, parameters)?;
-    Ok(ypred.log_likelihood_bound(&bound_error_models)?.exp())
+    Ok(ypred.log_likelihood(error_models)?.exp())
 }

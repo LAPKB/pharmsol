@@ -10,17 +10,14 @@ use thiserror::Error;
 
 use crate::{
     data::{Covariates, Infusion},
-    error_model::{AssayErrorModels, DenseAssayErrorModels},
+    error_model::AssayErrorModels,
     prelude::simulator::Prediction,
     simulator::{Diffusion, Drift, Fa, Init, Lag, Neqs, Out, V},
     Parameters, Subject,
 };
 
 use super::parameters_hash;
-use crate::simulator::cache::{
-    BoundErrorModelCache, SdeLikelihoodCache, DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
-    DEFAULT_CACHE_SIZE,
-};
+use crate::simulator::cache::{SdeLikelihoodCache, DEFAULT_CACHE_SIZE};
 
 use diffsol::VectorCommon;
 
@@ -194,7 +191,6 @@ pub struct SDE {
     metadata: Option<ValidatedModelMetadata>,
     injected_bolus_mappings: InjectedBolusMappings,
     cache: Option<SdeLikelihoodCache>,
-    error_model_cache: Option<BoundErrorModelCache>,
 }
 
 impl SDE {
@@ -228,9 +224,6 @@ impl SDE {
             metadata: None,
             injected_bolus_mappings: InjectedBolusMappings::default(),
             cache: Some(SdeLikelihoodCache::new(DEFAULT_CACHE_SIZE)),
-            error_model_cache: Some(BoundErrorModelCache::new(
-                DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
-            )),
         }
     }
 
@@ -260,9 +253,6 @@ impl SDE {
         let metadata = metadata.validate_for_with_particles(ModelKind::Sde, self.nparticles)?;
         validate_metadata_dimensions(&metadata, &self.neqs)?;
         self.metadata = Some(metadata);
-        self.error_model_cache = Some(BoundErrorModelCache::new(
-            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
-        ));
         Ok(self)
     }
 
@@ -292,9 +282,6 @@ impl SDE {
 
     fn invalidate_metadata(&mut self) {
         self.metadata = None;
-        self.error_model_cache = Some(BoundErrorModelCache::new(
-            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
-        ));
         self.injected_bolus_mappings
             .invalidate_for_ndrugs(self.neqs.ndrugs);
     }
@@ -334,17 +321,11 @@ fn validate_metadata_dimensions(
 impl super::Cache for SDE {
     fn with_cache_capacity(mut self, size: usize) -> Self {
         self.cache = Some(SdeLikelihoodCache::new(size));
-        self.error_model_cache = Some(BoundErrorModelCache::new(
-            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
-        ));
         self
     }
 
     fn enable_cache(mut self) -> Self {
         self.cache = Some(SdeLikelihoodCache::new(DEFAULT_CACHE_SIZE));
-        self.error_model_cache = Some(BoundErrorModelCache::new(
-            DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE,
-        ));
         self
     }
 
@@ -352,14 +333,10 @@ impl super::Cache for SDE {
         if let Some(cache) = &self.cache {
             cache.invalidate_all();
         }
-        if let Some(cache) = &self.error_model_cache {
-            cache.invalidate_all();
-        }
     }
 
     fn disable_cache(mut self) -> Self {
         self.cache = None;
-        self.error_model_cache = None;
         self
     }
 }
@@ -429,17 +406,6 @@ impl Predictions for Array2<Prediction> {
             .collect();
 
         log_liks.map(|lls| lls.iter().sum())
-    }
-
-    fn log_likelihood_bound(
-        &self,
-        error_models: &DenseAssayErrorModels,
-    ) -> Result<f64, crate::PharmsolError> {
-        self.get_predictions()
-            .iter()
-            .filter(|p| p.observation().is_some())
-            .map(|p| p.log_likelihood_bound(error_models))
-            .sum()
     }
 }
 
@@ -538,7 +504,7 @@ impl EquationPriv for SDE {
         &self,
         parameters: &[f64],
         observation: &crate::Observation,
-        error_models: Option<&DenseAssayErrorModels>,
+        error_models: Option<&AssayErrorModels>,
         _time: f64,
         covariates: &Covariates,
         x: &mut Self::S,
@@ -569,7 +535,7 @@ impl EquationPriv for SDE {
             let mut q: Vec<f64> = Vec::with_capacity(self.nparticles);
 
             pred.iter().for_each(|p| {
-                let lik = p.log_likelihood_bound(em).map(f64::exp);
+                let lik = p.log_likelihood(em).map(f64::exp);
                 match lik {
                     Ok(l) => q.push(l),
                     Err(e) => panic!("Error in likelihood calculation: {:?}", e),
@@ -607,7 +573,7 @@ impl EquationPriv for SDE {
         parameters: &[f64],
         event: &crate::Event,
         next_event: Option<&crate::Event>,
-        error_models: Option<&DenseAssayErrorModels>,
+        error_models: Option<&AssayErrorModels>,
         covariates: &Covariates,
         x: &mut Self::S,
         infusions: &mut Vec<Infusion>,
@@ -666,10 +632,6 @@ impl EquationPriv for SDE {
 }
 
 impl Equation for SDE {
-    fn bound_error_model_cache(&self) -> Option<&BoundErrorModelCache> {
-        self.error_model_cache.as_ref()
-    }
-
     /// Estimates the likelihood of observed data given a model and parameters.
     ///
     /// # Arguments

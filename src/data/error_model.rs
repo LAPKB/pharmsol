@@ -1,8 +1,6 @@
 use std::{
     collections::BTreeMap,
     hash::{Hash, Hasher},
-    ops::Deref,
-    sync::Arc,
 };
 
 use crate::{data::event::OutputLabel, simulator::likelihood::Prediction};
@@ -218,17 +216,17 @@ impl AssayErrorModels {
 
     /// Get the error model for an output label, if one was added.
     pub fn get(&self, outeq: impl ToString) -> Option<&AssayErrorModel> {
-        self.models.get(&OutputLabel::new(outeq))
+        self.models.get(outeq.to_string().as_str())
     }
 
     /// Get a mutable reference to the error model for an output label, if one was added.
     pub fn get_mut(&mut self, outeq: impl ToString) -> Option<&mut AssayErrorModel> {
-        self.models.get_mut(&OutputLabel::new(outeq))
+        self.models.get_mut(outeq.to_string().as_str())
     }
 
     /// Whether an error model was added for this output label.
     pub fn contains(&self, outeq: impl ToString) -> bool {
-        self.models.contains_key(&OutputLabel::new(outeq))
+        self.models.contains_key(outeq.to_string().as_str())
     }
 
     /// Get the error model for an output label.
@@ -236,20 +234,27 @@ impl AssayErrorModels {
     /// # Errors
     /// [ErrorModelError::UnknownOutputLabel] if no model was added for that label.
     pub fn error_model(&self, outeq: impl ToString) -> Result<&AssayErrorModel, ErrorModelError> {
-        let label = OutputLabel::new(outeq);
+        let label = outeq.to_string();
         self.models
-            .get(&label)
-            .ok_or_else(|| ErrorModelError::UnknownOutputLabel(label.to_string()))
+            .get(label.as_str())
+            .ok_or(ErrorModelError::UnknownOutputLabel(label))
     }
 
-    /// The error model for `outeq`, which must exist and not be [AssayErrorModel::None].
-    fn defined(&self, outeq: impl ToString) -> Result<&AssayErrorModel, ErrorModelError> {
-        let label = OutputLabel::new(outeq);
-        match self.models.get(&label) {
+    /// The error model for `label`, which must exist and not be [AssayErrorModel::None].
+    ///
+    /// Looks the label up as a `&str`, so the likelihood path never allocates.
+    #[inline]
+    fn defined_label(&self, label: &str) -> Result<&AssayErrorModel, ErrorModelError> {
+        match self.models.get(label) {
             None => Err(ErrorModelError::UnknownOutputLabel(label.to_string())),
             Some(AssayErrorModel::None) => Err(ErrorModelError::NoneErrorModel(label.to_string())),
             Some(model) => Ok(model),
         }
+    }
+
+    /// [`Self::defined_label`] for any label-like value.
+    fn defined(&self, outeq: impl ToString) -> Result<&AssayErrorModel, ErrorModelError> {
+        self.defined_label(&outeq.to_string())
     }
 
     /// Mutable variant of [`Self::defined`].
@@ -257,10 +262,10 @@ impl AssayErrorModels {
         &mut self,
         outeq: impl ToString,
     ) -> Result<&mut AssayErrorModel, ErrorModelError> {
-        let label = OutputLabel::new(outeq);
-        match self.models.get_mut(&label) {
-            None => Err(ErrorModelError::UnknownOutputLabel(label.to_string())),
-            Some(AssayErrorModel::None) => Err(ErrorModelError::NoneErrorModel(label.to_string())),
+        let label = outeq.to_string();
+        match self.models.get_mut(label.as_str()) {
+            None => Err(ErrorModelError::UnknownOutputLabel(label)),
+            Some(AssayErrorModel::None) => Err(ErrorModelError::NoneErrorModel(label)),
             Some(model) => Ok(model),
         }
     }
@@ -378,14 +383,17 @@ impl AssayErrorModels {
     /// This always uses the **observation** value to compute sigma, which is appropriate
     /// for non-parametric algorithms (NPAG, NPOD). For parametric algorithms (SAEM, FOCE),
     /// use [`crate::ResidualErrorModels`] instead, which computes sigma from the prediction.
+    #[inline]
     pub fn sigma(&self, prediction: &Prediction) -> Result<f64, ErrorModelError> {
-        self.defined(prediction.outeq())?.sigma(prediction)
+        self.defined_label(prediction.outeq().as_str())?
+            .sigma(prediction)
     }
 
     /// Computes the variance for a prediction, using the error model of the
     /// prediction's output label.
     pub fn variance(&self, prediction: &Prediction) -> Result<f64, ErrorModelError> {
-        self.defined(prediction.outeq())?.variance(prediction)
+        self.defined_label(prediction.outeq().as_str())?
+            .variance(prediction)
     }
 
     /// Computes the standard deviation (sigma) for an output label and value.
@@ -431,95 +439,6 @@ impl<'a> IntoIterator for &'a mut AssayErrorModels {
 
     fn into_iter(self) -> Self::IntoIter {
         self.models.iter_mut()
-    }
-}
-
-/// [`AssayErrorModels`] resolved against one equation's outputs.
-///
-/// The simulator indexes this by the output slot it resolved each observation
-/// to, so the likelihood loop does no label lookups. It is built once per
-/// equation and error-model set, and never leaves the crate's runtime path.
-#[doc(hidden)]
-#[derive(Debug, Clone)]
-pub struct DenseAssayErrorModels {
-    models: Vec<AssayErrorModel>,
-    labels: Vec<OutputLabel>,
-}
-
-impl DenseAssayErrorModels {
-    /// Place each model at the slot of the output it names.
-    ///
-    /// `outputs` are the equation's declared output names in slot order. When
-    /// it is empty (an equation without metadata), labels are slot numbers.
-    pub(crate) fn bind(
-        error_models: &AssayErrorModels,
-        outputs: &[String],
-    ) -> Result<Self, ErrorModelError> {
-        let mut labels: Vec<OutputLabel> = outputs.iter().map(OutputLabel::new).collect();
-        let mut models = vec![AssayErrorModel::None; outputs.len()];
-
-        for (label, model) in error_models.iter() {
-            let slot = if outputs.is_empty() {
-                label.index()
-            } else {
-                outputs.iter().position(|output| output == label.as_str())
-            }
-            .ok_or_else(|| ErrorModelError::UnknownOutputLabel(label.to_string()))?;
-
-            if slot >= models.len() {
-                models.resize(slot + 1, AssayErrorModel::None);
-                labels = (0..models.len()).map(OutputLabel::from).collect();
-            }
-            if models[slot] != AssayErrorModel::None {
-                return Err(ErrorModelError::ExistingOutputEquation(slot));
-            }
-            models[slot] = model.clone();
-        }
-
-        Ok(Self { models, labels })
-    }
-
-    /// The error model at a resolved output slot.
-    #[cfg(test)]
-    pub(crate) fn error_model(&self, slot: usize) -> Option<&AssayErrorModel> {
-        self.models.get(slot)
-    }
-
-    /// Sigma for a prediction from a resolved observation.
-    #[inline]
-    pub(crate) fn sigma(&self, prediction: &Prediction) -> Result<f64, ErrorModelError> {
-        let slot = prediction
-            .outeq_slot
-            .ok_or_else(|| ErrorModelError::UnknownOutputLabel(prediction.outeq().to_string()))?;
-        match self.models.get(slot) {
-            None => Err(ErrorModelError::UnknownOutputLabel(
-                prediction.outeq().to_string(),
-            )),
-            Some(AssayErrorModel::None) => Err(ErrorModelError::NoneErrorModel(
-                self.labels
-                    .get(slot)
-                    .map_or_else(|| prediction.outeq().to_string(), ToString::to_string),
-            )),
-            Some(model) => model.sigma(prediction),
-        }
-    }
-}
-
-#[doc(hidden)]
-#[derive(Debug)]
-pub enum BoundAssayErrorModels {
-    Owned(DenseAssayErrorModels),
-    Shared(Arc<DenseAssayErrorModels>),
-}
-
-impl Deref for BoundAssayErrorModels {
-    type Target = DenseAssayErrorModels;
-
-    fn deref(&self) -> &Self::Target {
-        match self {
-            Self::Owned(models) => models,
-            Self::Shared(models) => models.as_ref(),
-        }
     }
 }
 
@@ -899,14 +818,10 @@ pub enum ErrorModelError {
     ZeroSigma,
     #[error("The computed standard deviation is non-finite")]
     NonFiniteSigma,
-    #[error("The output equation index {0} is invalid")]
-    InvalidOutputEquation(usize),
     #[error("The output label `{0}` is not declared in this error model context")]
     UnknownOutputLabel(String),
     #[error("The output label `{0}` already exists in this assay error model specification")]
     ExistingOutputLabel(String),
-    #[error("The output equation number {0} already exists")]
-    ExistingOutputEquation(usize),
     #[error("An output equation does not have an error model defined")]
     MissingErrorModel,
     #[error("The error model for output `{0}` is of type ErrorModel::None")]
@@ -1007,62 +922,6 @@ mod tests {
             .unwrap();
 
         assert_eq!(models.len(), 2);
-    }
-
-    #[test]
-    fn test_error_models_bind_to_declared_outputs() {
-        let error_models = AssayErrorModels::new()
-            .add(
-                "effect",
-                AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0),
-            )
-            .unwrap();
-
-        let bound =
-            DenseAssayErrorModels::bind(&error_models, &["cp".to_string(), "effect".to_string()])
-                .unwrap();
-        assert_eq!(bound.error_model(0), Some(&AssayErrorModel::None));
-        assert_eq!(bound.error_model(1).unwrap().factor().unwrap(), 5.0);
-    }
-
-    #[test]
-    fn test_error_models_bind_unknown_label_fails() {
-        let error_models = AssayErrorModels::new()
-            .add(
-                "effect",
-                AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0),
-            )
-            .unwrap();
-
-        match DenseAssayErrorModels::bind(&error_models, &["cp".to_string()]) {
-            Err(ErrorModelError::UnknownOutputLabel(label)) => assert_eq!(label, "effect"),
-            other => panic!("Expected UnknownOutputLabel error, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn test_error_models_bind_numeric_label_by_name_not_position() {
-        let error_models = AssayErrorModels::new()
-            .add(
-                1,
-                AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0),
-            )
-            .unwrap();
-
-        // `1` is the only declared output, so it lives in slot 0.
-        let bound = DenseAssayErrorModels::bind(&error_models, &["1".to_string()]).unwrap();
-        assert!(bound.error_model(0).unwrap().is_additive());
-
-        // It never binds to the second of two outputs named otherwise.
-        assert!(
-            DenseAssayErrorModels::bind(&error_models, &["0".to_string(), "2".to_string()])
-                .is_err()
-        );
-
-        // Without declared outputs, labels are slot numbers.
-        let bound = DenseAssayErrorModels::bind(&error_models, &[]).unwrap();
-        assert_eq!(bound.error_model(0), Some(&AssayErrorModel::None));
-        assert!(bound.error_model(1).unwrap().is_additive());
     }
 
     #[test]

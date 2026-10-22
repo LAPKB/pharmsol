@@ -38,7 +38,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-use crate::data::error_model::ErrorModelError;
 use crate::data::event::OutputLabel;
 
 /// Residual error model for parametric estimation algorithms.
@@ -368,17 +367,17 @@ impl ResidualErrorModels {
 
     /// Get the error model for an output label
     pub fn get(&self, outeq: impl ToString) -> Option<&ResidualErrorModel> {
-        self.models.get(&OutputLabel::new(outeq))
+        self.models.get(outeq.to_string().as_str())
     }
 
     /// Get a mutable reference to the error model for an output label
     pub fn get_mut(&mut self, outeq: impl ToString) -> Option<&mut ResidualErrorModel> {
-        self.models.get_mut(&OutputLabel::new(outeq))
+        self.models.get_mut(outeq.to_string().as_str())
     }
 
     /// Whether an error model was added for this output label
     pub fn contains(&self, outeq: impl ToString) -> bool {
-        self.models.contains_key(&OutputLabel::new(outeq))
+        self.models.contains_key(outeq.to_string().as_str())
     }
 
     /// Compute sigma for an output label and prediction
@@ -441,12 +440,12 @@ impl ResidualErrorModels {
     pub fn total_log_likelihood<I, L>(&self, obs_pred_pairs: I) -> f64
     where
         I: IntoIterator<Item = (L, f64, f64)>,
-        L: ToString,
+        L: AsRef<str>,
     {
         let mut total = 0.0;
         for (outeq, obs, pred) in obs_pred_pairs {
-            match self.log_likelihood(outeq, obs, pred) {
-                Some(ll) => total += ll,
+            match self.models.get(outeq.as_ref()) {
+                Some(model) => total += model.log_likelihood(obs, pred),
                 None => return f64::NEG_INFINITY,
             }
         }
@@ -458,63 +457,6 @@ impl ResidualErrorModels {
         for model in self.models.values_mut() {
             *model = model.with_updated_sigma(new_sigma);
         }
-    }
-}
-
-/// [`ResidualErrorModels`] resolved against one equation's outputs, indexed by
-/// output slot.
-#[derive(Debug, Clone)]
-pub(crate) struct DenseResidualErrorModels {
-    models: Vec<Option<ResidualErrorModel>>,
-}
-
-impl DenseResidualErrorModels {
-    /// Place each model at the slot of the output it names.
-    ///
-    /// `outputs` are the equation's declared output names in slot order. When
-    /// it is empty (an equation without metadata), labels are slot numbers.
-    pub(crate) fn bind(
-        error_models: &ResidualErrorModels,
-        outputs: &[String],
-    ) -> Result<Self, ErrorModelError> {
-        let mut models = vec![None; outputs.len()];
-        for (label, model) in error_models.iter() {
-            let slot = if outputs.is_empty() {
-                label.index()
-            } else {
-                outputs.iter().position(|output| output == label.as_str())
-            }
-            .ok_or_else(|| ErrorModelError::UnknownOutputLabel(label.to_string()))?;
-            if slot >= models.len() {
-                models.resize(slot + 1, None);
-            }
-            models[slot] = Some(*model);
-        }
-        Ok(Self { models })
-    }
-
-    #[cfg(test)]
-    pub(crate) fn get(&self, slot: usize) -> Option<&ResidualErrorModel> {
-        self.models.get(slot).and_then(Option::as_ref)
-    }
-
-    /// Total log-likelihood of `(slot, observation, prediction)` triples.
-    /// `f64::NEG_INFINITY` if any slot has no model.
-    pub(crate) fn total_log_likelihood<I>(&self, obs_pred_pairs: I) -> f64
-    where
-        I: IntoIterator<Item = (Option<usize>, f64, f64)>,
-    {
-        let mut total = 0.0;
-        for (slot, obs, pred) in obs_pred_pairs {
-            match slot
-                .and_then(|slot| self.models.get(slot))
-                .and_then(Option::as_ref)
-            {
-                Some(model) => total += model.log_likelihood(obs, pred),
-                None => return f64::NEG_INFINITY,
-            }
-        }
-        total
     }
 }
 
@@ -591,12 +533,6 @@ mod tests {
         assert!((models.sigma("cp", 100.0).unwrap() - 0.5).abs() < 1e-10);
         assert!((models.sigma("effect", 100.0).unwrap() - 10.0).abs() < 1e-10);
         assert!(models.sigma("missing", 100.0).is_none());
-
-        let bound =
-            DenseResidualErrorModels::bind(&models, &["cp".to_string(), "effect".to_string()])
-                .unwrap();
-        assert!(bound.get(0).unwrap().is_constant());
-        assert!(bound.get(1).unwrap().is_proportional());
     }
 
     #[test]
@@ -619,37 +555,5 @@ mod tests {
         models.update_sigma(2.0);
         assert_eq!(models.get("cp").unwrap().primary_parameter(), 2.0);
         assert_eq!(models.get("effect").unwrap().primary_parameter(), 2.0);
-    }
-
-    #[test]
-    fn test_residual_error_models_bind_by_exact_label() {
-        let models = ResidualErrorModels::new().add("1", ResidualErrorModel::constant(0.5));
-
-        // Output `1` is the only declared output, so it lives in slot 0.
-        let bound = DenseResidualErrorModels::bind(&models, &["1".to_string()]).unwrap();
-        assert!(bound.get(0).unwrap().is_constant());
-
-        // `"1"` is a name, not a position: it does not bind to `outeq_1`
-        // or to the second of two outputs named otherwise.
-        for outputs in [vec!["outeq_1"], vec!["0", "2"]] {
-            let outputs = outputs.into_iter().map(String::from).collect::<Vec<_>>();
-            match DenseResidualErrorModels::bind(&models, &outputs) {
-                Err(ErrorModelError::UnknownOutputLabel(label)) => assert_eq!(label, "1"),
-                other => panic!("expected UnknownOutputLabel, got {other:?}"),
-            }
-        }
-    }
-
-    #[test]
-    fn test_residual_error_models_bind_slots_without_declared_outputs() {
-        let models = ResidualErrorModels::new().add(1, ResidualErrorModel::proportional(0.1));
-        let bound = DenseResidualErrorModels::bind(&models, &[]).unwrap();
-        assert!(bound.get(0).is_none());
-        assert!(bound.get(1).unwrap().is_proportional());
-        // An observation of an output with no model cannot be scored.
-        assert_eq!(
-            bound.total_log_likelihood([(Some(0), 1.0, 1.0)]),
-            f64::NEG_INFINITY
-        );
     }
 }

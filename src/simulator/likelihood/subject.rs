@@ -6,7 +6,7 @@
 
 use ndarray::{Array2, ShapeBuilder};
 
-use crate::data::error_model::{AssayErrorModels, DenseAssayErrorModels};
+use crate::data::error_model::AssayErrorModels;
 use crate::{PharmsolError, Predictions};
 
 use super::prediction::Prediction;
@@ -34,13 +34,6 @@ impl Predictions for SubjectPredictions {
 
     fn log_likelihood(&self, error_models: &AssayErrorModels) -> Result<f64, PharmsolError> {
         SubjectPredictions::log_likelihood(self, error_models)
-    }
-
-    fn log_likelihood_bound(
-        &self,
-        error_models: &DenseAssayErrorModels,
-    ) -> Result<f64, PharmsolError> {
-        SubjectPredictions::log_likelihood_bound(self, error_models)
     }
 }
 
@@ -82,19 +75,6 @@ impl SubjectPredictions {
         }
 
         Ok(total)
-    }
-
-    /// [`Self::log_likelihood`] against error models bound to the equation
-    /// that produced these predictions.
-    pub(crate) fn log_likelihood_bound(
-        &self,
-        error_models: &DenseAssayErrorModels,
-    ) -> Result<f64, PharmsolError> {
-        self.predictions
-            .iter()
-            .filter(|prediction| prediction.observation().is_some())
-            .map(|prediction| prediction.log_likelihood_bound(error_models))
-            .sum()
     }
 
     /// Calculate the likelihood of all predictions.
@@ -236,7 +216,6 @@ mod tests {
                 observation: Some(10.0),
                 prediction: 10.1,
                 outeq: OutputLabel::from(0),
-                outeq_slot: Some(0),
                 errorpoly: None,
                 state: vec![10.1],
                 occasion: 0,
@@ -247,7 +226,6 @@ mod tests {
                 observation: Some(8.0),
                 prediction: 8.2,
                 outeq: OutputLabel::from(0),
-                outeq_slot: Some(0),
                 errorpoly: None,
                 state: vec![8.2],
                 occasion: 0,

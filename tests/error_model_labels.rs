@@ -203,3 +203,21 @@ fn residual_error_models_score_by_label() -> Result<(), PharmsolError> {
     assert_eq!(batch, vec![expected]);
     Ok(())
 }
+
+#[test]
+fn error_models_serialize_as_a_label_map() -> Result<(), PharmsolError> {
+    let error_models = AssayErrorModels::new().add(
+        "cp",
+        AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 0.5),
+    )?;
+
+    let json = serde_json::to_value(&error_models).expect("serializes");
+    assert!(json.get("cp").is_some(), "keyed by label, got {json}");
+
+    let round_trip: AssayErrorModels = serde_json::from_value(json).expect("deserializes");
+    assert_eq!(round_trip, error_models);
+
+    let label: OutputLabel = serde_json::from_str("\"cp\"").expect("label deserializes");
+    assert_eq!(serde_json::to_string(&label).unwrap(), "\"cp\"");
+    Ok(())
+}
