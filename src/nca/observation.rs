@@ -13,7 +13,7 @@
 //! - **AUC methods**: delegate to [`crate::data::auc`] primitives
 
 use crate::data::auc;
-use crate::data::event::{AUCMethod, BLQRule, Censor};
+use crate::data::event::{AUCMethod, BLQRule, Censor, OutputLabel};
 use crate::Occasion;
 
 // ============================================================================
@@ -131,17 +131,18 @@ impl ObservationProfile {
     ///
     /// # Arguments
     /// * `occasion` - The occasion containing events
-    /// * `outeq` - Output equation index to extract
+    /// * `outeq` - Output label to extract
     /// * `blq_rule` - How to handle BLQ observations
     ///
     /// # Errors
-    /// Returns error if data is insufficient or invalid
+    /// Returns error if no observation carries `outeq`, or if data is
+    /// insufficient or invalid
     pub(crate) fn from_occasion(
         occasion: &Occasion,
-        outeq: usize,
+        outeq: &OutputLabel,
         blq_rule: &BLQRule,
     ) -> Result<Self, ObservationError> {
-        let (times, concs, censoring) = occasion.get_observations(outeq);
+        let (times, concs, censoring) = occasion.get_observations(outeq)?;
         Self::from_arrays(&times, &concs, &censoring, blq_rule.clone())
     }
 
@@ -432,7 +433,8 @@ mod tests {
             .build();
 
         let occasion = &subject.occasions()[0];
-        let profile = ObservationProfile::from_occasion(occasion, 0, &BLQRule::Exclude).unwrap();
+        let profile =
+            ObservationProfile::from_occasion(occasion, &"0".into(), &BLQRule::Exclude).unwrap();
 
         assert_eq!(profile.times.len(), 5);
         assert_eq!(profile.cmax(), 10.0);
@@ -451,7 +453,8 @@ mod tests {
             .observation(8.0, 2.0, 0)
             .build();
         let occ = &subject.occasions()[0];
-        let profile = ObservationProfile::from_occasion(occ, 0, &BLQRule::Exclude).unwrap();
+        let profile =
+            ObservationProfile::from_occasion(occ, &"0".into(), &BLQRule::Exclude).unwrap();
 
         assert_eq!(profile.cmax(), 10.0);
         assert_eq!(profile.tmax(), 1.0);
@@ -501,7 +504,8 @@ mod tests {
             .observation(8.0, 1.0, 0)
             .build();
         let occ = &subject.occasions()[0];
-        let profile = ObservationProfile::from_occasion(occ, 0, &BLQRule::Exclude).unwrap();
+        let profile =
+            ObservationProfile::from_occasion(occ, &"0".into(), &BLQRule::Exclude).unwrap();
         assert_eq!(profile.cmin(), 1.0);
     }
 
@@ -597,7 +601,8 @@ mod tests {
             .build();
 
         let occasion = &subject.occasions()[0];
-        let profile = ObservationProfile::from_occasion(occasion, 0, &BLQRule::Exclude).unwrap();
+        let profile =
+            ObservationProfile::from_occasion(occasion, &"0".into(), &BLQRule::Exclude).unwrap();
 
         let auc_val = profile.auc_last(&AUCMethod::Linear).unwrap();
         assert!((auc_val - 44.0).abs() < 1e-10);
@@ -614,7 +619,8 @@ mod tests {
             .observation(8.0, 2.0, 0)
             .build();
         let occ = &subject.occasions()[0];
-        let profile = ObservationProfile::from_occasion(occ, 0, &BLQRule::Exclude).unwrap();
+        let profile =
+            ObservationProfile::from_occasion(occ, &"0".into(), &BLQRule::Exclude).unwrap();
         let method = AUCMethod::Linear;
 
         let profile_auc = profile.auc_last(&method).unwrap();
@@ -631,7 +637,8 @@ mod tests {
             .observation(4.0, 6.0, 0)
             .build();
         let occ = &subject.occasions()[0];
-        let profile = ObservationProfile::from_occasion(occ, 0, &BLQRule::Exclude).unwrap();
+        let profile =
+            ObservationProfile::from_occasion(occ, &"0".into(), &BLQRule::Exclude).unwrap();
 
         assert!((profile.interpolate(1.0).unwrap() - 5.0).abs() < 1e-10);
         assert!((profile.interpolate(3.0).unwrap() - 8.0).abs() < 1e-10);
@@ -647,7 +654,8 @@ mod tests {
             .observation(8.0, 2.0, 0)
             .build();
         let occ = &subject.occasions()[0];
-        let profile = ObservationProfile::from_occasion(occ, 0, &BLQRule::Exclude).unwrap();
+        let profile =
+            ObservationProfile::from_occasion(occ, &"0".into(), &BLQRule::Exclude).unwrap();
 
         let display = format!("{}", profile);
         assert!(display.contains("ObservationProfile (5 points)"));

@@ -240,7 +240,7 @@ fn t_quantile(p: f64, df: f64) -> f64 {
 /// use pharmsol::nca::{metabolite_parent_ratio, NCAOptions, NCA};
 ///
 /// let parent_result = subject.nca(&NCAOptions::default())?;
-/// let metabolite_result = subject.nca(&NCAOptions::default().with_outeq(1))?;
+/// let metabolite_result = subject.nca(&NCAOptions::default().with_outeq("metabolite"))?;
 /// let ratios = metabolite_parent_ratio(&parent_result, &metabolite_result);
 /// println!("AUC ratio: {:.2}", ratios["auc_last_ratio"]);
 /// ```
