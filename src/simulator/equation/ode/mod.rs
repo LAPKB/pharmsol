@@ -11,7 +11,7 @@ pub(crate) mod closure_helpers {
 
 use crate::{
     data::{Covariates, Infusion},
-    error_model::AssayErrorModels,
+    error_model::{AssayErrorModels, DenseAssayErrorModels},
     prelude::simulator::SubjectPredictions,
     simulator::{DiffEq, Fa, Init, Lag, Neqs, Out, M, V},
     Event, Observation, Parameters, PharmsolError, Subject,
@@ -331,7 +331,7 @@ fn _estimate_likelihood(
 ) -> Result<f64, PharmsolError> {
     let bound_error_models = ode.bind_error_models(error_models)?;
     let ypred = _subject_predictions(ode, subject, parameters)?;
-    Ok(ypred.log_likelihood(&bound_error_models)?.exp())
+    Ok(ypred.log_likelihood_bound(&bound_error_models)?.exp())
 }
 
 #[inline(always)]
@@ -579,7 +579,7 @@ impl EquationPriv for ODE {
         &self,
         _parameters: &[f64],
         _observation: &Observation,
-        _error_models: Option<&AssayErrorModels>,
+        _error_models: Option<&DenseAssayErrorModels>,
         _time: f64,
         _covariates: &Covariates,
         _x: &mut Self::S,
@@ -1706,7 +1706,7 @@ impl ODE {
         events: &[Event],
         parameters_v: &V,
         covariates: &Covariates,
-        error_models: Option<&AssayErrorModels>,
+        error_models: Option<&DenseAssayErrorModels>,
         bolus_v: &mut V,
         zero_bolus: &V,
         zero_rateiv: &V,
@@ -1791,7 +1791,7 @@ impl ODE {
                         covariates,
                         y_out,
                     );
-                    let outeq = observation.outeq_index().ok_or_else(|| {
+                    let outeq = observation.outeq_slot().ok_or_else(|| {
                         let available = self
                             .metadata()
                             .map(|m| m.output_labels())
@@ -1802,7 +1802,7 @@ impl ODE {
                     let pred =
                         observation.to_prediction(pred, solver.state().y.as_slice().to_vec());
                     if let Some(error_models) = error_models {
-                        likelihood.push(pred.log_likelihood(error_models)?.exp());
+                        likelihood.push(pred.log_likelihood_bound(error_models)?.exp());
                     }
                     output.add_prediction(pred);
                 }
@@ -1857,7 +1857,7 @@ impl Equation for ODE {
     ) -> Result<f64, PharmsolError> {
         let bound_error_models = self.bind_error_models(error_models)?;
         let ypred = _subject_predictions(self, subject, parameters.as_slice())?;
-        ypred.log_likelihood(&bound_error_models)
+        ypred.log_likelihood_bound(&bound_error_models)
     }
 
     fn estimate_predictions_dense(
@@ -1876,7 +1876,7 @@ impl Equation for ODE {
     ) -> Result<f64, PharmsolError> {
         let bound_error_models = self.bind_error_models(error_models)?;
         let ypred = _subject_predictions(self, subject, parameters)?;
-        ypred.log_likelihood(&bound_error_models)
+        ypred.log_likelihood_bound(&bound_error_models)
     }
 
     fn simulate_subject_dense(

@@ -10,7 +10,7 @@ use thiserror::Error;
 
 use crate::{
     data::{Covariates, Infusion},
-    error_model::AssayErrorModels,
+    error_model::{AssayErrorModels, DenseAssayErrorModels},
     prelude::simulator::Prediction,
     simulator::{Diffusion, Drift, Fa, Init, Lag, Neqs, Out, V},
     Parameters, Subject,
@@ -430,6 +430,17 @@ impl Predictions for Array2<Prediction> {
 
         log_liks.map(|lls| lls.iter().sum())
     }
+
+    fn log_likelihood_bound(
+        &self,
+        error_models: &DenseAssayErrorModels,
+    ) -> Result<f64, crate::PharmsolError> {
+        self.get_predictions()
+            .iter()
+            .filter(|p| p.observation().is_some())
+            .map(|p| p.log_likelihood_bound(error_models))
+            .sum()
+    }
 }
 
 impl EquationTypes for SDE {
@@ -527,7 +538,7 @@ impl EquationPriv for SDE {
         &self,
         parameters: &[f64],
         observation: &crate::Observation,
-        error_models: Option<&AssayErrorModels>,
+        error_models: Option<&DenseAssayErrorModels>,
         _time: f64,
         covariates: &Covariates,
         x: &mut Self::S,
@@ -546,8 +557,8 @@ impl EquationPriv for SDE {
                 &mut y,
             );
             let outeq = observation
-                .outeq_index()
-                .expect("resolved observations should use numeric output labels");
+                .outeq_slot()
+                .expect("the simulator resolves every observation's output slot");
             *p = observation.to_prediction(y[outeq], x[i].as_slice().to_vec());
         });
         let out = Array2::from_shape_vec((self.nparticles, 1), pred.clone())?;
@@ -558,7 +569,7 @@ impl EquationPriv for SDE {
             let mut q: Vec<f64> = Vec::with_capacity(self.nparticles);
 
             pred.iter().for_each(|p| {
-                let lik = p.log_likelihood(em).map(f64::exp);
+                let lik = p.log_likelihood_bound(em).map(f64::exp);
                 match lik {
                     Ok(l) => q.push(l),
                     Err(e) => panic!("Error in likelihood calculation: {:?}", e),
@@ -596,7 +607,7 @@ impl EquationPriv for SDE {
         parameters: &[f64],
         event: &crate::Event,
         next_event: Option<&crate::Event>,
-        error_models: Option<&AssayErrorModels>,
+        error_models: Option<&DenseAssayErrorModels>,
         covariates: &Covariates,
         x: &mut Self::S,
         infusions: &mut Vec<Infusion>,

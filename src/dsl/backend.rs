@@ -20,7 +20,7 @@ use pharmsol_dsl::{
 
 use super::model_info::{RuntimeModelInfo, RuntimeRouteInfo, RuntimeStateInfo};
 use crate::{
-    data::error_model::AssayErrorModels,
+    data::error_model::{AssayErrorModels, DenseAssayErrorModels},
     data::{Covariates, Infusion, InputLabel, OutputLabel},
     simulator::{
         cache::{
@@ -779,7 +779,7 @@ impl SharedRuntimeModel {
                 }
                 Event::Observation(observation) => {
                     let outeq = self.resolve_output_label(observation.outeq())?;
-                    observation.set_outeq(outeq);
+                    observation.set_outeq_slot(outeq);
                 }
             }
         }
@@ -1057,7 +1057,7 @@ impl SharedRuntimeModel {
             &cov_buf,
             &mut outputs,
         )?;
-        let outeq = observation.outeq_index().ok_or_else(|| {
+        let outeq = observation.outeq_slot().ok_or_else(|| {
             PharmsolError::unknown_output_label(
                 observation.outeq(),
                 &self.metadata().output_labels(),
@@ -1507,7 +1507,7 @@ impl EquationPriv for RuntimeOdeModel {
         &self,
         _support_point: &[f64],
         _observation: &Observation,
-        _error_models: Option<&AssayErrorModels>,
+        _error_models: Option<&DenseAssayErrorModels>,
         _time: f64,
         _covariates: &Covariates,
         _x: &mut Self::S,
@@ -1546,7 +1546,7 @@ impl Equation for RuntimeOdeModel {
     ) -> Result<f64, PharmsolError> {
         let bound_error_models = self.bind_error_models(error_models)?;
         let predictions = runtime_ode_predictions(self, subject, parameters.as_slice())?;
-        predictions.log_likelihood(&bound_error_models)
+        predictions.log_likelihood_bound(&bound_error_models)
     }
 
     fn estimate_predictions_dense(
@@ -1565,7 +1565,7 @@ impl Equation for RuntimeOdeModel {
     ) -> Result<f64, PharmsolError> {
         let bound_error_models = self.bind_error_models(error_models)?;
         let predictions = runtime_ode_predictions(self, subject, parameters)?;
-        predictions.log_likelihood(&bound_error_models)
+        predictions.log_likelihood_bound(&bound_error_models)
     }
 
     fn simulate_subject_dense(
@@ -1581,7 +1581,7 @@ impl Equation for RuntimeOdeModel {
 
         let predictions = runtime_ode_predictions(self, subject, parameters)?;
         let likelihood = match bound_error_models.as_ref() {
-            Some(error_models) => Some(predictions.log_likelihood(error_models)?.exp()),
+            Some(error_models) => Some(predictions.log_likelihood_bound(error_models)?.exp()),
             None => None,
         };
         Ok((predictions, likelihood))
@@ -1591,13 +1591,12 @@ impl Equation for RuntimeOdeModel {
         EqnKind::ODE
     }
 
-    fn assay_error_models(&self) -> AssayErrorModels {
-        AssayErrorModels::with_output_names(
-            self.info()
-                .outputs
-                .iter()
-                .map(|output| output.name.as_str()),
-        )
+    fn output_names(&self) -> Vec<String> {
+        self.info()
+            .outputs
+            .iter()
+            .map(|output| output.name.clone())
+            .collect()
     }
 
     fn estimate_predictions(
@@ -1622,7 +1621,7 @@ impl Equation for RuntimeOdeModel {
 
         let predictions = runtime_ode_predictions(self, subject, support_point)?;
         let likelihood = match bound_error_models.as_ref() {
-            Some(error_models) => Some(predictions.log_likelihood(error_models)?.exp()),
+            Some(error_models) => Some(predictions.log_likelihood_bound(error_models)?.exp()),
             None => None,
         };
         Ok((predictions, likelihood))
@@ -1905,7 +1904,7 @@ impl EquationPriv for RuntimeAnalyticalModel {
         &self,
         _support_point: &[f64],
         _observation: &Observation,
-        _error_models: Option<&AssayErrorModels>,
+        _error_models: Option<&DenseAssayErrorModels>,
         _time: f64,
         _covariates: &Covariates,
         _x: &mut Self::S,
@@ -1940,7 +1939,7 @@ impl Equation for RuntimeAnalyticalModel {
     ) -> Result<f64, PharmsolError> {
         let bound_error_models = self.bind_error_models(error_models)?;
         let predictions = runtime_analytical_predictions(self, subject, parameters.as_slice())?;
-        predictions.log_likelihood(&bound_error_models)
+        predictions.log_likelihood_bound(&bound_error_models)
     }
 
     fn estimate_predictions_dense(
@@ -1955,13 +1954,12 @@ impl Equation for RuntimeAnalyticalModel {
         EqnKind::Analytical
     }
 
-    fn assay_error_models(&self) -> AssayErrorModels {
-        AssayErrorModels::with_output_names(
-            self.info()
-                .outputs
-                .iter()
-                .map(|output| output.name.as_str()),
-        )
+    fn output_names(&self) -> Vec<String> {
+        self.info()
+            .outputs
+            .iter()
+            .map(|output| output.name.clone())
+            .collect()
     }
 
     fn estimate_predictions(
@@ -1994,7 +1992,7 @@ impl Equation for RuntimeAnalyticalModel {
 
         let predictions = runtime_analytical_predictions(self, subject, parameters)?;
         let likelihood = match bound_error_models.as_ref() {
-            Some(error_models) => Some(predictions.log_likelihood(error_models)?.exp()),
+            Some(error_models) => Some(predictions.log_likelihood_bound(error_models)?.exp()),
             None => None,
         };
         Ok((predictions, likelihood))
@@ -2308,13 +2306,15 @@ fn runtime_sde_log_likelihood(
             return Ok(cached);
         }
 
+        let bound_error_models = model.bind_error_models(error_models)?;
         let predictions = model.estimate_predictions_dense(subject, support_point)?;
-        let log_lik = predictions.log_likelihood(error_models)?;
+        let log_lik = predictions.log_likelihood_bound(&bound_error_models)?;
         cache.insert(key, log_lik);
         Ok(log_lik)
     } else {
+        let bound_error_models = model.bind_error_models(error_models)?;
         let predictions = model.estimate_predictions_dense(subject, support_point)?;
-        predictions.log_likelihood(error_models)
+        predictions.log_likelihood_bound(&bound_error_models)
     }
 }
 
@@ -2395,7 +2395,7 @@ impl EquationPriv for RuntimeSdeModel {
         &self,
         _support_point: &[f64],
         _observation: &Observation,
-        _error_models: Option<&AssayErrorModels>,
+        _error_models: Option<&DenseAssayErrorModels>,
         _time: f64,
         _covariates: &Covariates,
         _x: &mut Self::S,
@@ -2427,21 +2427,19 @@ impl Equation for RuntimeSdeModel {
         parameters: &Parameters,
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
-        let bound_error_models = self.bind_error_models(error_models)?;
-        runtime_sde_log_likelihood(self, subject, parameters.as_slice(), &bound_error_models)
+        runtime_sde_log_likelihood(self, subject, parameters.as_slice(), error_models)
     }
 
     fn kind() -> EqnKind {
         EqnKind::SDE
     }
 
-    fn assay_error_models(&self) -> AssayErrorModels {
-        AssayErrorModels::with_output_names(
-            self.info()
-                .outputs
-                .iter()
-                .map(|output| output.name.as_str()),
-        )
+    fn output_names(&self) -> Vec<String> {
+        self.info()
+            .outputs
+            .iter()
+            .map(|output| output.name.clone())
+            .collect()
     }
 
     fn estimate_predictions(
@@ -2466,8 +2464,7 @@ impl Equation for RuntimeSdeModel {
         parameters: &[f64],
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
-        let bound_error_models = self.bind_error_models(error_models)?;
-        runtime_sde_log_likelihood(self, subject, parameters, &bound_error_models)
+        runtime_sde_log_likelihood(self, subject, parameters, error_models)
     }
 
     fn simulate_subject(
@@ -2492,7 +2489,7 @@ impl Equation for RuntimeSdeModel {
 
         let predictions = RuntimeSdeModel::estimate_predictions_dense(self, subject, parameters)?;
         let likelihood = match bound_error_models.as_ref() {
-            Some(error_models) => Some(predictions.log_likelihood(error_models)?.exp()),
+            Some(error_models) => Some(predictions.log_likelihood_bound(error_models)?.exp()),
             None => None,
         };
         Ok((predictions, likelihood))

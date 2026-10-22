@@ -59,7 +59,7 @@ pub use pharmsol_dsl::{AnalyticalKernel, ModelKind};
 pub use sde::*;
 
 use crate::{
-    error_model::{AssayErrorModels, BoundAssayErrorModels},
+    error_model::{AssayErrorModels, BoundAssayErrorModels, DenseAssayErrorModels},
     simulator::{cache::BoundErrorModelCache, Fa, Lag},
     Covariates, Event, Infusion, InputLabel, Observation, Occasion, OutputLabel, Parameters,
     PharmsolError, Subject,
@@ -113,6 +113,14 @@ pub trait Predictions: Default {
     /// # Returns
     /// The sum of log-likelihoods for all predictions
     fn log_likelihood(&self, error_models: &AssayErrorModels) -> Result<f64, PharmsolError>;
+
+    /// [`Self::log_likelihood`] against error models already bound to the
+    /// equation that produced these predictions.
+    #[doc(hidden)]
+    fn log_likelihood_bound(
+        &self,
+        error_models: &DenseAssayErrorModels,
+    ) -> Result<f64, PharmsolError>;
 }
 
 /// Trait for enabling prediction caching on equation types.
@@ -265,7 +273,7 @@ pub(crate) trait EquationPriv: EquationTypes {
                 }
                 Event::Observation(observation) => {
                     let outeq = self.resolve_output_label(observation.outeq())?;
-                    observation.set_outeq(outeq);
+                    observation.set_outeq_slot(outeq);
                 }
             }
         }
@@ -282,7 +290,7 @@ pub(crate) trait EquationPriv: EquationTypes {
         &self,
         parameters: &[f64],
         observation: &Observation,
-        error_models: Option<&AssayErrorModels>,
+        error_models: Option<&DenseAssayErrorModels>,
         time: f64,
         covariates: &Covariates,
         x: &mut Self::S,
@@ -298,7 +306,7 @@ pub(crate) trait EquationPriv: EquationTypes {
         parameters: &[f64],
         event: &Event,
         next_event: Option<&Event>,
-        error_models: Option<&AssayErrorModels>,
+        error_models: Option<&DenseAssayErrorModels>,
         covariates: &Covariates,
         x: &mut Self::S,
         infusions: &mut Vec<Infusion>,
@@ -376,28 +384,26 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
         None
     }
 
+    /// Resolve label-keyed error models to this equation's output slots.
     #[doc(hidden)]
-    fn bind_error_models<'a>(
-        &'a self,
-        error_models: &'a AssayErrorModels,
-    ) -> Result<BoundAssayErrorModels<'a>, PharmsolError> {
+    fn bind_error_models(
+        &self,
+        error_models: &AssayErrorModels,
+    ) -> Result<BoundAssayErrorModels, PharmsolError> {
+        let bind = || DenseAssayErrorModels::bind(error_models, &self.output_names());
+
         if let Some(cache) = self.bound_error_model_cache() {
             let key = error_models.hash();
             if let Some(bound_error_models) = cache.get(&key) {
                 return Ok(BoundAssayErrorModels::Shared(bound_error_models));
             }
 
-            return match error_models.bind_to(self)? {
-                BoundAssayErrorModels::Owned(bound_error_models) => {
-                    let bound_error_models = Arc::new(bound_error_models);
-                    cache.insert(key, Arc::clone(&bound_error_models));
-                    Ok(BoundAssayErrorModels::Shared(bound_error_models))
-                }
-                bound_error_models => Ok(bound_error_models),
-            };
+            let bound_error_models = Arc::new(bind()?);
+            cache.insert(key, Arc::clone(&bound_error_models));
+            return Ok(BoundAssayErrorModels::Shared(bound_error_models));
         }
 
-        Ok(error_models.bind_to(self)?)
+        Ok(BoundAssayErrorModels::Owned(bind()?))
     }
 
     /// Estimate the likelihood of the subject given the parameters and error model.
@@ -469,7 +475,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
     ) -> Result<f64, PharmsolError> {
         let bound_error_models = self.bind_error_models(error_models)?;
         let predictions = self.estimate_predictions_dense(subject, parameters)?;
-        predictions.log_likelihood(&bound_error_models)
+        predictions.log_likelihood_bound(&bound_error_models)
     }
 
     #[doc(hidden)]
@@ -537,20 +543,21 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
         self.get_nstates()
     }
 
-    /// Build a label-aware [`AssayErrorModels`] set for this equation.
+    /// The equation's declared output names, in output-slot order.
     ///
-    /// Handwritten equations resolve output labels from attached metadata.
-    /// Equations without metadata fall back to an explicit unbound set so dense
-    /// output-slot workflows remain available without adding runtime lookup cost.
+    /// Empty for a handwritten equation without metadata, whose outputs are
+    /// labeled by slot number instead.
     #[doc(hidden)]
-    fn assay_error_models(&self) -> AssayErrorModels {
+    fn output_names(&self) -> Vec<String> {
         self.metadata()
             .map(|metadata| {
-                AssayErrorModels::with_output_names(
-                    metadata.outputs().iter().map(|output| output.name()),
-                )
+                metadata
+                    .outputs()
+                    .iter()
+                    .map(|output| output.name().to_string())
+                    .collect()
             })
-            .unwrap_or_else(AssayErrorModels::empty)
+            .unwrap_or_default()
     }
 
     /// Simulate a subject with given parameters and optionally calculate likelihood.

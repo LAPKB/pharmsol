@@ -581,6 +581,10 @@ pub struct Observation {
     errorpoly: Option<ErrorPoly>,
     occasion: usize,
     censoring: Censor,
+    /// Output slot `outeq` resolves to in the equation being simulated. Set
+    /// by the simulator next to the label, which it never rewrites.
+    #[serde(skip)]
+    outeq_slot: Option<usize>,
 }
 impl Observation {
     /// Create a new observation
@@ -608,6 +612,7 @@ impl Observation {
             errorpoly,
             occasion,
             censoring,
+            outeq_slot: None,
         }
     }
 
@@ -655,6 +660,17 @@ impl Observation {
     /// Set the output label corresponding to this observation
     pub fn set_outeq(&mut self, outeq: impl ToString) {
         self.outeq = OutputLabel::new(outeq);
+        self.outeq_slot = None;
+    }
+
+    /// The output slot the simulator resolved this observation's label to.
+    pub(crate) fn outeq_slot(&self) -> Option<usize> {
+        self.outeq_slot
+    }
+
+    /// Record the output slot this observation's label resolves to.
+    pub(crate) fn set_outeq_slot(&mut self, slot: usize) {
+        self.outeq_slot = Some(slot);
     }
 
     /// Set the [ErrorPoly] for this observation
@@ -674,6 +690,7 @@ impl Observation {
 
     /// Get a mutable reference to the output label
     pub fn mut_outeq(&mut self) -> &mut OutputLabel {
+        self.outeq_slot = None;
         &mut self.outeq
     }
 
@@ -694,17 +711,14 @@ impl Observation {
 
     /// Create a [`Prediction`] from this observation.
     ///
-    /// This is a low-level helper for code paths that already operate on a
-    /// resolved or numeric output index. Named output labels must be resolved by
-    /// the caller before this conversion happens.
+    /// The prediction keeps this observation's output label.
     pub fn to_prediction(&self, pred: f64, state: Vec<f64>) -> Prediction {
         Prediction {
             time: self.time(),
             observation: self.value(),
             prediction: pred,
-            outeq: self
-                .outeq_index()
-                .expect("prediction requires a resolved or numeric output label"),
+            outeq: self.outeq.clone(),
+            outeq_slot: self.outeq_slot,
             errorpoly: self.errorpoly(),
             state,
             occasion: self.occasion(),

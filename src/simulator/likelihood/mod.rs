@@ -79,7 +79,7 @@ pub use matrix::psi;
 pub use prediction::Prediction;
 pub use subject::{PopulationPredictions, SubjectPredictions};
 
-use std::borrow::Cow;
+use crate::data::residual_error::DenseResidualErrorModels;
 
 use ndarray::{Array2, Axis};
 use rayon::prelude::*;
@@ -136,7 +136,6 @@ pub fn log_likelihood_batch(
     }
 
     let residual_error_models = bind_residual_error_models(equation, residual_error_models)?;
-    let residual_error_models = residual_error_models.as_ref();
 
     let score_subject = |subject: &Subject, parameter_row: &[f64]| {
         let predictions = match equation.estimate_predictions_dense(subject, parameter_row) {
@@ -149,7 +148,7 @@ pub fn log_likelihood_batch(
             .into_iter()
             .filter_map(|pred| {
                 pred.observation()
-                    .map(|obs| (pred.outeq(), obs, pred.prediction()))
+                    .map(|obs| (pred.outeq_slot, obs, pred.prediction()))
             });
 
         residual_error_models.total_log_likelihood(obs_pred_pairs)
@@ -232,7 +231,7 @@ pub fn log_likelihood_subject(
         .into_iter()
         .filter_map(|pred| {
             pred.observation()
-                .map(|obs| (pred.outeq(), obs, pred.prediction()))
+                .map(|obs| (pred.outeq_slot, obs, pred.prediction()))
         });
 
     residual_error_models.total_log_likelihood(obs_pred_pairs)
@@ -240,24 +239,21 @@ pub fn log_likelihood_subject(
 
 /// Bind label-keyed residual error models to the equation's output slots by
 /// exact output name.
-fn bind_residual_error_models<'a>(
+fn bind_residual_error_models(
     equation: &impl Equation,
-    residual_error_models: &'a crate::ResidualErrorModels,
-) -> Result<Cow<'a, crate::ResidualErrorModels>, PharmsolError> {
-    if residual_error_models.is_bound() {
-        return Ok(Cow::Borrowed(residual_error_models));
-    }
-    let outputs = equation.assay_error_models().bound_output_names();
-    Ok(Cow::Owned(
-        residual_error_models.bind_output_names(&outputs)?,
-    ))
+    residual_error_models: &crate::ResidualErrorModels,
+) -> Result<DenseResidualErrorModels, PharmsolError> {
+    Ok(DenseResidualErrorModels::bind(
+        residual_error_models,
+        &equation.output_names(),
+    )?)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::data::error_model::{AssayErrorModel, ErrorPoly};
-    use crate::data::event::Observation;
+    use crate::data::event::{Observation, OutputLabel};
     use crate::Censor;
 
     #[test]
@@ -267,7 +263,8 @@ mod tests {
             time: 1.0,
             observation: Some(10.0),
             prediction: 10.5,
-            outeq: 0,
+            outeq: OutputLabel::from(0),
+            outeq_slot: Some(0),
             errorpoly: None,
             state: vec![10.5],
             occasion: 0,
@@ -275,8 +272,8 @@ mod tests {
         };
 
         // Create error model with additive error
-        let error_models = crate::AssayErrorModels::empty()
-            .add_at(
+        let error_models = crate::AssayErrorModels::new()
+            .add(
                 0,
                 AssayErrorModel::additive(ErrorPoly::new(0.0, 1.0, 0.0, 0.0), 0.0),
             )
@@ -303,7 +300,8 @@ mod tests {
                 time: 1.0,
                 observation: Some(10.0),
                 prediction: 10.1,
-                outeq: 0,
+                outeq: OutputLabel::from(0),
+                outeq_slot: Some(0),
                 errorpoly: None,
                 state: vec![10.1],
                 occasion: 0,
@@ -313,7 +311,8 @@ mod tests {
                 time: 2.0,
                 observation: Some(8.0),
                 prediction: 8.2,
-                outeq: 0,
+                outeq: OutputLabel::from(0),
+                outeq_slot: Some(0),
                 errorpoly: None,
                 state: vec![8.2],
                 occasion: 0,
@@ -322,8 +321,8 @@ mod tests {
         ];
 
         let subject_predictions = SubjectPredictions::from(predictions);
-        let error_models = crate::AssayErrorModels::empty()
-            .add_at(
+        let error_models = crate::AssayErrorModels::new()
+            .add(
                 0,
                 AssayErrorModel::additive(ErrorPoly::new(0.0, 1.0, 0.0, 0.0), 0.0),
             )
@@ -346,7 +345,7 @@ mod tests {
     #[test]
     fn test_empty_predictions_have_neutral_log_likelihood() {
         let preds = SubjectPredictions::default();
-        let errors = crate::AssayErrorModels::empty();
+        let errors = crate::AssayErrorModels::new();
         assert_eq!(preds.log_likelihood(&errors).unwrap(), 0.0); // log(1) = 0
     }
 
@@ -357,9 +356,7 @@ mod tests {
         preds.add_prediction(obs.to_prediction(1.0, vec![]));
 
         let error_model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 0.0);
-        let errors = crate::AssayErrorModels::empty()
-            .add_at(0, error_model)
-            .unwrap();
+        let errors = crate::AssayErrorModels::new().add(0, error_model).unwrap();
 
         let log_lik = preds.log_likelihood(&errors).unwrap();
         assert!(log_lik.is_finite());

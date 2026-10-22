@@ -6,7 +6,7 @@
 
 use ndarray::{Array2, ShapeBuilder};
 
-use crate::data::error_model::AssayErrorModels;
+use crate::data::error_model::{AssayErrorModels, DenseAssayErrorModels};
 use crate::{PharmsolError, Predictions};
 
 use super::prediction::Prediction;
@@ -34,6 +34,13 @@ impl Predictions for SubjectPredictions {
 
     fn log_likelihood(&self, error_models: &AssayErrorModels) -> Result<f64, PharmsolError> {
         SubjectPredictions::log_likelihood(self, error_models)
+    }
+
+    fn log_likelihood_bound(
+        &self,
+        error_models: &DenseAssayErrorModels,
+    ) -> Result<f64, PharmsolError> {
+        SubjectPredictions::log_likelihood_bound(self, error_models)
     }
 }
 
@@ -75,6 +82,19 @@ impl SubjectPredictions {
         }
 
         Ok(total)
+    }
+
+    /// [`Self::log_likelihood`] against error models bound to the equation
+    /// that produced these predictions.
+    pub(crate) fn log_likelihood_bound(
+        &self,
+        error_models: &DenseAssayErrorModels,
+    ) -> Result<f64, PharmsolError> {
+        self.predictions
+            .iter()
+            .filter(|prediction| prediction.observation().is_some())
+            .map(|prediction| prediction.log_likelihood_bound(error_models))
+            .sum()
     }
 
     /// Calculate the likelihood of all predictions.
@@ -167,12 +187,12 @@ impl From<Array2<SubjectPredictions>> for PopulationPredictions {
 mod tests {
     use super::*;
     use crate::data::error_model::{AssayErrorModel, ErrorPoly};
-    use crate::data::event::Observation;
+    use crate::data::event::{Observation, OutputLabel};
     use crate::Censor;
 
     fn create_error_models() -> AssayErrorModels {
-        AssayErrorModels::empty()
-            .add_at(
+        AssayErrorModels::new()
+            .add(
                 0,
                 AssayErrorModel::additive(ErrorPoly::new(0.0, 1.0, 0.0, 0.0), 0.0),
             )
@@ -201,7 +221,7 @@ mod tests {
         preds.add_prediction(obs.to_prediction(1.0, vec![]));
 
         let error_model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 0.0);
-        let errors = AssayErrorModels::empty().add_at(0, error_model).unwrap();
+        let errors = AssayErrorModels::new().add(0, error_model).unwrap();
 
         let log_lik = preds.log_likelihood(&errors).unwrap();
         assert!(log_lik.is_finite());
@@ -215,7 +235,8 @@ mod tests {
                 time: 1.0,
                 observation: Some(10.0),
                 prediction: 10.1,
-                outeq: 0,
+                outeq: OutputLabel::from(0),
+                outeq_slot: Some(0),
                 errorpoly: None,
                 state: vec![10.1],
                 occasion: 0,
@@ -225,7 +246,8 @@ mod tests {
                 time: 2.0,
                 observation: Some(8.0),
                 prediction: 8.2,
-                outeq: 0,
+                outeq: OutputLabel::from(0),
+                outeq_slot: Some(0),
                 errorpoly: None,
                 state: vec![8.2],
                 occasion: 0,

@@ -339,7 +339,7 @@ pub mod prelude {
     pub use crate::data::{
         builder::SubjectBuilderExt,
         error_model::{AssayErrorModel, AssayErrorModels, ErrorPoly},
-        event::{AUCMethod, BLQRule, Route},
+        event::{AUCMethod, BLQRule, OutputLabel, Route},
         Covariates, Data, Event, Interpolation, Occasion, Subject,
     };
 

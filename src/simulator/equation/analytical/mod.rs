@@ -21,7 +21,7 @@ use super::{
     EqnKind, Equation, EquationPriv, EquationTypes, ModelMetadata, ModelMetadataError,
     ValidatedModelMetadata,
 };
-use crate::data::error_model::AssayErrorModels;
+use crate::data::error_model::{AssayErrorModels, DenseAssayErrorModels};
 use crate::simulator::cache::{
     BoundErrorModelCache, PredictionCache, DEFAULT_BOUND_ERROR_MODEL_CACHE_SIZE, DEFAULT_CACHE_SIZE,
 };
@@ -374,7 +374,7 @@ impl EquationPriv for Analytical {
         &self,
         parameters: &[f64],
         observation: &Observation,
-        error_models: Option<&AssayErrorModels>,
+        error_models: Option<&DenseAssayErrorModels>,
         _time: f64,
         covariates: &Covariates,
         x: &mut Self::S,
@@ -390,7 +390,7 @@ impl EquationPriv for Analytical {
             covariates,
             &mut y,
         );
-        let outeq = observation.outeq_index().ok_or_else(|| {
+        let outeq = observation.outeq_slot().ok_or_else(|| {
             let available = self
                 .metadata()
                 .map(|m| m.output_labels())
@@ -400,7 +400,7 @@ impl EquationPriv for Analytical {
         let pred = y[outeq];
         let pred = observation.to_prediction(pred, x.as_slice().to_vec());
         if let Some(error_models) = error_models {
-            likelihood.push(pred.log_likelihood(error_models)?.exp());
+            likelihood.push(pred.log_likelihood_bound(error_models)?.exp());
         }
         output.add_prediction(pred);
         Ok(())
@@ -909,7 +909,7 @@ impl Equation for Analytical {
     ) -> Result<f64, PharmsolError> {
         let bound_error_models = self.bind_error_models(error_models)?;
         let ypred = _subject_predictions(self, subject, parameters.as_slice())?;
-        ypred.log_likelihood(&bound_error_models)
+        ypred.log_likelihood_bound(&bound_error_models)
     }
 
     fn kind() -> EqnKind {
@@ -949,5 +949,5 @@ fn _estimate_likelihood(
 ) -> Result<f64, PharmsolError> {
     let bound_error_models = ode.bind_error_models(error_models)?;
     let ypred = _subject_predictions(ode, subject, parameters)?;
-    Ok(ypred.log_likelihood(&bound_error_models)?.exp())
+    Ok(ypred.log_likelihood_bound(&bound_error_models)?.exp())
 }
