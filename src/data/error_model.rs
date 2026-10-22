@@ -170,19 +170,30 @@ pub type ErrorModels = AssayErrorModels;
 
 fn hash_model<H: Hasher>(hasher: &mut H, model: &AssayErrorModel) {
     match model {
-        AssayErrorModel::Additive { lambda, .. } => {
+        AssayErrorModel::Additive { lambda, poly } => {
             0u8.hash(hasher);
             lambda.value().to_bits().hash(hasher);
             lambda.is_fixed().hash(hasher);
+            hash_poly(hasher, poly);
         }
-        AssayErrorModel::Proportional { gamma, .. } => {
+        AssayErrorModel::Proportional { gamma, poly } => {
             1u8.hash(hasher);
             gamma.value().to_bits().hash(hasher);
             gamma.is_fixed().hash(hasher);
+            hash_poly(hasher, poly);
         }
         AssayErrorModel::None => {
             2u8.hash(hasher);
         }
+    }
+}
+
+/// The polynomial is part of the hash because likelihood caches (SDE) key on
+/// it: changing only the polynomial must not reuse a cached likelihood.
+fn hash_poly<H: Hasher>(hasher: &mut H, poly: &ErrorPoly) {
+    let (c0, c1, c2, c3) = poly.coefficients();
+    for coefficient in [c0, c1, c2, c3] {
+        coefficient.to_bits().hash(hasher);
     }
 }
 
@@ -1551,6 +1562,20 @@ mod tests {
             )
             .unwrap();
         assert_ne!(a.hash(), b.hash());
+    }
+
+    #[test]
+    fn error_model_hash_differs_on_polynomial() {
+        for model in [
+            AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0),
+            AssayErrorModel::proportional(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 5.0),
+        ] {
+            let a = AssayErrorModels::new().add("cp", model).unwrap();
+            let mut b = a.clone();
+            b.set_errorpoly("cp", ErrorPoly::new(1.0, 0.1, 0.0, 0.0))
+                .unwrap();
+            assert_ne!(a.hash(), b.hash());
+        }
     }
 
     #[test]

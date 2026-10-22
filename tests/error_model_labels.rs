@@ -221,3 +221,75 @@ fn error_models_serialize_as_a_label_map() -> Result<(), PharmsolError> {
     assert_eq!(serde_json::to_string(&label).unwrap(), "\"cp\"");
     Ok(())
 }
+
+fn one_cpt_sde() -> equation::SDE {
+    equation::SDE::new(
+        |x, p, _t, dx, rateiv, _cov| {
+            fetch_params!(p, ke, _v);
+            dx[0] = rateiv[0] - ke * x[0];
+        },
+        // No diffusion, so every particle follows the same path and the
+        // likelihood is deterministic.
+        |_p, sigma| {
+            sigma[0] = 0.0;
+        },
+        |_p, _t, _cov| lag! {},
+        |_p, _t, _cov| fa! {},
+        |_p, _t, _cov, _x| {},
+        |x, p, _t, _cov, y| {
+            fetch_params!(p, _ke, v);
+            y[0] = x[0] / v;
+        },
+        16,
+    )
+    .with_nstates(1)
+    .with_ndrugs(1)
+    .with_nout(1)
+    .with_metadata(
+        equation::metadata::new("one_cpt_sde")
+            .kind(equation::ModelKind::Sde)
+            .parameters(["ke", "v"])
+            .states(["central"])
+            .outputs(["cp"])
+            .route(
+                equation::Route::infusion("iv")
+                    .to_state("central")
+                    .inject_input_to_destination(),
+            ),
+    )
+    .expect("SDE metadata validates")
+}
+
+#[test]
+fn sde_likelihood_cache_sees_error_polynomial_changes() -> Result<(), PharmsolError> {
+    let sde = one_cpt_sde();
+    let subject = Subject::builder("1")
+        .infusion(0.0, 100.0, "iv", 1.0)
+        .observation(1.0, 4.0, "cp")
+        .observation(2.0, 3.5, "cp")
+        .build();
+    let parameters =
+        Parameters::with_model(&sde, [("ke", 0.2), ("v", 20.0)]).expect("valid named parameters");
+
+    let mut error_models = AssayErrorModels::new().add(
+        "cp",
+        AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 0.5),
+    )?;
+
+    let first = sde.estimate_log_likelihood(&subject, &parameters, &error_models)?;
+    // The likelihood cache is on by default: a repeat call is a cache hit.
+    assert_eq!(
+        sde.estimate_log_likelihood(&subject, &parameters, &error_models)?,
+        first
+    );
+
+    // Change only the polynomial; gamma/lambda and its fixed state stay put.
+    error_models.set_errorpoly("cp", ErrorPoly::new(5.0, 0.0, 0.0, 0.0))?;
+    let after = sde.estimate_log_likelihood(&subject, &parameters, &error_models)?;
+
+    assert!(
+        (after - first).abs() > 1e-6,
+        "a polynomial-only change must not reuse the cached likelihood ({first} == {after})"
+    );
+    Ok(())
+}
