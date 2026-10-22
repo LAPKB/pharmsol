@@ -2954,7 +2954,7 @@ mod tests {
     }
 
     #[test]
-    fn handwritten_ode_metadata_resolves_raw_numeric_aliases_against_canonical_labels() {
+    fn handwritten_ode_metadata_resolves_numeric_labels_by_exact_name() {
         let ode = ODE::new(
             explicit_route_function,
             zero_lag,
@@ -2968,34 +2968,38 @@ mod tests {
         .with_metadata(
             super::super::metadata::new("numeric_alias_ode")
                 .states(["central"])
-                .outputs(["outeq_1"])
-                .route(super::super::Route::infusion("input_1").to_state("central")),
+                .outputs(["1"])
+                .route(super::super::Route::infusion("1").to_state("central")),
         )
         .expect("metadata attachment should validate");
 
-        let canonical = Subject::builder("canonical")
-            .infusion(0.0, 100.0, "input_1", 1.0)
-            .observation(1.0, 0.0, "outeq_1")
-            .build();
-        let aliased = Subject::builder("aliased")
+        let numeric = Subject::builder("numeric")
             .infusion(0.0, 100.0, "1", 1.0)
             .observation(1.0, 0.0, "1")
             .build();
+        let prediction = ode
+            .simulate_subject(&numeric, &crate::parameters::dense([]), None)
+            .expect("numeric labels should resolve by exact name")
+            .0
+            .predictions()[0]
+            .prediction();
+        assert!(prediction > 0.0);
 
-        let canonical_predictions = ode
-            .simulate_subject(&canonical, &crate::parameters::dense([]), None)
-            .expect("canonical labels should simulate")
-            .0;
-        let aliased_predictions = ode
-            .simulate_subject(&aliased, &crate::parameters::dense([]), None)
-            .expect("raw numeric aliases should simulate")
-            .0;
-
-        assert_relative_eq!(
-            canonical_predictions.predictions()[0].prediction(),
-            aliased_predictions.predictions()[0].prediction(),
-            epsilon = 1e-6
-        );
+        // `input_1` / `outeq_1` are different names, not aliases of `1`.
+        for prefixed in [
+            Subject::builder("prefixed_input")
+                .infusion(0.0, 100.0, "input_1", 1.0)
+                .observation(1.0, 0.0, "1")
+                .build(),
+            Subject::builder("prefixed_output")
+                .infusion(0.0, 100.0, "1", 1.0)
+                .observation(1.0, 0.0, "outeq_1")
+                .build(),
+        ] {
+            assert!(ode
+                .simulate_subject(&prefixed, &crate::parameters::dense([]), None)
+                .is_err());
+        }
     }
 
     #[test]
@@ -3245,7 +3249,7 @@ mod tests {
                 super::super::metadata::new("dense_grid_near_event_ode")
                     .states(["central"])
                     .outputs(["cp"])
-                    .route(super::super::Route::bolus("input_0").to_state("central")),
+                    .route(super::super::Route::bolus("0").to_state("central")),
             )
             .expect("metadata should validate");
 

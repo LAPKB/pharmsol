@@ -6,7 +6,7 @@ use super::syntax::*;
 use crate::name_match::{
     common_prefix_len, edit_distance, is_high_confidence_match, is_single_adjacent_transposition,
 };
-use crate::{NUMERIC_OUTPUT_PREFIX, NUMERIC_ROUTE_PREFIX, RATE_FUNCTION_NAME};
+use crate::RATE_FUNCTION_NAME;
 
 const DEFAULT_MODEL_NAME: &str = "main";
 
@@ -1638,49 +1638,6 @@ fn parse_label_segment(src: &str, abs_start: usize, kind: LabelKind) -> Result<I
         ));
     }
 
-    if let Some(suffix) = bare_numeric_label(trimmed) {
-        let replacement = kind.canonical_label(suffix);
-        return Err(ParseError::new(
-            format!(
-                "bare numeric {} labels are not allowed in the DSL; use `{replacement}` instead",
-                kind.noun()
-            ),
-            span,
-        )
-        .with_help(format!(
-            "numeric {} labels must use the `{}` prefix in authored DSL",
-            kind.noun(),
-            kind.prefix_pattern()
-        ))
-        .with_suggestion(DiagnosticSuggestion {
-            message: format!("use `{replacement}`"),
-            edits: vec![TextEdit { span, replacement }],
-            applicability: Applicability::Always,
-        }));
-    }
-
-    if let Some(suffix) = canonical_numeric_suffix(trimmed, kind.wrong_prefix()) {
-        let replacement = kind.canonical_label(suffix);
-        return Err(ParseError::new(
-            format!(
-                "`{trimmed}` is {} label and cannot be used as {}; use `{replacement}` here",
-                kind.wrong_kind_phrase(),
-                kind.noun_phrase()
-            ),
-            span,
-        )
-        .with_help(format!(
-            "numeric {} labels use the `{}` prefix",
-            kind.noun(),
-            kind.prefix_pattern()
-        ))
-        .with_suggestion(DiagnosticSuggestion {
-            message: format!("use `{replacement}`"),
-            edits: vec![TextEdit { span, replacement }],
-            applicability: Applicability::Always,
-        }));
-    }
-
     Ok(Ident::new(trimmed, span))
 }
 
@@ -1697,57 +1654,6 @@ impl LabelKind {
             Self::Output => "output label",
         }
     }
-
-    fn noun(self) -> &'static str {
-        match self {
-            Self::Route => "route",
-            Self::Output => "output",
-        }
-    }
-
-    fn noun_phrase(self) -> &'static str {
-        match self {
-            Self::Route => "a route",
-            Self::Output => "an output",
-        }
-    }
-
-    fn wrong_kind_phrase(self) -> &'static str {
-        match self {
-            Self::Route => "an output",
-            Self::Output => "a route",
-        }
-    }
-
-    fn canonical_label(self, suffix: &str) -> String {
-        match self {
-            Self::Route => format!("{NUMERIC_ROUTE_PREFIX}{suffix}"),
-            Self::Output => format!("{NUMERIC_OUTPUT_PREFIX}{suffix}"),
-        }
-    }
-
-    fn wrong_prefix(self) -> &'static str {
-        match self {
-            Self::Route => NUMERIC_OUTPUT_PREFIX,
-            Self::Output => NUMERIC_ROUTE_PREFIX,
-        }
-    }
-
-    fn prefix_pattern(self) -> &'static str {
-        match self {
-            Self::Route => "input_<n>",
-            Self::Output => "outeq_<n>",
-        }
-    }
-}
-
-fn bare_numeric_label(src: &str) -> Option<&str> {
-    (!src.is_empty() && src.chars().all(|ch| ch.is_ascii_digit())).then_some(src)
-}
-
-fn canonical_numeric_suffix<'a>(src: &'a str, prefix: &str) -> Option<&'a str> {
-    let suffix = src.strip_prefix(prefix)?;
-    (!suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit())).then_some(suffix)
 }
 
 fn parse_place_at(src: &str, abs_start: usize) -> Result<Place, ParseError> {

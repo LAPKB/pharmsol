@@ -36,6 +36,10 @@
 //! - **Exponential**: σ for log-transformed data
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+
+use crate::data::error_model::ErrorModelError;
+use crate::data::event::OutputLabel;
 
 /// Residual error model for parametric estimation algorithms.
 ///
@@ -336,25 +340,69 @@ impl ResidualErrorModel {
 
 /// Collection of residual error models for multiple output equations
 ///
-/// This mirrors [`crate::ErrorModels`] but for parametric algorithms.
+/// This mirrors [`crate::AssayErrorModels`] but for parametric algorithms.
+///
+/// Models are added by public output label and bound to an equation's dense
+/// output slots once, when used through [`crate::simulator::likelihood`]
+/// entrypoints. Labels match the equation's declared output names exactly:
+/// `"1"` binds to an output declared as `1`, never to a position. Equations
+/// without metadata declare no output names; their outputs are addressed by
+/// dense slot (`"0"`, `"1"`, ...), like the observation labels resolved
+/// against them.
+///
+/// The slot accessors ([`Self::get`], [`Self::sigma`],
+/// [`Self::log_likelihood`], ...) operate on the bound, dense form.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ResidualErrorModels {
     models: Vec<ResidualErrorModel>,
+    #[serde(default)]
+    named_models: BTreeMap<OutputLabel, ResidualErrorModel>,
 }
 
 impl ResidualErrorModels {
     /// Create an empty collection
     pub fn new() -> Self {
-        Self { models: vec![] }
+        Self::default()
     }
 
-    /// Add an error model for a specific output equation
-    pub fn add(mut self, outeq: usize, model: ResidualErrorModel) -> Self {
-        if outeq >= self.models.len() {
-            self.models.resize(outeq + 1, ResidualErrorModel::default());
-        }
-        self.models[outeq] = model;
+    /// Add an error model for a public output label.
+    ///
+    /// Adding a second model for the same label replaces the first.
+    pub fn add(mut self, outeq: impl ToString, model: ResidualErrorModel) -> Self {
+        self.named_models.insert(OutputLabel::new(outeq), model);
         self
+    }
+
+    /// Bind the label-keyed models to dense output slots.
+    ///
+    /// `outputs` are the equation's declared output names in slot order. When
+    /// it is empty (an equation without metadata), labels are dense slot
+    /// numbers.
+    pub(crate) fn bind_output_names(&self, outputs: &[String]) -> Result<Self, ErrorModelError> {
+        let mut bound = Self {
+            models: self.models.clone(),
+            named_models: BTreeMap::new(),
+        };
+        for (label, model) in &self.named_models {
+            let outeq = if outputs.is_empty() {
+                label.index()
+            } else {
+                outputs.iter().position(|output| output == label.as_str())
+            }
+            .ok_or_else(|| ErrorModelError::UnknownOutputLabel(label.to_string()))?;
+            if outeq >= bound.models.len() {
+                bound
+                    .models
+                    .resize(outeq + 1, ResidualErrorModel::default());
+            }
+            bound.models[outeq] = *model;
+        }
+        Ok(bound)
+    }
+
+    /// Whether every model is already bound to a dense slot.
+    pub(crate) fn is_bound(&self) -> bool {
+        self.named_models.is_empty()
     }
 
     /// Get the error model for a specific output equation
@@ -372,14 +420,18 @@ impl ResidualErrorModels {
         self.models.get(outeq).map(|m| m.sigma(prediction))
     }
 
-    /// Number of error models
+    /// Number of error models: dense slots once bound, otherwise the number
+    /// of labels added.
     pub fn len(&self) -> usize {
+        if self.models.is_empty() {
+            return self.named_models.len();
+        }
         self.models.len()
     }
 
     /// Check if collection is empty
     pub fn is_empty(&self) -> bool {
-        self.models.is_empty()
+        self.models.is_empty() && self.named_models.is_empty()
     }
 
     /// Iterate over (outeq, model) pairs
@@ -426,7 +478,7 @@ impl ResidualErrorModels {
 
     /// Update all models with a new sigma estimate
     pub fn update_sigma(&mut self, new_sigma: f64) {
-        for model in &mut self.models {
+        for model in self.models.iter_mut().chain(self.named_models.values_mut()) {
             *model = model.with_updated_sigma(new_sigma);
         }
     }
@@ -507,13 +559,48 @@ mod tests {
     #[test]
     fn test_residual_error_models_collection() {
         let models = ResidualErrorModels::new()
-            .add(0, ResidualErrorModel::constant(0.5))
-            .add(1, ResidualErrorModel::proportional(0.1));
+            .add("cp", ResidualErrorModel::constant(0.5))
+            .add("effect", ResidualErrorModel::proportional(0.1));
+        assert_eq!(models.len(), 2);
+
+        let models = models
+            .bind_output_names(&["cp".to_string(), "effect".to_string()])
+            .unwrap();
 
         assert_eq!(models.len(), 2);
         assert!(models.get(0).unwrap().is_constant());
         assert!(models.get(1).unwrap().is_proportional());
         assert!((models.sigma(0, 100.0).unwrap() - 0.5).abs() < 1e-10);
         assert!((models.sigma(1, 100.0).unwrap() - 10.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_residual_error_models_bind_by_exact_label() {
+        let models = ResidualErrorModels::new().add("1", ResidualErrorModel::constant(0.5));
+
+        // Output `1` is the only declared output, so it lives in slot 0.
+        let bound = models.bind_output_names(&["1".to_string()]).unwrap();
+        assert_eq!(bound.len(), 1);
+        assert!(bound.get(0).unwrap().is_constant());
+
+        // `"1"` is a name, not a position: it does not bind to `outeq_1`
+        // or to the second of two outputs named otherwise.
+        for outputs in [vec!["outeq_1"], vec!["0", "2"]] {
+            let outputs = outputs.into_iter().map(String::from).collect::<Vec<_>>();
+            match models.bind_output_names(&outputs) {
+                Err(ErrorModelError::UnknownOutputLabel(label)) => assert_eq!(label, "1"),
+                other => panic!("expected UnknownOutputLabel, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_residual_error_models_bind_dense_slots_without_declared_outputs() {
+        let models = ResidualErrorModels::new()
+            .add(1, ResidualErrorModel::proportional(0.1))
+            .bind_output_names(&[])
+            .unwrap();
+        assert_eq!(models.len(), 2);
+        assert!(models.get(1).unwrap().is_proportional());
     }
 }

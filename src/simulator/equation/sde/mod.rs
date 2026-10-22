@@ -834,7 +834,7 @@ mod tests {
     }
 
     #[test]
-    fn handwritten_sde_metadata_resolves_raw_numeric_aliases_against_canonical_labels() {
+    fn handwritten_sde_metadata_resolves_numeric_labels_by_exact_name() {
         let drift = |_x: &V, _p: &V, _t: f64, dx: &mut V, rateiv: &V, _cov: &Covariates| {
             dx.fill(0.0);
             dx[1] = rateiv[0];
@@ -858,33 +858,37 @@ mod tests {
             .with_metadata(
                 equation::metadata::new("numeric_alias_sde")
                     .states(["depot", "central"])
-                    .outputs(["outeq_1"])
-                    .route(Route::infusion("input_1").to_state("central"))
+                    .outputs(["1"])
+                    .route(Route::infusion("1").to_state("central"))
                     .particles(16),
             )
             .expect("SDE metadata attachment should validate");
 
-        let canonical = Subject::builder("canonical")
-            .infusion(0.0, 100.0, "input_1", 1.0)
-            .observation(1.0, 0.0, "outeq_1")
-            .build();
-        let aliased = Subject::builder("aliased")
+        let numeric = Subject::builder("numeric")
             .infusion(0.0, 100.0, "1", 1.0)
             .observation(1.0, 0.0, "1")
             .build();
+        let prediction = sde
+            .estimate_predictions(&numeric, &crate::parameters::dense([]))
+            .expect("numeric labels should resolve by exact name")[[0, 0]]
+        .prediction();
+        assert!(prediction > 0.0);
 
-        let canonical_predictions = sde
-            .estimate_predictions(&canonical, &crate::parameters::dense([]))
-            .expect("canonical labels should simulate");
-        let aliased_predictions = sde
-            .estimate_predictions(&aliased, &crate::parameters::dense([]))
-            .expect("raw numeric aliases should simulate");
-
-        assert!(
-            (canonical_predictions[[0, 0]].prediction() - aliased_predictions[[0, 0]].prediction())
-                .abs()
-                < 1e-10
-        );
+        // `input_1` / `outeq_1` are different names, not aliases of `1`.
+        for prefixed in [
+            Subject::builder("prefixed_input")
+                .infusion(0.0, 100.0, "input_1", 1.0)
+                .observation(1.0, 0.0, "1")
+                .build(),
+            Subject::builder("prefixed_output")
+                .infusion(0.0, 100.0, "1", 1.0)
+                .observation(1.0, 0.0, "outeq_1")
+                .build(),
+        ] {
+            assert!(sde
+                .estimate_predictions(&prefixed, &crate::parameters::dense([]))
+                .is_err());
+        }
     }
 
     #[test]

@@ -173,8 +173,9 @@ impl fmt::Display for InputLabel {
 }
 
 impl PartialEq<usize> for InputLabel {
+    /// Labels compare as text: `"1" == 1`, but `"01" != 1`.
     fn eq(&self, other: &usize) -> bool {
-        self.index() == Some(*other)
+        self.0 == other.to_string()
     }
 }
 
@@ -255,8 +256,9 @@ impl fmt::Display for OutputLabel {
 }
 
 impl PartialEq<usize> for OutputLabel {
+    /// Labels compare as text: `"1" == 1`, but `"01" != 1`.
     fn eq(&self, other: &usize) -> bool {
-        self.index() == Some(*other)
+        self.0 == other.to_string()
     }
 }
 
@@ -774,6 +776,14 @@ impl fmt::Display for Event {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn labels_compare_to_numbers_as_text() {
+        assert_eq!(InputLabel::new("1"), 1);
+        assert_eq!(OutputLabel::new("10"), 10);
+        assert_ne!(InputLabel::new("01"), 1);
+        assert_ne!(OutputLabel::new("outeq_1"), 1);
+    }
 
     #[test]
     fn test_bolus_creation() {

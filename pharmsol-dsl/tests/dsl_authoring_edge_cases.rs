@@ -190,17 +190,17 @@ out(cp) = central ~ continous()
 }
 
 #[test]
-fn mixed_named_and_prefixed_numeric_output_labels_compile_and_round_trip() {
+fn mixed_named_and_numeric_output_labels_compile_and_round_trip() {
     let src = r#"
 name = mixed_output_labels
 kind = ode
 params = ke, v
 states = central
-outputs = cp, outeq_0, outeq_1
+outputs = cp, 0, 1
 ddt(central) = infusion(iv) - ke * central
 out(cp) = central / v
-out(outeq_0) = 2 * central / v
-out(outeq_1) = 3 * central / v
+out(0) = 2 * central / v
+out(1) = 3 * central / v
 "#;
 
     let module = parse_module(src).expect("mixed output labels should parse in authoring DSL");
@@ -218,7 +218,7 @@ out(outeq_1) = 3 * central / v
             .iter()
             .map(|output| output.name.as_str())
             .collect::<Vec<_>>(),
-        vec!["cp", "outeq_0", "outeq_1"]
+        vec!["cp", "0", "1"]
     );
     assert_eq!(
         compiled
@@ -236,170 +236,134 @@ out(outeq_1) = 3 * central / v
     assert_eq!(rendered, reparsed.to_string());
 }
 
-#[test]
-fn prefixed_numeric_route_and_output_labels_compile_and_round_trip() {
-    let src = r#"
-name = prefixed_numeric_route_output_labels
-kind = ode
-params = ke, v
-states = central
-outputs = outeq_1
-ddt(central) = infusion(input_1) - ke * central
-out(outeq_1) = central / v
-"#;
-
-    let module = parse_module(src).expect("prefixed numeric route/output labels should parse");
-    let model = module
-        .models
-        .first()
-        .expect("authoring DSL should produce one model");
-    let analyzed =
-        analyze_model(model).expect("prefixed numeric route/output labels should analyze");
-    let compiled = compile_analyzed_model(&analyzed)
-        .expect("prefixed numeric route/output labels should compile");
-
-    assert_eq!(
+fn compiled_label_names(src: &str) -> (Vec<String>, Vec<String>) {
+    let module = parse_module(src).expect("model parses");
+    let model = module.models.first().expect("one model");
+    let analyzed = analyze_model(model).expect("model analyzes");
+    let compiled = compile_analyzed_model(&analyzed).expect("model compiles");
+    let rendered = module.to_string();
+    let reparsed = parse_module(&rendered).expect("rendered model reparses");
+    assert_eq!(rendered, reparsed.to_string());
+    (
         compiled
             .metadata
             .routes
             .iter()
-            .map(|route| route.name.as_str())
-            .collect::<Vec<_>>(),
-        vec!["input_1"]
-    );
-    assert_eq!(
+            .map(|route| route.name.clone())
+            .collect(),
         compiled
             .metadata
             .outputs
             .iter()
-            .map(|output| output.name.as_str())
-            .collect::<Vec<_>>(),
-        vec!["outeq_1"]
-    );
-
-    let rendered = module.to_string();
-    let reparsed = parse_module(&rendered).expect("rendered shared-label model should reparse");
-
-    assert_eq!(rendered, reparsed.to_string());
+            .map(|output| output.name.clone())
+            .collect(),
+    )
 }
 
 #[test]
-fn rejects_authoring_bare_numeric_output_declarations() {
+fn numeric_route_and_output_labels_compile_and_round_trip() {
     let src = r#"
-name = numeric_outputs
+name = numeric_route_output_labels
 kind = ode
+params = ke, v, tlag, f
+states = depot, central
+outputs = 1, 10
+lag(1) = tlag
+ddt(depot) = bolus(1) * f - ke * depot
+ddt(central) = infusion[10] + ke * depot - ke * central
+out(1) = central / v
+out(10) = depot
+"#;
+
+    let (routes, outputs) = compiled_label_names(src);
+    assert_eq!(routes, vec!["1", "10"]);
+    assert_eq!(outputs, vec!["1", "10"]);
+}
+
+#[test]
+fn structured_numeric_route_and_output_labels_compile() {
+    let src = r#"
+model numeric_labels {
+    kind ode
+    parameters { ke, v }
+    states { central }
+    routes {
+        bolus 1 -> central,
+        infusion 2 -> central,
+        10 -> central
+    }
+    dynamics {
+        ddt(central) = rate(2) + rate(10) - ke * central
+    }
+    outputs {
+        2 = central / v
+        10 = central
+    }
+}
+"#;
+
+    let (routes, outputs) = compiled_label_names(src);
+    assert_eq!(routes, vec!["1", "2", "10"]);
+    assert_eq!(outputs, vec!["2", "10"]);
+}
+
+#[test]
+fn numeric_labels_keep_their_literal_text() {
+    // `01` and `1` are different names; neither is normalized.
+    let src = r#"
+name = literal_numeric_labels
+kind = ode
+params = v
 states = central
-outputs = 1, 2
-ddt(central) = 0
+outputs = 01, 1
+ddt(central) = infusion(01) + infusion(1)
+out(01) = central / v
 out(1) = central
 "#;
 
-    let err = parse_model(src).expect_err("bare numeric output declarations must fail");
-    let rendered = err.render(src);
+    let (routes, outputs) = compiled_label_names(src);
+    assert_eq!(routes, vec!["01", "1"]);
+    assert_eq!(outputs, vec!["01", "1"]);
+}
 
+#[test]
+fn rejects_non_integer_numeric_labels() {
+    let src = r#"
+model float_label {
+    kind ode
+    states { central }
+    routes { 1.0 -> central }
+    dynamics { ddt(central) = 0 }
+    outputs { cp = central }
+}
+"#;
+
+    let err = parse_model(src).expect_err("float route labels must fail");
     assert!(
-        rendered.contains(
-            "bare numeric output labels are not allowed in the DSL; use `outeq_1` instead"
-        ),
+        err.render(src).contains("expected route label"),
         "{}",
-        rendered
-    );
-    assert!(
-        rendered.contains("suggestion: use `outeq_1`"),
-        "{}",
-        rendered
+        err.render(src)
     );
 }
 
 #[test]
-fn rejects_authoring_bare_numeric_route_labels() {
+fn prefixed_looking_labels_are_ordinary_names() {
+    // `input_1` / `outeq_1` carry no special meaning and may be used on
+    // either kind of label.
     let src = r#"
-name = numeric_routes
+name = prefixed_looking_labels
 kind = ode
+params = ke, v
 states = central
-outputs = cp
-ddt(central) = infusion(1) + 0
-out(cp) = central
+outputs = outeq_1, input_1
+ddt(central) = infusion(input_1) + infusion(outeq_1) - ke * central
+out(outeq_1) = central / v
+out(input_1) = central
 "#;
 
-    let err = parse_model(src).expect_err("bare numeric route labels must fail");
-    let rendered = err.render(src);
-
-    assert!(
-        rendered.contains(
-            "bare numeric route labels are not allowed in the DSL; use `input_1` instead"
-        ),
-        "{}",
-        rendered
-    );
-    assert!(
-        rendered.contains("suggestion: use `input_1`"),
-        "{}",
-        rendered
-    );
-}
-
-#[test]
-fn rejects_structured_bare_numeric_output_targets() {
-    let src = r#"
-model numeric_output_target {
-    kind ode
-    states { central }
-    outputs {
-        1 = central
-    }
-}
-"#;
-
-    let model = parse_model(src).expect("structured model parses");
-    let err = analyze_model(&model).expect_err("bare numeric output target must fail");
-    let rendered = err.render(src);
-
-    assert!(
-        rendered.contains(
-            "bare numeric output labels are not allowed in the DSL; use `outeq_1` instead"
-        ),
-        "{}",
-        rendered
-    );
-    assert!(
-        rendered.contains("suggestion: use `outeq_1`"),
-        "{}",
-        rendered
-    );
-}
-
-#[test]
-fn rejects_structured_bare_numeric_route_labels() {
-    let src = r#"
-model numeric_route_label {
-    kind ode
-    states { central }
-    routes {
-        1 -> central
-    }
-    outputs {
-        cp = central
-    }
-}
-"#;
-
-    let model = parse_model(src).expect("structured model parses");
-    let err = analyze_model(&model).expect_err("bare numeric route label must fail");
-    let rendered = err.render(src);
-
-    assert!(
-        rendered.contains(
-            "bare numeric route labels are not allowed in the DSL; use `input_1` instead"
-        ),
-        "{}",
-        rendered
-    );
-    assert!(
-        rendered.contains("suggestion: use `input_1`"),
-        "{}",
-        rendered
-    );
+    let (routes, outputs) = compiled_label_names(src);
+    assert_eq!(routes, vec!["input_1", "outeq_1"]);
+    assert_eq!(outputs, vec!["outeq_1", "input_1"]);
 }
 
 fn collect_route_input_indices(
@@ -460,8 +424,8 @@ kind = ode
 params = ke, v, tlag
 states = central
 outputs = cp
-lag(input_1) = tlag
-ddt(central) = bolus(input_1) + infusion(input_1) - ke * central
+lag(1) = tlag
+ddt(central) = bolus(1) + infusion(1) - ke * central
 out(cp) = central / v
 "#;
 
@@ -472,7 +436,7 @@ out(cp) = central / v
 
     let routes = &compiled.metadata.routes;
     assert_eq!(routes.len(), 2);
-    assert!(routes.iter().all(|route| route.name == "input_1"));
+    assert!(routes.iter().all(|route| route.name == "1"));
     let bolus = routes
         .iter()
         .find(|route| route.kind == Some(pharmsol_dsl::RouteKind::Bolus))
@@ -486,7 +450,7 @@ out(cp) = central / v
     assert!(bolus.has_lag);
     assert!(!infusion.has_lag);
 
-    // The injected `rate(input_1)` term must read the infusion input slot.
+    // The injected `rate(1)` term must read the infusion input slot.
     let mut indices = Vec::new();
     if let Some(function) = compiled.function(pharmsol_dsl::execution::ModelFunctionKind::Dynamics)
     {
@@ -504,14 +468,13 @@ name = duplicate_bolus
 kind = ode
 states = central
 outputs = cp
-ddt(central) = bolus(input_1) + bolus(input_1) + 0
+ddt(central) = bolus(1) + bolus(1) + 0
 out(cp) = central
 "#;
 
     let err = parse_model(src).expect_err("repeated bolus terms must fail");
     assert!(
-        err.render(src)
-            .contains("use one `bolus(input_1) * scale` term"),
+        err.render(src).contains("use one `bolus(1) * scale` term"),
         "{}",
         err.render(src)
     );
@@ -523,7 +486,7 @@ fn rejects_duplicate_route_names_in_canonical_models() {
 model dup_routes {
     kind ode
     states { central }
-    routes { input_1 -> central, input_1 -> central }
+    routes { 1 -> central, 1 -> central }
     dynamics { ddt(central) = 0 }
     outputs { cp = central }
 }
@@ -532,7 +495,7 @@ model dup_routes {
     let model = parse_model(src).expect("canonical model parses");
     let err = analyze_model(&model).expect_err("duplicate canonical route names must fail");
     assert!(
-        err.render(src).contains("duplicate route `input_1`"),
+        err.render(src).contains("duplicate route `1`"),
         "{}",
         err.render(src)
     );
@@ -546,8 +509,8 @@ model dosing {
     parameters { ke, v }
     states { central }
     routes {
-        bolus input_1 -> central,
-        infusion input_1 -> central
+        bolus 1 -> central,
+        infusion 1 -> central
     }
     dynamics {
         ddt(central) = -ke * central
@@ -566,7 +529,7 @@ model dosing {
 
     let routes = &compiled.metadata.routes;
     assert_eq!(routes.len(), 2);
-    assert!(routes.iter().all(|route| route.name == "input_1"));
+    assert!(routes.iter().all(|route| route.name == "1"));
     let bolus = routes
         .iter()
         .find(|route| route.kind == Some(pharmsol_dsl::RouteKind::Bolus))
@@ -580,11 +543,8 @@ model dosing {
 
     // Rendering preserves route kinds and reparses identically.
     let rendered = module.to_string();
-    assert!(rendered.contains("bolus input_1 -> central"), "{rendered}");
-    assert!(
-        rendered.contains("infusion input_1 -> central"),
-        "{rendered}"
-    );
+    assert!(rendered.contains("bolus 1 -> central"), "{rendered}");
+    assert!(rendered.contains("infusion 1 -> central"), "{rendered}");
     let reparsed = parse_module(&rendered).expect("rendered canonical model reparses");
     assert_eq!(rendered, reparsed.to_string());
 }
@@ -619,8 +579,8 @@ model mixed_kind {
     kind ode
     states { central }
     routes {
-        input_1 -> central,
-        bolus input_1 -> central
+        1 -> central,
+        bolus 1 -> central
     }
     dynamics { ddt(central) = 0 }
     outputs { cp = central }
@@ -630,7 +590,7 @@ model mixed_kind {
     let model = parse_model(src).expect("mixed-kind model parses");
     let err = analyze_model(&model).expect_err("kind-less and kinded duplicates must fail");
     assert!(
-        err.render(src).contains("duplicate route `input_1`"),
+        err.render(src).contains("duplicate route `1`"),
         "{}",
         err.render(src)
     );
@@ -646,9 +606,9 @@ model triple {
     kind ode
     states { central }
     routes {
-        bolus input_1 -> central,
-        infusion input_1 -> central,
-        bolus input_1 -> central
+        bolus 1 -> central,
+        infusion 1 -> central,
+        bolus 1 -> central
     }
     dynamics { ddt(central) = 0 }
     outputs { cp = central }
@@ -658,19 +618,19 @@ model triple {
     let model = parse_model(src).expect("triple-route model parses");
     let err = analyze_model(&model).expect_err("reappearing same-kind route must fail");
     assert!(
-        err.render(src).contains("duplicate route `input_1`"),
+        err.render(src).contains("duplicate route `1`"),
         "{}",
         err.render(src)
     );
 }
 
 #[test]
-fn rejects_rate_numeric_literals_with_prefixed_guidance() {
+fn rate_accepts_numeric_route_labels() {
     let src = r#"
 model numeric_rate_arg {
     kind ode
     states { central }
-    routes { input_5 -> central }
+    routes { 5 -> central }
     dynamics {
         ddt(central) = rate(5)
     }
@@ -680,64 +640,17 @@ model numeric_rate_arg {
 }
 "#;
 
-    let model = parse_model(src).expect("structured model parses");
-    let err = analyze_model(&model).expect_err("bare numeric rate argument must fail");
-    let rendered = err.render(src);
+    let (routes, _) = compiled_label_names(src);
+    assert_eq!(routes, vec!["5"]);
 
+    let unknown = src.replace("rate(5)", "rate(6)");
+    let model = parse_model(&unknown).expect("structured model parses");
+    let err = analyze_model(&model).expect_err("undeclared numeric route must fail");
     assert!(
-        rendered.contains(
-            "bare numeric route labels are not allowed in the DSL; use `input_5` instead"
-        ),
+        err.render(&unknown)
+            .contains("unknown route `6` in `rate(...)`"),
         "{}",
-        rendered
-    );
-    assert!(
-        rendered.contains("suggestion: use `input_5`"),
-        "{}",
-        rendered
-    );
-}
-
-#[test]
-fn rejects_wrong_prefix_labels_in_authored_dsl() {
-    let src = r#"
-name = wrong_prefix_route
-kind = ode
-states = central
-outputs = cp
-ddt(central) = infusion(outeq_1) + 0
-out(cp) = central
-"#;
-
-    let err = parse_model(src).expect_err("wrong-prefix route labels must fail");
-    let rendered = err.render(src);
-
-    assert!(
-        rendered.contains(
-            "`outeq_1` is an output label and cannot be used as a route; use `input_1` here"
-        ),
-        "{}",
-        rendered
-    );
-
-    let src = r#"
-name = wrong_prefix_output
-kind = ode
-states = central
-outputs = cp
-ddt(central) = infusion(iv) + 0
-out(input_1) = central
-"#;
-
-    let err = parse_model(src).expect_err("wrong-prefix output labels must fail");
-    let rendered = err.render(src);
-
-    assert!(
-        rendered.contains(
-            "`input_1` is a route label and cannot be used as an output; use `outeq_1` here"
-        ),
-        "{}",
-        rendered
+        err.render(&unknown)
     );
 }
 

@@ -295,18 +295,18 @@ kind = ode
 
 params = ke, v
 states = central
-outputs = outeq_2, outeq_10, outeq_11
+outputs = 2, 10, 11
 
 
 dx(central) = infusion(iv) - ke * central
 
-out(outeq_10) = central / v ~ continuous()
-out(outeq_2) = central / v ~ continuous()
-out(outeq_11) = central / v ~ continuous()
+out(10) = central / v ~ continuous()
+out(2) = central / v ~ continuous()
+out(11) = central / v ~ continuous()
 "#;
 
     const NUMERIC_ROUTE_LABELS_RUNTIME_DSL: &str = r#"
-name = prefixed_numeric_route_runtime
+name = numeric_route_runtime
 kind = ode
 
 params = ke, v
@@ -314,23 +314,23 @@ states = central
 outputs = cp
 
 
-dx(central) = bolus(input_10) + bolus(input_11) - ke * central
+dx(central) = bolus(10) + bolus(11) - ke * central
 
 out(cp) = central / v ~ continuous()
 "#;
 
     const SHARED_NUMERIC_ROUTE_OUTPUT_LABEL_RUNTIME_DSL: &str = r#"
-name = prefixed_numeric_route_output_runtime
+name = numeric_route_output_runtime
 kind = ode
 
 params = ke, v
 states = central
-outputs = outeq_1
+outputs = 1
 
 
-dx(central) = infusion(input_1) - ke * central
+dx(central) = infusion(1) - ke * central
 
-out(outeq_1) = central / v ~ continuous()
+out(1) = central / v ~ continuous()
 "#;
 
     const UNDECLARED_NUMERIC_OUTPUT_LABEL_RUNTIME_DSL: &str = r#"
@@ -435,15 +435,6 @@ out(cp) = central / v ~ continuous()
 
     fn numeric_route_subject() -> Subject {
         Subject::builder("numeric-route-runtime")
-            .bolus(0.0, 120.0, "input_10")
-            .bolus(1.0, 80.0, "input_11")
-            .missing_observation(0.5, "cp")
-            .missing_observation(1.5, "cp")
-            .build()
-    }
-
-    fn numeric_route_alias_subject() -> Subject {
-        Subject::builder("numeric-route-runtime-alias")
             .bolus(0.0, 120.0, "10")
             .bolus(1.0, 80.0, "11")
             .missing_observation(0.5, "cp")
@@ -451,19 +442,27 @@ out(cp) = central / v ~ continuous()
             .build()
     }
 
-    fn shared_numeric_route_output_subject() -> Subject {
-        Subject::builder("prefixed-numeric-route-output-runtime")
-            .infusion(0.0, 120.0, "input_1", 1.0)
-            .missing_observation(0.5, "outeq_1")
-            .missing_observation(1.5, "outeq_1")
+    fn prefixed_route_subject() -> Subject {
+        Subject::builder("prefixed-route-runtime")
+            .bolus(0.0, 120.0, "input_10")
+            .bolus(1.0, 80.0, "11")
+            .missing_observation(0.5, "cp")
+            .missing_observation(1.5, "cp")
             .build()
     }
 
-    fn shared_numeric_route_output_alias_subject() -> Subject {
-        Subject::builder("raw-numeric-route-output-runtime")
+    fn shared_numeric_route_output_subject() -> Subject {
+        Subject::builder("numeric-route-output-runtime")
             .infusion(0.0, 120.0, "1", 1.0)
             .missing_observation(0.5, "1")
             .missing_observation(1.5, "1")
+            .build()
+    }
+
+    fn prefixed_output_subject() -> Subject {
+        Subject::builder("prefixed-output-runtime")
+            .infusion(0.0, 120.0, "1", 1.0)
+            .missing_observation(0.5, "outeq_1")
             .build()
     }
 
@@ -650,14 +649,10 @@ out(cp) = central / v ~ continuous()
     fn runtime_jit_reports_route_kind_mismatch() {
         let subject = mismatched_route_kind_subject();
 
-        let jit = compile_runtime_model(
-            NUMERIC_ROUTE_LABELS_RUNTIME_DSL,
-            "prefixed_numeric_route_runtime",
-        );
+        let jit = compile_runtime_model(NUMERIC_ROUTE_LABELS_RUNTIME_DSL, "numeric_route_runtime");
         let support = Parameters::with_model(&jit, [("ke", 0.2), ("v", 10.0)])
             .expect("valid named parameters");
-        let expected_input =
-            compiled_route_input_index(&jit, "input_10").expect("input_10 route index");
+        let expected_input = compiled_route_input_index(&jit, "10").expect("10 route index");
 
         assert_unsupported_input_route_kind(
             &jit,
@@ -675,22 +670,19 @@ out(cp) = central / v ~ continuous()
             "multi_digit_output_runtime",
         );
 
-        assert_eq!(compiled_output_slot_index(&jit, "outeq_2"), Some(0));
-        assert_eq!(compiled_output_slot_index(&jit, "outeq_10"), Some(1));
-        assert_eq!(compiled_output_slot_index(&jit, "outeq_11"), Some(2));
+        assert_eq!(compiled_output_slot_index(&jit, "2"), Some(0));
+        assert_eq!(compiled_output_slot_index(&jit, "10"), Some(1));
+        assert_eq!(compiled_output_slot_index(&jit, "11"), Some(2));
     }
 
     #[test]
-    fn runtime_jit_supports_prefixed_multi_digit_numeric_route_labels() {
-        let jit = compile_runtime_model(
-            NUMERIC_ROUTE_LABELS_RUNTIME_DSL,
-            "prefixed_numeric_route_runtime",
-        );
+    fn runtime_jit_supports_multi_digit_numeric_route_labels() {
+        let jit = compile_runtime_model(NUMERIC_ROUTE_LABELS_RUNTIME_DSL, "numeric_route_runtime");
         let support = Parameters::with_model(&jit, [("ke", 0.2), ("v", 10.0)])
             .expect("valid named parameters");
 
-        assert_eq!(compiled_route_input_index(&jit, "input_10"), Some(0));
-        assert_eq!(compiled_route_input_index(&jit, "input_11"), Some(1));
+        assert_eq!(compiled_route_input_index(&jit, "10"), Some(0));
+        assert_eq!(compiled_route_input_index(&jit, "11"), Some(1));
 
         let subject = numeric_route_subject();
 
@@ -702,34 +694,25 @@ out(cp) = central / v ~ continuous()
     }
 
     #[test]
-    fn runtime_jit_resolves_raw_numeric_route_labels_against_prefixed_metadata() {
-        let jit = compile_runtime_model(
-            NUMERIC_ROUTE_LABELS_RUNTIME_DSL,
-            "prefixed_numeric_route_runtime",
-        );
+    fn runtime_jit_does_not_alias_prefixed_route_labels() {
+        let jit = compile_runtime_model(NUMERIC_ROUTE_LABELS_RUNTIME_DSL, "numeric_route_runtime");
         let support = Parameters::with_model(&jit, [("ke", 0.2), ("v", 10.0)])
             .expect("valid named parameters");
 
-        let subject = numeric_route_alias_subject();
-
-        let values = subject_values(
-            &jit.estimate_predictions(&subject, &support)
-                .expect("jit predictions"),
-        );
-        assert!(values.iter().all(|value| value.is_finite()));
+        assert_unknown_input_label(&jit, &prefixed_route_subject(), &support, "input_10");
     }
 
     #[test]
-    fn runtime_jit_supports_prefixed_numeric_route_and_output_labels() {
+    fn runtime_jit_supports_numeric_route_and_output_labels() {
         let jit = compile_runtime_model(
             SHARED_NUMERIC_ROUTE_OUTPUT_LABEL_RUNTIME_DSL,
-            "prefixed_numeric_route_output_runtime",
+            "numeric_route_output_runtime",
         );
         let support = Parameters::with_model(&jit, [("ke", 0.2), ("v", 10.0)])
             .expect("valid named parameters");
 
-        assert_eq!(compiled_route_input_index(&jit, "input_1"), Some(0));
-        assert_eq!(compiled_output_slot_index(&jit, "outeq_1"), Some(0));
+        assert_eq!(compiled_route_input_index(&jit, "1"), Some(0));
+        assert_eq!(compiled_output_slot_index(&jit, "1"), Some(0));
 
         let subject = shared_numeric_route_output_subject();
 
@@ -741,21 +724,15 @@ out(cp) = central / v ~ continuous()
     }
 
     #[test]
-    fn runtime_jit_resolves_shared_raw_numeric_route_and_output_aliases() {
+    fn runtime_jit_does_not_alias_prefixed_output_labels() {
         let jit = compile_runtime_model(
             SHARED_NUMERIC_ROUTE_OUTPUT_LABEL_RUNTIME_DSL,
-            "prefixed_numeric_route_output_runtime",
+            "numeric_route_output_runtime",
         );
         let support = Parameters::with_model(&jit, [("ke", 0.2), ("v", 10.0)])
             .expect("valid named parameters");
 
-        let subject = shared_numeric_route_output_alias_subject();
-
-        let values = subject_values(
-            &jit.estimate_predictions(&subject, &support)
-                .expect("jit predictions"),
-        );
-        assert!(values.iter().all(|value| value.is_finite()));
+        assert_unknown_output_label(&jit, &prefixed_output_subject(), &support, "outeq_1");
     }
 
     #[test]

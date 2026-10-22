@@ -11,10 +11,7 @@ use crate::name_match::{
     common_prefix_len, edit_distance, is_high_confidence_match, is_single_adjacent_transposition,
 };
 use crate::syntax;
-use crate::{
-    ModelKind, RouteKind, MAX_CONST_USIZE, NUMERIC_OUTPUT_PREFIX, NUMERIC_ROUTE_PREFIX,
-    RATE_FUNCTION_NAME,
-};
+use crate::{ModelKind, RouteKind, MAX_CONST_USIZE, RATE_FUNCTION_NAME};
 
 const RESERVED_NAMES: &[&str] = &[
     "abs",
@@ -628,7 +625,6 @@ impl<'a> Analyzer<'a> {
         let mut route_kinds = BTreeMap::<String, BTreeSet<Option<RouteKind>>>::new();
         if let Some(block) = block {
             for route in &block.routes {
-                self.validate_route_label_name(&route.input)?;
                 let (id, prefer_for_rate) = match route_kinds.get_mut(&route.input.text) {
                     Some(seen_kinds) => {
                         let duplicate = route.kind.is_none()
@@ -885,9 +881,6 @@ impl<'a> Analyzer<'a> {
         collect_bare_assignment_names(statements, &mut seen, &mut collected_idents);
         let mut symbols = Vec::new();
         for ident in collected_idents {
-            if matches!(kind, SymbolKind::Output) {
-                self.validate_output_label_name(&ident)?;
-            }
             if matches!(kind, SymbolKind::Derived) {
                 if let Some(parameter) = self.globals.parameters.get(&ident.text).copied() {
                     return Err(AnalysisAssist::default()
@@ -1634,18 +1627,12 @@ impl<'a> Analyzer<'a> {
                     callee.span,
                 ));
             }
-            if let syntax::ExprKind::Number(value) = &args[0].kind {
-                if let Some(suffix) = numeric_label_literal_suffix(*value) {
-                    return Err(self.bare_numeric_route_error(args[0].span, &suffix));
-                }
-            }
             let syntax::ExprKind::Name(route_name) = &args[0].kind else {
                 return Err(AnalysisError::new(
                     "`rate` expects a route identifier argument",
                     args[0].span,
                 ));
             };
-            self.validate_route_label_name(route_name)?;
             let route = self
                 .globals
                 .routes
@@ -2065,100 +2052,6 @@ impl<'a> Analyzer<'a> {
         });
         self.globals.all_names.entry(name.to_string()).or_insert(id);
         Ok(id)
-    }
-
-    fn validate_route_label_name(&self, label: &syntax::Ident) -> Result<(), AnalysisError> {
-        if let Some(suffix) = bare_numeric_label(&label.text) {
-            return Err(self.bare_numeric_route_error(label.span, suffix));
-        }
-        if let Some(suffix) = canonical_numeric_suffix(&label.text, NUMERIC_OUTPUT_PREFIX) {
-            return Err(self.wrong_prefix_route_error(label, suffix));
-        }
-        Ok(())
-    }
-
-    fn validate_output_label_name(&self, label: &syntax::Ident) -> Result<(), AnalysisError> {
-        if let Some(suffix) = bare_numeric_label(&label.text) {
-            return Err(self.bare_numeric_output_error(label.span, suffix));
-        }
-        if let Some(suffix) = canonical_numeric_suffix(&label.text, NUMERIC_ROUTE_PREFIX) {
-            return Err(self.wrong_prefix_output_error(label, suffix));
-        }
-        Ok(())
-    }
-
-    fn bare_numeric_route_error(&self, span: Span, suffix: &str) -> AnalysisError {
-        let replacement = format!("{NUMERIC_ROUTE_PREFIX}{suffix}");
-        AnalysisAssist::default()
-            .help("numeric route labels must use the `input_<n>` form in authored DSL")
-            .replacement_suggestion(
-                span,
-                replacement.clone(),
-                format!("use `{replacement}`"),
-                Applicability::Always,
-            )
-            .apply(AnalysisError::new(
-                format!(
-                    "bare numeric route labels are not allowed in the DSL; use `{replacement}` instead"
-                ),
-                span,
-            ))
-    }
-
-    fn bare_numeric_output_error(&self, span: Span, suffix: &str) -> AnalysisError {
-        let replacement = format!("{NUMERIC_OUTPUT_PREFIX}{suffix}");
-        AnalysisAssist::default()
-            .help("numeric output labels must use the `outeq_<n>` form in authored DSL")
-            .replacement_suggestion(
-                span,
-                replacement.clone(),
-                format!("use `{replacement}`"),
-                Applicability::Always,
-            )
-            .apply(AnalysisError::new(
-                format!(
-                    "bare numeric output labels are not allowed in the DSL; use `{replacement}` instead"
-                ),
-                span,
-            ))
-    }
-
-    fn wrong_prefix_route_error(&self, label: &syntax::Ident, suffix: &str) -> AnalysisError {
-        let replacement = format!("{NUMERIC_ROUTE_PREFIX}{suffix}");
-        AnalysisAssist::default()
-            .help("numeric route labels use the `input_<n>` prefix")
-            .replacement_suggestion(
-                label.span,
-                replacement.clone(),
-                format!("use `{replacement}`"),
-                Applicability::Always,
-            )
-            .apply(AnalysisError::new(
-                format!(
-                    "`{}` is an output label and cannot be used as a route; use `{replacement}` here",
-                    label.text
-                ),
-                label.span,
-            ))
-    }
-
-    fn wrong_prefix_output_error(&self, label: &syntax::Ident, suffix: &str) -> AnalysisError {
-        let replacement = format!("{NUMERIC_OUTPUT_PREFIX}{suffix}");
-        AnalysisAssist::default()
-            .help("numeric output labels use the `outeq_<n>` prefix")
-            .replacement_suggestion(
-                label.span,
-                replacement.clone(),
-                format!("use `{replacement}`"),
-                Applicability::Always,
-            )
-            .apply(AnalysisError::new(
-                format!(
-                    "`{}` is a route label and cannot be used as an output target; use `{replacement}` here",
-                    label.text
-                ),
-                label.span,
-            ))
     }
 
     fn insert_local_symbol(
@@ -2724,22 +2617,6 @@ fn allows_route_output_name_overlap(existing: SymbolKind, new: SymbolKind) -> bo
         (existing, new),
         (SymbolKind::Route, SymbolKind::Output) | (SymbolKind::Output, SymbolKind::Route)
     )
-}
-
-fn bare_numeric_label(src: &str) -> Option<&str> {
-    (!src.is_empty() && src.chars().all(|ch| ch.is_ascii_digit())).then_some(src)
-}
-
-fn canonical_numeric_suffix<'a>(src: &'a str, prefix: &str) -> Option<&'a str> {
-    let suffix = src.strip_prefix(prefix)?;
-    (!suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit())).then_some(suffix)
-}
-
-fn numeric_label_literal_suffix(value: f64) -> Option<String> {
-    // `usize::MAX as f64` rounds up to 2^64; keep the bound exclusive so the
-    // cast below never saturates.
-    (value.is_finite() && value >= 0.0 && value.fract() == 0.0 && value < usize::MAX as f64)
-        .then(|| (value as usize).to_string())
 }
 
 #[derive(Default)]
