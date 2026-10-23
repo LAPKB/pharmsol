@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.30.0](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.29.4...pharmsol-v0.30.0) - 2026-10-23
+
+### Added
+
+- [**breaking**] key error models by output label ([#392](https://github.com/LAPKB/pharmsol/pull/392))
+- Remove label prefixes ([#383](https://github.com/LAPKB/pharmsol/pull/383))
+
+### Fixed
+
+- [**breaking**] select NCA observations by output label ([#393](https://github.com/LAPKB/pharmsol/pull/393))
+
+### Other
+
+- Bump cranelift family to 0.136.3 ([#385](https://github.com/LAPKB/pharmsol/pull/385))
+
 ## [0.29.4](https://github.com/LAPKB/pharmsol/compare/pharmsol-v0.29.3...pharmsol-v0.29.4) - 2026-10-19
 
 ### Fixed

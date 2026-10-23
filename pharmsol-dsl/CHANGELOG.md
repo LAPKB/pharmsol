@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.30.0](https://github.com/LAPKB/pharmsol/compare/pharmsol-dsl-v0.29.4...pharmsol-dsl-v0.30.0) - 2026-10-23
+
+### Added
+
+- Remove label prefixes ([#383](https://github.com/LAPKB/pharmsol/pull/383))
+
 ## [0.29.3](https://github.com/LAPKB/pharmsol/compare/pharmsol-dsl-v0.29.2...pharmsol-dsl-v0.29.3) - 2026-09-15
 
 ### Fixed
