@@ -183,3 +183,18 @@ fn analytical_model_with_only_initial_conditions_needs_no_routes() {
     )
     .expect("init-driven analytical model compiles");
 }
+
+#[test]
+fn empty_canonical_routes_block_does_not_count() {
+    let model = |blocks: &str| {
+        format!(
+            "model m {{\n  kind analytical\n  parameters {{ ke, v }}\n  states {{ central }}\n  {blocks}\n  analytical {{ structure = one_compartment }}\n  outputs {{ cp = central / v }}\n}}\n"
+        )
+    };
+    let error = compile_model(&model("routes {}"))
+        .expect_err("an empty routes block gives doses nowhere to go")
+        .to_string();
+    assert!(error.contains("declares no routes"), "{error}");
+    // An empty `init {}` is already rejected by the parser.
+    assert!(compile_model(&model("init {}")).is_err());
+}

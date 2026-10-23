@@ -664,7 +664,7 @@ impl<'a> AuthoringParser<'a> {
         let inner = &trimmed[1..close];
         let inner_abs = abs + 1;
         let mut statements = Vec::new();
-        for (start, end) in split_statement_chunks(inner) {
+        for (start, end) in split_logical_statements(inner) {
             let chunk = &inner[start..end];
             let stmt = self.parse_authoring_statement(chunk, inner_abs + start, depth)?;
             statements.push(stmt);
@@ -1080,7 +1080,7 @@ impl<'a> AuthoringParser<'a> {
             }
             "dx" | "ddt" => {
                 let place = parse_place_at(call.argument, call.argument_start)?;
-                self.note_equation_target("dx", call.argument, span)?;
+                self.note_equation_target(format!("dx({})", self.place_key(&place)), span)?;
                 let rhs = parse_surface_rhs(rhs, rhs_abs)?;
                 let stmt = build_assignment_statement(
                     AssignTarget {
@@ -1096,7 +1096,7 @@ impl<'a> AuthoringParser<'a> {
             }
             "noise" => {
                 let place = parse_place_at(call.argument, call.argument_start)?;
-                self.note_equation_target("noise", call.argument, span)?;
+                self.note_equation_target(format!("noise({})", self.place_key(&place)), span)?;
                 let rhs = parse_surface_rhs(rhs, rhs_abs)?;
                 let stmt = build_assignment_statement(
                     AssignTarget {
@@ -1112,7 +1112,7 @@ impl<'a> AuthoringParser<'a> {
             }
             "init" => {
                 let place = parse_place_at(call.argument, call.argument_start)?;
-                self.note_equation_target("init", call.argument, span)?;
+                self.note_equation_target(format!("init({})", self.place_key(&place)), span)?;
                 let rhs = parse_surface_rhs(rhs, rhs_abs)?;
                 let stmt = build_assignment_statement(
                     AssignTarget {
@@ -1207,24 +1207,32 @@ impl<'a> AuthoringParser<'a> {
     }
 
     fn note_output_assignment(&mut self, output: &Ident, span: Span) -> Result<(), ParseError> {
-        self.note_equation_target("out", &output.text, span)?;
+        self.note_equation_target(format!("out({})", output.text), span)?;
         self.assigned_outputs
             .entry(output.text.clone())
             .or_insert(output.span);
         Ok(())
     }
 
+    /// Identifies the state element a place writes: constant indices are
+    /// compared by value, so `a[0]`, `a[00]`, and `a[(0)]` are the same target.
+    fn place_key(&self, place: &Place) -> String {
+        let Some(index) = &place.index else {
+            return place.name.text.clone();
+        };
+        let index = match index.kind {
+            ExprKind::Number(value) if value.fract() == 0.0 => format!("{value}"),
+            _ => self.src[index.span.start..index.span.end]
+                .split_whitespace()
+                .collect(),
+        };
+        format!("{}[{index}]", place.name.text)
+    }
+
     /// Records a top-level equation target such as `dx(central)`. Each one is
     /// an unconditional assignment, so a second equation for the same target
     /// would silently replace the first.
-    fn note_equation_target(
-        &mut self,
-        callee: &str,
-        argument: &str,
-        span: Span,
-    ) -> Result<(), ParseError> {
-        let argument: String = argument.split_whitespace().collect();
-        let target = format!("{callee}({argument})");
+    fn note_equation_target(&mut self, target: String, span: Span) -> Result<(), ParseError> {
         if let Some(first) = self.assigned_equations.insert(target.clone(), span) {
             return Err(
                 ParseError::new(format!("`{target}` is assigned more than once"), span)
@@ -2377,11 +2385,12 @@ const LEADING_CONTINUATIONS: &[&str] = &[
 ///
 /// A statement ends at a top-level `;` or newline. It continues past a newline
 /// while a `{` block is open, while a `(` or `[` group is open and the next line
-/// is indented or closes the group, when the line ends with a binary operator or
-/// comma and the next line is indented, and when the next line starts with a
-/// binary operator or `else`. Otherwise an unindented line starts a new
-/// statement, so an unclosed group or dangling operator is reported on its own
-/// line instead of absorbing the statement after it.
+/// is indented further than the statement's first line or closes the group,
+/// when the line ends with a binary operator or comma and the next line is
+/// indented further, and when the next line starts with a binary operator or
+/// `else`. Otherwise the next line starts a new statement, so an unclosed group
+/// or dangling operator is reported on its own line instead of absorbing the
+/// statement after it. The same rules apply inside `if` bodies.
 fn split_logical_statements(src: &str) -> Vec<(usize, usize)> {
     let bytes = src.as_bytes();
     let mut ranges = Vec::new();
@@ -2435,7 +2444,10 @@ fn continues_after_newline(
         return false;
     };
     let next = next_line.trim_start();
-    let indented = next_line.len() > next.len();
+    // Continuation lines are indented past the line the statement starts on.
+    let statement_line = &src[start..newline];
+    let first = start + statement_line.len() - statement_line.trim_start().len();
+    let indented = indentation(next_line) > indentation(line_at(src, first));
     if group_depth > 0 {
         return indented || next.starts_with([')', ']']);
     }
@@ -2451,6 +2463,18 @@ fn continues_after_newline(
             .any(|operator| next.starts_with(operator))
 }
 
+fn line_at(src: &str, offset: usize) -> &str {
+    let start = src[..offset].rfind('\n').map_or(0, |index| index + 1);
+    let end = src[offset..]
+        .find('\n')
+        .map_or(src.len(), |index| offset + index);
+    &src[start..end]
+}
+
+fn indentation(line: &str) -> usize {
+    line.len() - line.trim_start().len()
+}
+
 fn next_nonblank_line(src: &str, from: usize) -> Option<&str> {
     src[from..].split('\n').find(|line| !line.trim().is_empty())
 }
@@ -2463,55 +2487,6 @@ fn push_trimmed_range(src: &str, start: usize, end: usize, ranges: &mut Vec<(usi
     }
     let leading = text.len() - text.trim_start().len();
     ranges.push((start + leading, start + leading + trimmed.len()));
-}
-
-fn split_statement_chunks(src: &str) -> Vec<(usize, usize)> {
-    let mut chunks = Vec::new();
-    let mut start = 0;
-    let mut paren_depth = 0;
-    let mut bracket_depth = 0;
-    let mut brace_depth = 0;
-    let mut index = 0;
-    while index < src.len() {
-        match src.as_bytes()[index] {
-            b'(' => paren_depth += 1,
-            b')' => paren_depth -= 1,
-            b'[' => bracket_depth += 1,
-            b']' => bracket_depth -= 1,
-            b'{' => brace_depth += 1,
-            b'}' => brace_depth -= 1,
-            b';' | b'\n' if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 => {
-                // `else` continues the preceding `if` statement, so a boundary
-                // before one (across whitespace and blank/comment-masked lines)
-                // must not split the chunk. Same logical rule as at module level.
-                let mut next = index + 1;
-                while next < src.len() && src.as_bytes()[next].is_ascii_whitespace() {
-                    next += 1;
-                }
-                if !starts_with_keyword(&src[next..], "else") {
-                    chunks.push((start, index));
-                    start = index + 1;
-                }
-            }
-            _ => {}
-        }
-        index += 1;
-    }
-    chunks.push((start, src.len()));
-
-    let mut result = Vec::new();
-    for (a, b) in chunks {
-        let text = &src[a..b];
-        let trimmed_start = text.trim_start();
-        let leading = text.len() - trimmed_start.len();
-        let trimmed_end = trimmed_start.trim_end();
-        let trailing = trimmed_start.len() - trimmed_end.len();
-        if trimmed_end.is_empty() {
-            continue;
-        }
-        result.push((a + leading, b - trailing));
-    }
-    result
 }
 
 fn find_matching_delimiter(src: &str, open: char, close: char) -> Option<usize> {

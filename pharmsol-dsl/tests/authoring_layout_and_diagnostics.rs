@@ -227,3 +227,76 @@ fn double_star_suggests_caret() {
         "{report}"
     );
 }
+
+#[test]
+fn continuation_lines_work_inside_if_bodies() {
+    let multi_line = r#"
+params = ke, v
+covariates = wt
+states = central
+if (wt > 70) {
+    scale = ke *
+        2
+    shift = 1
+        + ke
+} else {
+    scale = ke
+    shift = 1
+}
+dx(central) = -scale * central + shift
+out(cp) = central / v
+"#;
+    let one_line = r#"
+params = ke, v
+covariates = wt
+states = central
+if (wt > 70) {
+    scale = ke * 2
+    shift = 1 + ke
+} else {
+    scale = ke
+    shift = 1
+}
+dx(central) = -scale * central + shift
+out(cp) = central / v
+"#;
+    let multi_line =
+        parse_module(multi_line).unwrap_or_else(|error| panic!("{}", error.render(multi_line)));
+    let one_line = parse_module(one_line).expect("one-line model parses");
+    assert_eq!(multi_line.to_string(), one_line.to_string());
+}
+
+#[test]
+fn dangling_operator_inside_if_body_is_reported_on_its_line() {
+    let report = render_error(
+        r#"name = m
+params = ke
+covariates = wt
+states = central
+if (wt > 70) {
+    scale = ke +
+    shift = 1
+} else {
+    scale = ke
+    shift = 1
+}
+dx(central) = -scale * central + shift
+out(cp) = central
+"#,
+    );
+    assert!(report.contains("line 6"), "{report}");
+}
+
+#[test]
+fn equivalent_index_spellings_are_duplicates() {
+    for second in ["dx(a[(0)]) = 2", "dx(a[00]) = 2", "dx(a[ 0 ]) = 2"] {
+        let src = format!(
+            "name = m\nstates = a[2]\ndx(a[0]) = 1\n{second}\ndx(a[1]) = 0\nout(cp) = a[1]\n"
+        );
+        let report = render_error(&src);
+        assert!(
+            report.contains("`dx(a[0])` is assigned more than once"),
+            "{second}: {report}"
+        );
+    }
+}

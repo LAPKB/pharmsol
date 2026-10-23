@@ -360,8 +360,12 @@ impl<'a> Analyzer<'a> {
                 diffusion: diffusion.as_ref(),
                 analytical: sections.analytical,
                 particles: sections.particles,
-                has_routes: sections.routes.is_some(),
-                has_init: sections.init.is_some(),
+                has_routes: sections
+                    .routes
+                    .is_some_and(|block| !block.routes.is_empty()),
+                has_init: sections
+                    .init
+                    .is_some_and(|block| !block.statements.is_empty()),
             },
             &states,
         )?;
