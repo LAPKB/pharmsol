@@ -125,3 +125,61 @@ out(cp) = central
         "{error}"
     );
 }
+
+#[test]
+fn dose_input_outside_derivative_is_named() {
+    let error =
+        compile_model("params = ke\nstates = c\nx = b[1]\ndx(c) = x - ke * c\nout(cp) = c\n")
+            .expect_err("bolus outside dx should fail")
+            .to_string();
+    assert!(
+        error.contains("dose input `b` can only be used in a `dx(...)` equation"),
+        "{error}"
+    );
+}
+
+#[test]
+fn infusion_outside_derivative_points_to_rate() {
+    let error = compile_model(
+        "params = ke\nstates = c\ndx(c) = rateiv[1] - ke * c\nout(cp) = c + rateiv[1]\n",
+    )
+    .expect_err("infusion outside dx should fail")
+    .to_string();
+    assert!(error.contains("use `rate(1)`"), "{error}");
+    compile_model("params = ke\nstates = c\ndx(c) = rateiv[1] - ke * c\nout(cp) = c + rate(1)\n")
+        .expect("the suggested `rate(1)` compiles");
+}
+
+#[test]
+fn bolus_scaled_by_state_is_explained() {
+    let error = compile_model("params = ke\nstates = c\ndx(c) = b[1] * c - ke * c\nout(cp) = c\n")
+        .expect_err("state-scaled bolus should fail")
+        .to_string();
+    assert!(
+        error.contains(
+            "a bolus can only be scaled by values that do not depend on states; `c` is a state"
+        ),
+        "{error}"
+    );
+}
+
+#[test]
+fn analytical_model_without_routes_is_rejected() {
+    let error = compile_model(
+        "kind = analytical\nparams = ke, v\nstates = central\nstructure = one_compartment\nout(cp) = central / v\n",
+    )
+    .expect_err("route-less analytical model should fail")
+    .to_string();
+    assert!(
+        error.contains("declares no routes, so doses in the data would be ignored"),
+        "{error}"
+    );
+}
+
+#[test]
+fn analytical_model_with_only_initial_conditions_needs_no_routes() {
+    compile_model(
+        "kind = analytical\nparams = ke, v, c0\nstates = central\nstructure = one_compartment\ninit(central) = c0\nout(cp) = central / v\n",
+    )
+    .expect("init-driven analytical model compiles");
+}

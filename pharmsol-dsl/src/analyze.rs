@@ -360,6 +360,8 @@ impl<'a> Analyzer<'a> {
                 diffusion: diffusion.as_ref(),
                 analytical: sections.analytical,
                 particles: sections.particles,
+                has_routes: sections.routes.is_some(),
+                has_init: sections.init.is_some(),
             },
             &states,
         )?;
@@ -1433,6 +1435,13 @@ impl<'a> Analyzer<'a> {
                 self.analyze_call(callee, args, expr.span, env)
             }
             syntax::ExprKind::Index { target, index } => {
+                if let syntax::ExprKind::Name(name) = &target.kind {
+                    if !self.globals.states.contains_key(&name.text) {
+                        if let Some(error) = input_outside_derivative_error(name, index) {
+                            return Err(error);
+                        }
+                    }
+                }
                 let index = self.analyze_expr(index, env)?;
                 self.expect_int(&index, "index expression", index.span)?;
                 match &target.kind {
@@ -1617,6 +1626,11 @@ impl<'a> Analyzer<'a> {
         span: Span,
         env: &BlockEnv,
     ) -> Result<AnalyzedExpr, AnalysisError> {
+        if let [argument] = args {
+            if let Some(error) = input_outside_derivative_error(callee, argument) {
+                return Err(error);
+            }
+        }
         if callee.text == RATE_FUNCTION_NAME {
             if args.len() != 1 {
                 return Err(AnalysisError::new(
@@ -2453,10 +2467,22 @@ impl<'a> Analyzer<'a> {
                 }
             }
             ModelKind::Analytical => {
-                if blocks.analytical.is_none() {
+                let Some(analytical) = blocks.analytical else {
                     return Err(AnalysisError::new(
                         "analytical models require an `analytical` block",
                         self.model.span,
+                    ));
+                };
+                // Without routes every dose in the data is silently ignored; a
+                // model driven only by `init(...)` has no doses to lose.
+                if !blocks.has_routes && !blocks.has_init {
+                    return Err(AnalysisError::new(
+                        "analytical model declares no routes, so doses in the data would be ignored",
+                        analytical.span,
+                    )
+                    .with_help(
+                        "declare where doses enter the structure, e.g. `bolus(1) -> central` \
+                         or `infusion(1) -> central`",
                     ));
                 }
                 if blocks.dynamics.is_some() || blocks.drift.is_some() || blocks.diffusion.is_some()
@@ -2624,6 +2650,40 @@ impl<'a> Analyzer<'a> {
     }
 }
 
+/// Dose inputs are lowered out of `dx(...)` equations before analysis, so one
+/// that reaches the analyzer is used somewhere else.
+fn input_outside_derivative_error(
+    name: &syntax::Ident,
+    argument: &syntax::Expr,
+) -> Option<AnalysisError> {
+    let infusion = match name.text.as_str() {
+        "bolus" | "b" => false,
+        "infusion" | "rateiv" => true,
+        _ => return None,
+    };
+    let label = match &argument.kind {
+        syntax::ExprKind::Name(label) => label.text.clone(),
+        syntax::ExprKind::Number(value) if value.fract() == 0.0 && *value >= 0.0 => {
+            format!("{value}")
+        }
+        _ => "input".to_string(),
+    };
+    let mut error = AnalysisError::new(
+        format!(
+            "dose input `{}` can only be used in a `dx(...)` equation",
+            name.text
+        ),
+        name.span,
+    )
+    .with_note("doses enter the model as terms of the state derivatives");
+    if infusion {
+        error = error.with_help(format!(
+            "to read the current infusion rate elsewhere, use `rate({label})`"
+        ));
+    }
+    Some(error)
+}
+
 fn allows_route_output_name_overlap(existing: SymbolKind, new: SymbolKind) -> bool {
     matches!(
         (existing, new),
@@ -2715,6 +2775,8 @@ struct ModelKindBlocks<'a> {
     diffusion: Option<&'a BlockAnalysis>,
     analytical: Option<&'a syntax::AnalyticalBlock>,
     particles: Option<&'a syntax::ParticlesDecl>,
+    has_routes: bool,
+    has_init: bool,
 }
 
 #[derive(Default)]

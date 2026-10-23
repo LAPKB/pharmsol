@@ -217,3 +217,13 @@ out(cp) = central
     );
     assert!(report.contains("use `=` to assign"), "{report}");
 }
+
+#[test]
+fn double_star_suggests_caret() {
+    let report =
+        render_error("name = m\nparams = ke\nstates = c\ndx(c) = -ke * c**2\nout(cp) = c\n");
+    assert!(
+        report.contains("`**` is not an operator; powers use `^`"),
+        "{report}"
+    );
+}

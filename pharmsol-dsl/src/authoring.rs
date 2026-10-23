@@ -819,6 +819,22 @@ impl<'a> AuthoringParser<'a> {
             )?;
         }
         if let Some((input, scale)) = scaled_bolus_term(expr) {
+            if let Some(state) = first_state_reference(&scale, &self.states) {
+                return Err(ParseError::new(
+                    format!(
+                        "a bolus can only be scaled by values that do not depend on states; `{}` is a state",
+                        state.text
+                    ),
+                    state.span,
+                )
+                .with_note(
+                    "the scale becomes the dose's bioavailability, which is fixed when the dose is given",
+                )
+                .with_help(
+                    "scale the bolus by parameters, covariates, or constants, and move \
+                     state-dependent terms out of the bolus term",
+                ));
+            }
             if conditional {
                 return Err(ParseError::new(
                     "put conditional bolus scaling in an event-safe derived value, then use one `bolus(input) * scale` term outside the conditional",
@@ -1481,6 +1497,25 @@ fn first_inline_input(statements: &[Stmt]) -> Option<Span> {
                 .or_else(|| branch.else_branch.as_deref().and_then(first_inline_input)),
             StmtKind::For(body) => first_inline_input(&body.body),
         })
+}
+
+fn first_state_reference<'e>(expr: &'e Expr, states: &[StateDecl]) -> Option<&'e Ident> {
+    match &expr.kind {
+        ExprKind::Name(name) if states.iter().any(|state| state.name.text == name.text) => {
+            Some(name)
+        }
+        ExprKind::Index { target, index } => {
+            first_state_reference(target, states).or_else(|| first_state_reference(index, states))
+        }
+        ExprKind::Unary { expr, .. } => first_state_reference(expr, states),
+        ExprKind::Binary { lhs, rhs, .. } => {
+            first_state_reference(lhs, states).or_else(|| first_state_reference(rhs, states))
+        }
+        ExprKind::Call { args, .. } => args
+            .iter()
+            .find_map(|arg| first_state_reference(arg, states)),
+        ExprKind::Number(_) | ExprKind::Bool(_) | ExprKind::Name(_) => None,
+    }
 }
 
 fn ode_input(expr: &Expr) -> Option<(SurfaceRouteKind, Ident)> {
