@@ -79,8 +79,6 @@ pub use matrix::psi;
 pub use prediction::Prediction;
 pub use subject::{PopulationPredictions, SubjectPredictions};
 
-use std::borrow::Cow;
-
 use ndarray::{Array2, Axis};
 use rayon::prelude::*;
 
@@ -135,8 +133,7 @@ pub fn log_likelihood_batch(
         )));
     }
 
-    let residual_error_models = bind_residual_error_models(equation, residual_error_models)?;
-    let residual_error_models = residual_error_models.as_ref();
+    equation.validate_output_labels(residual_error_models.labels())?;
 
     let score_subject = |subject: &Subject, parameter_row: &[f64]| {
         let predictions = match equation.estimate_predictions_dense(subject, parameter_row) {
@@ -144,13 +141,11 @@ pub fn log_likelihood_batch(
             Err(_) => return f64::NEG_INFINITY,
         };
 
-        let obs_pred_pairs = predictions
-            .get_predictions()
-            .into_iter()
-            .filter_map(|pred| {
-                pred.observation()
-                    .map(|obs| (pred.outeq(), obs, pred.prediction()))
-            });
+        let predictions = predictions.get_predictions();
+        let obs_pred_pairs = predictions.iter().filter_map(|pred| {
+            pred.observation()
+                .map(|obs| (pred.outeq(), obs, pred.prediction()))
+        });
 
         residual_error_models.total_log_likelihood(obs_pred_pairs)
     };
@@ -196,7 +191,7 @@ pub fn log_likelihood_batch(
 /// # Returns
 /// The log-likelihood for this subject. Returns `f64::NEG_INFINITY` on simulation error
 /// or when a residual error model names an output the equation does not declare
-/// (use [`log_likelihood_batch`] to get that binding error back).
+/// (use [`log_likelihood_batch`] to get that error back).
 ///
 /// # Example
 /// ```ignore
@@ -215,10 +210,12 @@ pub fn log_likelihood_subject(
     params: &crate::Parameters,
     residual_error_models: &crate::ResidualErrorModels,
 ) -> f64 {
-    let Ok(residual_error_models) = bind_residual_error_models(equation, residual_error_models)
-    else {
+    if equation
+        .validate_output_labels(residual_error_models.labels())
+        .is_err()
+    {
         return f64::NEG_INFINITY;
-    };
+    }
 
     // Simulate to get predictions
     let predictions = match equation.estimate_predictions_dense(subject, params.as_slice()) {
@@ -227,37 +224,20 @@ pub fn log_likelihood_subject(
     };
 
     // Extract (outeq, observation, prediction) tuples and compute log-likelihood
-    let obs_pred_pairs = predictions
-        .get_predictions()
-        .into_iter()
-        .filter_map(|pred| {
-            pred.observation()
-                .map(|obs| (pred.outeq(), obs, pred.prediction()))
-        });
+    let predictions = predictions.get_predictions();
+    let obs_pred_pairs = predictions.iter().filter_map(|pred| {
+        pred.observation()
+            .map(|obs| (pred.outeq(), obs, pred.prediction()))
+    });
 
     residual_error_models.total_log_likelihood(obs_pred_pairs)
-}
-
-/// Bind label-keyed residual error models to the equation's output slots by
-/// exact output name.
-fn bind_residual_error_models<'a>(
-    equation: &impl Equation,
-    residual_error_models: &'a crate::ResidualErrorModels,
-) -> Result<Cow<'a, crate::ResidualErrorModels>, PharmsolError> {
-    if residual_error_models.is_bound() {
-        return Ok(Cow::Borrowed(residual_error_models));
-    }
-    let outputs = equation.assay_error_models().bound_output_names();
-    Ok(Cow::Owned(
-        residual_error_models.bind_output_names(&outputs)?,
-    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::data::error_model::{AssayErrorModel, ErrorPoly};
-    use crate::data::event::Observation;
+    use crate::data::event::{Observation, OutputLabel};
     use crate::Censor;
 
     #[test]
@@ -267,7 +247,7 @@ mod tests {
             time: 1.0,
             observation: Some(10.0),
             prediction: 10.5,
-            outeq: 0,
+            outeq: OutputLabel::from(0),
             errorpoly: None,
             state: vec![10.5],
             occasion: 0,
@@ -275,8 +255,8 @@ mod tests {
         };
 
         // Create error model with additive error
-        let error_models = crate::AssayErrorModels::empty()
-            .add_at(
+        let error_models = crate::AssayErrorModels::new()
+            .add(
                 0,
                 AssayErrorModel::additive(ErrorPoly::new(0.0, 1.0, 0.0, 0.0), 0.0),
             )
@@ -303,7 +283,7 @@ mod tests {
                 time: 1.0,
                 observation: Some(10.0),
                 prediction: 10.1,
-                outeq: 0,
+                outeq: OutputLabel::from(0),
                 errorpoly: None,
                 state: vec![10.1],
                 occasion: 0,
@@ -313,7 +293,7 @@ mod tests {
                 time: 2.0,
                 observation: Some(8.0),
                 prediction: 8.2,
-                outeq: 0,
+                outeq: OutputLabel::from(0),
                 errorpoly: None,
                 state: vec![8.2],
                 occasion: 0,
@@ -322,8 +302,8 @@ mod tests {
         ];
 
         let subject_predictions = SubjectPredictions::from(predictions);
-        let error_models = crate::AssayErrorModels::empty()
-            .add_at(
+        let error_models = crate::AssayErrorModels::new()
+            .add(
                 0,
                 AssayErrorModel::additive(ErrorPoly::new(0.0, 1.0, 0.0, 0.0), 0.0),
             )
@@ -346,7 +326,7 @@ mod tests {
     #[test]
     fn test_empty_predictions_have_neutral_log_likelihood() {
         let preds = SubjectPredictions::default();
-        let errors = crate::AssayErrorModels::empty();
+        let errors = crate::AssayErrorModels::new();
         assert_eq!(preds.log_likelihood(&errors).unwrap(), 0.0); // log(1) = 0
     }
 
@@ -357,9 +337,7 @@ mod tests {
         preds.add_prediction(obs.to_prediction(1.0, vec![]));
 
         let error_model = AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 0.0);
-        let errors = crate::AssayErrorModels::empty()
-            .add_at(0, error_model)
-            .unwrap();
+        let errors = crate::AssayErrorModels::new().add(0, error_model).unwrap();
 
         let log_lik = preds.log_likelihood(&errors).unwrap();
         assert!(log_lik.is_finite());

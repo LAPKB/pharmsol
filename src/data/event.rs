@@ -13,7 +13,9 @@
 use crate::data::error_model::ErrorPoly;
 use crate::prelude::simulator::Prediction;
 use serde::{Deserialize, Serialize};
+use std::borrow::Borrow;
 use std::fmt;
+use std::sync::Arc;
 
 // ============================================================================
 // Shared Analysis Types
@@ -200,15 +202,19 @@ impl PartialEq<&InputLabel> for usize {
 /// Public label for an observation output.
 ///
 /// [`Observation`] stores the original user-facing output name in this type.
+///
+/// The name is shared, so cloning a label (as every [`Prediction`] does) is a
+/// reference-count increment rather than a string copy.
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub struct OutputLabel(String);
+#[serde(from = "String", into = "String")]
+pub struct OutputLabel(Arc<str>);
 
 impl OutputLabel {
     /// Create a new public label.
     ///
     /// Prefer stable names when the model declares named outputs.
     pub fn new(label: impl ToString) -> Self {
-        Self(label.to_string())
+        Self(label.to_string().into())
     }
 
     /// Borrow the stored label as a string.
@@ -227,24 +233,38 @@ impl OutputLabel {
 
 impl From<String> for OutputLabel {
     fn from(value: String) -> Self {
-        Self(value)
+        Self(value.into())
     }
 }
 
 impl From<&str> for OutputLabel {
     fn from(value: &str) -> Self {
-        Self(value.to_string())
+        Self(value.into())
     }
 }
 
 impl From<usize> for OutputLabel {
     fn from(value: usize) -> Self {
-        Self(value.to_string())
+        Self(value.to_string().into())
+    }
+}
+
+impl From<OutputLabel> for String {
+    fn from(value: OutputLabel) -> Self {
+        value.0.to_string()
     }
 }
 
 impl AsRef<str> for OutputLabel {
     fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+/// Lets label-keyed maps be searched with a plain `&str`, without building an
+/// [`OutputLabel`].
+impl Borrow<str> for OutputLabel {
+    fn borrow(&self) -> &str {
         self.as_str()
     }
 }
@@ -258,7 +278,7 @@ impl fmt::Display for OutputLabel {
 impl PartialEq<usize> for OutputLabel {
     /// Labels compare as text: `"1" == 1`, but `"01" != 1`.
     fn eq(&self, other: &usize) -> bool {
-        self.0 == other.to_string()
+        *self.0 == other.to_string()
     }
 }
 
@@ -581,6 +601,10 @@ pub struct Observation {
     errorpoly: Option<ErrorPoly>,
     occasion: usize,
     censoring: Censor,
+    /// Output slot `outeq` resolves to in the equation being simulated. Set
+    /// by the simulator next to the label, which it never rewrites.
+    #[serde(skip)]
+    outeq_slot: Option<usize>,
 }
 impl Observation {
     /// Create a new observation
@@ -608,6 +632,7 @@ impl Observation {
             errorpoly,
             occasion,
             censoring,
+            outeq_slot: None,
         }
     }
 
@@ -655,6 +680,17 @@ impl Observation {
     /// Set the output label corresponding to this observation
     pub fn set_outeq(&mut self, outeq: impl ToString) {
         self.outeq = OutputLabel::new(outeq);
+        self.outeq_slot = None;
+    }
+
+    /// The output slot the simulator resolved this observation's label to.
+    pub(crate) fn outeq_slot(&self) -> Option<usize> {
+        self.outeq_slot
+    }
+
+    /// Record the output slot this observation's label resolves to.
+    pub(crate) fn set_outeq_slot(&mut self, slot: usize) {
+        self.outeq_slot = Some(slot);
     }
 
     /// Set the [ErrorPoly] for this observation
@@ -674,6 +710,7 @@ impl Observation {
 
     /// Get a mutable reference to the output label
     pub fn mut_outeq(&mut self) -> &mut OutputLabel {
+        self.outeq_slot = None;
         &mut self.outeq
     }
 
@@ -694,17 +731,13 @@ impl Observation {
 
     /// Create a [`Prediction`] from this observation.
     ///
-    /// This is a low-level helper for code paths that already operate on a
-    /// resolved or numeric output index. Named output labels must be resolved by
-    /// the caller before this conversion happens.
+    /// The prediction keeps this observation's output label.
     pub fn to_prediction(&self, pred: f64, state: Vec<f64>) -> Prediction {
         Prediction {
             time: self.time(),
             observation: self.value(),
             prediction: pred,
-            outeq: self
-                .outeq_index()
-                .expect("prediction requires a resolved or numeric output label"),
+            outeq: self.outeq.clone(),
             errorpoly: self.errorpoly(),
             state,
             occasion: self.occasion(),

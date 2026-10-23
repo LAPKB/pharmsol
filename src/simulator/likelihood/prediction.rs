@@ -5,7 +5,7 @@
 //! calculation.
 
 use crate::data::error_model::AssayErrorModels;
-use crate::data::event::Observation;
+use crate::data::event::{Observation, OutputLabel};
 use crate::{Censor, ErrorPoly, PharmsolError};
 
 use super::distributions::{lognormccdf, lognormcdf, lognormpdf};
@@ -19,7 +19,7 @@ pub struct Prediction {
     pub(crate) time: f64,
     pub(crate) observation: Option<f64>,
     pub(crate) prediction: f64,
-    pub(crate) outeq: usize,
+    pub(crate) outeq: OutputLabel,
     pub(crate) errorpoly: Option<ErrorPoly>,
     pub(crate) state: Vec<f64>,
     pub(crate) occasion: usize,
@@ -47,9 +47,9 @@ impl Prediction {
         self.prediction = prediction;
     }
 
-    /// Get the output equation index.
-    pub fn outeq(&self) -> usize {
-        self.outeq
+    /// Get the output label of this prediction.
+    pub fn outeq(&self) -> &OutputLabel {
+        &self.outeq
     }
 
     /// Get the error polynomial coefficients, if available.
@@ -177,7 +177,7 @@ impl Prediction {
         Observation::new(
             self.time,
             self.observation,
-            self.outeq,
+            self.outeq.clone(),
             self.errorpoly,
             self.occasion,
             self.censoring,
@@ -191,7 +191,7 @@ impl Default for Prediction {
             time: 0.0,
             observation: None,
             prediction: 0.0,
-            outeq: 0,
+            outeq: OutputLabel::from(0),
             errorpoly: None,
             state: vec![],
             occasion: 0,
@@ -224,7 +224,7 @@ mod tests {
             time: 1.0,
             observation: Some(obs),
             prediction: pred,
-            outeq: 0,
+            outeq: OutputLabel::from(0),
             errorpoly: None,
             state: vec![pred],
             occasion: 0,
@@ -233,8 +233,8 @@ mod tests {
     }
 
     fn create_error_models() -> AssayErrorModels {
-        AssayErrorModels::empty()
-            .add_at(
+        AssayErrorModels::new()
+            .add(
                 0,
                 AssayErrorModel::additive(ErrorPoly::new(1.0, 0.0, 0.0, 0.0), 0.0),
             )
