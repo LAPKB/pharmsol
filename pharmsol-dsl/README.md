@@ -54,6 +54,29 @@ The main public modules are:
 The parser accepts both canonical `model { ... }` source and the authoring
 shorthand used by the `pharmsol` examples.
 
+## Dose Inputs
+
+ODE and SDE models take their dose inputs directly in `dx(...)`, so they
+need no route declarations:
+
+```text
+dx(depot)   = f * bolus(oral) - ka * depot
+dx(central) = ka * depot - ke * central + infusion(iv)
+```
+
+Route labels can be numbers, and the Pmetrics spellings `b[n]` and
+`rateiv[n]` are aliases for `bolus[n]` and `infusion[n]`:
+
+```text
+dx(depot)   = b[1] - ka * depot
+dx(central) = ka * depot - ke * central + rateiv[1]
+```
+
+A state named `b` or `rateiv` keeps its usual meaning; the alias is then off.
+SDE models can still declare routes with `bolus(oral) -> depot`, but a model
+uses one style or the other. Analytical models have no `dx(...)` equations and
+always declare their routes.
+
 ## Statement Layout
 
 In the authoring shorthand, each statement normally takes one line. Several

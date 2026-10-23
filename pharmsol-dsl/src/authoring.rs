@@ -137,8 +137,29 @@ impl<'a> AuthoringParser<'a> {
         }
 
         let kind = self.determine_kind(module_span)?;
-        if kind == ModelKind::Ode {
-            self.lower_ode_inputs()?;
+        self.resolve_input_aliases();
+        // SDE drift takes inputs inline like ODE derivatives, unless the model
+        // declares its routes with `bolus(input) -> state`.
+        let inline_inputs = match kind {
+            ModelKind::Ode => true,
+            ModelKind::Sde if self.routes.is_empty() => true,
+            ModelKind::Sde => {
+                if let Some(span) = first_inline_input(&self.derivative_statements) {
+                    return Err(ParseError::new(
+                        "this model declares its routes with `->`, so inputs cannot also appear in `dx(...)`",
+                        span,
+                    )
+                    .with_help(
+                        "either remove the route declarations and keep the inline \
+                         `bolus(...)`/`infusion(...)` terms, or remove the inline terms",
+                    ));
+                }
+                false
+            }
+            ModelKind::Analytical => false,
+        };
+        if inline_inputs {
+            self.lower_ode_inputs(kind)?;
         }
 
         let surface_routes = std::mem::take(&mut self.routes);
@@ -207,7 +228,7 @@ impl<'a> AuthoringParser<'a> {
         }
 
         let mut derivative_statements = std::mem::take(&mut self.derivative_statements);
-        if kind == ModelKind::Sde {
+        if kind == ModelKind::Sde && !inline_inputs {
             inject_infusion_rates(&surface_routes, &routes, &mut derivative_statements);
         }
 
@@ -712,17 +733,22 @@ impl<'a> AuthoringParser<'a> {
 
     // ODE input syntax lowers to the existing routes, event scales, and rates.
     // The execution model and simulator do not need a second input mechanism.
-    fn lower_ode_inputs(&mut self) -> Result<(), ParseError> {
+    fn lower_ode_inputs(&mut self, kind: ModelKind) -> Result<(), ParseError> {
+        let model = if kind == ModelKind::Sde { "SDE" } else { "ODE" };
         if let Some(route) = self.routes.values().next() {
             return Err(ParseError::new(
-                "ODE inputs belong in the derivative RHS: use `+ bolus(input)` or `+ infusion(input)`, not a route declaration",
+                format!("{model} inputs belong in the derivative RHS: use `+ bolus(input)` or `+ infusion(input)`, not a route declaration"),
                 route.span,
             ));
         }
         for property in self.route_modifiers.values().flatten() {
             if property.name.text == "bioavailability" {
                 return Err(ParseError::new(
-                    "ODE models no longer accept `fa(input)`; multiply `bolus(input)` by the scale in the derivative RHS",
+                    if kind == ModelKind::Sde {
+                        "SDE models with inline inputs do not accept `fa(input)`; multiply `bolus(input)` by the scale in the derivative RHS"
+                    } else {
+                        "ODE models no longer accept `fa(input)`; multiply `bolus(input)` by the scale in the derivative RHS"
+                    },
                     property.span,
                 ));
             }
@@ -895,6 +921,20 @@ impl<'a> AuthoringParser<'a> {
             }
         }
         Ok(())
+    }
+
+    /// Rewrites the Pmetrics spellings `b[n]` and `rateiv[n]` to `bolus[n]` and
+    /// `infusion[n]` in derivative equations. An alias is left alone when a
+    /// state of the same name exists, since `b[n]` then indexes that state.
+    fn resolve_input_aliases(&mut self) {
+        let aliases: Vec<(&str, &str)> = INPUT_ALIASES
+            .iter()
+            .copied()
+            .filter(|(alias, _)| !self.states.iter().any(|state| state.name.text == *alias))
+            .collect();
+        if !aliases.is_empty() {
+            rename_input_aliases(&mut self.derivative_statements, &aliases, self.src);
+        }
     }
 
     fn infer_ode_route(
@@ -1348,6 +1388,99 @@ impl<'a> AuthoringParser<'a> {
         self.first_span.get_or_insert(span);
         self.last_span = Some(span);
     }
+}
+
+const INPUT_ALIASES: &[(&str, &str)] = &[("b", "bolus"), ("rateiv", "infusion")];
+
+fn rename_input_aliases(statements: &mut [Stmt], aliases: &[(&str, &str)], src: &str) {
+    for statement in statements {
+        match &mut statement.kind {
+            StmtKind::Let(binding) => {
+                rename_input_aliases_in_expr(&mut binding.value, aliases, src)
+            }
+            StmtKind::Assign(assign) => {
+                rename_input_aliases_in_expr(&mut assign.value, aliases, src)
+            }
+            StmtKind::If(branch) => {
+                rename_input_aliases_in_expr(&mut branch.condition, aliases, src);
+                rename_input_aliases(&mut branch.then_branch, aliases, src);
+                if let Some(otherwise) = &mut branch.else_branch {
+                    rename_input_aliases(otherwise, aliases, src);
+                }
+            }
+            StmtKind::For(body) => rename_input_aliases(&mut body.body, aliases, src),
+        }
+    }
+}
+
+fn rename_input_aliases_in_expr(expr: &mut Expr, aliases: &[(&str, &str)], src: &str) {
+    // Returns true when `ident` was an alias and now names an input.
+    let rename = |ident: &mut Ident| {
+        let Some((_, canonical)) = aliases.iter().find(|(alias, _)| ident.text == *alias) else {
+            return false;
+        };
+        ident.text = (*canonical).to_string();
+        true
+    };
+    // The parser turns integer arguments of `bolus`/`infusion` into route
+    // labels; do the same for the aliases it parsed as plain numbers.
+    let label_from_number = |argument: &mut Expr| {
+        if let ExprKind::Number(_) = argument.kind {
+            let text = &src[argument.span.start..argument.span.end];
+            if !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit()) {
+                argument.kind = ExprKind::Name(Ident::new(text, argument.span));
+            }
+        }
+    };
+    match &mut expr.kind {
+        ExprKind::Index { target, index } => {
+            if let ExprKind::Name(name) = &mut target.kind {
+                if rename(name) {
+                    label_from_number(index);
+                }
+            }
+            rename_input_aliases_in_expr(index, aliases, src);
+        }
+        ExprKind::Call { callee, args } => {
+            if rename(callee) && args.len() == 1 {
+                label_from_number(&mut args[0]);
+            }
+            for arg in args {
+                rename_input_aliases_in_expr(arg, aliases, src);
+            }
+        }
+        ExprKind::Unary { expr, .. } => rename_input_aliases_in_expr(expr, aliases, src),
+        ExprKind::Binary { lhs, rhs, .. } => {
+            rename_input_aliases_in_expr(lhs, aliases, src);
+            rename_input_aliases_in_expr(rhs, aliases, src);
+        }
+        ExprKind::Number(_) | ExprKind::Bool(_) | ExprKind::Name(_) => {}
+    }
+}
+
+/// Returns the span of the first `bolus(...)` or `infusion(...)` term.
+fn first_inline_input(statements: &[Stmt]) -> Option<Span> {
+    fn in_expr(expr: &Expr) -> Option<Span> {
+        if ode_input(expr).is_some() {
+            return Some(expr.span);
+        }
+        match &expr.kind {
+            ExprKind::Unary { expr, .. } => in_expr(expr),
+            ExprKind::Binary { lhs, rhs, .. } => in_expr(lhs).or_else(|| in_expr(rhs)),
+            ExprKind::Call { args, .. } => args.iter().find_map(in_expr),
+            ExprKind::Index { target, index } => in_expr(target).or_else(|| in_expr(index)),
+            ExprKind::Number(_) | ExprKind::Bool(_) | ExprKind::Name(_) => None,
+        }
+    }
+    statements
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            StmtKind::Let(binding) => in_expr(&binding.value),
+            StmtKind::Assign(assign) => in_expr(&assign.value),
+            StmtKind::If(branch) => first_inline_input(&branch.then_branch)
+                .or_else(|| branch.else_branch.as_deref().and_then(first_inline_input)),
+            StmtKind::For(body) => first_inline_input(&body.body),
+        })
 }
 
 fn ode_input(expr: &Expr) -> Option<(SurfaceRouteKind, Ident)> {
