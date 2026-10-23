@@ -12,14 +12,14 @@
 //! ```rust,ignore
 //! use pharmsol::nca::sparse::sparse_auc_from_data;
 //!
-//! let result = sparse_auc_from_data(&data, 0, None).unwrap();
+//! let result = sparse_auc_from_data(&data, &OutputLabel::new("cp"), None).unwrap();
 //! println!("Population AUC: {:.2} ± {:.2}", result.auc, result.auc_se);
 //! ```
 //!
 //! Reference: Bailer AJ. "Testing for the equality of area under the curves when
 //! using destructive measurement techniques." J Pharmacokinet Biopharm. 1988;16(3):303-309.
 
-use crate::Data;
+use crate::{Data, OutputLabel};
 use serde::{Deserialize, Serialize};
 
 /// Result of sparse PK analysis using Bailer's method
@@ -180,12 +180,13 @@ pub fn sparse_auc(
 
 /// Compute population AUC from sparse/destructive sampling using a [`Data`] dataset
 ///
-/// Extracts all observations for the given `outeq` from every subject and occasion
-/// in the dataset, then applies Bailer's method.
+/// Extracts all observations for the given output label from every subject and
+/// occasion in the dataset, then applies Bailer's method. Occasions without
+/// observations for `outeq` are skipped.
 ///
 /// # Arguments
 /// * `data` - Population dataset with sparsely-sampled subjects
-/// * `outeq` - Output equation index to extract observations for
+/// * `outeq` - Output label to extract observations for
 /// * `time_tolerance` - Tolerance for grouping time points (None = exact matching)
 ///
 /// # Returns
@@ -198,20 +199,21 @@ pub fn sparse_auc(
 /// use pharmsol::nca::sparse::sparse_auc_from_data;
 ///
 /// let data: Data = /* load or build population data */;
-/// let result = sparse_auc_from_data(&data, 0, None).unwrap();
+/// let result = sparse_auc_from_data(&data, &OutputLabel::new("cp"), None).unwrap();
 /// println!("Population AUC: {:.2} ± {:.2}", result.auc, result.auc_se);
 /// ```
 pub fn sparse_auc_from_data(
     data: &Data,
-    outeq: usize,
+    outeq: &OutputLabel,
     time_tolerance: Option<f64>,
 ) -> Option<SparsePKResult> {
     let (mut all_times, mut all_concs) = (Vec::new(), Vec::new());
     for subject in data.subjects() {
         for occasion in subject.occasions() {
-            let (times, concs, _censoring) = occasion.get_observations(outeq);
-            all_times.extend(times);
-            all_concs.extend(concs);
+            if let Ok((times, concs, _censoring)) = occasion.get_observations(outeq) {
+                all_times.extend(times);
+                all_concs.extend(concs);
+            }
         }
     }
     sparse_auc(&all_times, &all_concs, time_tolerance)

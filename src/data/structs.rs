@@ -6,6 +6,9 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+/// Times, values and censoring flags for one output label
+pub(crate) type ObservedSeries = (Vec<f64>, Vec<f64>, Vec<Censor>);
+
 /// The main data container for pharmacokinetic/pharmacodynamic data
 ///
 /// [Data] is a collection of [Subject] instances, which themselves contain [Occasion] instances with [Event]s.
@@ -983,23 +986,62 @@ impl Occasion {
     // Observation Extraction
     // ========================================================================
 
-    /// Extract time-concentration data for a specific output equation
+    /// Output labels carried by the observations in this occasion, in order of
+    /// first appearance
+    pub(crate) fn output_labels(&self) -> Vec<OutputLabel> {
+        let mut labels: Vec<OutputLabel> = Vec::new();
+        for event in &self.events {
+            if let Event::Observation(obs) = event {
+                if !labels.contains(obs.outeq()) {
+                    labels.push(obs.outeq().clone());
+                }
+            }
+        }
+        labels
+    }
+
+    /// Resolve an optional output label selection
+    ///
+    /// `Some(label)` is returned as-is; `None` selects the first output label
+    /// present in the occasion's observations.
+    pub(crate) fn resolve_output_label(
+        &self,
+        outeq: Option<&OutputLabel>,
+    ) -> Result<OutputLabel, ObservationError> {
+        match outeq {
+            Some(label) => Ok(label.clone()),
+            None => self
+                .output_labels()
+                .into_iter()
+                .next()
+                .ok_or(ObservationError::InsufficientData { n: 0, required: 2 }),
+        }
+    }
+
+    /// Extract time-concentration data for a specific output label
     ///
     /// # Arguments
     ///
-    /// * `outeq` - Output equation index to extract
+    /// * `outeq` - Output label to extract
     ///
     /// # Returns
     ///
-    /// Tuple of (times, concentrations, censoring) vectors
-    pub(crate) fn get_observations(&self, outeq: usize) -> (Vec<f64>, Vec<f64>, Vec<Censor>) {
+    /// Tuple of (times, concentrations, censoring) vectors, or
+    /// [`ObservationError::NoObservations`] naming the labels that are present
+    /// when no observation carries `outeq`.
+    pub(crate) fn get_observations(
+        &self,
+        outeq: &OutputLabel,
+    ) -> Result<ObservedSeries, ObservationError> {
+        let mut found = false;
         let mut times = Vec::new();
         let mut concs = Vec::new();
         let mut censoring = Vec::new();
 
         for event in &self.events {
             if let Event::Observation(obs) = event {
-                if obs.outeq_index() == Some(outeq) {
+                if obs.outeq() == outeq {
+                    found = true;
                     if let Some(value) = obs.value() {
                         times.push(obs.time());
                         concs.push(value);
@@ -1009,7 +1051,14 @@ impl Occasion {
             }
         }
 
-        (times, concs, censoring)
+        if !found {
+            return Err(ObservationError::NoObservations {
+                outeq: outeq.clone(),
+                available: self.output_labels(),
+            });
+        }
+
+        Ok((times, concs, censoring))
     }
 }
 

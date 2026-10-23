@@ -5,6 +5,7 @@
 
 use super::observation::ObservationProfile;
 use crate::data::Subject;
+use crate::data::{ObservationError, OutputLabel};
 use crate::nca::calc::lambda_z_candidates;
 use crate::nca::*;
 use crate::Data;
@@ -593,7 +594,8 @@ fn test_lambda_z_candidates_returns_multiple() {
 
     // Get ObservationProfile for the first occasion
     let occasion = &subject.occasions()[0];
-    let profile = ObservationProfile::from_occasion(occasion, 0, &options.blq_rule).unwrap();
+    let profile =
+        ObservationProfile::from_occasion(occasion, &"0".into(), &options.blq_rule).unwrap();
 
     let candidates = lambda_z_candidates(&profile, &options.lambda_z, auc_last);
     assert!(
@@ -619,7 +621,8 @@ fn test_lambda_z_candidates_selected_matches_nca_result() {
     let auc_last = result.exposure.auc_last;
 
     let occasion = &subject.occasions()[0];
-    let profile = ObservationProfile::from_occasion(occasion, 0, &options.blq_rule).unwrap();
+    let profile =
+        ObservationProfile::from_occasion(occasion, &"0".into(), &options.blq_rule).unwrap();
 
     let candidates = lambda_z_candidates(&profile, &options.lambda_z, auc_last);
     let selected = candidates.iter().find(|c| c.is_selected).unwrap();
@@ -652,7 +655,8 @@ fn test_lambda_z_candidates_all_have_positive_lambda_z() {
     let auc_last = results[0].as_ref().unwrap().exposure.auc_last;
 
     let occasion = &subject.occasions()[0];
-    let profile = ObservationProfile::from_occasion(occasion, 0, &options.blq_rule).unwrap();
+    let profile =
+        ObservationProfile::from_occasion(occasion, &"0".into(), &options.blq_rule).unwrap();
 
     let candidates = lambda_z_candidates(&profile, &options.lambda_z, auc_last);
     for c in &candidates {
@@ -680,7 +684,8 @@ fn test_lambda_z_candidates_empty_for_insufficient_points() {
     let options = NCAOptions::default();
     let occasion = &subject.occasions()[0];
 
-    if let Ok(profile) = ObservationProfile::from_occasion(occasion, 0, &options.blq_rule) {
+    if let Ok(profile) = ObservationProfile::from_occasion(occasion, &"0".into(), &options.blq_rule)
+    {
         let candidates = lambda_z_candidates(&profile, &options.lambda_z, 10.0);
         // Either empty or no selected candidate (not enough points after Cmax)
         let selected = candidates.iter().filter(|c| c.is_selected).count();
@@ -699,7 +704,8 @@ fn test_lambda_z_candidates_span_ratio_and_extrap() {
     let auc_last = results[0].as_ref().unwrap().exposure.auc_last;
 
     let occasion = &subject.occasions()[0];
-    let profile = ObservationProfile::from_occasion(occasion, 0, &options.blq_rule).unwrap();
+    let profile =
+        ObservationProfile::from_occasion(occasion, &"0".into(), &options.blq_rule).unwrap();
 
     let candidates = lambda_z_candidates(&profile, &options.lambda_z, auc_last);
     for c in &candidates {
@@ -765,9 +771,120 @@ fn test_nca_error_on_empty_outeq() {
         .bolus(0.0, 100.0, 0)
         .observation(1.0, 10.0, 0)
         .build();
-    let options = NCAOptions::default().with_outeq(99);
+    let options = NCAOptions::default().with_outeq("99");
     let result = subject.nca(&options);
     assert!(result.is_err(), "nca() should fail for missing outeq");
+}
+
+// ============================================================================
+// Output label selection
+// ============================================================================
+
+/// One-output profile observed under `label`
+fn labelled_subject(label: &str) -> Subject {
+    Subject::builder("labelled")
+        .bolus(0.0, 100.0, 0)
+        .observation(1.0, 10.0, label)
+        .observation(2.0, 8.0, label)
+        .observation(4.0, 4.0, label)
+        .observation(8.0, 1.0, label)
+        .build()
+}
+
+#[test]
+fn test_nca_named_output_label() {
+    let subject = labelled_subject("cp");
+
+    // Default selects the first label present in the data
+    let result = subject.nca(&NCAOptions::default()).unwrap();
+    assert_eq!(result.exposure.cmax, 10.0);
+    assert_eq!(result.exposure.tlast, 8.0);
+
+    let explicit = subject
+        .nca(&NCAOptions::default().with_outeq("cp"))
+        .unwrap();
+    assert_eq!(explicit.exposure.cmax, 10.0);
+    assert!((explicit.exposure.auc_last - result.exposure.auc_last).abs() < 1e-12);
+
+    let cmax = subject.cmax_first(&OutputLabel::new("cp")).unwrap();
+    assert_eq!(cmax, 10.0);
+}
+
+#[test]
+fn test_nca_numeric_output_label_is_a_name() {
+    // "1" is a plain label, not position 1
+    let subject = labelled_subject("1");
+
+    let result = subject.nca(&NCAOptions::default().with_outeq("1")).unwrap();
+    assert_eq!(result.exposure.cmax, 10.0);
+
+    let default = subject.nca(&NCAOptions::default()).unwrap();
+    assert_eq!(default.exposure.cmax, 10.0);
+
+    assert!(subject.nca(&NCAOptions::default().with_outeq("0")).is_err());
+}
+
+#[test]
+fn test_nca_missing_output_label_names_available_labels() {
+    let subject = labelled_subject("cp");
+
+    let err = subject
+        .nca(&NCAOptions::default().with_outeq("ce"))
+        .unwrap_err();
+    match &err {
+        NCAError::Observation(ObservationError::NoObservations { outeq, available }) => {
+            assert_eq!(outeq, &OutputLabel::new("ce"));
+            assert_eq!(available, &vec![OutputLabel::new("cp")]);
+        }
+        other => panic!("expected NoObservations, got {other:?}"),
+    }
+    let msg = err.to_string();
+    assert!(msg.contains("'ce'"), "{msg}");
+    assert!(msg.contains("'cp'"), "{msg}");
+
+    let metric = subject.cmax_first(&OutputLabel::new("ce"));
+    assert!(matches!(
+        metric,
+        Err(MetricsError::Observation(
+            ObservationError::NoObservations { .. }
+        ))
+    ));
+}
+
+#[test]
+fn test_nca_selects_between_two_outputs() {
+    let subject = Subject::builder("two_outputs")
+        .bolus(0.0, 100.0, 0)
+        .observation(1.0, 10.0, "cp")
+        .observation(1.0, 3.0, "metabolite")
+        .observation(2.0, 8.0, "cp")
+        .observation(2.0, 5.0, "metabolite")
+        .observation(4.0, 4.0, "cp")
+        .observation(4.0, 2.0, "metabolite")
+        .observation(8.0, 1.0, "cp")
+        .observation(8.0, 0.5, "metabolite")
+        .build();
+
+    let parent = subject
+        .nca(&NCAOptions::default().with_outeq("cp"))
+        .unwrap();
+    assert_eq!(parent.exposure.cmax, 10.0);
+    assert_eq!(parent.exposure.tmax, 1.0);
+
+    let metabolite = subject
+        .nca(&NCAOptions::default().with_outeq("metabolite"))
+        .unwrap();
+    assert_eq!(metabolite.exposure.cmax, 5.0);
+    assert_eq!(metabolite.exposure.tmax, 2.0);
+
+    // Default is the first label present
+    let default = subject.nca(&NCAOptions::default()).unwrap();
+    assert_eq!(default.exposure.cmax, 10.0);
+
+    assert_eq!(
+        subject.tmax_first(&OutputLabel::new("metabolite")).unwrap(),
+        2.0
+    );
 }
 
 #[test]

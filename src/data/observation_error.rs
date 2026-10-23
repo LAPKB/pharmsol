@@ -7,6 +7,7 @@
 //!
 //! NCA code can propagate these via the [`From`] impl on `NCAError`.
 
+use crate::data::OutputLabel;
 use thiserror::Error;
 
 /// Errors arising from observation data processing
@@ -33,11 +34,16 @@ pub enum ObservationError {
     #[error("All values are zero or below quantification limit")]
     AllBelowLOQ,
 
-    /// No observations found for the requested output equation
-    #[error("No observations found for outeq {outeq}")]
+    /// No observations carry the requested output label
+    #[error(
+        "No observations found for output label '{outeq}' (labels present: {})",
+        format_labels(available)
+    )]
     NoObservations {
-        /// The output equation index that had no observations
-        outeq: usize,
+        /// The output label that had no observations
+        outeq: OutputLabel,
+        /// Output labels that are present in the data
+        available: Vec<OutputLabel>,
     },
 
     /// Array length mismatch between parallel input arrays
@@ -46,4 +52,15 @@ pub enum ObservationError {
         /// Description of which arrays mismatched and their lengths
         description: String,
     },
+}
+
+fn format_labels(labels: &[OutputLabel]) -> String {
+    if labels.is_empty() {
+        return "none".to_string();
+    }
+    labels
+        .iter()
+        .map(|l| format!("'{l}'"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
