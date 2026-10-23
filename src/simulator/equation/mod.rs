@@ -47,7 +47,7 @@
 //! assert!(metadata.output("cp").is_some());
 //! ```
 
-use std::{fmt::Debug, sync::Arc};
+use std::fmt::Debug;
 pub mod analytical;
 pub mod metadata;
 pub mod ode;
@@ -59,8 +59,8 @@ pub use pharmsol_dsl::{AnalyticalKernel, ModelKind};
 pub use sde::*;
 
 use crate::{
-    error_model::{AssayErrorModels, BoundAssayErrorModels},
-    simulator::{cache::BoundErrorModelCache, Fa, Lag},
+    error_model::{AssayErrorModels, ErrorModelError},
+    simulator::{Fa, Lag},
     Covariates, Event, Infusion, InputLabel, Observation, Occasion, OutputLabel, Parameters,
     PharmsolError, Subject,
 };
@@ -265,7 +265,7 @@ pub(crate) trait EquationPriv: EquationTypes {
                 }
                 Event::Observation(observation) => {
                     let outeq = self.resolve_output_label(observation.outeq())?;
-                    observation.set_outeq(outeq);
+                    observation.set_outeq_slot(outeq);
                 }
             }
         }
@@ -371,33 +371,31 @@ pub(crate) trait EquationPriv: EquationTypes {
 /// is provided for backward compatibility.
 #[allow(private_bounds)]
 pub trait Equation: EquationPriv + 'static + Clone + Sync {
+    /// Check that every label names one of this equation's outputs.
+    ///
+    /// Run once per call, before simulating, so an error model for an output
+    /// the equation does not declare fails up front instead of being ignored.
     #[doc(hidden)]
-    fn bound_error_model_cache(&self) -> Option<&BoundErrorModelCache> {
-        None
+    fn validate_output_labels<'a>(
+        &self,
+        labels: impl IntoIterator<Item = &'a OutputLabel>,
+    ) -> Result<(), PharmsolError> {
+        for label in labels {
+            let declared = match self.metadata() {
+                Some(metadata) => metadata.output_for_label(label.as_str()).is_some(),
+                None => label.index().is_some_and(|slot| slot < self.get_nouteqs()),
+            };
+            if !declared {
+                return Err(ErrorModelError::UnknownOutputLabel(label.to_string()).into());
+            }
+        }
+        Ok(())
     }
 
+    /// [`Self::validate_output_labels`] for an assay error-model set.
     #[doc(hidden)]
-    fn bind_error_models<'a>(
-        &'a self,
-        error_models: &'a AssayErrorModels,
-    ) -> Result<BoundAssayErrorModels<'a>, PharmsolError> {
-        if let Some(cache) = self.bound_error_model_cache() {
-            let key = error_models.hash();
-            if let Some(bound_error_models) = cache.get(&key) {
-                return Ok(BoundAssayErrorModels::Shared(bound_error_models));
-            }
-
-            return match error_models.bind_to(self)? {
-                BoundAssayErrorModels::Owned(bound_error_models) => {
-                    let bound_error_models = Arc::new(bound_error_models);
-                    cache.insert(key, Arc::clone(&bound_error_models));
-                    Ok(BoundAssayErrorModels::Shared(bound_error_models))
-                }
-                bound_error_models => Ok(bound_error_models),
-            };
-        }
-
-        Ok(error_models.bind_to(self)?)
+    fn validate_error_models(&self, error_models: &AssayErrorModels) -> Result<(), PharmsolError> {
+        self.validate_output_labels(error_models.labels())
     }
 
     /// Estimate the likelihood of the subject given the parameters and error model.
@@ -467,9 +465,9 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
         parameters: &[f64],
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
-        let bound_error_models = self.bind_error_models(error_models)?;
+        self.validate_error_models(error_models)?;
         let predictions = self.estimate_predictions_dense(subject, parameters)?;
-        predictions.log_likelihood(&bound_error_models)
+        predictions.log_likelihood(error_models)
     }
 
     #[doc(hidden)]
@@ -479,11 +477,9 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
         parameters: &[f64],
         error_models: Option<&AssayErrorModels>,
     ) -> Result<(Self::P, Option<f64>), PharmsolError> {
-        let bound_error_models = match error_models {
-            Some(error_models) => Some(self.bind_error_models(error_models)?),
-            None => None,
-        };
-        let bound_error_models = bound_error_models.as_deref();
+        if let Some(error_models) = error_models {
+            self.validate_error_models(error_models)?;
+        }
 
         let mut output = Self::P::new(self.nparticles());
         let mut likelihood = Vec::new();
@@ -498,7 +494,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
                     parameters,
                     event,
                     events.get(index + 1),
-                    bound_error_models,
+                    error_models,
                     covariates,
                     &mut x,
                     &mut infusions,
@@ -507,7 +503,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
                 )?;
             }
         }
-        let ll = bound_error_models.map(|_| likelihood.iter().product::<f64>());
+        let ll = error_models.map(|_| likelihood.iter().product::<f64>());
         Ok((output, ll))
     }
 
@@ -535,22 +531,6 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
     /// Get the number of state variables in the model.
     fn nstates(&self) -> usize {
         self.get_nstates()
-    }
-
-    /// Build a label-aware [`AssayErrorModels`] set for this equation.
-    ///
-    /// Handwritten equations resolve output labels from attached metadata.
-    /// Equations without metadata fall back to an explicit unbound set so dense
-    /// output-slot workflows remain available without adding runtime lookup cost.
-    #[doc(hidden)]
-    fn assay_error_models(&self) -> AssayErrorModels {
-        self.metadata()
-            .map(|metadata| {
-                AssayErrorModels::with_output_names(
-                    metadata.outputs().iter().map(|output| output.name()),
-                )
-            })
-            .unwrap_or_else(AssayErrorModels::empty)
     }
 
     /// Simulate a subject with given parameters and optionally calculate likelihood.

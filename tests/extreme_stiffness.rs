@@ -859,11 +859,13 @@ fn rebase_after_large_event_preserves_absolute_time_rhs() {
             5,
             "{solver_name}: prediction count"
         );
-        let value_at = |time: f64, outeq: usize| {
+        let value_at = |time: f64, outeq: &str| {
             predictions
                 .predictions()
                 .iter()
-                .find(|prediction| prediction.time() == time && prediction.outeq() == outeq)
+                .find(|prediction| {
+                    prediction.time() == time && prediction.outeq().as_str() == outeq
+                })
                 .unwrap_or_else(|| {
                     panic!("{solver_name}: missing prediction at t = {time}, output {outeq}")
                 })
@@ -872,17 +874,17 @@ fn rebase_after_large_event_preserves_absolute_time_rhs() {
 
         assert_close(
             &format!("{solver_name} amount at the large event"),
-            value_at(center, 0),
+            value_at(center, "amount"),
             0.0,
         );
         assert_close(
             &format!("{solver_name} amount at the ULP-close event"),
-            value_at(stop, 0),
+            value_at(stop, "amount"),
             delivered,
         );
         assert_close(
             &format!("{solver_name} absolute-time RHS at the ULP-close event"),
-            value_at(stop, 1),
+            value_at(stop, "time_weighted_amount"),
             expected_time_weighted_amount,
         );
     }
