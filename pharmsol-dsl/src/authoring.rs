@@ -27,6 +27,7 @@ struct AuthoringParser<'a> {
     explicit_output_order: Vec<String>,
     explicit_outputs: BTreeMap<String, Span>,
     assigned_outputs: BTreeMap<String, Span>,
+    assigned_equations: BTreeMap<String, Span>,
     declared_outputs_span: Option<Span>,
     routes: BTreeMap<(String, SurfaceRouteKind), SurfaceRoute>,
     route_order: Vec<(String, SurfaceRouteKind)>,
@@ -85,6 +86,7 @@ impl<'a> AuthoringParser<'a> {
             explicit_output_order: Vec::new(),
             explicit_outputs: BTreeMap::new(),
             assigned_outputs: BTreeMap::new(),
+            assigned_equations: BTreeMap::new(),
             declared_outputs_span: None,
             routes: BTreeMap::new(),
             route_order: Vec::new(),
@@ -102,67 +104,9 @@ impl<'a> AuthoringParser<'a> {
     }
 
     fn parse_module(mut self) -> Result<Module, ParseError> {
-        let mut offset = 0;
-        let mut pending: Option<String> = None;
-        let mut pending_start = 0;
-        let mut brace_depth = 0i32;
-        let segments: Vec<&str> = self.src.split_inclusive('\n').collect();
-        let mut index = 0;
-        while index < segments.len() {
-            let segment = segments[index];
-            index += 1;
-            let line = segment.strip_suffix('\n').unwrap_or(segment);
-            let code = &line[..line.find('#').unwrap_or(line.len())];
-            let (opens, closes) = brace_counts(code);
-            let starts_with_else = starts_with_keyword(code.trim_start(), "else");
-            if pending.is_none()
-                && brace_depth == 0
-                && opens == 0
-                && closes == 0
-                && !starts_with_else
-            {
-                self.parse_line(line, offset)?;
-                offset += segment.len();
-                continue;
-            }
-
-            if pending.is_none() {
-                pending = Some(String::new());
-                pending_start = offset;
-            }
-            if let Some(text) = &mut pending {
-                text.push_str(&mask_comments(line));
-                text.push('\n');
-            }
-            brace_depth += opens - closes;
-
-            if brace_depth <= 0 {
-                let next_is_else = segments[index..]
-                    .iter()
-                    .find(|next| {
-                        let next_line = next.strip_suffix('\n').unwrap_or(next);
-                        let next_code =
-                            &next_line[..next_line.find('#').unwrap_or(next_line.len())];
-                        !next_code.trim().is_empty()
-                    })
-                    .is_some_and(|next| {
-                        let next_line = next.strip_suffix('\n').unwrap_or(next);
-                        let next_code =
-                            &next_line[..next_line.find('#').unwrap_or(next_line.len())];
-                        starts_with_keyword(next_code.trim_start(), "else")
-                    });
-                if !next_is_else {
-                    let text = pending.take().unwrap();
-                    self.parse_line(text.trim_end_matches('\n'), pending_start)?;
-                    pending_start = 0;
-                    brace_depth = 0;
-                }
-            }
-            offset += segment.len();
-        }
-
-        if let Some(text) = pending {
-            self.parse_line(text.trim_end_matches('\n'), pending_start)?;
+        let masked = mask_source_comments(self.src);
+        for (start, end) in split_logical_statements(&masked) {
+            self.parse_line(&masked[start..end], start)?;
         }
 
         self.validate_declared_outputs_assigned()?;
@@ -388,12 +332,8 @@ impl<'a> AuthoringParser<'a> {
             return self.parse_route_line(trimmed, arrow, span.start, span);
         }
 
-        let eq_index = find_top_level_assignment(trimmed).ok_or_else(|| {
-            ParseError::new(
-                "expected an declaration, equation, or route shorthand",
-                span,
-            )
-        })?;
+        let eq_index = find_top_level_assignment(trimmed)
+            .ok_or_else(|| missing_assignment_error(trimmed, span))?;
 
         let lhs = &trimmed[..eq_index];
         let rhs = &trimmed[eq_index + 1..];
@@ -432,10 +372,13 @@ impl<'a> AuthoringParser<'a> {
                 "analytical" => ModelKind::Analytical,
                 "sde" => ModelKind::Sde,
                 other => {
-                    return Err(ParseError::new(
-                        format!("unknown model kind `{other}`"),
-                        kind_ident.span,
-                    ))
+                    let mut error =
+                        ParseError::new(format!("unknown model kind `{other}`"), kind_ident.span)
+                            .with_help("the model kind is one of `ode`, `analytical`, or `sde`");
+                    if let Some(candidate) = closest_keyword(other, MODEL_KINDS) {
+                        error = error.with_suggestion(did_you_mean(kind_ident.span, candidate));
+                    }
+                    return Err(error);
                 }
             };
             self.explicit_kind = Some((kind, span));
@@ -524,6 +467,25 @@ impl<'a> AuthoringParser<'a> {
             return self.parse_call_assignment(call, rhs, rhs_abs, span);
         }
 
+        // A comma-separated right-hand side is only valid after a declaration
+        // header, so a plain name here is most likely a misspelled header.
+        if is_valid_ident(lhs_trimmed) && split_top_level(rhs, ',').len() > 1 {
+            let lhs_start = lhs_abs + (lhs.len() - lhs.trim_start().len());
+            let lhs_span = Span::new(lhs_start, lhs_start + lhs_trimmed.len());
+            let mut error = ParseError::new(
+                format!("`{lhs_trimmed}` is not a declaration header"),
+                lhs_span,
+            )
+            .with_help(
+                "comma-separated lists follow a header: `params`, `covariates`, \
+                 `states`, `derived`, or `outputs`",
+            );
+            if let Some(candidate) = closest_keyword(lhs_trimmed, DECLARATION_HEADERS) {
+                error = error.with_suggestion(did_you_mean(lhs_span, candidate));
+            }
+            return Err(error);
+        }
+
         let target = match parse_ident_segment(lhs, lhs_abs) {
             Ok(target) => target,
             Err(error) => {
@@ -547,7 +509,7 @@ impl<'a> AuthoringParser<'a> {
             rhs,
         );
         if self.declared_outputs.contains(&target.text) {
-            self.note_output_assignment(&target);
+            self.note_output_assignment(&target, span)?;
             self.output_statements.push(stmt);
         } else {
             self.derive_statements.push(stmt);
@@ -1062,6 +1024,7 @@ impl<'a> AuthoringParser<'a> {
             }
             "dx" | "ddt" => {
                 let place = parse_place_at(call.argument, call.argument_start)?;
+                self.note_equation_target("dx", call.argument, span)?;
                 let rhs = parse_surface_rhs(rhs, rhs_abs)?;
                 let stmt = build_assignment_statement(
                     AssignTarget {
@@ -1077,6 +1040,7 @@ impl<'a> AuthoringParser<'a> {
             }
             "noise" => {
                 let place = parse_place_at(call.argument, call.argument_start)?;
+                self.note_equation_target("noise", call.argument, span)?;
                 let rhs = parse_surface_rhs(rhs, rhs_abs)?;
                 let stmt = build_assignment_statement(
                     AssignTarget {
@@ -1092,6 +1056,7 @@ impl<'a> AuthoringParser<'a> {
             }
             "init" => {
                 let place = parse_place_at(call.argument, call.argument_start)?;
+                self.note_equation_target("init", call.argument, span)?;
                 let rhs = parse_surface_rhs(rhs, rhs_abs)?;
                 let stmt = build_assignment_statement(
                     AssignTarget {
@@ -1106,7 +1071,7 @@ impl<'a> AuthoringParser<'a> {
                 let output = parse_output_label_segment(call.argument, call.argument_start)?;
                 self.validate_output_target(&output)?;
                 self.declared_outputs.insert(output.text.clone());
-                self.note_output_assignment(&output);
+                self.note_output_assignment(&output, span)?;
 
                 let (expr_rhs, annotation) = split_output_annotation(rhs);
                 if let Some((annotation_src, annotation_start)) = annotation {
@@ -1185,10 +1150,36 @@ impl<'a> AuthoringParser<'a> {
         Err(self.undeclared_output_error(&output.text, output.span))
     }
 
-    fn note_output_assignment(&mut self, output: &Ident) {
+    fn note_output_assignment(&mut self, output: &Ident, span: Span) -> Result<(), ParseError> {
+        self.note_equation_target("out", &output.text, span)?;
         self.assigned_outputs
             .entry(output.text.clone())
             .or_insert(output.span);
+        Ok(())
+    }
+
+    /// Records a top-level equation target such as `dx(central)`. Each one is
+    /// an unconditional assignment, so a second equation for the same target
+    /// would silently replace the first.
+    fn note_equation_target(
+        &mut self,
+        callee: &str,
+        argument: &str,
+        span: Span,
+    ) -> Result<(), ParseError> {
+        let argument: String = argument.split_whitespace().collect();
+        let target = format!("{callee}({argument})");
+        if let Some(first) = self.assigned_equations.insert(target.clone(), span) {
+            return Err(
+                ParseError::new(format!("`{target}` is assigned more than once"), span)
+                    .with_context_label(first, format!("`{target}` first assigned here"))
+                    .with_help(format!(
+                        "combine both right-hand sides into a single `{target} = ...` equation; \
+                 a second equation would replace the first"
+                    )),
+            );
+        }
+        Ok(())
     }
 
     fn validate_declared_outputs_assigned(&self) -> Result<(), ParseError> {
@@ -2115,36 +2106,195 @@ fn find_top_level_keyword(src: &str, keyword: &str) -> Option<usize> {
     None
 }
 
-fn mask_comments(line: &str) -> String {
-    let cutoff = line.find('#').unwrap_or(line.len());
-    let mut out = String::with_capacity(line.len());
-    out.push_str(&line[..cutoff]);
-    for _ in cutoff..line.len() {
-        out.push(' ');
+const MODEL_KINDS: &[&str] = &["ode", "analytical", "sde"];
+
+const DECLARATION_HEADERS: &[&str] = &[
+    "name",
+    "kind",
+    "params",
+    "parameters",
+    "covariates",
+    "states",
+    "derived",
+    "outputs",
+    "particles",
+    "structure",
+];
+
+/// Returns the candidate closest to `needle`, if it is a confident match.
+fn closest_keyword(needle: &str, candidates: &[&'static str]) -> Option<&'static str> {
+    let needle = needle.to_ascii_lowercase();
+    candidates
+        .iter()
+        .filter(|candidate| **candidate != needle)
+        .map(|candidate| {
+            let distance = if is_single_adjacent_transposition(&needle, candidate) {
+                1
+            } else {
+                edit_distance(&needle, candidate)
+            };
+            (distance, common_prefix_len(&needle, candidate), *candidate)
+        })
+        .filter(|(distance, prefix, candidate)| {
+            is_high_confidence_match(&needle, candidate, *distance, *prefix)
+        })
+        .min_by_key(|(distance, prefix, _)| (*distance, std::cmp::Reverse(*prefix)))
+        .map(|(_, _, candidate)| candidate)
+}
+
+fn did_you_mean(span: Span, candidate: &str) -> DiagnosticSuggestion {
+    DiagnosticSuggestion {
+        message: format!("did you mean `{candidate}`?"),
+        edits: vec![TextEdit {
+            span,
+            replacement: candidate.to_string(),
+        }],
+        applicability: Applicability::MaybeIncorrect,
+    }
+}
+
+/// Explains a top-level statement that has no `=`, `->`, or leading `if`.
+fn missing_assignment_error(trimmed: &str, span: Span) -> ParseError {
+    if let Some(index) = find_top_level_operator(trimmed, "==") {
+        let operator = Span::new(span.start + index, span.start + index + 2);
+        return ParseError::new("expected `=` in equation, found `==`", operator)
+            .with_help("`==` compares two values; a single `=` assigns the right-hand side")
+            .with_suggestion(DiagnosticSuggestion {
+                message: "use `=` to assign".to_string(),
+                edits: vec![TextEdit {
+                    span: operator,
+                    replacement: "=".to_string(),
+                }],
+                applicability: Applicability::MaybeIncorrect,
+            });
+    }
+    ParseError::new("expected a declaration, equation, or route shorthand", span).with_help(
+        "statements have the form `params = a, b`, `name = <expression>`, \
+         `dx(state) = <expression>`, or `input -> state`",
+    )
+}
+
+/// Replaces every `#` comment with spaces. Byte offsets are preserved, so spans
+/// computed on the masked text point into the original source.
+fn mask_source_comments(src: &str) -> String {
+    let mut out = String::with_capacity(src.len());
+    for segment in src.split_inclusive('\n') {
+        let (line, newline) = match segment.strip_suffix('\n') {
+            Some(line) => (line, "\n"),
+            None => (segment, ""),
+        };
+        let cutoff = line.find('#').unwrap_or(line.len());
+        out.push_str(&line[..cutoff]);
+        out.push_str(&" ".repeat(line.len() - cutoff));
+        out.push_str(newline);
     }
     out
 }
 
-fn brace_counts(src: &str) -> (i32, i32) {
-    let mut opens = 0i32;
-    let mut closes = 0i32;
-    let mut in_string = false;
-    let chars = src.chars().peekable();
-    for ch in chars {
-        if in_string {
-            if ch == '"' {
-                in_string = false;
+/// Operators that, at the end of a line, continue the statement on the next
+/// line. `=` is deliberately absent so a missing right-hand side is reported at
+/// its own line instead of swallowing the next statement.
+const TRAILING_CONTINUATIONS: &[&str] = &[
+    "+", "-", "*", "/", "^", ",", "&&", "||", "<", ">", "<=", ">=", "==", "!=",
+];
+
+/// Operators that, at the start of a line, continue the previous statement.
+/// No statement can begin with one of these.
+const LEADING_CONTINUATIONS: &[&str] = &[
+    "+", "-", "*", "/", "^", ",", "&&", "||", "<", ">", "==", "!=",
+];
+
+/// Splits comment-masked authoring source into the trimmed byte ranges of its
+/// logical statements.
+///
+/// A statement ends at a top-level `;` or newline. It continues past a newline
+/// while a `{` block is open, while a `(` or `[` group is open and the next line
+/// is indented or closes the group, when the line ends with a binary operator or
+/// comma and the next line is indented, and when the next line starts with a
+/// binary operator or `else`. Otherwise an unindented line starts a new
+/// statement, so an unclosed group or dangling operator is reported on its own
+/// line instead of absorbing the statement after it.
+fn split_logical_statements(src: &str) -> Vec<(usize, usize)> {
+    let bytes = src.as_bytes();
+    let mut ranges = Vec::new();
+    let mut start = 0;
+    let mut group_depth = 0i32;
+    let mut brace_depth = 0i32;
+    for (index, byte) in bytes.iter().enumerate() {
+        let boundary = match byte {
+            b'(' | b'[' => {
+                group_depth += 1;
+                false
             }
-            continue;
-        }
-        match ch {
-            '"' => in_string = true,
-            '{' => opens += 1,
-            '}' => closes += 1,
-            _ => {}
+            b')' | b']' => {
+                group_depth -= 1;
+                false
+            }
+            b'{' => {
+                brace_depth += 1;
+                false
+            }
+            b'}' => {
+                brace_depth -= 1;
+                false
+            }
+            b';' => group_depth <= 0 && brace_depth <= 0,
+            b'\n' => !continues_after_newline(src, start, index, group_depth, brace_depth),
+            _ => false,
+        };
+        if boundary {
+            push_trimmed_range(src, start, index, &mut ranges);
+            start = index + 1;
+            group_depth = 0;
+            brace_depth = 0;
         }
     }
-    (opens, closes)
+    push_trimmed_range(src, start, src.len(), &mut ranges);
+    ranges
+}
+
+fn continues_after_newline(
+    src: &str,
+    start: usize,
+    newline: usize,
+    group_depth: i32,
+    brace_depth: i32,
+) -> bool {
+    if brace_depth > 0 {
+        return true;
+    }
+    let Some(next_line) = next_nonblank_line(src, newline + 1) else {
+        return false;
+    };
+    let next = next_line.trim_start();
+    let indented = next_line.len() > next.len();
+    if group_depth > 0 {
+        return indented || next.starts_with([')', ']']);
+    }
+    let current = src[start..newline].trim_end();
+    (indented
+        && !current.trim_start().is_empty()
+        && TRAILING_CONTINUATIONS
+            .iter()
+            .any(|operator| current.ends_with(operator)))
+        || starts_with_keyword(next, "else")
+        || LEADING_CONTINUATIONS
+            .iter()
+            .any(|operator| next.starts_with(operator))
+}
+
+fn next_nonblank_line(src: &str, from: usize) -> Option<&str> {
+    src[from..].split('\n').find(|line| !line.trim().is_empty())
+}
+
+fn push_trimmed_range(src: &str, start: usize, end: usize, ranges: &mut Vec<(usize, usize)>) {
+    let text = &src[start..end];
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    let leading = text.len() - text.trim_start().len();
+    ranges.push((start + leading, start + leading + trimmed.len()));
 }
 
 fn split_statement_chunks(src: &str) -> Vec<(usize, usize)> {

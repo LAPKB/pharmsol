@@ -2597,18 +2597,30 @@ impl<'a> Analyzer<'a> {
         states: &[AnalyzedState],
         block_name: &str,
     ) -> Result<(), AnalysisError> {
-        for state in states {
-            if !block.touched_states.contains(&state.symbol) {
-                return Err(AnalysisError::new(
-                    format!(
-                        "{block_name} block does not assign `{}`",
-                        self.symbol_name(state.symbol)
-                    ),
-                    block.block.span,
-                ));
-            }
+        let missing: Vec<&AnalyzedState> = states
+            .iter()
+            .filter(|state| !block.touched_states.contains(&state.symbol))
+            .collect();
+        let Some(first) = missing.first() else {
+            return Ok(());
+        };
+        let names: Vec<String> = missing
+            .iter()
+            .map(|state| format!("`{}`", self.symbol_name(state.symbol)))
+            .collect();
+        let first_name = self.symbol_name(first.symbol);
+        let mut error = AnalysisError::new(
+            format!("{block_name} block does not assign {}", names.join(", ")),
+            first.span,
+        )
+        .with_context_label(block.block.span, format!("{block_name} block"));
+        for state in &missing[1..] {
+            error = error.with_secondary_label(state.span, "also unassigned");
         }
-        Ok(())
+        Err(error.with_help(format!(
+            "every state needs an equation; add `dx({first_name}) = ...`, \
+             or `dx({first_name}) = 0` for a state that does not change"
+        )))
     }
 }
 

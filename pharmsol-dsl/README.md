@@ -54,6 +54,28 @@ The main public modules are:
 The parser accepts both canonical `model { ... }` source and the authoring
 shorthand used by the `pharmsol` examples.
 
+## Statement Layout
+
+In the authoring shorthand, each statement normally takes one line. Several
+statements can share a line when separated by `;`. A long expression or list
+can span lines:
+
+```text
+dx(central) = -ke * central +   # trailing operator, next line indented
+    infusion(iv)
+dx(peripheral) = k12 * central
+    - k21 * peripheral            # line starts with an operator
+dx(depot) = (
+    -ka * depot                   # open `(` or `[`, next line indented
+)
+params = ke, v,
+    ka, k12, k21                  # trailing comma
+```
+
+A line that is not indented always starts a new statement. That way, a
+dangling operator or an unclosed `(` is reported on its own line instead of
+absorbing the next statement.
+
 ## Runtime-only utility functions
 
 The DSL supports the same effect functions as the Rust API:
