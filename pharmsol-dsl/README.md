@@ -95,9 +95,10 @@ params = ke, v,
     ka, k12, k21                  # trailing comma
 ```
 
-A line that is not indented always starts a new statement. That way, a
-dangling operator or an unclosed `(` is reported on its own line instead of
-absorbing the next statement.
+A continuation line must be indented further than the line its statement
+starts on; otherwise it starts a new statement. That way, a dangling operator
+or an unclosed `(` is reported on its own line instead of absorbing the next
+statement. The same rules apply inside `if` bodies.
 
 ## Runtime-only utility functions
 
