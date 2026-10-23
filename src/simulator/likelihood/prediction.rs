@@ -22,7 +22,6 @@ pub struct Prediction {
     pub(crate) outeq: usize,
     pub(crate) errorpoly: Option<ErrorPoly>,
     pub(crate) state: Vec<f64>,
-    pub(crate) occasion: usize,
     pub(crate) censoring: Censor,
 }
 
@@ -157,16 +156,6 @@ impl Prediction {
         &self.state
     }
 
-    /// Get the occasion index
-    pub fn occasion(&self) -> usize {
-        self.occasion
-    }
-
-    /// Get a mutable reference to the occasion index
-    pub fn mut_occasion(&mut self) -> &mut usize {
-        &mut self.occasion
-    }
-
     /// Get the censoring status
     pub fn censoring(&self) -> Censor {
         self.censoring
@@ -179,7 +168,6 @@ impl Prediction {
             self.observation,
             self.outeq,
             self.errorpoly,
-            self.occasion,
             self.censoring,
         )
     }
@@ -194,7 +182,6 @@ impl Default for Prediction {
             outeq: 0,
             errorpoly: None,
             state: vec![],
-            occasion: 0,
             censoring: Censor::None,
         }
     }
@@ -227,7 +214,6 @@ mod tests {
             outeq: 0,
             errorpoly: None,
             state: vec![pred],
-            occasion: 0,
             censoring: Censor::None,
         }
     }

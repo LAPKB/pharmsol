@@ -288,7 +288,6 @@ impl DataRow {
                     self.out,
                     outeq,
                     self.get_errorpoly(),
-                    0, // occasion set later
                     self.cens.unwrap_or(Censor::None),
                 )));
             }
@@ -315,7 +314,6 @@ impl DataRow {
                             id: self.id.clone(),
                             time: self.time,
                         })?,
-                        0,
                     ))
                 } else {
                     // Bolus
@@ -326,7 +324,6 @@ impl DataRow {
                             time: self.time,
                         })?,
                         input,
-                        0,
                     ))
                 };
 
@@ -654,9 +651,6 @@ pub fn build_data(rows: impl IntoIterator<Item = DataRow>) -> Result<Data, DataE
                     }
                 }
             }
-
-            // Set occasion index on all events
-            events.iter_mut().for_each(|e| e.set_occasion(block_index));
 
             // Build covariates
             let covariates = Covariates::from_row_observations(&observed_covariates);

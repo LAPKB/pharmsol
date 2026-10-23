@@ -2368,7 +2368,7 @@ mod tests {
     #[test]
     fn resolved_schedule_rejects_positive_nonzero_infusion_rate_underflow() {
         let amount = f64::from_bits(1);
-        let events = [Event::Infusion(Infusion::new(1.5, amount, "0", 2.0, 0))];
+        let events = [Event::Infusion(Infusion::new(1.5, amount, "0", 2.0))];
         let error = validate_resolved_ode_schedule(&events)
             .expect_err("positive nonzero infusion underflow must be rejected");
         let message = error.to_string();
@@ -2381,7 +2381,7 @@ mod tests {
     #[test]
     fn resolved_schedule_rejects_negative_nonzero_infusion_rate_underflow() {
         let amount = -f64::from_bits(1);
-        let events = [Event::Infusion(Infusion::new(1.5, amount, "0", 2.0, 0))];
+        let events = [Event::Infusion(Infusion::new(1.5, amount, "0", 2.0))];
         let error = validate_resolved_ode_schedule(&events)
             .expect_err("negative nonzero infusion underflow must be rejected");
         let message = error.to_string();
@@ -2393,7 +2393,7 @@ mod tests {
 
     #[test]
     fn resolved_schedule_accepts_zero_amount_infusion_with_zero_rate() {
-        let events = [Event::Infusion(Infusion::new(1.5, 0.0, "0", 2.0, 0))];
+        let events = [Event::Infusion(Infusion::new(1.5, 0.0, "0", 2.0))];
         assert_eq!(
             validate_resolved_ode_schedule(&events).expect("zero amount is material-free"),
             1.5
