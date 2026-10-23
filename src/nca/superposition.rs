@@ -25,9 +25,8 @@
 //! ```
 
 use super::observation::ObservationProfile;
-use crate::data::event::BLQRule;
+use crate::data::event::{BLQRule, OutputLabel};
 use crate::nca::error::NCAError;
-use crate::nca::traits::NCA;
 use crate::nca::types::{NCAOptions, NCAResult};
 use crate::{Occasion, Subject};
 use serde::{Deserialize, Serialize};
@@ -296,7 +295,8 @@ pub trait Superposition {
     /// Predict steady-state profile using a pre-computed [`NCAResult`]
     ///
     /// Skips the NCA step, useful when you already have an NCA result and
-    /// want to avoid redundant computation.
+    /// want to avoid redundant computation. The observed profile is taken
+    /// from the first output label present in the data.
     ///
     /// # Arguments
     /// * `nca_result` - Pre-computed NCA result containing terminal phase parameters
@@ -317,8 +317,7 @@ impl Superposition for Subject {
         options: &NCAOptions,
         n_eval_points: Option<usize>,
     ) -> Result<SuperpositionResult, NCAError> {
-        let nca_result = self.nca(options)?;
-        self.superposition_from_nca(&nca_result, tau, n_eval_points)
+        first_occasion(self)?.superposition(tau, options, n_eval_points)
     }
 
     fn superposition_from_nca(
@@ -327,15 +326,31 @@ impl Superposition for Subject {
         tau: f64,
         n_eval_points: Option<usize>,
     ) -> Result<SuperpositionResult, NCAError> {
-        let occ = self
-            .occasions()
-            .first()
-            .ok_or_else(|| NCAError::InvalidParameter {
-                param: "occasion".to_string(),
-                value: "no occasions found".to_string(),
-            })?;
-        occ.superposition_from_nca(nca_result, tau, n_eval_points)
+        first_occasion(self)?.superposition_from_nca(nca_result, tau, n_eval_points)
     }
+}
+
+fn first_occasion(subject: &Subject) -> Result<&Occasion, NCAError> {
+    subject
+        .occasions()
+        .first()
+        .ok_or_else(|| NCAError::InvalidParameter {
+            param: "occasion".to_string(),
+            value: "no occasions found".to_string(),
+        })
+}
+
+/// Superposition on the profile for `outeq` (`None` = first output label)
+fn occasion_superposition(
+    occasion: &Occasion,
+    outeq: Option<&OutputLabel>,
+    nca_result: &NCAResult,
+    tau: f64,
+    n_eval_points: Option<usize>,
+) -> Result<SuperpositionResult, NCAError> {
+    let outeq = occasion.resolve_output_label(outeq)?;
+    let profile = ObservationProfile::from_occasion(occasion, &outeq, &BLQRule::Exclude)?;
+    predict_from_nca(&profile, nca_result, tau, n_eval_points)
 }
 
 impl Superposition for Occasion {
@@ -347,7 +362,13 @@ impl Superposition for Occasion {
     ) -> Result<SuperpositionResult, NCAError> {
         use crate::nca::traits::NCA;
         let nca_result = self.nca(options)?;
-        self.superposition_from_nca(&nca_result, tau, n_eval_points)
+        occasion_superposition(
+            self,
+            options.outeq.as_ref(),
+            &nca_result,
+            tau,
+            n_eval_points,
+        )
     }
 
     fn superposition_from_nca(
@@ -356,8 +377,7 @@ impl Superposition for Occasion {
         tau: f64,
         n_eval_points: Option<usize>,
     ) -> Result<SuperpositionResult, NCAError> {
-        let profile = ObservationProfile::from_occasion(self, 0, &BLQRule::Exclude)?;
-        predict_from_nca(&profile, nca_result, tau, n_eval_points)
+        occasion_superposition(self, None, nca_result, tau, n_eval_points)
     }
 }
 
@@ -383,7 +403,8 @@ mod tests {
             .build();
 
         let occ = &subject.occasions()[0];
-        let profile = ObservationProfile::from_occasion(occ, 0, &BLQRule::Exclude).unwrap();
+        let profile =
+            ObservationProfile::from_occasion(occ, &"0".into(), &BLQRule::Exclude).unwrap();
 
         let lambda_z = 0.1;
         let tau = 12.0;
@@ -413,7 +434,8 @@ mod tests {
             .build();
 
         let occ = &subject.occasions()[0];
-        let profile = ObservationProfile::from_occasion(occ, 0, &BLQRule::Exclude).unwrap();
+        let profile =
+            ObservationProfile::from_occasion(occ, &"0".into(), &BLQRule::Exclude).unwrap();
 
         assert!(predict(&profile, -0.1, 12.0, None).is_none());
         assert!(predict(&profile, 0.1, 0.0, None).is_none());
@@ -440,7 +462,8 @@ mod tests {
             .build();
 
         let occ = &subject.occasions()[0];
-        let profile = ObservationProfile::from_occasion(occ, 0, &BLQRule::Exclude).unwrap();
+        let profile =
+            ObservationProfile::from_occasion(occ, &"0".into(), &BLQRule::Exclude).unwrap();
 
         let result = predict(&profile, lambda_z, tau, Some(50)).unwrap();
 
