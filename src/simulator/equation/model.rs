@@ -282,12 +282,45 @@ pub(crate) fn prepare_occasion<'a, M: Model>(
         steps.push(step);
     }
 
+    for step in &steps {
+        check_step(step)?;
+    }
     steps.sort_by(|a, b| {
         a.time()
             .total_cmp(&b.time())
             .then(a.same_time_order().cmp(&b.same_time_order()))
     });
     Ok(Schedule { steps, infusions })
+}
+
+/// Reject a dose no family can simulate: a non-finite time or amount, or
+/// an infusion without a positive, finite duration.
+fn check_step(step: &Step) -> Result<(), PharmsolError> {
+    let invalid = |detail: String| {
+        Err(PharmsolError::OtherError(format!(
+            "invalid event schedule: {detail}"
+        )))
+    };
+    let time = step.time();
+    if !time.is_finite() {
+        return invalid(format!("event time {time:?} is not finite"));
+    }
+    match *step {
+        Step::Bolus { amount, .. } if !amount.is_finite() => invalid(format!(
+            "bolus at t = {time} has non-finite amount {amount:?}"
+        )),
+        Step::Infusion(infusion) if !infusion.amount.is_finite() => invalid(format!(
+            "infusion at t = {time} has non-finite amount {:?}",
+            infusion.amount
+        )),
+        Step::Infusion(infusion) if !(infusion.duration > 0.0 && infusion.duration.is_finite()) => {
+            invalid(format!(
+                "infusion at t = {time} must have a positive, finite duration, got {:?}",
+                infusion.duration
+            ))
+        }
+        _ => Ok(()),
+    }
 }
 
 /// Fill `rates` with the total rate of every infusion running at `time`.
@@ -315,6 +348,26 @@ pub(crate) fn with_subject_context<M: Model>(
         .map(|metadata| metadata.parameter_names())
         .unwrap_or_default();
     error.with_subject_context(subject_id, parameters, &names)
+}
+
+/// Reject fewer parameters than a handwritten model's metadata declares;
+/// its functions would index past the end of `p`.
+pub(crate) fn check_declared_parameters(
+    metadata: Option<&ValidatedModelMetadata>,
+    parameters: &[f64],
+) -> Result<(), PharmsolError> {
+    let Some(metadata) = metadata else {
+        return Ok(());
+    };
+    let declared = metadata.parameters().len();
+    if parameters.len() < declared {
+        return Err(PharmsolError::OtherError(format!(
+            "model `{}` declares {declared} parameter(s), got {}",
+            metadata.name(),
+            parameters.len()
+        )));
+    }
+    Ok(())
 }
 
 /// Error from attaching metadata to a handwritten model.

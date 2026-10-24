@@ -4,7 +4,9 @@ use diffsol::{NalgebraContext, Vector};
 use pharmsol_dsl::ModelKind;
 
 use super::{OdeModel, ODE};
-use crate::simulator::equation::model::{check_dimensions, AttachMetadataError, Model};
+use crate::simulator::equation::model::{
+    check_declared_parameters, check_dimensions, AttachMetadataError, Model,
+};
 use crate::simulator::equation::{ModelMetadata, ValidatedModelMetadata};
 use crate::simulator::{DiffEq, Fa, Init, Lag, Neqs, Out, V};
 use crate::{Covariates, PharmsolError};
@@ -59,6 +61,10 @@ impl Model for NativeOde {
 
     fn metadata(&self) -> Option<&ValidatedModelMetadata> {
         self.metadata.as_ref()
+    }
+
+    fn check_parameters(&self, parameters: &[f64]) -> Result<(), PharmsolError> {
+        check_declared_parameters(self.metadata.as_ref(), parameters)
     }
 
     fn lag(

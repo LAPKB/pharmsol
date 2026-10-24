@@ -412,7 +412,13 @@ impl<M: OdeModel> ODE<M> {
                 }
             }
 
-            if let Some(next) = run.steps.get(index + 1) {
+            // A model without states has nothing to integrate (and diffsol
+            // cannot factor an empty system).
+            let next = run
+                .steps
+                .get(index + 1)
+                .filter(|_| self.model.nstates() > 0);
+            if let Some(next) = next {
                 advance_solver_to_event(
                     solver,
                     next.time(),

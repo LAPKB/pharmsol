@@ -3,7 +3,9 @@
 use pharmsol_dsl::ModelKind;
 
 use super::{Analytical, AnalyticalModel};
-use crate::simulator::equation::model::{check_dimensions, AttachMetadataError, Model};
+use crate::simulator::equation::model::{
+    check_declared_parameters, check_dimensions, AttachMetadataError, Model,
+};
 use crate::simulator::equation::{ModelMetadata, ValidatedModelMetadata};
 use crate::simulator::{AnalyticalEq, Fa, Init, Lag, Neqs, Out, SecEq, V};
 use crate::{Covariates, PharmsolError};
@@ -43,6 +45,10 @@ impl Model for NativeAnalytical {
 
     fn metadata(&self) -> Option<&ValidatedModelMetadata> {
         self.metadata.as_ref()
+    }
+
+    fn check_parameters(&self, parameters: &[f64]) -> Result<(), PharmsolError> {
+        check_declared_parameters(self.metadata.as_ref(), parameters)
     }
 
     fn lag(
@@ -90,6 +96,12 @@ impl Model for NativeAnalytical {
         input: usize,
         amount: f64,
     ) -> Result<(), PharmsolError> {
+        if input >= self.neqs.nstates {
+            return Err(PharmsolError::OtherError(format!(
+                "bolus input {input} has no state to land in: the model has {} state(s)",
+                self.neqs.nstates
+            )));
+        }
         x[input] += amount;
         Ok(())
     }

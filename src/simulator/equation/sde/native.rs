@@ -3,7 +3,9 @@
 use pharmsol_dsl::ModelKind;
 
 use super::{SdeModel, SDE};
-use crate::simulator::equation::model::{check_dimensions, AttachMetadataError, Model};
+use crate::simulator::equation::model::{
+    check_declared_parameters, check_dimensions, AttachMetadataError, Model,
+};
 use crate::simulator::equation::{ModelMetadata, ValidatedModelMetadata};
 use crate::simulator::{Diffusion, Drift, Fa, Init, Lag, Neqs, Out, V};
 use crate::{Covariates, PharmsolError};
@@ -51,6 +53,10 @@ impl Model for NativeSde {
 
     fn metadata(&self) -> Option<&ValidatedModelMetadata> {
         self.metadata.as_ref()
+    }
+
+    fn check_parameters(&self, parameters: &[f64]) -> Result<(), PharmsolError> {
+        check_declared_parameters(self.metadata.as_ref(), parameters)
     }
 
     fn lag(
@@ -105,6 +111,12 @@ impl Model for NativeSde {
             .copied()
             .flatten()
             .unwrap_or(input);
+        if destination >= self.neqs.nstates {
+            return Err(PharmsolError::OtherError(format!(
+                "bolus input {input} has no state to land in: the model has {} state(s)",
+                self.neqs.nstates
+            )));
+        }
         x[destination] += amount;
         Ok(())
     }

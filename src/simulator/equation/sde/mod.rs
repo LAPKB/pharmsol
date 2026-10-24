@@ -148,6 +148,11 @@ impl<M: SdeModel> SDE<M> {
         mode: Mode,
     ) -> Result<ParticleRun, PharmsolError> {
         let in_context = |error| with_subject_context(&self.model, error, subject.id(), parameters);
+        if self.nparticles == 0 {
+            return Err(PharmsolError::OtherError(
+                "an SDE needs at least one particle".to_string(),
+            ));
+        }
         self.model
             .check_parameters(parameters)
             .map_err(in_context)?;

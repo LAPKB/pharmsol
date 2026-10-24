@@ -935,7 +935,7 @@ fn invalid_ode_schedules_return_actionable_errors() {
         .unwrap_or_else(|_| panic!("{label}: invalid schedule must not panic"));
         let error = result.expect_err(&format!("{label}: invalid schedule must fail"));
         assert!(
-            error.to_string().contains("invalid ODE event schedule"),
+            error.to_string().contains("event schedule"),
             "{label}: expected actionable schedule error, got {error}"
         );
     }
