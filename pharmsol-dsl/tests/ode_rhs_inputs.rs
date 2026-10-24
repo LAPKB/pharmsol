@@ -112,7 +112,12 @@ fn bolus_scales_retain_event_safety_checks() {
         "unsafe_scale = central * f\ndx(gut) = bolus(oral) * unsafe_scale",
         "unsafe_scale = rate(iv) * f\ndx(gut) = bolus(oral) * unsafe_scale\ndx(central) = infusion(iv)",
     ] {
-        let parsed = parse_model(&model(equation)).unwrap();
-        assert!(analyze_model(&parsed).is_err(), "{equation}");
+        // A direct state reference is rejected while parsing; indirect ones
+        // through a derived value are rejected by analysis.
+        let rejected = match parse_model(&model(equation)) {
+            Ok(parsed) => analyze_model(&parsed).is_err(),
+            Err(_) => true,
+        };
+        assert!(rejected, "{equation}");
     }
 }

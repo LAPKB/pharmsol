@@ -602,9 +602,8 @@ states = depot, central
 particles = 16
 outputs = plasma
 
-bolus(po) -> depot
 
-dx(depot) = -ka * depot
+dx(depot) = -ka * depot + bolus(po)
 dx(central) = ka * depot - ke * central
 
 noise(central) = sigma_ke
@@ -651,9 +650,8 @@ states = central, peripheral
 particles = 16
 outputs = plasma
 
-bolus(iv) -> central
 
-dx(central) = -ke * central - kcp * central + kpc * peripheral
+dx(central) = -ke * central - kcp * central + kpc * peripheral + bolus(iv)
 dx(peripheral) = kcp * central - kpc * peripheral
 
 noise(central) = sigma_ke

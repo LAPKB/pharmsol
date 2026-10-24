@@ -119,11 +119,10 @@ states = depot, central, peripheral, ke_latent
 particles = 16
 outputs = cp
 
-bolus(oral) -> depot
 
 init(ke_latent) = ke0
 
-dx(depot) = -ka * depot
+dx(depot) = -ka * depot + bolus(oral)
 dx(central) = ka * depot - (ke_latent + kcp) * central + kpc * peripheral
 dx(peripheral) = kcp * central - kpc * peripheral
 dx(ke_latent) = -ke_latent + ke0

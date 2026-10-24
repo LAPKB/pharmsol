@@ -54,6 +54,52 @@ The main public modules are:
 The parser accepts both canonical `model { ... }` source and the authoring
 shorthand used by the `pharmsol` examples.
 
+## Dose Inputs
+
+ODE and SDE models take their dose inputs directly in `dx(...)`, so they
+need no route declarations:
+
+```text
+dx(depot)   = f * bolus(oral) - ka * depot
+dx(central) = ka * depot - ke * central + infusion(iv)
+```
+
+Route labels can be numbers, and the Pmetrics spellings `b[n]` and
+`rateiv[n]` are aliases for `bolus[n]` and `infusion[n]`:
+
+```text
+dx(depot)   = b[1] - ka * depot
+dx(central) = ka * depot - ke * central + rateiv[1]
+```
+
+A state named `b` or `rateiv` keeps its usual meaning; the alias is then off.
+ODE and SDE models reject route declarations such as `bolus(oral) -> depot`.
+Analytical models have no `dx(...)` equations, so they are the only models that
+declare routes, and they must declare at least one.
+
+## Statement Layout
+
+In the authoring shorthand, each statement normally takes one line. Several
+statements can share a line when separated by `;`. A long expression or list
+can span lines:
+
+```text
+dx(central) = -ke * central +   # trailing operator, next line indented
+    infusion(iv)
+dx(peripheral) = k12 * central
+    - k21 * peripheral            # line starts with an operator
+dx(depot) = (
+    -ka * depot                   # open `(` or `[`, next line indented
+)
+params = ke, v,
+    ka, k12, k21                  # trailing comma
+```
+
+A continuation line must be indented further than the line its statement
+starts on; otherwise it starts a new statement. That way, a dangling operator
+or an unclosed `(` is reported on its own line instead of absorbing the next
+statement. The same rules apply inside `if` bodies.
+
 ## Runtime-only utility functions
 
 The DSL supports the same effect functions as the Rust API:
