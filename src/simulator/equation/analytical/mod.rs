@@ -530,6 +530,89 @@ pub(crate) mod tests {
         assert_eq!(predictions.predictions()[0].prediction(), 4.0);
     }
 
+    #[test]
+    fn log_likelihood_matrix_reuses_cached_predictions() {
+        use crate::data::error_model::{AssayErrorModel, ErrorPoly};
+        use crate::simulator::likelihood::log_likelihood_matrix;
+        use crate::{Cache, Data};
+        use ndarray::array;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        // Counts calls into the structural kernel, i.e. real solves.
+        static KERNEL_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+        let eq = |x: &V, p: &V, dt: f64, _rateiv: &V, _cov: &Covariates| {
+            KERNEL_CALLS.fetch_add(1, Ordering::SeqCst);
+            let mut next = x.clone();
+            next[0] *= (-p[0] * dt).exp();
+            next
+        };
+        let seq_eq = |_params: &mut V, _t: f64, _cov: &Covariates| {};
+        let lag = |_p: &V, _t: f64, _cov: &Covariates| HashMap::new();
+        let fa = |_p: &V, _t: f64, _cov: &Covariates| HashMap::new();
+        let init = |_p: &V, _t: f64, _cov: &Covariates, x: &mut V| {
+            x.fill(0.0);
+        };
+        let out = |x: &V, p: &V, _t: f64, _cov: &Covariates, y: &mut V| {
+            y[0] = x[0] / p[1];
+        };
+
+        let analytical = Analytical::new(eq, seq_eq, lag, fa, init, out)
+            .with_nstates(1)
+            .with_ndrugs(1)
+            .with_nout(1);
+        let data = Data::new(vec![Subject::builder("cached")
+            .bolus(0.0, 100.0, 0)
+            .observation(1.0, 4.0, 0)
+            .observation(2.0, 3.5, 0)
+            .build()]);
+        let support_points = array![[0.2, 20.0], [0.3, 25.0]];
+        let error_models = AssayErrorModels::new()
+            .add(
+                0,
+                AssayErrorModel::additive(ErrorPoly::new(1.0, 0.1, 0.0, 0.0), 0.5),
+            )
+            .unwrap();
+
+        let first =
+            log_likelihood_matrix(&analytical, &data, &support_points, &error_models, false)
+                .unwrap();
+        let after_first = KERNEL_CALLS.load(Ordering::SeqCst);
+        assert!(after_first > 0, "the first matrix call must solve");
+        assert_eq!(
+            analytical.cache.as_ref().unwrap().entry_count(),
+            support_points.nrows(),
+            "the first matrix call must fill the prediction cache"
+        );
+
+        let second =
+            log_likelihood_matrix(&analytical, &data, &support_points, &error_models, false)
+                .unwrap();
+        assert_eq!(
+            KERNEL_CALLS.load(Ordering::SeqCst),
+            after_first,
+            "the second matrix call on the same support points must be served from the cache"
+        );
+        assert_eq!(first, second);
+
+        let parameters = crate::parameters::dense([0.2, 20.0]);
+        analytical
+            .estimate_predictions(data.subjects()[0], &parameters)
+            .unwrap();
+        assert_eq!(
+            KERNEL_CALLS.load(Ordering::SeqCst),
+            after_first,
+            "estimate_predictions must reuse the cached prediction"
+        );
+
+        // The cache only saves work: without it the matrix is the same.
+        let uncached = analytical.disable_cache();
+        let third =
+            log_likelihood_matrix(&uncached, &data, &support_points, &error_models, false).unwrap();
+        assert!(KERNEL_CALLS.load(Ordering::SeqCst) > after_first);
+        assert_eq!(first, third);
+    }
+
     fn simple_analytical() -> Analytical {
         let eq = |x: &V, _p: &V, _dt: f64, _rateiv: &V, _cov: &Covariates| x.clone();
         let seq_eq = |_params: &mut V, _t: f64, _cov: &Covariates| {};
@@ -883,6 +966,33 @@ impl Equation for Analytical {
     ) -> Result<f64, PharmsolError> {
         self.validate_error_models(error_models)?;
         let ypred = _subject_predictions(self, subject, parameters.as_slice())?;
+        ypred.log_likelihood(error_models)
+    }
+
+    fn estimate_predictions(
+        &self,
+        subject: &Subject,
+        parameters: &Parameters,
+    ) -> Result<Self::P, PharmsolError> {
+        _subject_predictions(self, subject, parameters.as_slice())
+    }
+
+    fn estimate_predictions_dense(
+        &self,
+        subject: &Subject,
+        parameters: &[f64],
+    ) -> Result<Self::P, PharmsolError> {
+        _subject_predictions(self, subject, parameters)
+    }
+
+    fn estimate_log_likelihood_dense(
+        &self,
+        subject: &Subject,
+        parameters: &[f64],
+        error_models: &AssayErrorModels,
+    ) -> Result<f64, PharmsolError> {
+        self.validate_error_models(error_models)?;
+        let ypred = _subject_predictions(self, subject, parameters)?;
         ypred.log_likelihood(error_models)
     }
 

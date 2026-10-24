@@ -1624,7 +1624,7 @@ impl RuntimeAnalyticalModel {
         subject: &Subject,
         parameters: &Parameters,
     ) -> Result<SubjectPredictions, PharmsolError> {
-        self.estimate_predictions_dense(subject, parameters.as_slice())
+        runtime_analytical_predictions(self, subject, parameters.as_slice())
     }
 
     fn estimate_predictions_dense(
@@ -1916,7 +1916,18 @@ impl Equation for RuntimeAnalyticalModel {
         subject: &Subject,
         parameters: &[f64],
     ) -> Result<Self::P, PharmsolError> {
-        RuntimeAnalyticalModel::estimate_predictions_dense(self, subject, parameters)
+        runtime_analytical_predictions(self, subject, parameters)
+    }
+
+    fn estimate_log_likelihood_dense(
+        &self,
+        subject: &Subject,
+        parameters: &[f64],
+        error_models: &AssayErrorModels,
+    ) -> Result<f64, PharmsolError> {
+        self.validate_error_models(error_models)?;
+        let predictions = runtime_analytical_predictions(self, subject, parameters)?;
+        predictions.log_likelihood(error_models)
     }
 
     fn kind() -> EqnKind {
@@ -2700,6 +2711,7 @@ mod tests {
     };
     use super::{runtime_ode_predictions, PredictionCache, DEFAULT_ODE_ATOL, DEFAULT_ODE_RTOL};
     use crate::dsl::model_info::{RuntimeCovariateInfo, RuntimeOutputInfo};
+    use crate::simulator::likelihood::log_likelihood_matrix;
     use crate::PharmsolError;
     use crate::{
         data::builder::SubjectBuilderExt,
@@ -2707,7 +2719,9 @@ mod tests {
         prelude::SubjectPredictions,
         Parameters, Subject,
     };
+    use crate::{AssayErrorModels, Data, Equation};
     use diffsol::VectorHost;
+    use ndarray::array;
     use pharmsol_dsl::execution::ModelFunctionKind;
     use pharmsol_dsl::{
         AnalyticalKernel, AnalyticalStructureInputKind, CovariateInterpolation, ModelKind,
@@ -3169,6 +3183,53 @@ mod tests {
         assert!(error.to_string().contains(
             "compiled analytical model `analytical_projection` has inconsistent derived metadata"
         ));
+    }
+
+    #[test]
+    fn runtime_analytical_dense_entry_points_use_prefilled_cache() {
+        let model = RuntimeAnalyticalModel {
+            cache: Some(PredictionCache::new(1)),
+            ..RuntimeAnalyticalModel::new(
+                analytical_model_info(&["ke", "v"], &[], AnalyticalKernel::OneCompartment),
+                DummyArtifact,
+            )
+            .expect("analytical model builds")
+        };
+        // DummyArtifact panics if a session starts, so any real solve fails the test.
+        let subject = Subject::builder("runtime_cached_analytical").build();
+        let support_point = [0.2, 20.0];
+        let expected = SubjectPredictions::default();
+        model
+            .cache
+            .as_ref()
+            .expect("cache should be enabled")
+            .insert(
+                (
+                    subject.hash(),
+                    crate::simulator::equation::parameters_hash(&support_point),
+                ),
+                expected.clone(),
+            );
+
+        let dense = Equation::estimate_predictions_dense(&model, &subject, &support_point)
+            .expect("dense predictions should come from the cache");
+        assert_eq!(dense.flat_predictions(), expected.flat_predictions());
+
+        let parameters =
+            Parameters::with_model(&model, [("ke", 0.2), ("v", 20.0)]).expect("valid parameters");
+        let predictions = Equation::estimate_predictions(&model, &subject, &parameters)
+            .expect("predictions should come from the cache");
+        assert_eq!(predictions.flat_predictions(), expected.flat_predictions());
+
+        let matrix = log_likelihood_matrix(
+            &model,
+            &Data::new(vec![subject]),
+            &array![[0.2, 20.0]],
+            &AssayErrorModels::new(),
+            false,
+        )
+        .expect("matrix should be served from the cache");
+        assert_eq!(matrix[[0, 0]], 0.0);
     }
 
     #[test]
