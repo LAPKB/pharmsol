@@ -73,9 +73,9 @@ dx(central) = ka * depot - ke * central + rateiv[1]
 ```
 
 A state named `b` or `rateiv` keeps its usual meaning; the alias is then off.
-SDE models can still declare routes with `bolus(oral) -> depot`, but a model
-uses one style or the other. Analytical models have no `dx(...)` equations and
-always declare their routes.
+ODE and SDE models reject route declarations such as `bolus(oral) -> depot`.
+Analytical models have no `dx(...)` equations, so they are the only models that
+declare routes, and they must declare at least one.
 
 ## Statement Layout
 

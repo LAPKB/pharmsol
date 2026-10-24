@@ -71,24 +71,8 @@ out(cp) = b[1]
 }
 
 #[test]
-fn sde_inline_inputs_lower_like_declared_routes() {
-    let declared = parse_module(
-        r#"
-kind = sde
-params = ka, ke, v, s, f
-states = depot, central
-particles = 16
-bolus(oral) -> depot
-infusion(iv) -> central
-fa(oral) = f
-dx(depot) = -ka * depot
-dx(central) = ka * depot - ke * central
-noise(central) = s
-out(cp) = central / v
-"#,
-    )
-    .expect("declared SDE parses");
-    let inline = parse_module(
+fn sde_inline_inputs_infer_routes_and_bioavailability() {
+    let model = compile_model(
         r#"
 kind = sde
 params = ka, ke, v, s, f
@@ -100,28 +84,47 @@ noise(central) = s
 out(cp) = central / v
 "#,
     )
-    .expect("inline SDE parses");
-    assert_eq!(inline.to_string(), declared.to_string());
+    .unwrap_or_else(|error| panic!("{error}"));
+    let routes: Vec<_> = model
+        .metadata
+        .routes
+        .iter()
+        .map(|route| {
+            (
+                route.name.as_str(),
+                route.kind,
+                route.destination.state_name.as_str(),
+                route.has_bioavailability,
+            )
+        })
+        .collect();
+    assert_eq!(
+        routes,
+        vec![
+            ("oral", Some(RouteKind::Bolus), "depot", true),
+            ("iv", Some(RouteKind::Infusion), "central", false),
+        ]
+    );
 }
 
 #[test]
-fn sde_cannot_mix_declared_routes_and_inline_inputs() {
+fn sde_route_declarations_are_rejected() {
     let error = compile_model(
         r#"
 kind = sde
 params = ke, s
 states = central
 particles = 4
-bolus(iv) -> central
-dx(central) = -ke * central + infusion(iv)
+infusion(iv) -> central
+dx(central) = -ke * central
 noise(central) = s
 out(cp) = central
 "#,
     )
-    .expect_err("mixing route styles should fail")
+    .expect_err("SDE route declarations are removed")
     .to_string();
     assert!(
-        error.contains("inputs cannot also appear in `dx(...)`"),
+        error.contains("SDE inputs belong in the derivative RHS"),
         "{error}"
     );
 }

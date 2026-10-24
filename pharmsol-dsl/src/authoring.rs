@@ -138,27 +138,9 @@ impl<'a> AuthoringParser<'a> {
 
         let kind = self.determine_kind(module_span)?;
         self.resolve_input_aliases();
-        // SDE drift takes inputs inline like ODE derivatives, unless the model
-        // declares its routes with `bolus(input) -> state`.
-        let inline_inputs = match kind {
-            ModelKind::Ode => true,
-            ModelKind::Sde if self.routes.is_empty() => true,
-            ModelKind::Sde => {
-                if let Some(span) = first_inline_input(&self.derivative_statements) {
-                    return Err(ParseError::new(
-                        "this model declares its routes with `->`, so inputs cannot also appear in `dx(...)`",
-                        span,
-                    )
-                    .with_help(
-                        "either remove the route declarations and keep the inline \
-                         `bolus(...)`/`infusion(...)` terms, or remove the inline terms",
-                    ));
-                }
-                false
-            }
-            ModelKind::Analytical => false,
-        };
-        if inline_inputs {
+        // ODE derivatives and SDE drift take their inputs inline; only
+        // analytical models, which have no `dx(...)`, declare routes.
+        if matches!(kind, ModelKind::Ode | ModelKind::Sde) {
             self.lower_ode_inputs(kind)?;
         }
 
@@ -227,10 +209,7 @@ impl<'a> AuthoringParser<'a> {
             });
         }
 
-        let mut derivative_statements = std::mem::take(&mut self.derivative_statements);
-        if kind == ModelKind::Sde && !inline_inputs {
-            inject_infusion_rates(&surface_routes, &routes, &mut derivative_statements);
-        }
+        let derivative_statements = std::mem::take(&mut self.derivative_statements);
 
         let name = self
             .name
@@ -744,11 +723,7 @@ impl<'a> AuthoringParser<'a> {
         for property in self.route_modifiers.values().flatten() {
             if property.name.text == "bioavailability" {
                 return Err(ParseError::new(
-                    if kind == ModelKind::Sde {
-                        "SDE models with inline inputs do not accept `fa(input)`; multiply `bolus(input)` by the scale in the derivative RHS"
-                    } else {
-                        "ODE models no longer accept `fa(input)`; multiply `bolus(input)` by the scale in the derivative RHS"
-                    },
+                    format!("{model} models no longer accept `fa(input)`; multiply `bolus(input)` by the scale in the derivative RHS"),
                     property.span,
                 ));
             }
@@ -1482,31 +1457,6 @@ fn rename_input_aliases_in_expr(expr: &mut Expr, aliases: &[(&str, &str)], src: 
     }
 }
 
-/// Returns the span of the first `bolus(...)` or `infusion(...)` term.
-fn first_inline_input(statements: &[Stmt]) -> Option<Span> {
-    fn in_expr(expr: &Expr) -> Option<Span> {
-        if ode_input(expr).is_some() {
-            return Some(expr.span);
-        }
-        match &expr.kind {
-            ExprKind::Unary { expr, .. } => in_expr(expr),
-            ExprKind::Binary { lhs, rhs, .. } => in_expr(lhs).or_else(|| in_expr(rhs)),
-            ExprKind::Call { args, .. } => args.iter().find_map(in_expr),
-            ExprKind::Index { target, index } => in_expr(target).or_else(|| in_expr(index)),
-            ExprKind::Number(_) | ExprKind::Bool(_) | ExprKind::Name(_) => None,
-        }
-    }
-    statements
-        .iter()
-        .find_map(|statement| match &statement.kind {
-            StmtKind::Let(binding) => in_expr(&binding.value),
-            StmtKind::Assign(assign) => in_expr(&assign.value),
-            StmtKind::If(branch) => first_inline_input(&branch.then_branch)
-                .or_else(|| branch.else_branch.as_deref().and_then(first_inline_input)),
-            StmtKind::For(body) => first_inline_input(&body.body),
-        })
-}
-
 fn first_state_reference<'e>(expr: &'e Expr, states: &[StateDecl]) -> Option<&'e Ident> {
     match &expr.kind {
         ExprKind::Name(name) if states.iter().any(|state| state.name.text == name.text) => {
@@ -1612,54 +1562,6 @@ fn scaled_bolus_term(expr: &Expr) -> Option<(Ident, Expr)> {
         ));
     }
     None
-}
-
-fn inject_infusion_rates(
-    surface_routes: &BTreeMap<(String, SurfaceRouteKind), SurfaceRoute>,
-    routes: &[RouteDecl],
-    derivative_statements: &mut Vec<Stmt>,
-) {
-    for route in routes {
-        let kind = match route.kind {
-            Some(RouteKind::Infusion) => SurfaceRouteKind::Infusion,
-            _ => continue,
-        };
-        let Some(surface_route) = surface_routes.get(&(route.input.text.clone(), kind)) else {
-            continue;
-        };
-
-        let rate_expr = Expr {
-            span: surface_route.span,
-            kind: ExprKind::Call {
-                callee: Ident::new(RATE_FUNCTION_NAME, surface_route.input.span),
-                args: vec![Expr {
-                    span: surface_route.input.span,
-                    kind: ExprKind::Name(surface_route.input.clone()),
-                }],
-            },
-        };
-
-        if !augment_derivative_statements(
-            derivative_statements,
-            &route.destination,
-            &rate_expr,
-            &surface_route.input,
-        ) {
-            derivative_statements.push(Stmt {
-                span: surface_route.span,
-                kind: StmtKind::Assign(AssignStmt {
-                    target: AssignTarget {
-                        span: surface_route.span,
-                        kind: AssignTargetKind::Call {
-                            callee: Ident::new("ddt", surface_route.span),
-                            args: vec![place_to_expr(&route.destination)],
-                        },
-                    },
-                    value: rate_expr,
-                }),
-            });
-        }
-    }
 }
 
 struct CallHead<'a> {
@@ -2018,85 +1920,6 @@ fn validate_output_annotation(src: &str, abs_start: usize) -> Result<(), ParseEr
             "expected the output annotation `continuous()`",
             annotation.span,
         )),
-    }
-}
-
-fn augment_derivative_statements(
-    statements: &mut [Stmt],
-    destination: &Place,
-    rate_expr: &Expr,
-    route: &Ident,
-) -> bool {
-    let mut matched = false;
-    for stmt in statements {
-        match &mut stmt.kind {
-            StmtKind::Assign(assign) if derivative_target_matches(&assign.target, destination) => {
-                if !expr_uses_rate(&assign.value, route) {
-                    assign.value = Expr {
-                        span: assign.value.span.join(rate_expr.span),
-                        kind: ExprKind::Binary {
-                            op: BinaryOp::Add,
-                            lhs: Box::new(assign.value.clone()),
-                            rhs: Box::new(rate_expr.clone()),
-                        },
-                    };
-                    stmt.span = stmt.span.join(rate_expr.span);
-                }
-                matched = true;
-            }
-            StmtKind::If(if_stmt) => {
-                let then_match = augment_derivative_statements(
-                    &mut if_stmt.then_branch,
-                    destination,
-                    rate_expr,
-                    route,
-                );
-                let else_match = if_stmt.else_branch.as_mut().is_some_and(|branch| {
-                    augment_derivative_statements(branch, destination, rate_expr, route)
-                });
-                matched |= then_match || else_match;
-            }
-            StmtKind::For(for_stmt) => {
-                matched |= augment_derivative_statements(
-                    &mut for_stmt.body,
-                    destination,
-                    rate_expr,
-                    route,
-                );
-            }
-            _ => {}
-        }
-    }
-    matched
-}
-
-fn expr_uses_rate(expr: &Expr, route: &Ident) -> bool {
-    match &expr.kind {
-        ExprKind::Call { callee, args }
-            if callee.text == RATE_FUNCTION_NAME
-                && args.len() == 1
-                && matches!(&args[0].kind, ExprKind::Name(name) if name.text == route.text) =>
-        {
-            true
-        }
-        ExprKind::Unary { expr, .. } => expr_uses_rate(expr, route),
-        ExprKind::Binary { lhs, rhs, .. } => {
-            expr_uses_rate(lhs, route) || expr_uses_rate(rhs, route)
-        }
-        ExprKind::Call { args, .. } => args.iter().any(|arg| expr_uses_rate(arg, route)),
-        ExprKind::Index { target, index } => {
-            expr_uses_rate(target, route) || expr_uses_rate(index, route)
-        }
-        ExprKind::Number(_) | ExprKind::Bool(_) | ExprKind::Name(_) => false,
-    }
-}
-
-fn derivative_target_matches(target: &AssignTarget, destination: &Place) -> bool {
-    match &target.kind {
-        AssignTargetKind::Call { callee, args } if callee.text == "ddt" && args.len() == 1 => {
-            expr_matches_place(&args[0], destination)
-        }
-        _ => false,
     }
 }
 

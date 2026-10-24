@@ -1,48 +1,11 @@
 #![cfg(feature = "dsl")]
 
-//! Inline dose inputs: SDE drift written like ODE derivatives, and the
-//! Pmetrics `b[n]` / `rateiv[n]` spellings, must simulate exactly like the
-//! equivalent declared-route models.
+//! The Pmetrics `b[n]` / `rateiv[n]` spellings must simulate exactly like
+//! `bolus[n]` / `infusion[n]`. Inline SDE inputs are checked against
+//! handwritten models in `authoring_parity_corpus.rs`.
 
 use pharmsol::dsl::{self, RuntimePredictions};
 use pharmsol::prelude::*;
-
-const SDE_DECLARED: &str = r#"
-name = sde_inputs
-kind = sde
-params = ka, ke, sigma_ke, v, tlag, f_oral
-states = gut, central
-outputs = cp
-particles = 8
-
-bolus(oral) -> gut
-infusion(iv) -> central
-lag(oral) = tlag
-fa(oral) = f_oral
-
-dx(gut) = -ka * gut
-dx(central) = ka * gut - ke * central
-noise(central) = sigma_ke
-
-out(cp) = central / v
-"#;
-
-const SDE_INLINE: &str = r#"
-name = sde_inputs
-kind = sde
-params = ka, ke, sigma_ke, v, tlag, f_oral
-states = gut, central
-outputs = cp
-particles = 8
-
-lag(oral) = tlag
-
-dx(gut) = f_oral * bolus(oral) - ka * gut
-dx(central) = ka * gut - ke * central + infusion(iv)
-noise(central) = sigma_ke
-
-out(cp) = central / v
-"#;
 
 const ODE_NAMED: &str = r#"
 name = ode_inputs
@@ -127,22 +90,6 @@ fn assert_same(left: &[f64], right: &[f64]) {
     for (left, right) in left.iter().zip(right) {
         assert!((left - right).abs() <= 1e-10, "{left} != {right}");
     }
-}
-
-#[test]
-fn sde_inline_inputs_match_declared_routes() {
-    let parameters = [
-        ("ka", 1.1),
-        ("ke", 0.2),
-        ("sigma_ke", 0.0),
-        ("v", 10.0),
-        ("tlag", 0.25),
-        ("f_oral", 0.8),
-    ];
-    let subject = subject("oral", "iv");
-    let declared = predictions(&compile(SDE_DECLARED, "sde_inputs"), &subject, &parameters);
-    let inline = predictions(&compile(SDE_INLINE, "sde_inputs"), &subject, &parameters);
-    assert_same(&declared, &inline);
 }
 
 #[test]
