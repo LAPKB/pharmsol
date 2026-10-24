@@ -27,6 +27,7 @@ struct AuthoringParser<'a> {
     explicit_output_order: Vec<String>,
     explicit_outputs: BTreeMap<String, Span>,
     assigned_outputs: BTreeMap<String, Span>,
+    assigned_equations: BTreeMap<String, Span>,
     declared_outputs_span: Option<Span>,
     routes: BTreeMap<(String, SurfaceRouteKind), SurfaceRoute>,
     route_order: Vec<(String, SurfaceRouteKind)>,
@@ -85,6 +86,7 @@ impl<'a> AuthoringParser<'a> {
             explicit_output_order: Vec::new(),
             explicit_outputs: BTreeMap::new(),
             assigned_outputs: BTreeMap::new(),
+            assigned_equations: BTreeMap::new(),
             declared_outputs_span: None,
             routes: BTreeMap::new(),
             route_order: Vec::new(),
@@ -102,67 +104,9 @@ impl<'a> AuthoringParser<'a> {
     }
 
     fn parse_module(mut self) -> Result<Module, ParseError> {
-        let mut offset = 0;
-        let mut pending: Option<String> = None;
-        let mut pending_start = 0;
-        let mut brace_depth = 0i32;
-        let segments: Vec<&str> = self.src.split_inclusive('\n').collect();
-        let mut index = 0;
-        while index < segments.len() {
-            let segment = segments[index];
-            index += 1;
-            let line = segment.strip_suffix('\n').unwrap_or(segment);
-            let code = &line[..line.find('#').unwrap_or(line.len())];
-            let (opens, closes) = brace_counts(code);
-            let starts_with_else = starts_with_keyword(code.trim_start(), "else");
-            if pending.is_none()
-                && brace_depth == 0
-                && opens == 0
-                && closes == 0
-                && !starts_with_else
-            {
-                self.parse_line(line, offset)?;
-                offset += segment.len();
-                continue;
-            }
-
-            if pending.is_none() {
-                pending = Some(String::new());
-                pending_start = offset;
-            }
-            if let Some(text) = &mut pending {
-                text.push_str(&mask_comments(line));
-                text.push('\n');
-            }
-            brace_depth += opens - closes;
-
-            if brace_depth <= 0 {
-                let next_is_else = segments[index..]
-                    .iter()
-                    .find(|next| {
-                        let next_line = next.strip_suffix('\n').unwrap_or(next);
-                        let next_code =
-                            &next_line[..next_line.find('#').unwrap_or(next_line.len())];
-                        !next_code.trim().is_empty()
-                    })
-                    .is_some_and(|next| {
-                        let next_line = next.strip_suffix('\n').unwrap_or(next);
-                        let next_code =
-                            &next_line[..next_line.find('#').unwrap_or(next_line.len())];
-                        starts_with_keyword(next_code.trim_start(), "else")
-                    });
-                if !next_is_else {
-                    let text = pending.take().unwrap();
-                    self.parse_line(text.trim_end_matches('\n'), pending_start)?;
-                    pending_start = 0;
-                    brace_depth = 0;
-                }
-            }
-            offset += segment.len();
-        }
-
-        if let Some(text) = pending {
-            self.parse_line(text.trim_end_matches('\n'), pending_start)?;
+        let masked = mask_source_comments(self.src);
+        for (start, end) in split_logical_statements(&masked) {
+            self.parse_line(&masked[start..end], start)?;
         }
 
         self.validate_declared_outputs_assigned()?;
@@ -193,8 +137,11 @@ impl<'a> AuthoringParser<'a> {
         }
 
         let kind = self.determine_kind(module_span)?;
-        if kind == ModelKind::Ode {
-            self.lower_ode_inputs()?;
+        self.resolve_input_aliases();
+        // ODE derivatives and SDE drift take their inputs inline; only
+        // analytical models, which have no `dx(...)`, declare routes.
+        if matches!(kind, ModelKind::Ode | ModelKind::Sde) {
+            self.lower_ode_inputs(kind)?;
         }
 
         let surface_routes = std::mem::take(&mut self.routes);
@@ -262,10 +209,7 @@ impl<'a> AuthoringParser<'a> {
             });
         }
 
-        let mut derivative_statements = std::mem::take(&mut self.derivative_statements);
-        if kind == ModelKind::Sde {
-            inject_infusion_rates(&surface_routes, &routes, &mut derivative_statements);
-        }
+        let derivative_statements = std::mem::take(&mut self.derivative_statements);
 
         let name = self
             .name
@@ -388,12 +332,8 @@ impl<'a> AuthoringParser<'a> {
             return self.parse_route_line(trimmed, arrow, span.start, span);
         }
 
-        let eq_index = find_top_level_assignment(trimmed).ok_or_else(|| {
-            ParseError::new(
-                "expected an declaration, equation, or route shorthand",
-                span,
-            )
-        })?;
+        let eq_index = find_top_level_assignment(trimmed)
+            .ok_or_else(|| missing_assignment_error(trimmed, span))?;
 
         let lhs = &trimmed[..eq_index];
         let rhs = &trimmed[eq_index + 1..];
@@ -432,10 +372,13 @@ impl<'a> AuthoringParser<'a> {
                 "analytical" => ModelKind::Analytical,
                 "sde" => ModelKind::Sde,
                 other => {
-                    return Err(ParseError::new(
-                        format!("unknown model kind `{other}`"),
-                        kind_ident.span,
-                    ))
+                    let mut error =
+                        ParseError::new(format!("unknown model kind `{other}`"), kind_ident.span)
+                            .with_help("the model kind is one of `ode`, `analytical`, or `sde`");
+                    if let Some(candidate) = closest_keyword(other, MODEL_KINDS) {
+                        error = error.with_suggestion(did_you_mean(kind_ident.span, candidate));
+                    }
+                    return Err(error);
                 }
             };
             self.explicit_kind = Some((kind, span));
@@ -524,6 +467,25 @@ impl<'a> AuthoringParser<'a> {
             return self.parse_call_assignment(call, rhs, rhs_abs, span);
         }
 
+        // A comma-separated right-hand side is only valid after a declaration
+        // header, so a plain name here is most likely a misspelled header.
+        if is_valid_ident(lhs_trimmed) && split_top_level(rhs, ',').len() > 1 {
+            let lhs_start = lhs_abs + (lhs.len() - lhs.trim_start().len());
+            let lhs_span = Span::new(lhs_start, lhs_start + lhs_trimmed.len());
+            let mut error = ParseError::new(
+                format!("`{lhs_trimmed}` is not a declaration header"),
+                lhs_span,
+            )
+            .with_help(
+                "comma-separated lists follow a header: `params`, `covariates`, \
+                 `states`, `derived`, or `outputs`",
+            );
+            if let Some(candidate) = closest_keyword(lhs_trimmed, DECLARATION_HEADERS) {
+                error = error.with_suggestion(did_you_mean(lhs_span, candidate));
+            }
+            return Err(error);
+        }
+
         let target = match parse_ident_segment(lhs, lhs_abs) {
             Ok(target) => target,
             Err(error) => {
@@ -547,7 +509,7 @@ impl<'a> AuthoringParser<'a> {
             rhs,
         );
         if self.declared_outputs.contains(&target.text) {
-            self.note_output_assignment(&target);
+            self.note_output_assignment(&target, span)?;
             self.output_statements.push(stmt);
         } else {
             self.derive_statements.push(stmt);
@@ -681,7 +643,7 @@ impl<'a> AuthoringParser<'a> {
         let inner = &trimmed[1..close];
         let inner_abs = abs + 1;
         let mut statements = Vec::new();
-        for (start, end) in split_statement_chunks(inner) {
+        for (start, end) in split_logical_statements(inner) {
             let chunk = &inner[start..end];
             let stmt = self.parse_authoring_statement(chunk, inner_abs + start, depth)?;
             statements.push(stmt);
@@ -750,17 +712,18 @@ impl<'a> AuthoringParser<'a> {
 
     // ODE input syntax lowers to the existing routes, event scales, and rates.
     // The execution model and simulator do not need a second input mechanism.
-    fn lower_ode_inputs(&mut self) -> Result<(), ParseError> {
+    fn lower_ode_inputs(&mut self, kind: ModelKind) -> Result<(), ParseError> {
+        let model = if kind == ModelKind::Sde { "SDE" } else { "ODE" };
         if let Some(route) = self.routes.values().next() {
             return Err(ParseError::new(
-                "ODE inputs belong in the derivative RHS: use `+ bolus(input)` or `+ infusion(input)`, not a route declaration",
+                format!("{model} inputs belong in the derivative RHS: use `+ bolus(input)` or `+ infusion(input)`, not a route declaration"),
                 route.span,
             ));
         }
         for property in self.route_modifiers.values().flatten() {
             if property.name.text == "bioavailability" {
                 return Err(ParseError::new(
-                    "ODE models no longer accept `fa(input)`; multiply `bolus(input)` by the scale in the derivative RHS",
+                    format!("{model} models no longer accept `fa(input)`; multiply `bolus(input)` by the scale in the derivative RHS"),
                     property.span,
                 ));
             }
@@ -831,6 +794,22 @@ impl<'a> AuthoringParser<'a> {
             )?;
         }
         if let Some((input, scale)) = scaled_bolus_term(expr) {
+            if let Some(state) = first_state_reference(&scale, &self.states) {
+                return Err(ParseError::new(
+                    format!(
+                        "a bolus can only be scaled by values that do not depend on states; `{}` is a state",
+                        state.text
+                    ),
+                    state.span,
+                )
+                .with_note(
+                    "the scale becomes the dose's bioavailability, which is fixed when the dose is given",
+                )
+                .with_help(
+                    "scale the bolus by parameters, covariates, or constants, and move \
+                     state-dependent terms out of the bolus term",
+                ));
+            }
             if conditional {
                 return Err(ParseError::new(
                     "put conditional bolus scaling in an event-safe derived value, then use one `bolus(input) * scale` term outside the conditional",
@@ -933,6 +912,20 @@ impl<'a> AuthoringParser<'a> {
             }
         }
         Ok(())
+    }
+
+    /// Rewrites the Pmetrics spellings `b[n]` and `rateiv[n]` to `bolus[n]` and
+    /// `infusion[n]` in derivative equations. An alias is left alone when a
+    /// state of the same name exists, since `b[n]` then indexes that state.
+    fn resolve_input_aliases(&mut self) {
+        let aliases: Vec<(&str, &str)> = INPUT_ALIASES
+            .iter()
+            .copied()
+            .filter(|(alias, _)| !self.states.iter().any(|state| state.name.text == *alias))
+            .collect();
+        if !aliases.is_empty() {
+            rename_input_aliases(&mut self.derivative_statements, &aliases, self.src);
+        }
     }
 
     fn infer_ode_route(
@@ -1062,6 +1055,7 @@ impl<'a> AuthoringParser<'a> {
             }
             "dx" | "ddt" => {
                 let place = parse_place_at(call.argument, call.argument_start)?;
+                self.note_equation_target(format!("dx({})", self.place_key(&place)), span)?;
                 let rhs = parse_surface_rhs(rhs, rhs_abs)?;
                 let stmt = build_assignment_statement(
                     AssignTarget {
@@ -1077,6 +1071,7 @@ impl<'a> AuthoringParser<'a> {
             }
             "noise" => {
                 let place = parse_place_at(call.argument, call.argument_start)?;
+                self.note_equation_target(format!("noise({})", self.place_key(&place)), span)?;
                 let rhs = parse_surface_rhs(rhs, rhs_abs)?;
                 let stmt = build_assignment_statement(
                     AssignTarget {
@@ -1092,6 +1087,7 @@ impl<'a> AuthoringParser<'a> {
             }
             "init" => {
                 let place = parse_place_at(call.argument, call.argument_start)?;
+                self.note_equation_target(format!("init({})", self.place_key(&place)), span)?;
                 let rhs = parse_surface_rhs(rhs, rhs_abs)?;
                 let stmt = build_assignment_statement(
                     AssignTarget {
@@ -1106,7 +1102,7 @@ impl<'a> AuthoringParser<'a> {
                 let output = parse_output_label_segment(call.argument, call.argument_start)?;
                 self.validate_output_target(&output)?;
                 self.declared_outputs.insert(output.text.clone());
-                self.note_output_assignment(&output);
+                self.note_output_assignment(&output, span)?;
 
                 let (expr_rhs, annotation) = split_output_annotation(rhs);
                 if let Some((annotation_src, annotation_start)) = annotation {
@@ -1185,10 +1181,44 @@ impl<'a> AuthoringParser<'a> {
         Err(self.undeclared_output_error(&output.text, output.span))
     }
 
-    fn note_output_assignment(&mut self, output: &Ident) {
+    fn note_output_assignment(&mut self, output: &Ident, span: Span) -> Result<(), ParseError> {
+        self.note_equation_target(format!("out({})", output.text), span)?;
         self.assigned_outputs
             .entry(output.text.clone())
             .or_insert(output.span);
+        Ok(())
+    }
+
+    /// Identifies the state element a place writes: constant indices are
+    /// compared by value, so `a[0]`, `a[00]`, and `a[(0)]` are the same target.
+    fn place_key(&self, place: &Place) -> String {
+        let Some(index) = &place.index else {
+            return place.name.text.clone();
+        };
+        let index = match index.kind {
+            ExprKind::Number(value) if value.fract() == 0.0 => format!("{value}"),
+            _ => self.src[index.span.start..index.span.end]
+                .split_whitespace()
+                .collect(),
+        };
+        format!("{}[{index}]", place.name.text)
+    }
+
+    /// Records a top-level equation target such as `dx(central)`. Each one is
+    /// an unconditional assignment, so a second equation for the same target
+    /// would silently replace the first.
+    fn note_equation_target(&mut self, target: String, span: Span) -> Result<(), ParseError> {
+        if let Some(first) = self.assigned_equations.insert(target.clone(), span) {
+            return Err(
+                ParseError::new(format!("`{target}` is assigned more than once"), span)
+                    .with_context_label(first, format!("`{target}` first assigned here"))
+                    .with_help(format!(
+                        "combine both right-hand sides into a single `{target} = ...` equation; \
+                 a second equation would replace the first"
+                    )),
+            );
+        }
+        Ok(())
     }
 
     fn validate_declared_outputs_assigned(&self) -> Result<(), ParseError> {
@@ -1359,6 +1389,93 @@ impl<'a> AuthoringParser<'a> {
     }
 }
 
+const INPUT_ALIASES: &[(&str, &str)] = &[("b", "bolus"), ("rateiv", "infusion")];
+
+fn rename_input_aliases(statements: &mut [Stmt], aliases: &[(&str, &str)], src: &str) {
+    for statement in statements {
+        match &mut statement.kind {
+            StmtKind::Let(binding) => {
+                rename_input_aliases_in_expr(&mut binding.value, aliases, src)
+            }
+            StmtKind::Assign(assign) => {
+                rename_input_aliases_in_expr(&mut assign.value, aliases, src)
+            }
+            StmtKind::If(branch) => {
+                rename_input_aliases_in_expr(&mut branch.condition, aliases, src);
+                rename_input_aliases(&mut branch.then_branch, aliases, src);
+                if let Some(otherwise) = &mut branch.else_branch {
+                    rename_input_aliases(otherwise, aliases, src);
+                }
+            }
+            StmtKind::For(body) => rename_input_aliases(&mut body.body, aliases, src),
+        }
+    }
+}
+
+fn rename_input_aliases_in_expr(expr: &mut Expr, aliases: &[(&str, &str)], src: &str) {
+    // Returns true when `ident` was an alias and now names an input.
+    let rename = |ident: &mut Ident| {
+        let Some((_, canonical)) = aliases.iter().find(|(alias, _)| ident.text == *alias) else {
+            return false;
+        };
+        ident.text = (*canonical).to_string();
+        true
+    };
+    // The parser turns integer arguments of `bolus`/`infusion` into route
+    // labels; do the same for the aliases it parsed as plain numbers.
+    let label_from_number = |argument: &mut Expr| {
+        if let ExprKind::Number(_) = argument.kind {
+            let text = &src[argument.span.start..argument.span.end];
+            if !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit()) {
+                argument.kind = ExprKind::Name(Ident::new(text, argument.span));
+            }
+        }
+    };
+    match &mut expr.kind {
+        ExprKind::Index { target, index } => {
+            if let ExprKind::Name(name) = &mut target.kind {
+                if rename(name) {
+                    label_from_number(index);
+                }
+            }
+            rename_input_aliases_in_expr(index, aliases, src);
+        }
+        ExprKind::Call { callee, args } => {
+            if rename(callee) && args.len() == 1 {
+                label_from_number(&mut args[0]);
+            }
+            for arg in args {
+                rename_input_aliases_in_expr(arg, aliases, src);
+            }
+        }
+        ExprKind::Unary { expr, .. } => rename_input_aliases_in_expr(expr, aliases, src),
+        ExprKind::Binary { lhs, rhs, .. } => {
+            rename_input_aliases_in_expr(lhs, aliases, src);
+            rename_input_aliases_in_expr(rhs, aliases, src);
+        }
+        ExprKind::Number(_) | ExprKind::Bool(_) | ExprKind::Name(_) => {}
+    }
+}
+
+fn first_state_reference<'e>(expr: &'e Expr, states: &[StateDecl]) -> Option<&'e Ident> {
+    match &expr.kind {
+        ExprKind::Name(name) if states.iter().any(|state| state.name.text == name.text) => {
+            Some(name)
+        }
+        ExprKind::Index { target, index } => {
+            first_state_reference(target, states).or_else(|| first_state_reference(index, states))
+        }
+        ExprKind::Unary { expr, .. } => first_state_reference(expr, states),
+        ExprKind::Binary { lhs, rhs, .. } => {
+            first_state_reference(lhs, states).or_else(|| first_state_reference(rhs, states))
+        }
+        ExprKind::Call { args, .. } => args
+            .iter()
+            .find_map(|arg| first_state_reference(arg, states)),
+        ExprKind::Number(_) | ExprKind::Bool(_) | ExprKind::Name(_) => None,
+    }
+}
+
 fn ode_input(expr: &Expr) -> Option<(SurfaceRouteKind, Ident)> {
     let (name, argument) = match &expr.kind {
         ExprKind::Call { callee, args } if args.len() == 1 => (&callee.text, &args[0]),
@@ -1445,54 +1562,6 @@ fn scaled_bolus_term(expr: &Expr) -> Option<(Ident, Expr)> {
         ));
     }
     None
-}
-
-fn inject_infusion_rates(
-    surface_routes: &BTreeMap<(String, SurfaceRouteKind), SurfaceRoute>,
-    routes: &[RouteDecl],
-    derivative_statements: &mut Vec<Stmt>,
-) {
-    for route in routes {
-        let kind = match route.kind {
-            Some(RouteKind::Infusion) => SurfaceRouteKind::Infusion,
-            _ => continue,
-        };
-        let Some(surface_route) = surface_routes.get(&(route.input.text.clone(), kind)) else {
-            continue;
-        };
-
-        let rate_expr = Expr {
-            span: surface_route.span,
-            kind: ExprKind::Call {
-                callee: Ident::new(RATE_FUNCTION_NAME, surface_route.input.span),
-                args: vec![Expr {
-                    span: surface_route.input.span,
-                    kind: ExprKind::Name(surface_route.input.clone()),
-                }],
-            },
-        };
-
-        if !augment_derivative_statements(
-            derivative_statements,
-            &route.destination,
-            &rate_expr,
-            &surface_route.input,
-        ) {
-            derivative_statements.push(Stmt {
-                span: surface_route.span,
-                kind: StmtKind::Assign(AssignStmt {
-                    target: AssignTarget {
-                        span: surface_route.span,
-                        kind: AssignTargetKind::Call {
-                            callee: Ident::new("ddt", surface_route.span),
-                            args: vec![place_to_expr(&route.destination)],
-                        },
-                    },
-                    value: rate_expr,
-                }),
-            });
-        }
-    }
 }
 
 struct CallHead<'a> {
@@ -1854,85 +1923,6 @@ fn validate_output_annotation(src: &str, abs_start: usize) -> Result<(), ParseEr
     }
 }
 
-fn augment_derivative_statements(
-    statements: &mut [Stmt],
-    destination: &Place,
-    rate_expr: &Expr,
-    route: &Ident,
-) -> bool {
-    let mut matched = false;
-    for stmt in statements {
-        match &mut stmt.kind {
-            StmtKind::Assign(assign) if derivative_target_matches(&assign.target, destination) => {
-                if !expr_uses_rate(&assign.value, route) {
-                    assign.value = Expr {
-                        span: assign.value.span.join(rate_expr.span),
-                        kind: ExprKind::Binary {
-                            op: BinaryOp::Add,
-                            lhs: Box::new(assign.value.clone()),
-                            rhs: Box::new(rate_expr.clone()),
-                        },
-                    };
-                    stmt.span = stmt.span.join(rate_expr.span);
-                }
-                matched = true;
-            }
-            StmtKind::If(if_stmt) => {
-                let then_match = augment_derivative_statements(
-                    &mut if_stmt.then_branch,
-                    destination,
-                    rate_expr,
-                    route,
-                );
-                let else_match = if_stmt.else_branch.as_mut().is_some_and(|branch| {
-                    augment_derivative_statements(branch, destination, rate_expr, route)
-                });
-                matched |= then_match || else_match;
-            }
-            StmtKind::For(for_stmt) => {
-                matched |= augment_derivative_statements(
-                    &mut for_stmt.body,
-                    destination,
-                    rate_expr,
-                    route,
-                );
-            }
-            _ => {}
-        }
-    }
-    matched
-}
-
-fn expr_uses_rate(expr: &Expr, route: &Ident) -> bool {
-    match &expr.kind {
-        ExprKind::Call { callee, args }
-            if callee.text == RATE_FUNCTION_NAME
-                && args.len() == 1
-                && matches!(&args[0].kind, ExprKind::Name(name) if name.text == route.text) =>
-        {
-            true
-        }
-        ExprKind::Unary { expr, .. } => expr_uses_rate(expr, route),
-        ExprKind::Binary { lhs, rhs, .. } => {
-            expr_uses_rate(lhs, route) || expr_uses_rate(rhs, route)
-        }
-        ExprKind::Call { args, .. } => args.iter().any(|arg| expr_uses_rate(arg, route)),
-        ExprKind::Index { target, index } => {
-            expr_uses_rate(target, route) || expr_uses_rate(index, route)
-        }
-        ExprKind::Number(_) | ExprKind::Bool(_) | ExprKind::Name(_) => false,
-    }
-}
-
-fn derivative_target_matches(target: &AssignTarget, destination: &Place) -> bool {
-    match &target.kind {
-        AssignTargetKind::Call { callee, args } if callee.text == "ddt" && args.len() == 1 => {
-            expr_matches_place(&args[0], destination)
-        }
-        _ => false,
-    }
-}
-
 fn expr_matches_place(expr: &Expr, destination: &Place) -> bool {
     match (&expr.kind, &destination.index) {
         (ExprKind::Name(name), None) => name.text == destination.name.text,
@@ -2115,85 +2105,211 @@ fn find_top_level_keyword(src: &str, keyword: &str) -> Option<usize> {
     None
 }
 
-fn mask_comments(line: &str) -> String {
-    let cutoff = line.find('#').unwrap_or(line.len());
-    let mut out = String::with_capacity(line.len());
-    out.push_str(&line[..cutoff]);
-    for _ in cutoff..line.len() {
-        out.push(' ');
+const MODEL_KINDS: &[&str] = &["ode", "analytical", "sde"];
+
+const DECLARATION_HEADERS: &[&str] = &[
+    "name",
+    "kind",
+    "params",
+    "parameters",
+    "covariates",
+    "states",
+    "derived",
+    "outputs",
+    "particles",
+    "structure",
+];
+
+/// Returns the candidate closest to `needle`, if it is a confident match.
+fn closest_keyword(needle: &str, candidates: &[&'static str]) -> Option<&'static str> {
+    let needle = needle.to_ascii_lowercase();
+    candidates
+        .iter()
+        .filter(|candidate| **candidate != needle)
+        .map(|candidate| {
+            let distance = if is_single_adjacent_transposition(&needle, candidate) {
+                1
+            } else {
+                edit_distance(&needle, candidate)
+            };
+            (distance, common_prefix_len(&needle, candidate), *candidate)
+        })
+        .filter(|(distance, prefix, candidate)| {
+            is_high_confidence_match(&needle, candidate, *distance, *prefix)
+        })
+        .min_by_key(|(distance, prefix, _)| (*distance, std::cmp::Reverse(*prefix)))
+        .map(|(_, _, candidate)| candidate)
+}
+
+fn did_you_mean(span: Span, candidate: &str) -> DiagnosticSuggestion {
+    DiagnosticSuggestion {
+        message: format!("did you mean `{candidate}`?"),
+        edits: vec![TextEdit {
+            span,
+            replacement: candidate.to_string(),
+        }],
+        applicability: Applicability::MaybeIncorrect,
+    }
+}
+
+/// Explains a top-level statement that has no `=`, `->`, or leading `if`.
+fn missing_assignment_error(trimmed: &str, span: Span) -> ParseError {
+    if let Some(index) = find_top_level_operator(trimmed, "==") {
+        let operator = Span::new(span.start + index, span.start + index + 2);
+        return ParseError::new("expected `=` in equation, found `==`", operator)
+            .with_help("`==` compares two values; a single `=` assigns the right-hand side")
+            .with_suggestion(DiagnosticSuggestion {
+                message: "use `=` to assign".to_string(),
+                edits: vec![TextEdit {
+                    span: operator,
+                    replacement: "=".to_string(),
+                }],
+                applicability: Applicability::MaybeIncorrect,
+            });
+    }
+    ParseError::new("expected a declaration, equation, or route shorthand", span).with_help(
+        "statements have the form `params = a, b`, `name = <expression>`, \
+         `dx(state) = <expression>`, or `input -> state`",
+    )
+}
+
+/// Replaces every `#` comment with spaces. Byte offsets are preserved, so spans
+/// computed on the masked text point into the original source.
+fn mask_source_comments(src: &str) -> String {
+    let mut out = String::with_capacity(src.len());
+    for segment in src.split_inclusive('\n') {
+        let (line, newline) = match segment.strip_suffix('\n') {
+            Some(line) => (line, "\n"),
+            None => (segment, ""),
+        };
+        let cutoff = line.find('#').unwrap_or(line.len());
+        out.push_str(&line[..cutoff]);
+        out.push_str(&" ".repeat(line.len() - cutoff));
+        out.push_str(newline);
     }
     out
 }
 
-fn brace_counts(src: &str) -> (i32, i32) {
-    let mut opens = 0i32;
-    let mut closes = 0i32;
-    let mut in_string = false;
-    let chars = src.chars().peekable();
-    for ch in chars {
-        if in_string {
-            if ch == '"' {
-                in_string = false;
+/// Operators that, at the end of a line, continue the statement on the next
+/// line. `=` is deliberately absent so a missing right-hand side is reported at
+/// its own line instead of swallowing the next statement.
+const TRAILING_CONTINUATIONS: &[&str] = &[
+    "+", "-", "*", "/", "^", ",", "&&", "||", "<", ">", "<=", ">=", "==", "!=",
+];
+
+/// Operators that, at the start of a line, continue the previous statement.
+/// No statement can begin with one of these.
+const LEADING_CONTINUATIONS: &[&str] = &[
+    "+", "-", "*", "/", "^", ",", "&&", "||", "<", ">", "==", "!=",
+];
+
+/// Splits comment-masked authoring source into the trimmed byte ranges of its
+/// logical statements.
+///
+/// A statement ends at a top-level `;` or newline. It continues past a newline
+/// while a `{` block is open, while a `(` or `[` group is open and the next line
+/// is indented further than the statement's first line or closes the group,
+/// when the line ends with a binary operator or comma and the next line is
+/// indented further, and when the next line starts with a binary operator or
+/// `else`. Otherwise the next line starts a new statement, so an unclosed group
+/// or dangling operator is reported on its own line instead of absorbing the
+/// statement after it. The same rules apply inside `if` bodies.
+fn split_logical_statements(src: &str) -> Vec<(usize, usize)> {
+    let bytes = src.as_bytes();
+    let mut ranges = Vec::new();
+    let mut start = 0;
+    let mut group_depth = 0i32;
+    let mut brace_depth = 0i32;
+    for (index, byte) in bytes.iter().enumerate() {
+        let boundary = match byte {
+            b'(' | b'[' => {
+                group_depth += 1;
+                false
             }
-            continue;
-        }
-        match ch {
-            '"' => in_string = true,
-            '{' => opens += 1,
-            '}' => closes += 1,
-            _ => {}
+            b')' | b']' => {
+                group_depth -= 1;
+                false
+            }
+            b'{' => {
+                brace_depth += 1;
+                false
+            }
+            b'}' => {
+                brace_depth -= 1;
+                false
+            }
+            b';' => group_depth <= 0 && brace_depth <= 0,
+            b'\n' => !continues_after_newline(src, start, index, group_depth, brace_depth),
+            _ => false,
+        };
+        if boundary {
+            push_trimmed_range(src, start, index, &mut ranges);
+            start = index + 1;
+            group_depth = 0;
+            brace_depth = 0;
         }
     }
-    (opens, closes)
+    push_trimmed_range(src, start, src.len(), &mut ranges);
+    ranges
 }
 
-fn split_statement_chunks(src: &str) -> Vec<(usize, usize)> {
-    let mut chunks = Vec::new();
-    let mut start = 0;
-    let mut paren_depth = 0;
-    let mut bracket_depth = 0;
-    let mut brace_depth = 0;
-    let mut index = 0;
-    while index < src.len() {
-        match src.as_bytes()[index] {
-            b'(' => paren_depth += 1,
-            b')' => paren_depth -= 1,
-            b'[' => bracket_depth += 1,
-            b']' => bracket_depth -= 1,
-            b'{' => brace_depth += 1,
-            b'}' => brace_depth -= 1,
-            b';' | b'\n' if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 => {
-                // `else` continues the preceding `if` statement, so a boundary
-                // before one (across whitespace and blank/comment-masked lines)
-                // must not split the chunk. Same logical rule as at module level.
-                let mut next = index + 1;
-                while next < src.len() && src.as_bytes()[next].is_ascii_whitespace() {
-                    next += 1;
-                }
-                if !starts_with_keyword(&src[next..], "else") {
-                    chunks.push((start, index));
-                    start = index + 1;
-                }
-            }
-            _ => {}
-        }
-        index += 1;
+fn continues_after_newline(
+    src: &str,
+    start: usize,
+    newline: usize,
+    group_depth: i32,
+    brace_depth: i32,
+) -> bool {
+    if brace_depth > 0 {
+        return true;
     }
-    chunks.push((start, src.len()));
+    let Some(next_line) = next_nonblank_line(src, newline + 1) else {
+        return false;
+    };
+    let next = next_line.trim_start();
+    // Continuation lines are indented past the line the statement starts on.
+    let statement_line = &src[start..newline];
+    let first = start + statement_line.len() - statement_line.trim_start().len();
+    let indented = indentation(next_line) > indentation(line_at(src, first));
+    if group_depth > 0 {
+        return indented || next.starts_with([')', ']']);
+    }
+    let current = src[start..newline].trim_end();
+    (indented
+        && !current.trim_start().is_empty()
+        && TRAILING_CONTINUATIONS
+            .iter()
+            .any(|operator| current.ends_with(operator)))
+        || starts_with_keyword(next, "else")
+        || LEADING_CONTINUATIONS
+            .iter()
+            .any(|operator| next.starts_with(operator))
+}
 
-    let mut result = Vec::new();
-    for (a, b) in chunks {
-        let text = &src[a..b];
-        let trimmed_start = text.trim_start();
-        let leading = text.len() - trimmed_start.len();
-        let trimmed_end = trimmed_start.trim_end();
-        let trailing = trimmed_start.len() - trimmed_end.len();
-        if trimmed_end.is_empty() {
-            continue;
-        }
-        result.push((a + leading, b - trailing));
+fn line_at(src: &str, offset: usize) -> &str {
+    let start = src[..offset].rfind('\n').map_or(0, |index| index + 1);
+    let end = src[offset..]
+        .find('\n')
+        .map_or(src.len(), |index| offset + index);
+    &src[start..end]
+}
+
+fn indentation(line: &str) -> usize {
+    line.len() - line.trim_start().len()
+}
+
+fn next_nonblank_line(src: &str, from: usize) -> Option<&str> {
+    src[from..].split('\n').find(|line| !line.trim().is_empty())
+}
+
+fn push_trimmed_range(src: &str, start: usize, end: usize, ranges: &mut Vec<(usize, usize)>) {
+    let text = &src[start..end];
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return;
     }
-    result
+    let leading = text.len() - text.trim_start().len();
+    ranges.push((start + leading, start + leading + trimmed.len()));
 }
 
 fn find_matching_delimiter(src: &str, open: char, close: char) -> Option<usize> {

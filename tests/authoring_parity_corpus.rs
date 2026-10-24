@@ -240,10 +240,9 @@ covariates = wt @locf
 states = depot, central
 outputs = cp
 
-bolus(oral) -> depot
 particles = 256
 
-dx(depot) = -ka * depot
+dx(depot) = -ka * depot + bolus(oral)
 dx(central) = ka * depot - ke * central
 noise(central) = sigma
 
@@ -258,10 +257,9 @@ params = ka, ke, v, sigma
 states = depot, central
 outputs = cp
 
-bolus(oral) -> depot
 particles = 256
 
-dx(depot) = -ka * depot
+dx(depot) = -ka * depot + bolus(oral)
 dx(central) = ka * depot - ke * central
 noise(central) = sigma
 
@@ -278,13 +276,10 @@ states = gut, central
 outputs = cp
 particles = 8
 
-bolus(oral) -> gut
-infusion(iv) -> central
 lag(oral) = tlag
-fa(oral) = f_oral
 
-dx(gut) = -ka * gut
-dx(central) = ka * gut - ke * central
+dx(gut) = -ka * gut + f_oral * bolus(oral)
+dx(central) = ka * gut - ke * central + infusion(iv)
 noise(central) = sigma_ke
 
 out(cp) = central / v ~ continuous()

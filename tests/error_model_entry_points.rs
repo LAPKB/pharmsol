@@ -343,9 +343,8 @@ states = central
 particles = 16
 outputs = cp
 
-infusion(iv) -> central
 
-dx(central) = -ke * central
+dx(central) = -ke * central + infusion(iv)
 noise(central) = 0.0
 
 out(cp) = central / v ~ continuous()

@@ -1,5 +1,5 @@
 use super::authoring;
-use super::diagnostic::{ParseError, Span};
+use super::diagnostic::{Applicability, DiagnosticSuggestion, ParseError, Span, TextEdit};
 use super::lexer::{lex, Token, TokenKind};
 use super::syntax::*;
 
@@ -1419,6 +1419,23 @@ impl Parser {
     }
 
     fn missing_expression_after_token(&self, operator: &Token) -> ParseError {
+        if let Some(next) = self.peek() {
+            if operator.kind == TokenKind::Star
+                && next.kind == TokenKind::Star
+                && next.span.start == operator.span.end
+            {
+                let span = operator.span.join(next.span);
+                return ParseError::new("`**` is not an operator; powers use `^`", span)
+                    .with_suggestion(DiagnosticSuggestion {
+                        message: "use `^`".to_string(),
+                        edits: vec![TextEdit {
+                            span,
+                            replacement: "^".to_string(),
+                        }],
+                        applicability: Applicability::Always,
+                    });
+            }
+        }
         let mut error = ParseError::new(
             format!("expected expression after {}", operator.kind.describe()),
             operator.span,
