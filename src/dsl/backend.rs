@@ -1,5 +1,4 @@
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 
@@ -30,12 +29,12 @@ use crate::{
                 validate_resolved_ode_schedule, ExplicitRkTableau, OdeSolver, SdirkTableau,
             },
             sde::simulate_sde_event_with,
-            EqnKind, Equation, EquationPriv, EquationTypes, Predictions,
+            Equation, Predictions,
         },
         likelihood::{Prediction, SubjectPredictions},
-        Fa, Lag, M, T, V,
+        M, V,
     },
-    Event, Observation, Occasion, Parameters, PharmsolError, Subject, ValidatedModelMetadata,
+    Event, Observation, Occasion, PharmsolError, Subject, ValidatedModelMetadata,
 };
 
 /// Host callback ABI for the runtime-only two-site effect function.
@@ -1122,15 +1121,7 @@ impl RuntimeOdeModel {
         self.shared.metadata()
     }
 
-    pub fn estimate_predictions(
-        &self,
-        subject: &Subject,
-        parameters: &Parameters,
-    ) -> Result<SubjectPredictions, PharmsolError> {
-        runtime_ode_predictions(self, subject, parameters.as_slice())
-    }
-
-    fn estimate_predictions_dense(
+    fn simulate(
         &self,
         subject: &Subject,
         support_point: &[f64],
@@ -1379,14 +1370,6 @@ impl RuntimeOdeModel {
     }
 }
 
-fn runtime_no_lag(_: &V, _: T, _: &Covariates) -> HashMap<usize, T> {
-    HashMap::new()
-}
-
-fn runtime_no_fa(_: &V, _: T, _: &Covariates) -> HashMap<usize, T> {
-    HashMap::new()
-}
-
 #[inline(always)]
 fn runtime_ode_predictions(
     model: &RuntimeOdeModel,
@@ -1410,14 +1393,12 @@ fn runtime_ode_predictions(
         }
 
         let result = model
-            .estimate_predictions_dense(subject, support_point)
+            .simulate(subject, support_point)
             .map_err(add_context)?;
         cache.insert(key, result.clone());
         Ok(result)
     } else {
-        model
-            .estimate_predictions_dense(subject, support_point)
-            .map_err(add_context)
+        model.simulate(subject, support_point).map_err(add_context)
     }
 }
 
@@ -1444,156 +1425,37 @@ impl crate::simulator::equation::Cache for RuntimeOdeModel {
     }
 }
 
-impl EquationTypes for RuntimeOdeModel {
-    type S = V;
+impl Equation for RuntimeOdeModel {
     type P = SubjectPredictions;
-}
 
-impl EquationPriv for RuntimeOdeModel {
-    fn lag(&self) -> &Lag {
-        &(runtime_no_lag as Lag)
-    }
-
-    fn fa(&self) -> &Fa {
-        &(runtime_no_fa as Fa)
-    }
-
-    fn get_nstates(&self) -> usize {
-        self.shared.info.state_len
-    }
-
-    fn get_ndrugs(&self) -> usize {
-        self.shared.info.route_len
-    }
-
-    fn get_nouteqs(&self) -> usize {
-        self.shared.info.output_len
-    }
-
-    fn metadata(&self) -> Option<&crate::ValidatedModelMetadata> {
+    fn metadata(&self) -> Option<&ValidatedModelMetadata> {
         Some(self.shared.metadata())
     }
 
-    fn solve(
-        &self,
-        _state: &mut Self::S,
-        _support_point: &[f64],
-        _covariates: &Covariates,
-        _infusions: &[Infusion],
-        _start_time: f64,
-        _end_time: f64,
-    ) -> Result<(), PharmsolError> {
-        unimplemented!("solve is not used for runtime ODE models")
+    fn nstates(&self) -> usize {
+        self.shared.info.state_len
     }
 
-    fn process_observation(
-        &self,
-        _support_point: &[f64],
-        _observation: &Observation,
-        _error_models: Option<&AssayErrorModels>,
-        _time: f64,
-        _covariates: &Covariates,
-        _x: &mut Self::S,
-        _likelihood: &mut Vec<f64>,
-        _output: &mut Self::P,
-    ) -> Result<(), PharmsolError> {
-        unimplemented!("process_observation is not used for runtime ODE models")
-    }
-
-    fn initial_state(&self, _support_point: &[f64], _covariates: &Covariates) -> Self::S {
-        V::zeros(self.shared.info.state_len, NalgebraContext::new())
-    }
-}
-
-impl Equation for RuntimeOdeModel {
-    fn estimate_likelihood(
-        &self,
-        subject: &Subject,
-        parameters: &Parameters,
-        error_models: &AssayErrorModels,
-    ) -> Result<f64, PharmsolError> {
-        Ok(self
-            .estimate_log_likelihood(subject, parameters, error_models)?
-            .exp())
-    }
-
-    fn estimate_log_likelihood(
-        &self,
-        subject: &Subject,
-        parameters: &Parameters,
-        error_models: &AssayErrorModels,
-    ) -> Result<f64, PharmsolError> {
-        self.validate_error_models(error_models)?;
-        let predictions = runtime_ode_predictions(self, subject, parameters.as_slice())?;
-        predictions.log_likelihood(error_models)
-    }
-
-    fn estimate_predictions_dense(
-        &self,
-        subject: &Subject,
-        parameters: &[f64],
-    ) -> Result<Self::P, PharmsolError> {
-        runtime_ode_predictions(self, subject, parameters)
-    }
-
-    fn estimate_log_likelihood_dense(
-        &self,
-        subject: &Subject,
-        parameters: &[f64],
-        error_models: &AssayErrorModels,
-    ) -> Result<f64, PharmsolError> {
-        self.validate_error_models(error_models)?;
-        let predictions = runtime_ode_predictions(self, subject, parameters)?;
-        predictions.log_likelihood(error_models)
-    }
-
-    fn simulate_subject_dense(
-        &self,
-        subject: &Subject,
-        parameters: &[f64],
-        error_models: Option<&AssayErrorModels>,
-    ) -> Result<(Self::P, Option<f64>), PharmsolError> {
-        if let Some(error_models) = error_models {
-            self.validate_error_models(error_models)?;
-        }
-
-        let predictions = runtime_ode_predictions(self, subject, parameters)?;
-        let likelihood = match error_models {
-            Some(error_models) => Some(predictions.log_likelihood(error_models)?.exp()),
-            None => None,
-        };
-        Ok((predictions, likelihood))
-    }
-
-    fn kind() -> EqnKind {
-        EqnKind::ODE
+    fn nouteqs(&self) -> usize {
+        self.shared.info.output_len
     }
 
     fn estimate_predictions(
         &self,
         subject: &Subject,
-        parameters: &Parameters,
-    ) -> Result<Self::P, PharmsolError> {
-        runtime_ode_predictions(self, subject, parameters.as_slice())
+        parameters: &[f64],
+    ) -> Result<SubjectPredictions, PharmsolError> {
+        runtime_ode_predictions(self, subject, parameters)
     }
 
-    fn simulate_subject(
+    fn estimate_log_likelihood(
         &self,
         subject: &Subject,
-        parameters: &Parameters,
-        error_models: Option<&AssayErrorModels>,
-    ) -> Result<(Self::P, Option<f64>), PharmsolError> {
-        let support_point = parameters.as_slice();
-        if let Some(error_models) = error_models {
-            self.validate_error_models(error_models)?;
-        }
-
-        let predictions = runtime_ode_predictions(self, subject, support_point)?;
-        let likelihood = match error_models {
-            Some(error_models) => Some(predictions.log_likelihood(error_models)?.exp()),
-            None => None,
-        };
-        Ok((predictions, likelihood))
+        parameters: &[f64],
+        error_models: &AssayErrorModels,
+    ) -> Result<f64, PharmsolError> {
+        self.validate_error_models(error_models)?;
+        runtime_ode_predictions(self, subject, parameters)?.log_likelihood(error_models)
     }
 }
 
@@ -1619,15 +1481,7 @@ impl RuntimeAnalyticalModel {
         self.shared.metadata()
     }
 
-    pub fn estimate_predictions(
-        &self,
-        subject: &Subject,
-        parameters: &Parameters,
-    ) -> Result<SubjectPredictions, PharmsolError> {
-        runtime_analytical_predictions(self, subject, parameters.as_slice())
-    }
-
-    fn estimate_predictions_dense(
+    fn simulate(
         &self,
         subject: &Subject,
         support_point: &[f64],
@@ -1793,14 +1647,12 @@ fn runtime_analytical_predictions(
         }
 
         let result = model
-            .estimate_predictions_dense(subject, support_point)
+            .simulate(subject, support_point)
             .map_err(add_context)?;
         cache.insert(key, result.clone());
         Ok(result)
     } else {
-        model
-            .estimate_predictions_dense(subject, support_point)
-            .map_err(add_context)
+        model.simulate(subject, support_point).map_err(add_context)
     }
 }
 
@@ -1827,146 +1679,37 @@ impl crate::simulator::equation::Cache for RuntimeAnalyticalModel {
     }
 }
 
-impl EquationTypes for RuntimeAnalyticalModel {
-    type S = V;
+impl Equation for RuntimeAnalyticalModel {
     type P = SubjectPredictions;
-}
 
-impl EquationPriv for RuntimeAnalyticalModel {
-    fn lag(&self) -> &Lag {
-        &(runtime_no_lag as Lag)
-    }
-
-    fn fa(&self) -> &Fa {
-        &(runtime_no_fa as Fa)
-    }
-
-    fn get_nstates(&self) -> usize {
-        self.shared.info.state_len
-    }
-
-    fn get_ndrugs(&self) -> usize {
-        self.shared.info.route_len
-    }
-
-    fn get_nouteqs(&self) -> usize {
-        self.shared.info.output_len
-    }
-
-    fn metadata(&self) -> Option<&crate::ValidatedModelMetadata> {
+    fn metadata(&self) -> Option<&ValidatedModelMetadata> {
         Some(self.shared.metadata())
     }
 
-    fn solve(
-        &self,
-        _state: &mut Self::S,
-        _support_point: &[f64],
-        _covariates: &Covariates,
-        _infusions: &[Infusion],
-        _start_time: f64,
-        _end_time: f64,
-    ) -> Result<(), PharmsolError> {
-        unimplemented!("solve is not used for runtime analytical models")
+    fn nstates(&self) -> usize {
+        self.shared.info.state_len
     }
 
-    fn process_observation(
-        &self,
-        _support_point: &[f64],
-        _observation: &Observation,
-        _error_models: Option<&AssayErrorModels>,
-        _time: f64,
-        _covariates: &Covariates,
-        _x: &mut Self::S,
-        _likelihood: &mut Vec<f64>,
-        _output: &mut Self::P,
-    ) -> Result<(), PharmsolError> {
-        unimplemented!("process_observation is not used for runtime analytical models")
-    }
-
-    fn initial_state(&self, _support_point: &[f64], _covariates: &Covariates) -> Self::S {
-        V::zeros(self.shared.info.state_len, NalgebraContext::new())
-    }
-}
-
-impl Equation for RuntimeAnalyticalModel {
-    fn estimate_likelihood(
-        &self,
-        subject: &Subject,
-        parameters: &Parameters,
-        error_models: &AssayErrorModels,
-    ) -> Result<f64, PharmsolError> {
-        Ok(self
-            .estimate_log_likelihood(subject, parameters, error_models)?
-            .exp())
-    }
-
-    fn estimate_log_likelihood(
-        &self,
-        subject: &Subject,
-        parameters: &Parameters,
-        error_models: &AssayErrorModels,
-    ) -> Result<f64, PharmsolError> {
-        self.validate_error_models(error_models)?;
-        let predictions = runtime_analytical_predictions(self, subject, parameters.as_slice())?;
-        predictions.log_likelihood(error_models)
-    }
-
-    fn estimate_predictions_dense(
-        &self,
-        subject: &Subject,
-        parameters: &[f64],
-    ) -> Result<Self::P, PharmsolError> {
-        runtime_analytical_predictions(self, subject, parameters)
-    }
-
-    fn estimate_log_likelihood_dense(
-        &self,
-        subject: &Subject,
-        parameters: &[f64],
-        error_models: &AssayErrorModels,
-    ) -> Result<f64, PharmsolError> {
-        self.validate_error_models(error_models)?;
-        let predictions = runtime_analytical_predictions(self, subject, parameters)?;
-        predictions.log_likelihood(error_models)
-    }
-
-    fn kind() -> EqnKind {
-        EqnKind::Analytical
+    fn nouteqs(&self) -> usize {
+        self.shared.info.output_len
     }
 
     fn estimate_predictions(
         &self,
         subject: &Subject,
-        parameters: &Parameters,
-    ) -> Result<Self::P, PharmsolError> {
-        RuntimeAnalyticalModel::estimate_predictions(self, subject, parameters)
+        parameters: &[f64],
+    ) -> Result<SubjectPredictions, PharmsolError> {
+        runtime_analytical_predictions(self, subject, parameters)
     }
 
-    fn simulate_subject(
-        &self,
-        subject: &Subject,
-        parameters: &Parameters,
-        error_models: Option<&AssayErrorModels>,
-    ) -> Result<(Self::P, Option<f64>), PharmsolError> {
-        self.simulate_subject_dense(subject, parameters.as_slice(), error_models)
-    }
-
-    fn simulate_subject_dense(
+    fn estimate_log_likelihood(
         &self,
         subject: &Subject,
         parameters: &[f64],
-        error_models: Option<&AssayErrorModels>,
-    ) -> Result<(Self::P, Option<f64>), PharmsolError> {
-        if let Some(error_models) = error_models {
-            self.validate_error_models(error_models)?;
-        }
-
-        let predictions = runtime_analytical_predictions(self, subject, parameters)?;
-        let likelihood = match error_models {
-            Some(error_models) => Some(predictions.log_likelihood(error_models)?.exp()),
-            None => None,
-        };
-        Ok((predictions, likelihood))
+        error_models: &AssayErrorModels,
+    ) -> Result<f64, PharmsolError> {
+        self.validate_error_models(error_models)?;
+        runtime_analytical_predictions(self, subject, parameters)?.log_likelihood(error_models)
     }
 }
 
@@ -2017,15 +1760,7 @@ impl RuntimeSdeModel {
         self.shared.metadata()
     }
 
-    pub fn estimate_predictions(
-        &self,
-        subject: &Subject,
-        parameters: &Parameters,
-    ) -> Result<Array2<Prediction>, PharmsolError> {
-        self.estimate_predictions_dense(subject, parameters.as_slice())
-    }
-
-    fn estimate_predictions_dense(
+    fn simulate(
         &self,
         subject: &Subject,
         support_point: &[f64],
@@ -2278,13 +2013,13 @@ fn runtime_sde_log_likelihood(
         }
 
         model.validate_error_models(error_models)?;
-        let predictions = model.estimate_predictions_dense(subject, support_point)?;
+        let predictions = model.simulate(subject, support_point)?;
         let log_lik = predictions.log_likelihood(error_models)?;
         cache.insert(key, log_lik);
         Ok(log_lik)
     } else {
         model.validate_error_models(error_models)?;
-        let predictions = model.estimate_predictions_dense(subject, support_point)?;
+        let predictions = model.simulate(subject, support_point)?;
         predictions.log_likelihood(error_models)
     }
 }
@@ -2312,149 +2047,36 @@ impl crate::simulator::equation::Cache for RuntimeSdeModel {
     }
 }
 
-impl EquationTypes for RuntimeSdeModel {
-    type S = Vec<DVector<f64>>;
+impl Equation for RuntimeSdeModel {
     type P = Array2<Prediction>;
-}
 
-impl EquationPriv for RuntimeSdeModel {
-    fn lag(&self) -> &Lag {
-        &(runtime_no_lag as Lag)
-    }
-
-    fn fa(&self) -> &Fa {
-        &(runtime_no_fa as Fa)
-    }
-
-    fn get_nstates(&self) -> usize {
-        self.shared.info.state_len
-    }
-
-    fn get_ndrugs(&self) -> usize {
-        self.shared.info.route_len
-    }
-
-    fn get_nouteqs(&self) -> usize {
-        self.shared.info.output_len
-    }
-
-    fn nparticles(&self) -> usize {
-        self.nparticles
-    }
-
-    fn is_sde(&self) -> bool {
-        true
-    }
-
-    fn metadata(&self) -> Option<&crate::ValidatedModelMetadata> {
+    fn metadata(&self) -> Option<&ValidatedModelMetadata> {
         Some(self.shared.metadata())
     }
 
-    fn solve(
-        &self,
-        _state: &mut Self::S,
-        _support_point: &[f64],
-        _covariates: &Covariates,
-        _infusions: &[Infusion],
-        _start_time: f64,
-        _end_time: f64,
-    ) -> Result<(), PharmsolError> {
-        unimplemented!("solve is not used for runtime SDE models")
+    fn nstates(&self) -> usize {
+        self.shared.info.state_len
     }
 
-    fn process_observation(
-        &self,
-        _support_point: &[f64],
-        _observation: &Observation,
-        _error_models: Option<&AssayErrorModels>,
-        _time: f64,
-        _covariates: &Covariates,
-        _x: &mut Self::S,
-        _likelihood: &mut Vec<f64>,
-        _output: &mut Self::P,
-    ) -> Result<(), PharmsolError> {
-        unimplemented!("process_observation is not used for runtime SDE models")
-    }
-
-    fn initial_state(&self, _support_point: &[f64], _covariates: &Covariates) -> Self::S {
-        vec![DVector::zeros(self.shared.info.state_len); self.nparticles]
-    }
-}
-
-impl Equation for RuntimeSdeModel {
-    fn estimate_likelihood(
-        &self,
-        subject: &Subject,
-        parameters: &Parameters,
-        error_models: &AssayErrorModels,
-    ) -> Result<f64, PharmsolError> {
-        let log_lik = self.estimate_log_likelihood(subject, parameters, error_models)?;
-        Ok(log_lik.exp())
-    }
-
-    fn estimate_log_likelihood(
-        &self,
-        subject: &Subject,
-        parameters: &Parameters,
-        error_models: &AssayErrorModels,
-    ) -> Result<f64, PharmsolError> {
-        runtime_sde_log_likelihood(self, subject, parameters.as_slice(), error_models)
-    }
-
-    fn kind() -> EqnKind {
-        EqnKind::SDE
+    fn nouteqs(&self) -> usize {
+        self.shared.info.output_len
     }
 
     fn estimate_predictions(
         &self,
         subject: &Subject,
-        parameters: &Parameters,
-    ) -> Result<Self::P, PharmsolError> {
-        RuntimeSdeModel::estimate_predictions(self, subject, parameters)
-    }
-
-    fn estimate_predictions_dense(
-        &self,
-        subject: &Subject,
         parameters: &[f64],
-    ) -> Result<Self::P, PharmsolError> {
-        RuntimeSdeModel::estimate_predictions_dense(self, subject, parameters)
+    ) -> Result<Array2<Prediction>, PharmsolError> {
+        self.simulate(subject, parameters)
     }
 
-    fn estimate_log_likelihood_dense(
+    fn estimate_log_likelihood(
         &self,
         subject: &Subject,
         parameters: &[f64],
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
         runtime_sde_log_likelihood(self, subject, parameters, error_models)
-    }
-
-    fn simulate_subject(
-        &self,
-        subject: &Subject,
-        parameters: &Parameters,
-        error_models: Option<&AssayErrorModels>,
-    ) -> Result<(Self::P, Option<f64>), PharmsolError> {
-        self.simulate_subject_dense(subject, parameters.as_slice(), error_models)
-    }
-
-    fn simulate_subject_dense(
-        &self,
-        subject: &Subject,
-        parameters: &[f64],
-        error_models: Option<&AssayErrorModels>,
-    ) -> Result<(Self::P, Option<f64>), PharmsolError> {
-        if let Some(error_models) = error_models {
-            self.validate_error_models(error_models)?;
-        }
-
-        let predictions = RuntimeSdeModel::estimate_predictions_dense(self, subject, parameters)?;
-        let likelihood = match error_models {
-            Some(error_models) => Some(predictions.log_likelihood(error_models)?.exp()),
-            None => None,
-        };
-        Ok((predictions, likelihood))
     }
 }
 
@@ -3211,7 +2833,7 @@ mod tests {
                 expected.clone(),
             );
 
-        let dense = Equation::estimate_predictions_dense(&model, &subject, &support_point)
+        let dense = Equation::estimate_predictions(&model, &subject, &support_point)
             .expect("dense predictions should come from the cache");
         assert_eq!(dense.flat_predictions(), expected.flat_predictions());
 

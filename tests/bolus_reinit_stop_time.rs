@@ -213,7 +213,7 @@ fn closure_solvers_accept_reached_stop_after_bolus_restarts(
         let model = closure_model(solver);
         let parameters = Parameters::with_model(&model, PARAMETERS)?;
         let predictions = model
-            .estimate_predictions_dense(&subject_with_bolus_history(), parameters.as_slice())
+            .estimate_predictions(&subject_with_bolus_history(), parameters.as_slice())
             .unwrap_or_else(|error| panic!("{label}: bolus-history simulation failed: {error}"));
 
         assert_eq!(predictions.predictions().len(), OBSERVATION_TIMES.len());
@@ -230,13 +230,12 @@ fn bdf_restores_crushed_timestep_after_successful_stop() -> Result<(), Box<dyn s
     let subject = subject_with_crushed_endpoint_step();
     let bdf_model = closure_model(OdeSolver::Bdf);
     let bdf_parameters = Parameters::with_model(&bdf_model, CRUSHED_STOP_PARAMETERS)?;
-    let bdf_predictions =
-        bdf_model.estimate_predictions_dense(&subject, bdf_parameters.as_slice())?;
+    let bdf_predictions = bdf_model.estimate_predictions(&subject, bdf_parameters.as_slice())?;
 
     let reference_model = closure_model(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45));
     let reference_parameters = Parameters::with_model(&reference_model, CRUSHED_STOP_PARAMETERS)?;
     let reference_predictions =
-        reference_model.estimate_predictions_dense(&subject, reference_parameters.as_slice())?;
+        reference_model.estimate_predictions(&subject, reference_parameters.as_slice())?;
 
     assert_eq!(
         bdf_predictions.predictions().len(),
@@ -263,13 +262,12 @@ fn bdf_accepts_exact_absolute_stop_with_local_roundoff() -> Result<(), Box<dyn s
     let subject = subject_with_lagged_absolute_stop_roundoff();
     let bdf_model = lagged_closure_model(OdeSolver::Bdf);
     let bdf_parameters = Parameters::with_model(&bdf_model, LAGGED_STOP_PARAMETERS)?;
-    let bdf_predictions =
-        bdf_model.estimate_predictions_dense(&subject, bdf_parameters.as_slice())?;
+    let bdf_predictions = bdf_model.estimate_predictions(&subject, bdf_parameters.as_slice())?;
 
     let reference_model = lagged_closure_model(OdeSolver::ExplicitRk(ExplicitRkTableau::Tsit45));
     let reference_parameters = Parameters::with_model(&reference_model, LAGGED_STOP_PARAMETERS)?;
     let reference_predictions =
-        reference_model.estimate_predictions_dense(&subject, reference_parameters.as_slice())?;
+        reference_model.estimate_predictions(&subject, reference_parameters.as_slice())?;
 
     assert_eq!(
         bdf_predictions.predictions().len(),
@@ -395,7 +393,7 @@ fn closure_solvers_restart_with_post_infusion_rhs() {
             ),
         ] {
             let predictions = model
-                .estimate_predictions_dense(&subject, &[])
+                .estimate_predictions(&subject, &[])
                 .unwrap_or_else(|error| {
                     panic!("closure {label} {scenario} infusion failed: {error}")
                 });
@@ -449,7 +447,7 @@ fn jit_solvers_restart_with_post_infusion_rhs() -> Result<(), Box<dyn std::error
         ] {
             let predictions = match &model {
                 CompiledRuntimeModel::Ode(model) => model
-                    .estimate_predictions_dense(&subject, &[])
+                    .estimate_predictions(&subject, &[])
                     .unwrap_or_else(|error| {
                         panic!("JIT {label} {scenario} infusion failed: {error}")
                     }),
@@ -486,7 +484,7 @@ fn closure_solvers_integrate_material_short_infusions() {
     for (label, solver) in solver_cases() {
         let model = closure_infusion_model(solver);
         let predictions = model
-            .estimate_predictions_dense(&material_short_infusion_subject(), &[])
+            .estimate_predictions(&material_short_infusion_subject(), &[])
             .unwrap_or_else(|error| panic!("closure {label} short infusion failed: {error}"));
         assert_post_infusion_decay(
             &format!("closure {label} short infusion"),
@@ -514,7 +512,7 @@ fn jit_solvers_integrate_material_short_infusions() -> Result<(), Box<dyn std::e
         };
         let predictions = match &model {
             CompiledRuntimeModel::Ode(model) => model
-                .estimate_predictions_dense(&material_short_infusion_subject(), &[])
+                .estimate_predictions(&material_short_infusion_subject(), &[])
                 .unwrap_or_else(|error| panic!("JIT {label} short infusion failed: {error}")),
             _ => unreachable!(),
         };
@@ -545,7 +543,7 @@ fn jit_solvers_accept_reached_stop_after_bolus_restarts() -> Result<(), Box<dyn 
 
         let predictions = match &model {
             CompiledRuntimeModel::Ode(model) => model
-                .estimate_predictions_dense(&subject_with_bolus_history(), parameters.as_slice())
+                .estimate_predictions(&subject_with_bolus_history(), parameters.as_slice())
                 .unwrap_or_else(|error| panic!("{label}: JIT bolus-history failed: {error}")),
             _ => unreachable!(),
         };
@@ -573,10 +571,8 @@ fn jit_bdf_restores_crushed_timestep_after_successful_stop(
     };
     let parameters = Parameters::with_model(&model, CRUSHED_STOP_PARAMETERS)?;
     let predictions = match &model {
-        CompiledRuntimeModel::Ode(model) => model.estimate_predictions_dense(
-            &subject_with_crushed_endpoint_step(),
-            parameters.as_slice(),
-        )?,
+        CompiledRuntimeModel::Ode(model) => model
+            .estimate_predictions(&subject_with_crushed_endpoint_step(), parameters.as_slice())?,
         _ => unreachable!(),
     };
 
@@ -693,9 +689,7 @@ fn assert_runtime_close_gaps(backend: &str, compiled: &CompiledRuntimeModel) {
                 .build();
             let model = configured_runtime_ode(compiled, solver.clone());
             let result = match &model {
-                CompiledRuntimeModel::Ode(model) => {
-                    model.estimate_predictions_dense(&subject, &[rate])
-                }
+                CompiledRuntimeModel::Ode(model) => model.estimate_predictions(&subject, &[rate]),
                 _ => unreachable!(),
             };
 
@@ -748,9 +742,7 @@ fn assert_runtime_large_initial_times_absolute_time(
                 .build();
             let model = configured_runtime_ode(compiled, solver.clone());
             let result = match &model {
-                CompiledRuntimeModel::Ode(model) => {
-                    model.estimate_predictions_dense(&subject, &[rate])
-                }
+                CompiledRuntimeModel::Ode(model) => model.estimate_predictions(&subject, &[rate]),
                 _ => unreachable!(),
             };
 
@@ -799,7 +791,7 @@ fn assert_runtime_rebase_after_large_event(backend: &str, compiled: &CompiledRun
     for (solver_name, solver) in solver_cases() {
         let model = configured_runtime_ode(compiled, solver);
         let result = match &model {
-            CompiledRuntimeModel::Ode(model) => model.estimate_predictions_dense(&subject, &[]),
+            CompiledRuntimeModel::Ode(model) => model.estimate_predictions(&subject, &[]),
             _ => unreachable!(),
         };
         match result {
@@ -870,7 +862,7 @@ fn assert_runtime_locf_integral(backend: &str, compiled: &CompiledRuntimeModel) 
         let model = configured_runtime_ode(compiled, solver);
         let predictions = match &model {
             CompiledRuntimeModel::Ode(model) => model
-                .estimate_predictions_dense(&runtime_locf_subject(), &[])
+                .estimate_predictions(&runtime_locf_subject(), &[])
                 .unwrap_or_else(|error| {
                     panic!("{backend} {solver_name} LOCF simulation failed: {error}")
                 }),
@@ -919,7 +911,7 @@ fn jit_runs_user_init_before_each_occasion() -> Result<(), Box<dyn std::error::E
         .missing_observation(0.0, "cp")
         .build();
     let predictions = match compiled {
-        CompiledRuntimeModel::Ode(model) => model.estimate_predictions_dense(&subject, &[])?,
+        CompiledRuntimeModel::Ode(model) => model.estimate_predictions(&subject, &[])?,
         _ => unreachable!("expected an ODE model"),
     };
 
@@ -944,7 +936,7 @@ fn jit_applies_derived_bioavailability() -> Result<(), Box<dyn std::error::Error
         .missing_observation(1.0, "cp")
         .build();
     let predictions = match compiled {
-        CompiledRuntimeModel::Ode(model) => model.estimate_predictions_dense(&subject, &[3.0])?,
+        CompiledRuntimeModel::Ode(model) => model.estimate_predictions(&subject, &[3.0])?,
         _ => unreachable!("expected an ODE model"),
     };
 

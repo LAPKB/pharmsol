@@ -63,7 +63,7 @@ use super::jit::{compile_execution_model_to_jit, JitCompileError};
 use super::model_info::RuntimeModelInfo;
 use crate::{
     simulator::likelihood::{Prediction, SubjectPredictions},
-    Parameters, PharmsolError, Subject, ValidatedModelMetadata,
+    Equation, Parameters, PharmsolError, Subject, ValidatedModelMetadata,
 };
 use pharmsol_dsl::{
     analyze_module, compile_analyzed_model, parse_module, AnalysisError, CompileError, Diagnostic,

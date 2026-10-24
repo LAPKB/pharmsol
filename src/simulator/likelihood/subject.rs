@@ -21,13 +21,6 @@ pub struct SubjectPredictions {
 }
 
 impl Predictions for SubjectPredictions {
-    fn squared_error(&self) -> f64 {
-        self.predictions
-            .iter()
-            .filter_map(|p| p.observation().map(|obs| (obs - p.prediction()).powi(2)))
-            .sum()
-    }
-
     fn get_predictions(&self) -> Vec<Prediction> {
         self.predictions.clone()
     }
@@ -38,6 +31,14 @@ impl Predictions for SubjectPredictions {
 }
 
 impl SubjectPredictions {
+    /// Sum of squared errors over all observed predictions.
+    pub fn squared_error(&self) -> f64 {
+        self.predictions
+            .iter()
+            .filter_map(|p| p.observation().map(|obs| (obs - p.prediction()).powi(2)))
+            .sum()
+    }
+
     /// Calculate the log-likelihood of all predictions given an error model.
     ///
     /// This sums the log-likelihood of each prediction to get the joint log-likelihood.

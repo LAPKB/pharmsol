@@ -23,9 +23,7 @@ fn macro_rhs_inputs_use_existing_simulator_vectors() {
         .missing_observation(0.25, "cp")
         .missing_observation(1.5, "cp")
         .build();
-    let predictions = model
-        .estimate_predictions_dense(&subject, &[1.5, 2.0])
-        .unwrap();
+    let predictions = model.estimate_predictions(&subject, &[1.5, 2.0]).unwrap();
     assert_relative_eq!(
         predictions.predictions()[0].prediction(),
         50.0,

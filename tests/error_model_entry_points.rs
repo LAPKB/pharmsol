@@ -77,10 +77,6 @@ fn assert_entry_points_agree(
     let matrix = log_likelihood_matrix(equation, &data, &support_points, &error_models, false)?;
     assert_relative_eq!(matrix[[0, 0]], log_likelihood, max_relative = 1e-10);
 
-    #[allow(deprecated)]
-    let deprecated = equation.estimate_likelihood(&subject, &parameters, &error_models)?;
-    assert_relative_eq!(deprecated.ln(), log_likelihood, max_relative = 1e-10);
-
     let undeclared = undeclared_error_models();
     assert_unknown_label(
         &format!("{name} estimate_log_likelihood"),
@@ -97,13 +93,6 @@ fn assert_entry_points_agree(
     assert_unknown_label(
         &format!("{name} log_likelihood_matrix"),
         log_likelihood_matrix(equation, &data, &support_points, &undeclared, false),
-        "concentration",
-    );
-    #[allow(deprecated)]
-    let deprecated = equation.estimate_likelihood(&subject, &parameters, &undeclared);
-    assert_unknown_label(
-        &format!("{name} estimate_likelihood"),
-        deprecated,
         "concentration",
     );
 
@@ -281,7 +270,7 @@ fn equations_without_metadata_accept_only_existing_output_numbers() -> Result<()
 
     let by_position = AssayErrorModels::new().add(0, error_model.clone())?;
     assert!(ode
-        .estimate_log_likelihood_dense(&subject, &parameters, &by_position)?
+        .estimate_log_likelihood(&subject, &parameters, &by_position)?
         .is_finite());
 
     // There is no second output, and an equation without metadata has no names.
@@ -289,7 +278,7 @@ fn equations_without_metadata_accept_only_existing_output_numbers() -> Result<()
         let error_models = AssayErrorModels::new().add(label, error_model.clone())?;
         assert_unknown_label(
             &format!("label `{label}`"),
-            ode.estimate_log_likelihood_dense(&subject, &parameters, &error_models),
+            ode.estimate_log_likelihood(&subject, &parameters, &error_models),
             label,
         );
     }

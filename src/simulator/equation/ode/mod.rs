@@ -14,12 +14,11 @@ use crate::{
     error_model::AssayErrorModels,
     prelude::simulator::SubjectPredictions,
     simulator::{DiffEq, Fa, Init, Lag, Neqs, Out, M, V},
-    Event, Observation, Parameters, PharmsolError, Subject,
+    Event, Observation, PharmsolError, Subject,
 };
 
 use super::parameters_hash;
 use crate::simulator::cache::{PredictionCache, DEFAULT_CACHE_SIZE};
-use crate::simulator::equation::Predictions;
 use closure::PMProblem;
 use diffsol::{
     error::OdeSolverError, ode_solver::method::OdeSolverMethod, NalgebraContext, OdeBuilder,
@@ -29,10 +28,7 @@ use nalgebra::DVector;
 use pharmsol_dsl::ModelKind;
 use thiserror::Error;
 
-use super::{
-    EqnKind, Equation, EquationPriv, EquationTypes, ModelMetadata, ModelMetadataError, State,
-    ValidatedModelMetadata,
-};
+use super::{Equation, EquationPriv, ModelMetadata, ModelMetadataError, ValidatedModelMetadata};
 
 const RTOL: f64 = 1e-4;
 const ATOL: f64 = 1e-4;
@@ -294,24 +290,6 @@ impl super::Cache for ODE {
     }
 }
 
-impl State for V {
-    #[inline(always)]
-    fn add_bolus(&mut self, input: usize, amount: f64) {
-        self[input] += amount;
-    }
-}
-
-fn _estimate_likelihood(
-    ode: &ODE,
-    subject: &Subject,
-    parameters: &[f64],
-    error_models: &AssayErrorModels,
-) -> Result<f64, PharmsolError> {
-    ode.validate_error_models(error_models)?;
-    let ypred = _subject_predictions(ode, subject, parameters)?;
-    Ok(ypred.log_likelihood(error_models)?.exp())
-}
-
 #[inline(always)]
 fn _subject_predictions(
     ode: &ODE,
@@ -342,7 +320,7 @@ fn _simulate_subject_dense(
         ode.validate_error_models(error_models)?;
     }
 
-    let mut output = SubjectPredictions::new(ode.nparticles());
+    let mut output = SubjectPredictions::default();
 
     let event_count: usize = subject.occasions().iter().map(|o| o.events().len()).sum();
     let mut likelihood = Vec::with_capacity(event_count);
@@ -493,12 +471,17 @@ fn _simulate_subject_dense(
     Ok((output, ll))
 }
 
-impl EquationTypes for ODE {
-    type S = V;
-    type P = SubjectPredictions;
-}
-
 impl EquationPriv for ODE {
+    type S = V;
+
+    fn empty_predictions(&self) -> SubjectPredictions {
+        SubjectPredictions::default()
+    }
+
+    fn add_bolus(&self, x: &mut V, input: usize, amount: f64) {
+        x[input] += amount;
+    }
+
     //#[inline(always)]
     // fn get_lag(&self, parameters: &[f64]) -> Option<HashMap<usize, f64>> {
     //     let parameters = DVector::from_vec(parameters.to_vec());
@@ -532,10 +515,6 @@ impl EquationPriv for ODE {
     #[inline(always)]
     fn get_nouteqs(&self) -> usize {
         self.neqs.nout
-    }
-
-    fn metadata(&self) -> Option<&ValidatedModelMetadata> {
-        self.metadata.as_ref()
     }
 
     #[inline(always)]
@@ -1804,73 +1783,45 @@ impl ODE {
 }
 
 impl Equation for ODE {
-    fn estimate_likelihood(
-        &self,
-        subject: &Subject,
-        parameters: &Parameters,
-        error_models: &AssayErrorModels,
-    ) -> Result<f64, PharmsolError> {
-        _estimate_likelihood(self, subject, parameters.as_slice(), error_models)
+    type P = SubjectPredictions;
+
+    fn metadata(&self) -> Option<&ValidatedModelMetadata> {
+        self.metadata.as_ref()
+    }
+
+    fn nstates(&self) -> usize {
+        self.neqs.nstates
+    }
+
+    fn nouteqs(&self) -> usize {
+        self.neqs.nout
     }
 
     fn estimate_predictions(
         &self,
         subject: &Subject,
-        parameters: &Parameters,
-    ) -> Result<Self::P, PharmsolError> {
-        _subject_predictions(self, subject, parameters.as_slice())
+        parameters: &[f64],
+    ) -> Result<SubjectPredictions, PharmsolError> {
+        _subject_predictions(self, subject, parameters)
     }
 
     fn estimate_log_likelihood(
         &self,
         subject: &Subject,
-        parameters: &Parameters,
-        error_models: &AssayErrorModels,
-    ) -> Result<f64, PharmsolError> {
-        self.validate_error_models(error_models)?;
-        let ypred = _subject_predictions(self, subject, parameters.as_slice())?;
-        ypred.log_likelihood(error_models)
-    }
-
-    fn estimate_predictions_dense(
-        &self,
-        subject: &Subject,
-        parameters: &[f64],
-    ) -> Result<Self::P, PharmsolError> {
-        _subject_predictions(self, subject, parameters)
-    }
-
-    fn estimate_log_likelihood_dense(
-        &self,
-        subject: &Subject,
         parameters: &[f64],
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
         self.validate_error_models(error_models)?;
-        let ypred = _subject_predictions(self, subject, parameters)?;
-        ypred.log_likelihood(error_models)
-    }
-
-    fn simulate_subject_dense(
-        &self,
-        subject: &Subject,
-        parameters: &[f64],
-        error_models: Option<&AssayErrorModels>,
-    ) -> Result<(Self::P, Option<f64>), PharmsolError> {
-        _simulate_subject_dense(self, subject, parameters, error_models)
-    }
-
-    fn kind() -> EqnKind {
-        EqnKind::ODE
+        _subject_predictions(self, subject, parameters)?.log_likelihood(error_models)
     }
 
     fn simulate_subject(
         &self,
         subject: &Subject,
-        parameters: &Parameters,
+        parameters: &[f64],
         error_models: Option<&AssayErrorModels>,
-    ) -> Result<(Self::P, Option<f64>), PharmsolError> {
-        _simulate_subject_dense(self, subject, parameters.as_slice(), error_models)
+    ) -> Result<(SubjectPredictions, Option<f64>), PharmsolError> {
+        _simulate_subject_dense(self, subject, parameters, error_models)
     }
 }
 
@@ -3226,7 +3177,7 @@ mod tests {
             .expect("metadata should validate");
 
             let predictions = ode
-                .simulate_subject_dense(&subject, &crate::parameters::dense([]), None)
+                .simulate_subject(&subject, &crate::parameters::dense([]), None)
                 .unwrap_or_else(|error| panic!("{label}: dense grid near event failed: {error}"))
                 .0;
             assert_eq!(predictions.predictions().len(), 4);

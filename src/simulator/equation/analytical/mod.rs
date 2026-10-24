@@ -18,13 +18,13 @@ pub use two_compartment_models::*;
 use super::parameters_hash;
 
 use super::{
-    EqnKind, Equation, EquationPriv, EquationTypes, ModelMetadata, ModelMetadataError,
+    simulate_events, Equation, EquationPriv, ModelMetadata, ModelMetadataError,
     ValidatedModelMetadata,
 };
 use crate::data::error_model::AssayErrorModels;
 use crate::simulator::cache::{PredictionCache, DEFAULT_CACHE_SIZE};
 use crate::PharmsolError;
-use crate::{data::Covariates, simulator::*, Observation, Parameters, Subject};
+use crate::{data::Covariates, simulator::*, Observation, Subject};
 
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
 pub enum AnalyticalMetadataError {
@@ -218,12 +218,17 @@ impl super::Cache for Analytical {
     }
 }
 
-impl EquationTypes for Analytical {
-    type S = V;
-    type P = SubjectPredictions;
-}
-
 impl EquationPriv for Analytical {
+    type S = V;
+
+    fn empty_predictions(&self) -> SubjectPredictions {
+        SubjectPredictions::default()
+    }
+
+    fn add_bolus(&self, x: &mut V, input: usize, amount: f64) {
+        x[input] += amount;
+    }
+
     // #[inline(always)]
     // fn get_init(&self) -> &Init {
     //     &self.init
@@ -267,10 +272,6 @@ impl EquationPriv for Analytical {
     #[inline(always)]
     fn get_nouteqs(&self) -> usize {
         self.neqs.nout
-    }
-
-    fn metadata(&self) -> Option<&ValidatedModelMetadata> {
-        self.metadata.as_ref()
     }
 
     #[inline(always)]
@@ -949,55 +950,36 @@ pub(crate) mod tests {
     }
 }
 impl Equation for Analytical {
-    fn estimate_likelihood(
-        &self,
-        subject: &Subject,
-        parameters: &Parameters,
-        error_models: &AssayErrorModels,
-    ) -> Result<f64, PharmsolError> {
-        _estimate_likelihood(self, subject, parameters.as_slice(), error_models)
+    type P = SubjectPredictions;
+
+    fn metadata(&self) -> Option<&ValidatedModelMetadata> {
+        self.metadata.as_ref()
     }
 
-    fn estimate_log_likelihood(
-        &self,
-        subject: &Subject,
-        parameters: &Parameters,
-        error_models: &AssayErrorModels,
-    ) -> Result<f64, PharmsolError> {
-        self.validate_error_models(error_models)?;
-        let ypred = _subject_predictions(self, subject, parameters.as_slice())?;
-        ypred.log_likelihood(error_models)
+    fn nstates(&self) -> usize {
+        self.neqs.nstates
+    }
+
+    fn nouteqs(&self) -> usize {
+        self.neqs.nout
     }
 
     fn estimate_predictions(
         &self,
         subject: &Subject,
-        parameters: &Parameters,
-    ) -> Result<Self::P, PharmsolError> {
-        _subject_predictions(self, subject, parameters.as_slice())
-    }
-
-    fn estimate_predictions_dense(
-        &self,
-        subject: &Subject,
         parameters: &[f64],
-    ) -> Result<Self::P, PharmsolError> {
+    ) -> Result<SubjectPredictions, PharmsolError> {
         _subject_predictions(self, subject, parameters)
     }
 
-    fn estimate_log_likelihood_dense(
+    fn estimate_log_likelihood(
         &self,
         subject: &Subject,
         parameters: &[f64],
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
         self.validate_error_models(error_models)?;
-        let ypred = _subject_predictions(self, subject, parameters)?;
-        ypred.log_likelihood(error_models)
-    }
-
-    fn kind() -> EqnKind {
-        EqnKind::Analytical
+        _subject_predictions(self, subject, parameters)?.log_likelihood(error_models)
     }
 }
 
@@ -1013,25 +995,10 @@ fn _subject_predictions(
             return Ok(cached);
         }
 
-        let result = analytical
-            .simulate_subject_dense(subject, parameters, None)?
-            .0;
+        let result = simulate_events(analytical, subject, parameters, None)?.0;
         cache.insert(key, result.clone());
         Ok(result)
     } else {
-        Ok(analytical
-            .simulate_subject_dense(subject, parameters, None)?
-            .0)
+        Ok(simulate_events(analytical, subject, parameters, None)?.0)
     }
-}
-
-fn _estimate_likelihood(
-    ode: &Analytical,
-    subject: &Subject,
-    parameters: &[f64],
-    error_models: &AssayErrorModels,
-) -> Result<f64, PharmsolError> {
-    ode.validate_error_models(error_models)?;
-    let ypred = _subject_predictions(ode, subject, parameters)?;
-    Ok(ypred.log_likelihood(error_models)?.exp())
 }

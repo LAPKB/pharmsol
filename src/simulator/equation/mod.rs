@@ -61,57 +61,20 @@ pub use sde::*;
 use crate::{
     error_model::{AssayErrorModels, ErrorModelError},
     simulator::{Fa, Lag},
-    Covariates, Event, Infusion, InputLabel, Observation, Occasion, OutputLabel, Parameters,
-    PharmsolError, Subject,
+    Covariates, Event, Infusion, InputLabel, Observation, Occasion, OutputLabel, PharmsolError,
+    Subject,
 };
 
 use super::likelihood::Prediction;
 
-/// Trait for state vectors that can receive bolus doses.
-pub trait State {
-    /// Add a bolus dose to the state at the specified resolved input index.
-    ///
-    /// # Parameters
-    /// - `input`: The resolved dense input index used by the execution layer
-    /// - `amount`: The bolus amount
-    fn add_bolus(&mut self, input: usize, amount: f64);
-}
-
-/// Trait for prediction containers.
-pub trait Predictions: Default {
-    /// Create a new prediction container with specified capacity.
-    ///
-    /// # Parameters
-    /// - `nparticles`: Number of particles (for SDE)
-    ///
-    /// # Returns
-    /// A new predictions container
-    fn new(_nparticles: usize) -> Self {
-        Default::default()
-    }
-
-    /// Calculate the sum of squared errors for all predictions.
-    ///
-    /// # Returns
-    /// The sum of squared errors
-    fn squared_error(&self) -> f64;
-
+/// Prediction container returned by an [`Equation`].
+pub trait Predictions {
     /// Get all predictions as a vector.
     ///
-    /// # Returns
-    /// Vector of prediction objects
+    /// Particle containers return the mean prediction across particles.
     fn get_predictions(&self) -> Vec<Prediction>;
 
     /// Calculate the log-likelihood of the predictions given an error model.
-    ///
-    /// This is numerically more stable than computing the likelihood and taking its log,
-    /// especially for extreme values or many observations.
-    ///
-    /// # Parameters
-    /// - `error_models`: The error models for computing observation variance
-    ///
-    /// # Returns
-    /// The sum of log-likelihoods for all predictions
     fn log_likelihood(&self, error_models: &AssayErrorModels) -> Result<f64, PharmsolError>;
 }
 
@@ -163,15 +126,9 @@ pub trait Cache: Sized {
     fn disable_cache(self) -> Self;
 }
 
-/// Associated state and prediction container types for an equation family.
-pub trait EquationTypes {
-    /// The state vector type
-    type S: State + Debug;
-    /// The predictions container type
-    type P: Predictions;
-}
-
-pub(crate) trait EquationPriv: EquationTypes {
+pub(crate) trait EquationPriv: Equation {
+    type S: Debug;
+    fn empty_predictions(&self) -> Self::P;
     // fn get_init(&self) -> &Init;
     // fn get_out(&self) -> &Out;
     fn lag(&self) -> &Lag;
@@ -179,7 +136,6 @@ pub(crate) trait EquationPriv: EquationTypes {
     fn get_nstates(&self) -> usize;
     fn get_ndrugs(&self) -> usize;
     fn get_nouteqs(&self) -> usize;
-    fn metadata(&self) -> Option<&ValidatedModelMetadata>;
     fn solve(
         &self,
         state: &mut Self::S,
@@ -189,9 +145,7 @@ pub(crate) trait EquationPriv: EquationTypes {
         start_time: f64,
         end_time: f64,
     ) -> Result<(), PharmsolError>;
-    fn nparticles(&self) -> usize {
-        1
-    }
+    fn add_bolus(&self, x: &mut Self::S, input: usize, amount: f64);
 
     fn resolve_input_label(
         &self,
@@ -272,11 +226,6 @@ pub(crate) trait EquationPriv: EquationTypes {
 
         Ok(resolved.process_events(Some((self.fa(), self.lag(), parameters, covariates))))
     }
-    #[allow(dead_code)]
-    fn is_sde(&self) -> bool {
-        false
-    }
-
     #[allow(clippy::too_many_arguments)]
     fn process_observation(
         &self,
@@ -321,7 +270,7 @@ pub(crate) trait EquationPriv: EquationTypes {
                         ndrugs: self.get_ndrugs(),
                     });
                 }
-                x.add_bolus(input, bolus.amount());
+                self.add_bolus(x, input, bolus.amount());
             }
             Event::Infusion(infusion) => {
                 infusions.push(infusion.clone());
@@ -354,23 +303,74 @@ pub(crate) trait EquationPriv: EquationTypes {
     }
 }
 
-/// Trait for handwritten model equations that can be simulated.
+/// A model that can be simulated against subject data.
 ///
-/// [`Equation`] is the shared interface implemented by handwritten [`ODE`],
-/// [`Analytical`], and [`SDE`] models.
+/// [`Equation`] is the shared interface of the [`ODE`], [`Analytical`], and
+/// [`SDE`] families, whether their model functions are handwritten closures or
+/// compiled from the DSL.
 ///
 /// Subject data enters this layer through public labels on dose and observation
-/// events. If metadata is attached to the equation, those labels are resolved by
-/// exact name before simulation. Otherwise, the equation declares no names and
-/// the execution layer expects labels that are dense indices.
+/// events. If the equation carries metadata, those labels are resolved by exact
+/// name before simulation. Otherwise, the equation declares no names and labels
+/// must be dense indices.
 ///
-/// # Likelihood Calculation
-///
-/// Use [`estimate_log_likelihood`](Self::estimate_log_likelihood) for numerically stable
-/// likelihood computation. The deprecated [`estimate_likelihood`](Self::estimate_likelihood)
-/// is provided for backward compatibility.
-#[allow(private_bounds)]
-pub trait Equation: EquationPriv + 'static + Clone + Sync {
+/// Parameters are passed as a dense slice in the model's parameter order.
+/// [`Parameters`](crate::Parameters) dereferences to a slice, so
+/// `&parameters` can be passed directly.
+pub trait Equation: Clone + Send + Sync + 'static {
+    /// Prediction container: [`SubjectPredictions`](crate::prelude::simulator::SubjectPredictions)
+    /// for deterministic models, a particle matrix for [`SDE`].
+    type P: Predictions;
+
+    /// Validated metadata attached to this equation, if any.
+    fn metadata(&self) -> Option<&ValidatedModelMetadata>;
+
+    /// Number of state variables.
+    fn nstates(&self) -> usize;
+
+    /// Number of output equations.
+    fn nouteqs(&self) -> usize;
+
+    /// Simulate a subject and return its predictions.
+    ///
+    /// Results may be served from the equation's cache.
+    fn estimate_predictions(
+        &self,
+        subject: &Subject,
+        parameters: &[f64],
+    ) -> Result<Self::P, PharmsolError>;
+
+    /// Log-likelihood of the subject's observations.
+    ///
+    /// Uses observation-based sigma, appropriate for non-parametric algorithms.
+    /// For parametric algorithms (SAEM, FOCE), use [`crate::ResidualErrorModels`]
+    /// directly.
+    fn estimate_log_likelihood(
+        &self,
+        subject: &Subject,
+        parameters: &[f64],
+        error_models: &AssayErrorModels,
+    ) -> Result<f64, PharmsolError>;
+
+    /// Simulate a subject and, when error models are given, also return the
+    /// likelihood (not log-likelihood) of its observations.
+    fn simulate_subject(
+        &self,
+        subject: &Subject,
+        parameters: &[f64],
+        error_models: Option<&AssayErrorModels>,
+    ) -> Result<(Self::P, Option<f64>), PharmsolError> {
+        let predictions = self.estimate_predictions(subject, parameters)?;
+        let likelihood = match error_models {
+            Some(error_models) => Some(
+                self.estimate_log_likelihood(subject, parameters, error_models)?
+                    .exp(),
+            ),
+            None => None,
+        };
+        Ok((predictions, likelihood))
+    }
+
     /// Check that every label names one of this equation's outputs.
     ///
     /// Run once per call, before simulating, so an error model for an output
@@ -383,7 +383,7 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
         for label in labels {
             let declared = match self.metadata() {
                 Some(metadata) => metadata.output_for_label(label.as_str()).is_some(),
-                None => label.index().is_some_and(|slot| slot < self.get_nouteqs()),
+                None => label.index().is_some_and(|slot| slot < self.nouteqs()),
             };
             if !declared {
                 return Err(ErrorModelError::UnknownOutputLabel(label.to_string()).into());
@@ -397,180 +397,47 @@ pub trait Equation: EquationPriv + 'static + Clone + Sync {
     fn validate_error_models(&self, error_models: &AssayErrorModels) -> Result<(), PharmsolError> {
         self.validate_output_labels(error_models.labels())
     }
-
-    /// Estimate the likelihood of the subject given the parameters and error model.
-    ///
-    /// **Deprecated**: Use [`estimate_log_likelihood`](Self::estimate_log_likelihood) instead
-    /// for better numerical stability, especially with many observations or extreme parameter values.
-    ///
-    /// This function calculates how likely the observed data is given the model
-    /// parameters and error model. It may use caching for performance.
-    ///
-    /// # Parameters
-    /// - `subject`: The subject data
-    /// - `parameters`: The parameter values
-    /// - `error_model`: The error model
-    ///
-    /// # Returns
-    /// The likelihood value (product of individual observation likelihoods)
-    #[deprecated(
-        since = "0.23.0",
-        note = "Use estimate_log_likelihood() instead for better numerical stability"
-    )]
-    fn estimate_likelihood(
-        &self,
-        subject: &Subject,
-        parameters: &Parameters,
-        error_models: &AssayErrorModels,
-    ) -> Result<f64, PharmsolError>;
-
-    /// Estimate the log-likelihood of the subject given the parameters and error model.
-    ///
-    /// This function calculates the log of how likely the observed data is given the model
-    /// parameters and error model. It is numerically more stable than `estimate_likelihood`
-    /// for extreme values or many observations.
-    ///
-    /// Uses observation-based sigma, appropriate for non-parametric algorithms.
-    /// For parametric algorithms (SAEM, FOCE), use [`crate::ResidualErrorModels`] directly.
-    ///
-    /// # Parameters
-    /// - `subject`: The subject data
-    /// - `parameters`: The parameter values
-    /// - `error_models`: The error model
-    ///
-    /// # Returns
-    /// The log-likelihood value (sum of individual observation log-likelihoods)
-    fn estimate_log_likelihood(
-        &self,
-        subject: &Subject,
-        parameters: &Parameters,
-        error_models: &AssayErrorModels,
-    ) -> Result<f64, PharmsolError>;
-
-    fn kind() -> EqnKind;
-
-    #[doc(hidden)]
-    fn estimate_predictions_dense(
-        &self,
-        subject: &Subject,
-        parameters: &[f64],
-    ) -> Result<Self::P, PharmsolError> {
-        Ok(self.simulate_subject_dense(subject, parameters, None)?.0)
-    }
-
-    #[doc(hidden)]
-    fn estimate_log_likelihood_dense(
-        &self,
-        subject: &Subject,
-        parameters: &[f64],
-        error_models: &AssayErrorModels,
-    ) -> Result<f64, PharmsolError> {
-        self.validate_error_models(error_models)?;
-        let predictions = self.estimate_predictions_dense(subject, parameters)?;
-        predictions.log_likelihood(error_models)
-    }
-
-    #[doc(hidden)]
-    fn simulate_subject_dense(
-        &self,
-        subject: &Subject,
-        parameters: &[f64],
-        error_models: Option<&AssayErrorModels>,
-    ) -> Result<(Self::P, Option<f64>), PharmsolError> {
-        if let Some(error_models) = error_models {
-            self.validate_error_models(error_models)?;
-        }
-
-        let mut output = Self::P::new(self.nparticles());
-        let mut likelihood = Vec::new();
-        for occasion in subject.occasions() {
-            let covariates = occasion.covariates();
-
-            let mut x = self.initial_state(parameters, covariates);
-            let mut infusions = Vec::new();
-            let events = self.resolve_occasion_events(occasion, parameters, covariates)?;
-            for (index, event) in events.iter().enumerate() {
-                self.simulate_event(
-                    parameters,
-                    event,
-                    events.get(index + 1),
-                    error_models,
-                    covariates,
-                    &mut x,
-                    &mut infusions,
-                    &mut likelihood,
-                    &mut output,
-                )?;
-            }
-        }
-        let ll = error_models.map(|_| likelihood.iter().product::<f64>());
-        Ok((output, ll))
-    }
-
-    /// Generate predictions for a subject with given parameters.
-    ///
-    /// # Parameters
-    /// - `subject`: The subject data
-    /// - `parameters`: The parameter values
-    ///
-    /// # Returns
-    /// Predicted concentrations
-    fn estimate_predictions(
-        &self,
-        subject: &Subject,
-        parameters: &Parameters,
-    ) -> Result<Self::P, PharmsolError> {
-        self.estimate_predictions_dense(subject, parameters.as_slice())
-    }
-
-    /// Get the number of output equations in the model.
-    fn nouteqs(&self) -> usize {
-        self.get_nouteqs()
-    }
-
-    /// Get the number of state variables in the model.
-    fn nstates(&self) -> usize {
-        self.get_nstates()
-    }
-
-    /// Simulate a subject with given parameters and optionally calculate likelihood.
-    ///
-    /// # Parameters
-    /// - `subject`: The subject data
-    /// - `parameters`: The parameter values
-    /// - `error_model`: The error model (optional)
-    ///
-    /// # Returns
-    /// A tuple containing predictions and optional likelihood
-    fn simulate_subject(
-        &self,
-        subject: &Subject,
-        parameters: &Parameters,
-        error_models: Option<&AssayErrorModels>,
-    ) -> Result<(Self::P, Option<f64>), PharmsolError> {
-        self.simulate_subject_dense(subject, parameters.as_slice(), error_models)
-    }
 }
 
-/// Runtime family tag for handwritten equations.
-#[repr(C)]
-#[derive(Clone, Debug)]
-pub enum EqnKind {
-    ODE = 0,
-    Analytical = 1,
-    SDE = 2,
-}
+/// Run the event loop of an [`EquationPriv`] family.
+///
+/// Returns the predictions and, when error models are given, the product of the
+/// per-observation likelihoods.
+pub(crate) fn simulate_events<E: EquationPriv>(
+    equation: &E,
+    subject: &Subject,
+    parameters: &[f64],
+    error_models: Option<&AssayErrorModels>,
+) -> Result<(E::P, Option<f64>), PharmsolError> {
+    if let Some(error_models) = error_models {
+        equation.validate_error_models(error_models)?;
+    }
 
-impl EqnKind {
-    pub fn to_str(&self) -> &'static str {
-        match self {
-            Self::ODE => "EqnKind::ODE",
-            Self::Analytical => "EqnKind::Analytical",
-            Self::SDE => "EqnKind::SDE",
+    let mut output = equation.empty_predictions();
+    let mut likelihood = Vec::new();
+    for occasion in subject.occasions() {
+        let covariates = occasion.covariates();
+
+        let mut x = equation.initial_state(parameters, covariates);
+        let mut infusions = Vec::new();
+        let events = equation.resolve_occasion_events(occasion, parameters, covariates)?;
+        for (index, event) in events.iter().enumerate() {
+            equation.simulate_event(
+                parameters,
+                event,
+                events.get(index + 1),
+                error_models,
+                covariates,
+                &mut x,
+                &mut infusions,
+                &mut likelihood,
+                &mut output,
+            )?;
         }
     }
+    let ll = error_models.map(|_| likelihood.iter().product::<f64>());
+    Ok((output, ll))
 }
-
 /// Hash parameter vectors to a u64 for cache key generation.
 #[inline(always)]
 pub(crate) fn parameters_hash(parameters: &[f64]) -> u64 {

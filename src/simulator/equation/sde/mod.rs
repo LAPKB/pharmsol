@@ -13,7 +13,7 @@ use crate::{
     error_model::AssayErrorModels,
     prelude::simulator::Prediction,
     simulator::{Diffusion, Drift, Fa, Init, Lag, Neqs, Out, V},
-    Parameters, Subject,
+    Subject,
 };
 
 use super::parameters_hash;
@@ -24,8 +24,8 @@ use diffsol::VectorCommon;
 use crate::PharmsolError;
 
 use super::{
-    EqnKind, Equation, EquationPriv, EquationTypes, ModelMetadata, ModelMetadataError, Predictions,
-    State, ValidatedModelMetadata,
+    simulate_events, Equation, EquationPriv, ModelMetadata, ModelMetadataError, Predictions,
+    ValidatedModelMetadata,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
@@ -341,33 +341,10 @@ impl super::Cache for SDE {
     }
 }
 
-/// State trait implementation for particle-based SDE simulation.
-///
-/// This implementation allows adding bolus doses to all particles in the system.
-impl State for Vec<DVector<f64>> {
-    /// Adds a bolus dose to a specific input compartment across all particles.
-    ///
-    /// # Arguments
-    ///
-    /// * `input` - Index of the input compartment
-    /// * `amount` - Amount to add to the compartment
-    fn add_bolus(&mut self, input: usize, amount: f64) {
-        self.par_iter_mut().for_each(|particle| {
-            particle[input] += amount;
-        });
-    }
-}
-
 /// Predictions implementation for particle-based SDE simulation outputs.
 ///
 /// This implementation manages and processes predictions from multiple particles.
 impl Predictions for Array2<Prediction> {
-    fn new(nparticles: usize) -> Self {
-        Array2::from_shape_fn((nparticles, 0), |_| Prediction::default())
-    }
-    fn squared_error(&self) -> f64 {
-        unimplemented!();
-    }
     fn get_predictions(&self) -> Vec<Prediction> {
         // Make this return the mean prediction across all particles
         if self.is_empty() || self.ncols() == 0 {
@@ -409,12 +386,19 @@ impl Predictions for Array2<Prediction> {
     }
 }
 
-impl EquationTypes for SDE {
-    type S = Vec<DVector<f64>>; // Vec -> particles, DVector -> state
-    type P = Array2<Prediction>; // Rows -> particles, Columns -> time
-}
-
 impl EquationPriv for SDE {
+    type S = Vec<DVector<f64>>; // Vec -> particles, DVector -> state
+
+    fn empty_predictions(&self) -> Array2<Prediction> {
+        Array2::from_shape_fn((self.nparticles, 0), |_| Prediction::default())
+    }
+
+    fn add_bolus(&self, x: &mut Self::S, input: usize, amount: f64) {
+        x.par_iter_mut().for_each(|particle| {
+            particle[input] += amount;
+        });
+    }
+
     // #[inline(always)]
     // fn get_init(&self) -> &Init {
     //     &self.init
@@ -460,10 +444,6 @@ impl EquationPriv for SDE {
         self.neqs.nout
     }
 
-    fn metadata(&self) -> Option<&ValidatedModelMetadata> {
-        self.metadata.as_ref()
-    }
-
     #[inline(always)]
     fn solve(
         &self,
@@ -491,13 +471,6 @@ impl EquationPriv for SDE {
             .clone();
         });
         Ok(())
-    }
-    fn nparticles(&self) -> usize {
-        self.nparticles
-    }
-
-    fn is_sde(&self) -> bool {
-        true
     }
     #[inline(always)]
     fn process_observation(
@@ -597,7 +570,7 @@ impl EquationPriv for SDE {
                     });
                 }
                 if !self.injected_bolus_mappings.apply(x, input, bolus.amount()) {
-                    x.add_bolus(input, bolus.amount());
+                    self.add_bolus(x, input, bolus.amount());
                 }
             }
             crate::Event::Infusion(infusion) => {
@@ -632,35 +605,37 @@ impl EquationPriv for SDE {
 }
 
 impl Equation for SDE {
-    /// Estimates the likelihood of observed data given a model and parameters.
-    ///
-    /// # Arguments
-    ///
-    /// * `subject` - Subject data containing observations
-    /// * `parameters` - Parameter vector for the model
-    /// * `error_model` - Error model to use for likelihood calculations
-    ///
-    /// # Returns
-    ///
-    /// The log-likelihood of the observed data given the model and parameters.
-    fn estimate_likelihood(
-        &self,
-        subject: &Subject,
-        parameters: &Parameters,
-        error_models: &AssayErrorModels,
-    ) -> Result<f64, PharmsolError> {
-        _estimate_likelihood(self, subject, parameters.as_slice(), error_models)
+    type P = Array2<Prediction>; // Rows -> particles, Columns -> time
+
+    fn metadata(&self) -> Option<&ValidatedModelMetadata> {
+        self.metadata.as_ref()
     }
 
+    fn nstates(&self) -> usize {
+        self.neqs.nstates
+    }
+
+    fn nouteqs(&self) -> usize {
+        self.neqs.nout
+    }
+
+    fn estimate_predictions(
+        &self,
+        subject: &Subject,
+        parameters: &[f64],
+    ) -> Result<Array2<Prediction>, PharmsolError> {
+        Ok(simulate_events(self, subject, parameters, None)?.0)
+    }
+
+    /// Particle-filter log-likelihood of the subject's observations.
     fn estimate_log_likelihood(
         &self,
         subject: &Subject,
-        parameters: &Parameters,
+        parameters: &[f64],
         error_models: &AssayErrorModels,
     ) -> Result<f64, PharmsolError> {
-        // For SDE, the particle filter computes likelihood in regular space.
-        // We compute it directly and then take the log.
-        let lik = _estimate_likelihood(self, subject, parameters.as_slice(), error_models)?;
+        // The particle filter computes the likelihood in regular space.
+        let lik = _estimate_likelihood(self, subject, parameters, error_models)?;
 
         if lik > 0.0 {
             Ok(lik.ln())
@@ -669,8 +644,13 @@ impl Equation for SDE {
         }
     }
 
-    fn kind() -> EqnKind {
-        EqnKind::SDE
+    fn simulate_subject(
+        &self,
+        subject: &Subject,
+        parameters: &[f64],
+        error_models: Option<&AssayErrorModels>,
+    ) -> Result<(Array2<Prediction>, Option<f64>), PharmsolError> {
+        simulate_events(self, subject, parameters, error_models)
     }
 }
 
@@ -691,12 +671,12 @@ fn _estimate_likelihood(
             return Ok(cached);
         }
 
-        let ypred = sde.simulate_subject_dense(subject, parameters, Some(error_models))?;
+        let ypred = simulate_events(sde, subject, parameters, Some(error_models))?;
         let result = ypred.1.unwrap();
         cache.insert(key, result);
         Ok(result)
     } else {
-        let ypred = sde.simulate_subject_dense(subject, parameters, Some(error_models))?;
+        let ypred = simulate_events(sde, subject, parameters, Some(error_models))?;
         Ok(ypred.1.unwrap())
     }
 }
